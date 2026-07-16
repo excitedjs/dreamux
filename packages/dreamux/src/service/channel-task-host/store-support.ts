@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import type { ChannelTaskHostEvent } from '@excitedjs/dreamux-types';
 
 import type { TaskStoreEventInput, TaskTargetRecord } from './types.js';
-import { canonicalJson } from './wal.js';
+import { canonicalJson } from './canonical-json.js';
 
 export function eventFor(input: {
   hostStreamId: string;
@@ -11,6 +11,7 @@ export function eventFor(input: {
   sequence: number;
   occurredAt: number;
   target: TaskTargetRecord | null;
+  manifestRevision: number;
   input: TaskStoreEventInput;
 }): ChannelTaskHostEvent {
   return {
@@ -20,6 +21,8 @@ export function eventFor(input: {
     occurred_at: input.occurredAt,
     target_id: input.target?.target_id ?? null,
     task_revision: input.target?.revision ?? null,
+    manifest_revision: input.manifestRevision,
+    container_generation: input.target?.container_generation ?? null,
     attempt: input.target === null ? null : clone(input.target.attempt),
     container: input.target === null
       ? null
@@ -59,6 +62,8 @@ export function validateTargetTransition(
     previous.target_id !== next.target_id ||
     previous.request_fingerprint !== next.request_fingerprint ||
     previous.receipt.receipt_id !== next.receipt.receipt_id ||
+    previous.manifest_revision !== next.manifest_revision ||
+    previous.container_generation !== next.container_generation ||
     previous.attempt.task_key !== next.attempt.task_key ||
     previous.attempt.attempt_key !== next.attempt.attempt_key ||
     next.revision !== previous.revision + 1

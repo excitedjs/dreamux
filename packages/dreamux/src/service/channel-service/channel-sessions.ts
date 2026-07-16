@@ -163,6 +163,19 @@ class ChannelSessions {
     const provider = this.opts.channelProviders.resolve(channel.provider);
     const capability = provider.taskChannel;
     if (capability?.protocol !== 'task_channel_host_v1') return false;
+    for (const required of [
+      'durable_task_submission_v1',
+      'host_event_stream_v1',
+      'durable_container_manifest_v1',
+      'resource_lifecycle_v1',
+    ] as const) {
+      if (!capability.capabilities.includes(required)) {
+        throw new Error(
+          `task-capable channel ${JSON.stringify(channelId)} does not declare ` +
+            `required capability ${JSON.stringify(required)}`,
+        );
+      }
+    }
     const repositorySource = (
       channel.collaborationSpace ?? defaultChannelCollaborationSpaceConfig()
     ).defaultBinding.repositorySource;

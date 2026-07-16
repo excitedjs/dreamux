@@ -25,6 +25,7 @@ import type { TeamCollection } from '../src/service/team-collection/index.js';
 import { TeammateCollection } from '../src/service/teammate-collection/index.js';
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
+import { applyTestTaskManifest, testTaskContainer } from './helpers/task-host.js';
 
 describe('durable task runtime submission recovery', () => {
   let root: string;
@@ -81,7 +82,8 @@ describe('durable task runtime submission recovery', () => {
     expect(store.get(target.target_id)?.submissions).toHaveLength(1);
     expect(
       store.replay(0, 500).events.filter(
-        (event) => event.payload.kind === 'turn.lifecycle',
+        (event) => event.payload.kind === 'resource.lifecycle' &&
+          event.payload.resource.kind === 'turn',
       ),
     ).toHaveLength(1);
 
@@ -348,8 +350,9 @@ describe('durable task runtime submission recovery', () => {
     const snapshot = store.snapshot();
     expect(snapshot.status).toBe('page');
     if (snapshot.status !== 'page') throw new Error('snapshot unavailable');
-    expect(snapshot.page.items[0]?.turns[0])
-      .toEqual(expect.objectContaining({ status: 'submitted' }));
+    expect(snapshot.page.items[0]?.resources.find(
+      (resource) => resource.kind === 'turn',
+    )).toEqual(expect.objectContaining({ state: 'submitted' }));
   });
 
   it('deduplicates stable tool operations and fences parent identity before effects', async () => {
@@ -750,6 +753,16 @@ describe('durable task runtime submission recovery', () => {
       identity: null,
       skillSources: [],
     });
+    const beforeSubmit = store.snapshot();
+    if (beforeSubmit.status !== 'page') throw new Error('snapshot unavailable');
+    const provisionalMember = beforeSubmit.page.items[0]?.resources.find(
+      (resource) => resource.kind === 'member',
+    );
+    expect(provisionalMember).toMatchObject({
+      kind: 'member',
+      state: 'provisioning',
+    });
+    expect(JSON.stringify(beforeSubmit.page)).not.toContain(prepared.teammateName);
     await executor.submitPrepared(target.team.team_name, prepared);
     const child = store.get(target.target_id)!.submissions.find(
       (submission) => submission.operation_id === prepared.operationId,
@@ -777,6 +790,44 @@ describe('durable task runtime submission recovery', () => {
     expect(member.acknowledgeCount).toBe(1);
     expect(leader.submitCount).toBe(2);
     expect(progressCount).toBe(1);
+
+    await executor.prepareSend({
+      teamId: target.team.team_name,
+      invocation: {
+        callId: 'member-send-call',
+        ordinal: 1,
+        parentOperationId: parent.operation_id,
+        runtimeId: 'leader-runtime',
+        durabilityNamespace: 'leader-namespace',
+      },
+      prompt: 'Continue the child task',
+      intent: null,
+      runtimeRole: 'member',
+      teammateName: prepared.teammateName,
+    });
+    const afterSend = store.snapshot();
+    if (afterSend.status !== 'page') throw new Error('snapshot unavailable');
+    const members = afterSend.page.items[0]?.resources.filter(
+      (resource) => resource.kind === 'member',
+    ) ?? [];
+    expect(members).toHaveLength(1);
+    expect(members[0]?.resource_id).toBe(provisionalMember?.resource_id);
+    expect(members[0]?.state).toBe('ready');
+    expect(JSON.stringify(afterSend.page)).not.toContain(prepared.teammateName);
+    expect(JSON.stringify(afterSend.page)).not.toContain('member-runtime');
+
+    const reopened = await TaskHostStore.open({
+      dispatcherId: 'dispatcher-a',
+      channelId: 'remote-tasks',
+      providerRef: 'npm:@example/dreamux-task-channel',
+      rootDir: root,
+    });
+    const recovered = reopened.snapshot();
+    if (recovered.status !== 'page') throw new Error('snapshot unavailable');
+    expect(recovered.page.items[0]?.resources.map((resource) => resource.resource_id))
+      .toEqual(afterSend.page.items[0]?.resources.map(
+        (resource) => resource.resource_id,
+      ));
     executor.stop();
   });
 });
@@ -937,6 +988,7 @@ async function readyStore(rootDir: string): Promise<TaskHostStore> {
     rootDir,
   });
   const claim = taskClaim();
+  await applyTestTaskManifest(store, [testTaskContainer('space-a')]);
   await store.claim(claim);
   await store.updateTarget(
     claim.targetId,
@@ -968,7 +1020,17 @@ async function readyStore(rootDir: string): Promise<TaskHostStore> {
       target.phase = 'ready';
       target.team.leader_name = 'task-leader';
     },
-    [{ payload: { kind: 'team.lifecycle', status: 'ready', team_id: claim.teamName } }],
+    [{
+      payload: {
+        kind: 'resource.lifecycle',
+        resource: {
+          kind: 'team',
+          resource_id: 'thr_test_team',
+          revision: 1,
+          state: 'ready',
+        },
+      },
+    }],
   );
   return store;
 }
@@ -990,6 +1052,8 @@ function taskClaim(): TaskTargetClaimInput {
     canonicalTargetKey: identity.targetKey,
     attempt,
     container: { container_type: 'task-space', container_key: 'space-a' },
+    manifestRevision: 1,
+    containerGeneration: 1,
     logicalRepository: { repository_key: 'repository-a' },
     resolvedRepository: {
       source: 'channel',
@@ -1007,6 +1071,8 @@ function taskClaim(): TaskTargetClaimInput {
       attempt,
       revision: 1,
       accepted_at: 1,
+      manifest_revision: 1,
+      container_generation: 1,
     },
     title: 'Task A',
     turn: { sourceId: 'delivery-a', text: 'Execute task A' },

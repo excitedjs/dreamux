@@ -56,6 +56,15 @@ export function hashContainer(input: {
     .slice(0, 12);
 }
 
+export function defaultSpaceName(input: {
+  dispatcherId: string;
+  channelId: string;
+  containerType: string;
+  containerKey: string;
+}): string {
+  return `space-${hashContainer(input)}`;
+}
+
 export function slugFor(value: string | null): string {
   if (value === null) return 'target';
   const slug = value

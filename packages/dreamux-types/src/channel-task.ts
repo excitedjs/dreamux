@@ -9,6 +9,8 @@
 export type ChannelTaskHostCapability =
   | 'durable_task_submission_v1'
   | 'host_event_stream_v1'
+  | 'durable_container_manifest_v1'
+  | 'resource_lifecycle_v1'
   | 'logical_repository_binding_v1';
 
 /** A provider opts in explicitly; conversational-only providers omit it. */
@@ -21,11 +23,16 @@ export interface ChannelTaskProviderCapability {
 }
 
 export interface ChannelTaskAttemptIdentity {
+  /** Non-empty UTF-8 identity, at most 512 bytes. */
   task_key: string;
+  /** Non-empty UTF-8 identity, at most 512 bytes. */
   attempt_key: string;
 }
 
-/** Stable remote collaboration container identity; no display/meta payload. */
+/**
+ * Stable remote collaboration container identity; no display/meta payload.
+ * The type is at most 512 UTF-8 bytes and the key at most 2,048 bytes.
+ */
 export interface ChannelTaskContainerIdentity {
   container_type: string;
   container_key: string;
@@ -33,10 +40,92 @@ export interface ChannelTaskContainerIdentity {
 
 /** A remote logical name. It can never carry a host path. */
 export interface ChannelLogicalRepositoryBinding {
+  /** Non-empty logical identity, at most 512 UTF-8 bytes; never a path. */
   repository_key: string;
-  /** Optional expected revision of the host-local binding policy. */
+  /** Optional expected host-local policy revision, at most 512 UTF-8 bytes. */
   expected_revision?: string;
 }
+
+export type ChannelTaskContainerState = 'active' | 'draining' | 'revoked';
+
+/** One entry in a complete provider-owned container authorization manifest. */
+export interface ChannelTaskContainerManifestEntry {
+  container: ChannelTaskContainerIdentity;
+  /** Positive safe-integer incarnation fence for this container binding. */
+  generation: number;
+  state: ChannelTaskContainerState;
+  /** Optional path-free repository identity resolved by trusted host policy. */
+  repository?: ChannelLogicalRepositoryBinding;
+  /** Safe-integer epoch milliseconds; required only for revoked entries. */
+  tombstoned_at?: number;
+}
+
+/**
+ * Complete container set for one channel. Entries are retained as explicit
+ * revoked tombstones; omission is never interpreted as revocation. Revision is
+ * a non-negative safe integer and the v1 Host accepts at most 100 entries.
+ */
+export interface ChannelTaskContainerManifest {
+  revision: number;
+  entries: readonly ChannelTaskContainerManifestEntry[];
+}
+
+export type ChannelTaskRepositoryResolution =
+  | {
+      status: 'ready';
+      /** Host-local policy revision, never a path. */
+      binding_revision: string;
+      /** Lowercase SHA-256 proof of the frozen policy; reveals no host path. */
+      fingerprint: string;
+    }
+  | {
+      status: 'unavailable';
+      code:
+        | 'TASK_DEFAULT_BINDING_DISABLED'
+        | 'TASK_REPOSITORY_BINDING_MISSING'
+        | 'TASK_REPOSITORY_BINDING_MISMATCH'
+        | 'TASK_REPOSITORY_NOT_MANAGED';
+      retryable: boolean;
+    }
+  | { status: 'revoked' };
+
+export interface ChannelTaskContainerResolution {
+  container: ChannelTaskContainerIdentity;
+  generation: number;
+  resolution: ChannelTaskRepositoryResolution;
+}
+
+/** Durable, path-free Host projection of the applied complete manifest. */
+export interface ChannelTaskContainerManifestState {
+  manifest: ChannelTaskContainerManifest;
+  digest: string;
+  /** Safe-integer epoch milliseconds of the first durable apply. */
+  applied_at: number;
+  resolutions: readonly ChannelTaskContainerResolution[];
+}
+
+export interface ChannelTaskContainerManifestApplyInput {
+  manifest: ChannelTaskContainerManifest;
+}
+
+export type ChannelTaskContainerManifestRejectCode =
+  | 'TASK_MANIFEST_INVALID'
+  | 'TASK_MANIFEST_STALE'
+  | 'TASK_MANIFEST_CONFLICT';
+
+export type ChannelTaskContainerManifestApplyResult =
+  | {
+      status: 'applied' | 'unchanged';
+      state: ChannelTaskContainerManifestState;
+      /** Highest durable Host sequence covered when this barrier resolved. */
+      host_watermark: number;
+    }
+  | {
+      status: 'rejected';
+      code: ChannelTaskContainerManifestRejectCode;
+      message: string;
+      current_revision: number;
+    };
 
 /** Remote attachment metadata accepted by strict task delivery; never a host path. */
 export interface ChannelTaskAttachment {
@@ -57,6 +146,10 @@ export interface ChannelTaskTurnInput {
 export interface ChannelTaskSubmitInput {
   attempt: ChannelTaskAttemptIdentity;
   container: ChannelTaskContainerIdentity;
+  /** Must equal the complete manifest revision durably applied to this Host. */
+  manifest_revision: number;
+  /** Binding incarnation authorized by the remote task command. */
+  container_generation: number;
   /** Required only when the channel's default binding uses a local resolver. */
   repository?: ChannelLogicalRepositoryBinding;
   turn: ChannelTaskTurnInput;
@@ -69,6 +162,9 @@ export interface ChannelTaskReceipt {
   attempt: ChannelTaskAttemptIdentity;
   revision: number;
   accepted_at: number;
+  /** Original authorization fence under which Core accepted this target. */
+  manifest_revision: number;
+  container_generation: number;
 }
 
 export type ChannelTaskRejectCode =
@@ -79,6 +175,9 @@ export type ChannelTaskRejectCode =
   | 'TASK_REPOSITORY_BINDING_MISSING'
   | 'TASK_REPOSITORY_BINDING_MISMATCH'
   | 'TASK_REPOSITORY_NOT_MANAGED'
+  | 'TASK_CONTAINER_MANIFEST_NOT_APPLIED'
+  | 'TASK_CONTAINER_NOT_AUTHORIZED'
+  | 'TASK_CONTAINER_GENERATION_MISMATCH'
   | 'TASK_ATTEMPT_CONFLICT'
   | 'TASK_HOST_BACKPRESSURE'
   | 'TASK_HOST_SHUTTING_DOWN';
@@ -95,6 +194,10 @@ export type ChannelTaskSubmitResult =
 export interface ChannelTaskCancelInput {
   attempt: ChannelTaskAttemptIdentity;
   container: ChannelTaskContainerIdentity;
+  /** Current applied manifest revision, even for an older accepted target. */
+  manifest_revision: number;
+  /** Original generation returned in that target's durable receipt. */
+  container_generation: number;
   reason?: string;
 }
 
@@ -111,14 +214,18 @@ export type ChannelTaskCancelResult =
       code:
         | 'TASK_HOST_NOT_NEGOTIATED'
         | 'TASK_HOST_SHUTTING_DOWN'
-        | 'TASK_INPUT_INVALID';
+        | 'TASK_INPUT_INVALID'
+        | 'TASK_CONTAINER_MANIFEST_NOT_APPLIED'
+        | 'TASK_CONTAINER_GENERATION_MISMATCH';
+      message: string;
+      retryable: boolean;
     };
 
 export type ChannelTaskTerminalOutcome = 'completed' | 'failed' | 'cancelled';
 
 export interface ChannelTaskTerminalResult {
   outcome: ChannelTaskTerminalOutcome;
-  /** A bounded provider-facing result, never a raw runtime or admin DTO. */
+  /** At most 64 KiB UTF-8; never a raw runtime or admin DTO. */
   summary?: string;
 }
 
@@ -133,6 +240,71 @@ export type ChannelTaskPhase =
   | 'finalizing'
   | 'finalized';
 
+/**
+ * Bounded provider-facing resource projection. Resource ids are opaque and
+ * stable for one accepted target across Core restart. Parent ids form only the
+ * Team/agent/turn/worktree hierarchy below that target. Every revision is the
+ * positive task aggregate revision that produced the projection; summaries,
+ * when present, are at most 4 KiB UTF-8.
+ */
+export type ChannelTaskResource =
+  | {
+      kind: 'team';
+      resource_id: string;
+      revision: number;
+      state: 'provisioning' | 'ready' | 'closing' | 'closed';
+    }
+  | {
+      kind: 'leader';
+      resource_id: string;
+      parent_resource_id: string;
+      revision: number;
+      state:
+        | 'provisioning'
+        | 'ready'
+        | 'running'
+        | 'completed'
+        | 'failed'
+        | 'stopped'
+        | 'in_doubt'
+        | 'closing'
+        | 'closed';
+      summary?: string;
+    }
+  | {
+      kind: 'member';
+      resource_id: string;
+      parent_resource_id: string;
+      revision: number;
+      state:
+        | 'provisioning'
+        | 'ready'
+        | 'running'
+        | 'completed'
+        | 'failed'
+        | 'stopped'
+        | 'in_doubt'
+        | 'closing'
+        | 'closed';
+      summary?: string;
+    }
+  | {
+      kind: 'turn';
+      resource_id: string;
+      parent_resource_id: string;
+      revision: number;
+      state: 'submitted' | 'running' | 'completed' | 'failed' | 'stopped' | 'in_doubt';
+      summary?: string;
+    }
+  | {
+      kind: 'worktree';
+      resource_id: string;
+      parent_resource_id: string;
+      revision: number;
+      state: 'provisional' | 'ready' | 'cleaning' | 'deleted' | 'retained';
+      reason?: 'dirty' | 'unmerged' | 'unique_commits' | 'cleanup_error';
+    };
+
 export interface ChannelTaskSnapshotItem {
   receipt: ChannelTaskReceipt;
   container: ChannelTaskContainerIdentity;
@@ -143,18 +315,9 @@ export interface ChannelTaskSnapshotItem {
     code: ChannelTaskBlockedCode;
     retryable: boolean;
   } | null;
-  team: {
-    team_id: string;
-    status: 'provisioning' | 'ready' | 'closing' | 'closed';
-  };
-  worktree: {
-    status: 'provisional' | 'ready' | 'cleaning' | 'deleted' | 'retained';
-    reason?: 'dirty' | 'unmerged' | 'unique_commits' | 'cleanup_error';
-  };
-  turns: Array<{
-    turn_key: string;
-    status: 'submitted' | 'running' | 'completed' | 'failed' | 'stopped' | 'in_doubt';
-  }>;
+  resources: ChannelTaskResource[];
+  /** True when older resources were omitted from this bounded projection. */
+  resources_truncated: boolean;
   /** True when older settled turns were omitted from this bounded projection. */
   turns_truncated: boolean;
   updated_at: number;
@@ -186,8 +349,13 @@ export interface ChannelTaskSnapshot {
   watermark: number;
   acknowledged_through: number;
   host_status: ChannelHostStatus;
+  /** Repeated on every page so a consumer can stage one atomic projection. */
+  container_manifest: ChannelTaskContainerManifestState;
+  /** Zero-based first item position in this immutable capture. */
   item_offset: number;
+  /** Number of items on this page; always equals `items.length`. */
   item_count: number;
+  /** Immutable total across every page with this snapshot id. */
   total_items: number;
   /** True only on the final page; apply the staged projection only then. */
   complete: boolean;
@@ -229,20 +397,14 @@ export type ChannelTaskHostEventPayload =
       tombstone?: true;
     }
   | {
-      kind: 'team.lifecycle';
-      status: 'provisioning' | 'ready' | 'closing' | 'closed';
-      team_id: string;
+      kind: 'container_manifest.applied';
+      revision: number;
+      digest: string;
+      entry_count: number;
     }
   | {
-      kind: 'worktree.lifecycle';
-      status: 'provisional' | 'ready' | 'cleaning' | 'deleted' | 'retained';
-      reason?: 'dirty' | 'unmerged' | 'unique_commits' | 'cleanup_error';
-    }
-  | {
-      kind: 'turn.lifecycle';
-      /** Opaque Core-derived correlation key; not an AgentRuntime operation id. */
-      turn_key: string;
-      status: 'submitted' | 'running' | 'completed' | 'failed' | 'stopped' | 'in_doubt';
+      kind: 'resource.lifecycle';
+      resource: ChannelTaskResource;
     }
   | {
       kind: 'cleanup.lifecycle';
@@ -257,6 +419,10 @@ export interface ChannelTaskHostEvent {
   target_id: string | null;
   /** Target aggregate revision after this transition, or null for host events. */
   task_revision: number | null;
+  /** Applied manifest for host events, or the target's original accept fence. */
+  manifest_revision: number;
+  /** Original target binding incarnation, or null for host-wide events. */
+  container_generation: number | null;
   attempt: ChannelTaskAttemptIdentity | null;
   container: ChannelTaskContainerIdentity | null;
   payload: ChannelTaskHostEventPayload;
@@ -289,7 +455,12 @@ export interface ChannelTaskHostNegotiationInput {
   resume?: ChannelTaskHostStreamCursor;
 }
 
-/** Core-created, session-scoped facts available before negotiation. */
+/**
+ * Core-created, session-scoped facts available before negotiation. This is an
+ * immutable handle-creation snapshot; apply results and snapshots carry newer
+ * manifest/status facts. Starting another session or detaching this one fences
+ * the handle.
+ */
 export interface ChannelTaskHostScope {
   schema_versions: readonly [1];
   required_capabilities: readonly ChannelTaskHostCapability[];
@@ -297,6 +468,8 @@ export interface ChannelTaskHostScope {
   host_stream_id: string;
   stream_generation: number;
   host_status: ChannelHostStatus;
+  applied_manifest_revision: number;
+  applied_manifest_digest: string;
   /** Opaque handle incarnation. Calls fail after this session is revoked. */
   session_fence: string;
 }
@@ -304,12 +477,15 @@ export interface ChannelTaskHostScope {
 export interface ChannelTaskHostNegotiationResult {
   schema_version: 1;
   capabilities: readonly ChannelTaskHostCapability[];
+  required_capabilities: readonly ChannelTaskHostCapability[];
   host_stream_id: string;
   stream_generation: number;
   watermark: number;
   /** Core's durable consecutive prefix before this session resumes. */
   acknowledged_through: number;
   host_status: ChannelHostStatus;
+  applied_manifest_revision: number;
+  applied_manifest_digest: string;
   session_fence: string;
   resume: 'replay' | 'snapshot_required';
 }
@@ -347,12 +523,27 @@ export interface ChannelTaskHostAcknowledgeResult {
   acknowledged_through: number;
 }
 
+/**
+ * Revocable scoped Host handle. Calls waiting to cross a Core durable-write
+ * boundary recheck the session fence; after revocation they reject instead of
+ * committing provider-authorized state. A transaction that already crossed
+ * that boundary remains authoritative and is recovered by the replacement
+ * session even if its original call did not return.
+ */
 export interface ChannelTaskHost {
   /** Immutable facts for this scoped handle. */
   readonly scope: ChannelTaskHostScope;
   negotiate(
     input: ChannelTaskHostNegotiationInput,
   ): Promise<ChannelTaskHostNegotiationResult>;
+  /**
+   * Durably apply one complete container set. A successful result is returned
+   * only after its checksummed WAL transaction is fsynced; commands fenced by
+   * that revision may execute only after this barrier resolves.
+   */
+  applyContainerManifest(
+    input: ChannelTaskContainerManifestApplyInput,
+  ): Promise<ChannelTaskContainerManifestApplyResult>;
   submit(input: ChannelTaskSubmitInput): Promise<ChannelTaskSubmitResult>;
   lookupSubmission(
     attempt: ChannelTaskAttemptIdentity,
@@ -363,8 +554,10 @@ export interface ChannelTaskHost {
    * Start or continue one immutable staged snapshot. Every page for a cursor
    * has the same snapshot id, watermark, item count, and host facts. The
    * adapter atomically replaces its remote projection only after `complete`,
-   * persists the watermark, then acknowledges that prefix. An invalid/expired
-   * cursor requires starting again without a cursor.
+   * after verifying contiguous offsets, identical immutable facts, and exactly
+   * `total_items`; it then persists the watermark and acknowledges that prefix.
+   * An invalid/expired cursor requires discarding all staged pages and starting
+   * again without a cursor.
    */
   snapshot(input?: ChannelTaskSnapshotRequest): Promise<ChannelTaskSnapshotResult>;
   replay(input: ChannelTaskHostReplayRequest): Promise<ChannelTaskHostReplayResult>;

@@ -14,7 +14,8 @@ import type {
   RuntimeSubmissionRecord,
   TaskTargetRecord,
 } from './types.js';
-import { canonicalJson } from './wal.js';
+import { canonicalJson } from './canonical-json.js';
+import { submissionResourceEvents } from './resources.js';
 
 export class RuntimeSubmissionIndex {
   constructor(private readonly store: TaskHostStore) {}
@@ -84,15 +85,7 @@ export class RuntimeSubmissionIndex {
         this.store.assertOperationCapacity(record);
         return true;
       },
-      (record) => [{
-        payload: {
-          kind: 'turn.lifecycle',
-          turn_key: input.operationId,
-          status: record.terminal?.outcome === 'cancelled'
-            ? 'stopped'
-            : 'submitted',
-        },
-      }],
+      (record) => submissionResourceEvents(record, input.operationId),
     );
     return requiredSubmission(target, input.operationId);
   }
@@ -129,13 +122,7 @@ export class RuntimeSubmissionIndex {
         submission.updated_at = Date.now();
         return true;
       },
-      [{
-        payload: {
-          kind: 'turn.lifecycle',
-          turn_key: input.operationId,
-          status: 'submitted',
-        },
-      }],
+      (record) => submissionResourceEvents(record, input.operationId),
     );
     return requiredSubmission(target, input.operationId);
   }
@@ -185,13 +172,17 @@ export class RuntimeSubmissionIndex {
           record.phase = 'running';
         }
       },
-      (record) => [{
-        payload: eventPayload(
-          current,
-          input.runtime,
-          record.terminal?.outcome === 'cancelled',
-        ),
-      }],
+      (record) => [
+        ...(current.kind === 'root' && record.phase === 'running'
+          ? [{
+              payload: {
+                kind: 'task.lifecycle' as const,
+                phase: 'running' as const,
+              },
+            }]
+          : []),
+        ...submissionResourceEvents(record, input.operationId),
+      ],
     );
     return requiredSubmission(target, input.operationId);
   }
@@ -234,15 +225,7 @@ export class RuntimeSubmissionIndex {
         submission.updated_at = Date.now();
         return true;
       },
-      (record) => [{
-        payload: {
-          kind: 'turn.lifecycle',
-          turn_key: current.operation_id,
-          status: record.terminal?.outcome === 'cancelled'
-            ? 'stopped'
-            : input.settlement.status,
-        },
-      }],
+      (record) => submissionResourceEvents(record, current.operation_id),
     );
     return requiredSubmission(target, input.operationId);
   }
@@ -319,15 +302,8 @@ export class RuntimeSubmissionIndex {
         }
         return true;
       },
-      (record) => [{
-        payload: {
-          kind: 'turn.lifecycle',
-          turn_key: current.operation_id,
-          status: record.terminal?.outcome === 'cancelled'
-            ? 'stopped'
-            : 'in_doubt',
-        },
-      }, ...(record.terminal !== null
+      (record) => [...submissionResourceEvents(record, current.operation_id),
+        ...(record.terminal !== null
         ? []
         : [{
             payload: {
@@ -421,30 +397,4 @@ function assertSameRuntimeRecord(
   ) {
     throw new Error('runtime returned a conflicting durable submission record');
   }
-}
-
-function eventPayload(
-  current: RuntimeSubmissionRecord,
-  runtime: AgentRuntimeDurableSubmissionRecord,
-  cancelled: boolean,
-) {
-  if (cancelled) {
-    return {
-      kind: 'turn.lifecycle' as const,
-      turn_key: current.operation_id,
-      status: 'stopped' as const,
-    };
-  }
-  if (runtime.settlement === null) {
-    return {
-      kind: 'turn.lifecycle' as const,
-      turn_key: current.operation_id,
-      status: 'running' as const,
-    };
-  }
-  return {
-    kind: 'turn.lifecycle' as const,
-    turn_key: current.operation_id,
-    status: runtime.settlement.status,
-  };
 }

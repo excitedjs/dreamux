@@ -23,6 +23,7 @@ export function buildTaskHostCheckpoint(input: {
   const frames: Buffer[] = [];
 
   const append = (
+    containerManifest: TaskHostTransaction['container_manifest_delta'],
     targets: TaskHostTransaction['target_deltas'],
     events: TaskHostTransaction['host_events'],
     checkpoint: TaskHostCheckpoint,
@@ -34,6 +35,7 @@ export function buildTaskHostCheckpoint(input: {
       committed_at: input.committedAt,
       host_stream_id: input.hostStreamId,
       stream_generation: input.state.streamGeneration,
+      container_manifest_delta: structuredClone(containerManifest),
       target_deltas: structuredClone(targets),
       host_events: structuredClone(events),
       sequence_allocation: null,
@@ -51,14 +53,22 @@ export function buildTaskHostCheckpoint(input: {
     frames.push(encoded.frame);
   };
 
+  if (input.state.containerManifest.revision > 0) {
+    append(
+      input.state.containerManifest,
+      [],
+      [],
+      { checkpoint_id: checkpointId, final: false },
+    );
+  }
   for (const target of input.state.targets.values()) {
-    append([target], [], { checkpoint_id: checkpointId, final: false });
+    append(null, [target], [], { checkpoint_id: checkpointId, final: false });
   }
   for (const event of input.state.events) {
     if (event.sequence <= input.state.acknowledgedThrough) continue;
-    append([], [event], { checkpoint_id: checkpointId, final: false });
+    append(null, [], [event], { checkpoint_id: checkpointId, final: false });
   }
-  append([], [], {
+  append(null, [], [], {
     checkpoint_id: checkpointId,
     final: true,
     next_sequence: input.state.nextSequence,

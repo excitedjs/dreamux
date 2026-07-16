@@ -15,7 +15,13 @@ export type TaskRepositoryResolution =
   | { status: 'resolved'; policy: TaskRepositoryPolicy }
   | {
       status: 'rejected';
-      code: ChannelTaskRejectCode;
+      code: Extract<
+        ChannelTaskRejectCode,
+        | 'TASK_DEFAULT_BINDING_DISABLED'
+        | 'TASK_REPOSITORY_BINDING_MISSING'
+        | 'TASK_REPOSITORY_BINDING_MISMATCH'
+        | 'TASK_REPOSITORY_NOT_MANAGED'
+      >;
       message: string;
       retryable: boolean;
     };
@@ -155,6 +161,8 @@ async function validateManagedRepository(input: {
     .update(repoRoot)
     .update('\0')
     .update(baseRef)
+    .update('\0')
+    .update(baseCommit)
     .digest('hex');
   return {
     source: input.source,
@@ -168,7 +176,13 @@ async function validateManagedRepository(input: {
 }
 
 function rejected(
-  code: ChannelTaskRejectCode,
+  code: Extract<
+    ChannelTaskRejectCode,
+    | 'TASK_DEFAULT_BINDING_DISABLED'
+    | 'TASK_REPOSITORY_BINDING_MISSING'
+    | 'TASK_REPOSITORY_BINDING_MISMATCH'
+    | 'TASK_REPOSITORY_NOT_MANAGED'
+  >,
   message: string,
   retryable: boolean,
 ): TaskRepositoryResolution {

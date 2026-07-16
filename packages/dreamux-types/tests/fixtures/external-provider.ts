@@ -283,15 +283,17 @@ interface FixtureTaskChannelConfig {
   repositories: Record<string, { cwd: string; revision: string; baseRef?: string }>;
 }
 
-const TASK_CHANNEL_CAPABILITY = {
+const TASK_CHANNEL_CAPABILITY: ChannelTaskProviderCapability = {
   protocol: 'task_channel_host_v1',
   schema_versions: [1],
   capabilities: [
     'durable_task_submission_v1',
     'host_event_stream_v1',
+    'durable_container_manifest_v1',
+    'resource_lifecycle_v1',
     'logical_repository_binding_v1',
   ],
-} as const satisfies ChannelTaskProviderCapability;
+};
 
 const taskCursors = new Map<string, ChannelTaskHostStreamCursor>();
 const taskProjections = new Map<string, ReadonlyMap<string, ChannelTaskSnapshotItem>>();
@@ -329,6 +331,24 @@ class FixtureTaskChannelSession implements ChannelSession {
       supported_capabilities: TASK_CHANNEL_CAPABILITY.capabilities,
       ...(persisted !== undefined ? { resume: persisted } : {}),
     });
+    const container: ChannelTaskContainerIdentity = {
+      container_type: 'task-space',
+      container_key: 'space-1',
+    };
+    const manifest = await host.applyContainerManifest({
+      manifest: {
+        revision: 1,
+        entries: [{
+          container,
+          generation: 1,
+          state: 'active',
+          repository: { repository_key: 'repository-1' },
+        }],
+      },
+    });
+    if (manifest.status === 'rejected') {
+      throw new Error(`manifest rejected: ${manifest.code}`);
+    }
     if (negotiated.resume === 'snapshot_required') {
       const staged = await stageTaskSnapshot(host);
       taskProjections.set(this.channel_id, staged.projection);
@@ -347,13 +367,11 @@ class FixtureTaskChannelSession implements ChannelSession {
       }
       await this.replayFrom(host, negotiated.host_stream_id, negotiated.stream_generation);
     }
-    const container: ChannelTaskContainerIdentity = {
-      container_type: 'task-space',
-      container_key: 'space-1',
-    };
     await host.submit({
       attempt: { task_key: 'task-1', attempt_key: 'attempt-1' },
       container,
+      manifest_revision: manifest.state.manifest.revision,
+      container_generation: 1,
       repository: { repository_key: 'repository-1' },
       turn: fixtureTaskTurn,
       title: 'Fixture task',

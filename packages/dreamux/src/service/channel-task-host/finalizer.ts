@@ -8,6 +8,13 @@ import {
   taskTeamProvisionInput,
 } from './provisioning.js';
 import type { TaskHostStore } from './store.js';
+import {
+  leaderResource,
+  memberResources,
+  resourceEvent,
+  teamResource,
+  worktreeResource,
+} from './resources.js';
 
 const RETRY_ERROR_CODE = 'TASK_FINALIZER_RETRY_REQUIRED';
 
@@ -99,20 +106,14 @@ export class TaskTargetFinalizer {
             last_error_code: null,
           };
         },
-        [{ payload: { kind: 'task.lifecycle', phase: 'finalizing' } }, {
-          payload: { kind: 'cleanup.lifecycle', status: 'started' },
-        }, {
-          payload: {
-            kind: 'team.lifecycle',
-            status: 'closing',
-            team_id: record.team.team_name,
-          },
-        }, {
-          payload: {
-            kind: 'worktree.lifecycle' as const,
-            status: 'cleaning' as const,
-          },
-        }],
+        (next) => [
+          { payload: { kind: 'task.lifecycle', phase: 'finalizing' } },
+          { payload: { kind: 'cleanup.lifecycle', status: 'started' } },
+          resourceEvent(teamResource(next, 'closing')),
+          resourceEvent(leaderResource(next, 'closing')),
+          ...memberResources(next, 'closing').map(resourceEvent),
+          resourceEvent(worktreeResource(next, 'cleaning')),
+        ],
       );
     }
 
@@ -142,20 +143,6 @@ export class TaskTargetFinalizer {
           : cleanupEvent((await this.opts.teams.finalizeTaskProvisioning(
               taskTeamProvisionInput(record),
             )).cleanup.cleanup_state);
-        const events = [{
-          payload: {
-            kind: 'team.lifecycle' as const,
-            status: 'closed' as const,
-            team_id: record.team.team_name,
-          },
-        }, {
-          payload: {
-            kind: 'worktree.lifecycle' as const,
-            ...cleanup,
-          },
-        }, {
-          payload: { kind: 'cleanup.lifecycle' as const, status: 'completed' as const },
-        }];
         record = await this.opts.store.updateTarget(
           targetId,
           null,
@@ -171,7 +158,18 @@ export class TaskTargetFinalizer {
               }
             }
           },
-          events,
+          (next) => [
+            resourceEvent(teamResource(next, 'closed')),
+            resourceEvent(leaderResource(next, 'closed')),
+            ...memberResources(next, 'closed').map(resourceEvent),
+            resourceEvent(worktreeResource(next, cleanup.status, cleanup.reason)),
+            {
+              payload: {
+                kind: 'cleanup.lifecycle' as const,
+                status: 'completed' as const,
+              },
+            },
+          ],
         );
       }
 

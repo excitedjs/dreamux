@@ -15,8 +15,25 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import { isNotFound } from '../../platform/fs-errors.js';
-import type { RuntimeSubmissionRecord, TaskTargetRecord } from './types.js';
-import { TASK_TARGET_RECORD_VERSION } from './types.js';
+import type {
+  RuntimeSubmissionRecord,
+  TaskContainerManifestRecord,
+  TaskTargetRecord,
+} from './types.js';
+import {
+  TASK_TARGET_RECORD_VERSION,
+} from './types.js';
+import { emptyTaskContainerManifest } from './container-manifest.js';
+import {
+  validatePersistedContainerManifest,
+  validatePersistedContainerManifestTransition,
+} from './container-manifest-record.js';
+import { assertJsonDomain, canonicalJson } from './canonical-json.js';
+import {
+  validateHostEventEnvelope,
+  validateManifestTransaction,
+  validateNewTargetManifestFence,
+} from './wal-domain-validation.js';
 
 const WAL_SCHEMA = 'task_host_tx_v1';
 const COMMIT_MARKER = 'task_host_commit_v1';
@@ -33,6 +50,7 @@ export interface TaskHostTransaction {
   committed_at: number;
   host_stream_id: string;
   stream_generation: number;
+  container_manifest_delta: TaskContainerManifestRecord | null;
   target_deltas: TaskTargetRecord[];
   host_events: ChannelTaskHostEvent[];
   sequence_allocation: null | { first: number; last: number };
@@ -62,6 +80,7 @@ export interface TaskHostWalState {
   replayFloor: number;
   hostStatus: 'recovering' | 'ready' | 'degraded' | 'stopping' | 'stopped';
   hostStatusCode: ChannelHostStatusCode | null;
+  containerManifest: TaskContainerManifestRecord;
   targets: Map<string, TaskTargetRecord>;
   events: ChannelTaskHostEvent[];
   checkpointId: string | null;
@@ -93,6 +112,7 @@ export function emptyWalState(): TaskHostWalState {
     replayFloor: 0,
     hostStatus: 'stopped',
     hostStatusCode: null,
+    containerManifest: emptyTaskContainerManifest(),
     targets: new Map(),
     events: [],
     checkpointId: null,
@@ -178,9 +198,25 @@ export function validateTransaction(
     throw new Error('task host WAL stream generation changed without rotation');
   }
   validateCheckpointEnvelope(tx, state);
-  if (!Array.isArray(tx.target_deltas) || !Array.isArray(tx.host_events)) {
+  if (
+    !(tx.container_manifest_delta === null || isRecord(tx.container_manifest_delta)) ||
+    !Array.isArray(tx.target_deltas) ||
+    !Array.isArray(tx.host_events)
+  ) {
     throw new Error('task host WAL transaction payload is invalid');
   }
+  if (tx.container_manifest_delta !== null) {
+    validatePersistedContainerManifest(tx.container_manifest_delta, channelId);
+    if (tx.checkpoint === null) {
+      validatePersistedContainerManifestTransition(
+        state.containerManifest,
+        tx.container_manifest_delta,
+      );
+    } else if (state.containerManifest.revision !== 0) {
+      throw new Error('task host WAL checkpoint repeats the container manifest');
+    }
+  }
+  validateManifestTransaction(tx);
   const targetIds = new Set<string>();
   for (const target of tx.target_deltas) {
     validateTarget(target, channelId);
@@ -189,14 +225,21 @@ export function validateTransaction(
     }
     targetIds.add(target.target_id);
     const previous = state.targets.get(target.target_id);
+    if (target.manifest_revision > state.containerManifest.revision) {
+      throw new Error('task host target is ahead of its durable container manifest');
+    }
     if (tx.checkpoint !== null) continue;
     if (previous === undefined) {
       if (target.revision !== 1) {
         throw new Error('new task host target must start at revision 1');
       }
+      validateNewTargetManifestFence(target, state.containerManifest);
     } else {
       validatePersistedTargetTransition(previous, target);
     }
+  }
+  for (const event of tx.host_events) {
+    validateHostEventEnvelope(event, tx, state);
   }
   if (tx.checkpoint !== null) {
     validateCheckpointEvents(tx, state, hostStreamId);
@@ -312,6 +355,9 @@ export function applyTransaction(
   state.txIndex = tx.tx_index;
   state.tailChecksum = checksum;
   state.streamGeneration = tx.stream_generation;
+  if (tx.container_manifest_delta !== null) {
+    state.containerManifest = structuredClone(tx.container_manifest_delta);
+  }
   for (const target of tx.target_deltas) {
     state.targets.set(target.target_id, structuredClone(target));
   }
@@ -355,7 +401,7 @@ export function applyTransaction(
 export function encodeFrame(
   tx: TaskHostTransaction,
 ): { frame: Buffer; checksum: string; transaction: TaskHostTransaction } {
-  assertJsonDomain(tx, new Set());
+  assertJsonDomain(tx);
   const canonical = canonicalJson(tx);
   const transaction = JSON.parse(canonical) as TaskHostTransaction;
   const payload = Buffer.from(canonical, 'utf8');
@@ -371,36 +417,6 @@ export function encodeFrame(
     checksum: digest.toString('hex'),
     transaction,
   };
-}
-
-function assertJsonDomain(value: unknown, seen: Set<object>): void {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
-    return;
-  }
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) {
-      throw new Error('task host WAL transaction contains a non-finite number');
-    }
-    return;
-  }
-  if (typeof value !== 'object') {
-    throw new Error('task host WAL transaction contains a non-JSON value');
-  }
-  if (seen.has(value)) {
-    throw new Error('task host WAL transaction contains a cycle');
-  }
-  seen.add(value);
-  if (Array.isArray(value)) {
-    for (const entry of value) assertJsonDomain(entry, seen);
-  } else {
-    for (const entry of Object.values(value as Record<string, unknown>)) {
-      if (entry === undefined) {
-        throw new Error('task host WAL transaction contains undefined');
-      }
-      assertJsonDomain(entry, seen);
-    }
-  }
-  seen.delete(value);
 }
 
 export async function appendFrame(path: string, frame: Buffer): Promise<void> {
@@ -429,16 +445,18 @@ export async function writeRotatedWal(path: string, frame: Buffer): Promise<void
   await syncDirectory(dirname(path));
 }
 
-export function canonicalJson(value: unknown): string {
-  return JSON.stringify(sortValue(value));
-}
-
 function validateTarget(target: TaskTargetRecord, channelId: string): void {
   if (
     target.version !== TASK_TARGET_RECORD_VERSION ||
     target.channel_id !== channelId ||
     target.target_id === '' ||
     target.receipt.target_id !== target.target_id ||
+    target.receipt.manifest_revision !== target.manifest_revision ||
+    target.receipt.container_generation !== target.container_generation ||
+    !Number.isSafeInteger(target.manifest_revision) ||
+    target.manifest_revision < 0 ||
+    !Number.isSafeInteger(target.container_generation) ||
+    target.container_generation < 1 ||
     !Number.isSafeInteger(target.revision) ||
     target.revision < 1 ||
     !Number.isSafeInteger(target.created_at) ||
@@ -605,14 +623,4 @@ async function syncDirectory(path: string): Promise<void> {
   } finally {
     await handle?.close();
   }
-}
-
-function sortValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortValue);
-  if (value === null || typeof value !== 'object') return value;
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => [key, sortValue(entry)]),
-  );
 }

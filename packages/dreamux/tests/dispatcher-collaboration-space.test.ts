@@ -39,6 +39,7 @@ import { Server } from '../src/server.js';
 import { dispatcherDir, resetRuntimeConfig } from '../src/platform/paths.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
+import { applyTestTaskManifest, testTaskContainer } from './helpers/task-host.js';
 import { feishuChannelCatalog } from './helpers/fake-channel.js';
 import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
 
@@ -175,7 +176,12 @@ function fakeTaskChannelCatalog(): ChannelProviderCatalog {
     taskChannel: {
       protocol: 'task_channel_host_v1',
       schema_versions: [1],
-      capabilities: ['durable_task_submission_v1', 'host_event_stream_v1'],
+      capabilities: [
+        'durable_task_submission_v1',
+        'host_event_stream_v1',
+        'durable_container_manifest_v1',
+        'resource_lifecycle_v1',
+      ],
     },
     createSession(context) {
       return {
@@ -1785,6 +1791,10 @@ describe('DispatcherService collaboration-space routing', () => {
       base_ref: null,
       base_commit: '0'.repeat(40),
     };
+    await applyTestTaskManifest(taskStore, [testTaskContainer('space-a', {
+      logicalRepository: null,
+      resolvedRepository: repository,
+    })]);
     await taskStore.claim({
       dispatcherId: 'flow',
       channelId,
@@ -1793,6 +1803,8 @@ describe('DispatcherService collaboration-space routing', () => {
       canonicalTargetKey: taskIdentity.targetKey,
       attempt,
       container: { container_type: 'task-space', container_key: 'space-a' },
+      manifestRevision: 1,
+      containerGeneration: 1,
       logicalRepository: null,
       resolvedRepository: repository,
       requestFingerprint: 'request-fingerprint',
@@ -1802,6 +1814,8 @@ describe('DispatcherService collaboration-space routing', () => {
         attempt,
         revision: 1,
         accepted_at: 1,
+        manifest_revision: 1,
+        container_generation: 1,
       },
       title: 'Task A',
       turn: { sourceId: 'delivery-a', text: 'Execute task A' },

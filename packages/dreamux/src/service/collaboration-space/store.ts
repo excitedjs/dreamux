@@ -10,6 +10,7 @@ import type {
   ProvisionedTargetRecord,
 } from './types.js';
 import { COLLABORATION_SPACE_RECORD_VERSION } from './types.js';
+import { defaultSpaceName } from './naming.js';
 
 const STORE_VERSION = 2;
 // One dispatcher has one process-level writer authority. Keep the fence at
@@ -42,6 +43,15 @@ export interface BindSpaceInput {
     canonical_url?: string;
   };
   display?: string;
+  binding: Omit<CollaborationSpaceBindingRecord, 'generation' | 'bound_at'>;
+}
+
+export interface RebindDefaultTaskSpaceInput {
+  dispatcherId: string;
+  channelId: string;
+  containerType: string;
+  containerKey: string;
+  expectedGeneration: number;
   binding: Omit<CollaborationSpaceBindingRecord, 'generation' | 'bound_at'>;
 }
 
@@ -246,6 +256,67 @@ export class CollaborationSpaceStore {
     });
   }
 
+  /**
+   * Advance an auto-created task binding without rewriting an older generation.
+   * Task attempts retain their own binding snapshot; conversational targets do
+   * not, so an open target on the current generation fences this transition.
+   */
+  async rebindDefaultTaskSpace(
+    input: RebindDefaultTaskSpaceInput,
+  ): Promise<CollaborationSpaceRecord> {
+    return STORE_WRITES.run(input.dispatcherId, async () => {
+      const file = await this.read(input.dispatcherId);
+      const space = file.spaces.find(
+        (entry) =>
+          entry.channel_id === input.channelId &&
+          entry.container_type === input.containerType &&
+          entry.container_key === input.containerKey,
+      );
+      const current = space?.current_binding;
+      if (
+        space === undefined ||
+        space.space_name !== defaultSpaceName({
+          dispatcherId: input.dispatcherId,
+          channelId: input.channelId,
+          containerType: input.containerType,
+          containerKey: input.containerKey,
+        }) ||
+        space.status !== 'bound' ||
+        current === null ||
+        current === undefined ||
+        current.generation !== input.expectedGeneration ||
+        current.repository_policy === undefined
+      ) {
+        throw new Error('collaboration space task binding cannot be rebound');
+      }
+      if (sameTaskBinding(current, input.binding)) return space;
+      const hasOpenConversationalTarget = file.targets.some(
+        (target) =>
+          target.space_name === space.space_name &&
+          target.binding_generation === current.generation &&
+          target.lifecycle_status !== 'closed' &&
+          target.lifecycle_status !== 'detached',
+      );
+      if (hasOpenConversationalTarget) {
+        throw new Error(
+          'collaboration space task binding has an open conversational target',
+        );
+      }
+      const now = Date.now();
+      const generation = space.last_binding_generation + 1;
+      space.current_binding = {
+        ...structuredClone(input.binding),
+        generation,
+        bound_at: now,
+      };
+      space.last_binding_generation = generation;
+      space.updated_at = now;
+      this.upsertSpace(file, space);
+      await this.write(input.dispatcherId, file);
+      return space;
+    });
+  }
+
   async listTargets(
     dispatcherId: string,
     filter: {
@@ -435,6 +506,18 @@ export class CollaborationSpaceStore {
     if (idx === -1) file.spaces.push(space);
     else file.spaces[idx] = space;
   }
+}
+
+function sameTaskBinding(
+  current: CollaborationSpaceBindingRecord,
+  candidate: RebindDefaultTaskSpaceInput['binding'],
+): boolean {
+  return current.repo_cwd === candidate.repo_cwd &&
+    JSON.stringify(current.worktree) === JSON.stringify(candidate.worktree) &&
+    current.leader_agent_runtime === candidate.leader_agent_runtime &&
+    current.identity === candidate.identity &&
+    JSON.stringify(current.repository_policy) ===
+      JSON.stringify(candidate.repository_policy);
 }
 
 function sameContainer(

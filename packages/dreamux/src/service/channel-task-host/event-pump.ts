@@ -92,7 +92,11 @@ export class TaskHostEventPump {
       }
       const current = this.store.acknowledgedThrough;
       if (through > current) {
-        await this.store.acknowledge(batch.stream_generation, through);
+        await this.store.acknowledge(batch.stream_generation, through, () => {
+          if (this.sink !== sink || this.sinkEpoch !== epoch || this.stopped) {
+            throw new Error('task channel event sink was replaced before durable ACK');
+          }
+        });
       } else if (current === before) {
         this.scheduleRetry();
         return;

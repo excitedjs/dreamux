@@ -4,8 +4,12 @@ import type {
   ChannelLogicalRepositoryBinding,
   ChannelTaskAttemptIdentity,
   ChannelTaskBlockedCode,
+  ChannelTaskContainerIdentity,
+  ChannelTaskContainerManifest,
+  ChannelTaskContainerState,
   ChannelTaskHostEventPayload,
   ChannelTaskReceipt,
+  ChannelTaskRepositoryResolution,
   ChannelTaskTerminalResult,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
@@ -33,6 +37,32 @@ export type TaskTargetPhase =
 
 export type TaskRepositoryPolicy = ResolvedCollaborationRepositoryPolicy;
 export type TaskCollaborationBindingSnapshot = CollaborationBindingSnapshot;
+
+export const TASK_CONTAINER_MANIFEST_RECORD_VERSION = 1;
+
+export interface TaskContainerManifestEntryRecord {
+  container: ChannelTaskContainerIdentity;
+  generation: number;
+  state: ChannelTaskContainerState;
+  logical_repository: ChannelLogicalRepositoryBinding | null;
+  resolved_repository: TaskRepositoryPolicy | null;
+  resolution: ChannelTaskRepositoryResolution;
+  tombstoned_at: number | null;
+}
+
+export interface TaskContainerManifestRecord {
+  version: typeof TASK_CONTAINER_MANIFEST_RECORD_VERSION;
+  revision: number;
+  digest: string;
+  applied_at: number;
+  entries: TaskContainerManifestEntryRecord[];
+}
+
+export interface TaskContainerManifestApplyCandidate {
+  manifest: ChannelTaskContainerManifest;
+  digest: string;
+  entries: TaskContainerManifestEntryRecord[];
+}
 
 export type RuntimeSubmissionState =
   | 'intent'
@@ -81,6 +111,8 @@ export interface TaskTargetRecord {
     container_type: string;
     container_key: string;
   };
+  manifest_revision: number;
+  container_generation: number;
   logical_repository: ChannelLogicalRepositoryBinding | null;
   resolved_repository: TaskRepositoryPolicy | null;
   repository_binding: Pick<
@@ -133,6 +165,8 @@ export interface TaskTargetClaimInput {
   canonicalTargetKey: string;
   attempt: ChannelTaskAttemptIdentity;
   container: TaskTargetRecord['container'];
+  manifestRevision: number;
+  containerGeneration: number;
   logicalRepository: ChannelLogicalRepositoryBinding | null;
   resolvedRepository: TaskRepositoryPolicy;
   requestFingerprint: string;
@@ -160,5 +194,33 @@ export class TaskTargetRevisionError extends Error {
   constructor(readonly expected: number, readonly actual: number) {
     super(`task target revision mismatch: expected ${expected}, found ${actual}`);
     this.name = 'TaskTargetRevisionError';
+  }
+}
+
+export class TaskManifestFenceError extends Error {
+  constructor(
+    readonly code:
+      | 'TASK_CONTAINER_MANIFEST_NOT_APPLIED'
+      | 'TASK_CONTAINER_NOT_AUTHORIZED'
+      | 'TASK_CONTAINER_GENERATION_MISMATCH'
+      | 'TASK_DEFAULT_BINDING_DISABLED'
+      | 'TASK_REPOSITORY_BINDING_MISSING'
+      | 'TASK_REPOSITORY_BINDING_MISMATCH'
+      | 'TASK_REPOSITORY_NOT_MANAGED',
+    readonly retryable: boolean,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'TaskManifestFenceError';
+  }
+}
+
+export class TaskManifestApplyError extends Error {
+  constructor(
+    readonly code: 'TASK_MANIFEST_STALE' | 'TASK_MANIFEST_CONFLICT',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'TaskManifestApplyError';
   }
 }

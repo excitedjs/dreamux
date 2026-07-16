@@ -13,8 +13,20 @@ import { join } from 'node:path';
 
 import { canonicalTaskIdentity } from '../src/service/channel-task-host/identity.js';
 import { TaskHostStore } from '../src/service/channel-task-host/store.js';
-import { writeRotatedWal } from '../src/service/channel-task-host/wal.js';
-import type { TaskTargetClaimInput } from '../src/service/channel-task-host/types.js';
+import {
+  encodeFrame,
+  newTransaction,
+  writeRotatedWal,
+} from '../src/service/channel-task-host/wal.js';
+import {
+  TASK_CONTAINER_MANIFEST_RECORD_VERSION,
+  type TaskTargetClaimInput,
+} from '../src/service/channel-task-host/types.js';
+import {
+  applyTestTaskManifest,
+  testTaskContainer,
+  testTaskManifestCandidate,
+} from './helpers/task-host.js';
 
 describe('TaskHostStore WAL and projections', () => {
   let root: string;
@@ -30,15 +42,22 @@ describe('TaskHostStore WAL and projections', () => {
   });
 
   it('commits target delta, event, and sequence atomically and replays them', async () => {
-    const store = await openStore(root, () => clock++);
+    const store = await openReadyStore(root, () => clock++);
     const claim = taskClaim('task-a', 'attempt-1', 'container-a');
 
     const accepted = await store.claim(claim);
     expect(accepted.created).toBe(true);
-    expect(store.watermark).toBe(1);
+    expect(store.watermark).toBe(2);
     expect(store.replay(0).events).toEqual([
       expect.objectContaining({
         sequence: 1,
+        payload: expect.objectContaining({
+          kind: 'container_manifest.applied',
+          revision: 1,
+        }),
+      }),
+      expect.objectContaining({
+        sequence: 2,
         task_revision: 1,
         target_id: claim.targetId,
         payload: { kind: 'task.lifecycle', phase: 'received' },
@@ -51,7 +70,7 @@ describe('TaskHostStore WAL and projections', () => {
   });
 
   it('deduplicates the same target claim and rejects conflicting input', async () => {
-    const store = await openStore(root, () => clock++);
+    const store = await openReadyStore(root, () => clock++);
     const claim = taskClaim('task-a', 'attempt-1', 'container-a');
     await store.claim(claim);
 
@@ -63,18 +82,190 @@ describe('TaskHostStore WAL and projections', () => {
       ...claim,
       requestFingerprint: 'different',
     })).rejects.toThrow(/different input/);
+    expect(store.watermark).toBe(2);
+  });
+
+  it('durably replays and checkpoints one complete container manifest', async () => {
+    const store = await openStore(root, () => clock++);
+    const candidate = testTaskManifestCandidate([
+      testTaskContainer('container-a'),
+      testTaskContainer('container-b'),
+    ]);
+
+    await expect(store.applyContainerManifest(candidate)).resolves.toMatchObject({
+      changed: true,
+      record: { revision: 1, entries: [{}, {}] },
+    });
     expect(store.watermark).toBe(1);
+    expect(store.replay(0).events).toEqual([
+      expect.objectContaining({
+        manifest_revision: 1,
+        container_generation: null,
+        payload: expect.objectContaining({
+          kind: 'container_manifest.applied',
+          revision: 1,
+          entry_count: 2,
+        }),
+      }),
+    ]);
+    const publicState = store.containerManifestState();
+    expect(publicState).toMatchObject({
+      manifest: { revision: 1, entries: [{}, {}] },
+      resolutions: [
+        { resolution: { status: 'ready', binding_revision: 'revision-1' } },
+        { resolution: { status: 'ready', binding_revision: 'revision-1' } },
+      ],
+    });
+    expect(JSON.stringify(publicState)).not.toContain('/tmp/example-repository');
+    await expect(store.applyContainerManifest(candidate)).resolves.toMatchObject({
+      changed: false,
+      record: { revision: 1 },
+    });
+    expect(store.watermark).toBe(1);
+
+    const reopened = await openStore(root, () => clock++);
+    expect(reopened.containerManifestState()).toEqual(publicState);
+    await reopened.compact();
+    const checkpointed = await openStore(root, () => clock++);
+    expect(checkpointed.containerManifestState()).toEqual(publicState);
+    expect(checkpointed.replay(0)).toEqual(reopened.replay(0));
+  });
+
+  it('requires tombstones and fences revoke and rebind generations', async () => {
+    const store = await openStore(root, () => clock++);
+    await applyTestTaskManifest(store, [
+      testTaskContainer('container-a'),
+      testTaskContainer('container-b'),
+    ]);
+    await expect(store.applyContainerManifest(testTaskManifestCandidate([
+      testTaskContainer('container-a'),
+    ]))).rejects.toThrow(/reused with different content/);
+    const accepted = taskClaim('task-a', 'attempt-1', 'container-b');
+    await store.claim(accepted);
+
+    await expect(store.applyContainerManifest(testTaskManifestCandidate([
+      testTaskContainer('container-a'),
+    ], 2))).rejects.toThrow(/explicit revoked tombstone/);
+    await applyTestTaskManifest(store, [
+      testTaskContainer('container-a'),
+      testTaskContainer('container-b', {
+        state: 'revoked',
+        tombstonedAt: 2_000,
+      }),
+    ], 2);
+    await applyTestTaskManifest(store, [
+      testTaskContainer('container-a'),
+      testTaskContainer('container-b', { generation: 2 }),
+    ], 3);
+    await expect(store.applyContainerManifest(testTaskManifestCandidate([
+      testTaskContainer('container-a'),
+      testTaskContainer('container-b', {
+        state: 'revoked',
+        tombstonedAt: 2_000,
+      }),
+    ], 2))).rejects.toThrow(/older than durable Host state/);
+
+    const duplicate = structuredClone(accepted);
+    duplicate.manifestRevision = 3;
+    duplicate.receipt.manifest_revision = 3;
+    await expect(store.claim(duplicate)).resolves.toMatchObject({
+      created: false,
+      record: {
+        manifest_revision: 1,
+        container_generation: 1,
+      },
+    });
+    const staleGeneration = taskClaim('task-b', 'attempt-1', 'container-b');
+    staleGeneration.manifestRevision = 3;
+    staleGeneration.receipt.manifest_revision = 3;
+    await expect(store.claim(staleGeneration)).rejects.toThrow(
+      /generation does not match/,
+    );
+    const rebound = taskClaim('task-c', 'attempt-1', 'container-b');
+    rebound.manifestRevision = 3;
+    rebound.containerGeneration = 2;
+    rebound.receipt.manifest_revision = 3;
+    rebound.receipt.container_generation = 2;
+    await expect(store.claim(rebound)).resolves.toMatchObject({ created: true });
+    await expect(store.setTerminal({
+      targetId: accepted.targetId,
+      expectedRevision: null,
+      terminal: { outcome: 'cancelled' },
+      manifestRevision: 3,
+      containerGeneration: 1,
+    })).resolves.toMatchObject({ changed: true });
+  });
+
+  it('does not publish a manifest whose WAL append is ambiguous', async () => {
+    const store = await openStore(root, () => clock++);
+    await mkdir(join(root, 'transactions.wal'));
+
+    await expect(store.applyContainerManifest(testTaskManifestCandidate([
+      testTaskContainer('container-a'),
+    ]))).rejects.toThrow(/writer is poisoned/);
+    expect(store.appliedManifestRevision).toBe(0);
+    expect(store.watermark).toBe(0);
+  });
+
+  it('fails recovery when a valid WAL frame carries a forged manifest digest', async () => {
+    const store = await openStore(root, () => clock++);
+    const candidate = testTaskManifestCandidate([
+      testTaskContainer('container-a'),
+    ]);
+    const digest = '0'.repeat(64);
+    const transaction = newTransaction({
+      channel_id: 'remote-tasks',
+      tx_index: 1,
+      previous_checksum: null,
+      committed_at: clock++,
+      host_stream_id: store.hostStreamId,
+      stream_generation: 1,
+      container_manifest_delta: {
+        version: TASK_CONTAINER_MANIFEST_RECORD_VERSION,
+        revision: 1,
+        digest,
+        applied_at: clock++,
+        entries: candidate.entries,
+      },
+      target_deltas: [],
+      host_events: [{
+        schema_version: 1,
+        event_id: `${store.hostStreamId}:1:1`,
+        sequence: 1,
+        occurred_at: clock++,
+        target_id: null,
+        task_revision: null,
+        manifest_revision: 1,
+        container_generation: null,
+        attempt: null,
+        container: null,
+        payload: {
+          kind: 'container_manifest.applied',
+          revision: 1,
+          digest,
+          entry_count: 1,
+        },
+      }],
+      sequence_allocation: { first: 1, last: 1 },
+      acknowledged_through: null,
+      checkpoint: null,
+    });
+    await writeFile(join(root, 'transactions.wal'), encodeFrame(transaction).frame);
+
+    await expect(openStore(root, () => clock++)).rejects.toThrow(
+      /invalid task host container manifest/,
+    );
   });
 
   it('truncates an incomplete tail but fails closed on checksum corruption', async () => {
-    const store = await openStore(root, () => clock++);
+    const store = await openReadyStore(root, () => clock++);
     await store.claim(taskClaim('task-a', 'attempt-1', 'container-a'));
     const wal = join(root, 'transactions.wal');
     const committedSize = (await stat(wal)).size;
 
     await appendFile(wal, Buffer.from([0, 0, 0]));
     const recovered = await openStore(root, () => clock++);
-    expect(recovered.watermark).toBe(1);
+    expect(recovered.watermark).toBe(2);
     expect((await stat(wal)).size).toBe(committedSize);
 
     const bytes = await readFile(wal);
@@ -85,18 +276,19 @@ describe('TaskHostStore WAL and projections', () => {
 
   it('does not publish failed WAL writes and poisons the writer', async () => {
     const failingRoot = join(root, 'failing');
-    const store = await openStore(failingRoot, () => clock++);
+    const store = await openReadyStore(failingRoot, () => clock++);
+    await rm(join(failingRoot, 'transactions.wal'));
     await mkdir(join(failingRoot, 'transactions.wal'));
     const claim = taskClaim('task-a', 'attempt-1', 'container-a');
 
     await expect(store.claim(claim)).rejects.toThrow(/writer is poisoned/);
     expect(store.get(claim.targetId)).toBeNull();
-    expect(store.watermark).toBe(0);
+    expect(store.watermark).toBe(1);
     await expect(store.appendHostStatus('ready')).rejects.toThrow(/writer is poisoned/);
   });
 
   it('rejects non-JSON values before publishing live state', async () => {
-    const store = await openStore(root, () => clock++);
+    const store = await openReadyStore(root, () => clock++);
     const claim = taskClaim('task-a', 'attempt-1', 'container-a');
     await store.claim(claim);
 
@@ -117,7 +309,7 @@ describe('TaskHostStore WAL and projections', () => {
   });
 
   it('enforces monotonic terminal and finalized transitions during live writes', async () => {
-    const store = await openStore(root, () => clock++);
+    const store = await openReadyStore(root, () => clock++);
     const claim = taskClaim('task-a', 'attempt-1', 'container-a');
     await store.claim(claim);
     const terminal = await store.setTerminal({
@@ -147,7 +339,7 @@ describe('TaskHostStore WAL and projections', () => {
   });
 
   it('uses consecutive-prefix ACKs and stable, complete snapshot pagination', async () => {
-    const store = await openStore(root, () => clock++);
+    const store = await openReadyStore(root, () => clock++);
     const first = taskClaim('task-a', 'attempt-1', 'container-a');
     const second = taskClaim('task-b', 'attempt-1', 'container-b');
     await store.claim(first);
@@ -171,6 +363,11 @@ describe('TaskHostStore WAL and projections', () => {
     const third = taskClaim('task-c', 'attempt-1', 'container-c');
     await store.claim(third);
     await store.acknowledge(store.streamGeneration, 1);
+    await applyTestTaskManifest(store, [
+      testTaskContainer('container-a'),
+      testTaskContainer('container-b'),
+      testTaskContainer('container-c'),
+    ], 2);
     const page2 = snapshotPage(store, page1.next_cursor!, 1);
     expect(page2).toMatchObject({
       snapshot_id: page1.snapshot_id,
@@ -178,6 +375,7 @@ describe('TaskHostStore WAL and projections', () => {
       total_items: 2,
       complete: true,
       next_cursor: null,
+      container_manifest: page1.container_manifest,
     });
     expect([...page1.items, ...page2.items].map((item) => item.receipt.target_id))
       .toEqual(
@@ -190,13 +388,16 @@ describe('TaskHostStore WAL and projections', () => {
       status: 'restart_required',
       reason: 'cursor_invalid',
     });
-    expect(snapshotPage(store).total_items).toBe(3);
+    expect(snapshotPage(store)).toMatchObject({
+      total_items: 3,
+      container_manifest: { manifest: { revision: 2 } },
+    });
 
     await expect(store.acknowledge(store.streamGeneration, 1)).resolves.toBe(1);
     await expect(store.acknowledge(store.streamGeneration, 0)).rejects.toThrow(
       /monotonic integer prefix/,
     );
-    await expect(store.acknowledge(store.streamGeneration, 4)).rejects.toThrow(
+    await expect(store.acknowledge(store.streamGeneration, 6)).rejects.toThrow(
       /beyond the stream watermark/,
     );
 
@@ -209,7 +410,7 @@ describe('TaskHostStore WAL and projections', () => {
   });
 
   it('losslessly checkpoints the physical WAL without changing the logical stream', async () => {
-    const store = await openStore(root, () => clock++);
+    const store = await openReadyStore(root, () => clock++);
     const claim = taskClaim('task-a', 'attempt-1', 'container-a');
     await store.claim(claim);
     await store.setTerminal({
@@ -281,7 +482,7 @@ describe('TaskHostStore WAL and projections', () => {
   });
 
   it('repairs a finalized target when ACK commits before tombstoning', async () => {
-    const store = await openStore(root, () => clock++);
+    const store = await openReadyStore(root, () => clock++);
     const claim = taskClaim('task-a', 'attempt-1', 'container-a');
     await store.claim(claim);
     await store.setTerminal({
@@ -375,6 +576,9 @@ describe('TaskHostStore WAL and projections', () => {
         throw new Error('simulated directory sync uncertainty');
       },
     });
+    await applyTestTaskManifest(store, [
+      testTaskContainer('container-a'),
+    ]);
     const claim = taskClaim('task-a', 'attempt-1', 'container-a');
     await store.claim(claim);
 
@@ -385,7 +589,7 @@ describe('TaskHostStore WAL and projections', () => {
   });
 
   it('fails closed when a multi-frame checkpoint loses its final commit frame', async () => {
-    const store = await openStore(root, () => clock++);
+    const store = await openReadyStore(root, () => clock++);
     await store.claim(taskClaim('task-a', 'attempt-1', 'container-a'));
     await store.claim(taskClaim('task-b', 'attempt-1', 'container-b'));
     await store.compact();
@@ -407,6 +611,19 @@ function openStore(rootDir: string, now: () => number): Promise<TaskHostStore> {
     rootDir,
     now,
   });
+}
+
+async function openReadyStore(
+  rootDir: string,
+  now: () => number,
+): Promise<TaskHostStore> {
+  const store = await openStore(rootDir, now);
+  await applyTestTaskManifest(store, [
+    testTaskContainer('container-a'),
+    testTaskContainer('container-b'),
+    testTaskContainer('container-c'),
+  ]);
+  return store;
 }
 
 function taskClaim(
@@ -433,6 +650,8 @@ function taskClaim(
       container_type: 'task-space',
       container_key: containerKey,
     },
+    manifestRevision: 1,
+    containerGeneration: 1,
     logicalRepository: { repository_key: 'repository-a' },
     resolvedRepository: {
       source: 'channel',
@@ -450,6 +669,8 @@ function taskClaim(
       attempt,
       revision: 1,
       accepted_at: 1_000,
+      manifest_revision: 1,
+      container_generation: 1,
     },
     title: `Task ${taskKey}`,
     turn: {

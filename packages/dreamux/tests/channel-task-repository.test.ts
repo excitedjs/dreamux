@@ -85,7 +85,7 @@ describe('task repository binding policy', () => {
     expect(moved.status).toBe('resolved');
     if (moved.status !== 'resolved') throw new Error('expected moved resolution');
     expect(moved.policy.base_commit).not.toBe(acceptedCommit);
-    expect(moved.policy.fingerprint).toBe(result.policy.fingerprint);
+    expect(moved.policy.fingerprint).not.toBe(result.policy.fingerprint);
   });
 
   it('rejects missing, unknown, and mismatched logical bindings with typed results', async () => {

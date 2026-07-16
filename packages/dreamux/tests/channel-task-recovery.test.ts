@@ -23,6 +23,7 @@ import { TeamStore } from '../src/service/team-collection/store.js';
 import type { TaskTeamProvisionInput } from '../src/service/team-collection/types.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
+import { applyTestTaskManifest, testTaskContainer } from './helpers/task-host.js';
 
 describe('task provisioning and finalizer crash recovery', () => {
   let root: string;
@@ -425,6 +426,7 @@ async function readyTaskStore(rootDir: string): Promise<TaskHostStore> {
     rootDir,
   });
   const claim = taskClaim();
+  await applyTestTaskManifest(store, [testTaskContainer('space-a')]);
   await store.claim(claim);
   await store.updateTarget(
     claim.targetId,
@@ -456,7 +458,17 @@ async function readyTaskStore(rootDir: string): Promise<TaskHostStore> {
       target.phase = 'ready';
       target.team.leader_name = 'task-leader';
     },
-    [{ payload: { kind: 'team.lifecycle', status: 'ready', team_id: claim.teamName } }],
+    [{
+      payload: {
+        kind: 'resource.lifecycle',
+        resource: {
+          kind: 'team',
+          resource_id: 'thr_test_team',
+          revision: 1,
+          state: 'ready',
+        },
+      },
+    }],
   );
   return store;
 }
@@ -478,6 +490,8 @@ function taskClaim(): TaskTargetClaimInput {
     canonicalTargetKey: identity.targetKey,
     attempt,
     container: { container_type: 'task-space', container_key: 'space-a' },
+    manifestRevision: 1,
+    containerGeneration: 1,
     logicalRepository: { repository_key: 'repository-a' },
     resolvedRepository: {
       source: 'channel',
@@ -495,6 +509,8 @@ function taskClaim(): TaskTargetClaimInput {
       attempt,
       revision: 1,
       accepted_at: 1,
+      manifest_revision: 1,
+      container_generation: 1,
     },
     title: 'Task A',
     turn: { sourceId: 'delivery-a', text: 'Execute task A' },

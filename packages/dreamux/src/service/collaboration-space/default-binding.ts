@@ -8,7 +8,7 @@ import type {
 } from './types.js';
 import type { ChannelContainer } from '@excitedjs/dreamux-types';
 import { COLLABORATION_SPACE_RECORD_VERSION } from './types.js';
-import { hashContainer } from './naming.js';
+import { defaultSpaceName } from './naming.js';
 
 export async function createDefaultBoundSpace(input: {
   dispatcherId: string;
@@ -22,12 +22,12 @@ export async function createDefaultBoundSpace(input: {
   const { dispatcherId, config, store, channelId, provider, container, binding } = input;
   resolveAgent(config, dispatcherId, binding.leaderAgentRuntime);
   const spaceName = validateTeamId(
-    `space-${hashContainer({
+    defaultSpaceName({
       dispatcherId,
       channelId,
       containerType: container.container_type,
       containerKey: container.container_key,
-    })}`,
+    }),
   );
   const now = Date.now();
   return store.saveDefaultBoundSpace({

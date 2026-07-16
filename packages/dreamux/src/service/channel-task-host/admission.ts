@@ -4,24 +4,22 @@ import type {
   ChannelTaskSubmitResult,
 } from '@excitedjs/dreamux-types';
 
-import type { ChannelService } from '../channel-service/index.js';
 import type { CollaborationSpaceService } from '../collaboration-space/index.js';
 import type { CanonicalTaskIdentity } from './identity.js';
-import { resolveTaskRepositoryPolicy } from './repository-policy.js';
 import type { TaskHostStore } from './store.js';
 import { matchesDuplicate, rejected } from './service-helpers.js';
 import { TaskHostBackpressureError } from './capacity.js';
-import { TaskTargetConflictError } from './types.js';
+import { TaskManifestFenceError, TaskTargetConflictError } from './types.js';
 
 export interface TaskAdmissionContext {
   dispatcherId: string;
   channelId: string;
   provider: string;
-  channels: ChannelService;
   collaborationSpaces: CollaborationSpaceService;
   store: TaskHostStore;
   defaultLeaderAgentRuntime: () => string;
   runtimeSupportsDurableTasks: (agentRuntimeId: string) => boolean;
+  assertSessionActive: () => void;
   startLifecycle: (targetId: string) => void;
 }
 
@@ -32,6 +30,14 @@ export async function admitTaskSubmission(
   identity: CanonicalTaskIdentity,
   fingerprint: string,
 ): Promise<ChannelTaskSubmitResult> {
+  try {
+    context.store.assertManifestRevision(input.manifest_revision);
+  } catch (error) {
+    if (error instanceof TaskManifestFenceError) {
+      return rejected(error.code, error.message, error.retryable);
+    }
+    throw error;
+  }
   const existing = context.store.get(identity.targetId);
   if (existing !== null) {
     if (!matchesDuplicate(existing, input, fingerprint)) {
@@ -54,18 +60,49 @@ export async function admitTaskSubmission(
     );
   }
 
-  const repository = await resolveTaskRepositoryPolicy({
-    channels: context.channels,
-    channelId: context.channelId,
-    logical: input.repository,
-  });
-  if (repository.status === 'rejected') return repository;
+  let manifestEntry;
+  try {
+    manifestEntry = context.store.authorizeNewSubmission({
+      manifestRevision: input.manifest_revision,
+      container: input.container,
+      containerGeneration: input.container_generation,
+    });
+  } catch (error) {
+    if (error instanceof TaskManifestFenceError) {
+      return rejected(error.code, error.message, error.retryable);
+    }
+    throw error;
+  }
+  if (manifestEntry.resolution.status === 'unavailable') {
+    return rejected(
+      manifestEntry.resolution.code,
+      'task container repository policy is unavailable',
+      manifestEntry.resolution.retryable,
+    );
+  }
+  if (manifestEntry.resolved_repository === null) {
+    return rejected(
+      'TASK_REPOSITORY_BINDING_MISSING',
+      'task container has no resolved managed repository',
+      false,
+    );
+  }
+  if (!logicalRepositoryMatches(
+    input.repository,
+    manifestEntry.logical_repository,
+  )) {
+    return rejected(
+      'TASK_REPOSITORY_BINDING_MISMATCH',
+      'task repository does not match the applied container manifest',
+      false,
+    );
+  }
   let inspected;
   try {
     inspected = await context.collaborationSpaces.inspectTaskBinding({
       channelId: context.channelId,
       container: input.container,
-      repository: repository.policy,
+      repository: manifestEntry.resolved_repository,
     });
   } catch {
     return rejected(
@@ -74,6 +111,7 @@ export async function admitTaskSubmission(
       false,
     );
   }
+  context.assertSessionActive();
   const leaderAgentRuntime = inspected?.leader_agent_runtime ??
     context.defaultLeaderAgentRuntime();
   if (!context.runtimeSupportsDurableTasks(leaderAgentRuntime)) {
@@ -91,8 +129,11 @@ export async function admitTaskSubmission(
     attempt: structuredClone(input.attempt),
     revision: 1,
     accepted_at: now,
+    manifest_revision: input.manifest_revision,
+    container_generation: input.container_generation,
   };
   try {
+    context.assertSessionActive();
     const claimed = await context.store.claim({
       dispatcherId: context.dispatcherId,
       channelId: context.channelId,
@@ -104,8 +145,10 @@ export async function admitTaskSubmission(
         container_type: input.container.container_type,
         container_key: input.container.container_key,
       },
-      logicalRepository: input.repository ?? null,
-      resolvedRepository: repository.policy,
+      manifestRevision: input.manifest_revision,
+      containerGeneration: input.container_generation,
+      logicalRepository: manifestEntry.logical_repository,
+      resolvedRepository: manifestEntry.resolved_repository,
       requestFingerprint: fingerprint,
       receipt,
       title: input.title ?? null,
@@ -113,7 +156,7 @@ export async function admitTaskSubmission(
       teamName: identity.teamName,
       worktreeSlug: identity.worktreeSlug,
       routeClaimId: identity.routeClaimId,
-    });
+    }, context.assertSessionActive);
     context.startLifecycle(identity.targetId);
     return { status: 'accepted', receipt: claimed.record.receipt };
   } catch (error) {
@@ -131,6 +174,21 @@ export async function admitTaskSubmission(
         true,
       );
     }
+    if (error instanceof TaskManifestFenceError) {
+      return rejected(error.code, error.message, error.retryable);
+    }
     throw error;
   }
+}
+
+function logicalRepositoryMatches(
+  delivered: ChannelTaskSubmitInput['repository'],
+  manifest: NonNullable<ChannelTaskSubmitInput['repository']> | null,
+): boolean {
+  if (delivered === undefined) return true;
+  if (manifest === null || delivered.repository_key !== manifest.repository_key) {
+    return false;
+  }
+  return delivered.expected_revision === undefined ||
+    delivered.expected_revision === manifest.expected_revision;
 }

@@ -119,6 +119,8 @@ describe('external provider fixture', () => {
       capabilities: [
         'durable_task_submission_v1',
         'host_event_stream_v1',
+        'durable_container_manifest_v1',
+        'resource_lifecycle_v1',
         'logical_repository_binding_v1',
       ],
     });

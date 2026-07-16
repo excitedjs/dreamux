@@ -1,6 +1,9 @@
 import type {
   ChannelTaskAttemptIdentity,
   ChannelTaskContainerIdentity,
+  ChannelTaskCancelInput,
+  ChannelTaskContainerManifestApplyInput,
+  ChannelTaskContainerManifestApplyResult,
   ChannelTaskHost,
   ChannelTaskHostCapability,
   ChannelTaskHostEventSink,
@@ -31,8 +34,8 @@ import { TaskTargetFinalizer } from './finalizer.js';
 import {
   canonicalTaskIdentity,
   taskRequestFingerprint,
+  validateTaskLookupInput,
   validateTaskSubmitInput,
-  validateTaskCancelInput,
 } from './identity.js';
 import { TaskRuntimeExecutor } from './runtime-execution.js';
 import {
@@ -43,12 +46,13 @@ import {
 import { TaskHostStore } from './store.js';
 import {
   boundedTerminal,
-  boundedText,
   errorInfo,
   rejected,
 } from './service-helpers.js';
 import { provisionTaskTarget } from './target-provisioning.js';
 import { admitTaskSubmission } from './admission.js';
+import { applyTaskContainerManifest } from './manifest-application.js';
+import { cancelTaskAttempt } from './cancellation.js';
 
 export interface TaskChannelHostServiceOptions {
   dispatcherId: string;
@@ -189,17 +193,21 @@ export class TaskChannelHostService {
         host_stream_id: this.store.hostStreamId,
         stream_generation: this.store.streamGeneration,
         host_status: this.store.hostStatus,
+        applied_manifest_revision: this.store.appliedManifestRevision,
+        applied_manifest_digest: this.store.appliedManifestDigest,
       },
       assertActive: (activeFence) => this.assertSessionFence(activeFence),
       negotiate: (input) => this.negotiate(input, fence),
-      submit: (input) => this.submit(input),
+      applyContainerManifest: (input) =>
+        this.applyContainerManifest(input, fence),
+      submit: (input) => this.submit(input, fence),
       lookupSubmission: (attempt, container) =>
-        this.lookupSubmission(attempt, container),
-      cancel: (input) => this.cancel(input),
+        this.lookupSubmission(attempt, container, fence),
+      cancel: (input) => this.cancel(input, fence),
       snapshot: (input) => Promise.resolve(this.snapshot(input, fence)),
-      replay: (input) => Promise.resolve(this.replay(input)),
+      replay: (input) => Promise.resolve(this.replay(input, fence)),
       acknowledgeHostEvents: async (input) => ({
-        acknowledged_through: await this.acknowledge(input),
+        acknowledged_through: await this.acknowledge(input, fence),
       }),
     });
   }
@@ -253,7 +261,9 @@ export class TaskChannelHostService {
 
   close(): void {
     this.accepting = false;
+    this.activeSessionFence = null;
     this.negotiatedCapabilities.clear();
+    this.sessionSyncMode = 'unnegotiated';
     this.finalizer.stop();
     this.executor.stop();
     this.pump.stop();
@@ -361,17 +371,24 @@ export class TaskChannelHostService {
     return {
       schema_version: 1,
       capabilities: [...this.negotiatedCapabilities],
+      required_capabilities: required,
       host_stream_id: this.store.hostStreamId,
       stream_generation: this.store.streamGeneration,
       watermark: this.store.watermark,
       acknowledged_through: this.store.acknowledgedThrough,
       host_status: this.store.hostStatus,
+      applied_manifest_revision: this.store.appliedManifestRevision,
+      applied_manifest_digest: this.store.appliedManifestDigest,
       session_fence: fence,
       resume: canReplay ? 'replay' : 'snapshot_required',
     };
   }
 
-  private async submit(input: ChannelTaskSubmitInput): Promise<ChannelTaskSubmitResult> {
+  private async submit(
+    input: ChannelTaskSubmitInput,
+    fence: string,
+  ): Promise<ChannelTaskSubmitResult> {
+    this.assertSessionFence(fence);
     if (!this.isNegotiated()) return rejected(
       'TASK_HOST_NOT_NEGOTIATED',
       'task channel host capabilities must be negotiated before delivery',
@@ -397,21 +414,41 @@ export class TaskChannelHostService {
       attempt: input.attempt,
     });
     const fingerprint = taskRequestFingerprint(input);
-    return this.targetLifecycle.run(identity.targetId, () =>
-      admitTaskSubmission({
+    return this.targetLifecycle.run(identity.targetId, () => {
+      this.assertSessionFence(fence);
+      return admitTaskSubmission({
         dispatcherId: this.opts.dispatcherId,
         channelId: this.opts.channelId,
         provider: this.opts.provider,
-        channels: this.opts.channels,
         collaborationSpaces: this.opts.collaborationSpaces,
         store: this.store,
         defaultLeaderAgentRuntime: () => this.defaultLeaderAgentRuntime(),
         runtimeSupportsDurableTasks: (agentRuntimeId) =>
           this.runtimeSupportsDurableTasks(agentRuntimeId),
+        assertSessionActive: () => this.assertSessionFence(fence),
         startLifecycle: (targetId) =>
           this.startLifecycle(targetId, () => this.provision(targetId)),
-      }, input, identity, fingerprint),
-    );
+      }, input, identity, fingerprint);
+    });
+  }
+
+  private async applyContainerManifest(
+    input: ChannelTaskContainerManifestApplyInput,
+    fence: string,
+  ): Promise<ChannelTaskContainerManifestApplyResult> {
+    this.requireNegotiated();
+    return applyTaskContainerManifest({
+      channelId: this.opts.channelId,
+      channels: this.opts.channels,
+      store: this.store,
+      assertSessionActive: () => this.assertSessionFence(fence),
+      invalidateSnapshot: () => {
+        if (this.sessionSnapshotId === null) return;
+        this.sessionSnapshotId = null;
+        this.sessionSnapshotNextOffset = 0;
+        this.sessionSyncMode = 'snapshot_required';
+      },
+    }, input);
   }
 
   private async provision(targetId: string): Promise<void> {
@@ -442,9 +479,12 @@ export class TaskChannelHostService {
   private lookupSubmission(
     attempt: ChannelTaskAttemptIdentity,
     container: ChannelTaskContainerIdentity,
+    fence: string,
   ): Promise<ChannelTaskReceipt | null> {
+    this.assertSessionFence(fence);
     this.requireNegotiated();
     try {
+      validateTaskLookupInput(attempt, container);
       const identity = canonicalTaskIdentity({
         dispatcherId: this.opts.dispatcherId,
         channelId: this.opts.channelId,
@@ -458,43 +498,20 @@ export class TaskChannelHostService {
     }
   }
 
-  private async cancel(input: {
-    attempt: ChannelTaskAttemptIdentity;
-    container: ChannelTaskContainerIdentity;
-    reason?: string;
-  }): ReturnType<ChannelTaskHost['cancel']> {
-    if (!this.isNegotiated()) {
-      return { status: 'rejected', code: 'TASK_HOST_NOT_NEGOTIATED' };
-    }
-    if (!this.accepting || this.stopping || this.opts.isShuttingDown()) {
-      return { status: 'rejected', code: 'TASK_HOST_SHUTTING_DOWN' };
-    }
-    try {
-      validateTaskCancelInput(input);
-    } catch {
-      return { status: 'rejected', code: 'TASK_INPUT_INVALID' };
-    }
-    const receipt = await this.lookupSubmission(input.attempt, input.container);
-    if (receipt === null) return { status: 'not_found' };
-    const result = await this.store.setTerminal({
-      targetId: receipt.target_id,
-      expectedRevision: null,
-      terminal: {
-        outcome: 'cancelled',
-        ...(input.reason !== undefined
-          ? { summary: boundedText(input.reason, 64 * 1024) }
-          : {}),
-      },
-    });
-    this.finalizer.start(receipt.target_id);
-    if (!result.changed) {
-      return {
-        status: 'already_terminal',
-        receipt: result.record.receipt,
-        terminal: result.record.terminal!,
-      };
-    }
-    return { status: 'accepted', receipt: result.record.receipt };
+  private async cancel(
+    input: ChannelTaskCancelInput,
+    fence: string,
+  ): ReturnType<ChannelTaskHost['cancel']> {
+    return cancelTaskAttempt({
+      store: this.store,
+      isNegotiated: () => this.isNegotiated(),
+      isAccepting: () =>
+        this.accepting && !this.stopping && !this.opts.isShuttingDown(),
+      assertSessionActive: () => this.assertSessionFence(fence),
+      lookupSubmission: () =>
+        this.lookupSubmission(input.attempt, input.container, fence),
+      startFinalizer: (targetId) => this.finalizer.start(targetId),
+    }, input);
   }
 
   private replay(input: {
@@ -502,7 +519,8 @@ export class TaskChannelHostService {
     stream_generation: number;
     after_sequence: number;
     limit?: number;
-  }): ChannelTaskHostReplayResult {
+  }, fence: string): ChannelTaskHostReplayResult {
+    this.assertSessionFence(fence);
     this.requireNegotiated();
     if (
       this.sessionSyncMode !== 'replay' ||
@@ -542,6 +560,7 @@ export class TaskChannelHostService {
     input: ChannelTaskSnapshotRequest | undefined,
     fence: string,
   ): ChannelTaskSnapshotResult {
+    this.assertSessionFence(fence);
     this.requireNegotiated();
     if (input?.cursor === undefined) {
       this.sessionSyncMode = 'snapshot_required';
@@ -570,15 +589,18 @@ export class TaskChannelHostService {
       this.sessionSyncMode = 'snapshot_required';
       return this.snapshotRestartRequired('cursor_invalid');
     }
-    this.sessionSnapshotId = page.snapshot_id;
-    this.sessionSnapshotNextOffset = page.item_offset + page.item_count;
     if (page.complete) {
+      this.sessionSnapshotId = null;
+      this.sessionSnapshotNextOffset = 0;
       this.sessionSyncMode = 'replay';
       this.sessionReplayOfferedThrough = page.watermark;
       this.sessionAckEligibleThrough = Math.max(
         this.sessionAckEligibleThrough,
         page.watermark,
       );
+    } else {
+      this.sessionSnapshotId = page.snapshot_id;
+      this.sessionSnapshotNextOffset = page.item_offset + page.item_count;
     }
     return result;
   }
@@ -599,7 +621,8 @@ export class TaskChannelHostService {
     host_stream_id: string;
     stream_generation: number;
     acknowledged_through: number;
-  }): Promise<number> {
+  }, fence: string): Promise<number> {
+    this.assertSessionFence(fence);
     this.requireNegotiated();
     if (input.host_stream_id !== this.store.hostStreamId) {
       throw new Error('host event acknowledgement has the wrong stream id');
@@ -610,6 +633,7 @@ export class TaskChannelHostService {
     return this.store.acknowledge(
       input.stream_generation,
       input.acknowledged_through,
+      () => this.assertSessionFence(fence),
     );
   }
 
@@ -650,7 +674,9 @@ export class TaskChannelHostService {
 
   private isNegotiated(): boolean {
     return this.negotiatedCapabilities.has('durable_task_submission_v1') &&
-      this.negotiatedCapabilities.has('host_event_stream_v1');
+      this.negotiatedCapabilities.has('host_event_stream_v1') &&
+      this.negotiatedCapabilities.has('durable_container_manifest_v1') &&
+      this.negotiatedCapabilities.has('resource_lifecycle_v1');
   }
 
   private requireNegotiated(): void {

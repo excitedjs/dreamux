@@ -134,6 +134,8 @@ describe('channel provider loader', () => {
               capabilities: [
                 'durable_task_submission_v1' as const,
                 'host_event_stream_v1' as const,
+                'durable_container_manifest_v1' as const,
+                'resource_lifecycle_v1' as const,
               ],
             },
             resolveRepositoryBinding: async () => null,
@@ -284,6 +286,8 @@ describe('channel provider loader', () => {
             capabilities: [
               'durable_task_submission_v1' as const,
               'host_event_stream_v1' as const,
+              'durable_container_manifest_v1' as const,
+              'resource_lifecycle_v1' as const,
               'logical_repository_binding_v1' as const,
             ],
           },

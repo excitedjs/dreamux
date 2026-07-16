@@ -73,6 +73,8 @@ describe('Task Channel Host public boundary', () => {
       required_capabilities: [
         'durable_task_submission_v1',
         'host_event_stream_v1',
+        'durable_container_manifest_v1',
+        'resource_lifecycle_v1',
       ],
       stream_generation: 1,
       host_status: 'ready',
@@ -89,10 +91,13 @@ describe('Task Channel Host public boundary', () => {
       capabilities: [
         'durable_task_submission_v1',
         'host_event_stream_v1',
+        'durable_container_manifest_v1',
+        'resource_lifecycle_v1',
       ],
       resume: 'snapshot_required',
       session_fence: host.scope.session_fence,
     });
+    await applyStaticManifest(host);
     const rejected = await host.submit(validSubmission());
     expect(rejected).toMatchObject({
       status: 'rejected',
@@ -117,6 +122,8 @@ describe('Task Channel Host public boundary', () => {
     expect(host.scope.required_capabilities).toEqual([
       'durable_task_submission_v1',
       'host_event_stream_v1',
+      'durable_container_manifest_v1',
+      'resource_lifecycle_v1',
       'logical_repository_binding_v1',
     ]);
     await expect(host.negotiate({
@@ -124,8 +131,202 @@ describe('Task Channel Host public boundary', () => {
       supported_capabilities: [
         'durable_task_submission_v1',
         'host_event_stream_v1',
+        'durable_container_manifest_v1',
+        'resource_lifecycle_v1',
       ],
     })).rejects.toThrow(/logical_repository_binding_v1/);
+  });
+
+  it('requires the durable manifest barrier before any task command', async () => {
+    const { service, store } = await openService({
+      root,
+      repo,
+      durableRuntime: true,
+    });
+    await service.recover();
+    const host = service.beginSession();
+    const negotiation = await negotiate(host);
+
+    expect(negotiation).toMatchObject({
+      applied_manifest_revision: 0,
+      required_capabilities: host.scope.required_capabilities,
+    });
+    await expect(host.submit(validSubmission())).resolves.toMatchObject({
+      status: 'rejected',
+      code: 'TASK_CONTAINER_MANIFEST_NOT_APPLIED',
+      retryable: true,
+    });
+    expect(store.list()).toEqual([]);
+
+    const applied = await host.applyContainerManifest({
+      manifest: {
+        revision: 1,
+        entries: [{
+          container: validSubmission().container,
+          generation: 1,
+          state: 'draining',
+        }],
+      },
+    });
+    expect(applied).toMatchObject({
+      status: 'applied',
+      state: {
+        manifest: { revision: 1 },
+        resolutions: [{ resolution: { status: 'ready' } }],
+      },
+      host_watermark: store.watermark,
+    });
+    await expect(host.submit(validSubmission())).resolves.toMatchObject({
+      status: 'rejected',
+      code: 'TASK_CONTAINER_NOT_AUTHORIZED',
+      retryable: false,
+    });
+    expect(store.list()).toEqual([]);
+  });
+
+  it('validates complete manifests and returns only path-free resolver proof', async () => {
+    const { service, store, channels } = await openService({
+      root,
+      repo,
+      durableRuntime: true,
+      repositorySource: 'channel',
+    });
+    await service.recover();
+    const host = service.beginSession();
+    await negotiate(host);
+
+    await expect(host.applyContainerManifest({
+      manifest: { revision: 1, entries: [] },
+      transport_cursor: 'provider-private',
+    } as never)).resolves.toMatchObject({
+      status: 'rejected',
+      code: 'TASK_MANIFEST_INVALID',
+      current_revision: 0,
+    });
+    await expect(host.applyContainerManifest({
+      manifest: {
+        revision: 1,
+        entries: Array.from({ length: 101 }, (_unused, index) => ({
+          container: {
+            container_type: 'task-space',
+            container_key: `space-${index}`,
+          },
+          generation: 1,
+          state: 'active',
+          repository: { repository_key: `repository-${index}` },
+        })),
+      },
+    })).resolves.toMatchObject({
+      status: 'rejected',
+      code: 'TASK_MANIFEST_INVALID',
+    });
+    expect(channels.resolveRepositoryBinding).not.toHaveBeenCalled();
+
+    const manifest = {
+      revision: 1,
+      entries: [{
+        container: validSubmission().container,
+        generation: 1,
+        state: 'active' as const,
+        repository: {
+          repository_key: 'repository-a',
+          expected_revision: 'revision-1',
+        },
+      }],
+    };
+    const result = await host.applyContainerManifest({ manifest });
+    expect(result.status).toBe('applied');
+    if (result.status === 'rejected') throw new Error(result.message);
+    expect(result.state).toMatchObject({
+      manifest,
+      resolutions: [{
+        generation: 1,
+        resolution: {
+          status: 'ready',
+          binding_revision: 'revision-1',
+        },
+      }],
+    });
+    expect(result.state.digest).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(result.state)).not.toContain(repo);
+    expect(store.appliedManifestRevision).toBe(1);
+    expect(channels.resolveRepositoryBinding).toHaveBeenCalledOnce();
+  });
+
+  it('invalidates an in-progress snapshot when the manifest barrier advances', async () => {
+    const { service } = await openService({ root, repo, durableRuntime: true });
+    await service.recover();
+    const host = service.beginSession();
+    await negotiate(host);
+    await applyStaticManifest(host);
+    await host.submit(validSubmission());
+    const second = validSubmission();
+    second.attempt = { task_key: 'task-b', attempt_key: 'attempt-1' };
+    second.turn = { sourceId: 'delivery-b', text: 'Execute task B' };
+    await host.submit(second);
+
+    const first = await host.snapshot({ limit: 1 });
+    if (first.status !== 'page' || first.page.next_cursor === null) {
+      throw new Error('expected a paged snapshot');
+    }
+    await host.applyContainerManifest({
+      manifest: {
+        revision: 2,
+        entries: [{
+          container: validSubmission().container,
+          generation: 1,
+          state: 'active',
+        }],
+      },
+    });
+    await expect(host.snapshot({
+      cursor: first.page.next_cursor,
+      limit: 1,
+    })).resolves.toMatchObject({
+      status: 'restart_required',
+      reason: 'cursor_invalid',
+    });
+    await expect(host.snapshot({ limit: 10 })).resolves.toMatchObject({
+      status: 'page',
+      page: {
+        complete: true,
+        container_manifest: { manifest: { revision: 2 } },
+      },
+    });
+    await service.drain();
+  });
+
+  it('replays a manifest advance after a complete snapshot', async () => {
+    const { service } = await openService({ root, repo, durableRuntime: true });
+    await service.recover();
+    const host = service.beginSession();
+    await negotiate(host);
+    await applyStaticManifest(host);
+    const captured = await host.snapshot({ limit: 10 });
+    if (captured.status !== 'page' || !captured.page.complete) {
+      throw new Error('expected one complete snapshot page');
+    }
+    await host.applyContainerManifest({
+      manifest: {
+        revision: 2,
+        entries: [{
+          container: validSubmission().container,
+          generation: 1,
+          state: 'active',
+        }],
+      },
+    });
+
+    await expect(host.replay({
+      host_stream_id: host.scope.host_stream_id,
+      stream_generation: host.scope.stream_generation,
+      after_sequence: captured.page.watermark,
+    })).resolves.toMatchObject({
+      status: 'events',
+      batch: {
+        events: [{ payload: { kind: 'container_manifest.applied', revision: 2 } }],
+      },
+    });
   });
 
   it('revokes superseded and detached scoped session handles', async () => {
@@ -139,6 +340,80 @@ describe('Task Channel Host public boundary', () => {
     await negotiate(second);
     service.detachEventSink();
     await expect(second.snapshot()).rejects.toThrow(/revoked/);
+    const closing = service.beginSession();
+    await negotiate(closing);
+    service.close();
+    await expect(closing.snapshot()).rejects.toThrow(/revoked/);
+  });
+
+  it('fences manifest resolution before its durable apply side effect', async () => {
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const { service, store } = await openService({
+      root,
+      repo,
+      durableRuntime: true,
+      repositorySource: 'channel',
+      resolveRepositoryBinding: async () => {
+        entered.resolve();
+        await release.promise;
+        return { cwd: repo, binding_revision: 'revision-1' };
+      },
+    });
+    await service.recover();
+    const first = service.beginSession();
+    await negotiate(first);
+    const applying = first.applyContainerManifest({
+      manifest: {
+        revision: 1,
+        entries: [{
+          container: validSubmission().container,
+          generation: 1,
+          state: 'active',
+          repository: {
+            repository_key: 'repository-a',
+            expected_revision: 'revision-1',
+          },
+        }],
+      },
+    });
+    void applying.catch(() => {});
+    await entered.promise;
+    const second = service.beginSession();
+    await negotiate(second);
+    release.resolve();
+
+    await expect(applying).rejects.toThrow(/revoked/);
+    expect(store.appliedManifestRevision).toBe(0);
+    expect(store.watermark).toBe(2);
+  });
+
+  it('fences task admission after asynchronous pre-receipt validation', async () => {
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const { service, store } = await openService({
+      root,
+      repo,
+      durableRuntime: true,
+      inspectTaskBinding: async () => {
+        entered.resolve();
+        await release.promise;
+        return null;
+      },
+    });
+    await service.recover();
+    const first = service.beginSession();
+    await negotiate(first);
+    await applyStaticManifest(first);
+    const submitting = first.submit(validSubmission());
+    void submitting.catch(() => {});
+    await entered.promise;
+    const second = service.beginSession();
+    await negotiate(second);
+    release.resolve();
+
+    await expect(submitting).rejects.toThrow(/revoked/);
+    expect(store.list()).toEqual([]);
   });
 
   it('requires negotiation before attaching the automatic event sink', async () => {
@@ -319,6 +594,10 @@ describe('Task Channel Host public boundary', () => {
       status: 'rejected',
       code: 'TASK_INPUT_INVALID',
     });
+    await expect(host.lookupSubmission(
+      { task_key: 'x'.repeat(513), attempt_key: 'attempt-1' },
+      validSubmission().container,
+    )).resolves.toBeNull();
     expect(store.list()).toEqual([]);
     expect(channels.resolveRepositoryBinding).not.toHaveBeenCalled();
     expect(collaborationSpaces.inspectTaskBinding).not.toHaveBeenCalled();
@@ -354,7 +633,7 @@ describe('Task Channel Host public boundary', () => {
     await expect(host.cancel({
       attempt: localPath.attempt,
       container: { ...localPath.container, meta: { unexpected: true } },
-    } as never)).resolves.toEqual({
+    } as never)).resolves.toMatchObject({
       status: 'rejected',
       code: 'TASK_INPUT_INVALID',
     });
@@ -409,6 +688,11 @@ async function openService(input: {
   repo: string;
   durableRuntime: boolean;
   repositorySource?: 'static' | 'channel';
+  resolveRepositoryBinding?: () => Promise<{
+    cwd: string;
+    binding_revision: string;
+  } | null>;
+  inspectTaskBinding?: () => Promise<null>;
 }) {
   const repositorySource = input.repositorySource ?? 'static';
   const channelConfig = {
@@ -442,13 +726,13 @@ async function openService(input: {
   });
   const channels = {
     collaborationSpaceConfig: vi.fn(() => channelConfig.collaborationSpace),
-    resolveRepositoryBinding: vi.fn(async () => ({
+    resolveRepositoryBinding: vi.fn(input.resolveRepositoryBinding ?? (async () => ({
       cwd: input.repo,
       binding_revision: 'revision-1',
-    })),
+    }))),
   } as unknown as ChannelService;
   const collaborationSpaces = {
-    inspectTaskBinding: vi.fn(async () => null),
+    inspectTaskBinding: vi.fn(input.inspectTaskBinding ?? (async () => null)),
   } as unknown as CollaborationSpaceService;
   const teams = {} as TeamCollection;
   const agentRuntimeProviders = {
@@ -490,6 +774,8 @@ function validSubmission(): ChannelTaskSubmitInput {
   return {
     attempt: { task_key: 'task-a', attempt_key: 'attempt-1' },
     container: { container_type: 'task-space', container_key: 'space-a' },
+    manifest_revision: 1,
+    container_generation: 1,
     turn: { sourceId: 'delivery-a', text: 'Execute task A' },
     title: 'Task A',
   };
@@ -513,18 +799,33 @@ function fakeTaskHost(
       host_stream_id: 'stream-a',
       stream_generation: 1,
       host_status: 'ready',
+      applied_manifest_revision: 0,
+      applied_manifest_digest: '0'.repeat(64),
       session_fence: 'fence-a',
     },
     negotiate: async () => ({
       schema_version: 1,
       capabilities: [],
+      required_capabilities: [],
       host_stream_id: 'stream-a',
       stream_generation: 1,
       watermark: 0,
       acknowledged_through: 0,
       host_status: 'ready',
+      applied_manifest_revision: 0,
+      applied_manifest_digest: '0'.repeat(64),
       session_fence: 'fence-a',
       resume: 'snapshot_required',
+    }),
+    applyContainerManifest: async ({ manifest }) => ({
+      status: 'unchanged',
+      state: {
+        manifest,
+        digest: '0'.repeat(64),
+        applied_at: 0,
+        resolutions: [],
+      },
+      host_watermark: 0,
     }),
     submit,
     lookupSubmission: async () => null,
@@ -540,6 +841,12 @@ function fakeTaskHost(
         watermark: 0,
         acknowledged_through: 0,
         host_status: 'ready',
+        container_manifest: {
+          manifest: { revision: 0, entries: [] },
+          digest: '0'.repeat(64),
+          applied_at: 0,
+          resolutions: [],
+        },
         item_offset: 0,
         item_count: 0,
         total_items: 0,
@@ -566,6 +873,20 @@ function fakeTaskHost(
   };
 }
 
+async function applyStaticManifest(host: ChannelTaskHost): Promise<void> {
+  const result = await host.applyContainerManifest({
+    manifest: {
+      revision: 1,
+      entries: [{
+        container: { container_type: 'task-space', container_key: 'space-a' },
+        generation: 1,
+        state: 'active',
+      }],
+    },
+  });
+  if (result.status === 'rejected') throw new Error(result.message);
+}
+
 async function waitFor(done: () => boolean): Promise<void> {
   for (let index = 0; index < 100; index += 1) {
     if (done()) return;
@@ -577,4 +898,12 @@ async function waitFor(done: () => boolean): Promise<void> {
 function noopLog(): DreamuxLogger {
   const sink = () => {};
   return { trace: sink, debug: sink, info: sink, warn: sink, error: sink };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }

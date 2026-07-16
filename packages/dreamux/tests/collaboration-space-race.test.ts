@@ -112,7 +112,7 @@ describe('CollaborationSpaceService race regressions', () => {
     });
   });
 
-  it('keeps one binding generation while each task pins its resolved commit', async () => {
+  it('advances the binding generation when the frozen repository policy changes', async () => {
     const channels = fakeChannels();
     const service = new CollaborationSpaceService({
       dispatcherId: 'flow',
@@ -140,30 +140,159 @@ describe('CollaborationSpaceService race regressions', () => {
       leaderAgentRuntime: 'agent-a',
       identity: null,
     });
+    const reboundRepository = {
+      ...repository,
+      binding_revision: 'revision-2',
+      fingerprint: 'b'.repeat(64),
+      base_commit: '1'.repeat(40),
+    };
+    await expect(service.inspectTaskBinding({
+      channelId: 'primary',
+      container: { container_type: 'workspace', container_key: 'space-a' },
+      repository: reboundRepository,
+    })).resolves.toBeNull();
     const second = await service.ensureTaskBinding({
       channelId: 'primary',
       provider: 'builtin:test',
       container: { container_type: 'workspace', container_key: 'space-a' },
-      repository: { ...repository, base_commit: '1'.repeat(40) },
+      repository: reboundRepository,
       leaderAgentRuntime: 'agent-a',
       identity: null,
     });
 
-    expect(second.generation).toBe(first.generation);
+    expect(second.generation).toBe(first.generation + 1);
     expect(first.repository.base_commit).toBe('0'.repeat(40));
     expect(second.repository.base_commit).toBe('1'.repeat(40));
     await expect(service.ensureTaskBinding({
       channelId: 'primary',
       provider: 'builtin:test',
       container: { container_type: 'workspace', container_key: 'space-a' },
-      repository: {
-        ...repository,
-        binding_revision: 'revision-2',
-        fingerprint: 'b'.repeat(64),
-      },
+      repository: reboundRepository,
       leaderAgentRuntime: 'agent-a',
       identity: null,
+    })).resolves.toMatchObject({ generation: second.generation });
+  });
+
+  it('never advances an explicitly named collaboration-space binding', async () => {
+    const channels = fakeChannels();
+    const service = new CollaborationSpaceService({
+      dispatcherId: 'flow',
+      config: fakeConfig(),
+      teams: fakeTeams([], []),
+      channels: channels.service,
+      store: new CollaborationSpaceStore(),
+      log: log as never,
+      isShuttingDown: () => false,
+    });
+    const container = { container_type: 'workspace', container_key: 'manual-space' };
+    await service.bind({
+      channelId: 'primary',
+      spaceName: 'operator-space',
+      container,
+      repo: { cwd: '/repo/a', baseRef: 'main' },
+      leaderAgentRuntime: 'agent-a',
+    });
+    const repository = {
+      source: 'static' as const,
+      logical_key: '@static',
+      binding_revision: 'static-v1',
+      fingerprint: 'a'.repeat(64),
+      repo_cwd: '/repo/a',
+      base_ref: 'main',
+      base_commit: '0'.repeat(40),
+    };
+    await expect(service.ensureTaskBinding({
+      channelId: 'primary',
+      provider: 'builtin:test',
+      container,
+      repository,
+      leaderAgentRuntime: 'agent-a',
+      identity: null,
+    })).resolves.toMatchObject({ space_name: 'operator-space', generation: 1 });
+
+    const changed = {
+      ...repository,
+      fingerprint: 'b'.repeat(64),
+      base_commit: '1'.repeat(40),
+    };
+    await expect(service.inspectTaskBinding({
+      channelId: 'primary',
+      container,
+      repository: changed,
+    })).rejects.toThrow('does not match the task');
+    await expect(service.ensureTaskBinding({
+      channelId: 'primary',
+      provider: 'builtin:test',
+      container,
+      repository: changed,
+      leaderAgentRuntime: 'agent-a',
+      identity: null,
+    })).rejects.toThrow('cannot be rebound');
+    await expect(service.status({ spaceName: 'operator-space' })).resolves.toMatchObject({
+      space: { current_binding: { generation: 1 } },
+    });
+  });
+
+  it('does not rebind a task space across an open conversational target', async () => {
+    const created: CreatedTeam[] = [];
+    const channels = fakeChannels();
+    const service = new CollaborationSpaceService({
+      dispatcherId: 'flow',
+      config: fakeConfig(),
+      teams: fakeTeams(created, []),
+      channels: channels.service,
+      store: new CollaborationSpaceStore(),
+      log: log as never,
+      isShuttingDown: () => false,
+    });
+    const container = { container_type: 'workspace', container_key: 'space-a' };
+    const repository = {
+      source: 'channel' as const,
+      logical_key: 'repository-a',
+      binding_revision: 'revision-1',
+      fingerprint: 'a'.repeat(64),
+      repo_cwd: '/repo/a',
+      base_ref: null,
+      base_commit: '0'.repeat(40),
+    };
+    await service.ensureTaskBinding({
+      channelId: 'primary',
+      provider: 'builtin:test',
+      container,
+      repository,
+      leaderAgentRuntime: 'agent-a',
+      identity: null,
+    });
+    await service.provisionTarget({
+      channelId: 'primary',
+      provider: 'builtin:test',
+      container,
+      target: {
+        target_type: 'topic',
+        target_key: 'conversation-a',
+        bindable: true,
+      },
+    });
+    const rebound = {
+      ...repository,
+      binding_revision: 'revision-2',
+      fingerprint: 'b'.repeat(64),
+      base_commit: '1'.repeat(40),
+    };
+
+    await expect(service.inspectTaskBinding({
+      channelId: 'primary',
+      container,
+      repository: rebound,
     })).rejects.toThrow(/does not match the task/);
+    await expect(service.ensureTaskBinding({
+      channelId: 'primary',
+      provider: 'builtin:test',
+      container,
+      repository: rebound,
+      leaderAgentRuntime: 'agent-a',
+      identity: null,
+    })).rejects.toThrow(/open conversational target/);
   });
 
   it('runs task ownership checks under the space dissolve lock', async () => {

@@ -17,6 +17,7 @@ export interface CapturedTaskSnapshot {
   watermark: number;
   acknowledgedThrough: number;
   hostStatus: ChannelTaskSnapshot['host_status'];
+  containerManifest: ChannelTaskSnapshot['container_manifest'];
   items: ChannelTaskSnapshotItem[];
   cursors: Map<string, number>;
 }

@@ -9,6 +9,7 @@ export interface TaskHostSessionHandleOptions {
   scope: Omit<ChannelTaskHostScope, 'session_fence'>;
   assertActive: (fence: string) => void;
   negotiate: ChannelTaskHost['negotiate'];
+  applyContainerManifest: ChannelTaskHost['applyContainerManifest'];
   submit: ChannelTaskHost['submit'];
   lookupSubmission: ChannelTaskHost['lookupSubmission'];
   cancel: ChannelTaskHost['cancel'];
@@ -20,6 +21,8 @@ export interface TaskHostSessionHandleOptions {
 export const TASK_HOST_CAPABILITIES = [
   'durable_task_submission_v1',
   'host_event_stream_v1',
+  'durable_container_manifest_v1',
+  'resource_lifecycle_v1',
   'logical_repository_binding_v1',
 ] as const satisfies readonly ChannelTaskHostCapability[];
 
@@ -29,6 +32,8 @@ export function taskHostRequiredCapabilities(
   return [
     'durable_task_submission_v1',
     'host_event_stream_v1',
+    'durable_container_manifest_v1',
+    'resource_lifecycle_v1',
     ...(repositorySource === 'channel'
       ? ['logical_repository_binding_v1' as const]
       : []),
@@ -48,6 +53,7 @@ export function createTaskHostSessionHandle(
   return {
     scope: { ...options.scope, session_fence: options.fence },
     negotiate: call(options.negotiate),
+    applyContainerManifest: call(options.applyContainerManifest),
     submit: call(options.submit),
     lookupSubmission: call(options.lookupSubmission),
     cancel: call(options.cancel),

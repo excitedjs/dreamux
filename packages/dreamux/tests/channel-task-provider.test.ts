@@ -108,9 +108,11 @@ describe('external task Channel provider seam', () => {
           taskChannel: {
             protocol: 'task_channel_host_v1',
             schema_versions: [1],
-            capabilities: [
-              'durable_task_submission_v1',
-              'host_event_stream_v1',
+              capabilities: [
+                'durable_task_submission_v1',
+                'host_event_stream_v1',
+                'durable_container_manifest_v1',
+                'resource_lifecycle_v1',
             ],
           },
           createSession: (sessionContext) => validTaskSession(sessionContext.channel_id),
@@ -147,6 +149,8 @@ async function taskCatalog(
           capabilities: [
             'durable_task_submission_v1',
             'host_event_stream_v1',
+            'durable_container_manifest_v1',
+            'resource_lifecycle_v1',
             'logical_repository_binding_v1',
           ],
         },

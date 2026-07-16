@@ -5,17 +5,20 @@ import type {
   ChannelTaskHostEventBatch,
   ChannelHostStatusCode,
   ChannelTaskSnapshotResult,
+  ChannelTaskContainerIdentity,
 } from '@excitedjs/dreamux-types';
 
-import { writeFileAtomic } from '../../platform/atomic-write.js';
 import { KeyedAsyncQueue } from '../serial-queue.js';
 import type {
   TaskStoreEventInput,
+  TaskContainerManifestApplyCandidate,
+  TaskContainerManifestRecord,
   TaskTargetClaimInput,
   TaskTargetRecord,
 } from './types.js';
 import {
   TASK_TARGET_RECORD_VERSION,
+  TaskManifestFenceError,
   TaskTargetConflictError,
   TaskTargetRevisionError,
 } from './types.js';
@@ -41,27 +44,30 @@ import {
   TaskHostBackpressureError,
 } from './capacity.js';
 import {
-  taskSnapshotItem,
-} from './snapshot.js';
-import {
   defaultTaskHostRoot,
   ensureTaskHostManifest,
 } from './manifest.js';
 import {
+  publicContainerManifestState,
+} from './container-manifest.js';
+import { submissionResourceEvents } from './resources.js';
+import {
   clone,
   deriveSubmissionView,
   eventFor,
-  safeSegment,
   validateTargetTransition,
 } from './store-support.js';
 import {
-  boundedPageLimit,
-  cursorForOffset,
-  MAX_CAPTURED_SNAPSHOTS,
-  newSnapshotId,
-  SNAPSHOT_TTL_MS,
-  type CapturedTaskSnapshot,
-} from './snapshot-pagination.js';
+  rebuildTaskHostProjections,
+  writeTaskHostProjections,
+} from './store-projections.js';
+import { TaskHostSnapshotCollection } from './store-snapshot.js';
+import { boundedPageLimit } from './snapshot-pagination.js';
+import {
+  assertTaskManifestRevision,
+  authorizeTaskContainer,
+  prepareContainerManifestApply,
+} from './store-manifest.js';
 
 const STORE_WRITES = new KeyedAsyncQueue();
 
@@ -80,12 +86,11 @@ export class TaskHostStore {
   readonly hostStreamId: string;
   private readonly rootDir: string;
   private readonly walPath: string;
-  private readonly projectionDir: string;
   private readonly now: () => number;
+  private readonly snapshots: TaskHostSnapshotCollection;
   private state: TaskHostWalState;
   private poisoned: Error | null = null;
   private onCommitted: (() => void) | null = null;
-  private readonly snapshots = new Map<string, CapturedTaskSnapshot>();
   private readonly checkpointAfterTransactions: number;
   private commitsSinceCheckpoint: number;
   private maintenance: Promise<void> | null = null;
@@ -96,9 +101,9 @@ export class TaskHostStore {
   ) {
     this.rootDir = opts.rootDir ?? defaultTaskHostRoot(opts.dispatcherId, opts.channelId);
     this.walPath = join(this.rootDir, 'transactions.wal');
-    this.projectionDir = join(this.rootDir, 'projections');
     this.hostStreamId = state.hostStreamId;
     this.now = opts.now ?? Date.now;
+    this.snapshots = new TaskHostSnapshotCollection(this.hostStreamId, this.now);
     this.state = state;
     this.checkpointAfterTransactions = Math.max(
       1,
@@ -157,6 +162,58 @@ export class TaskHostStore {
     return this.state.hostStatusCode;
   }
 
+  get appliedManifestRevision(): number {
+    return this.state.containerManifest.revision;
+  }
+
+  get appliedManifestDigest(): string {
+    return this.state.containerManifest.digest;
+  }
+
+  containerManifestState() {
+    return publicContainerManifestState(this.state.containerManifest);
+  }
+
+  applyContainerManifest(
+    candidate: TaskContainerManifestApplyCandidate,
+    assertAuthorized?: () => void,
+  ): Promise<{ changed: boolean; record: TaskContainerManifestRecord }> {
+    return this.write(async () => {
+      assertAuthorized?.();
+      const prepared = prepareContainerManifestApply(
+        this.state.containerManifest,
+        candidate,
+        this.now(),
+      );
+      if (!prepared.changed) return prepared;
+      const next = prepared.record;
+      await this.commit([], [{
+        payload: {
+          kind: 'container_manifest.applied',
+          revision: next.revision,
+          digest: next.digest,
+          entry_count: next.entries.length,
+        },
+      }], null, next);
+      return { changed: true, record: clone(next) };
+    });
+  }
+
+  assertManifestRevision(revision: number): void {
+    assertTaskManifestRevision(this.state.containerManifest, revision);
+  }
+
+  authorizeNewSubmission(input: {
+    manifestRevision: number;
+    container: ChannelTaskContainerIdentity;
+    containerGeneration: number;
+  }): TaskContainerManifestRecord['entries'][number] {
+    return authorizeTaskContainer({
+      manifest: this.state.containerManifest,
+      ...input,
+    });
+  }
+
   setCommitListener(listener: (() => void) | null): void {
     this.onCommitted = listener;
   }
@@ -177,11 +234,13 @@ export class TaskHostStore {
     assertOperationCapacity(this.state, candidate);
   }
 
-  async claim(input: TaskTargetClaimInput): Promise<{
+  async claim(input: TaskTargetClaimInput, assertAuthorized?: () => void): Promise<{
     created: boolean;
     record: TaskTargetRecord;
   }> {
     return this.write(async () => {
+      assertAuthorized?.();
+      this.assertManifestRevision(input.manifestRevision);
       const existing = this.state.targets.get(input.targetId);
       if (existing !== undefined) {
         if (existing.request_fingerprint !== input.requestFingerprint) {
@@ -190,6 +249,21 @@ export class TaskHostStore {
           );
         }
         return { created: false, record: clone(existing) };
+      }
+      const manifestEntry = this.authorizeNewSubmission({
+        manifestRevision: input.manifestRevision,
+        container: input.container,
+        containerGeneration: input.containerGeneration,
+      });
+      if (manifestEntry.resolved_repository === null) {
+        throw new TaskManifestFenceError(
+          manifestEntry.resolution.status === 'unavailable'
+            ? manifestEntry.resolution.code
+            : 'TASK_REPOSITORY_BINDING_MISSING',
+          manifestEntry.resolution.status === 'unavailable' &&
+            manifestEntry.resolution.retryable,
+          'task container has no resolved managed repository',
+        );
       }
       if (!canAcceptTask(this.state)) throw new TaskHostBackpressureError();
       const now = this.now();
@@ -202,13 +276,15 @@ export class TaskHostStore {
         canonical_target_key: input.canonicalTargetKey,
         attempt: clone(input.attempt),
         container: clone(input.container),
-        logical_repository: clone(input.logicalRepository),
-        resolved_repository: clone(input.resolvedRepository),
+        manifest_revision: input.manifestRevision,
+        container_generation: input.containerGeneration,
+        logical_repository: clone(manifestEntry.logical_repository),
+        resolved_repository: clone(manifestEntry.resolved_repository),
         repository_binding: {
-          source: input.resolvedRepository.source,
-          logical_key: input.resolvedRepository.logical_key,
-          binding_revision: input.resolvedRepository.binding_revision,
-          fingerprint: input.resolvedRepository.fingerprint,
+          source: manifestEntry.resolved_repository.source,
+          logical_key: manifestEntry.resolved_repository.logical_key,
+          binding_revision: manifestEntry.resolved_repository.binding_revision,
+          fingerprint: manifestEntry.resolved_repository.fingerprint,
         },
         request_fingerprint: input.requestFingerprint,
         receipt: clone(input.receipt),
@@ -283,10 +359,27 @@ export class TaskHostStore {
     targetId: string;
     expectedRevision: number | null;
     terminal: NonNullable<TaskTargetRecord['terminal']>;
+    manifestRevision?: number;
+    containerGeneration?: number;
+    assertAuthorized?: () => void;
   }): Promise<{ changed: boolean; record: TaskTargetRecord }> {
     return this.write(async () => {
+      input.assertAuthorized?.();
+      if (input.manifestRevision !== undefined) {
+        this.assertManifestRevision(input.manifestRevision);
+      }
       const current = this.state.targets.get(input.targetId);
       if (current === undefined) throw new Error(`unknown task target '${input.targetId}'`);
+      if (
+        input.containerGeneration !== undefined &&
+        input.containerGeneration !== current.container_generation
+      ) {
+        throw new TaskManifestFenceError(
+          'TASK_CONTAINER_GENERATION_MISMATCH',
+          false,
+          'task cancellation generation does not match its accepted target',
+        );
+      }
       if (
         input.expectedRevision !== null &&
         current.revision !== input.expectedRevision
@@ -320,15 +413,15 @@ export class TaskHostStore {
         },
       }];
       if (input.terminal.outcome === 'cancelled') {
+        const emittedResources = new Set<string>();
         for (const submission of current.submissions) {
           if (submission.state !== 'intent' && submission.state !== 'accepted') continue;
-          events.push({
-            payload: {
-              kind: 'turn.lifecycle',
-              turn_key: submission.operation_id,
-              status: 'stopped',
-            },
-          });
+          for (const event of submissionResourceEvents(next, submission.operation_id)) {
+            if (event.payload.kind !== 'resource.lifecycle') continue;
+            if (emittedResources.has(event.payload.resource.resource_id)) continue;
+            emittedResources.add(event.payload.resource.resource_id);
+            events.push(event);
+          }
         }
       }
       await this.commit([next], events);
@@ -367,8 +460,13 @@ export class TaskHostStore {
     };
   }
 
-  async acknowledge(streamGeneration: number, through: number): Promise<number> {
+  async acknowledge(
+    streamGeneration: number,
+    through: number,
+    assertAuthorized?: () => void,
+  ): Promise<number> {
     return this.write(async () => {
+      assertAuthorized?.();
       if (streamGeneration !== this.state.streamGeneration) {
         throw new Error('host event acknowledgement has the wrong stream generation');
       }
@@ -391,100 +489,7 @@ export class TaskHostStore {
     limit = 100,
     sessionFence = 'direct-store-session',
   ): ChannelTaskSnapshotResult {
-    let captured: CapturedTaskSnapshot;
-    let start: number;
-    if (cursor === undefined) {
-      this.pruneSnapshots();
-      captured = this.captureSnapshot(sessionFence);
-      start = 0;
-    } else {
-      const match = [...this.snapshots.values()].find(
-        (snapshot) => snapshot.cursors.has(cursor),
-      );
-      if (match === undefined) return this.snapshotRestart('cursor_invalid');
-      if (this.now() - match.createdAt > SNAPSHOT_TTL_MS) {
-        this.snapshots.delete(match.snapshotId);
-        return this.snapshotRestart('snapshot_expired');
-      }
-      if (
-        match.hostStreamId !== this.hostStreamId ||
-        match.streamGeneration !== this.state.streamGeneration
-      ) {
-        return this.snapshotRestart('stream_changed');
-      }
-      if (match.sessionFence !== sessionFence) {
-        return this.snapshotRestart('cursor_invalid');
-      }
-      captured = match;
-      start = captured.cursors.get(cursor)!;
-    }
-    const bounded = boundedPageLimit(limit);
-    const page = captured.items.slice(start, start + bounded).map((item) => clone(item));
-    const next = start + page.length;
-    const nextCursor = next < captured.items.length
-      ? cursorForOffset(captured, next)
-      : null;
-    return {
-      status: 'page',
-      page: {
-        schema_version: 1,
-        snapshot_id: captured.snapshotId,
-        session_fence: captured.sessionFence,
-        host_stream_id: captured.hostStreamId,
-        stream_generation: captured.streamGeneration,
-        watermark: captured.watermark,
-        acknowledged_through: captured.acknowledgedThrough,
-        host_status: captured.hostStatus,
-        item_offset: start,
-        item_count: page.length,
-        total_items: captured.items.length,
-        complete: next >= captured.items.length,
-        items: page,
-        next_cursor: nextCursor,
-      },
-    };
-  }
-
-  private captureSnapshot(sessionFence: string): CapturedTaskSnapshot {
-    if (this.snapshots.size >= MAX_CAPTURED_SNAPSHOTS) {
-      const oldest = this.snapshots.keys().next().value as string | undefined;
-      if (oldest !== undefined) this.snapshots.delete(oldest);
-    }
-    const captured: CapturedTaskSnapshot = {
-      snapshotId: newSnapshotId(),
-      sessionFence,
-      createdAt: this.now(),
-      hostStreamId: this.hostStreamId,
-      streamGeneration: this.state.streamGeneration,
-      watermark: this.watermark,
-      acknowledgedThrough: this.state.acknowledgedThrough,
-      hostStatus: this.state.hostStatus,
-      items: [...this.state.targets.values()]
-        .sort((left, right) => left.target_id.localeCompare(right.target_id))
-        .map(taskSnapshotItem),
-      cursors: new Map(),
-    };
-    this.snapshots.set(captured.snapshotId, captured);
-    return captured;
-  }
-
-  private pruneSnapshots(): void {
-    const now = this.now();
-    for (const [id, snapshot] of this.snapshots) {
-      if (now - snapshot.createdAt > SNAPSHOT_TTL_MS) this.snapshots.delete(id);
-    }
-  }
-
-  private snapshotRestart(
-    reason: 'cursor_invalid' | 'snapshot_expired' | 'stream_changed',
-  ): ChannelTaskSnapshotResult {
-    return {
-      status: 'restart_required',
-      reason,
-      host_stream_id: this.hostStreamId,
-      stream_generation: this.state.streamGeneration,
-      watermark: this.watermark,
-    };
+    return this.snapshots.snapshot(this.state, cursor, limit, sessionFence);
   }
 
   /** Losslessly rewrite physical WAL history without changing the logical stream. */
@@ -532,6 +537,7 @@ export class TaskHostStore {
     deltas: readonly TaskTargetRecord[],
     eventInputs: readonly TaskStoreEventInput[],
     acknowledgedThrough: number | null = null,
+    containerManifestDelta: TaskContainerManifestRecord | null = null,
   ): Promise<void> {
     const first = this.state.nextSequence;
     if (deltas.length === 1 && eventInputs.length > 0) {
@@ -540,7 +546,9 @@ export class TaskHostStore {
     for (const delta of deltas) assertTargetFrameCapacity(delta);
     const events = eventInputs.map((input, index) => {
       const target =
-        input.payload.kind !== 'host.lifecycle' && deltas.length === 1
+        input.payload.kind !== 'host.lifecycle' &&
+          input.payload.kind !== 'container_manifest.applied' &&
+          deltas.length === 1
           ? deltas[0]!
           : null;
       return eventFor({
@@ -549,6 +557,9 @@ export class TaskHostStore {
         sequence: first + index,
         occurredAt: input.occurredAt ?? this.now(),
         target,
+        manifestRevision: target?.manifest_revision ??
+          containerManifestDelta?.revision ??
+          this.state.containerManifest.revision,
         input,
       });
     });
@@ -559,6 +570,9 @@ export class TaskHostStore {
       committed_at: this.now(),
       host_stream_id: this.hostStreamId,
       stream_generation: this.state.streamGeneration,
+      container_manifest_delta: containerManifestDelta === null
+        ? null
+        : clone(containerManifestDelta),
       target_deltas: deltas.map((target) => clone(target)),
       host_events: events,
       sequence_allocation:
@@ -587,7 +601,7 @@ export class TaskHostStore {
     this.commitsSinceCheckpoint += 1;
     this.onCommitted?.();
     try {
-      await this.writeProjections(deltas);
+      await this.writeProjections(deltas, containerManifestDelta !== null);
     } catch (error) {
       this.opts.onProjectionError?.(error);
     }
@@ -649,50 +663,25 @@ export class TaskHostStore {
   }
 
   private async rebuildProjections(): Promise<void> {
-    await mkdir(join(this.projectionDir, 'targets'), { recursive: true });
-    await Promise.all([
-      ...[...this.state.targets.values()].map((target) =>
-        this.writeTargetProjection(target),
-      ),
-      this.writeStreamProjection(),
-    ]);
+    await rebuildTaskHostProjections({
+      rootDir: this.rootDir,
+      channelId: this.opts.channelId,
+      hostStreamId: this.hostStreamId,
+      state: this.state,
+    });
   }
 
-  private async writeProjections(deltas: readonly TaskTargetRecord[]): Promise<void> {
-    await mkdir(join(this.projectionDir, 'targets'), { recursive: true });
-    await Promise.all([
-      ...deltas.map((target) => this.writeTargetProjection(target)),
-      this.writeStreamProjection(),
-    ]);
-  }
-
-  private writeTargetProjection(target: TaskTargetRecord): Promise<void> {
-    return writeFileAtomic(
-      join(this.projectionDir, 'targets', `${safeSegment(target.target_id)}.json`),
-      `${JSON.stringify({
-        schema: 'task_host_target_projection_v1',
-        channel_id: this.opts.channelId,
-        tx_index: this.state.txIndex,
-        tail_checksum: this.state.tailChecksum,
-        target,
-      }, null, 2)}\n`,
-    );
-  }
-
-  private writeStreamProjection(): Promise<void> {
-    return writeFileAtomic(
-      join(this.projectionDir, 'stream.json'),
-      `${JSON.stringify({
-        schema: 'task_host_stream_projection_v1',
-        channel_id: this.opts.channelId,
-        tx_index: this.state.txIndex,
-        tail_checksum: this.state.tailChecksum,
-        host_stream_id: this.hostStreamId,
-        stream_generation: this.state.streamGeneration,
-        watermark: this.watermark,
-        acknowledged_through: this.state.acknowledgedThrough,
-        replay_floor: this.state.replayFloor,
-      }, null, 2)}\n`,
-    );
+  private async writeProjections(
+    deltas: readonly TaskTargetRecord[],
+    manifestChanged = false,
+  ): Promise<void> {
+    await writeTaskHostProjections({
+      rootDir: this.rootDir,
+      channelId: this.opts.channelId,
+      hostStreamId: this.hostStreamId,
+      state: this.state,
+      deltas,
+      manifestChanged,
+    });
   }
 }

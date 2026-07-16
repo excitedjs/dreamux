@@ -1,6 +1,6 @@
 import type { TaskHostWalState } from './wal.js';
 import type { TaskTargetRecord } from './types.js';
-import { canonicalJson } from './wal.js';
+import { canonicalJson } from './canonical-json.js';
 
 const MAX_TARGET_BYTES = 4 * 1024 * 1024;
 const MAX_OPERATION_TARGET_BYTES = 3 * 1024 * 1024;
@@ -114,6 +114,7 @@ function checkpointBytes(
   let bytes = state.events
     .filter((event) => event.sequence > state.acknowledgedThrough)
     .reduce((total, event) => total + serializedBytes(event), 0);
+  bytes += serializedBytes(state.containerManifest);
   for (const target of targets) bytes += serializedBytes(target);
   return bytes;
 }

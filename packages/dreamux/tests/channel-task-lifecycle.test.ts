@@ -8,6 +8,7 @@ import type {
   AgentRuntime,
   AgentRuntimeDurableSubmissionInput,
   AgentRuntimeDurableSubmissionRecord,
+  ChannelTaskCancelInput,
   ChannelTaskHost,
   ChannelTaskSubmitInput,
   DreamuxLogger,
@@ -57,9 +58,12 @@ describe('strict task attempt lifecycle', () => {
     expect(snapshotItem(harness.store)).toMatchObject({
       phase: 'blocked',
       blocked: { code: 'TASK_PROVISIONING_FAILED', retryable: true },
-      team: { status: 'provisioning' },
-      worktree: { status: 'provisional' },
     });
+    expect(snapshotItem(harness.store)?.resources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'team', state: 'provisioning' }),
+      expect.objectContaining({ kind: 'leader', state: 'provisioning' }),
+      expect.objectContaining({ kind: 'worktree', state: 'provisional' }),
+    ]));
     expect(harness.teams.ensureProvisioned).not.toHaveBeenCalled();
 
     const duplicate = await host.submit(structuredClone(submission));
@@ -71,10 +75,13 @@ describe('strict task attempt lifecycle', () => {
     expect(snapshotItem(harness.store)).toMatchObject({
       phase: 'running',
       blocked: null,
-      team: { status: 'ready' },
-      worktree: { status: 'ready' },
-      turns: [{ status: 'running' }],
     });
+    expect(snapshotItem(harness.store)?.resources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'team', state: 'ready' }),
+      expect.objectContaining({ kind: 'leader', state: 'running' }),
+      expect.objectContaining({ kind: 'worktree', state: 'ready' }),
+      expect.objectContaining({ kind: 'turn', state: 'running' }),
+    ]));
   });
 
   it('returns the original receipt for duplicate delivery and rejects conflicts', async () => {
@@ -240,18 +247,10 @@ describe('strict task attempt lifecycle', () => {
     await host.submit(submission);
     await harness.service.drain();
 
-    const first = await host.cancel({
-      attempt: submission.attempt,
-      container: submission.container,
-      reason: 'remote cancellation',
-    });
+    const first = await host.cancel(cancelInput(submission, 'remote cancellation'));
     expect(first.status).toBe('accepted');
     await harness.service.drain();
-    const second = await host.cancel({
-      attempt: submission.attempt,
-      container: submission.container,
-      reason: 'duplicate cancellation',
-    });
+    const second = await host.cancel(cancelInput(submission, 'duplicate cancellation'));
     expect(second).toMatchObject({
       status: 'already_terminal',
       terminal: { outcome: 'cancelled', summary: 'remote cancellation' },
@@ -274,11 +273,7 @@ describe('strict task attempt lifecycle', () => {
     await host.submit(submission);
     await harness.service.drain();
 
-    await host.cancel({
-      attempt: submission.attempt,
-      container: submission.container,
-      reason: 'cancel before binding',
-    });
+    await host.cancel(cancelInput(submission, 'cancel before binding'));
     await harness.service.drain();
     const snapshot = await host.snapshot();
     expect(snapshot).toMatchObject({
@@ -287,7 +282,9 @@ describe('strict task attempt lifecycle', () => {
         complete: true,
         items: [{
           phase: 'finalized',
-          worktree: { status: 'deleted' },
+          resources: expect.arrayContaining([
+            expect.objectContaining({ kind: 'worktree', state: 'deleted' }),
+          ]),
         }],
       },
     });
@@ -299,8 +296,9 @@ describe('strict task attempt lifecycle', () => {
     });
     if (replay.status !== 'events') throw new Error('event replay unavailable');
     const worktree = replay.batch.events.flatMap((event) =>
-      event.payload.kind === 'worktree.lifecycle'
-        ? [event.payload.status]
+      event.payload.kind === 'resource.lifecycle' &&
+        event.payload.resource.kind === 'worktree'
+        ? [event.payload.resource.state]
         : [],
     );
     expect(worktree).toEqual(['provisional', 'cleaning', 'deleted']);
@@ -327,11 +325,7 @@ describe('strict task attempt lifecycle', () => {
       return {};
     });
 
-    await host.cancel({
-      attempt: submission.attempt,
-      container: submission.container,
-      reason: 'cancel during active turn',
-    });
+    await host.cancel(cancelInput(submission, 'cancel during active turn'));
     await withTimeout(harness.service.drain(), 1_000);
 
     expect(harness.store.get(target.target_id)).toMatchObject({
@@ -366,11 +360,10 @@ describe('strict task attempt lifecycle', () => {
     });
     await entered.promise;
 
-    await expect(withTimeout(host.cancel({
-      attempt: submission.attempt,
-      container: submission.container,
-      reason: 'cancel without waiting for the runtime',
-    }), 250)).resolves.toMatchObject({ status: 'accepted' });
+    await expect(withTimeout(
+      host.cancel(cancelInput(submission, 'cancel without waiting for the runtime')),
+      250,
+    )).resolves.toMatchObject({ status: 'accepted' });
     expect(harness.store.list()[0]).toMatchObject({
       phase: 'terminal',
       terminal: { outcome: 'cancelled' },
@@ -379,8 +372,9 @@ describe('strict task attempt lifecycle', () => {
     release.resolve();
     await harness.service.drain();
     const turnStatuses = harness.store.replay(0, 500).events.flatMap((event) =>
-      event.payload.kind === 'turn.lifecycle'
-        ? [event.payload.status]
+      event.payload.kind === 'resource.lifecycle' &&
+        event.payload.resource.kind === 'turn'
+        ? [event.payload.resource.state]
         : [],
     );
     const firstStopped = turnStatuses.indexOf('stopped');
@@ -439,7 +433,6 @@ describe('strict task attempt lifecycle', () => {
     });
     expect(publicState).not.toContain(repo);
     expect(publicState).not.toContain('Execute task A with private input');
-    expect(publicState).not.toContain('repository-a');
     expect(publicState).not.toContain('runtime-private-settlement-result');
   });
 });
@@ -682,6 +675,18 @@ async function negotiatedHost(service: TaskChannelHostService): Promise<ChannelT
     supported_schema_versions: [1],
     supported_capabilities: host.scope.required_capabilities,
   });
+  const applied = await host.applyContainerManifest({
+    manifest: {
+      revision: 1,
+      entries: [{
+        container: { container_type: 'task-space', container_key: 'space-a' },
+        generation: 1,
+        state: 'active',
+        repository: { repository_key: 'repository-a' },
+      }],
+    },
+  });
+  if (applied.status === 'rejected') throw new Error(applied.message);
   return host;
 }
 
@@ -693,12 +698,27 @@ function taskSubmission(
   return {
     attempt: { task_key: taskKey, attempt_key: attemptKey },
     container: { container_type: 'task-space', container_key: 'space-a' },
+    manifest_revision: 1,
+    container_generation: 1,
     repository: { repository_key: 'repository-a' },
     turn: {
       sourceId,
       text: 'Execute task A with private input',
     },
     title: 'Task A',
+  };
+}
+
+function cancelInput(
+  submission: ChannelTaskSubmitInput,
+  reason: string,
+): ChannelTaskCancelInput {
+  return {
+    attempt: submission.attempt,
+    container: submission.container,
+    manifest_revision: submission.manifest_revision,
+    container_generation: submission.container_generation,
+    reason,
   };
 }
 

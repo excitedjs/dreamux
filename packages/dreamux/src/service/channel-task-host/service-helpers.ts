@@ -13,6 +13,7 @@ export function matchesDuplicate(
   fingerprint: string,
 ): boolean {
   if (existing.request_fingerprint !== fingerprint) return false;
+  if (existing.container_generation !== input.container_generation) return false;
   if (existing.repository_binding.source === 'static') return true;
   return input.repository !== undefined &&
     existing.logical_repository?.repository_key === input.repository.repository_key &&

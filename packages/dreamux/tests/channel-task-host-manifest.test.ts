@@ -18,6 +18,7 @@ import type { TaskTargetClaimInput } from '../src/service/channel-task-host/type
 import type { CollaborationSpaceService } from '../src/service/collaboration-space/index.js';
 import type { TeamCollection } from '../src/service/team-collection/index.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
+import { applyTestTaskManifest, testTaskContainer } from './helpers/task-host.js';
 
 const PROVIDER = 'npm:@example/dreamux-task-channel';
 
@@ -175,6 +176,7 @@ describe('durable task host manifest discovery', () => {
       providerRef: PROVIDER,
       rootDir: taskHostRootUnder(parent, 'remote-tasks'),
     });
+    await applyTestTaskManifest(store, [testTaskContainer('space-a')]);
     await store.claim(taskClaim());
     return store;
   }
@@ -222,6 +224,8 @@ function taskClaim(): TaskTargetClaimInput {
     canonicalTargetKey: identity.targetKey,
     attempt,
     container: { container_type: 'task-space', container_key: 'space-a' },
+    manifestRevision: 1,
+    containerGeneration: 1,
     logicalRepository: { repository_key: 'repository-a' },
     resolvedRepository: {
       source: 'channel',
@@ -239,6 +243,8 @@ function taskClaim(): TaskTargetClaimInput {
       attempt,
       revision: 1,
       accepted_at: 1,
+      manifest_revision: 1,
+      container_generation: 1,
     },
     title: 'Task A',
     turn: { sourceId: 'delivery-a', text: 'Execute task A' },

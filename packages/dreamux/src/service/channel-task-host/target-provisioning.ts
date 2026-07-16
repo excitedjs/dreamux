@@ -5,6 +5,12 @@ import { taskChannelTarget, taskTeamProvisionInput } from './provisioning.js';
 import type { TaskRuntimeExecutor } from './runtime-execution.js';
 import { requiredTarget } from './service-helpers.js';
 import type { TaskHostStore } from './store.js';
+import {
+  leaderResource,
+  resourceEvent,
+  teamResource,
+  worktreeResource,
+} from './resources.js';
 
 export interface ProvisionTaskTargetOptions {
   channelId: string;
@@ -33,15 +39,12 @@ export async function provisionTaskTarget(
             next.phase = 'provisioning';
             next.blocked = null;
           },
-          [{ payload: { kind: 'task.lifecycle', phase: 'provisioning' } }, {
-            payload: {
-              kind: 'team.lifecycle',
-              status: 'provisioning',
-              team_id: target.team.team_name,
-            },
-          }, {
-            payload: { kind: 'worktree.lifecycle', status: 'provisional' },
-          }],
+          (record) => [
+            { payload: { kind: 'task.lifecycle', phase: 'provisioning' } },
+            resourceEvent(teamResource(record, 'provisioning')),
+            resourceEvent(leaderResource(record, 'provisioning')),
+            resourceEvent(worktreeResource(record, 'provisional')),
+          ],
         );
       }
       if (target.resolved_repository === null) {
@@ -93,14 +96,12 @@ export async function provisionTaskTarget(
           if (next.phase !== 'running') next.phase = 'ready';
           next.blocked = null;
         },
-        [{ payload: {
-          kind: 'team.lifecycle',
-          status: 'ready',
-          team_id: target.team.team_name,
-        } }, { payload: {
-          kind: 'worktree.lifecycle',
-          status: 'ready',
-        } }, { payload: { kind: 'task.lifecycle', phase: 'ready' } }],
+        (record) => [
+          resourceEvent(teamResource(record, 'ready')),
+          resourceEvent(leaderResource(record, 'ready')),
+          resourceEvent(worktreeResource(record, 'ready')),
+          { payload: { kind: 'task.lifecycle', phase: 'ready' } },
+        ],
       );
     }
     await opts.teams.withRoutableTeamOwner(

@@ -32,6 +32,7 @@ import type {
   ResolvedCollaborationRepositoryPolicy,
 } from './types.js';
 import { createDefaultBoundSpace } from './default-binding.js';
+import { defaultSpaceName } from './naming.js';
 import { CollaborationSpaceStore } from './store.js';
 import { CollaborationRouteReconciler } from './route-reconciliation.js';
 import { spaceView, targetView } from './view.js';
@@ -209,7 +210,17 @@ export class CollaborationSpaceService {
       containerKey: input.container.container_key,
     });
     if (space === null) return null;
-    return taskBindingSnapshot(space, input.repository);
+    try {
+      return taskBindingSnapshot(space, input.repository);
+    } catch (error) {
+      if (
+        !canAdvanceTaskBinding(space) ||
+        await this.hasOpenConversationalTarget(space)
+      ) {
+        throw error;
+      }
+      return null;
+    }
   }
 
   async ensureTaskBinding(input: {
@@ -233,6 +244,12 @@ export class CollaborationSpaceService {
           containerType: input.container.container_type,
           containerKey: input.container.container_key,
         });
+        const repositoryPolicy = {
+          source: input.repository.source,
+          logical_key: input.repository.logical_key,
+          binding_revision: input.repository.binding_revision,
+          fingerprint: input.repository.fingerprint,
+        };
         let space = existing ?? await createDefaultBoundSpace({
           dispatcherId: this.dispatcherId,
           config: this.config,
@@ -248,15 +265,30 @@ export class CollaborationSpaceService {
                 ? { baseRef: input.repository.base_ref }
                 : {}),
             },
-            repositoryPolicy: {
-              source: input.repository.source,
-              logical_key: input.repository.logical_key,
-              binding_revision: input.repository.binding_revision,
-              fingerprint: input.repository.fingerprint,
-            },
+            repositoryPolicy,
             ...(input.identity !== null ? { identity: input.identity } : {}),
           },
         });
+        if (existing !== null && !taskBindingMatches(space, input.repository)) {
+          space = await this.store.rebindDefaultTaskSpace({
+            dispatcherId: this.dispatcherId,
+            channelId: input.channelId,
+            containerType: input.container.container_type,
+            containerKey: input.container.container_key,
+            expectedGeneration: existing.current_binding?.generation ?? 0,
+            binding: {
+              repo_cwd: input.repository.repo_cwd,
+              worktree: {
+                mode: 'managed',
+                base_ref: input.repository.base_ref,
+                cleanup: 'delete-on-close',
+              },
+              leader_agent_runtime: input.leaderAgentRuntime,
+              identity: input.identity,
+              repository_policy: repositoryPolicy,
+            },
+          });
+        }
         if (
           space.current_binding?.repository_policy === undefined &&
           input.repository.source === 'static'
@@ -278,6 +310,22 @@ export class CollaborationSpaceService {
         }
         return taskBindingSnapshot(space, input.repository);
       },
+    );
+  }
+
+  private async hasOpenConversationalTarget(
+    space: CollaborationSpaceRecord,
+  ): Promise<boolean> {
+    const binding = space.current_binding;
+    if (binding === null) return true;
+    const targets = await this.store.listTargets(this.dispatcherId, {
+      spaceName: space.space_name,
+      bindingGeneration: binding.generation,
+    });
+    return targets.some(
+      (target) =>
+        target.lifecycle_status !== 'closed' &&
+        target.lifecycle_status !== 'detached',
     );
   }
 
@@ -486,4 +534,29 @@ function taskBindingSnapshot(
     leader_agent_runtime: binding.leader_agent_runtime,
     identity: binding.identity,
   };
+}
+
+function canAdvanceTaskBinding(space: CollaborationSpaceRecord): boolean {
+  return space.status === 'bound' &&
+    space.space_name === defaultSpaceName({
+      dispatcherId: space.dispatcher_id,
+      channelId: space.channel_id,
+      containerType: space.container_type,
+      containerKey: space.container_key,
+    }) &&
+    space.current_binding !== null &&
+    space.current_binding.worktree.mode === 'managed' &&
+    space.current_binding.repository_policy !== undefined;
+}
+
+function taskBindingMatches(
+  space: CollaborationSpaceRecord,
+  expected: ResolvedCollaborationRepositoryPolicy,
+): boolean {
+  try {
+    taskBindingSnapshot(space, expected);
+    return true;
+  } catch {
+    return false;
+  }
 }
