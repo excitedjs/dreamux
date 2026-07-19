@@ -1,6 +1,11 @@
 # Change Log - @excitedjs/agent-runtime-claude-code
 
-This log was last generated on Wed, 15 Jul 2026 02:54:37 GMT and should not be manually modified.
+This log was last generated on Sun, 19 Jul 2026 03:45:02 GMT and should not be manually modified.
+
+## 0.4.1
+Sun, 19 Jul 2026 03:45:02 GMT
+
+_Version update only_
 
 ## 0.4.0
 Wed, 15 Jul 2026 02:54:37 GMT

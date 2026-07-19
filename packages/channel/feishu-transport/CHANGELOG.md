@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/feishu-transport
 
-This log was last generated on Fri, 03 Jul 2026 04:51:35 GMT and should not be manually modified.
+This log was last generated on Sun, 19 Jul 2026 03:45:02 GMT and should not be manually modified.
+
+## 0.6.0
+Sun, 19 Jul 2026 03:45:02 GMT
+
+### Minor changes
+
+- Expose optional chat-mode lookup and preserve inbound thread_id for topic-aware channel providers.
 
 ## 0.5.0
 Fri, 03 Jul 2026 04:51:35 GMT

@@ -2,6 +2,21 @@
   "name": "@excitedjs/dreamux-types",
   "entries": [
     {
+      "version": "0.5.0",
+      "tag": "@excitedjs/dreamux-types_v0.5.0",
+      "date": "Sun, 19 Jul 2026 03:45:02 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "Add provider-declared binding fallbacks to ChannelTarget for less-specific route reuse."
+          },
+          {
+            "comment": "Add provider-neutral strict collaboration routing and live core event capabilities."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.4.0",
       "tag": "@excitedjs/dreamux-types_v0.4.0",
       "date": "Wed, 15 Jul 2026 02:54:37 GMT",

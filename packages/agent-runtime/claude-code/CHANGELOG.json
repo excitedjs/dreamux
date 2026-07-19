@@ -2,6 +2,21 @@
   "name": "@excitedjs/agent-runtime-claude-code",
   "entries": [
     {
+      "version": "0.4.1",
+      "tag": "@excitedjs/agent-runtime-claude-code_v0.4.1",
+      "date": "Sun, 19 Jul 2026 03:45:02 GMT",
+      "comments": {
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.5.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.3.2`"
+          }
+        ]
+      }
+    },
+    {
       "version": "0.4.0",
       "tag": "@excitedjs/agent-runtime-claude-code_v0.4.0",
       "date": "Wed, 15 Jul 2026 02:54:37 GMT",

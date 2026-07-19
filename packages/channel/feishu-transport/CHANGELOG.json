@@ -2,6 +2,18 @@
   "name": "@excitedjs/feishu-transport",
   "entries": [
     {
+      "version": "0.6.0",
+      "tag": "@excitedjs/feishu-transport_v0.6.0",
+      "date": "Sun, 19 Jul 2026 03:45:02 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "Expose optional chat-mode lookup and preserve inbound thread_id for topic-aware channel providers."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.5.0",
       "tag": "@excitedjs/feishu-transport_v0.5.0",
       "date": "Fri, 03 Jul 2026 04:51:35 GMT",

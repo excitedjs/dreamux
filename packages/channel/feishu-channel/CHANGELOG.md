@@ -1,6 +1,18 @@
 # Change Log - @excitedjs/feishu-channel
 
-This log was last generated on Wed, 15 Jul 2026 02:54:37 GMT and should not be manually modified.
+This log was last generated on Sun, 19 Jul 2026 03:45:02 GMT and should not be manually modified.
+
+## 3.0.0
+Sun, 19 Jul 2026 03:45:02 GMT
+
+### Breaking changes
+
+- BREAKING: Remove the root-exported createFakeFeishuBot test helper and FakeFeishuBot type. Tests must provide package-local FeishuBot doubles; runtime behavior and persisted state are unchanged.
+
+### Minor changes
+
+- Add backwards-compatible Feishu topic-group projection, fail-safe chat-mode verification, and exact topic reply authorization.
+- Preserve enclosing group bindings for non-collaboration topic groups and expose inbound thread_id to the model-visible channel envelope.
 
 ## 2.1.0
 Wed, 15 Jul 2026 02:54:37 GMT

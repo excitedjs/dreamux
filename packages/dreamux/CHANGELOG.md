@@ -1,6 +1,18 @@
 # Change Log - @excitedjs/dreamux
 
-This log was last generated on Wed, 15 Jul 2026 02:54:37 GMT and should not be manually modified.
+This log was last generated on Sun, 19 Jul 2026 03:45:02 GMT and should not be manually modified.
+
+## 0.19.0
+Sun, 19 Jul 2026 03:45:02 GMT
+
+### Minor changes
+
+- Add provider-neutral strict collaboration routing and live core event capabilities.
+
+### Patches
+
+- Fix Feishu topic-group collaboration spaces so first topic inbound provisions a Team and later messages route and reply within the same topic.
+- Preserve active group bindings as a fallback for non-collaboration topic groups and authorize group-bound TeamLeader replies to observed topic messages.
 
 ## 0.18.0
 Wed, 15 Jul 2026 02:54:37 GMT
