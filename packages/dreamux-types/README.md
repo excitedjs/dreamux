@@ -26,7 +26,8 @@ shared structural types.
   skill sources, completion delivery, resume/last/context, MCP server
   descriptor, neutral state callbacks, and diagnostic helper shapes;
 - Channel provider/session contracts, target shapes, inbound envelope shapes,
-  tool descriptor/call shapes, and config/session contexts;
+  tool descriptor/call shapes, config/session contexts, optional strict
+  collaboration operations, and dispatcher-scoped read-only core event DTOs;
 - a minimal public logger type (`DreamuxLogger`).
 
 It does **not** export runtime implementations, default loggers, loader logic,

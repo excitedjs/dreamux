@@ -147,6 +147,16 @@ reaction state, target resolution, and its `reply` / `react` /
 Dreamux core injects the generic `channel-mcp` shim and routes tool calls back
 to the live Channel session or provider sessionless handler.
 
+Core also supplies optional session-scoped collaboration capabilities through
+`ChannelRoutes`: synchronous ensure of an existing collaboration target,
+exact-route delivery directly to its current TeamLeader, and a dispatcher-local
+read-only core fact source. Providers cannot select repository/cwd/workspace
+mode or claim dispatcher/channel authority through these methods. Exact
+delivery never falls back to another target or the dispatcher agent, and the
+fact source is live-session-only and best-effort rather than a historical state
+surface. Every Channel session generation receives revocable strict-route and
+event-source leases; stop or failed start revokes them before session close.
+
 Read [Channel runtime](channel-runtime.md) first, then the domain contracts:
 
 - [Feishu introduce](../domains/feishu-introduce.md)
@@ -215,8 +225,10 @@ for channel targets. Accepted background lifecycle work is tracked by
 `CollaborationSpaceService`; `DispatcherService` separately tracks direct
 inbound delivery/provisioning promises. Startup resumes durable `creating`,
 `failed`, and `closing` target records and releases stale managed claims left on
-inactive targets. Stop/shutdown closes admission, drains both task sets, and
-then sweeps every materialized Team runtime before closing the rest of the
+inactive targets before any Channel session starts, so start-time strict
+operations cannot race pending-target repair. Stop/shutdown closes admission,
+drains both task sets, and then sweeps every materialized Team runtime before
+closing the rest of the
 service graph. Already accepted provisioning rechecks the shutdown fence before
 Team creation, TeamLeader readiness, and route claim side effects. If a Team
 create was already in flight when the fence rose, provisioning closes that new
@@ -263,6 +275,25 @@ a waiting bind or repair therefore cannot publish a route to the Team being
 closed. Public target views expose a fixed failure summary; raw downstream
 errors remain local diagnostics and are not returned through MCP/status views.
 
+Strict Channel ensure and exact delivery stay on this same owner graph. Ensure
+reuses `acceptAndProvisionTarget` and returns only after the active/bound target,
+running Team, ready leader, local workspace, and exact claimed route agree.
+Exact delivery validates the current Team/leader/claim under the existing target
+and Team route fences before calling `TeamService.deliverToLeader`. Neither path
+creates a new target owner, remote close surface, retained submission state, or
+dispatcher-agent turn. The dispatcher gives each session start a fresh strict
+route lease; revocation makes old closures return `dispatcher_unavailable`
+without reaching those owners. Failed-start rollback revokes first, closes and
+drains admission, then uses the existing materialized-Team runtime sweep while
+leaving durable Team and target facts intact.
+
+`DispatcherService` also owns one in-process `DispatcherCoreEventBus` and the
+Channel source leases created from it. Team, identity, and turn stores remain
+the fact owners and publish only allowlisted post-write DTOs through a narrow
+capability. Channel sessions receive no raw bus or store, and sources are
+revoked before session close. The bus retains no state and provides no queue,
+eventual-delivery guarantee, or historical query.
+
 Scheduler ownership does not move into collaboration spaces. The dispatcher has
 its dispatcher scheduler, and each `TeamService` owns the TeamLeader scheduler it
 starts through the existing Team path.
@@ -270,6 +301,7 @@ starts through the existing Team path.
 Key source:
 
 - `/packages/dreamux/src/service/collaboration-space/`
+- `/packages/dreamux/src/service/dispatcher-core-events/`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 - `/packages/dreamux/src/mcp/collaboration-space-mcp.ts`
 - `/packages/dreamux/src/service/team-collection/`

@@ -34,6 +34,7 @@ import type {
   AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
   ChannelInboundEnvelope,
+  ChannelCoreEventSubscription,
   ChannelMessageTargetCheck,
   ChannelProvider,
   ChannelProviderDescriptor,
@@ -45,6 +46,7 @@ import type {
   ChannelTarget,
   ChannelToolCall,
   ChannelToolDescriptor,
+  ChannelTurnSettledEvent,
   DreamuxLogger,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
@@ -181,6 +183,7 @@ class FixtureChannelSession implements ChannelSession {
   readonly provider = 'npm:@example/fixture-channel';
   readonly channel_id: string;
   private readonly logger?: DreamuxLogger;
+  private readonly coreEventSubscriptions: ChannelCoreEventSubscription[] = [];
 
   constructor(channel_id: string, logger?: DreamuxLogger) {
     this.channel_id = channel_id;
@@ -192,6 +195,25 @@ class FixtureChannelSession implements ChannelSession {
       { channel_id: this.channel_id },
       'fixture channel started',
     );
+    if (routes.coreEvents !== undefined) {
+      this.coreEventSubscriptions.push(
+        routes.coreEvents.on(
+          'turn.settled',
+          (event: ChannelTurnSettledEvent) => {
+            this.logger?.info(
+              {
+                team_name: event.team_name,
+                agent_name: event.agent_name,
+                turn_id: event.turn_id,
+                status: event.status,
+                assistant_truncated: event.assistant_truncated,
+              },
+              'fixture core event',
+            );
+          },
+        ),
+      );
+    }
     const envelope: ChannelInboundEnvelope = {
       provider: this.provider,
       channel_id: this.channel_id,
@@ -203,7 +225,11 @@ class FixtureChannelSession implements ChannelSession {
     );
   }
 
-  async close(): Promise<void> {}
+  async close(): Promise<void> {
+    for (const subscription of this.coreEventSubscriptions.splice(0)) {
+      subscription.unsubscribe();
+    }
+  }
 
   async resolveTarget(meta: unknown): Promise<ChannelTarget> {
     const record = (meta ?? {}) as Record<string, unknown>;

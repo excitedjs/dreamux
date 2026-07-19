@@ -17,6 +17,7 @@ import {
   dispatcherTeamTeamMateDir,
 } from '../../platform/paths.js';
 import { assertNoRemovedRecordFields, LegacyStateError } from '../legacy-state.js';
+import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import {
   DISPATCHER_AGENT_NAME,
   validateAgentEntityName,
@@ -65,7 +66,10 @@ export interface AgentIdentityUpdateInput {
 }
 
 export class AgentIdentityStore {
-  constructor(private readonly log: DreamuxLogger) {}
+  constructor(
+    private readonly log: DreamuxLogger,
+    private readonly coreEvents?: DispatcherCoreEventPublisher,
+  ) {}
 
   /**
    * Read one identity by name within a scope (issue #233 symmetric layout).
@@ -272,6 +276,7 @@ export class AgentIdentityStore {
       last_assistant_preview: null,
     };
     await this.write(identity);
+    this.publishState(identity);
     return identity;
   }
 
@@ -307,12 +312,32 @@ export class AgentIdentityStore {
       updated_at: Date.now(),
     };
     await this.write(updated);
+    if (updated.status !== identity.status) this.publishState(updated);
     return updated;
   }
 
   async upsert(identity: AgentEntityIdentity): Promise<AgentEntityIdentity> {
     await this.write(identity);
+    this.publishState(identity);
     return identity;
+  }
+
+  private publishState(identity: AgentEntityIdentity): void {
+    if (
+      identity.team_id === null ||
+      (identity.role !== 'team_leader' && identity.role !== 'team_member')
+    ) {
+      return;
+    }
+    this.coreEvents?.publish(identity.dispatcher_id, {
+      schema_version: 1,
+      kind: 'agent.state',
+      occurred_at: identity.updated_at,
+      team_name: identity.team_id,
+      agent_name: identity.name,
+      role: identity.role,
+      status: identity.status,
+    });
   }
 
   /** Derive the entity directory from the identity's own role + team (issue #233). */

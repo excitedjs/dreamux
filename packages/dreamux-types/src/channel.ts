@@ -26,6 +26,7 @@ import type { InboundDeliveryResult, InboundTurnInput } from './turn.js';
 
 export interface ChannelTarget {
   target_type: string;
+  /** Provider-owned opaque key that is stable and unique within one Channel. */
   target_key: string;
   bindable: boolean;
   display?: string;
@@ -137,14 +138,151 @@ export interface ChannelMessageTargetCheck {
   meta?: Record<string, unknown>;
 }
 
+/**
+ * Request that core synchronously make an existing collaboration target ready.
+ * Workspace selection remains dispatcher-local policy; providers supply no
+ * repository, cwd, or workspace mode.
+ */
+export interface ChannelCollaborationTargetEnsureInput {
+  readonly container: ChannelContainer;
+  readonly target: ChannelTarget;
+  readonly title?: string;
+}
+
+export type ChannelScopedOperationFailureCode =
+  | 'invalid_input'
+  | 'collaboration_space_unavailable'
+  | 'target_conflict'
+  | 'target_closed'
+  | 'target_closing'
+  | 'route_unavailable'
+  | 'dispatcher_unavailable'
+  | 'operation_failed';
+
+export interface ChannelScopedOperationRejection {
+  readonly code: ChannelScopedOperationFailureCode;
+  readonly retryable: boolean;
+}
+
+export type ChannelCollaborationTargetEnsureResult =
+  | {
+      readonly status: 'ready';
+      /** Projection of the existing Team name; this creates no new identity. */
+      readonly team_name: string;
+    }
+  | {
+      readonly status: 'rejected';
+      readonly rejection: ChannelScopedOperationRejection;
+    };
+
+export interface ChannelExactDeliveryInput {
+  readonly target: ChannelTarget;
+  /** Rejects a stale command after the authoritative route changes owner. */
+  readonly expected_team_name: string;
+  readonly turn: InboundTurnInput;
+}
+
+export type ChannelExactDeliveryResult =
+  | { readonly status: 'submitted'; readonly turn_id: string }
+  /** Runtime-local facts only; neither status confirms cross-restart acceptance. */
+  | { readonly status: 'duplicate' }
+  | { readonly status: 'stopped' }
+  | {
+      readonly status: 'rejected';
+      readonly rejection: ChannelScopedOperationRejection;
+    };
+
+export type ChannelTeamAgentRole = 'team_leader' | 'team_member';
+
+export interface ChannelTeamStateEvent {
+  readonly schema_version: 1;
+  readonly kind: 'team.state';
+  readonly occurred_at: number;
+  readonly team_name: string;
+  readonly leader_name: string;
+  readonly status: 'starting' | 'running' | 'closed';
+}
+
+export interface ChannelAgentStateEvent {
+  readonly schema_version: 1;
+  readonly kind: 'agent.state';
+  readonly occurred_at: number;
+  readonly team_name: string;
+  readonly agent_name: string;
+  readonly role: ChannelTeamAgentRole;
+  readonly status:
+    | 'starting'
+    | 'running'
+    | 'degraded'
+    | 'stopped'
+    | 'closed';
+}
+
+export interface ChannelTurnSubmittedEvent {
+  readonly schema_version: 1;
+  readonly kind: 'turn.submitted';
+  readonly occurred_at: number;
+  readonly team_name: string;
+  readonly agent_name: string;
+  readonly role: ChannelTeamAgentRole;
+  readonly turn_id: string;
+}
+
+export interface ChannelTurnSettledEvent {
+  readonly schema_version: 1;
+  readonly kind: 'turn.settled';
+  readonly occurred_at: number;
+  readonly team_name: string;
+  readonly agent_name: string;
+  readonly role: ChannelTeamAgentRole;
+  readonly turn_id: string;
+  readonly status: 'completed' | 'failed' | 'stopped';
+  readonly assistant: string | null;
+  readonly assistant_truncated: boolean;
+}
+
+export type ChannelCoreEvent =
+  | ChannelTeamStateEvent
+  | ChannelAgentStateEvent
+  | ChannelTurnSubmittedEvent
+  | ChannelTurnSettledEvent;
+
+export type ChannelCoreEventKind = ChannelCoreEvent['kind'];
+
+export type ChannelCoreEventOfKind<K extends ChannelCoreEventKind> = Extract<
+  ChannelCoreEvent,
+  { readonly kind: K }
+>;
+
+export type ChannelCoreEventListener<K extends ChannelCoreEventKind> = (
+  event: ChannelCoreEventOfKind<K>,
+) => void | Promise<void>;
+
+export interface ChannelCoreEventSubscription {
+  /** Idempotent; core may already have revoked the enclosing session source. */
+  unsubscribe(): void;
+}
+
+/**
+ * Read-only, dispatcher-scoped, live-session event source. It intentionally
+ * exposes no emitter, listener enumeration, or arbitrary listener removal.
+ */
+export interface ChannelCoreEventSource {
+  on<K extends ChannelCoreEventKind>(
+    kind: K,
+    listener: ChannelCoreEventListener<K>,
+  ): ChannelCoreEventSubscription;
+}
+
 export interface ChannelRoutes {
   /**
    * Deliver a normalized inbound to Dreamux core. The channel session supplies
    * the neutral turn {@link InboundTurnInput} (text/body/attrs/attachments it
    * normalized) plus the routing/identity {@link ChannelInboundEnvelope}; core
-   * dedupes (on `input.sourceId`), submits the turn, and returns the neutral
-   * {@link InboundDeliveryResult}. The channel session owns any platform ack or
-   * reaction lifecycle around this call. A channel inbound never yields
+   * passes `input.sourceId` through as a runtime-local dedupe/correlation hint,
+   * submits the turn, and returns the neutral {@link InboundDeliveryResult}.
+   * The channel session owns any platform ack or reaction lifecycle around this
+   * call. A channel inbound never yields
    * `'skipped'` (that is a notice-only state), so the union is exactly the
    * inbound-delivery one.
    */
@@ -153,6 +291,16 @@ export interface ChannelRoutes {
     envelope: ChannelInboundEnvelope,
   ): Promise<InboundDeliveryResult>;
   targetLifecycle?(event: ChannelTargetLifecycleEvent): Promise<void>;
+  /** Optional presence is capability negotiation with an older core. */
+  readonly coreEvents?: ChannelCoreEventSource;
+  /** Synchronously ensure the existing collaboration target is fully ready. */
+  ensureCollaborationTarget?(
+    input: ChannelCollaborationTargetEnsureInput,
+  ): Promise<ChannelCollaborationTargetEnsureResult>;
+  /** Exact authoritative route only: no fallback and no Dispatcher Agent. */
+  deliverExact?(
+    input: ChannelExactDeliveryInput,
+  ): Promise<ChannelExactDeliveryResult>;
 }
 
 /**

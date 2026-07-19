@@ -147,7 +147,7 @@ create Dreamux spaces, Teams, worktrees, or bindings. A known unbound space
 created by `collaboration_space.dissolve` is not auto-bound again; explicit
 `bind` is required to reattach it.
 
-Provisioning has two entry points:
+Collaboration target work has three entry points:
 
 - **Target lifecycle events.** When the provider calls
   `ChannelRoutes.targetLifecycle` with `target_created` for a container with a
@@ -155,13 +155,13 @@ Provisioning has two entry points:
   create one, the collaboration target lifecycle path writes the durable claim
   and returns; heavy worktree/Team provisioning runs asynchronously under the
   `CollaborationSpaceService` lifecycle-task tracker. `DispatcherService`
-  resumes durable `creating` / `failed` / `closing` targets after channel
-  sessions start, releases stale managed claims for inactive targets, and drains
-  accepted lifecycle tasks during stop/shutdown. For unknown containers without
-  default binding, and for known unbound spaces, the create event is ignored
-  without claiming a target. For `target_closed`, the target lifecycle path
-  accepts the close event and asynchronously dissolves the Team and releases
-  the binding.
+  resumes durable `creating` / `failed` / `closing` targets before starting any
+  channel session, releases stale managed claims for inactive targets, and
+  drains accepted lifecycle tasks during stop/shutdown. For unknown containers
+  without default binding, and for known unbound spaces, the create event is
+  ignored without claiming a target. For `target_closed`, the target lifecycle
+  path accepts the close event and asynchronously dissolves the Team and
+  releases the binding.
 - **First-inbound provisioning.** When a bindable target has no existing binding
   and `envelope.container` is set on `deliver()`, `routeChannelInput` calls
   `acceptAndProvisionTarget` synchronously before routing. This may use channel
@@ -173,11 +173,33 @@ Provisioning has two entry points:
   `(channel_id, target_key)` omits `envelope.container`, core still checks for
   an existing durable collaboration-space target claim before falling back to
   the dispatcher agent.
+- **Optional strict session operations.** A provider may feature-detect
+  `ChannelRoutes.ensureCollaborationTarget` and `deliverExact`.
+  `ensureCollaborationTarget` reuses `acceptAndProvisionTarget` but returns only
+  after the target is active and bound, the Team is running, the TeamLeader is
+  ready, local workspace preparation has completed, and the exact claimed route
+  still matches. It returns the existing Team name and accepts no repository,
+  cwd, or workspace-mode input; omitted-repo placement follows the dispatcher's
+  local `workspace.enabled` policy. `deliverExact` holds the target and Team
+  route fences, requires the authoritative owner to match
+  `expected_team_name`, and submits directly to the TeamLeader. It never walks
+  `binding_fallbacks` or invokes the dispatcher agent. Both methods use bounded
+  public rejection codes and participate in dispatcher admission and shutdown
+  drain. They add no remote close operation or retained submission state;
+  `sourceId` remains a live-runtime correlation/dedupe hint. Every
+  `ChannelSession.start` receives a fresh process-local lease for the two strict
+  closures. Stop and failed-start rollback revoke it before session close; an
+  old generation thereafter returns `dispatcher_unavailable` without entering
+  routing or materializing a runtime.
 
 Both paths bypass the dispatcher agent runtime but still go through
-`DispatcherService` and core stores. Direct inbound promises are admitted and
-tracked by `DispatcherService`, so stop rejects later callbacks and drains older
-ones before sweeping materialized Team runtimes. Dispatcher and Team cron command
+`DispatcherService` and core stores. Direct inbound and strict promises are
+admitted and tracked by `DispatcherService`; session-lease revocation permanently
+rejects later strict callbacks from an old generation, while dispatcher drain
+waits for calls that crossed admission before sweeping materialized Team runtimes.
+Failed Channel start uses the same fence and sweep after closing its sessions,
+while retaining durable target and Team facts for the next generation.
+Dispatcher and Team cron command
 surfaces expose only `SchedulerCommands`; cron fires use the same owner
 admission, while scheduler lifecycle methods stay owner-only through the
 dispatcher container or TeamCollection's private lifecycle capability. Stop
@@ -207,6 +229,44 @@ loud. A missing route is reclaimed only when the original Team is still
 routable. Detached targets fall back to the normal dispatcher path.
 When the space is dissolved, future deliveries also fall back unless the space
 is rebound.
+
+## Dispatcher-Scoped Core Events
+
+Each `DispatcherService` owns one in-process `DispatcherCoreEventBus`. It is a
+best-effort distribution helper, not a fact owner or store. Existing owners
+publish after their normal write point:
+
+- `TeamStore` publishes Team status and concrete leader changes;
+- `AgentIdentityStore` publishes TeamLeader and TeamMate status changes;
+- `AgentTurnsStore` publishes Team-owned submitted and settled turn rows after
+  the append attempt, using the normalized Assistant value and truncation fact.
+
+Channel sessions receive only a public `ChannelCoreEventSource`. It supports
+typed `on(...)` subscriptions and idempotent per-listener `unsubscribe()`;
+providers cannot emit, enumerate, or remove other listeners. The source covers
+allowlisted Team, agent, and turn identities for the current dispatcher only.
+It contains no dispatcher id, channel target, repository/path, prompt, raw
+error, platform identity, cursor, or acknowledgement.
+
+Core installs the source before calling `ChannelSession.start`, so a session may
+subscribe before triggering a strict ensure. Stop and start-failure cleanup
+revoke the whole session source and strict-route lease before closing sessions;
+later subscription attempts fail and old subscription handles become no-ops.
+Events are
+live-session-only: the bus retains no history and provides no eventual-delivery
+or historical-query guarantee. A settled Assistant uses the same 160k core cap
+as the turn archive, and `assistant_truncated` is true when either the runtime
+already truncated the result or the core cap did.
+
+Key source:
+
+- `/packages/dreamux-types/src/channel.ts`
+- `/packages/dreamux/src/service/dispatcher-core-events/`
+- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
+- `/packages/dreamux/src/service/agent-entity/turns-store.ts`
+- `/packages/dreamux/src/service/team-collection/store.ts`
+- `/packages/dreamux/src/service/dispatcher-service/collaboration-routing.ts`
+- `/packages/dreamux/src/service/dispatcher-service/index.ts`
 
 The built-in Feishu provider implements first-inbound collaboration routing for
 real topic-mode groups. After the access gate accepts an inbound, the provider
@@ -282,6 +342,7 @@ Codex `turn/start` folding details.
 
 ## Decision Trail
 
+- [Channel-scoped collaboration and core events](../decisions/channel-scoped-collaboration-and-core-events.md)
 - [NPM package split and channel targets](../decisions/npm-package-split-and-channel-targets.md)
 - [Provider architecture realignment](../decisions/provider-architecture-realignment.md)
 - [Channel provider](../decisions/channel-provider.md)

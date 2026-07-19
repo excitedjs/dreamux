@@ -35,6 +35,7 @@ import type {
 } from './types.js';
 import { validateTeamId } from './types.js';
 import type { AgentEntityIdentityStatus } from '../agent-entity/types.js';
+import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import {
   TeamService,
   type TeamSchedulerLifecycle,
@@ -76,6 +77,7 @@ export interface TeamCollectionOptions {
     leaderName: string;
   }) => readonly AgentRuntimeMcpServer[];
   log: DreamuxLogger;
+  coreEvents?: DispatcherCoreEventPublisher;
 }
 
 /**
@@ -90,7 +92,7 @@ export interface TeamCollectionOptions {
  */
 export class TeamCollection {
   private readonly dispatcherId: string;
-  private readonly store = new TeamStore();
+  private readonly store: TeamStore;
   private readonly worktrees: WorktreeManager;
   /** Live {@link TeamService} cache keyed by team id (issue #233 factory). */
   private readonly cache = new Map<string, TeamService>();
@@ -127,6 +129,7 @@ export class TeamCollection {
   constructor(private readonly opts: TeamCollectionOptions) {
     this.dispatcherId = opts.dispatcherId;
     this.worktrees = opts.worktrees;
+    this.store = new TeamStore(opts.coreEvents);
   }
 
   async create(input: TeamCreateInput): Promise<TeamCreateResult> {

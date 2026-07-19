@@ -33,12 +33,16 @@ export async function recordSettledTurn(
     turnId: string | null;
     assistant: string | null;
     settleStatus: 'completed' | 'failed' | 'stopped' | null;
+    assistantTruncated?: boolean;
   },
 ): Promise<void> {
   await turnsStore.appendSettled(turnsScopeOf(state.current()), {
     turnId: input.turnId,
     assistant: input.assistant,
     settleStatus: input.settleStatus,
+    ...(input.assistantTruncated !== undefined
+      ? { assistantTruncated: input.assistantTruncated }
+      : {}),
   });
   await state.recordSettledTurn(input.assistant);
 }

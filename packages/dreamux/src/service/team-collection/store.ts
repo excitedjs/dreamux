@@ -8,8 +8,11 @@ import {
 } from '../../platform/paths.js';
 import type { TeamRecord, TeamStatus } from './types.js';
 import { validateTeamId } from './types.js';
+import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 
 export class TeamStore {
+  constructor(private readonly coreEvents?: DispatcherCoreEventPublisher) {}
+
   async get(dispatcherId: string, teamId: string): Promise<TeamRecord | null> {
     validateTeamId(teamId);
     try {
@@ -54,6 +57,7 @@ export class TeamStore {
       updated_at: now,
     };
     await this.write(team);
+    this.publishState(team);
     return team;
   }
 
@@ -83,7 +87,24 @@ export class TeamStore {
       updated_at: Date.now(),
     };
     await this.write(updated);
+    if (
+      updated.status !== team.status ||
+      updated.leader_name !== team.leader_name
+    ) {
+      this.publishState(updated);
+    }
     return updated;
+  }
+
+  private publishState(team: TeamRecord): void {
+    this.coreEvents?.publish(team.dispatcher_id, {
+      schema_version: 1,
+      kind: 'team.state',
+      occurred_at: team.updated_at,
+      team_name: team.team_id,
+      leader_name: team.leader_name,
+      status: team.status,
+    });
   }
 
   private async write(team: TeamRecord): Promise<void> {

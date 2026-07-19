@@ -194,6 +194,13 @@ export class TeammateService {
       text,
       sourceId: `completion:${completion.id}`,
     });
+    if (result.status === 'submitted') {
+      await recordSubmittedTurn(this.turnsStore, this.live(), {
+        turnId: result.turnId,
+        turnOrigin: null,
+        prompt: text,
+      });
+    }
     return turnResultToCompletionDelivery(result);
   }
 
@@ -491,6 +498,7 @@ export class TeammateService {
       turnId: settled.turnId,
       assistant: result,
       settleStatus: settled.status,
+      assistantTruncated: settled.result?.truncated === true,
     });
     const route = this.deps.routeSettledCompletion(
       identity.name,
