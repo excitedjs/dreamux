@@ -2,6 +2,18 @@
   "name": "@excitedjs/dreamux",
   "entries": [
     {
+      "version": "0.19.2",
+      "tag": "@excitedjs/dreamux_v0.19.2",
+      "date": "Mon, 20 Jul 2026 07:33:54 GMT",
+      "comments": {
+        "patch": [
+          {
+            "comment": "Create the managed service state working directory before systemd or launchd registration."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.19.1",
       "tag": "@excitedjs/dreamux_v0.19.1",
       "date": "Mon, 20 Jul 2026 06:55:12 GMT",

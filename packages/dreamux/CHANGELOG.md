@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/dreamux
 
-This log was last generated on Mon, 20 Jul 2026 06:55:12 GMT and should not be manually modified.
+This log was last generated on Mon, 20 Jul 2026 07:33:54 GMT and should not be manually modified.
+
+## 0.19.2
+Mon, 20 Jul 2026 07:33:54 GMT
+
+### Patches
+
+- Create the managed service state working directory before systemd or launchd registration.
 
 ## 0.19.1
 Mon, 20 Jul 2026 06:55:12 GMT
