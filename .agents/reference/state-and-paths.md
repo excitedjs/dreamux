@@ -136,6 +136,60 @@ Key source:
 - `/packages/dreamux/src/platform/runtime-sockets.ts`
 - `/packages/dreamux/src/admin/socket.ts`
 
+## Managed Service PATH
+
+`dreamux onboard` and `dreamux daemon install` generate a systemd user service
+or launchd plist with an explicit `PATH` environment. The same effective PATH
+resolves bare provider/agent binaries during service installation.
+
+Order, built by `buildServicePath()` in
+`/packages/dreamux/src/platform/paths.ts` (the single source of truth):
+
+1. Stable Dreamux-owned dirs: selected Node bin dir, resolved provider bin dirs,
+   dreamux bin dir.
+2. Captured interactive-session `PATH` from the env the operator ran
+   `onboard`/`daemon install` under, in its original order.
+3. Fresh-install fallback dirs: `$XDG_BIN_HOME` when set, `$HOME/.local/bin`,
+   and portable platform system dirs (`standardExecDirs`).
+
+Entries are de-duplicated while preserving first occurrence. Re-running
+`daemon install` after switching nvm/pyenv/Homebrew environments regenerates the
+service PATH.
+
+`withServicePath(env, input)` returns a copy of `env` with `PATH` set to
+`buildServicePath(input)`; it never mutates the caller's env or `process.env`.
+`env`/`homeDir`/`platform` are passed explicitly by callers — the path builders
+never read `process.env`.
+
+The callers (`runOnboard` in `onboard/run.ts` and `runDaemonInstall` in
+`daemon/install.ts`) resolve the *effective* values before persisting them into
+`ServiceInstallAnswers`/`EffectiveOnboardAnswers`: `env` is
+`options.env ?? process.env`, `homeDir` is `options.homeDir ?? homedir()`, and
+`platform` is `options.platform ?? process.platform`. In normal CLI use
+`options.env` is undefined, so the ambient `process.env.PATH` is captured into
+the service unit. Both the resolve-time PATH and the service-unit PATH use these
+same effective values.
+
+Resolve-time binary resolution uses `withUserLocalBinPath()` in
+`/packages/dreamux/src/onboard/service.ts`, a thin wrapper that builds the
+effective PATH from the captured session PATH + fallback dirs (no stable dirs,
+since the Node bin is not yet selected at resolve time). The service-unit PATH
+is rendered by `managedServicePath()` in the same module, which adds the stable
+dirs and delegates to `buildServicePath()`. Both share the single source.
+
+Key source:
+
+- `/packages/dreamux/src/platform/paths.ts` (`buildServicePath`,
+  `withServicePath`, `standardExecDirs`, `userLocalBinDirs`,
+  `systemExecDirs`, `dedupeExecDirs`)
+- `/packages/dreamux/src/onboard/service.ts` (`managedServicePath`,
+  `managedServiceEnvironment`, `withUserLocalBinPath`,
+  `resolveServiceExecutable`)
+- `/packages/dreamux/src/onboard/service-node.ts` (Node selection and
+  version-manager detection)
+- `/packages/dreamux/src/onboard/run.ts`
+- `/packages/dreamux/src/daemon/install.ts`
+
 ## Cache And Logs
 
 `~/.dreamux/cache/<dispatcher-id>/` is rebuildable cache:

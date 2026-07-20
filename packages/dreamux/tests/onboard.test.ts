@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, sep } from 'node:path';
+import { delimiter, dirname, join, sep } from 'node:path';
 
 import { parse as parsePlist } from 'plist';
 
@@ -246,7 +246,17 @@ describe('dreamux onboard', () => {
     // codex dir below).
     expect(serviceUnit).not.toContain('CODEX_HOST_CODEX_BIN');
     expect(serviceUnit).toContain(`Environment=HOME=${join(root, 'home')}`);
-    expect(serviceUnit).toContain(`Environment=PATH=${dirname(process.execPath)}`);
+    // The service PATH leads with the stable Node dir and includes the user's
+    // local standard bin dir ($HOME/.local/bin here) so provider-owned bare
+    // binaries installed there (e.g. local-agent) resolve under the service env.
+    const servicePath =
+      serviceUnit
+        .split('\n')
+        .find((line) => line.startsWith('Environment=PATH='))
+        ?.slice('Environment=PATH='.length) ?? '';
+    expect(servicePath).toContain(dirname(process.execPath));
+    expect(servicePath).toContain(join(root, 'home', '.local', 'bin'));
+    expect(servicePath.split(':')[0]).toBe(dirname(process.execPath));
     expect(
       ledger.get(join(logsRoot(), 'daemon.stdout.log'))?.status,
     ).toBe('created');
@@ -283,10 +293,117 @@ describe('dreamux onboard', () => {
       'utf8',
     );
     expect(serviceUnit).toContain('Environment=DREAMUX_NODE_BIN=/usr/local/bin/node');
-    expect(serviceUnit).toContain('Environment=PATH=/usr/local/bin');
+    const servicePath =
+      serviceUnit
+        .split('\n')
+        .find((line) => line.startsWith('Environment=PATH='))
+        ?.slice('Environment=PATH='.length) ?? '';
+    // The stable Node dir leads the service PATH; the user's local standard bin
+    // dir is also included so bare provider binaries installed there resolve.
+    expect(servicePath.split(':')[0]).toBe('/usr/local/bin');
+    expect(servicePath).toContain(join(root, 'home', '.local', 'bin'));
     expect(serviceUnit).not.toContain(
       `Environment=DREAMUX_NODE_BIN=${process.execPath}`,
     );
+  });
+
+  it('captures the interactive session PATH into the service PATH after stable dirs', async () => {
+    const runner = new FakeRunner();
+    const answers = testAnswers({
+      configDir: join(root, 'config'),
+      dreamuxBin: '/usr/local/bin/dreamux',
+    });
+    writeGlobalCodexAuth(answers);
+    // No stable system Node so the current process Node is used (its dirname
+    // leads the service PATH). The session PATH carries synthetic nvm/pyenv
+    // entries that must be preserved in order after the stable dirs.
+    const sessionPath = [
+      join(root, 'home', '.nvm', 'versions', 'node', 'v22.7.0', 'bin'),
+      join(root, 'home', '.pyenv', 'shims'),
+      '/usr/bin',
+      '/bin',
+    ].join(':');
+
+    await runOnboard({
+      answers,
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: { PATH: sessionPath, CODEX_ACCESS_TOKEN: 'interactive-token-test' },
+      nodeProbe: noSystemNodeProbe,
+    });
+
+    const serviceUnit = readFileSync(
+      join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service'),
+      'utf8',
+    );
+    const servicePath =
+      serviceUnit
+        .split('\n')
+        .find((line) => line.startsWith('Environment=PATH='))
+        ?.slice('Environment=PATH='.length) ?? '';
+    const parts = servicePath.split(':');
+    // Stable dirs lead (the current Node bin dir).
+    expect(parts[0]).toBe(dirname(process.execPath));
+    // Session PATH entries follow in their original order.
+    expect(parts).toContain(join(root, 'home', '.nvm', 'versions', 'node', 'v22.7.0', 'bin'));
+    expect(parts).toContain(join(root, 'home', '.pyenv', 'shims'));
+    // Fallback dirs are present last.
+    expect(parts).toContain(join(root, 'home', '.local', 'bin'));
+    // De-duplicated: /usr/bin appears exactly once (from session PATH; fallback
+    // does not re-add it).
+    expect(parts.filter((p) => p === '/usr/bin')).toHaveLength(1);
+  });
+
+  it('captures the ambient process.env PATH when options.env is omitted (normal CLI use)', async () => {
+    const runner = new FakeRunner();
+    const answers = testAnswers({
+      configDir: join(root, 'config'),
+      dreamuxBin: '/usr/local/bin/dreamux',
+    });
+    writeGlobalCodexAuth(answers);
+    const home = join(root, 'home');
+    // Synthetic nvm/pyenv dirs in the ambient PATH. Not fallback dirs, so they
+    // can only come from the captured session PATH.
+    const nvmBin = join(home, '.nvm', 'versions', 'node', 'v22.7.0', 'bin');
+    const pyenvShims = join(home, '.pyenv', 'shims');
+    const oldPath = process.env['PATH'];
+    const oldToken = process.env['CODEX_ACCESS_TOKEN'];
+    process.env['PATH'] = [nvmBin, pyenvShims, '/usr/bin', '/bin'].join(delimiter);
+    process.env['CODEX_ACCESS_TOKEN'] = 'interactive-token-test';
+
+    try {
+      // No env option: normal CLI use falls back to process.env.
+      await runOnboard({
+        answers,
+        runner,
+        platform: 'linux',
+        homeDir: home,
+        nodeProbe: noSystemNodeProbe,
+      });
+    } finally {
+      process.env['PATH'] = oldPath;
+      if (oldToken === undefined) delete process.env['CODEX_ACCESS_TOKEN'];
+      else process.env['CODEX_ACCESS_TOKEN'] = oldToken;
+    }
+
+    const serviceUnit = readFileSync(
+      join(home, '.config', 'systemd', 'user', 'dreamux.service'),
+      'utf8',
+    );
+    const servicePath =
+      serviceUnit
+        .split('\n')
+        .find((line) => line.startsWith('Environment=PATH='))
+        ?.slice('Environment=PATH='.length) ?? '';
+    const parts = servicePath.split(delimiter);
+    // Stable dirs lead (the current Node bin dir).
+    expect(parts[0]).toBe(dirname(process.execPath));
+    // Ambient session PATH entries are captured in order.
+    expect(parts).toContain(nvmBin);
+    expect(parts).toContain(pyenvShims);
+    // Fallback dirs are present last.
+    expect(parts).toContain(join(home, '.local', 'bin'));
   });
 
   it('excludes a version-manager-bound candidate and falls back to the current Node', async () => {
@@ -453,6 +570,11 @@ describe('dreamux onboard', () => {
     );
     expect(launchdPlist['EnvironmentVariables']['PATH']).toContain(
       dirname(process.execPath),
+    );
+    // The user's local standard bin dir is included so bare provider binaries
+    // installed there (e.g. local-agent in $HOME/.local/bin) resolve for the service.
+    expect(launchdPlist['EnvironmentVariables']['PATH']).toContain(
+      join(root, 'home', '.local', 'bin'),
     );
   });
 
