@@ -26,6 +26,7 @@ import type { CommandRunner } from '../src/onboard/types.js';
 import {
   buildServicePath,
   resetRuntimeConfig,
+  stateRoot,
   standardExecDirs,
   systemExecDirs,
   userLocalBinDirs,
@@ -182,6 +183,109 @@ class InstallRunner implements CommandRunner {
     throw new Error(`unexpected capture: ${args.join(' ')}`);
   }
 }
+
+class WorkingDirectoryOrderRunner extends InstallRunner {
+  readonly registrationChecks: boolean[] = [];
+
+  constructor(private readonly workingDirectory: string) {
+    super();
+  }
+
+  override async run(
+    command: string,
+    args: string[],
+    options: { dryRun?: boolean } = {},
+  ): Promise<void> {
+    if (
+      !options.dryRun &&
+      (command === 'systemctl' ||
+        (command === 'launchctl' &&
+          (args[0] === 'bootstrap' || args[0] === 'kickstart')))
+    ) {
+      this.registrationChecks.push(existsSync(this.workingDirectory));
+    }
+    await super.run(command, args, options);
+  }
+}
+
+describe('managed service working directory ownership', () => {
+  let root: string;
+  let oldHome: string | undefined;
+  let oldConfigDir: string | undefined;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'dreamux-service-working-dir-'));
+    oldHome = process.env['HOME'];
+    oldConfigDir = process.env['DREAMUX_CONFIG_DIR'];
+    process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_CONFIG_DIR'] = join(root, 'config');
+    writeInstallConfig(join(root, 'config'));
+  });
+
+  afterEach(() => {
+    restoreEnv('HOME', oldHome);
+    restoreEnv('DREAMUX_CONFIG_DIR', oldConfigDir);
+    resetRuntimeConfig();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it.each([
+    ['linux', undefined],
+    ['darwin', 501],
+  ] as const)(
+    'creates the state working directory before %s service registration',
+    async (platform, uid) => {
+      const workingDirectory = stateRoot();
+      const runner = new WorkingDirectoryOrderRunner(workingDirectory);
+      const nodeProbe: ServiceNodeProbe = {
+        realpath: async (path) => path,
+        isExecutable: async () => false,
+      };
+
+      const result = await runDaemonInstall({
+        runner,
+        platform,
+        homeDir: join(root, 'home'),
+        nodeProbe,
+        env: {
+          ...process.env,
+          CODEX_HOST_CODEX_BIN: process.execPath,
+        },
+        ...(uid === undefined ? {} : { uid }),
+      });
+
+      expect(existsSync(workingDirectory)).toBe(true);
+      expect(runner.registrationChecks.length).toBeGreaterThan(0);
+      expect(runner.registrationChecks.every(Boolean)).toBe(true);
+      expect(result.files).toContainEqual({
+        path: workingDirectory,
+        status: 'created',
+        reason: 'managed service working directory',
+      });
+    },
+  );
+
+  it('reports the missing working directory without creating it on dry-run', async () => {
+    const workingDirectory = stateRoot();
+    const runner = new WorkingDirectoryOrderRunner(workingDirectory);
+
+    const result = await runDaemonInstall({
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      dryRun: true,
+      env: { ...process.env },
+    });
+
+    expect(existsSync(workingDirectory)).toBe(false);
+    expect(runner.registrationChecks).toEqual([]);
+    expect(result.files).toContainEqual({
+      path: workingDirectory,
+      status: 'created',
+      reason: 'managed service working directory',
+    });
+  });
+});
 
 describe('daemon install (stable service Node, issue #83)', () => {
   let root: string;
