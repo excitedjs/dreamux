@@ -190,6 +190,20 @@ Key source:
 - `/packages/dreamux/src/onboard/run.ts`
 - `/packages/dreamux/src/daemon/install.ts`
 
+## Managed Service Working Directory
+
+Both the systemd unit and launchd plist use `stateRoot()`
+(`~/.dreamux/state/`) as their working directory. `installUserService()` owns
+creating that directory before either service manager registers or starts the
+service, so `dreamux daemon install --start` works even when onboarding did not
+previously create server state. Dry runs record the planned directory creation
+in the transparent file ledger without changing the filesystem.
+
+Key source:
+
+- `/packages/dreamux/src/onboard/service.ts`
+- `/packages/dreamux/src/onboard/ledger.ts`
+
 ## Cache And Logs
 
 `~/.dreamux/cache/<dispatcher-id>/` is rebuildable cache:

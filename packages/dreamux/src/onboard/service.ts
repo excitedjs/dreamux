@@ -110,9 +110,16 @@ export async function installUserService(
 ): Promise<ServiceInstallResult> {
   const homeDir = options.homeDir ?? homedir();
   const unit = serviceUnitPath(options.platform, homeDir);
+  const workingDir = stateRoot();
   const logDir = logsRoot();
   const stdoutLog = join(logDir, 'daemon.stdout.log');
   const stderrLog = join(logDir, 'daemon.stderr.log');
+  await ensureDirectory(
+    workingDir,
+    options.ledger,
+    'managed service working directory',
+    { dryRun: options.answers.dryRun },
+  );
   await ensureDirectory(logDir, options.ledger, 'daemon log directory', {
     dryRun: options.answers.dryRun,
   });
