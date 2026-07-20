@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/dreamux
 
-This log was last generated on Sun, 19 Jul 2026 03:45:02 GMT and should not be manually modified.
+This log was last generated on Mon, 20 Jul 2026 06:55:12 GMT and should not be manually modified.
+
+## 0.19.1
+Mon, 20 Jul 2026 06:55:12 GMT
+
+### Patches
+
+- Capture the full interactive-session PATH from `dreamux onboard` / `daemon install` and persist it into the generated systemd user service and launchd plist. The managed-service PATH leads with stable Dreamux-owned dirs (selected Node bin dir, resolved provider bin dirs, dreamux bin dir), then appends every entry of the captured session PATH in its original order, then appends fresh-install fallback dirs (`$XDG_BIN_HOME` when set, `$HOME/.local/bin`, and portable platform system dirs). All entries are de-duplicated while preserving first occurrence. Re-running `daemon install` after switching nvm/pyenv/Homebrew environments regenerates the service PATH. The same effective PATH resolves provider/agent binaries during service installation. No `process.env` mutation and no shell profile edits. `buildServicePath()`/`withServicePath()` in `platform/paths.ts` are the single source of truth; `withUserLocalBinPath()` builds the resolve-time effective PATH.
 
 ## 0.19.0
 Sun, 19 Jul 2026 03:45:02 GMT
