@@ -1,4 +1,5 @@
 import { pathExists } from '../platform/fs-errors.js';
+import { homedir } from 'node:os';
 
 import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
 import {
@@ -37,6 +38,7 @@ import {
   selectServiceNodeBin,
   type ServiceNodeProbe,
   validateManagedServiceLaunch,
+  withUserLocalBinPath,
 } from './service.js';
 import type {
   CommandRunner,
@@ -69,12 +71,14 @@ export async function runOnboard(
   const ledger = options.ledger ?? new TransparentFileLedger();
   const runner = options.runner ?? new ExecaCommandRunner();
   const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const homeDir = options.homeDir ?? homedir();
   const configPath = globalConfigFile({ configDir: answers.configDir });
   const existingConfig = await readExistingDreamuxConfig(answers.configDir);
   const dreamuxConfig = dreamuxConfigFromAnswers(answers, existingConfig);
   const serviceNodeBin = answers.registerService && !answers.dryRun
     ? await selectServiceNodeBin({
-        platform: options.platform ?? process.platform,
+        platform,
         currentNodeBin: process.execPath,
         runner,
         probe: options.nodeProbe,
@@ -125,12 +129,26 @@ export async function runOnboard(
   const catalogs = loaded === null ? null : catalogsFromLoadedConfig(loaded);
   const providerBinChecks =
     answers.registerService && !answers.dryRun && loaded !== null && catalogs !== null
-      ? await resolveProviderBinChecks(loaded.config, catalogs, env)
+      ? await resolveProviderBinChecks(
+          loaded.config,
+          catalogs,
+          env,
+          platform,
+          homeDir,
+        )
       : [];
+  // Persist the effective resolved env/homeDir/platform (not the optional raw
+  // options values) so managedServicePath renders the captured session PATH and
+  // the preflight uses the exact same inputs. In normal CLI use options.env is
+  // undefined, so env falls back to process.env — that ambient PATH must be
+  // persisted into the service unit.
   const effectiveAnswers = {
     ...answers,
     nodeBin: serviceNodeBin,
     providerBinChecks,
+    homeDir,
+    platform,
+    env,
   };
 
   const doctor = await runDispatcherDoctor(
@@ -158,8 +176,8 @@ export async function runOnboard(
         answers: effectiveAnswers,
         ledger,
         runner,
-        platform: options.platform,
-        homeDir: options.homeDir,
+        platform,
+        homeDir,
         uid: options.uid,
       })
     : null;
@@ -203,6 +221,8 @@ async function resolveProviderBinChecks(
   config: DreamuxConfig,
   catalogs: ProviderDiagnosticCatalogs,
   env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+  homeDir: string,
 ): Promise<ProviderBinCheck[]> {
   const checks = providerBinChecksForConfig({
     config,
@@ -210,10 +230,16 @@ async function resolveProviderBinChecks(
     env,
     scope: 'managedService',
   });
+  // Bare provider binaries (e.g. a `local-agent` installed to
+  // $HOME/.local/bin) resolve against the effective service PATH, which the
+  // service unit also includes. Resolve against that augmented PATH so the
+  // daemon-install preflight and the running service agree. process.env is
+  // never mutated; platform/homeDir/env are passed explicitly by the caller.
+  const resolveEnv = withUserLocalBinPath(env, homeDir, platform);
   return await Promise.all(
     checks.map(async (check) => ({
       ...check,
-      bin: await resolveServiceExecutable(check.bin, env),
+      bin: await resolveServiceExecutable(check.bin, resolveEnv),
     })),
   );
 }

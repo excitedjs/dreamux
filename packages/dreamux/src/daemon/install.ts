@@ -10,12 +10,14 @@
  */
 
 import { ExecaCommandRunner } from '../onboard/commands.js';
+import { homedir } from 'node:os';
 import {
   installUserService,
   removeUserService,
   resolveServiceExecutable,
   selectServiceNodeBin,
   validateManagedServiceLaunch,
+  withUserLocalBinPath,
   type ServiceInstallAnswers,
   type ServiceInstallResult,
   type ServiceNodeProbe,
@@ -73,6 +75,8 @@ export async function runDaemonInstall(
 ): Promise<DaemonInstallResult> {
   const runner = options.runner ?? new ExecaCommandRunner();
   const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const homeDir = options.homeDir ?? homedir();
   const dryRun = options.dryRun ?? false;
   const startService = options.startService ?? true;
 
@@ -93,7 +97,12 @@ export async function runDaemonInstall(
   const providerBinChecks = await Promise.all(
     serviceProviderBinChecks(config, env, catalogs).map(async (check) => ({
       ...check,
-      bin: dryRun ? check.bin : await resolveServiceExecutable(check.bin, env),
+      bin: dryRun
+        ? check.bin
+        : await resolveServiceExecutable(
+            check.bin,
+            withUserLocalBinPath(env, homeDir, platform),
+          ),
     })),
   );
   // Pin the managed service to a stable system Node (issue #83) rather than the
@@ -102,11 +111,16 @@ export async function runDaemonInstall(
   const nodeBin = dryRun
     ? process.execPath
     : await selectServiceNodeBin({
-        platform: options.platform ?? process.platform,
+        platform,
         currentNodeBin: process.execPath,
         runner,
         ...(options.nodeProbe !== undefined ? { probe: options.nodeProbe } : {}),
       });
+  // Persist the effective resolved env/homeDir/platform (not the optional raw
+  // options values) so managedServicePath renders the captured session PATH and
+  // the preflight uses the exact same inputs. In normal CLI use options.env is
+  // undefined, so env falls back to process.env — that ambient PATH must be
+  // persisted into the service unit.
   const answers: ServiceInstallAnswers = {
     configDir: globalConfigDir(),
     dreamuxBin: dreamuxBinPath(env),
@@ -114,6 +128,9 @@ export async function runDaemonInstall(
     providerBinChecks,
     startService,
     dryRun,
+    homeDir,
+    platform,
+    env,
   };
 
   if (!dryRun) {
@@ -134,8 +151,8 @@ export async function runDaemonInstall(
     answers,
     ledger,
     runner,
-    platform: options.platform,
-    homeDir: options.homeDir,
+    platform,
+    homeDir,
     uid: options.uid,
   });
   return { service, files: ledger.entries() };
