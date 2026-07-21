@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/dreamux
 
-This log was last generated on Mon, 20 Jul 2026 07:33:54 GMT and should not be manually modified.
+This log was last generated on Tue, 21 Jul 2026 09:40:27 GMT and should not be manually modified.
+
+## 0.19.3
+Tue, 21 Jul 2026 09:40:27 GMT
+
+### Patches
+
+- Allow TeamLeaders to safely bind unowned channel targets to their current Team.
 
 ## 0.19.2
 Mon, 20 Jul 2026 07:33:54 GMT
