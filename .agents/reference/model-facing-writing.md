@@ -27,7 +27,8 @@ The same applies to TeamLeader skills and caller-specific MCP descriptions.
 Before adding a rule, verify the real tool projection in source:
 
 - Dispatcher-visible tools are not automatically visible to TeamLeaders.
-- TeamLeader-visible `team` MCP exposes only `transfer_back`.
+- TeamLeader-visible `team` MCP exposes only scoped `bind_channel` and
+  `transfer_back`; bind has no model-supplied Team name.
 - Ordinary TeamMates and team members receive no bundled Dreamux skill by
   default.
 - Channel reply tools exist only when the active Channel provider exposes them.

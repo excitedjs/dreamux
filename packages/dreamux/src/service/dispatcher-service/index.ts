@@ -629,12 +629,12 @@ export class DispatcherService {
     return this.admitOperation(() => this.teamChannels.dissolve(input));
   }
 
-  async bindTeamChannel(input: {
-    teamId: string;
-    channelId?: string;
-    meta: Record<string, unknown>;
-  }) {
+  async bindTeamChannel(input: Parameters<TeamChannelCoordinator['bind']>[0]) {
     return this.admitOperation(() => this.teamChannels.bind(input));
+  }
+
+  async bindTeamLeaderChannel(input: Parameters<TeamChannelCoordinator['bindForTeamLeader']>[0]) {
+    return this.admitOperation(() => this.teamChannels.bindForTeamLeader(input));
   }
 
   async transferTeamChannelBack(input: {

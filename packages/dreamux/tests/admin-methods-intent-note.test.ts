@@ -212,6 +212,68 @@ describe('Team channel admin methods replace the old binding methods (#209 slice
     expect(seen[1]).toMatchObject({ meta: { chat_id: 'chat-demo' } });
   });
 
+  it('derives TeamLeader bind scope from the descriptor and rejects team_name', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const binding = { provider: 'provider:test', target_key: 'target-demo' };
+    const channelStub = {
+      repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
+      getDispatcher: () => ({
+        bindTeamLeaderChannel: async (input: Record<string, unknown>) => {
+          seen.push(input);
+          return binding;
+        },
+      }),
+    } as unknown as Server;
+    const scope = {
+      dispatcher_id: 'flow',
+      caller_kind: 'team_leader',
+      team_id: 'alpha',
+      leader_name: 'alpha-leader',
+      meta: { target: 'target-demo' },
+    };
+
+    await expect(
+      adminMethods['team.bind_channel']!(channelStub, scope),
+    ).resolves.toEqual(binding);
+    expect(seen).toEqual([{
+      lease: { teamId: 'alpha', leaderName: 'alpha-leader' },
+      meta: { target: 'target-demo' },
+    }]);
+
+    await expect(
+      adminMethods['team.bind_channel']!(channelStub, {
+        ...scope,
+        team_name: 'beta',
+      }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(seen).toHaveLength(1);
+  });
+
+  it('maps unavailable TeamLeader scope and binding conflicts at the admin boundary', async () => {
+    const scope = {
+      dispatcher_id: 'flow',
+      caller_kind: 'team_leader',
+      team_id: 'alpha',
+      leader_name: 'stale-leader',
+      meta: { target: 'target-demo' },
+    };
+    const serverFor = (error: Error) => ({
+      repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
+      getDispatcher: () => ({
+        bindTeamLeaderChannel: async () => { throw error; },
+      }),
+    }) as unknown as Server;
+
+    await expect(adminMethods['team.bind_channel']!(
+      serverFor(new TeamUnavailableError('stale TeamLeader generation')),
+      scope,
+    )).rejects.toMatchObject({ code: 'TEAM_NOT_FOUND' });
+    await expect(adminMethods['team.bind_channel']!(
+      serverFor(new Error('target is already bound')),
+      scope,
+    )).rejects.toMatchObject({ code: 'TEAM_BIND_FAILED' });
+  });
+
   it('passes TeamLeader caller scope as an expected transfer owner', async () => {
     const seen: Array<Record<string, unknown>> = [];
     const channelStub = {

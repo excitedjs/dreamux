@@ -149,9 +149,11 @@ Team lifecycle is addressed by `team_name`. Dispatcher-visible Team MCP tools:
 - `bind_channel`
 - `transfer_back`
 
-TeamLeader-visible Team MCP exposes only scoped `transfer_back`. Peer Team send
-remains future work; TeamLeaders use their scoped TeamMate MCP to send to Team
-members.
+TeamLeader-visible Team MCP exposes scoped `bind_channel` and `transfer_back`.
+Bind derives the Team and current leader generation from the MCP descriptor,
+and can only create an unowned explicit route or repeat the exact same one;
+dispatcher bind retains replacement semantics. Peer Team send remains future
+work; TeamLeaders use their scoped TeamMate MCP to send to Team members.
 
 `team.create` may include a first `prompt`; if omitted, the TeamLeader starts
 idle and waits for later Team MCP `send` or bound-channel inbound. Team-owned

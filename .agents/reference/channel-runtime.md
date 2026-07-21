@@ -84,8 +84,12 @@ projections:
   `send({ team_name, prompt, intent? })` to submit a turn to the TeamLeader,
   `bind_channel({ team_name, channel_id?, meta })` and
   `transfer_back({ channel_id?, meta })`
-- TeamLeader projection: only scoped
-  `transfer_back({ channel_id?, meta })`
+- TeamLeader projection:
+  `bind_channel({ channel_id?, meta })` and
+  `transfer_back({ channel_id?, meta })`, both scoped to the descriptor-bound
+  current Team/leader. TeamLeader bind is create-only for unowned targets and
+  refuses collaboration-managed routes; dispatcher bind keeps replacement
+  semantics.
 
 The `meta` object is provider-owned target selector input. Team peer send
 remains future work and is not part of channel binding.

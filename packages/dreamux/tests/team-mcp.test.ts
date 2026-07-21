@@ -685,9 +685,16 @@ describe('team-mcp stdio shim', () => {
     }
   });
 
-  it('projects Team MCP to TeamLeader transfer_back only and forwards caller scope', async () => {
+  it('projects scoped bind_channel and transfer_back to TeamLeader and forwards caller scope', async () => {
     const tools = await teamLeaderToolSchemas();
-    expect(tools.map((tool) => tool['name'])).toEqual(['transfer_back']);
+    expect(tools.map((tool) => tool['name'])).toEqual([
+      'bind_channel',
+      'transfer_back',
+    ]);
+    expect(schemaOf(tools, 'bind_channel').required).toEqual(['meta']);
+    expect(schemaOf(tools, 'bind_channel').properties).toHaveProperty('channel_id');
+    expect(schemaOf(tools, 'bind_channel').properties).toHaveProperty('meta');
+    expect(schemaOf(tools, 'bind_channel').properties).not.toHaveProperty('team_name');
     expect(schemaOf(tools, 'transfer_back').required).toEqual(['meta']);
 
     const admin = await startFakeAdminServer((request) => ({
@@ -715,19 +722,46 @@ describe('team-mcp stdio shim', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'transfer_back',
-          arguments: { meta: { chat_id: 'chat-demo' } },
+          name: 'bind_channel',
+          arguments: { meta: { target: 'target-demo' } },
         },
       });
       await reader.next();
 
-      expect(admin.requests[0]?.method).toBe('team.transfer_back');
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: {
+          name: 'transfer_back',
+          arguments: { meta: { target: 'target-demo' } },
+        },
+      });
+      await reader.next();
+
+      expect(admin.requests[0]?.method).toBe('team.bind_channel');
       expect(admin.requests[0]?.params).toMatchObject({
         caller_kind: 'team_leader',
         team_id: 'alpha',
         leader_name: 'alpha-leader',
-        meta: { chat_id: 'chat-demo' },
+        meta: { target: 'target-demo' },
       });
+      expect(admin.requests[0]?.params).not.toHaveProperty('team_name');
+      expect(admin.requests[1]?.method).toBe('team.transfer_back');
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: {
+          name: 'bind_channel',
+          arguments: {
+            team_name: 'beta',
+            meta: { target: 'target-demo' },
+          },
+        },
+      });
+      expect(await reader.next()).toMatchObject({ result: { isError: true } });
 
       const hiddenTools = [
         'create',
@@ -736,12 +770,11 @@ describe('team-mcp stdio shim', () => {
         'status',
         'history',
         'dissolve',
-        'bind_channel',
       ];
       for (const [idx, name] of hiddenTools.entries()) {
         writeJson(input, {
           jsonrpc: '2.0',
-          id: idx + 2,
+          id: idx + 4,
           method: 'tools/call',
           params: { name, arguments: {} },
         });
@@ -750,6 +783,7 @@ describe('team-mcp stdio shim', () => {
         });
       }
       expect(admin.requests.map((request) => request.method)).toEqual([
+        'team.bind_channel',
         'team.transfer_back',
       ]);
 

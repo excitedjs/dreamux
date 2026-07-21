@@ -2,7 +2,10 @@ import type { ChannelTarget } from '@excitedjs/dreamux-types';
 
 import type { ChannelRouteOwner, ChannelService } from '../channel-service/index.js';
 import type { TeamCollection } from '../team-collection/index.js';
-import type { TeamDissolveInput } from '../team-collection/types.js';
+import type {
+  TeamDissolveInput,
+  TeamLeaderLease,
+} from '../team-collection/types.js';
 import type { KeyedAsyncQueue } from '../serial-queue.js';
 import type { CollaborationSpaceStore } from './store.js';
 import {
@@ -65,6 +68,44 @@ export class CollaborationRouteReconciler {
       }
       return binding;
     }));
+  }
+
+  /**
+   * Publish a descriptor-scoped TeamLeader route without replacing any active
+   * owner or consuming collaboration-managed intent.
+   */
+  async bindLeasedTargetRoute(input: {
+    lease: TeamLeaderLease;
+    channelId: string;
+    target: ChannelTarget;
+  }) {
+    return this.opts.locks.run(routeKey({
+      channelId: input.channelId,
+      targetKey: input.target.target_key,
+    }), () => this.opts.teams.withRoutableTeamLeaderLease(
+      input.lease,
+      async (owner) => {
+        const latest = await this.latestTarget(
+          input.channelId,
+          input.target.target_key,
+        );
+        if (
+          latest !== null &&
+          latest.lifecycle_status !== 'closed' &&
+          latest.lifecycle_status !== 'detached'
+        ) {
+          throw new Error(
+            `channel target ${JSON.stringify(input.target.target_key)} is managed ` +
+              'by an active collaboration route',
+          );
+        }
+        return this.opts.channels.bindResolvedTargetIfAvailableToOwner({
+          owner,
+          channelId: input.channelId,
+          target: input.target,
+        });
+      },
+    ));
   }
 
   async mutateTargetRoute<T>(input: {

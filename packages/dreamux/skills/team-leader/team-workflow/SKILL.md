@@ -1,6 +1,6 @@
 ---
 name: team-workflow
-description: MCP operation notes for Team work. Load before using this Team's TeamMate tools, provider-exposed channel tools, cron tools, or team transfer tool.
+description: MCP operation notes for Team work. Load before using this Team's TeamMate tools, provider-exposed channel tools, cron tools, or Team channel binding tools.
 ---
 
 # Team Workflow
@@ -27,13 +27,19 @@ description: MCP operation notes for Team work. Load before using this Team's Te
 
 ## Team MCP Notes
 
-- The `team` MCP exposes only `transfer_back` in this context.
+- The `team` MCP exposes only `bind_channel` and `transfer_back` in this
+  context.
+- `bind_channel({ channel_id?, meta })` binds an unowned channel target to this
+  Team. The exact same explicit binding is safe to repeat. The operation
+  refuses a target already owned by another Team or managed by a collaboration
+  route.
 - `transfer_back({ channel_id?, meta })` releases a bound channel target from
   this Team when the tool call succeeds. It is a routing-only state change with
   no channel-message side effect.
 - `meta` is provider-defined. Use the active tool schema and tool result as the
   authority for the target selector and routing outcome.
-- Do not invent unavailable Team lifecycle, inspection, send, or bind tools.
+- Do not invent unavailable Team lifecycle, inspection, send, or peer-Team
+  tools.
 
 ## Channel Notes
 

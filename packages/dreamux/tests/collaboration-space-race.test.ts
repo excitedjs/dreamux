@@ -322,4 +322,56 @@ describe('CollaborationSpaceService race regressions', () => {
     expect(channels.claimIds.get(target.target_key)).toBe(originalClaim);
     expect(originalClaim).not.toBeNull();
   });
+
+  it('rejects TeamLeader bind without detaching an active managed target', async () => {
+    const created: CreatedTeam[] = [];
+    const dissolved: string[] = [];
+    const channels = fakeChannels();
+    const teams = fakeTeams(created, dissolved);
+    const service = new CollaborationSpaceService({
+      dispatcherId: 'flow',
+      config: fakeConfig(),
+      teams,
+      channels: channels.service,
+      log: log as never,
+      isShuttingDown: () => false,
+    });
+    await service.bind({
+      spaceName: 'space-alpha',
+      container: { container_type: 'topic_group', container_key: 'container-1' },
+      leaderAgentRuntime: 'agent-a',
+    });
+    const target = {
+      target_type: 'topic',
+      target_key: 'topic-teamleader-managed',
+      bindable: true,
+    };
+    const provisioned = await service.provisionTarget({
+      channelId: 'primary',
+      provider: 'builtin:test',
+      container: { container_type: 'topic_group', container_key: 'container-1' },
+      target,
+    });
+    if (provisioned === null || provisioned.leader_name === null) {
+      throw new Error('target was not provisioned');
+    }
+    const originalOwner = channels.boundOwners.get(target.target_key);
+    const originalClaim = channels.claimIds.get(target.target_key);
+
+    await expect(service.bindLeasedTargetRoute({
+      lease: {
+        teamId: provisioned.team_name,
+        leaderName: provisioned.leader_name,
+      },
+      channelId: 'primary',
+      target,
+    })).rejects.toThrow(/active collaboration route/);
+
+    await expect(service.status({ spaceName: 'space-alpha' })).resolves.toMatchObject({
+      targets: [{ lifecycle_status: 'active', phase: 'bound' }],
+    });
+    expect(channels.boundOwners.get(target.target_key)).toEqual(originalOwner);
+    expect(channels.claimIds.get(target.target_key)).toBe(originalClaim);
+    expect(originalClaim).not.toBeNull();
+  });
 });

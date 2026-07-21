@@ -108,7 +108,8 @@ live on Team MCP, not on a generic Channel MCP binding surface:
 - dispatcher projection:
   `transfer_back({ channel_id?, meta })`
 - TeamLeader projection:
-  scoped `transfer_back({ channel_id?, meta })`
+  scoped `bind_channel({ channel_id?, meta })` and
+  `transfer_back({ channel_id?, meta })`
 
 `channel_id` selects the configured channel. It defaults only when the
 dispatcher has one configured channel. `meta` is provider-owned selector input;
@@ -132,7 +133,13 @@ Channel binding state is durable server state at:
 ```
 
 The current store version keys active rows on `(channel_id, target_key)`. One
-target can be active for only one Team at a time; rebinding reassigns it.
+target can be active for only one Team at a time. Dispatcher rebinding
+reassigns it. TeamLeader bind instead uses an atomic available-to-owner write:
+it creates an unowned explicit route, returns the exact same explicit owner
+unchanged, and rejects another owner or any active managed claim. The caller's
+descriptor-bound Team/leader generation and route readiness are checked under
+the Team route lifecycle lease before that write; no managed intent is detached
+on this path.
 Rows carry provider ref, target type/key, display/canonical URL, provider
 `meta`, Team name, TeamLeader name, active flag, and timestamps.
 

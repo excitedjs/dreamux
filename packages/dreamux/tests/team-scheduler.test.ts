@@ -227,6 +227,8 @@ class CapturingChannelSession implements ChannelSession {
   constructor(
     channelId: string,
     private readonly startBlocker?: Promise<void>,
+    private readonly resolveTargetBlocker?: Promise<void>,
+    private readonly onResolveTarget?: () => void,
   ) {
     this.channel_id = channelId;
   }
@@ -242,6 +244,8 @@ class CapturingChannelSession implements ChannelSession {
   }
 
   async resolveTarget(meta: unknown): Promise<ChannelTarget> {
+    this.onResolveTarget?.();
+    await this.resolveTargetBlocker;
     const chatId =
       typeof (meta as { chat_id?: unknown })?.chat_id === 'string'
         ? (meta as { chat_id: string }).chat_id
@@ -281,7 +285,11 @@ function groupTarget(targetKey: string): ChannelTarget {
 
 function capturingChannelCatalog(
   sessions: CapturingChannelSession[],
-  options: { startBlockers?: Record<string, Promise<void>> } = {},
+  options: {
+    startBlockers?: Record<string, Promise<void>>;
+    resolveTargetBlockers?: Record<string, Promise<void>>;
+    onResolveTarget?: () => void;
+  } = {},
 ): ChannelProviderCatalog {
   const registry = createBuiltinProviderRegistry();
   const descriptor = registry.resolve('builtin:feishu');
@@ -297,6 +305,8 @@ function capturingChannelCatalog(
       const session = new CapturingChannelSession(
         context.channel_id,
         options.startBlockers?.[context.channel_id],
+        options.resolveTargetBlockers?.[context.channel_id],
+        options.onResolveTarget,
       );
       sessions.push(session);
       return session;
@@ -1404,6 +1414,164 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       'hello leader',
     ]);
     await restarted.stop();
+  });
+
+  it('scopes TeamLeader channel binding to the current routable Team generation', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const sessions: CapturingChannelSession[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        channels: [{ id: 'primary', provider: CHANNEL_PROVIDER_REF, config: {} }],
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const dispatcher = new DispatcherService({
+      id: 'dispatcher-a',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog({ runtimes }),
+      channelProviders: capturingChannelCatalog(sessions),
+      adminSocketPath: '/tmp/dreamux-admin.sock',
+      channelLoggerFactory: () => log,
+      log,
+    });
+    await dispatcher.start();
+    const alpha = await dispatcher.createTeam({
+      name: 'alpha',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead alpha',
+    });
+    const beta = await dispatcher.createTeam({
+      name: 'beta',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead beta',
+    });
+    const alphaLease = {
+      teamId: alpha.team.team_name,
+      leaderName: alpha.team.leader_name,
+    };
+    const first = await dispatcher.bindTeamLeaderChannel({
+      lease: alphaLease,
+      channelId: 'primary',
+      meta: { chat_id: 'chat-alpha' },
+    });
+    const repeated = await dispatcher.bindTeamLeaderChannel({
+      lease: alphaLease,
+      channelId: 'primary',
+      meta: { chat_id: 'chat-alpha' },
+    });
+    expect(repeated).toEqual(first);
+    await expect(sessions[0]!.emit('chat-alpha', 'hello alpha')).resolves.toMatchObject({
+      status: 'submitted',
+    });
+    expect(runtimes[0]!.submitted.map((input) => input.text)).toEqual(['hello alpha']);
+
+    await dispatcher.bindTeamChannel({
+      teamId: beta.team.team_name,
+      channelId: 'primary',
+      meta: { chat_id: 'chat-beta' },
+    });
+    await expect(dispatcher.bindTeamLeaderChannel({
+      lease: alphaLease,
+      channelId: 'primary',
+      meta: { chat_id: 'chat-beta' },
+    })).rejects.toThrow(/already bound to another owner/);
+    await expect(dispatcher.bindTeamLeaderChannel({
+      lease: { teamId: 'beta', leaderName: alphaLease.leaderName },
+      channelId: 'primary',
+      meta: { chat_id: 'chat-wrong-team' },
+    })).rejects.toBeInstanceOf(TeamUnavailableError);
+
+    await dispatcher.dissolveTeam({ teamId: 'alpha', note: 'replace alpha' });
+    await expect(dispatcher.bindTeamLeaderChannel({
+      lease: alphaLease,
+      channelId: 'primary',
+      meta: { chat_id: 'chat-closed' },
+    })).rejects.toBeInstanceOf(TeamUnavailableError);
+    const replacement = await dispatcher.createTeam({
+      name: 'alpha',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead replacement alpha',
+    });
+    await expect(dispatcher.bindTeamLeaderChannel({
+      lease: alphaLease,
+      channelId: 'primary',
+      meta: { chat_id: 'chat-stale' },
+    })).rejects.toBeInstanceOf(TeamUnavailableError);
+    await expect(dispatcher.bindTeamLeaderChannel({
+      lease: {
+        teamId: replacement.team.team_name,
+        leaderName: replacement.team.leader_name,
+      },
+      channelId: 'primary',
+      meta: { chat_id: 'chat-fresh' },
+    })).resolves.toMatchObject({
+      team_name: 'alpha',
+      leader_name: replacement.team.leader_name,
+    });
+    await dispatcher.shutdown();
+  });
+
+  it('resolves a TeamLeader target before the Team route lease and loses safely to close', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const sessions: CapturingChannelSession[] = [];
+    const enteredResolve = deferred<void>();
+    const releaseResolve = deferred<void>();
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        channels: [{ id: 'primary', provider: CHANNEL_PROVIDER_REF, config: {} }],
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const dispatcher = new DispatcherService({
+      id: 'dispatcher-a',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog({ runtimes }),
+      channelProviders: capturingChannelCatalog(sessions, {
+        resolveTargetBlockers: { primary: releaseResolve.promise },
+        onResolveTarget: () => enteredResolve.resolve(),
+      }),
+      adminSocketPath: '/tmp/dreamux-admin.sock',
+      channelLoggerFactory: () => log,
+      log,
+    });
+    await dispatcher.start();
+    const alpha = await dispatcher.createTeam({
+      name: 'alpha',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead alpha',
+    });
+    const owner = {
+      kind: 'team' as const,
+      teamName: alpha.team.team_name,
+      leaderName: alpha.team.leader_name,
+    };
+    const binding = dispatcher.bindTeamLeaderChannel({
+      lease: { teamId: owner.teamName, leaderName: owner.leaderName },
+      channelId: 'primary',
+      meta: { chat_id: 'chat-close-race' },
+    });
+    void binding.catch(() => {});
+    await enteredResolve.promise;
+
+    await dispatcher.dissolveTeam({ teamId: 'alpha', note: 'close during resolve' });
+    releaseResolve.resolve();
+    await expect(binding).rejects.toBeInstanceOf(TeamUnavailableError);
+    await expect(dispatcher.activeTeamBindingSummary(owner)).resolves.toBeNull();
+    await dispatcher.shutdown();
   });
 
   it('dispatcher cron starts a dormant dispatcher runtime', async () => {

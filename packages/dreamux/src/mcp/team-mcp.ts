@@ -121,6 +121,26 @@ async function handleRequest(
 export function teamTools(
   callerKind: TeamMcpCallerKind = 'dispatcher',
 ): Array<Record<string, unknown>> {
+  const bindChannelTool = callerKind === 'team_leader'
+    ? tool(
+        'bind_channel',
+        'Bind the selected unowned channel target to this Team. The exact same explicit binding is idempotent; targets owned by another Team or managed by a collaboration route are refused. channel_id selects the configured channel (optional; defaults to the sole channel). meta carries the provider-defined channel target selector that Dreamux normalizes through the channel provider.',
+        {
+          channel_id: { type: 'string', minLength: 1, maxLength: 64 },
+          meta: { type: 'object' },
+        },
+        ['meta'],
+      )
+    : tool(
+        'bind_channel',
+        'Bind a configured channel target to a Team by team_name so inbound from that target routes to the Team\'s TeamLeader. channel_id selects the configured channel (optional; defaults to the dispatcher\'s sole channel). meta carries the provider-defined channel target selector.',
+        {
+          team_name: { type: 'string', minLength: 1, maxLength: 64 },
+          channel_id: { type: 'string', minLength: 1, maxLength: 64 },
+          meta: { type: 'object' },
+        },
+        ['team_name', 'meta'],
+      );
   const transferBackDescription = callerKind === 'team_leader'
     ? 'Release this Team\'s binding for the selected channel target. This is a routing-only state change with no channel-message side effect. channel_id selects the configured channel (optional; defaults to the sole channel). meta carries the provider-defined channel target selector that Dreamux normalizes through the channel provider.'
     : 'Release a bound channel target from a Team so future inbound for that target is no longer routed to the Team. channel_id selects the configured channel (optional; defaults to the sole channel). meta carries the provider-defined channel target selector that Dreamux normalizes through the channel provider.';
@@ -128,7 +148,7 @@ export function teamTools(
     channel_id: { type: 'string', minLength: 1, maxLength: 64 },
     meta: { type: 'object' },
   }, ['meta']);
-  if (callerKind === 'team_leader') return [transferBackTool];
+  if (callerKind === 'team_leader') return [bindChannelTool, transferBackTool];
   return [
     tool('create', 'Create a Team and start its TeamLeader. team_name is the concrete Team key used by all later status/history/dissolve/send calls. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to let Dreamux allocate a plain shared work directory for the Team, or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } to choose an existing path or create a managed git worktree. prompt is optional: when supplied it is delivered as the TeamLeader\'s first turn; when omitted the leader starts idle and waits for bound-channel inbound or a later Team MCP send. To route a channel target to the Team, bind it after create with the team bind_channel tool.', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
@@ -161,11 +181,7 @@ export function teamTools(
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
       note: { type: 'string', minLength: 1, maxLength: 2000 },
     }, ['team_name', 'note']),
-    tool('bind_channel', 'Bind a configured channel target to a Team by team_name so inbound from that target routes to the Team\'s TeamLeader. channel_id selects the configured channel (optional; defaults to the dispatcher\'s sole channel). meta carries the provider-defined channel target selector.', {
-      team_name: { type: 'string', minLength: 1, maxLength: 64 },
-      channel_id: { type: 'string', minLength: 1, maxLength: 64 },
-      meta: { type: 'object' },
-    }, ['team_name', 'meta']),
+    bindChannelTool,
     transferBackTool,
   ];
 }
@@ -223,9 +239,14 @@ function mapToolCall(
   call: ToolCall,
   callerKind: TeamMcpCallerKind,
 ): { method: string; params: Record<string, unknown> } {
-  if (callerKind === 'team_leader' && call.name !== 'transfer_back') {
+  if (
+    callerKind === 'team_leader' &&
+    call.name !== 'bind_channel' &&
+    call.name !== 'transfer_back'
+  ) {
     throw new Error(
-      `Team tool '${String(call.name)}' is not available in this context. Available Team tools: transfer_back.`,
+      `Team tool '${String(call.name)}' is not available in this context. ` +
+        'Available Team tools: bind_channel, transfer_back.',
     );
   }
   switch (call.name) {
@@ -242,7 +263,10 @@ function mapToolCall(
     case 'dissolve':
       return { method: 'team.dissolve', params: dissolveArgs(call.arguments) };
     case 'bind_channel':
-      return { method: 'team.bind_channel', params: bindChannelArgs(call.arguments) };
+      return {
+        method: 'team.bind_channel',
+        params: bindChannelArgs(call.arguments, callerKind),
+      };
     case 'transfer_back':
       return { method: 'team.transfer_back', params: transferBackArgs(call.arguments) };
     default:
@@ -315,13 +339,18 @@ function dissolveArgs(value: unknown): Record<string, unknown> {
   };
 }
 
-function bindChannelArgs(value: unknown): Record<string, unknown> {
+function bindChannelArgs(
+  value: unknown,
+  callerKind: TeamMcpCallerKind,
+): Record<string, unknown> {
   const obj = asRecord(value, 'bind_channel arguments');
-  // Bind by team_name + a provider selector `meta`. channel_id is optional
-  // (defaults to the sole configured channel); core resolves the
-  // (channel_id, target_key) v2 binding key via the channel's resolveTarget(meta).
+  if (callerKind === 'team_leader' && Object.hasOwn(obj, 'team_name')) {
+    throw new Error('team_name is not accepted for TeamLeader bind_channel');
+  }
   return {
-    team_name: requireString(obj, 'team_name'),
+    ...(callerKind === 'dispatcher'
+      ? { team_name: requireString(obj, 'team_name') }
+      : {}),
     meta: requireRecord(obj, 'meta'),
     ...optionalChannelId(obj),
   };
