@@ -194,6 +194,21 @@ export class ChannelService {
     });
   }
 
+  async bindResolvedTargetIfAvailableToOwner(input: {
+    owner: ChannelRouteOwner;
+    channelId: string;
+    target: ChannelTarget;
+  }): Promise<ChannelBinding> {
+    return this.bindings.bindIfAvailableToOwner({
+      dispatcherId: this.dispatcherId,
+      channelId: input.channelId,
+      provider: this.channelProviderRef(input.channelId),
+      target: input.target,
+      teamName: input.owner.teamName,
+      leaderName: input.owner.leaderName,
+    });
+  }
+
   async claimResolvedTarget(input: {
     owner: ChannelRouteOwner;
     channelId: string;

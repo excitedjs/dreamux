@@ -1,12 +1,27 @@
 import type { ChannelRouteOwner, ChannelService } from '../channel-service/index.js';
 import type { CollaborationSpaceService } from '../collaboration-space/index.js';
 import type { TeamCollection } from '../team-collection/index.js';
-import type { TeamDissolveInput } from '../team-collection/types.js';
+import type {
+  TeamDissolveInput,
+  TeamLeaderLease,
+} from '../team-collection/types.js';
 
 interface TeamChannelCoordinatorOptions {
   teams: TeamCollection;
   channels: ChannelService;
   collaborationSpaces: CollaborationSpaceService;
+}
+
+interface TeamChannelBindInput {
+  teamId: string;
+  channelId?: string;
+  meta: Record<string, unknown>;
+}
+
+interface TeamLeaderChannelBindInput {
+  lease: TeamLeaderLease;
+  channelId?: string;
+  meta: Record<string, unknown>;
 }
 
 /** Coordinates explicit Team lifecycle changes across collaboration and routes. */
@@ -17,11 +32,7 @@ export class TeamChannelCoordinator {
     return this.opts.collaborationSpaces.dissolveTeam(input);
   }
 
-  async bind(input: {
-    teamId: string;
-    channelId?: string;
-    meta: Record<string, unknown>;
-  }) {
+  async bind(input: TeamChannelBindInput) {
     // Fail before detaching collaboration intent when the requested Team is
     // already unusable. The leased check inside the mutation closes the race
     // with a Team that starts dissolving after this inexpensive preflight.
@@ -30,6 +41,16 @@ export class TeamChannelCoordinator {
     const target = await this.opts.channels.resolveTarget(input.meta, channelId);
     return this.opts.collaborationSpaces.bindTargetRoute({
       teamId: input.teamId,
+      channelId,
+      target,
+    });
+  }
+
+  async bindForTeamLeader(input: TeamLeaderChannelBindInput) {
+    const channelId = this.opts.channels.resolveChannelId(input.channelId);
+    const target = await this.opts.channels.resolveTarget(input.meta, channelId);
+    return this.opts.collaborationSpaces.bindLeasedTargetRoute({
+      lease: input.lease,
       channelId,
       target,
     });

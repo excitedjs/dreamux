@@ -332,6 +332,39 @@ export class TeamCollection {
   }
 
   /**
+   * Hold the Team route lifecycle lease while proving both route readiness and
+   * the descriptor-bound TeamLeader generation used for route publication.
+   */
+  async withRoutableTeamLeaderLease<T>(
+    lease: TeamLeaderLease,
+    task: (owner: ChannelRouteOwner) => Promise<T>,
+  ): Promise<T> {
+    const id = validateTeamId(lease.teamId);
+    return this.routeLifecycle.run(id, async () => {
+      if (this.routeClosing.has(id)) {
+        throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
+      }
+      const service = await this.currentOpenService(id);
+      if (service.leaderName !== lease.leaderName) {
+        throw new TeamUnavailableError(
+          `Team ${JSON.stringify(id)} generation is no longer current`,
+        );
+      }
+      await service.ensureRouteReady();
+      if (this.routeClosing.has(id) || service.leaderName !== lease.leaderName) {
+        throw new TeamUnavailableError(
+          `Team ${JSON.stringify(id)} generation is no longer routable`,
+        );
+      }
+      return task({
+        kind: 'team',
+        teamName: id,
+        leaderName: service.leaderName,
+      });
+    });
+  }
+
+  /**
    * Announce Team closure before cross-service route cleanup, then keep the
    * fence raised until the caller has durably closed (or failed to close) the
    * Team. Route cleanup itself must not run under the queue lock because it

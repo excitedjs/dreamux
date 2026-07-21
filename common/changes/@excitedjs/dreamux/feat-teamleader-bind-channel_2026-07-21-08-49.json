@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Allow TeamLeaders to safely bind unowned channel targets to their current Team.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

@@ -13,6 +13,7 @@ import type { TeamCollection } from '../team-collection/index.js';
 import { resolveAgent } from '../teammate-collection/agent-config.js';
 import {
   type TeamDissolveInput,
+  type TeamLeaderLease,
   validateTeamId,
 } from '../team-collection/types.js';
 import {
@@ -271,6 +272,14 @@ export class CollaborationSpaceService {
     expectedOwner?: ChannelRouteOwner;
   }, mutation: () => Promise<T>): Promise<T> {
     return this.routes.mutateTargetRoute(input, mutation);
+  }
+
+  bindLeasedTargetRoute(input: {
+    lease: TeamLeaderLease;
+    channelId: string;
+    target: CollaborationSpaceProvisionInput['target'];
+  }) {
+    return this.routes.bindLeasedTargetRoute(input);
   }
 
   bindTargetRoute(input: {

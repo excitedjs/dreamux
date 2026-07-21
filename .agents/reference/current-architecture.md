@@ -186,7 +186,10 @@ capability. The Team MCP is caller-scoped:
   TeamLeader,
   `bind_channel({ team_name, channel_id?, meta })` and
   `transfer_back({ channel_id?, meta })`
-- TeamLeaders see only scoped `transfer_back({ channel_id?, meta })`
+- TeamLeaders see scoped `bind_channel({ channel_id?, meta })` and
+  `transfer_back({ channel_id?, meta })`. TeamLeader bind can claim only an
+  unowned target (or return the exact explicit binding idempotently); it cannot
+  replace another owner or consume a collaboration-managed route.
 
 `channel_id` defaults to the dispatcher's sole configured channel and is
 required only when the dispatcher has more than one configured channel.

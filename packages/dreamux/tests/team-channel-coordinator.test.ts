@@ -71,6 +71,10 @@ function harness(routeError?: Error) {
       events.push('collaboration.detach_target');
       return 'bound';
     },
+    bindLeasedTargetRoute: async (input: Record<string, unknown>) => {
+      events.push('channel.bind.scoped');
+      return input;
+    },
     dissolveTeam: async () => {
       events.push('collaboration.detach_owner');
       events.push('channel.transfer_all');
@@ -110,6 +114,21 @@ describe('TeamChannelCoordinator collaboration ownership', () => {
       coordinator.bind({ teamId: 'alpha', meta: { chat_id: 'chat-alpha' } }),
     ).rejects.toThrow(/leader identity missing/);
     expect(events).toEqual([]);
+  });
+
+  it('forwards descriptor scope through the non-replacing TeamLeader bind path', async () => {
+    const { coordinator, events } = harness();
+    const lease = { teamId: 'alpha', leaderName: 'leader-alpha' };
+
+    await expect(coordinator.bindForTeamLeader({
+      lease,
+      meta: { target: 'target-alpha' },
+    })).resolves.toMatchObject({
+      lease,
+      channelId: 'primary',
+      target: { target_key: 'chat-alpha' },
+    });
+    expect(events).toEqual(['channel.bind.scoped']);
   });
 
   it('detaches collaboration intent before transfer back', async () => {

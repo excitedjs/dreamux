@@ -82,10 +82,13 @@ TeamLeader `spawn` does not accept a `repo` input because the Team workspace is
 already selected when the Team is created. Team-scoped TeamMates share that
 workspace, so concurrent editing needs an explicit non-conflict boundary.
 
-TeamLeader `team` MCP exposes only `transfer_back({ channel_id?, meta })`.
-TeamLeaders cannot create, send to, list, inspect, dissolve, or bind Teams
-through their scoped Team MCP projection. `transfer_back` is a routing operation;
-it is a routing-only state change with no channel-message side effect.
+TeamLeader `team` MCP exposes `bind_channel({ channel_id?, meta })` and
+`transfer_back({ channel_id?, meta })`. Bind always targets the
+descriptor-bound current Team and can claim only an unowned target (or repeat
+the exact explicit binding); another owner or an active collaboration-managed
+route is refused. TeamLeaders cannot create, send to, list, inspect, dissolve,
+or select Teams through this projection. `transfer_back` remains a routing-only
+state change with no channel-message side effect.
 
 TeamLeader `cron` MCP tools are `cron_create`, `cron_list`, `cron_update`,
 `cron_delete`, and `cron_run_now`. Cron prompts are injected back into that

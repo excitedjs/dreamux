@@ -152,6 +152,10 @@ history and rationale; when you need current behavior, pair them with
   provider target `meta`, moving channel binding ownership to a core
   `ChannelService` over live sessions plus `ChannelBindingStore`; the later
   dispatcher `team.send` slice is recorded separately above.
+- [TeamLeader-scoped Team MCP channel binding](proposals/team-mcp-teamleader-bind-channel.md)
+  — active design for exposing a scoped `bind_channel` to TeamLeaders while
+  deriving the Team from descriptor-bound caller scope and validating the
+  current TeamLeader generation under the Team route-publication lease.
 - [Post-#110 architecture sustainability](proposals/post-110-architecture-sustainability.md)
   — diagnostic of why agent-written code drifted from the intended architecture
   after the #110 pluginization inflection (load-bearing invariants are prose with

@@ -149,6 +149,107 @@ describe('ChannelBindingStore v3', () => {
     ).resolves.toMatchObject({ team_name: 'beta' });
   });
 
+  it('creates only an available explicit route and treats the exact owner as idempotent', async () => {
+    const store = new ChannelBindingStore();
+    const input = {
+      dispatcherId: DISPATCHER,
+      channelId: 'primary',
+      provider: 'builtin:feishu',
+      target: groupTarget('chat-available'),
+      teamName: 'alpha',
+      leaderName: 'alpha-leader',
+    };
+    const first = await store.bindIfAvailableToOwner(input);
+    const second = await store.bindIfAvailableToOwner({
+      ...input,
+      target: {
+        ...input.target,
+        display: 'changed provider display',
+      },
+    });
+
+    expect(second).toEqual(first);
+    expect(second.claim_id).toBeNull();
+    expect(await store.list(DISPATCHER)).toHaveLength(1);
+  });
+
+  it('refuses another owner and every active managed claim without mutation', async () => {
+    const store = new ChannelBindingStore();
+    const explicitInput = {
+      dispatcherId: DISPATCHER,
+      channelId: 'primary',
+      provider: 'builtin:feishu',
+      target: groupTarget('chat-explicit'),
+      teamName: 'alpha',
+      leaderName: 'alpha-leader',
+    };
+    await store.bind(explicitInput);
+    await expect(store.bindIfAvailableToOwner({
+      ...explicitInput,
+      teamName: 'beta',
+      leaderName: 'beta-leader',
+    })).rejects.toThrow(/already bound to another owner/);
+    await expect(store.resolve({
+      dispatcherId: DISPATCHER,
+      channelId: 'primary',
+      targetKey: 'chat-explicit',
+    })).resolves.toMatchObject({
+      team_name: 'alpha',
+      leader_name: 'alpha-leader',
+      claim_id: null,
+    });
+
+    const managedInput = {
+      ...explicitInput,
+      target: groupTarget('chat-managed'),
+    };
+    await store.claim({ ...managedInput, claimId: 'managed-claim' });
+    await expect(
+      store.bindIfAvailableToOwner(managedInput),
+    ).rejects.toThrow(/active collaboration route/);
+    await expect(store.resolve({
+      dispatcherId: DISPATCHER,
+      channelId: 'primary',
+      targetKey: 'chat-managed',
+    })).resolves.toMatchObject({
+      team_name: 'alpha',
+      leader_name: 'alpha-leader',
+      claim_id: 'managed-claim',
+    });
+  });
+
+  it('atomically lets only one of two Team owners claim an available target', async () => {
+    const store = new ChannelBindingStore();
+    const base = {
+      dispatcherId: DISPATCHER,
+      channelId: 'primary',
+      provider: 'builtin:feishu',
+      target: groupTarget('chat-race'),
+    };
+    const results = await Promise.allSettled([
+      store.bindIfAvailableToOwner({
+        ...base,
+        teamName: 'alpha',
+        leaderName: 'alpha-leader',
+      }),
+      store.bindIfAvailableToOwner({
+        ...base,
+        teamName: 'beta',
+        leaderName: 'beta-leader',
+      }),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    const active = await store.resolve({
+      dispatcherId: DISPATCHER,
+      channelId: 'primary',
+      targetKey: 'chat-race',
+    });
+    expect(['alpha', 'beta']).toContain(active?.team_name);
+    expect(await store.list(DISPATCHER)).toHaveLength(1);
+  });
+
   it('claim rejects an active target owned by another Team', async () => {
     const store = new ChannelBindingStore();
     await store.bind({

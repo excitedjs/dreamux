@@ -91,13 +91,21 @@ export class ChannelBindingStore {
     return this.bindInternal(input, 'replace');
   }
 
+  /**
+   * Create an explicit binding without taking over an active route. The exact
+   * same explicit owner is idempotent; managed claims are never converted.
+   */
+  async bindIfAvailableToOwner(input: BindChannelInput): Promise<ChannelBinding> {
+    return this.bindInternal(input, 'available');
+  }
+
   async claim(input: BindChannelInput & { claimId: string }): Promise<ChannelBinding> {
     return this.bindInternal(input, 'claim');
   }
 
   private async bindInternal(
     input: BindChannelInput & { claimId?: string },
-    mode: 'replace' | 'claim',
+    mode: 'replace' | 'available' | 'claim',
   ): Promise<ChannelBinding> {
     if (!input.target.bindable) {
       throw new Error(
@@ -140,6 +148,24 @@ export class ChannelBindingStore {
         return next;
       }
       const previous = file.bindings[idx]!;
+      if (mode === 'available' && previous.active) {
+        if (previous.claim_id !== null) {
+          throw new Error(
+            `channel target ${JSON.stringify(input.target.target_key)} is managed ` +
+              'by an active collaboration route',
+          );
+        }
+        if (
+          previous.team_name !== input.teamName ||
+          previous.leader_name !== input.leaderName
+        ) {
+          throw new Error(
+            `channel target ${JSON.stringify(input.target.target_key)} is already ` +
+              'bound to another owner',
+          );
+        }
+        return previous;
+      }
       if (
         mode === 'claim' &&
         previous.active &&

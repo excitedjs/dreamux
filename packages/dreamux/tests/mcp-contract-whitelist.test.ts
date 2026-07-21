@@ -254,23 +254,37 @@ describe('issue #199 Slice 1 — public MCP contract whitelist', () => {
     expect(names).not.toContain('transfer_channel_back');
   });
 
-  it('TeamLeader Team MCP exposes only explicit transfer_back', async () => {
+  it('TeamLeader Team MCP exposes only scoped bind_channel and transfer_back', async () => {
     const tools = await teamLeaderTeamTools();
-    expect(tools.map((tool) => tool['name'])).toEqual(['transfer_back']);
+    expect(tools.map((tool) => tool['name'])).toEqual([
+      'bind_channel',
+      'transfer_back',
+    ]);
+    const bindTool = toolOf(tools, 'bind_channel');
+    const bind = schemaOf(tools, 'bind_channel');
+    expect(bind.required).toEqual(['meta']);
+    expect(bind.properties).toHaveProperty('channel_id');
+    expect(bind.properties).toHaveProperty('meta');
+    expect(bind.properties).not.toHaveProperty('team_name');
+    const bindDescription = String(bindTool['description'] ?? '');
+    expect(bindDescription).toContain('this Team');
+    expect(bindDescription).toMatch(/refus/i);
     const transferTool = toolOf(tools, 'transfer_back');
     const transfer = schemaOf(tools, 'transfer_back');
     expect(transfer.required).toEqual(['meta']);
     expect(transfer.properties).toHaveProperty('channel_id');
     expect(transfer.properties).toHaveProperty('meta');
-    const description = String(transferTool['description'] ?? '');
-    expect(description).toMatch(/routing[- ]only/i);
-    expect(description).toMatch(/no .*channel[- ]message .*side effect/i);
-    expect(description).toMatch(/bind(?:ing)?[\s\S]{0,80}channel target/i);
-    expect(description).not.toContain('Dispatcher');
-    expect(description).not.toContain('dispatcher routing');
-    expect(description).not.toContain('report');
-    expect(description).not.toContain('Feishu');
-    expect(description).not.toContain('chat_id');
+    const descriptions = [bindDescription, String(transferTool['description'] ?? '')];
+    expect(descriptions[1]).toMatch(/routing[- ]only/i);
+    expect(descriptions[1]).toMatch(/no .*channel[- ]message .*side effect/i);
+    expect(descriptions[1]).toMatch(/bind(?:ing)?[\s\S]{0,80}channel target/i);
+    for (const description of descriptions) {
+      expect(description).not.toContain('Dispatcher');
+      expect(description).not.toContain('dispatcher routing');
+      expect(description).not.toContain('report');
+      expect(description).not.toContain('Feishu');
+      expect(description).not.toContain('chat_id');
+    }
   });
 
   it('Team MCP descriptions keep channel selectors provider-owned', async () => {

@@ -119,8 +119,8 @@ describe('role-specific bundled Dreamux skills', () => {
     const description = frontmatterDescription(skill);
 
     expect(description).toMatch(/MCP operation notes/i);
-    expect(description).toMatch(/TeamMate|channel|cron|transfer/);
-    expect(skill).toMatch(/`team` MCP exposes only `transfer_back`/);
+    expect(description).toMatch(/TeamMate|channel|cron|binding/);
+    expect(skill).toMatch(/`team` MCP exposes only `bind_channel` and `transfer_back`/);
     expect(skill).toMatch(/share the Team\s+workspace/);
     expect(skill).toMatch(/one TeamMate at a time to edit/);
     expect(skill).toMatch(/TeamMate completion/i);
@@ -130,7 +130,10 @@ describe('role-specific bundled Dreamux skills', () => {
     expect(skill).toMatch(/not channel delivery/i);
     for (const tool of TEAMMATE_MCP_TOOLS) expect(skill).toContain(tool);
     for (const tool of CRON_MCP_TOOLS) expect(skill).toContain(tool);
+    expect(skill).toContain('bind_channel');
     expect(skill).toContain('transfer_back');
+    expect(skill).toMatch(/unowned channel target/);
+    expect(skill).toMatch(/refuses a target already owned/);
 
     expect(skill).not.toContain('Use this skill only from');
     expect(skill).not.toContain('TeamLeader-scoped');
@@ -143,12 +146,12 @@ describe('role-specific bundled Dreamux skills', () => {
     expect(skill).not.toMatch(/return(?:s|ing)? .*Dispatcher/i);
     expect(skill).not.toMatch(/Dispatcher .*outcome/i);
     expect(skill).not.toContain('dreamux-maintenance');
-    for (const dispatcherOnlyTool of ['create', 'dissolve', 'bind_channel']) {
+    for (const dispatcherOnlyTool of ['create', 'dissolve']) {
       expect(skill).not.toContain(`\`${dispatcherOnlyTool}\``);
     }
     expect(skill).not.toContain('`team.send`');
     expect(skill).not.toContain('targets that TeamLeader');
-    expect(skill).not.toContain('bind_channel({');
+    expect(skill).toContain('bind_channel({ channel_id?, meta })');
     expect(skill).not.toContain('tm spawn');
   });
 

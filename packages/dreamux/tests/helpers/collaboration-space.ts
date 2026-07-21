@@ -62,6 +62,20 @@ export function fakeTeams(created: CreatedTeam[], dissolved: string[]) {
       if (leader === undefined) throw new Error(`Team ${name} is not routable`);
       return task({ kind: 'team' as const, teamName: name, leaderName: leader });
     },
+    async withRoutableTeamLeaderLease<T>(
+      lease: { teamId: string; leaderName: string },
+      task: (owner: ChannelRouteOwner) => Promise<T>,
+    ) {
+      const leader = open.get(lease.teamId);
+      if (leader === undefined || leader !== lease.leaderName) {
+        throw new Error(`Team ${lease.teamId} generation is not routable`);
+      }
+      return task({
+        kind: 'team' as const,
+        teamName: lease.teamId,
+        leaderName: leader,
+      });
+    },
     async withTeamRouteClosing<T>(
       name: string,
       task: (owner: ChannelRouteOwner) => Promise<T>,
@@ -113,6 +127,28 @@ export function fakeChannels() {
       owner: ChannelRouteOwner;
       target: { target_key: string };
     }) {
+      boundOwners.set(input.target.target_key, input.owner);
+      claimIds.set(input.target.target_key, null);
+      return { active: true, team_name: input.owner.teamName };
+    },
+    async bindResolvedTargetIfAvailableToOwner(input: {
+      owner: ChannelRouteOwner;
+      target: { target_key: string };
+    }) {
+      const owner = boundOwners.get(input.target.target_key);
+      if (owner !== undefined && claimIds.get(input.target.target_key) !== null) {
+        throw new Error('target is managed by an active collaboration route');
+      }
+      if (
+        owner !== undefined &&
+        (owner.teamName !== input.owner.teamName ||
+          owner.leaderName !== input.owner.leaderName)
+      ) {
+        throw new Error(`target already bound to Team ${owner.teamName}`);
+      }
+      if (owner !== undefined) {
+        return { active: true, team_name: owner.teamName };
+      }
       boundOwners.set(input.target.target_key, input.owner);
       claimIds.set(input.target.target_key, null);
       return { active: true, team_name: input.owner.teamName };

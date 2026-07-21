@@ -60,7 +60,9 @@ the explicit `service/index.ts` facade.
   orchestration. The handle is bound to a `TeamCollection` TeamLeader lease
   (`team_id` + current `leader_name` generation); every handle mutation rechecks
   open/not-closing/current generation before touching members, and its teammate
-  sub-surface must not expose raw `spawn`.
+  sub-surface must not expose raw `spawn`. Route publication uses a distinct
+  routable TeamLeader lease that also starts/proves the leader before mutation;
+  channel binding remains in dispatcher-side coordination, not on the handle.
 - **`dispatcher-service/` (agent-side parts)** — the dispatcher agent's parts (Phase 5, #233):
   `agent.ts` builds the dispatcher's own agent as a contained `TeammateService`
   from the dispatcher root `identity.json` (role `dispatcher`), structurally
@@ -69,8 +71,9 @@ the explicit `service/index.ts` facade.
   path as child roles. `mcp-descriptors.ts` is the role-based MCP descriptor
   builder. `inbound-task-drain.ts` owns the dispatcher admission/drain gate for
   external work that may publish runtime, scheduler, route, or durable state.
-  `team-channel-coordinator.ts` coordinates explicit Team dissolve/bind/transfer
-  with collaboration-space route reconciliation. `channel-tool-invocation.ts`
+  `team-channel-coordinator.ts` coordinates explicit Team dissolve,
+  dispatcher/scoped-TeamLeader bind, and transfer with collaboration-space
+  route reconciliation. `channel-tool-invocation.ts`
   keeps TeamLeader egress authorization beside channel tool dispatch.
   `teammate-ops.ts` wraps dispatcher-scope mutating teammate ops with the
   dispatcher admission gate. Dispatcher and Team schedulers also receive this

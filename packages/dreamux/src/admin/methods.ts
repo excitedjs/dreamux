@@ -407,11 +407,37 @@ export const adminMethods: Record<string, AdminHandler> = {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
     const channelId = optionalString(params, 'channel_id');
-    return server.getDispatcher(id).bindTeamChannel({
-      teamId: mustString(params, 'team_name'),
-      ...(channelId !== null ? { channelId } : {}),
-      meta: mustRecord(params, 'meta'),
-    });
+    const callerKind = teamCallerKind(params);
+    if (callerKind === 'dispatcher') {
+      return server.getDispatcher(id).bindTeamChannel({
+        teamId: mustString(params, 'team_name'),
+        ...(channelId !== null ? { channelId } : {}),
+        meta: mustRecord(params, 'meta'),
+      });
+    }
+    if (params !== undefined && Object.hasOwn(params, 'team_name')) {
+      throw new AdminError(
+        'BAD_REQUEST',
+        "param 'team_name' is not accepted for a team_leader caller",
+      );
+    }
+    const lease = {
+      teamId: mustString(params, 'team_id'),
+      leaderName: mustString(params, 'leader_name'),
+    };
+    const meta = mustRecord(params, 'meta');
+    try {
+      return await server.getDispatcher(id).bindTeamLeaderChannel({
+        lease,
+        ...(channelId !== null ? { channelId } : {}),
+        meta,
+      });
+    } catch (err) {
+      if (err instanceof TeamUnavailableError) {
+        throw new AdminError('TEAM_NOT_FOUND', err.message);
+      }
+      throw new AdminError('TEAM_BIND_FAILED', parseMessage(err));
+    }
   },
 
   'team.transfer_back': async (server, params) => {
