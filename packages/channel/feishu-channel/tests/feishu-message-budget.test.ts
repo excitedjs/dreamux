@@ -112,6 +112,10 @@ describe('Feishu inbound resource budgets', () => {
       { status: 'downloaded', reason: undefined },
       { status: 'not_downloaded', reason: 'aggregate_limit' },
     ]);
+    expect(result.body).not.toContain('lark-cli');
+    expect(result.body).toContain(
+      '<attachment type="file" key="b" status="not_downloaded" reason="aggregate_limit" />',
+    );
   });
 
   it('counts cached attachments against per-resource and aggregate budgets', async () => {
@@ -228,6 +232,21 @@ describe('Feishu inbound resource budgets', () => {
     expect(result.body.match(/<attachment\b/g)?.length ?? 0).toBe(
       result.body.match(/<\/attachment>/g)?.length ?? 0,
     );
+  });
+
+  it('closes a Markdown code fence before the rich-body truncation marker', async () => {
+    const result = await formatFeishuMessageForRuntime(event({
+      parsedText: `\`\`\`ts\n${'x'.repeat(170_000)}\n\`\`\``,
+    }));
+
+    const markerIndex = result.body.indexOf('[message content truncated:');
+    const fenceLines = result.body.slice(0, markerIndex).match(/^```/gm) ?? [];
+    expect(result.body.length).toBeLessThanOrEqual(160_000);
+    expect(markerIndex).toBeGreaterThan(0);
+    expect(fenceLines).toHaveLength(2);
+    const closingFenceIndex = result.body.lastIndexOf('\n```\n');
+    expect(closingFenceIndex).toBeGreaterThan(0);
+    expect(closingFenceIndex).toBeLessThan(markerIndex);
   });
 
   it('keeps a group-bot baseline that fits without rich-body truncation', async () => {

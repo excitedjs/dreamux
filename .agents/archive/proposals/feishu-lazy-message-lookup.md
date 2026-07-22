@@ -1,4 +1,4 @@
-# Feishu lazy message lookup hints
+# Feishu lazy message identity hints
 
 - **Status:** Implemented; current behavior is documented in
   [Channel runtime](../../reference/channel-runtime.md)
@@ -14,22 +14,21 @@ Dreamux must preserve useful Feishu rich-message fidelity without eagerly
 copying history into every Agent turn. A merged-forward message is a reference
 to retrievable conversation history, not content that the Channel should
 expand. The Channel supplies the minimum lookup identity and an honest type
-hint; the Agent decides whether the task needs the details and uses the Feishu
-skill and `lark-cli` to retrieve them on demand.
+hint; the Agent decides whether the task needs the details and independently
+uses its available Feishu tooling when required.
 
 The same presentation rule applies to reply/quote ancestry. The Channel never
 embeds the parent body. It supplies the parent message id and, when one bounded
 parent read proves the parent message type, supplies that type for every valid
 Feishu message kind.
 
-## Verified lookup contract
+## Verified identity contract
 
-The direct message lookup is
-`lark-cli im +messages-mget --message-ids <message_id>`. The only
-message-specific input required by that lookup is the Feishu `message_id`;
-`chat_id` is not required. Identity selection, output format, reaction
-enrichment, and resource-download flags are execution choices owned by the
-skill, not data the Channel should duplicate in the prompt.
+The only message-specific identity required by the verified external lookup
+path is the Feishu `message_id`; `chat_id` is not required. Tool selection,
+commands, identity mode, output format, reaction enrichment, and resource
+download policy are Agent/tool concerns and are not duplicated in the Channel
+prompt.
 
 A direct lookup of a merged-forward message returns its `msg_type` and an
 expanded `forwarded_messages` representation. Dreamux therefore does not need
@@ -41,13 +40,10 @@ entity.
 - `@excitedjs/feishu-transport` remains the only Lark SDK owner. Its existing
   bounded `readMessage` seam remains for interactive-card and `nonsupport`
   enrichment and may be reused for a parent-type probe.
-- `@excitedjs/feishu-channel` owns the model-facing lookup hints and decides
+- `@excitedjs/feishu-channel` owns the model-facing identity hints and decides
   whether the post-gate parent-type probe is applicable.
-- The Feishu skill owns the broader `lark-cli` workflow used by an Agent to
-  retrieve message details. Its current references name `+messages-mget` but do
-  not provide a routed command skeleton, so the Channel marker includes the
-  exact minimal command above. It does not reproduce optional CLI policy or
-  flags.
+- Agent-side Feishu tooling owns any broader history lookup. The Channel does
+  not name a tool, embed a command, or reproduce execution policy or flags.
 - No Dreamux core, Agent Runtime, Channel ABI, routing, persistence, new MCP
   tool, merged-forward aggregate, or message cache is introduced.
 
@@ -64,12 +60,11 @@ After an accepted inbound is identified as `merge_forward`, the Channel:
   actionable `parentId` may still receive the one parent-type read below);
 - performs zero child-message reads and zero internal-resource downloads;
 - does not walk `items`, `upper_message_id`, or render forwarded participants;
-- emits a short escaped marker identifying the message as merged-forward and
-  tells the Agent to use the Feishu skill and the minimal `lark-cli` command
-  with the current `message_id` when the details are needed.
+- emits one short escaped marker identifying the message as merged-forward and
+  carrying the current `message_id`, with no tool or command guidance.
 
 The current message id already appears in the trusted Channel envelope. The
-marker may repeat it once to make the lookup instruction self-contained, but it
+marker may repeat it once to make the identity fact self-contained, but it
 must not add a `chat_id`, app link, message position, sender token, raw event
 JSON, or any forwarded content. It must not classify this intentional lazy
 representation as a parser failure or append a second generic incomplete-text
@@ -107,8 +102,8 @@ When the parent root is valid, the ancestry hint includes its
 `parent_message_type` for every supported or future Feishu type. The value must
 be a non-empty bounded type token (`[A-Za-z0-9_.-]`, at most 64 characters);
 otherwise the type is omitted rather than copying an unbounded value into the
-prompt. The same `parent_message_id` remains the only input to the minimal
-`lark-cli` lookup regardless of type. A missing reader, unavailable read,
+prompt. The same `parent_message_id` remains the only lookup identity regardless
+of type. A missing reader, unavailable read,
 mismatched root, invalid type token, or ordinary enrichment deadline never
 blocks the current message: the neutral parent-id hint remains and the optional
 type is omitted. An ordinary failure must not mark the current message body
@@ -135,7 +130,7 @@ content, mentions, and deleted/malformed state. Forward-tree-only sender and
 
 The transport may receive more fields from Lark, but it does not expose them to
 the Channel without a consumer. This keeps the seam narrow and avoids retaining
-an unused parallel representation of `lark-cli` output.
+an unused parallel representation of external lookup output.
 
 ## Model-facing examples
 
@@ -145,19 +140,19 @@ existing formatter style.
 Top-level merged-forward message:
 
 ```text
-Merged-forward message: message_id=om_example. When the records are needed, use the Feishu skill and run: lark-cli im +messages-mget --message-ids om_example
+Merged-forward message: message_id=om_example.
 ```
 
 Reply/quote when the parent read is unavailable:
 
 ```text
-Reply/quote ancestry: parent_message_id=om_parent. When the parent details are needed, use the Feishu skill and run: lark-cli im +messages-mget --message-ids om_parent
+Reply/quote ancestry: parent_message_id=om_parent.
 ```
 
 Reply/quote whose parent type was proven (an interactive card in this example):
 
 ```text
-Reply/quote ancestry: parent_message_id=om_parent, parent_message_type=interactive. When the parent details are needed, use the Feishu skill and run: lark-cli im +messages-mget --message-ids om_parent
+Reply/quote ancestry: parent_message_id=om_parent, parent_message_type=interactive.
 ```
 
 Every dynamic value remains untrusted and is XML-escaped exactly once. Only
@@ -170,8 +165,8 @@ Channel-owned envelope and reminder tags remain literal.
   `message_id` and performs zero message reads and zero resource fetches. A
   merged-forward event with actionable ancestry still performs zero reads for
   its own id and at most the separately authorized parent-type read.
-- The marker names the Feishu skill and `lark-cli`, contains no forwarded
-  record text, and does not carry `chat_id` as a lookup requirement.
+- The marker contains no tool name, command, forwarded record text, or
+  `chat_id`; it carries only the message identity and type fact.
 - Top-level and `nonsupport`-resolved merged-forward markers clear inherited
   incomplete state and do not append `FEISHU_SKILL_FALLBACK_NOTE` or any second
   generic parser warning.
@@ -212,9 +207,8 @@ Channel-owned envelope and reminder tags remain literal.
 - Parsing, rendering, caching, or submitting quoted/replied message bodies
   returned by the authorized parent-type read.
 - Downloading resources nested in merged-forward or parent messages before the
-  Agent explicitly requests them through the Feishu skill.
+  Agent independently requests them through its available tooling.
 - A local message cache, history store, merged-forward tree type, new Channel
   capability, or provider-specific logic in Dreamux core.
-- Changing `lark-cli`, the Feishu skill files, or their
-  identity/resource-download policy. The Channel carries only the stable
-  minimal `+messages-mget --message-ids` invocation needed for this message.
+- Changing external Feishu tools or their identity/resource-download policy.
+  The Channel carries facts only and does not prescribe an invocation.

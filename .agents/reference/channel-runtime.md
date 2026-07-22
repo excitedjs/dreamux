@@ -64,9 +64,9 @@ The access gate runs before any message read or resource fetch. Accepted
 interactive cards use the structured and default read representations with a
 deterministic visible-text union. `nonsupport` events may adopt a matching
 root's authoritative type/content. Merged-forward messages deliberately perform
-no current-message read or child-resource fetch: the model receives the current
-`message_id`, its `merge_forward` type, and the minimal Feishu-skill/lark-cli
-lookup command, then decides whether to fetch the records on demand.
+no current-message read or child-resource fetch: the model receives only the
+current `message_id` and its `merge_forward` type. Channel content does not name
+or prescribe a lookup tool or command.
 
 Rich posts preserve Markdown/code, links, mentions, rules, and inline resource
 positions. Cards expose only visible labels/text/options and exclude callback
@@ -83,8 +83,8 @@ escaped exactly once at the final channel boundary. A neutral ancestry hint is
 emitted only for non-self, non-thread-root parent relations. After current
 message enrichment, one optional two-second parent read may add a bounded
 `parent_message_type`; the returned parent body and children are discarded.
-The hint carries only `parent_message_id`, the proven type when available, and
-the same minimal lark-cli lookup command. The final channel reminder permits a
+The hint carries only `parent_message_id` and the proven type when available;
+it contains no tool or command guidance. The final channel reminder permits a
 direct substantive reply when no preliminary work is needed and asks for an
 acknowledgement only before longer work.
 

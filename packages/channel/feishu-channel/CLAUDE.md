@@ -21,9 +21,9 @@ never on `@excitedjs/dreamux` core.
 - Download inbound attachments after the host access gate allows delivery.
 - Own attachment cache layout, path sanitization, permissions, retention, and
   cleanup policy.
-- Generate honest fallback references when a resource is not downloaded,
-  including the resource key and a lark-cli fetch direction that uses
-  placeholder-safe identifiers in docs and tests.
+- Generate honest fallback metadata when a resource is not downloaded,
+  including its bounded resource key and failure reason without embedding a
+  tool command in the Channel prompt.
 - Serialize Codex/agent-facing inbound bodies, including the
   `<channel source="feishu" …>` envelope and `<attachment>` blocks.
 - If the channel ever needs to parse model/channel-specific markup, keep that
@@ -116,9 +116,7 @@ Keep the core attachment block short and stable:
 For fallback:
 
 ```xml
-<attachment type="file" name="debug.zip" key="FILE_KEY" status="not_downloaded" reason="missing_scope">
-lark-cli im +messages-resources-download --message-id MSG_ID --file-key FILE_KEY --type file --output ./feishu-attachment-file
-</attachment>
+<attachment type="file" name="debug.zip" key="FILE_KEY" status="not_downloaded" reason="missing_scope" />
 ```
 
 Optional fields such as size, mime, or preview may be added only when they are

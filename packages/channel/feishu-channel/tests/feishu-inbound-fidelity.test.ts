@@ -308,6 +308,32 @@ describe('Feishu inbound fidelity production path', () => {
     await session.close();
   });
 
+  it('closes a truncated post code fence before the marker and channel reminder', async () => {
+    const { transport, session, submitted } = await harness();
+
+    await transport.dispatch(rawMessage('om_long_code', 'post', {
+      zh_cn: {
+        content: [[{
+          tag: 'code_block',
+          language: 'ts',
+          text: 'x'.repeat(170_000),
+        }]],
+      },
+    }));
+
+    const body = submitted[0]?.body ?? '';
+    const markerIndex = body.indexOf('[message content truncated:');
+    const closingFenceIndex = body.lastIndexOf('\n```\n');
+    const reminderIndex = body.lastIndexOf(CHANNEL_REMINDER);
+    expect(submitted).toHaveLength(1);
+    expect(body.slice(0, markerIndex).match(/^```/gm)).toHaveLength(2);
+    expect(closingFenceIndex).toBeGreaterThan(0);
+    expect(closingFenceIndex).toBeLessThan(markerIndex);
+    expect(markerIndex).toBeLessThan(reminderIndex);
+    expect(body.endsWith(`\n\n${CHANNEL_REMINDER}`)).toBe(true);
+    await session.close();
+  });
+
   it('resolves cards through both read modes and excludes hidden action values', async () => {
     const { transport, session, submitted } = await harness();
     transport.setResource('card-image', Buffer.from('image'));
@@ -412,7 +438,7 @@ describe('Feishu inbound fidelity production path', () => {
     await session.close();
   });
 
-  it('delivers merged-forward as a lazy lark-cli lookup without reads or resources', async () => {
+  it('delivers merged-forward as an identity-only hint without reads or resources', async () => {
     const { transport, session, submitted } = await harness();
 
     await transport.dispatch(rawMessage('om_forward', 'merge_forward', {}));
@@ -420,9 +446,8 @@ describe('Feishu inbound fidelity production path', () => {
     expect(submitted[0]?.body).toContain(
       'Merged-forward message: message_id=om_forward.',
     );
-    expect(submitted[0]?.body).toContain(
-      'lark-cli im +messages-mget --message-ids om_forward',
-    );
+    expect(submitted[0]?.body).not.toContain('lark-cli');
+    expect(submitted[0]?.body).not.toContain('Feishu skill');
     expect(submitted[0]?.body).not.toContain('Parser note:');
     expect(transport.messageReads).toEqual([]);
     expect(transport.resourceReads).toEqual([]);
@@ -463,6 +488,7 @@ describe('Feishu inbound fidelity production path', () => {
     );
     expect(submitted[0]?.body).not.toContain('must stay hidden');
     expect(submitted[0]?.body).not.toContain('Parser note:');
+    expect(submitted[0]?.body).not.toContain('lark-cli');
     expect(transport.messageReads).toEqual([
       { messageId: 'om_forward_unknown', cardContent: 'default' },
     ]);
@@ -501,9 +527,8 @@ describe('Feishu inbound fidelity production path', () => {
     expect(submitted[3]?.body).toContain(
       'Reply/quote ancestry: parent_message_id=om_parent, parent_message_type=interactive.',
     );
-    expect(submitted[3]?.body).toContain(
-      'lark-cli im +messages-mget --message-ids om_parent',
-    );
+    expect(submitted[3]?.body).not.toContain('lark-cli');
+    expect(submitted[3]?.body).not.toContain('Feishu skill');
     expect(submitted[3]?.body).not.toContain('must not be submitted');
     expect(transport.messageReads).toEqual([
       { messageId: 'om_parent', cardContent: 'default' },

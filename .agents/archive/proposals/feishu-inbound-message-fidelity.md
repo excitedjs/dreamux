@@ -151,9 +151,8 @@ with a stable incomplete-content note when resolution is unavailable.
 
 A merged-forward event is deliberately lazy. The Channel performs no
 current-message reread, child-message walk, or internal-resource download. It
-emits the current `message_id`, the `merge_forward` type, and the minimal
-`lark-cli im +messages-mget --message-ids <message_id>` command. The Agent uses
-the Feishu skill and runs that lookup only when the task needs the records.
+emits only the current `message_id` and the `merge_forward` type. It does not
+name a tool or embed a lookup command in the Channel prompt.
 
 If a single `nonsupport` root reread authoritatively resolves the current
 message to `merge_forward`, the Channel emits the same lazy marker, discards any
@@ -180,8 +179,8 @@ matching root's bounded `parent_message_type` for every valid Feishu type. The
 API necessarily returns body content and may return merged-forward children,
 but the Channel inspects only the type and discards the rest. This optional read
 is capped at two seconds and starts only when the existing 20-second resource
-window can remain. The hint always carries the minimal lark-cli lookup command;
-ordinary read failure leaves only `parent_message_id`. Session revocation still
+window can remain. Ordinary read failure leaves only `parent_message_id`.
+Session revocation still
 terminates the stale handler rather than submitting across a restart.
 
 ## Other concrete message types

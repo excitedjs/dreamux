@@ -29,6 +29,7 @@ import {
   alwaysActiveSessionFence,
   type FeishuInboundWorkContext,
 } from './feishu-inbound-work.js';
+import { markdownFenceCloser } from './feishu-markdown-fence.js';
 import {
   normalizeFeishuMessageTypeToken,
   replyAncestryParentId,
@@ -140,7 +141,7 @@ export async function formatFeishuMessageForRuntime(
   const fallback = shouldAddFallbackNote(event)
     ? `\n\n${FEISHU_SKILL_FALLBACK_NOTE}`
     : '';
-  const attachmentBlock = renderAttachments(event.messageId, attachments);
+  const attachmentBlock = renderAttachments(attachments);
   const attachmentOmission = resolution.omittedCount === 0
     ? ''
     : `\n\n[${resolution.omittedCount} attachment(s) omitted: resource limit reached]`;
@@ -215,11 +216,7 @@ export function formatFeishuCreateTime(value: string): string {
 function renderMessageBody(event: FeishuInboundEvent): string {
   if (event.messageType === 'merge_forward') {
     const messageId = escapeXmlText(event.messageId);
-    return [
-      `Merged-forward message: message_id=${messageId}.`,
-      'When the forwarded records are needed, use the Feishu skill and run:',
-      `lark-cli im +messages-mget --message-ids ${messageId}`,
-    ].join('\n');
+    return `Merged-forward message: message_id=${messageId}.`;
   }
   const rawText = extractRawText(event);
   if (rawText !== null) {
@@ -276,13 +273,7 @@ function renderReplyAncestry(event: FeishuInboundEvent): string {
   const typeHint = parentMessageType === undefined
     ? ''
     : `, parent_message_type=${escapeXmlText(parentMessageType)}`;
-  return [
-    '',
-    '',
-    `Reply/quote ancestry: parent_message_id=${escapedParentId}${typeHint}.`,
-    'When the parent details are needed, use the Feishu skill and run:',
-    `lark-cli im +messages-mget --message-ids ${escapedParentId}`,
-  ].join('\n');
+  return `\n\nReply/quote ancestry: parent_message_id=${escapedParentId}${typeHint}.`;
 }
 
 function isRichMessage(messageType: string): boolean {
@@ -294,6 +285,32 @@ function truncateEscapedRichBody(
   maxChars: number = MAX_RICH_BODY_CHARS,
 ): string {
   if (value.length <= maxChars) return value;
+  let fenceReservation = 0;
+  while (true) {
+    const truncation = truncateEscapedXmlPrefix(
+      value,
+      Math.max(
+        0,
+        maxChars - RICH_BODY_TRUNCATION_MARKER.length - fenceReservation,
+      ),
+    );
+    const fenceCloser = markdownFenceCloser(truncation.content);
+    if (fenceCloser.length <= fenceReservation) {
+      return `${truncation.content}${fenceCloser}${truncation.xmlClosers}${RICH_BODY_TRUNCATION_MARKER}`;
+    }
+    fenceReservation = fenceCloser.length;
+  }
+}
+
+interface EscapedXmlPrefix {
+  content: string;
+  xmlClosers: string;
+}
+
+function truncateEscapedXmlPrefix(
+  value: string,
+  maxChars: number,
+): EscapedXmlPrefix {
   const tags = /<[^>]+>/g;
   const openTags: string[] = [];
   let output = '';
@@ -306,10 +323,7 @@ function truncateEscapedRichBody(
     const closers = closingTags(openTags);
     const budget = Math.max(
       0,
-      maxChars -
-        RICH_BODY_TRUNCATION_MARKER.length -
-        closers.length -
-        output.length,
+      maxChars - closers.length - output.length,
     );
     if (text.length <= budget) {
       output += text;
@@ -321,17 +335,16 @@ function truncateEscapedRichBody(
 
   while ((match = tags.exec(value)) !== null) {
     if (!appendText(value.slice(cursor, match.index))) {
-      return `${output}${RICH_BODY_TRUNCATION_MARKER}${closingTags(openTags)}`;
+      return { content: output, xmlClosers: closingTags(openTags) };
     }
     const tag = match[0];
     const nextOpenTags = updateOpenTags(openTags, tag);
     const required =
       output.length +
       tag.length +
-      RICH_BODY_TRUNCATION_MARKER.length +
       closingTags(nextOpenTags).length;
     if (required > maxChars) {
-      return `${output}${RICH_BODY_TRUNCATION_MARKER}${closingTags(openTags)}`;
+      return { content: output, xmlClosers: closingTags(openTags) };
     }
     output += tag;
     openTags.splice(0, openTags.length, ...nextOpenTags);
@@ -339,7 +352,7 @@ function truncateEscapedRichBody(
   }
 
   appendText(value.slice(cursor));
-  return `${output}${RICH_BODY_TRUNCATION_MARKER}${closingTags(openTags)}`;
+  return { content: output, xmlClosers: closingTags(openTags) };
 }
 
 function safeEscapedPrefix(value: string, budget: number): string {
@@ -519,15 +532,13 @@ async function resolveAttachment(
 }
 
 function renderAttachments(
-  messageId: string,
   attachments: FormattedFeishuAttachment[],
 ): string {
   if (attachments.length === 0) return '';
-  return attachments.map((attachment) => renderAttachment(messageId, attachment)).join('');
+  return attachments.map(renderAttachment).join('');
 }
 
 function renderAttachment(
-  messageId: string,
   attachment: FormattedFeishuAttachment,
 ): string {
   const attrs: Array<[string, string]> = [
@@ -542,27 +553,7 @@ function renderAttachment(
     .map(([key, value]) => `${key}="${escapeXmlAttribute(value)}"`)
     .join(' ');
 
-  if (attachment.status === 'downloaded') {
-    return `\n\n<attachment ${attrText} />`;
-  }
-
-  const key = attachment.key ?? `${attachment.type.toUpperCase()}_KEY`;
-  const outputName = attachment.type === 'image'
-    ? 'feishu-attachment-image'
-    : 'feishu-attachment-file';
-  const command = [
-    'lark-cli im +messages-resources-download',
-    `--message-id ${shellArg(messageId)}`,
-    `--file-key ${shellArg(key)}`,
-    `--type ${attachment.type}`,
-    `--output ./${outputName}`,
-  ].join(' ');
-  return [
-    `\n\n<attachment ${attrText}>`,
-    'Use lark-cli to fetch it if needed:',
-    escapeXmlText(command),
-    '</attachment>',
-  ].join('\n');
+  return `\n\n<attachment ${attrText} />`;
 }
 
 function attachmentPath(cacheRoot: string, resource: InboundResource): string {
@@ -686,10 +677,6 @@ class CachePathError extends Error {
 
 function escapeXmlAttribute(value: string): string {
   return escapeXmlText(value).replaceAll('"', '&quot;');
-}
-
-function shellArg(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function escapeXmlText(value: string): string {

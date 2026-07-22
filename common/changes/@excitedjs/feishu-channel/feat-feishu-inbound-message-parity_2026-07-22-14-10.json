@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Preserve rich Feishu inbound content, add lazy lark-cli lookup hints for merged-forward and quoted messages, and bound post-gate message reads.",
+      "comment": "Preserve rich Feishu inbound content, add fact-only identity and type hints for merged-forward and quoted messages, and bound post-gate message reads.",
       "type": "minor",
       "packageName": "@excitedjs/feishu-channel"
     }
