@@ -119,8 +119,14 @@ function renderTextNode(value: Record<string, unknown>): string {
     : Array.isArray(value.text_style)
       ? value.text_style
       : []
-  if (!style.includes('code') || text === '') return text
-  const fence = text.includes('`') ? '``' : '`'
+  if ((!style.includes('code') && !style.includes('codeInline')) || text === '') {
+    return text
+  }
+  const longestRun = Math.max(
+    0,
+    ...Array.from(text.matchAll(/`+/g), (match) => match[0].length),
+  )
+  const fence = '`'.repeat(longestRun + 1)
   return `${fence}${text}${fence}`
 }
 

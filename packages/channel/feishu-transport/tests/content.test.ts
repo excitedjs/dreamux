@@ -279,6 +279,20 @@ describe('extractPostText', () => {
     })
   })
 
+  test('recognizes codeInline and chooses a delimiter longer than embedded backticks', () => {
+    const post = {
+      zh_cn: {
+        content: [[{
+          tag: 'text',
+          text: 'a``b',
+          style: ['codeInline'],
+        }]],
+      },
+    }
+
+    expect(parseInbound(message('post', post)).text).toBe('```a``b```')
+  })
+
   test('marks unsupported rich-text elements without injecting their raw JSON', () => {
     const parsed = parseInbound(message('post', {
       zh_cn: {
@@ -349,6 +363,25 @@ describe('parseInbound — interactive', () => {
       },
     ])
     expect(parseInbound(message('interactive', c)).text).toBe('field one\nfield two')
+  })
+
+  test('extracts localized note lark_md content using the stable locale order', () => {
+    const c = {
+      header: {
+        title: {
+          tag: 'plain_text',
+          i18n: { en_us: 'English title', zh_cn: '中文标题' },
+        },
+      },
+      i18n_elements: {
+        en_us: [{ tag: 'note', elements: [{ tag: 'lark_md', content: 'English note' }] }],
+        zh_cn: [{ tag: 'note', elements: [{ tag: 'lark_md', content: '可见备注' }] }],
+      },
+    }
+
+    expect(parseInbound(message('interactive', c))).toEqual({
+      text: '中文标题\n可见备注',
+    })
   })
 
   test('recurses into column_set columns', () => {

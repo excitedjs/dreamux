@@ -251,6 +251,39 @@ describe('merged-forward expansion', () => {
     ])
   });
 
+  it('preserves localized note markdown in a forwarded child card', async () => {
+    const bot = createFakeFeishuBot();
+    bot.setMessageRead('om_root', 'user_card_content', response(
+      item('om_root', 'merge_forward', {}),
+      item('om_card', 'interactive', {
+        header: {
+          title: {
+            tag: 'plain_text',
+            i18n: { en_us: 'English title', zh_cn: '中文标题' },
+          },
+        },
+        i18n_elements: {
+          en_us: [{ tag: 'note', elements: [{ tag: 'lark_md', content: 'English note' }] }],
+          zh_cn: [{ tag: 'note', elements: [{ tag: 'lark_md', content: '可见备注' }] }],
+        },
+      }, {
+        upperMessageId: 'om_root',
+        sender: { id: 'ou_card', type: 'bot', name: 'Card bot' },
+      }),
+    ));
+
+    const result = await enrichFeishuInbound(
+      event('merge_forward'),
+      bot,
+      work(),
+      logger(),
+    );
+
+    expect(result.parsedText).toContain('中文标题');
+    expect(result.parsedText).toContain('可见备注');
+    expect(result.parsedText).not.toContain('unsupported card component');
+  });
+
   it('uses at most one default-mode fallback and still performs zero child reads', async () => {
     const bot = createFakeFeishuBot();
     bot.setMessageRead(

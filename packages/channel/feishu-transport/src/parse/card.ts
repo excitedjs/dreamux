@@ -36,7 +36,8 @@ export function parseInteractiveContent(
     visitedNodes: 0,
     incomplete: false,
   }
-  const title = visibleText(card.title) ?? visibleText(asRecord(card.header)?.title)
+  const title = visibleLocalizedText(card.title) ??
+    visibleLocalizedText(asRecord(card.header)?.title)
   if (title !== undefined) state.parts.push(title)
 
   const body = asRecord(card.body)
@@ -44,7 +45,8 @@ export function parseInteractiveContent(
     ? body.elements
     : Array.isArray(card.elements)
       ? card.elements
-      : undefined
+      : pickLocalizedElements(body?.i18n_elements) ??
+        pickLocalizedElements(card.i18n_elements)
   if (elements !== undefined) renderCardValue(elements, state, 0)
 
   const filtered = state.parts
@@ -90,7 +92,12 @@ function renderCardValue(
   if (tag === '') {
     const text = visibleText(node.text) ?? visibleText(node.content)
     if (text !== undefined) state.parts.push(text)
-  } else if (tag === 'markdown' || tag === 'plain_text' || tag === 'div') {
+  } else if (
+    tag === 'markdown' ||
+    tag === 'lark_md' ||
+    tag === 'plain_text' ||
+    tag === 'div'
+  ) {
     const text = visibleText(node.text) ?? visibleText(node.content)
     if (text !== undefined) state.parts.push(text)
   } else if (tag === 'button') {
@@ -173,11 +180,22 @@ function renderInlineNode(
   const node = asRecord(value)
   if (node === undefined) return undefined
   const tag = typeof node.tag === 'string' ? node.tag : ''
-  if (!['text', 'a', 'at', 'img', 'image', 'file'].includes(tag)) {
+  if (![
+    'text',
+    'plain_text',
+    'lark_md',
+    'a',
+    'at',
+    'img',
+    'image',
+    'file',
+  ].includes(tag)) {
     return undefined
   }
   if (!visitCardNode(state)) return ''
-  if (tag === 'text') return visibleText(node.text) ?? visibleText(node.content) ?? ''
+  if (tag === 'text' || tag === 'plain_text' || tag === 'lark_md') {
+    return visibleText(node.text) ?? visibleText(node.content) ?? ''
+  }
   if (tag === 'a') return renderLink(node)
   if (tag === 'at') return `@${stringValue(node.user_name) ?? 'unknown'}`
   if (tag === 'img' || tag === 'image') {
@@ -319,6 +337,32 @@ function visibleText(value: unknown): string | undefined {
   const record = asRecord(value)
   if (record === undefined) return undefined
   return stringValue(record.content) ?? stringValue(record.text)
+}
+
+function visibleLocalizedText(value: unknown): string | undefined {
+  const direct = visibleText(value)
+  if (direct !== undefined) return direct
+  const i18n = asRecord(asRecord(value)?.i18n)
+  if (i18n === undefined) return undefined
+  for (const locale of ['zh_cn', 'en_us', 'ja_jp']) {
+    const text = stringValue(i18n[locale])
+    if (text !== undefined) return text
+  }
+  for (const candidate of Object.values(i18n)) {
+    const text = stringValue(candidate)
+    if (text !== undefined) return text
+  }
+  return undefined
+}
+
+function pickLocalizedElements(value: unknown): unknown[] | undefined {
+  const i18n = asRecord(value)
+  if (i18n === undefined) return undefined
+  for (const locale of ['zh_cn', 'en_us', 'ja_jp']) {
+    const elements = i18n[locale]
+    if (Array.isArray(elements)) return elements
+  }
+  return Object.values(i18n).find(Array.isArray) as unknown[] | undefined
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

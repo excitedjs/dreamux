@@ -141,9 +141,12 @@ export async function formatFeishuMessageForRuntime(
   const groupBots = renderGroupBots(options.trustedBots ?? []);
   const ancestry = renderReplyAncestry(event);
 
+  const renderedBody = `${body}${ancestry}${fallback}${attachmentBlock}${attachmentOmission}${groupBots}`;
   return {
     attrs,
-    body: `${body}${ancestry}${fallback}${attachmentBlock}${attachmentOmission}${groupBots}`,
+    body: isRichMessage(event.messageType)
+      ? truncateEscapedRichBody(renderedBody)
+      : renderedBody,
     attachments,
     diagnostics: attachments
       .filter((attachment) => attachment.status === 'not_downloaded')
@@ -189,9 +192,7 @@ function renderMessageBody(event: FeishuInboundEvent): string {
     return renderTextWithMentions(rawText, event.mentions);
   }
   const escaped = escapeXmlText(event.parsedText);
-  return isRichMessage(event.messageType)
-    ? truncateEscapedRichBody(escaped)
-    : escaped;
+  return escaped;
 }
 
 function extractRawText(event: FeishuInboundEvent): string | null {
@@ -256,14 +257,75 @@ function isRichMessage(messageType: string): boolean {
 
 function truncateEscapedRichBody(value: string): string {
   if (value.length <= MAX_RICH_BODY_CHARS) return value;
-  const budget = MAX_RICH_BODY_CHARS - RICH_BODY_TRUNCATION_MARKER.length;
+  const tags = /<[^>]+>/g;
+  const openTags: string[] = [];
+  let output = '';
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  const closingTags = (stack: string[]): string =>
+    [...stack].reverse().map((name) => `</${name}>`).join('');
+  const appendText = (text: string): boolean => {
+    const closers = closingTags(openTags);
+    const budget = Math.max(
+      0,
+      MAX_RICH_BODY_CHARS -
+        RICH_BODY_TRUNCATION_MARKER.length -
+        closers.length -
+        output.length,
+    );
+    if (text.length <= budget) {
+      output += text;
+      return true;
+    }
+    output += safeEscapedPrefix(text, budget);
+    return false;
+  };
+
+  while ((match = tags.exec(value)) !== null) {
+    if (!appendText(value.slice(cursor, match.index))) {
+      return `${output}${RICH_BODY_TRUNCATION_MARKER}${closingTags(openTags)}`;
+    }
+    const tag = match[0];
+    const nextOpenTags = updateOpenTags(openTags, tag);
+    const required =
+      output.length +
+      tag.length +
+      RICH_BODY_TRUNCATION_MARKER.length +
+      closingTags(nextOpenTags).length;
+    if (required > MAX_RICH_BODY_CHARS) {
+      return `${output}${RICH_BODY_TRUNCATION_MARKER}${closingTags(openTags)}`;
+    }
+    output += tag;
+    openTags.splice(0, openTags.length, ...nextOpenTags);
+    cursor = match.index + tag.length;
+  }
+
+  appendText(value.slice(cursor));
+  return `${output}${RICH_BODY_TRUNCATION_MARKER}${closingTags(openTags)}`;
+}
+
+function safeEscapedPrefix(value: string, budget: number): string {
   let prefix = value.slice(0, budget);
   const lastAmpersand = prefix.lastIndexOf('&');
   const lastSemicolon = prefix.lastIndexOf(';');
   if (lastAmpersand > lastSemicolon) prefix = prefix.slice(0, lastAmpersand);
   const last = prefix.charCodeAt(prefix.length - 1);
   if (last >= 0xd800 && last <= 0xdbff) prefix = prefix.slice(0, -1);
-  return `${prefix}${RICH_BODY_TRUNCATION_MARKER}`;
+  return prefix;
+}
+
+function updateOpenTags(openTags: string[], tag: string): string[] {
+  const next = [...openTags];
+  const closing = /^<\/([A-Za-z][A-Za-z0-9:_-]*)\s*>$/.exec(tag);
+  if (closing !== null) {
+    if (next.at(-1) === closing[1]) next.pop();
+    return next;
+  }
+  if (/\/>$/.test(tag)) return next;
+  const opening = /^<([A-Za-z][A-Za-z0-9:_-]*)\b[^>]*>$/.exec(tag);
+  if (opening !== null) next.push(opening[1]);
+  return next;
 }
 
 async function resolveAttachments(
@@ -328,9 +390,9 @@ async function resolveAttachment(
     // permissive/symlinked/foreign-owned dir is never returned as `downloaded`
     // without the dir first passing (or being tightened to) the owner-only
     // invariant.
-    const resourceDeadline = Date.now() + Math.min(
-      options.timeoutMs ?? FEISHU_RESOURCE_TIMEOUT_MS,
-      work.remainingTimeMs(),
+    const resourceDeadline = Math.min(
+      work.deadlineAt,
+      Date.now() + (options.timeoutMs ?? FEISHU_RESOURCE_TIMEOUT_MS),
     );
     await runFeishuInboundWork(
       work,
@@ -338,11 +400,20 @@ async function resolveAttachment(
       resourceDeadline,
     );
     const path = attachmentPath(cacheRoot, resource);
-    if (await runFeishuInboundWork(
+    const cachedSize = await runFeishuInboundWork(
       work,
-      () => fileExists(path),
+      () => fileSize(path),
       resourceDeadline,
-    )) {
+    );
+    const perResourceLimit = options.maxBytes ?? work.maxResourceBytes;
+    if (cachedSize !== null) {
+      if (cachedSize > perResourceLimit) {
+        return { ...base, reason: 'too_large' };
+      }
+      if (cachedSize > work.remainingAggregateBytes) {
+        return { ...base, reason: 'aggregate_limit' };
+      }
+      work.remainingAggregateBytes -= cachedSize;
       return { ...base, status: 'downloaded', path };
     }
 
@@ -354,21 +425,17 @@ async function resolveAttachment(
         type: resource.type,
       }) ?? Promise.reject(new Error('Feishu resource fetcher unavailable')),
       resourceDeadline,
+      (late) => {
+        late.stream.destroy();
+      },
     );
-    const perResourceLimit = options.maxBytes ?? work.maxResourceBytes;
-    const byteLimit = Math.min(perResourceLimit, work.remainingAggregateBytes);
-    const limitError = byteLimit < perResourceLimit
-      ? new DownloadAggregateLimitError()
-      : new DownloadTooLargeError();
     const bytes = await readStreamWithLimit(
       response.stream,
-      byteLimit,
+      perResourceLimit,
       Math.max(1, resourceDeadline - Date.now()),
       work,
-      limitError,
     );
     work.assertEnrichmentActive();
-    work.remainingAggregateBytes -= bytes.byteLength;
     tmpPath = `${path}.tmp-${globalThis.process.pid}-${Date.now()}`;
     try {
       await runFeishuInboundWork(
@@ -476,12 +543,12 @@ function isInside(root: string, path: string): boolean {
   return path === root || path.startsWith(`${root}/`);
 }
 
-async function fileExists(path: string): Promise<boolean> {
+async function fileSize(path: string): Promise<number | null> {
   try {
     const info = await stat(path);
-    return info.isFile();
+    return info.isFile() ? info.size : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -490,7 +557,6 @@ async function readStreamWithLimit(
   maxBytes: number,
   timeoutMs: number,
   work: FeishuInboundWorkContext,
-  limitError: Error,
 ): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let total = 0;
@@ -508,8 +574,22 @@ async function readStreamWithLimit(
   try {
     for await (const chunk of stream) {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const resourceRemaining = Math.max(0, maxBytes - total);
+      const aggregateRemaining = work.remainingAggregateBytes;
       total += bytes.byteLength;
-      if (total > maxBytes) {
+      work.remainingAggregateBytes = Math.max(
+        0,
+        aggregateRemaining - bytes.byteLength,
+      );
+      if (bytes.byteLength > resourceRemaining) {
+        const limitError = resourceRemaining <= aggregateRemaining
+          ? new DownloadTooLargeError()
+          : new DownloadAggregateLimitError();
+        stream.destroy(limitError);
+        throw limitError;
+      }
+      if (bytes.byteLength > aggregateRemaining) {
+        const limitError = new DownloadAggregateLimitError();
         stream.destroy(limitError);
         throw limitError;
       }

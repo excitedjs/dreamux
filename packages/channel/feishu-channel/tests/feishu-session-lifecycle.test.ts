@@ -216,4 +216,44 @@ describe('Feishu session lifecycle fencing', () => {
     expect(readdirSync(join(stateDir, 'attachments'))).toEqual([]);
     expect(bot.reactionOps.map((entry) => entry.op)).toEqual(['add', 'remove']);
   });
+
+  it('clears received when close races the in-progress reaction replacement', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-feishu-reaction-close-'));
+    dirs.push(stateDir);
+    await allowSender(stateDir);
+    const bot = createFakeFeishuBot();
+    const progress = deferred<void>();
+    bot.setReactionDelay('OnIt', progress.promise);
+    const session = new FeishuChannelSession({
+      dispatcherId: 'dispatcher-a',
+      appId: 'app-test',
+      appSecret: '',
+      stateDir,
+      attachmentCacheDir: join(stateDir, 'attachments'),
+      log: logger(),
+      botFactory: () => bot,
+    });
+    await session.start({
+      submitTurn: async (): Promise<AgentRuntimeTurnResult> => ({
+        status: 'submitted',
+        turnId: 'turn-reaction-close',
+      }),
+    });
+
+    const delivery = bot.inject(event('om_reaction_close'));
+    await vi.waitFor(() => {
+      expect(bot.reactionOps.filter((entry) => entry.op === 'add')).toHaveLength(2);
+    });
+    const closing = session.close();
+    progress.resolve(undefined);
+    await closing;
+    await delivery;
+
+    expect(bot.reactionOps.map((entry) => entry.op)).toEqual([
+      'add',
+      'add',
+      'remove',
+      'remove',
+    ]);
+  });
 });

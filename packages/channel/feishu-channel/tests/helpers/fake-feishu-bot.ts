@@ -58,6 +58,7 @@ export interface FakeFeishuBot extends FeishuBot {
   setSendError(err: Error | null): void;
   setReactionError(err: Error | null): void;
   setRemoveReactionError(err: Error | null): void;
+  setReactionDelay(emoji: string, delay: Promise<void> | null): void;
   setMessageResource(
     fileKey: string,
     resource:
@@ -82,6 +83,7 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
   let sendError: Error | null = null;
   let reactionError: Error | null = null;
   let removeReactionError: Error | null = null;
+  const reactionDelays = new Map<string, Promise<void>>();
   let appOwner: FeishuAppOwnerIdentity = {};
   const messageResources = new Map<
     string,
@@ -138,6 +140,7 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       const reactionId = `reaction-fake-${nextReactionId++}`;
       reactions.push({ messageId, emoji, reactionId });
       reactionOps.push({ op: 'add', messageId, emoji, reactionId });
+      await reactionDelays.get(emoji);
       return reactionId;
     },
     async removeReaction(messageId: string, reactionId: string): Promise<void> {
@@ -225,6 +228,10 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     },
     setRemoveReactionError(err: Error | null): void {
       removeReactionError = err;
+    },
+    setReactionDelay(emoji: string, delay: Promise<void> | null): void {
+      if (delay === null) reactionDelays.delete(emoji);
+      else reactionDelays.set(emoji, delay);
     },
   setMessageResource(
       fileKey: string,

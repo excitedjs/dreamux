@@ -98,23 +98,33 @@ export async function runFeishuInboundWork<T>(
   work: FeishuInboundWorkContext,
   operation: () => Promise<T>,
   deadlineAt: number = work.deadlineAt,
+  onLateValue?: (value: T) => void | Promise<void>,
 ): Promise<T> {
   work.assertEnrichmentActive();
-  const remaining = Math.max(0, Math.min(deadlineAt, work.deadlineAt) - Date.now());
+  const effectiveDeadlineAt = Math.min(deadlineAt, work.deadlineAt);
+  const remaining = Math.max(0, effectiveDeadlineAt - Date.now());
   if (remaining === 0) throw deadlineError(work);
+  const endsAtMessageDeadline = effectiveDeadlineAt === work.deadlineAt;
 
   return new Promise<T>((resolve, reject) => {
     let settled = false;
-    const finish = (callback: () => void): void => {
-      if (settled) return;
+    const finish = (callback: () => void): boolean => {
+      if (settled) return false;
       settled = true;
       clearTimeout(timer);
       work.signal.removeEventListener('abort', onAbort);
       callback();
+      return true;
     };
-    const onAbort = (): void => finish(() => reject(deadlineError(work)));
+    const onAbort = (): void => {
+      finish(() => reject(deadlineError(work)));
+    };
     const timer = setTimeout(
-      () => finish(() => reject(new FeishuResourceTimeoutError())),
+      () => finish(() => reject(
+        endsAtMessageDeadline
+          ? deadlineError(work)
+          : new FeishuResourceTimeoutError(),
+      )),
       remaining,
     );
     work.signal.addEventListener('abort', onAbort, { once: true });
@@ -123,9 +133,22 @@ export async function runFeishuInboundWork<T>(
       return;
     }
     void Promise.resolve()
-      .then(operation)
+      .then(() => {
+        // The initial assertion and this microtask are separated by a revocation
+        // window. Recheck immediately before invoking the SDK/fs operation so a
+        // close cannot reject the wrapper while still starting new side effects.
+        work.assertEnrichmentActive();
+        return operation();
+      })
       .then(
-        (value) => finish(() => resolve(value)),
+        (value) => {
+          if (finish(() => resolve(value)) || onLateValue === undefined) return;
+          try {
+            void Promise.resolve(onLateValue(value)).catch(() => undefined);
+          } catch {
+            // Late cleanup is best-effort and must never create a second failure.
+          }
+        },
         (error: unknown) => finish(() => reject(error)),
       );
   });

@@ -435,6 +435,10 @@ async function deliverAcceptedMessage(
         IN_PROGRESS_REACTION_EMOJI,
         'in_progress',
       );
+      // setInboundReaction fences the newly-added reaction itself. Recheck the
+      // handler generation before relinquishing ownership of the prior
+      // `received` reaction so close-during-replacement cannot strand it.
+      work.assertSessionActive();
       reactionCreated = false;
       return;
     }
