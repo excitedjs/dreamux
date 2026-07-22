@@ -19,6 +19,7 @@ const works: FeishuInboundWorkContext[] = [];
 afterEach(() => {
   for (const work of works.splice(0)) work.dispose();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  vi.useRealTimers();
 });
 
 function event(overrides: Partial<FeishuInboundEvent> = {}): FeishuInboundEvent {
@@ -229,6 +230,23 @@ describe('Feishu inbound resource budgets', () => {
     );
   });
 
+  it('keeps a group-bot baseline that fits without rich-body truncation', async () => {
+    const base = await formatFeishuMessageForRuntime(event({ parsedText: 'x' }), {
+      trustedBots: [{ openId: 'ou_peer', name: '' }],
+    });
+    const groupBotsOverhead = base.body.length - 1;
+    const name = 'n'.repeat(160_000 - 1 - groupBotsOverhead);
+
+    const result = await formatFeishuMessageForRuntime(event({ parsedText: 'x' }), {
+      trustedBots: [{ openId: 'ou_peer', name }],
+    });
+
+    expect(result.body).toHaveLength(160_000);
+    expect(result.groupBotsRendered).toBe(true);
+    expect(result.body).toContain('<group_bots ');
+    expect(result.body).not.toContain('[message content truncated:');
+  });
+
   it('bounds a hanging resource API request by the per-message deadline', async () => {
     const pending = deferred<{
       stream: Readable;
@@ -314,6 +332,33 @@ describe('Feishu inbound resource budgets', () => {
       timeoutMs: 20,
       resourceFetcher: {
         async fetchMessageResource() {
+          return { stream, headers: {} };
+        },
+      },
+    });
+
+    expect(result.attachments[0]).toMatchObject({
+      status: 'not_downloaded',
+      reason: 'timeout',
+    });
+    expect(stream.destroyed).toBe(true);
+  });
+
+  it('destroys an acquired stream when its operation deadline is already expired', async () => {
+    vi.useFakeTimers();
+    const startedAt = new Date('2026-07-22T00:00:00.000Z').getTime();
+    vi.setSystemTime(startedAt);
+    const stream = new Readable({ read() {} });
+
+    const result = await formatFeishuMessageForRuntime(event({
+      resources: [{ type: 'file', key: 'boundary-stream' }],
+    }), {
+      cacheDir: cacheDir(),
+      work: budgetWork({ timeoutMs: 100 }),
+      timeoutMs: 20,
+      resourceFetcher: {
+        async fetchMessageResource() {
+          vi.setSystemTime(startedAt + 20);
           return { stream, headers: {} };
         },
       },

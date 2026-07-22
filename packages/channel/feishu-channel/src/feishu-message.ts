@@ -150,6 +150,11 @@ export async function formatFeishuMessageForRuntime(
     renderedBody = `${renderedPrefix}${groupBots}`;
   } else if (
     groupBots !== '' &&
+    renderedPrefix.length + groupBots.length <= MAX_RICH_BODY_CHARS
+  ) {
+    renderedBody = `${renderedPrefix}${groupBots}`;
+  } else if (
+    groupBots !== '' &&
     groupBots.length + RICH_BODY_TRUNCATION_MARKER.length <= MAX_RICH_BODY_CHARS
   ) {
     renderedBody = `${truncateEscapedRichBody(
@@ -449,13 +454,19 @@ async function resolveAttachment(
         late.stream.destroy();
       },
     );
-    const bytes = await runFeishuInboundWork(
-      work,
-      () => readStreamWithLimit(response.stream, perResourceLimit, work),
-      resourceDeadline,
-      undefined,
-      () => response.stream.destroy(new FeishuResourceTimeoutError()),
-    );
+    let bytes: Buffer;
+    try {
+      bytes = await runFeishuInboundWork(
+        work,
+        () => readStreamWithLimit(response.stream, perResourceLimit, work),
+        resourceDeadline,
+      );
+    } catch (error) {
+      // The response stream is already ours even when the shared wrapper
+      // rejects before the reader starts (deadline/session boundary).
+      response.stream.destroy();
+      throw error;
+    }
     work.assertEnrichmentActive();
     tmpPath = `${path}.tmp-${globalThis.process.pid}-${Date.now()}`;
     try {

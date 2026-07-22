@@ -99,7 +99,6 @@ export async function runFeishuInboundWork<T>(
   operation: () => Promise<T>,
   deadlineAt: number = work.deadlineAt,
   onLateValue?: (value: T) => void | Promise<void>,
-  onOperationTimeout?: () => void,
 ): Promise<T> {
   work.assertEnrichmentActive();
   const effectiveDeadlineAt = Math.min(deadlineAt, work.deadlineAt);
@@ -128,14 +127,7 @@ export async function runFeishuInboundWork<T>(
       finish(() => reject(deadlineError(work)));
     };
     const timer = setTimeout(
-      () => finish(() => {
-        try {
-          onOperationTimeout?.();
-        } catch {
-          // Timeout cleanup is best-effort; the bounded operation still fails.
-        }
-        reject(timeoutError());
-      }),
+      () => finish(() => reject(timeoutError())),
       remaining,
     );
     work.signal.addEventListener('abort', onAbort, { once: true });
