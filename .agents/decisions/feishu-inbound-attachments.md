@@ -49,15 +49,12 @@ resources add a compact attachment tag:
 ```
 
 When a resource cannot be downloaded, the body must be honest: no `path`, a
-short `reason`, the resource key when available, and a lark-cli fallback
-direction. The fallback command must not use the attacker-controlled original
-filename as `--output`; it uses a fixed safe output basename.
+short `reason`, and the resource key when available. The Channel body carries
+facts only; it does not prescribe a retrieval tool, command, output path, or
+other execution policy.
 
 ```xml
-<attachment type="file" name="debug.zip" key="FILE_KEY" status="not_downloaded" reason="missing_scope">
-Use lark-cli to fetch it if needed:
-lark-cli im +messages-resources-download --message-id MSG_ID --file-key FILE_KEY --type file --output ./feishu-attachment-file
-</attachment>
+<attachment type="file" name="debug.zip" key="FILE_KEY" status="not_downloaded" reason="missing_scope" />
 ```
 
 The core attributes are `type`, `name`, `key`, `path`, `status`, and `reason`.

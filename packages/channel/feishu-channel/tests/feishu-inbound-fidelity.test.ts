@@ -334,6 +334,29 @@ describe('Feishu inbound fidelity production path', () => {
     await session.close();
   });
 
+  it('does not synthesize a closer for an invalid backtick-fence info string', async () => {
+    const { transport, session, submitted } = await harness();
+
+    await transport.dispatch(rawMessage('om_invalid_fence', 'post', {
+      zh_cn: {
+        content: [[{
+          tag: 'md',
+          text: `\`\`\`foo\`bar\n${'x'.repeat(170_000)}`,
+        }]],
+      },
+    }));
+
+    const body = submitted[0]?.body ?? '';
+    const markerIndex = body.indexOf('[message content truncated:');
+    const reminderIndex = body.lastIndexOf(CHANNEL_REMINDER);
+    expect(submitted).toHaveLength(1);
+    expect(body.slice(0, markerIndex).match(/^```/gm)).toHaveLength(1);
+    expect(body).not.toContain('\n```\n[message content truncated:');
+    expect(markerIndex).toBeGreaterThan(0);
+    expect(markerIndex).toBeLessThan(reminderIndex);
+    await session.close();
+  });
+
   it('resolves cards through both read modes and excludes hidden action values', async () => {
     const { transport, session, submitted } = await harness();
     transport.setResource('card-image', Buffer.from('image'));

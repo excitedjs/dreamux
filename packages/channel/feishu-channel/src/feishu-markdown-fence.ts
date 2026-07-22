@@ -15,9 +15,10 @@ function activeMarkdownFence(value: string): MarkdownFence | null {
   for (const rawLine of value.split('\n')) {
     const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
     if (active === null) {
-      const opening = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+      const opening = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
       if (opening === null) continue;
       const run = opening[1];
+      if (run[0] === '`' && opening[2].includes('`')) continue;
       active = {
         marker: run[0] as '`' | '~',
         length: run.length,
