@@ -19,6 +19,16 @@ import type {
 
 import type { FeishuInboundEvent } from './bot.js';
 import type { PeerBot } from './chat-bots-store.js';
+import {
+  createFeishuInboundWork,
+  FeishuEnrichmentDeadlineError,
+  FeishuResourceTimeoutError,
+  FeishuSessionRevokedError,
+  FEISHU_RESOURCE_TIMEOUT_MS,
+  runFeishuInboundWork,
+  alwaysActiveSessionFence,
+  type FeishuInboundWorkContext,
+} from './feishu-inbound-work.js';
 
 export const FEISHU_SKILL_FALLBACK_NOTE =
   'Parser note: message text may be incomplete. Use the Feishu skill with the chat_id and message_id above to fetch the original message when needed.';
@@ -30,7 +40,10 @@ export type FeishuAttachmentReason =
   | 'timeout'
   | 'api_error'
   | 'unsupported_type'
-  | 'cache_error';
+  | 'cache_error'
+  | 'deadline'
+  | 'resource_limit'
+  | 'aggregate_limit';
 
 export type FeishuAttachmentStatus = 'downloaded' | 'not_downloaded';
 
@@ -49,6 +62,8 @@ export interface FormatFeishuMessageOptions {
   maxBytes?: number;
   /** Defaults to 20 seconds per resource. */
   timeoutMs?: number;
+  /** Shared lifecycle/deadline/resource budget for an accepted inbound. */
+  work?: FeishuInboundWorkContext;
 }
 
 export interface FormattedFeishuAttachment {
@@ -79,14 +94,29 @@ export interface FormatFeishuMessageResult {
   diagnostics: string[];
 }
 
-const DEFAULT_MAX_RESOURCE_BYTES = 25 * 1024 * 1024;
-const DEFAULT_RESOURCE_TIMEOUT_MS = 20_000;
+const MAX_RICH_BODY_CHARS = 160_000;
+const RICH_BODY_TRUNCATION_MARKER = '\n[message content truncated: 160000-character limit reached]';
 
 export async function formatFeishuMessageForRuntime(
   event: FeishuInboundEvent,
   options: FormatFeishuMessageOptions = {},
 ): Promise<FormatFeishuMessageResult> {
-  const attachments = await resolveAttachments(event, options);
+  const ownedWork = options.work === undefined
+    ? createFeishuInboundWork(alwaysActiveSessionFence(), {
+        ...(options.maxBytes !== undefined
+          ? { maxResourceBytes: options.maxBytes }
+          : {}),
+      })
+    : undefined;
+  const work = options.work ?? ownedWork;
+  if (work === undefined) throw new Error('Feishu inbound work context was not created');
+  let resolution: AttachmentResolution;
+  try {
+    resolution = await resolveAttachments(event, options, work);
+  } finally {
+    ownedWork?.dispose();
+  }
+  const attachments = resolution.attachments;
   const attrs: Array<[string, string]> = [
     ['chat_id', event.chatId],
     ['chat_type', event.chatType],
@@ -105,11 +135,15 @@ export async function formatFeishuMessageForRuntime(
     ? `\n\n${FEISHU_SKILL_FALLBACK_NOTE}`
     : '';
   const attachmentBlock = renderAttachments(event.messageId, attachments);
+  const attachmentOmission = resolution.omittedCount === 0
+    ? ''
+    : `\n\n[${resolution.omittedCount} attachment(s) omitted: resource limit reached]`;
   const groupBots = renderGroupBots(options.trustedBots ?? []);
+  const ancestry = renderReplyAncestry(event);
 
   return {
     attrs,
-    body: `${body}${fallback}${attachmentBlock}${groupBots}`,
+    body: `${body}${ancestry}${fallback}${attachmentBlock}${attachmentOmission}${groupBots}`,
     attachments,
     diagnostics: attachments
       .filter((attachment) => attachment.status === 'not_downloaded')
@@ -154,7 +188,10 @@ function renderMessageBody(event: FeishuInboundEvent): string {
   if (rawText !== null) {
     return renderTextWithMentions(rawText, event.mentions);
   }
-  return escapeXmlText(event.parsedText);
+  const escaped = escapeXmlText(event.parsedText);
+  return isRichMessage(event.messageType)
+    ? truncateEscapedRichBody(escaped)
+    : escaped;
 }
 
 function extractRawText(event: FeishuInboundEvent): string | null {
@@ -187,27 +224,81 @@ function renderTextWithMentions(text: string, mentions: Mention[]): string {
 }
 
 function shouldAddFallbackNote(event: FeishuInboundEvent): boolean {
+  if (event.contentIncomplete === true) return true;
   if (event.parsedText === '(unparseable message)') return true;
   if (event.messageType === 'text' && extractRawText(event) === null) return true;
   return event.parsedText === `(${event.messageType} message)`;
 }
 
+function renderReplyAncestry(event: FeishuInboundEvent): string {
+  const parentId = event.parentId;
+  if (parentId === undefined || parentId === '' || parentId === event.messageId) {
+    return '';
+  }
+  if (
+    event.threadId !== undefined &&
+    event.threadId !== '' &&
+    parentId === event.rootId
+  ) {
+    return '';
+  }
+  return [
+    '',
+    '',
+    `Reply/quote ancestry: parent_message_id=${escapeXmlText(parentId)}.`,
+    'Use the Feishu skill with that message id if the parent body is needed.',
+  ].join('\n');
+}
+
+function isRichMessage(messageType: string): boolean {
+  return ['post', 'interactive', 'merge_forward'].includes(messageType);
+}
+
+function truncateEscapedRichBody(value: string): string {
+  if (value.length <= MAX_RICH_BODY_CHARS) return value;
+  const budget = MAX_RICH_BODY_CHARS - RICH_BODY_TRUNCATION_MARKER.length;
+  let prefix = value.slice(0, budget);
+  const lastAmpersand = prefix.lastIndexOf('&');
+  const lastSemicolon = prefix.lastIndexOf(';');
+  if (lastAmpersand > lastSemicolon) prefix = prefix.slice(0, lastAmpersand);
+  const last = prefix.charCodeAt(prefix.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) prefix = prefix.slice(0, -1);
+  return `${prefix}${RICH_BODY_TRUNCATION_MARKER}`;
+}
+
 async function resolveAttachments(
   event: FeishuInboundEvent,
   options: FormatFeishuMessageOptions,
-): Promise<FormattedFeishuAttachment[]> {
+  work: FeishuInboundWorkContext,
+): Promise<AttachmentResolution> {
   const resources = event.resources ?? [];
   const out: FormattedFeishuAttachment[] = [];
-  for (const resource of resources) {
-    out.push(await resolveAttachment(event.messageId, resource, options));
+  let omittedCount = 0;
+  for (const [index, resource] of resources.entries()) {
+    const identity = resource.key === undefined || resource.key === ''
+      ? `${resource.type}:missing:${index}`
+      : `${resource.type}:${resource.key}`;
+    if (work.seenResourceKeys.has(identity)) continue;
+    if (work.seenResourceKeys.size >= work.maxUniqueResources) {
+      omittedCount += 1;
+      continue;
+    }
+    work.seenResourceKeys.add(identity);
+    out.push(await resolveAttachment(event.messageId, resource, options, work));
   }
-  return out;
+  return { attachments: out, omittedCount };
+}
+
+interface AttachmentResolution {
+  attachments: FormattedFeishuAttachment[];
+  omittedCount: number;
 }
 
 async function resolveAttachment(
   messageId: string,
   resource: InboundResource,
   options: FormatFeishuMessageOptions,
+  work: FeishuInboundWorkContext,
 ): Promise<FormattedFeishuAttachment> {
   const base: FormattedFeishuAttachment = {
     type: resource.type,
@@ -222,7 +313,13 @@ async function resolveAttachment(
   if (options.cacheDir === undefined || options.resourceFetcher === undefined) {
     return { ...base, reason: 'unsupported_type' };
   }
+  if (work.remainingTimeMs() === 0) return { ...base, reason: 'deadline' };
+  if (work.remainingAggregateBytes <= 0) {
+    return { ...base, reason: 'aggregate_limit' };
+  }
 
+  let publishedPath: string | undefined;
+  let tmpPath: string | undefined;
   try {
     const cacheRoot = resolve(options.cacheDir);
     // Owner-only cache dir (issue #182): tighten a pre-existing permissive dir
@@ -231,31 +328,81 @@ async function resolveAttachment(
     // permissive/symlinked/foreign-owned dir is never returned as `downloaded`
     // without the dir first passing (or being tightened to) the owner-only
     // invariant.
-    await ensureOwnerOnlyDir(cacheRoot);
+    const resourceDeadline = Date.now() + Math.min(
+      options.timeoutMs ?? FEISHU_RESOURCE_TIMEOUT_MS,
+      work.remainingTimeMs(),
+    );
+    await runFeishuInboundWork(
+      work,
+      () => ensureOwnerOnlyDir(cacheRoot),
+      resourceDeadline,
+    );
     const path = attachmentPath(cacheRoot, resource);
-    if (await fileExists(path)) return { ...base, status: 'downloaded', path };
+    if (await runFeishuInboundWork(
+      work,
+      () => fileExists(path),
+      resourceDeadline,
+    )) {
+      return { ...base, status: 'downloaded', path };
+    }
 
-    const response = await options.resourceFetcher.fetchMessageResource({
-      messageId,
-      fileKey: resource.key,
-      type: resource.type,
-    });
+    const response = await runFeishuInboundWork(
+      work,
+      () => options.resourceFetcher?.fetchMessageResource({
+        messageId,
+        fileKey: resource.key ?? '',
+        type: resource.type,
+      }) ?? Promise.reject(new Error('Feishu resource fetcher unavailable')),
+      resourceDeadline,
+    );
+    const perResourceLimit = options.maxBytes ?? work.maxResourceBytes;
+    const byteLimit = Math.min(perResourceLimit, work.remainingAggregateBytes);
+    const limitError = byteLimit < perResourceLimit
+      ? new DownloadAggregateLimitError()
+      : new DownloadTooLargeError();
     const bytes = await readStreamWithLimit(
       response.stream,
-      options.maxBytes ?? DEFAULT_MAX_RESOURCE_BYTES,
-      options.timeoutMs ?? DEFAULT_RESOURCE_TIMEOUT_MS,
+      byteLimit,
+      Math.max(1, resourceDeadline - Date.now()),
+      work,
+      limitError,
     );
-    const tmpPath = `${path}.tmp-${globalThis.process.pid}-${Date.now()}`;
+    work.assertEnrichmentActive();
+    work.remainingAggregateBytes -= bytes.byteLength;
+    tmpPath = `${path}.tmp-${globalThis.process.pid}-${Date.now()}`;
     try {
-      await writeFile(tmpPath, bytes, { mode: 0o600 });
-      await chmod(tmpPath, 0o600);
-      await rename(tmpPath, path);
+      await runFeishuInboundWork(
+        work,
+        () => writeFile(tmpPath ?? '', bytes, { mode: 0o600, signal: work.signal }),
+        resourceDeadline,
+      );
+      await runFeishuInboundWork(
+        work,
+        () => chmod(tmpPath ?? '', 0o600),
+        resourceDeadline,
+      );
+      await runFeishuInboundWork(
+        work,
+        async () => {
+          work.assertEnrichmentActive();
+          await rename(tmpPath ?? '', path);
+          publishedPath = path;
+          if (work.signal.aborted || !work.isSessionActive()) {
+            await rm(path, { force: true });
+            publishedPath = undefined;
+            work.assertEnrichmentActive();
+          }
+        },
+        resourceDeadline,
+      );
     } catch (err) {
-      await rm(tmpPath, { force: true });
+      if (tmpPath !== undefined) await rm(tmpPath, { force: true });
+      if (publishedPath !== undefined) await rm(publishedPath, { force: true });
       throw err;
     }
     return { ...base, status: 'downloaded', path };
   } catch (err) {
+    if (err instanceof FeishuSessionRevokedError) throw err;
     return { ...base, reason: reasonFromError(err) };
   }
 }
@@ -342,13 +489,20 @@ async function readStreamWithLimit(
   stream: Readable,
   maxBytes: number,
   timeoutMs: number,
+  work: FeishuInboundWorkContext,
+  limitError: Error,
 ): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let total = 0;
   let timedOut = false;
+  const onAbort = (): void => {
+    stream.destroy(new FeishuStreamAbortedError());
+  };
+  work.signal.addEventListener('abort', onAbort, { once: true });
+  if (work.signal.aborted) onAbort();
   const timer = setTimeout(() => {
     timedOut = true;
-    stream.destroy(new DownloadTimeoutError());
+    stream.destroy(new FeishuResourceTimeoutError());
   }, timeoutMs);
 
   try {
@@ -356,16 +510,20 @@ async function readStreamWithLimit(
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       total += bytes.byteLength;
       if (total > maxBytes) {
-        stream.destroy(new DownloadTooLargeError());
-        throw new DownloadTooLargeError();
+        stream.destroy(limitError);
+        throw limitError;
       }
       chunks.push(bytes);
     }
   } catch (err) {
-    if (timedOut) throw new DownloadTimeoutError();
+    if (work.signal.aborted) {
+      work.assertEnrichmentActive();
+    }
+    if (timedOut) throw new FeishuResourceTimeoutError();
     throw err;
   } finally {
     clearTimeout(timer);
+    work.signal.removeEventListener('abort', onAbort);
   }
 
   return Buffer.concat(chunks, total);
@@ -373,7 +531,9 @@ async function readStreamWithLimit(
 
 function reasonFromError(err: unknown): FeishuAttachmentReason {
   if (err instanceof DownloadTooLargeError) return 'too_large';
-  if (err instanceof DownloadTimeoutError) return 'timeout';
+  if (err instanceof DownloadAggregateLimitError) return 'aggregate_limit';
+  if (err instanceof FeishuResourceTimeoutError) return 'timeout';
+  if (err instanceof FeishuEnrichmentDeadlineError) return 'deadline';
   if (err instanceof CachePathError) return 'cache_error';
   if (err instanceof Error && looksLikeMissingScope(err)) return 'missing_scope';
   return 'api_error';
@@ -390,9 +550,15 @@ class DownloadTooLargeError extends Error {
   }
 }
 
-class DownloadTimeoutError extends Error {
+class DownloadAggregateLimitError extends Error {
   constructor() {
-    super('Feishu resource download timed out');
+    super('Feishu message aggregate resource byte cap was reached');
+  }
+}
+
+class FeishuStreamAbortedError extends Error {
+  constructor() {
+    super('Feishu resource stream was aborted');
   }
 }
 

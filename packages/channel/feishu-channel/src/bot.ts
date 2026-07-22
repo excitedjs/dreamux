@@ -32,6 +32,8 @@ import {
   type FeishuMessageResourceFetcher,
   type FeishuMessageResourceRequest,
   type FeishuMessageResourceResponse,
+  type FeishuMessageReadRequest,
+  type FeishuMessageReadResponse,
   type FeishuAppOwnerIdentity,
   type FeishuChatMode,
   type FeishuTransport,
@@ -83,6 +85,8 @@ export interface FeishuInboundEvent {
   parsedText: string;
   /** Structured Feishu resources discovered in the message content. */
   resources?: InboundResource[];
+  /** The local projection omitted or could not resolve visible content. */
+  contentIncomplete?: boolean;
   mentions: Mention[];
   createTime: string;
   /** The full original Feishu event payload (for storage / audit). */
@@ -145,6 +149,10 @@ export interface FeishuBot extends FeishuMessageResourceFetcher {
   fetchMessageResource(
     request: FeishuMessageResourceRequest,
   ): Promise<FeishuMessageResourceResponse>;
+  /** Optional for externally supplied bots; absence keeps event-only content. */
+  readMessage?(
+    request: FeishuMessageReadRequest,
+  ): Promise<FeishuMessageReadResponse>;
   resolveAppOwner(): Promise<FeishuAppOwnerIdentity>;
   close(): Promise<void>;
 }
@@ -269,6 +277,16 @@ export function createFeishuBot(
       return transport.fetchMessageResource(request);
     },
 
+    ...(transport.readMessage !== undefined
+      ? {
+          readMessage(
+            request: FeishuMessageReadRequest,
+          ): Promise<FeishuMessageReadResponse> {
+            return transport.readMessage?.(request) ?? Promise.resolve({ items: [] });
+          },
+        }
+      : {}),
+
     resolveAppOwner(): Promise<FeishuAppOwnerIdentity> {
       return transport.resolveAppOwner();
     },
@@ -348,6 +366,7 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
     rawContent,
     parsedText: payload.text,
     resources: parsed.resources ?? [],
+    ...(parsed.incomplete === true ? { contentIncomplete: true } : {}),
     mentions,
     createTime,
     raw,

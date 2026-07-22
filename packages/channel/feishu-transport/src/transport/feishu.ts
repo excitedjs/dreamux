@@ -20,6 +20,20 @@ import {
   type TransportDiagnostics,
   type TransportLogger,
 } from './diagnostics.js'
+import {
+  normalizeMessageReadItem,
+  type FeishuMessageReader,
+  type FeishuMessageReadRequest,
+  type FeishuMessageReadResponse,
+} from './message-read.js'
+export type {
+  FeishuMessageReadItem,
+  FeishuMessageReadMode,
+  FeishuMessageReadRequest,
+  FeishuMessageReadResponse,
+  FeishuMessageReadSender,
+  FeishuMessageReader,
+} from './message-read.js'
 
 const WS_HANDSHAKE_TIMEOUT_MS = 15_000
 
@@ -229,6 +243,7 @@ export interface FeishuTransport {
     fetchMessageResource(
     request: FeishuMessageResourceRequest,
   ): Promise<FeishuMessageResourceResponse>
+    readMessage?(request: FeishuMessageReadRequest): Promise<FeishuMessageReadResponse>
     resolveAppOwner(): Promise<FeishuAppOwnerIdentity>
     close(): Promise<void>
 }
@@ -246,7 +261,7 @@ export interface FeishuTransportOptions {
 export function createFeishuTransport(
   creds: FeishuCredentials,
   options: FeishuTransportOptions = {},
-): FeishuTransport {
+): FeishuTransport & FeishuMessageReader {
   const diag = createTransportDiagnostics(options.logger)
   const client =
     options.client ??
@@ -465,6 +480,23 @@ export function createFeishuTransport(
       return {
         stream: res.getReadableStream(),
         headers: res.headers as Record<string, unknown>,
+      }
+    },
+
+    async readMessage(
+      request: FeishuMessageReadRequest,
+    ): Promise<FeishuMessageReadResponse> {
+      const res = await client.im.v1.message.get({
+        path: { message_id: request.messageId },
+        params: {
+          user_id_type: 'open_id',
+          ...(request.cardContent === 'user_card_content'
+            ? { card_msg_content_type: 'user_card_content' }
+            : {}),
+        },
+      })
+      return {
+        items: (res.data?.items ?? []).map(normalizeMessageReadItem),
       }
     },
 

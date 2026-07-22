@@ -51,6 +51,48 @@ Key source:
 - `/packages/channel/feishu-channel/src/bot.ts`
 - `/packages/channel/feishu-transport/`
 
+## Feishu Inbound Content Fidelity
+
+Feishu content parsing and SDK ownership stay split across the two channel
+packages. `@excitedjs/feishu-transport` parses event content into untrusted text
+plus typed resources and exposes a narrow `readMessage` wrapper around
+`im.v1.message.get`. `@excitedjs/feishu-channel` decides when a read is allowed,
+validates the reread root against the already accepted event, renders the
+model-facing body, and downloads resources.
+
+The access gate runs before any message read or resource fetch. Accepted
+interactive cards use the structured and default read representations with a
+deterministic visible-text union. `nonsupport` events may adopt a matching
+root's authoritative type/content. Merged-forward messages use one logical
+top-level read (with one bounded fallback), walk returned `upper_message_id`
+relationships in memory, never reread children, and fetch child resources with
+the top-level event message id.
+
+Rich posts preserve Markdown/code, links, mentions, rules, and inline resource
+positions. Cards expose only visible labels/text/options and exclude callback
+or hidden values. Audio and media map onto the existing file/image resource
+ABI; stickers, shared entities, and future types receive explicit bounded
+fallbacks instead of raw JSON.
+
+Every accepted inbound owns a session-fenced enrichment context. Session close
+revokes it before closing the transport and drains handlers that already
+started. The context bounds the whole enrichment to 60 seconds, 32 unique
+resources, 25 MiB per resource, 100 MiB aggregate, and one sequential download;
+rich card/post/forward text is capped at 160,000 escaped characters. Untrusted
+text is escaped exactly once at the final channel boundary. A neutral ancestry
+hint is emitted only for non-self, non-thread-root parent relations. The final
+channel reminder permits a direct substantive reply when no preliminary work
+is needed and asks for an acknowledgement only before longer work.
+
+Key source:
+
+- `/packages/channel/feishu-transport/src/parse/`
+- `/packages/channel/feishu-transport/src/transport/message-read.ts`
+- `/packages/channel/feishu-channel/src/feishu-inbound-enrichment.ts`
+- `/packages/channel/feishu-channel/src/feishu-inbound-work.ts`
+- `/packages/channel/feishu-channel/src/feishu-message.ts`
+- `/packages/channel/feishu-channel/src/feishu-session-inbound.ts`
+
 ## Provider Tools And MCP
 
 The Feishu package owns its tool names and JSON schemas:

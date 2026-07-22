@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Preserve rich Feishu inbound content, expand merged forwards, and add bounded post-gate message reads.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

@@ -3,8 +3,8 @@
  *
  * Feishu delivers `message.content` as a JSON-encoded string whose shape
  * depends on `message_type`. This module turns that into the plain text the
- * channel forwards to the engine. Attachment message types (image, file) are
- * summarized as a short text marker — the channel forwards text, not binaries.
+ * channel forwards to the engine. Attachment-capable message types expose
+ * typed resource keys beside positional, human-readable markers.
  *
  * Ported verbatim from claudemux's `feishu-channel/src/content.ts` (the source
  * of truth — it carries the `interactive`-card parse dreamux's drifted copy had
@@ -12,6 +12,8 @@
  */
 
 import type { Mention } from '../contract/types.js'
+import { parseInteractiveContent } from './card.js'
+import { parsePostContent } from './post.js'
 
 /** The subset of an inbound Feishu message this module reads. */
 export interface InboundMessage {
@@ -28,6 +30,8 @@ export interface ParsedInbound {
   resources?: InboundResource[]
   /** Optional flat/narrow metadata supplied by the host's event normalizer. */
   meta?: Record<string, unknown>
+  /** True when the projection is an honest fallback or omitted visible data. */
+  incomplete?: boolean
 }
 
 export type InboundResourceType = 'file' | 'image'
@@ -59,7 +63,15 @@ export function parseInbound(message: InboundMessage): ParsedInbound {
   try {
     parsed = JSON.parse(message.content ?? '')
   } catch {
-    return { text: message.content ?? '(unparseable message)' }
+    return type === 'text'
+      ? {
+          text: message.content ?? '(unparseable message)',
+          incomplete: true,
+        }
+      : {
+          text: `(unparseable ${safeMessageType(type)} message)`,
+          incomplete: true,
+        }
   }
   const content = (parsed && typeof parsed === 'object' ? parsed : {}) as Record<string, unknown>
 
@@ -69,29 +81,104 @@ export function parseInbound(message: InboundMessage): ParsedInbound {
       return { text: applyMentions(text, message.mentions) }
     }
     case 'post':
-      return { text: extractPostText(content) }
+      return parsePostContent(content)
     case 'image':
+      {
+        const key = nonEmptyString(content.image_key)
       return {
         text: '(image message)',
         resources: [{
           type: 'image',
-          ...(typeof content.image_key === 'string' ? { key: content.image_key } : {}),
+          ...(key !== undefined ? { key } : {}),
         }],
+        ...(key === undefined ? { incomplete: true } : {}),
+      }
       }
     case 'file': {
+      const key = nonEmptyString(content.file_key)
       return {
         text: '(file message)',
         resources: [{
           type: 'file',
-          ...(typeof content.file_key === 'string' ? { key: content.file_key } : {}),
-          ...(typeof content.file_name === 'string' ? { name: content.file_name } : {}),
+          ...(key !== undefined ? { key } : {}),
+          ...(nonEmptyString(content.file_name) !== undefined
+            ? { name: nonEmptyString(content.file_name) }
+            : {}),
         }],
+        ...(key === undefined ? { incomplete: true } : {}),
       }
     }
     case 'interactive':
-      return { text: extractInteractiveText(content) }
+      return parseInteractiveContent(content)
+    case 'audio': {
+      const key = nonEmptyString(content.file_key)
+      return {
+        text: key === undefined
+          ? '(voice message without a resource key)'
+          : `[voice message attachment: ${key}]`,
+        resources: [{
+          type: 'file',
+          ...(key !== undefined ? { key } : {}),
+          name: 'voice.opus',
+        }],
+        ...(key === undefined ? { incomplete: true } : {}),
+      }
+    }
+    case 'media': {
+      const fileKey = nonEmptyString(content.file_key)
+      const imageKey = nonEmptyString(content.image_key)
+      const resources: InboundResource[] = [
+        {
+          type: 'file',
+          ...(fileKey !== undefined ? { key: fileKey } : {}),
+          name: 'video.mp4',
+        },
+        {
+          type: 'image',
+          ...(imageKey !== undefined ? { key: imageKey } : {}),
+          name: 'video-cover.jpg',
+        },
+      ]
+      return {
+        text: [
+          fileKey === undefined
+            ? '[video attachment without a resource key]'
+            : `[video attachment: ${fileKey}]`,
+          imageKey === undefined
+            ? '[video cover without a resource key]'
+            : `[video cover: ${imageKey}]`,
+        ].join('\n'),
+        resources,
+        ...(fileKey === undefined || imageKey === undefined
+          ? { incomplete: true }
+          : {}),
+      }
+    }
+    case 'sticker':
+      return { text: '(sticker message; sticker resources are not downloadable)' }
+    case 'share_chat': {
+      const chatId = nonEmptyString(content.chat_id)
+      return {
+        text: chatId === undefined ? '(shared chat)' : `(shared chat: ${chatId})`,
+        ...(chatId === undefined ? { incomplete: true } : {}),
+      }
+    }
+    case 'share_user': {
+      const userId = nonEmptyString(content.user_id)
+      return {
+        text: userId === undefined ? '(shared user)' : `(shared user: ${userId})`,
+        ...(userId === undefined ? { incomplete: true } : {}),
+      }
+    }
+    case 'merge_forward':
+      return { text: '(merged-forward message not expanded)', incomplete: true }
+    case 'nonsupport':
+      return { text: '(unsupported message content not resolved)', incomplete: true }
     default:
-      return { text: `(${type} message)` }
+      return {
+        text: `(${safeMessageType(type)} message)`,
+        incomplete: true,
+      }
   }
 }
 
@@ -166,107 +253,16 @@ function asString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined
 }
 
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
+
 function omitEmptyStrings(input: Record<string, string | undefined>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(input)) {
     if (value !== undefined && value !== '') out[key] = value
   }
   return out
-}
-
-/**
- * Feishu WebSocket events for interactive cards wrap the real v2 card JSON as a
- * JSON-encoded string under `user_dsl`. Unwrap it so the extractor below always
- * sees the card schema directly.
- */
-function unwrapUserDsl(card: Record<string, unknown>): Record<string, unknown> {
-  const dsl = card.user_dsl
-  if (typeof dsl !== 'string') return card
-  try {
-    const inner: unknown = JSON.parse(dsl)
-    if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
-      return inner as Record<string, unknown>
-    }
-  } catch {
-    // fall through
-  }
-  return card
-}
-
-/**
- * Extract plain text from a v2 interactive card content object.
- * Handles feishu-channel cards (tag: markdown) and Dbotmux / other bots'
- * cards (tag: div with text.content, tag: column_set, etc.).
- */
-function extractInteractiveText(card: Record<string, unknown>): string {
-  const c = unwrapUserDsl(card)
-  const parts: string[] = []
-
-  const header = c.header
-  if (header && typeof header === 'object') {
-    const title = (header as Record<string, unknown>).title
-    if (title && typeof title === 'object') {
-      const tc = (title as Record<string, unknown>).content
-      if (typeof tc === 'string' && tc.trim()) parts.push(tc)
-    }
-  }
-
-  const body = c.body
-  const elements = body && typeof body === 'object'
-    ? (body as Record<string, unknown>).elements
-    : c.elements
-  if (Array.isArray(elements)) {
-    for (const el of elements) extractCardElementText(el, parts)
-  }
-
-  return parts.join('\n') || '(interactive card)'
-}
-
-/** Recursively extract readable text from a v2 card element. */
-function extractCardElementText(el: unknown, parts: string[]): void {
-  if (!el || typeof el !== 'object' || Array.isArray(el)) return
-  const e = el as Record<string, unknown>
-  const tag = e.tag as string | undefined
-
-  if (tag === 'markdown' || tag === 'plain_text' || tag === 'div') {
-    // `content` is a direct string in feishu-channel cards;
-    // `text.content` is used when the text is a nested object (other bots).
-    const textObj = e.text
-    const text =
-      textObj && typeof textObj === 'object'
-        ? (textObj as Record<string, unknown>).content
-        : e.content
-    if (typeof text === 'string' && text.trim()) parts.push(text)
-
-    // div.fields[] — lark_md cells in field-layout cards from other bots.
-    if (Array.isArray(e.fields)) {
-      for (const f of e.fields) {
-        if (!f || typeof f !== 'object') continue
-        const fo = f as Record<string, unknown>
-        const ft =
-          fo.text && typeof fo.text === 'object'
-            ? (fo.text as Record<string, unknown>).content
-            : fo.content
-        if (typeof ft === 'string' && ft.trim()) parts.push(ft)
-      }
-    }
-  }
-
-  // column_set → columns[].elements[]
-  if (Array.isArray(e.columns)) {
-    for (const col of e.columns) {
-      if (!col || typeof col !== 'object') continue
-      const co = col as Record<string, unknown>
-      if (Array.isArray(co.elements)) {
-        for (const child of co.elements) extractCardElementText(child, parts)
-      }
-    }
-  }
-
-  // Generic child elements (action blocks, nested containers)
-  if (Array.isArray(e.elements)) {
-    for (const child of e.elements) extractCardElementText(child, parts)
-  }
 }
 
 /**
@@ -298,49 +294,10 @@ export function mentionName(
  * paragraphs, each an array of tagged inline elements.
  */
 export function extractPostText(content: Record<string, unknown>): string {
-  const post = pickPostLocale(content)
-  const lines: string[] = []
-
-  if (typeof post.title === 'string' && post.title.length > 0) {
-    lines.push(post.title)
-  }
-  const body = post.content
-  if (Array.isArray(body)) {
-    for (const paragraph of body) {
-      if (!Array.isArray(paragraph)) continue
-      lines.push(paragraph.map(renderPostElement).join(''))
-    }
-  }
-  return lines.join('\n')
+  return parsePostContent(content).text
 }
 
-/** Pick the first present locale block of a post, falling back to the raw object. */
-function pickPostLocale(content: Record<string, unknown>): Record<string, unknown> {
-  for (const locale of ['zh_cn', 'en_us', 'ja_jp']) {
-    const block = content[locale]
-    if (block && typeof block === 'object') return block as Record<string, unknown>
-  }
-  return content
-}
-
-/** Render one inline post element to text. */
-function renderPostElement(el: unknown): string {
-  if (!el || typeof el !== 'object') return ''
-  const e = el as Record<string, unknown>
-  switch (e.tag) {
-    case 'text':
-      return typeof e.text === 'string' ? e.text : ''
-    case 'a':
-      return typeof e.text === 'string'
-        ? e.text
-        : typeof e.href === 'string'
-          ? e.href
-          : ''
-    case 'at':
-      return `@${typeof e.user_name === 'string' ? e.user_name : ''}`
-    case 'img':
-      return '(image)'
-    default:
-      return ''
-  }
+function safeMessageType(value: string): string {
+  const safe = value.replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 64)
+  return safe === '' ? 'unknown' : safe
 }

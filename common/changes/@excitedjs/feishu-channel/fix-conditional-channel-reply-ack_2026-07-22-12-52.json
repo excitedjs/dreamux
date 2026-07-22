@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Make Feishu channel acknowledgements conditional so immediately answerable requests receive a single direct reply.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

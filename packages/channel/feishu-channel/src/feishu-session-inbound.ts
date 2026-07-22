@@ -15,6 +15,11 @@ import type {
 } from '@excitedjs/dreamux-types';
 import type { FeishuInboundEvent } from './bot.js';
 import { formatFeishuMessageForRuntime } from './feishu-message.js';
+import { enrichFeishuInbound } from './feishu-inbound-enrichment.js';
+import {
+  createFeishuInboundWork,
+  FeishuSessionRevokedError,
+} from './feishu-inbound-work.js';
 import {
   clearBaselineIfCurrent,
   observeKnownBot,
@@ -308,116 +313,155 @@ export async function onMessage(
   }
 
   // deliver
-  const route = await h.targetRouter.projectInbound(event);
+  await deliverAcceptedMessage(h, event, submitter);
+}
 
-  const baseline =
-    event.chatType === 'group'
-      ? await pendingBaseline(h.opts.stateDir, event.chatId)
-      : null;
-  const injectBots =
-    baseline !== null && baseline.needsBaseline && baseline.trusted.length > 0;
-  const formatted = await formatFeishuMessageForRuntime(
-    event,
-    {
-      cacheDir: h.opts.attachmentCacheDir,
-      resourceFetcher: h.bot,
-      ...(injectBots ? { trustedBots: baseline.trusted } : {}),
-    },
-  );
-  // Hand the runtime structured pieces, not pre-rendered XML. Append the
-  // standing channel-reminder on its own line at the very end — goes into
-  // `body` (rendered into the `<channel>` block) AND the neutral `text`
-  // fallback so the reminder always reaches the model.
-  const body = `${formatted.body}\n\n${CHANNEL_REMINDER}`;
-  const input: InboundTurnInput = {
-    sourceId: event.messageId,
-    source: 'feishu',
-    text: body,
-    attrs: formatted.attrs,
-    body,
-    attachments: formatted.attachments.map((attachment) => ({
-      kind: attachment.type,
-      ...(attachment.name !== undefined ? { name: attachment.name } : {}),
-      ...(attachment.path !== undefined ? { localPath: attachment.path } : {}),
-    })),
-  };
-  const envelope: FeishuInboundEnvelope = {
-    provider: BUILTIN_FEISHU_PROVIDER_REF,
-    chatId: event.chatId,
-    chatType: event.chatType === 'group' ? 'group' : 'p2p',
-    target: route.target,
-    ...(route.container !== undefined ? { container: route.container } : {}),
-    messageId: event.messageId,
-  };
-  await setInboundReaction(
-    h,
-    event.messageId,
-    event.chatId,
-    RECEIVED_REACTION_EMOJI,
-    'received',
-  );
-  let delivery: AgentRuntimeTurnResult;
+async function deliverAcceptedMessage(
+  h: SessionHandle,
+  acceptedEvent: FeishuInboundEvent,
+  submitter: FeishuInboundSubmitter,
+): Promise<void> {
+  const work = createFeishuInboundWork(h.sessionFence);
+  let reactionCreated = false;
   try {
-    delivery = await submitter.submitTurn(input, envelope);
-  } catch (err) {
-    // Pre-delivery `received` reaction was set; if submit threw we must not
-    // leave it hanging (PR #282 review). Clear the reaction and record the
-    // failure so the operator sees the error, not a stuck "received" mark.
-    await clearInboundReaction(h, event.messageId);
-    const message =
-      err instanceof Error ? err.message : String(err);
-    const stack = err instanceof Error ? err.stack : undefined;
-    log(h).error(
-      {
-        chat_id: event.chatId,
-        sender_id: event.senderId,
-        message_id: event.messageId,
-        err: { message, stack },
-      },
-      'feishu inbound submit threw before delivery',
-    );
-    return;
-  }
-  if (delivery.status === 'submitted') {
-    log(h).info(
-      {
-        chat_id: event.chatId,
-        sender_id: event.senderId,
-        message_id: event.messageId,
-      },
-      'feishu inbound submitted',
-    );
-    if (injectBots && baseline !== null) {
-      await clearBaselineIfCurrent(
-        h.opts.stateDir,
-        event.chatId,
-        baseline.generation,
-      );
-    }
+    work.assertSessionActive();
+    const route = await h.targetRouter.projectInbound(acceptedEvent);
+    work.assertSessionActive();
     await setInboundReaction(
       h,
-      event.messageId,
-      event.chatId,
-      IN_PROGRESS_REACTION_EMOJI,
-      'in_progress',
+      acceptedEvent.messageId,
+      acceptedEvent.chatId,
+      RECEIVED_REACTION_EMOJI,
+      'received',
     );
-    return;
-  }
-  await clearInboundReaction(h, event.messageId);
-  if (delivery.status === 'failed') {
-    const message =
-      delivery.error instanceof Error
-        ? delivery.error.message
-        : String(delivery.error);
-    const stack =
-      delivery.error instanceof Error ? delivery.error.stack : undefined;
-    log(h).error(
+    reactionCreated = true;
+
+    const event = await enrichFeishuInbound(
+      acceptedEvent,
+      h.bot,
+      work,
+      log(h),
+    );
+    work.assertSessionActive();
+
+    const baseline =
+      event.chatType === 'group'
+        ? await pendingBaseline(h.opts.stateDir, event.chatId)
+        : null;
+    const injectBots =
+      baseline !== null && baseline.needsBaseline && baseline.trusted.length > 0;
+    const formatted = await formatFeishuMessageForRuntime(
+      event,
       {
-        chat_id: event.chatId,
-        message_id: event.messageId,
-        err: { message, stack },
+        cacheDir: h.opts.attachmentCacheDir,
+        resourceFetcher: h.bot,
+        work,
+        ...(injectBots ? { trustedBots: baseline.trusted } : {}),
       },
-      'failed to submit feishu inbound',
     );
+    // Hand the runtime structured pieces, not pre-rendered XML. Append the
+    // standing channel-reminder on its own line at the very end — goes into
+    // `body` (rendered into the `<channel>` block) AND the neutral `text`
+    // fallback so the reminder always reaches the model.
+    const body = `${formatted.body}\n\n${CHANNEL_REMINDER}`;
+    const input: InboundTurnInput = {
+      sourceId: event.messageId,
+      source: 'feishu',
+      text: body,
+      attrs: formatted.attrs,
+      body,
+      attachments: formatted.attachments.map((attachment) => ({
+        kind: attachment.type,
+        ...(attachment.name !== undefined ? { name: attachment.name } : {}),
+        ...(attachment.path !== undefined ? { localPath: attachment.path } : {}),
+      })),
+    };
+    const envelope: FeishuInboundEnvelope = {
+      provider: BUILTIN_FEISHU_PROVIDER_REF,
+      chatId: event.chatId,
+      chatType: event.chatType === 'group' ? 'group' : 'p2p',
+      target: route.target,
+      ...(route.container !== undefined ? { container: route.container } : {}),
+      messageId: event.messageId,
+    };
+    work.assertSessionActive();
+    let delivery: AgentRuntimeTurnResult;
+    try {
+      delivery = await submitter.submitTurn(input, envelope);
+    } catch (err) {
+      // Pre-delivery `received` reaction was set; if submit threw we must not
+      // leave it hanging (PR #282 review). Clear the reaction and record the
+      // failure so the operator sees the error, not a stuck "received" mark.
+      await clearInboundReaction(h, event.messageId);
+      reactionCreated = false;
+      const message = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : undefined;
+      log(h).error(
+        {
+          chat_id: event.chatId,
+          sender_id: event.senderId,
+          message_id: event.messageId,
+          err: { message, stack },
+        },
+        'feishu inbound submit threw before delivery',
+      );
+      return;
+    }
+    if (!work.isSessionActive()) {
+      await clearInboundReaction(h, event.messageId);
+      reactionCreated = false;
+      return;
+    }
+    if (delivery.status === 'submitted') {
+      log(h).info(
+        {
+          chat_id: event.chatId,
+          sender_id: event.senderId,
+          message_id: event.messageId,
+        },
+        'feishu inbound submitted',
+      );
+      if (injectBots && baseline !== null) {
+        await clearBaselineIfCurrent(
+          h.opts.stateDir,
+          event.chatId,
+          baseline.generation,
+        );
+      }
+      await setInboundReaction(
+        h,
+        event.messageId,
+        event.chatId,
+        IN_PROGRESS_REACTION_EMOJI,
+        'in_progress',
+      );
+      reactionCreated = false;
+      return;
+    }
+    await clearInboundReaction(h, event.messageId);
+    reactionCreated = false;
+    if (delivery.status === 'failed') {
+      const message =
+        delivery.error instanceof Error
+          ? delivery.error.message
+          : String(delivery.error);
+      const stack =
+        delivery.error instanceof Error ? delivery.error.stack : undefined;
+      log(h).error(
+        {
+          chat_id: event.chatId,
+          message_id: event.messageId,
+          err: { message, stack },
+        },
+        'failed to submit feishu inbound',
+      );
+    }
+  } catch (error) {
+    if (reactionCreated) {
+      await clearInboundReaction(h, acceptedEvent.messageId);
+    }
+    if (!(error instanceof FeishuSessionRevokedError)) throw error;
+  } finally {
+    work.dispose();
   }
 }

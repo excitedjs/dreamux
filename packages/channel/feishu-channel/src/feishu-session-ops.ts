@@ -36,6 +36,10 @@ import { AsyncMutex } from './lib/mutex.js';
 import type { FeishuChannelSessionOptions } from './feishu-channel.js';
 import type { PeerBot } from './chat-bots-store.js';
 import type { FeishuTargetRouter } from './feishu-target-router.js';
+import {
+  alwaysActiveSessionFence,
+  type FeishuSessionFence,
+} from './feishu-inbound-work.js';
 
 // ─────────────────────────────────────────────────────────────────────────
 // In-memory state & constants (mirror the class fields)
@@ -46,12 +50,14 @@ export const MAX_PENDING_RECEIVED_REACTION_CLEARS = 1024;
 /**
  * Appended to every delivered inbound's content as a standing guardrail: a
  * channel message must be answered with the channel reply tool, not a plain
- * assistant message. English to match the other model-facing strings in this
- * layer (`FEISHU_SKILL_FALLBACK_NOTE`, the `<group_bots>` note). Placed at the
- * very end of the body the runtime wraps into its `<channel>` block.
+ * assistant message. A separate acknowledgement is required only when work is
+ * needed before the substantive answer, so immediately answerable requests get
+ * one direct visible reply. English to match the other model-facing strings in
+ * this layer (`FEISHU_SKILL_FALLBACK_NOTE`, the `<group_bots>` note). Placed at
+ * the very end of the body the runtime wraps into its `<channel>` block.
  */
 export const CHANNEL_REMINDER =
-  '<channel-reminder>A message from this channel must be answered with the channel reply tool, not a plain assistant message. Acknowledge it with a brief reply through that tool first, then start the work.</channel-reminder>';
+  '<channel-reminder>A message from this channel must be answered with the channel reply tool, not a plain assistant message. If you can answer immediately, send the answer directly through that tool without a separate acknowledgement. If the request needs investigation or work before you can answer, send a brief acknowledgement through that tool first, then continue and report the result through the same tool.</channel-reminder>';
 
 export type InboundReactionState = 'received' | 'in_progress';
 
@@ -80,6 +86,7 @@ export interface SessionHandle {
   accessMutex: AsyncMutex;
   botDisplayName: string;
   targetRouter: FeishuTargetRouter;
+  sessionFence: FeishuSessionFence;
 }
 
 /** Build a package-private handle from a session's internal fields. */
@@ -90,8 +97,17 @@ export function sessionHandle(
   accessMutex: AsyncMutex,
   botDisplayName: string,
   targetRouter: FeishuTargetRouter,
+  sessionFence: FeishuSessionFence = alwaysActiveSessionFence(),
 ): SessionHandle {
-  return { opts, state, bot, accessMutex, botDisplayName, targetRouter };
+  return {
+    opts,
+    state,
+    bot,
+    accessMutex,
+    botDisplayName,
+    targetRouter,
+    sessionFence,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -249,6 +265,7 @@ export async function setInboundReaction(
 ): Promise<void> {
   if (messageId === '') return;
   if (h.state.pendingReceivedReactionClears.has(messageId)) return;
+  if (!h.sessionFence.isCurrent()) return;
 
   const previous = h.state.inboundReactions.get(messageId);
   let reactionId: string;
@@ -270,6 +287,22 @@ export async function setInboundReaction(
       { dispatcher_id: h.opts.dispatcherId, message_id: messageId },
       `Feishu returned no reaction_id for the ${state} reaction`,
     );
+    return;
+  }
+
+  if (!h.sessionFence.isCurrent()) {
+    try {
+      await h.bot.removeReaction(messageId, reactionId);
+    } catch (err) {
+      log(h).warn(
+        {
+          dispatcher_id: h.opts.dispatcherId,
+          message_id: messageId,
+          err: errInfo(err),
+        },
+        `failed to clear the revoked ${state} reaction`,
+      );
+    }
     return;
   }
 

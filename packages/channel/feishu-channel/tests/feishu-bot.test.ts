@@ -16,6 +16,8 @@ import type {
   FeishuInviteMembersResult,
   FeishuMessageResourceRequest,
   FeishuMessageResourceResponse,
+  FeishuMessageReadRequest,
+  FeishuMessageReadResponse,
   FeishuSendResult,
   FeishuTransport,
   InboundRoutes,
@@ -80,6 +82,12 @@ class FakeTransport implements FeishuTransport {
   async fetchMessageResource(
     _request: FeishuMessageResourceRequest,
   ): Promise<FeishuMessageResourceResponse> {
+    throw new Error('unused in this test');
+  }
+
+  async readMessage(
+    _request: FeishuMessageReadRequest,
+  ): Promise<FeishuMessageReadResponse> {
     throw new Error('unused in this test');
   }
 
