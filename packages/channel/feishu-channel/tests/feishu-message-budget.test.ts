@@ -303,4 +303,26 @@ describe('Feishu inbound resource budgets', () => {
     });
     expect(stream.destroyed).toBe(true);
   });
+
+  it('uses the operation deadline for a hanging resource stream', async () => {
+    const stream = new Readable({ read() {} });
+    const result = await formatFeishuMessageForRuntime(event({
+      resources: [{ type: 'file', key: 'resource-timeout' }],
+    }), {
+      cacheDir: cacheDir(),
+      work: budgetWork({ timeoutMs: 100 }),
+      timeoutMs: 20,
+      resourceFetcher: {
+        async fetchMessageResource() {
+          return { stream, headers: {} };
+        },
+      },
+    });
+
+    expect(result.attachments[0]).toMatchObject({
+      status: 'not_downloaded',
+      reason: 'timeout',
+    });
+    expect(stream.destroyed).toBe(true);
+  });
 });

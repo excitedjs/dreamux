@@ -90,6 +90,8 @@ export interface FormatFeishuMessageResult {
    * the runtime drops no model-visible content.
    */
   body: string;
+  /** Whether a requested one-shot trusted-bot baseline reached the body. */
+  groupBotsRendered: boolean;
   attachments: FormattedFeishuAttachment[];
   diagnostics: string[];
 }
@@ -141,12 +143,27 @@ export async function formatFeishuMessageForRuntime(
   const groupBots = renderGroupBots(options.trustedBots ?? []);
   const ancestry = renderReplyAncestry(event);
 
-  const renderedBody = `${body}${ancestry}${fallback}${attachmentBlock}${attachmentOmission}${groupBots}`;
+  const renderedPrefix = `${body}${ancestry}${fallback}${attachmentBlock}${attachmentOmission}`;
+  let groupBotsRendered = groupBots !== '';
+  let renderedBody: string;
+  if (!isRichMessage(event.messageType)) {
+    renderedBody = `${renderedPrefix}${groupBots}`;
+  } else if (
+    groupBots !== '' &&
+    groupBots.length + RICH_BODY_TRUNCATION_MARKER.length <= MAX_RICH_BODY_CHARS
+  ) {
+    renderedBody = `${truncateEscapedRichBody(
+      renderedPrefix,
+      MAX_RICH_BODY_CHARS - groupBots.length,
+    )}${groupBots}`;
+  } else {
+    groupBotsRendered = false;
+    renderedBody = truncateEscapedRichBody(renderedPrefix);
+  }
   return {
     attrs,
-    body: isRichMessage(event.messageType)
-      ? truncateEscapedRichBody(renderedBody)
-      : renderedBody,
+    body: renderedBody,
+    groupBotsRendered,
     attachments,
     diagnostics: attachments
       .filter((attachment) => attachment.status === 'not_downloaded')
@@ -255,8 +272,11 @@ function isRichMessage(messageType: string): boolean {
   return ['post', 'interactive', 'merge_forward'].includes(messageType);
 }
 
-function truncateEscapedRichBody(value: string): string {
-  if (value.length <= MAX_RICH_BODY_CHARS) return value;
+function truncateEscapedRichBody(
+  value: string,
+  maxChars: number = MAX_RICH_BODY_CHARS,
+): string {
+  if (value.length <= maxChars) return value;
   const tags = /<[^>]+>/g;
   const openTags: string[] = [];
   let output = '';
@@ -269,7 +289,7 @@ function truncateEscapedRichBody(value: string): string {
     const closers = closingTags(openTags);
     const budget = Math.max(
       0,
-      MAX_RICH_BODY_CHARS -
+      maxChars -
         RICH_BODY_TRUNCATION_MARKER.length -
         closers.length -
         output.length,
@@ -293,7 +313,7 @@ function truncateEscapedRichBody(value: string): string {
       tag.length +
       RICH_BODY_TRUNCATION_MARKER.length +
       closingTags(nextOpenTags).length;
-    if (required > MAX_RICH_BODY_CHARS) {
+    if (required > maxChars) {
       return `${output}${RICH_BODY_TRUNCATION_MARKER}${closingTags(openTags)}`;
     }
     output += tag;
@@ -429,11 +449,12 @@ async function resolveAttachment(
         late.stream.destroy();
       },
     );
-    const bytes = await readStreamWithLimit(
-      response.stream,
-      perResourceLimit,
-      Math.max(1, resourceDeadline - Date.now()),
+    const bytes = await runFeishuInboundWork(
       work,
+      () => readStreamWithLimit(response.stream, perResourceLimit, work),
+      resourceDeadline,
+      undefined,
+      () => response.stream.destroy(new FeishuResourceTimeoutError()),
     );
     work.assertEnrichmentActive();
     tmpPath = `${path}.tmp-${globalThis.process.pid}-${Date.now()}`;
@@ -555,21 +576,15 @@ async function fileSize(path: string): Promise<number | null> {
 async function readStreamWithLimit(
   stream: Readable,
   maxBytes: number,
-  timeoutMs: number,
   work: FeishuInboundWorkContext,
 ): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let total = 0;
-  let timedOut = false;
   const onAbort = (): void => {
     stream.destroy(new FeishuStreamAbortedError());
   };
   work.signal.addEventListener('abort', onAbort, { once: true });
   if (work.signal.aborted) onAbort();
-  const timer = setTimeout(() => {
-    timedOut = true;
-    stream.destroy(new FeishuResourceTimeoutError());
-  }, timeoutMs);
 
   try {
     for await (const chunk of stream) {
@@ -599,10 +614,8 @@ async function readStreamWithLimit(
     if (work.signal.aborted) {
       work.assertEnrichmentActive();
     }
-    if (timedOut) throw new FeishuResourceTimeoutError();
     throw err;
   } finally {
-    clearTimeout(timer);
     work.signal.removeEventListener('abort', onAbort);
   }
 

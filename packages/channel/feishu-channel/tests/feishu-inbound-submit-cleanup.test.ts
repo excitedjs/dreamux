@@ -167,6 +167,40 @@ describe('feishu inbound delivery', () => {
     expect(emojis).toContain(IN_PROGRESS_REACTION_EMOJI);
   });
 
+  it('clears received when adding the in_progress reaction fails', async () => {
+    await allowSender();
+    const bot = createFakeFeishuBot('fake-bot');
+    const addReaction = bot.addReaction.bind(bot);
+    bot.addReaction = async (messageId, emoji) => {
+      if (emoji === IN_PROGRESS_REACTION_EMOJI) {
+        throw new Error('progress reaction failed');
+      }
+      return addReaction(messageId, emoji);
+    };
+    const state: FeishuChannelState = {
+      inboundReactions: new Map(),
+      pendingReceivedReactionClears: new Set(),
+    };
+    const handle = buildHandle(state, bot);
+    const submitter: FeishuInboundSubmitter = {
+      submitTurn: async (): Promise<AgentRuntimeTurnResult> => ({
+        status: 'submitted',
+        turnId: 'turn-1',
+      }),
+    };
+
+    await onMessage(handle, makeEvent(), submitter);
+
+    expect(state.inboundReactions.size).toBe(0);
+    expect(bot.reactionOps).toEqual([
+      expect.objectContaining({
+        op: 'add',
+        emoji: RECEIVED_REACTION_EMOJI,
+      }),
+      expect.objectContaining({ op: 'remove' }),
+    ]);
+  });
+
   it('appends one trusted channel reminder at the end of the submitted body', async () => {
     await allowSender();
     const bot = createFakeFeishuBot('fake-bot');

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createFeishuInboundWork,
   FeishuEnrichmentDeadlineError,
+  FeishuResourceTimeoutError,
   FeishuSessionRevokedError,
   runFeishuInboundWork,
   type FeishuInboundWorkContext,
@@ -60,5 +61,24 @@ describe('Feishu inbound work fencing', () => {
     );
     await vi.advanceTimersByTimeAsync(25);
     await assertion;
+  });
+
+  it('classifies an already-expired operation-local deadline as a resource timeout', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-22T00:00:00.000Z'));
+    const controller = new AbortController();
+    const work = createFeishuInboundWork(session(controller), { timeoutMs: 100 });
+    works.push(work);
+    let calls = 0;
+
+    await expect(runFeishuInboundWork(
+      work,
+      async () => {
+        calls += 1;
+        return 'unexpected';
+      },
+      Date.now(),
+    )).rejects.toBeInstanceOf(FeishuResourceTimeoutError);
+    expect(calls).toBe(0);
   });
 });

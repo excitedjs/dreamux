@@ -262,10 +262,10 @@ export async function setInboundReaction(
   chatId: string,
   emoji: string,
   state: InboundReactionState,
-): Promise<void> {
-  if (messageId === '') return;
-  if (h.state.pendingReceivedReactionClears.has(messageId)) return;
-  if (!h.sessionFence.isCurrent()) return;
+): Promise<boolean> {
+  if (messageId === '') return false;
+  if (h.state.pendingReceivedReactionClears.has(messageId)) return false;
+  if (!h.sessionFence.isCurrent()) return false;
 
   const previous = h.state.inboundReactions.get(messageId);
   let reactionId: string;
@@ -280,14 +280,14 @@ export async function setInboundReaction(
       },
       `failed to add the ${state} reaction`,
     );
-    return;
+    return false;
   }
   if (reactionId === '') {
     log(h).warn(
       { dispatcher_id: h.opts.dispatcherId, message_id: messageId },
       `Feishu returned no reaction_id for the ${state} reaction`,
     );
-    return;
+    return false;
   }
 
   if (!h.sessionFence.isCurrent()) {
@@ -303,7 +303,7 @@ export async function setInboundReaction(
         `failed to clear the revoked ${state} reaction`,
       );
     }
-    return;
+    return false;
   }
 
   if (h.state.pendingReceivedReactionClears.has(messageId)) {
@@ -319,7 +319,7 @@ export async function setInboundReaction(
         `failed to clear the late ${state} reaction`,
       );
     }
-    return;
+    return false;
   }
 
   h.state.inboundReactions.set(messageId, { chatId, reactionId, state });
@@ -338,6 +338,7 @@ export async function setInboundReaction(
       );
     }
   }
+  return true;
 }
 
 export async function clearInboundReaction(

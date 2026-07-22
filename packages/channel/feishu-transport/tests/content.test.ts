@@ -293,6 +293,26 @@ describe('extractPostText', () => {
     expect(parseInbound(message('post', post)).text).toBe('```a``b```')
   })
 
+  test.each([
+    ['`leading', '`` `leading ``'],
+    ['trailing`', '`` trailing` ``'],
+    ['```', '```` ``` ````'],
+    [' boundary spaces ', '`  boundary spaces  `'],
+    ['   ', '`   `'],
+  ])('pads inline code boundaries without changing visible content: %j', (text, expected) => {
+    const post = {
+      zh_cn: {
+        content: [[{
+          tag: 'text',
+          text,
+          style: ['codeInline'],
+        }]],
+      },
+    }
+
+    expect(parseInbound(message('post', post)).text).toBe(expected)
+  })
+
   test('marks unsupported rich-text elements without injecting their raw JSON', () => {
     const parsed = parseInbound(message('post', {
       zh_cn: {

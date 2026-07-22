@@ -327,14 +327,13 @@ async function deliverAcceptedMessage(
     work.assertSessionActive();
     const route = await h.targetRouter.projectInbound(acceptedEvent);
     work.assertSessionActive();
-    await setInboundReaction(
+    reactionCreated = await setInboundReaction(
       h,
       acceptedEvent.messageId,
       acceptedEvent.chatId,
       RECEIVED_REACTION_EMOJI,
       'received',
     );
-    reactionCreated = true;
 
     const event = await enrichFeishuInbound(
       acceptedEvent,
@@ -421,14 +420,14 @@ async function deliverAcceptedMessage(
         },
         'feishu inbound submitted',
       );
-      if (injectBots && baseline !== null) {
+      if (injectBots && baseline !== null && formatted.groupBotsRendered) {
         await clearBaselineIfCurrent(
           h.opts.stateDir,
           event.chatId,
           baseline.generation,
         );
       }
-      await setInboundReaction(
+      const progressReactionCreated = await setInboundReaction(
         h,
         event.messageId,
         event.chatId,
@@ -439,6 +438,9 @@ async function deliverAcceptedMessage(
       // handler generation before relinquishing ownership of the prior
       // `received` reaction so close-during-replacement cannot strand it.
       work.assertSessionActive();
+      if (!progressReactionCreated) {
+        await clearInboundReaction(h, event.messageId);
+      }
       reactionCreated = false;
       return;
     }

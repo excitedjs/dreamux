@@ -31,6 +31,10 @@ import type {
 
 import { createFeishuBot } from '../src/bot.js';
 import {
+  pendingBaseline,
+  trustIntroducedBots,
+} from '../src/chat-bots-store.js';
+import {
   FeishuChannelSession,
   type FeishuInboundSubmitter,
 } from '../src/feishu-channel.js';
@@ -165,6 +169,10 @@ function rawMessage(
   messageType: string,
   content: unknown,
   ancestry: { parentId?: string; rootId?: string; threadId?: string } = {},
+  chat: { chatId: string; chatType: 'group' | 'p2p' } = {
+    chatId: 'oc_dm',
+    chatType: 'p2p',
+  },
 ): unknown {
   return {
     event: {
@@ -175,8 +183,8 @@ function rawMessage(
       },
       message: {
         message_id: messageId,
-        chat_id: 'oc_dm',
-        chat_type: 'p2p',
+        chat_id: chat.chatId,
+        chat_type: chat.chatType,
         message_type: messageType,
         content: JSON.stringify(content),
         create_time: '1710000000000',
@@ -192,12 +200,18 @@ async function harness(): Promise<{
   transport: WireTransport;
   session: FeishuChannelSession;
   submitted: InboundTurnInput[];
+  stateDir: string;
 }> {
   const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-feishu-fidelity-'));
   dirs.push(stateDir);
   const access = defaultDispatcherAccessState();
   access.dm_policy = 'allowlist';
   access.allow_users = ['ou_allowed'];
+  access.group = {
+    policy: 'allowlist',
+    allow_chats: ['oc_group'],
+    require_mention: false,
+  };
   await saveDispatcherAccess(stateDir, access);
   const transport = new WireTransport();
   const bot = createFeishuBot(
@@ -221,7 +235,7 @@ async function harness(): Promise<{
     botFactory: () => bot,
   });
   await session.start(submitter);
-  return { transport, session, submitted };
+  return { transport, session, submitted, stateDir };
 }
 
 describe('Feishu inbound fidelity production path', () => {
@@ -262,6 +276,32 @@ describe('Feishu inbound fidelity production path', () => {
       { messageId: 'om_post', fileKey: 'img-key', type: 'image' },
       { messageId: 'om_post', fileKey: 'file-key', type: 'file' },
     ]);
+    await session.close();
+  });
+
+  it('preserves and consumes a one-shot group-bot baseline beside truncated rich content', async () => {
+    const { transport, session, submitted, stateDir } = await harness();
+    await trustIntroducedBots(stateDir, 'oc_group', [{
+      openId: 'ou_peer_bot',
+      name: 'Peer bot',
+    }]);
+
+    await transport.dispatch(rawMessage('om_long_post', 'post', {
+      zh_cn: {
+        content: [[{ tag: 'text', text: 'x'.repeat(170_000) }]],
+      },
+    }, {}, { chatId: 'oc_group', chatType: 'group' }));
+
+    expect(submitted).toHaveLength(1);
+    const body = submitted[0]?.body ?? '';
+    const visibleBody = body.slice(0, -(`\n\n${CHANNEL_REMINDER}`.length));
+    expect(visibleBody.length).toBeLessThanOrEqual(160_000);
+    expect(visibleBody).toContain(
+      '[message content truncated: 160000-character limit reached]',
+    );
+    expect(visibleBody).toContain('<group_bots ');
+    expect(visibleBody).toContain('name="Peer bot" open_id="ou_peer_bot"');
+    expect((await pendingBaseline(stateDir, 'oc_group')).needsBaseline).toBe(false);
     await session.close();
   });
 

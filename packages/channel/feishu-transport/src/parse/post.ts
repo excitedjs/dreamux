@@ -127,7 +127,12 @@ function renderTextNode(value: Record<string, unknown>): string {
     ...Array.from(text.matchAll(/`+/g), (match) => match[0].length),
   )
   const fence = '`'.repeat(longestRun + 1)
-  return `${fence}${text}${fence}`
+  const allSpaces = /^ +$/.test(text)
+  const needsPadding =
+    text.startsWith('`') ||
+    text.endsWith('`') ||
+    (!allSpaces && text.startsWith(' ') && text.endsWith(' '))
+  return `${fence}${needsPadding ? ` ${text} ` : text}${fence}`
 }
 
 function renderCodeBlock(value: Record<string, unknown>): string {
