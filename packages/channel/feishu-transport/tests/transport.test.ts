@@ -525,8 +525,6 @@ describe('createFeishuTransport — message reads', () => {
         messageId: 'om_read',
         messageType: 'interactive',
         content: JSON.stringify({ title: 'visible' }),
-        upperMessageId: 'om_parent',
-        sender: { id: 'ou_sender', type: 'user', name: 'Ada' },
         mentions: [{
           key: '@_user_1',
           id: { open_id: 'ou_mentioned' },

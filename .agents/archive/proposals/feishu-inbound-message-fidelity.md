@@ -11,7 +11,8 @@
 Authorized Feishu messages must reach the model with an honest, bounded, and
 useful representation of their visible text, ancestry, and downloadable
 resources. Rich messages must not silently lose inline images, files,
-Markdown/code, card content, merged-forward children, or reply ancestry.
+Markdown/code, card content, the existence and lookup identity of a
+merged-forward message, or reply ancestry.
 
 The same branch also refines the existing channel reminder: an immediately
 answerable request gets one direct channel reply, while work that needs
@@ -43,10 +44,9 @@ channel downloads only the resources that parser exposes. As a result:
   envelopes or decide routing.
 - `readMessage` accepts a `messageId` and an optional card-content mode
   (`default` or `user_card_content`). It returns normalized `items` carrying
-  only the fields needed here: message id, message type, body content,
-  `upper_message_id`, sender id/type/name when available, mentions, and a
-  deleted/malformed indication. SDK errors remain transport diagnostics and do
-  not become prompt text.
+only the fields needed here: message id, message type, body content,
+  mentions, and a deleted/malformed indication. SDK errors remain transport
+  diagnostics and do not become prompt text.
 - `@excitedjs/feishu-channel` owns when enrichment is allowed, root-message
   identity checks, model-facing rendering, attachment download/cache behavior,
   ancestry guidance, fallback notes, budgets, and the channel reminder.
@@ -101,8 +101,8 @@ channel downloads only the resources that parser exposes. As a result:
 - Raw unknown JSON, raw SDK errors, card callback values, hidden form state,
   and template variables are never injected into the model.
 - The final escaped message content before the reminder is capped at 160,000
-  characters for post, card, and merged-forward messages. The truncation marker
-  itself is included in that cap.
+  characters for post and card messages. The truncation marker itself is
+  included in that cap.
 
 ## Rich-text posts
 
@@ -149,46 +149,40 @@ A `nonsupport` event is best-effort reread and reparsed as its authoritative
 message type after the root identity check. The original event is delivered
 with a stable incomplete-content note when resolution is unavailable.
 
-A merged-forward event performs one logical top-level expansion using the
-current event's `messageId`. The success path performs exactly one
-`user_card_content` read. An API error, missing/mismatched root, deleted root,
-or malformed root permits at most one second read in default mode. Each response
-is validated independently; there are always zero child-message reads. The
-accepted response's `items` are walked in memory by `upper_message_id`. Child
-resources are best-effort downloaded against the same top-level
-`event.messageId`, never the event's quote/thread `parentId` and never a child
-message id.
+A merged-forward event is deliberately lazy. The Channel performs no
+current-message reread, child-message walk, or internal-resource download. It
+emits the current `message_id`, the `merge_forward` type, and the minimal
+`lark-cli im +messages-mget --message-ids <message_id>` command. The Agent uses
+the Feishu skill and runs that lookup only when the task needs the records.
 
-The API item order is preserved as the stable sibling order. The walk rejects
-duplicate message ids and cycles, attaches otherwise valid orphans under an
-explicit `Unattached forwarded items` section, and renders deleted/malformed
-items as bounded omission markers. A nested merged-forward wrapper whose depth
-would exceed the bound is rendered as a truncation marker rather than flattened
-silently.
-
-The top-level wrapper is depth zero and its direct children are depth one.
-Expansion permits at most depth five and 500 descendant items. Resource
-placeholders retain every occurrence, while downloads are deduplicated by
-`(type, key)`. The global 160,000-character, 32-resource, 100-MiB, and 60-second
-budgets apply. Child-resource failure remains visible and does not block the
-rest of the forward.
+If a single `nonsupport` root reread authoritatively resolves the current
+message to `merge_forward`, the Channel emits the same lazy marker, discards any
+returned child items, and performs no second read or resource fetch. Neither
+path is a parser failure or receives the generic incomplete-content warning.
 
 ## Reply and quote ancestry
 
-Quoted bodies are not fetched automatically. The channel emits one neutral
-reply/quote ancestry line with the accepted `parentId` and the existing Feishu
-skill recovery direction only when the following truth table selects it:
+Quoted bodies are never parsed, rendered, cached, downloaded, or submitted. The
+channel emits one neutral reply/quote ancestry line with the accepted `parentId`
+only when the following truth table selects it:
 
 | Event shape | Hint |
 |---|---|
 | no `parentId` | none |
 | `parentId === messageId` | none |
 | `threadId` present and `parentId === rootId` | none; ordinary thread-root reply |
-| any other non-empty `parentId` | neutral reply/quote ancestry hint |
+| any other non-empty `parentId` | neutral reply/quote ancestry hint plus at most one parent read |
 
 The last row intentionally includes ordinary group and p2p events where Feishu
-supplies a root/parent relation without a `threadId`. The wording does not claim
-that Dreamux can prove which Feishu UI gesture produced that ancestry.
+supplies a root/parent relation without a `threadId`. After current-message
+enrichment, a best-effort default-mode `message.get(parentId)` may add the
+matching root's bounded `parent_message_type` for every valid Feishu type. The
+API necessarily returns body content and may return merged-forward children,
+but the Channel inspects only the type and discards the rest. This optional read
+is capped at two seconds and starts only when the existing 20-second resource
+window can remain. The hint always carries the minimal lark-cli lookup command;
+ordinary read failure leaves only `parent_message_id`. Session revocation still
+terminates the stale handler rather than submitting across a restart.
 
 ## Other concrete message types
 
@@ -231,15 +225,16 @@ the result or blocker through the same channel.
   They prove that CRLF/CR normalization and per-line edge trimming deduplicate
   equivalent lines, while differences in internal whitespace, punctuation,
   URLs, Markdown, or case remain visible.
-- Merged-forward tests cover flat and nested trees, stable sibling order,
-  participant attribution, duplicate/cycle/orphan/deleted items, child
-  resources fetched with the top-level event id, every bound, and read/resource
-  failure fallback. They separately lock the one-call success path, the
-  two-call top-level fallback path, and zero child-message reads.
+- Merged-forward tests prove a real-shape event becomes only the bounded lazy
+  lookup marker, performs zero current/child reads and resource fetches, and
+  carries no forwarded content or generic parser warning. `nonsupport` to
+  merged-forward performs exactly one current root read and then stops.
 - `nonsupport` tests prove authoritative type/content replacement happens only
   after gate acceptance and only for a matching root item.
 - Reply ancestry tests cover every truth-table row in group, topic, and p2p
-  events without fetching the quoted body.
+  events. An actionable parent is read at most once; a valid root adds every
+  bounded message type, while its body, children, sender, mentions, and
+  resources never enter the turn or attachment pipeline.
 - Final submitted bodies inject adversarial `&<>`, quotes, closing tags,
   `<attachment`, and `<channel-reminder>` strings through post/card/forward
   titles, bodies, code, links, sender names, filenames, shared ids, and control
@@ -262,7 +257,8 @@ the result or blocker through the same channel.
 
 - OCR, speech-to-text, video decoding, sticker extraction, or semantic analysis
   of binary resources.
-- Automatic retrieval or embedding of the quoted message body.
+- Parsing, rendering, caching, downloading, or submitting the quoted message
+  body returned by the authorized parent-type read.
 - Historical chat search, thread-history injection, message edits, or card
   action behavior beyond the existing callback path.
 - Rendering client-only/lazy card subcomponents that neither message-read

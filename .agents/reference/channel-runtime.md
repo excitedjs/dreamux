@@ -63,10 +63,10 @@ model-facing body, and downloads resources.
 The access gate runs before any message read or resource fetch. Accepted
 interactive cards use the structured and default read representations with a
 deterministic visible-text union. `nonsupport` events may adopt a matching
-root's authoritative type/content. Merged-forward messages use one logical
-top-level read (with one bounded fallback), walk returned `upper_message_id`
-relationships in memory, never reread children, and fetch child resources with
-the top-level event message id.
+root's authoritative type/content. Merged-forward messages deliberately perform
+no current-message read or child-resource fetch: the model receives the current
+`message_id`, its `merge_forward` type, and the minimal Feishu-skill/lark-cli
+lookup command, then decides whether to fetch the records on demand.
 
 Rich posts preserve Markdown/code, links, mentions, rules, and inline resource
 positions. Cards expose only visible labels/text/options and exclude callback
@@ -78,17 +78,22 @@ Every accepted inbound owns a session-fenced enrichment context. Session close
 revokes it before closing the transport and drains handlers that already
 started. The context bounds the whole enrichment to 60 seconds, 32 unique
 resources, 25 MiB per resource, 100 MiB aggregate, and one sequential download;
-rich card/post/forward text is capped at 160,000 escaped characters. Untrusted
-text is escaped exactly once at the final channel boundary. A neutral ancestry
-hint is emitted only for non-self, non-thread-root parent relations. The final
-channel reminder permits a direct substantive reply when no preliminary work
-is needed and asks for an acknowledgement only before longer work.
+rich card/post text is capped at 160,000 escaped characters. Untrusted text is
+escaped exactly once at the final channel boundary. A neutral ancestry hint is
+emitted only for non-self, non-thread-root parent relations. After current
+message enrichment, one optional two-second parent read may add a bounded
+`parent_message_type`; the returned parent body and children are discarded.
+The hint carries only `parent_message_id`, the proven type when available, and
+the same minimal lark-cli lookup command. The final channel reminder permits a
+direct substantive reply when no preliminary work is needed and asks for an
+acknowledgement only before longer work.
 
 Key source:
 
 - `/packages/channel/feishu-transport/src/parse/`
 - `/packages/channel/feishu-transport/src/transport/message-read.ts`
 - `/packages/channel/feishu-channel/src/feishu-inbound-enrichment.ts`
+- `/packages/channel/feishu-channel/src/feishu-reply-ancestry.ts`
 - `/packages/channel/feishu-channel/src/feishu-inbound-work.ts`
 - `/packages/channel/feishu-channel/src/feishu-message.ts`
 - `/packages/channel/feishu-channel/src/feishu-session-inbound.ts`

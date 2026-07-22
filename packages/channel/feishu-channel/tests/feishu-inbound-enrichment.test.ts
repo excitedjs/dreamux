@@ -152,7 +152,6 @@ describe('nonsupport resolution', () => {
       'om_root',
       'audio',
       { file_key: 'voice-key' },
-      { sender: { id: 'ou_untrusted_replacement', type: 'user', name: 'Mallory' } },
     )));
 
     const result = await enrichFeishuInbound(
@@ -171,14 +170,11 @@ describe('nonsupport resolution', () => {
     expect(result.senderName).toBe('Authorized sender');
   });
 
-  it('continues into merged-forward expansion when that is the authoritative type', async () => {
+  it('stops at a lazy lookup when the authoritative type is merged-forward', async () => {
     const bot = createFakeFeishuBot();
     bot.setMessageRead('om_root', 'default', response(
       item('om_root', 'merge_forward', {}),
-      item('om_child', 'text', { text: 'resolved child' }, {
-        upperMessageId: 'om_root',
-        sender: { id: 'ou_child', type: 'user', name: 'Child' },
-      }),
+      item('om_child', 'text', { text: 'must stay hidden' }),
     ));
 
     const result = await enrichFeishuInbound(
@@ -189,43 +185,19 @@ describe('nonsupport resolution', () => {
     );
 
     expect(result.messageType).toBe('merge_forward');
-    expect(result.parsedText).toContain('Child (text)');
-    expect(result.parsedText).toContain('resolved child');
+    expect(result.parsedText).toBe('(merged-forward message not expanded)');
+    expect(result.parsedText).not.toContain('must stay hidden');
+    expect(result.resources).toEqual([]);
+    expect(result.contentIncomplete).toBe(false);
     expect(bot.messageReadRequests).toEqual([
       { messageId: 'om_root', cardContent: 'default' },
     ]);
   });
 });
 
-describe('merged-forward expansion', () => {
-  it('walks one top-level response in stable order and never reads children', async () => {
+describe('lazy message lookup', () => {
+  it('does not reread or expand a top-level merged-forward message', async () => {
     const bot = createFakeFeishuBot();
-    bot.setMessageRead('om_root', 'user_card_content', response(
-      item('om_root', 'merge_forward', {}),
-      item('om_a', 'post', {
-        zh_cn: {
-          title: 'First',
-          content: [[{ tag: 'img', image_key: 'shared-image' }]],
-        },
-      }, {
-        upperMessageId: 'om_root',
-        sender: { id: 'ou_a', type: 'user', name: 'Ada' },
-      }),
-      item('om_nested', 'merge_forward', {}, {
-        upperMessageId: 'om_root',
-        sender: { id: 'ou_b', type: 'user', name: 'Bob' },
-      }),
-      item('om_b', 'image', { image_key: 'shared-image' }, {
-        upperMessageId: 'om_nested',
-        sender: { id: 'ou_c', type: 'user', name: 'Chen' },
-      }),
-      item('om_orphan', 'text', { text: 'orphan body' }, {
-        upperMessageId: 'om_missing',
-      }),
-      item('om_a', 'text', { text: 'duplicate body' }, {
-        upperMessageId: 'om_root',
-      }),
-    ));
 
     const result = await enrichFeishuInbound(
       event('merge_forward'),
@@ -234,116 +206,112 @@ describe('merged-forward expansion', () => {
       logger(),
     );
 
-    expect(result.parsedText).toContain('Merged forwarded messages:')
-    expect(result.parsedText.indexOf('Ada (post)')).toBeLessThan(
-      result.parsedText.indexOf('Bob: [nested merged-forward message]'),
-    )
-    expect(result.parsedText).toContain('Chen (image)')
-    expect(result.parsedText).toContain('Unattached forwarded items:')
-    expect(result.parsedText).toContain('orphan body')
-    expect(result.parsedText).toContain('duplicate message id')
-    expect(result.resources).toEqual([
-      { type: 'image', key: 'shared-image', name: 'shared-image.jpg' },
-    ])
-    expect(result.contentIncomplete).toBe(true)
+    expect(result.parsedText).toBe('(merged-forward message not expanded)');
+    expect(result.resources).toEqual([]);
+    expect(result.contentIncomplete).toBe(false);
+    expect(bot.messageReadRequests).toEqual([]);
+  });
+
+  it('reads only an actionable parent of a top-level merged-forward message', async () => {
+    const bot = createFakeFeishuBot();
+    bot.setMessageRead('om_parent', 'default', response(
+      item('om_parent', 'post', { title: 'must stay hidden' }),
+    ));
+
+    const result = await enrichFeishuInbound(
+      event('merge_forward', { parentId: 'om_parent' }),
+      bot,
+      work(),
+      logger(),
+    );
+
+    expect(result.parentMessageType).toBe('post');
+    expect(result.parsedText).toBe('(merged-forward message not expanded)');
     expect(bot.messageReadRequests).toEqual([
-      { messageId: 'om_root', cardContent: 'user_card_content' },
-    ])
+      { messageId: 'om_parent', cardContent: 'default' },
+    ]);
   });
 
-  it('preserves localized note markdown in a forwarded child card', async () => {
+  it.each([
+    'text',
+    'post',
+    'interactive',
+    'merge_forward',
+    'image',
+    'future_type.v2',
+  ])('projects the validated parent type %s without consuming its content', async (
+    parentMessageType,
+  ) => {
     const bot = createFakeFeishuBot();
-    bot.setMessageRead('om_root', 'user_card_content', response(
-      item('om_root', 'merge_forward', {}),
-      item('om_card', 'interactive', {
-        header: {
-          title: {
-            tag: 'plain_text',
-            i18n: { en_us: 'English title', zh_cn: '中文标题' },
-          },
-        },
-        i18n_elements: {
-          en_us: [{ tag: 'note', elements: [{ tag: 'lark_md', content: 'English note' }] }],
-          zh_cn: [{ tag: 'note', elements: [{ tag: 'lark_md', content: '可见备注' }] }],
-        },
-      }, {
-        upperMessageId: 'om_root',
-        sender: { id: 'ou_card', type: 'bot', name: 'Card bot' },
-      }),
+    bot.setMessageRead('om_parent', 'default', response(
+      item('om_parent', parentMessageType, { secret: 'must stay hidden' }),
+      item('om_child', 'text', { text: 'child must stay hidden' }),
     ));
 
     const result = await enrichFeishuInbound(
-      event('merge_forward'),
+      event('text', {
+        rawContent: JSON.stringify({ text: 'current body' }),
+        parsedText: 'current body',
+        parentId: 'om_parent',
+      }),
       bot,
       work(),
       logger(),
     );
 
-    expect(result.parsedText).toContain('中文标题');
-    expect(result.parsedText).toContain('可见备注');
-    expect(result.parsedText).not.toContain('unsupported card component');
-  });
-
-  it('uses at most one default-mode fallback and still performs zero child reads', async () => {
-    const bot = createFakeFeishuBot();
-    bot.setMessageRead(
-      'om_root',
-      'user_card_content',
-      new Error('structured unavailable'),
-    );
-    bot.setMessageRead('om_root', 'default', response(
-      item('om_root', 'merge_forward', {}),
-      item('om_child', 'text', { text: 'fallback child' }, {
-        upperMessageId: 'om_root',
-      }),
-    ));
-
-    const result = await enrichFeishuInbound(
-      event('merge_forward'),
-      bot,
-      work(),
-      logger(),
-    );
-
-    expect(result.parsedText).toContain('fallback child')
+    expect(result.parentMessageType).toBe(parentMessageType);
+    expect(result.parsedText).toBe('current body');
     expect(bot.messageReadRequests).toEqual([
-      { messageId: 'om_root', cardContent: 'user_card_content' },
-      { messageId: 'om_root', cardContent: 'default' },
-    ])
+      { messageId: 'om_parent', cardContent: 'default' },
+    ]);
   });
 
-  it('bounds descendant count and nesting depth with stable omission markers', async () => {
+  it('omits invalid parent types and skips non-actionable ancestry reads', async () => {
     const bot = createFakeFeishuBot();
-    const descendants = Array.from({ length: 501 }, (_, index) => item(
-      `om_wide_${index}`,
-      'text',
-      { text: `wide-${index}` },
-      { upperMessageId: 'om_root' },
-    ));
-    let parentId = 'om_root';
-    const deep = Array.from({ length: 6 }, (_, index) => {
-      const messageId = `om_deep_${index}`;
-      const value = item(messageId, 'merge_forward', {}, {
-        upperMessageId: parentId,
-      });
-      parentId = messageId;
-      return value;
-    });
-    bot.setMessageRead('om_root', 'user_card_content', response(
-      item('om_root', 'merge_forward', {}),
-      ...deep,
-      ...descendants,
+    bot.setMessageRead('om_parent', 'default', response(
+      item('om_parent', 'invalid type!', { secret: true }),
     ));
 
-    const result = await enrichFeishuInbound(
-      event('merge_forward'),
+    const invalid = await enrichFeishuInbound(
+      event('text', { parentId: 'om_parent' }),
+      bot,
+      work(),
+      logger(),
+    );
+    const threadRoot = await enrichFeishuInbound(
+      event('text', {
+        parentId: 'om_thread_root',
+        rootId: 'om_thread_root',
+        threadId: 'omt_topic',
+      }),
       bot,
       work(),
       logger(),
     );
 
-    expect(result.parsedText).toContain('depth limit reached');
-    expect(result.parsedText).toContain('item(s) omitted: item limit reached');
-    expect(result.contentIncomplete).toBe(true);
+    expect(invalid.parentMessageType).toBeUndefined();
+    expect(threadRoot.parentMessageType).toBeUndefined();
+    expect(bot.messageReadRequests).toEqual([
+      { messageId: 'om_parent', cardContent: 'default' },
+    ]);
+  });
+
+  it.each([
+    response(item('om_other', 'text', { text: 'mismatched' })),
+    response(item('om_parent', 'text', { text: 'deleted' }, { deleted: true })),
+    response(item('om_parent', 'text', '', { malformed: true })),
+  ])('omits the parent type for an unusable root', async (parentResponse) => {
+    const bot = createFakeFeishuBot();
+    bot.setMessageRead('om_parent', 'default', parentResponse);
+
+    const result = await enrichFeishuInbound(
+      event('text', { parentId: 'om_parent' }),
+      bot,
+      work(),
+      logger(),
+    );
+
+    expect(result.parentMessageType).toBeUndefined();
+    expect(result.contentIncomplete).toBeUndefined();
   });
 });

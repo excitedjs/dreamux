@@ -86,7 +86,6 @@ export {
   type FeishuMessageReadMode,
   type FeishuMessageReadRequest,
   type FeishuMessageReadResponse,
-  type FeishuMessageReadSender,
   type InboundRoutes,
   type RouteHandler,
 } from './transport/feishu.js'

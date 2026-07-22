@@ -29,6 +29,10 @@ import {
   alwaysActiveSessionFence,
   type FeishuInboundWorkContext,
 } from './feishu-inbound-work.js';
+import {
+  normalizeFeishuMessageTypeToken,
+  replyAncestryParentId,
+} from './feishu-reply-ancestry.js';
 
 export const FEISHU_SKILL_FALLBACK_NOTE =
   'Parser note: message text may be incomplete. Use the Feishu skill with the chat_id and message_id above to fetch the original message when needed.';
@@ -209,6 +213,14 @@ export function formatFeishuCreateTime(value: string): string {
 }
 
 function renderMessageBody(event: FeishuInboundEvent): string {
+  if (event.messageType === 'merge_forward') {
+    const messageId = escapeXmlText(event.messageId);
+    return [
+      `Merged-forward message: message_id=${messageId}.`,
+      'When the forwarded records are needed, use the Feishu skill and run:',
+      `lark-cli im +messages-mget --message-ids ${messageId}`,
+    ].join('\n');
+  }
   const rawText = extractRawText(event);
   if (rawText !== null) {
     return renderTextWithMentions(rawText, event.mentions);
@@ -247,6 +259,7 @@ function renderTextWithMentions(text: string, mentions: Mention[]): string {
 }
 
 function shouldAddFallbackNote(event: FeishuInboundEvent): boolean {
+  if (event.messageType === 'merge_forward') return false;
   if (event.contentIncomplete === true) return true;
   if (event.parsedText === '(unparseable message)') return true;
   if (event.messageType === 'text' && extractRawText(event) === null) return true;
@@ -254,27 +267,26 @@ function shouldAddFallbackNote(event: FeishuInboundEvent): boolean {
 }
 
 function renderReplyAncestry(event: FeishuInboundEvent): string {
-  const parentId = event.parentId;
-  if (parentId === undefined || parentId === '' || parentId === event.messageId) {
-    return '';
-  }
-  if (
-    event.threadId !== undefined &&
-    event.threadId !== '' &&
-    parentId === event.rootId
-  ) {
-    return '';
-  }
+  const parentId = replyAncestryParentId(event);
+  if (parentId === undefined) return '';
+  const escapedParentId = escapeXmlText(parentId);
+  const parentMessageType = event.parentMessageType === undefined
+    ? undefined
+    : normalizeFeishuMessageTypeToken(event.parentMessageType);
+  const typeHint = parentMessageType === undefined
+    ? ''
+    : `, parent_message_type=${escapeXmlText(parentMessageType)}`;
   return [
     '',
     '',
-    `Reply/quote ancestry: parent_message_id=${escapeXmlText(parentId)}.`,
-    'Use the Feishu skill with that message id if the parent body is needed.',
+    `Reply/quote ancestry: parent_message_id=${escapedParentId}${typeHint}.`,
+    'When the parent details are needed, use the Feishu skill and run:',
+    `lark-cli im +messages-mget --message-ids ${escapedParentId}`,
   ].join('\n');
 }
 
 function isRichMessage(messageType: string): boolean {
-  return ['post', 'interactive', 'merge_forward'].includes(messageType);
+  return ['post', 'interactive'].includes(messageType);
 }
 
 function truncateEscapedRichBody(

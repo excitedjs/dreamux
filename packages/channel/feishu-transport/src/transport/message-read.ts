@@ -7,19 +7,11 @@ export interface FeishuMessageReadRequest {
   cardContent?: FeishuMessageReadMode
 }
 
-export interface FeishuMessageReadSender {
-  id: string
-  type: string
-  name?: string
-}
-
 /** Content-only projection of one `im.v1.message.get` item. */
 export interface FeishuMessageReadItem {
   messageId: string
   messageType: string
   content: string
-  upperMessageId?: string
-  sender?: FeishuMessageReadSender
   mentions: Mention[]
   deleted: boolean
   malformed: boolean
@@ -40,12 +32,6 @@ export interface RawMessageReadItem {
   msg_type?: string
   deleted?: boolean
   body?: { content?: string }
-  upper_message_id?: string
-  sender?: {
-    id?: string
-    sender_type?: string
-    sender_name?: string
-  }
   mentions?: Array<{
     key?: string
     id?: string
@@ -60,27 +46,10 @@ export function normalizeMessageReadItem(
   const messageId = raw.message_id ?? ''
   const messageType = raw.msg_type ?? ''
   const content = raw.body?.content ?? ''
-  const senderId = raw.sender?.id ?? ''
-  const senderType = raw.sender?.sender_type ?? ''
-  const senderName = raw.sender?.sender_name
   return {
     messageId,
     messageType,
     content,
-    ...(raw.upper_message_id !== undefined && raw.upper_message_id !== ''
-      ? { upperMessageId: raw.upper_message_id }
-      : {}),
-    ...(senderId !== '' || senderType !== '' || senderName !== undefined
-      ? {
-          sender: {
-            id: senderId,
-            type: senderType,
-            ...(senderName !== undefined && senderName !== ''
-              ? { name: senderName }
-              : {}),
-          },
-        }
-      : {}),
     mentions: (raw.mentions ?? []).map(normalizeMessageReadMention),
     deleted: raw.deleted === true,
     malformed:

@@ -31,7 +31,6 @@ export type {
   FeishuMessageReadMode,
   FeishuMessageReadRequest,
   FeishuMessageReadResponse,
-  FeishuMessageReadSender,
   FeishuMessageReader,
 } from './message-read.js'
 

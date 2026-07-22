@@ -57,14 +57,17 @@ class WireTransport implements FeishuTransport {
   readonly messageReads: FeishuMessageReadRequest[] = [];
   readonly resourceReads: FeishuMessageResourceRequest[] = [];
   private routes: InboundRoutes | undefined;
-  private readonly readResults = new Map<string, FeishuMessageReadResponse | Error>();
+  private readonly readResults = new Map<
+    string,
+    FeishuMessageReadResponse | Promise<FeishuMessageReadResponse> | Error
+  >();
   private readonly resources = new Map<string, Buffer | Error>();
   private reactionIndex = 0;
 
   setRead(
     messageId: string,
     mode: 'default' | 'user_card_content',
-    value: FeishuMessageReadResponse | Error,
+    value: FeishuMessageReadResponse | Promise<FeishuMessageReadResponse> | Error,
   ): void {
     this.readResults.set(`${mode}:${messageId}`, value);
   }
@@ -139,7 +142,7 @@ class WireTransport implements FeishuTransport {
     const value = this.readResults.get(`${mode}:${request.messageId}`);
     if (value === undefined) throw new Error(`missing read ${mode}:${request.messageId}`);
     if (value instanceof Error) throw value;
-    return value;
+    return await value;
   }
 
   async resolveAppOwner(): Promise<FeishuAppOwnerIdentity> {
@@ -409,25 +412,39 @@ describe('Feishu inbound fidelity production path', () => {
     await session.close();
   });
 
-  it('downloads merged-forward child resources with the top-level message id', async () => {
+  it('delivers merged-forward as a lazy lark-cli lookup without reads or resources', async () => {
     const { transport, session, submitted } = await harness();
-    transport.setResource('child-image', Buffer.from('image'));
-    transport.setRead('om_forward', 'user_card_content', {
+
+    await transport.dispatch(rawMessage('om_forward', 'merge_forward', {}));
+
+    expect(submitted[0]?.body).toContain(
+      'Merged-forward message: message_id=om_forward.',
+    );
+    expect(submitted[0]?.body).toContain(
+      'lark-cli im +messages-mget --message-ids om_forward',
+    );
+    expect(submitted[0]?.body).not.toContain('Parser note:');
+    expect(transport.messageReads).toEqual([]);
+    expect(transport.resourceReads).toEqual([]);
+    await session.close();
+  });
+
+  it('stops after one nonsupport root read when it resolves to merged-forward', async () => {
+    const { transport, session, submitted } = await harness();
+    transport.setRead('om_forward_unknown', 'default', {
       items: [
         {
-          messageId: 'om_forward',
+          messageId: 'om_forward_unknown',
           messageType: 'merge_forward',
-          content: '{}',
+          content: '',
           mentions: [],
           deleted: false,
           malformed: false,
         },
         {
-          messageId: 'om_child',
-          messageType: 'image',
-          content: JSON.stringify({ image_key: 'child-image' }),
-          upperMessageId: 'om_forward',
-          sender: { id: 'ou_child', type: 'user', name: 'Child sender' },
+          messageId: 'om_hidden_child',
+          messageType: 'text',
+          content: JSON.stringify({ text: 'must stay hidden' }),
           mentions: [],
           deleted: false,
           malformed: false,
@@ -435,20 +452,36 @@ describe('Feishu inbound fidelity production path', () => {
       ],
     });
 
-    await transport.dispatch(rawMessage('om_forward', 'merge_forward', {}));
+    await transport.dispatch(rawMessage(
+      'om_forward_unknown',
+      'nonsupport',
+      {},
+    ));
 
-    expect(submitted[0]?.body).toContain('Child sender (image)');
+    expect(submitted[0]?.body).toContain(
+      'Merged-forward message: message_id=om_forward_unknown.',
+    );
+    expect(submitted[0]?.body).not.toContain('must stay hidden');
+    expect(submitted[0]?.body).not.toContain('Parser note:');
     expect(transport.messageReads).toEqual([
-      { messageId: 'om_forward', cardContent: 'user_card_content' },
+      { messageId: 'om_forward_unknown', cardContent: 'default' },
     ]);
-    expect(transport.resourceReads).toEqual([
-      { messageId: 'om_forward', fileKey: 'child-image', type: 'image' },
-    ]);
+    expect(transport.resourceReads).toEqual([]);
     await session.close();
   });
 
   it('emits ancestry hints only for the truth-table positive case', async () => {
     const { transport, session, submitted } = await harness();
+    transport.setRead('om_parent', 'default', {
+      items: [{
+        messageId: 'om_parent',
+        messageType: 'interactive',
+        content: JSON.stringify({ secret: 'must not be submitted' }),
+        mentions: [],
+        deleted: false,
+        malformed: false,
+      }],
+    });
     await transport.dispatch(rawMessage('om_none', 'text', { text: 'none' }));
     await transport.dispatch(rawMessage('om_self', 'text', { text: 'self' }, {
       parentId: 'om_self',
@@ -466,9 +499,64 @@ describe('Feishu inbound fidelity production path', () => {
     expect(submitted.slice(0, 3).every((input) =>
       !input.body?.includes('Reply/quote ancestry:'))).toBe(true);
     expect(submitted[3]?.body).toContain(
-      'Reply/quote ancestry: parent_message_id=om_parent.',
+      'Reply/quote ancestry: parent_message_id=om_parent, parent_message_type=interactive.',
     );
-    expect(transport.messageReads).toEqual([]);
+    expect(submitted[3]?.body).toContain(
+      'lark-cli im +messages-mget --message-ids om_parent',
+    );
+    expect(submitted[3]?.body).not.toContain('must not be submitted');
+    expect(transport.messageReads).toEqual([
+      { messageId: 'om_parent', cardContent: 'default' },
+    ]);
+    await session.close();
+  });
+
+  it('preserves current card content when the optional parent probe times out', async () => {
+    const { transport, session, submitted } = await harness();
+    transport.setRead('om_current_card', 'user_card_content', {
+      items: [{
+        messageId: 'om_current_card',
+        messageType: 'interactive',
+        content: JSON.stringify({
+          body: { elements: [{ tag: 'markdown', content: 'Current card body' }] },
+        }),
+        mentions: [],
+        deleted: false,
+        malformed: false,
+      }],
+    });
+    transport.setRead('om_current_card', 'default', {
+      items: [{
+        messageId: 'om_current_card',
+        messageType: 'interactive',
+        content: JSON.stringify({ elements: [] }),
+        mentions: [],
+        deleted: false,
+        malformed: false,
+      }],
+    });
+    transport.setRead(
+      'om_slow_parent',
+      'default',
+      new Promise<FeishuMessageReadResponse>(() => undefined),
+    );
+    await transport.dispatch(rawMessage(
+      'om_current_card',
+      'interactive',
+      {},
+      { parentId: 'om_slow_parent' },
+    ));
+
+    expect(submitted[0]?.body).toContain('Current card body');
+    expect(submitted[0]?.body).toContain(
+      'Reply/quote ancestry: parent_message_id=om_slow_parent.',
+    );
+    expect(submitted[0]?.body).not.toContain('parent_message_type=');
+    expect(transport.messageReads).toEqual([
+      { messageId: 'om_current_card', cardContent: 'user_card_content' },
+      { messageId: 'om_current_card', cardContent: 'default' },
+      { messageId: 'om_slow_parent', cardContent: 'default' },
+    ]);
     await session.close();
   });
 });

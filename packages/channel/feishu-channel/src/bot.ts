@@ -63,6 +63,8 @@ export interface FeishuInboundEvent {
   /** Diagnostic reply ancestry; never used as a topic identity fallback. */
   rootId?: string;
   parentId?: string;
+  /** Post-gate, best-effort type of the actionable reply/quote parent. */
+  parentMessageType?: string;
   senderId: string;
   /**
    * The sender's `union_id`, when Feishu provides it. Diagnostic only — it is
