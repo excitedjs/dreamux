@@ -431,7 +431,7 @@ export class FeishuChannelSession {
       coreEvents.on('binding.route', (event) => {
         this.enqueueBindingNotification(
           event,
-          lifecycle.notificationController.signal,
+          lifecycle.notificationController,
         );
       }),
     );
@@ -439,7 +439,7 @@ export class FeishuChannelSession {
       coreEvents.on('binding.collaboration_space', (event) => {
         this.enqueueBindingNotification(
           event,
-          lifecycle.notificationController.signal,
+          lifecycle.notificationController,
         );
       }),
     );
@@ -453,21 +453,26 @@ export class FeishuChannelSession {
 
   private enqueueBindingNotification(
     event: ChannelBindingRouteEvent | ChannelBindingCollaborationSpaceEvent,
-    signal: AbortSignal,
+    controller: AbortController,
   ): void {
     const provider = event.kind === 'binding.route'
       ? event.endpoint.provider
       : event.container.provider;
-    if (provider !== BUILTIN_FEISHU_PROVIDER_REF) return;
+    if (
+      provider !== BUILTIN_FEISHU_PROVIDER_REF ||
+      controller.signal.aborted
+    ) {
+      return;
+    }
     const run = this.bindingNotificationQueue
       .catch(() => undefined)
-      .then(() => this.sendBindingNotification(event, signal));
+      .then(() => this.sendBindingNotification(event, controller));
     this.bindingNotificationQueue = run.catch(() => undefined);
   }
 
   private async sendBindingNotification(
     event: ChannelBindingRouteEvent | ChannelBindingCollaborationSpaceEvent,
-    signal: AbortSignal,
+    controller: AbortController,
   ): Promise<void> {
     const notification = event.kind === 'binding.route'
       ? routeBindingNotification(event)
@@ -485,7 +490,7 @@ export class FeishuChannelSession {
     }
     try {
       const result = await runFeishuBoundedOperation({
-        signal,
+        signal: controller.signal,
         deadlineAt:
           Date.now() + FEISHU_BINDING_NOTIFICATION_SEND_TIMEOUT_MS,
         operation: () => this.bot.sendCard(
@@ -516,6 +521,19 @@ export class FeishuChannelSession {
             action: event.action,
           },
           'Feishu binding notification cancelled during session close',
+        );
+        return;
+      }
+      if (isFeishuOperationError(err, 'deadline')) {
+        controller.abort();
+        this.opts.log.warn(
+          {
+            dispatcher_id: this.opts.dispatcherId,
+            event_kind: event.kind,
+            action: event.action,
+            err: errInfo(err),
+          },
+          'Feishu binding notification timed out; disabling notifications for this session',
         );
         return;
       }

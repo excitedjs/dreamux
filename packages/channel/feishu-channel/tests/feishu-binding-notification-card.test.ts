@@ -315,4 +315,37 @@ describe('Feishu binding notification cards', () => {
       'Feishu binding notification drain reached its close deadline',
     );
   });
+
+  it('disables later notifications when a timed-out send may complete late', async () => {
+    vi.useFakeTimers();
+    let releaseSend!: () => void;
+    const delayedSend = new Promise<void>((resolve) => {
+      releaseSend = resolve;
+    });
+    const bot = createFakeFeishuBot('app-late');
+    bot.setSendCardDelay(delayedSend);
+    const log = logger();
+    const source = eventSource();
+    const s = session({ stateDir, bot, log });
+    await start({ session: s, source });
+
+    source.emit(routeEvent({ meta: { chat_id: 'chat-a' } }));
+    source.emit(routeEvent({ meta: { chat_id: 'chat-b' }, action: 'unbound' }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(bot.sentCards.map((card) => card.chatId)).toEqual(['chat-a']);
+
+    await vi.advanceTimersByTimeAsync(20_001);
+    expect(bot.sentCards.map((card) => card.chatId)).toEqual(['chat-a']);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ event_kind: 'binding.route' }),
+      'Feishu binding notification timed out; disabling notifications for this session',
+    );
+
+    releaseSend();
+    await vi.advanceTimersByTimeAsync(0);
+    source.emit(routeEvent({ meta: { chat_id: 'chat-c' } }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(bot.sentCards.map((card) => card.chatId)).toEqual(['chat-a']);
+    await expect(s.close()).resolves.toBeUndefined();
+  });
 });

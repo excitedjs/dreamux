@@ -163,6 +163,10 @@ able to create Markdown links, mentions, tags, or card actions.
   session close. Each remote send also has a fixed deadline; when the close
   window expires, the session aborts notification work and continues closing
   without waiting for a hung Feishu request.
+- The transport cannot cancel an already-issued Feishu card request. If a live
+  send reaches its deadline, the session disables all later binding
+  notifications until restart. This preserves queue order: a timed-out request
+  may finish late, but no newer card can overtake it.
 
 ## Card Content
 
@@ -212,6 +216,8 @@ Unbound:
 - Rapid bind/unbind/bind cards preserve event order.
 - A hung card send cannot hold Feishu session close beyond the notification
   drain deadline.
+- When a card send times out, queued and later notifications are suppressed for
+  that session even if the timed-out request eventually completes.
 - Pre-session startup reconciliation makes no attempt.
 - Card-send failure is contained and logged without changing binding results.
 - Card JSON cannot contain identity configuration, `claim_id`, prompts, raw
