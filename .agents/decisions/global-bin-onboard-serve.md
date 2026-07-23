@@ -64,6 +64,16 @@ satisfies the package's supported Node range, resolves the Codex executable to a
 runnable path for managed service use, seeds `HOME` for clean user-service
 probes, and renders those values into the user service environment.
 
+Optional Homebrew fallback prefixes are presence-gated. `dreamux onboard` and
+`dreamux daemon install` asynchronously probe the platform candidate
+(`/opt/homebrew/bin` on macOS or `/home/linuxbrew/.linuxbrew/bin` on Linux)
+once, before resolving provider binaries. Only an existing candidate is added
+as a Dreamux-supplied fallback, and that captured fallback list is reused when
+rendering the service unit so preflight and runtime PATHs cannot drift within
+one install. A candidate already present in the operator's captured session
+`PATH` remains untouched. Dreamux does not execute `brew --prefix`, read shell
+profiles, or synchronously probe the filesystem.
+
 The service Node is not the onboarding Node frozen unconditionally. Onboarding
 prefers a stable system Node from a platform-aware candidate list (macOS covers
 Homebrew under `/opt/homebrew` and `/usr/local`; Linux covers `/usr/local/bin`,

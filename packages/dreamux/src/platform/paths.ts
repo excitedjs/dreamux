@@ -49,6 +49,7 @@ import {
   BUILT_IN_DEFAULTS,
   type DreamuxConfig,
 } from '../config/config.js';
+import { pathExists } from './fs-errors.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -449,11 +450,12 @@ export function dispatcherPathSegment(id: string): string {
 //     convention among some installers (e.g. language-ecosystem tools) but is
 //     NOT part of the formal XDG Base Directory specification; we honor it when
 //     the caller supplies it and also keep the conventional $HOME/.local/bin.
-//   - Results are ordered and de-duplicated. Earlier entries win. None of these
-//     dirs need to exist to appear on the service PATH (a non-existent dir is
-//     harmless); a bare binary that does not exist still fails loud at spawn.
+//   - Results are ordered and de-duplicated. Earlier entries win. User-local and
+//     portable system dirs are deterministic fallbacks. Optional Homebrew
+//     prefixes are added only after an async presence probe at the orchestration
+//     boundary, then captured for the whole install.
 //   - No shell profile is read or written, brew --prefix is never executed, and
-//     the interactive shell PATH is never mutated. The dirs are deterministic.
+//     the interactive shell PATH is never mutated.
 // ---------------------------------------------------------------------------
 
 export interface ExecDirOptions {
@@ -486,22 +488,12 @@ export function userLocalBinDirs(options: ExecDirOptions): string[] {
 
 /**
  * Platform conventional system bin dirs (user-local dirs are NOT included here —
- * see {@link userLocalBinDirs}). All platforms include /usr/local/bin,
- * /usr/bin, /bin. macOS adds the Apple Silicon Homebrew prefix
- * /opt/homebrew/bin (Intel Homebrew lands under /usr/local/bin, already
- * covered). Linux adds the common Linuxbrew prefix
- * /home/linuxbrew/.linuxbrew/bin.
- *
- * These are deterministic: no brew --prefix, no shell profile inspection.
+ * see {@link userLocalBinDirs}). These deterministic portable fallbacks do not
+ * include optional Homebrew prefixes; {@link probeStandardExecDirs} adds the
+ * platform candidate only when it exists.
  */
-export function systemExecDirs(platform: NodeJS.Platform): string[] {
-  const dirs = ['/usr/local/bin', '/usr/bin', '/bin'];
-  if (platform === 'darwin') {
-    dirs.push('/opt/homebrew/bin');
-  } else if (platform === 'linux') {
-    dirs.push('/home/linuxbrew/.linuxbrew/bin');
-  }
-  return dirs;
+export function systemExecDirs(_platform: NodeJS.Platform): string[] {
+  return ['/usr/local/bin', '/usr/bin', '/bin'];
 }
 
 /**
@@ -515,6 +507,29 @@ export function standardExecDirs(options: ExecDirOptions): string[] {
     ...userLocalBinDirs(options),
     ...systemExecDirs(options.platform),
   ]);
+}
+
+export type ExecDirProbe = (path: string) => Promise<boolean>;
+
+/**
+ * Resolve the standard executable fallback list for one onboard/daemon-install
+ * run. The portable fallbacks remain deterministic; the single platform
+ * Homebrew candidate is added only when the async probe confirms it exists.
+ *
+ * Callers capture this result once and reuse it for provider resolution,
+ * launch validation, and service rendering. That keeps the effective PATH
+ * stable within one install even if the filesystem changes later.
+ */
+export async function probeStandardExecDirs(
+  options: ExecDirOptions,
+  probe: ExecDirProbe = pathExists,
+): Promise<string[]> {
+  const dirs = standardExecDirs(options);
+  const homebrewDir = homebrewExecDir(options.platform);
+  if (homebrewDir !== null && (await probe(homebrewDir))) {
+    dirs.push(homebrewDir);
+  }
+  return dedupeExecDirs(dirs);
 }
 
 /**
@@ -569,7 +584,7 @@ export function withServicePath(
  * resolve against the standard executable dirs during `dreamux onboard` and
  * `dreamux daemon install`. It places the captured session PATH (in original
  * order) ahead of the fresh-install fallback dirs (XDG_BIN_HOME /
- * $HOME/.local/bin + portable platform system + brew dirs), matching the order
+ * $HOME/.local/bin + portable platform system dirs), matching the order
  * {@link buildServicePath} persists into the service unit — so the
  * daemon-install preflight and the running service agree.
  *
@@ -597,6 +612,12 @@ export function withStandardExecPath(
     sessionPath,
     fallbackDirs,
   });
+}
+
+function homebrewExecDir(platform: NodeJS.Platform): string | null {
+  if (platform === 'darwin') return '/opt/homebrew/bin';
+  if (platform === 'linux') return '/home/linuxbrew/.linuxbrew/bin';
+  return null;
 }
 
 function dedupeExecDirs(values: string[]): string[] {

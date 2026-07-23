@@ -48,6 +48,7 @@ function answers(
     nodeBin: '/usr/bin/node',
     startService: false,
     dryRun: true,
+    fallbackDirs: [],
     ...overrides,
   };
 }
