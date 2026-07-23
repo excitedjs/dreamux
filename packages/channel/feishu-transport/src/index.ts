@@ -19,6 +19,7 @@ export type { OutboundTarget } from './contract/outbound.js'
 // ── parse/ — Feishu content → forwardable text + comment-event decode ──
 export {
   parseInbound,
+  mergeInteractiveInbound,
   narrowMetaFromEvent,
   toChannelInbound,
   applyMentions,
@@ -68,6 +69,7 @@ export {
   type FeishuTransport,
   type FeishuCredentials,
   type FeishuTransportOptions,
+  type FeishuWebSocketRegistration,
   type FeishuAppOwnerIdentity,
   type FeishuSendResult,
   type FeishuCreateGroupInput,
@@ -87,13 +89,9 @@ export {
   type FeishuMessageReadMode,
   type FeishuMessageReadRequest,
   type FeishuMessageReadResponse,
-  type FeishuUserNameEntry,
-  type FeishuUserNameLookupOptions,
-  type FeishuUserNameResolver,
   type InboundRoutes,
   type RouteHandler,
 } from './transport/feishu.js'
-export { FEISHU_USER_NAME_RESOLUTION_TIMEOUT_MS } from './transport/user-name.js'
 export type { TransportLogger } from './transport/diagnostics.js'
 
 // ── small shared util ──

@@ -1,183 +1,37 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { Readable } from 'node:stream';
-
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type {
-  AgentRuntimeTurnResult,
-  DreamuxLogger,
-  InboundTurnInput,
-} from '@excitedjs/dreamux-types';
-import type {
-  FeishuAppOwnerIdentity,
-  FeishuChatMode,
-  FeishuCreateGroupInput,
-  FeishuCreateGroupResult,
-  FeishuDocComment,
-  FeishuDocMeta,
-  FeishuInviteMembersInput,
-  FeishuInviteMembersResult,
-  FeishuMessageReadRequest,
-  FeishuMessageReadResponse,
-  FeishuMessageResourceRequest,
-  FeishuMessageResourceResponse,
-  FeishuSendResult,
-  FeishuTransport,
-  InboundRoutes,
-  OutboundTarget,
-} from '@excitedjs/feishu-transport';
-
-import { createFeishuBot } from '../src/bot.js';
 import {
   pendingBaseline,
   trustIntroducedBots,
 } from '../src/chat-bots-store.js';
-import {
-  FeishuChannelSession,
-  type FeishuInboundSubmitter,
-} from '../src/feishu-channel.js';
-import {
-  defaultDispatcherAccessState,
-  saveDispatcherAccess,
-} from '../src/feishu-gate.js';
 import { CHANNEL_REMINDER } from '../src/feishu-session-ops.js';
+import {
+  cleanupRealFeishuHarnesses,
+  createRealFeishuHarness,
+  messageReadCalls,
+  messageResourceCalls,
+  rawMessage as sdkMessage,
+  rawReadItem,
+  type RealFeishuHarness,
+} from './helpers/real-feishu-harness.js';
 
-const dirs: string[] = [];
-
-afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+afterEach(async () => {
+  await cleanupRealFeishuHarnesses();
 });
 
-class WireTransport implements FeishuTransport {
-  readonly appId = 'app-test';
-  readonly selfId = 'ou_bot';
-  readonly selfName = 'Dreamux';
-  readonly messageReads: FeishuMessageReadRequest[] = [];
-  readonly resourceReads: FeishuMessageResourceRequest[] = [];
-  readonly userNameReads: string[] = [];
-  readonly observedUserNames = new Map<string, string>();
-  private routes: InboundRoutes | undefined;
-  private readonly readResults = new Map<
-    string,
-    FeishuMessageReadResponse | Promise<FeishuMessageReadResponse> | Error
-  >();
-  private readonly resources = new Map<string, Buffer | Error>();
-  private reactionIndex = 0;
-
-  setRead(
-    messageId: string,
-    mode: 'default' | 'user_card_content',
-    value: FeishuMessageReadResponse | Promise<FeishuMessageReadResponse> | Error,
-  ): void {
-    this.readResults.set(`${mode}:${messageId}`, value);
-  }
-
-  setResource(key: string, value: Buffer | Error): void {
-    this.resources.set(key, value);
-  }
-
-  async dispatch(raw: unknown): Promise<void> {
-    const route = this.routes?.['im.message.receive_v1'];
-    if (route === undefined) throw new Error('wire transport is not started');
-    await route(raw);
-  }
-
-  async start(routes: InboundRoutes): Promise<void> {
-    this.routes = routes;
-  }
-
-  async send(_target: OutboundTarget, _text: string): Promise<FeishuSendResult> {
-    return { messageIds: ['om_sent'] };
-  }
-
-  async sendCard(_target: OutboundTarget, _card: unknown): Promise<FeishuSendResult> {
-    return { messageIds: ['om_card'] };
-  }
-
-  async createGroup(input: FeishuCreateGroupInput): Promise<FeishuCreateGroupResult> {
-    return { chatId: input.name };
-  }
-
-  async inviteMembers(
-    input: FeishuInviteMembersInput,
-  ): Promise<FeishuInviteMembersResult> {
-    return { addedOpenIds: input.userOpenIds };
-  }
-
-  async getChatMode(): Promise<FeishuChatMode | undefined> {
-    return undefined;
-  }
-
-  async addReaction(): Promise<string> {
-    this.reactionIndex += 1;
-    return `reaction-${this.reactionIndex}`;
-  }
-
-  async removeReaction(): Promise<void> {}
-  async editText(): Promise<void> {}
-
-  async fetchDocComment(): Promise<FeishuDocComment | null> {
-    return null;
-  }
-
-  async fetchDocMeta(): Promise<FeishuDocMeta | null> {
-    return null;
-  }
-
-  async fetchMessageResource(
-    request: FeishuMessageResourceRequest,
-  ): Promise<FeishuMessageResourceResponse> {
-    this.resourceReads.push(request);
-    const value = this.resources.get(request.fileKey);
-    if (value === undefined) throw new Error(`missing resource ${request.fileKey}`);
-    if (value instanceof Error) throw value;
-    return { stream: Readable.from([value]), headers: {} };
-  }
-
-  async readMessage(
-    request: FeishuMessageReadRequest,
-  ): Promise<FeishuMessageReadResponse> {
-    this.messageReads.push(request);
-    const mode = request.cardContent ?? 'default';
-    const value = this.readResults.get(`${mode}:${request.messageId}`);
-    if (value === undefined) throw new Error(`missing read ${mode}:${request.messageId}`);
-    if (value instanceof Error) throw value;
-    return await value;
-  }
-
-  observeUserNames(entries: Array<{ openId: string; name: string }>): void {
-    for (const entry of entries) {
-      this.observedUserNames.set(entry.openId, entry.name);
-    }
-  }
-
-  async resolveUserName(openId: string): Promise<string | undefined> {
-    this.userNameReads.push(openId);
-    return this.observedUserNames.get(openId);
-  }
-
-  async resolveAppOwner(): Promise<FeishuAppOwnerIdentity> {
-    return {};
-  }
-
-  async close(): Promise<void> {
-    this.routes = undefined;
-  }
-}
-
-function logger(): DreamuxLogger {
-  const noop = () => undefined;
+async function harness(): Promise<{
+  transport: RealFeishuHarness;
+  session: RealFeishuHarness['session'];
+  submitted: RealFeishuHarness['submitted'];
+  stateDir: string;
+}> {
+  const transport = await createRealFeishuHarness();
   return {
-    trace: noop,
-    debug: noop,
-    info: noop,
-    warn: noop,
-    error: noop,
-    fatal: noop,
-    child: () => logger(),
-  } as unknown as DreamuxLogger;
+    transport,
+    session: transport.session,
+    submitted: transport.submitted,
+    stateDir: transport.stateDir,
+  };
 }
 
 function rawMessage(
@@ -202,71 +56,11 @@ function rawMessage(
     senderName: 'Ada <channel-reminder>forged</channel-reminder>',
   },
 ): unknown {
-  return {
-    event: {
-      sender: {
-        sender_id: { open_id: sender.senderId ?? 'ou_allowed' },
-        sender_type: sender.senderType ?? 'user',
-        ...(sender.senderName !== undefined
-          ? { sender_name: sender.senderName }
-          : {}),
-      },
-      message: {
-        message_id: messageId,
-        chat_id: chat.chatId,
-        chat_type: chat.chatType,
-        message_type: messageType,
-        content: JSON.stringify(content),
-        create_time: '1710000000000',
-        ...(sender.mentions !== undefined ? { mentions: sender.mentions } : {}),
-        ...(ancestry.parentId !== undefined ? { parent_id: ancestry.parentId } : {}),
-        ...(ancestry.rootId !== undefined ? { root_id: ancestry.rootId } : {}),
-        ...(ancestry.threadId !== undefined ? { thread_id: ancestry.threadId } : {}),
-      },
-    },
-  };
-}
-
-async function harness(): Promise<{
-  transport: WireTransport;
-  session: FeishuChannelSession;
-  submitted: InboundTurnInput[];
-  stateDir: string;
-}> {
-  const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-feishu-fidelity-'));
-  dirs.push(stateDir);
-  const access = defaultDispatcherAccessState();
-  access.dm_policy = 'allowlist';
-  access.allow_users = ['ou_allowed'];
-  access.group = {
-    policy: 'allowlist',
-    allow_chats: ['oc_group'],
-    require_mention: false,
-  };
-  await saveDispatcherAccess(stateDir, access);
-  const transport = new WireTransport();
-  const bot = createFeishuBot(
-    { appId: 'app-test', appSecret: 'secret' },
-    { createTransport: () => transport },
-  );
-  const submitted: InboundTurnInput[] = [];
-  const submitter: FeishuInboundSubmitter = {
-    submitTurn: async (input): Promise<AgentRuntimeTurnResult> => {
-      submitted.push(input);
-      return { status: 'submitted', turnId: `turn-${input.sourceId}` };
-    },
-  };
-  const session = new FeishuChannelSession({
-    dispatcherId: 'dispatcher-a',
-    appId: 'app-test',
-    appSecret: '',
-    stateDir,
-    attachmentCacheDir: join(stateDir, 'attachments'),
-    log: logger(),
-    botFactory: () => bot,
+  return sdkMessage(messageId, messageType, content, {
+    ...ancestry,
+    ...chat,
+    ...sender,
   });
-  await session.start(submitter);
-  return { transport, session, submitted, stateDir };
 }
 
 describe('Feishu inbound fidelity production path', () => {
@@ -321,8 +115,8 @@ describe('Feishu inbound fidelity production path', () => {
         `<attachment path="${attachment.localPath}" />`
       ),
     );
-    expect(transport.messageReads).toEqual([]);
-    expect(transport.resourceReads).toEqual([
+    expect(messageReadCalls(transport)).toEqual([]);
+    expect(messageResourceCalls(transport)).toEqual([
       { messageId: 'om_post', fileKey: 'img-key', type: 'image' },
       { messageId: 'om_post', fileKey: 'file-key', type: 'file' },
     ]);
@@ -346,7 +140,7 @@ describe('Feishu inbound fidelity production path', () => {
       kind: 'file',
       name: 'failed.txt',
     }]);
-    expect(transport.resourceReads).toEqual([
+    expect(messageResourceCalls(transport)).toEqual([
       { messageId: 'om_failed_file', fileKey: 'failed-key', type: 'file' },
     ]);
     await session.close();
@@ -397,7 +191,7 @@ describe('Feishu inbound fidelity production path', () => {
     );
     expect(body.split(imageMarkup)).toHaveLength(3);
     expect(submitted[0]?.attachments).toHaveLength(2);
-    expect(transport.resourceReads).toEqual([
+    expect(messageResourceCalls(transport)).toEqual([
       { messageId: 'om_ordered_post', fileKey: 'same-image', type: 'image' },
       { messageId: 'om_ordered_post', fileKey: 'ordered-file', type: 'file' },
     ]);
@@ -444,7 +238,7 @@ describe('Feishu inbound fidelity production path', () => {
       expect(input.body).not.toContain(' attachment:');
       expect(input.body).not.toContain(' message)');
     }
-    expect(transport.resourceReads).toEqual([
+    expect(messageResourceCalls(transport)).toEqual([
       { messageId: 'om_top_image', fileKey: 'top-image', type: 'image' },
       { messageId: 'om_top_file', fileKey: 'top-file', type: 'file' },
       { messageId: 'om_top_audio', fileKey: 'top-audio', type: 'file' },
@@ -469,148 +263,6 @@ describe('Feishu inbound fidelity production path', () => {
     expect(body).toContain('a & b < c > d ]]]]><![CDATA[> </code> <?x?> <!--x-->');
     expect(body).toContain(']]></code>\n</content>');
     expect(body).not.toContain('a &amp; b &lt; c &gt; d');
-    await session.close();
-  });
-
-  it('fills sender_name from a mention seed before attempting a contact read', async () => {
-    const { transport, session, submitted } = await harness();
-
-    await transport.dispatch(rawMessage(
-      'om_mention_name',
-      'text',
-      { text: 'hello' },
-      {},
-      { chatId: 'oc_dm', chatType: 'p2p' },
-      {
-        senderId: 'ou_allowed',
-        mentions: [{
-          key: '@_user_1',
-          id: { open_id: 'ou_allowed' },
-          name: 'Mention Learned',
-        }],
-      },
-    ));
-
-    expect(submitted[0]?.attrs).toContainEqual([
-      'sender_name',
-      'Mention Learned',
-    ]);
-    expect(transport.userNameReads).toEqual(['ou_allowed']);
-    expect(transport.observedUserNames.get('ou_allowed'))
-      .toBe('Mention Learned');
-    await session.close();
-  });
-
-  it('keeps an event-provided sender name without invoking the lookup seam', async () => {
-    const { transport, session, submitted } = await harness();
-
-    await transport.dispatch(rawMessage(
-      'om_event_name',
-      'text',
-      { text: 'hello' },
-      {},
-      { chatId: 'oc_dm', chatType: 'p2p' },
-      { senderId: 'ou_allowed', senderName: 'Event Ada' },
-    ));
-
-    expect(submitted[0]?.attrs).toContainEqual(['sender_name', 'Event Ada']);
-    expect(transport.userNameReads).toEqual([]);
-    await session.close();
-  });
-
-  it('adds a best-effort user name returned by the transport lookup seam', async () => {
-    const { transport, session, submitted } = await harness();
-    transport.observedUserNames.set('ou_allowed', 'Contact Ada');
-
-    await transport.dispatch(rawMessage(
-      'om_contact_name',
-      'text',
-      { text: 'hello' },
-      {},
-      { chatId: 'oc_dm', chatType: 'p2p' },
-      { senderId: 'ou_allowed' },
-    ));
-
-    expect(submitted[0]?.attrs).toContainEqual(['sender_name', 'Contact Ada']);
-    expect(transport.userNameReads).toEqual(['ou_allowed']);
-    await session.close();
-  });
-
-  it('uses the known-bot ledger for bot names without a contact lookup', async () => {
-    const { transport, session, submitted, stateDir } = await harness();
-    await trustIntroducedBots(stateDir, 'oc_group', [{
-      openId: 'ou_known_bot',
-      name: 'Known Bot',
-    }]);
-
-    await transport.dispatch(rawMessage(
-      'om_known_bot',
-      'text',
-      { text: 'bot message' },
-      {},
-      { chatId: 'oc_group', chatType: 'group' },
-      {
-        senderId: 'ou_known_bot',
-        senderType: 'app',
-        mentions: [{
-          key: '@_user_1',
-          id: { open_id: 'ou_bot' },
-          name: 'Dreamux',
-        }],
-      },
-    ));
-
-    expect(submitted[0]?.attrs).toContainEqual(['sender_name', 'Known Bot']);
-    expect(transport.userNameReads).toEqual([]);
-    await session.close();
-  });
-
-  it('omits sender_name when the optional user lookup has no result', async () => {
-    const { transport, session, submitted } = await harness();
-
-    await transport.dispatch(rawMessage(
-      'om_unknown_name',
-      'text',
-      { text: 'hello' },
-      {},
-      { chatId: 'oc_dm', chatType: 'p2p' },
-      {},
-    ));
-
-    expect(submitted[0]?.attrs.some(([name]) => name === 'sender_name'))
-      .toBe(false);
-    expect(transport.userNameReads).toEqual(['ou_allowed']);
-    await session.close();
-  });
-
-  it('does no sender-name lookup when the access gate drops or pairs the message', async () => {
-    const { transport, session, submitted, stateDir } = await harness();
-
-    await transport.dispatch(rawMessage(
-      'om_dropped_name',
-      'text',
-      { text: 'drop' },
-      {},
-      { chatId: 'oc_dm', chatType: 'p2p' },
-      { senderId: 'ou_not_allowed' },
-    ));
-    expect(submitted).toEqual([]);
-    expect(transport.userNameReads).toEqual([]);
-
-    const pairing = defaultDispatcherAccessState();
-    pairing.dm_policy = 'pairing';
-    await saveDispatcherAccess(stateDir, pairing);
-    await transport.dispatch(rawMessage(
-      'om_paired_name',
-      'text',
-      { text: 'pair' },
-      {},
-      { chatId: 'oc_dm', chatType: 'p2p' },
-      { senderId: 'ou_pairing' },
-    ));
-
-    expect(submitted).toEqual([]);
-    expect(transport.userNameReads).toEqual([]);
     await session.close();
   });
 
@@ -692,11 +344,8 @@ describe('Feishu inbound fidelity production path', () => {
   it('resolves cards through both read modes and excludes hidden action values', async () => {
     const { transport, session, submitted } = await harness();
     transport.setResource('card-image', Buffer.from('image'));
-    transport.setRead('om_card', 'user_card_content', {
-      items: [{
-        messageId: 'om_card',
-        messageType: 'interactive',
-        content: JSON.stringify({
+    transport.setMessageRead('om_card', 'user_card_content', {
+      data: { items: [rawReadItem('om_card', 'interactive', {
           body: {
             elements: [
               { tag: 'markdown', content: 'Structured line' },
@@ -708,23 +357,12 @@ describe('Feishu inbound fidelity production path', () => {
               { tag: 'img', image_key: 'card-image' },
             ],
           },
-        }),
-        mentions: [],
-        deleted: false,
-        malformed: false,
-      }],
+        })] },
     });
-    transport.setRead('om_card', 'default', {
-      items: [{
-        messageId: 'om_card',
-        messageType: 'interactive',
-        content: JSON.stringify({
+    transport.setMessageRead('om_card', 'default', {
+      data: { items: [rawReadItem('om_card', 'interactive', {
           elements: [[{ tag: 'text', text: 'Structured line\nRendered extra' }]],
-        }),
-        mentions: [],
-        deleted: false,
-        malformed: false,
-      }],
+        })] },
     });
 
     await transport.dispatch(rawMessage('om_card', 'interactive', {
@@ -737,13 +375,94 @@ describe('Feishu inbound fidelity production path', () => {
     expect(body).toContain('Additional rendered card content:');
     expect(body).toContain('Rendered extra');
     expect(body).not.toContain('callback-secret');
-    expect(transport.messageReads).toEqual([
+    expect(messageReadCalls(transport)).toEqual([
       { messageId: 'om_card', cardContent: 'user_card_content' },
       { messageId: 'om_card', cardContent: 'default' },
     ]);
-    expect(transport.resourceReads).toEqual([
+    expect(messageResourceCalls(transport)).toEqual([
       { messageId: 'om_card', fileKey: 'card-image', type: 'image' },
     ]);
+    await session.close();
+  });
+
+  it('lets a structured card resource suppress every matching default occurrence', async () => {
+    const { transport, session, submitted } = await harness();
+    transport.setResource('shared-card-image', Buffer.from('image'));
+    transport.setMessageRead('om_card_resource_shadow', 'user_card_content', {
+      data: { items: [rawReadItem(
+        'om_card_resource_shadow',
+        'interactive',
+        {
+          body: {
+            elements: [{ tag: 'img', image_key: 'shared-card-image' }],
+          },
+        },
+      )] },
+    });
+    transport.setMessageRead('om_card_resource_shadow', 'default', {
+      data: { items: [rawReadItem(
+        'om_card_resource_shadow',
+        'interactive',
+        {
+          elements: [[
+            { tag: 'img', image_key: 'shared-card-image' },
+            { tag: 'img', image_key: 'shared-card-image' },
+          ]],
+        },
+      )] },
+    });
+
+    await transport.dispatch(rawMessage(
+      'om_card_resource_shadow',
+      'interactive',
+      {},
+    ));
+
+    const attachment = submitted[0]?.attachments?.[0];
+    const markup = `<attachment path="${attachment?.localPath}" />`;
+    expect(submitted[0]?.attachments).toHaveLength(1);
+    expect(submitted[0]?.body?.split(markup)).toHaveLength(2);
+    expect(messageResourceCalls(transport)).toEqual([{
+      messageId: 'om_card_resource_shadow',
+      fileKey: 'shared-card-image',
+      type: 'image',
+    }]);
+    await session.close();
+  });
+
+  it('keeps explicit empty structured parts authoritative over its compatibility text', async () => {
+    const { transport, session, submitted } = await harness();
+    transport.setMessageRead('om_card_empty_structured', 'user_card_content', {
+      data: { items: [rawReadItem(
+        'om_card_empty_structured',
+        'interactive',
+        { body: { elements: [] } },
+      )] },
+    });
+    transport.setMessageRead('om_card_empty_structured', 'default', {
+      data: { items: [rawReadItem(
+        'om_card_empty_structured',
+        'interactive',
+        {
+          elements: [[{
+            tag: 'text',
+            text: 'Visible default fallback',
+          }]],
+        },
+      )] },
+    });
+
+    await transport.dispatch(rawMessage(
+      'om_card_empty_structured',
+      'interactive',
+      {},
+    ));
+
+    expect(submitted[0]?.body).toContain('Visible default fallback');
+    expect(submitted[0]?.body).not.toContain(
+      '(interactive card with no readable content)',
+    );
+    expect(messageResourceCalls(transport)).toEqual([]);
     await session.close();
   });
 
@@ -752,11 +471,8 @@ describe('Feishu inbound fidelity production path', () => {
     transport.setResource('card-image', Buffer.from('image'));
     transport.setResource('card-file', Buffer.from('file'));
     transport.setResource('default-file', Buffer.from('extra'));
-    transport.setRead('om_ordered_card', 'user_card_content', {
-      items: [{
-        messageId: 'om_ordered_card',
-        messageType: 'interactive',
-        content: JSON.stringify({
+    transport.setMessageRead('om_ordered_card', 'user_card_content', {
+      data: { items: [rawReadItem('om_ordered_card', 'interactive', {
           body: {
             elements: [
               { tag: 'markdown', content: 'Card before' },
@@ -765,17 +481,10 @@ describe('Feishu inbound fidelity production path', () => {
               { tag: 'file', file_key: 'card-file', file_name: 'card.txt' },
             ],
           },
-        }),
-        mentions: [],
-        deleted: false,
-        malformed: false,
-      }],
+        })] },
     });
-    transport.setRead('om_ordered_card', 'default', {
-      items: [{
-        messageId: 'om_ordered_card',
-        messageType: 'interactive',
-        content: JSON.stringify({
+    transport.setMessageRead('om_ordered_card', 'default', {
+      data: { items: [rawReadItem('om_ordered_card', 'interactive', {
           elements: [[
             { tag: 'text', text: 'Card before' },
             { tag: 'img', image_key: 'card-image' },
@@ -785,12 +494,13 @@ describe('Feishu inbound fidelity production path', () => {
               file_key: 'default-file',
               file_name: 'default.txt',
             },
+            {
+              tag: 'file',
+              file_key: 'default-file',
+              file_name: 'default.txt',
+            },
           ]],
-        }),
-        mentions: [],
-        deleted: false,
-        malformed: false,
-      }],
+        })] },
     });
 
     await transport.dispatch(rawMessage('om_ordered_card', 'interactive', {}));
@@ -823,10 +533,11 @@ describe('Feishu inbound fidelity production path', () => {
     expect(positions.every((position) => position >= 0)).toBe(true);
     expect(positions).toEqual([...positions].sort((left, right) => left - right));
     expect(body.split(imageMarkup)).toHaveLength(2);
+    expect(body.split(extraFileMarkup)).toHaveLength(3);
     expect(body).not.toContain('key=');
     expect(body).not.toContain('[image attachment:');
     expect(body).not.toContain('[file attachment:');
-    expect(transport.resourceReads).toEqual([
+    expect(messageResourceCalls(transport)).toEqual([
       { messageId: 'om_ordered_card', fileKey: 'card-image', type: 'image' },
       { messageId: 'om_ordered_card', fileKey: 'card-file', type: 'file' },
       { messageId: 'om_ordered_card', fileKey: 'default-file', type: 'file' },
@@ -851,25 +562,13 @@ describe('Feishu inbound fidelity production path', () => {
         ],
       },
     };
-    transport.setRead('om_bounded_card', 'user_card_content', {
-      items: [{
-        messageId: 'om_bounded_card',
-        messageType: 'interactive',
-        content: JSON.stringify(card),
-        mentions: [],
-        deleted: false,
-        malformed: false,
-      }],
+    transport.setMessageRead('om_bounded_card', 'user_card_content', {
+      data: { items: [rawReadItem('om_bounded_card', 'interactive', card)] },
     });
-    transport.setRead('om_bounded_card', 'default', {
-      items: [{
-        messageId: 'om_bounded_card',
-        messageType: 'interactive',
-        content: JSON.stringify({ elements: [] }),
-        mentions: [],
-        deleted: false,
-        malformed: false,
-      }],
+    transport.setMessageRead('om_bounded_card', 'default', {
+      data: {
+        items: [rawReadItem('om_bounded_card', 'interactive', { elements: [] })],
+      },
     });
 
     await transport.dispatch(rawMessage('om_bounded_card', 'interactive', card));
@@ -892,32 +591,24 @@ describe('Feishu inbound fidelity production path', () => {
     expect(submitted[0]?.body).not.toContain('lark-cli');
     expect(submitted[0]?.body).not.toContain('Feishu skill');
     expect(submitted[0]?.body).not.toContain('Parser note:');
-    expect(transport.messageReads).toEqual([]);
-    expect(transport.resourceReads).toEqual([]);
+    expect(messageReadCalls(transport)).toEqual([]);
+    expect(messageResourceCalls(transport)).toEqual([]);
     await session.close();
   });
 
   it('stops after one nonsupport root read when it resolves to merged-forward', async () => {
     const { transport, session, submitted } = await harness();
-    transport.setRead('om_forward_unknown', 'default', {
-      items: [
-        {
-          messageId: 'om_forward_unknown',
-          messageType: 'merge_forward',
-          content: '',
-          mentions: [],
-          deleted: false,
-          malformed: false,
-        },
-        {
-          messageId: 'om_hidden_child',
-          messageType: 'text',
-          content: JSON.stringify({ text: 'must stay hidden' }),
-          mentions: [],
-          deleted: false,
-          malformed: false,
-        },
-      ],
+    transport.setMessageRead('om_forward_unknown', 'default', {
+      data: {
+        items: [
+          rawReadItem('om_forward_unknown', 'merge_forward', ''),
+          rawReadItem(
+            'om_hidden_child',
+            'text',
+            { text: 'must stay hidden' },
+          ),
+        ],
+      },
     });
 
     await transport.dispatch(rawMessage(
@@ -932,24 +623,23 @@ describe('Feishu inbound fidelity production path', () => {
     expect(submitted[0]?.body).not.toContain('must stay hidden');
     expect(submitted[0]?.body).not.toContain('Parser note:');
     expect(submitted[0]?.body).not.toContain('lark-cli');
-    expect(transport.messageReads).toEqual([
+    expect(messageReadCalls(transport)).toEqual([
       { messageId: 'om_forward_unknown', cardContent: 'default' },
     ]);
-    expect(transport.resourceReads).toEqual([]);
+    expect(messageResourceCalls(transport)).toEqual([]);
     await session.close();
   });
 
   it('emits ancestry hints only for the truth-table positive case', async () => {
     const { transport, session, submitted } = await harness();
-    transport.setRead('om_parent', 'default', {
-      items: [{
-        messageId: 'om_parent',
-        messageType: 'merge_forward',
-        content: JSON.stringify({ secret: 'must not be submitted' }),
-        mentions: [],
-        deleted: false,
-        malformed: false,
-      }],
+    transport.setMessageRead('om_parent', 'default', {
+      data: {
+        items: [rawReadItem(
+          'om_parent',
+          'merge_forward',
+          { secret: 'must not be submitted' },
+        )],
+      },
     });
     await transport.dispatch(rawMessage('om_none', 'text', { text: 'none' }));
     await transport.dispatch(rawMessage('om_self', 'text', { text: 'self' }, {
@@ -973,7 +663,7 @@ describe('Feishu inbound fidelity production path', () => {
     expect(submitted[3]?.body).not.toContain('lark-cli');
     expect(submitted[3]?.body).not.toContain('Feishu skill');
     expect(submitted[3]?.body).not.toContain('must not be submitted');
-    expect(transport.messageReads).toEqual([
+    expect(messageReadCalls(transport)).toEqual([
       { messageId: 'om_parent', cardContent: 'default' },
     ]);
     await session.close();
@@ -981,32 +671,20 @@ describe('Feishu inbound fidelity production path', () => {
 
   it('preserves current card content when the optional parent probe times out', async () => {
     const { transport, session, submitted } = await harness();
-    transport.setRead('om_current_card', 'user_card_content', {
-      items: [{
-        messageId: 'om_current_card',
-        messageType: 'interactive',
-        content: JSON.stringify({
+    transport.setMessageRead('om_current_card', 'user_card_content', {
+      data: { items: [rawReadItem('om_current_card', 'interactive', {
           body: { elements: [{ tag: 'markdown', content: 'Current card body' }] },
-        }),
-        mentions: [],
-        deleted: false,
-        malformed: false,
-      }],
+        })] },
     });
-    transport.setRead('om_current_card', 'default', {
-      items: [{
-        messageId: 'om_current_card',
-        messageType: 'interactive',
-        content: JSON.stringify({ elements: [] }),
-        mentions: [],
-        deleted: false,
-        malformed: false,
-      }],
+    transport.setMessageRead('om_current_card', 'default', {
+      data: {
+        items: [rawReadItem('om_current_card', 'interactive', { elements: [] })],
+      },
     });
-    transport.setRead(
+    transport.setMessageRead(
       'om_slow_parent',
       'default',
-      new Promise<FeishuMessageReadResponse>(() => undefined),
+      new Promise(() => undefined),
     );
     await transport.dispatch(rawMessage(
       'om_current_card',
@@ -1020,7 +698,7 @@ describe('Feishu inbound fidelity production path', () => {
       '<reply-to message_id="om_slow_parent" />',
     );
     expect(submitted[0]?.body).not.toContain('parent_message_type=');
-    expect(transport.messageReads).toEqual([
+    expect(messageReadCalls(transport)).toEqual([
       { messageId: 'om_current_card', cardContent: 'user_card_content' },
       { messageId: 'om_current_card', cardContent: 'default' },
       { messageId: 'om_slow_parent', cardContent: 'default' },

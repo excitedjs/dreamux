@@ -13,8 +13,24 @@
  */
 
 import type { Mention } from '../contract/types.js'
-import { parseInteractiveContent } from './card.js'
+import {
+  mergeInteractiveContentParts,
+  parseInteractiveContent,
+} from './card.js'
+import {
+  projectLegacyText,
+  projectUniqueResources,
+  resourcePart,
+  type InboundContentPart,
+  type InboundResource,
+  type ParsedContent,
+} from './parts.js'
 import { parsePostContent } from './post.js'
+export type {
+  InboundContentPart,
+  InboundResource,
+  InboundResourceType,
+} from './parts.js'
 
 /** The subset of an inbound Feishu message this module reads. */
 export interface InboundMessage {
@@ -36,21 +52,6 @@ export interface ParsedInbound {
   /** True when the projection is an honest fallback or omitted visible data. */
   incomplete?: boolean
 }
-
-export type InboundResourceType = 'file' | 'image'
-
-export interface InboundResource {
-  type: InboundResourceType
-  /** Feishu message resource key (`file_key` / `image_key`) when present. */
-  key?: string
-  /** Original user-facing filename. Treat as display text, never a path. */
-  name?: string
-}
-
-export type InboundContentPart =
-  | { kind: 'text'; text: string }
-  | { kind: 'code'; code: string; language?: string }
-  | { kind: 'resource'; resource: InboundResource }
 
 export interface ChannelInbound {
   /** Flattened markdown-ish text suitable for a narrow channel payload. */
@@ -74,17 +75,10 @@ export function parseInbound(message: InboundMessage): ParsedInbound {
     const text = type === 'text'
       ? message.content ?? '(unparseable message)'
       : `(unparseable ${safeMessageType(type)} message)`
-    return type === 'text'
-      ? {
-          text,
-          parts: [{ kind: 'text', text }],
-          incomplete: true,
-        }
-      : {
-          text,
-          parts: [{ kind: 'text', text }],
-          incomplete: true,
-        }
+    return projectParsedContent({
+      parts: [{ kind: 'text', text }],
+      incomplete: true,
+    })
   }
   const content = (parsed && typeof parsed === 'object' ? parsed : {}) as Record<string, unknown>
 
@@ -92,88 +86,51 @@ export function parseInbound(message: InboundMessage): ParsedInbound {
     case 'text': {
       const text = typeof content.text === 'string' ? content.text : ''
       const rendered = applyMentions(text, message.mentions)
-      return {
-        text: rendered,
+      return projectParsedContent({
         parts: rendered === '' ? [] : [{ kind: 'text', text: rendered }],
-      }
+      })
     }
     case 'post':
-      return parsePostContent(content)
+      return projectParsedContent(parsePostContent(content))
     case 'image':
-      {
-        const key = nonEmptyString(content.image_key)
-      return {
-        text: '(image message)',
-        parts: [{ kind: 'resource', resource: {
-          type: 'image',
-          ...(key !== undefined ? { key } : {}),
-        } }],
-        resources: [{
-          type: 'image',
-          ...(key !== undefined ? { key } : {}),
-        }],
+    {
+      const key = nonEmptyString(content.image_key)
+      return projectParsedContent({
+        parts: [resourcePart('image', key)],
+        compatibilityText: '(image message)',
         ...(key === undefined ? { incomplete: true } : {}),
-      }
-      }
+      })
+    }
     case 'file': {
       const key = nonEmptyString(content.file_key)
-      return {
-        text: '(file message)',
-        parts: [{ kind: 'resource', resource: {
-          type: 'file',
-          ...(key !== undefined ? { key } : {}),
-          ...(nonEmptyString(content.file_name) !== undefined
-            ? { name: nonEmptyString(content.file_name) }
-            : {}),
-        } }],
-        resources: [{
-          type: 'file',
-          ...(key !== undefined ? { key } : {}),
-          ...(nonEmptyString(content.file_name) !== undefined
-            ? { name: nonEmptyString(content.file_name) }
-            : {}),
-        }],
+      const name = nonEmptyString(content.file_name)
+      return projectParsedContent({
+        parts: [resourcePart('file', key, name)],
+        compatibilityText: '(file message)',
         ...(key === undefined ? { incomplete: true } : {}),
-      }
+      })
     }
     case 'interactive':
-      return parseInteractiveContent(content)
+      return projectParsedContent(parseInteractiveContent(content))
     case 'audio': {
       const key = nonEmptyString(content.file_key)
-      return {
-        text: key === undefined
+      return projectParsedContent({
+        parts: [resourcePart('file', key, 'voice.opus')],
+        compatibilityText: key === undefined
           ? '(voice message without a resource key)'
           : `[voice message attachment: ${key}]`,
-        parts: [{ kind: 'resource', resource: {
-          type: 'file',
-          ...(key !== undefined ? { key } : {}),
-          name: 'voice.opus',
-        } }],
-        resources: [{
-          type: 'file',
-          ...(key !== undefined ? { key } : {}),
-          name: 'voice.opus',
-        }],
         ...(key === undefined ? { incomplete: true } : {}),
-      }
+      })
     }
     case 'media': {
       const fileKey = nonEmptyString(content.file_key)
       const imageKey = nonEmptyString(content.image_key)
-      const resources: InboundResource[] = [
-        {
-          type: 'file',
-          ...(fileKey !== undefined ? { key: fileKey } : {}),
-          name: 'video.mp4',
-        },
-        {
-          type: 'image',
-          ...(imageKey !== undefined ? { key: imageKey } : {}),
-          name: 'video-cover.jpg',
-        },
-      ]
-      return {
-        text: [
+      return projectParsedContent({
+        parts: [
+          resourcePart('file', fileKey, 'video.mp4'),
+          resourcePart('image', imageKey, 'video-cover.jpg'),
+        ],
+        compatibilityText: [
           fileKey === undefined
             ? '[video attachment without a resource key]'
             : `[video attachment: ${fileKey}]`,
@@ -181,64 +138,99 @@ export function parseInbound(message: InboundMessage): ParsedInbound {
             ? '[video cover without a resource key]'
             : `[video cover: ${imageKey}]`,
         ].join('\n'),
-        parts: resources.map((resource) => ({ kind: 'resource', resource })),
-        resources,
         ...(fileKey === undefined || imageKey === undefined
           ? { incomplete: true }
           : {}),
-      }
+      })
     }
     case 'sticker':
-      return {
-        text: '(sticker message; sticker resources are not downloadable)',
+      return projectParsedContent({
         parts: [{
           kind: 'text',
           text: '(sticker message; sticker resources are not downloadable)',
         }],
-      }
+      })
     case 'share_chat': {
       const chatId = nonEmptyString(content.chat_id)
-      return {
-        text: chatId === undefined ? '(shared chat)' : `(shared chat: ${chatId})`,
+      const text = chatId === undefined
+        ? '(shared chat)'
+        : `(shared chat: ${chatId})`
+      return projectParsedContent({
         parts: [{
           kind: 'text',
-          text: chatId === undefined ? '(shared chat)' : `(shared chat: ${chatId})`,
+          text,
         }],
         ...(chatId === undefined ? { incomplete: true } : {}),
-      }
+      })
     }
     case 'share_user': {
       const userId = nonEmptyString(content.user_id)
-      return {
-        text: userId === undefined ? '(shared user)' : `(shared user: ${userId})`,
+      const text = userId === undefined
+        ? '(shared user)'
+        : `(shared user: ${userId})`
+      return projectParsedContent({
         parts: [{
           kind: 'text',
-          text: userId === undefined ? '(shared user)' : `(shared user: ${userId})`,
+          text,
         }],
         ...(userId === undefined ? { incomplete: true } : {}),
-      }
+      })
     }
     case 'merge_forward':
-      return {
-        text: '(merged-forward message not expanded)',
+      return projectParsedContent({
         parts: [],
+        compatibilityText: '(merged-forward message not expanded)',
         incomplete: true,
-      }
+      })
     case 'nonsupport':
-      return {
-        text: '(unsupported message content not resolved)',
+      return projectParsedContent({
         parts: [{
           kind: 'text',
           text: '(unsupported message content not resolved)',
         }],
         incomplete: true,
-      }
-    default:
-      return {
-        text: `(${safeMessageType(type)} message)`,
-        parts: [{ kind: 'text', text: `(${safeMessageType(type)} message)` }],
+      })
+    default: {
+      const text = `(${safeMessageType(type)} message)`
+      return projectParsedContent({
+        parts: [{ kind: 'text', text }],
         incomplete: true,
-      }
+      })
+    }
+  }
+}
+
+/**
+ * Merge the two real Feishu card read projections at the transport boundary.
+ * `parts` stay authoritative; flat compatibility views are projected once.
+ */
+export function mergeInteractiveInbound(
+  primary: ParsedInbound,
+  supplemental?: ParsedInbound,
+): ParsedInbound {
+  if (supplemental === undefined || supplemental.parts === undefined) {
+    return primary
+  }
+  const primaryParts = primary.parts === undefined
+    ? primary.text === ''
+      ? []
+      : [{ kind: 'text' as const, text: primary.text }]
+    : primary.parts
+  return projectParsedContent({
+    parts: mergeInteractiveContentParts(primaryParts, supplemental.parts),
+    ...(primary.incomplete === true || supplemental.incomplete === true
+      ? { incomplete: true }
+      : {}),
+  })
+}
+
+function projectParsedContent(content: ParsedContent): ParsedInbound {
+  const resources = projectUniqueResources(content.parts)
+  return {
+    text: projectLegacyText(content),
+    parts: content.parts,
+    ...(resources.length > 0 ? { resources } : {}),
+    ...(content.incomplete === true ? { incomplete: true } : {}),
   }
 }
 
@@ -354,7 +346,7 @@ export function mentionName(
  * paragraphs, each an array of tagged inline elements.
  */
 export function extractPostText(content: Record<string, unknown>): string {
-  return parsePostContent(content).text
+  return projectParsedContent(parsePostContent(content)).text
 }
 
 function safeMessageType(value: string): string {

@@ -19,10 +19,10 @@ import type {
 import type { FeishuInboundEvent } from './bot.js';
 import type { PeerBot } from './chat-bots-store.js';
 import {
+  isFeishuOperationError,
+} from './feishu-bounded-operation.js';
+import {
   createFeishuInboundWork,
-  FeishuEnrichmentDeadlineError,
-  FeishuResourceTimeoutError,
-  FeishuSessionRevokedError,
   FEISHU_RESOURCE_TIMEOUT_MS,
   runFeishuInboundWork,
   alwaysActiveSessionFence,
@@ -32,6 +32,10 @@ import {
   formatFeishuCreateTime,
   renderFeishuStructuredBody,
 } from './feishu-message-render.js';
+
+const FEISHU_MAX_RESOURCE_BYTES = 25 * 1024 * 1024;
+const FEISHU_MAX_AGGREGATE_RESOURCE_BYTES = 100 * 1024 * 1024;
+const FEISHU_MAX_UNIQUE_RESOURCES = 32;
 
 /**
  * @deprecated Retained for source compatibility. Structured Feishu inbound
@@ -69,6 +73,10 @@ export interface FormatFeishuMessageOptions {
   maxBytes?: number;
   /** Defaults to 20 seconds per resource. */
   timeoutMs?: number;
+  /** Defaults to 100 MiB across resources in one accepted message. */
+  maxAggregateBytes?: number;
+  /** Defaults to 32 unique resources in one accepted message. */
+  maxUniqueResources?: number;
   /** Shared lifecycle/deadline/resource budget for an accepted inbound. */
   work?: FeishuInboundWorkContext;
 }
@@ -107,11 +115,7 @@ export async function formatFeishuMessageForRuntime(
   options: FormatFeishuMessageOptions = {},
 ): Promise<FormatFeishuMessageResult> {
   const ownedWork = options.work === undefined
-    ? createFeishuInboundWork(alwaysActiveSessionFence(), {
-        ...(options.maxBytes !== undefined
-          ? { maxResourceBytes: options.maxBytes }
-          : {}),
-      })
+    ? createFeishuInboundWork(alwaysActiveSessionFence())
     : undefined;
   const work = options.work ?? ownedWork;
   if (work === undefined) throw new Error('Feishu inbound work context was not created');
@@ -168,51 +172,53 @@ async function resolveAttachments(
   options: FormatFeishuMessageOptions,
   work: FeishuInboundWorkContext,
 ): Promise<AttachmentResolution> {
-  const resources = uniqueResourcesForEvent(event);
+  const resources = resourcesForEvent(event);
   const out: FormattedFeishuAttachment[] = [];
   const byIdentity = new Map<string, FormattedFeishuAttachment>();
-  const omittedIdentities = new Set<string>();
+  const budget: AttachmentBudget = {
+    maxResourceBytes: options.maxBytes ?? FEISHU_MAX_RESOURCE_BYTES,
+    remainingAggregateBytes:
+      options.maxAggregateBytes ?? FEISHU_MAX_AGGREGATE_RESOURCE_BYTES,
+    maxUniqueResources:
+      options.maxUniqueResources ?? FEISHU_MAX_UNIQUE_RESOURCES,
+  };
   for (const resource of resources) {
     const identity = attachmentIdentity(resource);
-    if (work.seenResourceKeys.has(identity)) continue;
-    if (work.seenResourceKeys.size >= work.maxUniqueResources) {
-      omittedIdentities.add(identity);
+    if (byIdentity.has(identity)) continue;
+    if (out.length >= budget.maxUniqueResources) {
+      byIdentity.set(identity, notDownloaded(resource, 'resource_limit'));
       continue;
     }
-    work.seenResourceKeys.add(identity);
     const resolved = await resolveAttachment(
       event.messageId,
       resource,
       options,
       work,
+      budget,
     );
     out.push(resolved);
     byIdentity.set(identity, resolved);
   }
-  return { attachments: out, byIdentity, omittedIdentities };
+  return { attachments: out, byIdentity };
 }
 
 interface AttachmentResolution {
   attachments: FormattedFeishuAttachment[];
   byIdentity: Map<string, FormattedFeishuAttachment>;
-  omittedIdentities: Set<string>;
 }
 
-function uniqueResourcesForEvent(event: FeishuInboundEvent): InboundResource[] {
-  const out: InboundResource[] = [];
-  const seen = new Set<string>();
-  const candidates = [
-    ...(event.resources ?? []),
-    ...(event.contentParts ?? []).flatMap((part) =>
-      part.kind === 'resource' ? [part.resource] : []),
-  ];
-  for (const resource of candidates) {
-    const identity = attachmentIdentity(resource);
-    if (seen.has(identity)) continue;
-    seen.add(identity);
-    out.push(resource);
+interface AttachmentBudget {
+  maxResourceBytes: number;
+  remainingAggregateBytes: number;
+  maxUniqueResources: number;
+}
+
+function resourcesForEvent(event: FeishuInboundEvent): InboundResource[] {
+  if (event.contentParts !== undefined) {
+    return event.contentParts.flatMap((part) =>
+      part.kind === 'resource' ? [part.resource] : []);
   }
-  return out;
+  return event.resources ?? [];
 }
 
 function attachmentIdentity(resource: InboundResource): string {
@@ -234,15 +240,25 @@ function attachmentFor(
     };
   }
   return {
+    ...notDownloaded(
+      resource,
+      resource.key === undefined || resource.key === ''
+        ? 'no_key'
+        : 'api_error',
+    ),
+  };
+}
+
+function notDownloaded(
+  resource: InboundResource,
+  reason: FeishuAttachmentReason,
+): FormattedFeishuAttachment {
+  return {
     type: resource.type,
     ...(resource.name !== undefined ? { name: resource.name } : {}),
     ...(resource.key !== undefined ? { key: resource.key } : {}),
     status: 'not_downloaded',
-    reason: resolution.omittedIdentities.has(stableIdentity)
-      ? 'resource_limit'
-      : resource.key === undefined || resource.key === ''
-        ? 'no_key'
-        : 'api_error',
+    reason,
   };
 }
 
@@ -251,6 +267,7 @@ async function resolveAttachment(
   resource: InboundResource,
   options: FormatFeishuMessageOptions,
   work: FeishuInboundWorkContext,
+  budget: AttachmentBudget,
 ): Promise<FormattedFeishuAttachment> {
   const base: FormattedFeishuAttachment = {
     type: resource.type,
@@ -266,7 +283,7 @@ async function resolveAttachment(
     return { ...base, reason: 'unsupported_type' };
   }
   if (work.remainingTimeMs() === 0) return { ...base, reason: 'deadline' };
-  if (work.remainingAggregateBytes <= 0) {
+  if (budget.remainingAggregateBytes <= 0) {
     return { ...base, reason: 'aggregate_limit' };
   }
 
@@ -295,15 +312,15 @@ async function resolveAttachment(
       () => fileSize(path),
       resourceDeadline,
     );
-    const perResourceLimit = options.maxBytes ?? work.maxResourceBytes;
+    const perResourceLimit = budget.maxResourceBytes;
     if (cachedSize !== null) {
       if (cachedSize > perResourceLimit) {
         return { ...base, reason: 'too_large' };
       }
-      if (cachedSize > work.remainingAggregateBytes) {
+      if (cachedSize > budget.remainingAggregateBytes) {
         return { ...base, reason: 'aggregate_limit' };
       }
-      work.remainingAggregateBytes -= cachedSize;
+      budget.remainingAggregateBytes -= cachedSize;
       return { ...base, status: 'downloaded', path };
     }
 
@@ -323,7 +340,12 @@ async function resolveAttachment(
     try {
       bytes = await runFeishuInboundWork(
         work,
-        () => readStreamWithLimit(response.stream, perResourceLimit, work),
+        () => readStreamWithLimit(
+          response.stream,
+          perResourceLimit,
+          budget,
+          work,
+        ),
         resourceDeadline,
       );
     } catch (error) {
@@ -366,7 +388,7 @@ async function resolveAttachment(
     }
     return { ...base, status: 'downloaded', path };
   } catch (err) {
-    if (err instanceof FeishuSessionRevokedError) throw err;
+    if (isFeishuOperationError(err, 'aborted')) throw err;
     return { ...base, reason: reasonFromError(err) };
   }
 }
@@ -405,6 +427,7 @@ async function fileSize(path: string): Promise<number | null> {
 async function readStreamWithLimit(
   stream: Readable,
   maxBytes: number,
+  budget: AttachmentBudget,
   work: FeishuInboundWorkContext,
 ): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -419,9 +442,9 @@ async function readStreamWithLimit(
     for await (const chunk of stream) {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       const resourceRemaining = Math.max(0, maxBytes - total);
-      const aggregateRemaining = work.remainingAggregateBytes;
+      const aggregateRemaining = budget.remainingAggregateBytes;
       total += bytes.byteLength;
-      work.remainingAggregateBytes = Math.max(
+      budget.remainingAggregateBytes = Math.max(
         0,
         aggregateRemaining - bytes.byteLength,
       );
@@ -454,8 +477,8 @@ async function readStreamWithLimit(
 function reasonFromError(err: unknown): FeishuAttachmentReason {
   if (err instanceof DownloadTooLargeError) return 'too_large';
   if (err instanceof DownloadAggregateLimitError) return 'aggregate_limit';
-  if (err instanceof FeishuResourceTimeoutError) return 'timeout';
-  if (err instanceof FeishuEnrichmentDeadlineError) return 'deadline';
+  if (isFeishuOperationError(err, 'timeout')) return 'timeout';
+  if (isFeishuOperationError(err, 'deadline')) return 'deadline';
   if (err instanceof CachePathError) return 'cache_error';
   if (err instanceof Error && looksLikeMissingScope(err)) return 'missing_scope';
   return 'api_error';

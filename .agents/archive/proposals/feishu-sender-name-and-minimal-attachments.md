@@ -165,3 +165,30 @@ retaining the key after the cache path is available.
 - Changing lark-cli, adding a model-facing download instruction, or changing
   Feishu resource API semantics.
 - Changing attachment download size, count, aggregate-byte, or time limits.
+
+## Complexity-reduction follow-up
+
+The review follow-up keeps the surrounding Linuxbrew, PATH, onboard, and release
+work in the same change while reducing Feishu inbound state and test duplication:
+
+- Ordered content `parts` are the sole internal representation. Compatibility
+  `text` and de-duplicated `resources` are projected once at the transport
+  boundary; positional resource occurrences remain ordered and share one
+  download per unique resource.
+- One Channel-owned bounded-operation primitive provides absolute deadlines,
+  session abort fencing, settle-once cleanup, and optional late-value cleanup.
+  Attachment count and byte budgets belong to the attachment resolver, and
+  session object identity fences restarts.
+- Production-path tests use the real `createFeishuTransport` normalization path
+  with only SDK and WebSocket edges injected, including sender-name coverage.
+- Each accepted unnamed human message makes one thin contact lookup attempt.
+  Event names and known bot names still avoid the API; the Channel bounds the
+  attempt by the lesser of two seconds and the remaining global deadline.
+  Failures, malformed responses, nonzero codes, aborts, and timeouts affect only
+  that message and never suppress the next lookup.
+
+This simplification must preserve post/card parsing, source order and escaping,
+lazy merged-forward and reply references, quoted parent type, attachment and
+render budgets, one fetch per unique resource, session close/drain and late
+cleanup, route verification, the 60-second global deadline, per-operation
+deadlines, and issue #63 non-blocking submission.

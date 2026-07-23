@@ -1,17 +1,16 @@
 import {
+  mergeInteractiveInbound,
   parseInbound,
   type FeishuMessageReadItem,
   type FeishuMessageReadMode,
   type FeishuMessageReadResponse,
-  type InboundContentPart,
-  type InboundResource,
   type ParsedInbound,
 } from '@excitedjs/feishu-transport';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import type { FeishuBot, FeishuInboundEvent } from './bot.js';
+import { isFeishuOperationError } from './feishu-bounded-operation.js';
 import {
-  FeishuSessionRevokedError,
   FEISHU_RESOURCE_TIMEOUT_MS,
   runFeishuInboundWork,
   type FeishuInboundWorkContext,
@@ -83,25 +82,19 @@ async function enrichInteractive(
   const supplemental = structuredParsed === undefined
     ? undefined
     : simplifiedParsed;
-  const text = mergeCardText(primary.parsed.text, supplemental?.parsed.text);
-  const contentParts = mergeCardParts(
-    primary.parsed.parts ?? [{ kind: 'text', text: primary.parsed.text }],
+  const parsed = mergeInteractiveInbound(
+    primary.parsed,
     supplemental?.parsed,
-  );
-  const resources = mergeResources(
-    primary.parsed.resources ?? [],
-    supplemental?.parsed.resources ?? [],
   );
   return {
     ...event,
     messageType: 'interactive',
     rawContent: primary.item.content,
-    parsedText: text,
-    contentParts,
+    parsedText: parsed.text,
+    contentParts: parsed.parts ?? [],
     mentions: primary.item.mentions,
-    resources,
-    ...(primary.parsed.incomplete === true ||
-    supplemental?.parsed.incomplete === true ||
+    resources: parsed.resources ?? [],
+    ...(parsed.incomplete === true ||
     structuredParsed === undefined ||
     simplifiedParsed === undefined
       ? { contentIncomplete: true }
@@ -121,38 +114,6 @@ function parseInteractiveRoot(
       mentions: item.mentions,
     }),
   };
-}
-
-function mergeCardText(primary: string, supplemental: string | undefined): string {
-  const normalizedPrimary = normalizeCardLines(primary);
-  if (
-    supplemental === undefined ||
-    supplemental === '(interactive card with no readable content)'
-  ) {
-    return normalizedPrimary.join('\n');
-  }
-  const seen = new Set(normalizedPrimary.map(normalizeCardLineForComparison));
-  const extra = normalizeCardLines(supplemental).filter((line) => {
-    const normalized = normalizeCardLineForComparison(line);
-    if (normalized === '' || seen.has(normalized)) return false;
-    seen.add(normalized);
-    return true;
-  });
-  if (extra.length === 0) return normalizedPrimary.join('\n');
-  return [
-    ...normalizedPrimary,
-    '',
-    'Additional rendered card content:',
-    ...extra,
-  ].join('\n');
-}
-
-function normalizeCardLines(value: string): string[] {
-  return value.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n');
-}
-
-function normalizeCardLineForComparison(value: string): string {
-  return value.trim();
 }
 
 async function resolveUnsupported(
@@ -182,7 +143,7 @@ async function resolveUnsupported(
     messageType: root.messageType,
     rawContent: root.content,
     parsedText: parsed.text,
-    ...(parsed.parts !== undefined ? { contentParts: parsed.parts } : {}),
+    contentParts: parsed.parts ?? [],
     mentions: root.mentions,
     resources: parsed.resources ?? [],
     ...(parsed.incomplete === true
@@ -265,7 +226,7 @@ async function readMessage(
       cardContent: mode,
     }) ?? Promise.resolve({ items: [] }), deadlineAt);
   } catch (error) {
-    if (error instanceof FeishuSessionRevokedError) throw error;
+    if (isFeishuOperationError(error, 'aborted')) throw error;
     log.debug(
       {
         message_id: messageId,
@@ -294,78 +255,4 @@ function parseReadItem(item: FeishuMessageReadItem): ParsedInbound {
     content: item.content,
     mentions: item.mentions,
   });
-}
-
-function mergeResources(...groups: InboundResource[][]): InboundResource[] {
-  const out: InboundResource[] = [];
-  const seen = new Set<string>();
-  for (const resource of groups.flat()) {
-    const identity = resource.key === undefined
-      ? undefined
-      : `${resource.type}:${resource.key}`;
-    if (identity !== undefined && seen.has(identity)) continue;
-    if (identity !== undefined) seen.add(identity);
-    out.push(resource);
-  }
-  return out;
-}
-
-function mergeCardParts(
-  primary: InboundContentPart[],
-  supplemental: ParsedInbound | undefined,
-): InboundContentPart[] {
-  if (
-    supplemental === undefined ||
-    supplemental.text === '(interactive card with no readable content)'
-  ) {
-    return primary
-  }
-  const primaryText = cardTextLines(primary)
-  const seenLines = new Set(primaryText.map(normalizeCardLineForComparison))
-  const extraLines = cardTextLines(
-    supplemental.parts ?? [{ kind: 'text', text: supplemental.text }],
-  ).filter((line) => {
-    const normalized = normalizeCardLineForComparison(line)
-    if (normalized === '' || seenLines.has(normalized)) return false
-    seenLines.add(normalized)
-    return true
-  })
-  const primaryResources = new Set(
-    primary
-      .filter((part): part is Extract<InboundContentPart, { kind: 'resource' }> =>
-        part.kind === 'resource')
-      .flatMap((part) => resourceIdentity(part.resource) ?? []),
-  )
-  const supplementalResources = (supplemental.parts ?? [])
-    .filter((part): part is Extract<InboundContentPart, { kind: 'resource' }> =>
-      part.kind === 'resource')
-    .filter((part) => {
-      const identity = resourceIdentity(part.resource)
-      if (identity === undefined) return true
-      if (primaryResources.has(identity)) return false
-      primaryResources.add(identity)
-      return true
-    })
-  if (extraLines.length === 0 && supplementalResources.length === 0) return primary
-  return [
-    ...primary,
-    ...(extraLines.length === 0
-      ? []
-      : [{
-          kind: 'text' as const,
-          text: `\n\nAdditional rendered card content:\n${extraLines.join('\n')}`,
-        }]),
-    ...supplementalResources,
-  ]
-}
-
-function cardTextLines(parts: InboundContentPart[]): string[] {
-  return parts
-    .filter((part): part is Extract<InboundContentPart, { kind: 'text' }> =>
-      part.kind === 'text')
-    .flatMap((part) => normalizeCardLines(part.text))
-}
-
-function resourceIdentity(resource: InboundResource): string | undefined {
-  return resource.key === undefined ? undefined : `${resource.type}:${resource.key}`
 }

@@ -37,8 +37,6 @@ import {
   type FeishuAppOwnerIdentity,
   type FeishuChatMode,
   type FeishuTransport,
-  type FeishuUserNameEntry,
-  type FeishuUserNameLookupOptions,
   type InboundContentPart,
   type InboundResource,
   type Mention,
@@ -159,13 +157,8 @@ export interface FeishuBot extends FeishuMessageResourceFetcher {
   readMessage?(
     request: FeishuMessageReadRequest,
   ): Promise<FeishuMessageReadResponse>;
-  /** Optional cache seed for accepted mention names. */
-  observeUserNames?(entries: FeishuUserNameEntry[]): void;
   /** Optional contact lookup for an accepted human sender. */
-  resolveUserName?(
-    openId: string,
-    options?: FeishuUserNameLookupOptions,
-  ): Promise<string | undefined>;
+  resolveUserName?(openId: string): Promise<string | undefined>;
   resolveAppOwner(): Promise<FeishuAppOwnerIdentity>;
   close(): Promise<void>;
 }
@@ -300,21 +293,10 @@ export function createFeishuBot(
         }
       : {}),
 
-    ...(transport.observeUserNames !== undefined
-      ? {
-          observeUserNames(entries: FeishuUserNameEntry[]): void {
-            transport.observeUserNames?.(entries);
-          },
-        }
-      : {}),
-
     ...(transport.resolveUserName !== undefined
       ? {
-          resolveUserName(
-            openId: string,
-            options?: FeishuUserNameLookupOptions,
-          ): Promise<string | undefined> {
-            return transport.resolveUserName?.(openId, options) ??
+          resolveUserName(openId: string): Promise<string | undefined> {
+            return transport.resolveUserName?.(openId) ??
               Promise.resolve(undefined);
           },
         }

@@ -9,7 +9,6 @@
  */
 
 import {
-  FEISHU_USER_NAME_RESOLUTION_TIMEOUT_MS,
   isBotMentioned,
   isBotSenderType,
 } from '@excitedjs/feishu-transport';
@@ -19,10 +18,10 @@ import type {
 } from '@excitedjs/dreamux-types';
 import type { FeishuInboundEvent } from './bot.js';
 import { formatFeishuMessageForRuntime } from './feishu-message.js';
+import { isFeishuOperationError } from './feishu-bounded-operation.js';
 import { enrichFeishuInbound } from './feishu-inbound-enrichment.js';
 import {
   createFeishuInboundWork,
-  FeishuSessionRevokedError,
   runFeishuInboundWork,
   type FeishuInboundWorkContext,
 } from './feishu-inbound-work.js';
@@ -68,6 +67,7 @@ import {
 } from './feishu-channel.js';
 
 const log = (h: SessionHandle) => h.opts.log;
+const FEISHU_USER_NAME_LOOKUP_TIMEOUT_MS = 2_000;
 
 function pairingTokenLogFields(token: string): Record<string, unknown> {
   return { pairing_token_len: PAIRING_TOKEN_REGEX.test(token) ? 6 : token.length };
@@ -479,7 +479,7 @@ async function deliverAcceptedMessage(
     if (reactionCreated) {
       await clearInboundReaction(h, acceptedEvent.messageId);
     }
-    if (!(error instanceof FeishuSessionRevokedError)) throw error;
+    if (!isFeishuOperationError(error, 'aborted')) throw error;
   } finally {
     work.dispose();
   }
@@ -491,22 +491,6 @@ async function enrichSenderName(
   work: FeishuInboundWorkContext,
 ): Promise<FeishuInboundEvent> {
   work.assertSessionActive();
-  h.bot.observeUserNames?.(
-    [
-      ...event.mentions.flatMap((mention) => {
-        const openId = mention.id?.open_id;
-        return openId !== undefined &&
-          openId !== '' &&
-          mention.name !== undefined &&
-          mention.name !== ''
-          ? [{ openId, name: mention.name }]
-          : [];
-      }),
-      ...(event.senderId !== '' && event.senderName !== ''
-        ? [{ openId: event.senderId, name: event.senderName }]
-        : []),
-    ],
-  );
   if (event.senderName !== '') return event;
 
   if (isBotSenderType(event.senderType)) {
@@ -524,15 +508,12 @@ async function enrichSenderName(
   try {
     const name = await runFeishuInboundWork(
       work,
-      () => h.bot.resolveUserName?.(
-        event.senderId,
-        { signal: work.signal },
-      ) ?? Promise.resolve(undefined),
-      Date.now() + Math.min(FEISHU_USER_NAME_RESOLUTION_TIMEOUT_MS, remaining),
+      () => h.bot.resolveUserName?.(event.senderId) ?? Promise.resolve(undefined),
+      Date.now() + Math.min(FEISHU_USER_NAME_LOOKUP_TIMEOUT_MS, remaining),
     );
     return name === undefined || name === '' ? event : { ...event, senderName: name };
   } catch (error) {
-    if (error instanceof FeishuSessionRevokedError) throw error;
+    if (isFeishuOperationError(error, 'aborted')) throw error;
     return event;
   }
 }

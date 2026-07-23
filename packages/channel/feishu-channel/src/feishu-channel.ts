@@ -134,7 +134,6 @@ export class FeishuChannelSession {
   private readonly targetRouter: FeishuTargetRouter;
   private readonly _accessMutex = new AsyncMutex();
   private readonly inactiveFence = alwaysActiveSessionFence();
-  private sessionGeneration = 0;
   private lifecycle: FeishuSessionLifecycle | undefined;
 
   constructor(private readonly opts: FeishuChannelSessionOptions) {
@@ -192,7 +191,6 @@ export class FeishuChannelSession {
       throw new Error('Feishu channel session is already started');
     }
     const controller = new AbortController();
-    const generation = ++this.sessionGeneration;
     const lifecycle: FeishuSessionLifecycle = {
       controller,
       inFlight: new Set(),
@@ -200,7 +198,6 @@ export class FeishuChannelSession {
         signal: controller.signal,
         isCurrent: () =>
           this.lifecycle === lifecycle &&
-          this.sessionGeneration === generation &&
           !controller.signal.aborted,
       },
     };

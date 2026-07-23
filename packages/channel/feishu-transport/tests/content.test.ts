@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
+import { mergeInteractiveContentParts } from '../src/parse/card'
 import { applyMentions, extractPostText, mentionName, narrowMetaFromEvent, parseInbound, toChannelInbound } from '../src/parse/content'
-import type { InboundMessage } from '../src/parse/content'
+import type { InboundContentPart, InboundMessage } from '../src/parse/content'
 import type { Mention } from '../src/contract/types'
 
 function message(type: string, content: unknown, mentions?: Mention[]): InboundMessage {
@@ -393,6 +394,54 @@ describe('parseInbound — interactive', () => {
     }
   }
 
+  test('merges card parts without mutating inputs and keeps default-only repeats', () => {
+    const primary: InboundContentPart[] = [
+      {
+        kind: 'resource',
+        resource: { type: 'image', key: 'shared', name: 'shared.jpg' },
+      },
+      { kind: 'text', text: 'Primary' },
+    ]
+    const supplemental: InboundContentPart[] = [
+      {
+        kind: 'resource',
+        resource: { type: 'image', key: 'shared', name: 'shared.jpg' },
+      },
+      {
+        kind: 'resource',
+        resource: { type: 'image', key: 'shared', name: 'shared.jpg' },
+      },
+      { kind: 'text', text: 'Default extra' },
+      {
+        kind: 'resource',
+        resource: { type: 'file', key: 'default-only', name: 'extra.txt' },
+      },
+      {
+        kind: 'resource',
+        resource: { type: 'file', key: 'default-only', name: 'extra.txt' },
+      },
+    ]
+    const primaryBefore = structuredClone(primary)
+    const supplementalBefore = structuredClone(supplemental)
+
+    const merged = mergeInteractiveContentParts(primary, supplemental)
+
+    expect(primary).toEqual(primaryBefore)
+    expect(supplemental).toEqual(supplementalBefore)
+    expect(merged.filter((part) => part.kind === 'resource')).toEqual([
+      primary[0],
+      supplemental[3],
+      supplemental[4],
+    ])
+    expect(merged.filter((part) => part.kind === 'text')).toEqual([
+      { kind: 'text', text: 'Primary' },
+      {
+        kind: 'text',
+        text: '\n\nAdditional rendered card content:\nDefault extra',
+      },
+    ])
+  })
+
   test('preserves inline text/resource order while de-duplicating fetch resources', () => {
     const parsed = parseInbound(message('interactive', card(undefined, [
       { tag: 'text', text: 'before' },
@@ -608,6 +657,21 @@ describe('parseInbound — interactive', () => {
     expect(parsed.resources).toEqual([
       { type: 'image', key: 'card-image', name: 'card-image.jpg' },
     ])
+  })
+
+  test('degrades an unknown inline card node without inventing a file resource', () => {
+    const parsed = parseInbound(message(
+      'interactive',
+      card(undefined, [[{ tag: 'future_widget', secret: 'hidden' }]]),
+    ))
+
+    expect(parsed.text).toBe('[unsupported card component: future_widget]')
+    expect(parsed.parts).toEqual([{
+      kind: 'text',
+      text: '[unsupported card component: future_widget]',
+    }])
+    expect(parsed.resources).toBeUndefined()
+    expect(parsed.incomplete).toBe(true)
   })
 
   test('bounds deeply nested card containers without overflowing the stack', () => {

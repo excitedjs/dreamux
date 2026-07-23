@@ -37,8 +37,10 @@ import type { FeishuChannelSessionOptions } from './feishu-channel.js';
 import type { PeerBot } from './chat-bots-store.js';
 import type { FeishuTargetRouter } from './feishu-target-router.js';
 import {
+  runFeishuBoundedOperation,
+} from './feishu-bounded-operation.js';
+import {
   alwaysActiveSessionFence,
-  runFeishuInboundWork,
   type FeishuInboundWorkContext,
   type FeishuSessionFence,
 } from './feishu-inbound-work.js';
@@ -380,50 +382,20 @@ function runReactionOperation<T>(
   work: FeishuInboundWorkContext | undefined,
   onLateValue?: (value: T) => void | Promise<void>,
 ): Promise<T> {
-  if (work !== undefined) {
-    return runFeishuInboundWork(
-      work,
-      operation,
-      Date.now() + Math.min(
-        FEISHU_REACTION_OPERATION_TIMEOUT_MS,
-        work.remainingTimeMs(),
-      ),
-      onLateValue,
-    );
-  }
-  return runWithReactionTimeout(operation, onLateValue);
-}
-
-function runWithReactionTimeout<T>(
-  operation: () => Promise<T>,
-  onLateValue?: (value: T) => void | Promise<void>,
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    let settled = false;
-    const finish = (callback: () => void): boolean => {
-      if (settled) return false;
-      settled = true;
-      clearTimeout(timer);
-      callback();
-      return true;
-    };
-    const timer = setTimeout(
-      () => finish(() => reject(new FeishuReactionTimeoutError())),
-      FEISHU_REACTION_OPERATION_TIMEOUT_MS,
-    );
-    void Promise.resolve()
-      .then(operation)
-      .then(
-        (value) => {
-          if (finish(() => resolve(value)) || onLateValue === undefined) return;
-          try {
-            void Promise.resolve(onLateValue(value)).catch(() => undefined);
-          } catch {
-            // Late cleanup is best-effort and must not create another failure.
-          }
-        },
-        (error: unknown) => finish(() => reject(error)),
-      );
+  const deadlineAt = Math.min(
+    Date.now() + FEISHU_REACTION_OPERATION_TIMEOUT_MS,
+    work?.deadlineAt ?? Number.POSITIVE_INFINITY,
+  );
+  return runFeishuBoundedOperation({
+    operation,
+    deadlineAt,
+    ...(work !== undefined
+      ? {
+          signal: work.signal,
+          beforeStart: work.assertEnrichmentActive,
+        }
+      : {}),
+    ...(onLateValue !== undefined ? { onLateValue } : {}),
   });
 }
 
@@ -432,16 +404,10 @@ function removeReactionWithinTimeout(
   messageId: string,
   reactionId: string,
 ): Promise<void> {
-  return runWithReactionTimeout(
-    () => h.bot.removeReaction(messageId, reactionId),
-  );
-}
-
-class FeishuReactionTimeoutError extends Error {
-  constructor() {
-    super('Feishu reaction operation timed out');
-    this.name = 'FeishuReactionTimeoutError';
-  }
+  return runFeishuBoundedOperation({
+    operation: () => h.bot.removeReaction(messageId, reactionId),
+    deadlineAt: Date.now() + FEISHU_REACTION_OPERATION_TIMEOUT_MS,
+  });
 }
 
 export function rememberPendingReceivedReactionClear(

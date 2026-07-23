@@ -251,13 +251,8 @@ describe('Feishu session lifecycle fencing', () => {
     const bot = createFakeFeishuBot();
     const resolvedName = deferred<string | undefined>();
     const nameRequests: string[] = [];
-    const nameSignals: AbortSignal[] = [];
-    bot.resolveUserName = async (
-      openId: string,
-      options,
-    ): Promise<string | undefined> => {
+    bot.resolveUserName = async (openId: string): Promise<string | undefined> => {
       nameRequests.push(openId);
-      if (options?.signal !== undefined) nameSignals.push(options.signal);
       return resolvedName.promise;
     };
     const submitted: string[] = [];
@@ -287,12 +282,9 @@ describe('Feishu session lifecycle fencing', () => {
     await vi.waitFor(() => {
       expect(nameRequests).toEqual(['ou_allowed']);
     });
-    expect(nameSignals).toHaveLength(1);
-    expect(nameSignals[0]?.aborted).toBe(false);
 
     await session.close();
     await delivery;
-    expect(nameSignals[0]?.aborted).toBe(true);
     expect(submitted).toEqual([]);
     expect(bot.reactionOps.map((entry) => entry.op)).toEqual(['add', 'remove']);
 

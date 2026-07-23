@@ -54,10 +54,11 @@ Key source:
 ## Feishu Inbound Content Fidelity
 
 Feishu content parsing and SDK ownership stay split across the two channel
-packages. `@excitedjs/feishu-transport` parses event content into additive,
-untrusted, source-ordered `text` / `code` / `resource` parts while retaining
-the legacy flat text and de-duplicated resource views. It also exposes narrow
-wrappers around `im.v1.message.get`, message-resource download, and optional
+packages. `@excitedjs/feishu-transport` parses event content once into ordered,
+untrusted `text` / `code` / `resource` parts. That sequence is the internal
+source of truth; the transport projects the legacy flat text and de-duplicated
+resource views only at its public compatibility boundary. It also exposes
+narrow wrappers around `im.v1.message.get`, message-resource download, and
 contact-backed sender-name lookup. `@excitedjs/feishu-channel` decides when
 those calls are allowed, validates reread roots against the already accepted
 event, resolves/downloads resources, and owns the model-facing XML.
@@ -93,15 +94,17 @@ JSON.
 
 Every accepted inbound owns a session-fenced enrichment context. Session close
 revokes it before closing the transport and drains handlers that already
-started. The context bounds the whole enrichment to 60 seconds, 32 unique
-resources, 25 MiB per resource, 100 MiB aggregate, and one sequential download;
-the complete pre-reminder structured body is capped at 160,000 UTF-16 code
-units. The typed truncator charges XML wrappers, escaped text, CDATA splits,
-refs, and optional trusted-bot context and always closes Channel-owned
-structures. Untrusted text is escaped exactly once at the final Channel
-boundary. After current-message enrichment, one optional two-second parent read
-may add the bounded reply type; the returned parent body and children are
-discarded.
+started. A Channel-owned bounded-operation primitive supplies the shared
+absolute-deadline, abort, settle-once, and optional late-value-cleanup semantics.
+The lifecycle context bounds the whole enrichment to 60 seconds; the attachment
+resolver separately owns the 32-unique-resource, 25-MiB-per-resource, and
+100-MiB-aggregate policy while retaining one sequential download. The complete
+pre-reminder structured body is capped at 160,000 UTF-16 code units. The typed
+truncator charges XML wrappers, escaped text, CDATA splits, refs, and optional
+trusted-bot context and always closes Channel-owned structures. Untrusted text
+is escaped exactly once at the final Channel boundary. After current-message
+enrichment, one optional two-second parent read may add the bounded reply type;
+the returned parent body and children are discarded.
 
 Topic chat-mode discovery and received/in-progress reaction operations are
 also bounded and session-aware. A hung SDK request cannot keep session close or
@@ -110,26 +113,25 @@ stale message target, and a late reaction result is cleaned up best-effort
 without entering the current session ledger.
 
 Sender names are best-effort and never gate delivery. Event-provided names win;
-known/trusted bot state names bot senders without a contact call; accepted
-mention pairs seed a positive transport-local cache; and an unnamed human may
-use `contact.v3.user.get` with at most 2,000 ms of the remaining inbound budget.
-The transport caches only positive names and separately tracks same-user
-in-flight requests and per-user versions; it does not negatively cache or
-globally suppress missing-scope responses.
-Feishu code `99991672`, other nonzero responses, timeouts, and transient errors
-affect only the current attempt, so the next positive-cache miss retries.
-Per-user monotonic versions, mention precedence, and the session abort signal
-prevent a timed-out or revoked lookup from overwriting a newer cached/mention
-name. Unknown names are omitted. `create_time` is rendered in the process-local
-time zone as unpadded `YYYY-M-d H:m:s`. The final concise Channel reminder
-permits a direct substantive reply when no preliminary work is needed and asks
-for an acknowledgement only before longer work.
+known/trusted bot state names bot senders without a contact call; and every
+accepted unnamed human message makes one thin `contact.v3.user.get` attempt.
+The Channel bounds that attempt to the lesser of 2,000 ms and the remaining
+inbound budget and fences it with the current session lifecycle. The transport
+keeps no positive/negative cache, in-flight de-duplication, per-user version, or
+permission circuit. Feishu code `99991672`, any other nonzero response,
+malformed/missing names, timeouts, and transient errors affect only the current
+message, so the next accepted unnamed message queries Feishu again. Unknown
+names are omitted. `create_time` is rendered in the process-local time zone as
+unpadded `YYYY-M-d H:m:s`. The final concise Channel reminder permits a direct
+substantive reply when no preliminary work is needed and asks for an
+acknowledgement only before longer work.
 
 Key source:
 
 - `/packages/channel/feishu-transport/src/parse/`
 - `/packages/channel/feishu-transport/src/transport/message-read.ts`
-- `/packages/channel/feishu-transport/src/transport/user-name.ts`
+- `/packages/channel/feishu-transport/src/transport/feishu.ts`
+- `/packages/channel/feishu-channel/src/feishu-bounded-operation.ts`
 - `/packages/channel/feishu-channel/src/feishu-inbound-enrichment.ts`
 - `/packages/channel/feishu-channel/src/feishu-reply-ancestry.ts`
 - `/packages/channel/feishu-channel/src/feishu-inbound-work.ts`

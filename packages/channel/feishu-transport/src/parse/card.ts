@@ -1,8 +1,10 @@
-import type {
-  InboundContentPart,
-  InboundResource,
-  ParsedInbound,
-} from './content.js'
+import {
+  appendTextPart,
+  resourceIdentity,
+  resourcePart,
+  type InboundContentPart,
+  type ParsedContent,
+} from './parts.js'
 
 const CARD_UPGRADE_FALLBACK = '请升级至最新版本客户端'
 const CARD_NODE_LIMIT = 5_000
@@ -18,10 +20,7 @@ const CARD_CONTAINER_TAGS = new Set([
 ])
 
 interface CardRenderState {
-  parts: string[]
-  contentParts: InboundContentPart[]
-  resources: InboundResource[]
-  seenResources: Set<string>
+  parts: InboundContentPart[]
   visitedNodes: number
   budgetExhausted: boolean
   incomplete: boolean
@@ -30,16 +29,17 @@ interface CardRenderState {
 /** Parse the default/simplified and v2/user-DSL card representations. */
 export function parseInteractiveContent(
   outer: Record<string, unknown>,
-): ParsedInbound {
+): ParsedContent {
   const card = unwrapUserDsl(outer)
   if (card.type === 'template') {
-    return { text: '(interactive template card)', incomplete: true }
+    return {
+      parts: [],
+      compatibilityText: '(interactive template card)',
+      incomplete: true,
+    }
   }
   const state: CardRenderState = {
     parts: [],
-    contentParts: [],
-    resources: [],
-    seenResources: new Set(),
     visitedNodes: 0,
     budgetExhausted: false,
     incomplete: false,
@@ -58,16 +58,60 @@ export function parseInteractiveContent(
   if (elements !== undefined) renderCardValue(elements, state, 0)
   if (state.budgetExhausted) markCardOmission(state)
 
-  const filtered = state.parts
-    .flatMap((part) => normalizeVisiblePart(part, state))
-    .filter((part) => part.trim() !== '')
-  const text = filtered.join('\n')
   return {
-    text: text === '' ? '(interactive card with no readable content)' : text,
-    parts: state.contentParts,
-    ...(state.resources.length > 0 ? { resources: state.resources } : {}),
-    ...(state.incomplete || text === '' ? { incomplete: true } : {}),
+    parts: state.parts,
+    ...(state.parts.length === 0
+      ? { compatibilityText: '(interactive card with no readable content)' }
+      : {}),
+    ...(state.incomplete || state.parts.length === 0
+      ? { incomplete: true }
+      : {}),
   }
+}
+
+/**
+ * Merge the structured and simplified card projections once, preserving
+ * primary occurrences and appending only new visible supplemental parts.
+ */
+export function mergeInteractiveContentParts(
+  primary: InboundContentPart[],
+  supplemental: InboundContentPart[],
+): InboundContentPart[] {
+  const seenText = new Set(cardTextLines(primary).map(normalizeLine))
+  const primaryResources = new Set(primary.flatMap((part) => {
+    if (part.kind !== 'resource') return []
+    const identity = resourceIdentity(part.resource)
+    return identity === undefined ? [] : [identity]
+  }))
+  const extra: InboundContentPart[] = []
+  for (const part of supplemental) {
+    if (part.kind === 'text') {
+      const lines = normalizeLines(part.text).filter((line) => {
+        const normalized = normalizeLine(line)
+        if (normalized === '' || seenText.has(normalized)) return false
+        seenText.add(normalized)
+        return true
+      })
+      appendTextPart(extra, lines.join('\n'))
+      continue
+    }
+    if (part.kind === 'resource') {
+      const identity = resourceIdentity(part.resource)
+      if (identity !== undefined && primaryResources.has(identity)) continue
+    }
+    extra.push(part)
+  }
+  if (extra.length === 0) return primary
+
+  const merged: InboundContentPart[] = [
+    ...primary,
+    { kind: 'text', text: '\n\nAdditional rendered card content:\n' },
+  ]
+  for (const part of extra) {
+    if (part.kind === 'text') appendTextPart(merged, part.text)
+    else merged.push(part)
+  }
+  return merged
 }
 
 function unwrapUserDsl(
@@ -96,8 +140,7 @@ function renderCardValue(
     return
   }
   const node = asRecord(value)
-  if (node === undefined) return
-  if (!visitCardNode(state)) return
+  if (node === undefined || !visitCardNode(state)) return
   const tag = typeof node.tag === 'string' ? node.tag : ''
 
   if (tag === '') {
@@ -132,18 +175,19 @@ function renderCardValue(
     renderSelect(node, state)
   } else if (tag === 'img' || tag === 'image') {
     const key = stringValue(node.image_key) ?? stringValue(node.img_key)
-    const resource = addResource(
+    pushCardPart(
       state,
-      'image',
-      key,
-      key === undefined ? undefined : `${key}.jpg`,
+      resourcePart('image', key, key === undefined ? undefined : `${key}.jpg`),
     )
-    pushCardResource(state, resource, resourceMarker('image', key))
   } else if (tag === 'file') {
-    const key = stringValue(node.file_key)
-    const name = stringValue(node.file_name)
-    const resource = addResource(state, 'file', key, name)
-    pushCardResource(state, resource, resourceMarker('file', key, name))
+    pushCardPart(
+      state,
+      resourcePart(
+        'file',
+        stringValue(node.file_key),
+        stringValue(node.file_name),
+      ),
+    )
   } else if (tag === 'a') {
     const rendered = renderLink(node)
     if (rendered !== '') pushCardText(state, rendered)
@@ -177,16 +221,9 @@ function renderCardArray(
   state: CardRenderState,
   depth: number,
 ): void {
-  let inline: Array<{
-    legacy: string
-    part: InboundContentPart
-  }> = []
+  let inline: InboundContentPart[] = []
   const flushInline = (): void => {
-    const line = inline.map(({ legacy }) => legacy).join('').trim()
-    if (line !== '') {
-      state.parts.push(line)
-      appendCardBlockParts(state.contentParts, inline.map(({ part }) => part))
-    }
+    appendCardBlockParts(state.parts, inline)
     inline = []
   }
   for (const value of values) {
@@ -197,8 +234,7 @@ function renderCardArray(
       continue
     }
     flushInline()
-    if (state.budgetExhausted) break
-    renderCardValue(value, state, depth + 1)
+    if (!state.budgetExhausted) renderCardValue(value, state, depth + 1)
   }
   flushInline()
 }
@@ -206,7 +242,7 @@ function renderCardArray(
 function renderInlineNode(
   value: unknown,
   state: CardRenderState,
-): { legacy: string; part: InboundContentPart } | undefined {
+): InboundContentPart | undefined {
   const node = asRecord(value)
   if (node === undefined) return undefined
   const tag = typeof node.tag === 'string' ? node.tag : ''
@@ -222,42 +258,42 @@ function renderInlineNode(
   ].includes(tag)) {
     return undefined
   }
-  if (!visitCardNode(state)) {
-    return { legacy: '', part: { kind: 'text', text: '' } }
-  }
+  if (!visitCardNode(state)) return { kind: 'text', text: '' }
   if (tag === 'text' || tag === 'plain_text' || tag === 'lark_md') {
-    const text = visibleText(node.text) ?? visibleText(node.content) ?? ''
-    return { legacy: text, part: { kind: 'text', text } }
+    return {
+      kind: 'text',
+      text: normalizeCardText(
+        visibleText(node.text) ?? visibleText(node.content) ?? '',
+        state,
+      ),
+    }
   }
   if (tag === 'a') {
-    const text = renderLink(node)
-    return { legacy: text, part: { kind: 'text', text } }
+    return {
+      kind: 'text',
+      text: normalizeCardText(renderLink(node), state),
+    }
   }
   if (tag === 'at') {
-    const text = `@${stringValue(node.user_name) ?? 'unknown'}`
-    return { legacy: text, part: { kind: 'text', text } }
+    return {
+      kind: 'text',
+      text: `@${stringValue(node.user_name) ?? 'unknown'}`,
+    }
   }
   if (tag === 'img' || tag === 'image') {
     const key = stringValue(node.image_key) ?? stringValue(node.img_key)
-    const resource = addResource(
-      state,
+    return resourcePart(
       'image',
       key,
       key === undefined ? undefined : `${key}.jpg`,
     )
-    return {
-      legacy: resourceMarker('image', key),
-      part: { kind: 'resource', resource },
-    }
   }
   if (tag === 'file') {
-    const key = stringValue(node.file_key)
-    const name = stringValue(node.file_name)
-    const resource = addResource(state, 'file', key, name)
-    return {
-      legacy: resourceMarker('file', key, name),
-      part: { kind: 'resource', resource },
-    }
+    return resourcePart(
+      'file',
+      stringValue(node.file_key),
+      stringValue(node.file_name),
+    )
   }
   return undefined
 }
@@ -267,8 +303,9 @@ function renderNested(
   state: CardRenderState,
   depth: number,
 ): void {
-  if (value === undefined || state.budgetExhausted) return
-  renderCardValue(value, state, depth + 1)
+  if (value !== undefined && !state.budgetExhausted) {
+    renderCardValue(value, state, depth + 1)
+  }
 }
 
 function renderColumns(
@@ -315,53 +352,10 @@ function renderLink(node: Record<string, unknown>): string {
   return text || href
 }
 
-function addResource(
-  state: CardRenderState,
-  type: InboundResource['type'],
-  key: string | undefined,
-  name: string | undefined,
-): InboundResource {
-  const resource: InboundResource = {
-    type,
-    ...(key !== undefined ? { key } : {}),
-    ...(name !== undefined ? { name } : {}),
-  }
-  const identity = key === undefined ? undefined : `${type}:${key}`
-  if (identity === undefined || !state.seenResources.has(identity)) {
-    if (identity !== undefined) state.seenResources.add(identity)
-    state.resources.push(resource)
-  }
-  return resource
-}
-
-function resourceMarker(
-  type: InboundResource['type'],
-  key: string | undefined,
-  name?: string,
-): string {
-  const detail = name ?? key
-  return detail === undefined
-    ? `[${type} attachment without a resource key]`
-    : `[${type} attachment: ${detail}]`
-}
-
-function normalizeVisiblePart(
-  part: string,
-  state: CardRenderState,
-): string[] {
-  if (!part.includes(CARD_UPGRADE_FALLBACK)) return [part]
-  state.incomplete = true
-  return part
-    .split('\n')
-    .map((line) => line.includes(CARD_UPGRADE_FALLBACK)
-      ? '[card component is only visible in the Feishu client]'
-      : line)
-}
-
 function markCardOmission(state: CardRenderState): void {
   state.incomplete = true
   const marker = '[additional card content omitted: parser bound reached]'
-  if (!state.parts.includes(marker)) pushCardText(state, marker)
+  if (!hasText(state.parts, marker)) pushCardText(state, marker)
 }
 
 function visitCardNode(state: CardRenderState): boolean {
@@ -385,29 +379,31 @@ function markUnsupportedComponent(
   state.incomplete = true
   const safe = tag.replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 64) || 'unknown'
   const marker = `[unsupported card component: ${safe}]`
-  if (!state.parts.includes(marker)) pushCardText(state, marker)
+  if (!hasText(state.parts, marker)) pushCardText(state, marker)
 }
 
 function pushCardText(state: CardRenderState, text: string): void {
-  if (text === '') return
-  const normalized = text.includes(CARD_UPGRADE_FALLBACK)
-    ? text.split('\n').map((line) => {
-        if (!line.includes(CARD_UPGRADE_FALLBACK)) return line
-        state.incomplete = true
-        return '[card component is only visible in the Feishu client]'
-      }).join('\n')
-    : text
-  state.parts.push(normalized)
-  appendCardBlockParts(state.contentParts, [{ kind: 'text', text: normalized }])
+  const normalized = normalizeCardText(text, state)
+  if (normalized !== '') {
+    pushCardPart(state, { kind: 'text', text: normalized })
+  }
 }
 
-function pushCardResource(
+function normalizeCardText(text: string, state: CardRenderState): string {
+  const normalized = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n')
+  if (!normalized.includes(CARD_UPGRADE_FALLBACK)) return normalized
+  state.incomplete = true
+  return normalized.split('\n').map((line) =>
+    line.includes(CARD_UPGRADE_FALLBACK)
+      ? '[card component is only visible in the Feishu client]'
+      : line).join('\n')
+}
+
+function pushCardPart(
   state: CardRenderState,
-  resource: InboundResource,
-  legacy: string,
+  part: InboundContentPart,
 ): void {
-  state.parts.push(legacy)
-  appendCardBlockParts(state.contentParts, [{ kind: 'resource', resource }])
+  appendCardBlockParts(state.parts, [part])
 }
 
 function appendCardBlockParts(
@@ -424,11 +420,21 @@ function appendCardBlockParts(
   }
 }
 
-function appendTextPart(parts: InboundContentPart[], text: string): void {
-  if (text === '') return
-  const previous = parts.at(-1)
-  if (previous?.kind === 'text') previous.text += text
-  else parts.push({ kind: 'text', text })
+function cardTextLines(parts: InboundContentPart[]): string[] {
+  return parts.flatMap((part) =>
+    part.kind === 'text' ? normalizeLines(part.text) : [])
+}
+
+function normalizeLines(value: string): string[] {
+  return value.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n')
+}
+
+function normalizeLine(value: string): string {
+  return value.trim()
+}
+
+function hasText(parts: InboundContentPart[], text: string): boolean {
+  return parts.some((part) => part.kind === 'text' && part.text.includes(text))
 }
 
 function visibleText(value: unknown): string | undefined {

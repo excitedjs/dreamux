@@ -6,6 +6,11 @@ import type {
 import type { FeishuChatMode } from '@excitedjs/feishu-transport';
 
 import type { FeishuInboundEvent } from './bot.js';
+import {
+  FeishuOperationError,
+  isFeishuOperationError,
+  runFeishuBoundedOperation,
+} from './feishu-bounded-operation.js';
 
 const FEISHU_CHAT_MODE_LOOKUP_TIMEOUT_MS = 2_000;
 
@@ -145,7 +150,7 @@ export class FeishuTargetRouter {
       this.opts.log.warn(
         {
           chat_id: chatId,
-          reason: err instanceof FeishuChatModeLookupTimeoutError
+          reason: isFeishuOperationError(err, 'deadline')
             ? 'chat_mode_lookup_timed_out'
             : 'chat_mode_lookup_failed',
           err: safeError(err),
@@ -159,44 +164,17 @@ export class FeishuTargetRouter {
 
 function assertRoutingActive(signal: AbortSignal | undefined): void {
   if (signal?.aborted === true) {
-    throw new FeishuRouteProjectionAbortedError();
+    throw new FeishuOperationError('aborted');
   }
 }
 
 function withChatModeTimeout(
   promise: Promise<FeishuChatMode | undefined>,
 ): Promise<FeishuChatMode | undefined> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (callback: () => void): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      callback();
-    };
-    const timer = setTimeout(
-      () => finish(() => reject(new FeishuChatModeLookupTimeoutError())),
-      FEISHU_CHAT_MODE_LOOKUP_TIMEOUT_MS,
-    );
-    void promise.then(
-      (value) => finish(() => resolve(value)),
-      (error: unknown) => finish(() => reject(error)),
-    );
+  return runFeishuBoundedOperation({
+    operation: () => promise,
+    deadlineAt: Date.now() + FEISHU_CHAT_MODE_LOOKUP_TIMEOUT_MS,
   });
-}
-
-class FeishuRouteProjectionAbortedError extends Error {
-  constructor() {
-    super('Feishu inbound route projection was aborted');
-    this.name = 'FeishuRouteProjectionAbortedError';
-  }
-}
-
-class FeishuChatModeLookupTimeoutError extends Error {
-  constructor() {
-    super('Feishu chat-mode lookup timed out');
-    this.name = 'FeishuChatModeLookupTimeoutError';
-  }
 }
 
 function topicRoute(event: FeishuInboundEvent): FeishuInboundRoute {

@@ -75,7 +75,7 @@ describe('Feishu inbound resource budgets', () => {
       ],
     }), {
       cacheDir: cacheDir(),
-      work: budgetWork({ maxUniqueResources: 2 }),
+      maxUniqueResources: 2,
       resourceFetcher: {
         async fetchMessageResource(request) {
           calls.push(request.fileKey);
@@ -142,10 +142,8 @@ describe('Feishu inbound resource budgets', () => {
       ],
     }), {
       cacheDir: cacheDir(),
-      work: budgetWork({
-        maxResourceBytes: 4,
-        maxAggregateResourceBytes: 5,
-      }),
+      maxBytes: 4,
+      maxAggregateBytes: 5,
       resourceFetcher: {
         async fetchMessageResource() {
           return { stream: Readable.from([Buffer.from('four')]), headers: {} };
@@ -261,7 +259,6 @@ describe('Feishu inbound resource budgets', () => {
     expect(first.attachments.every((attachment) => attachment.status === 'downloaded'))
       .toBe(true);
 
-    const aggregate = budgetWork({ maxAggregateResourceBytes: 5 });
     const second = await formatFeishuMessageForRuntime(event({
       resources: [
         { type: 'file', key: 'cached-a' },
@@ -269,7 +266,7 @@ describe('Feishu inbound resource budgets', () => {
       ],
     }), {
       cacheDir: cache,
-      work: aggregate,
+      maxAggregateBytes: 5,
       resourceFetcher: {
         async fetchMessageResource() {
           throw new Error('cache hit should not fetch');
@@ -281,13 +278,11 @@ describe('Feishu inbound resource budgets', () => {
         { status: 'downloaded', reason: undefined },
         { status: 'not_downloaded', reason: 'aggregate_limit' },
       ]);
-    expect(aggregate.remainingAggregateBytes).toBe(1);
-
     const perResource = await formatFeishuMessageForRuntime(event({
       resources: [{ type: 'file', key: 'cached-a' }],
     }), {
       cacheDir: cache,
-      work: budgetWork({ maxResourceBytes: 3 }),
+      maxBytes: 3,
       resourceFetcher: {
         async fetchMessageResource() {
           throw new Error('cache hit should not fetch');
@@ -301,10 +296,6 @@ describe('Feishu inbound resource budgets', () => {
   });
 
   it('charges bytes read before an aggregate-limit failure', async () => {
-    const work = budgetWork({
-      maxResourceBytes: 20,
-      maxAggregateResourceBytes: 5,
-    });
     const result = await formatFeishuMessageForRuntime(event({
       resources: [
         { type: 'file', key: 'over-budget' },
@@ -312,7 +303,8 @@ describe('Feishu inbound resource budgets', () => {
       ],
     }), {
       cacheDir: cacheDir(),
-      work,
+      maxBytes: 20,
+      maxAggregateBytes: 5,
       resourceFetcher: {
         async fetchMessageResource(request) {
           return {
@@ -329,7 +321,6 @@ describe('Feishu inbound resource budgets', () => {
       'aggregate_limit',
       'aggregate_limit',
     ]);
-    expect(work.remainingAggregateBytes).toBe(0);
   });
 
   it('caps escaped rich content without cutting an XML entity', async () => {
