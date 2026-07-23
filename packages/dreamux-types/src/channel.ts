@@ -241,11 +241,71 @@ export interface ChannelTurnSettledEvent {
   readonly assistant_truncated: boolean;
 }
 
+export type ChannelBindingAction = 'bound' | 'unbound';
+
+export type ChannelBindingTransition =
+  | 'bound'
+  | 'replaced'
+  | 'unbound';
+
+export interface ChannelBindingEndpointSnapshot {
+  readonly provider: string;
+  readonly channel_id: string;
+  readonly endpoint_type: string;
+  readonly endpoint_key: string;
+  readonly display: string | null;
+  readonly canonical_url: string | null;
+  readonly meta: Readonly<Record<string, unknown>>;
+}
+
+export interface ChannelBindingRouteTeamSnapshot {
+  readonly team_name: string;
+  readonly leader_name: string;
+  readonly leader_agent_runtime?: string;
+  readonly runtime_cwd?: string;
+}
+
+export interface ChannelBindingRouteEvent {
+  readonly schema_version: 1;
+  readonly kind: 'binding.route';
+  readonly occurred_at: number;
+  readonly action: ChannelBindingAction;
+  readonly transition: ChannelBindingTransition;
+  readonly endpoint: ChannelBindingEndpointSnapshot;
+  readonly previous_team: ChannelBindingRouteTeamSnapshot | null;
+  readonly current_team: ChannelBindingRouteTeamSnapshot | null;
+}
+
+export interface ChannelBindingCollaborationSpacePolicySnapshot {
+  readonly leader_agent_runtime: string;
+  readonly repo_cwd: string | null;
+  readonly worktree:
+    | { readonly mode: 'default' }
+    | {
+        readonly mode: 'managed';
+        readonly base_ref: string | null;
+        readonly cleanup: 'delete-on-close';
+      };
+}
+
+export interface ChannelBindingCollaborationSpaceEvent {
+  readonly schema_version: 1;
+  readonly kind: 'binding.collaboration_space';
+  readonly occurred_at: number;
+  readonly action: ChannelBindingAction;
+  readonly transition: 'bound' | 'unbound';
+  readonly container: ChannelBindingEndpointSnapshot;
+  readonly space_name: string;
+  readonly current_binding: ChannelBindingCollaborationSpacePolicySnapshot | null;
+}
+
 export type ChannelCoreEvent =
   | ChannelTeamStateEvent
   | ChannelAgentStateEvent
   | ChannelTurnSubmittedEvent
-  | ChannelTurnSettledEvent;
+  | ChannelTurnSettledEvent
+  | ChannelBindingRouteEvent
+  | ChannelBindingCollaborationSpaceEvent;
 
 export type ChannelCoreEventKind = ChannelCoreEvent['kind'];
 

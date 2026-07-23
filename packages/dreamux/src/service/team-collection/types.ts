@@ -177,6 +177,13 @@ export interface TeamLeaderLease {
   leaderName: string;
 }
 
+export interface TeamRouteProjection {
+  team_name: string;
+  leader_name: string;
+  leader_agent_runtime: string;
+  runtime_cwd: string;
+}
+
 export function validateTeamId(id: string): string {
   if (!TEAM_ID_PATTERN.test(id)) {
     throw new Error(

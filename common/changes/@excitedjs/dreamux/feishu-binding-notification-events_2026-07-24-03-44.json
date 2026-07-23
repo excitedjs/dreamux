@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Publish provider-neutral binding transition events and persist collaboration target metadata across provisioning retries.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

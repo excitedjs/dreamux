@@ -79,6 +79,13 @@ export type {
 export type {
   ChannelBinCheck,
   ChannelAgentStateEvent,
+  ChannelBindingAction,
+  ChannelBindingCollaborationSpaceEvent,
+  ChannelBindingCollaborationSpacePolicySnapshot,
+  ChannelBindingEndpointSnapshot,
+  ChannelBindingRouteEvent,
+  ChannelBindingRouteTeamSnapshot,
+  ChannelBindingTransition,
   ChannelCollaborationTargetEnsureInput,
   ChannelCollaborationTargetEnsureResult,
   ChannelConfigContext,

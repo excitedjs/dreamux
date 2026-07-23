@@ -186,6 +186,7 @@ function topicRoute(event: FeishuInboundEvent): FeishuInboundRoute {
     target: topicTarget({
       chatId: event.chatId,
       threadId,
+      messageId: event.messageId,
       ...(event.rootId !== undefined ? { rootId: event.rootId } : {}),
       ...(event.parentId !== undefined ? { parentId: event.parentId } : {}),
     }),
@@ -200,6 +201,7 @@ function topicRoute(event: FeishuInboundEvent): FeishuInboundRoute {
 function topicTarget(input: {
   chatId: string;
   threadId: string;
+  messageId: string;
   rootId?: string;
   parentId?: string;
 }): ChannelTarget {
@@ -212,6 +214,7 @@ function topicTarget(input: {
       chat_type: 'group',
       chat_mode: 'topic',
       thread_id: input.threadId,
+      message_id: input.messageId,
       ...(input.rootId !== undefined ? { root_id: input.rootId } : {}),
       ...(input.parentId !== undefined ? { parent_id: input.parentId } : {}),
     },

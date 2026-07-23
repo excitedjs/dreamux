@@ -42,6 +42,11 @@ import {
   parseMessage,
   requiredSpace,
 } from './support.js';
+import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
+import {
+  publishCollaborationSpaceBindTransition,
+  publishCollaborationSpaceUnbound,
+} from '../binding-events.js';
 
 export interface CollaborationSpaceServiceOptions {
   dispatcherId: string;
@@ -49,6 +54,7 @@ export interface CollaborationSpaceServiceOptions {
   teams: TeamCollection;
   channels: ChannelService;
   store?: CollaborationSpaceStore;
+  coreEvents?: DispatcherCoreEventPublisher;
   log: DreamuxLogger;
   isShuttingDown: () => boolean;
 }
@@ -93,6 +99,7 @@ export class CollaborationSpaceService {
       teams: this.teams,
       channels: this.channels,
       store: this.store,
+      coreEvents: opts.coreEvents,
       spaceLocks: this.spaceLocks,
       targetLocks,
       routes: this.routes,
@@ -121,7 +128,7 @@ export class CollaborationSpaceService {
       spaceContainerLockKey(channelId, container.container_key),
       async () => {
         this.assertNotShuttingDown();
-        const saved = await this.store.bindSpace({
+        const transition = await this.store.bindSpaceWithTransition({
           dispatcherId: this.dispatcherId,
           spaceName,
           channelId,
@@ -141,6 +148,12 @@ export class CollaborationSpaceService {
             identity: input.identity ?? null,
           },
         });
+        publishCollaborationSpaceBindTransition({
+          coreEvents: this.opts.coreEvents,
+          dispatcherId: this.dispatcherId,
+          transition,
+        });
+        const saved = transition.space;
         return { space: await this.view(saved) };
       },
     );
@@ -163,15 +176,18 @@ export class CollaborationSpaceService {
         };
       }
       const detached = await this.targets.detachActiveTargets(space);
-      const now = Date.now();
-      const saved = await this.store.saveSpace({
-        ...space,
-        current_binding: null,
-        status: 'unbound',
-        updated_at: now,
-        unbound_at: now,
-        unbound_note: input.note,
+      const transition = await this.store.unbindSpaceWithTransition({
+        space,
+        note: input.note,
       });
+      if (transition.transition === 'unbound') {
+        publishCollaborationSpaceUnbound({
+          coreEvents: this.opts.coreEvents,
+          dispatcherId: this.dispatcherId,
+          space: transition.space,
+        });
+      }
+      const saved = transition.space;
       return {
         space: await this.view(saved),
         detached_targets: detached.detached_targets,

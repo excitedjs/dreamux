@@ -49,6 +49,7 @@ import type {
   TeamDissolveInput,
   TeamLeaderSendResult,
   TeamRecord,
+  TeamRouteProjection,
   TeamSummary,
   TeamView,
 } from '../team-collection/types.js';
@@ -303,6 +304,16 @@ export class TeamService {
 
   get leaderName(): string {
     return this.mustRecord().leader_name;
+  }
+
+  routeProjection(): TeamRouteProjection {
+    const record = this.mustRecord();
+    return {
+      team_name: record.team_id,
+      leader_name: record.leader_name,
+      leader_agent_runtime: record.leader_agent_runtime,
+      runtime_cwd: record.runtime_cwd,
+    };
   }
 
   view(): TeamView {

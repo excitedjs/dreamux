@@ -669,6 +669,12 @@ describe('DispatcherService collaboration-space routing', () => {
         routes.coreEvents!.on('turn.settled', (event) => {
           events.push(event);
         }),
+        routes.coreEvents!.on('binding.collaboration_space', (event) => {
+          events.push(event);
+        }),
+        routes.coreEvents!.on('binding.route', (event) => {
+          events.push(event);
+        }),
       ];
       const container = {
         container_type: 'conversation',
@@ -688,6 +694,33 @@ describe('DispatcherService collaboration-space routing', () => {
       });
       if (ensured.status !== 'ready') throw new Error(ensured.rejection.code);
       expect(harness.runtimes).toHaveLength(1);
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'binding.collaboration_space',
+            action: 'bound',
+            transition: 'bound',
+            container: expect.objectContaining({
+              provider: CHANNEL_REF,
+              endpoint_key: 'container-strict-route',
+            }),
+          }),
+          expect.objectContaining({
+            kind: 'binding.route',
+            action: 'bound',
+            transition: 'bound',
+            endpoint: expect.objectContaining({
+              provider: CHANNEL_REF,
+              endpoint_key: 'target-strict-route',
+            }),
+            current_team: expect.objectContaining({
+              team_name: ensured.team_name,
+              leader_agent_runtime: 'dispatcher-runtime',
+              runtime_cwd: workspace,
+            }),
+          }),
+        ]),
+      );
       await expect(
         routes.ensureCollaborationTarget!({
           container,
@@ -831,8 +864,15 @@ describe('DispatcherService collaboration-space routing', () => {
         assistant: 'strict answer',
         assistant_truncated: true,
       });
+      const liveFactEvents = events.filter(
+        (event) =>
+          event.kind === 'team.state' ||
+          event.kind === 'agent.state' ||
+          event.kind === 'turn.submitted' ||
+          event.kind === 'turn.settled',
+      );
       expect(
-        events.every(
+        liveFactEvents.every(
           (event) =>
             event.team_name === ensured.team_name &&
             (event.kind === 'team.state' || event.agent_name === leaderName),
@@ -1189,6 +1229,17 @@ describe('DispatcherService collaboration-space routing', () => {
       expect(runtimes[1]?.submitted.map((turn) => turn.sourceId)).toEqual([
         'msg-topic-reply',
       ]);
+      await vi.waitFor(() => {
+        expect(bot.sentCards).toHaveLength(3);
+      });
+      expect(bot.sentCards[0]?.target).toMatchObject({ chatId: 'chat-topic' });
+      expect(bot.sentCards[0]?.target.replyToMessageId).toBeUndefined();
+      expect(bot.sentCards[1]?.target).toMatchObject({
+        chatId: 'chat-topic',
+        replyToMessageId: 'msg-topic-root',
+      });
+      expect(bot.sentCards[2]?.target).toMatchObject({ chatId: 'chat-topic' });
+      expect(bot.sentCards[2]?.target.replyToMessageId).toBeUndefined();
       await expect(dispatcher.getCollaborationSpaceStatus({
         spaceName: 'feishu-space',
       })).resolves.toMatchObject({
@@ -1794,6 +1845,79 @@ describe('DispatcherService collaboration-space routing', () => {
         },
       },
     ]);
+  });
+
+  it('publishes one space event across concurrent default auto-bind', async () => {
+    const workspace = join(root, 'workspace-concurrent-default-bind');
+    mkdirSync(workspace, { recursive: true });
+    const events: ChannelCoreEvent[] = [];
+    const observed: Array<
+      Awaited<ReturnType<NonNullable<ChannelRoutes['ensureCollaborationTarget']>>>
+    > = [];
+    const dispatcherConfig = testDispatcherConfig({
+      id: 'flow',
+      cwd: workspace,
+      agentRuntime: 'dispatcher-runtime',
+      runtimeProvider: RUNTIME_REF,
+      channelProvider: CHANNEL_REF,
+      workspaceEnabled: false,
+    });
+    dispatcherConfig.channels[0]!.collaborationSpace = {
+      defaultBinding: {
+        enabled: true,
+        repo: null,
+        identity: 'Auto topic leader',
+      },
+    };
+    const config = testDreamuxConfig([dispatcherConfig]);
+    const runtimes: FakeRuntime[] = [];
+    const dispatcher = new DispatcherService({
+      id: 'flow',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, []),
+      channelProviders: fakeChannelCatalog(async (routes) => {
+        routes.coreEvents!.on('binding.collaboration_space', (event) => {
+          events.push(event);
+        });
+        const request = {
+          container: {
+            container_type: 'topic_group',
+            container_key: 'container-auto-concurrent',
+          },
+          target: {
+            target_type: 'topic',
+            target_key: 'topic-auto-concurrent',
+            bindable: true,
+          },
+        } as const;
+        observed.push(...await Promise.all([
+          routes.ensureCollaborationTarget!(request),
+          routes.ensureCollaborationTarget!(request),
+        ]));
+      }),
+      channelLoggerFactory: () => noopLog(),
+      log: noopLog(),
+    });
+
+    try {
+      await dispatcher.start();
+      expect(observed.every((result) => result.status === 'ready')).toBe(true);
+      expect(runtimes).toHaveLength(1);
+      expect(events.filter(
+        (event) => event.kind === 'binding.collaboration_space',
+      )).toEqual([
+        expect.objectContaining({
+          action: 'bound',
+          transition: 'bound',
+          container: expect.objectContaining({
+            endpoint_key: 'container-auto-concurrent',
+          }),
+        }),
+      ]);
+    } finally {
+      await dispatcher.stop();
+    }
   });
 
   it('does not auto-bind a known unbound collaboration space', async () => {

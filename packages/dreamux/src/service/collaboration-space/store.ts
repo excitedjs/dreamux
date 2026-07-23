@@ -39,10 +39,35 @@ export interface BindSpaceInput {
     container_key: string;
     display?: string;
     canonical_url?: string;
+    meta?: Record<string, unknown>;
   };
   display?: string;
   binding: Omit<CollaborationSpaceBindingRecord, 'generation' | 'bound_at'>;
 }
+
+export type CollaborationSpaceBindTransition =
+  | {
+      transition: 'unchanged';
+      space: CollaborationSpaceRecord;
+      previous: CollaborationSpaceRecord;
+    }
+  | {
+      transition: 'bound';
+      space: CollaborationSpaceRecord;
+      previous: CollaborationSpaceRecord | null;
+    };
+
+export type CollaborationSpaceUnbindTransition =
+  | {
+      transition: 'unchanged';
+      space: CollaborationSpaceRecord;
+      previous: CollaborationSpaceRecord;
+    }
+  | {
+      transition: 'unbound';
+      space: CollaborationSpaceRecord;
+      previous: CollaborationSpaceRecord;
+    };
 
 export class CollaborationSpaceStore {
   /**
@@ -52,6 +77,12 @@ export class CollaborationSpaceStore {
    * binding policy.
   */
   async bindSpace(input: BindSpaceInput): Promise<CollaborationSpaceRecord> {
+    return (await this.bindSpaceWithTransition(input)).space;
+  }
+
+  async bindSpaceWithTransition(
+    input: BindSpaceInput,
+  ): Promise<CollaborationSpaceBindTransition> {
     return STORE_WRITES.run(input.dispatcherId, async () => {
       const file = await this.read(input.dispatcherId);
       const existing = file.spaces.find(
@@ -67,6 +98,7 @@ export class CollaborationSpaceStore {
         ...(existing!.canonical_url !== null
           ? { canonical_url: existing!.canonical_url }
           : {}),
+        meta: existing!.meta,
       };
       if (
         existing !== null &&
@@ -111,6 +143,7 @@ export class CollaborationSpaceStore {
         container_key: container.container_key,
         display: input.display ?? container.display ?? existing?.display ?? null,
         canonical_url: container.canonical_url ?? existing?.canonical_url ?? null,
+        meta: container.meta ?? existing?.meta ?? {},
         current_binding: {
           ...input.binding,
           generation,
@@ -125,7 +158,7 @@ export class CollaborationSpaceStore {
       };
       this.upsertSpace(file, saved);
       await this.write(input.dispatcherId, file);
-      return saved;
+      return { transition: 'bound', space: saved, previous: existing };
     });
   }
 
@@ -170,7 +203,17 @@ export class CollaborationSpaceStore {
   async saveDefaultBoundSpace(
     space: CollaborationSpaceRecord,
   ): Promise<CollaborationSpaceRecord> {
-    let saved = space;
+    return (await this.saveDefaultBoundSpaceWithTransition(space)).space;
+  }
+
+  async saveDefaultBoundSpaceWithTransition(
+    space: CollaborationSpaceRecord,
+  ): Promise<CollaborationSpaceBindTransition> {
+    let result: CollaborationSpaceBindTransition = {
+      transition: 'bound',
+      space,
+      previous: null,
+    };
     await STORE_WRITES.run(space.dispatcher_id, async () => {
       const file = await this.read(space.dispatcher_id);
       const byContainer = file.spaces.find((entry) =>
@@ -181,7 +224,11 @@ export class CollaborationSpaceStore {
           byContainer.current_binding !== null &&
           byContainer.status === 'bound'
         ) {
-          saved = byContainer;
+          result = {
+            transition: 'unchanged',
+            space: byContainer,
+            previous: byContainer,
+          };
           return;
         }
         throw new Error(
@@ -192,7 +239,54 @@ export class CollaborationSpaceStore {
       this.upsertSpace(file, space);
       await this.write(space.dispatcher_id, file);
     });
-    return saved;
+    return result;
+  }
+
+  async unbindSpaceWithTransition(input: {
+    space: CollaborationSpaceRecord;
+    note: string;
+  }): Promise<CollaborationSpaceUnbindTransition> {
+    const { space } = input;
+    let result: CollaborationSpaceUnbindTransition | null = null;
+    await STORE_WRITES.run(space.dispatcher_id, async () => {
+      const file = await this.read(space.dispatcher_id);
+      const current = file.spaces.find(
+        (entry) => entry.space_name === space.space_name,
+      );
+      if (current === undefined) {
+        throw new Error(
+          `collaboration space ${JSON.stringify(space.space_name)} does not exist`,
+        );
+      }
+      if (current.current_binding === null || current.status === 'unbound') {
+        result = {
+          transition: 'unchanged',
+          space: current,
+          previous: current,
+        };
+        return;
+      }
+      const now = Date.now();
+      const saved: CollaborationSpaceRecord = {
+        ...current,
+        current_binding: null,
+        status: 'unbound',
+        updated_at: now,
+        unbound_at: now,
+        unbound_note: input.note,
+      };
+      this.upsertSpace(file, saved);
+      await this.write(space.dispatcher_id, file);
+      result = {
+        transition: 'unbound',
+        space: saved,
+        previous: current,
+      };
+    });
+    if (result === null) {
+      throw new Error('collaboration space unbind transition did not complete');
+    }
+    return result;
   }
 
   async listTargets(
@@ -308,7 +402,11 @@ export class CollaborationSpaceStore {
     ) {
       throw new Error(`invalid collaboration-space store for dispatcher ${dispatcherId}`);
     }
-    return parsed as unknown as CollaborationSpaceStoreFile;
+    return {
+      version: STORE_VERSION,
+      spaces: (parsed['spaces'] as Record<string, unknown>[]).map(normalizeSpace),
+      targets: (parsed['targets'] as Record<string, unknown>[]).map(normalizeTarget),
+    };
   }
 
   private async write(
@@ -356,4 +454,26 @@ function sameContainer(
 ): boolean {
   return left.channel_id === right.channel_id &&
     left.container_key === right.container_key;
+}
+
+function normalizeSpace(row: Record<string, unknown>): CollaborationSpaceRecord {
+  return {
+    ...(row as unknown as CollaborationSpaceRecord),
+    meta: asRecord(row['meta']),
+  };
+}
+
+function normalizeTarget(row: Record<string, unknown>): ProvisionedTargetRecord {
+  return {
+    ...(row as unknown as ProvisionedTargetRecord),
+    target_meta: asRecord(row['target_meta']),
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (value === undefined) return {};
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  throw new Error('invalid collaboration-space provider metadata');
 }

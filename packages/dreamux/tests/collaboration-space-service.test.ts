@@ -158,6 +158,79 @@ describe('CollaborationSpaceService', () => {
     });
   });
 
+  it('persists provider target meta from topic provisioning into the resulting binding', async () => {
+    const created: CreatedTeam[] = [];
+    const dissolved: string[] = [];
+    const channels = fakeChannels();
+    const service = new CollaborationSpaceService({
+      dispatcherId: 'flow',
+      config: fakeConfig(),
+      teams: fakeTeams(created, dissolved),
+      channels: channels.service,
+      log: log as never,
+      isShuttingDown: () => false,
+    });
+
+    await service.bind({
+      spaceName: 'space-alpha',
+      container: {
+        container_type: 'topic_group',
+        container_key: 'chat-topic',
+        meta: { chat_id: 'chat-topic', chat_mode: 'topic' },
+      },
+      leaderAgentRuntime: 'agent-a',
+    });
+    const target = {
+      channelId: 'primary',
+      provider: 'builtin:test',
+      container: { container_type: 'topic_group', container_key: 'chat-topic' },
+      target: {
+        target_type: 'topic',
+        target_key: 'topic-1',
+        bindable: true,
+        meta: {
+          chat_id: 'chat-topic',
+          chat_type: 'group',
+          chat_mode: 'topic',
+          thread_id: 'topic-1',
+          message_id: 'msg-trigger',
+        },
+      },
+    };
+
+    await expect(service.acceptTargetCreated(target)).resolves.toBe(true);
+    const provisioned = await service.provisionTarget({
+      ...target,
+      target: {
+        target_type: 'topic',
+        target_key: 'topic-1',
+        bindable: true,
+      },
+    });
+    expect(provisioned).toMatchObject({
+      target_meta: {
+        chat_id: 'chat-topic',
+        thread_id: 'topic-1',
+        message_id: 'msg-trigger',
+      },
+    });
+    const stored = await new CollaborationSpaceStore().getTarget('flow', {
+      channelId: 'primary',
+      containerKey: 'chat-topic',
+      bindingGeneration: 1,
+      targetKey: 'topic-1',
+    });
+    expect(stored).toMatchObject({
+      target_meta: { message_id: 'msg-trigger' },
+    });
+    expect(channels.targetMetas.get('topic-1')).toMatchObject({
+      chat_id: 'chat-topic',
+      chat_mode: 'topic',
+      thread_id: 'topic-1',
+      message_id: 'msg-trigger',
+    });
+  });
+
   it('accepts target close before dissolving the provisioned Team asynchronously', async () => {
     const created: CreatedTeam[] = [];
     const dissolved: string[] = [];
@@ -790,6 +863,21 @@ describe('CollaborationSpaceService', () => {
         if (match === undefined) throw new Error(`Team ${name} is not routable`);
         return task({ kind: 'team', teamName: name, leaderName: `${name}-leader` });
       },
+      async withRoutableTeamProjection<T>(name: string, task: (projection: {
+        team_name: string;
+        leader_name: string;
+        leader_agent_runtime: string;
+        runtime_cwd: string;
+      }) => Promise<T>) {
+        const match = created.find((t) => t.name === name);
+        if (match === undefined) throw new Error(`Team ${name} is not routable`);
+        return task({
+          team_name: name,
+          leader_name: `${name}-leader`,
+          leader_agent_runtime: 'agent-a',
+          runtime_cwd: `/tmp/dreamux-test/${name}`,
+        });
+      },
       async withTeamRouteClosing<T>(name: string, task: (owner: {
         kind: 'team'; teamName: string; leaderName: string;
       }) => Promise<T>) {
@@ -930,6 +1018,9 @@ describe('CollaborationSpaceService', () => {
       async withRoutableTeamOwner() {
         throw new Error('persisted TeamLeader identity is missing');
       },
+      async withRoutableTeamProjection() {
+        throw new Error('persisted TeamLeader identity is missing');
+      },
     } as unknown as TeamCollection;
     const service = new CollaborationSpaceService({
       dispatcherId: 'flow',
@@ -1004,6 +1095,21 @@ describe('CollaborationSpaceService', () => {
         const match = created.find((t) => t.name === name);
         if (match === undefined) throw new Error(`Team ${name} is not routable`);
         return task({ kind: 'team', teamName: name, leaderName: `${name}-leader` });
+      },
+      async withRoutableTeamProjection<T>(name: string, task: (projection: {
+        team_name: string;
+        leader_name: string;
+        leader_agent_runtime: string;
+        runtime_cwd: string;
+      }) => Promise<T>) {
+        const match = created.find((t) => t.name === name);
+        if (match === undefined) throw new Error(`Team ${name} is not routable`);
+        return task({
+          team_name: name,
+          leader_name: `${name}-leader`,
+          leader_agent_runtime: 'agent-a',
+          runtime_cwd: `/tmp/dreamux-test/${name}`,
+        });
       },
       async withTeamRouteClosing<T>(name: string, task: (owner: {
         kind: 'team'; teamName: string; leaderName: string;

@@ -40,6 +40,7 @@ export function targetClaimRecord(input: {
     target_key: provision.target.target_key,
     target_type: provision.target.target_type,
     target_display: display,
+    target_meta: provision.target.meta ?? {},
     team_name: teamName,
     leader_name: null,
     worktree_slug: teamName,
@@ -85,5 +86,6 @@ export function targetFromRecord(target: ProvisionedTargetRecord): ChannelTarget
     target_key: target.target_key,
     bindable: true,
     ...(target.target_display !== null ? { display: target.target_display } : {}),
+    meta: target.target_meta,
   };
 }

@@ -291,11 +291,19 @@ drains admission, then uses the existing materialized-Team runtime sweep while
 leaving durable Team and target facts intact.
 
 `DispatcherService` also owns one in-process `DispatcherCoreEventBus` and the
-Channel source leases created from it. Team, identity, and turn stores remain
-the fact owners and publish only allowlisted post-write DTOs through a narrow
-capability. Channel sessions receive no raw bus or store, and sources are
-revoked before session close. The bus retains no state and provides no queue,
-eventual-delivery guarantee, or historical query.
+Channel source leases created from it. Team, identity, turn, channel binding,
+and collaboration-space services remain the fact owners and publish only
+allowlisted post-write DTOs through a narrow capability. Binding route events
+are emitted after the channel-binding store returns a real atomic transition,
+and collaboration-space events are emitted after the space store returns its
+transition. Binding events intentionally use the same dispatcher-wide live
+broadcast as other core events; the endpoint snapshot carries the provider ref
+and opaque provider-owned metadata so the matching provider can filter and
+address the notification. Bound route events are the only core events that
+include the TeamLeader runtime id and runtime cwd. Channel sessions receive no
+raw bus or store, and sources are revoked before session close. The bus retains
+no state and provides no queue, eventual-delivery guarantee, or historical
+query.
 
 Scheduler ownership does not move into collaboration spaces. The dispatcher has
 its dispatcher scheduler, and each `TeamService` owns the TeamLeader scheduler it

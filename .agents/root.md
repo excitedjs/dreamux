@@ -146,6 +146,9 @@ history and rationale; when you need current behavior, pair them with
   Feishu `thread_id` as a neutral collaboration target, preserving ordinary
   group fail-safe routing, and authorizing TeamLeader replies against the exact
   recorded topic target.
+- [Feishu binding notification cards](proposals/feishu-binding-notification-cards.md)
+  — live Feishu cards for collaboration-space, group, and topic binding state
+  transitions through the provider-neutral Channel core-event seam.
 - [TeamLeader-scoped Team MCP transfer back](proposals/team-mcp-teamleader-transfer-back.md)
   — retained implementation design for exposing only `transfer_back` from Team MCP to
   TeamLeaders, keeping dispatcher Team lifecycle tools private, keeping explicit

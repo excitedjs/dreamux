@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type {
+  ChannelCoreEvent,
   ChannelProvider,
   ChannelProviderDescriptor,
   ChannelSession,
@@ -197,6 +198,105 @@ describe('ChannelService binding ownership', () => {
     await expect(
       service.resolveInboundBinding({ channelId: 'primary', target }),
     ).resolves.toBeNull();
+  });
+
+  it('publishes route binding events only for authoritative transitions', async () => {
+    const events: ChannelCoreEvent[] = [];
+    const service = new ChannelService({
+      dispatcherId: 'dispatcher-a',
+      config: testDreamuxConfig([
+        testDispatcherConfig({ id: 'dispatcher-a', channelId: 'primary' }),
+      ]),
+      channelProviders: channelProviderCatalog(),
+      channelLoggerFactory: () => ({}) as never,
+      coreEvents: {
+        publish(dispatcherId, event) {
+          expect(dispatcherId).toBe('dispatcher-a');
+          events.push(event);
+        },
+      },
+    });
+    const sessions = await service.build();
+    service.adopt(sessions);
+    const team = {
+      team_name: 'alpha',
+      leader_name: 'leader-a',
+      leader_agent_runtime: 'test:runtime',
+      runtime_cwd: '/tmp/runtime-alpha',
+    };
+
+    await service.bindResolvedTargetWithTransition({
+      team,
+      channelId: 'primary',
+      target: groupTarget('chat-a'),
+    });
+    await service.bindResolvedTargetWithTransition({
+      team,
+      channelId: 'primary',
+      target: {
+        ...groupTarget('chat-a'),
+        display: 'renamed',
+        meta: { chat_id: 'chat-a', refreshed: true },
+      },
+    });
+    await service.transferResolvedTargetBack({
+      channelId: 'primary',
+      target: groupTarget('chat-a'),
+    });
+    await service.bindResolvedTargetIfAvailableToOwnerWithTransition({
+      team,
+      channelId: 'primary',
+      target: groupTarget('chat-b'),
+    });
+    await service.bindResolvedTargetIfAvailableToOwnerWithTransition({
+      team,
+      channelId: 'primary',
+      target: groupTarget('chat-b'),
+    });
+
+    expect(events).toHaveLength(3);
+    expect(events[0]).toMatchObject({
+      kind: 'binding.route',
+      action: 'bound',
+      transition: 'bound',
+      endpoint: {
+        provider: PROVIDER_REF,
+        endpoint_type: 'group',
+        endpoint_key: 'chat-a',
+      },
+      current_team: {
+        team_name: 'alpha',
+        leader_agent_runtime: 'test:runtime',
+        runtime_cwd: '/tmp/runtime-alpha',
+      },
+    });
+    expect(events[1]).toMatchObject({
+      kind: 'binding.route',
+      action: 'unbound',
+      transition: 'unbound',
+      endpoint: {
+        display: 'renamed',
+        meta: { refreshed: true },
+      },
+      previous_team: {
+        team_name: 'alpha',
+        leader_name: 'leader-a',
+      },
+      current_team: null,
+    });
+    expect(events[2]).toMatchObject({
+      kind: 'binding.route',
+      action: 'bound',
+      transition: 'bound',
+      endpoint: {
+        endpoint_key: 'chat-b',
+      },
+      current_team: {
+        team_name: 'alpha',
+        leader_agent_runtime: 'test:runtime',
+        runtime_cwd: '/tmp/runtime-alpha',
+      },
+    });
   });
 
   it('requires exact message ownership before a broader binding can authorize egress', async () => {

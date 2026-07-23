@@ -84,10 +84,39 @@ export type TransferChannelBackInput = ResolveChannelInput & {
   expectedOwner?: ChannelBindingOwnerInput;
 };
 
+export type ChannelBindingBindTransitionKind =
+  | 'unchanged'
+  | 'bound'
+  | 'replaced';
+
+export interface ChannelBindingBindTransition {
+  transition: ChannelBindingBindTransitionKind;
+  binding: ChannelBinding;
+  previous: ChannelBinding | null;
+}
+
+export type ChannelBindingUnbindTransition =
+  | {
+      transition: 'unchanged';
+      binding: null;
+      previous: null;
+    }
+  | {
+      transition: 'unbound';
+      binding: ChannelBinding;
+      previous: ChannelBinding;
+    };
+
 export class ChannelBindingStore {
   private readonly writes = new KeyedAsyncQueue();
 
   async bind(input: BindChannelInput): Promise<ChannelBinding> {
+    return (await this.bindWithTransition(input)).binding;
+  }
+
+  async bindWithTransition(
+    input: BindChannelInput,
+  ): Promise<ChannelBindingBindTransition> {
     return this.bindInternal(input, 'replace');
   }
 
@@ -96,17 +125,29 @@ export class ChannelBindingStore {
    * same explicit owner is idempotent; managed claims are never converted.
    */
   async bindIfAvailableToOwner(input: BindChannelInput): Promise<ChannelBinding> {
+    return (await this.bindIfAvailableToOwnerWithTransition(input)).binding;
+  }
+
+  async bindIfAvailableToOwnerWithTransition(
+    input: BindChannelInput,
+  ): Promise<ChannelBindingBindTransition> {
     return this.bindInternal(input, 'available');
   }
 
   async claim(input: BindChannelInput & { claimId: string }): Promise<ChannelBinding> {
+    return (await this.claimWithTransition(input)).binding;
+  }
+
+  async claimWithTransition(
+    input: BindChannelInput & { claimId: string },
+  ): Promise<ChannelBindingBindTransition> {
     return this.bindInternal(input, 'claim');
   }
 
   private async bindInternal(
     input: BindChannelInput & { claimId?: string },
     mode: 'replace' | 'available' | 'claim',
-  ): Promise<ChannelBinding> {
+  ): Promise<ChannelBindingBindTransition> {
     if (!input.target.bindable) {
       throw new Error(
         `channel target ${JSON.stringify(input.target.target_key)} (type ` +
@@ -145,7 +186,7 @@ export class ChannelBindingStore {
       if (idx === -1) {
         file.bindings.push(next);
         await this.write(input.dispatcherId, file);
-        return next;
+        return { transition: 'bound', binding: next, previous: null };
       }
       const previous = file.bindings[idx]!;
       if (mode === 'available' && previous.active) {
@@ -164,7 +205,11 @@ export class ChannelBindingStore {
               'bound to another owner',
           );
         }
-        return previous;
+        return {
+          transition: 'unchanged',
+          binding: previous,
+          previous,
+        };
       }
       if (
         mode === 'claim' &&
@@ -191,15 +236,22 @@ export class ChannelBindingStore {
         ...next,
         created_at: previous.created_at,
       };
+      const transition = bindingTransition(previous, merged);
       file.bindings[idx] = merged;
       await this.write(input.dispatcherId, file);
-      return merged;
+      return { transition, binding: merged, previous };
     });
   }
 
   async transferBack(
     input: TransferChannelBackInput,
   ): Promise<ChannelBinding | null> {
+    return (await this.transferBackWithTransition(input)).binding;
+  }
+
+  async transferBackWithTransition(
+    input: TransferChannelBackInput,
+  ): Promise<ChannelBindingUnbindTransition> {
     return this.transferBackInternal(input, 'throw-on-mismatch');
   }
 
@@ -208,6 +260,14 @@ export class ChannelBindingStore {
       owner: ChannelBindingOwnerInput;
     },
   ): Promise<ChannelBinding | null> {
+    return (await this.transferBackIfOwnedWithTransition(input)).binding;
+  }
+
+  async transferBackIfOwnedWithTransition(
+    input: ResolveChannelInput & {
+      owner: ChannelBindingOwnerInput;
+    },
+  ): Promise<ChannelBindingUnbindTransition> {
     return this.transferBackInternal(
       {
         dispatcherId: input.dispatcherId,
@@ -222,6 +282,12 @@ export class ChannelBindingStore {
   async transferBackIfClaimed(
     input: ResolveChannelInput & { claimId: string },
   ): Promise<ChannelBinding | null> {
+    return (await this.transferBackIfClaimedWithTransition(input)).binding;
+  }
+
+  async transferBackIfClaimedWithTransition(
+    input: ResolveChannelInput & { claimId: string },
+  ): Promise<ChannelBindingUnbindTransition> {
     return this.transferBackInternal(
       {
         dispatcherId: input.dispatcherId,
@@ -236,7 +302,7 @@ export class ChannelBindingStore {
   private async transferBackInternal(
     input: TransferChannelBackInput & { expectedClaimId?: string },
     mode: 'throw-on-mismatch' | 'ignore-mismatch',
-  ): Promise<ChannelBinding | null> {
+  ): Promise<ChannelBindingUnbindTransition> {
     return this.writes.run(input.dispatcherId, async () => {
       const file = await this.read(input.dispatcherId);
       const binding = file.bindings.find(
@@ -245,13 +311,17 @@ export class ChannelBindingStore {
           entry.target_key === input.targetKey &&
           entry.active,
       );
-      if (binding === undefined) return null;
+      if (binding === undefined) {
+        return { transition: 'unchanged', binding: null, previous: null };
+      }
       if (
         input.expectedOwner !== undefined &&
         (binding.team_name !== input.expectedOwner.teamName ||
           binding.leader_name !== input.expectedOwner.leaderName)
       ) {
-        if (mode === 'ignore-mismatch') return null;
+        if (mode === 'ignore-mismatch') {
+          return { transition: 'unchanged', binding: null, previous: null };
+        }
         throw new Error(
           `channel target '${input.targetKey}' is bound to Team ` +
             `${JSON.stringify(binding.team_name)} leader ` +
@@ -264,13 +334,14 @@ export class ChannelBindingStore {
         input.expectedClaimId !== undefined &&
         binding.claim_id !== input.expectedClaimId
       ) {
-        return null;
+        return { transition: 'unchanged', binding: null, previous: null };
       }
+      const previous = { ...binding };
       binding.active = false;
       binding.updated_at = Date.now();
       binding.deactivated_at = binding.updated_at;
       await this.write(input.dispatcherId, file);
-      return binding;
+      return { transition: 'unbound', binding, previous };
     });
   }
 
@@ -404,6 +475,22 @@ export async function readActiveV2ChannelBindingRouteKeys(
       channelId: binding.channel_id,
       targetKey: binding.target_key,
     }));
+}
+
+function bindingTransition(
+  previous: ChannelBinding,
+  next: ChannelBinding,
+): ChannelBindingBindTransitionKind {
+  if (
+    previous.active &&
+    next.active &&
+    previous.team_name === next.team_name &&
+    previous.leader_name === next.leader_name &&
+    previous.claim_id === next.claim_id
+  ) {
+    return 'unchanged';
+  }
+  return previous.active ? 'replaced' : 'bound';
 }
 
 /**

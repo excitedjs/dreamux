@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/feishu-channel",
+      "comment": "Send serialized best-effort Feishu cards for binding route and collaboration-space transitions.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "053700@gmail.com"
+}

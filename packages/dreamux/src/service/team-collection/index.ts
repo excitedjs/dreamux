@@ -32,10 +32,13 @@ import type {
   TeamLeaderSendResult,
   TeamListRow,
   TeamRecord,
+  TeamRouteProjection,
 } from './types.js';
 import { validateTeamId } from './types.js';
 import type { AgentEntityIdentityStatus } from '../agent-entity/types.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
+import { dedupe } from './dedupe.js';
+import { routeOwnerFromProjection } from './route-projection.js';
 import {
   TeamService,
   type TeamSchedulerLifecycle,
@@ -272,6 +275,12 @@ export class TeamCollection {
    * channel route.
    */
   async requireRoutableTeamOwner(teamId: string): Promise<ChannelRouteOwner> {
+    return routeOwnerFromProjection(await this.requireRoutableTeamProjection(teamId));
+  }
+
+  async requireRoutableTeamProjection(
+    teamId: string,
+  ): Promise<TeamRouteProjection> {
     const id = validateTeamId(teamId);
     if (this.routeClosing.has(id)) {
       throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
@@ -282,11 +291,7 @@ export class TeamCollection {
     if (this.routeClosing.has(id)) {
       throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
     }
-    return {
-      kind: 'team',
-      teamName: id,
-      leaderName: service.leaderName,
-    };
+    return service.routeProjection();
   }
 
   /**
@@ -298,12 +303,20 @@ export class TeamCollection {
     teamId: string,
     task: (owner: ChannelRouteOwner) => Promise<T>,
   ): Promise<T> {
+    return this.withRoutableTeamProjection(teamId, (projection) =>
+      task(routeOwnerFromProjection(projection)));
+  }
+
+  async withRoutableTeamProjection<T>(
+    teamId: string,
+    task: (projection: TeamRouteProjection) => Promise<T>,
+  ): Promise<T> {
     const id = validateTeamId(teamId);
     return this.routeLifecycle.run(id, async () => {
       if (this.routeClosing.has(id)) {
         throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
       }
-      return task(await this.requireRoutableTeamOwner(id));
+      return task(await this.requireRoutableTeamProjection(id));
     });
   }
 
@@ -339,6 +352,14 @@ export class TeamCollection {
     lease: TeamLeaderLease,
     task: (owner: ChannelRouteOwner) => Promise<T>,
   ): Promise<T> {
+    return this.withRoutableTeamLeaderProjectionLease(lease, (projection) =>
+      task(routeOwnerFromProjection(projection)));
+  }
+
+  async withRoutableTeamLeaderProjectionLease<T>(
+    lease: TeamLeaderLease,
+    task: (projection: TeamRouteProjection) => Promise<T>,
+  ): Promise<T> {
     const id = validateTeamId(lease.teamId);
     return this.routeLifecycle.run(id, async () => {
       if (this.routeClosing.has(id)) {
@@ -356,11 +377,7 @@ export class TeamCollection {
           `Team ${JSON.stringify(id)} generation is no longer routable`,
         );
       }
-      return task({
-        kind: 'team',
-        teamName: id,
-        leaderName: service.leaderName,
-      });
+      return task(service.routeProjection());
     });
   }
 
@@ -605,19 +622,6 @@ export class TeamUnavailableError extends Error {
     super(message);
     this.name = 'TeamUnavailableError';
   }
-}
-
-/** Share one in-flight promise per key; a concurrent same-key call joins it. */
-function dedupe<T>(
-  inFlight: Map<string, Promise<T>>,
-  key: string,
-  start: () => Promise<T>,
-): Promise<T> {
-  const existing = inFlight.get(key);
-  if (existing !== undefined) return existing;
-  const promise = start().finally(() => inFlight.delete(key));
-  inFlight.set(key, promise);
-  return promise;
 }
 
 function matchesTeamHistoryQuery(

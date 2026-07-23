@@ -31,6 +31,7 @@ export function containerFromSpace(space: CollaborationSpaceRecord): ChannelCont
     container_key: space.container_key,
     ...(space.display !== null ? { display: space.display } : {}),
     ...(space.canonical_url !== null ? { canonical_url: space.canonical_url } : {}),
+    meta: space.meta,
   };
 }
 

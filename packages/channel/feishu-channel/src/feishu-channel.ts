@@ -1,5 +1,9 @@
 import type {
   ChannelContainer,
+  ChannelCoreEventSource,
+  ChannelCoreEventSubscription,
+  ChannelBindingCollaborationSpaceEvent,
+  ChannelBindingRouteEvent,
   ChannelTarget,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
@@ -8,7 +12,10 @@ import type {
   FeishuBot,
   FeishuCardActionEvent,
 } from './bot.js';
-import { createFeishuBot } from './bot.js';
+import {
+  channelOutboundToFeishuTarget,
+  createFeishuBot,
+} from './bot.js';
 import {
   listChatBots,
   recordBotAdded,
@@ -38,6 +45,10 @@ import {
 } from './feishu-session-ops.js';
 import { onMessage as sessionOnMessage } from './feishu-session-inbound.js';
 import { FeishuTargetRouter } from './feishu-target-router.js';
+import {
+  collaborationSpaceNotification,
+  routeBindingNotification,
+} from './feishu-binding-notification-card.js';
 
 /**
  * Logger shape used throughout the Feishu channel session — pino-style,
@@ -87,6 +98,7 @@ export interface FeishuChannelSessionOptions {
 }
 
 export interface FeishuInboundSubmitter {
+  readonly coreEvents?: ChannelCoreEventSource;
   submitTurn(
     input: InboundTurnInput,
     envelope: FeishuInboundEnvelope,
@@ -135,6 +147,8 @@ export class FeishuChannelSession {
   private readonly _accessMutex = new AsyncMutex();
   private readonly inactiveFence = alwaysActiveSessionFence();
   private lifecycle: FeishuSessionLifecycle | undefined;
+  private readonly coreEventSubscriptions: ChannelCoreEventSubscription[] = [];
+  private bindingNotificationQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly opts: FeishuChannelSessionOptions) {
     this.bot = opts.botFactory !== undefined
@@ -202,6 +216,7 @@ export class FeishuChannelSession {
       },
     };
     this.lifecycle = lifecycle;
+    this.subscribeBindingNotifications(submitter.coreEvents);
     try {
       await this.bot.start({
         onBotMemberAdded: async (added) => {
@@ -237,6 +252,7 @@ export class FeishuChannelSession {
       }
     } catch (error) {
       controller.abort();
+      this.unsubscribeBindingNotifications();
       if (this.lifecycle === lifecycle) this.lifecycle = undefined;
       throw error;
     }
@@ -245,6 +261,8 @@ export class FeishuChannelSession {
   async close(): Promise<void> {
     const lifecycle = this.lifecycle;
     lifecycle?.controller.abort();
+    this.unsubscribeBindingNotifications();
+    await this.bindingNotificationQueue;
     await this.bot.close();
     if (lifecycle !== undefined) {
       await Promise.allSettled([...lifecycle.inFlight]);
@@ -376,6 +394,90 @@ export class FeishuChannelSession {
     event: FeishuCardActionEvent,
   ): Promise<unknown> {
     return sessionHandleCardAction(this.handle, event);
+  }
+
+  private subscribeBindingNotifications(
+    coreEvents: ChannelCoreEventSource | undefined,
+  ): void {
+    if (coreEvents === undefined) return;
+    this.coreEventSubscriptions.push(
+      coreEvents.on('binding.route', (event) => {
+        this.enqueueBindingNotification(event);
+      }),
+    );
+    this.coreEventSubscriptions.push(
+      coreEvents.on('binding.collaboration_space', (event) => {
+        this.enqueueBindingNotification(event);
+      }),
+    );
+  }
+
+  private unsubscribeBindingNotifications(): void {
+    for (const subscription of this.coreEventSubscriptions.splice(0)) {
+      subscription.unsubscribe();
+    }
+  }
+
+  private enqueueBindingNotification(
+    event: ChannelBindingRouteEvent | ChannelBindingCollaborationSpaceEvent,
+  ): void {
+    const provider = event.kind === 'binding.route'
+      ? event.endpoint.provider
+      : event.container.provider;
+    if (provider !== BUILTIN_FEISHU_PROVIDER_REF) return;
+    const run = this.bindingNotificationQueue
+      .catch(() => undefined)
+      .then(() => this.sendBindingNotification(event));
+    this.bindingNotificationQueue = run.catch(() => undefined);
+  }
+
+  private async sendBindingNotification(
+    event: ChannelBindingRouteEvent | ChannelBindingCollaborationSpaceEvent,
+  ): Promise<void> {
+    const notification = event.kind === 'binding.route'
+      ? routeBindingNotification(event)
+      : collaborationSpaceNotification(event);
+    if (notification === null) {
+      this.opts.log.warn(
+        {
+          dispatcher_id: this.opts.dispatcherId,
+          event_kind: event.kind,
+          action: event.action,
+        },
+        'skipped Feishu binding notification with incomplete provider metadata',
+      );
+      return;
+    }
+    try {
+      const result = await this.bot.sendCard(
+        channelOutboundToFeishuTarget({
+          conversationId: notification.target.chatId,
+          ...(notification.target.messageId !== undefined
+            ? { replyTo: notification.target.messageId }
+            : {}),
+        }),
+        notification.card,
+      );
+      this.opts.log.info(
+        {
+          dispatcher_id: this.opts.dispatcherId,
+          event_kind: event.kind,
+          action: event.action,
+          message_ids: result.messageIds,
+        },
+        'Feishu binding notification sent',
+      );
+    } catch (err) {
+      this.opts.log.warn(
+        {
+          dispatcher_id: this.opts.dispatcherId,
+          event_kind: event.kind,
+          action: event.action,
+          err: errInfo(err),
+        },
+        'Feishu binding notification failed',
+      );
+    }
   }
 }
 

@@ -1,11 +1,11 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
-
 import type { DreamuxConfig } from '../../config/config.js';
 import type { ChannelService } from '../channel-service/index.js';
 import type { KeyedAsyncQueue } from '../serial-queue.js';
 import type { TeamCollection } from '../team-collection/index.js';
-import { createDefaultBoundSpace } from './default-binding.js';
+import { createDefaultBoundSpaceWithTransition } from './default-binding.js';
 import { detachActiveTargets } from './detach-active-targets.js';
+import { publishCollaborationSpaceBindTransition } from '../binding-events.js';
 import { targetIntent } from './naming.js';
 import type { CollaborationSpaceStore } from './store.js';
 import type { CollaborationRouteReconciler } from './route-reconciliation.js';
@@ -22,23 +22,20 @@ import {
   type CollaborationTargetStrictOperations,
 } from './strict-operations.js';
 import { routeClaimIdForTarget, targetClaimRecord, targetFromRecord } from './target.js';
-import type { CollaborationSpaceCloseTargetInput, CollaborationSpaceDefaultBindingInput,
-  CollaborationSpaceProvisionInput, CollaborationSpaceRecord, ProvisionedTargetRecord,
-  ProvisionedTargetView } from './types.js';
+import type {
+  CollaborationSpaceCloseTargetInput, CollaborationSpaceDefaultBindingInput,
+  CollaborationSpaceProvisionInput, CollaborationSpaceRecord,
+  ProvisionedTargetRecord, ProvisionedTargetView,
+} from './types.js';
 import { targetView } from './view.js';
-
 export interface AcceptTargetCreatedOptions {
   allowMissing?: boolean;
   defaultBinding?: CollaborationSpaceDefaultBindingInput;
   /** Internal strict operation mode; conversational notification stays lenient. */
   strict?: boolean;
 }
-export interface AcceptedTargetProvision {
-  provision: () => Promise<ProvisionedTargetRecord>;
-}
-export interface AcceptedTargetClose {
-  close: () => Promise<{ closed: boolean; target: ProvisionedTargetView | null }>;
-}
+export interface AcceptedTargetProvision { provision: () => Promise<ProvisionedTargetRecord>; }
+export interface AcceptedTargetClose { close: () => Promise<{ closed: boolean; target: ProvisionedTargetView | null }>; }
 
 export interface CollaborationTargetLifecycleOptions {
   dispatcherId: string;
@@ -46,6 +43,7 @@ export interface CollaborationTargetLifecycleOptions {
   teams: TeamCollection;
   channels: ChannelService;
   store: CollaborationSpaceStore;
+  coreEvents?: import('../dispatcher-core-events/index.js').DispatcherCoreEventPublisher;
   spaceLocks: KeyedAsyncQueue;
   targetLocks: KeyedAsyncQueue;
   routes: CollaborationRouteReconciler;
@@ -53,9 +51,7 @@ export interface CollaborationTargetLifecycleOptions {
   log: DreamuxLogger;
   isShuttingDown: () => boolean;
 }
-interface AcceptedTargetCreated {
-  space: CollaborationSpaceRecord;
-}
+interface AcceptedTargetCreated { space: CollaborationSpaceRecord; }
 
 export class CollaborationTargetLifecycle {
   constructor(private readonly opts: CollaborationTargetLifecycleOptions) {}
@@ -334,13 +330,19 @@ export class CollaborationTargetLifecycle {
         : null;
     }
     if (defaultBinding === undefined) return null;
-    return createDefaultBoundSpace({
+    const transition = await createDefaultBoundSpaceWithTransition({
       dispatcherId: this.opts.dispatcherId,
       config: this.opts.config,
       store: this.opts.store,
       provision: input,
       binding: defaultBinding,
     });
+    publishCollaborationSpaceBindTransition({
+      coreEvents: this.opts.coreEvents,
+      dispatcherId: this.opts.dispatcherId,
+      transition,
+    });
+    return transition.space;
   }
 
   private async provisionUnderLock(
@@ -375,6 +377,7 @@ export class CollaborationTargetLifecycle {
       if (existing.lifecycle_status === 'detached') return existing;
     }
     let record = existing ?? await this.createTargetClaim(space, input);
+    const target = existing === null ? input.target : targetFromRecord(record);
     const needsTeamRecreation = record.lifecycle_status !== 'active' &&
       record.phase !== 'claimed' &&
       !(await this.opts.teams.isOpenTeam(record.team_name));
@@ -388,12 +391,12 @@ export class CollaborationTargetLifecycle {
     try {
       const routed = await this.opts.channels.resolveInboundBinding({
         channelId: input.channelId,
-        target: input.target,
+        target,
       });
       if (record.lifecycle_status === 'active') {
         return this.opts.routes.reconcileActiveUnderLock(
           record,
-          input.target,
+          target,
           routed,
         );
       }
@@ -415,7 +418,7 @@ export class CollaborationTargetLifecycle {
           await this.opts.teams.create({
             name: record.team_name,
             leaderAgentRuntime: binding.leader_agent_runtime,
-            intent: targetIntent(input.target, record),
+            intent: targetIntent(target, record),
             ...(binding.identity !== null ? { identity: binding.identity } : {}),
             ...(binding.repo_cwd !== null && binding.worktree.mode === 'managed'
               ? {
@@ -436,14 +439,14 @@ export class CollaborationTargetLifecycle {
         }
       }
       this.assertNotShuttingDown();
-      return await this.opts.teams.withRoutableTeamOwner(
+      return await this.opts.teams.withRoutableTeamProjection(
         record.team_name,
-        async (owner) => {
+        async (team) => {
           this.assertNotShuttingDown();
           if (record.phase === 'claimed') {
             record = await this.opts.store.saveTarget({
               ...record,
-              leader_name: owner.leaderName,
+              leader_name: team.leader_name,
               phase: 'team_created',
               updated_at: Date.now(),
             });
@@ -451,12 +454,12 @@ export class CollaborationTargetLifecycle {
           }
           const latestBinding = await this.opts.channels.resolveInboundBinding({
             channelId: input.channelId,
-            target: input.target,
+            target,
           });
           if (
             latestBinding !== null &&
-            (latestBinding.owner.teamName !== owner.teamName ||
-              latestBinding.owner.leaderName !== owner.leaderName)
+            (latestBinding.owner.teamName !== team.team_name ||
+              latestBinding.owner.leaderName !== team.leader_name)
           ) {
             throw collaborationTargetFailure(
               strict,
@@ -465,23 +468,23 @@ export class CollaborationTargetLifecycle {
                 `${JSON.stringify(latestBinding.owner.teamName)}`,
             );
           }
-          await this.opts.channels.claimResolvedTarget({
-            owner,
+          await this.opts.channels.claimResolvedTargetWithTransition({
+            team,
             channelId: input.channelId,
-            target: input.target,
+            target,
             claimId: routeClaimIdForTarget(record),
           });
           if (this.opts.isShuttingDown()) {
             await this.opts.channels.releaseResolvedTargetIfClaimed({
               claimId: routeClaimIdForTarget(record),
               channelId: input.channelId,
-              target: input.target,
+              target,
             });
             this.assertNotShuttingDown();
           }
           const active = await this.opts.store.saveTarget({
             ...record,
-            leader_name: owner.leaderName,
+            leader_name: team.leader_name,
             phase: 'bound',
             lifecycle_status: 'active',
             last_error: null,
@@ -491,7 +494,7 @@ export class CollaborationTargetLifecycle {
             await this.opts.channels.releaseResolvedTargetIfClaimed({
               claimId: routeClaimIdForTarget(active),
               channelId: input.channelId,
-              target: input.target,
+              target,
             });
             this.assertNotShuttingDown();
           }

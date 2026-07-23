@@ -307,6 +307,84 @@ describe('ChannelBindingStore v3', () => {
     });
   });
 
+  it('reports route transition taxonomy inside the store write lock', async () => {
+    const store = new ChannelBindingStore();
+    const input = {
+      dispatcherId: DISPATCHER,
+      channelId: 'primary',
+      provider: 'builtin:feishu',
+      target: groupTarget('chat-a'),
+      teamName: 'alpha',
+      leaderName: 'alpha-leader',
+    };
+
+    await expect(store.bindWithTransition(input)).resolves.toMatchObject({
+      transition: 'bound',
+      previous: null,
+      binding: { team_name: 'alpha', claim_id: null, active: true },
+    });
+    await expect(store.bindWithTransition({
+      ...input,
+      target: {
+        ...groupTarget('chat-a'),
+        display: 'Renamed group',
+        meta: { chat_id: 'chat-a', chat_type: 'group', refreshed: true },
+      },
+    })).resolves.toMatchObject({
+      transition: 'unchanged',
+      previous: { team_name: 'alpha', claim_id: null, active: true },
+      binding: {
+        display: 'Renamed group',
+        meta: { refreshed: true },
+      },
+    });
+    await expect(store.claimWithTransition({
+      ...input,
+      claimId: 'managed-claim',
+    })).rejects.toThrow(/different active route claim/);
+    await store.transferBack({
+      dispatcherId: DISPATCHER,
+      channelId: 'primary',
+      targetKey: 'chat-a',
+    });
+    await expect(store.claimWithTransition({
+      ...input,
+      claimId: 'managed-claim',
+    })).resolves.toMatchObject({
+      transition: 'bound',
+      previous: { active: false },
+      binding: { claim_id: 'managed-claim', active: true },
+    });
+    await expect(store.bindWithTransition(input)).resolves.toMatchObject({
+      transition: 'replaced',
+      previous: { claim_id: 'managed-claim' },
+      binding: { claim_id: null },
+    });
+    await expect(store.transferBackWithTransition({
+      dispatcherId: DISPATCHER,
+      channelId: 'primary',
+      targetKey: 'chat-a',
+    })).resolves.toMatchObject({
+      transition: 'unbound',
+      previous: { active: true },
+      binding: { active: false },
+    });
+    await expect(store.transferBackWithTransition({
+      dispatcherId: DISPATCHER,
+      channelId: 'primary',
+      targetKey: 'chat-a',
+    })).resolves.toEqual({
+      transition: 'unchanged',
+      previous: null,
+      binding: null,
+    });
+    await expect(store.bindWithTransition(input)).resolves.toMatchObject({
+      transition: 'bound',
+      previous: { active: false },
+      binding: { active: true },
+    });
+  });
+
   it('transferBackIfOwned ignores owner mismatches without deactivating the new owner', async () => {
     const store = new ChannelBindingStore();
     await store.bind({

@@ -122,9 +122,7 @@ export class DispatcherService {
     const adminSocket = opts.adminSocketPath ?? defaultAdminSocketPath();
     this.agentRuntimeProviders = opts.agentRuntimeProviders;
     this.adminSocket = adminSocket;
-
     this.router = new CompletionRouter({ dispatcherId: opts.id, log: opts.log });
-
     const configuredChannelCount =
       opts.config.dispatchers.find((dispatcher) => dispatcher.id === opts.id)
         ?.channels.length ?? 0;
@@ -145,6 +143,7 @@ export class DispatcherService {
       dispatcherId: opts.id,
       config: opts.config,
       channelProviders: opts.channelProviders,
+      coreEvents: this.coreEvents.publisher,
       channelLoggerFactory: opts.channelLoggerFactory,
       ...(opts.adminSocketPath !== undefined
         ? { adminSocketPath: opts.adminSocketPath }
@@ -211,6 +210,7 @@ export class DispatcherService {
       config: opts.config,
       teams: this.teams,
       channels: this.channels,
+      coreEvents: this.coreEvents.publisher,
       log: opts.log,
       isShuttingDown: () => this.shuttingDown || this.stopping,
     });
