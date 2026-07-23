@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "BREAKING: The public Feishu formatter now returns structured Channel-owned content/ref XML and formatFeishuCreateTime now renders process-local unpadded time instead of UTC ISO. Consumers that parse formatter body text or expect ISO timestamps must adopt the new structured body and local display-time contract.",
+      "comment": "BREAKING: The public Feishu formatter now returns structured Channel-owned content/ref XML, renders downloaded inline attachments as path-only elements and non-downloaded attachments as status/key-only elements, and renders create time as process-local unpadded time instead of UTC ISO. Accepted unnamed human turns may await a best-effort contact lookup for up to two seconds. Consumers that parse formatter body text, attachment attributes, or ISO timestamps must adopt the new contracts.",
       "type": "major",
       "packageName": "@excitedjs/feishu-channel"
     }

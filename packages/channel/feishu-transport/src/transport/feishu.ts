@@ -288,7 +288,7 @@ export function createFeishuTransport(
     })
   let wsClient: lark.WSClient | undefined
   let resolvedSelfInfo: FeishuBotInfo | undefined
-  const userNames = createFeishuUserNameResolver(client, diag)
+  const userNames = createFeishuUserNameResolver(client)
 
     async function openInbound(routes: InboundRoutes): Promise<void> {
     resolvedSelfInfo = await resolveBotInfo(client, diag)

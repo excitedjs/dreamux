@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Preserve ordered Feishu text, code, and resource parts; add bounded message reads; and expose a best-effort per-transport sender-name resolver with mention caching.",
+      "comment": "Preserve ordered Feishu text, code, and resource parts; add bounded message reads; and expose a best-effort sender-name resolver with a two-second per-attempt budget, positive mention/contact caching, same-user single-flight, and retries after every nonzero response including missing scope. Failed lookups affect only the current attempt, so the next positive-cache miss calls Feishu again.",
       "type": "minor",
       "packageName": "@excitedjs/feishu-transport"
     }

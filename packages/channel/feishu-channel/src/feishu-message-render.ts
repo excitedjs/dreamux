@@ -214,26 +214,11 @@ function renderContentPart(
 }
 
 function renderAttachment(attachment: FormattedFeishuAttachment): string {
-  const attrs: Array<[string, string]> = [
-    ['type', attachment.type],
-    ...(attachment.name !== undefined
-      ? [['name', attachment.name] as [string, string]]
-      : []),
-    ...(attachment.key !== undefined
-      ? [['key', attachment.key] as [string, string]]
-      : []),
-    ...(attachment.path !== undefined
-      ? [['path', attachment.path] as [string, string]]
-      : []),
-    ['status', attachment.status],
-    ...(attachment.reason !== undefined
-      ? [['reason', attachment.reason] as [string, string]]
-      : []),
-  ];
-  const attrText = attrs
-    .map(([key, value]) => `${key}="${escapeXmlAttribute(value)}"`)
-    .join(' ');
-  return `<attachment ${attrText} />`;
+  if (attachment.status === 'downloaded' && attachment.path !== undefined) {
+    return `<attachment path="${escapeXmlAttribute(attachment.path)}" />`;
+  }
+  const key = escapeXmlAttribute(attachment.key ?? '');
+  return `<attachment status="not_downloaded" key="${key}" />`;
 }
 
 function renderCode(code: string, language?: string): string {

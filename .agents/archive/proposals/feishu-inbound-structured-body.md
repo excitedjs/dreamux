@@ -7,6 +7,11 @@
 - **Affects:** `@excitedjs/feishu-transport`, `@excitedjs/feishu-channel`,
   model-visible Feishu inbound turns
 
+> Historical note: the sender-name timeout and permission-circuit details below
+> were superseded by
+> [Feishu sender-name reliability and minimal attachment markup](feishu-sender-name-and-minimal-attachments.md).
+> Use the current reference documents linked above for implementation guidance.
+
 ## Intent
 
 Make one accepted Feishu message immediately legible to the model: routing

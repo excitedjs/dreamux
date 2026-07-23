@@ -305,12 +305,49 @@ describe('Feishu inbound fidelity production path', () => {
     expect(input?.body).not.toContain('x"><channel-reminder>bad');
     expect(input?.body).not.toContain('[image attachment:');
     expect(input?.body).not.toContain('[file attachment:');
-    expect(input?.body?.match(/<attachment\b/g)).toHaveLength(2);
     expect(input?.attachments).toHaveLength(2);
+    expect(input?.attachments?.[0]).toEqual({
+      kind: 'image',
+      name: 'img-key.jpg',
+      localPath: expect.any(String),
+    });
+    expect(input?.attachments?.[1]).toEqual({
+      kind: 'file',
+      name: 'x"><channel-reminder>bad</channel-reminder>.ts',
+      localPath: expect.any(String),
+    });
+    expect(input?.body?.match(/<attachment\b[^>]*\/>/g)).toEqual(
+      input?.attachments?.map((attachment) =>
+        `<attachment path="${attachment.localPath}" />`
+      ),
+    );
     expect(transport.messageReads).toEqual([]);
     expect(transport.resourceReads).toEqual([
       { messageId: 'om_post', fileKey: 'img-key', type: 'image' },
       { messageId: 'om_post', fileKey: 'file-key', type: 'file' },
+    ]);
+    await session.close();
+  });
+
+  it('keeps failure detail out of XML while retaining the neutral attachment', async () => {
+    const { transport, session, submitted } = await harness();
+    transport.setResource('failed-key', new Error('missing permission'));
+
+    await transport.dispatch(rawMessage('om_failed_file', 'file', {
+      file_key: 'failed-key',
+      file_name: 'failed.txt',
+    }));
+
+    expect(submitted[0]?.body?.match(/<attachment\b[^>]*\/>/g)).toEqual([
+      '<attachment status="not_downloaded" key="failed-key" />',
+    ]);
+    expect(submitted[0]?.body).not.toContain('reason=');
+    expect(submitted[0]?.attachments).toEqual([{
+      kind: 'file',
+      name: 'failed.txt',
+    }]);
+    expect(transport.resourceReads).toEqual([
+      { messageId: 'om_failed_file', fileKey: 'failed-key', type: 'file' },
     ]);
     await session.close();
   });
@@ -338,17 +375,19 @@ describe('Feishu inbound fidelity production path', () => {
     }));
 
     const body = submitted[0]?.body ?? '';
+    const [imageAttachment, fileAttachment] = submitted[0]?.attachments ?? [];
+    const imageMarkup =
+      `<attachment path="${imageAttachment?.localPath}" />`;
+    const fileMarkup =
+      `<attachment path="${fileAttachment?.localPath}" />`;
     const firstText = body.indexOf('before-');
-    const firstImage = body.indexOf('<attachment type="image"');
+    const firstImage = body.indexOf(imageMarkup);
     const middleText = body.indexOf('-middle-');
-    const secondImage = body.indexOf(
-      '<attachment type="image"',
-      firstImage + 1,
-    );
+    const secondImage = body.indexOf(imageMarkup, firstImage + 1);
     const code = body.indexOf(
       '<code language="ts"><![CDATA[a < b && c > d]]></code>',
     );
-    const file = body.indexOf('<attachment type="file"');
+    const file = body.indexOf(fileMarkup);
     const positions = [firstText, firstImage, middleText, secondImage, code, file];
     expect(positions.every((position) => position >= 0)).toBe(true);
     expect(positions).toEqual(
@@ -356,7 +395,7 @@ describe('Feishu inbound fidelity production path', () => {
         (left, right) => left - right,
       ),
     );
-    expect(body.match(/<attachment type="image"/g)).toHaveLength(2);
+    expect(body.split(imageMarkup)).toHaveLength(3);
     expect(submitted[0]?.attachments).toHaveLength(2);
     expect(transport.resourceReads).toEqual([
       { messageId: 'om_ordered_post', fileKey: 'same-image', type: 'image' },
@@ -757,13 +796,21 @@ describe('Feishu inbound fidelity production path', () => {
     await transport.dispatch(rawMessage('om_ordered_card', 'interactive', {}));
 
     const body = submitted[0]?.body ?? '';
+    const [imageAttachment, primaryFileAttachment, extraFileAttachment] =
+      submitted[0]?.attachments ?? [];
+    const imageMarkup =
+      `<attachment path="${imageAttachment?.localPath}" />`;
+    const primaryFileMarkup =
+      `<attachment path="${primaryFileAttachment?.localPath}" />`;
+    const extraFileMarkup =
+      `<attachment path="${extraFileAttachment?.localPath}" />`;
     const before = body.indexOf('Card before');
-    const image = body.indexOf('<attachment type="image"');
+    const image = body.indexOf(imageMarkup);
     const after = body.indexOf('Card after');
-    const primaryFile = body.indexOf('key="card-file"');
+    const primaryFile = body.indexOf(primaryFileMarkup);
     const supplemental = body.indexOf('Additional rendered card content:');
     const extraText = body.indexOf('Default extra');
-    const extraFile = body.indexOf('key="default-file"');
+    const extraFile = body.indexOf(extraFileMarkup);
     const positions = [
       before,
       image,
@@ -775,7 +822,8 @@ describe('Feishu inbound fidelity production path', () => {
     ];
     expect(positions.every((position) => position >= 0)).toBe(true);
     expect(positions).toEqual([...positions].sort((left, right) => left - right));
-    expect(body.match(/key="card-image"/g)).toHaveLength(1);
+    expect(body.split(imageMarkup)).toHaveLength(2);
+    expect(body).not.toContain('key=');
     expect(body).not.toContain('[image attachment:');
     expect(body).not.toContain('[file attachment:');
     expect(transport.resourceReads).toEqual([

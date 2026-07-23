@@ -47,25 +47,29 @@ position where Feishu placed it:
 ```xml
 <content>
 Inspect this archive:
-<attachment type="file" name="debug.zip" key="FILE_KEY"
-  path="/abs/cache/file" status="downloaded" />
+<attachment path="/abs/cache/file" />
 </content>
 ```
 
 When a resource cannot be downloaded, the body must be honest: no `path`, a
-short `reason`, and the resource key when available. The Channel body carries
-facts only; it does not prescribe a retrieval tool, command, output path, or
-other execution policy.
+fixed `not_downloaded` status, and the resource key. A missing Feishu key is
+represented by the empty string rather than an invented value. The Channel
+body carries facts only; it does not prescribe a retrieval tool, command,
+output path, or other execution policy.
 
 ```xml
-<attachment type="file" name="debug.zip" key="FILE_KEY" status="not_downloaded" reason="missing_scope" />
+<attachment status="not_downloaded" key="FILE_KEY" />
 ```
 
-The attachment attributes are `type`, `name`, `key`, `path`, `status`, and
-`reason`.
-`path` only appears when the local file exists and is expected to be readable by
-the Agent Runtime. `key` stays present even for downloaded resources so a cleaned cache can
-be refetched later.
+Those are the two complete model-visible attachment shapes. A downloaded
+resource exposes only its escaped local `path`; it deliberately omits the key
+once that path is available. A non-downloaded resource exposes only
+`status="not_downloaded"` and the escaped `key`. The exported
+`FormattedFeishuAttachment` continues to carry `type`, optional `name`/`key`/
+`path`, `status`, and optional `reason`; diagnostics retain the detailed
+failure reason, and the neutral runtime attachment retains the applicable
+`kind`/`name`/`localPath`. Those structured facts are not duplicated into inline
+XML.
 
 Repeated occurrences of one `(type, key)` retain repeated positional
 `<attachment>` elements but share one download/cache result and one neutral

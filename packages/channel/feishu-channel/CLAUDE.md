@@ -21,11 +21,12 @@ never on `@excitedjs/dreamux` core.
 - Download inbound attachments after the host access gate allows delivery.
 - Own attachment cache layout, path sanitization, permissions, retention, and
   cleanup policy.
-- Generate honest fallback metadata when a resource is not downloaded,
-  including its bounded resource key and failure reason without embedding a
-  tool command in the Channel prompt.
-- Serialize Codex/agent-facing inbound bodies, including the
-  `<channel source="feishu" …>` envelope and `<attachment>` blocks.
+- Generate honest structured metadata and diagnostics when a resource is not
+  downloaded. Inline XML exposes only its bounded key and the fixed
+  `not_downloaded` status, without embedding a tool command or detailed reason
+  in the Channel prompt.
+- Serialize the Channel-owned inner inbound body, including `<attachment>`
+  blocks. Agent runtimes own the outer `<channel source="feishu" …>` envelope.
 - If the channel ever needs to parse model/channel-specific markup, keep that
   deserialization here rather than in `@excitedjs/feishu-transport`.
 
@@ -50,7 +51,8 @@ never on `@excitedjs/dreamux` core.
 - Do not write private Feishu identifiers, internal domains, operator paths, or
   real resource keys into committed fixtures or docs.
 - Do not make download failure look like success. If no local readable file
-  exists, omit `path`, keep the key when available, and include a short reason.
+  exists, render `status="not_downloaded"` with the escaped key (empty when
+  missing); retain the short reason in structured diagnostics, not inline XML.
 
 ## Owner-Only Pairing Approval Card
 
@@ -110,17 +112,19 @@ Design constraints:
 Keep the core attachment block short and stable:
 
 ```xml
-<attachment type="file" name="debug.zip" key="FILE_KEY" path="/abs/cache/debug.zip" status="downloaded" />
+<attachment path="/abs/cache/debug.zip" />
 ```
 
 For fallback:
 
 ```xml
-<attachment type="file" name="debug.zip" key="FILE_KEY" status="not_downloaded" reason="missing_scope" />
+<attachment status="not_downloaded" key="FILE_KEY" />
 ```
 
-Optional fields such as size, mime, or preview may be added only when they are
-useful and bounded. They are not part of the minimal core contract.
+These are the complete inline shapes. Do not add type, name, key, status, or
+reason to a downloaded element, and do not add type, name, path, or reason to a
+non-downloaded element. `FormattedFeishuAttachment`, diagnostics, and neutral
+runtime attachments retain the applicable structured facts.
 
 ## Upstream / Downstream Contract
 

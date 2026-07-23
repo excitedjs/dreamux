@@ -19,6 +19,7 @@ import {
   commentFromBatchQuery,
   createFeishuTransport,
 } from '../src/transport/feishu'
+import { FEISHU_USER_NAME_RESOLUTION_TIMEOUT_MS } from '../src/transport/user-name'
 import type { TransportLogger } from '../src/transport/diagnostics'
 
 afterEach(() => {
@@ -680,24 +681,28 @@ describe('createFeishuTransport — sender names', () => {
     expect(stub.contactUserGet).toHaveBeenCalledTimes(1)
   })
 
-  test('opens the per-instance permission circuit only for code 99991672', async () => {
+  test('retries every missing-scope miss and still resolves later users', async () => {
     const stub = stubClient()
     stub.contactUserGet.mockResolvedValueOnce({ code: 99991672 } as never)
+    stub.contactUserGet.mockResolvedValueOnce({ code: 99991672 } as never)
+    stub.contactUserGet.mockResolvedValueOnce({
+      code: 0,
+      data: { user: { name: 'Other user' } },
+    } as never)
+    stub.contactUserGet.mockResolvedValueOnce({
+      code: 0,
+      data: { user: { name: 'Recovered' } },
+    } as never)
     const transport = buildTransport(stub)
 
     await expect(transport.resolveUserName?.('ou_first')).resolves.toBeUndefined()
-    await expect(transport.resolveUserName?.('ou_second')).resolves.toBeUndefined()
+    await expect(transport.resolveUserName?.('ou_first')).resolves.toBeUndefined()
+    await expect(transport.resolveUserName?.('ou_second')).resolves.toBe('Other user')
+    await expect(transport.resolveUserName?.('ou_first')).resolves.toBe('Recovered')
+    await expect(transport.resolveUserName?.('ou_first')).resolves.toBe('Recovered')
+    await expect(transport.resolveUserName?.('ou_second')).resolves.toBe('Other user')
 
-    expect(stub.contactUserGet).toHaveBeenCalledTimes(1)
-
-    const otherStub = stubClient()
-    otherStub.contactUserGet.mockResolvedValueOnce({
-      code: 0,
-      data: { user: { name: 'Other app' } },
-    } as never)
-    const otherTransport = buildTransport(otherStub)
-    await expect(otherTransport.resolveUserName?.('ou_second')).resolves.toBe('Other app')
-    expect(otherStub.contactUserGet).toHaveBeenCalledTimes(1)
+    expect(stub.contactUserGet).toHaveBeenCalledTimes(4)
   })
 
   test('retries after a transient failure and does not share caches across instances', async () => {
@@ -734,7 +739,9 @@ describe('createFeishuTransport — sender names', () => {
     const transport = buildTransport(stub)
 
     const timedOut = transport.resolveUserName?.('ou_slow')
-    await vi.advanceTimersByTimeAsync(801)
+    await vi.advanceTimersByTimeAsync(
+      FEISHU_USER_NAME_RESOLUTION_TIMEOUT_MS + 1,
+    )
     await expect(timedOut).resolves.toBeUndefined()
     await expect(transport.resolveUserName?.('ou_slow')).resolves.toBe('Later')
     expect(stub.contactUserGet).toHaveBeenCalledTimes(2)
@@ -750,7 +757,9 @@ describe('createFeishuTransport — sender names', () => {
     const transport = buildTransport(stub)
 
     const timedOut = transport.resolveUserName?.('ou_race')
-    await vi.advanceTimersByTimeAsync(801)
+    await vi.advanceTimersByTimeAsync(
+      FEISHU_USER_NAME_RESOLUTION_TIMEOUT_MS + 1,
+    )
     await expect(timedOut).resolves.toBeUndefined()
 
     const current = transport.resolveUserName?.('ou_race')
@@ -781,7 +790,7 @@ describe('createFeishuTransport — sender names', () => {
     expect(stub.contactUserGet).toHaveBeenCalledTimes(1)
   })
 
-  test('does not let an aborted lookup mutate the permission circuit', async () => {
+  test('does not let an aborted lookup cache a late name', async () => {
     const stub = stubClient()
     const abortedRequest = deferred<unknown>()
     stub.contactUserGet.mockImplementationOnce(() => abortedRequest.promise as never)
@@ -799,7 +808,11 @@ describe('createFeishuTransport — sender names', () => {
     controller.abort()
     await expect(aborted).resolves.toBeUndefined()
 
-    abortedRequest.resolve({ code: 99991672 })
+    await expect(transport.resolveUserName?.('ou_aborted')).resolves.toBe('Recovered')
+    abortedRequest.resolve({
+      code: 0,
+      data: { user: { name: 'Stale' } },
+    })
     await Promise.resolve()
     await expect(transport.resolveUserName?.('ou_aborted')).resolves.toBe('Recovered')
     expect(stub.contactUserGet).toHaveBeenCalledTimes(2)

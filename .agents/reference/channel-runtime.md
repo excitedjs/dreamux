@@ -76,6 +76,14 @@ Rich posts preserve Markdown/code, links, mentions, rules, and inline resource
 positions. The Channel wraps visible content in `<content>`, renders each
 resource occurrence once as an inline `<attachment>` at its original position,
 and de-duplicates only the download/cache result and neutral runtime attachment.
+Downloaded occurrences render exactly `<attachment path="..." />`.
+Non-downloaded occurrences render exactly
+`<attachment status="not_downloaded" key="..." />`; a missing Feishu key is an
+empty escaped value. The exported structured attachment retains
+type/name/key/path/status/reason details, diagnostics retain the detailed
+failure reason, and the neutral runtime attachment retains applicable
+`kind`/`name`/`localPath` facts. Those facts are not repeated in the model-visible
+XML.
 Code is Channel-owned `<code><![CDATA[...]]></code>` with safe `]]>` splitting,
 so source operators remain literal without opening the surrounding XML. Cards
 expose only visible labels/text/options and exclude callback or hidden values.
@@ -104,14 +112,18 @@ without entering the current session ledger.
 Sender names are best-effort and never gate delivery. Event-provided names win;
 known/trusted bot state names bot senders without a contact call; accepted
 mention pairs seed a positive transport-local cache; and an unnamed human may
-use `contact.v3.user.get` with at most 800 ms of the remaining inbound budget.
-Only Feishu code `99991672` opens the per-transport missing-scope circuit.
-Per-user monotonic versions and the session abort signal prevent a timed-out or
-revoked lookup from overwriting a newer cached/mention name or opening that
-circuit after close. Unknown names are omitted. `create_time` is rendered in
-the process-local time zone as unpadded `YYYY-M-d H:m:s`. The final concise
-Channel reminder permits a direct substantive reply when no preliminary work
-is needed and asks for an acknowledgement only before longer work.
+use `contact.v3.user.get` with at most 2,000 ms of the remaining inbound budget.
+The transport caches only positive names and separately tracks same-user
+in-flight requests and per-user versions; it does not negatively cache or
+globally suppress missing-scope responses.
+Feishu code `99991672`, other nonzero responses, timeouts, and transient errors
+affect only the current attempt, so the next positive-cache miss retries.
+Per-user monotonic versions, mention precedence, and the session abort signal
+prevent a timed-out or revoked lookup from overwriting a newer cached/mention
+name. Unknown names are omitted. `create_time` is rendered in the process-local
+time zone as unpadded `YYYY-M-d H:m:s`. The final concise Channel reminder
+permits a direct substantive reply when no preliminary work is needed and asks
+for an acknowledgement only before longer work.
 
 Key source:
 

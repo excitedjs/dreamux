@@ -1,7 +1,4 @@
-import type { TransportDiagnostics } from './diagnostics.js'
-
-export const FEISHU_USER_NAME_RESOLUTION_TIMEOUT_MS = 800
-export const FEISHU_CONTACT_SCOPE_MISSING_CODE = 99991672
+export const FEISHU_USER_NAME_RESOLUTION_TIMEOUT_MS = 2_000
 
 export interface FeishuUserNameEntry {
   openId: string
@@ -39,12 +36,10 @@ export interface FeishuContactUserClient {
 
 export function createFeishuUserNameResolver(
   client: FeishuContactUserClient,
-  diagnostics: TransportDiagnostics,
 ): FeishuUserNameResolver {
   const names = new Map<string, string>()
   const versions = new Map<string, number>()
   const inFlight = new Map<string, PendingUserNameLookup>()
-  let scopeUnavailable = false
 
   const advanceVersion = (openId: string): number => {
     const version = (versions.get(openId) ?? 0) + 1
@@ -71,15 +66,12 @@ export function createFeishuUserNameResolver(
         path: { user_id: openId },
         params: { user_id_type: 'open_id' },
       })
-      if (response.code === FEISHU_CONTACT_SCOPE_MISSING_CODE) {
-        return { scopeUnavailable: true }
-      }
       if (response.code !== undefined && response.code !== 0) return {}
       const name = response.data?.user?.name
       return typeof name === 'string' && name !== '' ? { name } : {}
     } catch {
       // Sender names are optional. Transient SDK/network failures degrade for
-      // this message and deliberately do not open the permission circuit.
+      // this attempt; the next uncached message is free to retry.
       return {}
     }
   }
@@ -94,7 +86,6 @@ export function createFeishuUserNameResolver(
       if (isAborted(options.signal)) return undefined
       const cached = names.get(openId)
       if (cached !== undefined) return cached
-      if (scopeUnavailable) return undefined
 
       let pending = inFlight.get(openId)
       if (pending === undefined) {
@@ -126,12 +117,7 @@ export function createFeishuUserNameResolver(
       ) {
         return names.get(openId)
       }
-      if (result.scopeUnavailable === true) {
-        scopeUnavailable = true
-        diagnostics.diagnostic(
-          'contact:user.base:readonly is unavailable; sender-name lookup is disabled for this Feishu transport instance',
-        )
-      } else if (result.name !== undefined) {
+      if (result.name !== undefined) {
         names.set(openId, result.name)
       }
       return names.get(openId)
@@ -146,7 +132,6 @@ interface PendingUserNameLookup {
 
 interface FeishuUserNameFetchResult {
   name?: string
-  scopeUnavailable?: boolean
 }
 
 function isAborted(signal: AbortSignal | undefined): boolean {

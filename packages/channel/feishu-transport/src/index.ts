@@ -93,10 +93,7 @@ export {
   type InboundRoutes,
   type RouteHandler,
 } from './transport/feishu.js'
-export {
-  FEISHU_CONTACT_SCOPE_MISSING_CODE,
-  FEISHU_USER_NAME_RESOLUTION_TIMEOUT_MS,
-} from './transport/user-name.js'
+export { FEISHU_USER_NAME_RESOLUTION_TIMEOUT_MS } from './transport/user-name.js'
 export type { TransportLogger } from './transport/diagnostics.js'
 
 // ── small shared util ──
