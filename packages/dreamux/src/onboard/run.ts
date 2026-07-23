@@ -13,8 +13,10 @@ import {
 import {
   dispatcherDir,
   logsRoot,
+  probeStandardExecDirs,
   setRuntimeConfig,
   stateRoot,
+  type ExecDirProbe,
 } from '../platform/paths.js';
 import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
 import { ChannelProviderCatalog } from '../channel/catalog.js';
@@ -51,6 +53,7 @@ import type {
 type EffectiveOnboardAnswers = OnboardAnswers & {
   nodeBin: string;
   providerBinChecks: ProviderBinCheck[];
+  fallbackDirs: string[];
 };
 
 export interface RunOnboardOptions {
@@ -62,6 +65,8 @@ export interface RunOnboardOptions {
   uid?: number;
   env?: NodeJS.ProcessEnv;
   nodeProbe?: ServiceNodeProbe;
+  /** Optional Homebrew-directory presence probe (tests). */
+  execDirProbe?: ExecDirProbe;
 }
 
 export async function runOnboard(
@@ -127,28 +132,33 @@ export async function runOnboard(
     : await loadConfig({ configDir: answers.configDir });
   if (loaded !== null) setRuntimeConfig(loaded.config);
   const catalogs = loaded === null ? null : catalogsFromLoadedConfig(loaded);
+  const fallbackDirs = answers.registerService
+    ? await probeStandardExecDirs(
+        { platform, homeDir, env },
+        options.execDirProbe,
+      )
+    : [];
   const providerBinChecks =
     answers.registerService && !answers.dryRun && loaded !== null && catalogs !== null
       ? await resolveProviderBinChecks(
           loaded.config,
           catalogs,
           env,
-          platform,
-          homeDir,
+          fallbackDirs,
         )
       : [];
-  // Persist the effective resolved env/homeDir/platform (not the optional raw
-  // options values) so managedServicePath renders the captured session PATH and
-  // the preflight uses the exact same inputs. In normal CLI use options.env is
-  // undefined, so env falls back to process.env — that ambient PATH must be
-  // persisted into the service unit.
+  // Persist the effective env/homeDir and captured fallback dirs (not the
+  // optional raw option values) so managedServicePath renders the same PATH
+  // used by provider resolution. In normal CLI use options.env is undefined, so
+  // env falls back to process.env — that ambient PATH must be persisted into
+  // the service unit.
   const effectiveAnswers = {
     ...answers,
     nodeBin: serviceNodeBin,
     providerBinChecks,
     homeDir,
-    platform,
     env,
+    fallbackDirs,
   };
 
   const doctor = await runDispatcherDoctor(
@@ -221,8 +231,7 @@ async function resolveProviderBinChecks(
   config: DreamuxConfig,
   catalogs: ProviderDiagnosticCatalogs,
   env: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform,
-  homeDir: string,
+  fallbackDirs: string[],
 ): Promise<ProviderBinCheck[]> {
   const checks = providerBinChecksForConfig({
     config,
@@ -235,7 +244,7 @@ async function resolveProviderBinChecks(
   // service unit also includes. Resolve against that augmented PATH so the
   // daemon-install preflight and the running service agree. process.env is
   // never mutated; platform/homeDir/env are passed explicitly by the caller.
-  const resolveEnv = withUserLocalBinPath(env, homeDir, platform);
+  const resolveEnv = withUserLocalBinPath(env, fallbackDirs);
   return await Promise.all(
     checks.map(async (check) => ({
       ...check,

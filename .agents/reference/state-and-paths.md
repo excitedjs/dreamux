@@ -150,11 +150,16 @@ Order, built by `buildServicePath()` in
 2. Captured interactive-session `PATH` from the env the operator ran
    `onboard`/`daemon install` under, in its original order.
 3. Fresh-install fallback dirs: `$XDG_BIN_HOME` when set, `$HOME/.local/bin`,
-   and portable platform system dirs (`standardExecDirs`).
+   portable platform system dirs (`standardExecDirs`), and the platform
+   Homebrew candidate only when an async presence probe succeeds.
 
 Entries are de-duplicated while preserving first occurrence. Re-running
 `daemon install` after switching nvm/pyenv/Homebrew environments regenerates the
-service PATH.
+service PATH. `runOnboard` and `runDaemonInstall` probe the optional Homebrew
+candidate once and reuse the captured fallback list for provider resolution,
+launch validation, and service-unit rendering. A Homebrew directory already in
+the captured session `PATH` is preserved even when it is not added as a
+Dreamux-supplied fallback.
 
 `withServicePath(env, input)` returns a copy of `env` with `PATH` set to
 `buildServicePath(input)`; it never mutates the caller's env or `process.env`.
@@ -165,10 +170,11 @@ The callers (`runOnboard` in `onboard/run.ts` and `runDaemonInstall` in
 `daemon/install.ts`) resolve the *effective* values before persisting them into
 `ServiceInstallAnswers`/`EffectiveOnboardAnswers`: `env` is
 `options.env ?? process.env`, `homeDir` is `options.homeDir ?? homedir()`, and
-`platform` is `options.platform ?? process.platform`. In normal CLI use
-`options.env` is undefined, so the ambient `process.env.PATH` is captured into
-the service unit. Both the resolve-time PATH and the service-unit PATH use these
-same effective values.
+the probed fallback list is captured from
+`options.platform ?? process.platform`. In normal CLI use `options.env` is
+undefined, so the ambient `process.env.PATH` is captured into the service unit.
+Both the resolve-time PATH and the service-unit PATH use these same effective
+values.
 
 Resolve-time binary resolution uses `withUserLocalBinPath()` in
 `/packages/dreamux/src/onboard/service.ts`, a thin wrapper that builds the
@@ -180,7 +186,7 @@ dirs and delegates to `buildServicePath()`. Both share the single source.
 Key source:
 
 - `/packages/dreamux/src/platform/paths.ts` (`buildServicePath`,
-  `withServicePath`, `standardExecDirs`, `userLocalBinDirs`,
+  `withServicePath`, `standardExecDirs`, `probeStandardExecDirs`, `userLocalBinDirs`,
   `systemExecDirs`, `dedupeExecDirs`)
 - `/packages/dreamux/src/onboard/service.ts` (`managedServicePath`,
   `managedServiceEnvironment`, `withUserLocalBinPath`,

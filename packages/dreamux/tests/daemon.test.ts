@@ -25,6 +25,7 @@ import {
 import type { CommandRunner } from '../src/onboard/types.js';
 import {
   buildServicePath,
+  probeStandardExecDirs,
   resetRuntimeConfig,
   stateRoot,
   standardExecDirs,
@@ -268,6 +269,7 @@ describe('managed service working directory ownership', () => {
   it('reports the missing working directory without creating it on dry-run', async () => {
     const workingDirectory = stateRoot();
     const runner = new WorkingDirectoryOrderRunner(workingDirectory);
+    const probed: string[] = [];
 
     const result = await runDaemonInstall({
       runner,
@@ -275,10 +277,15 @@ describe('managed service working directory ownership', () => {
       homeDir: join(root, 'home'),
       dryRun: true,
       env: { ...process.env },
+      execDirProbe: async (path) => {
+        probed.push(path);
+        return false;
+      },
     });
 
     expect(existsSync(workingDirectory)).toBe(false);
     expect(runner.registrationChecks).toEqual([]);
+    expect(probed).toEqual([LINUXBREW_BIN]);
     expect(result.files).toContainEqual({
       path: workingDirectory,
       status: 'created',
@@ -364,6 +371,17 @@ describe('daemon install (stable service Node, issue #83)', () => {
 // ---------------------------------------------------------------------------
 
 const localBin = (home: string) => join(home, '.local', 'bin');
+const LINUXBREW_BIN = '/home/linuxbrew/.linuxbrew/bin';
+
+function linuxFallbackDirs(
+  home: string,
+  includeLinuxbrew = false,
+): string[] {
+  return [
+    ...standardExecDirs({ platform: 'linux', homeDir: home, env: {} }),
+    ...(includeLinuxbrew ? [LINUXBREW_BIN] : []),
+  ];
+}
 
 /** Synthetic session PATH entries that mimic nvm / pyenv / Homebrew layouts. */
 const SESSION_PATH_PARTS = [
@@ -462,19 +480,9 @@ describe('userLocalBinDirs and systemExecDirs (explicit deterministic fallbacks)
     ).toEqual([localBin(home)]);
   });
 
-  it('systemExecDirs are deterministic per platform', () => {
-    expect(systemExecDirs('darwin')).toEqual([
-      '/usr/local/bin',
-      '/usr/bin',
-      '/bin',
-      '/opt/homebrew/bin',
-    ]);
-    expect(systemExecDirs('linux')).toEqual([
-      '/usr/local/bin',
-      '/usr/bin',
-      '/bin',
-      '/home/linuxbrew/.linuxbrew/bin',
-    ]);
+  it('systemExecDirs are deterministic and exclude optional Homebrew prefixes', () => {
+    expect(systemExecDirs('darwin')).toEqual(['/usr/local/bin', '/usr/bin', '/bin']);
+    expect(systemExecDirs('linux')).toEqual(['/usr/local/bin', '/usr/bin', '/bin']);
   });
 
   it('standardExecDirs combines user-local + system in order', () => {
@@ -485,8 +493,53 @@ describe('userLocalBinDirs and systemExecDirs (explicit deterministic fallbacks)
       '/usr/local/bin',
       '/usr/bin',
       '/bin',
-      '/home/linuxbrew/.linuxbrew/bin',
     ]);
+  });
+
+  it('adds the platform Homebrew candidate only when the async probe finds it', async () => {
+    const home = '/home/example';
+    const absentProbes: string[] = [];
+    await expect(
+      probeStandardExecDirs(
+        { platform: 'linux', homeDir: home, env: {} },
+        async (path) => {
+          absentProbes.push(path);
+          return false;
+        },
+      ),
+    ).resolves.toEqual(linuxFallbackDirs(home));
+    expect(absentProbes).toEqual([LINUXBREW_BIN]);
+
+    const presentProbes: string[] = [];
+    await expect(
+      probeStandardExecDirs(
+        { platform: 'linux', homeDir: home, env: {} },
+        async (path) => {
+          presentProbes.push(path);
+          return true;
+        },
+      ),
+    ).resolves.toEqual(linuxFallbackDirs(home, true));
+    expect(presentProbes).toEqual([LINUXBREW_BIN]);
+
+    const darwinHome = '/Users/example';
+    const darwinProbes: string[] = [];
+    await expect(
+      probeStandardExecDirs(
+        { platform: 'darwin', homeDir: darwinHome, env: {} },
+        async (path) => {
+          darwinProbes.push(path);
+          return true;
+        },
+      ),
+    ).resolves.toEqual([
+      localBin(darwinHome),
+      '/usr/local/bin',
+      '/usr/bin',
+      '/bin',
+      '/opt/homebrew/bin',
+    ]);
+    expect(darwinProbes).toEqual(['/opt/homebrew/bin']);
   });
 });
 
@@ -494,7 +547,8 @@ describe('withUserLocalBinPath (resolve-time effective PATH)', () => {
   it('includes the captured session PATH ahead of fallbacks and never mutates process.env', () => {
     const home = '/home/example';
     const before = process.env['PATH'];
-    const env = withUserLocalBinPath({ PATH: SESSION_PATH }, home, 'linux');
+    const fallbackDirs = linuxFallbackDirs(home, true);
+    const env = withUserLocalBinPath({ PATH: SESSION_PATH }, fallbackDirs);
     // process.env is untouched.
     expect(process.env['PATH']).toBe(before);
 
@@ -503,15 +557,15 @@ describe('withUserLocalBinPath (resolve-time effective PATH)', () => {
     expect(parts.slice(0, 6)).toEqual(SESSION_PATH_PARTS);
     // Fallback dirs follow.
     expect(parts).toContain(localBin(home));
-    expect(parts).toContain('/home/linuxbrew/.linuxbrew/bin');
+    expect(parts).toContain(LINUXBREW_BIN);
     // De-duplicated: a second call yields the same PATH.
-    const again = withUserLocalBinPath(env, home, 'linux');
+    const again = withUserLocalBinPath(env, fallbackDirs);
     expect(again['PATH']).toBe(env['PATH']);
   });
 
   it('works with an empty session PATH (fresh install)', () => {
     const home = '/home/example';
-    const env = withUserLocalBinPath({ PATH: '' }, home, 'linux');
+    const env = withUserLocalBinPath({ PATH: '' }, linuxFallbackDirs(home));
     const parts = env['PATH']?.split(delimiter) ?? [];
     // Only fallback dirs, no empty entries.
     expect(parts).toContain(localBin(home));
@@ -579,7 +633,10 @@ describe('provider binary resolution from captured session PATH', () => {
     // With the session PATH captured via withUserLocalBinPath, it resolves.
     const resolved = await resolveServiceExecutable(
       'local-agent',
-      withUserLocalBinPath({ PATH: sessionPath }, home, 'linux'),
+      withUserLocalBinPath(
+        { PATH: sessionPath },
+        linuxFallbackDirs(home),
+      ),
     );
     expect(resolved).toBe(binPath);
   });
@@ -591,7 +648,10 @@ describe('provider binary resolution from captured session PATH', () => {
     // Session PATH does not include .local/bin; the fallback dirs do.
     const resolved = await resolveServiceExecutable(
       'local-agent',
-      withUserLocalBinPath({ PATH: '/usr/bin:/bin' }, home, 'linux'),
+      withUserLocalBinPath(
+        { PATH: '/usr/bin:/bin' },
+        linuxFallbackDirs(home),
+      ),
     );
     expect(resolved).toBe(binPath);
   });
@@ -609,8 +669,8 @@ describe('captured session PATH appears in systemd and launchd service config', 
       startService: true,
       dryRun: false,
       homeDir: home,
-      platform: 'linux' as const,
       env,
+      fallbackDirs: linuxFallbackDirs(home, true),
     };
   }
 
@@ -633,7 +693,7 @@ describe('captured session PATH appears in systemd and launchd service config', 
     expect(parts).toContain('/opt/homebrew/bin');
     // Fallback dirs are present.
     expect(parts).toContain(localBin(home));
-    expect(parts).toContain('/home/linuxbrew/.linuxbrew/bin');
+    expect(parts).toContain(LINUXBREW_BIN);
     // De-duplicated: /usr/local/bin appears exactly once.
     expect(parts.filter((p) => p === '/usr/local/bin')).toHaveLength(1);
   });
@@ -728,6 +788,50 @@ describe('re-running daemon install refreshes the persisted service PATH', () =>
     expect(unitPathB).toContain(join(home, '.nvm', 'versions', 'node', 'v24.1.0', 'bin'));
     expect(unitPathB).not.toContain(join(home, '.nvm', 'versions', 'node', 'v22.7.0', 'bin'));
     expect(unitPathB).not.toBe(unitPathA);
+  });
+
+  it('probes Linuxbrew once per install and persists it only when present', async () => {
+    const runner = new InstallRunner();
+    const nodeProbe: ServiceNodeProbe = {
+      realpath: async (path) => path,
+      isExecutable: async () => false,
+    };
+    const home = join(root, 'home');
+    const env = {
+      PATH: '/usr/bin:/bin',
+      HOME: home,
+      CODEX_HOST_CODEX_BIN: process.execPath,
+    };
+    const probes: string[] = [];
+
+    await runDaemonInstall({
+      runner,
+      platform: 'linux',
+      homeDir: home,
+      nodeProbe,
+      env,
+      execDirProbe: async (path) => {
+        probes.push(path);
+        return false;
+      },
+    });
+    expect(probes).toEqual([LINUXBREW_BIN]);
+    expect(readUnitPath().split(delimiter)).not.toContain(LINUXBREW_BIN);
+
+    probes.length = 0;
+    await runDaemonInstall({
+      runner,
+      platform: 'linux',
+      homeDir: home,
+      nodeProbe,
+      env,
+      execDirProbe: async (path) => {
+        probes.push(path);
+        return true;
+      },
+    });
+    expect(probes).toEqual([LINUXBREW_BIN]);
+    expect(readUnitPath().split(delimiter)).toContain(LINUXBREW_BIN);
   });
 });
 

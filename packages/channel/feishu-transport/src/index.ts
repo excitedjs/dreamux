@@ -19,6 +19,7 @@ export type { OutboundTarget } from './contract/outbound.js'
 // ── parse/ — Feishu content → forwardable text + comment-event decode ──
 export {
   parseInbound,
+  mergeInteractiveInbound,
   narrowMetaFromEvent,
   toChannelInbound,
   applyMentions,
@@ -29,6 +30,7 @@ export {
   type ChannelInbound,
   type InboundResource,
   type InboundResourceType,
+  type InboundContentPart,
 } from './parse/content.js'
 export {
   normalizeBotMemberAddedEvent,
@@ -67,6 +69,7 @@ export {
   type FeishuTransport,
   type FeishuCredentials,
   type FeishuTransportOptions,
+  type FeishuWebSocketRegistration,
   type FeishuAppOwnerIdentity,
   type FeishuSendResult,
   type FeishuCreateGroupInput,
@@ -81,6 +84,11 @@ export {
   type FeishuMessageResourceRequest,
   type FeishuMessageResourceResponse,
   type FeishuMessageResourceType,
+  type FeishuMessageReader,
+  type FeishuMessageReadItem,
+  type FeishuMessageReadMode,
+  type FeishuMessageReadRequest,
+  type FeishuMessageReadResponse,
   type InboundRoutes,
   type RouteHandler,
 } from './transport/feishu.js'

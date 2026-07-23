@@ -113,6 +113,7 @@ const noSystemNodeProbe: ServiceNodeProbe = {
   realpath: async (path) => path,
   isExecutable: async () => false,
 };
+const LINUXBREW_BIN = '/home/linuxbrew/.linuxbrew/bin';
 
 function writeGlobalCodexAuth(answers: OnboardAnswers): void {
   const authPath = join(dispatcherCodexHome(answers.dispatcherId), 'auth.json');
@@ -323,6 +324,7 @@ describe('dreamux onboard', () => {
       '/usr/bin',
       '/bin',
     ].join(':');
+    const probes: string[] = [];
 
     await runOnboard({
       answers,
@@ -331,6 +333,10 @@ describe('dreamux onboard', () => {
       homeDir: join(root, 'home'),
       env: { PATH: sessionPath, CODEX_ACCESS_TOKEN: 'interactive-token-test' },
       nodeProbe: noSystemNodeProbe,
+      execDirProbe: async (path) => {
+        probes.push(path);
+        return false;
+      },
     });
 
     const serviceUnit = readFileSync(
@@ -350,9 +356,48 @@ describe('dreamux onboard', () => {
     expect(parts).toContain(join(root, 'home', '.pyenv', 'shims'));
     // Fallback dirs are present last.
     expect(parts).toContain(join(root, 'home', '.local', 'bin'));
+    expect(parts).not.toContain(LINUXBREW_BIN);
+    expect(probes).toEqual([LINUXBREW_BIN]);
     // De-duplicated: /usr/bin appears exactly once (from session PATH; fallback
     // does not re-add it).
     expect(parts.filter((p) => p === '/usr/bin')).toHaveLength(1);
+  });
+
+  it('preserves Linuxbrew when the operator already supplied it in session PATH', async () => {
+    const runner = new FakeRunner();
+    const answers = testAnswers({
+      configDir: join(root, 'config'),
+      dreamuxBin: '/usr/local/bin/dreamux',
+    });
+    writeGlobalCodexAuth(answers);
+
+    await runOnboard({
+      answers,
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {
+        PATH: [LINUXBREW_BIN, '/usr/bin', '/bin'].join(':'),
+        CODEX_ACCESS_TOKEN: 'interactive-token-test',
+      },
+      nodeProbe: noSystemNodeProbe,
+      execDirProbe: async () => false,
+    });
+
+    const serviceUnit = readFileSync(
+      join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service'),
+      'utf8',
+    );
+    const servicePath =
+      serviceUnit
+        .split('\n')
+        .find((line) => line.startsWith('Environment=PATH='))
+        ?.slice('Environment=PATH='.length) ?? '';
+    expect(
+      servicePath
+        .split(':')
+        .filter((entry) => entry === LINUXBREW_BIN),
+    ).toHaveLength(1);
   });
 
   it('captures the ambient process.env PATH when options.env is omitted (normal CLI use)', async () => {

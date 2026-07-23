@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   ChannelInboundEnvelope,
@@ -91,6 +91,7 @@ describe('Feishu topic routing', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     rmSync(stateDir, { recursive: true, force: true });
   });
 
@@ -442,6 +443,47 @@ describe('Feishu topic routing', () => {
       { target: { target_key: 'topic-a' } },
       { target: { target_key: 'topic-b' } },
     ]);
+  });
+
+  it('bounds a hung mode lookup and clears it so a later request can retry', async () => {
+    vi.useFakeTimers();
+    const warnings: Warning[] = [];
+    let calls = 0;
+    const router = new FeishuTargetRouter({
+      chatModes: {
+        async getChatMode() {
+          calls += 1;
+          if (calls === 1) return new Promise(() => undefined);
+          return 'topic';
+        },
+      },
+      log: logger(warnings),
+    });
+
+    const timedOut = router.projectInbound(event({
+      messageId: 'msg-timeout',
+      chatId: 'chat-timeout',
+      threadId: 'topic-timeout',
+    }));
+    await vi.advanceTimersByTimeAsync(2_001);
+    await expect(timedOut).resolves.toMatchObject({
+      target: { target_type: 'group', target_key: 'chat-timeout' },
+    });
+
+    await expect(router.projectInbound(event({
+      messageId: 'msg-retry',
+      chatId: 'chat-timeout',
+      threadId: 'topic-retry',
+    }))).resolves.toMatchObject({
+      target: { target_type: 'topic', target_key: 'topic-retry' },
+    });
+    expect(calls).toBe(2);
+    expect(warnings).toMatchObject([{
+      fields: {
+        chat_id: 'chat-timeout',
+        reason: 'chat_mode_lookup_timed_out',
+      },
+    }]);
   });
 
   it('does not query or record topic routing for access-gated input', async () => {

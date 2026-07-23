@@ -127,13 +127,41 @@ function stubClient() {
     getReadableStream: () => Readable.from([Buffer.from('resource bytes')]),
     headers: { 'content-type': 'application/octet-stream' },
   }))
+  const messageGet = vi.fn(async () => ({
+    data: {
+      items: [{
+        message_id: 'om_read',
+        msg_type: 'interactive',
+        body: { content: JSON.stringify({ title: 'visible' }) },
+        upper_message_id: 'om_parent',
+        sender: {
+          id: 'ou_sender',
+          sender_type: 'user',
+          sender_name: 'Ada',
+        },
+        mentions: [{
+          key: '@_user_1',
+          id: 'ou_mentioned',
+          id_type: 'open_id',
+          name: 'Bob',
+        }],
+      }],
+    },
+  }))
   const chatCreate = vi.fn(async () => ({ data: { chat_id: 'oc_created' } }))
   const chatGet = vi.fn(async () => ({ data: { chat_mode: 'group' } }))
   const memberCreate = vi.fn(async () => ({}))
   const request = vi.fn(async () => ({}))
+  const contactUserGet = vi.fn(async () => ({
+    code: 0,
+    data: { user: { name: 'Ada' } },
+  }))
   const stub = {
     im: {
-      v1: { messageResource: { get: messageResourceGet } },
+      v1: {
+        message: { get: messageGet },
+        messageResource: { get: messageResourceGet },
+      },
       message: { create, reply, patch, update },
       messageReaction: { create: reactionCreate, delete: reactionDelete },
       chat: { create: chatCreate, get: chatGet, members: { create: memberCreate } },
@@ -142,7 +170,11 @@ function stubClient() {
       fileComment: { batchQuery: vi.fn(async () => ({ data: { items: [] } })) },
       meta: { batchQuery: vi.fn(async () => ({ data: { metas: [] } })) },
     },
+    contact: {
+      v3: { user: { get: contactUserGet } },
+    },
     request,
+    contactUserGet,
   }
   return {
     client: stub as unknown as lark.Client,
@@ -153,15 +185,28 @@ function stubClient() {
     reactionCreate,
     reactionDelete,
     messageResourceGet,
+    messageGet,
     chatCreate,
     chatGet,
     memberCreate,
     request,
+    contactUserGet,
   }
 }
 
 function buildTransport(stub: ReturnType<typeof stubClient>) {
-  return createFeishuTransport({ appId: 'app', appSecret: 'secret' }, { client: stub.client })
+  const noop = (): void => undefined
+  const logger: TransportLogger = {
+    error: noop,
+    warn: noop,
+    info: noop,
+    debug: noop,
+    trace: noop,
+  }
+  return createFeishuTransport(
+    { appId: 'app', appSecret: 'secret' },
+    { client: stub.client, logger },
+  )
 }
 
 describe('createFeishuTransport — send', () => {
@@ -478,6 +523,155 @@ describe('createFeishuTransport — message resources', () => {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
     }
     expect(Buffer.concat(chunks).toString('utf8')).toBe('resource bytes')
+  })
+})
+
+describe('createFeishuTransport — message reads', () => {
+  test('omits card_msg_content_type for the default representation', async () => {
+    const stub = stubClient()
+    const transport = buildTransport(stub)
+
+    const result = await transport.readMessage({
+      messageId: 'om_read',
+      cardContent: 'default',
+    })
+
+    expect(stub.messageGet).toHaveBeenCalledWith({
+      path: { message_id: 'om_read' },
+      params: { user_id_type: 'open_id' },
+    })
+    expect(result).toEqual({
+      items: [{
+        messageId: 'om_read',
+        messageType: 'interactive',
+        content: JSON.stringify({ title: 'visible' }),
+        mentions: [{
+          key: '@_user_1',
+          id: { open_id: 'ou_mentioned' },
+          name: 'Bob',
+        }],
+        deleted: false,
+        malformed: false,
+      }],
+    })
+  })
+
+  test('requests the structured card representation explicitly', async () => {
+    const stub = stubClient()
+    const transport = buildTransport(stub)
+
+    await transport.readMessage({
+      messageId: 'om_read',
+      cardContent: 'user_card_content',
+    })
+
+    expect(stub.messageGet).toHaveBeenCalledWith({
+      path: { message_id: 'om_read' },
+      params: {
+        user_id_type: 'open_id',
+        card_msg_content_type: 'user_card_content',
+      },
+    })
+  })
+
+  test('marks incomplete SDK items as malformed without throwing', async () => {
+    const stub = stubClient()
+    stub.messageGet.mockResolvedValueOnce({
+      data: {
+        items: [{
+          message_id: '',
+          msg_type: '',
+          body: {},
+          deleted: true,
+        }],
+      },
+    } as never)
+    const transport = buildTransport(stub)
+
+    await expect(transport.readMessage({ messageId: 'om_bad' })).resolves.toEqual({
+      items: [{
+        messageId: '',
+        messageType: '',
+        content: '',
+        mentions: [],
+        deleted: true,
+        malformed: true,
+      }],
+    })
+  })
+
+  test('accepts an empty merged-forward root body because descendants carry its content', async () => {
+    const stub = stubClient()
+    stub.messageGet.mockResolvedValueOnce({
+      data: {
+        items: [{
+          message_id: 'om_forward',
+          msg_type: 'merge_forward',
+          body: { content: '' },
+        }],
+      },
+    } as never)
+    const transport = buildTransport(stub)
+
+    const result = await transport.readMessage({ messageId: 'om_forward' })
+
+    expect(result.items[0]).toMatchObject({
+      messageId: 'om_forward',
+      messageType: 'merge_forward',
+      malformed: false,
+    })
+  })
+})
+
+describe('createFeishuTransport — sender names', () => {
+  test('queries contact.v3.user.get on every call without caching', async () => {
+    const stub = stubClient()
+    const transport = buildTransport(stub)
+
+    await expect(transport.resolveUserName?.('ou_sender')).resolves.toBe('Ada')
+    await expect(transport.resolveUserName?.('ou_sender')).resolves.toBe('Ada')
+
+    expect(stub.contactUserGet).toHaveBeenCalledTimes(2)
+    expect(stub.contactUserGet).toHaveBeenCalledWith({
+      path: { user_id: 'ou_sender' },
+      params: { user_id_type: 'open_id' },
+    })
+  })
+
+  test('returns no name for every nonzero or malformed response', async () => {
+    const stub = stubClient()
+    stub.contactUserGet.mockResolvedValueOnce({ code: 99991672 } as never)
+    stub.contactUserGet.mockResolvedValueOnce({ code: 7 } as never)
+    stub.contactUserGet.mockResolvedValueOnce({ code: 0, data: {} } as never)
+    const transport = buildTransport(stub)
+
+    await expect(transport.resolveUserName?.('ou_sender')).resolves.toBeUndefined()
+    await expect(transport.resolveUserName?.('ou_sender')).resolves.toBeUndefined()
+    await expect(transport.resolveUserName?.('ou_sender')).resolves.toBeUndefined()
+    expect(stub.contactUserGet).toHaveBeenCalledTimes(3)
+  })
+
+  test('leaves thrown SDK failures for the Channel attempt boundary', async () => {
+    const stub = stubClient()
+    stub.contactUserGet.mockRejectedValueOnce(new Error('transient'))
+    const transport = buildTransport(stub)
+
+    await expect(transport.resolveUserName?.('ou_sender')).rejects.toThrow('transient')
+  })
+
+  test('returns no name when the client has no contact API or id is empty', async () => {
+    const stub = stubClient()
+    const withoutContact = {
+      ...stub.client,
+      contact: undefined,
+    } as lark.Client
+    const transport = createFeishuTransport(
+      { appId: 'app', appSecret: 'secret' },
+      { client: withoutContact },
+    )
+
+    await expect(transport.resolveUserName?.('ou_sender')).resolves.toBeUndefined()
+    await expect(transport.resolveUserName?.('')).resolves.toBeUndefined()
   })
 })
 

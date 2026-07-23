@@ -32,9 +32,12 @@ import {
   type FeishuMessageResourceFetcher,
   type FeishuMessageResourceRequest,
   type FeishuMessageResourceResponse,
+  type FeishuMessageReadRequest,
+  type FeishuMessageReadResponse,
   type FeishuAppOwnerIdentity,
   type FeishuChatMode,
   type FeishuTransport,
+  type InboundContentPart,
   type InboundResource,
   type Mention,
   type OutboundTarget,
@@ -61,6 +64,8 @@ export interface FeishuInboundEvent {
   /** Diagnostic reply ancestry; never used as a topic identity fallback. */
   rootId?: string;
   parentId?: string;
+  /** Post-gate, best-effort type of the actionable reply/quote parent. */
+  parentMessageType?: string;
   senderId: string;
   /**
    * The sender's `union_id`, when Feishu provides it. Diagnostic only — it is
@@ -71,9 +76,8 @@ export interface FeishuInboundEvent {
   senderUnionId?: string;
   senderType: string;
   /**
-   * Best-effort display name seam for future enrichers. Feishu
-   * im.message.receive_v1 does not provide this in the native event envelope,
-   * so the normal value is intentionally an empty string.
+   * Best-effort event display name. Feishu normally omits it, so the accepted
+   * inbound path may later enrich an empty value through the transport seam.
    */
   senderName: string;
   messageType: string;
@@ -81,8 +85,12 @@ export interface FeishuInboundEvent {
   rawContent: string;
   /** Parsed text after the core's content flattening / mention substitution. */
   parsedText: string;
+  /** Untrusted visible content in Feishu source order. */
+  contentParts?: InboundContentPart[];
   /** Structured Feishu resources discovered in the message content. */
   resources?: InboundResource[];
+  /** The local projection omitted or could not resolve visible content. */
+  contentIncomplete?: boolean;
   mentions: Mention[];
   createTime: string;
   /** The full original Feishu event payload (for storage / audit). */
@@ -145,6 +153,12 @@ export interface FeishuBot extends FeishuMessageResourceFetcher {
   fetchMessageResource(
     request: FeishuMessageResourceRequest,
   ): Promise<FeishuMessageResourceResponse>;
+  /** Optional for externally supplied bots; absence keeps event-only content. */
+  readMessage?(
+    request: FeishuMessageReadRequest,
+  ): Promise<FeishuMessageReadResponse>;
+  /** Optional contact lookup for an accepted human sender. */
+  resolveUserName?(openId: string): Promise<string | undefined>;
   resolveAppOwner(): Promise<FeishuAppOwnerIdentity>;
   close(): Promise<void>;
 }
@@ -269,6 +283,25 @@ export function createFeishuBot(
       return transport.fetchMessageResource(request);
     },
 
+    ...(transport.readMessage !== undefined
+      ? {
+          readMessage(
+            request: FeishuMessageReadRequest,
+          ): Promise<FeishuMessageReadResponse> {
+            return transport.readMessage?.(request) ?? Promise.resolve({ items: [] });
+          },
+        }
+      : {}),
+
+    ...(transport.resolveUserName !== undefined
+      ? {
+          resolveUserName(openId: string): Promise<string | undefined> {
+            return transport.resolveUserName?.(openId) ??
+              Promise.resolve(undefined);
+          },
+        }
+      : {}),
+
     resolveAppOwner(): Promise<FeishuAppOwnerIdentity> {
       return transport.resolveAppOwner();
     },
@@ -347,7 +380,9 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
     messageType,
     rawContent,
     parsedText: payload.text,
+    ...(parsed.parts !== undefined ? { contentParts: parsed.parts } : {}),
     resources: parsed.resources ?? [],
+    ...(parsed.incomplete === true ? { contentIncomplete: true } : {}),
     mentions,
     createTime,
     raw,

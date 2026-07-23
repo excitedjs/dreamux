@@ -9,7 +9,6 @@ import { expandHome } from '../config/config.js';
 import {
   buildServicePath,
   logsRoot,
-  standardExecDirs,
   stateRoot,
   userLocalBinDirs,
   withServicePath,
@@ -58,10 +57,13 @@ export interface ServiceInstallAnswers {
   dryRun: boolean;
   /** Home directory the service runs under; resolves user-local bin dirs. Defaults to `homedir()`. */
   homeDir?: string;
-  /** Platform selecting conventional system bin dirs. Defaults to `process.platform`. */
-  platform?: NodeJS.Platform;
   /** Environment to read XDG_BIN_HOME from; path builders never read process.env. */
   env?: NodeJS.ProcessEnv;
+  /**
+   * Standard fallback dirs captured once by the async onboard/daemon-install
+   * entry point. Reused for provider resolution and service rendering.
+   */
+  fallbackDirs: string[];
 }
 
 export interface ServiceInstallOptions {
@@ -296,22 +298,16 @@ export async function resolveServiceExecutable(
 /**
  * Builds the resolve-time effective PATH used to resolve bare provider/agent
  * binaries during `onboard`/`daemon install`. Captured session PATH leads, then
- * fresh-install fallback dirs (XDG_BIN_HOME / ~/.local/bin + platform dirs).
+ * the caller's captured fresh-install fallback dirs.
  * Stable Dreamux-owned dirs are added at service render time (see
  * managedServicePath). Delegates to {@link withServicePath} in paths.ts. Never
  * mutates env.
  */
 export function withUserLocalBinPath(
   env: NodeJS.ProcessEnv,
-  homeDir?: string,
-  platform?: NodeJS.Platform,
+  fallbackDirs: string[],
 ): NodeJS.ProcessEnv {
   const sessionPath = env['PATH'] ?? '';
-  const fallbackDirs = standardExecDirs({
-    platform: platform ?? process.platform,
-    homeDir: homeDir ?? homedir(),
-    env,
-  });
   return withServicePath(env, { stableDirs: [], sessionPath, fallbackDirs });
 }
 
@@ -329,12 +325,11 @@ function managedServicePath(answers: ServiceInstallAnswers): string {
     ...absoluteDir(answers.dreamuxBin),
   ];
   const sessionPath = answers.env?.['PATH'] ?? '';
-  const fallbackDirs = standardExecDirs({
-    platform: answers.platform ?? process.platform,
-    homeDir: answers.homeDir ?? homedir(),
-    env: answers.env ?? {},
+  return buildServicePath({
+    stableDirs,
+    sessionPath,
+    fallbackDirs: answers.fallbackDirs,
   });
-  return buildServicePath({ stableDirs, sessionPath, fallbackDirs });
 }
 
 function serviceProviderBinChecks(

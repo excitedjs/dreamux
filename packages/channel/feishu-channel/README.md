@@ -16,14 +16,16 @@ of the Lark SDK.
 - **Access / trust** behavior: the @-mention/allowlist gate and the chat-bots
   store, read and written under a host-supplied state directory.
 - **Inbound normalization**: turning Feishu events into agent-facing channel
-  results, including the `<channel source="feishu" …>` envelope and
-  `<attachment>` blocks.
+  results, including the Channel-owned inner body and inline `<attachment>`
+  blocks. Agent runtimes own the outer `<channel source="feishu" …>` envelope.
 - **Topic routing**: verifying `chat_mode=topic`, projecting `thread_id` as a
   neutral collaboration target, and recording exact per-message targets for
   scoped TeamLeader replies.
 - **Attachment handling**: downloading inbound attachments after the host access
   gate allows delivery, plus cache layout, path sanitization, permissions, and
-  honest fallback references when a resource is not downloaded.
+  honest fallback references when a resource is not downloaded. Inline XML is
+  path-only for a downloaded resource and status/key-only for a non-downloaded
+  resource; structured formatter results retain the detailed metadata.
 - The Feishu MCP **tool backing**: the `reply` / `react` / `list_chat_bots`
   tool parsing and handlers.
 

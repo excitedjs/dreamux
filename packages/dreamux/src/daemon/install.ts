@@ -38,7 +38,11 @@ import {
   type ProviderDiagnosticCatalogs,
 } from '../provider-diagnostics.js';
 import { dreamuxBinPath } from '../platform/package-bin.js';
-import { setRuntimeConfig } from '../platform/paths.js';
+import {
+  probeStandardExecDirs,
+  setRuntimeConfig,
+  type ExecDirProbe,
+} from '../platform/paths.js';
 
 export interface DaemonInstallOptions {
   startService?: boolean;
@@ -50,6 +54,8 @@ export interface DaemonInstallOptions {
   env?: NodeJS.ProcessEnv;
   /** Stable-Node selection probe (tests). */
   nodeProbe?: ServiceNodeProbe;
+  /** Optional Homebrew-directory presence probe (tests). */
+  execDirProbe?: ExecDirProbe;
 }
 
 export interface DaemonInstallResult {
@@ -94,6 +100,11 @@ export async function runDaemonInstall(
   };
   setRuntimeConfig(config);
 
+  const fallbackDirs = await probeStandardExecDirs(
+    { platform, homeDir, env },
+    options.execDirProbe,
+  );
+  const resolveEnv = withUserLocalBinPath(env, fallbackDirs);
   const providerBinChecks = await Promise.all(
     serviceProviderBinChecks(config, env, catalogs).map(async (check) => ({
       ...check,
@@ -101,7 +112,7 @@ export async function runDaemonInstall(
         ? check.bin
         : await resolveServiceExecutable(
             check.bin,
-            withUserLocalBinPath(env, homeDir, platform),
+            resolveEnv,
           ),
     })),
   );
@@ -116,11 +127,11 @@ export async function runDaemonInstall(
         runner,
         ...(options.nodeProbe !== undefined ? { probe: options.nodeProbe } : {}),
       });
-  // Persist the effective resolved env/homeDir/platform (not the optional raw
-  // options values) so managedServicePath renders the captured session PATH and
-  // the preflight uses the exact same inputs. In normal CLI use options.env is
-  // undefined, so env falls back to process.env — that ambient PATH must be
-  // persisted into the service unit.
+  // Persist the effective env/homeDir and captured fallback dirs (not the
+  // optional raw option values) so managedServicePath renders the same PATH
+  // used by provider resolution. In normal CLI use options.env is undefined, so
+  // env falls back to process.env — that ambient PATH must be persisted into
+  // the service unit.
   const answers: ServiceInstallAnswers = {
     configDir: globalConfigDir(),
     dreamuxBin: dreamuxBinPath(env),
@@ -129,8 +140,8 @@ export async function runDaemonInstall(
     startService,
     dryRun,
     homeDir,
-    platform,
     env,
+    fallbackDirs,
   };
 
   if (!dryRun) {

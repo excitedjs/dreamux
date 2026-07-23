@@ -7,7 +7,6 @@ import type {
   CreateBotOptions,
   FeishuBot,
   FeishuCardActionEvent,
-  FeishuInboundEvent,
 } from './bot.js';
 import { createFeishuBot } from './bot.js';
 import {
@@ -17,6 +16,10 @@ import {
 } from './chat-bots-store.js';
 import { BUILTIN_FEISHU_PROVIDER_REF } from './provider-ref.js';
 import { AsyncMutex } from './lib/mutex.js';
+import {
+  alwaysActiveSessionFence,
+  type FeishuSessionFence,
+} from './feishu-inbound-work.js';
 import {
   FEISHU_TOOLS,
   type FeishuMcpListChatBotsInput,
@@ -110,6 +113,12 @@ export class FeishuChannelCapabilityError extends Error {
   }
 }
 
+interface FeishuSessionLifecycle {
+  controller: AbortController;
+  fence: FeishuSessionFence;
+  inFlight: Set<Promise<unknown>>;
+}
+
 export class FeishuChannelSession {
   readonly ref = BUILTIN_FEISHU_PROVIDER_REF;
   readonly bot: FeishuBot;
@@ -124,6 +133,8 @@ export class FeishuChannelSession {
   };
   private readonly targetRouter: FeishuTargetRouter;
   private readonly _accessMutex = new AsyncMutex();
+  private readonly inactiveFence = alwaysActiveSessionFence();
+  private lifecycle: FeishuSessionLifecycle | undefined;
 
   constructor(private readonly opts: FeishuChannelSessionOptions) {
     this.bot = opts.botFactory !== undefined
@@ -148,6 +159,10 @@ export class FeishuChannelSession {
    * this cost-free.
    */
   private get handle(): SessionHandle {
+    return this.handleForFence(this.lifecycle?.fence ?? this.inactiveFence);
+  }
+
+  private handleForFence(fence: FeishuSessionFence): SessionHandle {
     return sessionHandle(
       this.opts,
       this.state,
@@ -155,29 +170,86 @@ export class FeishuChannelSession {
       this._accessMutex,
       this.bot.botDisplayName ?? 'Dreamux bot',
       this.targetRouter,
+      fence,
     );
   }
 
+  private async trackLifecycleTask<T>(
+    lifecycle: FeishuSessionLifecycle,
+    task: Promise<T>,
+  ): Promise<T> {
+    lifecycle.inFlight.add(task);
+    try {
+      return await task;
+    } finally {
+      lifecycle.inFlight.delete(task);
+    }
+  }
+
   async start(submitter: FeishuInboundSubmitter): Promise<void> {
-    await this.bot.start({
-      onBotMemberAdded: async (added) => {
-        await recordBotAdded(
-          this.opts.stateDir,
-          added.chatId,
-          added.eventId,
-        );
+    if (this.lifecycle !== undefined && !this.lifecycle.controller.signal.aborted) {
+      throw new Error('Feishu channel session is already started');
+    }
+    const controller = new AbortController();
+    const lifecycle: FeishuSessionLifecycle = {
+      controller,
+      inFlight: new Set(),
+      fence: {
+        signal: controller.signal,
+        isCurrent: () =>
+          this.lifecycle === lifecycle &&
+          !controller.signal.aborted,
       },
-      onMessage: async (event) => {
-        await this.onMessage(event, submitter);
-      },
-      onCardAction: async (event) => {
-        return this.onCardAction(event);
-      },
-    });
+    };
+    this.lifecycle = lifecycle;
+    try {
+      await this.bot.start({
+        onBotMemberAdded: async (added) => {
+          if (!lifecycle.fence.isCurrent()) return;
+          await this.trackLifecycleTask(
+            lifecycle,
+            recordBotAdded(
+              this.opts.stateDir,
+              added.chatId,
+              added.eventId,
+            ),
+          );
+        },
+        onMessage: async (event) => {
+          if (!lifecycle.fence.isCurrent()) return;
+          await this.trackLifecycleTask(
+            lifecycle,
+            sessionOnMessage(
+              this.handleForFence(lifecycle.fence),
+              event,
+              submitter,
+            ),
+          );
+        },
+        onCardAction: async (event) => {
+          if (!lifecycle.fence.isCurrent()) return {};
+          return this.trackLifecycleTask(lifecycle, this.onCardAction(event));
+        },
+      });
+      if (!lifecycle.fence.isCurrent()) {
+        await this.bot.close();
+        throw new Error('Feishu channel session was closed during startup');
+      }
+    } catch (error) {
+      controller.abort();
+      if (this.lifecycle === lifecycle) this.lifecycle = undefined;
+      throw error;
+    }
   }
 
   async close(): Promise<void> {
+    const lifecycle = this.lifecycle;
+    lifecycle?.controller.abort();
     await this.bot.close();
+    if (lifecycle !== undefined) {
+      await Promise.allSettled([...lifecycle.inFlight]);
+      if (this.lifecycle === lifecycle) this.lifecycle = undefined;
+    }
   }
 
   async handleMcpTool(
@@ -298,13 +370,6 @@ export class FeishuChannelSession {
   ): Promise<{ reaction_id: string }> {
     const r = await sessionAddReaction(this.handle, input);
     return { reaction_id: r };
-  }
-
-  private async onMessage(
-    event: FeishuInboundEvent,
-    submitter: FeishuInboundSubmitter,
-  ): Promise<void> {
-    return sessionOnMessage(this.handle, event, submitter);
   }
 
   private async onCardAction(

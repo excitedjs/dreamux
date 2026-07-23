@@ -125,11 +125,13 @@ default-branch dispatch dance:
   scans nothing is not a gate). Each tarball is scanned for the public-repo red
   line (internal Feishu identifiers, the internal `/data00` mount, an absolute
   `/home/<user>/` builder/developer path) plus a `package/package.json` sanity
-  check. The known **public** example `/home/volta/` (documented in
-  `onboard/service.ts` and compiled into dist) is allow-listed so it cannot
-  false-fail the gate; any other home path still fails. The audited tarball is
-  representative of the upload because both come from the same deterministic
-  `dist` and `files` allow-list.
+  check. The known **public** examples `/home/volta/` (documented in
+  `onboard/service.ts` and compiled into dist) and `/home/linuxbrew/` (the
+  standard Linuxbrew prefix, presence-gated by `platform/paths.ts`) are
+  allow-listed so they cannot false-fail the gate; any other extracted
+  `/home/<user>/` token still fails. The audited tarball is representative of
+  the upload because both come from the same deterministic `dist` and `files`
+  allow-list.
 
 ## Consequences
 

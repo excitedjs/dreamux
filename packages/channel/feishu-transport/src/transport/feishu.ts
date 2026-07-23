@@ -1,4 +1,3 @@
-
 import * as lark from '@larksuiteoapi/node-sdk'
 import type { Readable } from 'node:stream'
 
@@ -20,9 +19,21 @@ import {
   type TransportDiagnostics,
   type TransportLogger,
 } from './diagnostics.js'
+import {
+  normalizeMessageReadItem,
+  type FeishuMessageReader,
+  type FeishuMessageReadRequest,
+  type FeishuMessageReadResponse,
+} from './message-read.js'
+export type {
+  FeishuMessageReadItem,
+  FeishuMessageReadMode,
+  FeishuMessageReadRequest,
+  FeishuMessageReadResponse,
+  FeishuMessageReader,
+} from './message-read.js'
 
 const WS_HANDSHAKE_TIMEOUT_MS = 15_000
-
 const WS_STARTUP_GRACE_MS = 30_000
 
 // application/v6 owner.type: enterprise-member owner for a custom app.
@@ -36,16 +47,13 @@ export interface FeishuCreateGroupInput {
   name: string
   userOpenIds: string[]
 }
-
 export interface FeishuCreateGroupResult {
   chatId: string
 }
-
 export interface FeishuInviteMembersInput {
   chatId: string
   userOpenIds: string[]
 }
-
 export interface FeishuInviteMembersResult {
   addedOpenIds: string[]
 }
@@ -97,6 +105,29 @@ function feishuChatClient(client: lark.Client): {
     }
   }
   return { chat: root.im?.chat }
+}
+
+type FeishuContactUserRequest = { path: { user_id: string }; params: { user_id_type: 'open_id' } }
+type FeishuContactUserResponse = { code?: number; data?: { user?: { name?: string } } }
+type FeishuContactUserApi = { get(input: FeishuContactUserRequest): Promise<FeishuContactUserResponse> }
+
+function contactUserApi(client: lark.Client): FeishuContactUserApi | undefined {
+  return (client as unknown as {
+    contact?: { v3?: { user?: FeishuContactUserApi } }
+  }).contact?.v3?.user
+}
+
+async function fetchUserName(client: lark.Client, openId: string):
+  Promise<string | undefined> {
+  const user = contactUserApi(client)
+  if (openId === '' || user === undefined) return undefined
+  const response = await user.get({
+    path: { user_id: openId },
+    params: { user_id_type: 'open_id' },
+  })
+  if (response.code !== undefined && response.code !== 0) return undefined
+  const name = response.data?.user?.name
+  return typeof name === 'string' && name !== '' ? name : undefined
 }
 
 export interface FeishuDocCommentReply {
@@ -220,15 +251,12 @@ export interface FeishuTransport {
     addReaction(messageId: string, emoji: string): Promise<string>
     removeReaction(messageId: string, reactionId: string): Promise<void>
     editText(messageId: string, text: string): Promise<void>
-    fetchDocComment(
-    fileToken: string,
-    fileType: string,
-    commentId: string,
-  ): Promise<FeishuDocComment | null>
+    fetchDocComment(fileToken: string, fileType: string, commentId: string): Promise<FeishuDocComment | null>
     fetchDocMeta(fileToken: string, fileType: string): Promise<FeishuDocMeta | null>
-    fetchMessageResource(
-    request: FeishuMessageResourceRequest,
-  ): Promise<FeishuMessageResourceResponse>
+    fetchMessageResource(request: FeishuMessageResourceRequest): Promise<FeishuMessageResourceResponse>
+    readMessage?(request: FeishuMessageReadRequest): Promise<FeishuMessageReadResponse>
+    /** Optional best-effort contact lookup for an accepted human sender. */
+    resolveUserName?(openId: string): Promise<string | undefined>
     resolveAppOwner(): Promise<FeishuAppOwnerIdentity>
     close(): Promise<void>
 }
@@ -241,12 +269,19 @@ export interface FeishuCredentials {
 export interface FeishuTransportOptions {
     client?: lark.Client
     logger?: TransportLogger
+    /** Narrow test/embedding edge replacing only WebSocket route registration. */
+    webSocketRegistration?: FeishuWebSocketRegistration
+}
+
+export interface FeishuWebSocketRegistration {
+  open(routes: InboundRoutes): Promise<{ openId?: string; appName?: string } | void>
+  close(): void | Promise<void>
 }
 
 export function createFeishuTransport(
   creds: FeishuCredentials,
   options: FeishuTransportOptions = {},
-): FeishuTransport {
+): FeishuTransport & FeishuMessageReader {
   const diag = createTransportDiagnostics(options.logger)
   const client =
     options.client ??
@@ -258,7 +293,12 @@ export function createFeishuTransport(
   let wsClient: lark.WSClient | undefined
   let resolvedSelfInfo: FeishuBotInfo | undefined
 
-    async function openInbound(routes: InboundRoutes): Promise<void> {
+  async function openInbound(routes: InboundRoutes): Promise<void> {
+    if (options.webSocketRegistration !== undefined) {
+      resolvedSelfInfo = (await options.webSocketRegistration.open(routes)) ||
+        undefined
+      return
+    }
     resolvedSelfInfo = await resolveBotInfo(client, diag)
     const dispatcher = new lark.EventDispatcher({ logger: diag.sdkLogger }).register(routes)
     let markReady: () => void = () => {}
@@ -468,13 +508,38 @@ export function createFeishuTransport(
       }
     },
 
+    async readMessage(
+      request: FeishuMessageReadRequest,
+    ): Promise<FeishuMessageReadResponse> {
+      const res = await client.im.v1.message.get({
+        path: { message_id: request.messageId },
+        params: {
+          user_id_type: 'open_id',
+          ...(request.cardContent === 'user_card_content'
+            ? { card_msg_content_type: 'user_card_content' }
+            : {}),
+        },
+      })
+      return {
+        items: (res.data?.items ?? []).map(normalizeMessageReadItem),
+      }
+    },
+
+    resolveUserName(openId: string): Promise<string | undefined> {
+      return fetchUserName(client, openId)
+    },
+
     async resolveAppOwner(): Promise<FeishuAppOwnerIdentity> {
       return resolveAppOwner(client, diag, creds.appId)
     },
 
     async close(): Promise<void> {
       try {
-        wsClient?.close()
+        if (options.webSocketRegistration !== undefined) {
+          await options.webSocketRegistration.close()
+        } else {
+          wsClient?.close()
+        }
       } catch (err) {
         diag.diagnostic('error while closing the Feishu WebSocket:', err)
       }

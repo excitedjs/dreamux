@@ -36,22 +36,32 @@ import { AsyncMutex } from './lib/mutex.js';
 import type { FeishuChannelSessionOptions } from './feishu-channel.js';
 import type { PeerBot } from './chat-bots-store.js';
 import type { FeishuTargetRouter } from './feishu-target-router.js';
+import {
+  runFeishuBoundedOperation,
+} from './feishu-bounded-operation.js';
+import {
+  alwaysActiveSessionFence,
+  type FeishuInboundWorkContext,
+  type FeishuSessionFence,
+} from './feishu-inbound-work.js';
 
 // ─────────────────────────────────────────────────────────────────────────
 // In-memory state & constants (mirror the class fields)
 // ─────────────────────────────────────────────────────────────────────────
 
 export const MAX_PENDING_RECEIVED_REACTION_CLEARS = 1024;
+const FEISHU_REACTION_OPERATION_TIMEOUT_MS = 2_000;
 
 /**
  * Appended to every delivered inbound's content as a standing guardrail: a
  * channel message must be answered with the channel reply tool, not a plain
- * assistant message. English to match the other model-facing strings in this
- * layer (`FEISHU_SKILL_FALLBACK_NOTE`, the `<group_bots>` note). Placed at the
- * very end of the body the runtime wraps into its `<channel>` block.
+ * assistant message. A separate acknowledgement is required only when work is
+ * needed before the substantive answer, so immediately answerable requests get
+ * one direct visible reply. Placed at the very end of the body the runtime
+ * wraps into its `<channel>` block.
  */
 export const CHANNEL_REMINDER =
-  '<channel-reminder>A message from this channel must be answered with the channel reply tool, not a plain assistant message. Acknowledge it with a brief reply through that tool first, then start the work.</channel-reminder>';
+  '<channel-reminder>Reply through the channel reply tool, never as plain assistant text. Answer now if ready; otherwise acknowledge, then report back.</channel-reminder>';
 
 export type InboundReactionState = 'received' | 'in_progress';
 
@@ -80,6 +90,7 @@ export interface SessionHandle {
   accessMutex: AsyncMutex;
   botDisplayName: string;
   targetRouter: FeishuTargetRouter;
+  sessionFence: FeishuSessionFence;
 }
 
 /** Build a package-private handle from a session's internal fields. */
@@ -90,8 +101,17 @@ export function sessionHandle(
   accessMutex: AsyncMutex,
   botDisplayName: string,
   targetRouter: FeishuTargetRouter,
+  sessionFence: FeishuSessionFence = alwaysActiveSessionFence(),
 ): SessionHandle {
-  return { opts, state, bot, accessMutex, botDisplayName, targetRouter };
+  return {
+    opts,
+    state,
+    bot,
+    accessMutex,
+    botDisplayName,
+    targetRouter,
+    sessionFence,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -246,14 +266,21 @@ export async function setInboundReaction(
   chatId: string,
   emoji: string,
   state: InboundReactionState,
-): Promise<void> {
-  if (messageId === '') return;
-  if (h.state.pendingReceivedReactionClears.has(messageId)) return;
+  work?: FeishuInboundWorkContext,
+): Promise<boolean> {
+  if (messageId === '') return false;
+  if (h.state.pendingReceivedReactionClears.has(messageId)) return false;
+  if (!h.sessionFence.isCurrent()) return false;
 
   const previous = h.state.inboundReactions.get(messageId);
   let reactionId: string;
   try {
-    reactionId = await h.bot.addReaction(messageId, emoji);
+    reactionId = await runReactionOperation(
+      () => h.bot.addReaction(messageId, emoji),
+      work,
+      (lateReactionId) =>
+        removeReactionWithinTimeout(h, messageId, lateReactionId),
+    );
   } catch (err) {
     log(h).warn(
       {
@@ -263,19 +290,35 @@ export async function setInboundReaction(
       },
       `failed to add the ${state} reaction`,
     );
-    return;
+    return false;
   }
   if (reactionId === '') {
     log(h).warn(
       { dispatcher_id: h.opts.dispatcherId, message_id: messageId },
       `Feishu returned no reaction_id for the ${state} reaction`,
     );
-    return;
+    return false;
+  }
+
+  if (!h.sessionFence.isCurrent()) {
+    try {
+      await removeReactionWithinTimeout(h, messageId, reactionId);
+    } catch (err) {
+      log(h).warn(
+        {
+          dispatcher_id: h.opts.dispatcherId,
+          message_id: messageId,
+          err: errInfo(err),
+        },
+        `failed to clear the revoked ${state} reaction`,
+      );
+    }
+    return false;
   }
 
   if (h.state.pendingReceivedReactionClears.has(messageId)) {
     try {
-      await h.bot.removeReaction(messageId, reactionId);
+      await removeReactionWithinTimeout(h, messageId, reactionId);
     } catch (err) {
       log(h).warn(
         {
@@ -286,14 +329,18 @@ export async function setInboundReaction(
         `failed to clear the late ${state} reaction`,
       );
     }
-    return;
+    return false;
   }
 
   h.state.inboundReactions.set(messageId, { chatId, reactionId, state });
 
   if (previous !== undefined) {
     try {
-      await h.bot.removeReaction(messageId, previous.reactionId);
+      await removeReactionWithinTimeout(
+        h,
+        messageId,
+        previous.reactionId,
+      );
     } catch (err) {
       log(h).warn(
         {
@@ -305,6 +352,7 @@ export async function setInboundReaction(
       );
     }
   }
+  return true;
 }
 
 export async function clearInboundReaction(
@@ -315,7 +363,7 @@ export async function clearInboundReaction(
   const reaction = h.state.inboundReactions.get(messageId);
   if (reaction === undefined) return;
   try {
-    await h.bot.removeReaction(messageId, reaction.reactionId);
+    await removeReactionWithinTimeout(h, messageId, reaction.reactionId);
     h.state.inboundReactions.delete(messageId);
   } catch (err) {
     log(h).warn(
@@ -327,6 +375,39 @@ export async function clearInboundReaction(
       `failed to clear the ${reaction.state} reaction`,
     );
   }
+}
+
+function runReactionOperation<T>(
+  operation: () => Promise<T>,
+  work: FeishuInboundWorkContext | undefined,
+  onLateValue?: (value: T) => void | Promise<void>,
+): Promise<T> {
+  const deadlineAt = Math.min(
+    Date.now() + FEISHU_REACTION_OPERATION_TIMEOUT_MS,
+    work?.deadlineAt ?? Number.POSITIVE_INFINITY,
+  );
+  return runFeishuBoundedOperation({
+    operation,
+    deadlineAt,
+    ...(work !== undefined
+      ? {
+          signal: work.signal,
+          beforeStart: work.assertEnrichmentActive,
+        }
+      : {}),
+    ...(onLateValue !== undefined ? { onLateValue } : {}),
+  });
+}
+
+function removeReactionWithinTimeout(
+  h: SessionHandle,
+  messageId: string,
+  reactionId: string,
+): Promise<void> {
+  return runFeishuBoundedOperation({
+    operation: () => h.bot.removeReaction(messageId, reactionId),
+    deadlineAt: Date.now() + FEISHU_REACTION_OPERATION_TIMEOUT_MS,
+  });
 }
 
 export function rememberPendingReceivedReactionClear(

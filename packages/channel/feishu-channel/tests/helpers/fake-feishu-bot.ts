@@ -6,6 +6,9 @@ import type {
   FeishuInviteMembersResult,
   FeishuMessageResourceRequest,
   FeishuMessageResourceResponse,
+  FeishuMessageReadMode,
+  FeishuMessageReadRequest,
+  FeishuMessageReadResponse,
   OutboundTarget,
 } from '@excitedjs/feishu-transport';
 
@@ -45,6 +48,8 @@ export interface FakeFeishuBot extends FeishuBot {
     | { op: 'remove'; messageId: string; reactionId: string }
   >;
   readonly chatModeRequests: string[];
+  readonly messageReadRequests: FeishuMessageReadRequest[];
+  readonly messageResourceRequests: FeishuMessageResourceRequest[];
   inject(event: FeishuInboundEvent): Promise<void>;
   injectBotMemberAdded(event: FeishuBotMemberAddedEvent): Promise<void>;
   injectCardAction(event: FeishuCardActionEvent): Promise<unknown>;
@@ -53,9 +58,19 @@ export interface FakeFeishuBot extends FeishuBot {
   setSendError(err: Error | null): void;
   setReactionError(err: Error | null): void;
   setRemoveReactionError(err: Error | null): void;
+  setReactionDelay(emoji: string, delay: Promise<void> | null): void;
   setMessageResource(
     fileKey: string,
-    resource: FeishuMessageResourceResponse | Error | null,
+    resource:
+      | FeishuMessageResourceResponse
+      | Promise<FeishuMessageResourceResponse>
+      | Error
+      | null,
+  ): void;
+  setMessageRead(
+    messageId: string,
+    cardContent: FeishuMessageReadMode,
+    response: FeishuMessageReadResponse | Error | Promise<FeishuMessageReadResponse> | null,
   ): void;
 }
 
@@ -68,8 +83,18 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
   let sendError: Error | null = null;
   let reactionError: Error | null = null;
   let removeReactionError: Error | null = null;
+  const reactionDelays = new Map<string, Promise<void>>();
   let appOwner: FeishuAppOwnerIdentity = {};
-  const messageResources = new Map<string, FeishuMessageResourceResponse | Error>();
+  const messageResources = new Map<
+    string,
+    FeishuMessageResourceResponse | Promise<FeishuMessageResourceResponse> | Error
+  >();
+  const messageReads = new Map<
+    string,
+    FeishuMessageReadResponse | Error | Promise<FeishuMessageReadResponse>
+  >();
+  const messageReadRequests: FeishuMessageReadRequest[] = [];
+  const messageResourceRequests: FeishuMessageResourceRequest[] = [];
   const chatModes = new Map<string, FeishuChatMode | Error>();
   const chatModeRequests: string[] = [];
   const openId: string | undefined = `fake-open-id-${appId}`;
@@ -115,6 +140,7 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       const reactionId = `reaction-fake-${nextReactionId++}`;
       reactions.push({ messageId, emoji, reactionId });
       reactionOps.push({ op: 'add', messageId, emoji, reactionId });
+      await reactionDelays.get(emoji);
       return reactionId;
     },
     async removeReaction(messageId: string, reactionId: string): Promise<void> {
@@ -125,12 +151,25 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     async fetchMessageResource(
       request: FeishuMessageResourceRequest,
     ): Promise<FeishuMessageResourceResponse> {
+      messageResourceRequests.push(request);
       const resource = messageResources.get(request.fileKey);
       if (resource === undefined) {
         throw new Error(`no fake Feishu resource for key ${request.fileKey}`);
       }
       if (resource instanceof Error) throw resource;
-      return resource;
+      return await resource;
+    },
+    async readMessage(
+      request: FeishuMessageReadRequest,
+    ): Promise<FeishuMessageReadResponse> {
+      messageReadRequests.push(request);
+      const mode = request.cardContent ?? 'default';
+      const response = messageReads.get(`${mode}:${request.messageId}`);
+      if (response === undefined) {
+        throw new Error(`no fake Feishu message read for ${mode}:${request.messageId}`);
+      }
+      if (response instanceof Error) throw response;
+      return response;
     },
     async resolveAppOwner(): Promise<FeishuAppOwnerIdentity> {
       return appOwner;
@@ -155,6 +194,12 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     },
     get chatModeRequests() {
       return chatModeRequests;
+    },
+    get messageReadRequests() {
+      return messageReadRequests;
+    },
+    get messageResourceRequests() {
+      return messageResourceRequests;
     },
     async inject(event: FeishuInboundEvent): Promise<void> {
       if (routes === null) throw new Error('fake bot not started');
@@ -184,12 +229,29 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     setRemoveReactionError(err: Error | null): void {
       removeReactionError = err;
     },
-    setMessageResource(
+    setReactionDelay(emoji: string, delay: Promise<void> | null): void {
+      if (delay === null) reactionDelays.delete(emoji);
+      else reactionDelays.set(emoji, delay);
+    },
+  setMessageResource(
       fileKey: string,
-      resource: FeishuMessageResourceResponse | Error | null,
+      resource:
+        | FeishuMessageResourceResponse
+        | Promise<FeishuMessageResourceResponse>
+        | Error
+        | null,
     ): void {
       if (resource === null) messageResources.delete(fileKey);
       else messageResources.set(fileKey, resource);
+    },
+    setMessageRead(
+      messageId: string,
+      cardContent: FeishuMessageReadMode,
+      response: FeishuMessageReadResponse | Error | Promise<FeishuMessageReadResponse> | null,
+    ): void {
+      const key = `${cardContent}:${messageId}`;
+      if (response === null) messageReads.delete(key);
+      else messageReads.set(key, response);
     },
   };
 }

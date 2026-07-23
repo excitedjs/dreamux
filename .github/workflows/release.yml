@@ -331,16 +331,16 @@ jobs:
             fi
             # Public-repo red line: a published artifact must not carry internal
             # Feishu identifiers, the internal /data00 mount, or an absolute
-            # builder/developer home path. `/home/volta/` is an intentional
-            # PUBLIC example in onboard/service.ts (it documents Volta's home
-            # layout and is compiled into dist), so that exact token is
-            # allow-listed; any other /home/<user>/ is treated as a leaked path.
+            # builder/developer home path. `/home/volta/` and
+            # `/home/linuxbrew/` are intentional PUBLIC examples compiled into
+            # dist, so those exact tokens are allow-listed; any other
+            # /home/<user>/ token is treated as a leaked path.
             # Extend the allow-list (grep -vxE alternation) only with reviewed,
             # provably-public example paths.
             leaks="$(
               tar xzO -f "$tgz" 2>/dev/null \
                 | grep -aoE '(ou_[A-Za-z0-9]{20}|oc_[A-Za-z0-9]{20}|cli_[A-Za-z0-9]{16}|/data00/|/home/[a-z][a-z0-9_-]+/)' \
-                | grep -vxE '/home/volta/' \
+                | grep -vxE '/home/(volta|linuxbrew)/' \
                 | sort -u || true
             )"
             if [ -n "$leaks" ]; then

@@ -23,6 +23,7 @@ import {
   type FeishuInboundSubmitter,
 } from '../src/feishu-channel.js';
 import {
+  CHANNEL_REMINDER,
   sessionHandle,
   type FeishuChannelState,
 } from '../src/feishu-session-ops.js';
@@ -63,7 +64,7 @@ function makeEvent(overrides: Partial<FeishuInboundEvent> = {}): FeishuInboundEv
   return { ...base, ...overrides };
 }
 
-describe('feishu inbound submit-throw cleanup (PR #282)', () => {
+describe('feishu inbound delivery', () => {
   let stateDir: string;
 
   beforeEach(() => {
@@ -164,5 +165,64 @@ describe('feishu inbound submit-throw cleanup (PR #282)', () => {
       .map((op) => op.emoji);
     expect(emojis).toContain(RECEIVED_REACTION_EMOJI);
     expect(emojis).toContain(IN_PROGRESS_REACTION_EMOJI);
+  });
+
+  it('clears received when adding the in_progress reaction fails', async () => {
+    await allowSender();
+    const bot = createFakeFeishuBot('fake-bot');
+    const addReaction = bot.addReaction.bind(bot);
+    bot.addReaction = async (messageId, emoji) => {
+      if (emoji === IN_PROGRESS_REACTION_EMOJI) {
+        throw new Error('progress reaction failed');
+      }
+      return addReaction(messageId, emoji);
+    };
+    const state: FeishuChannelState = {
+      inboundReactions: new Map(),
+      pendingReceivedReactionClears: new Set(),
+    };
+    const handle = buildHandle(state, bot);
+    const submitter: FeishuInboundSubmitter = {
+      submitTurn: async (): Promise<AgentRuntimeTurnResult> => ({
+        status: 'submitted',
+        turnId: 'turn-1',
+      }),
+    };
+
+    await onMessage(handle, makeEvent(), submitter);
+
+    expect(state.inboundReactions.size).toBe(0);
+    expect(bot.reactionOps).toEqual([
+      expect.objectContaining({
+        op: 'add',
+        emoji: RECEIVED_REACTION_EMOJI,
+      }),
+      expect.objectContaining({ op: 'remove' }),
+    ]);
+  });
+
+  it('appends one trusted channel reminder at the end of the submitted body', async () => {
+    await allowSender();
+    const bot = createFakeFeishuBot('fake-bot');
+    const state: FeishuChannelState = {
+      inboundReactions: new Map(),
+      pendingReceivedReactionClears: new Set(),
+    };
+    const handle = buildHandle(state, bot);
+    let captured: InboundTurnInput | undefined;
+
+    const submitter: FeishuInboundSubmitter = {
+      submitTurn: async (input): Promise<AgentRuntimeTurnResult> => {
+        captured = input;
+        return { status: 'submitted', turnId: 'turn-1' };
+      },
+    };
+
+    await onMessage(handle, makeEvent(), submitter);
+
+    expect(captured).toBeDefined();
+    expect(captured?.body.match(/<channel-reminder>/g)).toHaveLength(1);
+    expect(captured?.body.endsWith(`\n\n${CHANNEL_REMINDER}`)).toBe(true);
+    expect(captured?.text).toBe(captured?.body);
   });
 });
