@@ -1466,7 +1466,11 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       channelId: 'primary',
       meta: { chat_id: 'chat-alpha' },
     });
-    expect(repeated).toEqual(first);
+    expect(repeated).toEqual({
+      ...first,
+      updated_at: expect.any(Number),
+    });
+    expect(repeated.updated_at).toBeGreaterThanOrEqual(first.updated_at);
     await expect(sessions[0]!.emit('chat-alpha', 'hello alpha')).resolves.toMatchObject({
       status: 'submitted',
     });

@@ -86,32 +86,44 @@ function routeEvent(input: {
   action?: 'bound' | 'unbound';
 } = {}): ChannelBindingRouteEvent {
   const action = input.action ?? 'bound';
+  const endpoint = {
+    provider: input.provider ?? 'builtin:feishu',
+    channel_id: 'primary',
+    endpoint_type: input.endpointType ?? 'group',
+    endpoint_key: input.endpointType === 'topic' ? 'topic-a' : 'chat-a',
+    display: 'Target <unsafe>',
+    canonical_url: null,
+    meta: input.meta ?? { chat_id: 'chat-a', chat_type: 'group' },
+  };
+  if (action === 'unbound') {
+    return {
+      schema_version: 1,
+      kind: 'binding.route',
+      occurred_at: 42,
+      action,
+      transition: 'unbound',
+      endpoint,
+      previous_team: {
+        team_name: 'alpha',
+        leader_name: 'leader-alpha',
+      },
+      current_team: null,
+    };
+  }
   return {
     schema_version: 1,
     kind: 'binding.route',
     occurred_at: 42,
     action,
-    transition: action === 'bound' ? 'bound' : 'unbound',
-    endpoint: {
-      provider: input.provider ?? 'builtin:feishu',
-      channel_id: 'primary',
-      endpoint_type: input.endpointType ?? 'group',
-      endpoint_key: input.endpointType === 'topic' ? 'topic-a' : 'chat-a',
-      display: 'Target <unsafe>',
-      canonical_url: null,
-      meta: input.meta ?? { chat_id: 'chat-a', chat_type: 'group' },
+    transition: 'bound',
+    endpoint,
+    previous_team: null,
+    current_team: {
+      team_name: 'alpha',
+      leader_name: 'leader-alpha',
+      leader_agent_runtime: 'test:runtime',
+      runtime_cwd: '/tmp/dreamux/work',
     },
-    previous_team: action === 'unbound'
-      ? { team_name: 'alpha', leader_name: 'leader-alpha' }
-      : null,
-    current_team: action === 'bound'
-      ? {
-          team_name: 'alpha',
-          leader_name: 'leader-alpha',
-          leader_agent_runtime: 'test:runtime',
-          runtime_cwd: '/tmp/dreamux/work',
-        }
-      : null,
   };
 }
 
@@ -120,33 +132,44 @@ function spaceEvent(input: {
   action?: 'bound' | 'unbound';
 } = {}): ChannelBindingCollaborationSpaceEvent {
   const action = input.action ?? 'bound';
+  const container = {
+    provider: input.provider ?? 'builtin:feishu',
+    channel_id: 'primary',
+    endpoint_type: 'topic_group',
+    endpoint_key: 'chat-topic',
+    display: 'Topic Group',
+    canonical_url: null,
+    meta: { chat_id: 'chat-topic', chat_mode: 'topic' },
+  };
+  if (action === 'unbound') {
+    return {
+      schema_version: 1,
+      kind: 'binding.collaboration_space',
+      occurred_at: 43,
+      action,
+      transition: 'unbound',
+      container,
+      space_name: 'space-alpha',
+      current_binding: null,
+    };
+  }
   return {
     schema_version: 1,
     kind: 'binding.collaboration_space',
     occurred_at: 43,
     action,
-    transition: action === 'bound' ? 'bound' : 'unbound',
-    container: {
-      provider: input.provider ?? 'builtin:feishu',
-      channel_id: 'primary',
-      endpoint_type: 'topic_group',
-      endpoint_key: 'chat-topic',
-      display: 'Topic Group',
-      canonical_url: null,
-      meta: { chat_id: 'chat-topic', chat_mode: 'topic' },
-    },
+    transition: 'bound',
+    container,
     space_name: 'space-alpha',
-    current_binding: action === 'bound'
-      ? {
-          leader_agent_runtime: 'test:runtime',
-          repo_cwd: '/tmp/repo',
-          worktree: {
-            mode: 'managed',
-            base_ref: 'main',
-            cleanup: 'delete-on-close',
-          },
-        }
-      : null,
+    current_binding: {
+      leader_agent_runtime: 'test:runtime',
+      repo_cwd: '/tmp/repo',
+      worktree: {
+        mode: 'managed',
+        base_ref: 'main',
+        cleanup: 'delete-on-close',
+      },
+    },
   };
 }
 
@@ -158,6 +181,7 @@ describe('Feishu binding notification cards', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     rmSync(stateDir, { recursive: true, force: true });
   });
 
@@ -267,6 +291,28 @@ describe('Feishu binding notification cards', () => {
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ event_kind: 'binding.route' }),
       'Feishu binding notification failed',
+    );
+  });
+
+  it('bounds close when a binding notification send never settles', async () => {
+    vi.useFakeTimers();
+    const bot = createFakeFeishuBot('app-hung');
+    bot.setSendCardDelay(new Promise(() => undefined));
+    const log = logger();
+    const source = eventSource();
+    const s = session({ stateDir, bot, log });
+    await start({ session: s, source });
+
+    source.emit(routeEvent({ meta: { chat_id: 'chat-hung' } }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(bot.sentCards).toHaveLength(1);
+
+    const closing = s.close();
+    await vi.advanceTimersByTimeAsync(5_001);
+    await expect(closing).resolves.toBeUndefined();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ dispatcher_id: 'flow' }),
+      'Feishu binding notification drain reached its close deadline',
     );
   });
 });

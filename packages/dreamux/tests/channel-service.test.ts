@@ -35,6 +35,15 @@ function groupTarget(chatId: string): ChannelTarget {
   };
 }
 
+function teamProjection(teamName: string, leaderName: string) {
+  return {
+    team_name: teamName,
+    leader_name: leaderName,
+    leader_agent_runtime: 'test:runtime',
+    runtime_cwd: `/tmp/${teamName}`,
+  };
+}
+
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   const promise = new Promise<T>((res) => {
@@ -113,7 +122,10 @@ describe('ChannelService binding ownership', () => {
     const owner = { kind: 'team' as const, teamName: 'alpha', leaderName: 'leader-a' };
 
     await expect(
-      service.bindTarget({ owner, meta: { chat_id: 'chat-a' } }),
+      service.bindTarget({
+        team: teamProjection(owner.teamName, owner.leaderName),
+        meta: { chat_id: 'chat-a' },
+      }),
     ).resolves.toMatchObject({ team_name: 'alpha', leader_name: 'leader-a' });
     await expect(service.activeBindingSummaryForOwner(owner)).resolves.toEqual({
       channel_id: 'primary',
@@ -163,14 +175,14 @@ describe('ChannelService binding ownership', () => {
     const target = groupTarget('chat-claim');
 
     await service.claimResolvedTarget({
-      owner: alpha,
+      team: teamProjection(alpha.teamName, alpha.leaderName),
       channelId: 'primary',
       target,
       claimId: 'claim-alpha',
     });
     await expect(
       service.claimResolvedTarget({
-        owner: beta,
+        team: teamProjection(beta.teamName, beta.leaderName),
         channelId: 'primary',
         target,
         claimId: 'claim-beta',
@@ -225,12 +237,12 @@ describe('ChannelService binding ownership', () => {
       runtime_cwd: '/tmp/runtime-alpha',
     };
 
-    await service.bindResolvedTargetWithTransition({
+    await service.bindResolvedTarget({
       team,
       channelId: 'primary',
       target: groupTarget('chat-a'),
     });
-    await service.bindResolvedTargetWithTransition({
+    await service.bindResolvedTarget({
       team,
       channelId: 'primary',
       target: {
@@ -243,12 +255,12 @@ describe('ChannelService binding ownership', () => {
       channelId: 'primary',
       target: groupTarget('chat-a'),
     });
-    await service.bindResolvedTargetIfAvailableToOwnerWithTransition({
+    await service.bindResolvedTargetIfAvailableToOwner({
       team,
       channelId: 'primary',
       target: groupTarget('chat-b'),
     });
-    await service.bindResolvedTargetIfAvailableToOwnerWithTransition({
+    await service.bindResolvedTargetIfAvailableToOwner({
       team,
       channelId: 'primary',
       target: groupTarget('chat-b'),
@@ -326,7 +338,7 @@ describe('ChannelService binding ownership', () => {
       leaderName: 'group-leader',
     };
     await service.bindResolvedTarget({
-      owner,
+      team: teamProjection(owner.teamName, owner.leaderName),
       channelId: 'primary',
       target: groupTarget('chat-a'),
     });

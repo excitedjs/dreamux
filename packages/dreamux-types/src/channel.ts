@@ -258,23 +258,42 @@ export interface ChannelBindingEndpointSnapshot {
   readonly meta: Readonly<Record<string, unknown>>;
 }
 
-export interface ChannelBindingRouteTeamSnapshot {
+export interface ChannelBindingRouteOwnerSnapshot {
   readonly team_name: string;
   readonly leader_name: string;
-  readonly leader_agent_runtime?: string;
-  readonly runtime_cwd?: string;
 }
 
-export interface ChannelBindingRouteEvent {
+export interface ChannelBindingRouteTeamSnapshot
+  extends ChannelBindingRouteOwnerSnapshot {
+  readonly leader_agent_runtime: string;
+  readonly runtime_cwd: string;
+}
+
+export interface ChannelBindingRouteBoundEvent {
   readonly schema_version: 1;
   readonly kind: 'binding.route';
   readonly occurred_at: number;
-  readonly action: ChannelBindingAction;
-  readonly transition: ChannelBindingTransition;
+  readonly action: 'bound';
+  readonly transition: 'bound' | 'replaced';
   readonly endpoint: ChannelBindingEndpointSnapshot;
-  readonly previous_team: ChannelBindingRouteTeamSnapshot | null;
-  readonly current_team: ChannelBindingRouteTeamSnapshot | null;
+  readonly previous_team: ChannelBindingRouteOwnerSnapshot | null;
+  readonly current_team: ChannelBindingRouteTeamSnapshot;
 }
+
+export interface ChannelBindingRouteUnboundEvent {
+  readonly schema_version: 1;
+  readonly kind: 'binding.route';
+  readonly occurred_at: number;
+  readonly action: 'unbound';
+  readonly transition: 'unbound';
+  readonly endpoint: ChannelBindingEndpointSnapshot;
+  readonly previous_team: ChannelBindingRouteOwnerSnapshot;
+  readonly current_team: null;
+}
+
+export type ChannelBindingRouteEvent =
+  | ChannelBindingRouteBoundEvent
+  | ChannelBindingRouteUnboundEvent;
 
 export interface ChannelBindingCollaborationSpacePolicySnapshot {
   readonly leader_agent_runtime: string;
@@ -288,16 +307,31 @@ export interface ChannelBindingCollaborationSpacePolicySnapshot {
       };
 }
 
-export interface ChannelBindingCollaborationSpaceEvent {
+export interface ChannelBindingCollaborationSpaceBoundEvent {
   readonly schema_version: 1;
   readonly kind: 'binding.collaboration_space';
   readonly occurred_at: number;
-  readonly action: ChannelBindingAction;
-  readonly transition: 'bound' | 'unbound';
+  readonly action: 'bound';
+  readonly transition: 'bound';
   readonly container: ChannelBindingEndpointSnapshot;
   readonly space_name: string;
-  readonly current_binding: ChannelBindingCollaborationSpacePolicySnapshot | null;
+  readonly current_binding: ChannelBindingCollaborationSpacePolicySnapshot;
 }
+
+export interface ChannelBindingCollaborationSpaceUnboundEvent {
+  readonly schema_version: 1;
+  readonly kind: 'binding.collaboration_space';
+  readonly occurred_at: number;
+  readonly action: 'unbound';
+  readonly transition: 'unbound';
+  readonly container: ChannelBindingEndpointSnapshot;
+  readonly space_name: string;
+  readonly current_binding: null;
+}
+
+export type ChannelBindingCollaborationSpaceEvent =
+  | ChannelBindingCollaborationSpaceBoundEvent
+  | ChannelBindingCollaborationSpaceUnboundEvent;
 
 export type ChannelCoreEvent =
   | ChannelTeamStateEvent

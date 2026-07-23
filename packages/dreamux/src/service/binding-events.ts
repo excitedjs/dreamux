@@ -1,6 +1,7 @@
 import type {
   ChannelBindingCollaborationSpacePolicySnapshot,
   ChannelBindingEndpointSnapshot,
+  ChannelBindingRouteOwnerSnapshot,
   ChannelBindingRouteTeamSnapshot,
 } from '@excitedjs/dreamux-types';
 
@@ -46,7 +47,7 @@ export function publishRouteUnbindTransition(input: {
     action: 'unbound',
     transition: 'unbound',
     endpoint: endpointFromBinding(input.transition.binding),
-    previous_team: activeTeamFromBinding(input.transition.previous),
+    previous_team: teamOwnerFromBinding(input.transition.previous),
     current_team: null,
   });
 }
@@ -128,8 +129,17 @@ function teamFromProjection(
 
 function activeTeamFromBinding(
   binding: ChannelBinding | null,
-): ChannelBindingRouteTeamSnapshot | null {
+): ChannelBindingRouteOwnerSnapshot | null {
   if (binding === null || !binding.active) return null;
+  return Object.freeze({
+    team_name: binding.team_name,
+    leader_name: binding.leader_name,
+  });
+}
+
+function teamOwnerFromBinding(
+  binding: ChannelBinding,
+): ChannelBindingRouteOwnerSnapshot {
   return Object.freeze({
     team_name: binding.team_name,
     leader_name: binding.leader_name,

@@ -244,7 +244,12 @@ describe('CollaborationSpaceService race regressions', () => {
         return channels.service.bindResolvedTarget({
           channelId: 'primary',
           target,
-          owner: manualOwner,
+          team: {
+            team_name: manualOwner.teamName,
+            leader_name: manualOwner.leaderName,
+            leader_agent_runtime: 'agent-a',
+            runtime_cwd: `/tmp/dreamux-test/${manualOwner.teamName}`,
+          },
         });
       },
     );

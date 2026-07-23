@@ -53,7 +53,7 @@ export class CollaborationRouteReconciler {
       channelId: input.channelId,
       targetKey: input.target.target_key,
     }), () => this.opts.teams.withRoutableTeamProjection(input.teamId, async (team) => {
-      const binding = await this.opts.channels.bindResolvedTargetWithTransition({
+      const binding = await this.opts.channels.bindResolvedTarget({
         team,
         channelId: input.channelId,
         target: input.target,
@@ -99,7 +99,7 @@ export class CollaborationRouteReconciler {
               'by an active collaboration route',
           );
         }
-        return this.opts.channels.bindResolvedTargetIfAvailableToOwnerWithTransition({
+        return this.opts.channels.bindResolvedTargetIfAvailableToOwner({
           team,
           channelId: input.channelId,
           target: input.target,
@@ -280,7 +280,7 @@ export class CollaborationRouteReconciler {
           }
           if (currentRoute === null) {
             try {
-              await this.opts.channels.claimResolvedTargetWithTransition({
+              await this.opts.channels.claimResolvedTarget({
                 team: routableTeam,
                 channelId: record.channel_id,
                 target,

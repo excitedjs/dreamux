@@ -151,6 +151,12 @@ collaboration claim (`claim_id != null`) may be replaced by an explicit binding
 for the same Team, but a managed claim cannot take over an explicit active route
 through the claim API.
 
+The available-to-owner idempotent path still persists the latest provider
+display and `meta` under that same fence, preserving a newer Feishu topic reply
+anchor without producing another event. `ChannelService` exposes only
+projection-bearing mutation methods for route bind/claim, so every durable
+service-level transition passes through publication gating.
+
 The binding store is v3. Version 2 rows that already carry `channel_id` and
 `target_key` are reused as explicit routes with `claim_id: null` only when no
 open collaboration target shares the route key. If such an overlap exists,
@@ -219,6 +225,11 @@ durable claim, and `targetFromRecord()` restores it for retry/reconciliation
 paths before the channel route write. This keeps provider addressing facts across
 the crash window between target claim and binding persistence while core still
 treats the metadata as opaque.
+
+An explicit collaboration-space bind replay with the same repository, runtime,
+identity, and worktree policy refreshes container display/addressing metadata
+and returns `unchanged`; it emits no duplicate space event. Changing the policy
+still requires dissolve and rebind.
 
 Source:
 

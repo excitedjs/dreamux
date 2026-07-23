@@ -102,19 +102,14 @@ export class CollaborationSpaceStore {
       };
       if (
         existing !== null &&
-        (existing.channel_id !== input.channelId ||
+        (existing.provider !== input.provider ||
+          existing.channel_id !== input.channelId ||
           existing.container_type !== container.container_type ||
           existing.container_key !== container.container_key)
       ) {
         throw new Error(
           `collaboration space ${JSON.stringify(input.spaceName)} is already ` +
             'registered for a different channel container',
-        );
-      }
-      if (existing?.status === 'bound') {
-        throw new Error(
-          `collaboration space ${JSON.stringify(input.spaceName)} is already bound; ` +
-            'dissolve it before binding it again',
         );
       }
       const existingByContainer = file.spaces.find(
@@ -132,6 +127,32 @@ export class CollaborationSpaceStore {
       }
 
       const now = Date.now();
+      if (existing?.status === 'bound') {
+        if (
+          existing.current_binding === null ||
+          !sameBindingPolicy(existing.current_binding, input.binding)
+        ) {
+          throw new Error(
+            `collaboration space ${JSON.stringify(input.spaceName)} is already bound; ` +
+              'dissolve it before changing its binding policy',
+          );
+        }
+        const refreshed: CollaborationSpaceRecord = {
+          ...existing,
+          display: input.display ?? container.display ?? existing.display,
+          canonical_url: container.canonical_url ?? existing.canonical_url,
+          meta: container.meta ?? existing.meta,
+          updated_at: now,
+        };
+        this.upsertSpace(file, refreshed);
+        await this.write(input.dispatcherId, file);
+        return {
+          transition: 'unchanged',
+          space: refreshed,
+          previous: existing,
+        };
+      }
+
       const generation = (existing?.last_binding_generation ?? 0) + 1;
       const saved: CollaborationSpaceRecord = {
         version: COLLABORATION_SPACE_RECORD_VERSION,
@@ -454,6 +475,28 @@ function sameContainer(
 ): boolean {
   return left.channel_id === right.channel_id &&
     left.container_key === right.container_key;
+}
+
+function sameBindingPolicy(
+  current: CollaborationSpaceBindingRecord,
+  requested: Omit<CollaborationSpaceBindingRecord, 'generation' | 'bound_at'>,
+): boolean {
+  if (
+    current.repo_cwd !== requested.repo_cwd ||
+    current.leader_agent_runtime !== requested.leader_agent_runtime ||
+    current.identity !== requested.identity ||
+    current.worktree.mode !== requested.worktree.mode
+  ) {
+    return false;
+  }
+  if (
+    current.worktree.mode === 'managed' &&
+    requested.worktree.mode === 'managed'
+  ) {
+    return current.worktree.base_ref === requested.worktree.base_ref &&
+      current.worktree.cleanup === requested.worktree.cleanup;
+  }
+  return true;
 }
 
 function normalizeSpace(row: Record<string, unknown>): CollaborationSpaceRecord {

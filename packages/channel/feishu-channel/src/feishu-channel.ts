@@ -28,6 +28,10 @@ import {
   type FeishuSessionFence,
 } from './feishu-inbound-work.js';
 import {
+  isFeishuOperationError,
+  runFeishuBoundedOperation,
+} from './feishu-bounded-operation.js';
+import {
   FEISHU_TOOLS,
   type FeishuMcpListChatBotsInput,
   type FeishuMcpReactInput,
@@ -127,9 +131,13 @@ export class FeishuChannelCapabilityError extends Error {
 
 interface FeishuSessionLifecycle {
   controller: AbortController;
+  notificationController: AbortController;
   fence: FeishuSessionFence;
   inFlight: Set<Promise<unknown>>;
 }
+
+const FEISHU_BINDING_NOTIFICATION_SEND_TIMEOUT_MS = 20_000;
+const FEISHU_BINDING_NOTIFICATION_CLOSE_DRAIN_MS = 5_000;
 
 export class FeishuChannelSession {
   readonly ref = BUILTIN_FEISHU_PROVIDER_REF;
@@ -207,6 +215,7 @@ export class FeishuChannelSession {
     const controller = new AbortController();
     const lifecycle: FeishuSessionLifecycle = {
       controller,
+      notificationController: new AbortController(),
       inFlight: new Set(),
       fence: {
         signal: controller.signal,
@@ -216,7 +225,7 @@ export class FeishuChannelSession {
       },
     };
     this.lifecycle = lifecycle;
-    this.subscribeBindingNotifications(submitter.coreEvents);
+    this.subscribeBindingNotifications(submitter.coreEvents, lifecycle);
     try {
       await this.bot.start({
         onBotMemberAdded: async (added) => {
@@ -252,6 +261,7 @@ export class FeishuChannelSession {
       }
     } catch (error) {
       controller.abort();
+      lifecycle.notificationController.abort();
       this.unsubscribeBindingNotifications();
       if (this.lifecycle === lifecycle) this.lifecycle = undefined;
       throw error;
@@ -262,6 +272,22 @@ export class FeishuChannelSession {
     const lifecycle = this.lifecycle;
     lifecycle?.controller.abort();
     this.unsubscribeBindingNotifications();
+    try {
+      await runFeishuBoundedOperation({
+        operation: () => this.bindingNotificationQueue,
+        deadlineAt: Date.now() + FEISHU_BINDING_NOTIFICATION_CLOSE_DRAIN_MS,
+      });
+    } catch (err) {
+      this.opts.log.warn(
+        {
+          dispatcher_id: this.opts.dispatcherId,
+          err: errInfo(err),
+        },
+        'Feishu binding notification drain reached its close deadline',
+      );
+    } finally {
+      lifecycle?.notificationController.abort();
+    }
     await this.bindingNotificationQueue;
     await this.bot.close();
     if (lifecycle !== undefined) {
@@ -398,16 +424,23 @@ export class FeishuChannelSession {
 
   private subscribeBindingNotifications(
     coreEvents: ChannelCoreEventSource | undefined,
+    lifecycle: FeishuSessionLifecycle,
   ): void {
     if (coreEvents === undefined) return;
     this.coreEventSubscriptions.push(
       coreEvents.on('binding.route', (event) => {
-        this.enqueueBindingNotification(event);
+        this.enqueueBindingNotification(
+          event,
+          lifecycle.notificationController.signal,
+        );
       }),
     );
     this.coreEventSubscriptions.push(
       coreEvents.on('binding.collaboration_space', (event) => {
-        this.enqueueBindingNotification(event);
+        this.enqueueBindingNotification(
+          event,
+          lifecycle.notificationController.signal,
+        );
       }),
     );
   }
@@ -420,6 +453,7 @@ export class FeishuChannelSession {
 
   private enqueueBindingNotification(
     event: ChannelBindingRouteEvent | ChannelBindingCollaborationSpaceEvent,
+    signal: AbortSignal,
   ): void {
     const provider = event.kind === 'binding.route'
       ? event.endpoint.provider
@@ -427,12 +461,13 @@ export class FeishuChannelSession {
     if (provider !== BUILTIN_FEISHU_PROVIDER_REF) return;
     const run = this.bindingNotificationQueue
       .catch(() => undefined)
-      .then(() => this.sendBindingNotification(event));
+      .then(() => this.sendBindingNotification(event, signal));
     this.bindingNotificationQueue = run.catch(() => undefined);
   }
 
   private async sendBindingNotification(
     event: ChannelBindingRouteEvent | ChannelBindingCollaborationSpaceEvent,
+    signal: AbortSignal,
   ): Promise<void> {
     const notification = event.kind === 'binding.route'
       ? routeBindingNotification(event)
@@ -449,15 +484,20 @@ export class FeishuChannelSession {
       return;
     }
     try {
-      const result = await this.bot.sendCard(
-        channelOutboundToFeishuTarget({
-          conversationId: notification.target.chatId,
-          ...(notification.target.messageId !== undefined
-            ? { replyTo: notification.target.messageId }
-            : {}),
-        }),
-        notification.card,
-      );
+      const result = await runFeishuBoundedOperation({
+        signal,
+        deadlineAt:
+          Date.now() + FEISHU_BINDING_NOTIFICATION_SEND_TIMEOUT_MS,
+        operation: () => this.bot.sendCard(
+          channelOutboundToFeishuTarget({
+            conversationId: notification.target.chatId,
+            ...(notification.target.messageId !== undefined
+              ? { replyTo: notification.target.messageId }
+              : {}),
+          }),
+          notification.card,
+        ),
+      });
       this.opts.log.info(
         {
           dispatcher_id: this.opts.dispatcherId,
@@ -468,6 +508,17 @@ export class FeishuChannelSession {
         'Feishu binding notification sent',
       );
     } catch (err) {
+      if (isFeishuOperationError(err, 'aborted')) {
+        this.opts.log.debug(
+          {
+            dispatcher_id: this.opts.dispatcherId,
+            event_kind: event.kind,
+            action: event.action,
+          },
+          'Feishu binding notification cancelled during session close',
+        );
+        return;
+      }
       this.opts.log.warn(
         {
           dispatcher_id: this.opts.dispatcherId,

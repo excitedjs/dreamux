@@ -26,6 +26,12 @@ results. Core carries endpoint snapshots, Team projections, and opaque provider
 metadata; it does not introduce a `notification_address` capability and does
 not interpret Feishu selector fields.
 
+Both event kinds are action-discriminated unions. Bound route events require the
+runtime-bearing current Team projection, unbound route events require only the
+previous owner, and collaboration-space policy is required only on bound
+events. The owning service exposes one publishing mutation path per route
+operation; callers cannot select a parallel silent service mutation.
+
 Feishu records the triggering inbound topic `message_id` in the normalized
 topic target `meta`. Collaboration target claims persist a copy of target
 `meta`, `targetFromRecord()` restores it, and channel bindings persist it. The
@@ -41,6 +47,9 @@ static card delivery.
   acknowledgement, or durable outbox.
 - Binding stores stay pure: they return transition DTOs under the existing
   write fence and never publish events themselves.
+- Idempotent route and collaboration-space rebinds may refresh display or
+  provider metadata under that fence while remaining `unchanged`, so they
+  publish no event.
 - The route-bound projection comes from `TeamCollection` under the route
   lifecycle lease and includes the TeamLeader runtime id and runtime cwd.
 - Dispatcher-wide broadcast is intentional. Channel sessions filter by provider
@@ -50,6 +59,9 @@ static card delivery.
   group root.
 - Feishu collaboration-space cards send fresh top-level messages to the
   container chat, which creates a new topic in a Feishu topic group.
+- Feishu notification sends and the session-close drain are deadline-bounded.
+  Close aborts remaining notification work after its settle window, so a hung
+  remote request cannot hold dispatcher shutdown.
 - Feishu cards render plain text only and do not expose raw provider `meta`,
   `claim_id`, prompts, or raw errors.
 

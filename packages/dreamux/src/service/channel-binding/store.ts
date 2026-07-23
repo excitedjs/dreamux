@@ -205,9 +205,15 @@ export class ChannelBindingStore {
               'bound to another owner',
           );
         }
+        const refreshed: ChannelBinding = {
+          ...next,
+          created_at: previous.created_at,
+        };
+        file.bindings[idx] = refreshed;
+        await this.write(input.dispatcherId, file);
         return {
           transition: 'unchanged',
-          binding: previous,
+          binding: refreshed,
           previous,
         };
       }

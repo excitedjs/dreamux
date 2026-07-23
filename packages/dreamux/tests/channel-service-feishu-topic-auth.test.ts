@@ -55,6 +55,15 @@ function topicEvent(input: {
   };
 }
 
+function teamProjection(teamName: string, leaderName: string) {
+  return {
+    team_name: teamName,
+    leader_name: leaderName,
+    leader_agent_runtime: 'test:runtime',
+    runtime_cwd: `/tmp/${teamName}`,
+  };
+}
+
 describe('ChannelService Feishu topic authorization', () => {
   let root: string;
   let previousHome: string | undefined;
@@ -117,7 +126,7 @@ describe('ChannelService Feishu topic authorization', () => {
         leaderName: 'leader-a',
       };
       await service.bindResolvedTarget({
-        owner,
+        team: teamProjection(owner.teamName, owner.leaderName),
         channelId: 'primary',
         target: ownTarget,
       });
@@ -235,7 +244,7 @@ describe('ChannelService Feishu topic authorization', () => {
         leaderName: 'group-leader',
       };
       await service.bindResolvedTarget({
-        owner,
+        team: teamProjection(owner.teamName, owner.leaderName),
         channelId: 'primary',
         target: groupTarget,
       });

@@ -350,6 +350,14 @@ carry no repository/path data. No event contains prompt text, raw errors,
 platform user identity, cursor, acknowledgement, `claim_id`, or binding
 fallbacks.
 
+The two binding kinds are action-discriminated public unions. A route-bound
+event requires its runtime-bearing current Team projection, a route-unbound
+event requires the previous Team owner and has no current Team, and
+collaboration-space policy is required only on bound events. `ChannelService`
+owns the only public route mutation paths and always classifies/publishes after
+the store write; stores retain pure transition primitives but callers cannot
+choose a silent service mutation.
+
 Core installs the source before calling `ChannelSession.start`, so a session may
 subscribe before triggering a strict ensure. Stop and start-failure cleanup
 revoke the whole session source and strict-route lease before closing sessions;
@@ -429,13 +437,15 @@ begins on first accepted topic inbound.
 The built-in Feishu session subscribes to `binding.route` and
 `binding.collaboration_space` from its dispatcher-wide core event source and
 ignores events whose endpoint provider is not `builtin:feishu`. Delivery is
-best-effort, live-session-only, and serialized per session. Route topic cards
-reply to the persisted triggering `message_id`; route group cards send to the
-group; collaboration-space cards always send a fresh top-level card to the
-container chat, which creates a new topic in a Feishu topic group. Cards use
-Feishu `plain_text` elements only and render display fields, Team facts, runtime
-cwd, and repository/workspace policy without rendering raw provider `meta`,
-`claim_id`, prompts, or raw errors.
+best-effort, live-session-only, serialized per session, and bounded by a remote
+send deadline. Session close gives accepted notification work a bounded settle
+window, then aborts the queue before closing the bot; a hung card request cannot
+hold dispatcher shutdown. Route topic cards reply to the persisted triggering
+`message_id`; route group cards send to the group; collaboration-space cards
+always send a fresh top-level card to the container chat, which creates a new
+topic in a Feishu topic group. Cards use Feishu `plain_text` elements only and
+render display fields, Team facts, runtime cwd, and repository/workspace policy
+without rendering raw provider `meta`, `claim_id`, prompts, or raw errors.
 
 Key source:
 

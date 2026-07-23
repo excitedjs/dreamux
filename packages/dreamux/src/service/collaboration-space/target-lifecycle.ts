@@ -468,7 +468,7 @@ export class CollaborationTargetLifecycle {
                 `${JSON.stringify(latestBinding.owner.teamName)}`,
             );
           }
-          await this.opts.channels.claimResolvedTargetWithTransition({
+          await this.opts.channels.claimResolvedTarget({
             team,
             channelId: input.channelId,
             target,

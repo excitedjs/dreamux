@@ -55,7 +55,6 @@ export function routeBindingNotification(
   }
 
   const team = event.current_team;
-  if (team === null) return null;
   return {
     target: address,
     card: card({
@@ -78,14 +77,12 @@ export function routeBindingNotification(
         line(
           'TeamLeader 运行时',
           'TeamLeader runtime',
-          team.leader_agent_runtime ?? '未知',
-          team.leader_agent_runtime ?? 'unknown',
+          team.leader_agent_runtime,
         ),
         line(
           '运行工作目录',
           'Runtime cwd',
-          team.runtime_cwd ?? '未知',
-          team.runtime_cwd ?? 'unknown',
+          team.runtime_cwd,
         ),
       ],
     }),
@@ -123,7 +120,6 @@ export function collaborationSpaceNotification(
   }
 
   const binding = event.current_binding;
-  if (binding === null) return null;
   const workspace = binding.worktree.mode === 'managed'
     ? `从 ${binding.repo_cwd ?? '已配置仓库'} 创建的托管 worktree`
     : 'Dispatcher 默认工作区';

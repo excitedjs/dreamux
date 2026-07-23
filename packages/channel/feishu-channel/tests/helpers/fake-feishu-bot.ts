@@ -56,6 +56,7 @@ export interface FakeFeishuBot extends FeishuBot {
   setAppOwner(owner: FeishuAppOwnerIdentity): void;
   setChatMode(chatId: string, mode: FeishuChatMode | Error | undefined): void;
   setSendError(err: Error | null): void;
+  setSendCardDelay(delay: Promise<void> | null): void;
   setReactionError(err: Error | null): void;
   setRemoveReactionError(err: Error | null): void;
   setReactionDelay(emoji: string, delay: Promise<void> | null): void;
@@ -81,6 +82,7 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
   let nextMessageId = 1;
   let nextReactionId = 1;
   let sendError: Error | null = null;
+  let sendCardDelay: Promise<void> | null = null;
   let reactionError: Error | null = null;
   let removeReactionError: Error | null = null;
   const reactionDelays = new Map<string, Promise<void>>();
@@ -124,6 +126,7 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       if (sendError !== null) throw sendError;
       const id = `message-fake-${nextMessageId++}`;
       sentCards.push({ chatId: target.chatId, target, card, messageIds: [id] });
+      await sendCardDelay;
       return { messageIds: [id] };
     },
     async inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult> {
@@ -222,6 +225,9 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     },
     setSendError(err: Error | null): void {
       sendError = err;
+    },
+    setSendCardDelay(delay: Promise<void> | null): void {
+      sendCardDelay = delay;
     },
     setReactionError(err: Error | null): void {
       reactionError = err;

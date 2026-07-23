@@ -42,11 +42,12 @@ part of this change.
 Extend the existing root-exported `ChannelCoreEvent` union with two additive v1
 event kinds:
 
-- `binding.route` with `schema_version`, `occurred_at`, `action`, an endpoint
-  snapshot, and the previous/current Team projection appropriate to the action;
-- `binding.collaboration_space` with `schema_version`, `occurred_at`, `action`,
-  a container endpoint snapshot, the space name, and bound-only repository /
-  workspace policy.
+- `binding.route` as an action-discriminated union: bound/replaced events require
+  the current Team projection, including runtime and runtime cwd, while unbound
+  events require the previous Team owner and fix the current Team to `null`;
+- `binding.collaboration_space` as an action-discriminated union: bound events
+  require the current repository/workspace policy, while unbound events fix it
+  to `null`.
 
 This is a public provider ABI addition and requires the corresponding
 `@excitedjs/dreamux-types` minor change note, root-export guards, and external
@@ -106,8 +107,10 @@ claim (`claim_id != null`) to an explicit binding (`claim_id == null`) is
 one new-bound event and no transient old-owner unbound event.
 
 `CollaborationSpaceStore` applies the same rule to explicit/default bind and
-unbind. Concurrent default auto-bind callers publish only for the one inserted
-binding.
+unbind. Replaying an explicit bind with the same policy refreshes container
+metadata atomically and returns `unchanged`; changing policy still requires
+dissolve/rebind. Concurrent default auto-bind callers publish only for the one
+inserted binding.
 
 The route-bound projection is produced by a `TeamCollection` capability under
 the existing route lifecycle lease. It contains:
@@ -156,8 +159,10 @@ able to create Markdown links, mentions, tags, or card actions.
 - The Feishu session serializes binding-notification attempts so rapid
   bind/unbind/rebind events cannot overtake one another.
 - Revoking the existing core-event source prevents new attempts. A send already
-  accepted by the Feishu notification queue is allowed to settle during session
-  close.
+  accepted by the Feishu notification queue gets a bounded settle window during
+  session close. Each remote send also has a fixed deadline; when the close
+  window expires, the session aborts notification work and continues closing
+  without waiting for a hung Feishu request.
 
 ## Card Content
 
@@ -205,6 +210,8 @@ Unbound:
   reclaim; legacy records without metadata remain compatible and skip/warn.
 - A stale Team route lease fails before the binding write and emits no event.
 - Rapid bind/unbind/bind cards preserve event order.
+- A hung card send cannot hold Feishu session close beyond the notification
+  drain deadline.
 - Pre-session startup reconciliation makes no attempt.
 - Card-send failure is contained and logged without changing binding results.
 - Card JSON cannot contain identity configuration, `claim_id`, prompts, raw

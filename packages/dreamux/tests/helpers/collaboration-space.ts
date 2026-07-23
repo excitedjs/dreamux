@@ -163,37 +163,6 @@ export function fakeChannels() {
           };
     },
     async bindResolvedTarget(input: {
-      owner: ChannelRouteOwner;
-      target: { target_key: string; meta?: Record<string, unknown> };
-    }) {
-      boundOwners.set(input.target.target_key, input.owner);
-      claimIds.set(input.target.target_key, null);
-      targetMetas.set(input.target.target_key, input.target.meta ?? {});
-      return { active: true, team_name: input.owner.teamName };
-    },
-    async bindResolvedTargetIfAvailableToOwner(input: {
-      owner: ChannelRouteOwner;
-      target: { target_key: string };
-    }) {
-      const owner = boundOwners.get(input.target.target_key);
-      if (owner !== undefined && claimIds.get(input.target.target_key) !== null) {
-        throw new Error('target is managed by an active collaboration route');
-      }
-      if (
-        owner !== undefined &&
-        (owner.teamName !== input.owner.teamName ||
-          owner.leaderName !== input.owner.leaderName)
-      ) {
-        throw new Error(`target already bound to Team ${owner.teamName}`);
-      }
-      if (owner !== undefined) {
-        return { active: true, team_name: owner.teamName };
-      }
-      boundOwners.set(input.target.target_key, input.owner);
-      claimIds.set(input.target.target_key, null);
-      return { active: true, team_name: input.owner.teamName };
-    },
-    async bindResolvedTargetWithTransition(input: {
       team: { team_name: string; leader_name: string };
       target: { target_key: string; meta?: Record<string, unknown> };
     }) {
@@ -207,7 +176,7 @@ export function fakeChannels() {
       targetMetas.set(input.target.target_key, input.target.meta ?? {});
       return { active: true, team_name: input.team.team_name };
     },
-    async bindResolvedTargetIfAvailableToOwnerWithTransition(input: {
+    async bindResolvedTargetIfAvailableToOwner(input: {
       team: { team_name: string; leader_name: string };
       target: { target_key: string; meta?: Record<string, unknown> };
     }) {
@@ -235,30 +204,6 @@ export function fakeChannels() {
       return { active: true, team_name: input.team.team_name };
     },
     async claimResolvedTarget(input: {
-      owner: ChannelRouteOwner;
-      target: { target_key: string; meta?: Record<string, unknown> };
-      claimId: string;
-    }) {
-      const owner = boundOwners.get(input.target.target_key);
-      if (
-        owner !== undefined &&
-        (owner.teamName !== input.owner.teamName ||
-          owner.leaderName !== input.owner.leaderName)
-      ) {
-        throw new Error(`target already bound to Team ${owner.teamName}`);
-      }
-      if (
-        owner !== undefined &&
-        claimIds.get(input.target.target_key) !== input.claimId
-      ) {
-        throw new Error('target already has a different active route claim');
-      }
-      boundOwners.set(input.target.target_key, input.owner);
-      claimIds.set(input.target.target_key, input.claimId);
-      targetMetas.set(input.target.target_key, input.target.meta ?? {});
-      return { active: true, team_name: input.owner.teamName };
-    },
-    async claimResolvedTargetWithTransition(input: {
       team: { team_name: string; leader_name: string };
       target: { target_key: string; meta?: Record<string, unknown> };
       claimId: string;

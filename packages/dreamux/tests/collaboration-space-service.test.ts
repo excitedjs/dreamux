@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type { ChannelCoreEvent } from '@excitedjs/dreamux-types';
+
 import { CollaborationSpaceService } from '../src/service/collaboration-space/index.js';
 import { CollaborationSpaceStore } from '../src/service/collaboration-space/store.js';
 import { PUBLIC_TARGET_LIFECYCLE_ERROR } from '../src/service/collaboration-space/view.js';
@@ -46,11 +48,19 @@ describe('CollaborationSpaceService', () => {
     const created: CreatedTeam[] = [];
     const dissolved: string[] = [];
     const channels = fakeChannels();
+    const store = new CollaborationSpaceStore();
+    const events: ChannelCoreEvent[] = [];
     const service = new CollaborationSpaceService({
       dispatcherId: 'flow',
       config: fakeConfig(),
       teams: fakeTeams(created, dissolved),
       channels: channels.service,
+      store,
+      coreEvents: {
+        publish(_dispatcherId, event) {
+          events.push(event);
+        },
+      },
       log: log as never,
       isShuttingDown: () => false,
     });
@@ -75,6 +85,36 @@ describe('CollaborationSpaceService', () => {
         has_identity: true,
       },
     });
+    const replayed = await service.bind({
+      spaceName: 'space-alpha',
+      container: {
+        container_type: 'topic_group',
+        container_key: 'container-1',
+        display: 'Renamed Alpha Topics',
+        meta: { chat_id: 'container-1', refreshed: true },
+      },
+      repo: { cwd: '/repo/a', baseRef: 'main' },
+      leaderAgentRuntime: 'agent-a',
+      identity: 'Default leader identity',
+    });
+    expect(replayed.space.current_binding).toMatchObject({ generation: 1 });
+    await expect(store.getSpace('flow', 'space-alpha')).resolves.toMatchObject({
+      display: 'Renamed Alpha Topics',
+      meta: { refreshed: true },
+      current_binding: { generation: 1 },
+    });
+    expect(events.filter((event) =>
+      event.kind === 'binding.collaboration_space')).toHaveLength(1);
+    await expect(service.bind({
+      spaceName: 'space-alpha',
+      container: {
+        container_type: 'topic_group',
+        container_key: 'container-1',
+      },
+      repo: { cwd: '/repo/a', baseRef: 'main' },
+      leaderAgentRuntime: 'agent-b',
+      identity: 'Default leader identity',
+    })).rejects.toThrow(/dissolve it before changing its binding policy/);
 
     const firstTarget = {
       channelId: 'primary',
@@ -270,7 +310,12 @@ describe('CollaborationSpaceService', () => {
     const owner = channels.boundOwners.get('topic-closed');
     if (owner === undefined) throw new Error('provisioned route is missing');
     await channels.service.bindResolvedTarget({
-      owner,
+      team: {
+        team_name: owner.teamName,
+        leader_name: owner.leaderName,
+        leader_agent_runtime: 'agent-a',
+        runtime_cwd: `/tmp/dreamux-test/${owner.teamName}`,
+      },
       channelId: 'primary',
       target: {
         target_type: 'topic',
@@ -710,7 +755,12 @@ describe('CollaborationSpaceService', () => {
       () => channels.service.bindResolvedTarget({
         channelId: 'primary',
         target,
-        owner,
+        team: {
+          team_name: owner.teamName,
+          leader_name: owner.leaderName,
+          leader_agent_runtime: 'agent-a',
+          runtime_cwd: `/tmp/dreamux-test/${owner.teamName}`,
+        },
       }),
     );
     await service.reconcileInboundTargetRoute({ channelId: 'primary', target });

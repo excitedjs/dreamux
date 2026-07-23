@@ -179,46 +179,16 @@ export class ChannelService {
   }
 
   async bindTarget(input: {
-    owner: ChannelRouteOwner;
+    team: TeamRouteProjection;
     channelId?: string;
     meta: Record<string, unknown>;
   }): Promise<ChannelBinding> {
     const channelId = this.resolveChannelId(input.channelId);
     const target = await this.resolveTarget(input.meta, channelId);
-    return this.bindResolvedTarget({ owner: input.owner, channelId, target });
+    return this.bindResolvedTarget({ team: input.team, channelId, target });
   }
 
   async bindResolvedTarget(input: {
-    owner: ChannelRouteOwner;
-    channelId: string;
-    target: ChannelTarget;
-  }): Promise<ChannelBinding> {
-    return this.bindings.bind({
-      dispatcherId: this.dispatcherId,
-      channelId: input.channelId,
-      provider: this.channelProviderRef(input.channelId),
-      target: input.target,
-      teamName: input.owner.teamName,
-      leaderName: input.owner.leaderName,
-    });
-  }
-
-  async bindResolvedTargetIfAvailableToOwner(input: {
-    owner: ChannelRouteOwner;
-    channelId: string;
-    target: ChannelTarget;
-  }): Promise<ChannelBinding> {
-    return this.bindings.bindIfAvailableToOwner({
-      dispatcherId: this.dispatcherId,
-      channelId: input.channelId,
-      provider: this.channelProviderRef(input.channelId),
-      target: input.target,
-      teamName: input.owner.teamName,
-      leaderName: input.owner.leaderName,
-    });
-  }
-
-  async bindResolvedTargetWithTransition(input: {
     team: TeamRouteProjection;
     channelId: string;
     target: ChannelTarget;
@@ -240,7 +210,7 @@ export class ChannelService {
     return transition.binding;
   }
 
-  async bindResolvedTargetIfAvailableToOwnerWithTransition(input: {
+  async bindResolvedTargetIfAvailableToOwner(input: {
     team: TeamRouteProjection;
     channelId: string;
     target: ChannelTarget;
@@ -264,23 +234,6 @@ export class ChannelService {
   }
 
   async claimResolvedTarget(input: {
-    owner: ChannelRouteOwner;
-    channelId: string;
-    target: ChannelTarget;
-    claimId: string;
-  }): Promise<ChannelBinding> {
-    return this.bindings.claim({
-      dispatcherId: this.dispatcherId,
-      channelId: input.channelId,
-      provider: this.channelProviderRef(input.channelId),
-      target: input.target,
-      teamName: input.owner.teamName,
-      leaderName: input.owner.leaderName,
-      claimId: input.claimId,
-    });
-  }
-
-  async claimResolvedTargetWithTransition(input: {
     team: TeamRouteProjection;
     channelId: string;
     target: ChannelTarget;

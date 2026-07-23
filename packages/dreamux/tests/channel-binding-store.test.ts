@@ -149,7 +149,7 @@ describe('ChannelBindingStore v3', () => {
     ).resolves.toMatchObject({ team_name: 'beta' });
   });
 
-  it('creates only an available explicit route and treats the exact owner as idempotent', async () => {
+  it('keeps the available owner while refreshing provider metadata idempotently', async () => {
     const store = new ChannelBindingStore();
     const input = {
       dispatcherId: DISPATCHER,
@@ -160,16 +160,26 @@ describe('ChannelBindingStore v3', () => {
       leaderName: 'alpha-leader',
     };
     const first = await store.bindIfAvailableToOwner(input);
-    const second = await store.bindIfAvailableToOwner({
+    const second = await store.bindIfAvailableToOwnerWithTransition({
       ...input,
       target: {
         ...input.target,
         display: 'changed provider display',
+        meta: { chat_id: 'chat-available', message_id: 'latest-message' },
       },
     });
 
-    expect(second).toEqual(first);
-    expect(second.claim_id).toBeNull();
+    expect(second).toMatchObject({
+      transition: 'unchanged',
+      binding: {
+        display: 'changed provider display',
+        meta: { message_id: 'latest-message' },
+        team_name: first.team_name,
+        leader_name: first.leader_name,
+        created_at: first.created_at,
+      },
+    });
+    expect(second.binding.claim_id).toBeNull();
     expect(await store.list(DISPATCHER)).toHaveLength(1);
   });
 
