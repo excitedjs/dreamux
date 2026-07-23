@@ -61,9 +61,11 @@ static card delivery.
   container chat, which creates a new topic in a Feishu topic group.
 - Feishu notification sends and the session-close drain are deadline-bounded.
   Close aborts remaining notification work after its settle window, so a hung
-  remote request cannot hold dispatcher shutdown. Because transport cannot
-  cancel a request already issued to Feishu, a live send timeout disables later
-  binding notifications for that session; restart creates a fresh session.
+  remote request cannot hold dispatcher shutdown. The Feishu transport exposes
+  caller-owned `AbortSignal` cancellation for card sends. A live send timeout
+  aborts the underlying HTTP request and disables later binding notifications
+  for that session; restart creates a fresh session only after the old request
+  has observed cancellation.
 - Feishu cards render plain text only and do not expose raw provider `meta`,
   `claim_id`, prompts, or raw errors.
 

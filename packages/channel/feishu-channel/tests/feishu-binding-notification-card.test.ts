@@ -316,7 +316,7 @@ describe('Feishu binding notification cards', () => {
     );
   });
 
-  it('disables later notifications when a timed-out send may complete late', async () => {
+  it('cancels a timed-out send before a restarted session sends again', async () => {
     vi.useFakeTimers();
     let releaseSend!: () => void;
     const delayedSend = new Promise<void>((resolve) => {
@@ -341,11 +341,26 @@ describe('Feishu binding notification cards', () => {
       'Feishu binding notification timed out; disabling notifications for this session',
     );
 
-    releaseSend();
-    await vi.advanceTimersByTimeAsync(0);
     source.emit(routeEvent({ meta: { chat_id: 'chat-c' } }));
     await vi.advanceTimersByTimeAsync(0);
     expect(bot.sentCards.map((card) => card.chatId)).toEqual(['chat-a']);
     await expect(s.close()).resolves.toBeUndefined();
+
+    bot.setSendCardDelay(null);
+    const restartedSource = eventSource();
+    await start({ session: s, source: restartedSource });
+    restartedSource.emit(routeEvent({ meta: { chat_id: 'chat-restarted' } }));
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(s.close()).resolves.toBeUndefined();
+
+    releaseSend();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(bot.sentCards.map((card) => card.chatId)).toEqual([
+      'chat-a',
+      'chat-restarted',
+    ]);
+    expect(bot.deliveredCards.map((card) => card.chatId)).toEqual([
+      'chat-restarted',
+    ]);
   });
 });

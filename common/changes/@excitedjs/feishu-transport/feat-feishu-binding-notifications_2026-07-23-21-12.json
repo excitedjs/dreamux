@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/feishu-transport",
+      "comment": "Add caller-owned AbortSignal cancellation for interactive card sends.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport"
+}

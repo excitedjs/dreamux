@@ -440,15 +440,16 @@ ignores events whose endpoint provider is not `builtin:feishu`. Delivery is
 best-effort, live-session-only, serialized per session, and bounded by a remote
 send deadline. Session close gives accepted notification work a bounded settle
 window, then aborts the queue before closing the bot; a hung card request cannot
-hold dispatcher shutdown. Transport cannot cancel an already-issued request, so
-a live notification timeout aborts the notification controller and suppresses
-queued/later cards for that session. This prevents a timed-out card from
-finishing after a newer one; a new session restores delivery. Route topic cards
-reply to the persisted triggering `message_id`; route group cards send to the
-group; collaboration-space cards always send a fresh top-level card to the
-container chat, which creates a new topic in a Feishu topic group. Cards use
-Feishu `plain_text` elements only and render display fields, Team facts, runtime
-cwd, and repository/workspace policy without rendering raw provider `meta`,
+hold dispatcher shutdown. `FeishuTransport.sendCard` accepts a caller-owned
+`AbortSignal` and forwards it through the SDK client's cancellable HTTP request
+path. A live notification timeout aborts that request and suppresses
+queued/later cards for the session, preventing an in-process request from
+crossing close/restart and finishing after a newer card. Route topic cards reply
+to the persisted triggering `message_id`; route group cards send to the group;
+collaboration-space cards always send a fresh top-level card to the container
+chat, which creates a new topic in a Feishu topic group. Cards use Feishu
+`plain_text` elements only and render display fields, Team facts, runtime cwd,
+and repository/workspace policy without rendering raw provider `meta`,
 `claim_id`, prompts, or raw errors.
 
 Key source:

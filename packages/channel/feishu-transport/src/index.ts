@@ -71,6 +71,7 @@ export {
   type FeishuTransportOptions,
   type FeishuWebSocketRegistration,
   type FeishuAppOwnerIdentity,
+  type FeishuSendOptions,
   type FeishuSendResult,
   type FeishuCreateGroupInput,
   type FeishuCreateGroupResult,

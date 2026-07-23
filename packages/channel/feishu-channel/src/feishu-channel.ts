@@ -501,6 +501,7 @@ export class FeishuChannelSession {
               : {}),
           }),
           notification.card,
+          { signal: controller.signal },
         ),
       });
       this.opts.log.info(

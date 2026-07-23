@@ -2,6 +2,7 @@ import * as lark from '@larksuiteoapi/node-sdk'
 import type { Readable } from 'node:stream'
 
 import type { OutboundTarget } from '../contract/outbound.js'
+import { sendInteractiveCard } from './outbound-card.js'
 import {
   cardToContent,
   renderMarkdownToCards,
@@ -41,6 +42,10 @@ export const FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER = 2
 
 export interface FeishuSendResult {
     messageIds: string[]
+}
+
+export interface FeishuSendOptions {
+    signal?: AbortSignal
 }
 
 export interface FeishuCreateGroupInput {
@@ -243,7 +248,11 @@ export interface FeishuTransport {
     readonly selfName: string | undefined
     start(routes: InboundRoutes): Promise<void>
     send(target: OutboundTarget, text: string): Promise<FeishuSendResult>
-    sendCard(target: OutboundTarget, card: unknown): Promise<FeishuSendResult>
+    sendCard(
+      target: OutboundTarget,
+      card: unknown,
+      options?: FeishuSendOptions,
+    ): Promise<FeishuSendResult>
     createGroup(input: FeishuCreateGroupInput): Promise<FeishuCreateGroupResult>
     inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult>
     /** Optional capability for custom transports; callers must fail safe when absent. */
@@ -366,10 +375,19 @@ export function createFeishuTransport(
       return { messageIds }
     },
 
-    async sendCard(target: OutboundTarget, card: unknown): Promise<FeishuSendResult> {
+    async sendCard(
+      target: OutboundTarget,
+      card: unknown,
+      options?: FeishuSendOptions,
+    ): Promise<FeishuSendResult> {
       const content = JSON.stringify(card)
       assertCardContentFits(content)
-      const res = await sendInteractiveCard(client, target, content)
+      const res = await sendInteractiveCard(
+        client,
+        target,
+        content,
+        options?.signal,
+      )
       const id = res.data?.message_id
       return { messageIds: id ? [id] : [] }
     },
@@ -546,37 +564,6 @@ export function createFeishuTransport(
       wsClient = undefined
     },
   }
-}
-
-type MessageSendResponse = { data?: { message_id?: string } }
-
-type MessageApiWithReply = {
-  reply(args: {
-    path: { message_id: string }
-    data: { msg_type: string; content: string }
-  }): Promise<MessageSendResponse>
-}
-
-async function sendInteractiveCard(
-  client: lark.Client,
-  target: OutboundTarget,
-  content: string,
-): Promise<MessageSendResponse> {
-  const data = { msg_type: 'interactive', content }
-  if (target.replyToMessageId !== undefined) {
-    const messageApi = client.im.message as unknown as MessageApiWithReply
-    return messageApi.reply({
-      path: { message_id: target.replyToMessageId },
-      data,
-    })
-  }
-  return client.im.message.create({
-    params: { receive_id_type: 'chat_id' },
-    data: {
-      receive_id: target.chatId,
-      ...data,
-    },
-  })
 }
 
 function textWithLeadingMentions(target: OutboundTarget, text: string): string {
