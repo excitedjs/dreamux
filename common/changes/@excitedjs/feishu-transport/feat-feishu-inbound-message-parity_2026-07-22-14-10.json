@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Preserve rich Feishu inbound content and add the bounded message-read seam used for card, unsupported-message, and quote-type resolution.",
+      "comment": "Preserve ordered Feishu text, code, and resource parts; add bounded message reads; and expose a best-effort per-transport sender-name resolver with mention caching.",
       "type": "minor",
       "packageName": "@excitedjs/feishu-transport"
     }

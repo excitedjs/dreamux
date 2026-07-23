@@ -5,6 +5,7 @@ implementation guidance; use the linked decisions and reference docs first.
 
 | Proposal | Current pointer |
 |---|---|
+| [Feishu inbound structured body](feishu-inbound-structured-body.md) | [Channel runtime](../../reference/channel-runtime.md), [Feishu inbound attachments](../../decisions/feishu-inbound-attachments.md) |
 | [Feishu lazy message identity hints](feishu-lazy-message-lookup.md) | [Channel runtime](../../reference/channel-runtime.md), [Feishu inbound message fidelity](feishu-inbound-message-fidelity.md) |
 | [Feishu inbound message fidelity](feishu-inbound-message-fidelity.md) | [Channel runtime](../../reference/channel-runtime.md), [Feishu inbound attachments](../../decisions/feishu-inbound-attachments.md) |
 | [Feishu trusted-bot context](feishu-bot-trust-context.md) | [Feishu introduce](../../domains/feishu-introduce.md), [non-blocking dispatcher inbound](../../domains/non-blocking-dispatcher-inbound.md), [Channel routing and binding](../../domains/channel-routing-and-binding.md) |

@@ -13,13 +13,17 @@
 
 import * as lark from '@larksuiteoapi/node-sdk'
 import { Readable } from 'node:stream'
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   FEISHU_CARD_CONTENT_SAFE_BYTES,
   commentFromBatchQuery,
   createFeishuTransport,
 } from '../src/transport/feishu'
 import type { TransportLogger } from '../src/transport/diagnostics'
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 /**
  * One `drive.v1.fileComment.batchQuery` response item, in the exact shape the
@@ -152,6 +156,10 @@ function stubClient() {
   const chatGet = vi.fn(async () => ({ data: { chat_mode: 'group' } }))
   const memberCreate = vi.fn(async () => ({}))
   const request = vi.fn(async () => ({}))
+  const contactUserGet = vi.fn(async () => ({
+    code: 0,
+    data: { user: { name: 'Ada' } },
+  }))
   const stub = {
     im: {
       v1: {
@@ -166,7 +174,11 @@ function stubClient() {
       fileComment: { batchQuery: vi.fn(async () => ({ data: { items: [] } })) },
       meta: { batchQuery: vi.fn(async () => ({ data: { metas: [] } })) },
     },
+    contact: {
+      v3: { user: { get: contactUserGet } },
+    },
     request,
+    contactUserGet,
   }
   return {
     client: stub as unknown as lark.Client,
@@ -182,11 +194,34 @@ function stubClient() {
     chatGet,
     memberCreate,
     request,
+    contactUserGet,
   }
 }
 
 function buildTransport(stub: ReturnType<typeof stubClient>) {
-  return createFeishuTransport({ appId: 'app', appSecret: 'secret' }, { client: stub.client })
+  const noop = (): void => undefined
+  const logger: TransportLogger = {
+    error: noop,
+    warn: noop,
+    info: noop,
+    debug: noop,
+    trace: noop,
+  }
+  return createFeishuTransport(
+    { appId: 'app', appSecret: 'secret' },
+    { client: stub.client, logger },
+  )
+}
+
+function deferred<T>(): {
+  promise: Promise<T>
+  resolve(value: T): void
+} {
+  let resolvePromise: (value: T) => void = () => undefined
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve
+  })
+  return { promise, resolve: resolvePromise }
 }
 
 describe('createFeishuTransport — send', () => {
@@ -600,6 +635,174 @@ describe('createFeishuTransport — message reads', () => {
       messageType: 'merge_forward',
       malformed: false,
     })
+  })
+})
+
+describe('createFeishuTransport — sender names', () => {
+  test('seeds mention names without a contact read', async () => {
+    const stub = stubClient()
+    const transport = buildTransport(stub)
+
+    transport.observeUserNames?.([{ openId: 'ou_mentioned', name: 'Bob' }])
+
+    await expect(transport.resolveUserName?.('ou_mentioned')).resolves.toBe('Bob')
+    expect(stub.contactUserGet).not.toHaveBeenCalled()
+  })
+
+  test('resolves and positively caches a user name through contact.v3.user.get', async () => {
+    const stub = stubClient()
+    const transport = buildTransport(stub)
+
+    await expect(transport.resolveUserName?.('ou_sender')).resolves.toBe('Ada')
+    await expect(transport.resolveUserName?.('ou_sender')).resolves.toBe('Ada')
+
+    expect(stub.contactUserGet).toHaveBeenCalledTimes(1)
+    expect(stub.contactUserGet).toHaveBeenCalledWith({
+      path: { user_id: 'ou_sender' },
+      params: { user_id_type: 'open_id' },
+    })
+  })
+
+  test('deduplicates concurrent misses', async () => {
+    const stub = stubClient()
+    let resolveRequest: (value: unknown) => void = () => undefined
+    stub.contactUserGet.mockImplementationOnce(() =>
+      new Promise((resolve) => {
+        resolveRequest = resolve
+      }) as never)
+    const transport = buildTransport(stub)
+
+    const first = transport.resolveUserName?.('ou_same')
+    const second = transport.resolveUserName?.('ou_same')
+    resolveRequest({ code: 0, data: { user: { name: 'Same' } } })
+
+    await expect(Promise.all([first, second])).resolves.toEqual(['Same', 'Same'])
+    expect(stub.contactUserGet).toHaveBeenCalledTimes(1)
+  })
+
+  test('opens the per-instance permission circuit only for code 99991672', async () => {
+    const stub = stubClient()
+    stub.contactUserGet.mockResolvedValueOnce({ code: 99991672 } as never)
+    const transport = buildTransport(stub)
+
+    await expect(transport.resolveUserName?.('ou_first')).resolves.toBeUndefined()
+    await expect(transport.resolveUserName?.('ou_second')).resolves.toBeUndefined()
+
+    expect(stub.contactUserGet).toHaveBeenCalledTimes(1)
+
+    const otherStub = stubClient()
+    otherStub.contactUserGet.mockResolvedValueOnce({
+      code: 0,
+      data: { user: { name: 'Other app' } },
+    } as never)
+    const otherTransport = buildTransport(otherStub)
+    await expect(otherTransport.resolveUserName?.('ou_second')).resolves.toBe('Other app')
+    expect(otherStub.contactUserGet).toHaveBeenCalledTimes(1)
+  })
+
+  test('retries after a transient failure and does not share caches across instances', async () => {
+    const firstStub = stubClient()
+    firstStub.contactUserGet.mockRejectedValueOnce(new Error('transient'))
+    firstStub.contactUserGet.mockResolvedValueOnce({
+      code: 0,
+      data: { user: { name: 'Recovered' } },
+    } as never)
+    const first = buildTransport(firstStub)
+
+    await expect(first.resolveUserName?.('ou_retry')).resolves.toBeUndefined()
+    await expect(first.resolveUserName?.('ou_retry')).resolves.toBe('Recovered')
+
+    const secondStub = stubClient()
+    secondStub.contactUserGet.mockResolvedValueOnce({
+      code: 0,
+      data: { user: { name: 'Other app' } },
+    } as never)
+    const second = buildTransport(secondStub)
+    await expect(second.resolveUserName?.('ou_retry')).resolves.toBe('Other app')
+    expect(secondStub.contactUserGet).toHaveBeenCalledTimes(1)
+  })
+
+  test('evicts a timed-out in-flight request so a later attempt can retry', async () => {
+    vi.useFakeTimers()
+    const stub = stubClient()
+    stub.contactUserGet.mockImplementationOnce(() =>
+      new Promise(() => undefined) as never)
+    stub.contactUserGet.mockResolvedValueOnce({
+      code: 0,
+      data: { user: { name: 'Later' } },
+    } as never)
+    const transport = buildTransport(stub)
+
+    const timedOut = transport.resolveUserName?.('ou_slow')
+    await vi.advanceTimersByTimeAsync(801)
+    await expect(timedOut).resolves.toBeUndefined()
+    await expect(transport.resolveUserName?.('ou_slow')).resolves.toBe('Later')
+    expect(stub.contactUserGet).toHaveBeenCalledTimes(2)
+  })
+
+  test('does not let a timed-out request overwrite a newer cached name', async () => {
+    vi.useFakeTimers()
+    const stub = stubClient()
+    const oldRequest = deferred<unknown>()
+    const newRequest = deferred<unknown>()
+    stub.contactUserGet.mockImplementationOnce(() => oldRequest.promise as never)
+    stub.contactUserGet.mockImplementationOnce(() => newRequest.promise as never)
+    const transport = buildTransport(stub)
+
+    const timedOut = transport.resolveUserName?.('ou_race')
+    await vi.advanceTimersByTimeAsync(801)
+    await expect(timedOut).resolves.toBeUndefined()
+
+    const current = transport.resolveUserName?.('ou_race')
+    newRequest.resolve({ code: 0, data: { user: { name: 'New Name' } } })
+    await expect(current).resolves.toBe('New Name')
+
+    oldRequest.resolve({ code: 0, data: { user: { name: 'Old Name' } } })
+    await Promise.resolve()
+    await expect(transport.resolveUserName?.('ou_race')).resolves.toBe('New Name')
+    expect(stub.contactUserGet).toHaveBeenCalledTimes(2)
+  })
+
+  test('does not let a pending request overwrite a newer mention seed', async () => {
+    const stub = stubClient()
+    const pendingRequest = deferred<unknown>()
+    stub.contactUserGet.mockImplementationOnce(() => pendingRequest.promise as never)
+    const transport = buildTransport(stub)
+
+    const pending = transport.resolveUserName?.('ou_seeded')
+    transport.observeUserNames?.([{ openId: 'ou_seeded', name: 'Mention Name' }])
+    pendingRequest.resolve({
+      code: 0,
+      data: { user: { name: 'Stale Contact Name' } },
+    })
+
+    await expect(pending).resolves.toBe('Mention Name')
+    await expect(transport.resolveUserName?.('ou_seeded')).resolves.toBe('Mention Name')
+    expect(stub.contactUserGet).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not let an aborted lookup mutate the permission circuit', async () => {
+    const stub = stubClient()
+    const abortedRequest = deferred<unknown>()
+    stub.contactUserGet.mockImplementationOnce(() => abortedRequest.promise as never)
+    stub.contactUserGet.mockResolvedValueOnce({
+      code: 0,
+      data: { user: { name: 'Recovered' } },
+    } as never)
+    const transport = buildTransport(stub)
+    const controller = new AbortController()
+
+    const aborted = transport.resolveUserName?.(
+      'ou_aborted',
+      { signal: controller.signal },
+    )
+    controller.abort()
+    await expect(aborted).resolves.toBeUndefined()
+
+    abortedRequest.resolve({ code: 99991672 })
+    await Promise.resolve()
+    await expect(transport.resolveUserName?.('ou_aborted')).resolves.toBe('Recovered')
+    expect(stub.contactUserGet).toHaveBeenCalledTimes(2)
   })
 })
 

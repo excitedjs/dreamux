@@ -7,6 +7,8 @@ import type { FeishuChatMode } from '@excitedjs/feishu-transport';
 
 import type { FeishuInboundEvent } from './bot.js';
 
+const FEISHU_CHAT_MODE_LOOKUP_TIMEOUT_MS = 2_000;
+
 interface FeishuChatModeReader {
   getChatMode?(chatId: string): Promise<FeishuChatMode | undefined>;
 }
@@ -36,7 +38,11 @@ export class FeishuTargetRouter {
 
   constructor(private readonly opts: FeishuTargetRouterOptions) {}
 
-  async projectInbound(event: FeishuInboundEvent): Promise<FeishuInboundRoute> {
+  async projectInbound(
+    event: FeishuInboundEvent,
+    signal?: AbortSignal,
+  ): Promise<FeishuInboundRoute> {
+    assertRoutingActive(signal);
     let route: FeishuInboundRoute = {
       target: chatTarget(event.chatId, event.chatType),
     };
@@ -45,11 +51,13 @@ export class FeishuTargetRouter {
       event.threadId !== undefined &&
       event.threadId !== ''
     ) {
-      const mode = await this.chatMode(event.chatId);
+      const mode = await this.chatMode(event.chatId, signal);
+      assertRoutingActive(signal);
       if (mode === 'topic') {
         route = topicRoute(event);
       }
     }
+    assertRoutingActive(signal);
     this.messageTargets.set(event.messageId, route.target);
     return route;
   }
@@ -85,16 +93,28 @@ export class FeishuTargetRouter {
     return recorded !== undefined && targetChatId(recorded) === chatId;
   }
 
-  private async chatMode(chatId: string): Promise<FeishuChatMode | undefined> {
+  private async chatMode(
+    chatId: string,
+    signal?: AbortSignal,
+  ): Promise<FeishuChatMode | undefined> {
+    assertRoutingActive(signal);
     const cached = this.resolvedChatModes.get(chatId);
     if (cached !== undefined) return cached;
     const pending = this.pendingChatModes.get(chatId);
-    if (pending !== undefined) return pending;
+    if (pending !== undefined) {
+      const mode = await pending;
+      assertRoutingActive(signal);
+      if (mode !== undefined) this.resolvedChatModes.set(chatId, mode);
+      return mode;
+    }
 
     const lookup = this.lookupChatMode(chatId);
     this.pendingChatModes.set(chatId, lookup);
     try {
-      return await lookup;
+      const mode = await lookup;
+      assertRoutingActive(signal);
+      if (mode !== undefined) this.resolvedChatModes.set(chatId, mode);
+      return mode;
     } finally {
       if (this.pendingChatModes.get(chatId) === lookup) {
         this.pendingChatModes.delete(chatId);
@@ -112,11 +132,10 @@ export class FeishuTargetRouter {
       return undefined;
     }
     try {
-      const mode = await getChatMode.call(this.opts.chatModes, chatId);
-      if (mode !== undefined) {
-        this.resolvedChatModes.set(chatId, mode);
-        return mode;
-      }
+      const mode = await withChatModeTimeout(
+        getChatMode.call(this.opts.chatModes, chatId),
+      );
+      if (mode !== undefined) return mode;
       this.opts.log.warn(
         { chat_id: chatId, reason: 'missing_or_unknown_chat_mode' },
         'could not verify Feishu topic-group mode; treating inbound as an ordinary group',
@@ -126,13 +145,57 @@ export class FeishuTargetRouter {
       this.opts.log.warn(
         {
           chat_id: chatId,
-          reason: 'chat_mode_lookup_failed',
+          reason: err instanceof FeishuChatModeLookupTimeoutError
+            ? 'chat_mode_lookup_timed_out'
+            : 'chat_mode_lookup_failed',
           err: safeError(err),
         },
         'could not verify Feishu topic-group mode; treating inbound as an ordinary group',
       );
       return undefined;
     }
+  }
+}
+
+function assertRoutingActive(signal: AbortSignal | undefined): void {
+  if (signal?.aborted === true) {
+    throw new FeishuRouteProjectionAbortedError();
+  }
+}
+
+function withChatModeTimeout(
+  promise: Promise<FeishuChatMode | undefined>,
+): Promise<FeishuChatMode | undefined> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callback();
+    };
+    const timer = setTimeout(
+      () => finish(() => reject(new FeishuChatModeLookupTimeoutError())),
+      FEISHU_CHAT_MODE_LOOKUP_TIMEOUT_MS,
+    );
+    void promise.then(
+      (value) => finish(() => resolve(value)),
+      (error: unknown) => finish(() => reject(error)),
+    );
+  });
+}
+
+class FeishuRouteProjectionAbortedError extends Error {
+  constructor() {
+    super('Feishu inbound route projection was aborted');
+    this.name = 'FeishuRouteProjectionAbortedError';
+  }
+}
+
+class FeishuChatModeLookupTimeoutError extends Error {
+  constructor() {
+    super('Feishu chat-mode lookup timed out');
+    this.name = 'FeishuChatModeLookupTimeoutError';
   }
 }
 

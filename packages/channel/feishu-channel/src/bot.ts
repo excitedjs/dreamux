@@ -37,6 +37,9 @@ import {
   type FeishuAppOwnerIdentity,
   type FeishuChatMode,
   type FeishuTransport,
+  type FeishuUserNameEntry,
+  type FeishuUserNameLookupOptions,
+  type InboundContentPart,
   type InboundResource,
   type Mention,
   type OutboundTarget,
@@ -75,9 +78,8 @@ export interface FeishuInboundEvent {
   senderUnionId?: string;
   senderType: string;
   /**
-   * Best-effort display name seam for future enrichers. Feishu
-   * im.message.receive_v1 does not provide this in the native event envelope,
-   * so the normal value is intentionally an empty string.
+   * Best-effort event display name. Feishu normally omits it, so the accepted
+   * inbound path may later enrich an empty value through the transport seam.
    */
   senderName: string;
   messageType: string;
@@ -85,6 +87,8 @@ export interface FeishuInboundEvent {
   rawContent: string;
   /** Parsed text after the core's content flattening / mention substitution. */
   parsedText: string;
+  /** Untrusted visible content in Feishu source order. */
+  contentParts?: InboundContentPart[];
   /** Structured Feishu resources discovered in the message content. */
   resources?: InboundResource[];
   /** The local projection omitted or could not resolve visible content. */
@@ -155,6 +159,13 @@ export interface FeishuBot extends FeishuMessageResourceFetcher {
   readMessage?(
     request: FeishuMessageReadRequest,
   ): Promise<FeishuMessageReadResponse>;
+  /** Optional cache seed for accepted mention names. */
+  observeUserNames?(entries: FeishuUserNameEntry[]): void;
+  /** Optional contact lookup for an accepted human sender. */
+  resolveUserName?(
+    openId: string,
+    options?: FeishuUserNameLookupOptions,
+  ): Promise<string | undefined>;
   resolveAppOwner(): Promise<FeishuAppOwnerIdentity>;
   close(): Promise<void>;
 }
@@ -289,6 +300,26 @@ export function createFeishuBot(
         }
       : {}),
 
+    ...(transport.observeUserNames !== undefined
+      ? {
+          observeUserNames(entries: FeishuUserNameEntry[]): void {
+            transport.observeUserNames?.(entries);
+          },
+        }
+      : {}),
+
+    ...(transport.resolveUserName !== undefined
+      ? {
+          resolveUserName(
+            openId: string,
+            options?: FeishuUserNameLookupOptions,
+          ): Promise<string | undefined> {
+            return transport.resolveUserName?.(openId, options) ??
+              Promise.resolve(undefined);
+          },
+        }
+      : {}),
+
     resolveAppOwner(): Promise<FeishuAppOwnerIdentity> {
       return transport.resolveAppOwner();
     },
@@ -367,6 +398,7 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
     messageType,
     rawContent,
     parsedText: payload.text,
+    ...(parsed.parts !== undefined ? { contentParts: parsed.parts } : {}),
     resources: parsed.resources ?? [],
     ...(parsed.incomplete === true ? { contentIncomplete: true } : {}),
     mentions,

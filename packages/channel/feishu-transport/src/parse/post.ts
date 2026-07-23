@@ -1,6 +1,11 @@
-import type { InboundResource, ParsedInbound } from './content.js'
+import type {
+  InboundContentPart,
+  InboundResource,
+  ParsedInbound,
+} from './content.js'
 
 interface PostRenderState {
+  parts: InboundContentPart[]
   resources: InboundResource[]
   seenResources: Set<string>
   omittedTags: Set<string>
@@ -13,6 +18,7 @@ export function parsePostContent(
 ): ParsedInbound {
   const post = pickPostLocale(content)
   const state: PostRenderState = {
+    parts: [],
     resources: [],
     seenResources: new Set(),
     omittedTags: new Set(),
@@ -21,17 +27,25 @@ export function parsePostContent(
   const lines: string[] = []
   if (typeof post.title === 'string' && post.title !== '') {
     lines.push(post.title)
+    appendTextPart(state.parts, post.title)
   }
   if (Array.isArray(post.content)) {
     for (const row of post.content) {
       const nodes = Array.isArray(row) ? row : [row]
+      const partsBeforeRow = state.parts.map(cloneContentPart)
+      if (lines.length > 0) appendTextPart(state.parts, '\n')
       const rendered = nodes.map((node) => renderPostNode(node, state)).join('')
-      if (rendered !== '') lines.push(rendered)
+      if (rendered !== '') {
+        lines.push(rendered)
+      } else {
+        state.parts = partsBeforeRow
+      }
     }
   }
   const text = lines.join('\n')
   return {
     text: text === '' ? '(empty rich-text post)' : text,
+    parts: state.parts,
     ...(state.resources.length > 0 ? { resources: state.resources } : {}),
     ...(state.incomplete || text === '' ? { incomplete: true } : {}),
   }
@@ -57,33 +71,61 @@ function renderPostNode(node: unknown, state: PostRenderState): string {
   if (value === undefined) return ''
   switch (value.tag) {
     case 'text':
-      return renderTextNode(value)
-    case 'md':
-      return stringValue(value.text) ?? stringValue(value.content) ?? ''
+      {
+        const text = renderTextNode(value)
+        appendTextPart(state.parts, text)
+        return text
+      }
+    case 'md': {
+      const text = stringValue(value.text) ?? stringValue(value.content) ?? ''
+      appendTextPart(state.parts, text)
+      return text
+    }
     case 'code':
-    case 'code_block':
+    case 'code_block': {
+      const code = stringValue(value.text) ?? stringValue(value.content) ?? ''
+      const language = stringValue(value.language) ?? stringValue(value.lang)
+      state.parts.push({
+        kind: 'code',
+        code,
+        ...(language !== undefined ? { language } : {}),
+      })
       return renderCodeBlock(value)
+    }
     case 'a': {
       const text = stringValue(value.text) ?? ''
       const href = stringValue(value.href) ?? ''
-      if (text !== '' && href !== '') return `[${text}](${href})`
-      return text || href
+      const rendered = text !== '' && href !== '' ? `[${text}](${href})` : text || href
+      appendTextPart(state.parts, rendered)
+      return rendered
     }
-    case 'at':
-      return `@${stringValue(value.user_name) ?? 'unknown'}`
-    case 'hr':
+    case 'at': {
+      const rendered = `@${stringValue(value.user_name) ?? 'unknown'}`
+      appendTextPart(state.parts, rendered)
+      return rendered
+    }
+    case 'hr': {
+      appendTextPart(state.parts, '---')
       return '---'
+    }
     case 'img': {
       const key = stringValue(value.image_key)
       if (key === undefined) state.incomplete = true
-      addResource(state, 'image', key, key === undefined ? undefined : `${key}.jpg`)
+      const resource = addResource(
+        state,
+        'image',
+        key,
+        key === undefined ? undefined : `${key}.jpg`,
+      )
+      state.parts.push({ kind: 'resource', resource })
       return resourceMarker('image', key)
     }
     case 'file': {
       const key = stringValue(value.file_key)
       const name = stringValue(value.file_name)
       if (key === undefined) state.incomplete = true
-      addResource(state, 'file', key, name)
+      const resource = addResource(state, 'file', key, name)
+      state.parts.push({ kind: 'resource', resource })
       return resourceMarker('file', key, name)
     }
     case 'media': {
@@ -91,23 +133,32 @@ function renderPostNode(node: unknown, state: PostRenderState): string {
       const imageKey = stringValue(value.image_key)
       const fileKey = stringValue(value.file_key)
       if (imageKey !== undefined) {
-        addResource(state, 'image', imageKey, `${imageKey}.jpg`)
+        const resource = addResource(state, 'image', imageKey, `${imageKey}.jpg`)
+        state.parts.push({ kind: 'resource', resource })
         rendered.push(resourceMarker('image', imageKey))
       }
       if (fileKey !== undefined) {
         const name = stringValue(value.file_name)
-        addResource(state, 'file', fileKey, name)
+        const resource = addResource(state, 'file', fileKey, name)
+        state.parts.push({ kind: 'resource', resource })
         rendered.push(resourceMarker('file', fileKey, name))
       }
-      if (rendered.length === 0) state.incomplete = true
-      return rendered.join('') || '[media attachment without a resource key]'
+      if (rendered.length === 0) {
+        state.incomplete = true
+        const marker = '[media attachment without a resource key]'
+        appendTextPart(state.parts, marker)
+        return marker
+      }
+      return rendered.join('')
     }
     default: {
       const tag = safeTag(value.tag)
       state.incomplete = true
       if (state.omittedTags.has(tag)) return ''
       state.omittedTags.add(tag)
-      return `[unsupported rich-text element: ${tag}]`
+      const marker = `[unsupported rich-text element: ${tag}]`
+      appendTextPart(state.parts, marker)
+      return marker
     }
   }
 }
@@ -154,15 +205,35 @@ function addResource(
   type: InboundResource['type'],
   key: string | undefined,
   name: string | undefined,
-): void {
-  const identity = key === undefined ? undefined : `${type}:${key}`
-  if (identity !== undefined && state.seenResources.has(identity)) return
-  if (identity !== undefined) state.seenResources.add(identity)
-  state.resources.push({
+): InboundResource {
+  const resource: InboundResource = {
     type,
     ...(key !== undefined ? { key } : {}),
     ...(name !== undefined ? { name } : {}),
-  })
+  }
+  const identity = key === undefined ? undefined : `${type}:${key}`
+  if (identity === undefined || !state.seenResources.has(identity)) {
+    if (identity !== undefined) state.seenResources.add(identity)
+    state.resources.push(resource)
+  }
+  return resource
+}
+
+function appendTextPart(parts: InboundContentPart[], text: string): void {
+  if (text === '') return
+  const previous = parts.at(-1)
+  if (previous?.kind === 'text') {
+    previous.text += text
+  } else {
+    parts.push({ kind: 'text', text })
+  }
+}
+
+function cloneContentPart(part: InboundContentPart): InboundContentPart {
+  if (part.kind === 'resource') {
+    return { kind: 'resource', resource: { ...part.resource } }
+  }
+  return { ...part }
 }
 
 function resourceMarker(

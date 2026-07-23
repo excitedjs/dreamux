@@ -2,9 +2,10 @@
  * Parsing inbound Feishu message content.
  *
  * Feishu delivers `message.content` as a JSON-encoded string whose shape
- * depends on `message_type`. This module turns that into the plain text the
- * channel forwards to the engine. Attachment-capable message types expose
- * typed resource keys beside positional, human-readable markers.
+ * depends on `message_type`. This module retains the legacy flat text view and
+ * also exposes source-ordered text/code/resource parts. Attachment-capable
+ * message types expose de-duplicated resource keys beside those positional
+ * parts.
  *
  * Ported verbatim from claudemux's `feishu-channel/src/content.ts` (the source
  * of truth — it carries the `interactive`-card parse dreamux's drifted copy had
@@ -26,6 +27,8 @@ export interface InboundMessage {
 export interface ParsedInbound {
   /** Human-readable text to forward to the engine. */
   text: string
+  /** Untrusted visible content in Feishu source order. */
+  parts?: InboundContentPart[]
   /** Structured message resources discovered in Feishu content. */
   resources?: InboundResource[]
   /** Optional flat/narrow metadata supplied by the host's event normalizer. */
@@ -44,6 +47,11 @@ export interface InboundResource {
   name?: string
 }
 
+export type InboundContentPart =
+  | { kind: 'text'; text: string }
+  | { kind: 'code'; code: string; language?: string }
+  | { kind: 'resource'; resource: InboundResource }
+
 export interface ChannelInbound {
   /** Flattened markdown-ish text suitable for a narrow channel payload. */
   text: string
@@ -52,9 +60,9 @@ export interface ChannelInbound {
 }
 
 /**
- * Parse one inbound Feishu message into forwardable text. Never throws —
- * malformed content falls back to a best-effort string so a weird message
- * still reaches the engine.
+ * Parse one inbound Feishu message into forwardable legacy text plus optional
+ * ordered parts. Never throws — malformed content falls back to a best-effort
+ * string so a weird message still reaches the engine.
  */
 export function parseInbound(message: InboundMessage): ParsedInbound {
   const type = message.message_type ?? 'unknown'
@@ -63,13 +71,18 @@ export function parseInbound(message: InboundMessage): ParsedInbound {
   try {
     parsed = JSON.parse(message.content ?? '')
   } catch {
+    const text = type === 'text'
+      ? message.content ?? '(unparseable message)'
+      : `(unparseable ${safeMessageType(type)} message)`
     return type === 'text'
       ? {
-          text: message.content ?? '(unparseable message)',
+          text,
+          parts: [{ kind: 'text', text }],
           incomplete: true,
         }
       : {
-          text: `(unparseable ${safeMessageType(type)} message)`,
+          text,
+          parts: [{ kind: 'text', text }],
           incomplete: true,
         }
   }
@@ -78,7 +91,11 @@ export function parseInbound(message: InboundMessage): ParsedInbound {
   switch (type) {
     case 'text': {
       const text = typeof content.text === 'string' ? content.text : ''
-      return { text: applyMentions(text, message.mentions) }
+      const rendered = applyMentions(text, message.mentions)
+      return {
+        text: rendered,
+        parts: rendered === '' ? [] : [{ kind: 'text', text: rendered }],
+      }
     }
     case 'post':
       return parsePostContent(content)
@@ -87,6 +104,10 @@ export function parseInbound(message: InboundMessage): ParsedInbound {
         const key = nonEmptyString(content.image_key)
       return {
         text: '(image message)',
+        parts: [{ kind: 'resource', resource: {
+          type: 'image',
+          ...(key !== undefined ? { key } : {}),
+        } }],
         resources: [{
           type: 'image',
           ...(key !== undefined ? { key } : {}),
@@ -98,6 +119,13 @@ export function parseInbound(message: InboundMessage): ParsedInbound {
       const key = nonEmptyString(content.file_key)
       return {
         text: '(file message)',
+        parts: [{ kind: 'resource', resource: {
+          type: 'file',
+          ...(key !== undefined ? { key } : {}),
+          ...(nonEmptyString(content.file_name) !== undefined
+            ? { name: nonEmptyString(content.file_name) }
+            : {}),
+        } }],
         resources: [{
           type: 'file',
           ...(key !== undefined ? { key } : {}),
@@ -116,6 +144,11 @@ export function parseInbound(message: InboundMessage): ParsedInbound {
         text: key === undefined
           ? '(voice message without a resource key)'
           : `[voice message attachment: ${key}]`,
+        parts: [{ kind: 'resource', resource: {
+          type: 'file',
+          ...(key !== undefined ? { key } : {}),
+          name: 'voice.opus',
+        } }],
         resources: [{
           type: 'file',
           ...(key !== undefined ? { key } : {}),
@@ -148,6 +181,7 @@ export function parseInbound(message: InboundMessage): ParsedInbound {
             ? '[video cover without a resource key]'
             : `[video cover: ${imageKey}]`,
         ].join('\n'),
+        parts: resources.map((resource) => ({ kind: 'resource', resource })),
         resources,
         ...(fileKey === undefined || imageKey === undefined
           ? { incomplete: true }
@@ -155,11 +189,21 @@ export function parseInbound(message: InboundMessage): ParsedInbound {
       }
     }
     case 'sticker':
-      return { text: '(sticker message; sticker resources are not downloadable)' }
+      return {
+        text: '(sticker message; sticker resources are not downloadable)',
+        parts: [{
+          kind: 'text',
+          text: '(sticker message; sticker resources are not downloadable)',
+        }],
+      }
     case 'share_chat': {
       const chatId = nonEmptyString(content.chat_id)
       return {
         text: chatId === undefined ? '(shared chat)' : `(shared chat: ${chatId})`,
+        parts: [{
+          kind: 'text',
+          text: chatId === undefined ? '(shared chat)' : `(shared chat: ${chatId})`,
+        }],
         ...(chatId === undefined ? { incomplete: true } : {}),
       }
     }
@@ -167,16 +211,32 @@ export function parseInbound(message: InboundMessage): ParsedInbound {
       const userId = nonEmptyString(content.user_id)
       return {
         text: userId === undefined ? '(shared user)' : `(shared user: ${userId})`,
+        parts: [{
+          kind: 'text',
+          text: userId === undefined ? '(shared user)' : `(shared user: ${userId})`,
+        }],
         ...(userId === undefined ? { incomplete: true } : {}),
       }
     }
     case 'merge_forward':
-      return { text: '(merged-forward message not expanded)', incomplete: true }
+      return {
+        text: '(merged-forward message not expanded)',
+        parts: [],
+        incomplete: true,
+      }
     case 'nonsupport':
-      return { text: '(unsupported message content not resolved)', incomplete: true }
+      return {
+        text: '(unsupported message content not resolved)',
+        parts: [{
+          kind: 'text',
+          text: '(unsupported message content not resolved)',
+        }],
+        incomplete: true,
+      }
     default:
       return {
         text: `(${safeMessageType(type)} message)`,
+        parts: [{ kind: 'text', text: `(${safeMessageType(type)} message)` }],
         incomplete: true,
       }
   }

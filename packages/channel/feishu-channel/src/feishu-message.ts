@@ -14,7 +14,6 @@ import { ensureOwnerOnlyDir } from '@excitedjs/dreamux-utils';
 import type {
   FeishuMessageResourceFetcher,
   InboundResource,
-  Mention,
 } from '@excitedjs/feishu-transport';
 
 import type { FeishuInboundEvent } from './bot.js';
@@ -29,12 +28,15 @@ import {
   alwaysActiveSessionFence,
   type FeishuInboundWorkContext,
 } from './feishu-inbound-work.js';
-import { markdownFenceCloser } from './feishu-markdown-fence.js';
 import {
-  normalizeFeishuMessageTypeToken,
-  replyAncestryParentId,
-} from './feishu-reply-ancestry.js';
+  formatFeishuCreateTime,
+  renderFeishuStructuredBody,
+} from './feishu-message-render.js';
 
+/**
+ * @deprecated Retained for source compatibility. Structured Feishu inbound
+ * bodies no longer emit tool-directed fallback prose.
+ */
 export const FEISHU_SKILL_FALLBACK_NOTE =
   'Parser note: message text may be incomplete. Use the Feishu skill with the chat_id and message_id above to fetch the original message when needed.';
 
@@ -89,10 +91,9 @@ export interface FormatFeishuMessageResult {
    */
   attrs: Array<[string, string]>;
   /**
-   * The full pre-rendered, escaped inner content: message body (+ mentions) +
-   * parser fallback note + attachment refs + group-bots block. Everything that
-   * previously lived inside the per-message wrapper, so moving the wrapping to
-   * the runtime drops no model-visible content.
+   * The Channel-owned inner markup: ordered content, lookup-only refs, and
+   * optional trusted-bot context. The standing reminder is appended separately
+   * by the session so it remains the final child.
    */
   body: string;
   /** Whether a requested one-shot trusted-bot baseline reached the body. */
@@ -100,9 +101,6 @@ export interface FormatFeishuMessageResult {
   attachments: FormattedFeishuAttachment[];
   diagnostics: string[];
 }
-
-const MAX_RICH_BODY_CHARS = 160_000;
-const RICH_BODY_TRUNCATION_MARKER = '\n[message content truncated: 160000-character limit reached]';
 
 export async function formatFeishuMessageForRuntime(
   event: FeishuInboundEvent,
@@ -124,56 +122,29 @@ export async function formatFeishuMessageForRuntime(
     ownedWork?.dispose();
   }
   const attachments = resolution.attachments;
-  const attrs: Array<[string, string]> = [
-    ['chat_id', event.chatId],
-    ['chat_type', event.chatType],
-  ];
+  const attrs: Array<[string, string]> = [];
+  appendNonEmptyAttr(attrs, 'chat_id', event.chatId);
+  appendNonEmptyAttr(attrs, 'chat_type', event.chatType);
   if (event.threadId !== undefined && event.threadId !== '') {
     attrs.push(['thread_id', event.threadId]);
   }
-  attrs.push(
-    ['message_id', event.messageId],
-    ['sender_id', event.senderId],
-    ['sender_name', event.senderName],
-    ['create_time', formatFeishuCreateTime(event.createTime)],
+  appendNonEmptyAttr(attrs, 'message_id', event.messageId);
+  appendNonEmptyAttr(attrs, 'sender_id', event.senderId);
+  appendNonEmptyAttr(attrs, 'sender_name', event.senderName);
+  appendNonEmptyAttr(
+    attrs,
+    'create_time',
+    formatFeishuCreateTime(event.createTime),
   );
-  const body = renderMessageBody(event);
-  const fallback = shouldAddFallbackNote(event)
-    ? `\n\n${FEISHU_SKILL_FALLBACK_NOTE}`
-    : '';
-  const attachmentBlock = renderAttachments(attachments);
-  const attachmentOmission = resolution.omittedCount === 0
-    ? ''
-    : `\n\n[${resolution.omittedCount} attachment(s) omitted: resource limit reached]`;
-  const groupBots = renderGroupBots(options.trustedBots ?? []);
-  const ancestry = renderReplyAncestry(event);
-
-  const renderedPrefix = `${body}${ancestry}${fallback}${attachmentBlock}${attachmentOmission}`;
-  let groupBotsRendered = groupBots !== '';
-  let renderedBody: string;
-  if (!isRichMessage(event.messageType)) {
-    renderedBody = `${renderedPrefix}${groupBots}`;
-  } else if (
-    groupBots !== '' &&
-    renderedPrefix.length + groupBots.length <= MAX_RICH_BODY_CHARS
-  ) {
-    renderedBody = `${renderedPrefix}${groupBots}`;
-  } else if (
-    groupBots !== '' &&
-    groupBots.length + RICH_BODY_TRUNCATION_MARKER.length <= MAX_RICH_BODY_CHARS
-  ) {
-    renderedBody = `${truncateEscapedRichBody(
-      renderedPrefix,
-      MAX_RICH_BODY_CHARS - groupBots.length,
-    )}${groupBots}`;
-  } else {
-    groupBotsRendered = false;
-    renderedBody = truncateEscapedRichBody(renderedPrefix);
-  }
+  const rendered = renderFeishuStructuredBody(
+    event,
+    options.trustedBots ?? [],
+    (resource) => attachmentFor(resource, resolution),
+  );
   return {
     attrs,
-    body: renderedBody,
-    groupBotsRendered,
+    body: rendered.body,
+    groupBotsRendered: rendered.groupBotsRendered,
     attachments,
     diagnostics: attachments
       .filter((attachment) => attachment.status === 'not_downloaded')
@@ -182,200 +153,14 @@ export async function formatFeishuMessageForRuntime(
   };
 }
 
-function renderGroupBots(trustedBots: PeerBot[]): string {
-  if (trustedBots.length === 0) return '';
-  const lines = trustedBots.map((bot) => {
-    const name = bot.name ?? '';
-    return `  <bot name="${escapeXmlAttribute(name)}" open_id="${escapeXmlAttribute(bot.openId)}" />`;
-  });
-  return [
-    '\n\n<group_bots note="trusted bots in this group; a bot speaks without @-mentioning us">',
-    ...lines,
-    '</group_bots>',
-  ].join('\n');
-}
+export { formatFeishuCreateTime } from './feishu-message-render.js';
 
-export function formatFeishuCreateTime(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed === '') return '';
-
-  const numeric = Number(trimmed);
-  if (Number.isFinite(numeric)) {
-    const epochMs = Math.abs(numeric) < 1_000_000_000_000
-      ? numeric * 1000
-      : numeric;
-    const date = new Date(epochMs);
-    if (!Number.isNaN(date.getTime())) return date.toISOString();
-  }
-
-  const date = new Date(trimmed);
-  if (!Number.isNaN(date.getTime())) return date.toISOString();
-  return trimmed;
-}
-
-function renderMessageBody(event: FeishuInboundEvent): string {
-  if (event.messageType === 'merge_forward') {
-    const messageId = escapeXmlText(event.messageId);
-    return `Merged-forward message: message_id=${messageId}.`;
-  }
-  const rawText = extractRawText(event);
-  if (rawText !== null) {
-    return renderTextWithMentions(rawText, event.mentions);
-  }
-  const escaped = escapeXmlText(event.parsedText);
-  return escaped;
-}
-
-function extractRawText(event: FeishuInboundEvent): string | null {
-  if (event.messageType !== 'text') return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(event.rawContent);
-  } catch {
-    return null;
-  }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return null;
-  }
-  const text = (parsed as Record<string, unknown>)['text'];
-  return typeof text === 'string' ? text : null;
-}
-
-function renderTextWithMentions(text: string, mentions: Mention[]): string {
-  let out = escapeXmlText(text);
-  for (const mention of mentions) {
-    const id = mention.id?.open_id ?? mention.id?.union_id ?? mention.id?.user_id;
-    if (mention.key === '' || id === undefined || mention.name === undefined) {
-      continue;
-    }
-    out = out.split(escapeXmlText(mention.key)).join(
-      `<at id="${escapeXmlAttribute(id)}">${escapeXmlText(mention.name)}</at>`,
-    );
-  }
-  return out;
-}
-
-function shouldAddFallbackNote(event: FeishuInboundEvent): boolean {
-  if (event.messageType === 'merge_forward') return false;
-  if (event.contentIncomplete === true) return true;
-  if (event.parsedText === '(unparseable message)') return true;
-  if (event.messageType === 'text' && extractRawText(event) === null) return true;
-  return event.parsedText === `(${event.messageType} message)`;
-}
-
-function renderReplyAncestry(event: FeishuInboundEvent): string {
-  const parentId = replyAncestryParentId(event);
-  if (parentId === undefined) return '';
-  const escapedParentId = escapeXmlText(parentId);
-  const parentMessageType = event.parentMessageType === undefined
-    ? undefined
-    : normalizeFeishuMessageTypeToken(event.parentMessageType);
-  const typeHint = parentMessageType === undefined
-    ? ''
-    : `, parent_message_type=${escapeXmlText(parentMessageType)}`;
-  return `\n\nReply/quote ancestry: parent_message_id=${escapedParentId}${typeHint}.`;
-}
-
-function isRichMessage(messageType: string): boolean {
-  return ['post', 'interactive'].includes(messageType);
-}
-
-function truncateEscapedRichBody(
+function appendNonEmptyAttr(
+  attrs: Array<[string, string]>,
+  name: string,
   value: string,
-  maxChars: number = MAX_RICH_BODY_CHARS,
-): string {
-  if (value.length <= maxChars) return value;
-  let fenceReservation = 0;
-  while (true) {
-    const truncation = truncateEscapedXmlPrefix(
-      value,
-      Math.max(
-        0,
-        maxChars - RICH_BODY_TRUNCATION_MARKER.length - fenceReservation,
-      ),
-    );
-    const fenceCloser = markdownFenceCloser(truncation.content);
-    if (fenceCloser.length <= fenceReservation) {
-      return `${truncation.content}${fenceCloser}${truncation.xmlClosers}${RICH_BODY_TRUNCATION_MARKER}`;
-    }
-    fenceReservation = fenceCloser.length;
-  }
-}
-
-interface EscapedXmlPrefix {
-  content: string;
-  xmlClosers: string;
-}
-
-function truncateEscapedXmlPrefix(
-  value: string,
-  maxChars: number,
-): EscapedXmlPrefix {
-  const tags = /<[^>]+>/g;
-  const openTags: string[] = [];
-  let output = '';
-  let cursor = 0;
-  let match: RegExpExecArray | null;
-
-  const closingTags = (stack: string[]): string =>
-    [...stack].reverse().map((name) => `</${name}>`).join('');
-  const appendText = (text: string): boolean => {
-    const closers = closingTags(openTags);
-    const budget = Math.max(
-      0,
-      maxChars - closers.length - output.length,
-    );
-    if (text.length <= budget) {
-      output += text;
-      return true;
-    }
-    output += safeEscapedPrefix(text, budget);
-    return false;
-  };
-
-  while ((match = tags.exec(value)) !== null) {
-    if (!appendText(value.slice(cursor, match.index))) {
-      return { content: output, xmlClosers: closingTags(openTags) };
-    }
-    const tag = match[0];
-    const nextOpenTags = updateOpenTags(openTags, tag);
-    const required =
-      output.length +
-      tag.length +
-      closingTags(nextOpenTags).length;
-    if (required > maxChars) {
-      return { content: output, xmlClosers: closingTags(openTags) };
-    }
-    output += tag;
-    openTags.splice(0, openTags.length, ...nextOpenTags);
-    cursor = match.index + tag.length;
-  }
-
-  appendText(value.slice(cursor));
-  return { content: output, xmlClosers: closingTags(openTags) };
-}
-
-function safeEscapedPrefix(value: string, budget: number): string {
-  let prefix = value.slice(0, budget);
-  const lastAmpersand = prefix.lastIndexOf('&');
-  const lastSemicolon = prefix.lastIndexOf(';');
-  if (lastAmpersand > lastSemicolon) prefix = prefix.slice(0, lastAmpersand);
-  const last = prefix.charCodeAt(prefix.length - 1);
-  if (last >= 0xd800 && last <= 0xdbff) prefix = prefix.slice(0, -1);
-  return prefix;
-}
-
-function updateOpenTags(openTags: string[], tag: string): string[] {
-  const next = [...openTags];
-  const closing = /^<\/([A-Za-z][A-Za-z0-9:_-]*)\s*>$/.exec(tag);
-  if (closing !== null) {
-    if (next.at(-1) === closing[1]) next.pop();
-    return next;
-  }
-  if (/\/>$/.test(tag)) return next;
-  const opening = /^<([A-Za-z][A-Za-z0-9:_-]*)\b[^>]*>$/.exec(tag);
-  if (opening !== null) next.push(opening[1]);
-  return next;
+): void {
+  if (value !== '') attrs.push([name, value]);
 }
 
 async function resolveAttachments(
@@ -383,27 +168,82 @@ async function resolveAttachments(
   options: FormatFeishuMessageOptions,
   work: FeishuInboundWorkContext,
 ): Promise<AttachmentResolution> {
-  const resources = event.resources ?? [];
+  const resources = uniqueResourcesForEvent(event);
   const out: FormattedFeishuAttachment[] = [];
-  let omittedCount = 0;
-  for (const [index, resource] of resources.entries()) {
-    const identity = resource.key === undefined || resource.key === ''
-      ? `${resource.type}:missing:${index}`
-      : `${resource.type}:${resource.key}`;
+  const byIdentity = new Map<string, FormattedFeishuAttachment>();
+  const omittedIdentities = new Set<string>();
+  for (const resource of resources) {
+    const identity = attachmentIdentity(resource);
     if (work.seenResourceKeys.has(identity)) continue;
     if (work.seenResourceKeys.size >= work.maxUniqueResources) {
-      omittedCount += 1;
+      omittedIdentities.add(identity);
       continue;
     }
     work.seenResourceKeys.add(identity);
-    out.push(await resolveAttachment(event.messageId, resource, options, work));
+    const resolved = await resolveAttachment(
+      event.messageId,
+      resource,
+      options,
+      work,
+    );
+    out.push(resolved);
+    byIdentity.set(identity, resolved);
   }
-  return { attachments: out, omittedCount };
+  return { attachments: out, byIdentity, omittedIdentities };
 }
 
 interface AttachmentResolution {
   attachments: FormattedFeishuAttachment[];
-  omittedCount: number;
+  byIdentity: Map<string, FormattedFeishuAttachment>;
+  omittedIdentities: Set<string>;
+}
+
+function uniqueResourcesForEvent(event: FeishuInboundEvent): InboundResource[] {
+  const out: InboundResource[] = [];
+  const seen = new Set<string>();
+  const candidates = [
+    ...(event.resources ?? []),
+    ...(event.contentParts ?? []).flatMap((part) =>
+      part.kind === 'resource' ? [part.resource] : []),
+  ];
+  for (const resource of candidates) {
+    const identity = attachmentIdentity(resource);
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    out.push(resource);
+  }
+  return out;
+}
+
+function attachmentIdentity(resource: InboundResource): string {
+  return resource.key === undefined || resource.key === ''
+    ? `${resource.type}:missing:${resource.name ?? ''}`
+    : `${resource.type}:${resource.key}`;
+}
+
+function attachmentFor(
+  resource: InboundResource,
+  resolution: AttachmentResolution,
+): FormattedFeishuAttachment {
+  const stableIdentity = attachmentIdentity(resource);
+  const resolved = resolution.byIdentity.get(stableIdentity);
+  if (resolved !== undefined) {
+    return {
+      ...resolved,
+      ...(resource.name !== undefined ? { name: resource.name } : {}),
+    };
+  }
+  return {
+    type: resource.type,
+    ...(resource.name !== undefined ? { name: resource.name } : {}),
+    ...(resource.key !== undefined ? { key: resource.key } : {}),
+    status: 'not_downloaded',
+    reason: resolution.omittedIdentities.has(stableIdentity)
+      ? 'resource_limit'
+      : resource.key === undefined || resource.key === ''
+        ? 'no_key'
+        : 'api_error',
+  };
 }
 
 async function resolveAttachment(
@@ -531,31 +371,6 @@ async function resolveAttachment(
   }
 }
 
-function renderAttachments(
-  attachments: FormattedFeishuAttachment[],
-): string {
-  if (attachments.length === 0) return '';
-  return attachments.map(renderAttachment).join('');
-}
-
-function renderAttachment(
-  attachment: FormattedFeishuAttachment,
-): string {
-  const attrs: Array<[string, string]> = [
-    ['type', attachment.type],
-    ...(attachment.name !== undefined ? [['name', attachment.name] as [string, string]] : []),
-    ...(attachment.key !== undefined ? [['key', attachment.key] as [string, string]] : []),
-    ...(attachment.path !== undefined ? [['path', attachment.path] as [string, string]] : []),
-    ['status', attachment.status],
-    ...(attachment.reason !== undefined ? [['reason', attachment.reason] as [string, string]] : []),
-  ];
-  const attrText = attrs
-    .map(([key, value]) => `${key}="${escapeXmlAttribute(value)}"`)
-    .join(' ');
-
-  return `\n\n<attachment ${attrText} />`;
-}
-
 function attachmentPath(cacheRoot: string, resource: InboundResource): string {
   const key = resource.key ?? 'missing-key';
   const digest = createHash('sha256').update(key).digest('hex').slice(0, 16);
@@ -673,15 +488,4 @@ class CachePathError extends Error {
   constructor() {
     super('Feishu resource cache path escaped cache root');
   }
-}
-
-function escapeXmlAttribute(value: string): string {
-  return escapeXmlText(value).replaceAll('"', '&quot;');
-}
-
-function escapeXmlText(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
 }

@@ -76,6 +76,18 @@ async function allowSender(stateDir: string): Promise<void> {
   await saveDispatcherAccess(stateDir, access);
 }
 
+async function allowGroupSender(stateDir: string): Promise<void> {
+  const access = defaultDispatcherAccessState();
+  access.dm_policy = 'allowlist';
+  access.allow_users = ['ou_allowed'];
+  access.group = {
+    policy: 'allowlist',
+    allow_chats: ['oc_chat'],
+    require_mention: false,
+  };
+  await saveDispatcherAccess(stateDir, access);
+}
+
 function readResponse(messageId: string): FeishuMessageReadResponse {
   return {
     items: [{
@@ -92,6 +104,203 @@ function readResponse(messageId: string): FeishuMessageReadResponse {
 }
 
 describe('Feishu session lifecycle fencing', () => {
+  it('does not let a hung chat-mode lookup block close', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-feishu-route-close-'));
+    dirs.push(stateDir);
+    await allowGroupSender(stateDir);
+    const bot = createFakeFeishuBot();
+    const mode = deferred<'topic'>();
+    const getChatMode = vi.fn(async () => mode.promise);
+    bot.getChatMode = getChatMode;
+    const submitted: string[] = [];
+    const session = new FeishuChannelSession({
+      dispatcherId: 'dispatcher-a',
+      appId: 'app-test',
+      appSecret: '',
+      stateDir,
+      attachmentCacheDir: join(stateDir, 'attachments'),
+      log: logger(),
+      botFactory: () => bot,
+    });
+    await session.start({
+      submitTurn: async (input): Promise<AgentRuntimeTurnResult> => {
+        submitted.push(input.sourceId);
+        return { status: 'submitted', turnId: `turn-${input.sourceId}` };
+      },
+    });
+
+    const delivery = bot.inject({
+      ...event('om_route_hung'),
+      chatType: 'group',
+      threadId: 'omt_topic',
+      messageType: 'text',
+      rawContent: JSON.stringify({ text: 'hello' }),
+      parsedText: 'hello',
+    });
+    await vi.waitFor(() => {
+      expect(getChatMode).toHaveBeenCalledTimes(1);
+    });
+
+    await session.close();
+    await delivery;
+    expect(submitted).toEqual([]);
+    expect(bot.reactionOps).toEqual([]);
+
+    mode.resolve('topic');
+    await Promise.resolve();
+    expect(submitted).toEqual([]);
+  });
+
+  it('does not let a hung received reaction block close', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-feishu-reaction-hung-'));
+    dirs.push(stateDir);
+    await allowSender(stateDir);
+    const bot = createFakeFeishuBot();
+    bot.setReactionDelay('Get', new Promise(() => undefined));
+    const submitted: string[] = [];
+    const session = new FeishuChannelSession({
+      dispatcherId: 'dispatcher-a',
+      appId: 'app-test',
+      appSecret: '',
+      stateDir,
+      attachmentCacheDir: join(stateDir, 'attachments'),
+      log: logger(),
+      botFactory: () => bot,
+    });
+    await session.start({
+      submitTurn: async (input): Promise<AgentRuntimeTurnResult> => {
+        submitted.push(input.sourceId);
+        return { status: 'submitted', turnId: `turn-${input.sourceId}` };
+      },
+    });
+
+    const delivery = bot.inject({
+      ...event('om_reaction_hung'),
+      messageType: 'text',
+      rawContent: JSON.stringify({ text: 'hello' }),
+      parsedText: 'hello',
+    });
+    await vi.waitFor(() => {
+      expect(bot.reactionOps).toHaveLength(1);
+    });
+
+    await session.close();
+    await delivery;
+    expect(submitted).toEqual([]);
+    expect(bot.reactionOps).toEqual([
+      expect.objectContaining({ op: 'add', messageId: 'om_reaction_hung' }),
+    ]);
+  });
+
+  it('does not let a hung in-progress reaction block close', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-feishu-progress-hung-'));
+    dirs.push(stateDir);
+    await allowSender(stateDir);
+    const bot = createFakeFeishuBot();
+    bot.setReactionDelay('OnIt', new Promise(() => undefined));
+    const session = new FeishuChannelSession({
+      dispatcherId: 'dispatcher-a',
+      appId: 'app-test',
+      appSecret: '',
+      stateDir,
+      attachmentCacheDir: join(stateDir, 'attachments'),
+      log: logger(),
+      botFactory: () => bot,
+    });
+    await session.start({
+      submitTurn: async (): Promise<AgentRuntimeTurnResult> => ({
+        status: 'submitted',
+        turnId: 'turn-progress-hung',
+      }),
+    });
+
+    const delivery = bot.inject({
+      ...event('om_progress_hung'),
+      messageType: 'text',
+      rawContent: JSON.stringify({ text: 'hello' }),
+      parsedText: 'hello',
+    });
+    await vi.waitFor(() => {
+      expect(bot.reactionOps.filter((entry) => entry.op === 'add')).toHaveLength(2);
+    });
+
+    await session.close();
+    await delivery;
+    expect(bot.reactionOps).toEqual([
+      expect.objectContaining({
+        op: 'add',
+        messageId: 'om_progress_hung',
+        emoji: 'Get',
+      }),
+      expect.objectContaining({
+        op: 'add',
+        messageId: 'om_progress_hung',
+        emoji: 'OnIt',
+      }),
+      expect.objectContaining({
+        op: 'remove',
+        messageId: 'om_progress_hung',
+      }),
+    ]);
+  });
+
+  it('revokes a hanging sender-name lookup before close and never submits it', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-feishu-name-close-'));
+    dirs.push(stateDir);
+    await allowSender(stateDir);
+    const bot = createFakeFeishuBot();
+    const resolvedName = deferred<string | undefined>();
+    const nameRequests: string[] = [];
+    const nameSignals: AbortSignal[] = [];
+    bot.resolveUserName = async (
+      openId: string,
+      options,
+    ): Promise<string | undefined> => {
+      nameRequests.push(openId);
+      if (options?.signal !== undefined) nameSignals.push(options.signal);
+      return resolvedName.promise;
+    };
+    const submitted: string[] = [];
+    const session = new FeishuChannelSession({
+      dispatcherId: 'dispatcher-a',
+      appId: 'app-test',
+      appSecret: '',
+      stateDir,
+      attachmentCacheDir: join(stateDir, 'attachments'),
+      log: logger(),
+      botFactory: () => bot,
+    });
+    await session.start({
+      submitTurn: async (input): Promise<AgentRuntimeTurnResult> => {
+        submitted.push(input.sourceId);
+        return { status: 'submitted', turnId: `turn-${input.sourceId}` };
+      },
+    });
+
+    const delivery = bot.inject({
+      ...event('om_sender_name'),
+      messageType: 'text',
+      rawContent: JSON.stringify({ text: 'hello' }),
+      parsedText: 'hello',
+      senderName: '',
+    });
+    await vi.waitFor(() => {
+      expect(nameRequests).toEqual(['ou_allowed']);
+    });
+    expect(nameSignals).toHaveLength(1);
+    expect(nameSignals[0]?.aborted).toBe(false);
+
+    await session.close();
+    await delivery;
+    expect(nameSignals[0]?.aborted).toBe(true);
+    expect(submitted).toEqual([]);
+    expect(bot.reactionOps.map((entry) => entry.op)).toEqual(['add', 'remove']);
+
+    resolvedName.resolve('Late Ada');
+    await Promise.resolve();
+    expect(submitted).toEqual([]);
+  });
+
   it('revokes a hanging enrichment before close and prevents stale submission after restart', async () => {
     const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-feishu-lifecycle-'));
     dirs.push(stateDir);

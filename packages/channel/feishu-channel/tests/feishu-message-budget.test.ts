@@ -11,7 +11,10 @@ import {
   createFeishuInboundWork,
   type FeishuInboundWorkContext,
 } from '../src/feishu-inbound-work.js';
-import { formatFeishuMessageForRuntime } from '../src/feishu-message.js';
+import {
+  formatFeishuCreateTime,
+  formatFeishuMessageForRuntime,
+} from '../src/feishu-message.js';
 
 const dirs: string[] = [];
 const works: FeishuInboundWorkContext[] = [];
@@ -83,7 +86,42 @@ describe('Feishu inbound resource budgets', () => {
 
     expect(calls).toEqual(['a', 'b']);
     expect(result.attachments).toHaveLength(2);
-    expect(result.body).toContain('[1 attachment(s) omitted: resource limit reached]');
+    expect(result.body).toContain(
+      '<attachment type="image" key="c" status="not_downloaded" reason="resource_limit" />',
+    );
+  });
+
+  it('keeps each occurrence display name while sharing one download result', async () => {
+    const calls: string[] = [];
+    const result = await formatFeishuMessageForRuntime(event({
+      contentParts: [
+        {
+          kind: 'resource',
+          resource: { type: 'file', key: 'shared', name: 'first.txt' },
+        },
+        {
+          kind: 'resource',
+          resource: { type: 'file', key: 'shared', name: 'second.txt' },
+        },
+      ],
+      resources: [
+        { type: 'file', key: 'shared', name: 'first.txt' },
+      ],
+    }), {
+      cacheDir: cacheDir(),
+      work: budgetWork({}),
+      resourceFetcher: {
+        async fetchMessageResource(request) {
+          calls.push(request.fileKey);
+          return { stream: Readable.from([Buffer.from('x')]), headers: {} };
+        },
+      },
+    });
+
+    expect(calls).toEqual(['shared']);
+    expect(result.attachments).toHaveLength(1);
+    expect(result.body).toContain('name="first.txt"');
+    expect(result.body).toContain('name="second.txt"');
   });
 
   it('enforces one aggregate byte budget across sequential downloads', async () => {
@@ -234,19 +272,31 @@ describe('Feishu inbound resource budgets', () => {
     );
   });
 
-  it('closes a Markdown code fence before the rich-body truncation marker', async () => {
+  it('closes a CDATA code element before the rich-body truncation marker', async () => {
     const result = await formatFeishuMessageForRuntime(event({
       parsedText: `\`\`\`ts\n${'x'.repeat(170_000)}\n\`\`\``,
     }));
 
     const markerIndex = result.body.indexOf('[message content truncated:');
-    const fenceLines = result.body.slice(0, markerIndex).match(/^```/gm) ?? [];
     expect(result.body.length).toBeLessThanOrEqual(160_000);
     expect(markerIndex).toBeGreaterThan(0);
-    expect(fenceLines).toHaveLength(2);
-    const closingFenceIndex = result.body.lastIndexOf('\n```\n');
-    expect(closingFenceIndex).toBeGreaterThan(0);
-    expect(closingFenceIndex).toBeLessThan(markerIndex);
+    expect(result.body).toContain('<code language="ts"><![CDATA[');
+    const closingCodeIndex = result.body.lastIndexOf(']]></code>');
+    expect(closingCodeIndex).toBeGreaterThan(0);
+    expect(closingCodeIndex).toBeLessThan(markerIndex);
+  });
+
+  it('charges repeated CDATA terminators before selecting a closed code prefix', async () => {
+    const result = await formatFeishuMessageForRuntime(event({
+      parsedText: `\`\`\`xml\n${']]>'.repeat(60_000)}\n\`\`\``,
+    }));
+
+    const markerIndex = result.body.indexOf('[message content truncated:');
+    const closingCodeIndex = result.body.lastIndexOf(']]></code>');
+    expect(result.body.length).toBeLessThanOrEqual(160_000);
+    expect(result.body).toContain(']]]]><![CDATA[>');
+    expect(closingCodeIndex).toBeGreaterThan(0);
+    expect(closingCodeIndex).toBeLessThan(markerIndex);
   });
 
   it('keeps a group-bot baseline that fits without rich-body truncation', async () => {
@@ -388,5 +438,26 @@ describe('Feishu inbound resource budgets', () => {
       reason: 'timeout',
     });
     expect(stream.destroyed).toBe(true);
+  });
+});
+
+describe('Feishu channel timestamp', () => {
+  it('uses the process time zone with unpadded components', () => {
+    const previous = process.env['TZ'];
+    try {
+      process.env['TZ'] = 'Asia/Shanghai';
+      expect(formatFeishuCreateTime('1766575805'))
+        .toBe('2025-12-24 19:30:5');
+      process.env['TZ'] = 'America/New_York';
+      expect(formatFeishuCreateTime('1766575805'))
+        .toBe('2025-12-24 6:30:5');
+    } finally {
+      if (previous === undefined) delete process.env['TZ'];
+      else process.env['TZ'] = previous;
+    }
+  });
+
+  it('keeps an unparseable timestamp unchanged', () => {
+    expect(formatFeishuCreateTime('not-a-time')).toBe('not-a-time');
   });
 });

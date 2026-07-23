@@ -18,7 +18,7 @@ The monorepo already had the package boundary needed for a cleaner split:
 `@excitedjs/feishu-transport` is the Lark SDK / JSAPI boundary,
 `@excitedjs/feishu-channel` is the channel layer, and `@excitedjs/dreamux` is
 the host runtime. Before this decision, `feishu-channel` was only scaffolded
-and Dreamux still owned the Codex-facing `<feishu_message>` serializer.
+and Dreamux still owned the model-facing Feishu serializer.
 
 ## Decision
 
@@ -26,26 +26,30 @@ Move Feishu inbound serialization and attachment handling into
 `@excitedjs/feishu-channel`.
 
 - `@excitedjs/feishu-transport` exposes structured resource metadata from
-  parsed content and a raw message-resource fetch seam. It does not choose
-  cache paths, write files, assemble `<feishu_message>` / `<attachment>` text,
-  or parse model-facing special formats.
-- `@excitedjs/feishu-channel` owns the Codex-facing inbound body, including the
-  existing `<feishu_message>` envelope, `<group_bots>` block, fallback parser
-  note, and attachment blocks. It also owns attachment download, cache-first
-  lookup, filename sanitization, byte caps, timeouts, owner-only file modes,
-  and fallback text.
-- `@excitedjs/dreamux` calls the channel formatter after access gating passes,
-  passes a per-dispatcher cache directory and the transport-backed fetcher, and
-  submits the returned `formattedText` without reassembling channel-specific
-  XML.
+  parsed content, preserves ordered text/code/resource occurrences, and owns
+  the narrow Lark message-read, contact-name, and message-resource seams. It
+  does not choose cache paths, write files, or emit model-facing XML.
+- `@excitedjs/feishu-channel` owns the inner Channel body: `<content>`,
+  positional `<attachment>` elements, lookup-only `<refs>`, optional
+  `<group_bots>`, and the final `<channel-reminder>`. It also owns attachment
+  download, cache-first lookup, filename sanitization, byte/deadline caps,
+  owner-only file modes, and honest omission facts.
+- Dreamux core stays provider-neutral. It accepts the Channel-owned attrs/body
+  and neutral attachment paths, while each runtime owns the outer `<channel>`
+  envelope.
 
 ## Message Body Contract
 
-The Codex-facing body keeps the existing `<feishu_message>` wrapper. Downloaded
-resources add a compact attachment tag:
+The runtime-owned outer `<channel>` contains a Channel-owned structured body.
+User-visible content keeps source order, and an attachment appears once at the
+position where Feishu placed it:
 
 ```xml
-<attachment type="file" name="debug.zip" key="FILE_KEY" path="/abs/cache/file" status="downloaded" />
+<content>
+Inspect this archive:
+<attachment type="file" name="debug.zip" key="FILE_KEY"
+  path="/abs/cache/file" status="downloaded" />
+</content>
 ```
 
 When a resource cannot be downloaded, the body must be honest: no `path`, a
@@ -57,10 +61,30 @@ other execution policy.
 <attachment type="file" name="debug.zip" key="FILE_KEY" status="not_downloaded" reason="missing_scope" />
 ```
 
-The core attributes are `type`, `name`, `key`, `path`, `status`, and `reason`.
+The attachment attributes are `type`, `name`, `key`, `path`, `status`, and
+`reason`.
 `path` only appears when the local file exists and is expected to be readable by
-Codex. `key` stays present even for downloaded resources so a cleaned cache can
+the Agent Runtime. `key` stays present even for downloaded resources so a cleaned cache can
 be refetched later.
+
+Repeated occurrences of one `(type, key)` retain repeated positional
+`<attachment>` elements but share one download/cache result and one neutral
+runtime attachment. Code is rendered as a Channel-owned
+`<code><![CDATA[...]]></code>` element with safe `]]>` splitting, so source
+operators stay literal without becoming Channel markup.
+
+Merged-forward and reply/quote bodies are not expanded. They appear only as
+bounded lookup identities under `<refs>`:
+
+```xml
+<refs>
+  <merged-forward message_id="om_current" />
+  <reply-to message_id="om_parent" message_type="merge_forward" />
+</refs>
+```
+
+Parser incompleteness is an `incomplete="true"` content attribute. The body
+does not emit prose that directs the model to a particular retrieval tool.
 
 ## Cache Contract
 
@@ -78,19 +102,12 @@ Feishu resource fetch or a fallback block.
 
 ## Consequences
 
-### Issue #97 release correction
-
-`@excitedjs/feishu-channel@0.0.1` was manually bootstrapped on npm after issue
-#97, but the immediate install fix keeps `@excitedjs/dreamux` independent from
-that package at runtime. The formatter stays host-local until Dreamux
-deliberately imports the channel package again and the release plan includes the
-channel package as a publish-chain participant.
-
 - Gate drop / pair / unauthorized paths must not download resources because
-  Dreamux invokes the channel formatter only after `dreamuxFeishuGate()` returns
-  `deliver`.
-- Dreamux tests should assert that Dreamux consumes channel output. Channel
-  tests own serialization, cache, sanitize, and fallback details.
+  the session invokes message reads, contact lookup, and formatting only after
+  `dreamuxFeishuGate()` returns `deliver`.
+- Feishu Channel tests own serialization, cache, sanitization, lifecycle
+  fencing, and omission details. Transport tests own SDK request shape and
+  source-order parsing.
 - Future Feishu resource types should first extend the channel contract and
   tests. Transport remains a JSAPI wrapper and should not grow Dreamux- or
   model-specific serialization helpers.

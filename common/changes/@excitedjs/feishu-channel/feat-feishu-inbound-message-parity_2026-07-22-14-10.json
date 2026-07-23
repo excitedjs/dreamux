@@ -1,8 +1,8 @@
 {
   "changes": [
     {
-      "comment": "Preserve rich Feishu inbound content, add fact-only identity and type hints for merged-forward and quoted messages, and bound post-gate message reads.",
-      "type": "minor",
+      "comment": "BREAKING: The public Feishu formatter now returns structured Channel-owned content/ref XML and formatFeishuCreateTime now renders process-local unpadded time instead of UTC ISO. Consumers that parse formatter body text or expect ISO timestamps must adopt the new structured body and local display-time contract.",
+      "type": "major",
       "packageName": "@excitedjs/feishu-channel"
     }
   ],

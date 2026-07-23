@@ -9,7 +9,10 @@ function message(type: string, content: unknown, mentions?: Mention[]): InboundM
 
 describe('parseInbound — text', () => {
   test('extracts plain text', () => {
-    expect(parseInbound(message('text', { text: 'hello there' }))).toEqual({ text: 'hello there' })
+    expect(parseInbound(message('text', { text: 'hello there' }))).toEqual({
+      text: 'hello there',
+      parts: [{ kind: 'text', text: 'hello there' }],
+    })
   })
 
   test('resolves @-mention placeholders to display names', () => {
@@ -40,6 +43,10 @@ describe('parseInbound — attachments', () => {
   test('an image message exposes a structured resource', () => {
     expect(parseInbound(message('image', { image_key: 'img_v2_abc' }))).toEqual({
       text: '(image message)',
+      parts: [{
+        kind: 'resource',
+        resource: { type: 'image', key: 'img_v2_abc' },
+      }],
       resources: [{ type: 'image', key: 'img_v2_abc' }],
     })
   })
@@ -47,6 +54,10 @@ describe('parseInbound — attachments', () => {
   test('a file message exposes a structured resource', () => {
     expect(parseInbound(message('file', { file_name: 'report.pdf', file_key: 'k' }))).toEqual({
       text: '(file message)',
+      parts: [{
+        kind: 'resource',
+        resource: { type: 'file', key: 'k', name: 'report.pdf' },
+      }],
       resources: [{ type: 'file', key: 'k', name: 'report.pdf' }],
     })
   })
@@ -54,6 +65,10 @@ describe('parseInbound — attachments', () => {
   test('a file message with no key still records the attachment type', () => {
     expect(parseInbound(message('file', { file_name: 'report.pdf' }))).toEqual({
       text: '(file message)',
+      parts: [{
+        kind: 'resource',
+        resource: { type: 'file', name: 'report.pdf' },
+      }],
       resources: [{ type: 'file', name: 'report.pdf' }],
       incomplete: true,
     })
@@ -62,6 +77,10 @@ describe('parseInbound — attachments', () => {
   test('an audio message without a key degrades honestly', () => {
     expect(parseInbound(message('audio', { duration: 3 }))).toEqual({
       text: '(voice message without a resource key)',
+      parts: [{
+        kind: 'resource',
+        resource: { type: 'file', name: 'voice.opus' },
+      }],
       resources: [{ type: 'file', name: 'voice.opus' }],
       incomplete: true,
     })
@@ -272,6 +291,34 @@ describe('extractPostText', () => {
         '---',
         '[image attachment: img-inline][file attachment: snippet.ts]',
       ].join('\n'),
+      parts: [
+        {
+          kind: 'text',
+          text: 'Deploy notes\n**bold** and `inline()`\n`literal`\n',
+        },
+        {
+          kind: 'code',
+          code: 'const x = 1 < 2',
+          language: 'ts',
+        },
+        { kind: 'text', text: '\n---\n' },
+        {
+          kind: 'resource',
+          resource: {
+            type: 'image',
+            key: 'img-inline',
+            name: 'img-inline.jpg',
+          },
+        },
+        {
+          kind: 'resource',
+          resource: {
+            type: 'file',
+            key: 'file-inline',
+            name: 'snippet.ts',
+          },
+        },
+      ],
       resources: [
         { type: 'image', key: 'img-inline', name: 'img-inline.jpg' },
         { type: 'file', key: 'file-inline', name: 'snippet.ts' },
@@ -325,6 +372,10 @@ describe('extractPostText', () => {
 
     expect(parsed).toEqual({
       text: '[unsupported rich-text element: future_widget]',
+      parts: [{
+        kind: 'text',
+        text: '[unsupported rich-text element: future_widget]',
+      }],
       incomplete: true,
     })
     expect(parsed.text).not.toContain('secret_payload')
@@ -341,6 +392,59 @@ describe('parseInbound — interactive', () => {
       body: { elements },
     }
   }
+
+  test('preserves inline text/resource order while de-duplicating fetch resources', () => {
+    const parsed = parseInbound(message('interactive', card(undefined, [
+      { tag: 'text', text: 'before' },
+      { tag: 'img', image_key: 'img-a' },
+      { tag: 'text', text: 'after' },
+      { tag: 'img', image_key: 'img-a' },
+      { tag: 'file', file_key: 'file-a', file_name: 'a.txt' },
+    ])))
+
+    expect(parsed.parts).toEqual([
+      { kind: 'text', text: 'before' },
+      {
+        kind: 'resource',
+        resource: { type: 'image', key: 'img-a', name: 'img-a.jpg' },
+      },
+      { kind: 'text', text: 'after' },
+      {
+        kind: 'resource',
+        resource: { type: 'image', key: 'img-a', name: 'img-a.jpg' },
+      },
+      {
+        kind: 'resource',
+        resource: { type: 'file', key: 'file-a', name: 'a.txt' },
+      },
+    ])
+    expect(parsed.resources).toEqual([
+      { type: 'image', key: 'img-a', name: 'img-a.jpg' },
+      { type: 'file', key: 'file-a', name: 'a.txt' },
+    ])
+  })
+
+  test('preserves source order when v2 block text surrounds resources', () => {
+    const parsed = parseInbound(message('interactive', card(undefined, [
+      { tag: 'markdown', content: 'before' },
+      { tag: 'img', image_key: 'img-a' },
+      { tag: 'markdown', content: 'after' },
+      { tag: 'file', file_key: 'file-a', file_name: 'a.txt' },
+    ])))
+
+    expect(parsed.parts).toEqual([
+      { kind: 'text', text: 'before\n' },
+      {
+        kind: 'resource',
+        resource: { type: 'image', key: 'img-a', name: 'img-a.jpg' },
+      },
+      { kind: 'text', text: '\nafter\n' },
+      {
+        kind: 'resource',
+        resource: { type: 'file', key: 'file-a', name: 'a.txt' },
+      },
+    ])
+  })
 
   test('extracts markdown element content', () => {
     const c = card(undefined, [
@@ -401,6 +505,7 @@ describe('parseInbound — interactive', () => {
 
     expect(parseInbound(message('interactive', c))).toEqual({
       text: '中文标题\n可见备注',
+      parts: [{ kind: 'text', text: '中文标题\n可见备注' }],
     })
   })
 
@@ -527,6 +632,25 @@ describe('parseInbound — interactive', () => {
     expect(parsed.incomplete).toBe(true)
   })
 
+  test('flushes retained inline content before stopping at the node limit', () => {
+    const inline = Array.from({ length: 5_100 }, (_, index) => ({
+      tag: 'text',
+      text: `row-${index}|`,
+    }))
+    const parsed = parseInbound(message(
+      'interactive',
+      card(undefined, [inline]),
+    ))
+    const marker = '[additional card content omitted: parser bound reached]'
+
+    expect(parsed.text.match(/parser bound reached/g)).toHaveLength(1)
+    expect(parsed.text.indexOf(marker)).toBeGreaterThan(
+      parsed.text.indexOf('row-4999|'),
+    )
+    expect(parsed.text).not.toContain('row-5000|')
+    expect(parsed.incomplete).toBe(true)
+  })
+
   test('counts wide column and option containers against the same node budget', () => {
     const columns = Array.from({ length: 5_100 }, (_, index) => ({
       tag: 'column',
@@ -546,6 +670,14 @@ describe('parseInbound — other concrete types', () => {
   test('maps audio and video resources onto the existing file/image ABI', () => {
     expect(parseInbound(message('audio', { file_key: 'voice-key' }))).toEqual({
       text: '[voice message attachment: voice-key]',
+      parts: [{
+        kind: 'resource',
+        resource: {
+          type: 'file',
+          key: 'voice-key',
+          name: 'voice.opus',
+        },
+      }],
       resources: [{ type: 'file', key: 'voice-key', name: 'voice.opus' }],
     })
     expect(parseInbound(message('media', {
@@ -553,6 +685,24 @@ describe('parseInbound — other concrete types', () => {
       image_key: 'cover-key',
     }))).toEqual({
       text: '[video attachment: video-key]\n[video cover: cover-key]',
+      parts: [
+        {
+          kind: 'resource',
+          resource: {
+            type: 'file',
+            key: 'video-key',
+            name: 'video.mp4',
+          },
+        },
+        {
+          kind: 'resource',
+          resource: {
+            type: 'image',
+            key: 'cover-key',
+            name: 'video-cover.jpg',
+          },
+        },
+      ],
       resources: [
         { type: 'file', key: 'video-key', name: 'video.mp4' },
         { type: 'image', key: 'cover-key', name: 'video-cover.jpg' },
@@ -576,6 +726,10 @@ describe('parseInbound — other concrete types', () => {
     ))
     expect(parsed).toEqual({
       text: '(futurechannel-reminder message)',
+      parts: [{
+        kind: 'text',
+        text: '(futurechannel-reminder message)',
+      }],
       incomplete: true,
     })
   })

@@ -26,6 +26,11 @@ import {
   type FeishuMessageReadRequest,
   type FeishuMessageReadResponse,
 } from './message-read.js'
+import {
+  createFeishuUserNameResolver,
+  type FeishuUserNameEntry,
+  type FeishuUserNameLookupOptions,
+} from './user-name.js'
 export type {
   FeishuMessageReadItem,
   FeishuMessageReadMode,
@@ -33,6 +38,11 @@ export type {
   FeishuMessageReadResponse,
   FeishuMessageReader,
 } from './message-read.js'
+export type {
+  FeishuUserNameEntry,
+  FeishuUserNameLookupOptions,
+  FeishuUserNameResolver,
+} from './user-name.js'
 
 const WS_HANDSHAKE_TIMEOUT_MS = 15_000
 
@@ -243,6 +253,13 @@ export interface FeishuTransport {
     request: FeishuMessageResourceRequest,
   ): Promise<FeishuMessageResourceResponse>
     readMessage?(request: FeishuMessageReadRequest): Promise<FeishuMessageReadResponse>
+    /** Optional cache seed for display names already present in accepted mentions. */
+    observeUserNames?(entries: FeishuUserNameEntry[]): void
+    /** Optional best-effort contact lookup for an accepted human sender. */
+    resolveUserName?(
+      openId: string,
+      options?: FeishuUserNameLookupOptions,
+    ): Promise<string | undefined>
     resolveAppOwner(): Promise<FeishuAppOwnerIdentity>
     close(): Promise<void>
 }
@@ -271,6 +288,7 @@ export function createFeishuTransport(
     })
   let wsClient: lark.WSClient | undefined
   let resolvedSelfInfo: FeishuBotInfo | undefined
+  const userNames = createFeishuUserNameResolver(client, diag)
 
     async function openInbound(routes: InboundRoutes): Promise<void> {
     resolvedSelfInfo = await resolveBotInfo(client, diag)
@@ -497,6 +515,17 @@ export function createFeishuTransport(
       return {
         items: (res.data?.items ?? []).map(normalizeMessageReadItem),
       }
+    },
+
+    observeUserNames(entries: FeishuUserNameEntry[]): void {
+      userNames.observeUserNames(entries)
+    },
+
+    resolveUserName(
+      openId: string,
+      options?: FeishuUserNameLookupOptions,
+    ): Promise<string | undefined> {
+      return userNames.resolveUserName(openId, options)
     },
 
     async resolveAppOwner(): Promise<FeishuAppOwnerIdentity> {

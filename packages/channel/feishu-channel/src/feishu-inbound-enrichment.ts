@@ -3,6 +3,7 @@ import {
   type FeishuMessageReadItem,
   type FeishuMessageReadMode,
   type FeishuMessageReadResponse,
+  type InboundContentPart,
   type InboundResource,
   type ParsedInbound,
 } from '@excitedjs/feishu-transport';
@@ -83,6 +84,10 @@ async function enrichInteractive(
     ? undefined
     : simplifiedParsed;
   const text = mergeCardText(primary.parsed.text, supplemental?.parsed.text);
+  const contentParts = mergeCardParts(
+    primary.parsed.parts ?? [{ kind: 'text', text: primary.parsed.text }],
+    supplemental?.parsed,
+  );
   const resources = mergeResources(
     primary.parsed.resources ?? [],
     supplemental?.parsed.resources ?? [],
@@ -92,6 +97,7 @@ async function enrichInteractive(
     messageType: 'interactive',
     rawContent: primary.item.content,
     parsedText: text,
+    contentParts,
     mentions: primary.item.mentions,
     resources,
     ...(primary.parsed.incomplete === true ||
@@ -119,7 +125,12 @@ function parseInteractiveRoot(
 
 function mergeCardText(primary: string, supplemental: string | undefined): string {
   const normalizedPrimary = normalizeCardLines(primary);
-  if (supplemental === undefined) return normalizedPrimary.join('\n');
+  if (
+    supplemental === undefined ||
+    supplemental === '(interactive card with no readable content)'
+  ) {
+    return normalizedPrimary.join('\n');
+  }
   const seen = new Set(normalizedPrimary.map(normalizeCardLineForComparison));
   const extra = normalizeCardLines(supplemental).filter((line) => {
     const normalized = normalizeCardLineForComparison(line);
@@ -171,6 +182,7 @@ async function resolveUnsupported(
     messageType: root.messageType,
     rawContent: root.content,
     parsedText: parsed.text,
+    ...(parsed.parts !== undefined ? { contentParts: parsed.parts } : {}),
     mentions: root.mentions,
     resources: parsed.resources ?? [],
     ...(parsed.incomplete === true
@@ -186,6 +198,7 @@ function asLazyMergedForward(
     ...event,
     messageType: 'merge_forward',
     parsedText: '(merged-forward message not expanded)',
+    contentParts: [],
     resources: [],
     contentIncomplete: false,
   };
@@ -295,4 +308,64 @@ function mergeResources(...groups: InboundResource[][]): InboundResource[] {
     out.push(resource);
   }
   return out;
+}
+
+function mergeCardParts(
+  primary: InboundContentPart[],
+  supplemental: ParsedInbound | undefined,
+): InboundContentPart[] {
+  if (
+    supplemental === undefined ||
+    supplemental.text === '(interactive card with no readable content)'
+  ) {
+    return primary
+  }
+  const primaryText = cardTextLines(primary)
+  const seenLines = new Set(primaryText.map(normalizeCardLineForComparison))
+  const extraLines = cardTextLines(
+    supplemental.parts ?? [{ kind: 'text', text: supplemental.text }],
+  ).filter((line) => {
+    const normalized = normalizeCardLineForComparison(line)
+    if (normalized === '' || seenLines.has(normalized)) return false
+    seenLines.add(normalized)
+    return true
+  })
+  const primaryResources = new Set(
+    primary
+      .filter((part): part is Extract<InboundContentPart, { kind: 'resource' }> =>
+        part.kind === 'resource')
+      .flatMap((part) => resourceIdentity(part.resource) ?? []),
+  )
+  const supplementalResources = (supplemental.parts ?? [])
+    .filter((part): part is Extract<InboundContentPart, { kind: 'resource' }> =>
+      part.kind === 'resource')
+    .filter((part) => {
+      const identity = resourceIdentity(part.resource)
+      if (identity === undefined) return true
+      if (primaryResources.has(identity)) return false
+      primaryResources.add(identity)
+      return true
+    })
+  if (extraLines.length === 0 && supplementalResources.length === 0) return primary
+  return [
+    ...primary,
+    ...(extraLines.length === 0
+      ? []
+      : [{
+          kind: 'text' as const,
+          text: `\n\nAdditional rendered card content:\n${extraLines.join('\n')}`,
+        }]),
+    ...supplementalResources,
+  ]
+}
+
+function cardTextLines(parts: InboundContentPart[]): string[] {
+  return parts
+    .filter((part): part is Extract<InboundContentPart, { kind: 'text' }> =>
+      part.kind === 'text')
+    .flatMap((part) => normalizeCardLines(part.text))
+}
+
+function resourceIdentity(resource: InboundResource): string | undefined {
+  return resource.key === undefined ? undefined : `${resource.type}:${resource.key}`
 }

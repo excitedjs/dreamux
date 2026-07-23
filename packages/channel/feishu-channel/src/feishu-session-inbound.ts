@@ -8,7 +8,11 @@
  * ledger, token approval, introduce ack) live in `feishu-session-ops.ts`.
  */
 
-import { isBotMentioned, isBotSenderType } from '@excitedjs/feishu-transport';
+import {
+  FEISHU_USER_NAME_RESOLUTION_TIMEOUT_MS,
+  isBotMentioned,
+  isBotSenderType,
+} from '@excitedjs/feishu-transport';
 import type {
   AgentRuntimeTurnResult,
   InboundTurnInput,
@@ -19,9 +23,12 @@ import { enrichFeishuInbound } from './feishu-inbound-enrichment.js';
 import {
   createFeishuInboundWork,
   FeishuSessionRevokedError,
+  runFeishuInboundWork,
+  type FeishuInboundWorkContext,
 } from './feishu-inbound-work.js';
 import {
   clearBaselineIfCurrent,
+  listChatBots,
   observeKnownBot,
   pendingBaseline,
   trustIntroducedBots,
@@ -325,7 +332,10 @@ async function deliverAcceptedMessage(
   let reactionCreated = false;
   try {
     work.assertSessionActive();
-    const route = await h.targetRouter.projectInbound(acceptedEvent);
+    const route = await runFeishuInboundWork(
+      work,
+      () => h.targetRouter.projectInbound(acceptedEvent, work.signal),
+    );
     work.assertSessionActive();
     reactionCreated = await setInboundReaction(
       h,
@@ -333,10 +343,12 @@ async function deliverAcceptedMessage(
       acceptedEvent.chatId,
       RECEIVED_REACTION_EMOJI,
       'received',
+      work,
     );
 
+    const namedEvent = await enrichSenderName(h, acceptedEvent, work);
     const event = await enrichFeishuInbound(
-      acceptedEvent,
+      namedEvent,
       h.bot,
       work,
       log(h),
@@ -433,6 +445,7 @@ async function deliverAcceptedMessage(
         event.chatId,
         IN_PROGRESS_REACTION_EMOJI,
         'in_progress',
+        work,
       );
       // setInboundReaction fences the newly-added reaction itself. Recheck the
       // handler generation before relinquishing ownership of the prior
@@ -469,5 +482,57 @@ async function deliverAcceptedMessage(
     if (!(error instanceof FeishuSessionRevokedError)) throw error;
   } finally {
     work.dispose();
+  }
+}
+
+async function enrichSenderName(
+  h: SessionHandle,
+  event: FeishuInboundEvent,
+  work: FeishuInboundWorkContext,
+): Promise<FeishuInboundEvent> {
+  work.assertSessionActive();
+  h.bot.observeUserNames?.(
+    [
+      ...event.mentions.flatMap((mention) => {
+        const openId = mention.id?.open_id;
+        return openId !== undefined &&
+          openId !== '' &&
+          mention.name !== undefined &&
+          mention.name !== ''
+          ? [{ openId, name: mention.name }]
+          : [];
+      }),
+      ...(event.senderId !== '' && event.senderName !== ''
+        ? [{ openId: event.senderId, name: event.senderName }]
+        : []),
+    ],
+  );
+  if (event.senderName !== '') return event;
+
+  if (isBotSenderType(event.senderType)) {
+    const listing = await listChatBots(h.opts.stateDir, event.chatId);
+    work.assertSessionActive();
+    const known = [...listing.trusted, ...listing.known].find(
+      (bot) => bot.openId === event.senderId && bot.name !== undefined,
+    );
+    return known?.name === undefined ? event : { ...event, senderName: known.name };
+  }
+
+  if (event.senderId === '' || h.bot.resolveUserName === undefined) return event;
+  const remaining = work.remainingTimeMs();
+  if (remaining === 0) return event;
+  try {
+    const name = await runFeishuInboundWork(
+      work,
+      () => h.bot.resolveUserName?.(
+        event.senderId,
+        { signal: work.signal },
+      ) ?? Promise.resolve(undefined),
+      Date.now() + Math.min(FEISHU_USER_NAME_RESOLUTION_TIMEOUT_MS, remaining),
+    );
+    return name === undefined || name === '' ? event : { ...event, senderName: name };
+  } catch (error) {
+    if (error instanceof FeishuSessionRevokedError) throw error;
+    return event;
   }
 }

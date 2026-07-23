@@ -54,48 +54,75 @@ Key source:
 ## Feishu Inbound Content Fidelity
 
 Feishu content parsing and SDK ownership stay split across the two channel
-packages. `@excitedjs/feishu-transport` parses event content into untrusted text
-plus typed resources and exposes a narrow `readMessage` wrapper around
-`im.v1.message.get`. `@excitedjs/feishu-channel` decides when a read is allowed,
-validates the reread root against the already accepted event, renders the
-model-facing body, and downloads resources.
+packages. `@excitedjs/feishu-transport` parses event content into additive,
+untrusted, source-ordered `text` / `code` / `resource` parts while retaining
+the legacy flat text and de-duplicated resource views. It also exposes narrow
+wrappers around `im.v1.message.get`, message-resource download, and optional
+contact-backed sender-name lookup. `@excitedjs/feishu-channel` decides when
+those calls are allowed, validates reread roots against the already accepted
+event, resolves/downloads resources, and owns the model-facing XML.
 
 The access gate runs before any message read or resource fetch. Accepted
 interactive cards use the structured and default read representations with a
 deterministic visible-text union. `nonsupport` events may adopt a matching
 root's authoritative type/content. Merged-forward messages deliberately perform
-no current-message read or child-resource fetch: the model receives only the
-current `message_id` and its `merge_forward` type. Channel content does not name
-or prescribe a lookup tool or command.
+no current-message read or child-resource fetch. The Channel emits an empty
+`<content />` plus `<refs><merged-forward message_id="..."/></refs>`.
+Actionable reply/quote ancestry is likewise a `<reply-to>` reference with only
+the parent id and a best-effort proven type; parent content is never injected.
+Channel content does not name or prescribe a lookup tool or command.
 
 Rich posts preserve Markdown/code, links, mentions, rules, and inline resource
-positions. Cards expose only visible labels/text/options and exclude callback
-or hidden values. Audio and media map onto the existing file/image resource
-ABI; stickers, shared entities, and future types receive explicit bounded
-fallbacks instead of raw JSON.
+positions. The Channel wraps visible content in `<content>`, renders each
+resource occurrence once as an inline `<attachment>` at its original position,
+and de-duplicates only the download/cache result and neutral runtime attachment.
+Code is Channel-owned `<code><![CDATA[...]]></code>` with safe `]]>` splitting,
+so source operators remain literal without opening the surrounding XML. Cards
+expose only visible labels/text/options and exclude callback or hidden values.
+Audio and media map onto the existing file/image resource ABI; stickers, shared
+entities, and future types receive explicit bounded fallbacks instead of raw
+JSON.
 
 Every accepted inbound owns a session-fenced enrichment context. Session close
 revokes it before closing the transport and drains handlers that already
 started. The context bounds the whole enrichment to 60 seconds, 32 unique
 resources, 25 MiB per resource, 100 MiB aggregate, and one sequential download;
-rich card/post text is capped at 160,000 escaped characters. Untrusted text is
-escaped exactly once at the final channel boundary. A neutral ancestry hint is
-emitted only for non-self, non-thread-root parent relations. After current
-message enrichment, one optional two-second parent read may add a bounded
-`parent_message_type`; the returned parent body and children are discarded.
-The hint carries only `parent_message_id` and the proven type when available;
-it contains no tool or command guidance. The final channel reminder permits a
-direct substantive reply when no preliminary work is needed and asks for an
-acknowledgement only before longer work.
+the complete pre-reminder structured body is capped at 160,000 UTF-16 code
+units. The typed truncator charges XML wrappers, escaped text, CDATA splits,
+refs, and optional trusted-bot context and always closes Channel-owned
+structures. Untrusted text is escaped exactly once at the final Channel
+boundary. After current-message enrichment, one optional two-second parent read
+may add the bounded reply type; the returned parent body and children are
+discarded.
+
+Topic chat-mode discovery and received/in-progress reaction operations are
+also bounded and session-aware. A hung SDK request cannot keep session close or
+dispatcher restart waiting indefinitely. Late route results cannot record a
+stale message target, and a late reaction result is cleaned up best-effort
+without entering the current session ledger.
+
+Sender names are best-effort and never gate delivery. Event-provided names win;
+known/trusted bot state names bot senders without a contact call; accepted
+mention pairs seed a positive transport-local cache; and an unnamed human may
+use `contact.v3.user.get` with at most 800 ms of the remaining inbound budget.
+Only Feishu code `99991672` opens the per-transport missing-scope circuit.
+Per-user monotonic versions and the session abort signal prevent a timed-out or
+revoked lookup from overwriting a newer cached/mention name or opening that
+circuit after close. Unknown names are omitted. `create_time` is rendered in
+the process-local time zone as unpadded `YYYY-M-d H:m:s`. The final concise
+Channel reminder permits a direct substantive reply when no preliminary work
+is needed and asks for an acknowledgement only before longer work.
 
 Key source:
 
 - `/packages/channel/feishu-transport/src/parse/`
 - `/packages/channel/feishu-transport/src/transport/message-read.ts`
+- `/packages/channel/feishu-transport/src/transport/user-name.ts`
 - `/packages/channel/feishu-channel/src/feishu-inbound-enrichment.ts`
 - `/packages/channel/feishu-channel/src/feishu-reply-ancestry.ts`
 - `/packages/channel/feishu-channel/src/feishu-inbound-work.ts`
 - `/packages/channel/feishu-channel/src/feishu-message.ts`
+- `/packages/channel/feishu-channel/src/feishu-message-render.ts`
 - `/packages/channel/feishu-channel/src/feishu-session-inbound.ts`
 
 ## Provider Tools And MCP
