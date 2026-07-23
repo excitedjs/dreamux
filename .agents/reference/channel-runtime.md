@@ -443,9 +443,11 @@ window, then aborts the queue before closing the bot; a hung card request cannot
 hold dispatcher shutdown. `FeishuTransport.sendCard` accepts a caller-owned
 `AbortSignal` and forwards it through the SDK client's cancellable HTTP request
 path. A live notification timeout aborts that request and suppresses
-queued/later cards for the session, preventing an in-process request from
-crossing close/restart and finishing after a newer card. Route topic cards reply
-to the persisted triggering `message_id`; route group cards send to the group;
+queued/later cards for the session. This bounds local work but cannot retract a
+request already accepted by Feishu; its remote delivery result remains unknown,
+and no ordering guarantee spans a timeout or session restart. Route topic cards
+reply to the persisted triggering `message_id`; route group cards send to the
+group;
 collaboration-space cards always send a fresh top-level card to the container
 chat, which creates a new topic in a Feishu topic group. Cards use Feishu
 `plain_text` elements only and render display fields, Team facts, runtime cwd,

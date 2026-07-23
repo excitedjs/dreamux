@@ -149,15 +149,16 @@ able to create Markdown links, mentions, tags, or card actions.
 ## Delivery Semantics
 
 - Notifications are live-session and best-effort. Each real transition produces
-  at most one `sendCard` attempt. A successful attempt creates one card; a
-  failed attempt creates none and logs a warning without changing the binding
-  result.
+  at most one `sendCard` attempt. A confirmed success reports one card. A
+  rejected or timed-out attempt logs a warning without changing the binding
+  result, but its remote delivery outcome may be unknown once the request has
+  reached Feishu.
 - Idempotent replays and already-unbound operations produce no send attempt.
 - Pre-session startup reconciliation is intentionally silent because the
   live-only bus has no consumer or history at that point. Durable replay/outbox
   delivery remains out of scope.
 - The Feishu session serializes binding-notification attempts so rapid
-  bind/unbind/rebind events cannot overtake one another.
+  bind/unbind/rebind events start locally in event order.
 - Revoking the existing core-event source prevents new attempts. A send already
   accepted by the Feishu notification queue gets a bounded settle window during
   session close. Each remote send also has a fixed deadline; when the close
@@ -166,8 +167,10 @@ able to create Markdown links, mentions, tags, or card actions.
 - The Feishu transport accepts an `AbortSignal` for caller-owned card sends and
   passes it to the underlying HTTP request. If a live send reaches its deadline,
   the session aborts that request and disables all later binding notifications
-  until restart. This prevents an old in-process request from crossing a
-  session restart and overtaking a newer card.
+  until restart. Cancellation bounds local work but cannot retract a request
+  already accepted by Feishu, so the remote result remains unknown and no card
+  ordering guarantee spans a timeout or session restart. A durable outbox,
+  provider idempotency key, and remote reconciliation remain out of scope.
 
 ## Card Content
 
@@ -214,12 +217,14 @@ Unbound:
   route write restores the provider metadata from the target record before
   reclaim; legacy records without metadata remain compatible and skip/warn.
 - A stale Team route lease fails before the binding write and emits no event.
-- Rapid bind/unbind/bind cards preserve event order.
+- Rapid bind/unbind/bind attempts start in event order while the sends settle
+  within their deadline.
 - A hung card send cannot hold Feishu session close beyond the notification
   drain deadline.
 - When a card send times out, queued and later notifications are suppressed for
-  that session, and the underlying transport request observes cancellation
-  before a restarted session sends again.
+  that session and the transport request receives caller cancellation. Tests
+  model the old remote result as unknown across a restarted session rather than
+  claiming that abort retracts an accepted Feishu request.
 - Pre-session startup reconciliation makes no attempt.
 - Card-send failure is contained and logged without changing binding results.
 - Card JSON cannot contain identity configuration, `claim_id`, prompts, raw

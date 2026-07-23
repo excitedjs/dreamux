@@ -64,8 +64,9 @@ static card delivery.
   remote request cannot hold dispatcher shutdown. The Feishu transport exposes
   caller-owned `AbortSignal` cancellation for card sends. A live send timeout
   aborts the underlying HTTP request and disables later binding notifications
-  for that session; restart creates a fresh session only after the old request
-  has observed cancellation.
+  for that session. Cancellation bounds local work but cannot retract a request
+  already accepted by Feishu, so its remote result remains unknown and ordering
+  is not guaranteed across a timeout or session restart.
 - Feishu cards render plain text only and do not expose raw provider `meta`,
   `claim_id`, prompts, or raw errors.
 

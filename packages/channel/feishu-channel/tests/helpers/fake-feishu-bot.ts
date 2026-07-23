@@ -139,8 +139,8 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       const id = `message-fake-${nextMessageId++}`;
       const entry = { chatId: target.chatId, target, card, messageIds: [id] };
       sentCards.push(entry);
+      observeRemoteCardDelivery(sendCardDelay, entry, deliveredCards);
       await waitForSendCardDelay(sendCardDelay, options?.signal);
-      deliveredCards.push(entry);
       return { messageIds: [id] };
     },
     async inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult> {
@@ -277,6 +277,21 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       else messageReads.set(key, response);
     },
   };
+}
+
+function observeRemoteCardDelivery(
+  delay: Promise<void> | null,
+  entry: FakeFeishuBot['sentCards'][number],
+  deliveredCards: FakeFeishuBot['deliveredCards'],
+): void {
+  if (delay === null) {
+    deliveredCards.push(entry);
+    return;
+  }
+  void delay.then(
+    () => deliveredCards.push(entry),
+    () => undefined,
+  );
 }
 
 async function waitForSendCardDelay(

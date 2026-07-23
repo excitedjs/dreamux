@@ -316,7 +316,7 @@ describe('Feishu binding notification cards', () => {
     );
   });
 
-  it('cancels a timed-out send before a restarted session sends again', async () => {
+  it('bounds local sends while remote timeout outcome stays unknown across restart', async () => {
     vi.useFakeTimers();
     let releaseSend!: () => void;
     const delayedSend = new Promise<void>((resolve) => {
@@ -361,6 +361,7 @@ describe('Feishu binding notification cards', () => {
     ]);
     expect(bot.deliveredCards.map((card) => card.chatId)).toEqual([
       'chat-restarted',
+      'chat-a',
     ]);
   });
 });
