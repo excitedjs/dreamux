@@ -2,6 +2,18 @@
   "name": "@excitedjs/feishu-transport",
   "entries": [
     {
+      "version": "0.7.0",
+      "tag": "@excitedjs/feishu-transport_v0.7.0",
+      "date": "Thu, 23 Jul 2026 18:09:54 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "Preserve ordered Feishu text, code, and positional resource parts as the internal source of truth, project compatible flat text and de-duplicated resources at the transport boundary, add bounded message reads, and expose a thin per-message sender-name lookup. Every accepted unnamed human message may query Feishu again after any nonzero, malformed, failed, or timed-out attempt."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.6.0",
       "tag": "@excitedjs/feishu-transport_v0.6.0",
       "date": "Sun, 19 Jul 2026 03:45:02 GMT",

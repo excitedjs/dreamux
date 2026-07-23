@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/dreamux
 
-This log was last generated on Tue, 21 Jul 2026 09:40:27 GMT and should not be manually modified.
+This log was last generated on Thu, 23 Jul 2026 18:09:54 GMT and should not be manually modified.
+
+## 0.19.4
+Thu, 23 Jul 2026 18:09:54 GMT
+
+### Patches
+
+- Presence-gate optional Homebrew service PATH fallbacks and allow the reviewed Linuxbrew prefix through release artifact auditing.
 
 ## 0.19.3
 Tue, 21 Jul 2026 09:40:27 GMT

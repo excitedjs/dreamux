@@ -1,6 +1,6 @@
 {
   "name": "@excitedjs/feishu-transport",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Shared Feishu platform-I/O core for dreamux and claudemux: connect / receive / send / auth / render / parse around the Lark node SDK.",
   "license": "MIT",
   "repository": {

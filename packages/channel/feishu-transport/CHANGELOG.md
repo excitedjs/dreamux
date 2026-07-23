@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/feishu-transport
 
-This log was last generated on Sun, 19 Jul 2026 03:45:02 GMT and should not be manually modified.
+This log was last generated on Thu, 23 Jul 2026 18:09:54 GMT and should not be manually modified.
+
+## 0.7.0
+Thu, 23 Jul 2026 18:09:54 GMT
+
+### Minor changes
+
+- Preserve ordered Feishu text, code, and positional resource parts as the internal source of truth, project compatible flat text and de-duplicated resources at the transport boundary, add bounded message reads, and expose a thin per-message sender-name lookup. Every accepted unnamed human message may query Feishu again after any nonzero, malformed, failed, or timed-out attempt.
 
 ## 0.6.0
 Sun, 19 Jul 2026 03:45:02 GMT

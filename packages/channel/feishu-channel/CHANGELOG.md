@@ -1,6 +1,17 @@
 # Change Log - @excitedjs/feishu-channel
 
-This log was last generated on Sun, 19 Jul 2026 03:45:02 GMT and should not be manually modified.
+This log was last generated on Thu, 23 Jul 2026 18:09:54 GMT and should not be manually modified.
+
+## 4.0.0
+Thu, 23 Jul 2026 18:09:54 GMT
+
+### Breaking changes
+
+- BREAKING: The public Feishu formatter now returns structured Channel-owned content/ref XML, renders downloaded inline attachments as path-only elements and non-downloaded attachments as status/key-only elements, and renders create time as process-local unpadded time instead of UTC ISO. Accepted unnamed human turns may await a best-effort contact lookup for up to two seconds. Consumers that parse formatter body text, attachment attributes, or ISO timestamps must adopt the new contracts.
+
+### Patches
+
+- Make Feishu channel acknowledgements conditional so immediately answerable requests receive a single direct reply.
 
 ## 3.0.0
 Sun, 19 Jul 2026 03:45:02 GMT
