@@ -421,6 +421,8 @@ describe('Feishu inbound resource budgets', () => {
   });
 
   it('destroys a resource stream that arrives after the request deadline', async () => {
+    vi.useFakeTimers();
+    const fetchStarted = deferred<void>();
     const pending = deferred<{
       stream: Readable;
       headers: Record<string, unknown>;
@@ -433,10 +435,13 @@ describe('Feishu inbound resource budgets', () => {
       timeoutMs: 100,
       resourceFetcher: {
         async fetchMessageResource() {
+          fetchStarted.resolve(undefined);
           return pending.promise;
         },
       },
     });
+    await fetchStarted.promise;
+    await vi.advanceTimersByTimeAsync(20);
     const result = await resultPromise;
     expect(result.attachments[0]).toMatchObject({
       status: 'not_downloaded',
