@@ -37,12 +37,24 @@ import type {
 import { validateTeamId } from './types.js';
 import type { AgentEntityIdentityStatus } from '../agent-entity/types.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
-import { dedupe } from './dedupe.js';
 import {
   TeamService,
   type TeamSchedulerLifecycle,
   type TeamServiceDeps,
 } from '../team-service/index.js';
+
+/** Share one in-flight promise per key; a concurrent same-key call joins it. */
+function dedupe<T>(
+  inFlight: Map<string, Promise<T>>,
+  key: string,
+  start: () => Promise<T>,
+): Promise<T> {
+  const existing = inFlight.get(key);
+  if (existing !== undefined) return existing;
+  const promise = start().finally(() => inFlight.delete(key));
+  inFlight.set(key, promise);
+  return promise;
+}
 
 export interface TeamCollectionOptions {
   /** The dispatcher this collection belongs to (issue #233 ownership sinking). */

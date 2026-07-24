@@ -2,7 +2,7 @@
   "changes": [
     {
       "packageName": "@excitedjs/feishu-channel",
-      "comment": "Send serialized best-effort Feishu cards for binding route and collaboration-space transitions.",
+      "comment": "Send independent best-effort Feishu cards for binding route and collaboration-space transitions, retrying a failed or timed-out attempt once in memory.",
       "type": "patch"
     }
   ],

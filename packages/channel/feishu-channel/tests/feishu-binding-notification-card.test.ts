@@ -323,6 +323,88 @@ describe('Feishu binding notification cards', () => {
     );
   });
 
+  it('aborts a timed-out attempt and immediately retries once', async () => {
+    vi.useFakeTimers();
+    const bot = createFakeFeishuBot('app-timeout-retry');
+    const log = logger();
+    const source = eventSource();
+    const s = session({ stateDir, bot, log });
+    await start({ session: s, source });
+    const signals: AbortSignal[] = [];
+    let attempts = 0;
+    bot.sendCard = async (_target, _card, options) => {
+      attempts += 1;
+      const signal = options?.signal;
+      if (signal === undefined) throw new Error('expected a send signal');
+      signals.push(signal);
+      if (attempts === 2) return { messageIds: ['message-retry-success'] };
+      return new Promise((_, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), {
+          once: true,
+        });
+      });
+    };
+
+    source.emit(routeEvent({ meta: { chat_id: 'chat-timeout-retry' } }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(attempts).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(20_001);
+    expect(attempts).toBe(2);
+    expect(signals[0]?.aborted).toBe(true);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ attempt: 1, event_kind: 'binding.route' }),
+      'Feishu binding notification failed; retrying once',
+    );
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attempt: 2,
+        message_ids: ['message-retry-success'],
+      }),
+      'Feishu binding notification sent',
+    );
+    await expect(s.close()).resolves.toBeUndefined();
+  });
+
+  it('stops after two timed-out attempts', async () => {
+    vi.useFakeTimers();
+    const bot = createFakeFeishuBot('app-timeout-final');
+    const log = logger();
+    const source = eventSource();
+    const s = session({ stateDir, bot, log });
+    await start({ session: s, source });
+    const signals: AbortSignal[] = [];
+    let attempts = 0;
+    bot.sendCard = async (_target, _card, options) => {
+      attempts += 1;
+      const signal = options?.signal;
+      if (signal === undefined) throw new Error('expected a send signal');
+      signals.push(signal);
+      return new Promise((_, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), {
+          once: true,
+        });
+      });
+    };
+
+    source.emit(routeEvent({ meta: { chat_id: 'chat-timeout-final' } }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(attempts).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(20_001);
+    expect(attempts).toBe(2);
+    expect(signals[0]?.aborted).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(20_001);
+    expect(attempts).toBe(2);
+    expect(signals[1]?.aborted).toBe(true);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ attempt: 2, event_kind: 'binding.route' }),
+      'Feishu binding notification failed after retry',
+    );
+    await expect(s.close()).resolves.toBeUndefined();
+  });
+
   it('cancels a hung notification when the session closes', async () => {
     vi.useFakeTimers();
     const bot = createFakeFeishuBot('app-hung');
