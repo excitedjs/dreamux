@@ -1,12 +1,14 @@
-import { mkdir, open, readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 
-import { writeFileAtomic } from '../../platform/atomic-write.js';
+import {
+  writeFileAtomic,
+  writeFileExclusiveAtomic,
+} from '../../platform/atomic-write.js';
 import { isNotFound } from '../../platform/fs-errors.js';
 import {
   dispatcherTeamDir,
   dispatcherTeamNameClaimPath,
   dispatcherTeamRecordPath,
-  dispatcherTeamScopeDir,
 } from '../../platform/paths.js';
 import type { TeamRecord, TeamStatus } from './types.js';
 import { validateTeamId } from './types.js';
@@ -63,18 +65,7 @@ export class TeamStore {
     validateTeamId(teamId);
     requireClaimToken(claimToken);
     if (await this.get(dispatcherId, teamId) !== null) return false;
-    await mkdir(dispatcherTeamScopeDir(dispatcherId, teamId), {
-      recursive: true,
-    });
     const path = dispatcherTeamNameClaimPath(dispatcherId, teamId);
-    let handle;
-    try {
-      handle = await open(path, 'wx', 0o600);
-    } catch (err) {
-      if (!isAlreadyExists(err)) throw err;
-      const existing = await this.readNameClaim(dispatcherId, teamId);
-      return existing.claim_token === claimToken;
-    }
     const claim: TeamNameClaimRecord = {
       version: 1,
       dispatcher_id: dispatcherId,
@@ -82,10 +73,13 @@ export class TeamStore {
       claim_token: claimToken,
       created_at: Date.now(),
     };
-    try {
-      await handle.writeFile(`${JSON.stringify(claim, null, 2)}\n`);
-    } finally {
-      await handle.close();
+    const published = await writeFileExclusiveAtomic(
+      path,
+      `${JSON.stringify(claim, null, 2)}\n`,
+    );
+    if (!published) {
+      const existing = await this.readNameClaim(dispatcherId, teamId);
+      return existing.claim_token === claimToken;
     }
     // A legacy writer could have materialized the Team between the preflight
     // check and the claim file creation. Preserve the claim but report taken.
@@ -221,15 +215,6 @@ function requireClaimToken(value: string): void {
   if (value.trim() === '') {
     throw new Error('Team name claim token must be non-empty');
   }
-}
-
-function isAlreadyExists(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    'code' in err &&
-    (err as { code?: unknown }).code === 'EEXIST'
-  );
 }
 
 function readTeam(dispatcherId: string, teamId: string, raw: string): TeamRecord {

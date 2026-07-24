@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const execFileAsync = promisify(execFile);
 
@@ -24,6 +24,9 @@ import type {
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import { TeamCollection } from '../src/service/team-collection/index.js';
 import { TeamStore } from '../src/service/team-collection/store.js';
+import { dispatcherTeamNameClaimPath } from '../src/platform/paths.js';
+import { CollaborationSpaceService } from '../src/service/collaboration-space/index.js';
+import { CollaborationSpaceStore } from '../src/service/collaboration-space/store.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
 import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
 import {
@@ -33,6 +36,7 @@ import {
 } from '../src/service/completion-router/index.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
+import { fakeChannels } from './helpers/collaboration-space.js';
 
 const FAKE_RUNTIME_REF = 'test:runtime';
 
@@ -1103,7 +1107,7 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
     await teams.stopAll();
   });
 
-  it('keeps a durable collaboration name claim authoritative after restart', async () => {
+  it('recovers the same collaboration name claim after restart while explicit create skips it', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
     const config = testDreamuxConfig([
@@ -1135,13 +1139,52 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
         nameSuffixGenerator: generateSuffix,
       });
 
+    const channels = fakeChannels();
+    const store = new CollaborationSpaceStore();
     const beforeRestart = createCollection([], () => 'aaaa');
-    const durableClaim = await beforeRestart.claimName(
-      'alpha',
-      'collaboration-target-claim',
-    );
-    expect(durableClaim.name).toBe('alpha-aaaa');
-    expect(await beforeRestart.hasTeam(durableClaim.name)).toBe(false);
+    const firstService = new CollaborationSpaceService({
+      dispatcherId: 'dispatcher-a',
+      config,
+      teams: beforeRestart,
+      channels: channels.service,
+      store,
+      log,
+      isShuttingDown: () => false,
+    });
+    await firstService.bind({
+      spaceName: 'space-alpha',
+      container: {
+        container_type: 'topic_group',
+        container_key: 'container-a',
+      },
+      leaderAgentRuntime: 'agent-a',
+    });
+    const targetInput = {
+      channelId: 'primary',
+      provider: 'builtin:test',
+      container: {
+        container_type: 'topic_group',
+        container_key: 'container-a',
+      },
+      target: {
+        target_type: 'topic',
+        target_key: 'topic-a',
+        display: 'Alpha',
+        bindable: true,
+      },
+    } as const;
+    await expect(
+      firstService.acceptTargetCreated(targetInput),
+    ).resolves.toBe(true);
+    const durableTarget = (await store.listTargets('dispatcher-a'))[0];
+    expect(durableTarget).toMatchObject({
+      team_name: 'space-alpha-aaaa',
+      lifecycle_status: 'creating',
+      phase: 'claimed',
+    });
+    expect(
+      await beforeRestart.hasTeam(durableTarget!.team_name),
+    ).toBe(false);
 
     const suffixes = ['aaaa', 'bbbb'];
     const runtimes: FakeRuntime[] = [];
@@ -1150,13 +1193,67 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       () => suffixes.shift() ?? 'bbbb',
     );
     const explicit = await afterRestart.createFromPrefix({
-      namePrefix: 'alpha',
+      namePrefix: 'space-alpha',
       leaderAgentRuntime: 'agent-a',
       intent: 'must skip the durable collaboration claim',
     });
-    expect(explicit.team.team_name).toBe('alpha-bbbb');
+    expect(explicit.team.team_name).toBe('space-alpha-bbbb');
     expect(runtimes).toHaveLength(1);
+
+    const resumedService = new CollaborationSpaceService({
+      dispatcherId: 'dispatcher-a',
+      config,
+      teams: afterRestart,
+      channels: channels.service,
+      store,
+      log,
+      isShuttingDown: () => false,
+    });
+    await resumedService.resumePendingTargets();
+    await expect(
+      resumedService.status({ spaceName: 'space-alpha' }),
+    ).resolves.toMatchObject({
+      targets: [{
+        team_name: 'space-alpha-aaaa',
+        lifecycle_status: 'active',
+        phase: 'bound',
+      }],
+    });
+    expect(runtimes).toHaveLength(2);
+    expect(channels.boundOwners.get('topic-a')).toMatchObject({
+      teamName: 'space-alpha-aaaa',
+    });
     await afterRestart.stopAll();
+  });
+
+  it('publishes competing name claims atomically and ignores interrupted temps', async () => {
+    const store = new TeamStore();
+    const results = await Promise.all([
+      store.claimName('dispatcher-a', 'alpha-aaaa', 'owner-a'),
+      store.claimName('dispatcher-a', 'alpha-aaaa', 'owner-b'),
+    ]);
+    expect([...results].sort()).toEqual([false, true]);
+    const winner = results[0] ? 'owner-a' : 'owner-b';
+    const loser = results[0] ? 'owner-b' : 'owner-a';
+    await expect(
+      store.requireNameClaim('dispatcher-a', 'alpha-aaaa', winner),
+    ).resolves.toBeUndefined();
+    await expect(
+      store.requireNameClaim('dispatcher-a', 'alpha-aaaa', loser),
+    ).rejects.toThrow(/claimed by another owner/);
+
+    const interrupted = dispatcherTeamNameClaimPath(
+      'dispatcher-a',
+      'alpha-bbbb',
+    );
+    mkdirSync(dirname(interrupted), { recursive: true });
+    writeFileSync(`${interrupted}.interrupted.tmp`, '{"version":');
+    await expect(
+      store.claimName('dispatcher-a', 'alpha-bbbb', 'owner-c'),
+    ).resolves.toBe(true);
+    await expect(
+      store.requireNameClaim('dispatcher-a', 'alpha-bbbb', 'owner-c'),
+    ).resolves.toBeUndefined();
   });
 });
 

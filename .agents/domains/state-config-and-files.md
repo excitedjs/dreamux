@@ -136,10 +136,12 @@ The dispatcher root `identity.json` + `turn.jsonl` are the dispatcher agent's
 entity state and sit structurally outside the `teammate/` collection. TeamLeader
 state lives at the Team root; Team member state lives under that Team's member
 collection. `name-claim.json` is the Team namespace's permanent ownership
-record: it is written before a Team or collaboration-target side effect and is
-never removed, including after dissolve. There is no separate `status.json`
-recovery authority and no durable `runtime/<name>/` scratch under the
-dispatcher state root — runtime scratch is volatile and lives under `run/`.
+record: a complete sibling temp file is published with an atomic no-clobber
+hard link before a Team or collaboration-target side effect, so readers never
+observe a partial claim. The claim is never removed, including after dissolve.
+There is no separate `status.json` recovery authority and no durable
+`runtime/<name>/` scratch under the dispatcher state root — runtime scratch is
+volatile and lives under `run/`.
 
 Source:
 
