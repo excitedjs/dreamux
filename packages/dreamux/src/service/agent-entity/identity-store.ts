@@ -29,6 +29,7 @@ import {
 import { KeyedAsyncQueue } from '../serial-queue.js';
 import {
   DISPATCHER_AGENT_NAME,
+  TEAMMATE_NAME_PATTERN,
   validateAgentEntityName,
   type AgentEntityIdentity,
   type AgentEntityIdentityStatus,
@@ -178,26 +179,25 @@ export class AgentIdentityStore {
   }
 
   /**
-   * Every teammate/leader name across the whole dispatcher (issue #233): the
-   * dispatcher's own teammates, plus each team's leader and members. Names-only,
-   * so the dispatcher-global `allocateName` dedup stays collision-free for the
-   * per-turn router key without `TeammateCollection` reaching into the team store.
-   * The leader is read explicitly from the team root because `list` is now
-   * members-only.
+   * Every occupied teammate/leader name across the whole dispatcher (issue
+   * #233): the dispatcher's own teammates, plus each team's leader and members.
+   * Entity directory names remain occupied even when their identity file is
+   * unreadable, so no-clobber discovery happens before workspace side effects.
+   * The leader is read explicitly from the team root because member directory
+   * names do not encode it; the live store also receives pending leader names
+   * from TeamStore.
    */
   async listAllNames(dispatcherId: string): Promise<Set<string>> {
-    const names = new Set<string>();
-    for (const identity of await this.listCollection(
-      dispatcherId,
-      dispatcherTeamMateDir(dispatcherId),
-    )) {
-      names.add(identity.name);
-    }
+    const names = new Set(
+      await this.listCollectionNames(dispatcherTeamMateDir(dispatcherId)),
+    );
     for (const teamId of await this.listTeamIds(dispatcherId)) {
       const leader = await this.leaderIdentity(dispatcherId, teamId);
       if (leader !== null) names.add(leader.name);
-      for (const identity of await this.list(dispatcherId, teamId)) {
-        names.add(identity.name);
+      for (const memberName of await this.listCollectionNames(
+        dispatcherTeamTeamMateDir(dispatcherId, teamId),
+      )) {
+        names.add(memberName);
       }
     }
     return names;
@@ -265,25 +265,34 @@ export class AgentIdentityStore {
     }
   }
 
+  /** List valid entity directory names; the directory itself is the occupancy fact. */
+  private async listCollectionNames(dir: string): Promise<string[]> {
+    try {
+      const entries = await readdir(dir, { withFileTypes: true });
+      return entries
+        .filter(
+          (entry) =>
+            entry.isDirectory() && TEAMMATE_NAME_PATTERN.test(entry.name),
+        )
+        .map((entry) => entry.name)
+        .sort();
+    } catch (err) {
+      if (isNotFound(err)) return [];
+      throw err;
+    }
+  }
+
   /** Read every `<dir>/<entity>/identity.json` child, skipping unreadable ones. */
   private async listCollection(
     dispatcherId: string,
     dir: string,
   ): Promise<AgentEntityIdentity[]> {
-    let entries: import('node:fs').Dirent[];
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch (err) {
-      if (isNotFound(err)) return [];
-      throw err;
-    }
     const identities: AgentEntityIdentity[] = [];
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (!entry.isDirectory()) continue;
+    for (const name of await this.listCollectionNames(dir)) {
       const identity = await this.readAt(
         dispatcherId,
-        entry.name,
-        join(dir, entry.name, 'identity.json'),
+        name,
+        join(dir, name, 'identity.json'),
       );
       if (identity !== null) identities.push(identity);
     }

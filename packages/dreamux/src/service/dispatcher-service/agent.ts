@@ -40,10 +40,11 @@ export interface DispatcherAgentDeps {
   identity: AgentEntityIdentity;
   /**
    * The identity + turns store pair, constructed once by `DispatcherService` and
-   * shared with the dispatcher-scope `TeammateCollection` (issue #233). The stores
-   * are stateless (paths by role + team_id), so one pair safely serves the
-   * dispatcher agent's root identity (role `dispatcher`) and the collection's
-   * teammate reads (role `teammate`).
+   * shared with the dispatcher-scope `TeammateCollection` (issue #233). The live
+   * identity store owns dispatcher-global transient name reservations; the turns
+   * store remains stateless over paths. The same pair safely serves the dispatcher
+   * agent's root identity (role `dispatcher`) and the collection's teammate reads
+   * and generated-name creation (role `teammate`).
    */
   identities: AgentIdentityStore;
   turnsStore: AgentTurnsStore;

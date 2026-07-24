@@ -24,7 +24,10 @@ import type {
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import { TeamCollection } from '../src/service/team-collection/index.js';
 import { TeamStore } from '../src/service/team-collection/store.js';
-import { dispatcherTeamNameClaimPath } from '../src/platform/paths.js';
+import {
+  dispatcherAgentIdentityPath,
+  dispatcherTeamNameClaimPath,
+} from '../src/platform/paths.js';
 import { CollaborationSpaceService } from '../src/service/collaboration-space/index.js';
 import { CollaborationSpaceStore } from '../src/service/collaboration-space/store.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
@@ -1606,6 +1609,37 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
     releaseFirst.resolve();
     await expect(first).resolves.toBe('tl-alpha-aaaa');
 
+    const memberEntered = deferred<string>();
+    const releaseMember = deferred<void>();
+    const member = identities.withReservedName(
+      {
+        dispatcherId: 'dispatcher-a',
+        kind: 'team_member',
+        base: 'worker',
+        generateSuffix: () => 'aaaa',
+      },
+      async (name) => {
+        memberEntered.resolve(name);
+        await releaseMember.promise;
+        return name;
+      },
+    );
+    await expect(memberEntered.promise).resolves.toBe('tm-worker-aaaa');
+    const ordinarySuffixes = ['aaaa', 'bbbb'];
+    await expect(
+      identities.withReservedName(
+        {
+          dispatcherId: 'dispatcher-a',
+          kind: 'teammate',
+          base: 'tm-worker',
+          generateSuffix: () => ordinarySuffixes.shift()!,
+        },
+        async (name) => name,
+      ),
+    ).resolves.toBe('tm-worker-bbbb');
+    releaseMember.resolve();
+    await expect(member).resolves.toBe('tm-worker-aaaa');
+
     await expect(
       identities.withReservedName(
         {
@@ -1630,6 +1664,84 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
         async (name) => name,
       ),
     ).resolves.toBe('tm-worker-cccc');
+  });
+
+  it('regenerates before spawn when an unreadable identity directory occupies the candidate', async () => {
+    const workspace = join(root, 'corrupt-identity-workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const identities = new AgentIdentityStore(log);
+    await identities.create({
+      dispatcherId: 'dispatcher-a',
+      name: 'reviewer-aaaa',
+      role: 'teammate',
+      teamId: null,
+      agentRuntime: 'agent-a',
+      sourceCwd: workspace,
+      sourceRepo: null,
+      cwd: workspace,
+      runtimeCwd: workspace,
+      worktree: {
+        mode: 'reuse-cwd',
+        slug: null,
+        path: workspace,
+        branch: null,
+        base_ref: null,
+        cleanup: 'keep',
+        cleanup_state: 'not-managed',
+        cleanup_error: null,
+      },
+      intent: 'corrupt occupancy fixture',
+      status: 'closed',
+    });
+    writeFileSync(
+      dispatcherAgentIdentityPath({
+        dispatcherId: 'dispatcher-a',
+        name: 'reviewer-aaaa',
+        teamId: null,
+        role: 'teammate',
+      }),
+      '{"version":',
+    );
+
+    const suffixes = ['aaaa', 'bbbb'];
+    const worktrees = new WorktreeManager();
+    const prepareWorkspace = vi.spyOn(worktrees, 'prepareDefaultWorkspace');
+    const collection = new TeammateCollection({
+      dispatcherId: 'dispatcher-a',
+      teamScope: null,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      worktrees,
+      identities,
+      turnsStore: new AgentTurnsStore(log),
+      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      suffixGenerator: () => suffixes.shift()!,
+      log,
+    });
+    await expect(
+      collection.spawn({
+        name: 'reviewer',
+        prompt: 'skip the corrupt occupied candidate',
+        intent: 'verify directory occupancy',
+        agentRuntime: 'agent-a',
+      }),
+    ).resolves.toMatchObject({
+      teammate: { name: 'reviewer-bbbb' },
+    });
+    expect(prepareWorkspace).toHaveBeenCalledTimes(1);
+    await collection.stopAll();
   });
 
   it('keeps a persisted pending TeamLeader name occupied after reservation release and restart', async () => {
