@@ -12,14 +12,15 @@ import type { AgentEntityRole } from './agent-entity/types.js';
  *   Team member:       `tm-${slug}-${suffix}`
  *   TeamLeader:        `tl-${team_slug}-${suffix}`
  *
- * Suffixes contain 4-8 lowercase base36 characters. Callers enforce
- * never-reuse by checking every persisted name in their own collection,
- * including closed records.
+ * Team suffixes contain 4-8 lowercase base36 characters. Agent-entity suffixes
+ * retain their established fixed 8-character contract. Callers enforce
+ * never-reuse in the authoritative collection that owns each namespace.
  */
 
 export const CONCRETE_NAME_MAX = 64;
-export const NAME_SUFFIX_MIN_LENGTH = 4;
-export const NAME_SUFFIX_MAX_LENGTH = 8;
+export const TEAM_NAME_SUFFIX_MIN_LENGTH = 4;
+export const TEAM_NAME_SUFFIX_MAX_LENGTH = 8;
+export const AGENT_NAME_SUFFIX_LENGTH = 8;
 const DEFAULT_MAX_ATTEMPTS = 16;
 const BASE36 = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
@@ -40,12 +41,14 @@ export function slugifyName(base: string): string {
   return slug === '' ? 'tm' : slug;
 }
 
-/** A CSPRNG-backed lowercase base36 suffix whose length is uniformly 4-8. */
-export function generateNameSuffix(): string {
-  const length = randomInt(
-    NAME_SUFFIX_MIN_LENGTH,
-    NAME_SUFFIX_MAX_LENGTH + 1,
-  );
+/** A CSPRNG-backed lowercase base36 suffix with the kind-specific length. */
+export function generateNameSuffix(kind: ConcreteNameKind): string {
+  const length = kind === 'team'
+    ? randomInt(
+        TEAM_NAME_SUFFIX_MIN_LENGTH,
+        TEAM_NAME_SUFFIX_MAX_LENGTH + 1,
+      )
+    : AGENT_NAME_SUFFIX_LENGTH;
   const bytes = randomBytes(length);
   let out = '';
   for (let i = 0; i < length; i += 1) {
@@ -87,19 +90,55 @@ export function allocateConcreteName(input: {
   generateSuffix?: SuffixGenerator;
   maxAttempts?: number;
 }): string {
-  const generate = input.generateSuffix ?? generateNameSuffix;
+  for (const candidate of concreteNameCandidates(input)) {
+    if (!input.exists(candidate)) return candidate;
+  }
+  throw new Error(
+    `could not allocate a unique ${input.kind} name after ` +
+      `${input.maxAttempts ?? DEFAULT_MAX_ATTEMPTS} attempts ` +
+      `(base ${JSON.stringify(input.base)})`,
+  );
+}
+
+/**
+ * Allocate and durably claim the first candidate accepted by the namespace
+ * owner. Unlike the synchronous allocator, the claim callback is the
+ * serialization point: it must atomically reject names claimed elsewhere.
+ */
+export async function claimConcreteName(input: {
+  kind: ConcreteNameKind;
+  base: string;
+  teamSlug?: string;
+  claim: (name: string) => Promise<boolean>;
+  generateSuffix?: SuffixGenerator;
+  maxAttempts?: number;
+}): Promise<string> {
+  for (const candidate of concreteNameCandidates(input)) {
+    if (await input.claim(candidate)) return candidate;
+  }
+  throw new Error(
+    `could not claim a unique ${input.kind} name after ` +
+      `${input.maxAttempts ?? DEFAULT_MAX_ATTEMPTS} attempts ` +
+      `(base ${JSON.stringify(input.base)})`,
+  );
+}
+
+function* concreteNameCandidates(input: {
+  kind: ConcreteNameKind;
+  base: string;
+  teamSlug?: string;
+  generateSuffix?: SuffixGenerator;
+  maxAttempts?: number;
+}): Generator<string> {
+  const generate =
+    input.generateSuffix ?? (() => generateNameSuffix(input.kind));
   const maxAttempts = input.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const candidate = buildConcreteName({
+    yield buildConcreteName({
       kind: input.kind,
       base: input.base,
       ...(input.teamSlug !== undefined ? { teamSlug: input.teamSlug } : {}),
       suffix: generate(),
     });
-    if (!input.exists(candidate)) return candidate;
   }
-  throw new Error(
-    `could not allocate a unique ${input.kind} name after ${maxAttempts} attempts ` +
-      `(base ${JSON.stringify(input.base)})`,
-  );
 }

@@ -179,9 +179,12 @@ agent, the dispatcher-scope `TeammateCollection`, and each Team's
 never self-built inside a collection (PR #282 owner-boundary fix).
 
 Team creation takes `name_prefix` and returns a concrete `team_name` with a
-4–8 character random suffix. Concrete Team names are checked against all
-persisted Teams, including closed records, and are never reused. Later Team
-lifecycle and routing operations are addressed by that returned `team_name`.
+4–8 character random suffix. Core atomically persists `name-claim.json` in the
+Team namespace before any Team or collaboration-target side effect; the claim
+survives restart and dissolve, so closed and not-yet-materialized concrete names
+are never reused. Agent-entity names retain their fixed 8-character suffix.
+Later Team lifecycle and routing operations are addressed by that returned
+`team_name`.
 Channel binding is a Team MCP capability. The Team MCP is caller-scoped:
 
 - dispatchers see lifecycle/read tools plus

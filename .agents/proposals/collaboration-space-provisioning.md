@@ -439,8 +439,10 @@ For each target:
 - request a concrete name from the shared Team allocator with
   `name_prefix = "space-" + title_slug`;
 - append a CSPRNG-backed 4–8 character lowercase base36 suffix;
-- check the candidate against all persisted Team records, including closed
-  Teams, and reserve it before persisting the target claim;
+- atomically persist a Team-namespace name claim before persisting the target
+  claim; the opaque target-generation claim token must authorize the later Team
+  create, and the Team name claim survives restart even before a Team record
+  exists;
 - `worktree_slug = team_name`
 - managed worktree branch = `team_name` when the binding uses an explicit repo
 

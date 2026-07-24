@@ -1048,10 +1048,12 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       log,
     });
 
-    const firstName = await teams.allocateName('alpha');
+    const firstClaim = await teams.claimName('alpha');
+    const firstName = firstClaim.name;
     expect(firstName).toMatch(/^alpha-[a-z0-9]{4,8}$/);
     await teams.create({
       name: firstName,
+      nameClaimToken: firstClaim.token,
       leaderAgentRuntime: 'agent-a',
       intent: 'lead alpha in a managed worktree',
       repoCwd: sourceRepo,
@@ -1072,11 +1074,13 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       worktree: { mode: 'reuse-cwd' },
     })).rejects.toThrow(/concrete Team names are never reused/);
 
-    const secondName = await teams.allocateName('alpha');
+    const secondClaim = await teams.claimName('alpha');
+    const secondName = secondClaim.name;
     expect(secondName).toMatch(/^alpha-[a-z0-9]{4,8}$/);
     expect(secondName).not.toBe(firstName);
     await teams.create({
       name: secondName,
+      nameClaimToken: secondClaim.token,
       leaderAgentRuntime: 'agent-a',
       intent: 'lead alpha from the source checkout',
       repoCwd: sourceRepo,
@@ -1097,6 +1101,62 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       worktree: { mode: 'reuse-cwd', path: sourceRepo },
     });
     await teams.stopAll();
+  });
+
+  it('keeps a durable collaboration name claim authoritative after restart', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const createCollection = (
+      runtimes: FakeRuntime[],
+      generateSuffix: () => string,
+    ): TeamCollection =>
+      new TeamCollection({
+        dispatcherId: 'dispatcher-a',
+        config,
+        agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+        worktrees: new WorktreeManager(),
+        identities: new AgentIdentityStore(log),
+        turnsStore: new AgentTurnsStore(log),
+        router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+        initiatorFor: async () => null,
+        isShuttingDown: () => false,
+        adminSocketPath: '/tmp/admin.sock',
+        leaderChannelDescriptors: () => [],
+        log,
+        nameSuffixGenerator: generateSuffix,
+      });
+
+    const beforeRestart = createCollection([], () => 'aaaa');
+    const durableClaim = await beforeRestart.claimName(
+      'alpha',
+      'collaboration-target-claim',
+    );
+    expect(durableClaim.name).toBe('alpha-aaaa');
+    expect(await beforeRestart.hasTeam(durableClaim.name)).toBe(false);
+
+    const suffixes = ['aaaa', 'bbbb'];
+    const runtimes: FakeRuntime[] = [];
+    const afterRestart = createCollection(
+      runtimes,
+      () => suffixes.shift() ?? 'bbbb',
+    );
+    const explicit = await afterRestart.createFromPrefix({
+      namePrefix: 'alpha',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'must skip the durable collaboration claim',
+    });
+    expect(explicit.team.team_name).toBe('alpha-bbbb');
+    expect(runtimes).toHaveLength(1);
+    await afterRestart.stopAll();
   });
 });
 

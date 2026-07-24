@@ -1,10 +1,12 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { mkdir, open, readFile, readdir } from 'node:fs/promises';
 
 import { writeFileAtomic } from '../../platform/atomic-write.js';
 import { isNotFound } from '../../platform/fs-errors.js';
 import {
   dispatcherTeamDir,
+  dispatcherTeamNameClaimPath,
   dispatcherTeamRecordPath,
+  dispatcherTeamScopeDir,
 } from '../../platform/paths.js';
 import type { TeamRecord, TeamStatus } from './types.js';
 import { validateTeamId } from './types.js';
@@ -48,7 +50,76 @@ export class TeamStore {
     return teams;
   }
 
-  async create(input: Omit<TeamRecord, 'version' | 'created_at' | 'updated_at'>): Promise<TeamRecord> {
+  /**
+   * Atomically claim one concrete Team name. Existing claims are idempotent
+   * only for the same opaque token; a legacy Team record without a claim still
+   * reserves its name forever.
+   */
+  async claimName(
+    dispatcherId: string,
+    teamId: string,
+    claimToken: string,
+  ): Promise<boolean> {
+    validateTeamId(teamId);
+    requireClaimToken(claimToken);
+    if (await this.get(dispatcherId, teamId) !== null) return false;
+    await mkdir(dispatcherTeamScopeDir(dispatcherId, teamId), {
+      recursive: true,
+    });
+    const path = dispatcherTeamNameClaimPath(dispatcherId, teamId);
+    let handle;
+    try {
+      handle = await open(path, 'wx', 0o600);
+    } catch (err) {
+      if (!isAlreadyExists(err)) throw err;
+      const existing = await this.readNameClaim(dispatcherId, teamId);
+      return existing.claim_token === claimToken;
+    }
+    const claim: TeamNameClaimRecord = {
+      version: 1,
+      dispatcher_id: dispatcherId,
+      team_name: teamId,
+      claim_token: claimToken,
+      created_at: Date.now(),
+    };
+    try {
+      await handle.writeFile(`${JSON.stringify(claim, null, 2)}\n`);
+    } finally {
+      await handle.close();
+    }
+    // A legacy writer could have materialized the Team between the preflight
+    // check and the claim file creation. Preserve the claim but report taken.
+    return await this.get(dispatcherId, teamId) === null;
+  }
+
+  async requireNameClaim(
+    dispatcherId: string,
+    teamId: string,
+    claimToken: string,
+  ): Promise<void> {
+    requireClaimToken(claimToken);
+    const claim = await this.readNameClaim(dispatcherId, teamId);
+    if (claim.claim_token !== claimToken) {
+      throw new Error(
+        `Team name ${JSON.stringify(teamId)} is claimed by another owner`,
+      );
+    }
+  }
+
+  async create(
+    input: Omit<TeamRecord, 'version' | 'created_at' | 'updated_at'>,
+    claimToken: string,
+  ): Promise<TeamRecord> {
+    await this.requireNameClaim(
+      input.dispatcher_id,
+      input.team_id,
+      claimToken,
+    );
+    if (await this.get(input.dispatcher_id, input.team_id) !== null) {
+      throw new Error(
+        `Team ${JSON.stringify(input.team_id)} already exists; concrete Team names are never reused`,
+      );
+    }
     const now = Date.now();
     const team: TeamRecord = {
       version: 1,
@@ -59,6 +130,35 @@ export class TeamStore {
     await this.write(team);
     this.publishState(team);
     return team;
+  }
+
+  private async readNameClaim(
+    dispatcherId: string,
+    teamId: string,
+  ): Promise<TeamNameClaimRecord> {
+    const path = dispatcherTeamNameClaimPath(dispatcherId, teamId);
+    let raw: string;
+    try {
+      raw = await readFile(path, 'utf8');
+    } catch (err) {
+      if (isNotFound(err)) {
+        throw new Error(
+          `Team name ${JSON.stringify(teamId)} has no persistent claim`,
+        );
+      }
+      throw err;
+    }
+    const value = JSON.parse(raw) as Record<string, unknown>;
+    if (
+      value['version'] !== 1 ||
+      value['dispatcher_id'] !== dispatcherId ||
+      value['team_name'] !== teamId ||
+      typeof value['claim_token'] !== 'string' ||
+      typeof value['created_at'] !== 'number'
+    ) {
+      throw new Error(`invalid Team name claim ${JSON.stringify(teamId)}`);
+    }
+    return value as unknown as TeamNameClaimRecord;
   }
 
   async update(
@@ -107,6 +207,29 @@ export class TeamStore {
     const path = dispatcherTeamRecordPath(team.dispatcher_id, team.team_id);
     await writeFileAtomic(path, `${JSON.stringify(team, null, 2)}\n`);
   }
+}
+
+interface TeamNameClaimRecord {
+  version: 1;
+  dispatcher_id: string;
+  team_name: string;
+  claim_token: string;
+  created_at: number;
+}
+
+function requireClaimToken(value: string): void {
+  if (value.trim() === '') {
+    throw new Error('Team name claim token must be non-empty');
+  }
+}
+
+function isAlreadyExists(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as { code?: unknown }).code === 'EEXIST'
+  );
 }
 
 function readTeam(dispatcherId: string, teamId: string, raw: string): TeamRecord {

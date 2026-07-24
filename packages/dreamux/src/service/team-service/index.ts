@@ -83,6 +83,7 @@ export interface TeamServiceDeps {
 export interface TeamServiceCreateInput {
   teamId: string;
   name: string;
+  nameClaimToken: string;
   prompt?: string;
   leaderAgentRuntime: string;
   intent: string;
@@ -180,7 +181,7 @@ export class TeamService {
       intent: input.intent,
       closed_at: null,
       close_note: null,
-    });
+    }, input.nameClaimToken);
     const existingLeader = await deps.identities.get(
       deps.dispatcherId,
       leaderName,

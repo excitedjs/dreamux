@@ -140,7 +140,8 @@ Source:
 
 `team.create.name_prefix` is a label request, not a durable address. Core
 allocates a concrete `team_name` with a 4–8 character random suffix, checks it
-against all persisted Teams including closed records, and never reuses it.
+against the Team namespace's permanent name claims (including closed and
+not-yet-materialized Teams), and never reuses it.
 Every later Team operation is addressed by the concrete `team_name` returned
 from create. Dispatcher-visible Team MCP tools:
 

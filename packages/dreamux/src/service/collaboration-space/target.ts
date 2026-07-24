@@ -26,9 +26,17 @@ export async function createTargetClaim(
 ): Promise<ProvisionedTargetRecord> {
   const binding = requiredBinding(space);
   const display = nonBlank(provision.title) ?? nonBlank(provision.target.display) ?? null;
-  const teamName = validateTeamId(
-    await teams.allocateName(collaborationTeamNamePrefix(display)),
+  const nameClaim = await teams.claimName(
+    collaborationTeamNamePrefix(display),
+    routeClaimId({
+      dispatcherId,
+      channelId: provision.channelId,
+      containerKey: provision.container.container_key,
+      bindingGeneration: binding.generation,
+      targetKey: provision.target.target_key,
+    }),
   );
+  const teamName = validateTeamId(nameClaim.name);
   const now = Date.now();
   return store.saveTarget({
     version: COLLABORATION_SPACE_RECORD_VERSION,
@@ -59,12 +67,28 @@ export async function createTargetClaim(
 
 /** Stable opaque claim token linking one durable target generation to its route. */
 export function routeClaimIdForTarget(target: ProvisionedTargetRecord): string {
+  return routeClaimId({
+    dispatcherId: target.dispatcher_id,
+    channelId: target.channel_id,
+    containerKey: target.container_key,
+    bindingGeneration: target.binding_generation,
+    targetKey: target.target_key,
+  });
+}
+
+function routeClaimId(input: {
+  dispatcherId: string;
+  channelId: string;
+  containerKey: string;
+  bindingGeneration: number;
+  targetKey: string;
+}): string {
   return JSON.stringify([
-    target.dispatcher_id,
-    target.channel_id,
-    target.container_key,
-    target.binding_generation,
-    target.target_key,
+    input.dispatcherId,
+    input.channelId,
+    input.containerKey,
+    input.bindingGeneration,
+    input.targetKey,
   ]);
 }
 

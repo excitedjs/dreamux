@@ -391,14 +391,14 @@ export class CollaborationTargetLifecycle {
     if (needsTeamRecreation) {
       // A Team checkpoint is usable only while its Team remains open. Concrete
       // Team names are never reused, so recovery reserves a fresh generation.
-      const teamName = await this.opts.teams.allocateName(
-        collaborationTeamNamePrefix(record.target_display),
+      const nameClaim = await this.opts.teams.claimName(
+        collaborationTeamNamePrefix(record.target_display), routeClaimIdForTarget(record),
       );
       record = await this.opts.store.saveTarget({
         ...record,
-        team_name: teamName,
+        team_name: nameClaim.name,
         leader_name: null,
-        worktree_slug: teamName,
+        worktree_slug: nameClaim.name,
         phase: 'claimed',
         updated_at: Date.now(),
       });
@@ -433,6 +433,7 @@ export class CollaborationTargetLifecycle {
           this.assertNotShuttingDown();
           await this.opts.teams.create({
             name: record.team_name,
+            nameClaimToken: routeClaimIdForTarget(record),
             leaderAgentRuntime: binding.leader_agent_runtime,
             intent: targetIntent(target, record),
             ...(binding.identity !== null ? { identity: binding.identity } : {}),

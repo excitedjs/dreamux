@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type {
   AgentRuntimeMcpServer,
   DreamuxLogger,
@@ -30,6 +32,7 @@ import type {
   TeamLeaderLease,
   TeamLeaderSendResult,
   TeamListRow,
+  TeamNameClaim,
   TeamRecord,
   TeamRouteProjection,
 } from './types.js';
@@ -43,7 +46,10 @@ import {
 } from './read-helpers.js';
 import type { AgentEntityIdentityStatus } from '../agent-entity/types.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
-import { allocateConcreteName } from '../name-allocator.js';
+import {
+  claimConcreteName,
+  type SuffixGenerator,
+} from '../name-allocator.js';
 import {
   TeamService,
   type TeamSchedulerLifecycle,
@@ -99,6 +105,8 @@ export interface TeamCollectionOptions {
   }) => readonly AgentRuntimeMcpServer[];
   log: DreamuxLogger;
   coreEvents?: DispatcherCoreEventPublisher;
+  /** Test seam for deterministic persistent-claim collision coverage. */
+  nameSuffixGenerator?: SuffixGenerator;
 }
 
 /**
@@ -134,11 +142,6 @@ export class TeamCollection {
    * ownership of those partially booted runtimes so it can retry cleanup.
    */
   private readonly materialized = new Set<TeamService>();
-  /**
-   * Process-local reservations close the gap between allocating a concrete
-   * name and durably writing its Team/claim record.
-   */
-  private readonly reservedNames = new Set<string>();
   /** In-flight cache-miss `get`, so a cold-cache race rebuilds one TeamService
    * (one leader runtime), not two (issue #233 concurrency guard). */
   private readonly rebuilding = new Map<string, Promise<TeamService>>();
@@ -156,26 +159,30 @@ export class TeamCollection {
     this.store = new TeamStore(opts.coreEvents);
   }
 
-  async allocateName(namePrefix: string): Promise<string> {
+  async claimName(
+    namePrefix: string,
+    claimToken: string = randomUUID(),
+  ): Promise<TeamNameClaim> {
     requireLifecycleText(namePrefix, 'Team name prefix');
-    const taken = new Set(
-      (await this.store.list(this.dispatcherId)).map((team) => team.team_id),
-    );
-    const name = allocateConcreteName({
+    const name = await claimConcreteName({
       kind: 'team',
       base: namePrefix,
-      exists: (candidate) =>
-        taken.has(candidate) || this.reservedNames.has(candidate),
+      claim: (candidate) =>
+        this.store.claimName(this.dispatcherId, candidate, claimToken),
+      ...(this.opts.nameSuffixGenerator !== undefined
+        ? { generateSuffix: this.opts.nameSuffixGenerator }
+        : {}),
     });
-    this.reservedNames.add(name);
-    return name;
+    return { name, token: claimToken };
   }
 
   async createFromPrefix(input: TeamCreateInput): Promise<TeamCreateResult> {
     const { namePrefix, ...options } = input;
+    const claim = await this.claimName(namePrefix);
     return this.create({
       ...options,
-      name: await this.allocateName(namePrefix),
+      name: claim.name,
+      nameClaimToken: claim.token,
     });
   }
 
@@ -185,20 +192,32 @@ export class TeamCollection {
    */
   async create(input: TeamCreateAtNameInput): Promise<TeamCreateResult> {
     const teamId = validateTeamId(input.name);
-    this.reservedNames.add(teamId);
+    if (this.routeClosing.has(teamId)) {
+      throw new TeamUnavailableError(
+        `Team ${JSON.stringify(teamId)} is closing`,
+      );
+    }
+    const claimToken = input.nameClaimToken ?? randomUUID();
+    if (!(await this.store.claimName(this.dispatcherId, teamId, claimToken))) {
+      throw new Error(
+        `Team ${JSON.stringify(teamId)} already exists or its concrete name is claimed by another owner; ` +
+          'concrete Team names are never reused',
+      );
+    }
     return this.routeLifecycle.run(teamId, async () => {
       if (this.routeClosing.has(teamId)) {
         throw new TeamUnavailableError(
           `Team ${JSON.stringify(teamId)} is closing`,
         );
       }
-      return this.doCreate(input, teamId);
+      return this.doCreate(input, teamId, claimToken);
     });
   }
 
   private async doCreate(
     input: TeamCreateAtNameInput,
     teamId: string,
+    nameClaimToken: string,
   ): Promise<TeamCreateResult> {
     requireLifecycleText(input.intent, 'Team create intent');
     const existing = await this.store.get(this.dispatcherId, teamId);
@@ -238,6 +257,7 @@ export class TeamCollection {
         {
           teamId,
           name: input.name,
+          nameClaimToken,
           ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
           leaderAgentRuntime: input.leaderAgentRuntime,
           intent: input.intent,

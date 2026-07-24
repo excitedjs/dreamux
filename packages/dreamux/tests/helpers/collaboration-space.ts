@@ -34,13 +34,13 @@ export function fakeTeams(created: CreatedTeam[], dissolved: string[]) {
   const known = new Set<string>();
   let nextName = 0;
   return {
-    async allocateName(prefix: string) {
+    async claimName(prefix: string, claimToken: string) {
       while (true) {
         const name = `${prefix}-${String(nextName).padStart(4, '0')}`;
         nextName += 1;
         if (allocated.has(name) || open.has(name)) continue;
         allocated.add(name);
-        return name;
+        return { name, token: claimToken };
       }
     },
     async create(input: CreatedTeam & { name: string }) {

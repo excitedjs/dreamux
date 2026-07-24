@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  AGENT_NAME_SUFFIX_LENGTH,
   CONCRETE_NAME_MAX,
-  NAME_SUFFIX_MAX_LENGTH,
-  NAME_SUFFIX_MIN_LENGTH,
+  TEAM_NAME_SUFFIX_MAX_LENGTH,
+  TEAM_NAME_SUFFIX_MIN_LENGTH,
   allocateConcreteName,
   buildConcreteName,
   generateNameSuffix,
@@ -31,12 +32,32 @@ describe('Team and TeamMate concrete-name allocation (#188)', () => {
     expect(slugifyName('---lead---')).toBe('lead');
   });
 
-  it('generates a 4-8 char lowercase base36 suffix', () => {
+  it('generates a 4-8 char lowercase base36 Team suffix', () => {
     for (let sample = 0; sample < 32; sample += 1) {
-      const suffix = generateNameSuffix();
-      expect(suffix.length).toBeGreaterThanOrEqual(NAME_SUFFIX_MIN_LENGTH);
-      expect(suffix.length).toBeLessThanOrEqual(NAME_SUFFIX_MAX_LENGTH);
+      const suffix = generateNameSuffix('team');
+      expect(suffix.length).toBeGreaterThanOrEqual(
+        TEAM_NAME_SUFFIX_MIN_LENGTH,
+      );
+      expect(suffix.length).toBeLessThanOrEqual(
+        TEAM_NAME_SUFFIX_MAX_LENGTH,
+      );
       expect(suffix).toMatch(/^[a-z0-9]+$/);
+    }
+  });
+
+  it('retains the fixed 8-char agent-entity suffix contract', () => {
+    for (
+      const kind of ['teammate', 'team_member', 'team_leader'] as const
+    ) {
+      expect(generateNameSuffix(kind)).toHaveLength(AGENT_NAME_SUFFIX_LENGTH);
+      expect(
+        allocateConcreteName({
+          kind,
+          base: 'reviewer',
+          teamSlug: 'alpha',
+          exists: never,
+        }),
+      ).toMatch(/-[a-z0-9]{8}$/);
     }
   });
 

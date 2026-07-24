@@ -877,8 +877,8 @@ describe('CollaborationSpaceService', () => {
     // Custom teams mock that fails on first create
     let createCount = 0;
     const teamsWithFailure = {
-      async allocateName(prefix: string) {
-        return `${prefix}-0000`;
+      async claimName(prefix: string, claimToken: string) {
+        return { name: `${prefix}-0000`, token: claimToken };
       },
       async create(input: CreatedTeam & { name: string }) {
         createCount += 1;
@@ -1057,8 +1057,8 @@ describe('CollaborationSpaceService', () => {
     const channels = fakeChannels();
     let staleRecordExists = false;
     const staleTeams = {
-      async allocateName(prefix: string) {
-        return `${prefix}-0000`;
+      async claimName(prefix: string, claimToken: string) {
+        return { name: `${prefix}-0000`, token: claimToken };
       },
       async create(input: CreatedTeam) {
         created.push(input);
@@ -1122,8 +1122,8 @@ describe('CollaborationSpaceService', () => {
 
     // Teams mock where dissolve fails
     const teamsWithBadDissolve = {
-      async allocateName(prefix: string) {
-        return `${prefix}-0000`;
+      async claimName(prefix: string, claimToken: string) {
+        return { name: `${prefix}-0000`, token: claimToken };
       },
       async create(input: CreatedTeam & { name: string }) {
         created.push(input);

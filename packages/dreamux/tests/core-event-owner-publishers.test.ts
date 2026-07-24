@@ -71,6 +71,7 @@ describe('core event owner publishers', () => {
     }
 
     const teamStore = new TeamStore(bus.publisher);
+    await teamStore.claimName('dispatcher-a', 'team-a', 'event-test');
     let team = await teamStore.create({
       dispatcher_id: 'dispatcher-a',
       team_id: 'team-a',
@@ -94,7 +95,7 @@ describe('core event owner publishers', () => {
       intent: 'public event test',
       closed_at: null,
       close_note: null,
-    });
+    }, 'event-test');
     team = await teamStore.update(team, { intent: 'non-public update' });
     await teamStore.update(team, { status: 'running' });
 

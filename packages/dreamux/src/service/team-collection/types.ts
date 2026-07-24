@@ -61,6 +61,16 @@ export interface TeamCreateInput extends TeamCreateOptions {
  */
 export interface TeamCreateAtNameInput extends TeamCreateOptions {
   name: string;
+  /**
+   * Authority for a previously persisted concrete-name claim. Omit only when
+   * TeamCollection itself should claim this exact name before creating it.
+   */
+  nameClaimToken?: string;
+}
+
+export interface TeamNameClaim {
+  name: string;
+  token: string;
 }
 
 export interface TeamDissolveInput {
