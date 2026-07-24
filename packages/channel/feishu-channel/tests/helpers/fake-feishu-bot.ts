@@ -34,12 +34,6 @@ export interface FakeFeishuBot extends FeishuBot {
     card: unknown;
     messageIds: string[];
   }>;
-  readonly deliveredCards: Array<{
-    chatId: string;
-    target: OutboundTarget;
-    card: unknown;
-    messageIds: string[];
-  }>;
   readonly reactions: Array<{
     messageId: string;
     emoji: string;
@@ -85,7 +79,6 @@ export interface FakeFeishuBot extends FeishuBot {
 export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
   const sent: FakeFeishuBot['sentMessages'] = [];
   const sentCards: FakeFeishuBot['sentCards'] = [];
-  const deliveredCards: FakeFeishuBot['deliveredCards'] = [];
   let routes: FeishuInboundRoutes | null = null;
   let nextMessageId = 1;
   let nextReactionId = 1;
@@ -139,7 +132,6 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       const id = `message-fake-${nextMessageId++}`;
       const entry = { chatId: target.chatId, target, card, messageIds: [id] };
       sentCards.push(entry);
-      observeRemoteCardDelivery(sendCardDelay, entry, deliveredCards);
       await waitForSendCardDelay(sendCardDelay, options?.signal);
       return { messageIds: [id] };
     },
@@ -199,9 +191,6 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     },
     get sentCards() {
       return sentCards;
-    },
-    get deliveredCards() {
-      return deliveredCards;
     },
     get reactions() {
       return reactions;
@@ -277,21 +266,6 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       else messageReads.set(key, response);
     },
   };
-}
-
-function observeRemoteCardDelivery(
-  delay: Promise<void> | null,
-  entry: FakeFeishuBot['sentCards'][number],
-  deliveredCards: FakeFeishuBot['deliveredCards'],
-): void {
-  if (delay === null) {
-    deliveredCards.push(entry);
-    return;
-  }
-  void delay.then(
-    () => deliveredCards.push(entry),
-    () => undefined,
-  );
 }
 
 async function waitForSendCardDelay(
