@@ -59,7 +59,7 @@ describe('ChannelBindingStore v3', () => {
 
   it('binds, resolves, and transfers back by (channel_id, target_key)', async () => {
     const store = new ChannelBindingStore();
-    const bound = await store.bind({
+    const { binding: bound } = await store.bind({
       dispatcherId: DISPATCHER,
       channelId: 'primary',
       provider: 'builtin:feishu',
@@ -100,7 +100,7 @@ describe('ChannelBindingStore v3', () => {
       channelId: 'primary',
       targetKey: 'chat-a',
     });
-    expect(back?.active).toBe(false);
+    expect(back.binding?.active).toBe(false);
     await expect(
       store.resolve({ dispatcherId: DISPATCHER, channelId: 'primary', targetKey: 'chat-a' }),
     ).resolves.toBeNull();
@@ -122,7 +122,7 @@ describe('ChannelBindingStore v3', () => {
 
   it('reassigns an active target to a new Team (one active row per key, created_at preserved)', async () => {
     const store = new ChannelBindingStore();
-    const first = await store.bind({
+    const { binding: first } = await store.bind({
       dispatcherId: DISPATCHER,
       channelId: 'primary',
       provider: 'builtin:feishu',
@@ -130,7 +130,7 @@ describe('ChannelBindingStore v3', () => {
       teamName: 'alpha',
       leaderName: 'alpha-leader',
     });
-    const second = await store.bind({
+    const { binding: second } = await store.bind({
       dispatcherId: DISPATCHER,
       channelId: 'primary',
       provider: 'builtin:feishu',
@@ -159,8 +159,8 @@ describe('ChannelBindingStore v3', () => {
       teamName: 'alpha',
       leaderName: 'alpha-leader',
     };
-    const first = await store.bindIfAvailableToOwner(input);
-    const second = await store.bindIfAvailableToOwnerWithTransition({
+    const { binding: first } = await store.bindIfAvailableToOwner(input);
+    const second = await store.bindIfAvailableToOwner({
       ...input,
       target: {
         ...input.target,
@@ -305,7 +305,7 @@ describe('ChannelBindingStore v3', () => {
       channelId: 'primary',
       targetKey: 'chat-a',
       claimId: 'collaboration-claim',
-    })).resolves.toBeNull();
+    })).resolves.toMatchObject({ transition: 'unchanged', binding: null });
     await expect(store.resolve({
       dispatcherId: DISPATCHER,
       channelId: 'primary',
@@ -328,12 +328,12 @@ describe('ChannelBindingStore v3', () => {
       leaderName: 'alpha-leader',
     };
 
-    await expect(store.bindWithTransition(input)).resolves.toMatchObject({
+    await expect(store.bind(input)).resolves.toMatchObject({
       transition: 'bound',
       previous: null,
       binding: { team_name: 'alpha', claim_id: null, active: true },
     });
-    await expect(store.bindWithTransition({
+    await expect(store.bind({
       ...input,
       target: {
         ...groupTarget('chat-a'),
@@ -348,7 +348,7 @@ describe('ChannelBindingStore v3', () => {
         meta: { refreshed: true },
       },
     });
-    await expect(store.claimWithTransition({
+    await expect(store.claim({
       ...input,
       claimId: 'managed-claim',
     })).rejects.toThrow(/different active route claim/);
@@ -357,7 +357,7 @@ describe('ChannelBindingStore v3', () => {
       channelId: 'primary',
       targetKey: 'chat-a',
     });
-    await expect(store.claimWithTransition({
+    await expect(store.claim({
       ...input,
       claimId: 'managed-claim',
     })).resolves.toMatchObject({
@@ -365,12 +365,12 @@ describe('ChannelBindingStore v3', () => {
       previous: { active: false },
       binding: { claim_id: 'managed-claim', active: true },
     });
-    await expect(store.bindWithTransition(input)).resolves.toMatchObject({
+    await expect(store.bind(input)).resolves.toMatchObject({
       transition: 'replaced',
       previous: { claim_id: 'managed-claim' },
       binding: { claim_id: null },
     });
-    await expect(store.transferBackWithTransition({
+    await expect(store.transferBack({
       dispatcherId: DISPATCHER,
       channelId: 'primary',
       targetKey: 'chat-a',
@@ -379,7 +379,7 @@ describe('ChannelBindingStore v3', () => {
       previous: { active: true },
       binding: { active: false },
     });
-    await expect(store.transferBackWithTransition({
+    await expect(store.transferBack({
       dispatcherId: DISPATCHER,
       channelId: 'primary',
       targetKey: 'chat-a',
@@ -388,7 +388,7 @@ describe('ChannelBindingStore v3', () => {
       previous: null,
       binding: null,
     });
-    await expect(store.bindWithTransition(input)).resolves.toMatchObject({
+    await expect(store.bind(input)).resolves.toMatchObject({
       transition: 'bound',
       previous: { active: false },
       binding: { active: true },
@@ -413,7 +413,7 @@ describe('ChannelBindingStore v3', () => {
         targetKey: 'chat-a',
         owner: { teamName: 'alpha', leaderName: 'alpha-leader' },
       }),
-    ).resolves.toBeNull();
+    ).resolves.toMatchObject({ transition: 'unchanged', binding: null });
     await expect(
       store.resolve({ dispatcherId: DISPATCHER, channelId: 'primary', targetKey: 'chat-a' }),
     ).resolves.toMatchObject({ team_name: 'beta', active: true });

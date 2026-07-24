@@ -263,7 +263,7 @@ describe('CollaborationSpaceService', () => {
     expect(stored).toMatchObject({
       target_meta: { message_id: 'msg-trigger' },
     });
-    expect(channels.targetMetas.get('topic-1')).toMatchObject({
+    expect(channels.claimedTargetMetas.get('topic-1')).toMatchObject({
       chat_id: 'chat-topic',
       chat_mode: 'topic',
       thread_id: 'topic-1',
@@ -906,13 +906,6 @@ describe('CollaborationSpaceService', () => {
         if (match === undefined) throw new Error(`Team ${name} is not routable`);
         return { kind: 'team' as const, teamName: name, leaderName: `${name}-leader` };
       },
-      async withRoutableTeamOwner<T>(name: string, task: (owner: {
-        kind: 'team'; teamName: string; leaderName: string;
-      }) => Promise<T>) {
-        const match = created.find((t) => t.name === name);
-        if (match === undefined) throw new Error(`Team ${name} is not routable`);
-        return task({ kind: 'team', teamName: name, leaderName: `${name}-leader` });
-      },
       async withRoutableTeamProjection<T>(name: string, task: (projection: {
         team_name: string;
         leader_name: string;
@@ -1065,9 +1058,6 @@ describe('CollaborationSpaceService', () => {
       async requireRoutableTeamOwner() {
         throw new Error('persisted TeamLeader identity is missing');
       },
-      async withRoutableTeamOwner() {
-        throw new Error('persisted TeamLeader identity is missing');
-      },
       async withRoutableTeamProjection() {
         throw new Error('persisted TeamLeader identity is missing');
       },
@@ -1138,13 +1128,6 @@ describe('CollaborationSpaceService', () => {
         const match = created.find((t) => t.name === name);
         if (match === undefined) throw new Error(`Team ${name} is not routable`);
         return { kind: 'team' as const, teamName: name, leaderName: `${name}-leader` };
-      },
-      async withRoutableTeamOwner<T>(name: string, task: (owner: {
-        kind: 'team'; teamName: string; leaderName: string;
-      }) => Promise<T>) {
-        const match = created.find((t) => t.name === name);
-        if (match === undefined) throw new Error(`Team ${name} is not routable`);
-        return task({ kind: 'team', teamName: name, leaderName: `${name}-leader` });
       },
       async withRoutableTeamProjection<T>(name: string, task: (projection: {
         team_name: string;

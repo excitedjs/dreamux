@@ -241,13 +241,6 @@ export interface ChannelTurnSettledEvent {
   readonly assistant_truncated: boolean;
 }
 
-export type ChannelBindingAction = 'bound' | 'unbound';
-
-export type ChannelBindingTransition =
-  | 'bound'
-  | 'replaced'
-  | 'unbound';
-
 export interface ChannelBindingEndpointSnapshot {
   readonly provider: string;
   readonly channel_id: string;

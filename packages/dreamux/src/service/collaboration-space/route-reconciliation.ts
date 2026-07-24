@@ -82,7 +82,7 @@ export class CollaborationRouteReconciler {
     return this.opts.locks.run(routeKey({
       channelId: input.channelId,
       targetKey: input.target.target_key,
-    }), () => this.opts.teams.withRoutableTeamLeaderProjectionLease(
+    }), () => this.opts.teams.withRoutableTeamLeaderLease(
       input.lease,
       async (team) => {
         const latest = await this.latestTarget(

@@ -76,11 +76,7 @@ export class CollaborationSpaceStore {
    * one store critical section so a generation always identifies one immutable
    * binding policy.
   */
-  async bindSpace(input: BindSpaceInput): Promise<CollaborationSpaceRecord> {
-    return (await this.bindSpaceWithTransition(input)).space;
-  }
-
-  async bindSpaceWithTransition(
+  async bindSpace(
     input: BindSpaceInput,
   ): Promise<CollaborationSpaceBindTransition> {
     return STORE_WRITES.run(input.dispatcherId, async () => {
@@ -212,22 +208,7 @@ export class CollaborationSpaceStore {
     );
   }
 
-  async saveSpace(space: CollaborationSpaceRecord): Promise<CollaborationSpaceRecord> {
-    await STORE_WRITES.run(space.dispatcher_id, async () => {
-      const file = await this.read(space.dispatcher_id);
-      this.upsertSpace(file, space);
-      await this.write(space.dispatcher_id, file);
-    });
-    return space;
-  }
-
   async saveDefaultBoundSpace(
-    space: CollaborationSpaceRecord,
-  ): Promise<CollaborationSpaceRecord> {
-    return (await this.saveDefaultBoundSpaceWithTransition(space)).space;
-  }
-
-  async saveDefaultBoundSpaceWithTransition(
     space: CollaborationSpaceRecord,
   ): Promise<CollaborationSpaceBindTransition> {
     let result: CollaborationSpaceBindTransition = {
@@ -263,7 +244,7 @@ export class CollaborationSpaceStore {
     return result;
   }
 
-  async unbindSpaceWithTransition(input: {
+  async unbindSpace(input: {
     space: CollaborationSpaceRecord;
     note: string;
   }): Promise<CollaborationSpaceUnbindTransition> {

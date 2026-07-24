@@ -1116,6 +1116,13 @@ describe('DispatcherService collaboration-space routing', () => {
       expect(runtimes[1]?.submitted.map((turn) =>
         turn.attrs?.find(([key]) => key === 'thread_id')?.[1],
       )).toEqual(['topic-a', 'topic-a']);
+      await vi.waitFor(() => {
+        expect(bot.sentCards).toHaveLength(3);
+      });
+      expect(bot.sentCards[2]?.target).toMatchObject({
+        chatId: 'chat-topic',
+        replyToMessageId: 'msg-topic-root',
+      });
       await expect(dispatcher.getCollaborationSpaceStatus({
         spaceName: 'feishu-space',
       })).resolves.toMatchObject({

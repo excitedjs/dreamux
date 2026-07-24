@@ -131,8 +131,7 @@ class FeishuChannelSessionAdapter implements ChannelSession {
       // keys off the actually-submitted turn — not a fabricated id.
       submitTurn: (input, envelope) =>
         routes.deliver(input, inboundEnvelopeToChannelEnvelope(this.channel_id, envelope)),
-      coreEvents: routes.coreEvents,
-    });
+    }, routes.coreEvents);
   }
 
   async close(): Promise<void> {

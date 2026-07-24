@@ -442,10 +442,10 @@ send deadline. Session close gives accepted notification work a bounded settle
 window, then aborts the queue before closing the bot; a hung card request cannot
 hold dispatcher shutdown. `FeishuTransport.sendCard` accepts a caller-owned
 `AbortSignal` and forwards it through the SDK client's cancellable HTTP request
-path. A live notification timeout aborts that request and suppresses
-queued/later cards for the session. This bounds local work but cannot retract a
+path. A live notification timeout aborts that request and lets the serialized
+queue continue with later cards. This bounds local work but cannot retract a
 request already accepted by Feishu; its remote delivery result remains unknown,
-and no ordering guarantee spans a timeout or session restart. Route topic cards
+and remote display order is not promised across that timeout. Route topic cards
 reply to the persisted triggering `message_id`; route group cards send to the
 group;
 collaboration-space cards always send a fresh top-level card to the container

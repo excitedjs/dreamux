@@ -73,10 +73,10 @@ async function start(input: {
   session: FeishuChannelSession;
   source: ChannelCoreEventSource;
 }): Promise<void> {
-  await input.session.start({
-    coreEvents: input.source,
-    submitTurn: async () => ({ status: 'submitted' }),
-  });
+  await input.session.start(
+    { submitTurn: async () => ({ status: 'submitted' }) },
+    input.source,
+  );
 }
 
 function routeEvent(input: {
@@ -316,7 +316,7 @@ describe('Feishu binding notification cards', () => {
     );
   });
 
-  it('bounds local sends while remote timeout outcome stays unknown across restart', async () => {
+  it('times out one local send without muting later notifications', async () => {
     vi.useFakeTimers();
     let releaseSend!: () => void;
     const delayedSend = new Promise<void>((resolve) => {
@@ -335,33 +335,27 @@ describe('Feishu binding notification cards', () => {
     expect(bot.sentCards.map((card) => card.chatId)).toEqual(['chat-a']);
 
     await vi.advanceTimersByTimeAsync(20_001);
-    expect(bot.sentCards.map((card) => card.chatId)).toEqual(['chat-a']);
+    expect(bot.sentCards.map((card) => card.chatId)).toEqual(['chat-a', 'chat-b']);
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ event_kind: 'binding.route' }),
-      'Feishu binding notification timed out; disabling notifications for this session',
+      'Feishu binding notification timed out; remote delivery is unknown',
     );
-
-    source.emit(routeEvent({ meta: { chat_id: 'chat-c' } }));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(bot.sentCards.map((card) => card.chatId)).toEqual(['chat-a']);
-    await expect(s.close()).resolves.toBeUndefined();
-
-    bot.setSendCardDelay(null);
-    const restartedSource = eventSource();
-    await start({ session: s, source: restartedSource });
-    restartedSource.emit(routeEvent({ meta: { chat_id: 'chat-restarted' } }));
-    await vi.advanceTimersByTimeAsync(0);
-    await expect(s.close()).resolves.toBeUndefined();
 
     releaseSend();
     await vi.advanceTimersByTimeAsync(0);
+    bot.setSendCardDelay(null);
+    source.emit(routeEvent({ meta: { chat_id: 'chat-c' } }));
+    await vi.advanceTimersByTimeAsync(0);
     expect(bot.sentCards.map((card) => card.chatId)).toEqual([
       'chat-a',
-      'chat-restarted',
+      'chat-b',
+      'chat-c',
     ]);
+    await expect(s.close()).resolves.toBeUndefined();
     expect(bot.deliveredCards.map((card) => card.chatId)).toEqual([
-      'chat-restarted',
       'chat-a',
+      'chat-b',
+      'chat-c',
     ]);
   });
 });

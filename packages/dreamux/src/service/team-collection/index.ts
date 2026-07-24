@@ -38,7 +38,6 @@ import { validateTeamId } from './types.js';
 import type { AgentEntityIdentityStatus } from '../agent-entity/types.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import { dedupe } from './dedupe.js';
-import { routeOwnerFromProjection } from './route-projection.js';
 import {
   TeamService,
   type TeamSchedulerLifecycle,
@@ -275,7 +274,12 @@ export class TeamCollection {
    * channel route.
    */
   async requireRoutableTeamOwner(teamId: string): Promise<ChannelRouteOwner> {
-    return routeOwnerFromProjection(await this.requireRoutableTeamProjection(teamId));
+    const projection = await this.requireRoutableTeamProjection(teamId);
+    return {
+      kind: 'team',
+      teamName: projection.team_name,
+      leaderName: projection.leader_name,
+    };
   }
 
   async requireRoutableTeamProjection(
@@ -299,14 +303,6 @@ export class TeamCollection {
    * A concurrent Team close cannot announce its closing fence until `task`
    * finishes; once closing is announced, later leases fail before mutation.
    */
-  async withRoutableTeamOwner<T>(
-    teamId: string,
-    task: (owner: ChannelRouteOwner) => Promise<T>,
-  ): Promise<T> {
-    return this.withRoutableTeamProjection(teamId, (projection) =>
-      task(routeOwnerFromProjection(projection)));
-  }
-
   async withRoutableTeamProjection<T>(
     teamId: string,
     task: (projection: TeamRouteProjection) => Promise<T>,
@@ -349,14 +345,6 @@ export class TeamCollection {
    * the descriptor-bound TeamLeader generation used for route publication.
    */
   async withRoutableTeamLeaderLease<T>(
-    lease: TeamLeaderLease,
-    task: (owner: ChannelRouteOwner) => Promise<T>,
-  ): Promise<T> {
-    return this.withRoutableTeamLeaderProjectionLease(lease, (projection) =>
-      task(routeOwnerFromProjection(projection)));
-  }
-
-  async withRoutableTeamLeaderProjectionLease<T>(
     lease: TeamLeaderLease,
     task: (projection: TeamRouteProjection) => Promise<T>,
   ): Promise<T> {

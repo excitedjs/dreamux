@@ -54,26 +54,24 @@ export function fakeTeams(created: CreatedTeam[], dissolved: string[]) {
       if (leader === undefined) throw new Error(`Team ${name} is not routable`);
       return { kind: 'team' as const, teamName: name, leaderName: leader };
     },
-    async withRoutableTeamOwner<T>(
-      name: string,
-      task: (owner: ChannelRouteOwner) => Promise<T>,
-    ) {
-      const leader = open.get(name);
-      if (leader === undefined) throw new Error(`Team ${name} is not routable`);
-      return task({ kind: 'team' as const, teamName: name, leaderName: leader });
-    },
     async withRoutableTeamLeaderLease<T>(
       lease: { teamId: string; leaderName: string },
-      task: (owner: ChannelRouteOwner) => Promise<T>,
+      task: (projection: {
+        team_name: string;
+        leader_name: string;
+        leader_agent_runtime: string;
+        runtime_cwd: string;
+      }) => Promise<T>,
     ) {
       const leader = open.get(lease.teamId);
       if (leader === undefined || leader !== lease.leaderName) {
         throw new Error(`Team ${lease.teamId} generation is not routable`);
       }
       return task({
-        kind: 'team' as const,
-        teamName: lease.teamId,
-        leaderName: leader,
+        team_name: lease.teamId,
+        leader_name: leader,
+        leader_agent_runtime: 'agent-a',
+        runtime_cwd: `/tmp/dreamux-test/${lease.teamId}`,
       });
     },
     async withRoutableTeamProjection<T>(
@@ -92,26 +90,6 @@ export function fakeTeams(created: CreatedTeam[], dissolved: string[]) {
         leader_name: leader,
         leader_agent_runtime: 'agent-a',
         runtime_cwd: `/tmp/dreamux-test/${name}`,
-      });
-    },
-    async withRoutableTeamLeaderProjectionLease<T>(
-      lease: { teamId: string; leaderName: string },
-      task: (projection: {
-        team_name: string;
-        leader_name: string;
-        leader_agent_runtime: string;
-        runtime_cwd: string;
-      }) => Promise<T>,
-    ) {
-      const leader = open.get(lease.teamId);
-      if (leader === undefined || leader !== lease.leaderName) {
-        throw new Error(`Team ${lease.teamId} generation is not routable`);
-      }
-      return task({
-        team_name: lease.teamId,
-        leader_name: leader,
-        leader_agent_runtime: 'agent-a',
-        runtime_cwd: `/tmp/dreamux-test/${lease.teamId}`,
       });
     },
     async withTeamRouteClosing<T>(
@@ -141,7 +119,7 @@ export function fakeTeams(created: CreatedTeam[], dissolved: string[]) {
 export function fakeChannels() {
   const boundOwners = new Map<string, ChannelRouteOwner>();
   const claimIds = new Map<string, string | null>();
-  const targetMetas = new Map<string, Record<string, unknown>>();
+  const claimedTargetMetas = new Map<string, Record<string, unknown>>();
   const service = {
     resolveChannelId(requested?: string) {
       return requested ?? 'primary';
@@ -173,7 +151,6 @@ export function fakeChannels() {
       };
       boundOwners.set(input.target.target_key, owner);
       claimIds.set(input.target.target_key, null);
-      targetMetas.set(input.target.target_key, input.target.meta ?? {});
       return { active: true, team_name: input.team.team_name };
     },
     async bindResolvedTargetIfAvailableToOwner(input: {
@@ -200,7 +177,6 @@ export function fakeChannels() {
         leaderName: input.team.leader_name,
       });
       claimIds.set(input.target.target_key, null);
-      targetMetas.set(input.target.target_key, input.target.meta ?? {});
       return { active: true, team_name: input.team.team_name };
     },
     async claimResolvedTarget(input: {
@@ -228,7 +204,7 @@ export function fakeChannels() {
         leaderName: input.team.leader_name,
       });
       claimIds.set(input.target.target_key, input.claimId);
-      targetMetas.set(input.target.target_key, input.target.meta ?? {});
+      claimedTargetMetas.set(input.target.target_key, input.target.meta ?? {});
       return { active: true, team_name: input.team.team_name };
     },
     async transferResolvedTargetBack(input: {
@@ -246,7 +222,6 @@ export function fakeChannels() {
       }
       boundOwners.delete(input.target.target_key);
       claimIds.delete(input.target.target_key);
-      targetMetas.delete(input.target.target_key);
       return { active: false, team_name: owner.teamName };
     },
     async releaseResolvedTargetIfOwned(input: {
@@ -263,7 +238,6 @@ export function fakeChannels() {
       }
       boundOwners.delete(input.target.target_key);
       claimIds.delete(input.target.target_key);
-      targetMetas.delete(input.target.target_key);
       return { active: false, team_name: owner.teamName };
     },
     async releaseResolvedTargetIfClaimed(input: {
@@ -279,7 +253,6 @@ export function fakeChannels() {
       }
       boundOwners.delete(input.target.target_key);
       claimIds.delete(input.target.target_key);
-      targetMetas.delete(input.target.target_key);
       return { active: false, team_name: owner.teamName };
     },
     async transferAllForOwner(owner: ChannelRouteOwner) {
@@ -293,7 +266,6 @@ export function fakeChannels() {
         }
         boundOwners.delete(targetKey);
         claimIds.delete(targetKey);
-        targetMetas.delete(targetKey);
         transferred.push({ active: false, team_name: owner.teamName });
       }
       return transferred;
@@ -302,7 +274,7 @@ export function fakeChannels() {
   return {
     boundOwners,
     claimIds,
-    targetMetas,
+    claimedTargetMetas,
     service: service as unknown as ChannelService,
   };
 }

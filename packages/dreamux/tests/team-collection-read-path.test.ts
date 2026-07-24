@@ -425,7 +425,7 @@ describe('TeamCollection route readiness recovery', () => {
     const releaseRoute = deferred<void>();
     const closingEntered = deferred<void>();
     const releaseClosing = deferred<void>();
-    const routeLease = teams.withRoutableTeamOwner('alpha', async () => {
+    const routeLease = teams.withRoutableTeamProjection('alpha', async () => {
       routeEntered.resolve();
       await releaseRoute.promise;
     });
@@ -446,7 +446,7 @@ describe('TeamCollection route readiness recovery', () => {
     await routeLease;
     await closingEntered.promise;
     await expect(
-      teams.withRoutableTeamOwner('alpha', async () => undefined),
+      teams.withRoutableTeamProjection('alpha', async () => undefined),
     ).rejects.toThrow(/closing/);
 
     releaseClosing.resolve();

@@ -3,7 +3,7 @@ import type { DreamuxConfig } from '../../config/config.js';
 import type { ChannelService } from '../channel-service/index.js';
 import type { KeyedAsyncQueue } from '../serial-queue.js';
 import type { TeamCollection } from '../team-collection/index.js';
-import { createDefaultBoundSpaceWithTransition } from './default-binding.js';
+import { createDefaultBoundSpace } from './default-binding.js';
 import { detachActiveTargets } from './detach-active-targets.js';
 import { publishCollaborationSpaceBindTransition } from '../binding-events.js';
 import { targetIntent } from './naming.js';
@@ -330,7 +330,7 @@ export class CollaborationTargetLifecycle {
         : null;
     }
     if (defaultBinding === undefined) return null;
-    const transition = await createDefaultBoundSpaceWithTransition({
+    const transition = await createDefaultBoundSpace({
       dispatcherId: this.opts.dispatcherId,
       config: this.opts.config,
       store: this.opts.store,

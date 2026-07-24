@@ -121,12 +121,12 @@ describe('ChannelService binding ownership', () => {
     service.adopt(sessions);
     const owner = { kind: 'team' as const, teamName: 'alpha', leaderName: 'leader-a' };
 
-    await expect(
-      service.bindTarget({
-        team: teamProjection(owner.teamName, owner.leaderName),
-        meta: { chat_id: 'chat-a' },
-      }),
-    ).resolves.toMatchObject({ team_name: 'alpha', leader_name: 'leader-a' });
+    const target = await service.resolveTarget({ chat_id: 'chat-a' }, 'primary');
+    await expect(service.bindResolvedTarget({
+      team: teamProjection(owner.teamName, owner.leaderName),
+      channelId: 'primary',
+      target,
+    })).resolves.toMatchObject({ team_name: 'alpha', leader_name: 'leader-a' });
     await expect(service.activeBindingSummaryForOwner(owner)).resolves.toEqual({
       channel_id: 'primary',
       provider: PROVIDER_REF,
@@ -236,11 +236,18 @@ describe('ChannelService binding ownership', () => {
       leader_agent_runtime: 'test:runtime',
       runtime_cwd: '/tmp/runtime-alpha',
     };
+    const publishedMeta = {
+      chat_id: 'chat-a',
+      routing: { message_id: 'message-before-publish' },
+    };
 
     await service.bindResolvedTarget({
       team,
       channelId: 'primary',
-      target: groupTarget('chat-a'),
+      target: {
+        ...groupTarget('chat-a'),
+        meta: publishedMeta,
+      },
     });
     await service.bindResolvedTarget({
       team,
@@ -282,6 +289,15 @@ describe('ChannelService binding ownership', () => {
         runtime_cwd: '/tmp/runtime-alpha',
       },
     });
+    publishedMeta.routing.message_id = 'message-after-publish';
+    const publishedEndpoint = events[0]?.kind === 'binding.route'
+      ? events[0].endpoint
+      : undefined;
+    expect(publishedEndpoint?.meta).toMatchObject({
+      routing: { message_id: 'message-before-publish' },
+    });
+    expect(Object.isFrozen(publishedEndpoint?.meta)).toBe(true);
+    expect(Object.isFrozen(publishedEndpoint?.meta['routing'])).toBe(true);
     expect(events[1]).toMatchObject({
       kind: 'binding.route',
       action: 'unbound',

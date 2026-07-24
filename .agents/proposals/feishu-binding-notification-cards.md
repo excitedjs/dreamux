@@ -166,11 +166,12 @@ able to create Markdown links, mentions, tags, or card actions.
   without waiting for a hung Feishu request.
 - The Feishu transport accepts an `AbortSignal` for caller-owned card sends and
   passes it to the underlying HTTP request. If a live send reaches its deadline,
-  the session aborts that request and disables all later binding notifications
-  until restart. Cancellation bounds local work but cannot retract a request
-  already accepted by Feishu, so the remote result remains unknown and no card
-  ordering guarantee spans a timeout or session restart. A durable outbox,
-  provider idempotency key, and remote reconciliation remain out of scope.
+  the session aborts that request and continues with the next serialized
+  notification. Cancellation bounds local work but cannot retract a request
+  already accepted by Feishu, so the timed-out remote result remains unknown;
+  the local start order remains stable, but remote display order is not promised
+  across a timeout. A durable outbox, provider idempotency key, and remote
+  reconciliation remain out of scope.
 
 ## Card Content
 
@@ -221,10 +222,10 @@ Unbound:
   within their deadline.
 - A hung card send cannot hold Feishu session close beyond the notification
   drain deadline.
-- When a card send times out, queued and later notifications are suppressed for
-  that session and the transport request receives caller cancellation. Tests
-  model the old remote result as unknown across a restarted session rather than
-  claiming that abort retracts an accepted Feishu request.
+- When a card send times out, that transport request receives caller
+  cancellation and the serialized queue continues. Tests model the timed-out
+  remote result as unknown rather than claiming that abort retracts an accepted
+  Feishu request.
 - Pre-session startup reconciliation makes no attempt.
 - Card-send failure is contained and logged without changing binding results.
 - Card JSON cannot contain identity configuration, `claim_id`, prompts, raw

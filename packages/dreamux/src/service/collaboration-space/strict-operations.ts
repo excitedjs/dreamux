@@ -183,18 +183,18 @@ export class CollaborationTargetStrictOperations {
           );
         }
         try {
-          return await this.opts.teams.withRoutableTeamOwner(
+          return await this.opts.teams.withRoutableTeamProjection(
             record.team_name,
-            async (owner) => {
+            async (team) => {
               const routed = await this.opts.channels.resolveInboundBinding({
                 channelId: input.channelId,
                 target: input.target,
               });
               if (
-                owner.leaderName !== record.leader_name ||
+                team.leader_name !== record.leader_name ||
                 routed === null ||
-                routed.owner.teamName !== owner.teamName ||
-                routed.owner.leaderName !== owner.leaderName ||
+                routed.owner.teamName !== team.team_name ||
+                routed.owner.leaderName !== team.leader_name ||
                 routed.binding.claim_id !== routeClaimIdForTarget(record)
               ) {
                 throw new CollaborationTargetOperationError(

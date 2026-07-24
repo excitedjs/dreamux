@@ -110,13 +110,7 @@ export type ChannelBindingUnbindTransition =
 export class ChannelBindingStore {
   private readonly writes = new KeyedAsyncQueue();
 
-  async bind(input: BindChannelInput): Promise<ChannelBinding> {
-    return (await this.bindWithTransition(input)).binding;
-  }
-
-  async bindWithTransition(
-    input: BindChannelInput,
-  ): Promise<ChannelBindingBindTransition> {
+  async bind(input: BindChannelInput): Promise<ChannelBindingBindTransition> {
     return this.bindInternal(input, 'replace');
   }
 
@@ -124,21 +118,13 @@ export class ChannelBindingStore {
    * Create an explicit binding without taking over an active route. The exact
    * same explicit owner is idempotent; managed claims are never converted.
    */
-  async bindIfAvailableToOwner(input: BindChannelInput): Promise<ChannelBinding> {
-    return (await this.bindIfAvailableToOwnerWithTransition(input)).binding;
-  }
-
-  async bindIfAvailableToOwnerWithTransition(
+  async bindIfAvailableToOwner(
     input: BindChannelInput,
   ): Promise<ChannelBindingBindTransition> {
     return this.bindInternal(input, 'available');
   }
 
-  async claim(input: BindChannelInput & { claimId: string }): Promise<ChannelBinding> {
-    return (await this.claimWithTransition(input)).binding;
-  }
-
-  async claimWithTransition(
+  async claim(
     input: BindChannelInput & { claimId: string },
   ): Promise<ChannelBindingBindTransition> {
     return this.bindInternal(input, 'claim');
@@ -251,25 +237,11 @@ export class ChannelBindingStore {
 
   async transferBack(
     input: TransferChannelBackInput,
-  ): Promise<ChannelBinding | null> {
-    return (await this.transferBackWithTransition(input)).binding;
-  }
-
-  async transferBackWithTransition(
-    input: TransferChannelBackInput,
   ): Promise<ChannelBindingUnbindTransition> {
     return this.transferBackInternal(input, 'throw-on-mismatch');
   }
 
   async transferBackIfOwned(
-    input: ResolveChannelInput & {
-      owner: ChannelBindingOwnerInput;
-    },
-  ): Promise<ChannelBinding | null> {
-    return (await this.transferBackIfOwnedWithTransition(input)).binding;
-  }
-
-  async transferBackIfOwnedWithTransition(
     input: ResolveChannelInput & {
       owner: ChannelBindingOwnerInput;
     },
@@ -286,12 +258,6 @@ export class ChannelBindingStore {
   }
 
   async transferBackIfClaimed(
-    input: ResolveChannelInput & { claimId: string },
-  ): Promise<ChannelBinding | null> {
-    return (await this.transferBackIfClaimedWithTransition(input)).binding;
-  }
-
-  async transferBackIfClaimedWithTransition(
     input: ResolveChannelInput & { claimId: string },
   ): Promise<ChannelBindingUnbindTransition> {
     return this.transferBackInternal(

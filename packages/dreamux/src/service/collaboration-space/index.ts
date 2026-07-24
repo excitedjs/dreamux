@@ -128,7 +128,7 @@ export class CollaborationSpaceService {
       spaceContainerLockKey(channelId, container.container_key),
       async () => {
         this.assertNotShuttingDown();
-        const transition = await this.store.bindSpaceWithTransition({
+        const transition = await this.store.bindSpace({
           dispatcherId: this.dispatcherId,
           spaceName,
           channelId,
@@ -176,7 +176,7 @@ export class CollaborationSpaceService {
         };
       }
       const detached = await this.targets.detachActiveTargets(space);
-      const transition = await this.store.unbindSpaceWithTransition({
+      const transition = await this.store.unbindSpace({
         space,
         note: input.note,
       });

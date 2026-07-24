@@ -8,22 +8,11 @@ import type {
 import type {
   CollaborationSpaceDefaultBindingInput,
   CollaborationSpaceProvisionInput,
-  CollaborationSpaceRecord,
 } from './types.js';
 import { COLLABORATION_SPACE_RECORD_VERSION } from './types.js';
 import { hashContainer } from './naming.js';
 
 export async function createDefaultBoundSpace(input: {
-  dispatcherId: string;
-  config: DreamuxConfig;
-  store: CollaborationSpaceStore;
-  provision: CollaborationSpaceProvisionInput;
-  binding: CollaborationSpaceDefaultBindingInput;
-}): Promise<CollaborationSpaceRecord> {
-  return (await createDefaultBoundSpaceWithTransition(input)).space;
-}
-
-export async function createDefaultBoundSpaceWithTransition(input: {
   dispatcherId: string;
   config: DreamuxConfig;
   store: CollaborationSpaceStore;
@@ -40,7 +29,7 @@ export async function createDefaultBoundSpaceWithTransition(input: {
     })}`,
   );
   const now = Date.now();
-  return store.saveDefaultBoundSpaceWithTransition({
+  return store.saveDefaultBoundSpace({
     version: COLLABORATION_SPACE_RECORD_VERSION,
     dispatcher_id: dispatcherId,
     space_name: spaceName,
