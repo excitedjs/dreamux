@@ -193,6 +193,9 @@ describe('Feishu binding notification cards', () => {
 
     source.emit(routeEvent({ provider: 'builtin:other' }));
     source.emit(routeEvent());
+    await vi.waitFor(() => {
+      expect(bot.sentCards).toHaveLength(1);
+    });
     await s.close();
 
     expect(bot.sentCards).toHaveLength(1);
@@ -222,6 +225,9 @@ describe('Feishu binding notification cards', () => {
         message_id: 'msg-trigger',
       },
     }));
+    await vi.waitFor(() => {
+      expect(bot.sentCards).toHaveLength(1);
+    });
     await s.close();
 
     expect(bot.sentCards).toHaveLength(1);
@@ -262,6 +268,9 @@ describe('Feishu binding notification cards', () => {
     await start({ session: s, source });
 
     source.emit(spaceEvent());
+    await vi.waitFor(() => {
+      expect(bot.sentCards).toHaveLength(1);
+    });
     await s.close();
 
     expect(bot.sentCards).toHaveLength(1);
@@ -269,32 +278,52 @@ describe('Feishu binding notification cards', () => {
     expect(bot.sentCards[0]?.target.replyToMessageId).toBeUndefined();
   });
 
-  it('serializes attempts, preserves order, and contains send failures', async () => {
+  it('retries one failed send in place and contains a final failure', async () => {
     const bot = createFakeFeishuBot('app');
     const log = logger();
     const source = eventSource();
     const s = session({ stateDir, bot, log });
     await start({ session: s, source });
+    const sendCard = bot.sendCard.bind(bot);
+    let attempts = 0;
+    bot.sendCard = async (...args) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('transient send failure');
+      return sendCard(...args);
+    };
 
-    source.emit(routeEvent({ meta: { chat_id: 'chat-1' } }));
-    source.emit(routeEvent({ meta: { chat_id: 'chat-2' }, action: 'unbound' }));
+    source.emit(routeEvent({ meta: { chat_id: 'chat-retry' } }));
+    await vi.waitFor(() => {
+      expect(attempts).toBe(2);
+      expect(bot.sentCards).toHaveLength(1);
+    });
     await s.close();
-    expect(bot.sentCards.map((card) => card.chatId)).toEqual(['chat-1', 'chat-2']);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ attempt: 1, event_kind: 'binding.route' }),
+      'Feishu binding notification failed; retrying once',
+    );
 
     const failingBot = createFakeFeishuBot('app-failing');
-    failingBot.setSendError(new Error('send failed'));
+    let failedAttempts = 0;
+    failingBot.sendCard = async () => {
+      failedAttempts += 1;
+      throw new Error('send failed');
+    };
     const failingSource = eventSource();
     const failing = session({ stateDir, bot: failingBot, log });
     await start({ session: failing, source: failingSource });
     failingSource.emit(routeEvent({ meta: { chat_id: 'chat-fail' } }));
+    await vi.waitFor(() => {
+      expect(failedAttempts).toBe(2);
+    });
     await expect(failing.close()).resolves.toBeUndefined();
     expect(log.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ event_kind: 'binding.route' }),
-      'Feishu binding notification failed',
+      expect.objectContaining({ attempt: 2, event_kind: 'binding.route' }),
+      'Feishu binding notification failed after retry',
     );
   });
 
-  it('bounds close when a binding notification send never settles', async () => {
+  it('cancels a hung notification when the session closes', async () => {
     vi.useFakeTimers();
     const bot = createFakeFeishuBot('app-hung');
     bot.setSendCardDelay(new Promise(() => undefined));
@@ -308,54 +337,7 @@ describe('Feishu binding notification cards', () => {
     expect(bot.sentCards).toHaveLength(1);
 
     const closing = s.close();
-    await vi.advanceTimersByTimeAsync(5_001);
+    await vi.advanceTimersByTimeAsync(0);
     await expect(closing).resolves.toBeUndefined();
-    expect(log.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ dispatcher_id: 'flow' }),
-      'Feishu binding notification drain reached its close deadline',
-    );
-  });
-
-  it('times out one local send without muting later notifications', async () => {
-    vi.useFakeTimers();
-    let releaseSend!: () => void;
-    const delayedSend = new Promise<void>((resolve) => {
-      releaseSend = resolve;
-    });
-    const bot = createFakeFeishuBot('app-late');
-    bot.setSendCardDelay(delayedSend);
-    const log = logger();
-    const source = eventSource();
-    const s = session({ stateDir, bot, log });
-    await start({ session: s, source });
-
-    source.emit(routeEvent({ meta: { chat_id: 'chat-a' } }));
-    source.emit(routeEvent({ meta: { chat_id: 'chat-b' }, action: 'unbound' }));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(bot.sentCards.map((card) => card.chatId)).toEqual(['chat-a']);
-
-    await vi.advanceTimersByTimeAsync(20_001);
-    expect(bot.sentCards.map((card) => card.chatId)).toEqual(['chat-a', 'chat-b']);
-    expect(log.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ event_kind: 'binding.route' }),
-      'Feishu binding notification timed out; remote delivery is unknown',
-    );
-
-    releaseSend();
-    await vi.advanceTimersByTimeAsync(0);
-    bot.setSendCardDelay(null);
-    source.emit(routeEvent({ meta: { chat_id: 'chat-c' } }));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(bot.sentCards.map((card) => card.chatId)).toEqual([
-      'chat-a',
-      'chat-b',
-      'chat-c',
-    ]);
-    await expect(s.close()).resolves.toBeUndefined();
-    expect(bot.deliveredCards.map((card) => card.chatId)).toEqual([
-      'chat-a',
-      'chat-b',
-      'chat-c',
-    ]);
   });
 });

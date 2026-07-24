@@ -27,8 +27,8 @@ unbound. This removes the need to ask whether a binding operation took effect.
   cleanup, and collaboration-space dissolve use the same state-transition
   notification.
 - Dissolving a collaboration space with active topic Teams produces one
-  route-unbound attempt per released topic followed by one space-unbound
-  attempt in the group.
+  route-unbound notification per released topic followed by one space-unbound
+  notification in the group.
 - Only `@excitedjs/feishu-channel` subscribes to these event kinds and renders
   cards. Other Channel providers receive the dispatcher broadcast but do not
   act on it.
@@ -149,28 +149,25 @@ able to create Markdown links, mentions, tags, or card actions.
 ## Delivery Semantics
 
 - Notifications are live-session and best-effort. Each real transition produces
-  at most one `sendCard` attempt. A confirmed success reports one card. A
-  rejected or timed-out attempt logs a warning without changing the binding
-  result, but its remote delivery outcome may be unknown once the request has
-  reached Feishu.
+  one `sendCard` attempt and one immediate retry if that attempt fails. A
+  confirmed success reports one card. Two rejected or timed-out attempts log a
+  warning without changing the binding result, but a timed-out attempt's remote
+  delivery outcome may be unknown once the request has reached Feishu.
 - Idempotent replays and already-unbound operations produce no send attempt.
 - Pre-session startup reconciliation is intentionally silent because the
   live-only bus has no consumer or history at that point. Durable replay/outbox
   delivery remains out of scope.
-- The Feishu session serializes binding-notification attempts so rapid
-  bind/unbind/rebind events start locally in event order.
-- Revoking the existing core-event source prevents new attempts. A send already
-  accepted by the Feishu notification queue gets a bounded settle window during
-  session close. Each remote send also has a fixed deadline; when the close
-  window expires, the session aborts notification work and continues closing
-  without waiting for a hung Feishu request.
+- Notification tasks are independent; no local or remote ordering guarantee is
+  provided between separate binding transitions.
+- Revoking the existing core-event source prevents new attempts. Session close
+  aborts in-flight notification work before closing the bot, and each remote
+  attempt also has a fixed deadline.
 - The Feishu transport accepts an `AbortSignal` for caller-owned card sends and
   passes it to the underlying HTTP request. If a live send reaches its deadline,
-  the session aborts that request and continues with the next serialized
-  notification. Cancellation bounds local work but cannot retract a request
-  already accepted by Feishu, so the timed-out remote result remains unknown;
-  the local start order remains stable, but remote display order is not promised
-  across a timeout. A durable outbox, provider idempotency key, and remote
+  the session aborts that request and makes its one immediate retry while the
+  session remains live. Cancellation bounds local work but cannot retract a
+  request already accepted by Feishu, so retry may duplicate a remotely accepted
+  card. A durable outbox, provider idempotency key, ordering, and remote
   reconciliation remain out of scope.
 
 ## Card Content
@@ -197,16 +194,17 @@ Unbound:
 
 ## Acceptance
 
-- Explicit group binding makes one Feishu `sendCard` attempt with the concrete
-  TeamLeader name, runtime, and runtime cwd; success yields one group card.
-- Collaboration-space binding makes one group-card attempt before any Team is
+- Explicit group binding starts one Feishu card notification with the concrete
+  TeamLeader name, runtime, and runtime cwd; a failed attempt is retried once.
+- Collaboration-space binding starts one group-card notification before any Team is
   created, with configured runtime and repository/workspace policy. The card is
   a fresh top-level message in the topic group, so it creates a new topic.
 - Automatic topic provisioning records the triggering inbound `message_id` in
   both the initial durable target claim and the resulting channel binding, then
-  makes one reply-card attempt to that message after the Team route is bound.
-- Explicit and lifecycle-driven live unbinds make one concise attempt per real
-  transition; idempotent replays make none.
+  starts one reply-card notification to that message after the Team route is bound.
+- Explicit and lifecycle-driven live unbinds start one concise notification per
+  real transition; idempotent replays make none. Each notification has at most
+  two local attempts.
 - Every Channel source under one dispatcher receives the binding event, but
   only the single provider matching `endpoint.provider` acts; Feishu ignores
   non-Feishu endpoints.
@@ -218,14 +216,10 @@ Unbound:
   route write restores the provider metadata from the target record before
   reclaim; legacy records without metadata remain compatible and skip/warn.
 - A stale Team route lease fails before the binding write and emits no event.
-- Rapid bind/unbind/bind attempts start in event order while the sends settle
-  within their deadline.
-- A hung card send cannot hold Feishu session close beyond the notification
-  drain deadline.
-- When a card send times out, that transport request receives caller
-  cancellation and the serialized queue continues. Tests model the timed-out
-  remote result as unknown rather than claiming that abort retracts an accepted
-  Feishu request.
+- A failed card attempt is retried exactly once; failure of both attempts is
+  contained and logged without changing the binding result.
+- A hung card send cannot hold Feishu session close.
+- Separate binding notifications have no ordering acceptance criterion.
 - Pre-session startup reconciliation makes no attempt.
 - Card-send failure is contained and logged without changing binding results.
 - Card JSON cannot contain identity configuration, `claim_id`, prompts, raw

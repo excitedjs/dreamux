@@ -10,8 +10,4 @@ export class AsyncMutex {
     this._tail = next;
     return next;
   }
-
-  async drain(): Promise<void> {
-    await this._tail.catch(() => undefined);
-  }
 }

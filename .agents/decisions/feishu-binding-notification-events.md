@@ -36,15 +36,16 @@ Feishu records the triggering inbound topic `message_id` in the normalized
 topic target `meta`. Collaboration target claims persist a copy of target
 `meta`, `targetFromRecord()` restores it, and channel bindings persist it. The
 built-in Feishu provider subscribes to the dispatcher-wide event source, filters
-events by `endpoint.provider === "builtin:feishu"`, and serializes best-effort
-static card delivery.
+events by `endpoint.provider === "builtin:feishu"`, and runs best-effort static
+card delivery as independent lifecycle tasks.
 
 ## Consequences
 
 - The core event ABI grows additively; external providers can ignore the new
   event kinds.
-- Event publication remains live-session-only. There is no history, retry,
-  acknowledgement, or durable outbox.
+- Event publication remains live-session-only. There is no history,
+  acknowledgement, durable retry, or durable outbox. Feishu retries one failed
+  card attempt once in memory.
 - Binding stores stay pure: they return transition DTOs under the existing
   write fence and never publish events themselves.
 - Idempotent route and collaboration-space rebinds may refresh display or
@@ -59,14 +60,13 @@ static card delivery.
   group root.
 - Feishu collaboration-space cards send fresh top-level messages to the
   container chat, which creates a new topic in a Feishu topic group.
-- Feishu notification sends and the session-close drain are deadline-bounded.
-  Close aborts remaining notification work after its settle window, so a hung
-  remote request cannot hold dispatcher shutdown. The Feishu transport exposes
-  caller-owned `AbortSignal` cancellation for card sends. A live send timeout
-  aborts the underlying HTTP request, then the serialized queue continues with
-  later binding notifications. Cancellation bounds local work but cannot retract
-  a request already accepted by Feishu, so its remote result remains unknown and
-  remote display order is not guaranteed across that timeout.
+- Feishu notification attempts are deadline-bounded. Close aborts in-flight
+  notification work, so a hung remote request cannot hold dispatcher shutdown.
+  The Feishu transport exposes caller-owned `AbortSignal` cancellation for card
+  sends. A failed or timed-out attempt is retried once while the session remains
+  live. Cancellation cannot retract a request already accepted by Feishu, so the
+  retry can duplicate a remotely accepted card. Separate notifications have no
+  ordering guarantee.
 - Feishu cards render plain text only and do not expose raw provider `meta`,
   `claim_id`, prompts, or raw errors.
 

@@ -437,15 +437,15 @@ begins on first accepted topic inbound.
 The built-in Feishu session subscribes to `binding.route` and
 `binding.collaboration_space` from its dispatcher-wide core event source and
 ignores events whose endpoint provider is not `builtin:feishu`. Delivery is
-best-effort, live-session-only, serialized per session, and bounded by a remote
-send deadline. Session close gives accepted notification work a bounded settle
-window, then aborts the queue before closing the bot; a hung card request cannot
-hold dispatcher shutdown. `FeishuTransport.sendCard` accepts a caller-owned
-`AbortSignal` and forwards it through the SDK client's cancellable HTTP request
-path. A live notification timeout aborts that request and lets the serialized
-queue continue with later cards. This bounds local work but cannot retract a
-request already accepted by Feishu; its remote delivery result remains unknown,
-and remote display order is not promised across that timeout. Route topic cards
+best-effort and live-session-only. Each notification runs independently, retries
+one failed attempt once, and has no ordering guarantee relative to another
+notification. Session close aborts in-flight notification work before closing
+the bot, so a hung card request cannot hold dispatcher shutdown.
+`FeishuTransport.sendCard` accepts a caller-owned `AbortSignal` and forwards it
+through the SDK client's cancellable HTTP request path. A live notification
+timeout aborts that attempt before the immediate retry. Cancellation cannot
+retract a request already accepted by Feishu, so retry can duplicate a remotely
+accepted card. Route topic cards
 reply to the persisted triggering `message_id`; route group cards send to the
 group;
 collaboration-space cards always send a fresh top-level card to the container

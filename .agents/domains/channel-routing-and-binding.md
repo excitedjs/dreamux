@@ -255,9 +255,9 @@ TeamLeader, TeamLeader runtime id, and runtime cwd.
 The source is installed before session start and revoked before session close on
 stop or failed start. It is live-session-only and best-effort: it retains no
 history and provides no eventual-delivery or historical-query guarantee. Binding
-notifications are ordered only by each provider session's own serialized
-consumer queue. The bus does not become a new state owner, and providers never
-receive core service/store instances or raw `EventEmitter` management methods.
+notifications are independent best-effort tasks; providers make no ordering
+guarantee between them. The bus does not become a new state owner, and providers
+never receive core service/store instances or raw `EventEmitter` management methods.
 Binding events are dispatcher-wide broadcasts rather than channel-id scoped
 streams; providers filter by the provider ref on the endpoint snapshot.
 
