@@ -284,7 +284,7 @@ export const adminMethods: Record<string, AdminHandler> = {
   'team.create': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const name = mustString(params, 'team_name');
+    const namePrefix = mustString(params, 'name_prefix');
     const leaderAgentRuntime = mustString(params, 'leader_agent_runtime');
     const intent = mustNonEmptyString(params, 'intent');
     const repo = repoRequest(params, 'repo');
@@ -301,7 +301,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     });
     try {
       const created = await dispatcher.createTeam({
-        name,
+        namePrefix,
         ...(repoCwd !== null ? { repoCwd } : {}),
         leaderAgentRuntime,
         intent,

@@ -1,3 +1,5 @@
+import { buildFeishuCard } from './feishu-card.js';
+
 export const DREAMUX_PAIRING_CARD_ACTION = 'approve_pairing';
 export const DREAMUX_ACTION_KEY = 'dreamux_action';
 export const DREAMUX_PAIRING_TOKEN_KEY = 'dreamux_pairing_token';
@@ -25,18 +27,11 @@ export interface FeishuCardActionResponse {
 
 export function buildPairingApprovalCard(input: PairingApprovalCardInput): unknown {
   const requesterAt = `<at id="${escapeAtId(input.requesterOpenId)}"></at>`;
-  return {
-    config: { wide_screen_mode: true, enable_forward: false, update_multi: true },
-    header: {
-      template: 'blue',
-      title: {
-        tag: 'plain_text',
-        content: `用户请求访问 ${input.botDisplayName}`,
-        i18n_content: {
-          en_us: `User requests access to ${input.botDisplayName}`,
-        },
-      },
-    },
+  return buildFeishuCard({
+    template: 'blue',
+    title: `用户请求访问 ${input.botDisplayName}`,
+    enTitle: `User requests access to ${input.botDisplayName}`,
+    updateMulti: true,
     elements: [
       {
         tag: 'div',
@@ -69,7 +64,7 @@ export function buildPairingApprovalCard(input: PairingApprovalCardInput): unkno
         ],
       },
     ],
-  };
+  });
 }
 
 export function buildPairingSuccessCard(input: PairingSuccessCardInput): unknown {
@@ -79,18 +74,11 @@ export function buildPairingSuccessCard(input: PairingSuccessCardInput): unknown
   const enContent = input.duplicate
     ? 'The target is already allowed. The authorization request is now closed.'
     : 'Owner verification passed. Access has been added to the allowlist.';
-  return {
-    config: { wide_screen_mode: true, enable_forward: false, update_multi: true },
-    header: {
-      template: 'green',
-      title: {
-        tag: 'plain_text',
-        content: '授权成功',
-        i18n_content: {
-          en_us: 'Authorized',
-        },
-      },
-    },
+  return buildFeishuCard({
+    template: 'green',
+    title: '授权成功',
+    enTitle: 'Authorized',
+    updateMulti: true,
     elements: [
       {
         tag: 'div',
@@ -103,7 +91,7 @@ export function buildPairingSuccessCard(input: PairingSuccessCardInput): unknown
         },
       },
     ],
-  };
+  });
 }
 
 function escapeAtId(value: string): string {

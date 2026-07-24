@@ -143,6 +143,20 @@ on this path.
 Rows carry provider ref, target type/key, display/canonical URL, provider
 `meta`, Team name, TeamLeader name, active flag, and timestamps.
 
+Store mutation methods return atomic transition DTOs from inside the existing
+write fence. Route `bound`, `replaced`, and `unbound` transitions are the only
+ones that higher services publish; metadata/display refreshes and already
+inactive replays are `unchanged` and produce no binding event. A managed
+collaboration claim (`claim_id != null`) may be replaced by an explicit binding
+for the same Team, but a managed claim cannot take over an explicit active route
+through the claim API.
+
+The available-to-owner idempotent path still persists the latest provider
+display and `meta` under that same fence, preserving a newer Feishu topic reply
+anchor without producing another event. `ChannelService` exposes only
+projection-bearing mutation methods for route bind/claim, so every durable
+service-level transition passes through publication gating.
+
 The binding store is v3. Version 2 rows that already carry `channel_id` and
 `target_key` are reused as explicit routes with `claim_id: null` only when no
 open collaboration target shares the route key. If such an overlap exists,
@@ -205,9 +219,22 @@ Failed-start rollback then closes admission, drains accepted strict and lifecycl
 work, and sweeps materialized Team runtimes while retaining durable Team and
 target facts for recovery. There is no corresponding remote close/cancel method.
 
+Collaboration-space records persist container metadata opaquely. Provisioned
+target records persist a copy of the provider-owned target `meta` in the initial
+durable claim, and `targetFromRecord()` restores it for retry/reconciliation
+paths before the channel route write. This keeps provider addressing facts across
+the crash window between target claim and binding persistence while core still
+treats the metadata as opaque.
+
+An explicit collaboration-space bind replay with the same repository, runtime,
+identity, and worktree policy refreshes container display/addressing metadata
+and returns `unchanged`; it emits no duplicate space event. Changing the policy
+still requires dissolve and rebind.
+
 Source:
 
 - `/packages/dreamux-types/src/channel.ts`
+- `/packages/dreamux/src/service/collaboration-space/target.ts`
 - `/packages/dreamux/src/service/dispatcher-service/collaboration-routing.ts`
 - `/packages/dreamux/src/service/collaboration-space/target-lifecycle.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
@@ -215,24 +242,34 @@ Source:
 ## Core Fact Subscriptions
 
 Each dispatcher has an in-process typed event bus fed by the existing Team,
-agent-identity, and turn owners. A Channel session receives only a scoped,
-read-only event source with owned subscription handles. The DTO allowlist covers
-Team and Team agent state changes plus Team-owned turn submitted/settled facts,
-including settle status, nullable Assistant text, and truncation.
+agent-identity, turn, channel-binding, and collaboration-space owners. A Channel
+session receives only a scoped, read-only event source with owned subscription
+handles. The DTO allowlist covers Team and Team agent state changes, Team-owned
+turn submitted/settled facts, route binding transitions, and
+collaboration-space binding transitions. Turn settled facts include settle
+status, nullable Assistant text, and truncation. Binding event endpoint
+snapshots include provider ref, endpoint type/key/display/canonical URL, and
+opaque provider-owned `meta`; route-bound snapshots also include the concrete
+TeamLeader, TeamLeader runtime id, and runtime cwd.
 
 The source is installed before session start and revoked before session close on
 stop or failed start. It is live-session-only and best-effort: it retains no
-history and provides no eventual-delivery, historical-query, or ordering
-guarantee. The bus
-does not become a new state owner, and providers never receive core
-service/store instances or raw `EventEmitter` management methods.
+history and provides no eventual-delivery or historical-query guarantee. Binding
+notifications are independent best-effort tasks; providers make no ordering
+guarantee between them. The bus does not become a new state owner, and providers
+never receive core service/store instances or raw `EventEmitter` management methods.
+Binding events are dispatcher-wide broadcasts rather than channel-id scoped
+streams; providers filter by the provider ref on the endpoint snapshot.
 
 Source:
 
 - `/packages/dreamux/src/service/dispatcher-core-events/`
+- `/packages/dreamux/src/service/binding-events.ts`
 - `/packages/dreamux/src/service/agent-entity/identity-store.ts`
 - `/packages/dreamux/src/service/agent-entity/turns-store.ts`
 - `/packages/dreamux/src/service/team-collection/store.ts`
+- `/packages/dreamux/src/service/channel-service/index.ts`
+- `/packages/dreamux/src/service/collaboration-space/index.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 
 ## TeamLeader Egress Authorization
@@ -268,6 +305,7 @@ Detailed Feishu behavior lives in focused domain pages:
 ## Decision Trail
 
 - [Channel-scoped collaboration and core events](../decisions/channel-scoped-collaboration-and-core-events.md)
+- [Feishu binding notification events](../decisions/feishu-binding-notification-events.md)
 - [NPM package split and channel targets](../decisions/npm-package-split-and-channel-targets.md)
 - [Channel provider](../decisions/channel-provider.md)
 - [Channel input runtime assembly](../decisions/channel-input-runtime-assembly.md)

@@ -122,9 +122,7 @@ export class DispatcherService {
     const adminSocket = opts.adminSocketPath ?? defaultAdminSocketPath();
     this.agentRuntimeProviders = opts.agentRuntimeProviders;
     this.adminSocket = adminSocket;
-
     this.router = new CompletionRouter({ dispatcherId: opts.id, log: opts.log });
-
     const configuredChannelCount =
       opts.config.dispatchers.find((dispatcher) => dispatcher.id === opts.id)
         ?.channels.length ?? 0;
@@ -135,7 +133,6 @@ export class DispatcherService {
     });
 
     const worktrees = new WorktreeManager();
-
     const identities = new AgentIdentityStore(opts.log, this.coreEvents.publisher);
     const turnsStore = new AgentTurnsStore(opts.log, this.coreEvents.publisher);
     this.identities = identities;
@@ -145,6 +142,7 @@ export class DispatcherService {
       dispatcherId: opts.id,
       config: opts.config,
       channelProviders: opts.channelProviders,
+      coreEvents: this.coreEvents.publisher,
       channelLoggerFactory: opts.channelLoggerFactory,
       ...(opts.adminSocketPath !== undefined
         ? { adminSocketPath: opts.adminSocketPath }
@@ -211,6 +209,7 @@ export class DispatcherService {
       config: opts.config,
       teams: this.teams,
       channels: this.channels,
+      coreEvents: this.coreEvents.publisher,
       log: opts.log,
       isShuttingDown: () => this.shuttingDown || this.stopping,
     });
@@ -580,7 +579,7 @@ export class DispatcherService {
   }
 
   createTeam(input: TeamCreateInput) {
-    return this.admitOperation(() => this.teams.create(input));
+    return this.admitOperation(() => this.teams.createFromPrefix(input));
   }
 
   sendTeamLeader(input: {

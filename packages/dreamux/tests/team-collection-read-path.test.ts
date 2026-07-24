@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 const execFileAsync = promisify(execFile);
 
@@ -24,8 +24,15 @@ import type {
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import { TeamCollection } from '../src/service/team-collection/index.js';
 import { TeamStore } from '../src/service/team-collection/store.js';
+import {
+  dispatcherAgentIdentityPath,
+  dispatcherTeamNameClaimPath,
+} from '../src/platform/paths.js';
+import { CollaborationSpaceService } from '../src/service/collaboration-space/index.js';
+import { CollaborationSpaceStore } from '../src/service/collaboration-space/store.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
 import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
+import { TeammateCollection } from '../src/service/teammate-collection/index.js';
 import {
   CompletionRouter,
   type CompletionDeliveryResult,
@@ -33,6 +40,7 @@ import {
 } from '../src/service/completion-router/index.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
+import { fakeChannels } from './helpers/collaboration-space.js';
 
 const FAKE_RUNTIME_REF = 'test:runtime';
 
@@ -244,6 +252,7 @@ describe('TeamCollection read path (issue #233 R4)', () => {
     ]);
     const log = noopLog();
     const turnsStore = new AgentTurnsStore(log);
+    const agentSuffixes = ['aaaa', 'bbbbbbbb'];
     const teams = new TeamCollection({
       dispatcherId: 'dispatcher-a',
       config,
@@ -257,14 +266,16 @@ describe('TeamCollection read path (issue #233 R4)', () => {
       adminSocketPath: '/tmp/admin.sock',
       leaderChannelDescriptors: () => [],
       log,
+      agentNameSuffixGenerator: () => agentSuffixes.shift()!,
     });
 
-    await teams.create({
+    const created = await teams.create({
       name: 'alpha',
       leaderAgentRuntime: 'agent-a',
       intent: 'lead alpha',
       prompt: 'initial leader prompt',
     });
+    expect(created.leader?.name).toBe('tl-alpha-aaaa');
 
     // Spawn one team member through the team's own (store-sharing) collection.
     const team = await teams.get('alpha');
@@ -274,7 +285,7 @@ describe('TeamCollection read path (issue #233 R4)', () => {
       agentRuntime: 'agent-a',
       intent: 'member work',
     });
-    expect(spawn.teammate.name).toMatch(/worker/);
+    expect(spawn.teammate.name).toBe('tm-worker-bbbbbbbb');
     const memberTurns = [];
     for await (const row of turnsStore.stream({
       dispatcherId: 'dispatcher-a',
@@ -310,6 +321,43 @@ describe('TeamCollection read path (issue #233 R4)', () => {
     const status = await team.status();
     expect(status.member_count).toBe(1);
     expect(status.leader).not.toBeNull();
+  });
+
+  it('uses the shared 4-char endpoint through the real dispatcher TeamMate path', async () => {
+    const workspace = join(root, 'dispatcher-teammate-workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const collection = new TeammateCollection({
+      dispatcherId: 'dispatcher-a',
+      teamScope: null,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      worktrees: new WorktreeManager(),
+      identities: new AgentIdentityStore(log),
+      turnsStore: new AgentTurnsStore(log),
+      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      suffixGenerator: () => 'a1b2',
+      log,
+    });
+    const spawned = await collection.spawn({
+      name: 'reviewer',
+      prompt: 'review',
+      intent: 'verify generated name',
+      agentRuntime: 'agent-a',
+    });
+    expect(spawned.teammate.name).toBe('reviewer-a1b2');
+    await collection.stopAll();
   });
 });
 
@@ -425,7 +473,7 @@ describe('TeamCollection route readiness recovery', () => {
     const releaseRoute = deferred<void>();
     const closingEntered = deferred<void>();
     const releaseClosing = deferred<void>();
-    const routeLease = teams.withRoutableTeamOwner('alpha', async () => {
+    const routeLease = teams.withRoutableTeamProjection('alpha', async () => {
       routeEntered.resolve();
       await releaseRoute.promise;
     });
@@ -446,7 +494,7 @@ describe('TeamCollection route readiness recovery', () => {
     await routeLease;
     await closingEntered.promise;
     await expect(
-      teams.withRoutableTeamOwner('alpha', async () => undefined),
+      teams.withRoutableTeamProjection('alpha', async () => undefined),
     ).rejects.toThrow(/closing/);
 
     releaseClosing.resolve();
@@ -802,7 +850,7 @@ describe('TeamCollection identity prompt launch behavior', () => {
   });
 });
 
-describe('TeamCollection dispatcher send to TeamLeader', () => {
+describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
   let root: string;
   let previousHome: string | undefined;
 
@@ -1005,6 +1053,365 @@ describe('TeamCollection dispatcher send to TeamLeader', () => {
     ).rejects.toThrow(/is closed/);
     expect(runtimes).toHaveLength(1);
     expect(runtimes[0]!.submitted).toHaveLength(0);
+  });
+
+  it('never reuses a closed Team name when recreating the prefix with reuse-cwd', async () => {
+    const sourceRepo = join(root, 'source');
+    mkdirSync(sourceRepo, { recursive: true });
+    const git = async (args: string[]): Promise<string> => {
+      const { stdout } = await execFileAsync('git', args, { cwd: sourceRepo });
+      return stdout;
+    };
+    await git(['init', '-q']);
+    await git(['config', 'user.email', 'test@example.com']);
+    await git(['config', 'user.name', 'Test']);
+    writeFileSync(join(sourceRepo, 'README.md'), '# source\n');
+    await git(['add', '.']);
+    await git(['commit', '-qm', 'init']);
+
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const teams = new TeamCollection({
+      dispatcherId: 'dispatcher-a',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      worktrees: new WorktreeManager(),
+      identities: new AgentIdentityStore(log),
+      turnsStore: new AgentTurnsStore(log),
+      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      adminSocketPath: '/tmp/admin.sock',
+      leaderChannelDescriptors: () => [],
+      log,
+    });
+
+    const firstClaim = await teams.claimName('alpha');
+    const firstName = firstClaim.name;
+    expect(firstName).toMatch(/^alpha-[a-z0-9]{4,8}$/);
+    await teams.create({
+      name: firstName,
+      nameClaimToken: firstClaim.token,
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead alpha in a managed worktree',
+      repoCwd: sourceRepo,
+      worktree: { mode: 'managed', cleanup: 'delete-on-close' },
+    });
+    const firstProjection = await teams.requireRoutableTeamProjection(firstName);
+    expect(firstProjection.runtime_cwd).not.toBe(sourceRepo);
+
+    await (await teams.get(firstName)).dissolve({
+      teamId: firstName,
+      note: 'replace the workspace mode',
+    });
+    await expect(teams.create({
+      name: firstName,
+      leaderAgentRuntime: 'agent-a',
+      intent: 'must not reuse the closed concrete name',
+      repoCwd: sourceRepo,
+      worktree: { mode: 'reuse-cwd' },
+    })).rejects.toThrow(/concrete Team names are never reused/);
+
+    const secondClaim = await teams.claimName('alpha');
+    const secondName = secondClaim.name;
+    expect(secondName).toMatch(/^alpha-[a-z0-9]{4,8}$/);
+    expect(secondName).not.toBe(firstName);
+    await teams.create({
+      name: secondName,
+      nameClaimToken: secondClaim.token,
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead alpha from the source checkout',
+      repoCwd: sourceRepo,
+      worktree: { mode: 'reuse-cwd' },
+    });
+
+    const secondProjection = await teams.requireRoutableTeamProjection(secondName);
+    expect(secondProjection.runtime_cwd).toBe(sourceRepo);
+    expect((await teams.get(secondName)).sharedWorkspace()).toMatchObject({
+      sourceCwd: sourceRepo,
+      runtimeCwd: sourceRepo,
+      worktree: { mode: 'reuse-cwd', path: sourceRepo },
+    });
+    const record = await new TeamStore().get('dispatcher-a', secondName);
+    expect(record).toMatchObject({
+      repo_cwd: sourceRepo,
+      runtime_cwd: sourceRepo,
+      worktree: { mode: 'reuse-cwd', path: sourceRepo },
+    });
+    await teams.stopAll();
+  });
+
+  it('recovers the same collaboration name claim after restart while explicit create skips it', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const createCollection = (
+      runtimes: FakeRuntime[],
+      generateSuffix: () => string,
+    ): TeamCollection =>
+      new TeamCollection({
+        dispatcherId: 'dispatcher-a',
+        config,
+        agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+        worktrees: new WorktreeManager(),
+        identities: new AgentIdentityStore(log),
+        turnsStore: new AgentTurnsStore(log),
+        router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+        initiatorFor: async () => null,
+        isShuttingDown: () => false,
+        adminSocketPath: '/tmp/admin.sock',
+        leaderChannelDescriptors: () => [],
+        log,
+        nameSuffixGenerator: generateSuffix,
+      });
+
+    const channels = fakeChannels();
+    const store = new CollaborationSpaceStore();
+    const beforeRestart = createCollection([], () => 'aaaa');
+    const firstService = new CollaborationSpaceService({
+      dispatcherId: 'dispatcher-a',
+      config,
+      teams: beforeRestart,
+      channels: channels.service,
+      store,
+      log,
+      isShuttingDown: () => false,
+    });
+    await firstService.bind({
+      spaceName: 'space-alpha',
+      container: {
+        container_type: 'topic_group',
+        container_key: 'container-a',
+      },
+      leaderAgentRuntime: 'agent-a',
+    });
+    const targetInput = {
+      channelId: 'primary',
+      provider: 'builtin:test',
+      container: {
+        container_type: 'topic_group',
+        container_key: 'container-a',
+      },
+      target: {
+        target_type: 'topic',
+        target_key: 'topic-a',
+        display: 'Alpha',
+        bindable: true,
+      },
+    } as const;
+    await expect(
+      firstService.acceptTargetCreated(targetInput),
+    ).resolves.toBe(true);
+    const durableTarget = (await store.listTargets('dispatcher-a'))[0];
+    expect(durableTarget).toMatchObject({
+      team_name: 'space-alpha-aaaa',
+      lifecycle_status: 'creating',
+      phase: 'claimed',
+    });
+    expect(
+      await beforeRestart.hasTeam(durableTarget!.team_name),
+    ).toBe(false);
+
+    const suffixes = ['aaaa', 'bbbb'];
+    const runtimes: FakeRuntime[] = [];
+    const afterRestart = createCollection(
+      runtimes,
+      () => suffixes.shift() ?? 'bbbb',
+    );
+    const explicit = await afterRestart.createFromPrefix({
+      namePrefix: 'space-alpha',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'must skip the durable collaboration claim',
+    });
+    expect(explicit.team.team_name).toBe('space-alpha-bbbb');
+    expect(runtimes).toHaveLength(1);
+
+    const resumedService = new CollaborationSpaceService({
+      dispatcherId: 'dispatcher-a',
+      config,
+      teams: afterRestart,
+      channels: channels.service,
+      store,
+      log,
+      isShuttingDown: () => false,
+    });
+    await resumedService.resumePendingTargets();
+    await expect(
+      resumedService.status({ spaceName: 'space-alpha' }),
+    ).resolves.toMatchObject({
+      targets: [{
+        team_name: 'space-alpha-aaaa',
+        lifecycle_status: 'active',
+        phase: 'bound',
+      }],
+    });
+    expect(runtimes).toHaveLength(2);
+    expect(channels.boundOwners.get('topic-a')).toMatchObject({
+      teamName: 'space-alpha-aaaa',
+    });
+    await afterRestart.stopAll();
+  });
+
+  it('publishes competing name claims atomically and ignores interrupted temps', async () => {
+    const store = new TeamStore();
+    const results = await Promise.all([
+      store.claimName('dispatcher-a', 'alpha-aaaa', 'owner-a'),
+      store.claimName('dispatcher-a', 'alpha-aaaa', 'owner-b'),
+    ]);
+    expect([...results].sort()).toEqual([false, true]);
+    const winner = results[0] ? 'owner-a' : 'owner-b';
+    const loser = results[0] ? 'owner-b' : 'owner-a';
+    await expect(
+      store.requireNameClaim('dispatcher-a', 'alpha-aaaa', winner),
+    ).resolves.toBeUndefined();
+    await expect(
+      store.requireNameClaim('dispatcher-a', 'alpha-aaaa', loser),
+    ).rejects.toThrow(/claimed by another owner/);
+
+    const interrupted = dispatcherTeamNameClaimPath(
+      'dispatcher-a',
+      'alpha-bbbb',
+    );
+    mkdirSync(dirname(interrupted), { recursive: true });
+    writeFileSync(`${interrupted}.interrupted.tmp`, '{"version":');
+    await expect(
+      store.claimName('dispatcher-a', 'alpha-bbbb', 'owner-c'),
+    ).resolves.toBe(true);
+    await expect(
+      store.requireNameClaim('dispatcher-a', 'alpha-bbbb', 'owner-c'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('regenerates before spawn when an unreadable identity directory occupies the candidate', async () => {
+    const workspace = join(root, 'corrupt-identity-workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const identities = new AgentIdentityStore(log);
+    await identities.create({
+      dispatcherId: 'dispatcher-a',
+      name: 'reviewer-aaaa',
+      role: 'teammate',
+      teamId: null,
+      agentRuntime: 'agent-a',
+      sourceCwd: workspace,
+      sourceRepo: null,
+      cwd: workspace,
+      runtimeCwd: workspace,
+      worktree: {
+        mode: 'reuse-cwd',
+        slug: null,
+        path: workspace,
+        branch: null,
+        base_ref: null,
+        cleanup: 'keep',
+        cleanup_state: 'not-managed',
+        cleanup_error: null,
+      },
+      intent: 'corrupt occupancy fixture',
+      status: 'closed',
+    });
+    writeFileSync(
+      dispatcherAgentIdentityPath({
+        dispatcherId: 'dispatcher-a',
+        name: 'reviewer-aaaa',
+        teamId: null,
+        role: 'teammate',
+      }),
+      '{"version":',
+    );
+
+    const suffixes = ['aaaa', 'bbbb'];
+    const worktrees = new WorktreeManager();
+    const prepareWorkspace = vi.spyOn(worktrees, 'prepareDefaultWorkspace');
+    const collection = new TeammateCollection({
+      dispatcherId: 'dispatcher-a',
+      teamScope: null,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      worktrees,
+      identities,
+      turnsStore: new AgentTurnsStore(log),
+      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      suffixGenerator: () => suffixes.shift()!,
+      log,
+    });
+    await expect(
+      collection.spawn({
+        name: 'reviewer',
+        prompt: 'skip the corrupt occupied candidate',
+        intent: 'verify directory occupancy',
+        agentRuntime: 'agent-a',
+      }),
+    ).resolves.toMatchObject({
+      teammate: { name: 'reviewer-bbbb' },
+    });
+    expect(prepareWorkspace).toHaveBeenCalledTimes(1);
+    await collection.stopAll();
+  });
+
+  it('creates agent identities without silently replacing an existing file', async () => {
+    const identities = new AgentIdentityStore(noopLog());
+    const workspace = join(root, 'identity-workspace');
+    mkdirSync(workspace, { recursive: true });
+    const input = {
+      dispatcherId: 'dispatcher-a',
+      name: 'worker-aaaa',
+      role: 'teammate' as const,
+      teamId: null,
+      agentRuntime: 'agent-a',
+      sourceCwd: workspace,
+      sourceRepo: null,
+      cwd: workspace,
+      runtimeCwd: workspace,
+      worktree: {
+        mode: 'reuse-cwd' as const,
+        slug: null,
+        path: workspace,
+        branch: null,
+        base_ref: null,
+        cleanup: 'keep' as const,
+        cleanup_state: 'not-managed' as const,
+        cleanup_error: null,
+      },
+      intent: 'first identity',
+      status: 'starting' as const,
+    };
+    await identities.create(input);
+    await expect(
+      identities.create({ ...input, intent: 'must not replace' }),
+    ).rejects.toThrow(/already exists/);
+    await expect(
+      identities.get('dispatcher-a', input.name),
+    ).resolves.toMatchObject({ intent: 'first identity' });
   });
 });
 

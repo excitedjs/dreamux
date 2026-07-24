@@ -240,9 +240,11 @@ export async function onMessage(
     let sentCardMessageId: string | undefined;
     try {
       const sendResult = await sendCard(h, {
-        chatId: inbound.chat_id,
+        target: {
+          conversationId: inbound.chat_id,
+          ...(event.messageId !== '' ? { replyTo: event.messageId } : {}),
+        },
         card,
-        ...(event.messageId !== '' ? { messageId: event.messageId } : {}),
       });
       sentCardMessageId = sendResult.messageIds[0];
     } catch (err) {

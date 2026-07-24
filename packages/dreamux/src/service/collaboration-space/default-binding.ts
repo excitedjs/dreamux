@@ -1,11 +1,13 @@
 import type { DreamuxConfig } from '../../config/config.js';
 import { resolveAgent } from '../teammate-collection/agent-config.js';
 import { validateTeamId } from '../team-collection/types.js';
-import type { CollaborationSpaceStore } from './store.js';
+import type {
+  CollaborationSpaceBindTransition,
+  CollaborationSpaceStore,
+} from './store.js';
 import type {
   CollaborationSpaceDefaultBindingInput,
   CollaborationSpaceProvisionInput,
-  CollaborationSpaceRecord,
 } from './types.js';
 import { COLLABORATION_SPACE_RECORD_VERSION } from './types.js';
 import { hashContainer } from './naming.js';
@@ -16,7 +18,7 @@ export async function createDefaultBoundSpace(input: {
   store: CollaborationSpaceStore;
   provision: CollaborationSpaceProvisionInput;
   binding: CollaborationSpaceDefaultBindingInput;
-}): Promise<CollaborationSpaceRecord> {
+}): Promise<CollaborationSpaceBindTransition> {
   const { dispatcherId, config, store, provision, binding } = input;
   resolveAgent(config, dispatcherId, binding.leaderAgentRuntime);
   const spaceName = validateTeamId(
@@ -37,6 +39,7 @@ export async function createDefaultBoundSpace(input: {
     container_key: provision.container.container_key,
     display: provision.container.display ?? null,
     canonical_url: provision.container.canonical_url ?? null,
+    meta: provision.container.meta ?? {},
     current_binding: {
       generation: 1,
       repo_cwd: binding.repo?.cwd ?? null,

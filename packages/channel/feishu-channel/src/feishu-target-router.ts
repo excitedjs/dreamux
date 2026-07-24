@@ -1,11 +1,12 @@
 import type {
+  ChannelBindingEndpointSnapshot,
   ChannelContainer,
   ChannelTarget,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 import type { FeishuChatMode } from '@excitedjs/feishu-transport';
 
-import type { FeishuInboundEvent } from './bot.js';
+import type { ChannelOutboundTarget, FeishuInboundEvent } from './bot.js';
 import {
   FeishuOperationError,
   isFeishuOperationError,
@@ -86,6 +87,24 @@ export class FeishuTargetRouter {
       );
     }
     return chatTarget(chatId, selector['chat_type'] === 'p2p' ? 'p2p' : 'group');
+  }
+
+  bindingNotificationTarget(
+    endpoint: ChannelBindingEndpointSnapshot,
+  ): ChannelOutboundTarget | null {
+    const chatId = optionalString(endpoint.meta, 'chat_id') ??
+      (endpoint.endpoint_type === 'group' ||
+          endpoint.endpoint_type === 'topic_group'
+        ? endpoint.endpoint_key
+        : undefined);
+    if (chatId === undefined || chatId === '') return null;
+    if (endpoint.endpoint_type !== 'topic') {
+      return { conversationId: chatId };
+    }
+    const messageId = optionalString(endpoint.meta, 'message_id');
+    return messageId === undefined
+      ? null
+      : { conversationId: chatId, replyTo: messageId };
   }
 
   messageBelongsToTarget(messageId: string, target: ChannelTarget): boolean {
@@ -186,6 +205,7 @@ function topicRoute(event: FeishuInboundEvent): FeishuInboundRoute {
     target: topicTarget({
       chatId: event.chatId,
       threadId,
+      messageId: event.messageId,
       ...(event.rootId !== undefined ? { rootId: event.rootId } : {}),
       ...(event.parentId !== undefined ? { parentId: event.parentId } : {}),
     }),
@@ -200,6 +220,7 @@ function topicRoute(event: FeishuInboundEvent): FeishuInboundRoute {
 function topicTarget(input: {
   chatId: string;
   threadId: string;
+  messageId: string;
   rootId?: string;
   parentId?: string;
 }): ChannelTarget {
@@ -212,6 +233,7 @@ function topicTarget(input: {
       chat_type: 'group',
       chat_mode: 'topic',
       thread_id: input.threadId,
+      message_id: input.messageId,
       ...(input.rootId !== undefined ? { root_id: input.rootId } : {}),
       ...(input.parentId !== undefined ? { parent_id: input.parentId } : {}),
     },
@@ -287,7 +309,10 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function requiredString(selector: Record<string, unknown>, key: string): string {
+function requiredString(
+  selector: Readonly<Record<string, unknown>>,
+  key: string,
+): string {
   const value = optionalString(selector, key);
   if (value === undefined) {
     throw new Error(`feishu resolveTarget requires a non-empty ${key}`);
@@ -296,7 +321,7 @@ function requiredString(selector: Record<string, unknown>, key: string): string 
 }
 
 function optionalString(
-  selector: Record<string, unknown>,
+  selector: Readonly<Record<string, unknown>>,
   key: string,
 ): string | undefined {
   const value = selector[key];

@@ -319,6 +319,15 @@ export function dispatcherTeamRecordPath(id: string, teamId: string): string {
   return join(dispatcherTeamScopeDir(id, teamId), 'record.json');
 }
 
+/**
+ * A Team concrete-name claim. The claim is created before any Team or
+ * collaboration-target side effect and is never removed, so a concrete name
+ * cannot be reused after failure, shutdown, dissolve, or process restart.
+ */
+export function dispatcherTeamNameClaimPath(id: string, teamId: string): string {
+  return join(dispatcherTeamScopeDir(id, teamId), 'name-claim.json');
+}
+
 /** Per-TeamLeader cron jobs; path isolation keeps the job schema dispatcher-scoped. */
 export function dispatcherTeamCronJobsPath(id: string, teamId: string): string {
   return join(dispatcherTeamScopeDir(id, teamId), 'cron-jobs.json');

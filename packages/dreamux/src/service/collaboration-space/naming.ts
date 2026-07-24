@@ -14,25 +14,10 @@ export function targetIntent(
     : `Collaboration target ${record.team_name.slice(-12)}`;
 }
 
-export function hashTarget(input: {
-  dispatcherId: string;
-  channelId: string;
-  containerKey: string;
-  bindingGeneration: number;
-  targetKey: string;
-}): string {
-  return createHash('sha256')
-    .update(input.dispatcherId)
-    .update('\0')
-    .update(input.channelId)
-    .update('\0')
-    .update(input.containerKey)
-    .update('\0')
-    .update(String(input.bindingGeneration))
-    .update('\0')
-    .update(input.targetKey)
-    .digest('hex')
-    .slice(0, 12);
+export function collaborationTeamNamePrefix(
+  display: string | null | undefined,
+): string {
+  return `space-${slugFor(nonBlank(display))}`;
 }
 
 export function hashContainer(input: {

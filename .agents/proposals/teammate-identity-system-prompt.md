@@ -62,7 +62,8 @@ Add a minimal, provider-neutral TeamMate identity capability:
 
 `identity` is model-facing role guidance for the agent. It is distinct from:
 
-- `name_prefix` / `team_name`, which address the concrete agent or Team.
+- `name_prefix`, which requests a label, and the returned concrete
+  `name` / `team_name`, which address the agent or Team.
 - `intent`, which is the durable recovery subject.
 - `prompt`, which is turn input.
 - `AgentRuntimeRole`, which is Dreamux's structural role

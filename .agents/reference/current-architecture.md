@@ -176,10 +176,21 @@ role-agnostic: `DispatcherService` builds one shared `AgentIdentityStore` +
 `AgentTurnsStore` pair at construction and injects it into the dispatcher
 agent, the dispatcher-scope `TeammateCollection`, and each Team's
 `TeamCollection` / `TeamService` / member `TeammateCollection`. Stores are
-never self-built inside a collection (PR #282 owner-boundary fix).
+never self-built inside agent collections (PR #282 owner-boundary fix).
 
-Team lifecycle is addressed by `team_name`. Channel binding is a Team MCP
-capability. The Team MCP is caller-scoped:
+Team creation takes `name_prefix` and returns a concrete `team_name` with a
+4–8 character random suffix. Core publishes a fully written
+`name-claim.json` in the Team namespace through an atomic no-clobber hard link
+before any Team or collaboration-target side effect; the claim survives restart
+and dissolve, so closed and not-yet-materialized concrete names are never
+reused. Generated TeamLeader, ordinary TeamMate, and Team-member names use the
+same 4–8 character suffix contract. `AgentIdentityStore.allocateName()` checks
+the persisted dispatcher-global entity namespace before selection; identity
+creation uses an atomic no-clobber write. Agent naming adds no transient
+reservation queue or permanent claim file.
+Later Team lifecycle and routing operations are addressed by that returned
+`team_name`.
+Channel binding is a Team MCP capability. The Team MCP is caller-scoped:
 
 - dispatchers see lifecycle/read tools plus
   `send({ team_name, prompt, intent? })` to submit a turn to that Team's
@@ -291,11 +302,19 @@ drains admission, then uses the existing materialized-Team runtime sweep while
 leaving durable Team and target facts intact.
 
 `DispatcherService` also owns one in-process `DispatcherCoreEventBus` and the
-Channel source leases created from it. Team, identity, and turn stores remain
-the fact owners and publish only allowlisted post-write DTOs through a narrow
-capability. Channel sessions receive no raw bus or store, and sources are
-revoked before session close. The bus retains no state and provides no queue,
-eventual-delivery guarantee, or historical query.
+Channel source leases created from it. Team, identity, turn, channel binding,
+and collaboration-space services remain the fact owners and publish only
+allowlisted post-write DTOs through a narrow capability. Binding route events
+are emitted after the channel-binding store returns a real atomic transition,
+and collaboration-space events are emitted after the space store returns its
+transition. Binding events intentionally use the same dispatcher-wide live
+broadcast as other core events; the endpoint snapshot carries the provider ref
+and opaque provider-owned metadata so the matching provider can filter and
+address the notification. Bound route events are the only core events that
+include the TeamLeader runtime id and runtime cwd. Channel sessions receive no
+raw bus or store, and sources are revoked before session close. The bus retains
+no state and provides no queue, eventual-delivery guarantee, or historical
+query.
 
 Scheduler ownership does not move into collaboration spaces. The dispatcher has
 its dispatcher scheduler, and each `TeamService` owns the TeamLeader scheduler it

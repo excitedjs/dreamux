@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/feishu-channel",
+      "comment": "Expose caller-owned cancellation for interactive card sends and document timeout outcomes as remotely unknown.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel"
+}

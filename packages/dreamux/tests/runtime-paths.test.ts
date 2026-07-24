@@ -18,6 +18,7 @@ import {
   dispatcherAgentTurnsPath,
   dispatcherTeamDir,
   dispatcherTeamMateDir,
+  dispatcherTeamNameClaimPath,
   dispatcherTeamRecordPath,
   dispatcherTeamScopeDir,
   dispatcherTeamTeamMateDir,
@@ -114,6 +115,9 @@ describe('runtime paths', () => {
     );
     expect(dispatcherTeamRecordPath('dispatcher-a', 'alpha')).toBe(
       join(stateRoot(), 'dispatcher-a', 'team', 'alpha', 'record.json'),
+    );
+    expect(dispatcherTeamNameClaimPath('dispatcher-a', 'alpha')).toBe(
+      join(stateRoot(), 'dispatcher-a', 'team', 'alpha', 'name-claim.json'),
     );
     expect(
       dispatcherAgentIdentityPath({

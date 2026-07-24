@@ -308,6 +308,95 @@ describe('createFeishuTransport — send', () => {
     expect(calls[0]?.[0].data.msg_type).toBe('interactive')
     expect(JSON.parse(calls[0]?.[0].data.content ?? '{}')).toEqual(card)
   })
+
+  test('sendCard forwards AbortSignal to the cancellable request path', async () => {
+    const stub = stubClient()
+    const controller = new AbortController()
+    stub.request.mockImplementationOnce((raw: unknown) => {
+      const signal = (raw as { signal?: AbortSignal }).signal
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener(
+          'abort',
+          () => reject(signal.reason),
+          { once: true },
+        )
+      })
+    })
+    const transport = buildTransport(stub)
+
+    const sending = transport.sendCard(
+      { chatId: 'oc_chat' },
+      { elements: [{ tag: 'div' }] },
+      { signal: controller.signal },
+    )
+    expect(stub.create).not.toHaveBeenCalled()
+    expect(stub.request).toHaveBeenCalledWith(expect.objectContaining({
+      url: '/open-apis/im/v1/messages',
+      method: 'POST',
+      signal: controller.signal,
+    }))
+
+    controller.abort()
+    await expect(sending).rejects.toBe(controller.signal.reason)
+  })
+
+  test('sendCard uses cancellable top-level create with caller-owned signal', async () => {
+    const stub = stubClient()
+    const controller = new AbortController()
+    stub.request.mockResolvedValueOnce({
+      data: { message_id: 'om_cancellable_create' },
+    })
+    const transport = buildTransport(stub)
+    const card = { elements: [{ tag: 'div' }] }
+
+    const result = await transport.sendCard(
+      { chatId: 'oc_chat' },
+      card,
+      { signal: controller.signal },
+    )
+
+    expect(result.messageIds).toEqual(['om_cancellable_create'])
+    expect(stub.create).not.toHaveBeenCalled()
+    expect(stub.request).toHaveBeenCalledWith({
+      url: '/open-apis/im/v1/messages',
+      method: 'POST',
+      params: { receive_id_type: 'chat_id' },
+      data: {
+        receive_id: 'oc_chat',
+        msg_type: 'interactive',
+        content: JSON.stringify(card),
+      },
+      signal: controller.signal,
+    })
+  })
+
+  test('sendCard uses cancellable reply with caller-owned signal', async () => {
+    const stub = stubClient()
+    const controller = new AbortController()
+    stub.request.mockResolvedValueOnce({
+      data: { message_id: 'om_cancellable_reply' },
+    })
+    const transport = buildTransport(stub)
+    const card = { elements: [{ tag: 'div' }] }
+
+    const result = await transport.sendCard(
+      { chatId: 'oc_chat', replyToMessageId: 'om/source' },
+      card,
+      { signal: controller.signal },
+    )
+
+    expect(result.messageIds).toEqual(['om_cancellable_reply'])
+    expect(stub.reply).not.toHaveBeenCalled()
+    expect(stub.request).toHaveBeenCalledWith({
+      url: '/open-apis/im/v1/messages/om%2Fsource/reply',
+      method: 'POST',
+      data: {
+        msg_type: 'interactive',
+        content: JSON.stringify(card),
+      },
+      signal: controller.signal,
+    })
+  })
 })
 
 describe('createFeishuTransport — app owner', () => {

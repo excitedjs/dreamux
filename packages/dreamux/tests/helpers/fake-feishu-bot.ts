@@ -24,6 +24,12 @@ export interface FakeFeishuBot extends FeishuBot {
     text: string;
     messageIds: string[];
   }>;
+  readonly sentCards: Array<{
+    chatId: string;
+    target: FeishuOutboundTarget;
+    card: unknown;
+    messageIds: string[];
+  }>;
   readonly reactions: Array<{
     messageId: string;
     emoji: string;
@@ -44,6 +50,7 @@ export interface FakeFeishuBot extends FeishuBot {
 /** Test-local FeishuBot double for Dreamux host/provider integration tests. */
 export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
   const sentMessages: FakeFeishuBot['sentMessages'] = [];
+  const sentCards: FakeFeishuBot['sentCards'] = [];
   const reactions: FakeFeishuBot['reactions'] = [];
   const removedReactions: FakeFeishuBot['removedReactions'] = [];
   const reactionOps: FakeFeishuBot['reactionOps'] = [];
@@ -77,10 +84,12 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     },
 
     async sendCard(
-      _target: FeishuOutboundTarget,
-      _card: unknown,
+      target: FeishuOutboundTarget,
+      card: unknown,
     ): Promise<FeishuSendResult> {
-      return { messageIds: [`message-fake-${nextMessageId++}`] };
+      const messageIds = [`message-fake-${nextMessageId++}`];
+      sentCards.push({ chatId: target.chatId, target, card, messageIds });
+      return { messageIds };
     },
 
     async inviteMembers(
@@ -123,6 +132,10 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
 
     get sentMessages() {
       return sentMessages;
+    },
+
+    get sentCards() {
+      return sentCards;
     },
 
     get reactions() {

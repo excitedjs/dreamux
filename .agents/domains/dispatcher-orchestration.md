@@ -138,7 +138,17 @@ Source:
 
 ## Team Model
 
-Team lifecycle is addressed by `team_name`. Dispatcher-visible Team MCP tools:
+`team.create.name_prefix` is a label request, not a durable address. Core
+allocates a concrete `team_name` with a 4–8 character random suffix, checks it
+against the Team namespace's permanent name claims (including closed and
+not-yet-materialized Teams), and never reuses it.
+Generated TeamLeader, ordinary TeamMate, and Team-member names also use 4–8
+character suffixes. The shared `AgentIdentityStore` checks persisted
+dispatcher-global entity names before allocating each generated agent name and
+creates identities with no-clobber writes. It does not keep transient
+reservations or serialize separate creation operations.
+Every later Team operation is addressed by the concrete `team_name` returned
+from create. Dispatcher-visible Team MCP tools:
 
 - `create`
 - `send`

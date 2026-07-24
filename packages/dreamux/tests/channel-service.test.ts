@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type {
+  ChannelCoreEvent,
   ChannelProvider,
   ChannelProviderDescriptor,
   ChannelSession,
@@ -31,6 +32,15 @@ function groupTarget(chatId: string): ChannelTarget {
     target_key: chatId,
     bindable: true,
     meta: { chat_id: chatId },
+  };
+}
+
+function teamProjection(teamName: string, leaderName: string) {
+  return {
+    team_name: teamName,
+    leader_name: leaderName,
+    leader_agent_runtime: 'test:runtime',
+    runtime_cwd: `/tmp/${teamName}`,
   };
 }
 
@@ -111,9 +121,12 @@ describe('ChannelService binding ownership', () => {
     service.adopt(sessions);
     const owner = { kind: 'team' as const, teamName: 'alpha', leaderName: 'leader-a' };
 
-    await expect(
-      service.bindTarget({ owner, meta: { chat_id: 'chat-a' } }),
-    ).resolves.toMatchObject({ team_name: 'alpha', leader_name: 'leader-a' });
+    const target = await service.resolveTarget({ chat_id: 'chat-a' }, 'primary');
+    await expect(service.bindResolvedTarget({
+      team: teamProjection(owner.teamName, owner.leaderName),
+      channelId: 'primary',
+      target,
+    })).resolves.toMatchObject({ team_name: 'alpha', leader_name: 'leader-a' });
     await expect(service.activeBindingSummaryForOwner(owner)).resolves.toEqual({
       channel_id: 'primary',
       provider: PROVIDER_REF,
@@ -162,14 +175,14 @@ describe('ChannelService binding ownership', () => {
     const target = groupTarget('chat-claim');
 
     await service.claimResolvedTarget({
-      owner: alpha,
+      team: teamProjection(alpha.teamName, alpha.leaderName),
       channelId: 'primary',
       target,
       claimId: 'claim-alpha',
     });
     await expect(
       service.claimResolvedTarget({
-        owner: beta,
+        team: teamProjection(beta.teamName, beta.leaderName),
         channelId: 'primary',
         target,
         claimId: 'claim-beta',
@@ -199,6 +212,121 @@ describe('ChannelService binding ownership', () => {
     ).resolves.toBeNull();
   });
 
+  it('publishes route binding events only for authoritative transitions', async () => {
+    const events: ChannelCoreEvent[] = [];
+    const service = new ChannelService({
+      dispatcherId: 'dispatcher-a',
+      config: testDreamuxConfig([
+        testDispatcherConfig({ id: 'dispatcher-a', channelId: 'primary' }),
+      ]),
+      channelProviders: channelProviderCatalog(),
+      channelLoggerFactory: () => ({}) as never,
+      coreEvents: {
+        publish(dispatcherId, event) {
+          expect(dispatcherId).toBe('dispatcher-a');
+          events.push(event);
+        },
+      },
+    });
+    const sessions = await service.build();
+    service.adopt(sessions);
+    const team = {
+      team_name: 'alpha',
+      leader_name: 'leader-a',
+      leader_agent_runtime: 'test:runtime',
+      runtime_cwd: '/tmp/runtime-alpha',
+    };
+    const publishedMeta = {
+      chat_id: 'chat-a',
+      routing: { message_id: 'message-before-publish' },
+    };
+
+    await service.bindResolvedTarget({
+      team,
+      channelId: 'primary',
+      target: {
+        ...groupTarget('chat-a'),
+        meta: publishedMeta,
+      },
+    });
+    await service.bindResolvedTarget({
+      team,
+      channelId: 'primary',
+      target: {
+        ...groupTarget('chat-a'),
+        display: 'renamed',
+        meta: { chat_id: 'chat-a', refreshed: true },
+      },
+    });
+    await service.transferResolvedTargetBack({
+      channelId: 'primary',
+      target: groupTarget('chat-a'),
+    });
+    await service.bindResolvedTargetIfAvailableToOwner({
+      team,
+      channelId: 'primary',
+      target: groupTarget('chat-b'),
+    });
+    await service.bindResolvedTargetIfAvailableToOwner({
+      team,
+      channelId: 'primary',
+      target: groupTarget('chat-b'),
+    });
+
+    expect(events).toHaveLength(3);
+    expect(events[0]).toMatchObject({
+      kind: 'binding.route',
+      action: 'bound',
+      transition: 'bound',
+      endpoint: {
+        provider: PROVIDER_REF,
+        endpoint_type: 'group',
+        endpoint_key: 'chat-a',
+      },
+      current_team: {
+        team_name: 'alpha',
+        leader_agent_runtime: 'test:runtime',
+        runtime_cwd: '/tmp/runtime-alpha',
+      },
+    });
+    publishedMeta.routing.message_id = 'message-after-publish';
+    const publishedEndpoint = events[0]?.kind === 'binding.route'
+      ? events[0].endpoint
+      : undefined;
+    expect(publishedEndpoint?.meta).toMatchObject({
+      routing: { message_id: 'message-before-publish' },
+    });
+    expect(Object.isFrozen(publishedEndpoint?.meta)).toBe(true);
+    expect(Object.isFrozen(publishedEndpoint?.meta['routing'])).toBe(true);
+    expect(events[1]).toMatchObject({
+      kind: 'binding.route',
+      action: 'unbound',
+      transition: 'unbound',
+      endpoint: {
+        display: 'renamed',
+        meta: { refreshed: true },
+      },
+      previous_team: {
+        team_name: 'alpha',
+        leader_name: 'leader-a',
+      },
+      current_team: null,
+    });
+    expect(events[2]).toMatchObject({
+      kind: 'binding.route',
+      action: 'bound',
+      transition: 'bound',
+      endpoint: {
+        endpoint_key: 'chat-b',
+      },
+      current_team: {
+        team_name: 'alpha',
+        leader_agent_runtime: 'test:runtime',
+        runtime_cwd: '/tmp/runtime-alpha',
+      },
+    });
+  });
+
   it('requires exact message ownership before a broader binding can authorize egress', async () => {
     const exactTarget: ChannelTarget = {
       target_type: 'topic',
@@ -226,7 +354,7 @@ describe('ChannelService binding ownership', () => {
       leaderName: 'group-leader',
     };
     await service.bindResolvedTarget({
-      owner,
+      team: teamProjection(owner.teamName, owner.leaderName),
       channelId: 'primary',
       target: groupTarget('chat-a'),
     });

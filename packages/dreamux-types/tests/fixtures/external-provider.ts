@@ -33,8 +33,9 @@ import type {
   AgentRuntimeSystemPrompt,
   AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
-  ChannelInboundEnvelope,
+  ChannelBindingRouteEvent,
   ChannelCoreEventSubscription,
+  ChannelInboundEnvelope,
   ChannelMessageTargetCheck,
   ChannelProvider,
   ChannelProviderDescriptor,
@@ -209,6 +210,23 @@ class FixtureChannelSession implements ChannelSession {
                 assistant_truncated: event.assistant_truncated,
               },
               'fixture core event',
+            );
+          },
+        ),
+      );
+      this.coreEventSubscriptions.push(
+        routes.coreEvents.on(
+          'binding.route',
+          (event: ChannelBindingRouteEvent) => {
+            this.logger?.info(
+              {
+                action: event.action,
+                transition: event.transition,
+                provider: event.endpoint.provider,
+                endpoint_type: event.endpoint.endpoint_type,
+                team_name: event.current_team?.team_name ?? null,
+              },
+              'fixture binding event',
             );
           },
         ),

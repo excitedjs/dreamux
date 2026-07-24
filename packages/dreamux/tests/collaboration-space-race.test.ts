@@ -244,7 +244,12 @@ describe('CollaborationSpaceService race regressions', () => {
         return channels.service.bindResolvedTarget({
           channelId: 'primary',
           target,
-          owner: manualOwner,
+          team: {
+            team_name: manualOwner.teamName,
+            leader_name: manualOwner.leaderName,
+            leader_agent_runtime: 'agent-a',
+            runtime_cwd: `/tmp/dreamux-test/${manualOwner.teamName}`,
+          },
         });
       },
     );
@@ -274,11 +279,11 @@ describe('CollaborationSpaceService race regressions', () => {
     const dissolved: string[] = [];
     const channels = fakeChannels();
     const teams = fakeTeams(created, dissolved);
-    const withOwner = teams.withRoutableTeamOwner.bind(teams);
+    const withProjection = teams.withRoutableTeamProjection.bind(teams);
     let closing = false;
-    teams.withRoutableTeamOwner = async (teamId, task) => {
+    teams.withRoutableTeamProjection = async (teamId, task) => {
       if (closing) throw new Error(`Team ${JSON.stringify(teamId)} is closing`);
-      return withOwner(teamId, task);
+      return withProjection(teamId, task);
     };
     const service = new CollaborationSpaceService({
       dispatcherId: 'flow',

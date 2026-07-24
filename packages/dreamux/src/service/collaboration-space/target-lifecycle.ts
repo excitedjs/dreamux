@@ -1,12 +1,12 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
-
 import type { DreamuxConfig } from '../../config/config.js';
 import type { ChannelService } from '../channel-service/index.js';
 import type { KeyedAsyncQueue } from '../serial-queue.js';
 import type { TeamCollection } from '../team-collection/index.js';
 import { createDefaultBoundSpace } from './default-binding.js';
 import { detachActiveTargets } from './detach-active-targets.js';
-import { targetIntent } from './naming.js';
+import { publishCollaborationSpaceBindTransition } from '../binding-events.js';
+import { collaborationTeamNamePrefix, targetIntent } from './naming.js';
 import type { CollaborationSpaceStore } from './store.js';
 import type { CollaborationRouteReconciler } from './route-reconciliation.js';
 import {
@@ -21,24 +21,14 @@ import {
   collaborationTargetFailure,
   type CollaborationTargetStrictOperations,
 } from './strict-operations.js';
-import { routeClaimIdForTarget, targetClaimRecord, targetFromRecord } from './target.js';
-import type { CollaborationSpaceCloseTargetInput, CollaborationSpaceDefaultBindingInput,
-  CollaborationSpaceProvisionInput, CollaborationSpaceRecord, ProvisionedTargetRecord,
-  ProvisionedTargetView } from './types.js';
+import { createTargetClaim, routeClaimIdForTarget, targetFromRecord } from './target.js';
+import type {
+  AcceptedTargetClose, AcceptedTargetProvision, AcceptTargetCreatedOptions,
+  CollaborationSpaceCloseTargetInput, CollaborationSpaceDefaultBindingInput,
+  CollaborationSpaceProvisionInput, CollaborationSpaceRecord,
+  ProvisionedTargetRecord, ProvisionedTargetView,
+} from './types.js';
 import { targetView } from './view.js';
-
-export interface AcceptTargetCreatedOptions {
-  allowMissing?: boolean;
-  defaultBinding?: CollaborationSpaceDefaultBindingInput;
-  /** Internal strict operation mode; conversational notification stays lenient. */
-  strict?: boolean;
-}
-export interface AcceptedTargetProvision {
-  provision: () => Promise<ProvisionedTargetRecord>;
-}
-export interface AcceptedTargetClose {
-  close: () => Promise<{ closed: boolean; target: ProvisionedTargetView | null }>;
-}
 
 export interface CollaborationTargetLifecycleOptions {
   dispatcherId: string;
@@ -46,6 +36,7 @@ export interface CollaborationTargetLifecycleOptions {
   teams: TeamCollection;
   channels: ChannelService;
   store: CollaborationSpaceStore;
+  coreEvents?: import('../dispatcher-core-events/index.js').DispatcherCoreEventPublisher;
   spaceLocks: KeyedAsyncQueue;
   targetLocks: KeyedAsyncQueue;
   routes: CollaborationRouteReconciler;
@@ -53,9 +44,7 @@ export interface CollaborationTargetLifecycleOptions {
   log: DreamuxLogger;
   isShuttingDown: () => boolean;
 }
-interface AcceptedTargetCreated {
-  space: CollaborationSpaceRecord;
-}
+interface AcceptedTargetCreated { space: CollaborationSpaceRecord; }
 
 export class CollaborationTargetLifecycle {
   constructor(private readonly opts: CollaborationTargetLifecycleOptions) {}
@@ -296,7 +285,13 @@ export class CollaborationTargetLifecycle {
           };
           const existing = await this.opts.store.getTarget(this.opts.dispatcherId, key);
           if (existing === null) {
-            await this.createTargetClaim(space, input);
+            await createTargetClaim(
+              this.opts.dispatcherId,
+              space,
+              input,
+              this.opts.teams,
+              this.opts.store,
+            );
             return;
           }
           if (existing.lifecycle_status === 'closed') {
@@ -334,13 +329,19 @@ export class CollaborationTargetLifecycle {
         : null;
     }
     if (defaultBinding === undefined) return null;
-    return createDefaultBoundSpace({
+    const transition = await createDefaultBoundSpace({
       dispatcherId: this.opts.dispatcherId,
       config: this.opts.config,
       store: this.opts.store,
       provision: input,
       binding: defaultBinding,
     });
+    publishCollaborationSpaceBindTransition({
+      coreEvents: this.opts.coreEvents,
+      dispatcherId: this.opts.dispatcherId,
+      transition,
+    });
+    return transition.space;
   }
 
   private async provisionUnderLock(
@@ -374,26 +375,44 @@ export class CollaborationTargetLifecycle {
       }
       if (existing.lifecycle_status === 'detached') return existing;
     }
-    let record = existing ?? await this.createTargetClaim(space, input);
-    const needsTeamRecreation = record.lifecycle_status !== 'active' &&
-      record.phase !== 'claimed' &&
-      !(await this.opts.teams.isOpenTeam(record.team_name));
+    let record = existing ?? await createTargetClaim(
+      this.opts.dispatcherId,
+      space,
+      input,
+      this.opts.teams,
+      this.opts.store,
+    );
+    const target = existing === null ? input.target : targetFromRecord(record);
+    const teamIsOpen = await this.opts.teams.isOpenTeam(record.team_name);
+    const needsTeamRecreation =
+      record.lifecycle_status !== 'active' &&
+      !teamIsOpen &&
+      (await this.opts.teams.hasTeam(record.team_name));
     if (needsTeamRecreation) {
-      // A Team checkpoint is usable only while its Team remains open.
+      // A Team checkpoint is usable only while its Team remains open. Concrete
+      // Team names are never reused, so recovery reserves a fresh generation.
+      const nameClaim = await this.opts.teams.claimName(
+        collaborationTeamNamePrefix(record.target_display), routeClaimIdForTarget(record),
+      );
       record = await this.opts.store.saveTarget({
-        ...record, leader_name: null, phase: 'claimed', updated_at: Date.now(),
+        ...record,
+        team_name: nameClaim.name,
+        leader_name: null,
+        worktree_slug: nameClaim.name,
+        phase: 'claimed',
+        updated_at: Date.now(),
       });
     }
     let createdTeamHere = false;
     try {
       const routed = await this.opts.channels.resolveInboundBinding({
         channelId: input.channelId,
-        target: input.target,
+        target,
       });
       if (record.lifecycle_status === 'active') {
         return this.opts.routes.reconcileActiveUnderLock(
           record,
-          input.target,
+          target,
           routed,
         );
       }
@@ -414,8 +433,9 @@ export class CollaborationTargetLifecycle {
           this.assertNotShuttingDown();
           await this.opts.teams.create({
             name: record.team_name,
+            nameClaimToken: routeClaimIdForTarget(record),
             leaderAgentRuntime: binding.leader_agent_runtime,
-            intent: targetIntent(input.target, record),
+            intent: targetIntent(target, record),
             ...(binding.identity !== null ? { identity: binding.identity } : {}),
             ...(binding.repo_cwd !== null && binding.worktree.mode === 'managed'
               ? {
@@ -436,14 +456,14 @@ export class CollaborationTargetLifecycle {
         }
       }
       this.assertNotShuttingDown();
-      return await this.opts.teams.withRoutableTeamOwner(
+      return await this.opts.teams.withRoutableTeamProjection(
         record.team_name,
-        async (owner) => {
+        async (team) => {
           this.assertNotShuttingDown();
           if (record.phase === 'claimed') {
             record = await this.opts.store.saveTarget({
               ...record,
-              leader_name: owner.leaderName,
+              leader_name: team.leader_name,
               phase: 'team_created',
               updated_at: Date.now(),
             });
@@ -451,12 +471,12 @@ export class CollaborationTargetLifecycle {
           }
           const latestBinding = await this.opts.channels.resolveInboundBinding({
             channelId: input.channelId,
-            target: input.target,
+            target,
           });
           if (
             latestBinding !== null &&
-            (latestBinding.owner.teamName !== owner.teamName ||
-              latestBinding.owner.leaderName !== owner.leaderName)
+            (latestBinding.owner.teamName !== team.team_name ||
+              latestBinding.owner.leaderName !== team.leader_name)
           ) {
             throw collaborationTargetFailure(
               strict,
@@ -466,22 +486,22 @@ export class CollaborationTargetLifecycle {
             );
           }
           await this.opts.channels.claimResolvedTarget({
-            owner,
+            team,
             channelId: input.channelId,
-            target: input.target,
+            target,
             claimId: routeClaimIdForTarget(record),
           });
           if (this.opts.isShuttingDown()) {
             await this.opts.channels.releaseResolvedTargetIfClaimed({
               claimId: routeClaimIdForTarget(record),
               channelId: input.channelId,
-              target: input.target,
+              target,
             });
             this.assertNotShuttingDown();
           }
           const active = await this.opts.store.saveTarget({
             ...record,
-            leader_name: owner.leaderName,
+            leader_name: team.leader_name,
             phase: 'bound',
             lifecycle_status: 'active',
             last_error: null,
@@ -491,7 +511,7 @@ export class CollaborationTargetLifecycle {
             await this.opts.channels.releaseResolvedTargetIfClaimed({
               claimId: routeClaimIdForTarget(active),
               channelId: input.channelId,
-              target: input.target,
+              target,
             });
             this.assertNotShuttingDown();
           }
@@ -536,23 +556,6 @@ export class CollaborationTargetLifecycle {
       );
       throw err;
     }
-  }
-
-  private async createTargetClaim(
-    space: CollaborationSpaceRecord,
-    input: CollaborationSpaceProvisionInput,
-  ): Promise<ProvisionedTargetRecord> {
-    const claim = targetClaimRecord({
-      dispatcherId: this.opts.dispatcherId,
-      space,
-      provision: input,
-    });
-    if (await this.opts.teams.isOpenTeam(claim.team_name)) {
-      throw new Error(
-        `generated collaboration Team name ${JSON.stringify(claim.team_name)} already exists`,
-      );
-    }
-    return this.opts.store.saveTarget(claim);
   }
 
   private async resumeTargetRecord(

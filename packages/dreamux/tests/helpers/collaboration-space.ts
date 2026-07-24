@@ -30,9 +30,23 @@ export function fakeConfig() {
 
 export function fakeTeams(created: CreatedTeam[], dissolved: string[]) {
   const open = new Map<string, string>();
+  const allocated = new Set<string>();
+  const known = new Set<string>();
+  let nextName = 0;
   return {
+    async claimName(prefix: string, claimToken: string) {
+      while (true) {
+        const name = `${prefix}-${String(nextName).padStart(4, '0')}`;
+        nextName += 1;
+        if (allocated.has(name) || open.has(name)) continue;
+        allocated.add(name);
+        return { name, token: claimToken };
+      }
+    },
     async create(input: CreatedTeam & { name: string }) {
       created.push(input);
+      allocated.add(input.name);
+      known.add(input.name);
       open.set(input.name, `${input.name}-leader`);
       return {
         team: { team_name: input.name, leader_name: `${input.name}-leader` },
@@ -44,6 +58,9 @@ export function fakeTeams(created: CreatedTeam[], dissolved: string[]) {
     async isOpenTeam(name: string) {
       return open.has(name);
     },
+    async hasTeam(name: string) {
+      return known.has(name);
+    },
     async requireOpenTeamRouteOwner(name: string) {
       const leader = open.get(name);
       if (leader === undefined) throw new Error(`Team ${name} is not open`);
@@ -54,26 +71,42 @@ export function fakeTeams(created: CreatedTeam[], dissolved: string[]) {
       if (leader === undefined) throw new Error(`Team ${name} is not routable`);
       return { kind: 'team' as const, teamName: name, leaderName: leader };
     },
-    async withRoutableTeamOwner<T>(
-      name: string,
-      task: (owner: ChannelRouteOwner) => Promise<T>,
-    ) {
-      const leader = open.get(name);
-      if (leader === undefined) throw new Error(`Team ${name} is not routable`);
-      return task({ kind: 'team' as const, teamName: name, leaderName: leader });
-    },
     async withRoutableTeamLeaderLease<T>(
       lease: { teamId: string; leaderName: string },
-      task: (owner: ChannelRouteOwner) => Promise<T>,
+      task: (projection: {
+        team_name: string;
+        leader_name: string;
+        leader_agent_runtime: string;
+        runtime_cwd: string;
+      }) => Promise<T>,
     ) {
       const leader = open.get(lease.teamId);
       if (leader === undefined || leader !== lease.leaderName) {
         throw new Error(`Team ${lease.teamId} generation is not routable`);
       }
       return task({
-        kind: 'team' as const,
-        teamName: lease.teamId,
-        leaderName: leader,
+        team_name: lease.teamId,
+        leader_name: leader,
+        leader_agent_runtime: 'agent-a',
+        runtime_cwd: `/tmp/dreamux-test/${lease.teamId}`,
+      });
+    },
+    async withRoutableTeamProjection<T>(
+      name: string,
+      task: (projection: {
+        team_name: string;
+        leader_name: string;
+        leader_agent_runtime: string;
+        runtime_cwd: string;
+      }) => Promise<T>,
+    ) {
+      const leader = open.get(name);
+      if (leader === undefined) throw new Error(`Team ${name} is not routable`);
+      return task({
+        team_name: name,
+        leader_name: leader,
+        leader_agent_runtime: 'agent-a',
+        runtime_cwd: `/tmp/dreamux-test/${name}`,
       });
     },
     async withTeamRouteClosing<T>(
@@ -103,6 +136,7 @@ export function fakeTeams(created: CreatedTeam[], dissolved: string[]) {
 export function fakeChannels() {
   const boundOwners = new Map<string, ChannelRouteOwner>();
   const claimIds = new Map<string, string | null>();
+  const claimedTargetMetas = new Map<string, Record<string, unknown>>();
   const service = {
     resolveChannelId(requested?: string) {
       return requested ?? 'primary';
@@ -124,16 +158,21 @@ export function fakeChannels() {
           };
     },
     async bindResolvedTarget(input: {
-      owner: ChannelRouteOwner;
-      target: { target_key: string };
+      team: { team_name: string; leader_name: string };
+      target: { target_key: string; meta?: Record<string, unknown> };
     }) {
-      boundOwners.set(input.target.target_key, input.owner);
+      const owner = {
+        kind: 'team' as const,
+        teamName: input.team.team_name,
+        leaderName: input.team.leader_name,
+      };
+      boundOwners.set(input.target.target_key, owner);
       claimIds.set(input.target.target_key, null);
-      return { active: true, team_name: input.owner.teamName };
+      return { active: true, team_name: input.team.team_name };
     },
     async bindResolvedTargetIfAvailableToOwner(input: {
-      owner: ChannelRouteOwner;
-      target: { target_key: string };
+      team: { team_name: string; leader_name: string };
+      target: { target_key: string; meta?: Record<string, unknown> };
     }) {
       const owner = boundOwners.get(input.target.target_key);
       if (owner !== undefined && claimIds.get(input.target.target_key) !== null) {
@@ -141,28 +180,32 @@ export function fakeChannels() {
       }
       if (
         owner !== undefined &&
-        (owner.teamName !== input.owner.teamName ||
-          owner.leaderName !== input.owner.leaderName)
+        (owner.teamName !== input.team.team_name ||
+          owner.leaderName !== input.team.leader_name)
       ) {
         throw new Error(`target already bound to Team ${owner.teamName}`);
       }
       if (owner !== undefined) {
         return { active: true, team_name: owner.teamName };
       }
-      boundOwners.set(input.target.target_key, input.owner);
+      boundOwners.set(input.target.target_key, {
+        kind: 'team' as const,
+        teamName: input.team.team_name,
+        leaderName: input.team.leader_name,
+      });
       claimIds.set(input.target.target_key, null);
-      return { active: true, team_name: input.owner.teamName };
+      return { active: true, team_name: input.team.team_name };
     },
     async claimResolvedTarget(input: {
-      owner: ChannelRouteOwner;
-      target: { target_key: string };
+      team: { team_name: string; leader_name: string };
+      target: { target_key: string; meta?: Record<string, unknown> };
       claimId: string;
     }) {
       const owner = boundOwners.get(input.target.target_key);
       if (
         owner !== undefined &&
-        (owner.teamName !== input.owner.teamName ||
-          owner.leaderName !== input.owner.leaderName)
+        (owner.teamName !== input.team.team_name ||
+          owner.leaderName !== input.team.leader_name)
       ) {
         throw new Error(`target already bound to Team ${owner.teamName}`);
       }
@@ -172,9 +215,14 @@ export function fakeChannels() {
       ) {
         throw new Error('target already has a different active route claim');
       }
-      boundOwners.set(input.target.target_key, input.owner);
+      boundOwners.set(input.target.target_key, {
+        kind: 'team' as const,
+        teamName: input.team.team_name,
+        leaderName: input.team.leader_name,
+      });
       claimIds.set(input.target.target_key, input.claimId);
-      return { active: true, team_name: input.owner.teamName };
+      claimedTargetMetas.set(input.target.target_key, input.target.meta ?? {});
+      return { active: true, team_name: input.team.team_name };
     },
     async transferResolvedTargetBack(input: {
       expectedOwner?: ChannelRouteOwner;
@@ -243,6 +291,7 @@ export function fakeChannels() {
   return {
     boundOwners,
     claimIds,
+    claimedTargetMetas,
     service: service as unknown as ChannelService,
   };
 }

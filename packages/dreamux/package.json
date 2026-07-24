@@ -31,7 +31,7 @@
     "typecheck:tests": "tsc -p tsconfig.tests.json",
     "lint": "eslint .",
     "smoke-built-cli": "node ./scripts/smoke-built-cli.mjs",
-    "test": "vitest run",
+    "test": "vitest run --fileParallelism=false",
     "test:watch": "vitest",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run build"

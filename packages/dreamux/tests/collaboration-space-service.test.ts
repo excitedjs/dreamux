@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type { ChannelCoreEvent } from '@excitedjs/dreamux-types';
+
 import { CollaborationSpaceService } from '../src/service/collaboration-space/index.js';
 import { CollaborationSpaceStore } from '../src/service/collaboration-space/store.js';
 import { PUBLIC_TARGET_LIFECYCLE_ERROR } from '../src/service/collaboration-space/view.js';
@@ -46,11 +48,19 @@ describe('CollaborationSpaceService', () => {
     const created: CreatedTeam[] = [];
     const dissolved: string[] = [];
     const channels = fakeChannels();
+    const store = new CollaborationSpaceStore();
+    const events: ChannelCoreEvent[] = [];
     const service = new CollaborationSpaceService({
       dispatcherId: 'flow',
       config: fakeConfig(),
       teams: fakeTeams(created, dissolved),
       channels: channels.service,
+      store,
+      coreEvents: {
+        publish(_dispatcherId, event) {
+          events.push(event);
+        },
+      },
       log: log as never,
       isShuttingDown: () => false,
     });
@@ -75,6 +85,36 @@ describe('CollaborationSpaceService', () => {
         has_identity: true,
       },
     });
+    const replayed = await service.bind({
+      spaceName: 'space-alpha',
+      container: {
+        container_type: 'topic_group',
+        container_key: 'container-1',
+        display: 'Renamed Alpha Topics',
+        meta: { chat_id: 'container-1', refreshed: true },
+      },
+      repo: { cwd: '/repo/a', baseRef: 'main' },
+      leaderAgentRuntime: 'agent-a',
+      identity: 'Default leader identity',
+    });
+    expect(replayed.space.current_binding).toMatchObject({ generation: 1 });
+    await expect(store.getSpace('flow', 'space-alpha')).resolves.toMatchObject({
+      display: 'Renamed Alpha Topics',
+      meta: { refreshed: true },
+      current_binding: { generation: 1 },
+    });
+    expect(events.filter((event) =>
+      event.kind === 'binding.collaboration_space')).toHaveLength(1);
+    await expect(service.bind({
+      spaceName: 'space-alpha',
+      container: {
+        container_type: 'topic_group',
+        container_key: 'container-1',
+      },
+      repo: { cwd: '/repo/a', baseRef: 'main' },
+      leaderAgentRuntime: 'agent-b',
+      identity: 'Default leader identity',
+    })).rejects.toThrow(/dissolve it before changing its binding policy/);
 
     const firstTarget = {
       channelId: 'primary',
@@ -158,6 +198,79 @@ describe('CollaborationSpaceService', () => {
     });
   });
 
+  it('persists provider target meta from topic provisioning into the resulting binding', async () => {
+    const created: CreatedTeam[] = [];
+    const dissolved: string[] = [];
+    const channels = fakeChannels();
+    const service = new CollaborationSpaceService({
+      dispatcherId: 'flow',
+      config: fakeConfig(),
+      teams: fakeTeams(created, dissolved),
+      channels: channels.service,
+      log: log as never,
+      isShuttingDown: () => false,
+    });
+
+    await service.bind({
+      spaceName: 'space-alpha',
+      container: {
+        container_type: 'topic_group',
+        container_key: 'chat-topic',
+        meta: { chat_id: 'chat-topic', chat_mode: 'topic' },
+      },
+      leaderAgentRuntime: 'agent-a',
+    });
+    const target = {
+      channelId: 'primary',
+      provider: 'builtin:test',
+      container: { container_type: 'topic_group', container_key: 'chat-topic' },
+      target: {
+        target_type: 'topic',
+        target_key: 'topic-1',
+        bindable: true,
+        meta: {
+          chat_id: 'chat-topic',
+          chat_type: 'group',
+          chat_mode: 'topic',
+          thread_id: 'topic-1',
+          message_id: 'msg-trigger',
+        },
+      },
+    };
+
+    await expect(service.acceptTargetCreated(target)).resolves.toBe(true);
+    const provisioned = await service.provisionTarget({
+      ...target,
+      target: {
+        target_type: 'topic',
+        target_key: 'topic-1',
+        bindable: true,
+      },
+    });
+    expect(provisioned).toMatchObject({
+      target_meta: {
+        chat_id: 'chat-topic',
+        thread_id: 'topic-1',
+        message_id: 'msg-trigger',
+      },
+    });
+    const stored = await new CollaborationSpaceStore().getTarget('flow', {
+      channelId: 'primary',
+      containerKey: 'chat-topic',
+      bindingGeneration: 1,
+      targetKey: 'topic-1',
+    });
+    expect(stored).toMatchObject({
+      target_meta: { message_id: 'msg-trigger' },
+    });
+    expect(channels.claimedTargetMetas.get('topic-1')).toMatchObject({
+      chat_id: 'chat-topic',
+      chat_mode: 'topic',
+      thread_id: 'topic-1',
+      message_id: 'msg-trigger',
+    });
+  });
+
   it('accepts target close before dissolving the provisioned Team asynchronously', async () => {
     const created: CreatedTeam[] = [];
     const dissolved: string[] = [];
@@ -197,7 +310,12 @@ describe('CollaborationSpaceService', () => {
     const owner = channels.boundOwners.get('topic-closed');
     if (owner === undefined) throw new Error('provisioned route is missing');
     await channels.service.bindResolvedTarget({
-      owner,
+      team: {
+        team_name: owner.teamName,
+        leader_name: owner.leaderName,
+        leader_agent_runtime: 'agent-a',
+        runtime_cwd: `/tmp/dreamux-test/${owner.teamName}`,
+      },
       channelId: 'primary',
       target: {
         target_type: 'topic',
@@ -637,7 +755,12 @@ describe('CollaborationSpaceService', () => {
       () => channels.service.bindResolvedTarget({
         channelId: 'primary',
         target,
-        owner,
+        team: {
+          team_name: owner.teamName,
+          leader_name: owner.leaderName,
+          leader_agent_runtime: 'agent-a',
+          runtime_cwd: `/tmp/dreamux-test/${owner.teamName}`,
+        },
       }),
     );
     await service.reconcileInboundTargetRoute({ channelId: 'primary', target });
@@ -754,6 +877,9 @@ describe('CollaborationSpaceService', () => {
     // Custom teams mock that fails on first create
     let createCount = 0;
     const teamsWithFailure = {
+      async claimName(prefix: string, claimToken: string) {
+        return { name: `${prefix}-0000`, token: claimToken };
+      },
       async create(input: CreatedTeam & { name: string }) {
         createCount += 1;
         if (createCount === 1) {
@@ -773,6 +899,9 @@ describe('CollaborationSpaceService', () => {
       async isOpenTeam(name: string) {
         return created.some((t) => t.name === name);
       },
+      async hasTeam(name: string) {
+        return created.some((t) => t.name === name);
+      },
       async requireOpenTeamRouteOwner(name: string) {
         const match = created.find((t) => t.name === name);
         if (match === undefined) throw new Error(`Team ${name} is not open`);
@@ -783,12 +912,20 @@ describe('CollaborationSpaceService', () => {
         if (match === undefined) throw new Error(`Team ${name} is not routable`);
         return { kind: 'team' as const, teamName: name, leaderName: `${name}-leader` };
       },
-      async withRoutableTeamOwner<T>(name: string, task: (owner: {
-        kind: 'team'; teamName: string; leaderName: string;
+      async withRoutableTeamProjection<T>(name: string, task: (projection: {
+        team_name: string;
+        leader_name: string;
+        leader_agent_runtime: string;
+        runtime_cwd: string;
       }) => Promise<T>) {
         const match = created.find((t) => t.name === name);
         if (match === undefined) throw new Error(`Team ${name} is not routable`);
-        return task({ kind: 'team', teamName: name, leaderName: `${name}-leader` });
+        return task({
+          team_name: name,
+          leader_name: `${name}-leader`,
+          leader_agent_runtime: 'agent-a',
+          runtime_cwd: `/tmp/dreamux-test/${name}`,
+        });
       },
       async withTeamRouteClosing<T>(name: string, task: (owner: {
         kind: 'team'; teamName: string; leaderName: string;
@@ -890,6 +1027,7 @@ describe('CollaborationSpaceService', () => {
     } as const;
     const provisioned = await service.provisionTarget(input);
     if (provisioned === null) throw new Error('target was not provisioned');
+    expect(provisioned.team_name).toMatch(/^space-target-[a-z0-9]{4,8}$/);
     await service.dissolveTeam({
       teamId: provisioned.team_name,
       note: 'simulate completed shutdown compensation',
@@ -902,12 +1040,14 @@ describe('CollaborationSpaceService', () => {
       updated_at: Date.now(),
     });
 
-    await expect(service.provisionTarget(input)).resolves.toMatchObject({
+    const reprovisioned = await service.provisionTarget(input);
+    expect(reprovisioned).toMatchObject({
       lifecycle_status: 'active',
       phase: 'bound',
-      team_name: provisioned.team_name,
     });
+    expect(reprovisioned?.team_name).not.toBe(provisioned.team_name);
     expect(created).toHaveLength(2);
+    expect(created[1]?.name).not.toBe(created[0]?.name);
     expect(dissolved).toEqual([provisioned.team_name]);
     expect(channels.boundOwners.has(input.target.target_key)).toBe(true);
   });
@@ -917,6 +1057,9 @@ describe('CollaborationSpaceService', () => {
     const channels = fakeChannels();
     let staleRecordExists = false;
     const staleTeams = {
+      async claimName(prefix: string, claimToken: string) {
+        return { name: `${prefix}-0000`, token: claimToken };
+      },
       async create(input: CreatedTeam) {
         created.push(input);
         throw new Error('stale Team must not be recreated implicitly');
@@ -924,10 +1067,13 @@ describe('CollaborationSpaceService', () => {
       async isOpenTeam() {
         return staleRecordExists;
       },
+      async hasTeam() {
+        return staleRecordExists;
+      },
       async requireRoutableTeamOwner() {
         throw new Error('persisted TeamLeader identity is missing');
       },
-      async withRoutableTeamOwner() {
+      async withRoutableTeamProjection() {
         throw new Error('persisted TeamLeader identity is missing');
       },
     } as unknown as TeamCollection;
@@ -976,6 +1122,9 @@ describe('CollaborationSpaceService', () => {
 
     // Teams mock where dissolve fails
     const teamsWithBadDissolve = {
+      async claimName(prefix: string, claimToken: string) {
+        return { name: `${prefix}-0000`, token: claimToken };
+      },
       async create(input: CreatedTeam & { name: string }) {
         created.push(input);
         return {
@@ -988,6 +1137,9 @@ describe('CollaborationSpaceService', () => {
       async isOpenTeam(name: string) {
         return created.some((t) => t.name === name);
       },
+      async hasTeam(name: string) {
+        return created.some((t) => t.name === name);
+      },
       async requireOpenTeamRouteOwner(name: string) {
         const match = created.find((t) => t.name === name);
         if (match === undefined) throw new Error(`Team ${name} is not open`);
@@ -998,12 +1150,20 @@ describe('CollaborationSpaceService', () => {
         if (match === undefined) throw new Error(`Team ${name} is not routable`);
         return { kind: 'team' as const, teamName: name, leaderName: `${name}-leader` };
       },
-      async withRoutableTeamOwner<T>(name: string, task: (owner: {
-        kind: 'team'; teamName: string; leaderName: string;
+      async withRoutableTeamProjection<T>(name: string, task: (projection: {
+        team_name: string;
+        leader_name: string;
+        leader_agent_runtime: string;
+        runtime_cwd: string;
       }) => Promise<T>) {
         const match = created.find((t) => t.name === name);
         if (match === undefined) throw new Error(`Team ${name} is not routable`);
-        return task({ kind: 'team', teamName: name, leaderName: `${name}-leader` });
+        return task({
+          team_name: name,
+          leader_name: `${name}-leader`,
+          leader_agent_runtime: 'agent-a',
+          runtime_cwd: `/tmp/dreamux-test/${name}`,
+        });
       },
       async withTeamRouteClosing<T>(name: string, task: (owner: {
         kind: 'team'; teamName: string; leaderName: string;
@@ -1625,6 +1785,7 @@ describe('CollaborationSpaceService', () => {
       lifecycle_status: 'active',
     });
     expect(created).toHaveLength(2);
+    expect(created[1]?.name).not.toBe(created[0]?.name);
     expect(channels.boundOwners.has(input.target.target_key)).toBe(true);
   });
 
@@ -1686,6 +1847,7 @@ describe('CollaborationSpaceService', () => {
       lifecycle_status: 'active',
     });
     expect(created).toHaveLength(2);
+    expect(created[1]?.name).not.toBe(created[0]?.name);
     expect(channels.boundOwners.has(input.target.target_key)).toBe(true);
   });
 
@@ -1745,6 +1907,7 @@ describe('CollaborationSpaceService', () => {
       lifecycle_status: 'active',
     });
     expect(created).toHaveLength(2);
+    expect(created[1]?.name).not.toBe(created[0]?.name);
     expect(channels.boundOwners.has(input.target.target_key)).toBe(true);
   });
 });

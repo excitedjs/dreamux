@@ -42,13 +42,14 @@ import {
   type AgentEntityRuntimeStatus,
   type AgentEntityTurnResult,
 } from '../agent-entity/types.js';
-import { allocateConcreteName } from '../teammate-collection/name-allocator.js';
+import type { SuffixGenerator } from '../name-allocator.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import type { TeamStore } from '../team-collection/store.js';
 import type {
   TeamDissolveInput,
   TeamLeaderSendResult,
   TeamRecord,
+  TeamRouteProjection,
   TeamSummary,
   TeamView,
 } from '../team-collection/types.js';
@@ -75,6 +76,7 @@ export interface TeamServiceDeps {
   }) => readonly AgentRuntimeMcpServer[];
   trackMaterialized: (service: TeamService) => void;
   store: TeamStore;
+  agentNameSuffixGenerator?: SuffixGenerator;
   evict: (service: TeamService) => void;
   log: DreamuxLogger;
 }
@@ -82,13 +84,13 @@ export interface TeamServiceDeps {
 export interface TeamServiceCreateInput {
   teamId: string;
   name: string;
+  nameClaimToken: string;
   prompt?: string;
   leaderAgentRuntime: string;
   intent: string;
   identity?: string;
   skillSources?: readonly AgentRuntimeSkillSource[];
   workspace: TeamMateSharedWorkspace;
-  existing: TeamRecord | null;
 }
 
 export interface TeamServiceCreateOutput {
@@ -140,6 +142,9 @@ export class TeamService {
       router: deps.router,
       initiatorFor: deps.initiatorFor,
       isShuttingDown: deps.isShuttingDown,
+      ...(deps.agentNameSuffixGenerator !== undefined
+        ? { suffixGenerator: deps.agentNameSuffixGenerator }
+        : {}),
       log: deps.log,
     });
     this.scheduler_ = new SchedulerService({
@@ -165,40 +170,30 @@ export class TeamService {
       input.identity,
       'TeamLeader identity',
     );
-    const leaderName = await service.allocateLeaderName();
-    let team =
-      input.existing ??
-      (await deps.store.create({
-        dispatcher_id: deps.dispatcherId,
-        team_id: input.teamId,
-        name: input.name,
-        repo_cwd: input.workspace.sourceCwd,
-        source_repo: input.workspace.sourceRepo,
-        leader_name: leaderName,
-        leader_agent_runtime: input.leaderAgentRuntime,
-        runtime_cwd: input.workspace.runtimeCwd,
-        worktree: input.workspace.worktree,
-        status: 'starting',
-        intent: input.intent,
-        closed_at: null,
-        close_note: null,
-      }));
-    team = await deps.store.update(team, {
-      status: 'starting',
-      closedAt: null,
-      closeNote: null,
-      worktree: input.workspace.worktree,
-      intent: input.intent,
-      leaderName,
+    const leaderName = await deps.identities.allocateName({
+      dispatcherId: deps.dispatcherId,
+      kind: 'team_leader',
+      base: input.teamId,
+      teamSlug: input.teamId,
+      ...(deps.agentNameSuffixGenerator !== undefined
+        ? { generateSuffix: deps.agentNameSuffixGenerator }
+        : {}),
     });
-    const existingLeader = await deps.identities.get(
-      deps.dispatcherId,
-      leaderName,
-      input.teamId,
-    );
-    if (existingLeader !== null) {
-      throw new Error(`TeamLeader ${JSON.stringify(leaderName)} already exists`);
-    }
+    let team = await deps.store.create({
+      dispatcher_id: deps.dispatcherId,
+      team_id: input.teamId,
+      name: input.name,
+      repo_cwd: input.workspace.sourceCwd,
+      source_repo: input.workspace.sourceRepo,
+      leader_name: leaderName,
+      leader_agent_runtime: input.leaderAgentRuntime,
+      runtime_cwd: input.workspace.runtimeCwd,
+      worktree: input.workspace.worktree,
+      status: 'starting',
+      intent: input.intent,
+      closed_at: null,
+      close_note: null,
+    }, input.nameClaimToken);
     const identity = await deps.identities.create({
       dispatcherId: deps.dispatcherId,
       name: leaderName,
@@ -303,6 +298,16 @@ export class TeamService {
 
   get leaderName(): string {
     return this.mustRecord().leader_name;
+  }
+
+  routeProjection(): TeamRouteProjection {
+    const record = this.mustRecord();
+    return {
+      team_name: record.team_id,
+      leader_name: record.leader_name,
+      leader_agent_runtime: record.leader_agent_runtime,
+      runtime_cwd: record.runtime_cwd,
+    };
   }
 
   view(): TeamView {
@@ -454,16 +459,6 @@ export class TeamService {
 
   private async members(): Promise<AgentEntityRuntimeStatus[]> {
     return this.teammateCollection.list(); // members-only; leader is `this.leader`
-  }
-
-  private async allocateLeaderName(): Promise<string> {
-    const taken = await this.deps.identities.listAllNames(this.deps.dispatcherId);
-    return allocateConcreteName({
-      role: 'team_leader',
-      base: this.id,
-      teamSlug: this.id,
-      exists: (candidate) => taken.has(candidate),
-    });
   }
 
   private leaderMcpServers(leaderName: string): readonly AgentRuntimeMcpServer[] {

@@ -34,6 +34,7 @@ import {
   type FeishuMessageResourceResponse,
   type FeishuMessageReadRequest,
   type FeishuMessageReadResponse,
+  type FeishuSendOptions,
   type FeishuAppOwnerIdentity,
   type FeishuChatMode,
   type FeishuTransport,
@@ -144,7 +145,11 @@ export interface FeishuBot extends FeishuMessageResourceFetcher {
   readonly botDisplayName: string | undefined;
   start(routes: FeishuInboundRoutes): Promise<void>;
   send(target: OutboundTarget, text: string): Promise<FeishuSendResult>;
-  sendCard(target: OutboundTarget, card: unknown): Promise<FeishuSendResult>;
+  sendCard(
+    target: OutboundTarget,
+    card: unknown,
+    options?: FeishuSendOptions,
+  ): Promise<FeishuSendResult>;
   inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult>;
   /** Optional for externally supplied bots; absence disables topic projection. */
   getChatMode?(chatId: string): Promise<FeishuChatMode | undefined>;
@@ -256,8 +261,12 @@ export function createFeishuBot(
       return { messageIds };
     },
 
-    async sendCard(target: OutboundTarget, card: unknown): Promise<FeishuSendResult> {
-      const { messageIds } = await transport.sendCard(target, card);
+    async sendCard(
+      target: OutboundTarget,
+      card: unknown,
+      options?: FeishuSendOptions,
+    ): Promise<FeishuSendResult> {
+      const { messageIds } = await transport.sendCard(target, card, options);
       return { messageIds };
     },
 

@@ -59,7 +59,7 @@ describe('ChannelBindingStore v3', () => {
 
   it('binds, resolves, and transfers back by (channel_id, target_key)', async () => {
     const store = new ChannelBindingStore();
-    const bound = await store.bind({
+    const { binding: bound } = await store.bind({
       dispatcherId: DISPATCHER,
       channelId: 'primary',
       provider: 'builtin:feishu',
@@ -100,7 +100,7 @@ describe('ChannelBindingStore v3', () => {
       channelId: 'primary',
       targetKey: 'chat-a',
     });
-    expect(back?.active).toBe(false);
+    expect(back.binding?.active).toBe(false);
     await expect(
       store.resolve({ dispatcherId: DISPATCHER, channelId: 'primary', targetKey: 'chat-a' }),
     ).resolves.toBeNull();
@@ -122,7 +122,7 @@ describe('ChannelBindingStore v3', () => {
 
   it('reassigns an active target to a new Team (one active row per key, created_at preserved)', async () => {
     const store = new ChannelBindingStore();
-    const first = await store.bind({
+    const { binding: first } = await store.bind({
       dispatcherId: DISPATCHER,
       channelId: 'primary',
       provider: 'builtin:feishu',
@@ -130,7 +130,7 @@ describe('ChannelBindingStore v3', () => {
       teamName: 'alpha',
       leaderName: 'alpha-leader',
     });
-    const second = await store.bind({
+    const { binding: second } = await store.bind({
       dispatcherId: DISPATCHER,
       channelId: 'primary',
       provider: 'builtin:feishu',
@@ -149,7 +149,7 @@ describe('ChannelBindingStore v3', () => {
     ).resolves.toMatchObject({ team_name: 'beta' });
   });
 
-  it('creates only an available explicit route and treats the exact owner as idempotent', async () => {
+  it('keeps the available owner while refreshing provider metadata idempotently', async () => {
     const store = new ChannelBindingStore();
     const input = {
       dispatcherId: DISPATCHER,
@@ -159,17 +159,27 @@ describe('ChannelBindingStore v3', () => {
       teamName: 'alpha',
       leaderName: 'alpha-leader',
     };
-    const first = await store.bindIfAvailableToOwner(input);
+    const { binding: first } = await store.bindIfAvailableToOwner(input);
     const second = await store.bindIfAvailableToOwner({
       ...input,
       target: {
         ...input.target,
         display: 'changed provider display',
+        meta: { chat_id: 'chat-available', message_id: 'latest-message' },
       },
     });
 
-    expect(second).toEqual(first);
-    expect(second.claim_id).toBeNull();
+    expect(second).toMatchObject({
+      transition: 'unchanged',
+      binding: {
+        display: 'changed provider display',
+        meta: { message_id: 'latest-message' },
+        team_name: first.team_name,
+        leader_name: first.leader_name,
+        created_at: first.created_at,
+      },
+    });
+    expect(second.binding.claim_id).toBeNull();
     expect(await store.list(DISPATCHER)).toHaveLength(1);
   });
 
@@ -295,7 +305,7 @@ describe('ChannelBindingStore v3', () => {
       channelId: 'primary',
       targetKey: 'chat-a',
       claimId: 'collaboration-claim',
-    })).resolves.toBeNull();
+    })).resolves.toMatchObject({ transition: 'unchanged', binding: null });
     await expect(store.resolve({
       dispatcherId: DISPATCHER,
       channelId: 'primary',
@@ -304,6 +314,84 @@ describe('ChannelBindingStore v3', () => {
       team_name: 'alpha',
       claim_id: null,
       active: true,
+    });
+  });
+
+  it('reports route transition taxonomy inside the store write lock', async () => {
+    const store = new ChannelBindingStore();
+    const input = {
+      dispatcherId: DISPATCHER,
+      channelId: 'primary',
+      provider: 'builtin:feishu',
+      target: groupTarget('chat-a'),
+      teamName: 'alpha',
+      leaderName: 'alpha-leader',
+    };
+
+    await expect(store.bind(input)).resolves.toMatchObject({
+      transition: 'bound',
+      previous: null,
+      binding: { team_name: 'alpha', claim_id: null, active: true },
+    });
+    await expect(store.bind({
+      ...input,
+      target: {
+        ...groupTarget('chat-a'),
+        display: 'Renamed group',
+        meta: { chat_id: 'chat-a', chat_type: 'group', refreshed: true },
+      },
+    })).resolves.toMatchObject({
+      transition: 'unchanged',
+      previous: { team_name: 'alpha', claim_id: null, active: true },
+      binding: {
+        display: 'Renamed group',
+        meta: { refreshed: true },
+      },
+    });
+    await expect(store.claim({
+      ...input,
+      claimId: 'managed-claim',
+    })).rejects.toThrow(/different active route claim/);
+    await store.transferBack({
+      dispatcherId: DISPATCHER,
+      channelId: 'primary',
+      targetKey: 'chat-a',
+    });
+    await expect(store.claim({
+      ...input,
+      claimId: 'managed-claim',
+    })).resolves.toMatchObject({
+      transition: 'bound',
+      previous: { active: false },
+      binding: { claim_id: 'managed-claim', active: true },
+    });
+    await expect(store.bind(input)).resolves.toMatchObject({
+      transition: 'replaced',
+      previous: { claim_id: 'managed-claim' },
+      binding: { claim_id: null },
+    });
+    await expect(store.transferBack({
+      dispatcherId: DISPATCHER,
+      channelId: 'primary',
+      targetKey: 'chat-a',
+    })).resolves.toMatchObject({
+      transition: 'unbound',
+      previous: { active: true },
+      binding: { active: false },
+    });
+    await expect(store.transferBack({
+      dispatcherId: DISPATCHER,
+      channelId: 'primary',
+      targetKey: 'chat-a',
+    })).resolves.toEqual({
+      transition: 'unchanged',
+      previous: null,
+      binding: null,
+    });
+    await expect(store.bind(input)).resolves.toMatchObject({
+      transition: 'bound',
+      previous: { active: false },
+      binding: { active: true },
     });
   });
 
@@ -325,7 +413,7 @@ describe('ChannelBindingStore v3', () => {
         targetKey: 'chat-a',
         owner: { teamName: 'alpha', leaderName: 'alpha-leader' },
       }),
-    ).resolves.toBeNull();
+    ).resolves.toMatchObject({ transition: 'unchanged', binding: null });
     await expect(
       store.resolve({ dispatcherId: DISPATCHER, channelId: 'primary', targetKey: 'chat-a' }),
     ).resolves.toMatchObject({ team_name: 'beta', active: true });

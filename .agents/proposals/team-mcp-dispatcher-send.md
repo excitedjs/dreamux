@@ -70,9 +70,9 @@ communication remains on the existing TeamLeader-scoped TeamMate MCP
 
 ## Tool contract
 
-`team_name` is the concrete Team key, matching the existing Team MCP lifecycle
-tools. It is scoped to the descriptor-bound dispatcher, just like the existing
-Team MCP lifecycle and binding verbs.
+`team_name` is the concrete, never-reused Team key returned by
+`team.create({ name_prefix, ... })`. It is scoped to the descriptor-bound
+dispatcher, just like the existing Team MCP lifecycle and binding verbs.
 
 `prompt` is the submitted turn text, matching `teammate.send`. It is required
 and non-empty at both MCP-schema and admin-method validation layers.

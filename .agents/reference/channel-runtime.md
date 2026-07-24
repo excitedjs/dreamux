@@ -332,13 +332,31 @@ publish after their normal write point:
 - `AgentIdentityStore` publishes TeamLeader and TeamMate status changes;
 - `AgentTurnsStore` publishes Team-owned submitted and settled turn rows after
   the append attempt, using the normalized Assistant value and truncation fact.
+- `ChannelService` publishes route bind/unbind events after the binding store
+  returns a real transition.
+- `CollaborationSpaceService` publishes collaboration-space bind/unbind events
+  after the space store returns a real transition.
 
 Channel sessions receive only a public `ChannelCoreEventSource`. It supports
 typed `on(...)` subscriptions and idempotent per-listener `unsubscribe()`;
 providers cannot emit, enumerate, or remove other listeners. The source covers
-allowlisted Team, agent, and turn identities for the current dispatcher only.
-It contains no dispatcher id, channel target, repository/path, prompt, raw
-error, platform identity, cursor, or acknowledgement.
+allowlisted Team, agent, turn, route binding, and collaboration-space binding
+facts for the current dispatcher only. Binding events are dispatcher-wide live
+broadcasts, not channel-id scoped streams; the endpoint snapshot names the
+provider ref and provider-owned opaque `meta`, so only the matching provider
+should interpret it. Bound route events include the concrete TeamLeader name,
+TeamLeader runtime id, and runtime cwd; ordinary Team/agent/turn events still
+carry no repository/path data. No event contains prompt text, raw errors,
+platform user identity, cursor, acknowledgement, `claim_id`, or binding
+fallbacks.
+
+The two binding kinds are action-discriminated public unions. A route-bound
+event requires its runtime-bearing current Team projection, a route-unbound
+event requires the previous Team owner and has no current Team, and
+collaboration-space policy is required only on bound events. `ChannelService`
+owns the only public route mutation paths and always classifies/publishes after
+the store write; stores retain pure transition primitives but callers cannot
+choose a silent service mutation.
 
 Core installs the source before calling `ChannelSession.start`, so a session may
 subscribe before triggering a strict ensure. Stop and start-failure cleanup
@@ -353,10 +371,13 @@ already truncated the result or the core cap did.
 Key source:
 
 - `/packages/dreamux-types/src/channel.ts`
+- `/packages/dreamux/src/service/binding-events.ts`
 - `/packages/dreamux/src/service/dispatcher-core-events/`
 - `/packages/dreamux/src/service/agent-entity/identity-store.ts`
 - `/packages/dreamux/src/service/agent-entity/turns-store.ts`
 - `/packages/dreamux/src/service/team-collection/store.ts`
+- `/packages/dreamux/src/service/channel-service/index.ts`
+- `/packages/dreamux/src/service/collaboration-space/index.ts`
 - `/packages/dreamux/src/service/dispatcher-service/collaboration-routing.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 
@@ -402,8 +423,36 @@ Every non-empty inbound `thread_id` is independently included in the opaque
 display attrs rendered into the model-visible `<channel>` envelope. Ordinary
 group threads expose that fact without acquiring a topic container or topic
 routing semantics.
-The provider does not claim topic-created or topic-closed lifecycle support;
-provisioning begins on first accepted topic inbound.
+For topic collaboration provisioning, Feishu also records the triggering inbound
+`message_id` in the normalized topic target `meta`. Core persists that opaque
+metadata in the initial `ProvisionedTargetRecord`, restores it through
+`targetFromRecord()`, and persists it into the resulting `ChannelBinding`. This
+preserves the reply anchor across the crash window between durable target claim
+and route write. Legacy records without the metadata restore an empty `meta`
+object; the Feishu notification path skips malformed topic endpoints with a
+warning instead of sending a topic notification to the group root. The provider
+does not claim topic-created or topic-closed lifecycle support; provisioning
+begins on first accepted topic inbound.
+
+The built-in Feishu session subscribes to `binding.route` and
+`binding.collaboration_space` from its dispatcher-wide core event source and
+ignores events whose endpoint provider is not `builtin:feishu`. Delivery is
+best-effort and live-session-only. Each notification runs independently, retries
+one failed attempt once, and has no ordering guarantee relative to another
+notification. Session close aborts in-flight notification work before closing
+the bot, so a hung card request cannot hold dispatcher shutdown.
+`FeishuTransport.sendCard` accepts a caller-owned `AbortSignal` and forwards it
+through the SDK client's cancellable HTTP request path. A live notification
+timeout aborts that attempt before the immediate retry. Cancellation cannot
+retract a request already accepted by Feishu, so retry can duplicate a remotely
+accepted card. Route topic cards
+reply to the persisted triggering `message_id`; route group cards send to the
+group;
+collaboration-space cards always send a fresh top-level card to the container
+chat, which creates a new topic in a Feishu topic group. Cards use Feishu
+`plain_text` elements only and render display fields, Team facts, runtime cwd,
+and repository/workspace policy without rendering raw provider `meta`,
+`claim_id`, prompts, or raw errors.
 
 Key source:
 
@@ -417,7 +466,9 @@ Key source:
 - `/packages/dreamux/src/service/dispatcher-service/collaboration-routing.ts`
 - `/packages/channel/feishu-transport/src/parse/content.ts`
 - `/packages/channel/feishu-transport/src/transport/feishu.ts`
+- `/packages/channel/feishu-channel/src/feishu-binding-notification-card.ts`
 - `/packages/channel/feishu-channel/src/feishu-target-router.ts`
+- `/packages/channel/feishu-channel/src/feishu-channel.ts`
 - `/packages/channel/feishu-channel/src/provider.ts`
 
 ## Feishu Domain Contracts
@@ -435,6 +486,7 @@ Codex `turn/start` folding details.
 ## Decision Trail
 
 - [Channel-scoped collaboration and core events](../decisions/channel-scoped-collaboration-and-core-events.md)
+- [Feishu binding notification events](../decisions/feishu-binding-notification-events.md)
 - [NPM package split and channel targets](../decisions/npm-package-split-and-channel-targets.md)
 - [Provider architecture realignment](../decisions/provider-architecture-realignment.md)
 - [Channel provider](../decisions/channel-provider.md)

@@ -12,11 +12,21 @@ import type {
   DreamuxConfig,
 } from '../../config/config.js';
 import { defaultChannelCollaborationSpaceConfig } from '../../config/config.js';
-import type { ChannelBinding } from '../channel-binding/store.js';
+import type {
+  ChannelBinding,
+  ChannelBindingBindTransition,
+  ChannelBindingUnbindTransition,
+} from '../channel-binding/store.js';
 import { ChannelBindingStore } from '../channel-binding/store.js';
+import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
+import {
+  publishRouteBindTransition,
+  publishRouteUnbindTransition,
+} from '../binding-events.js';
 import type { ChannelMcpCallerScope } from './mcp-descriptors.js';
 import { ChannelSessions } from './channel-sessions.js';
 import { ChannelToolAuthorizationError } from './errors.js';
+import type { TeamRouteProjection } from '../team-collection/types.js';
 
 export interface ChannelRouteOwner {
   kind: 'team';
@@ -38,6 +48,7 @@ export interface ChannelServiceOptions {
   config: DreamuxConfig;
   channelProviders: ChannelProviderCatalog;
   bindings?: ChannelBindingStore;
+  coreEvents?: DispatcherCoreEventPublisher;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   adminSocketPath?: string;
 }
@@ -53,10 +64,12 @@ export class ChannelService {
   private readonly dispatcherId: string;
   private readonly sessions: ChannelSessions;
   private readonly bindings: ChannelBindingStore;
+  private readonly coreEvents?: DispatcherCoreEventPublisher;
 
   constructor(opts: ChannelServiceOptions) {
     this.dispatcherId = opts.dispatcherId;
     this.bindings = opts.bindings ?? new ChannelBindingStore();
+    this.coreEvents = opts.coreEvents;
     this.sessions = new ChannelSessions({
       dispatcherId: opts.dispatcherId,
       config: opts.config,
@@ -169,61 +182,55 @@ export class ChannelService {
     return { channelId, target };
   }
 
-  async bindTarget(input: {
-    owner: ChannelRouteOwner;
-    channelId?: string;
-    meta: Record<string, unknown>;
-  }): Promise<ChannelBinding> {
-    const channelId = this.resolveChannelId(input.channelId);
-    const target = await this.resolveTarget(input.meta, channelId);
-    return this.bindResolvedTarget({ owner: input.owner, channelId, target });
-  }
-
   async bindResolvedTarget(input: {
-    owner: ChannelRouteOwner;
+    team: TeamRouteProjection;
     channelId: string;
     target: ChannelTarget;
   }): Promise<ChannelBinding> {
-    return this.bindings.bind({
+    const transition = await this.bindings.bind({
       dispatcherId: this.dispatcherId,
       channelId: input.channelId,
       provider: this.channelProviderRef(input.channelId),
       target: input.target,
-      teamName: input.owner.teamName,
-      leaderName: input.owner.leaderName,
+      teamName: input.team.team_name,
+      leaderName: input.team.leader_name,
     });
+    return this.commitRouteBind(transition, input.team);
   }
 
   async bindResolvedTargetIfAvailableToOwner(input: {
-    owner: ChannelRouteOwner;
+    team: TeamRouteProjection;
     channelId: string;
     target: ChannelTarget;
   }): Promise<ChannelBinding> {
-    return this.bindings.bindIfAvailableToOwner({
-      dispatcherId: this.dispatcherId,
-      channelId: input.channelId,
-      provider: this.channelProviderRef(input.channelId),
-      target: input.target,
-      teamName: input.owner.teamName,
-      leaderName: input.owner.leaderName,
-    });
+    const transition =
+      await this.bindings.bindIfAvailableToOwner({
+        dispatcherId: this.dispatcherId,
+        channelId: input.channelId,
+        provider: this.channelProviderRef(input.channelId),
+        target: input.target,
+        teamName: input.team.team_name,
+        leaderName: input.team.leader_name,
+      });
+    return this.commitRouteBind(transition, input.team);
   }
 
   async claimResolvedTarget(input: {
-    owner: ChannelRouteOwner;
+    team: TeamRouteProjection;
     channelId: string;
     target: ChannelTarget;
     claimId: string;
   }): Promise<ChannelBinding> {
-    return this.bindings.claim({
+    const transition = await this.bindings.claim({
       dispatcherId: this.dispatcherId,
       channelId: input.channelId,
       provider: this.channelProviderRef(input.channelId),
       target: input.target,
-      teamName: input.owner.teamName,
-      leaderName: input.owner.leaderName,
+      teamName: input.team.team_name,
+      leaderName: input.team.leader_name,
       claimId: input.claimId,
     });
+    return this.commitRouteBind(transition, input.team);
   }
 
   async transferBack(input: {
@@ -233,7 +240,7 @@ export class ChannelService {
   }): Promise<ChannelBinding | null> {
     const channelId = this.resolveChannelId(input.channelId);
     const target = await this.resolveTarget(input.meta, channelId);
-    const binding = await this.bindings.transferBack({
+    const transition = await this.bindings.transferBack({
       dispatcherId: this.dispatcherId,
       channelId,
       targetKey: target.target_key,
@@ -246,7 +253,7 @@ export class ChannelService {
           }
         : {}),
     });
-    return binding;
+    return this.commitRouteUnbind(transition);
   }
 
   async transferResolvedTargetBack(input: {
@@ -254,7 +261,7 @@ export class ChannelService {
     channelId: string;
     target: ChannelTarget;
   }): Promise<ChannelBinding | null> {
-    const binding = await this.bindings.transferBack({
+    const transition = await this.bindings.transferBack({
       dispatcherId: this.dispatcherId,
       channelId: input.channelId,
       targetKey: input.target.target_key,
@@ -267,7 +274,7 @@ export class ChannelService {
           }
         : {}),
     });
-    return binding;
+    return this.commitRouteUnbind(transition);
   }
 
   async releaseResolvedTargetIfOwned(input: {
@@ -275,7 +282,7 @@ export class ChannelService {
     channelId: string;
     target: ChannelTarget;
   }): Promise<ChannelBinding | null> {
-    return this.bindings.transferBackIfOwned({
+    const transition = await this.bindings.transferBackIfOwned({
       dispatcherId: this.dispatcherId,
       channelId: input.channelId,
       targetKey: input.target.target_key,
@@ -284,6 +291,7 @@ export class ChannelService {
         leaderName: input.owner.leaderName,
       },
     });
+    return this.commitRouteUnbind(transition);
   }
 
   async releaseResolvedTargetIfClaimed(input: {
@@ -291,12 +299,13 @@ export class ChannelService {
     channelId: string;
     target: ChannelTarget;
   }): Promise<ChannelBinding | null> {
-    return this.bindings.transferBackIfClaimed({
+    const transition = await this.bindings.transferBackIfClaimed({
       dispatcherId: this.dispatcherId,
       channelId: input.channelId,
       targetKey: input.target.target_key,
       claimId: input.claimId,
     });
+    return this.commitRouteUnbind(transition);
   }
 
   async resolveInboundBinding(input: {
@@ -373,7 +382,7 @@ export class ChannelService {
     const transferred: ChannelBinding[] = [];
     for (const binding of await this.bindings.list(this.dispatcherId)) {
       if (!binding.active || !ownerMatchesBinding(owner, binding)) continue;
-      const result = await this.bindings.transferBack({
+      const transition = await this.bindings.transferBack({
         dispatcherId: this.dispatcherId,
         channelId: binding.channel_id,
         targetKey: binding.target_key,
@@ -382,7 +391,8 @@ export class ChannelService {
           leaderName: owner.leaderName,
         },
       });
-      if (result !== null) transferred.push(result);
+      const released = this.commitRouteUnbind(transition);
+      if (released !== null) transferred.push(released);
     }
     return transferred;
   }
@@ -397,6 +407,30 @@ export class ChannelService {
     channelId?: string,
   ): Promise<boolean> {
     return this.sessions.messageBelongsToTarget(target, messageId, channelId);
+  }
+
+  private commitRouteBind(
+    transition: ChannelBindingBindTransition,
+    currentTeam: TeamRouteProjection,
+  ): ChannelBinding {
+    publishRouteBindTransition({
+      coreEvents: this.coreEvents,
+      dispatcherId: this.dispatcherId,
+      transition,
+      currentTeam,
+    });
+    return transition.binding;
+  }
+
+  private commitRouteUnbind(
+    transition: ChannelBindingUnbindTransition,
+  ): ChannelBinding | null {
+    publishRouteUnbindTransition({
+      coreEvents: this.coreEvents,
+      dispatcherId: this.dispatcherId,
+      transition,
+    });
+    return transition.binding;
   }
 
   resolveToolChannelId(requested?: string, providerRef?: string): string {

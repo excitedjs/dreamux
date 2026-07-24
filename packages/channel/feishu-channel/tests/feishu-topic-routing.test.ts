@@ -183,6 +183,7 @@ describe('Feishu topic routing', () => {
           chat_id: 'chat-topic',
           chat_mode: 'topic',
           thread_id: 'topic-a',
+          message_id: 'msg-root',
         },
       },
       {
@@ -190,6 +191,7 @@ describe('Feishu topic routing', () => {
         target_key: 'topic-a',
         meta: {
           thread_id: 'topic-a',
+          message_id: 'msg-reply',
           root_id: 'msg-root',
           parent_id: 'msg-root',
         },

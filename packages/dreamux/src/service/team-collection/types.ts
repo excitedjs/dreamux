@@ -31,8 +31,7 @@ export interface TeamRecord {
   close_note: string | null;
 }
 
-export interface TeamCreateInput {
-  name: string;
+interface TeamCreateOptions {
   /**
    * Explicit repository cwd for the Team workspace (issue #199). Omitted when
    * the caller passes no `repo`: the Team then runs in a plain
@@ -49,6 +48,29 @@ export interface TeamCreateInput {
   /** Additional admin-supplied TeamLeader skill roots. */
   skillSources?: readonly AgentRuntimeSkillSource[];
   prompt?: string;
+}
+
+/** Dispatcher-facing request: `namePrefix` is never the durable Team address. */
+export interface TeamCreateInput extends TeamCreateOptions {
+  namePrefix: string;
+}
+
+/**
+ * Internal create request for a concrete name already allocated and durably
+ * reserved by its owner (for example a collaboration target claim).
+ */
+export interface TeamCreateAtNameInput extends TeamCreateOptions {
+  name: string;
+  /**
+   * Authority for a previously persisted concrete-name claim. Omit only when
+   * TeamCollection itself should claim this exact name before creating it.
+   */
+  nameClaimToken?: string;
+}
+
+export interface TeamNameClaim {
+  name: string;
+  token: string;
 }
 
 export interface TeamDissolveInput {
@@ -175,6 +197,13 @@ export interface TeamLeaderSendResult {
 export interface TeamLeaderLease {
   teamId: string;
   leaderName: string;
+}
+
+export interface TeamRouteProjection {
+  team_name: string;
+  leader_name: string;
+  leader_agent_runtime: string;
+  runtime_cwd: string;
 }
 
 export function validateTeamId(id: string): string {

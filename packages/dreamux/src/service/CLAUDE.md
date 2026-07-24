@@ -168,15 +168,17 @@ the explicit `service/index.ts` facade.
   *leader* (its pair sits at the team root, beside `record.json`), and
   `team/<team>/teammate/<name>/` for team members. The `teammate/` and `team/`
   dirs are blind-scan collections of entity dirs only — `channel-bindings.json`
-  sits at the dispatcher root, never inside a collection. Writing is a blind `mkdir -p` + write; the store
+  sits at the dispatcher root, never inside a collection. Identity create uses
+  an atomic no-clobber write; later updates use atomic replacement. The store
   derives every path from the identity's `role` + `team_id` (`paths.ts`
   `dispatcherAgentEntityDir`). Reads/lists scan `<scope>/teammate/<name>/`; a
   team-scoped read-by-name two-probes (member dir, then team root for the
   leader). `last` reads the identity first (existence/scope), then the turn
   archive — it never starts a runtime, so a closed teammate stays recoverable.
-  Both writes are best-effort. Teammate **names stay dispatcher-global**:
-  `allocateName` dedups against `IdentityStore.listAllNames` (all three scopes,
-  leaders included), so `producerName:turnId` is collision-free for the router.
+  Teammate **names stay dispatcher-global**: the live `AgentIdentityStore`
+  checks persisted entity directory names before allocating a TeamLeader,
+  dispatcher-TeamMate, or Team-member name. Directory names remain occupied
+  even when an identity is unreadable, and identity creation is no-clobber.
   The reserved-name guard (`assertNotReservedAgentName`) blocks names that would
   recreate a legacy leaf (`records` / `turns` / …). `session_id` is the
   runtime-native thread id, persisted directly.

@@ -52,9 +52,9 @@ export class CollaborationRouteReconciler {
     return this.opts.locks.run(routeKey({
       channelId: input.channelId,
       targetKey: input.target.target_key,
-    }), () => this.opts.teams.withRoutableTeamOwner(input.teamId, async (owner) => {
+    }), () => this.opts.teams.withRoutableTeamProjection(input.teamId, async (team) => {
       const binding = await this.opts.channels.bindResolvedTarget({
-        owner,
+        team,
         channelId: input.channelId,
         target: input.target,
       });
@@ -84,7 +84,7 @@ export class CollaborationRouteReconciler {
       targetKey: input.target.target_key,
     }), () => this.opts.teams.withRoutableTeamLeaderLease(
       input.lease,
-      async (owner) => {
+      async (team) => {
         const latest = await this.latestTarget(
           input.channelId,
           input.target.target_key,
@@ -100,7 +100,7 @@ export class CollaborationRouteReconciler {
           );
         }
         return this.opts.channels.bindResolvedTargetIfAvailableToOwner({
-          owner,
+          team,
           channelId: input.channelId,
           target: input.target,
         });
@@ -270,18 +270,18 @@ export class CollaborationRouteReconciler {
     this.assertNotShuttingDown();
     let routeLeaseAcquired = false;
     try {
-      return await this.opts.teams.withRoutableTeamOwner(
+      return await this.opts.teams.withRoutableTeamProjection(
         record.team_name,
-        async (routableOwner) => {
+        async (routableTeam) => {
           routeLeaseAcquired = true;
           this.assertNotShuttingDown();
-          if (!sameOwner(routableOwner, expectedOwner)) {
+          if (!sameProjectionOwner(routableTeam, expectedOwner)) {
             return this.detachAndRelease(record, target);
           }
           if (currentRoute === null) {
             try {
               await this.opts.channels.claimResolvedTarget({
-                owner: expectedOwner,
+                team: routableTeam,
                 channelId: record.channel_id,
                 target,
                 claimId: routeClaimIdForTarget(record),
@@ -373,6 +373,16 @@ function routeBelongsToTarget(
 
 function sameOwner(left: ChannelRouteOwner, right: ChannelRouteOwner): boolean {
   return left.teamName === right.teamName && left.leaderName === right.leaderName;
+}
+
+function sameProjectionOwner(
+  left: {
+    team_name: string;
+    leader_name: string;
+  },
+  right: ChannelRouteOwner,
+): boolean {
+  return left.team_name === right.teamName && left.leader_name === right.leaderName;
 }
 
 function targetCanBelongToOwner(

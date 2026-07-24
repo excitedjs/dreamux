@@ -31,13 +31,6 @@ function harness(routeError?: Error) {
       if (routeError !== undefined) throw routeError;
       return OWNER;
     },
-    withRoutableTeamOwner: async (
-      _name: string,
-      task: (owner: ChannelRouteOwner) => Promise<unknown>,
-    ) => {
-      if (routeError !== undefined) throw routeError;
-      return task(OWNER);
-    },
     withTeamRouteClosing: async (
       _name: string,
       task: (owner: ChannelRouteOwner) => Promise<unknown>,
@@ -177,13 +170,6 @@ describe('TeamChannelCoordinator collaboration ownership', () => {
       teams: {
         async requireRoutableTeamOwner() {
           return OWNER;
-        },
-        async withRoutableTeamOwner<T>(
-          _name: string,
-          task: (owner: ChannelRouteOwner) => Promise<T>,
-        ) {
-          if (closing) throw new Error('Team "alpha" is closing');
-          return task(OWNER);
         },
         async withTeamRouteClosing<T>(
           _name: string,

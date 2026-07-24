@@ -30,9 +30,10 @@ daemon/service/config/log work, or missing-reply investigations.
 
 - `create`, `send`, `list`, `status`, `history`, `dissolve`, `bind_channel`, and
   `transfer_back` operate on dispatcher-owned Teams.
-- Address Teams by `team_name`. `create` starts a TeamLeader. `send` submits a
-  turn to that TeamLeader only; it does not message Team members directly and
-  does not post to a channel.
+- `create.name_prefix` is only a requested label. Use the returned concrete,
+  never-reused `team.team_name` for every later Team operation.
+- `create` starts a TeamLeader. `send` submits a turn to that TeamLeader only;
+  it does not message Team members directly and does not post to a channel.
 - `create.prompt` is optional. Without it, the TeamLeader starts idle until a
   bound-channel inbound or later `team.send`.
 - `bind_channel` and `transfer_back` are Team MCP tools. They take

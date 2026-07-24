@@ -32,6 +32,7 @@ export interface CollaborationSpaceRecord {
   container_key: string;
   display: string | null;
   canonical_url: string | null;
+  meta: Record<string, unknown>;
   current_binding: CollaborationSpaceBindingRecord | null;
   last_binding_generation: number;
   status: CollaborationSpaceStatus;
@@ -66,6 +67,7 @@ export interface ProvisionedTargetRecord {
   target_key: string;
   target_type: string;
   target_display: string | null;
+  target_meta: Record<string, unknown>;
   team_name: string;
   leader_name: string | null;
   worktree_slug: string;
@@ -170,4 +172,22 @@ export interface CollaborationSpaceCloseTargetInput {
   container: ChannelContainer;
   target: ChannelTarget;
   eventId?: string;
+}
+
+export interface AcceptTargetCreatedOptions {
+  allowMissing?: boolean;
+  defaultBinding?: CollaborationSpaceDefaultBindingInput;
+  /** Internal strict operation mode; conversational notification stays lenient. */
+  strict?: boolean;
+}
+
+export interface AcceptedTargetProvision {
+  provision: () => Promise<ProvisionedTargetRecord>;
+}
+
+export interface AcceptedTargetClose {
+  close: () => Promise<{
+    closed: boolean;
+    target: ProvisionedTargetView | null;
+  }>;
 }

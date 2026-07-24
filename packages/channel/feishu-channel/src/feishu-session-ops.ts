@@ -12,6 +12,7 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER } from '@excitedjs/feishu-transport';
 import type {
+  ChannelOutboundTarget,
   FeishuBot,
   FeishuCardActionEvent,
   FeishuInboundEvent,
@@ -37,6 +38,7 @@ import type { FeishuChannelSessionOptions } from './feishu-channel.js';
 import type { PeerBot } from './chat-bots-store.js';
 import type { FeishuTargetRouter } from './feishu-target-router.js';
 import {
+  FeishuOperationError,
   runFeishuBoundedOperation,
 } from './feishu-bounded-operation.js';
 import {
@@ -187,40 +189,56 @@ export async function sendReply(
 
 export async function sendCard(
   h: SessionHandle,
-  input: { chatId: string; card: unknown; messageId?: string },
+  input: {
+    target: ChannelOutboundTarget;
+    card: unknown;
+    signal?: AbortSignal;
+    mode?: 'inbound' | 'background';
+  },
 ): Promise<{ messageIds: string[] }> {
+  if (!h.sessionFence.isCurrent()) {
+    throw new FeishuOperationError('aborted');
+  }
   let result: { messageIds: string[] };
   try {
     result = await h.bot.sendCard(
-      channelOutboundToFeishuTarget({
-        conversationId: input.chatId,
-        ...(input.messageId !== undefined ? { replyTo: input.messageId } : {}),
-      }),
+      channelOutboundToFeishuTarget(input.target),
       input.card,
+      input.signal !== undefined ? { signal: input.signal } : undefined,
     );
   } catch (err) {
-    log(h).error(
-      {
-        dispatcher_id: h.opts.dispatcherId,
-        chat_id: input.chatId,
-        message_id: input.messageId,
-        err: errInfo(err),
-      },
-      'feishu sendCard failed',
-    );
+    if (input.mode !== 'background') {
+      log(h).error(
+        {
+          dispatcher_id: h.opts.dispatcherId,
+          chat_id: input.target.conversationId,
+          message_id: input.target.replyTo,
+          err: errInfo(err),
+        },
+        'feishu sendCard failed',
+      );
+    }
     throw err;
   }
-  log(h).info(
-    {
-      dispatcher_id: h.opts.dispatcherId,
-      chat_id: input.chatId,
-      message_id: input.messageId,
-      message_ids: result.messageIds,
-    },
-    'feishu interactive card sent',
-  );
-  if (input.messageId !== undefined) {
-    await clearInboundReaction(h, input.messageId);
+  if (!h.sessionFence.isCurrent()) {
+    throw new FeishuOperationError('aborted');
+  }
+  if (input.mode !== 'background') {
+    log(h).info(
+      {
+        dispatcher_id: h.opts.dispatcherId,
+        chat_id: input.target.conversationId,
+        message_id: input.target.replyTo,
+        message_ids: result.messageIds,
+      },
+      'feishu interactive card sent',
+    );
+  }
+  if (
+    input.mode !== 'background' &&
+    input.target.replyTo !== undefined
+  ) {
+    await clearInboundReaction(h, input.target.replyTo);
   }
   return result;
 }

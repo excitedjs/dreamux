@@ -7,7 +7,10 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import { parseAgentRuntimeSkillSources } from '../../agent-runtime/skill-sources.js';
-import { writeFileAtomic } from '../../platform/atomic-write.js';
+import {
+  writeFileAtomic,
+  writeFileExclusiveAtomic,
+} from '../../platform/atomic-write.js';
 import { isNotFound } from '../../platform/fs-errors.js';
 import {
   dispatcherAgentIdentityPath,
@@ -19,7 +22,13 @@ import {
 import { assertNoRemovedRecordFields, LegacyStateError } from '../legacy-state.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import {
+  allocateConcreteName,
+  type ConcreteNameKind,
+  type SuffixGenerator,
+} from '../name-allocator.js';
+import {
   DISPATCHER_AGENT_NAME,
+  TEAMMATE_NAME_PATTERN,
   validateAgentEntityName,
   type AgentEntityIdentity,
   type AgentEntityIdentityStatus,
@@ -63,6 +72,14 @@ export interface AgentIdentityUpdateInput {
   lastSeenAt?: number;
   lastPromptPreview?: string | null;
   lastAssistantPreview?: string | null;
+}
+
+export interface AgentNameAllocationInput {
+  dispatcherId: string;
+  kind: Exclude<ConcreteNameKind, 'team'>;
+  base: string;
+  teamSlug?: string;
+  generateSuffix?: SuffixGenerator;
 }
 
 export class AgentIdentityStore {
@@ -148,29 +165,41 @@ export class AgentIdentityStore {
   }
 
   /**
-   * Every teammate/leader name across the whole dispatcher (issue #233): the
-   * dispatcher's own teammates, plus each team's leader and members. Names-only,
-   * so the dispatcher-global `allocateName` dedup stays collision-free for the
-   * per-turn router key without `TeammateCollection` reaching into the team store.
-   * The leader is read explicitly from the team root because `list` is now
-   * members-only.
+   * Every occupied teammate/leader name across the whole dispatcher (issue
+   * #233): the dispatcher's own teammates, plus each team's leader and members.
+   * Entity directory names remain occupied even when their identity file is
+   * unreadable, so no-clobber discovery happens before workspace side effects.
+   * The leader is read explicitly from the team root because member directory
+   * names do not encode it.
    */
   async listAllNames(dispatcherId: string): Promise<Set<string>> {
-    const names = new Set<string>();
-    for (const identity of await this.listCollection(
-      dispatcherId,
-      dispatcherTeamMateDir(dispatcherId),
-    )) {
-      names.add(identity.name);
-    }
+    const names = new Set(
+      await this.listCollectionNames(dispatcherTeamMateDir(dispatcherId)),
+    );
     for (const teamId of await this.listTeamIds(dispatcherId)) {
       const leader = await this.leaderIdentity(dispatcherId, teamId);
       if (leader !== null) names.add(leader.name);
-      for (const identity of await this.list(dispatcherId, teamId)) {
-        names.add(identity.name);
+      for (const memberName of await this.listCollectionNames(
+        dispatcherTeamTeamMateDir(dispatcherId, teamId),
+      )) {
+        names.add(memberName);
       }
     }
     return names;
+  }
+
+  /** Allocate one generated name against the dispatcher's persisted namespace. */
+  async allocateName(input: AgentNameAllocationInput): Promise<string> {
+    const occupied = await this.listAllNames(input.dispatcherId);
+    return allocateConcreteName({
+      kind: input.kind,
+      base: input.base,
+      ...(input.teamSlug !== undefined ? { teamSlug: input.teamSlug } : {}),
+      exists: (value) => occupied.has(value),
+      ...(input.generateSuffix !== undefined
+        ? { generateSuffix: input.generateSuffix }
+        : {}),
+    });
   }
 
   private async listTeamIds(dispatcherId: string): Promise<string[]> {
@@ -185,25 +214,34 @@ export class AgentIdentityStore {
     }
   }
 
+  /** List valid entity directory names; the directory itself is the occupancy fact. */
+  private async listCollectionNames(dir: string): Promise<string[]> {
+    try {
+      const entries = await readdir(dir, { withFileTypes: true });
+      return entries
+        .filter(
+          (entry) =>
+            entry.isDirectory() && TEAMMATE_NAME_PATTERN.test(entry.name),
+        )
+        .map((entry) => entry.name)
+        .sort();
+    } catch (err) {
+      if (isNotFound(err)) return [];
+      throw err;
+    }
+  }
+
   /** Read every `<dir>/<entity>/identity.json` child, skipping unreadable ones. */
   private async listCollection(
     dispatcherId: string,
     dir: string,
   ): Promise<AgentEntityIdentity[]> {
-    let entries: import('node:fs').Dirent[];
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch (err) {
-      if (isNotFound(err)) return [];
-      throw err;
-    }
     const identities: AgentEntityIdentity[] = [];
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (!entry.isDirectory()) continue;
+    for (const name of await this.listCollectionNames(dir)) {
       const identity = await this.readAt(
         dispatcherId,
-        entry.name,
-        join(dir, entry.name, 'identity.json'),
+        name,
+        join(dir, name, 'identity.json'),
       );
       if (identity !== null) identities.push(identity);
     }
@@ -275,7 +313,21 @@ export class AgentIdentityStore {
       last_prompt_preview: null,
       last_assistant_preview: null,
     };
-    await this.write(identity);
+    const path = dispatcherAgentIdentityPath({
+      dispatcherId: identity.dispatcher_id,
+      name: identity.name,
+      teamId: identity.team_id,
+      role: identity.role,
+    });
+    const created = await writeFileExclusiveAtomic(
+      path,
+      `${JSON.stringify(identity, null, 2)}\n`,
+    );
+    if (!created) {
+      throw new Error(
+        `Agent identity ${JSON.stringify(identity.name)} already exists`,
+      );
+    }
     this.publishState(identity);
     return identity;
   }

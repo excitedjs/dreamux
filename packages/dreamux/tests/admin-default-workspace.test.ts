@@ -85,10 +85,11 @@ describe('admin no-repo spawn/create → default work dir (#199)', () => {
     } as unknown as Server;
     await adminMethods['team.create']!(server, {
       dispatcher_id: 'flow',
-      team_name: 'plain',
+      name_prefix: 'plain',
       leader_agent_runtime: 'codex',
       intent: 'work',
     });
+    expect(captured['namePrefix']).toBe('plain');
     expect(captured).not.toHaveProperty('repoCwd');
     expect(captured).not.toHaveProperty('worktree');
   });
@@ -109,7 +110,7 @@ describe('admin no-repo spawn/create → default work dir (#199)', () => {
     } as unknown as Server;
     await adminMethods['team.create']!(server, {
       dispatcher_id: 'flow',
-      team_name: 'plain',
+      name_prefix: 'plain',
       leader_agent_runtime: 'codex',
       intent: 'work',
       identity: 'team lead',

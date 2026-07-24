@@ -77,7 +77,7 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
       });
       await expectBadRequest('team.create', {
         dispatcher_id: 'flow',
-        team_name: 'alpha',
+        name_prefix: 'alpha',
         leader_agent_runtime: 'codex',
         intent: 'work',
         skill_sources,
@@ -91,7 +91,7 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
       mkdirSync(join(root, 'team-workflow'), { recursive: true });
       await expectBadRequest('team.create', {
         dispatcher_id: 'flow',
-        team_name: 'alpha',
+        name_prefix: 'alpha',
         leader_agent_runtime: 'codex',
         intent: 'work',
         skill_sources: [{
@@ -114,7 +114,7 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
   it('rejects team.create with missing or empty intent', async () => {
     const base = {
       dispatcher_id: 'flow',
-      team_name: 'alpha',
+      name_prefix: 'alpha',
       leader_agent_runtime: 'codex',
     };
     await expectBadRequest('team.create', base);
@@ -124,7 +124,7 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
   it('rejects team.create with blank identity', async () => {
     await expectBadRequest('team.create', {
       dispatcher_id: 'flow',
-      team_name: 'alpha',
+      name_prefix: 'alpha',
       leader_agent_runtime: 'codex',
       intent: 'work',
       identity: '   ',

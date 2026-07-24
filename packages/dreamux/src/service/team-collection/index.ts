@@ -1,4 +1,4 @@
-import { Buffer } from 'node:buffer';
+import { randomUUID } from 'node:crypto';
 
 import type {
   AgentRuntimeMcpServer,
@@ -24,6 +24,7 @@ import { KeyedAsyncQueue } from '../serial-queue.js';
 import { TeamStore } from './store.js';
 import type {
   TeamCreateInput,
+  TeamCreateAtNameInput,
   TeamCreateResult,
   TeamHistoryQuery,
   TeamHistoryResult,
@@ -31,16 +32,42 @@ import type {
   TeamLeaderLease,
   TeamLeaderSendResult,
   TeamListRow,
+  TeamNameClaim,
   TeamRecord,
+  TeamRouteProjection,
 } from './types.js';
 import { validateTeamId } from './types.js';
+import {
+  clampTeamHistoryLimit,
+  decodeTeamCursor,
+  encodeTeamCursor,
+  matchesTeamHistoryQuery,
+  previewTeamText,
+} from './read-helpers.js';
 import type { AgentEntityIdentityStatus } from '../agent-entity/types.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
+import {
+  claimConcreteName,
+  type SuffixGenerator,
+} from '../name-allocator.js';
 import {
   TeamService,
   type TeamSchedulerLifecycle,
   type TeamServiceDeps,
 } from '../team-service/index.js';
+
+/** Share one in-flight promise per key; a concurrent same-key call joins it. */
+function dedupe<T>(
+  inFlight: Map<string, Promise<T>>,
+  key: string,
+  start: () => Promise<T>,
+): Promise<T> {
+  const existing = inFlight.get(key);
+  if (existing !== undefined) return existing;
+  const promise = start().finally(() => inFlight.delete(key));
+  inFlight.set(key, promise);
+  return promise;
+}
 
 export interface TeamCollectionOptions {
   /** The dispatcher this collection belongs to (issue #233 ownership sinking). */
@@ -78,6 +105,8 @@ export interface TeamCollectionOptions {
   }) => readonly AgentRuntimeMcpServer[];
   log: DreamuxLogger;
   coreEvents?: DispatcherCoreEventPublisher;
+  nameSuffixGenerator?: SuffixGenerator;
+  agentNameSuffixGenerator?: SuffixGenerator;
 }
 
 /**
@@ -113,8 +142,6 @@ export class TeamCollection {
    * ownership of those partially booted runtimes so it can retry cleanup.
    */
   private readonly materialized = new Set<TeamService>();
-  /** In-flight `create` per team id (concurrent same-id creates share one). */
-  private readonly creating = new Map<string, Promise<TeamCreateResult>>();
   /** In-flight cache-miss `get`, so a cold-cache race rebuilds one TeamService
    * (one leader runtime), not two (issue #233 concurrency guard). */
   private readonly rebuilding = new Map<string, Promise<TeamService>>();
@@ -132,28 +159,72 @@ export class TeamCollection {
     this.store = new TeamStore(opts.coreEvents);
   }
 
-  async create(input: TeamCreateInput): Promise<TeamCreateResult> {
+  async claimName(
+    namePrefix: string,
+    claimToken: string = randomUUID(),
+  ): Promise<TeamNameClaim> {
+    requireLifecycleText(namePrefix, 'Team name prefix');
+    const name = await claimConcreteName({
+      kind: 'team',
+      base: namePrefix,
+      claim: (candidate) =>
+        this.store.claimName(this.dispatcherId, candidate, claimToken),
+      ...(this.opts.nameSuffixGenerator !== undefined
+        ? { generateSuffix: this.opts.nameSuffixGenerator }
+        : {}),
+    });
+    return { name, token: claimToken };
+  }
+
+  async createFromPrefix(input: TeamCreateInput): Promise<TeamCreateResult> {
+    const { namePrefix, ...options } = input;
+    const claim = await this.claimName(namePrefix);
+    return this.create({
+      ...options,
+      name: claim.name,
+      nameClaimToken: claim.token,
+    });
+  }
+
+  /**
+   * Create one Team at a concrete name already allocated by the caller. The
+   * name is still checked against all persisted Teams and is never reusable.
+   */
+  async create(input: TeamCreateAtNameInput): Promise<TeamCreateResult> {
     const teamId = validateTeamId(input.name);
-    return dedupe(this.creating, teamId, () =>
-      this.routeLifecycle.run(teamId, async () => {
-        if (this.routeClosing.has(teamId)) {
-          throw new TeamUnavailableError(
-            `Team ${JSON.stringify(teamId)} is closing`,
-          );
-        }
-        return this.doCreate(input, teamId);
-      }),
-    );
+    if (this.routeClosing.has(teamId)) {
+      throw new TeamUnavailableError(
+        `Team ${JSON.stringify(teamId)} is closing`,
+      );
+    }
+    const claimToken = input.nameClaimToken ?? randomUUID();
+    if (!(await this.store.claimName(this.dispatcherId, teamId, claimToken))) {
+      throw new Error(
+        `Team ${JSON.stringify(teamId)} already exists or its concrete name is claimed by another owner; ` +
+          'concrete Team names are never reused',
+      );
+    }
+    return this.routeLifecycle.run(teamId, async () => {
+      if (this.routeClosing.has(teamId)) {
+        throw new TeamUnavailableError(
+          `Team ${JSON.stringify(teamId)} is closing`,
+        );
+      }
+      return this.doCreate(input, teamId, claimToken);
+    });
   }
 
   private async doCreate(
-    input: TeamCreateInput,
+    input: TeamCreateAtNameInput,
     teamId: string,
+    nameClaimToken: string,
   ): Promise<TeamCreateResult> {
     requireLifecycleText(input.intent, 'Team create intent');
     const existing = await this.store.get(this.dispatcherId, teamId);
-    if (existing !== null && existing.status !== 'closed') {
-      throw new Error(`Team ${JSON.stringify(teamId)} already exists`);
+    if (existing !== null) {
+      throw new Error(
+        `Team ${JSON.stringify(teamId)} already exists; concrete Team names are never reused`,
+      );
     }
     const workspaceRoot = await dispatcherWorkspace(
       this.opts.config,
@@ -186,6 +257,7 @@ export class TeamCollection {
         {
           teamId,
           name: input.name,
+          nameClaimToken,
           ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
           leaderAgentRuntime: input.leaderAgentRuntime,
           intent: input.intent,
@@ -194,7 +266,6 @@ export class TeamCollection {
             ? { skillSources: input.skillSources }
             : {}),
           workspace,
-          existing,
         },
       );
     // Cache the live service so later `get`s reuse this leader + collection and
@@ -272,6 +343,17 @@ export class TeamCollection {
    * channel route.
    */
   async requireRoutableTeamOwner(teamId: string): Promise<ChannelRouteOwner> {
+    const projection = await this.requireRoutableTeamProjection(teamId);
+    return {
+      kind: 'team',
+      teamName: projection.team_name,
+      leaderName: projection.leader_name,
+    };
+  }
+
+  async requireRoutableTeamProjection(
+    teamId: string,
+  ): Promise<TeamRouteProjection> {
     const id = validateTeamId(teamId);
     if (this.routeClosing.has(id)) {
       throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
@@ -282,11 +364,7 @@ export class TeamCollection {
     if (this.routeClosing.has(id)) {
       throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
     }
-    return {
-      kind: 'team',
-      teamName: id,
-      leaderName: service.leaderName,
-    };
+    return service.routeProjection();
   }
 
   /**
@@ -294,16 +372,16 @@ export class TeamCollection {
    * A concurrent Team close cannot announce its closing fence until `task`
    * finishes; once closing is announced, later leases fail before mutation.
    */
-  async withRoutableTeamOwner<T>(
+  async withRoutableTeamProjection<T>(
     teamId: string,
-    task: (owner: ChannelRouteOwner) => Promise<T>,
+    task: (projection: TeamRouteProjection) => Promise<T>,
   ): Promise<T> {
     const id = validateTeamId(teamId);
     return this.routeLifecycle.run(id, async () => {
       if (this.routeClosing.has(id)) {
         throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
       }
-      return task(await this.requireRoutableTeamOwner(id));
+      return task(await this.requireRoutableTeamProjection(id));
     });
   }
 
@@ -337,7 +415,7 @@ export class TeamCollection {
    */
   async withRoutableTeamLeaderLease<T>(
     lease: TeamLeaderLease,
-    task: (owner: ChannelRouteOwner) => Promise<T>,
+    task: (projection: TeamRouteProjection) => Promise<T>,
   ): Promise<T> {
     const id = validateTeamId(lease.teamId);
     return this.routeLifecycle.run(id, async () => {
@@ -356,11 +434,7 @@ export class TeamCollection {
           `Team ${JSON.stringify(id)} generation is no longer routable`,
         );
       }
-      return task({
-        kind: 'team',
-        teamName: id,
-        leaderName: service.leaderName,
-      });
+      return task(service.routeProjection());
     });
   }
 
@@ -408,6 +482,12 @@ export class TeamCollection {
   async isOpenTeam(teamId: string): Promise<boolean> {
     const team = await this.store.get(this.dispatcherId, validateTeamId(teamId));
     return team !== null && team.status !== 'closed';
+  }
+
+  async hasTeam(teamId: string): Promise<boolean> {
+    return (
+      await this.store.get(this.dispatcherId, validateTeamId(teamId))
+    ) !== null;
   }
 
   private async currentOpenService(teamId: string): Promise<TeamService> {
@@ -466,6 +546,9 @@ export class TeamCollection {
       leaderChannelDescriptors: this.opts.leaderChannelDescriptors,
       trackMaterialized: (service) => this.materialized.add(service),
       log: this.opts.log,
+      ...(this.opts.agentNameSuffixGenerator !== undefined
+        ? { agentNameSuffixGenerator: this.opts.agentNameSuffixGenerator }
+        : {}),
     };
   }
 
@@ -605,82 +688,6 @@ export class TeamUnavailableError extends Error {
     super(message);
     this.name = 'TeamUnavailableError';
   }
-}
-
-/** Share one in-flight promise per key; a concurrent same-key call joins it. */
-function dedupe<T>(
-  inFlight: Map<string, Promise<T>>,
-  key: string,
-  start: () => Promise<T>,
-): Promise<T> {
-  const existing = inFlight.get(key);
-  if (existing !== undefined) return existing;
-  const promise = start().finally(() => inFlight.delete(key));
-  inFlight.set(key, promise);
-  return promise;
-}
-
-function matchesTeamHistoryQuery(
-  row: TeamHistoryRow,
-  input: Omit<TeamHistoryQuery, 'dispatcherId'>,
-): boolean {
-  if (input.name !== undefined && row.team_name !== validateTeamId(input.name)) {
-    return false;
-  }
-  if (input.status !== undefined && row.status !== input.status) return false;
-  if (input.repo !== undefined) {
-    const needle = input.repo.toLowerCase();
-    const hit = row.source_repo !== null && row.source_repo.toLowerCase().includes(needle);
-    if (!hit) return false;
-  }
-  if (input.grep !== undefined && !teamRowMatchesText(row, input.grep)) {
-    return false;
-  }
-  if (input.since !== undefined && row.updated_at < input.since) return false;
-  if (input.until !== undefined && row.updated_at > input.until) return false;
-  return true;
-}
-
-function teamRowMatchesText(row: TeamHistoryRow, grep: string): boolean {
-  const needle = grep.toLowerCase();
-  if (needle === '') return true;
-  return [
-    row.team_name,
-    row.intent,
-    row.source_repo,
-    row.leader_name,
-    row.close_note,
-  ].some((value) => value !== null && value.toLowerCase().includes(needle));
-}
-
-function clampTeamHistoryLimit(input: number | undefined): number {
-  if (input === undefined) return 20;
-  if (!Number.isInteger(input) || input < 1) {
-    throw new Error('history limit must be a positive integer');
-  }
-  return Math.min(input, 100);
-}
-
-function encodeTeamCursor(offset: number): string {
-  return Buffer.from(JSON.stringify({ offset }), 'utf8').toString('base64url');
-}
-
-function decodeTeamCursor(cursor: string): number {
-  try {
-    const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as {
-      offset?: unknown;
-    };
-    if (typeof parsed.offset === 'number' && Number.isInteger(parsed.offset) && parsed.offset >= 0) {
-      return parsed.offset;
-    }
-  } catch {
-  }
-  throw new Error('invalid history cursor');
-}
-
-function previewTeamText(text: string): string {
-  const collapsed = text.replace(/\s+/g, ' ').trim();
-  return collapsed.length <= 500 ? collapsed : `${collapsed.slice(0, 497)}...`;
 }
 
 function errInfo(err: unknown): Record<string, unknown> {

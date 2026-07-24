@@ -43,7 +43,7 @@ export interface DispatcherAgentDeps {
    * shared with the dispatcher-scope `TeammateCollection` (issue #233). The stores
    * are stateless (paths by role + team_id), so one pair safely serves the
    * dispatcher agent's root identity (role `dispatcher`) and the collection's
-   * teammate reads (role `teammate`).
+   * teammate reads and generated-name creation (role `teammate`).
    */
   identities: AgentIdentityStore;
   turnsStore: AgentTurnsStore;
