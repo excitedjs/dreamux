@@ -7,7 +7,10 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import { parseAgentRuntimeSkillSources } from '../../agent-runtime/skill-sources.js';
-import { writeFileAtomic } from '../../platform/atomic-write.js';
+import {
+  writeFileAtomic,
+  writeFileExclusiveAtomic,
+} from '../../platform/atomic-write.js';
 import { isNotFound } from '../../platform/fs-errors.js';
 import {
   dispatcherAgentIdentityPath,
@@ -18,6 +21,12 @@ import {
 } from '../../platform/paths.js';
 import { assertNoRemovedRecordFields, LegacyStateError } from '../legacy-state.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
+import {
+  allocateConcreteName,
+  type ConcreteNameKind,
+  type SuffixGenerator,
+} from '../name-allocator.js';
+import { KeyedAsyncQueue } from '../serial-queue.js';
 import {
   DISPATCHER_AGENT_NAME,
   validateAgentEntityName,
@@ -65,10 +74,31 @@ export interface AgentIdentityUpdateInput {
   lastAssistantPreview?: string | null;
 }
 
+export interface OccupiedTeamLeaderNames {
+  listOccupiedLeaderNames(dispatcherId: string): Promise<ReadonlySet<string>>;
+}
+
+export interface ReservedAgentNameInput {
+  dispatcherId: string;
+  kind: Exclude<ConcreteNameKind, 'team'>;
+  base: string;
+  teamSlug?: string;
+  generateSuffix?: SuffixGenerator;
+}
+
+const EMPTY_TEAM_LEADER_NAMES: OccupiedTeamLeaderNames = {
+  listOccupiedLeaderNames: async () => new Set<string>(),
+};
+
 export class AgentIdentityStore {
+  private readonly nameReservations = new KeyedAsyncQueue();
+  private readonly reservedNames = new Map<string, Set<string>>();
+
   constructor(
     private readonly log: DreamuxLogger,
     private readonly coreEvents?: DispatcherCoreEventPublisher,
+    private readonly occupiedTeamLeaderNames: OccupiedTeamLeaderNames =
+      EMPTY_TEAM_LEADER_NAMES,
   ) {}
 
   /**
@@ -173,6 +203,56 @@ export class AgentIdentityStore {
     return names;
   }
 
+  /**
+   * Reserve one generated agent name across every collection in a dispatcher.
+   *
+   * The queue protects only candidate selection and reservation-set mutation.
+   * Slow workspace preparation and identity persistence run outside it while
+   * the selected name stays reserved. The final queued release happens after
+   * the callback settles, so a successful identity write becomes visible to
+   * the next allocator before the transient reservation disappears.
+   */
+  async withReservedName<T>(
+    input: ReservedAgentNameInput,
+    task: (name: string) => Promise<T>,
+  ): Promise<T> {
+    const name = await this.nameReservations.run(input.dispatcherId, async () => {
+      const occupied = await this.listAllNames(input.dispatcherId);
+      for (const leaderName of await this.occupiedTeamLeaderNames
+        .listOccupiedLeaderNames(input.dispatcherId)) {
+        occupied.add(leaderName);
+      }
+      for (const reserved of this.reservedNames.get(input.dispatcherId) ?? []) {
+        occupied.add(reserved);
+      }
+      const candidate = allocateConcreteName({
+        kind: input.kind,
+        base: input.base,
+        ...(input.teamSlug !== undefined ? { teamSlug: input.teamSlug } : {}),
+        exists: (value) => occupied.has(value),
+        ...(input.generateSuffix !== undefined
+          ? { generateSuffix: input.generateSuffix }
+          : {}),
+      });
+      const reservations =
+        this.reservedNames.get(input.dispatcherId) ?? new Set<string>();
+      reservations.add(candidate);
+      this.reservedNames.set(input.dispatcherId, reservations);
+      return candidate;
+    });
+    try {
+      return await task(name);
+    } finally {
+      await this.nameReservations.run(input.dispatcherId, async () => {
+        const reservations = this.reservedNames.get(input.dispatcherId);
+        reservations?.delete(name);
+        if (reservations?.size === 0) {
+          this.reservedNames.delete(input.dispatcherId);
+        }
+      });
+    }
+  }
+
   private async listTeamIds(dispatcherId: string): Promise<string[]> {
     try {
       const entries = await readdir(dispatcherTeamDir(dispatcherId), {
@@ -275,7 +355,21 @@ export class AgentIdentityStore {
       last_prompt_preview: null,
       last_assistant_preview: null,
     };
-    await this.write(identity);
+    const path = dispatcherAgentIdentityPath({
+      dispatcherId: identity.dispatcher_id,
+      name: identity.name,
+      teamId: identity.team_id,
+      role: identity.role,
+    });
+    const created = await writeFileExclusiveAtomic(
+      path,
+      `${JSON.stringify(identity, null, 2)}\n`,
+    );
+    if (!created) {
+      throw new Error(
+        `Agent identity ${JSON.stringify(identity.name)} already exists`,
+      );
+    }
     this.publishState(identity);
     return identity;
   }

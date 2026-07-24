@@ -1,10 +1,9 @@
 import { describe, it, expect } from 'vitest';
 
 import {
-  AGENT_NAME_SUFFIX_LENGTH,
   CONCRETE_NAME_MAX,
-  TEAM_NAME_SUFFIX_MAX_LENGTH,
-  TEAM_NAME_SUFFIX_MIN_LENGTH,
+  NAME_SUFFIX_MAX_LENGTH,
+  NAME_SUFFIX_MIN_LENGTH,
   allocateConcreteName,
   buildConcreteName,
   generateNameSuffix,
@@ -32,32 +31,37 @@ describe('Team and TeamMate concrete-name allocation (#188)', () => {
     expect(slugifyName('---lead---')).toBe('lead');
   });
 
-  it('generates a 4-8 char lowercase base36 Team suffix', () => {
+  it('generates a 4-8 char lowercase base36 suffix', () => {
     for (let sample = 0; sample < 32; sample += 1) {
-      const suffix = generateNameSuffix('team');
+      const suffix = generateNameSuffix();
       expect(suffix.length).toBeGreaterThanOrEqual(
-        TEAM_NAME_SUFFIX_MIN_LENGTH,
+        NAME_SUFFIX_MIN_LENGTH,
       );
       expect(suffix.length).toBeLessThanOrEqual(
-        TEAM_NAME_SUFFIX_MAX_LENGTH,
+        NAME_SUFFIX_MAX_LENGTH,
       );
       expect(suffix).toMatch(/^[a-z0-9]+$/);
     }
   });
 
-  it('retains the fixed 8-char agent-entity suffix contract', () => {
-    for (
-      const kind of ['teammate', 'team_member', 'team_leader'] as const
-    ) {
-      expect(generateNameSuffix(kind)).toHaveLength(AGENT_NAME_SUFFIX_LENGTH);
-      expect(
-        allocateConcreteName({
+  it('uses both 4- and 8-char endpoints for every generated name kind', () => {
+    for (const kind of [
+      'team',
+      'teammate',
+      'team_member',
+      'team_leader',
+    ] as const) {
+      for (const suffix of ['a1b2', 'abcd1234']) {
+        const name = allocateConcreteName({
           kind,
           base: 'reviewer',
           teamSlug: 'alpha',
           exists: never,
-        }),
-      ).toMatch(/-[a-z0-9]{8}$/);
+          generateSuffix: () => suffix,
+        });
+        expect(name).toMatch(new RegExp(`-${suffix}$`));
+        expect(TEAMMATE_NAME_PATTERN.test(name)).toBe(true);
+      }
     }
   });
 
@@ -82,17 +86,19 @@ describe('Team and TeamMate concrete-name allocation (#188)', () => {
     ).toBe('tl-alpha-abcd1234');
   });
 
-  it('truncates the slug so the whole name stays within the 64-char limit', () => {
+  it('truncates the slug at both suffix endpoints to the 64-char limit', () => {
     const longBase = 'x'.repeat(200);
-    const name = buildConcreteName({
-      kind: 'team_member',
-      base: longBase,
-      suffix: 'abcd1234',
-    });
-    expect(name.length).toBeLessThanOrEqual(CONCRETE_NAME_MAX);
-    expect(TEAMMATE_NAME_PATTERN.test(name)).toBe(true);
-    expect(name.startsWith('tm-')).toBe(true);
-    expect(name.endsWith('-abcd1234')).toBe(true);
+    for (const suffix of ['a1b2', 'abcd1234']) {
+      const name = buildConcreteName({
+        kind: 'team_member',
+        base: longBase,
+        suffix,
+      });
+      expect(name).toHaveLength(CONCRETE_NAME_MAX);
+      expect(TEAMMATE_NAME_PATTERN.test(name)).toBe(true);
+      expect(name.startsWith('tm-')).toBe(true);
+      expect(name.endsWith(`-${suffix}`)).toBe(true);
+    }
   });
 
   it('every produced name matches the TeamMate name pattern', () => {

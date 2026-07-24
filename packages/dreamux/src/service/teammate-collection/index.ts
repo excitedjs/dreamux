@@ -34,10 +34,7 @@ import {
 } from './read-helpers.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import { AgentTurnsStore } from '../agent-entity/turns-store.js';
-import {
-  allocateConcreteName,
-  type SuffixGenerator,
-} from '../name-allocator.js';
+import type { SuffixGenerator } from '../name-allocator.js';
 import {
   assertManagedWorktreeAvailable,
   dispatcherWorkspace,
@@ -55,7 +52,6 @@ import {
   type AgentEntityIdentity,
   type AgentEntityLastResult,
   type AgentEntityRecordRow,
-  type AgentEntityRole,
   type AgentEntityRuntimeStatus,
   type AgentEntitySendResult,
   type AgentEntitySpawnResult,
@@ -89,9 +85,9 @@ export interface TeammateCollectionOptions {
    * `DispatcherService` is the per-dispatcher composition root and builds the
    * shared pair once, then injects it into the dispatcher agent, the
    * dispatcher-scope teammate collection, and each team-scope member
-   * collection. The stores are stateless (paths by role + team_id), so one
-   * pair safely serves all scopes; `TeammateCollection` must never hide a
-   * `new` fallback.
+   * collection. The shared identity store also owns dispatcher-global
+   * transient name reservations, so every scope must use that same live
+   * instance; `TeammateCollection` must never hide a `new` fallback.
    */
   identities: AgentIdentityStore;
   turnsStore: AgentTurnsStore;
@@ -192,29 +188,6 @@ export class TeammateCollection implements TeammateOps {
     return this.turnsStore;
   }
 
-  /**
-   * Allocate a dispatcher-global concrete name. The candidate is checked against
-   * ALL of the dispatcher's identities regardless of team, so `producerName` is
-   * unique across the dispatcher and `producerName:turnId` stays collision-free
-   * for the per-dispatcher router (issue #233).
-   */
-  private async allocateName(
-    role: AgentEntityRole,
-    base: string,
-    teamSlug?: string,
-  ): Promise<string> {
-    const taken = await this.identities.listAllNames(this.dispatcherId);
-    return allocateConcreteName({
-      kind: role,
-      base,
-      ...(teamSlug !== undefined ? { teamSlug } : {}),
-      exists: (candidate) => taken.has(candidate),
-      ...(this.opts.suffixGenerator !== undefined
-        ? { generateSuffix: this.opts.suffixGenerator }
-        : {}),
-    });
-  }
-
   async spawn(input: SpawnTeamMateRequest): Promise<AgentEntitySpawnResult> {
     if (this.opts.isShuttingDown?.())
       throw new Error(`dispatcher '${this.dispatcherId}' is shutting down`);
@@ -231,43 +204,54 @@ export class TeammateCollection implements TeammateOps {
     if (teamId !== undefined && input.sharedWorkspace === undefined) {
       throw new Error('Team member spawn requires a shared team workspace');
     }
-    const role: AgentEntityRole = teamId !== undefined ? 'team_member' : 'teammate';
-    const name = await this.allocateName(role, input.name);
+    const role = teamId !== undefined ? 'team_member' : 'teammate';
     const agentRuntimeId =
       input.agentRuntime ?? defaultAgentRuntime(this.opts.config, this.dispatcherId);
-    const workspace = await resolveSpawnWorkspace({
-      config: this.opts.config,
-      worktrees: this.worktrees,
-      dispatcherId: this.dispatcherId,
-      name,
-      request: input,
-    });
-    if (input.sharedWorkspace === undefined) {
-      await assertManagedWorktreeAvailable({
-        identities: this.identities,
+    const identity = await this.identities.withReservedName(
+      {
         dispatcherId: this.dispatcherId,
-        name,
-        worktree: workspace.worktree,
-      });
-    }
-    const identity = await this.identities.create({
-      dispatcherId: this.dispatcherId,
-      name,
-      role,
-      teamId: teamId ?? null,
-      agentRuntime: agentRuntimeId,
-      sourceCwd: workspace.sourceCwd,
-      sourceRepo: workspace.sourceRepo,
-      cwd: workspace.runtimeCwd,
-      runtimeCwd: workspace.runtimeCwd,
-      worktree: workspace.worktree,
-      intent: input.intent,
-      identityPrompt,
-      ...(input.skillSources !== undefined
-        ? { skillSources: input.skillSources }
-        : {}),
-      status: 'starting',
-    });
+        kind: role,
+        base: input.name,
+        ...(this.opts.suffixGenerator !== undefined
+          ? { generateSuffix: this.opts.suffixGenerator }
+          : {}),
+      },
+      async (name) => {
+        const workspace = await resolveSpawnWorkspace({
+          config: this.opts.config,
+          worktrees: this.worktrees,
+          dispatcherId: this.dispatcherId,
+          name,
+          request: input,
+        });
+        if (input.sharedWorkspace === undefined) {
+          await assertManagedWorktreeAvailable({
+            identities: this.identities,
+            dispatcherId: this.dispatcherId,
+            name,
+            worktree: workspace.worktree,
+          });
+        }
+        return this.identities.create({
+          dispatcherId: this.dispatcherId,
+          name,
+          role,
+          teamId: teamId ?? null,
+          agentRuntime: agentRuntimeId,
+          sourceCwd: workspace.sourceCwd,
+          sourceRepo: workspace.sourceRepo,
+          cwd: workspace.runtimeCwd,
+          runtimeCwd: workspace.runtimeCwd,
+          worktree: workspace.worktree,
+          intent: input.intent,
+          identityPrompt,
+          ...(input.skillSources !== undefined
+            ? { skillSources: input.skillSources }
+            : {}),
+          status: 'starting',
+        });
+      },
+    );
     const entity = this.entityFor(identity);
     await entity.ensureStarted();
     const turn = await entity.submitInitialPrompt(input.prompt, {

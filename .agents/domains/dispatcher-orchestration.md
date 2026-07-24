@@ -142,6 +142,11 @@ Source:
 allocates a concrete `team_name` with a 4–8 character random suffix, checks it
 against the Team namespace's permanent name claims (including closed and
 not-yet-materialized Teams), and never reuses it.
+Generated TeamLeader, ordinary TeamMate, and Team-member names also use 4–8
+character suffixes. One dispatcher-shared `AgentIdentityStore` serializes
+candidate reservation across those three creation paths, while a narrow
+TeamStore projection keeps a Team record's pending `leader_name` occupied
+before its identity exists.
 Every later Team operation is addressed by the concrete `team_name` returned
 from create. Dispatcher-visible Team MCP tools:
 

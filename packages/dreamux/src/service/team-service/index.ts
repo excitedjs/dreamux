@@ -42,7 +42,7 @@ import {
   type AgentEntityRuntimeStatus,
   type AgentEntityTurnResult,
 } from '../agent-entity/types.js';
-import { allocateConcreteName } from '../name-allocator.js';
+import type { SuffixGenerator } from '../name-allocator.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import type { TeamStore } from '../team-collection/store.js';
 import type {
@@ -76,6 +76,7 @@ export interface TeamServiceDeps {
   }) => readonly AgentRuntimeMcpServer[];
   trackMaterialized: (service: TeamService) => void;
   store: TeamStore;
+  agentNameSuffixGenerator?: SuffixGenerator;
   evict: (service: TeamService) => void;
   log: DreamuxLogger;
 }
@@ -141,6 +142,9 @@ export class TeamService {
       router: deps.router,
       initiatorFor: deps.initiatorFor,
       isShuttingDown: deps.isShuttingDown,
+      ...(deps.agentNameSuffixGenerator !== undefined
+        ? { suffixGenerator: deps.agentNameSuffixGenerator }
+        : {}),
       log: deps.log,
     });
     this.scheduler_ = new SchedulerService({
@@ -166,48 +170,53 @@ export class TeamService {
       input.identity,
       'TeamLeader identity',
     );
-    const leaderName = await service.allocateLeaderName();
-    let team = await deps.store.create({
-      dispatcher_id: deps.dispatcherId,
-      team_id: input.teamId,
-      name: input.name,
-      repo_cwd: input.workspace.sourceCwd,
-      source_repo: input.workspace.sourceRepo,
-      leader_name: leaderName,
-      leader_agent_runtime: input.leaderAgentRuntime,
-      runtime_cwd: input.workspace.runtimeCwd,
-      worktree: input.workspace.worktree,
-      status: 'starting',
-      intent: input.intent,
-      closed_at: null,
-      close_note: null,
-    }, input.nameClaimToken);
-    const existingLeader = await deps.identities.get(
-      deps.dispatcherId,
-      leaderName,
-      input.teamId,
+    let { team, identity } = await deps.identities.withReservedName(
+      {
+        dispatcherId: deps.dispatcherId,
+        kind: 'team_leader',
+        base: input.teamId,
+        teamSlug: input.teamId,
+        ...(deps.agentNameSuffixGenerator !== undefined
+          ? { generateSuffix: deps.agentNameSuffixGenerator }
+          : {}),
+      },
+      async (leaderName) => {
+        const createdTeam = await deps.store.create({
+          dispatcher_id: deps.dispatcherId,
+          team_id: input.teamId,
+          name: input.name,
+          repo_cwd: input.workspace.sourceCwd,
+          source_repo: input.workspace.sourceRepo,
+          leader_name: leaderName,
+          leader_agent_runtime: input.leaderAgentRuntime,
+          runtime_cwd: input.workspace.runtimeCwd,
+          worktree: input.workspace.worktree,
+          status: 'starting',
+          intent: input.intent,
+          closed_at: null,
+          close_note: null,
+        }, input.nameClaimToken);
+        const createdIdentity = await deps.identities.create({
+          dispatcherId: deps.dispatcherId,
+          name: leaderName,
+          role: 'team_leader',
+          teamId: input.teamId,
+          agentRuntime: input.leaderAgentRuntime,
+          sourceCwd: input.workspace.sourceCwd,
+          sourceRepo: input.workspace.sourceRepo,
+          cwd: input.workspace.runtimeCwd,
+          runtimeCwd: input.workspace.runtimeCwd,
+          worktree: input.workspace.worktree,
+          intent: input.intent,
+          identityPrompt,
+          ...(input.skillSources !== undefined
+            ? { skillSources: input.skillSources }
+            : {}),
+          status: 'starting',
+        });
+        return { team: createdTeam, identity: createdIdentity };
+      },
     );
-    if (existingLeader !== null) {
-      throw new Error(`TeamLeader ${JSON.stringify(leaderName)} already exists`);
-    }
-    const identity = await deps.identities.create({
-      dispatcherId: deps.dispatcherId,
-      name: leaderName,
-      role: 'team_leader',
-      teamId: input.teamId,
-      agentRuntime: input.leaderAgentRuntime,
-      sourceCwd: input.workspace.sourceCwd,
-      sourceRepo: input.workspace.sourceRepo,
-      cwd: input.workspace.runtimeCwd,
-      runtimeCwd: input.workspace.runtimeCwd,
-      worktree: input.workspace.worktree,
-      intent: input.intent,
-      identityPrompt,
-      ...(input.skillSources !== undefined
-        ? { skillSources: input.skillSources }
-        : {}),
-      status: 'starting',
-    });
     const leader = service.buildLeader(identity);
     // Publish ownership before starting: if any later create step and its first
     // cleanup attempt both fail, the collection's shutdown sweep can retry this
@@ -455,16 +464,6 @@ export class TeamService {
 
   private async members(): Promise<AgentEntityRuntimeStatus[]> {
     return this.teammateCollection.list(); // members-only; leader is `this.leader`
-  }
-
-  private async allocateLeaderName(): Promise<string> {
-    const taken = await this.deps.identities.listAllNames(this.deps.dispatcherId);
-    return allocateConcreteName({
-      kind: 'team_leader',
-      base: this.id,
-      teamSlug: this.id,
-      exists: (candidate) => taken.has(candidate),
-    });
   }
 
   private leaderMcpServers(leaderName: string): readonly AgentRuntimeMcpServer[] {

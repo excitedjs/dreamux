@@ -45,7 +45,6 @@ import {
   previewTeamText,
 } from './read-helpers.js';
 import type { AgentEntityIdentityStatus } from '../agent-entity/types.js';
-import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import {
   claimConcreteName,
   type SuffixGenerator,
@@ -75,13 +74,15 @@ export interface TeamCollectionOptions {
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   worktrees: WorktreeManager;
+  store: TeamStore;
   /**
    * The dispatcher's identity + turns store pair (issue #233 R4). Supplied by
    * `DispatcherService` (the same pair the dispatcher agent + dispatcher-scope
    * collection share) and forwarded into every per-team collection so no team
    * news its own. Read-path probes (`leaderState` / `memberCount`) read the
-   * identity store directly, never a throwaway collection. The stores are
-   * stateless (paths by role + team_id), so one pair safely serves all scopes.
+   * identity store directly, never a throwaway collection. One live identity
+   * store must serve all scopes because it owns dispatcher-global transient
+   * name reservations; the turns store remains a path-derived shared store.
    */
   identities: AgentIdentityStore;
   turnsStore: AgentTurnsStore;
@@ -104,14 +105,14 @@ export interface TeamCollectionOptions {
     leaderName: string;
   }) => readonly AgentRuntimeMcpServer[];
   log: DreamuxLogger;
-  coreEvents?: DispatcherCoreEventPublisher;
-  /** Test seam for deterministic persistent-claim collision coverage. */
   nameSuffixGenerator?: SuffixGenerator;
+  agentNameSuffixGenerator?: SuffixGenerator;
 }
 
 /**
  * The dispatcher's team collection (issue #233): one per dispatcher, owned by
- * `DispatcherService`. Owns the team store + worktree manager; exposes
+ * `DispatcherService`. Receives the shared team store and owns the worktree
+ * manager; exposes
  * `create` / `list` / `history` and open-Team route-owner facts. `get(teamId)` is a get-or-rebuild factory (like `Dispatchers.get`
  * / `TeammateCollection.entityFor`): cached live {@link TeamService} if any, else
  * rebuilt from the persisted {@link TeamRecord} and cached. Each `TeamService`
@@ -156,7 +157,7 @@ export class TeamCollection {
   constructor(private readonly opts: TeamCollectionOptions) {
     this.dispatcherId = opts.dispatcherId;
     this.worktrees = opts.worktrees;
-    this.store = new TeamStore(opts.coreEvents);
+    this.store = opts.store;
   }
 
   async claimName(
@@ -546,6 +547,9 @@ export class TeamCollection {
       leaderChannelDescriptors: this.opts.leaderChannelDescriptors,
       trackMaterialized: (service) => this.materialized.add(service),
       log: this.opts.log,
+      ...(this.opts.agentNameSuffixGenerator !== undefined
+        ? { agentNameSuffixGenerator: this.opts.agentNameSuffixGenerator }
+        : {}),
     };
   }
 

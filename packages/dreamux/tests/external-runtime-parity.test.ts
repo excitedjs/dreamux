@@ -18,6 +18,7 @@ import type {
   AgentEntityWorktreeIdentity,
 } from '../src/service/agent-entity/types.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
+import { resetRuntimeConfig } from '../src/platform/paths.js';
 import type { ExternalChannelProviderFactory } from '../src/channel/external-channel-provider.js';
 import { testConfigFileObject } from './helpers/config.js';
 import { asChannelDescriptor } from './helpers/provider.js';
@@ -133,13 +134,21 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void
 
 describe('external runtime production parity', () => {
   let root: string;
+  let previousHome: string | undefined;
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'dreamux-external-runtime-parity-'));
+    previousHome = process.env['HOME'];
+    process.env['HOME'] = join(root, 'home');
+    await mkdir(process.env['HOME'], { recursive: true });
+    resetRuntimeConfig();
     externalRuntimeModule.resetExternalRuntimeFixture();
   });
 
   afterEach(async () => {
+    if (previousHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = previousHome;
+    resetRuntimeConfig();
     await rm(root, { recursive: true, force: true });
     externalRuntimeModule.resetExternalRuntimeFixture();
   });

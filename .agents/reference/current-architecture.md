@@ -183,7 +183,11 @@ Team creation takes `name_prefix` and returns a concrete `team_name` with a
 `name-claim.json` in the Team namespace through an atomic no-clobber hard link
 before any Team or collaboration-target side effect; the claim survives restart
 and dissolve, so closed and not-yet-materialized concrete names are never
-reused. Agent-entity names retain their fixed 8-character suffix.
+reused. Generated TeamLeader, ordinary TeamMate, and Team-member names use the
+same 4–8 character suffix contract. The live `AgentIdentityStore` atomically
+reserves those agent names across dispatcher collections; persisted identities
+and the shared TeamStore's pending `leader_name` projection replace the
+transient reservation after creation.
 Later Team lifecycle and routing operations are addressed by that returned
 `team_name`.
 Channel binding is a Team MCP capability. The Team MCP is caller-scoped:

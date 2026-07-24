@@ -12,19 +12,17 @@ import type { AgentEntityRole } from './agent-entity/types.js';
  *   Team member:       `tm-${slug}-${suffix}`
  *   TeamLeader:        `tl-${team_slug}-${suffix}`
  *
- * Team suffixes contain 4-8 lowercase base36 characters. Agent-entity suffixes
- * retain their established fixed 8-character contract. Callers enforce
- * never-reuse in the authoritative collection that owns each namespace.
+ * Every generated suffix contains 4-8 lowercase base36 characters. Callers
+ * enforce uniqueness in the authoritative collection that owns each namespace.
  */
 
 export const CONCRETE_NAME_MAX = 64;
-export const TEAM_NAME_SUFFIX_MIN_LENGTH = 4;
-export const TEAM_NAME_SUFFIX_MAX_LENGTH = 8;
-export const AGENT_NAME_SUFFIX_LENGTH = 8;
+export const NAME_SUFFIX_MIN_LENGTH = 4;
+export const NAME_SUFFIX_MAX_LENGTH = 8;
 const DEFAULT_MAX_ATTEMPTS = 16;
 const BASE36 = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
-export type ConcreteNameKind = AgentEntityRole | 'team';
+export type ConcreteNameKind = Exclude<AgentEntityRole, 'dispatcher'> | 'team';
 
 /** Random generator hook so tests can force collisions deterministically. */
 export type SuffixGenerator = () => string;
@@ -41,14 +39,12 @@ export function slugifyName(base: string): string {
   return slug === '' ? 'tm' : slug;
 }
 
-/** A CSPRNG-backed lowercase base36 suffix with the kind-specific length. */
-export function generateNameSuffix(kind: ConcreteNameKind): string {
-  const length = kind === 'team'
-    ? randomInt(
-        TEAM_NAME_SUFFIX_MIN_LENGTH,
-        TEAM_NAME_SUFFIX_MAX_LENGTH + 1,
-      )
-    : AGENT_NAME_SUFFIX_LENGTH;
+/** A CSPRNG-backed lowercase base36 suffix with a 4-8 character length. */
+export function generateNameSuffix(): string {
+  const length = randomInt(
+    NAME_SUFFIX_MIN_LENGTH,
+    NAME_SUFFIX_MAX_LENGTH + 1,
+  );
   const bytes = randomBytes(length);
   let out = '';
   for (let i = 0; i < length; i += 1) {
@@ -130,8 +126,7 @@ function* concreteNameCandidates(input: {
   generateSuffix?: SuffixGenerator;
   maxAttempts?: number;
 }): Generator<string> {
-  const generate =
-    input.generateSuffix ?? (() => generateNameSuffix(input.kind));
+  const generate = input.generateSuffix ?? generateNameSuffix;
   const maxAttempts = input.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     yield buildConcreteName({

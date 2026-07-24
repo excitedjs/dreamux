@@ -52,6 +52,11 @@ export class TeamStore {
     return teams;
   }
 
+  /** Project the Team records that already occupy dispatcher-global leader names. */
+  async listOccupiedLeaderNames(dispatcherId: string): Promise<ReadonlySet<string>> {
+    return new Set((await this.list(dispatcherId)).map((team) => team.leader_name));
+  }
+
   /**
    * Atomically claim one concrete Team name. Existing claims are idempotent
    * only for the same opaque token; a legacy Team record without a claim still
