@@ -188,7 +188,13 @@ export class TeamService {
       status: 'starting',
       closedAt: null,
       closeNote: null,
-      worktree: input.workspace.worktree,
+      generation: {
+        repoCwd: input.workspace.sourceCwd,
+        sourceRepo: input.workspace.sourceRepo,
+        leaderAgentRuntime: input.leaderAgentRuntime,
+        runtimeCwd: input.workspace.runtimeCwd,
+        worktree: input.workspace.worktree,
+      },
       intent: input.intent,
       leaderName,
     });

@@ -802,7 +802,7 @@ describe('TeamCollection identity prompt launch behavior', () => {
   });
 });
 
-describe('TeamCollection dispatcher send to TeamLeader', () => {
+describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
   let root: string;
   let previousHome: string | undefined;
 
@@ -1005,6 +1005,85 @@ describe('TeamCollection dispatcher send to TeamLeader', () => {
     ).rejects.toThrow(/is closed/);
     expect(runtimes).toHaveLength(1);
     expect(runtimes[0]!.submitted).toHaveLength(0);
+  });
+
+  it('refreshes workspace facts when a closed managed Team is recreated with reuse-cwd', async () => {
+    const sourceRepo = join(root, 'source');
+    mkdirSync(sourceRepo, { recursive: true });
+    const git = async (args: string[]): Promise<string> => {
+      const { stdout } = await execFileAsync('git', args, { cwd: sourceRepo });
+      return stdout;
+    };
+    await git(['init', '-q']);
+    await git(['config', 'user.email', 'test@example.com']);
+    await git(['config', 'user.name', 'Test']);
+    writeFileSync(join(sourceRepo, 'README.md'), '# source\n');
+    await git(['add', '.']);
+    await git(['commit', '-qm', 'init']);
+
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const teams = new TeamCollection({
+      dispatcherId: 'dispatcher-a',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      worktrees: new WorktreeManager(),
+      identities: new AgentIdentityStore(log),
+      turnsStore: new AgentTurnsStore(log),
+      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      adminSocketPath: '/tmp/admin.sock',
+      leaderChannelDescriptors: () => [],
+      log,
+    });
+
+    await teams.create({
+      name: 'alpha',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead alpha in a managed worktree',
+      repoCwd: sourceRepo,
+      worktree: { mode: 'managed', cleanup: 'delete-on-close' },
+    });
+    const firstProjection = await teams.requireRoutableTeamProjection('alpha');
+    expect(firstProjection.runtime_cwd).not.toBe(sourceRepo);
+
+    await (await teams.get('alpha')).dissolve({
+      teamId: 'alpha',
+      note: 'replace the workspace mode',
+    });
+    await teams.create({
+      name: 'alpha',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'lead alpha from the source checkout',
+      repoCwd: sourceRepo,
+      worktree: { mode: 'reuse-cwd' },
+    });
+
+    const secondProjection = await teams.requireRoutableTeamProjection('alpha');
+    expect(secondProjection.runtime_cwd).toBe(sourceRepo);
+    expect((await teams.get('alpha')).sharedWorkspace()).toMatchObject({
+      sourceCwd: sourceRepo,
+      runtimeCwd: sourceRepo,
+      worktree: { mode: 'reuse-cwd', path: sourceRepo },
+    });
+    const record = await new TeamStore().get('dispatcher-a', 'alpha');
+    expect(record).toMatchObject({
+      repo_cwd: sourceRepo,
+      runtime_cwd: sourceRepo,
+      worktree: { mode: 'reuse-cwd', path: sourceRepo },
+    });
+    await teams.stopAll();
   });
 });
 

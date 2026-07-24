@@ -2,7 +2,7 @@
   "changes": [
     {
       "packageName": "@excitedjs/dreamux",
-      "comment": "Publish provider-neutral binding transition events and persist collaboration target metadata across provisioning retries.",
+      "comment": "Publish provider-neutral binding transition events, persist collaboration target metadata across provisioning retries, and refresh workspace/runtime facts when a closed Team is recreated.",
       "type": "patch"
     }
   ],
