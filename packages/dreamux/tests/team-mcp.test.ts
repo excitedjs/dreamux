@@ -160,8 +160,9 @@ describe('team-mcp stdio shim', () => {
     expect(schemaOf(tools, 'create').properties).not.toHaveProperty('bind_group');
     expect(schemaOf(tools, 'create').properties).not.toHaveProperty('skill_sources');
     expect(JSON.stringify(tools)).not.toContain('skill_sources');
-    // #199 Slice 1: public addressing is by the concrete `team_name`.
-    expect(schemaOf(tools, 'create').required).toContain('team_name');
+    // Create requests by prefix; later lifecycle calls use returned team_name.
+    expect(schemaOf(tools, 'create').required).toContain('name_prefix');
+    expect(schemaOf(tools, 'create').properties).not.toHaveProperty('team_name');
     expect(schemaOf(tools, 'create').properties).not.toHaveProperty('name');
     expect(schemaOf(tools, 'dissolve').required).toEqual(['team_name', 'note']);
   });
@@ -253,7 +254,7 @@ describe('team-mcp stdio shim', () => {
         params: {
           name: 'create',
           arguments: {
-            team_name: 'alpha',
+            name_prefix: 'alpha',
             leader_agent_runtime: 'codex',
             intent: 'lead alpha',
             identity: 'architecture lead',
@@ -288,7 +289,7 @@ describe('team-mcp stdio shim', () => {
         params: {
           dispatcher_id: 'dispatcher-a',
           caller_kind: 'dispatcher',
-          team_name: 'alpha',
+          name_prefix: 'alpha',
           leader_agent_runtime: 'codex',
           intent: 'lead alpha',
           identity: 'architecture lead',
@@ -334,7 +335,7 @@ describe('team-mcp stdio shim', () => {
         params: {
           name: 'create',
           arguments: {
-            team_name: 'alpha',
+            name_prefix: 'alpha',
             leader_agent_runtime: 'codex',
             intent: 'lead alpha',
           },
@@ -593,7 +594,7 @@ describe('team-mcp stdio shim', () => {
         method: 'tools/call',
         params: {
           name: 'create',
-          arguments: { team_name: 'alpha', repo_cwd: '/repo', leader_agent_runtime: 'codex' },
+          arguments: { name_prefix: 'alpha', repo_cwd: '/repo', leader_agent_runtime: 'codex' },
         },
       });
       const createResponse = (await reader.next()) as { result: Record<string, unknown> };

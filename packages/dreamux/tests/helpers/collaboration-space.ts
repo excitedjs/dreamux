@@ -30,9 +30,23 @@ export function fakeConfig() {
 
 export function fakeTeams(created: CreatedTeam[], dissolved: string[]) {
   const open = new Map<string, string>();
+  const allocated = new Set<string>();
+  const known = new Set<string>();
+  let nextName = 0;
   return {
+    async allocateName(prefix: string) {
+      while (true) {
+        const name = `${prefix}-${String(nextName).padStart(4, '0')}`;
+        nextName += 1;
+        if (allocated.has(name) || open.has(name)) continue;
+        allocated.add(name);
+        return name;
+      }
+    },
     async create(input: CreatedTeam & { name: string }) {
       created.push(input);
+      allocated.add(input.name);
+      known.add(input.name);
       open.set(input.name, `${input.name}-leader`);
       return {
         team: { team_name: input.name, leader_name: `${input.name}-leader` },
@@ -43,6 +57,9 @@ export function fakeTeams(created: CreatedTeam[], dissolved: string[]) {
     },
     async isOpenTeam(name: string) {
       return open.has(name);
+    },
+    async hasTeam(name: string) {
+      return known.has(name);
     },
     async requireOpenTeamRouteOwner(name: string) {
       const leader = open.get(name);

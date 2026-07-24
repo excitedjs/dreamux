@@ -17,12 +17,12 @@ import {
   validateTeamId,
 } from '../team-collection/types.js';
 import {
-  type AcceptedTargetClose,
-  type AcceptedTargetProvision,
-  type AcceptTargetCreatedOptions,
   CollaborationTargetLifecycle,
 } from './target-lifecycle.js';
 import type {
+  AcceptedTargetClose,
+  AcceptedTargetProvision,
+  AcceptTargetCreatedOptions,
   CollaborationSpaceBindInput,
   CollaborationSpaceCloseTargetInput,
   CollaborationSpaceDissolveInput,

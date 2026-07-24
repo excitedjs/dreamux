@@ -42,7 +42,7 @@ import {
   type AgentEntityRuntimeStatus,
   type AgentEntityTurnResult,
 } from '../agent-entity/types.js';
-import { allocateConcreteName } from '../teammate-collection/name-allocator.js';
+import { allocateConcreteName } from '../name-allocator.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import type { TeamStore } from '../team-collection/store.js';
 import type {
@@ -89,7 +89,6 @@ export interface TeamServiceCreateInput {
   identity?: string;
   skillSources?: readonly AgentRuntimeSkillSource[];
   workspace: TeamMateSharedWorkspace;
-  existing: TeamRecord | null;
 }
 
 export interface TeamServiceCreateOutput {
@@ -167,36 +166,20 @@ export class TeamService {
       'TeamLeader identity',
     );
     const leaderName = await service.allocateLeaderName();
-    let team =
-      input.existing ??
-      (await deps.store.create({
-        dispatcher_id: deps.dispatcherId,
-        team_id: input.teamId,
-        name: input.name,
-        repo_cwd: input.workspace.sourceCwd,
-        source_repo: input.workspace.sourceRepo,
-        leader_name: leaderName,
-        leader_agent_runtime: input.leaderAgentRuntime,
-        runtime_cwd: input.workspace.runtimeCwd,
-        worktree: input.workspace.worktree,
-        status: 'starting',
-        intent: input.intent,
-        closed_at: null,
-        close_note: null,
-      }));
-    team = await deps.store.update(team, {
+    let team = await deps.store.create({
+      dispatcher_id: deps.dispatcherId,
+      team_id: input.teamId,
+      name: input.name,
+      repo_cwd: input.workspace.sourceCwd,
+      source_repo: input.workspace.sourceRepo,
+      leader_name: leaderName,
+      leader_agent_runtime: input.leaderAgentRuntime,
+      runtime_cwd: input.workspace.runtimeCwd,
+      worktree: input.workspace.worktree,
       status: 'starting',
-      closedAt: null,
-      closeNote: null,
-      generation: {
-        repoCwd: input.workspace.sourceCwd,
-        sourceRepo: input.workspace.sourceRepo,
-        leaderAgentRuntime: input.leaderAgentRuntime,
-        runtimeCwd: input.workspace.runtimeCwd,
-        worktree: input.workspace.worktree,
-      },
       intent: input.intent,
-      leaderName,
+      closed_at: null,
+      close_note: null,
     });
     const existingLeader = await deps.identities.get(
       deps.dispatcherId,
@@ -476,7 +459,7 @@ export class TeamService {
   private async allocateLeaderName(): Promise<string> {
     const taken = await this.deps.identities.listAllNames(this.deps.dispatcherId);
     return allocateConcreteName({
-      role: 'team_leader',
+      kind: 'team_leader',
       base: this.id,
       teamSlug: this.id,
       exists: (candidate) => taken.has(candidate),

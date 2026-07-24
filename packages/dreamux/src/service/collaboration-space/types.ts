@@ -173,3 +173,21 @@ export interface CollaborationSpaceCloseTargetInput {
   target: ChannelTarget;
   eventId?: string;
 }
+
+export interface AcceptTargetCreatedOptions {
+  allowMissing?: boolean;
+  defaultBinding?: CollaborationSpaceDefaultBindingInput;
+  /** Internal strict operation mode; conversational notification stays lenient. */
+  strict?: boolean;
+}
+
+export interface AcceptedTargetProvision {
+  provision: () => Promise<ProvisionedTargetRecord>;
+}
+
+export interface AcceptedTargetClose {
+  close: () => Promise<{
+    closed: boolean;
+    target: ProvisionedTargetView | null;
+  }>;
+}

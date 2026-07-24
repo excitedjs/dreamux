@@ -1007,7 +1007,7 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
     expect(runtimes[0]!.submitted).toHaveLength(0);
   });
 
-  it('refreshes workspace facts when a closed managed Team is recreated with reuse-cwd', async () => {
+  it('never reuses a closed Team name when recreating the prefix with reuse-cwd', async () => {
     const sourceRepo = join(root, 'source');
     mkdirSync(sourceRepo, { recursive: true });
     const git = async (args: string[]): Promise<string> => {
@@ -1048,36 +1048,49 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       log,
     });
 
+    const firstName = await teams.allocateName('alpha');
+    expect(firstName).toMatch(/^alpha-[a-z0-9]{4,8}$/);
     await teams.create({
-      name: 'alpha',
+      name: firstName,
       leaderAgentRuntime: 'agent-a',
       intent: 'lead alpha in a managed worktree',
       repoCwd: sourceRepo,
       worktree: { mode: 'managed', cleanup: 'delete-on-close' },
     });
-    const firstProjection = await teams.requireRoutableTeamProjection('alpha');
+    const firstProjection = await teams.requireRoutableTeamProjection(firstName);
     expect(firstProjection.runtime_cwd).not.toBe(sourceRepo);
 
-    await (await teams.get('alpha')).dissolve({
-      teamId: 'alpha',
+    await (await teams.get(firstName)).dissolve({
+      teamId: firstName,
       note: 'replace the workspace mode',
     });
+    await expect(teams.create({
+      name: firstName,
+      leaderAgentRuntime: 'agent-a',
+      intent: 'must not reuse the closed concrete name',
+      repoCwd: sourceRepo,
+      worktree: { mode: 'reuse-cwd' },
+    })).rejects.toThrow(/concrete Team names are never reused/);
+
+    const secondName = await teams.allocateName('alpha');
+    expect(secondName).toMatch(/^alpha-[a-z0-9]{4,8}$/);
+    expect(secondName).not.toBe(firstName);
     await teams.create({
-      name: 'alpha',
+      name: secondName,
       leaderAgentRuntime: 'agent-a',
       intent: 'lead alpha from the source checkout',
       repoCwd: sourceRepo,
       worktree: { mode: 'reuse-cwd' },
     });
 
-    const secondProjection = await teams.requireRoutableTeamProjection('alpha');
+    const secondProjection = await teams.requireRoutableTeamProjection(secondName);
     expect(secondProjection.runtime_cwd).toBe(sourceRepo);
-    expect((await teams.get('alpha')).sharedWorkspace()).toMatchObject({
+    expect((await teams.get(secondName)).sharedWorkspace()).toMatchObject({
       sourceCwd: sourceRepo,
       runtimeCwd: sourceRepo,
       worktree: { mode: 'reuse-cwd', path: sourceRepo },
     });
-    const record = await new TeamStore().get('dispatcher-a', 'alpha');
+    const record = await new TeamStore().get('dispatcher-a', secondName);
     expect(record).toMatchObject({
       repo_cwd: sourceRepo,
       runtime_cwd: sourceRepo,

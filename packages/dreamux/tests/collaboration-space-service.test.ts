@@ -877,6 +877,9 @@ describe('CollaborationSpaceService', () => {
     // Custom teams mock that fails on first create
     let createCount = 0;
     const teamsWithFailure = {
+      async allocateName(prefix: string) {
+        return `${prefix}-0000`;
+      },
       async create(input: CreatedTeam & { name: string }) {
         createCount += 1;
         if (createCount === 1) {
@@ -894,6 +897,9 @@ describe('CollaborationSpaceService', () => {
         };
       },
       async isOpenTeam(name: string) {
+        return created.some((t) => t.name === name);
+      },
+      async hasTeam(name: string) {
         return created.some((t) => t.name === name);
       },
       async requireOpenTeamRouteOwner(name: string) {
@@ -1021,6 +1027,7 @@ describe('CollaborationSpaceService', () => {
     } as const;
     const provisioned = await service.provisionTarget(input);
     if (provisioned === null) throw new Error('target was not provisioned');
+    expect(provisioned.team_name).toMatch(/^space-target-[a-z0-9]{4,8}$/);
     await service.dissolveTeam({
       teamId: provisioned.team_name,
       note: 'simulate completed shutdown compensation',
@@ -1033,12 +1040,14 @@ describe('CollaborationSpaceService', () => {
       updated_at: Date.now(),
     });
 
-    await expect(service.provisionTarget(input)).resolves.toMatchObject({
+    const reprovisioned = await service.provisionTarget(input);
+    expect(reprovisioned).toMatchObject({
       lifecycle_status: 'active',
       phase: 'bound',
-      team_name: provisioned.team_name,
     });
+    expect(reprovisioned?.team_name).not.toBe(provisioned.team_name);
     expect(created).toHaveLength(2);
+    expect(created[1]?.name).not.toBe(created[0]?.name);
     expect(dissolved).toEqual([provisioned.team_name]);
     expect(channels.boundOwners.has(input.target.target_key)).toBe(true);
   });
@@ -1048,11 +1057,17 @@ describe('CollaborationSpaceService', () => {
     const channels = fakeChannels();
     let staleRecordExists = false;
     const staleTeams = {
+      async allocateName(prefix: string) {
+        return `${prefix}-0000`;
+      },
       async create(input: CreatedTeam) {
         created.push(input);
         throw new Error('stale Team must not be recreated implicitly');
       },
       async isOpenTeam() {
+        return staleRecordExists;
+      },
+      async hasTeam() {
         return staleRecordExists;
       },
       async requireRoutableTeamOwner() {
@@ -1107,6 +1122,9 @@ describe('CollaborationSpaceService', () => {
 
     // Teams mock where dissolve fails
     const teamsWithBadDissolve = {
+      async allocateName(prefix: string) {
+        return `${prefix}-0000`;
+      },
       async create(input: CreatedTeam & { name: string }) {
         created.push(input);
         return {
@@ -1117,6 +1135,9 @@ describe('CollaborationSpaceService', () => {
         };
       },
       async isOpenTeam(name: string) {
+        return created.some((t) => t.name === name);
+      },
+      async hasTeam(name: string) {
         return created.some((t) => t.name === name);
       },
       async requireOpenTeamRouteOwner(name: string) {
@@ -1764,6 +1785,7 @@ describe('CollaborationSpaceService', () => {
       lifecycle_status: 'active',
     });
     expect(created).toHaveLength(2);
+    expect(created[1]?.name).not.toBe(created[0]?.name);
     expect(channels.boundOwners.has(input.target.target_key)).toBe(true);
   });
 
@@ -1825,6 +1847,7 @@ describe('CollaborationSpaceService', () => {
       lifecycle_status: 'active',
     });
     expect(created).toHaveLength(2);
+    expect(created[1]?.name).not.toBe(created[0]?.name);
     expect(channels.boundOwners.has(input.target.target_key)).toBe(true);
   });
 
@@ -1884,6 +1907,7 @@ describe('CollaborationSpaceService', () => {
       lifecycle_status: 'active',
     });
     expect(created).toHaveLength(2);
+    expect(created[1]?.name).not.toBe(created[0]?.name);
     expect(channels.boundOwners.has(input.target.target_key)).toBe(true);
   });
 });

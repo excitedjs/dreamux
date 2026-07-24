@@ -638,13 +638,14 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     await expect(dispatcher.scheduler.runNow(wake.id)).resolves.toMatchObject({
       status: 'submitted',
     });
-    await dispatcher.createTeam({
-      name: 'alpha',
+    const created = await dispatcher.createTeam({
+      namePrefix: 'alpha',
       leaderAgentRuntime: 'agent-a',
       intent: 'lead alpha',
       identity: 'team coordinator',
     });
-    const team = await dispatcher.team('alpha');
+    const teamName = created.team.team_name;
+    const team = await dispatcher.team(teamName);
     await team.spawnTeamMate({
       name: 'worker',
       prompt: 'do work',
@@ -704,7 +705,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       '--caller',
       'team_leader',
       '--team-id',
-      'alpha',
+      teamName,
       '--leader-name',
       expect.any(String),
     ]);
@@ -714,7 +715,9 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     ]);
     const append = leaderContext?.systemPrompt?.append ?? [];
     expect(append).toHaveLength(4);
-    expect(append[0]).toBe('You are the TeamLeader of Dreamux Team "alpha".');
+    expect(append[0]).toBe(
+      `You are the TeamLeader of Dreamux Team "${teamName}".`,
+    );
     expect(append[1]).toContain('team-workflow');
     expect(append[1]).toMatch(/TeamMate/i);
     expect(append[1]).toMatch(/channel/i);
@@ -821,15 +824,15 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     }) as { teammate: { name: string } };
     const team = await adminMethods['team.create']!(server, {
       dispatcher_id: 'dispatcher-a',
-      team_name: 'alpha',
+      name_prefix: 'alpha',
       leader_agent_runtime: 'agent-a',
       intent: 'lead alpha',
       skill_sources: [leaderSource],
-    }) as { leader: { name: string } };
+    }) as { team: { team_name: string }; leader: { name: string } };
     const member = await adminMethods['teammate.spawn']!(server, {
       dispatcher_id: 'dispatcher-a',
       caller_kind: 'team_leader',
-      team_id: 'alpha',
+      team_id: team.team.team_name,
       name_prefix: 'worker',
       prompt: 'work',
       intent: 'admin member',
@@ -887,10 +890,10 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       prompt: 'resume helper',
     });
     await rebuilt.sendTeamLeader({
-      teamId: 'alpha',
+      teamId: team.team.team_name,
       prompt: 'resume leader',
     });
-    const rebuiltTeam = await rebuilt.team('alpha');
+    const rebuiltTeam = await rebuilt.team(team.team.team_name);
     await rebuiltTeam.teammates.send({
       name: member.teammate.name,
       prompt: 'resume member',
@@ -956,14 +959,14 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       log,
     });
     await dispatcher.start();
-    await dispatcher.createTeam({
-      name: 'alpha',
+    const created = await dispatcher.createTeam({
+      namePrefix: 'alpha',
       leaderAgentRuntime: 'agent-a',
       intent: 'lead alpha',
     });
 
     const sent = await dispatcher.sendTeamLeader({
-      teamId: 'alpha',
+      teamId: created.team.team_name,
       prompt: 'follow up',
     });
     expect(sent.turn).toEqual({ status: 'submitted', turn_id: 'text-1' });
@@ -976,7 +979,10 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     await dispatcher.shutdown();
     await expect(
       Promise.resolve().then(() =>
-        dispatcher.sendTeamLeader({ teamId: 'alpha', prompt: 'too late' }),
+        dispatcher.sendTeamLeader({
+          teamId: created.team.team_name,
+          prompt: 'too late',
+        }),
       ),
     ).rejects.toThrow(/shutting down/);
   });
@@ -1011,13 +1017,13 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       prompt: 'scheduled dispatcher',
       tz: 'UTC',
     });
-    await dispatcher.createTeam({
-      name: 'alpha',
+    const created = await dispatcher.createTeam({
+      namePrefix: 'alpha',
       leaderAgentRuntime: 'agent-a',
       intent: 'lead alpha',
     });
-    const heldTeam = await dispatcher.team('alpha');
-    const teamScheduler = await dispatcher.teamScheduler('alpha');
+    const heldTeam = await dispatcher.team(created.team.team_name);
+    const teamScheduler = await dispatcher.teamScheduler(created.team.team_name);
     const teamJob = await teamScheduler.create({
       cron: '* * * * *',
       prompt: 'scheduled alpha',
@@ -1066,7 +1072,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     ).rejects.toThrow(/shutting down/);
   });
 
-  it('rejects held TeamLeader handles after Team dissolve or replacement', async () => {
+  it('keeps a held TeamLeader handle closed when the same prefix creates a new Team', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
     const runtimes: FakeRuntime[] = [];
@@ -1090,12 +1096,13 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       channelLoggerFactory: () => log,
       log,
     });
-    await dispatcher.createTeam({
-      name: 'alpha',
+    const first = await dispatcher.createTeam({
+      namePrefix: 'alpha',
       leaderAgentRuntime: 'agent-a',
       intent: 'lead alpha',
     });
-    const oldHandle = await dispatcher.team('alpha');
+    const firstName = first.team.team_name;
+    const oldHandle = await dispatcher.team(firstName);
     const member = await oldHandle.spawnTeamMate({
       name: 'worker',
       prompt: 'start worker',
@@ -1103,7 +1110,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     });
     expect(oldHandle.teammates).not.toHaveProperty('spawn');
 
-    await dispatcher.dissolveTeam({ teamId: 'alpha', note: 'done' });
+    await dispatcher.dissolveTeam({ teamId: firstName, note: 'done' });
     await expect(
       oldHandle.teammates.send({
         name: member.teammate.name,
@@ -1118,29 +1125,28 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       }),
     ).rejects.toThrow(/closed/);
 
-    await dispatcher.createTeam({
-      name: 'alpha',
+    const replacement = await dispatcher.createTeam({
+      namePrefix: 'alpha',
       leaderAgentRuntime: 'agent-a',
       intent: 'lead replacement alpha',
     });
-    await expect(oldHandle.teammates.list()).rejects.toThrow(
-      /generation is no longer current/,
-    );
+    expect(replacement.team.team_name).not.toBe(firstName);
+    await expect(oldHandle.teammates.list()).rejects.toThrow(/closed/);
     await expect(
       oldHandle.teammates.send({
         name: member.teammate.name,
         prompt: 'after replacement',
       }),
-    ).rejects.toThrow(/generation is no longer current/);
+    ).rejects.toThrow(/closed/);
     await expect(
       oldHandle.spawnTeamMate({
         name: 'stale',
         prompt: 'stale worker',
         intent: 'stale alpha',
       }),
-    ).rejects.toThrow(/generation is no longer current/);
+    ).rejects.toThrow(/closed/);
 
-    const replacementHandle = await dispatcher.team('alpha');
+    const replacementHandle = await dispatcher.team(replacement.team.team_name);
     await expect(
       replacementHandle.spawnTeamMate({
         name: 'fresh',
@@ -1379,13 +1385,13 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       log,
     });
     await dispatcher.start();
-    await dispatcher.createTeam({
-      name: 'alpha',
+    const created = await dispatcher.createTeam({
+      namePrefix: 'alpha',
       leaderAgentRuntime: 'agent-a',
       intent: 'lead alpha',
     });
     await dispatcher.bindTeamChannel({
-      teamId: 'alpha',
+      teamId: created.team.team_name,
       channelId: 'primary',
       meta: { chat_id: 'chat-team' },
     });
@@ -1443,12 +1449,12 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     });
     await dispatcher.start();
     const alpha = await dispatcher.createTeam({
-      name: 'alpha',
+      namePrefix: 'alpha',
       leaderAgentRuntime: 'agent-a',
       intent: 'lead alpha',
     });
     const beta = await dispatcher.createTeam({
-      name: 'beta',
+      namePrefix: 'beta',
       leaderAgentRuntime: 'agent-a',
       intent: 'lead beta',
     });
@@ -1487,19 +1493,22 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       meta: { chat_id: 'chat-beta' },
     })).rejects.toThrow(/already bound to another owner/);
     await expect(dispatcher.bindTeamLeaderChannel({
-      lease: { teamId: 'beta', leaderName: alphaLease.leaderName },
+      lease: { teamId: beta.team.team_name, leaderName: alphaLease.leaderName },
       channelId: 'primary',
       meta: { chat_id: 'chat-wrong-team' },
     })).rejects.toBeInstanceOf(TeamUnavailableError);
 
-    await dispatcher.dissolveTeam({ teamId: 'alpha', note: 'replace alpha' });
+    await dispatcher.dissolveTeam({
+      teamId: alpha.team.team_name,
+      note: 'replace alpha',
+    });
     await expect(dispatcher.bindTeamLeaderChannel({
       lease: alphaLease,
       channelId: 'primary',
       meta: { chat_id: 'chat-closed' },
     })).rejects.toBeInstanceOf(TeamUnavailableError);
     const replacement = await dispatcher.createTeam({
-      name: 'alpha',
+      namePrefix: 'alpha',
       leaderAgentRuntime: 'agent-a',
       intent: 'lead replacement alpha',
     });
@@ -1516,7 +1525,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       channelId: 'primary',
       meta: { chat_id: 'chat-fresh' },
     })).resolves.toMatchObject({
-      team_name: 'alpha',
+      team_name: replacement.team.team_name,
       leader_name: replacement.team.leader_name,
     });
     await dispatcher.shutdown();
@@ -1554,7 +1563,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     });
     await dispatcher.start();
     const alpha = await dispatcher.createTeam({
-      name: 'alpha',
+      namePrefix: 'alpha',
       leaderAgentRuntime: 'agent-a',
       intent: 'lead alpha',
     });
@@ -1571,7 +1580,10 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     void binding.catch(() => {});
     await enteredResolve.promise;
 
-    await dispatcher.dissolveTeam({ teamId: 'alpha', note: 'close during resolve' });
+    await dispatcher.dissolveTeam({
+      teamId: owner.teamName,
+      note: 'close during resolve',
+    });
     releaseResolve.resolve();
     await expect(binding).rejects.toBeInstanceOf(TeamUnavailableError);
     await expect(dispatcher.activeTeamBindingSummary(owner)).resolves.toBeNull();

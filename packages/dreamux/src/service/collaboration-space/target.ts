@@ -1,8 +1,13 @@
 import type { ChannelTarget } from '@excitedjs/dreamux-types';
 
 import type { ChannelRouteOwner } from '../channel-service/index.js';
+import type { TeamCollection } from '../team-collection/index.js';
 import { validateTeamId } from '../team-collection/types.js';
-import { hashTarget, nonBlank, slugFor } from './naming.js';
+import {
+  collaborationTeamNamePrefix,
+  nonBlank,
+} from './naming.js';
+import type { CollaborationSpaceStore } from './store.js';
 import { requiredBinding } from './support.js';
 import {
   COLLABORATION_SPACE_RECORD_VERSION,
@@ -11,28 +16,24 @@ import {
   type ProvisionedTargetRecord,
 } from './types.js';
 
-/** Build the durable target claim before Team or route side effects begin. */
-export function targetClaimRecord(input: {
-  dispatcherId: string;
-  space: CollaborationSpaceRecord;
-  provision: CollaborationSpaceProvisionInput;
-}): ProvisionedTargetRecord {
-  const binding = requiredBinding(input.space);
-  const { provision } = input;
-  const targetHash = hashTarget({
-    dispatcherId: input.dispatcherId,
-    channelId: provision.channelId,
-    containerKey: provision.container.container_key,
-    bindingGeneration: binding.generation,
-    targetKey: provision.target.target_key,
-  });
+/** Reserve and persist a target claim before Team or route side effects begin. */
+export async function createTargetClaim(
+  dispatcherId: string,
+  space: CollaborationSpaceRecord,
+  provision: CollaborationSpaceProvisionInput,
+  teams: TeamCollection,
+  store: CollaborationSpaceStore,
+): Promise<ProvisionedTargetRecord> {
+  const binding = requiredBinding(space);
   const display = nonBlank(provision.title) ?? nonBlank(provision.target.display) ?? null;
-  const teamName = validateTeamId(`space-${slugFor(display)}-${targetHash}`);
+  const teamName = validateTeamId(
+    await teams.allocateName(collaborationTeamNamePrefix(display)),
+  );
   const now = Date.now();
-  return {
+  return store.saveTarget({
     version: COLLABORATION_SPACE_RECORD_VERSION,
-    dispatcher_id: input.dispatcherId,
-    space_name: input.space.space_name,
+    dispatcher_id: dispatcherId,
+    space_name: space.space_name,
     channel_id: provision.channelId,
     provider: provision.provider,
     container_key: provision.container.container_key,
@@ -53,7 +54,7 @@ export function targetClaimRecord(input: {
     updated_at: now,
     closed_at: null,
     detached_at: null,
-  };
+  });
 }
 
 /** Stable opaque claim token linking one durable target generation to its route. */

@@ -6,7 +6,7 @@ import type { TeamCollection } from '../team-collection/index.js';
 import { createDefaultBoundSpace } from './default-binding.js';
 import { detachActiveTargets } from './detach-active-targets.js';
 import { publishCollaborationSpaceBindTransition } from '../binding-events.js';
-import { targetIntent } from './naming.js';
+import { collaborationTeamNamePrefix, targetIntent } from './naming.js';
 import type { CollaborationSpaceStore } from './store.js';
 import type { CollaborationRouteReconciler } from './route-reconciliation.js';
 import {
@@ -21,21 +21,14 @@ import {
   collaborationTargetFailure,
   type CollaborationTargetStrictOperations,
 } from './strict-operations.js';
-import { routeClaimIdForTarget, targetClaimRecord, targetFromRecord } from './target.js';
+import { createTargetClaim, routeClaimIdForTarget, targetFromRecord } from './target.js';
 import type {
+  AcceptedTargetClose, AcceptedTargetProvision, AcceptTargetCreatedOptions,
   CollaborationSpaceCloseTargetInput, CollaborationSpaceDefaultBindingInput,
   CollaborationSpaceProvisionInput, CollaborationSpaceRecord,
   ProvisionedTargetRecord, ProvisionedTargetView,
 } from './types.js';
 import { targetView } from './view.js';
-export interface AcceptTargetCreatedOptions {
-  allowMissing?: boolean;
-  defaultBinding?: CollaborationSpaceDefaultBindingInput;
-  /** Internal strict operation mode; conversational notification stays lenient. */
-  strict?: boolean;
-}
-export interface AcceptedTargetProvision { provision: () => Promise<ProvisionedTargetRecord>; }
-export interface AcceptedTargetClose { close: () => Promise<{ closed: boolean; target: ProvisionedTargetView | null }>; }
 
 export interface CollaborationTargetLifecycleOptions {
   dispatcherId: string;
@@ -292,7 +285,13 @@ export class CollaborationTargetLifecycle {
           };
           const existing = await this.opts.store.getTarget(this.opts.dispatcherId, key);
           if (existing === null) {
-            await this.createTargetClaim(space, input);
+            await createTargetClaim(
+              this.opts.dispatcherId,
+              space,
+              input,
+              this.opts.teams,
+              this.opts.store,
+            );
             return;
           }
           if (existing.lifecycle_status === 'closed') {
@@ -376,15 +375,32 @@ export class CollaborationTargetLifecycle {
       }
       if (existing.lifecycle_status === 'detached') return existing;
     }
-    let record = existing ?? await this.createTargetClaim(space, input);
+    let record = existing ?? await createTargetClaim(
+      this.opts.dispatcherId,
+      space,
+      input,
+      this.opts.teams,
+      this.opts.store,
+    );
     const target = existing === null ? input.target : targetFromRecord(record);
-    const needsTeamRecreation = record.lifecycle_status !== 'active' &&
-      record.phase !== 'claimed' &&
-      !(await this.opts.teams.isOpenTeam(record.team_name));
+    const teamIsOpen = await this.opts.teams.isOpenTeam(record.team_name);
+    const needsTeamRecreation =
+      record.lifecycle_status !== 'active' &&
+      !teamIsOpen &&
+      (await this.opts.teams.hasTeam(record.team_name));
     if (needsTeamRecreation) {
-      // A Team checkpoint is usable only while its Team remains open.
+      // A Team checkpoint is usable only while its Team remains open. Concrete
+      // Team names are never reused, so recovery reserves a fresh generation.
+      const teamName = await this.opts.teams.allocateName(
+        collaborationTeamNamePrefix(record.target_display),
+      );
       record = await this.opts.store.saveTarget({
-        ...record, leader_name: null, phase: 'claimed', updated_at: Date.now(),
+        ...record,
+        team_name: teamName,
+        leader_name: null,
+        worktree_slug: teamName,
+        phase: 'claimed',
+        updated_at: Date.now(),
       });
     }
     let createdTeamHere = false;
@@ -539,23 +555,6 @@ export class CollaborationTargetLifecycle {
       );
       throw err;
     }
-  }
-
-  private async createTargetClaim(
-    space: CollaborationSpaceRecord,
-    input: CollaborationSpaceProvisionInput,
-  ): Promise<ProvisionedTargetRecord> {
-    const claim = targetClaimRecord({
-      dispatcherId: this.opts.dispatcherId,
-      space,
-      provision: input,
-    });
-    if (await this.opts.teams.isOpenTeam(claim.team_name)) {
-      throw new Error(
-        `generated collaboration Team name ${JSON.stringify(claim.team_name)} already exists`,
-      );
-    }
-    return this.opts.store.saveTarget(claim);
   }
 
   private async resumeTargetRecord(

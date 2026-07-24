@@ -431,33 +431,29 @@ not `event_id`. `event_id` is retained for audit and event replay diagnostics.
 Provisioning must never expose raw provider ids in Team names, worktree slugs,
 or branch names.
 
-For each target, derive:
+For each target:
 
-- `target_hash = sha256(dispatcher_id + "\\0" + channel_id + "\\0" +
-  container_key + "\\0" + binding_generation + "\\0" +
-  target_key).slice(0, 12)`
-- `title_slug`: a sanitized ASCII slug from lifecycle title or target display,
-  using only letters, digits, dots, underscores, and dashes, capped at 32
-  characters; if absent after sanitization, use `target`.
-- `team_name = "space-" + title_slug + "-" + target_hash`
+- derive `title_slug` from the lifecycle title or target display, using only
+  letters, digits, dots, underscores, and dashes, capped at 32 characters; if
+  absent after sanitization, use `target`;
+- request a concrete name from the shared Team allocator with
+  `name_prefix = "space-" + title_slug`;
+- append a CSPRNG-backed 4–8 character lowercase base36 suffix;
+- check the candidate against all persisted Team records, including closed
+  Teams, and reserve it before persisting the target claim;
 - `worktree_slug = team_name`
 - managed worktree branch = `team_name` when the binding uses an explicit repo
 
 The generated names must pass `TEAM_ID_PATTERN`,
-`assertNotReservedAgentName`, and the worktree slug validator. If a collision is
-detected with a different target record, provisioning must fail loud instead of
-falling back to raw provider ids.
-
-`space_name` and generated `team_name` live in different stores, but generated
-Team names must still be checked against existing Teams before creation. If a
-manual Team already owns the generated name, provisioning fails loud instead of
-choosing a new provider-derived name.
+`assertNotReservedAgentName`, and the worktree slug validator. Random collisions
+are regenerated within a bounded attempt budget. Raw provider ids never become
+fallback name material.
 
 Team intent is:
 
 - `Collaboration target: <title>` when a non-empty lifecycle title or target
   display exists;
-- otherwise `Collaboration target <target_hash>`.
+- otherwise a short fallback derived from the concrete Team name.
 
 ## Target Created Behavior
 
@@ -492,6 +488,9 @@ Required behavior:
 - if a retry finds an existing non-closed Team with the recorded `team_name`
   before `phase` reached `team_created`, reconcile to that Team instead of
   calling create again;
+- if a retry finds that the recorded Team existed but is now closed, allocate
+  and persist a fresh concrete Team name before recreating; closed Team names
+  are never reused;
 - update phase to `team_created` after the Team exists;
 - bind the channel target to the Team only if no conflicting active binding
   exists;

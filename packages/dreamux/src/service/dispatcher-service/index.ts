@@ -580,7 +580,7 @@ export class DispatcherService {
   }
 
   createTeam(input: TeamCreateInput) {
-    return this.admitOperation(() => this.teams.create(input));
+    return this.admitOperation(() => this.teams.createFromPrefix(input));
   }
 
   sendTeamLeader(input: {

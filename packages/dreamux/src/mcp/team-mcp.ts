@@ -150,14 +150,14 @@ export function teamTools(
   }, ['meta']);
   if (callerKind === 'team_leader') return [bindChannelTool, transferBackTool];
   return [
-    tool('create', 'Create a Team and start its TeamLeader. team_name is the concrete Team key used by all later status/history/dissolve/send calls. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to let Dreamux allocate a plain shared work directory for the Team, or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } to choose an existing path or create a managed git worktree. prompt is optional: when supplied it is delivered as the TeamLeader\'s first turn; when omitted the leader starts idle and waits for bound-channel inbound or a later Team MCP send. To route a channel target to the Team, bind it after create with the team bind_channel tool.', {
-      team_name: { type: 'string', minLength: 1, maxLength: 64 },
+    tool('create', 'Create a Team and start its TeamLeader. name_prefix is only a requested label; create RETURNS a concrete, never-reused team.team_name with a 4-8 character random suffix, and every later status/history/dissolve/send/bind_channel call MUST use that returned team_name. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to let Dreamux allocate a plain shared work directory for the Team, or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } to choose an existing path or create a managed git worktree. prompt is optional: when supplied it is delivered as the TeamLeader\'s first turn; when omitted the leader starts idle and waits for bound-channel inbound or a later Team MCP send. To route a channel target to the Team, bind it after create with the team bind_channel tool.', {
+      name_prefix: { type: 'string', minLength: 1, maxLength: 64 },
       repo: repoInputSchema(),
       leader_agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
       intent: { type: 'string', minLength: 1, maxLength: 2000 },
       identity: { type: 'string', minLength: 1, maxLength: 4000 },
       prompt: { type: 'string', maxLength: 20000 },
-    }, ['team_name', 'leader_agent_runtime', 'intent']),
+    }, ['name_prefix', 'leader_agent_runtime', 'intent']),
     tool('send', 'Submit a follow-up turn to a Team\'s TeamLeader by team_name. This targets the TeamLeader agent only; it does not send to Team members and does not bind or post to a channel.', {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
       prompt: { type: 'string', minLength: 1, maxLength: 20000 },
@@ -283,7 +283,7 @@ function createArgs(value: unknown): Record<string, unknown> {
   // dispatcher-default workspace (no git worktree, issue #199).
   const repo = optionalRepoInput(obj, 'repo');
   return {
-    team_name: requireString(obj, 'team_name'),
+    name_prefix: requireString(obj, 'name_prefix'),
     leader_agent_runtime: requireString(obj, 'leader_agent_runtime'),
     // Required recovery subject (issue #182 PR-3).
     intent: requireString(obj, 'intent'),

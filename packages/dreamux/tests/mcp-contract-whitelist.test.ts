@@ -239,10 +239,17 @@ describe('issue #199 Slice 1 — public MCP contract whitelist', () => {
     }
   });
 
-  it('team verbs address by team_name, never the legacy name/team_id', async () => {
+  it('team.create requests a prefix while lifecycle verbs use team_name', async () => {
     const tools = await teamTools();
-    for (const verb of ['create', 'send', 'status', 'dissolve']) {
+    const create = schemaOf(tools, 'create');
+    expect(create.properties).toHaveProperty('name_prefix');
+    expect(create.properties).not.toHaveProperty('team_name');
+    expect(String(toolOf(tools, 'create')['description'])).toMatch(
+      /concrete, never-reused team\.team_name.*4-8 character random suffix/,
+    );
+    for (const verb of ['send', 'status', 'dissolve']) {
       expect(schemaOf(tools, verb).properties).toHaveProperty('team_name');
+      expect(schemaOf(tools, verb).properties).not.toHaveProperty('name_prefix');
       expect(schemaOf(tools, verb).properties).not.toHaveProperty('name');
       expect(schemaOf(tools, verb).properties).not.toHaveProperty('team_id');
     }
@@ -364,6 +371,6 @@ describe('issue #199 Slice 2 — repo input + field-collapse whitelist', () => {
     expect(create.properties).not.toHaveProperty('worktree');
     expect(create.required).not.toContain('repo_cwd');
     expect(create.required).not.toContain('identity');
-    expect(create.required).toEqual(['team_name', 'leader_agent_runtime', 'intent']);
+    expect(create.required).toEqual(['name_prefix', 'leader_agent_runtime', 'intent']);
   });
 });

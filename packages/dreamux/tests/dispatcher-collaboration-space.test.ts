@@ -1007,13 +1007,13 @@ describe('DispatcherService collaboration-space routing', () => {
 
     try {
       await dispatcher.startInputSources();
-      await dispatcher.createTeam({
-        name: 'group-team',
+      const groupTeam = await dispatcher.createTeam({
+        namePrefix: 'group-team',
         leaderAgentRuntime: 'dispatcher-runtime',
         intent: 'own the existing group route',
       });
       await dispatcher.bindTeamChannel({
-        teamId: 'group-team',
+        teamId: groupTeam.team.team_name,
         channelId: 'primary',
         meta: { chat_id: 'chat-topic' },
       });
@@ -1076,13 +1076,13 @@ describe('DispatcherService collaboration-space routing', () => {
     });
     try {
       await dispatcher.startInputSources();
-      await dispatcher.createTeam({
-        name: 'group-team',
+      const groupTeam = await dispatcher.createTeam({
+        namePrefix: 'group-team',
         leaderAgentRuntime: 'dispatcher-runtime',
         intent: 'own the enclosing group route',
       });
       await dispatcher.bindTeamChannel({
-        teamId: 'group-team',
+        teamId: groupTeam.team.team_name,
         channelId: 'primary',
         meta: { chat_id: 'chat-topic' },
       });
@@ -1181,13 +1181,13 @@ describe('DispatcherService collaboration-space routing', () => {
 
     try {
       await dispatcher.startInputSources();
-      await dispatcher.createTeam({
-        name: 'group-team',
+      const groupTeam = await dispatcher.createTeam({
+        namePrefix: 'group-team',
         leaderAgentRuntime: 'dispatcher-runtime',
         intent: 'own the enclosing group route',
       });
       await dispatcher.bindTeamChannel({
-        teamId: 'group-team',
+        teamId: groupTeam.team.team_name,
         channelId: 'primary',
         meta: { chat_id: 'chat-topic' },
       });
@@ -1197,13 +1197,13 @@ describe('DispatcherService collaboration-space routing', () => {
         threadId: 'topic-a',
       }));
 
-      await dispatcher.createTeam({
-        name: 'exact-topic-team',
+      const exactTopicTeam = await dispatcher.createTeam({
+        namePrefix: 'exact-topic-team',
         leaderAgentRuntime: 'dispatcher-runtime',
         intent: 'own one exact topic route',
       });
       await dispatcher.bindTeamChannel({
-        teamId: 'exact-topic-team',
+        teamId: exactTopicTeam.team.team_name,
         channelId: 'primary',
         meta: {
           chat_id: 'chat-topic',
@@ -2166,7 +2166,7 @@ describe('DispatcherService collaboration-space routing', () => {
     };
 
     const create = dispatcher.createTeam({
-      name: 'admitted-create',
+      namePrefix: 'admitted-create',
       leaderAgentRuntime: 'dispatcher-runtime',
       intent: 'verify dispatcher admission drain',
     });
@@ -2181,7 +2181,7 @@ describe('DispatcherService collaboration-space routing', () => {
     await Promise.resolve();
     expect(stopped).toBe(false);
     expect(() => dispatcher.createTeam({
-      name: 'late-create',
+      namePrefix: 'late-create',
       leaderAgentRuntime: 'dispatcher-runtime',
       intent: 'too late',
     })).toThrow(/shutting down/);
@@ -2399,7 +2399,7 @@ describe('DispatcherService collaboration-space routing', () => {
       log: noopLog(),
     });
     await dispatcher.createTeam({
-      name: 'stop-sweep',
+      namePrefix: 'stop-sweep',
       leaderAgentRuntime: 'dispatcher-runtime',
       intent: 'verify Team runtime shutdown',
     });

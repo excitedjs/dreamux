@@ -57,11 +57,13 @@ later call. `send` is also the reattach path for a closed TeamMate when the
 runtime can resume it from the recorded session.
 
 Dispatcher `team` MCP tools are `create`, `send`, `list`, `status`, `history`,
-`dissolve`, `bind_channel`, and `transfer_back`. Team lifecycle is addressed by
-`team_name`. `bind_channel({ team_name, channel_id?, meta })` routes an existing
-channel target to a Team, and `transfer_back({ channel_id?, meta })` releases a
-bound target from Team routing. `meta` is provider-owned; the active channel
-provider's tool schema and results are the authority for the target selector.
+`dissolve`, `bind_channel`, and `transfer_back`. `create.name_prefix` is only a
+requested label; use the returned concrete, never-reused `team.team_name` for
+every later Team call. `bind_channel({ team_name, channel_id?, meta })` routes
+an existing channel target to a Team, and
+`transfer_back({ channel_id?, meta })` releases a bound target from Team
+routing. `meta` is provider-owned; the active channel provider's tool schema
+and results are the authority for the target selector.
 
 Dispatcher `cron` MCP tools are `cron_create`, `cron_list`, `cron_update`,
 `cron_delete`, and `cron_run_now`. Cron prompts are injected back into the

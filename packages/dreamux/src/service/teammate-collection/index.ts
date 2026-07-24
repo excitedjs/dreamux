@@ -34,7 +34,10 @@ import {
 } from './read-helpers.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import { AgentTurnsStore } from '../agent-entity/turns-store.js';
-import { allocateConcreteName, type SuffixGenerator } from './name-allocator.js';
+import {
+  allocateConcreteName,
+  type SuffixGenerator,
+} from '../name-allocator.js';
 import {
   assertManagedWorktreeAvailable,
   dispatcherWorkspace,
@@ -202,7 +205,7 @@ export class TeammateCollection implements TeammateOps {
   ): Promise<string> {
     const taken = await this.identities.listAllNames(this.dispatcherId);
     return allocateConcreteName({
-      role,
+      kind: role,
       base,
       ...(teamSlug !== undefined ? { teamSlug } : {}),
       exists: (candidate) => taken.has(candidate),

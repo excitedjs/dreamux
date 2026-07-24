@@ -67,18 +67,6 @@ export class TeamStore {
       status?: TeamStatus;
       closedAt?: number | null;
       closeNote?: string | null;
-      /**
-       * Generation-owned facts must move together when a closed Team is
-       * recreated. Keeping any field from the prior generation would make
-       * route projections and newly spawned members use a stale workspace.
-       */
-      generation?: {
-        repoCwd: string;
-        sourceRepo: string | null;
-        leaderAgentRuntime: string;
-        runtimeCwd: string;
-        worktree: TeamRecord['worktree'];
-      };
       worktree?: TeamRecord['worktree'];
       intent?: string;
       leaderName?: string;
@@ -89,21 +77,8 @@ export class TeamStore {
       ...(input.status !== undefined ? { status: input.status } : {}),
       ...(input.closedAt !== undefined ? { closed_at: input.closedAt } : {}),
       ...(input.closeNote !== undefined ? { close_note: input.closeNote } : {}),
-      ...(input.generation !== undefined
-        ? {
-            repo_cwd: input.generation.repoCwd,
-            source_repo: input.generation.sourceRepo,
-            leader_agent_runtime: input.generation.leaderAgentRuntime,
-            runtime_cwd: input.generation.runtimeCwd,
-            worktree: input.generation.worktree,
-          }
-        : {}),
       ...(input.worktree !== undefined ? { worktree: input.worktree } : {}),
-      // Recreating a closed Team allocates a FRESH concrete leader name (#188:
-      // concrete names are never reused), so the reused record adopts it.
       ...(input.leaderName !== undefined ? { leader_name: input.leaderName } : {}),
-      // Recreating a closed Team must refresh the recovery subject so the reused
-      // record carries the new create.intent, not a stale one (issue #182 PR-3).
       ...(input.intent !== undefined ? { intent: input.intent } : {}),
       updated_at: Date.now(),
     };
