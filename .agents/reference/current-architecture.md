@@ -176,7 +176,7 @@ role-agnostic: `DispatcherService` builds one shared `AgentIdentityStore` +
 `AgentTurnsStore` pair at construction and injects it into the dispatcher
 agent, the dispatcher-scope `TeammateCollection`, and each Team's
 `TeamCollection` / `TeamService` / member `TeammateCollection`. Stores are
-never self-built inside a collection (PR #282 owner-boundary fix).
+never self-built inside agent collections (PR #282 owner-boundary fix).
 
 Team creation takes `name_prefix` and returns a concrete `team_name` with a
 4–8 character random suffix. Core publishes a fully written
@@ -184,10 +184,10 @@ Team creation takes `name_prefix` and returns a concrete `team_name` with a
 before any Team or collaboration-target side effect; the claim survives restart
 and dissolve, so closed and not-yet-materialized concrete names are never
 reused. Generated TeamLeader, ordinary TeamMate, and Team-member names use the
-same 4–8 character suffix contract. The live `AgentIdentityStore` atomically
-reserves those agent names across dispatcher collections; persisted identities
-and the shared TeamStore's pending `leader_name` projection replace the
-transient reservation after creation.
+same 4–8 character suffix contract. `AgentIdentityStore.allocateName()` checks
+the persisted dispatcher-global entity namespace before selection; identity
+creation uses an atomic no-clobber write. Agent naming adds no transient
+reservation queue or permanent claim file.
 Later Team lifecycle and routing operations are addressed by that returned
 `team_name`.
 Channel binding is a Team MCP capability. The Team MCP is caller-scoped:

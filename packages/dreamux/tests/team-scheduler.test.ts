@@ -31,7 +31,6 @@ import {
   TeamCollection,
   TeamUnavailableError,
 } from '../src/service/team-collection/index.js';
-import { TeamStore } from '../src/service/team-collection/store.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
 import { ensureDispatcherIdentity } from '../src/service/dispatcher-service/identity.js';
 import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
@@ -1816,7 +1815,6 @@ function makeTeams(input: {
       contexts: input.contexts,
     }),
     worktrees: new WorktreeManager(),
-    store: new TeamStore(),
     identities: new AgentIdentityStore(input.log),
     turnsStore: new AgentTurnsStore(input.log),
     router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log: input.log }),

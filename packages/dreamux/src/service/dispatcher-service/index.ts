@@ -52,7 +52,6 @@ import {
   type AgentEntityIdentity,
 } from '../agent-entity/types.js';
 import { TeamCollection } from '../team-collection/index.js';
-import { TeamStore } from '../team-collection/store.js';
 import { SchedulerService, type SchedulerCommands } from '../scheduler/service.js';
 import { CronJobStore } from '../scheduler/store.js';
 import { ChannelService, type ChannelRouteOwner } from '../channel-service/index.js';
@@ -134,8 +133,7 @@ export class DispatcherService {
     });
 
     const worktrees = new WorktreeManager();
-    const teamStore = new TeamStore(this.coreEvents.publisher);
-    const identities = new AgentIdentityStore(opts.log, this.coreEvents.publisher, teamStore);
+    const identities = new AgentIdentityStore(opts.log, this.coreEvents.publisher);
     const turnsStore = new AgentTurnsStore(opts.log, this.coreEvents.publisher);
     this.identities = identities;
     this.turnsStore = turnsStore;
@@ -187,7 +185,6 @@ export class DispatcherService {
       config: opts.config,
       agentRuntimeProviders: opts.agentRuntimeProviders,
       worktrees,
-      store: teamStore,
       identities,
       turnsStore,
       router: this.router,
@@ -204,6 +201,7 @@ export class DispatcherService {
           }),
         ],
       log: opts.log,
+      coreEvents: this.coreEvents.publisher,
     });
 
     this.collaborationSpaces = new CollaborationSpaceService({

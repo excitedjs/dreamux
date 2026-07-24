@@ -85,9 +85,7 @@ export interface TeammateCollectionOptions {
    * `DispatcherService` is the per-dispatcher composition root and builds the
    * shared pair once, then injects it into the dispatcher agent, the
    * dispatcher-scope teammate collection, and each team-scope member
-   * collection. The shared identity store also owns dispatcher-global
-   * transient name reservations, so every scope must use that same live
-   * instance; `TeammateCollection` must never hide a `new` fallback.
+   * collection. `TeammateCollection` must never hide a `new` fallback.
    */
   identities: AgentIdentityStore;
   turnsStore: AgentTurnsStore;
@@ -207,51 +205,47 @@ export class TeammateCollection implements TeammateOps {
     const role = teamId !== undefined ? 'team_member' : 'teammate';
     const agentRuntimeId =
       input.agentRuntime ?? defaultAgentRuntime(this.opts.config, this.dispatcherId);
-    const identity = await this.identities.withReservedName(
-      {
+    const name = await this.identities.allocateName({
+      dispatcherId: this.dispatcherId,
+      kind: role,
+      base: input.name,
+      ...(this.opts.suffixGenerator !== undefined
+        ? { generateSuffix: this.opts.suffixGenerator }
+        : {}),
+    });
+    const workspace = await resolveSpawnWorkspace({
+      config: this.opts.config,
+      worktrees: this.worktrees,
+      dispatcherId: this.dispatcherId,
+      name,
+      request: input,
+    });
+    if (input.sharedWorkspace === undefined) {
+      await assertManagedWorktreeAvailable({
+        identities: this.identities,
         dispatcherId: this.dispatcherId,
-        kind: role,
-        base: input.name,
-        ...(this.opts.suffixGenerator !== undefined
-          ? { generateSuffix: this.opts.suffixGenerator }
-          : {}),
-      },
-      async (name) => {
-        const workspace = await resolveSpawnWorkspace({
-          config: this.opts.config,
-          worktrees: this.worktrees,
-          dispatcherId: this.dispatcherId,
-          name,
-          request: input,
-        });
-        if (input.sharedWorkspace === undefined) {
-          await assertManagedWorktreeAvailable({
-            identities: this.identities,
-            dispatcherId: this.dispatcherId,
-            name,
-            worktree: workspace.worktree,
-          });
-        }
-        return this.identities.create({
-          dispatcherId: this.dispatcherId,
-          name,
-          role,
-          teamId: teamId ?? null,
-          agentRuntime: agentRuntimeId,
-          sourceCwd: workspace.sourceCwd,
-          sourceRepo: workspace.sourceRepo,
-          cwd: workspace.runtimeCwd,
-          runtimeCwd: workspace.runtimeCwd,
-          worktree: workspace.worktree,
-          intent: input.intent,
-          identityPrompt,
-          ...(input.skillSources !== undefined
-            ? { skillSources: input.skillSources }
-            : {}),
-          status: 'starting',
-        });
-      },
-    );
+        name,
+        worktree: workspace.worktree,
+      });
+    }
+    const identity = await this.identities.create({
+      dispatcherId: this.dispatcherId,
+      name,
+      role,
+      teamId: teamId ?? null,
+      agentRuntime: agentRuntimeId,
+      sourceCwd: workspace.sourceCwd,
+      sourceRepo: workspace.sourceRepo,
+      cwd: workspace.runtimeCwd,
+      runtimeCwd: workspace.runtimeCwd,
+      worktree: workspace.worktree,
+      intent: input.intent,
+      identityPrompt,
+      ...(input.skillSources !== undefined
+        ? { skillSources: input.skillSources }
+        : {}),
+      status: 'starting',
+    });
     const entity = this.entityFor(identity);
     await entity.ensureStarted();
     const turn = await entity.submitInitialPrompt(input.prompt, {

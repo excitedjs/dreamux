@@ -176,10 +176,9 @@ the explicit `service/index.ts` facade.
   leader). `last` reads the identity first (existence/scope), then the turn
   archive — it never starts a runtime, so a closed teammate stays recoverable.
   Teammate **names stay dispatcher-global**: the live `AgentIdentityStore`
-  atomically reserves candidates across TeamLeader, dispatcher-TeamMate, and
-  Team-member creation. Occupancy includes entity directory names even when an
-  identity is unreadable, plus the shared TeamStore's pending `leader_name`
-  projection, so `producerName:turnId` remains collision-free for the router.
+  checks persisted entity directory names before allocating a TeamLeader,
+  dispatcher-TeamMate, or Team-member name. Directory names remain occupied
+  even when an identity is unreadable, and identity creation is no-clobber.
   The reserved-name guard (`assertNotReservedAgentName`) blocks names that would
   recreate a legacy leaf (`records` / `turns` / …). `session_id` is the
   runtime-native thread id, persisted directly.

@@ -258,7 +258,6 @@ describe('TeamCollection read path (issue #233 R4)', () => {
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
-      store: new TeamStore(),
       identities: new AgentIdentityStore(log),
       turnsStore,
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
@@ -405,7 +404,6 @@ describe('TeamCollection route readiness recovery', () => {
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
-      store: new TeamStore(),
       identities,
       turnsStore: new AgentTurnsStore(log),
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
@@ -457,7 +455,6 @@ describe('TeamCollection route readiness recovery', () => {
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
-      store: new TeamStore(),
       identities: new AgentIdentityStore(log),
       turnsStore: new AgentTurnsStore(log),
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
@@ -541,7 +538,6 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
-      store: new TeamStore(),
       identities: new AgentIdentityStore(log),
       turnsStore: new AgentTurnsStore(log),
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
@@ -593,7 +589,6 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
         submitError: new Error('initial prompt failed'),
       }),
       worktrees: new WorktreeManager(),
-      store: new TeamStore(),
       identities: new AgentIdentityStore(log),
       turnsStore: new AgentTurnsStore(log),
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
@@ -632,7 +627,6 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
-      store: new TeamStore(),
       identities: new AgentIdentityStore(log),
       turnsStore: new AgentTurnsStore(log),
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
@@ -700,7 +694,6 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
         stopError: leaderStopError,
       }),
       worktrees: new WorktreeManager(),
-      store: new TeamStore(),
       identities: new AgentIdentityStore(log),
       turnsStore: new AgentTurnsStore(log),
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
@@ -763,7 +756,6 @@ describe('TeamCollection identity prompt launch behavior', () => {
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes, {}, contexts),
       worktrees: new WorktreeManager(),
-      store: new TeamStore(),
       identities,
       turnsStore: new AgentTurnsStore(log),
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
@@ -836,7 +828,6 @@ describe('TeamCollection identity prompt launch behavior', () => {
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
-      store: new TeamStore(),
       identities: new AgentIdentityStore(log),
       turnsStore: new AgentTurnsStore(log),
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
@@ -895,7 +886,6 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
-      store: new TeamStore(),
       identities: new AgentIdentityStore(log),
       turnsStore,
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
@@ -977,7 +967,6 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
         lastText: 'leader finished',
       }),
       worktrees: new WorktreeManager(),
-      store: new TeamStore(),
       identities: new AgentIdentityStore(log),
       turnsStore,
       router,
@@ -1031,7 +1020,6 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
-      store: new TeamStore(),
       identities: new AgentIdentityStore(log),
       turnsStore: new AgentTurnsStore(log),
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
@@ -1098,7 +1086,6 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
-      store: new TeamStore(),
       identities: new AgentIdentityStore(log),
       turnsStore: new AgentTurnsStore(log),
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
@@ -1185,7 +1172,6 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
         config,
         agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
         worktrees: new WorktreeManager(),
-        store: new TeamStore(),
         identities: new AgentIdentityStore(log),
         turnsStore: new AgentTurnsStore(log),
         router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
@@ -1314,358 +1300,6 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('releases ordinary and team-member reservations after identity persistence fails', async () => {
-    const workspace = join(root, 'reservation-release-workspace');
-    mkdirSync(workspace, { recursive: true });
-    const runtimes: FakeRuntime[] = [];
-    const config = testDreamuxConfig([
-      testDispatcherConfig({
-        id: 'dispatcher-a',
-        cwd: workspace,
-        agentRuntime: 'agent-a',
-        runtimeProvider: FAKE_RUNTIME_REF,
-      }),
-    ]);
-    const log = noopLog();
-    const teamStore = new TeamStore();
-    const identities = new AgentIdentityStore(log, undefined, teamStore);
-    const createIdentity = vi.spyOn(identities, 'create');
-    const dispatcherTeammates = new TeammateCollection({
-      dispatcherId: 'dispatcher-a',
-      teamScope: null,
-      config,
-      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
-      worktrees: new WorktreeManager(),
-      identities,
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
-      initiatorFor: async () => null,
-      isShuttingDown: () => false,
-      suffixGenerator: () => 'a1b2',
-      log,
-    });
-    createIdentity.mockRejectedValueOnce(new Error('ordinary identity failed'));
-    await expect(
-      dispatcherTeammates.spawn({
-        name: 'reviewer',
-        prompt: 'first attempt',
-        intent: 'exercise reservation cleanup',
-        agentRuntime: 'agent-a',
-      }),
-    ).rejects.toThrow(/ordinary identity failed/);
-    await expect(
-      dispatcherTeammates.spawn({
-        name: 'reviewer',
-        prompt: 'second attempt',
-        intent: 'reuse released candidate',
-        agentRuntime: 'agent-a',
-      }),
-    ).resolves.toMatchObject({
-      teammate: { name: 'reviewer-a1b2' },
-    });
-
-    const suffixes = ['l111', 'm111', 'm111'];
-    const teams = new TeamCollection({
-      dispatcherId: 'dispatcher-a',
-      config,
-      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
-      worktrees: new WorktreeManager(),
-      store: teamStore,
-      identities,
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
-      initiatorFor: async () => null,
-      isShuttingDown: () => false,
-      adminSocketPath: '/tmp/admin.sock',
-      leaderChannelDescriptors: () => [],
-      log,
-      agentNameSuffixGenerator: () => suffixes.shift()!,
-    });
-    await teams.create({
-      name: 'alpha',
-      leaderAgentRuntime: 'agent-a',
-      intent: 'exercise member reservation cleanup',
-    });
-    const team = await teams.get('alpha');
-    createIdentity.mockRejectedValueOnce(new Error('member identity failed'));
-    await expect(
-      team.spawnTeamMate({
-        name: 'worker',
-        prompt: 'first member attempt',
-        intent: 'exercise member reservation cleanup',
-        agentRuntime: 'agent-a',
-      }),
-    ).rejects.toThrow(/member identity failed/);
-    await expect(
-      team.spawnTeamMate({
-        name: 'worker',
-        prompt: 'second member attempt',
-        intent: 'reuse released member candidate',
-        agentRuntime: 'agent-a',
-      }),
-    ).resolves.toMatchObject({
-      teammate: { name: 'tm-worker-m111' },
-    });
-    await teams.stopAll();
-    await dispatcherTeammates.stopAll();
-  });
-
-  it('releases a TeamLeader reservation when TeamRecord persistence fails', async () => {
-    const workspace = join(root, 'leader-record-failure-workspace');
-    mkdirSync(workspace, { recursive: true });
-    const runtimes: FakeRuntime[] = [];
-    const config = testDreamuxConfig([
-      testDispatcherConfig({
-        id: 'dispatcher-a',
-        cwd: workspace,
-        agentRuntime: 'agent-a',
-        runtimeProvider: FAKE_RUNTIME_REF,
-      }),
-    ]);
-    const log = noopLog();
-    const teamStore = new TeamStore();
-    vi.spyOn(teamStore, 'create')
-      .mockRejectedValueOnce(new Error('TeamRecord persistence failed'));
-    const identities = new AgentIdentityStore(log, undefined, teamStore);
-    const teams = new TeamCollection({
-      dispatcherId: 'dispatcher-a',
-      config,
-      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
-      worktrees: new WorktreeManager(),
-      store: teamStore,
-      identities,
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
-      initiatorFor: async () => null,
-      isShuttingDown: () => false,
-      adminSocketPath: '/tmp/admin.sock',
-      leaderChannelDescriptors: () => [],
-      log,
-      agentNameSuffixGenerator: () => 'aaaa',
-    });
-    await expect(
-      teams.create({
-        name: 'alpha',
-        leaderAgentRuntime: 'agent-a',
-        intent: 'fail before the Team record exists',
-      }),
-    ).rejects.toThrow(/TeamRecord persistence failed/);
-    await expect(teamStore.get('dispatcher-a', 'alpha')).resolves.toBeNull();
-
-    const dispatcherTeammates = new TeammateCollection({
-      dispatcherId: 'dispatcher-a',
-      teamScope: null,
-      config,
-      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
-      worktrees: new WorktreeManager(),
-      identities,
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
-      initiatorFor: async () => null,
-      isShuttingDown: () => false,
-      suffixGenerator: () => 'aaaa',
-      log,
-    });
-    await expect(
-      dispatcherTeammates.spawn({
-        name: 'tl-alpha',
-        prompt: 'claim the released leader candidate',
-        intent: 'prove pre-record cleanup',
-        agentRuntime: 'agent-a',
-      }),
-    ).resolves.toMatchObject({
-      teammate: { name: 'tl-alpha-aaaa' },
-    });
-    await dispatcherTeammates.stopAll();
-    await teams.stopAll();
-  });
-
-  it('keeps a failed post-record TeamLeader name occupied after reconstruction', async () => {
-    const workspace = join(root, 'leader-identity-failure-workspace');
-    mkdirSync(workspace, { recursive: true });
-    const runtimes: FakeRuntime[] = [];
-    const config = testDreamuxConfig([
-      testDispatcherConfig({
-        id: 'dispatcher-a',
-        cwd: workspace,
-        agentRuntime: 'agent-a',
-        runtimeProvider: FAKE_RUNTIME_REF,
-      }),
-    ]);
-    const log = noopLog();
-    const teamStore = new TeamStore();
-    const identities = new AgentIdentityStore(log, undefined, teamStore);
-    vi.spyOn(identities, 'create')
-      .mockRejectedValueOnce(new Error('leader identity persistence failed'));
-    const teams = new TeamCollection({
-      dispatcherId: 'dispatcher-a',
-      config,
-      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
-      worktrees: new WorktreeManager(),
-      store: teamStore,
-      identities,
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
-      initiatorFor: async () => null,
-      isShuttingDown: () => false,
-      adminSocketPath: '/tmp/admin.sock',
-      leaderChannelDescriptors: () => [],
-      log,
-      agentNameSuffixGenerator: () => 'aaaa',
-    });
-    await expect(
-      teams.create({
-        name: 'alpha',
-        leaderAgentRuntime: 'agent-a',
-        intent: 'fail after the Team record exists',
-      }),
-    ).rejects.toThrow(/leader identity persistence failed/);
-    await expect(teamStore.get('dispatcher-a', 'alpha')).resolves.toMatchObject({
-      leader_name: 'tl-alpha-aaaa',
-      status: 'starting',
-    });
-    await expect(
-      identities.get('dispatcher-a', 'tl-alpha-aaaa', 'alpha'),
-    ).resolves.toBeNull();
-
-    const suffixes = ['aaaa', 'bbbb'];
-    await expect(
-      identities.withReservedName(
-        {
-          dispatcherId: 'dispatcher-a',
-          kind: 'teammate',
-          base: 'tl-alpha',
-          generateSuffix: () => suffixes.shift()!,
-        },
-        async (name) => name,
-      ),
-    ).resolves.toBe('tl-alpha-bbbb');
-
-    const restartedIdentities = new AgentIdentityStore(
-      log,
-      undefined,
-      new TeamStore(),
-    );
-    const restartedSuffixes = ['aaaa', 'bbbb'];
-    const dispatcherTeammates = new TeammateCollection({
-      dispatcherId: 'dispatcher-a',
-      teamScope: null,
-      config,
-      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
-      worktrees: new WorktreeManager(),
-      identities: restartedIdentities,
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
-      initiatorFor: async () => null,
-      isShuttingDown: () => false,
-      suffixGenerator: () => restartedSuffixes.shift()!,
-      log,
-    });
-    await expect(
-      dispatcherTeammates.spawn({
-        name: 'tl-alpha',
-        prompt: 'skip the pending leader after reconstruction',
-        intent: 'prove durable leader-name occupancy',
-        agentRuntime: 'agent-a',
-      }),
-    ).resolves.toMatchObject({
-      teammate: { name: 'tl-alpha-bbbb' },
-    });
-    await dispatcherTeammates.stopAll();
-    await teams.stopAll();
-  });
-
-  it('reserves generated agent names across roles and releases failed reservations', async () => {
-    const identities = new AgentIdentityStore(noopLog());
-    const firstEntered = deferred<string>();
-    const releaseFirst = deferred<void>();
-    const first = identities.withReservedName(
-      {
-        dispatcherId: 'dispatcher-a',
-        kind: 'team_leader',
-        base: 'alpha',
-        teamSlug: 'alpha',
-        generateSuffix: () => 'aaaa',
-      },
-      async (name) => {
-        firstEntered.resolve(name);
-        await releaseFirst.promise;
-        return name;
-      },
-    );
-    await expect(firstEntered.promise).resolves.toBe('tl-alpha-aaaa');
-
-    const suffixes = ['aaaa', 'bbbb'];
-    const second = await identities.withReservedName(
-      {
-        dispatcherId: 'dispatcher-a',
-        kind: 'teammate',
-        base: 'tl-alpha',
-        generateSuffix: () => suffixes.shift()!,
-      },
-      async (name) => name,
-    );
-    expect(second).toBe('tl-alpha-bbbb');
-    releaseFirst.resolve();
-    await expect(first).resolves.toBe('tl-alpha-aaaa');
-
-    const memberEntered = deferred<string>();
-    const releaseMember = deferred<void>();
-    const member = identities.withReservedName(
-      {
-        dispatcherId: 'dispatcher-a',
-        kind: 'team_member',
-        base: 'worker',
-        generateSuffix: () => 'aaaa',
-      },
-      async (name) => {
-        memberEntered.resolve(name);
-        await releaseMember.promise;
-        return name;
-      },
-    );
-    await expect(memberEntered.promise).resolves.toBe('tm-worker-aaaa');
-    const ordinarySuffixes = ['aaaa', 'bbbb'];
-    await expect(
-      identities.withReservedName(
-        {
-          dispatcherId: 'dispatcher-a',
-          kind: 'teammate',
-          base: 'tm-worker',
-          generateSuffix: () => ordinarySuffixes.shift()!,
-        },
-        async (name) => name,
-      ),
-    ).resolves.toBe('tm-worker-bbbb');
-    releaseMember.resolve();
-    await expect(member).resolves.toBe('tm-worker-aaaa');
-
-    await expect(
-      identities.withReservedName(
-        {
-          dispatcherId: 'dispatcher-a',
-          kind: 'team_member',
-          base: 'worker',
-          generateSuffix: () => 'cccc',
-        },
-        async () => {
-          throw new Error('workspace failed');
-        },
-      ),
-    ).rejects.toThrow(/workspace failed/);
-    await expect(
-      identities.withReservedName(
-        {
-          dispatcherId: 'dispatcher-a',
-          kind: 'team_member',
-          base: 'worker',
-          generateSuffix: () => 'cccc',
-        },
-        async (name) => name,
-      ),
-    ).resolves.toBe('tm-worker-cccc');
-  });
-
   it('regenerates before spawn when an unreadable identity directory occupies the candidate', async () => {
     const workspace = join(root, 'corrupt-identity-workspace');
     mkdirSync(workspace, { recursive: true });
@@ -1742,77 +1376,6 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
     });
     expect(prepareWorkspace).toHaveBeenCalledTimes(1);
     await collection.stopAll();
-  });
-
-  it('keeps a persisted pending TeamLeader name occupied after reservation release and restart', async () => {
-    const log = noopLog();
-    const teamStore = new TeamStore();
-    const identities = new AgentIdentityStore(log, undefined, teamStore);
-    await expect(
-      teamStore.claimName('dispatcher-a', 'alpha-team', 'team-owner'),
-    ).resolves.toBe(true);
-    await expect(
-      identities.withReservedName(
-        {
-          dispatcherId: 'dispatcher-a',
-          kind: 'team_leader',
-          base: 'alpha',
-          teamSlug: 'alpha',
-          generateSuffix: () => 'aaaa',
-        },
-        async (leaderName) => {
-          await teamStore.create({
-            dispatcher_id: 'dispatcher-a',
-            team_id: 'alpha-team',
-            name: 'Alpha',
-            repo_cwd: root,
-            source_repo: null,
-            leader_name: leaderName,
-            leader_agent_runtime: 'agent-a',
-            runtime_cwd: root,
-            worktree: {
-              mode: 'reuse-cwd',
-              slug: null,
-              path: root,
-              branch: null,
-              base_ref: null,
-              cleanup: 'keep',
-              cleanup_state: 'not-managed',
-              cleanup_error: null,
-            },
-            status: 'starting',
-            intent: 'pending leader identity',
-            closed_at: null,
-            close_note: null,
-          }, 'team-owner');
-          throw new Error('identity create failed');
-        },
-      ),
-    ).rejects.toThrow(/identity create failed/);
-
-    const allocateAroundPendingLeader = async (
-      store: AgentIdentityStore,
-    ): Promise<string> => {
-      const suffixes = ['aaaa', 'bbbb'];
-      return store.withReservedName(
-        {
-          dispatcherId: 'dispatcher-a',
-          kind: 'teammate',
-          base: 'tl-alpha',
-          generateSuffix: () => suffixes.shift()!,
-        },
-        async (name) => name,
-      );
-    };
-    await expect(allocateAroundPendingLeader(identities))
-      .resolves.toBe('tl-alpha-bbbb');
-    const restarted = new AgentIdentityStore(
-      log,
-      undefined,
-      new TeamStore(),
-    );
-    await expect(allocateAroundPendingLeader(restarted))
-      .resolves.toBe('tl-alpha-bbbb');
   });
 
   it('creates agent identities without silently replacing an existing file', async () => {
@@ -1925,7 +1488,6 @@ describe('closing a team member must not remove the shared team worktree', () =>
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
-      store: new TeamStore(),
       identities: new AgentIdentityStore(log),
       turnsStore: new AgentTurnsStore(log),
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
@@ -2021,7 +1583,6 @@ describe('team dissolve syncs cleanup_state to the leader and members (#237)', (
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
-      store: new TeamStore(),
       identities: new AgentIdentityStore(log),
       turnsStore: new AgentTurnsStore(log),
       router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),

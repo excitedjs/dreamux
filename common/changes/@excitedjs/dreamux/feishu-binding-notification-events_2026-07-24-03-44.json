@@ -2,7 +2,7 @@
   "changes": [
     {
       "packageName": "@excitedjs/dreamux",
-      "comment": "BREAKING: Team MCP create now accepts name_prefix instead of team_name and returns a concrete, never-reused team_name with a 4-8 character random suffix. Rebuild callers to retain the returned team_name for later Team operations. Team names are durably claimed before Team or collaboration-target side effects; generated TeamLeader, TeamMate, and Team-member names also use 4-8 character suffixes and share an atomic dispatcher-global reservation capability. Also publish provider-neutral binding transition events and persist collaboration target metadata across provisioning retries.",
+      "comment": "BREAKING: Team MCP create now accepts name_prefix instead of team_name and returns a concrete, never-reused team_name with a 4-8 character random suffix. Rebuild callers to retain the returned team_name for later Team operations. Team names are durably claimed before Team or collaboration-target side effects; generated TeamLeader, TeamMate, and Team-member names also use 4-8 character suffixes. Also publish provider-neutral binding transition events and persist collaboration target metadata across provisioning retries.",
       "type": "minor"
     }
   ],
