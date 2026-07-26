@@ -9,6 +9,7 @@ import type {
   ChannelScopedOperationFailureCode,
   ChannelTargetLifecycleEvent,
   DreamuxLogger,
+  DreamuxManagedRepoRequest,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
@@ -21,6 +22,7 @@ import { validateTeamId } from '../team-collection/types.js';
 const ROUTE_IDENTITY_MAX = 512;
 const DISPLAY_TEXT_MAX = 4_096;
 const SOURCE_ID_MAX = 1_024;
+const REPO_PATH_MAX = 4_096;
 
 export async function handleCollaborationTargetLifecycle(input: {
   dispatcherId: string;
@@ -126,6 +128,7 @@ export async function ensureCollaborationTarget(input: {
         container: request.container,
         target: request.target,
         ...(request.title !== undefined ? { title: request.title } : {}),
+        ...(request.repo !== undefined ? { repo: request.repo } : {}),
         channels: input.channels,
       }),
       {
@@ -407,6 +410,7 @@ function provisionInputForTarget(input: {
   container: ChannelInboundEnvelope['container'];
   target: ChannelInboundEnvelope['target'];
   title?: string;
+  repo?: DreamuxManagedRepoRequest;
   eventId?: string;
 }) {
   if (input.container === undefined) {
@@ -418,6 +422,7 @@ function provisionInputForTarget(input: {
     container: input.container,
     target: input.target,
     ...(input.title !== undefined ? { title: input.title } : {}),
+    ...(input.repo !== undefined ? { repo: input.repo } : {}),
     ...(input.eventId !== undefined ? { eventId: input.eventId } : {}),
   };
 }
@@ -449,12 +454,32 @@ function normalizeEnsureInput(
   input: ChannelCollaborationTargetEnsureInput,
 ): ChannelCollaborationTargetEnsureInput {
   if (!isRecord(input)) throw new TypeError('ensure input must be an object');
+  const repo =
+    input.repo !== undefined ? normalizeManagedRepoRequest(input.repo) : undefined;
   return {
     container: normalizeContainer(input.container),
     target: normalizeStrictTarget(input.target),
     ...(input.title !== undefined
       ? { title: boundedString(input.title, DISPLAY_TEXT_MAX, true) }
       : {}),
+    ...(repo !== undefined ? { repo } : {}),
+  };
+}
+
+/**
+ * Validate the optional repo request: nonblank bounded `path` and `base_ref`
+ * selecting the source repository and ref for this provision call. A small
+ * local validator is intentional — this is the only place the Channel seam
+ * parses the request. Throws on any violation so `ensureCollaborationTarget`
+ * maps it to `invalid_input`.
+ */
+function normalizeManagedRepoRequest(
+  repo: DreamuxManagedRepoRequest,
+): DreamuxManagedRepoRequest {
+  if (!isRecord(repo)) throw new TypeError('repo must be an object');
+  return {
+    path: boundedString(repo.path, REPO_PATH_MAX),
+    base_ref: boundedString(repo.base_ref, ROUTE_IDENTITY_MAX),
   };
 }
 

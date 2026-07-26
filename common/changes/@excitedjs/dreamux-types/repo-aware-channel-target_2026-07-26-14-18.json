@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add an optional per-target repository to the public Channel ABI: DreamuxManagedRepoRequest (a source path and base_ref) and an optional repo field on ChannelCollaborationTargetEnsureInput. Existing providers stay source- and behavior-compatible.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "053700@gmail.com"
+}

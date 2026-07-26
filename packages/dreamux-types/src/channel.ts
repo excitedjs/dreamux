@@ -139,14 +139,29 @@ export interface ChannelMessageTargetCheck {
 }
 
 /**
+ * An optional per-target repository a channel provider may supply on
+ * {@link ChannelCollaborationTargetEnsureInput.repo}. It selects the source
+ * repository and the ref the target's Team worktree is created from.
+ */
+export interface DreamuxManagedRepoRequest {
+  /** Source repository working directory the worktree branches from. */
+  readonly path: string;
+  /** Git ref the worktree is created from. */
+  readonly base_ref: string;
+}
+
+/**
  * Request that core synchronously make an existing collaboration target ready.
- * Workspace selection remains dispatcher-local policy; providers supply no
- * repository, cwd, or workspace mode.
+ *
+ * A provider may supply an optional {@link DreamuxManagedRepoRequest} `repo` to
+ * select the source repository and ref for this provision call. When `repo` is
+ * omitted, the existing space binding is used.
  */
 export interface ChannelCollaborationTargetEnsureInput {
   readonly container: ChannelContainer;
   readonly target: ChannelTarget;
   readonly title?: string;
+  readonly repo?: DreamuxManagedRepoRequest;
 }
 
 export type ChannelScopedOperationFailureCode =

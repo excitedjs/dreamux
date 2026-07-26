@@ -128,4 +128,5 @@ export type {
   ChannelToolDescriptor,
   ChannelTurnSettledEvent,
   ChannelTurnSubmittedEvent,
+  DreamuxManagedRepoRequest,
 } from './channel.js';

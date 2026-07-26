@@ -431,23 +431,23 @@ export class CollaborationTargetLifecycle {
       if (record.phase === 'claimed') {
         if (!(await this.opts.teams.isOpenTeam(record.team_name))) {
           this.assertNotShuttingDown();
+          const repo = input.repo !== undefined
+            ? { ...input.repo, cleanup: 'delete-on-close' as const }
+            : binding.repo_cwd !== null && binding.worktree.mode === 'managed'
+              ? { path: binding.repo_cwd, ...binding.worktree } : null;
           await this.opts.teams.create({
             name: record.team_name,
             nameClaimToken: routeClaimIdForTarget(record),
             leaderAgentRuntime: binding.leader_agent_runtime,
             intent: targetIntent(target, record),
             ...(binding.identity !== null ? { identity: binding.identity } : {}),
-            ...(binding.repo_cwd !== null && binding.worktree.mode === 'managed'
+            ...(repo !== null
               ? {
-                  repoCwd: binding.repo_cwd,
-                  worktree: {
-                    mode: 'managed' as const,
-                    slug: record.worktree_slug,
+                  repoCwd: repo.path, worktree: {
+                    mode: 'managed' as const, slug: record.worktree_slug,
                     branch: record.team_name,
-                    ...(binding.worktree.base_ref !== null
-                      ? { base_ref: binding.worktree.base_ref }
-                      : {}),
-                    cleanup: binding.worktree.cleanup,
+                    ...(repo.base_ref !== null ? { base_ref: repo.base_ref } : {}),
+                    cleanup: repo.cleanup,
                   },
                 }
               : {}),

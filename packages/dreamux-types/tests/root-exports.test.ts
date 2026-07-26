@@ -110,6 +110,7 @@ const ALLOWLIST = [
   'ChannelTurnSubmittedEvent',
   'DreamuxEnvironment',
   'DreamuxLogger',
+  'DreamuxManagedRepoRequest',
   'InboundAttachment',
   'InboundDeliveryResult',
   'InboundTurnInput',
