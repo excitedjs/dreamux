@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/dreamux
 
-This log was last generated on Thu, 23 Jul 2026 18:09:54 GMT and should not be manually modified.
+This log was last generated on Sun, 26 Jul 2026 02:44:44 GMT and should not be manually modified.
+
+## 0.20.0
+Sun, 26 Jul 2026 02:44:44 GMT
+
+### Minor changes
+
+- BREAKING: Team MCP create now accepts name_prefix instead of team_name and returns a concrete, never-reused team_name with a 4-8 character random suffix. Rebuild callers to retain the returned team_name for later Team operations. Team names are durably claimed before Team or collaboration-target side effects; generated TeamLeader, TeamMate, and Team-member names also use 4-8 character suffixes. Also publish provider-neutral binding transition events and persist collaboration target metadata across provisioning retries.
 
 ## 0.19.4
 Thu, 23 Jul 2026 18:09:54 GMT

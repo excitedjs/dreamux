@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/dreamux-types
 
-This log was last generated on Sun, 19 Jul 2026 03:45:02 GMT and should not be manually modified.
+This log was last generated on Sun, 26 Jul 2026 02:44:44 GMT and should not be manually modified.
+
+## 0.6.0
+Sun, 26 Jul 2026 02:44:44 GMT
+
+### Minor changes
+
+- Add public Channel core-event DTOs for route and collaboration-space binding transitions.
 
 ## 0.5.0
 Sun, 19 Jul 2026 03:45:02 GMT

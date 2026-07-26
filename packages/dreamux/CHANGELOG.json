@@ -2,6 +2,35 @@
   "name": "@excitedjs/dreamux",
   "entries": [
     {
+      "version": "0.20.0",
+      "tag": "@excitedjs/dreamux_v0.20.0",
+      "date": "Sun, 26 Jul 2026 02:44:44 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "BREAKING: Team MCP create now accepts name_prefix instead of team_name and returns a concrete, never-reused team_name with a 4-8 character random suffix. Rebuild callers to retain the returned team_name for later Team operations. Team names are durably claimed before Team or collaboration-target side effects; generated TeamLeader, TeamMate, and Team-member names also use 4-8 character suffixes. Also publish provider-neutral binding transition events and persist collaboration target metadata across provisioning retries."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/agent-runtime-claude-code\" to `0.4.2`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/agent-runtime-codex\" to `0.3.3`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.6.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.3.3`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/feishu-channel\" to `4.1.0`"
+          }
+        ]
+      }
+    },
+    {
       "version": "0.19.4",
       "tag": "@excitedjs/dreamux_v0.19.4",
       "date": "Thu, 23 Jul 2026 18:09:54 GMT",

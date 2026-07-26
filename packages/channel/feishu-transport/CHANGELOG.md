@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/feishu-transport
 
-This log was last generated on Thu, 23 Jul 2026 18:09:54 GMT and should not be manually modified.
+This log was last generated on Sun, 26 Jul 2026 02:44:44 GMT and should not be manually modified.
+
+## 0.8.0
+Sun, 26 Jul 2026 02:44:44 GMT
+
+### Minor changes
+
+- Add caller-owned AbortSignal cancellation for interactive card sends.
 
 ## 0.7.0
 Thu, 23 Jul 2026 18:09:54 GMT

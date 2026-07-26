@@ -2,6 +2,18 @@
   "name": "@excitedjs/feishu-transport",
   "entries": [
     {
+      "version": "0.8.0",
+      "tag": "@excitedjs/feishu-transport_v0.8.0",
+      "date": "Sun, 26 Jul 2026 02:44:44 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "Add caller-owned AbortSignal cancellation for interactive card sends."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.7.0",
       "tag": "@excitedjs/feishu-transport_v0.7.0",
       "date": "Thu, 23 Jul 2026 18:09:54 GMT",

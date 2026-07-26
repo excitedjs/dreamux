@@ -1,6 +1,17 @@
 # Change Log - @excitedjs/feishu-channel
 
-This log was last generated on Thu, 23 Jul 2026 18:09:54 GMT and should not be manually modified.
+This log was last generated on Sun, 26 Jul 2026 02:44:44 GMT and should not be manually modified.
+
+## 4.1.0
+Sun, 26 Jul 2026 02:44:44 GMT
+
+### Minor changes
+
+- Expose caller-owned cancellation for interactive card sends and document timeout outcomes as remotely unknown.
+
+### Patches
+
+- Send independent best-effort Feishu cards for binding route and collaboration-space transitions, retrying a failed or timed-out attempt once in memory.
 
 ## 4.0.0
 Thu, 23 Jul 2026 18:09:54 GMT
