@@ -56,7 +56,10 @@ function channelMcpServerDescriptors(input: {
     const tools = provider.tools?.(channel.config);
     if (tools === undefined || tools.length === 0) continue;
     out.push({
-      name: provider.descriptor.id,
+      name:
+        provider.descriptor.ref.source === 'builtin'
+          ? provider.descriptor.id
+          : channel.id,
       command: dreamuxBinPath(),
       args: [
         'channel-mcp',

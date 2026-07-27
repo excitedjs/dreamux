@@ -1,6 +1,7 @@
 import type {
   ChannelContainer,
   ChannelTarget,
+  DreamuxManagedRepoRequest,
 } from '@excitedjs/dreamux-types';
 
 export const COLLABORATION_SPACE_RECORD_VERSION = 1;
@@ -154,6 +155,12 @@ export interface CollaborationSpaceProvisionInput {
   container: ChannelContainer;
   target: ChannelTarget;
   title?: string;
+  /**
+   * Optional managed repo for this target's Team. When present, core creates
+   * the Team in a managed worktree branched from `repo.base_ref` instead of the
+   * space binding's workspace. When omitted, the space-binding behavior is used.
+   */
+  repo?: DreamuxManagedRepoRequest;
   eventId?: string;
 }
 

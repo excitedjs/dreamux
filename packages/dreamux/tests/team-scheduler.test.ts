@@ -419,6 +419,8 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       text: 'scheduled alpha',
       sourceId: expect.stringMatching(/^scheduled:job-/),
     });
+    restarted.stopSchedulers();
+    await restarted.stopAll();
   });
 
   it('startSchedulers reuses cached Team services', async () => {

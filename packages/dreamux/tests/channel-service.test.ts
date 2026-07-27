@@ -13,7 +13,10 @@ import type {
 
 import { ChannelProviderCatalog } from '../src/channel/catalog.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
-import { createBuiltinProviderRegistry } from '../src/registry/index.js';
+import {
+  createBuiltinProviderRegistry,
+  parseProviderRef,
+} from '../src/registry/index.js';
 import { ChannelService } from '../src/service/channel-service/index.js';
 import { ChannelSessions } from '../src/service/channel-service/channel-sessions.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
@@ -425,6 +428,47 @@ describe('ChannelService binding ownership', () => {
       expect.objectContaining({ marker: 'dispatcher-a' }),
     ]);
     expect(service.live().size).toBe(0);
+  });
+
+  it('uses the channel id as the MCP server name for an npm channel provider', () => {
+    const providerRef = 'npm:@example/dreamux-channel';
+    const descriptor: ChannelProviderDescriptor = {
+      id: providerRef,
+      kind: 'channel',
+      ref: parseProviderRef(providerRef),
+    };
+    const registry = createBuiltinProviderRegistry();
+    registry.register(descriptor);
+    registry.registerImplementation(descriptor.id, {
+      ref: providerRef,
+      descriptor,
+      tools: () => [{ name: 'repository_report' }],
+      createSession: () => {
+        throw new Error('not used');
+      },
+    } satisfies ChannelProvider);
+    const service = new ChannelService({
+      dispatcherId: 'dispatcher-a',
+      config: testDreamuxConfig([
+        testDispatcherConfig({
+          id: 'dispatcher-a',
+          channelId: 'flowx',
+          channelProvider: providerRef,
+        }),
+      ]),
+      channelProviders: new ChannelProviderCatalog({ registry }),
+      channelLoggerFactory: () => ({}) as never,
+      adminSocketPath: '/tmp/dreamux-admin.sock',
+    });
+
+    expect(
+      service.channelMcpServerDescriptorsForCaller({ callerKind: 'dispatcher' }),
+    ).toEqual([
+      expect.objectContaining({
+        name: 'flowx',
+        args: expect.arrayContaining(['--provider', providerRef]),
+      }),
+    ]);
   });
 
   it('detaches closing sessions before await so an older close cannot clear a restart', async () => {
