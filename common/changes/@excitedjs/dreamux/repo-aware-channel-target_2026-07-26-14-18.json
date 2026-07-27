@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Support an optional per-target repository on collaboration target ensure. Collaboration routing validates the request (nonblank path/base_ref) and maps it onto the existing TeamCollection/WorktreeManager options, so the target's Team is created in a managed worktree branched from base_ref. Omitting the repo uses the existing space-binding behavior.",
+      "comment": "Support an optional per-target repository on collaboration target ensure. Collaboration routing validates the request (nonblank path/base_ref) and maps it onto the existing TeamCollection/WorktreeManager options, so the target's Team is created in a managed worktree branched from base_ref. Omitting the repo uses the existing space-binding behavior. External Channel tools now use the dispatcher-local channel id as their MCP server name so npm provider refs remain routing data instead of invalid MCP identifiers.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux"
     }

@@ -243,6 +243,10 @@ roles:
 Channel MCP descriptor rendering is a core-owned capability built in
 `service/channel-service/mcp-descriptors.ts`; `dispatcher-service/mcp-descriptors.ts`
 only composes the dispatcher-root aggregate (channel + team + teammate + cron).
+Built-in channels keep their provider id as the MCP server name. External
+channels use the dispatcher-local channel id because an `npm:` provider ref is
+not a valid MCP server name; the full provider ref remains in the shim's
+`--provider` routing argument.
 The channel service never imports back from `dispatcher-service`, and provider
 packages stay core-agnostic.
 
