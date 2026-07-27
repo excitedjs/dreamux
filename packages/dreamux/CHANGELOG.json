@@ -2,6 +2,35 @@
   "name": "@excitedjs/dreamux",
   "entries": [
     {
+      "version": "0.21.0",
+      "tag": "@excitedjs/dreamux_v0.21.0",
+      "date": "Mon, 27 Jul 2026 08:35:50 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "Support an optional per-target repository on collaboration target ensure. Collaboration routing validates the request (nonblank path/base_ref) and maps it onto the existing TeamCollection/WorktreeManager options, so the target's Team is created in a managed worktree branched from base_ref. Omitting the repo uses the existing space-binding behavior. External Channel tools now use the dispatcher-local channel id as their MCP server name so npm provider refs remain routing data instead of invalid MCP identifiers."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/agent-runtime-claude-code\" to `0.4.3`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/agent-runtime-codex\" to `0.3.4`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.7.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.3.4`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/feishu-channel\" to `4.1.1`"
+          }
+        ]
+      }
+    },
+    {
       "version": "0.20.0",
       "tag": "@excitedjs/dreamux_v0.20.0",
       "date": "Sun, 26 Jul 2026 02:44:44 GMT",

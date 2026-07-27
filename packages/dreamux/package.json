@@ -1,6 +1,6 @@
 {
   "name": "@excitedjs/dreamux",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "Dreamux core host for multi-dispatcher agent orchestration through provider interfaces.",
   "license": "MIT",
   "repository": {

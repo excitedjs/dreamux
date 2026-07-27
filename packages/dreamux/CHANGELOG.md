@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/dreamux
 
-This log was last generated on Sun, 26 Jul 2026 02:44:44 GMT and should not be manually modified.
+This log was last generated on Mon, 27 Jul 2026 08:35:50 GMT and should not be manually modified.
+
+## 0.21.0
+Mon, 27 Jul 2026 08:35:50 GMT
+
+### Minor changes
+
+- Support an optional per-target repository on collaboration target ensure. Collaboration routing validates the request (nonblank path/base_ref) and maps it onto the existing TeamCollection/WorktreeManager options, so the target's Team is created in a managed worktree branched from base_ref. Omitting the repo uses the existing space-binding behavior. External Channel tools now use the dispatcher-local channel id as their MCP server name so npm provider refs remain routing data instead of invalid MCP identifiers.
 
 ## 0.20.0
 Sun, 26 Jul 2026 02:44:44 GMT

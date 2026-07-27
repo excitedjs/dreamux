@@ -2,6 +2,21 @@
   "name": "@excitedjs/feishu-channel",
   "entries": [
     {
+      "version": "4.1.1",
+      "tag": "@excitedjs/feishu-channel_v4.1.1",
+      "date": "Mon, 27 Jul 2026 08:35:50 GMT",
+      "comments": {
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.7.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.3.4`"
+          }
+        ]
+      }
+    },
+    {
       "version": "4.1.0",
       "tag": "@excitedjs/feishu-channel_v4.1.0",
       "date": "Sun, 26 Jul 2026 02:44:44 GMT",

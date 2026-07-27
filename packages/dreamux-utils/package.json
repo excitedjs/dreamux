@@ -1,6 +1,6 @@
 {
   "name": "@excitedjs/dreamux-utils",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Pure shared utilities for Dreamux providers and host: neutral config-validation primitives, OS/filesystem helpers, completion-body resolution, and inbound-turn render helpers. Depends on @excitedjs/dreamux-types only, never on @excitedjs/dreamux core (issue excitedjs/dreamux#209).",
   "license": "MIT",
   "repository": {

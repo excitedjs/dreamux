@@ -2,6 +2,18 @@
   "name": "@excitedjs/dreamux-types",
   "entries": [
     {
+      "version": "0.7.0",
+      "tag": "@excitedjs/dreamux-types_v0.7.0",
+      "date": "Mon, 27 Jul 2026 08:35:50 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "Add an optional per-target repository to the public Channel ABI: DreamuxManagedRepoRequest (a source path and base_ref) and an optional repo field on ChannelCollaborationTargetEnsureInput. Existing providers stay source- and behavior-compatible."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.6.0",
       "tag": "@excitedjs/dreamux-types_v0.6.0",
       "date": "Sun, 26 Jul 2026 02:44:44 GMT",

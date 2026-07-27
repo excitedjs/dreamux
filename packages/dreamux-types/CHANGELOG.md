@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/dreamux-types
 
-This log was last generated on Sun, 26 Jul 2026 02:44:44 GMT and should not be manually modified.
+This log was last generated on Mon, 27 Jul 2026 08:35:50 GMT and should not be manually modified.
+
+## 0.7.0
+Mon, 27 Jul 2026 08:35:50 GMT
+
+### Minor changes
+
+- Add an optional per-target repository to the public Channel ABI: DreamuxManagedRepoRequest (a source path and base_ref) and an optional repo field on ChannelCollaborationTargetEnsureInput. Existing providers stay source- and behavior-compatible.
 
 ## 0.6.0
 Sun, 26 Jul 2026 02:44:44 GMT
