@@ -298,6 +298,28 @@ describe('AgentRuntimeProviderCatalog', () => {
     ).rejects.toThrow(/npm:@example\/missing-runtime/);
   });
 
+  it('does not fall back to ambient imports for npm provider refs', async () => {
+    const ambientImports: string[] = [];
+    const pluginImports: string[] = [];
+
+    await expect(
+      loadAgentRuntimeProviders({
+        registry: createBuiltinProviderRegistry(),
+        refs: ['npm:@example/ambient-runtime#provider'],
+        importModule: async (packageName) => {
+          ambientImports.push(packageName);
+          return { provider: externalFactory() };
+        },
+        importNpmModule: async (_ref, packageName) => {
+          pluginImports.push(packageName);
+          throw new Error('empty plugin store');
+        },
+      }),
+    ).rejects.toThrow(/empty plugin store/);
+    expect(ambientImports).toEqual([]);
+    expect(pluginImports).toEqual(['@example/ambient-runtime']);
+  });
+
   it('rejects external modules that do not export a provider factory', async () => {
     await expect(
       loadAgentRuntimeProviders({

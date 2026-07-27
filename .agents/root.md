@@ -107,10 +107,6 @@ history and rationale; when you need current behavior, pair them with
 
 ## Active Proposals
 
-- [Local provider plugin store](proposals/local-provider-plugin-store.md)
-  — implementation specification for installing `npm:` provider packages into
-  immutable generations under `~/.dreamux/plugins`, blocking only on first
-  install, and staging four-hour `latest` updates for the next process start.
 - [AgentRuntime input surface cleanup](proposals/agent-runtime-input-surface-cleanup.md)
   — draft technical design for narrowing the provider-facing runtime input
   surface: plain text `completionInput` for non-channel turns, `channelInput`

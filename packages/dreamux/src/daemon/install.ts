@@ -88,7 +88,10 @@ export async function runDaemonInstall(
 
   // Fail loudly when the operator has not run onboard yet — daemon install
   // re-registers an existing setup, it does not create one.
-  const loaded = await loadConfig({ configDir: globalConfigDir() });
+  const loaded = await loadConfig({
+    configDir: globalConfigDir(),
+    providerPluginLoadMode: 'materialize',
+  });
   const { config } = loaded;
   const catalogs = {
     agentRuntime: new AgentRuntimeProviderCatalog({

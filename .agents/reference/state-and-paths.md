@@ -210,6 +210,26 @@ Key source:
 - `/packages/dreamux/src/onboard/service.ts`
 - `/packages/dreamux/src/onboard/ledger.ts`
 
+## Provider Plugins
+
+`~/.dreamux/plugins/` is Dreamux-owned, persistent, rebuildable installed
+content for external `npm:` provider refs. It is not dispatcher state, volatile
+run data, or provider-owned cache.
+
+Each package has one encoded path segment with `metadata.json`, immutable
+`versions/<version>/` generations, and non-importable `staging/<install>/`
+directories. Generations are imported only through their local
+`dreamux-import.mjs` bridge. `dreamux serve`, `dreamux onboard`, and
+`dreamux daemon install` materialize missing packages; `dreamux doctor` performs
+installed-only checks; `dreamux uninstall` removes the plugin root without
+loading providers.
+
+Key source:
+
+- `/packages/dreamux/src/platform/paths.ts`
+- `/packages/dreamux/src/registry/provider-plugin-store.ts`
+- `/packages/dreamux/src/config/provider-plugin-loading.ts`
+
 ## Cache And Logs
 
 `~/.dreamux/cache/<dispatcher-id>/` is rebuildable cache:

@@ -20,6 +20,7 @@ import { mkdir } from 'node:fs/promises';
 import { Server } from '../server.js';
 import { loadConfig } from '../config/config.js';
 import { createBuiltinProviderRegistry } from '../registry/index.js';
+import { ProviderPluginStore } from '../registry/provider-plugin-store.js';
 import { createLogger } from '../platform/logger.js';
 import {
   adminSocketPath,
@@ -49,10 +50,6 @@ async function main(): Promise<void> {
   // Server's runtime + channel catalogs (Server builds them from it).
   const providerRegistry = createBuiltinProviderRegistry();
 
-  // Load ~/.dreamux/config.json before anything else starts. Missing or invalid
-  // config is a setup error; `dreamux serve` must not silently create defaults.
-  const { config, configFile } = await loadConfig({ providerRegistry });
-
   await mkdir(stateRoot(), { recursive: true });
   await mkdir(logsRoot(), { recursive: true });
   await mkdir(channelLogDir(), { recursive: true });
@@ -62,6 +59,13 @@ async function main(): Promise<void> {
   // (tests) gets stderr-only defaults. Both stream to stderr too, so a
   // foreground `serve` stays visible.
   const logger = createLogger({ name: 'server', filePath: serverLogPath() });
+  const providerPluginStore = new ProviderPluginStore({ logger });
+
+  const { config, configFile, providerPluginPackages } = await loadConfig({
+    providerRegistry,
+    providerPluginStore,
+    providerPluginLoadMode: 'materialize',
+  });
   logger.info({ config_file: configFile }, 'loaded global config');
 
   const server = new Server({
@@ -73,11 +77,18 @@ async function main(): Promise<void> {
     runtimeSocketSweep: () => sweepRuntimeSocketDirs(),
     legacyAdminLockPath: `${legacyAdminSocketPath()}.lock`,
   });
-  await server.start();
+  try {
+    await server.start();
+  } catch (err) {
+    await providerPluginStore.closeUpdater();
+    throw err;
+  }
+  providerPluginStore.startUpdater(providerPluginPackages);
   logger.info({ admin_socket: adminSocketPath() }, 'server up');
 
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'received signal');
+    await providerPluginStore.closeUpdater();
     await server.shutdown();
     process.exit(0);
   };

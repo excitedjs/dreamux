@@ -24,6 +24,7 @@ import {
 } from '../src/config/config.js';
 import {
   adminSocketPath,
+  providerPluginMetadataPath,
   resetRuntimeConfig,
   runRoot,
   setRuntimeConfig,
@@ -41,12 +42,67 @@ import {
   testConfigFileObject,
   testSingleDispatcherFileObject,
 } from './helpers/config.js';
-import { asAgentRuntimeDescriptor } from './helpers/provider.js';
+import { asAgentRuntimeDescriptor, asChannelDescriptor } from './helpers/provider.js';
+import {
+  ProviderPluginStore,
+  type ProviderPluginNpmRunner,
+} from '../src/registry/provider-plugin-store.js';
+import type {
+  ChannelProvider,
+  ChannelSession,
+} from '@excitedjs/dreamux-types';
+import type { ExternalChannelProviderFactory } from '../src/channel/external-channel-provider.js';
 
 function writeConfigObjectAt(configDir: string, value: unknown): void {
   writeFileSync(globalConfigFile({ configDir }), JSON.stringify(value), {
     mode: 0o600,
   });
+}
+
+class FakeProviderPluginStore implements Partial<ProviderPluginStore> {
+  readonly materialized: string[] = [];
+  readonly imported: string[] = [];
+  readonly inspected: string[] = [];
+  readonly modules = new Map<string, Record<string, unknown>>();
+  failMaterialize: Error | null = null;
+
+  async materializePackage(packageName: string): Promise<string> {
+    this.materialized.push(packageName);
+    if (this.failMaterialize !== null) throw this.failMaterialize;
+    return '1.0.0';
+  }
+
+  async inspectPackage(packageName: string) {
+    this.inspected.push(packageName);
+    return {
+      packageName,
+      ok: true,
+      version: '1.0.0',
+      error: null,
+    };
+  }
+
+  async importModule(packageName: string): Promise<Record<string, unknown>> {
+    this.imported.push(packageName);
+    const module = this.modules.get(packageName);
+    if (module === undefined) throw new Error(`missing module ${packageName}`);
+    return module;
+  }
+}
+
+class FailingInstallRunner implements ProviderPluginNpmRunner {
+  readonly latestCalls: string[] = [];
+  readonly installCalls: string[] = [];
+
+  async latestVersion(packageName: string): Promise<string> {
+    this.latestCalls.push(packageName);
+    return '1.0.0';
+  }
+
+  async installExact(input: { packageName: string }): Promise<void> {
+    this.installCalls.push(input.packageName);
+    throw new Error('install failed');
+  }
 }
 
 const EXTERNAL_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
@@ -70,6 +126,32 @@ const externalRuntimeFactory: ExternalAgentRuntimeProviderFactory = ({
     throw new Error('external runtime config test does not create a runtime');
   },
 });
+
+function externalChannelFactory(): ExternalChannelProviderFactory {
+  return ({ ref, descriptor }) => ({
+    ref,
+    descriptor: asChannelDescriptor(descriptor),
+    readConfig(raw) {
+      return raw;
+    },
+    createSession(context) {
+      const session: ChannelSession = {
+        provider: ref,
+        channel_id: context.channel_id,
+        async start() {
+          /* config parse only */
+        },
+        async close() {
+          /* config parse only */
+        },
+        async resolveTarget() {
+          return { target_type: 'fixture', target_key: 'k', bindable: true };
+        },
+      };
+      return session;
+    },
+  }) satisfies ChannelProvider;
+}
 
 describe('global config (~/.dreamux/config.json)', () => {
   let configDir: string;
@@ -868,6 +950,112 @@ describe('global config (~/.dreamux/config.json)', () => {
     });
     expect(providerRegistry.resolve(providerRef).kind).toBe('agentRuntime');
     expect(providerRegistry.getImplementation(providerRef)).not.toBeUndefined();
+  });
+
+  it('keeps injected runtime importers from touching the plugin store', async () => {
+    const providerRef = 'npm:@example/dreamux-runtime#provider';
+    writeConfigObject(
+      testConfigFileObject({
+        agents: [{ id: 'flow', provider: providerRef, config: {} }],
+        dispatchers: [{ id: 'flow', agentRuntime: 'flow' }],
+      }),
+    );
+    const pluginStore = new FakeProviderPluginStore();
+
+    await loadConfig({
+      configDir,
+      providerPluginStore: pluginStore as unknown as ProviderPluginStore,
+      externalAgentRuntimeModuleImporter: async () => ({ provider: externalRuntimeFactory }),
+    });
+
+    expect(pluginStore.materialized).toEqual([]);
+    expect(pluginStore.imported).toEqual([]);
+  });
+
+  it('does not call the plugin store for builtin provider refs', async () => {
+    writeConfigObject(
+      testSingleDispatcherFileObject({
+        id: 'flow',
+        feishu: { app_id: 'app-flow', app_secret: 'secret-flow' },
+      }),
+    );
+    const pluginStore = new FakeProviderPluginStore();
+
+    await loadConfig({
+      configDir,
+      providerPluginStore: pluginStore as unknown as ProviderPluginStore,
+    });
+
+    expect(pluginStore.materialized).toEqual([]);
+    expect(pluginStore.imported).toEqual([]);
+    expect(pluginStore.inspected).toEqual([]);
+  });
+
+  it('materializes one npm package once across runtime and channel refs', async () => {
+    const runtimeRef = 'npm:@example/dreamux-provider#runtime';
+    const channelRef = 'npm:@example/dreamux-provider#channel';
+    writeConfigObject(
+      testConfigFileObject({
+        agents: [{ id: 'flow', provider: runtimeRef, config: {} }],
+        dispatchers: [
+          {
+            id: 'flow',
+            agentRuntime: 'flow',
+            channelProvider: channelRef,
+            feishu: { app_id: 'fixture-app', app_secret: 'fixture-secret' },
+          },
+        ],
+      }),
+    );
+    const pluginStore = new FakeProviderPluginStore();
+    pluginStore.modules.set('@example/dreamux-provider', {
+      runtime: externalRuntimeFactory,
+      channel: externalChannelFactory(),
+    });
+
+    const { providerPluginPackages, providerRegistry } = await loadConfig({
+      configDir,
+      providerPluginStore: pluginStore as unknown as ProviderPluginStore,
+    });
+
+    expect(providerPluginPackages).toEqual(['@example/dreamux-provider']);
+    expect(pluginStore.materialized).toEqual(['@example/dreamux-provider']);
+    expect(pluginStore.imported).toEqual([
+      '@example/dreamux-provider',
+      '@example/dreamux-provider',
+    ]);
+    expect(providerRegistry.resolve(runtimeRef).kind).toBe('agentRuntime');
+    expect(providerRegistry.resolve(channelRef).kind).toBe('channel');
+  });
+
+  it('reports plugin materialization failures with provider ref and package', async () => {
+    const providerRef = 'npm:@example/broken-runtime#provider';
+    writeConfigObject(
+      testConfigFileObject({
+        agents: [{ id: 'flow', provider: providerRef, config: {} }],
+        dispatchers: [{ id: 'flow', agentRuntime: 'flow' }],
+      }),
+    );
+    const runner = new FailingInstallRunner();
+    const pluginRoot = mkdtempSync(join(tmpdir(), 'dreamux-plugin-store-'));
+    const pluginStore = new ProviderPluginStore({
+      root: pluginRoot,
+      runner,
+      now: () => 5000,
+    });
+
+    try {
+      await expect(
+        loadConfig({ configDir, providerPluginStore: pluginStore }),
+      ).rejects.toThrow(
+        /failed to materialize provider plugin package "@example\/broken-runtime" for npm:@example\/broken-runtime#provider: install failed/,
+      );
+      expect(runner.latestCalls).toEqual(['@example/broken-runtime']);
+      expect(runner.installCalls).toEqual(['@example/broken-runtime']);
+      expect(existsSync(providerPluginMetadataPath('@example/broken-runtime', pluginRoot))).toBe(false);
+    } finally {
+      rmSync(pluginRoot, { recursive: true, force: true });
+    }
   });
 
   it('awaits an external runtime provider whose readConfig is async (#209 F4)', async () => {

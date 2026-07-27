@@ -31,6 +31,11 @@ export type ProviderModuleImporter = (
   packageName: string,
 ) => Promise<ProviderModule>;
 
+export type NpmProviderModuleImporter = (
+  ref: NpmProviderRef,
+  packageName: string,
+) => Promise<ProviderModule>;
+
 /** Context passed to a provider package's factory export. */
 export interface ProviderFactoryContext {
   /** Canonical provider ref from config, for example `npm:some-pkg#provider`. */
@@ -75,6 +80,7 @@ export interface LoadProviderPackagesOptions {
   registry: ProviderRegistry;
   refs: Iterable<string>;
   importModule?: ProviderModuleImporter;
+  importNpmModule?: NpmProviderModuleImporter;
 }
 
 /**
@@ -97,9 +103,16 @@ export async function loadProviderPackages<
   spec: ProviderPackageLoaderSpec<TProvider>,
 ): Promise<void> {
   const importModule = options.importModule ?? defaultImportModule;
+  const importNpmModule = options.importNpmModule;
   for (const ref of uniqueLoadableRefs(options.refs)) {
     if (isImplementationLoaded(options.registry, ref)) continue;
-    await loadOneProviderPackage(options.registry, ref, importModule, spec);
+    await loadOneProviderPackage(
+      options.registry,
+      ref,
+      importModule,
+      importNpmModule,
+      spec,
+    );
   }
 }
 
@@ -123,13 +136,20 @@ async function loadOneProviderPackage<
   registry: ProviderRegistry,
   ref: ProviderRef,
   importModule: ProviderModuleImporter,
+  importNpmModule: NpmProviderModuleImporter | undefined,
   spec: ProviderPackageLoaderSpec<TProvider>,
 ): Promise<void> {
   const existing = registry.hasRef(ref.raw)
     ? registry.resolve(ref.raw)
     : undefined;
   const packageName = resolvePackageName(ref, spec);
-  const module = await importProviderModule(ref, packageName, importModule, spec);
+  const module = await importProviderModule(
+    ref,
+    packageName,
+    importModule,
+    importNpmModule,
+    spec,
+  );
   const factory = selectFactoryExport(ref, module, spec);
   const seedDescriptor: ProviderDescriptor = existing ?? {
     id: seedDescriptorId(ref),
@@ -182,10 +202,13 @@ async function importProviderModule<
   ref: ProviderRef,
   packageName: string,
   importModule: ProviderModuleImporter,
+  importNpmModule: NpmProviderModuleImporter | undefined,
   spec: ProviderPackageLoaderSpec<TProvider>,
 ): Promise<ProviderModule> {
   try {
-    return await importModule(packageName);
+    return ref.source === 'npm' && importNpmModule !== undefined
+      ? await importNpmModule(ref, packageName)
+      : await importModule(packageName);
   } catch (err) {
     throw spec.createLoadError(
       ref.raw,

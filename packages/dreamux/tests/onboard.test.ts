@@ -26,6 +26,7 @@ import type { ServiceNodeProbe } from '../src/onboard/service.js';
 import { loadConfig } from '../src/config/config.js';
 import {
   logsRoot,
+  pluginRoot,
   resetRuntimeConfig,
 } from '../src/platform/paths.js';
 import { dispatcherCodexHome } from '@excitedjs/agent-runtime-codex';
@@ -739,6 +740,68 @@ describe('dreamux onboard', () => {
         agentRuntime: 'docs',
       },
     ]);
+  });
+
+  it('dry-run rerun over a missing npm provider does not materialize old plugins', async () => {
+    const runner = new FakeRunner();
+    const configDir = join(root, 'config');
+    mkdirSync(configDir, { recursive: true });
+    const existing = {
+      agents: [
+        {
+          id: 'old-runtime',
+          provider: 'npm:@example/missing-runtime#provider',
+          config: { old_option: true },
+        },
+      ],
+      dispatchers: [
+        {
+          id: 'old',
+          cwd: join(root, 'old-cwd'),
+          enabled: true,
+          workspace: { enabled: false },
+          channels: [
+            {
+              id: 'primary',
+              provider: 'builtin:feishu',
+              config: { app_id: 'app-old', app_secret: 'secret-old' },
+            },
+          ],
+          agentRuntime: 'old-runtime',
+        },
+      ],
+    };
+    const configPath = join(configDir, 'config.json');
+    writeFileSync(configPath, JSON.stringify(existing), { mode: 0o600 });
+    const before = readFileSync(configPath, 'utf8');
+    const answers = testAnswers({
+      configDir,
+      dispatcherId: 'docs',
+      dispatcherCwd: join(root, 'docs-cwd'),
+      registerService: false,
+      dryRun: true,
+      channels: [feishuOnboardChannel('app-docs', 'secret-docs')],
+    });
+
+    const result = await runOnboard({
+      answers,
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: { CODEX_ACCESS_TOKEN: 'interactive-token-test' },
+    });
+
+    expect(readFileSync(configPath, 'utf8')).toBe(before);
+    expect(existsSync(pluginRoot())).toBe(false);
+    expect(result.files).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: configPath,
+          status: 'modified',
+        }),
+      ]),
+    );
+    expect(result.doctor.ok).toBe(true);
   });
 
   it('preserves a teammate-only agent (unreferenced by any dispatcher) on rerun', async () => {

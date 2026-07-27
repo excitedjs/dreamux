@@ -129,7 +129,10 @@ export async function runOnboard(
 
   const loaded = answers.dryRun
     ? null
-    : await loadConfig({ configDir: answers.configDir });
+    : await loadConfig({
+        configDir: answers.configDir,
+        providerPluginLoadMode: 'materialize',
+      });
   if (loaded !== null) setRuntimeConfig(loaded.config);
   const catalogs = loaded === null ? null : catalogsFromLoadedConfig(loaded);
   const fallbackDirs = answers.registerService
@@ -211,7 +214,11 @@ async function readExistingDreamuxConfig(configDir: string) {
   const configPath = globalConfigFile({ configDir });
   await assertNoLegacyTomlOnly({ configDir });
   if (!(await pathExists(configPath))) return undefined;
-  return (await loadConfig({ configDir })).config;
+  const loaded = await loadConfig({
+    configDir,
+    providerPluginLoadMode: 'installed-only',
+  });
+  return loaded.config;
 }
 
 function catalogsFromLoadedConfig(

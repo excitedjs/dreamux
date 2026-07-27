@@ -45,15 +45,21 @@ startup.
 
 Builtin provider descriptors are registered eagerly for both `agentRuntime`
 (`builtin:codex`, `builtin:claude-code`) and `channel` (`builtin:feishu`).
-External refs in `dispatchers[].runtime.provider` and
+External refs in `agents[].provider` and
 `dispatchers[].channels[].provider` are loaded before config validation by
-dynamic-importing the installed package, selecting its default export or
+materializing the referenced package into the Dreamux-owned local plugin store,
+importing the selected immutable generation, selecting its default export or
 `#named` export, calling the provider factory with the seed descriptor, and
 registering the returned provider implementation into the same registry instance
-used by config validation and server startup. Dreamux does not install provider
-packages; a missing package, missing export, invalid provider contract, incomplete
+used by config validation and server startup. A missing package, registry or
+installation failure, missing export, invalid provider contract, incomplete
 capability declaration, or descriptor mismatch fails startup loudly with the
 selected provider ref.
+
+External `npm:` refs are never satisfied by ambient Node resolution: not a
+global install, `NODE_PATH`, the operator working directory, or Dreamux's own
+dependency tree. Builtin refs keep resolving to Dreamux-shipped packages and do
+not use the plugin store.
 
 Issue #209 demotes the old "Capability Registry" idea into a process-local
 provider registry / loader. Wired runtime providers attach their implemented

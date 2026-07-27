@@ -144,9 +144,10 @@ Implementation status:
   completion delivery loop (ledger, retry, pull fallback) still belongs to the
   later server-hosted TeamMate PRs.
 - External `npm:` Agent Runtime loading is implemented through the provider
-  registry. Config loading scans `dispatchers[].runtime.provider`, dynamically
-  imports npm runtime providers before validation, calls their provider factory,
-  and registers the result into the same registry instance that the
+  registry. Config loading scans `agents[].provider`, materializes referenced
+  npm packages through the Dreamux-owned plugin store, imports the selected
+  immutable generation before validation, calls each provider factory, and
+  registers the result into the same registry instance that the
   `AgentRuntimeProviderCatalog` views at server startup. Missing packages,
   missing exports, invalid descriptors, invalid capability declarations, and
   non-runnable descriptors fail loudly with the selected provider ref.

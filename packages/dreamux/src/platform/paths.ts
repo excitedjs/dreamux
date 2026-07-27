@@ -1,6 +1,6 @@
 /**
- * Filesystem layout for dreamux-owned runtime state, volatile run files, and
- * logs.
+ * Filesystem layout for dreamux-owned runtime state, volatile run files, logs,
+ * cache, and provider plugins.
  *
  * Effective layout (issue #182 PR-1 split durable state from volatile run
  * files):
@@ -30,6 +30,7 @@
  *       <dispatcher-id>/
  *         spill/
  *         <provider-owned subdirs>
+ *     plugins/                rebuildable installed external provider packages
  *
  * `stateRoot()` is the single root for dreamux-owned durable state; `runRoot()`
  * is the single root for dreamux-owned volatile run files. The old
@@ -167,6 +168,39 @@ export function logsRoot(): string {
  */
 export function cacheRoot(): string {
   return join(dreamuxRoot(), 'cache');
+}
+
+export function pluginRoot(): string {
+  return join(dreamuxRoot(), 'plugins');
+}
+
+export function providerPluginPackageDir(packageName: string, root = pluginRoot()): string { return join(root, providerPluginPackageSegment(packageName)); }
+export function providerPluginMetadataPath(packageName: string, root = pluginRoot()): string { return join(providerPluginPackageDir(packageName, root), 'metadata.json'); }
+export function providerPluginVersionsDir(packageName: string, root = pluginRoot()): string { return join(providerPluginPackageDir(packageName, root), 'versions'); }
+export function providerPluginGenerationDir(packageName: string, version: string, root = pluginRoot()): string {
+  return join(providerPluginVersionsDir(packageName, root), providerPluginVersionSegment(version));
+}
+export function providerPluginGenerationRootPackageJsonPath(root: string): string { return join(root, 'package.json'); }
+export function providerPluginGenerationRootLockfilePath(root: string): string { return join(root, 'package-lock.json'); }
+export function providerPluginGenerationRootBridgePath(root: string): string { return join(root, 'dreamux-import.mjs'); }
+export function providerPluginGenerationRootInstalledPackageJsonPath(root: string, packageName: string): string {
+  return join(root, 'node_modules', ...packageName.split('/'), 'package.json');
+}
+export function providerPluginGenerationPackageJsonPath(packageName: string, version: string, root = pluginRoot()): string {
+  return providerPluginGenerationRootPackageJsonPath(providerPluginGenerationDir(packageName, version, root));
+}
+export function providerPluginGenerationLockfilePath(packageName: string, version: string, root = pluginRoot()): string {
+  return providerPluginGenerationRootLockfilePath(providerPluginGenerationDir(packageName, version, root));
+}
+export function providerPluginGenerationBridgePath(packageName: string, version: string, root = pluginRoot()): string {
+  return providerPluginGenerationRootBridgePath(providerPluginGenerationDir(packageName, version, root));
+}
+export function providerPluginInstalledPackageJsonPath(packageName: string, version: string, root = pluginRoot()): string {
+  return providerPluginGenerationRootInstalledPackageJsonPath(providerPluginGenerationDir(packageName, version, root), packageName);
+}
+export function providerPluginStagingRoot(packageName: string, root = pluginRoot()): string { return join(providerPluginPackageDir(packageName, root), 'staging'); }
+export function providerPluginStagingDir(packageName: string, installId: string, root = pluginRoot()): string {
+  return join(providerPluginStagingRoot(packageName, root), providerPluginInstallSegment(installId));
 }
 
 export function dispatcherCacheDir(id: string): string {
@@ -638,4 +672,25 @@ function dedupeExecDirs(values: string[]): string[] {
     out.push(value);
   }
   return out;
+}
+
+function providerPluginPackageSegment(packageName: string): string {
+  if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(packageName)) {
+    throw new Error(`invalid provider plugin package name: ${packageName}`);
+  }
+  return Buffer.from(packageName, 'utf8').toString('base64url');
+}
+
+function providerPluginVersionSegment(version: string): string {
+  if (!/^[A-Za-z0-9._+-]+$/.test(version) || version.includes('..')) {
+    throw new Error(`invalid provider plugin version: ${version}`);
+  }
+  return version;
+}
+
+function providerPluginInstallSegment(installId: string): string {
+  if (!/^[A-Za-z0-9._-]+$/.test(installId) || installId.includes('..')) {
+    throw new Error(`invalid provider plugin install id: ${installId}`);
+  }
+  return installId;
 }

@@ -15,6 +15,10 @@ import {
   createBuiltinProviderRegistry,
   type ProviderRegistry,
 } from '../registry/index.js';
+import type {
+  ProviderPluginInspection,
+  ProviderPluginStore,
+} from '../registry/provider-plugin-store.js';
 import {
   describeType,
   isPlainObject,
@@ -40,6 +44,7 @@ import {
   stringifyChannelCollaborationSpace,
   type DispatcherChannelCollaborationSpaceConfig,
 } from './collaboration-space-config.js';
+import { prepareProviderPlugins } from './provider-plugin-loading.js';
 
 export { expandHome } from './config-helpers.js';
 export {
@@ -100,12 +105,18 @@ export interface ConfigPathOverrides {
     providerRegistry?: ProviderRegistry;
     externalAgentRuntimeModuleImporter?: ExternalAgentRuntimeModuleImporter;
     externalChannelModuleImporter?: ExternalChannelModuleImporter;
+    providerPluginStore?: ProviderPluginStore;
+    providerPluginLoadMode?: ProviderPluginLoadMode;
 }
+
+export type ProviderPluginLoadMode = 'materialize' | 'installed-only';
 
 export interface LoadConfigResult {
   config: DreamuxConfig;
   configFile: string;
   providerRegistry: ProviderRegistry;
+  providerPluginPackages: string[];
+  providerPluginDiagnostics: ProviderPluginInspection[];
 }
 
 export function globalConfigDir(overrides: ConfigPathOverrides = {}): string {
@@ -125,20 +136,22 @@ export function legacyGlobalConfigFile(
 
 export async function loadOrInitConfig(
   overrides: ConfigPathOverrides = {},
-): Promise<{
-  config: DreamuxConfig;
-  configFile: string;
-  createdOnThisBoot: boolean;
-  providerRegistry: ProviderRegistry;
-}> {
+): Promise<LoadConfigResult & { createdOnThisBoot: boolean }> {
   const file = globalConfigFile(overrides);
   const providerRegistry = providerRegistryFor(overrides);
   await assertNoLegacyTomlOnly(overrides);
   await mkdir(dirname(file), { recursive: true });
 
   const createdOnThisBoot = await atomicWriteIfAbsent(file, DEFAULT_CONFIG_JSON);
-  const config = await readConfigFile(file, providerRegistry, overrides);
-  return { config, configFile: file, createdOnThisBoot, providerRegistry };
+  const loaded = await readConfigFile(file, providerRegistry, overrides);
+  return {
+    config: loaded.config,
+    configFile: file,
+    createdOnThisBoot,
+    providerRegistry,
+    providerPluginPackages: loaded.providerPluginPackages,
+    providerPluginDiagnostics: loaded.providerPluginDiagnostics,
+  };
 }
 
 export async function loadConfig(
@@ -147,10 +160,13 @@ export async function loadConfig(
   const file = globalConfigFile(overrides);
   const providerRegistry = providerRegistryFor(overrides);
   await assertNoLegacyTomlOnly(overrides);
+  const loaded = await readConfigFile(file, providerRegistry, overrides);
   return {
-    config: await readConfigFile(file, providerRegistry, overrides),
+    config: loaded.config,
     configFile: file,
     providerRegistry,
+    providerPluginPackages: loaded.providerPluginPackages,
+    providerPluginDiagnostics: loaded.providerPluginDiagnostics,
   };
 }
 
@@ -206,7 +222,11 @@ async function readConfigFile(
   file: string,
   providerRegistry: ProviderRegistry,
   overrides: ConfigPathOverrides,
-): Promise<DreamuxConfig> {
+): Promise<{
+  config: DreamuxConfig;
+  providerPluginPackages: string[];
+  providerPluginDiagnostics: ProviderPluginInspection[];
+}> {
   if (!(await pathExists(file))) {
     throw new Error(
       `dreamux config is missing at ${file}.\n` +
@@ -225,17 +245,30 @@ async function readConfigFile(
         `Fix the JSON syntax in ${file}, then restart. Run \`dreamux onboard\` if you need to recreate the config.`,
     );
   }
+  const agentRefs = agentProviderRefs(parsed);
+  const channelRefs = channelProviderRefs(parsed);
+  const pluginPlan = await prepareProviderPlugins({
+    agentRefs,
+    channelRefs,
+    overrides,
+  });
   await loadAgentRuntimeProviders({
     registry: providerRegistry,
-    refs: agentProviderRefs(parsed),
+    refs: agentRefs,
     importModule: overrides.externalAgentRuntimeModuleImporter,
+    importNpmModule: pluginPlan.agentImporter,
   });
   await loadChannelProviders({
     registry: providerRegistry,
-    refs: channelProviderRefs(parsed),
+    refs: channelRefs,
     importModule: overrides.externalChannelModuleImporter,
+    importNpmModule: pluginPlan.channelImporter,
   });
-  return await mergeWithDefaults(parsed, file, providerRegistry);
+  return {
+    config: await mergeWithDefaults(parsed, file, providerRegistry),
+    providerPluginPackages: pluginPlan.packages,
+    providerPluginDiagnostics: pluginPlan.diagnostics,
+  };
 }
 
 export async function assertNoLegacyTomlOnly(

@@ -270,7 +270,10 @@ async function readConfigForDoctor(
   catalogs: ProviderDiagnosticCatalogs;
 }> {
   try {
-    const loaded = await loadConfig({ configDir });
+    const loaded = await loadConfig({
+      configDir,
+      providerPluginLoadMode: 'installed-only',
+    });
     checks.push({
       name: 'config',
       ok: true,

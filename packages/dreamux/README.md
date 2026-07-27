@@ -47,8 +47,8 @@ Design background:
   declared channel and routes inbound/egress by `(channel_id, target_key)`.
 - **Provider refs are explicit.** Wired builtin refs are `builtin:feishu`,
   `builtin:codex`, and `builtin:claude-code`. External `npm:` refs are loaded
-  through the same provider package loader when the package is installed and
-  implements the selected provider kind.
+  through the Dreamux-owned local plugin store and the same provider package
+  loader when the package implements the selected provider kind.
 - **One dispatcher is one trust domain.** A bot may receive multiple chats, but
   all accepted messages share one dispatcher runtime context. Do not bind
   unrelated private chats to the same dispatcher.
@@ -234,11 +234,14 @@ does not own or attribute spontaneous turns initiated from the Remote Control UI
 in this release; avoid driving external UI turns and Dreamux turns concurrently.
 It does not use Codex app-server, Codex handshake, or Codex home diagnostics.
 
-Provider refs reserved for future external providers look like npm package refs
-or package export refs, for example `npm:@example/dreamux-provider` and
-`npm:@example/dreamux-provider#channel`. Dreamux does not install packages for
-you; if the package is already resolvable, config load imports it and validates
-the provider contract before starting dispatchers.
+External provider refs look like npm package refs or package export refs, for
+example `npm:@example/dreamux-provider` and
+`npm:@example/dreamux-provider#channel`. Dreamux installs external provider
+packages into `~/.dreamux/plugins/` on first materializing config load and
+imports the selected immutable generation from that private store. Ambient
+global packages, `NODE_PATH`, the process working directory, and Dreamux's own
+dependency tree do not satisfy `npm:` provider refs. Builtin refs still resolve
+to packages shipped with Dreamux and do not use the plugin store.
 
 Edit and restart `dreamux serve` to apply dispatcher declaration changes.
 Channel ids must be unique within a dispatcher, and each dispatcher may declare

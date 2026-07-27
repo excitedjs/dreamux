@@ -1,6 +1,9 @@
 # Local provider plugin store
 
-- **Status:** Draft implementation specification
+- **Status:** Implemented; current owner docs are
+  [Current architecture](../../reference/current-architecture.md),
+  [State and paths](../../reference/state-and-paths.md), and
+  [Provider references and capability registry](../../decisions/provider-references-and-capability-registry.md)
 - **Date:** 2026-07-27
 - **Affects:** `npm:` provider loading, provider installation and updates,
   Dreamux-owned paths, server lifecycle, config loading

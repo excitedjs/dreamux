@@ -375,6 +375,49 @@ describe('dreamux doctor command', () => {
     expect(JSON.stringify(result)).not.toContain('secret-test');
   });
 
+  it('reports missing npm provider plugins as diagnostics without installing', async () => {
+    const runner = new FakeRunner();
+    const configPath = join(root, 'config', 'config.json');
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        testConfigFileObject({
+          agents: [
+            {
+              id: 'flow',
+              provider: 'npm:@example/missing-runtime#provider',
+              config: {},
+            },
+          ],
+          dispatchers: [{ id: 'flow', cwd: defaultDispatcherCwd('flow'), agentRuntime: 'flow' }],
+        }),
+      ),
+      { mode: 0o600 },
+    );
+    mkdirSync(stateRoot(), { recursive: true });
+
+    const result = await runDreamuxDoctor({
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+    });
+
+    expect(result.checks.find((check) => check.name === 'config')).toMatchObject({
+      ok: true,
+    });
+    const report = runtimeProviderReport(
+      result,
+      'flow',
+      'npm:@example/missing-runtime#provider',
+      'foreground',
+    );
+    expect(report?.result.ok).toBe(false);
+    expect(report?.result.detail).toContain('@example/missing-runtime');
+    expect(runner.calls.some((call) => call.command === 'npm')).toBe(false);
+  });
+
   it('preflights non-closed Team cron stores', async () => {
     const runner = new FakeRunner();
     writeConfig();

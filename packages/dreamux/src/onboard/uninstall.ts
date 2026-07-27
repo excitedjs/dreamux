@@ -1,5 +1,5 @@
 import { pathExists } from '../platform/fs-errors.js';
-import { rm } from 'node:fs/promises';
+import { readFile, rm, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 
@@ -11,9 +11,8 @@ import {
   expandHome,
   globalConfigDir,
   globalConfigFile,
-  loadConfig,
 } from '../config/config.js';
-import { cacheRoot, logsRoot, runRoot, stateRoot } from '../platform/paths.js';
+import { cacheRoot, logsRoot, pluginRoot, runRoot, stateRoot } from '../platform/paths.js';
 
 export type UninstallStatus = 'removed' | 'missing' | 'skipped';
 
@@ -54,11 +53,13 @@ export async function runUninstall(
   const runDir = normalizePath(runRoot());
   const cacheDir = normalizePath(cacheRoot());
   const logDir = normalizePath(logsRoot());
+  const pluginDir = normalizePath(pluginRoot());
 
   assertSafeOwnedDirectory(stateDir, 'dreamux state directory');
   assertSafeOwnedDirectory(runDir, 'dreamux run directory');
   assertSafeOwnedDirectory(cacheDir, 'dreamux cache directory');
   assertSafeOwnedDirectory(logDir, 'dreamux logs directory');
+  assertSafeOwnedDirectory(pluginDir, 'dreamux plugin directory');
   assertSafeOwnedDirectory(configDir, 'dreamux config directory');
 
   // Service removal (unit-only) is shared with `dreamux daemon uninstall`.
@@ -75,11 +76,16 @@ export async function runUninstall(
     reason: `${removal.platform} unit`,
   });
 
-  await removeOwnedDirectory(stateDir, entries, 'dreamux state directory', dryRun);
-  await removeOwnedDirectory(runDir, entries, 'dreamux run directory', dryRun);
-  await removeOwnedDirectory(cacheDir, entries, 'dreamux cache directory', dryRun);
-  await removeOwnedDirectory(logDir, entries, 'dreamux logs directory', dryRun);
-  await removeOwnedDirectory(configDir, entries, 'dreamux config directory', dryRun);
+  for (const entry of uniqueRemovalTargets([
+    [stateDir, 'dreamux state directory'],
+    [runDir, 'dreamux run directory'],
+    [cacheDir, 'dreamux cache directory'],
+    [logDir, 'dreamux logs directory'],
+    [pluginDir, 'dreamux plugin directory'],
+    [configDir, 'dreamux config directory'],
+  ])) {
+    await removeOwnedDirectory(entry.path, entries, entry.reason, dryRun);
+  }
 
   return {
     entries: entries.sort((a, b) => a.path.localeCompare(b.path)),
@@ -97,14 +103,48 @@ async function warnIfConfigIsNotReadable(
 ): Promise<void> {
   try {
     await assertNoLegacyTomlOnly({ configDir });
-    if (!(await pathExists(globalConfigFile({ configDir })))) return;
-    await loadConfig({ configDir });
+    const file = globalConfigFile({ configDir });
+    if (!(await pathExists(file))) return;
+    await assertOwnerOnlyFile(file);
+    try {
+      assertRawConfigShape(JSON.parse(await readFile(file, 'utf8')) as unknown, file);
+    } catch (err) {
+      throw new Error(
+        `dreamux config parse error in ${file}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     warnings.push(
       `could not validate dreamux config before uninstall; continuing with fixed state/log paths: ${message}`,
     );
   }
+}
+
+async function assertOwnerOnlyFile(file: string): Promise<void> {
+  if (process.platform === 'win32') return;
+  const mode = (await stat(file)).mode & 0o777;
+  if (mode !== 0o600) {
+    throw new Error(`dreamux config file must be mode 0600: ${file} has mode 0${mode.toString(8)}`);
+  }
+}
+
+function assertRawConfigShape(value: unknown, file: string): void {
+  if (!isRecord(value)) {
+    throw new Error(`dreamux config error in ${file}: top-level must be an object`);
+  }
+  const agents = value['agents'];
+  const dispatchers = value['dispatchers'];
+  if (agents !== undefined && !Array.isArray(agents)) {
+    throw new Error(`dreamux config error in ${file}: agents must be an array`);
+  }
+  if (dispatchers !== undefined && !Array.isArray(dispatchers)) {
+    throw new Error(`dreamux config error in ${file}: dispatchers must be an array`);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 async function removeOwnedDirectory(
@@ -178,6 +218,16 @@ function uniquePaths(paths: Array<string | undefined>): string[] {
     out.add(normalizePath(path));
   }
   return Array.from(out);
+}
+
+function uniqueRemovalTargets(
+  entries: Array<[path: string, reason: string]>,
+): Array<{ path: string; reason: string }> {
+  const out = new Map<string, string>();
+  for (const [path, reason] of entries) {
+    if (!out.has(path)) out.set(path, reason);
+  }
+  return [...out].map(([path, reason]) => ({ path, reason }));
 }
 
 function isSameOrInside(path: string, root: string): boolean {

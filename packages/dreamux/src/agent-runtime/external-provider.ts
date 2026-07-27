@@ -26,6 +26,7 @@ import {
   type ProviderModule,
   type ProviderModuleImporter,
   type ProviderPackageLoaderSpec,
+  type NpmProviderModuleImporter,
 } from '../registry/provider-loader.js';
 import type {
   AgentRuntimeCapabilities,
@@ -73,6 +74,7 @@ export interface LoadAgentRuntimeProvidersOptions {
   registry: ProviderRegistry;
   refs: Iterable<string>;
   importModule?: ExternalAgentRuntimeModuleImporter;
+  importNpmModule?: NpmProviderModuleImporter;
 }
 
 const AGENT_RUNTIME_LOADER_SPEC: ProviderPackageLoaderSpec<AgentRuntimeProvider> = {

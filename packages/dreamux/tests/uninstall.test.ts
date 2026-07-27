@@ -15,6 +15,7 @@ import type { CommandRunner } from '../src/onboard/types.js';
 import {
   logsRoot,
   cacheRoot,
+  pluginRoot,
   runRoot,
   resetRuntimeConfig,
   stateRoot,
@@ -72,6 +73,9 @@ describe('dreamux uninstall', () => {
     mkdirSync(stateRoot(), { recursive: true });
     mkdirSync(join(runRoot(), 'sockets'), { recursive: true });
     mkdirSync(join(cacheRoot(), 'flow', 'spill'), { recursive: true });
+    mkdirSync(join(pluginRoot(), 'ZXhhbXBsZQ', 'versions', '1.0.0'), {
+      recursive: true,
+    });
     mkdirSync(logsRoot(), { recursive: true });
     mkdirSync(dirname(servicePath), { recursive: true });
     mkdirSync(legacyWorkspaceSkillDir, { recursive: true });
@@ -108,6 +112,7 @@ describe('dreamux uninstall', () => {
     expect(existsSync(stateRoot())).toBe(false);
     expect(existsSync(runRoot())).toBe(false);
     expect(existsSync(cacheRoot())).toBe(false);
+    expect(existsSync(pluginRoot())).toBe(false);
     expect(existsSync(logsRoot())).toBe(false);
     expect(existsSync(servicePath)).toBe(false);
     expect(existsSync(legacyWorkspaceSkillDir)).toBe(true);
@@ -123,6 +128,7 @@ describe('dreamux uninstall', () => {
         { status: 'removed', path: stateRoot(), reason: 'dreamux state directory' },
         { status: 'removed', path: runRoot(), reason: 'dreamux run directory' },
         { status: 'removed', path: cacheRoot(), reason: 'dreamux cache directory' },
+        { status: 'removed', path: pluginRoot(), reason: 'dreamux plugin directory' },
         { status: 'removed', path: logsRoot(), reason: 'dreamux logs directory' },
       ]),
     );
