@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFile } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { existsSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -61,8 +67,9 @@ describe('collaboration target per-target repo close cleanup', () => {
 
   it('dissolves the Team and removes the managed worktree on owner target-close', async () => {
     // A real source repo so the managed worktree is a real `git worktree`.
-    const sourceRepo = join(root, 'source');
-    mkdirSync(sourceRepo, { recursive: true });
+    const sourceRepoPath = join(root, 'source');
+    mkdirSync(sourceRepoPath, { recursive: true });
+    const sourceRepo = realpathSync(sourceRepoPath);
     const git = async (args: string[]): Promise<string> => {
       const { stdout } = await execFileAsync('git', args, { cwd: sourceRepo });
       return stdout;
