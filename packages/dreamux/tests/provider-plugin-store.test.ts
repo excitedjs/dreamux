@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import {
   ExecaProviderPluginNpmRunner,
@@ -16,7 +16,7 @@ import {
   providerPluginGenerationRootLockfilePath,
   providerPluginGenerationRootPackageJsonPath,
   providerPluginMetadataPath,
-  providerPluginStagingRoot,
+  providerPluginStagingDir,
 } from '../src/platform/paths.js';
 
 class FakeNpmRunner implements ProviderPluginNpmRunner {
@@ -132,7 +132,7 @@ describe('ProviderPluginStore', () => {
   });
 
   it('ignores incomplete staging content', async () => {
-    await mkdir(join(providerPluginStagingRoot('@example/provider', root), 'leftover'), {
+    await mkdir(dirname(providerPluginStagingDir('@example/provider', 'leftover', root)), {
       recursive: true,
     });
     const runner = new FakeNpmRunner();

@@ -33,9 +33,7 @@ import {
   pluginRoot,
   providerPluginGenerationBridgePath,
   providerPluginGenerationDir,
-  providerPluginInstalledPackageJsonPath,
   providerPluginMetadataPath,
-  providerPluginPackageDir,
   providerPluginStagingDir,
   resetRuntimeConfig,
   restartIntentPath,
@@ -173,7 +171,7 @@ describe('runtime paths', () => {
 
   it('owns external provider plugin paths under ~/.dreamux/plugins', () => {
     const packageName = '@example/provider';
-    const packageDir = providerPluginPackageDir(packageName);
+    const packageDir = join(pluginRoot(), 'QGV4YW1wbGUvcHJvdmlkZXI');
     expect(packageDir).toBe(join(pluginRoot(), 'QGV4YW1wbGUvcHJvdmlkZXI'));
     expect(providerPluginMetadataPath(packageName)).toBe(
       join(packageDir, 'metadata.json'),
@@ -183,9 +181,6 @@ describe('runtime paths', () => {
     );
     expect(providerPluginGenerationBridgePath(packageName, '1.2.3')).toBe(
       join(packageDir, 'versions', '1.2.3', 'dreamux-import.mjs'),
-    );
-    expect(providerPluginInstalledPackageJsonPath(packageName, '1.2.3')).toBe(
-      join(packageDir, 'versions', '1.2.3', 'node_modules', '@example', 'provider', 'package.json'),
     );
     expect(providerPluginStagingDir(packageName, 'install-1')).toBe(
       join(packageDir, 'staging', 'install-1'),

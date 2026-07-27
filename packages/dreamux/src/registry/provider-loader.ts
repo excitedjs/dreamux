@@ -206,9 +206,15 @@ async function importProviderModule<
   spec: ProviderPackageLoaderSpec<TProvider>,
 ): Promise<ProviderModule> {
   try {
-    return ref.source === 'npm' && importNpmModule !== undefined
-      ? await importNpmModule(ref, packageName)
-      : await importModule(packageName);
+    if (ref.source === 'npm') {
+      if (importNpmModule === undefined) {
+        throw new Error(
+          'npm provider refs require a generation-local plugin importer',
+        );
+      }
+      return await importNpmModule(ref, packageName);
+    }
+    return await importModule(packageName);
   } catch (err) {
     throw spec.createLoadError(
       ref.raw,

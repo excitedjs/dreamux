@@ -21,6 +21,7 @@ import {
   providerPluginMetadataPath,
   providerPluginStagingDir,
 } from '../platform/paths.js';
+import { NPM_PACKAGE_PATTERN } from './provider-ref.js';
 import type { ProviderModule } from './provider-loader.js';
 
 export const PROVIDER_PLUGIN_UPDATE_INTERVAL_MS = 4 * 60 * 60 * 1000;
@@ -138,6 +139,7 @@ export class ProviderPluginStore {
     packageName: string,
     signal?: AbortSignal,
   ): Promise<string> {
+    assertProviderPluginPackageName(packageName);
     const current = await this.selectedUsableVersion(packageName);
     if (current !== null) return current;
 
@@ -155,6 +157,7 @@ export class ProviderPluginStore {
   }
 
   async inspectPackage(packageName: string): Promise<ProviderPluginInspection> {
+    assertProviderPluginPackageName(packageName);
     try {
       const meta = await this.readMetadata(packageName);
       if (meta.selected_version === null) {
@@ -183,6 +186,7 @@ export class ProviderPluginStore {
   }
 
   async importModule(packageName: string): Promise<ProviderModule> {
+    assertProviderPluginPackageName(packageName);
     const meta = await this.readMetadata(packageName);
     if (meta.selected_version === null) {
       throw new Error(`provider plugin ${packageName} has no selected generation`);
@@ -223,6 +227,7 @@ export class ProviderPluginStore {
     packageName: string,
     signal?: AbortSignal,
   ): Promise<void> {
+    assertProviderPluginPackageName(packageName);
     const before = await this.readMetadata(packageName);
     try {
       const latest = await this.runner.latestVersion(packageName, signal);
@@ -254,6 +259,7 @@ export class ProviderPluginStore {
     const now = this.now();
     let min = PROVIDER_PLUGIN_UPDATE_INTERVAL_MS;
     for (const packageName of packages) {
+      assertProviderPluginPackageName(packageName);
       const meta = await this.readMetadata(packageName);
       const last = meta.last_check_completed_at;
       const delay =
@@ -402,6 +408,12 @@ export class ProviderPluginStore {
   }
 }
 
+function assertProviderPluginPackageName(packageName: string): void {
+  if (!NPM_PACKAGE_PATTERN.test(packageName)) {
+    throw new Error(`invalid provider plugin package name: ${packageName}`);
+  }
+}
+
 class ProviderPluginUpdater {
   private timer: NodeJS.Timeout | null = null;
   private flight: Promise<void> | null = null;
@@ -429,7 +441,7 @@ class ProviderPluginUpdater {
   private schedule(delay: number): void {
     if (this.closed) return;
     this.timer = setTimeout(() => {
-      this.run().catch((err: unknown) => this.handleRunError(err));
+      void this.run();
     }, delay);
     this.timer.unref?.();
   }
@@ -449,12 +461,6 @@ class ProviderPluginUpdater {
         if (!this.closed) this.schedule(delay);
       }
     }
-  }
-
-  private handleRunError(err: unknown): void {
-    if (this.closed) return;
-    this.warn(`provider plugin updater failed: ${errorMessage(err)}`);
-    this.schedule(PROVIDER_PLUGIN_UPDATE_INTERVAL_MS);
   }
 
   private async nextDelay(): Promise<number> {

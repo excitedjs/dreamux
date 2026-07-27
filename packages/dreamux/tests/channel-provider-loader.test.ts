@@ -97,7 +97,7 @@ describe('channel provider loader', () => {
     await loadChannelProviders({
       registry,
       refs: ['npm:@example/dreamux-channel#provider'],
-      importModule: async (packageName) => {
+      importNpmModule: async (_ref, packageName) => {
         expect(packageName).toBe('@example/dreamux-channel');
         return { provider: channelFactory({ created }) };
       },
@@ -157,7 +157,7 @@ describe('channel provider loader', () => {
       loadChannelProviders({
         registry: createBuiltinProviderRegistry(),
         refs: ['npm:@example/missing-channel'],
-        importModule: async () => {
+        importNpmModule: async () => {
           throw new Error('package not found');
         },
       }),
@@ -166,7 +166,7 @@ describe('channel provider loader', () => {
       loadChannelProviders({
         registry: createBuiltinProviderRegistry(),
         refs: ['npm:@example/missing-channel'],
-        importModule: async () => {
+        importNpmModule: async () => {
           throw new Error('package not found');
         },
       }),
@@ -178,7 +178,7 @@ describe('channel provider loader', () => {
       loadChannelProviders({
         registry: createBuiltinProviderRegistry(),
         refs: ['npm:@example/dreamux-channel#missing'],
-        importModule: async () => ({ default: channelFactory() }),
+        importNpmModule: async () => ({ default: channelFactory() }),
       }),
     ).rejects.toThrow(ExternalChannelProviderContractError);
   });
@@ -188,7 +188,7 @@ describe('channel provider loader', () => {
       loadChannelProviders({
         registry: createBuiltinProviderRegistry(),
         refs: ['npm:@example/dreamux-channel'],
-        importModule: async () => ({
+        importNpmModule: async () => ({
           default: ({ ref, descriptor }: { ref: string; descriptor: unknown }) => ({
             ref,
             descriptor,
@@ -203,7 +203,7 @@ describe('channel provider loader', () => {
       loadChannelProviders({
         registry: createBuiltinProviderRegistry(),
         refs: ['npm:@example/dreamux-channel'],
-        importModule: async () => ({
+        importNpmModule: async () => ({
           default: ({ ref }: { ref: string }) => ({
             ref,
             descriptor: {

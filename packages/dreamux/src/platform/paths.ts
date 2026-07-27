@@ -174,11 +174,9 @@ export function pluginRoot(): string {
   return join(dreamuxRoot(), 'plugins');
 }
 
-export function providerPluginPackageDir(packageName: string, root = pluginRoot()): string { return join(root, providerPluginPackageSegment(packageName)); }
 export function providerPluginMetadataPath(packageName: string, root = pluginRoot()): string { return join(providerPluginPackageDir(packageName, root), 'metadata.json'); }
-export function providerPluginVersionsDir(packageName: string, root = pluginRoot()): string { return join(providerPluginPackageDir(packageName, root), 'versions'); }
 export function providerPluginGenerationDir(packageName: string, version: string, root = pluginRoot()): string {
-  return join(providerPluginVersionsDir(packageName, root), providerPluginVersionSegment(version));
+  return join(providerPluginPackageDir(packageName, root), 'versions', safePluginSegment(version, 'provider plugin version'));
 }
 export function providerPluginGenerationRootPackageJsonPath(root: string): string { return join(root, 'package.json'); }
 export function providerPluginGenerationRootLockfilePath(root: string): string { return join(root, 'package-lock.json'); }
@@ -195,12 +193,8 @@ export function providerPluginGenerationLockfilePath(packageName: string, versio
 export function providerPluginGenerationBridgePath(packageName: string, version: string, root = pluginRoot()): string {
   return providerPluginGenerationRootBridgePath(providerPluginGenerationDir(packageName, version, root));
 }
-export function providerPluginInstalledPackageJsonPath(packageName: string, version: string, root = pluginRoot()): string {
-  return providerPluginGenerationRootInstalledPackageJsonPath(providerPluginGenerationDir(packageName, version, root), packageName);
-}
-export function providerPluginStagingRoot(packageName: string, root = pluginRoot()): string { return join(providerPluginPackageDir(packageName, root), 'staging'); }
 export function providerPluginStagingDir(packageName: string, installId: string, root = pluginRoot()): string {
-  return join(providerPluginStagingRoot(packageName, root), providerPluginInstallSegment(installId));
+  return join(providerPluginPackageDir(packageName, root), 'staging', safePluginSegment(installId, 'provider plugin install id'));
 }
 
 export function dispatcherCacheDir(id: string): string {
@@ -674,23 +668,13 @@ function dedupeExecDirs(values: string[]): string[] {
   return out;
 }
 
-function providerPluginPackageSegment(packageName: string): string {
-  if (!/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(packageName)) {
-    throw new Error(`invalid provider plugin package name: ${packageName}`);
-  }
-  return Buffer.from(packageName, 'utf8').toString('base64url');
+function providerPluginPackageDir(packageName: string, root: string): string {
+  return join(root, Buffer.from(packageName, 'utf8').toString('base64url'));
 }
 
-function providerPluginVersionSegment(version: string): string {
-  if (!/^[A-Za-z0-9._+-]+$/.test(version) || version.includes('..')) {
-    throw new Error(`invalid provider plugin version: ${version}`);
+function safePluginSegment(segment: string, description: string): string {
+  if (!/^[A-Za-z0-9._+-]+$/.test(segment) || segment.includes('..')) {
+    throw new Error(`invalid ${description}: ${segment}`);
   }
-  return version;
-}
-
-function providerPluginInstallSegment(installId: string): string {
-  if (!/^[A-Za-z0-9._-]+$/.test(installId) || installId.includes('..')) {
-    throw new Error(`invalid provider plugin install id: ${installId}`);
-  }
-  return installId;
+  return segment;
 }

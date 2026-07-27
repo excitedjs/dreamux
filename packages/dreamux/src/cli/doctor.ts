@@ -274,6 +274,7 @@ async function readConfigForDoctor(
       configDir,
       providerPluginLoadMode: 'installed-only',
     });
+    addProviderPluginChecks(checks, loaded.providerPluginDiagnostics);
     checks.push({
       name: 'config',
       ok: true,
@@ -296,6 +297,27 @@ async function readConfigForDoctor(
       configFile: globalConfigFile({ configDir }),
       catalogs: catalogsFromRegistry(createBuiltinProviderRegistry()),
     };
+  }
+}
+
+function addProviderPluginChecks(
+  checks: DoctorCheck[],
+  diagnostics: Array<{
+    packageName: string;
+    ok: boolean;
+    version: string | null;
+    error: string | null;
+  }>,
+): void {
+  for (const diagnostic of diagnostics) {
+    checks.push({
+      name: `provider plugin ${diagnostic.packageName}`,
+      ok: diagnostic.ok,
+      detail: diagnostic.ok
+        ? `selected generation ${diagnostic.version ?? 'unknown'}`
+        : (diagnostic.error ??
+          `provider plugin ${diagnostic.packageName} is not installed or usable`),
+    });
   }
 }
 

@@ -193,7 +193,7 @@ describe('AgentRuntimeProviderCatalog', () => {
         'npm:@example/dreamux-runtime',
         'npm:@example/dreamux-runtime#named',
       ],
-      importModule: async (packageName) => {
+      importNpmModule: async (_ref, packageName) => {
         expect(packageName).toBe('@example/dreamux-runtime');
         return { default: factory, named: factory };
       },
@@ -282,7 +282,7 @@ describe('AgentRuntimeProviderCatalog', () => {
       loadAgentRuntimeProviders({
         registry: createBuiltinProviderRegistry(),
         refs: ['npm:@example/missing-runtime'],
-        importModule: async () => {
+        importNpmModule: async () => {
           throw new Error('package not found');
         },
       }),
@@ -291,7 +291,7 @@ describe('AgentRuntimeProviderCatalog', () => {
       loadAgentRuntimeProviders({
         registry: createBuiltinProviderRegistry(),
         refs: ['npm:@example/missing-runtime'],
-        importModule: async () => {
+        importNpmModule: async () => {
           throw new Error('package not found');
         },
       }),
@@ -320,12 +320,38 @@ describe('AgentRuntimeProviderCatalog', () => {
     expect(pluginImports).toEqual(['@example/ambient-runtime']);
   });
 
+  it('requires a plugin importer for npm provider refs even when ambient import would resolve', async () => {
+    const ambientImports: string[] = [];
+
+    await expect(
+      loadAgentRuntimeProviders({
+        registry: createBuiltinProviderRegistry(),
+        refs: ['npm:@example/ambient-runtime#provider'],
+        importModule: async (packageName) => {
+          ambientImports.push(packageName);
+          return { provider: externalFactory() };
+        },
+      }),
+    ).rejects.toThrow(ExternalAgentRuntimeProviderLoadError);
+    await expect(
+      loadAgentRuntimeProviders({
+        registry: createBuiltinProviderRegistry(),
+        refs: ['npm:@example/ambient-runtime#provider'],
+        importModule: async (packageName) => {
+          ambientImports.push(packageName);
+          return { provider: externalFactory() };
+        },
+      }),
+    ).rejects.toThrow(/generation-local plugin importer/);
+    expect(ambientImports).toEqual([]);
+  });
+
   it('rejects external modules that do not export a provider factory', async () => {
     await expect(
       loadAgentRuntimeProviders({
         registry: createBuiltinProviderRegistry(),
         refs: ['npm:@example/dreamux-runtime#missing'],
-        importModule: async () => ({ default: externalFactory() }),
+        importNpmModule: async () => ({ default: externalFactory() }),
       }),
     ).rejects.toThrow(ExternalAgentRuntimeProviderContractError);
   });
@@ -335,7 +361,7 @@ describe('AgentRuntimeProviderCatalog', () => {
       loadAgentRuntimeProviders({
         registry: createBuiltinProviderRegistry(),
         refs: ['npm:@example/dreamux-runtime'],
-        importModule: async () => ({
+        importNpmModule: async () => ({
           default: ({
             ref,
             descriptor,
@@ -357,7 +383,7 @@ describe('AgentRuntimeProviderCatalog', () => {
     await loadAgentRuntimeProviders({
       registry,
       refs: ['npm:@example/dreamux-runtime'],
-      importModule: async () => ({
+      importNpmModule: async () => ({
         default: ({
           ref,
           descriptor,
@@ -390,7 +416,7 @@ describe('AgentRuntimeProviderCatalog', () => {
     await loadAgentRuntimeProviders({
       registry,
       refs: ['npm:@example/dreamux-runtime'],
-      importModule: async () => ({
+      importNpmModule: async () => ({
         default: ({
           ref,
           descriptor,

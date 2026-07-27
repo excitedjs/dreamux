@@ -407,6 +407,14 @@ describe('dreamux doctor command', () => {
     expect(result.checks.find((check) => check.name === 'config')).toMatchObject({
       ok: true,
     });
+    expect(
+      result.checks.find(
+        (check) => check.name === 'provider plugin @example/missing-runtime',
+      ),
+    ).toMatchObject({
+      ok: false,
+      detail: expect.stringContaining('no selected generation'),
+    });
     const report = runtimeProviderReport(
       result,
       'flow',
@@ -414,7 +422,7 @@ describe('dreamux doctor command', () => {
       'foreground',
     );
     expect(report?.result.ok).toBe(false);
-    expect(report?.result.detail).toContain('@example/missing-runtime');
+    expect(report?.result.detail).toContain('not runnable');
     expect(runner.calls.some((call) => call.command === 'npm')).toBe(false);
   });
 

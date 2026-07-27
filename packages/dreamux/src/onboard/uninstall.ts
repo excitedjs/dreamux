@@ -1,18 +1,20 @@
 import { pathExists } from '../platform/fs-errors.js';
-import { readFile, rm, stat } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 
 import { ExecaCommandRunner } from './commands.js';
 import { removeUserService } from './service.js';
 import type { CommandRunner, ServicePlatform } from '../onboard/types.js';
+import type { ProviderPluginStore } from '../registry/provider-plugin-store.js';
 import {
   assertNoLegacyTomlOnly,
   expandHome,
   globalConfigDir,
   globalConfigFile,
 } from '../config/config.js';
-import { cacheRoot, logsRoot, pluginRoot, runRoot, stateRoot } from '../platform/paths.js';
+import { inspectRawConfig } from '../config/raw-inspection.js';
+import { dreamuxRoot } from '../platform/paths.js';
 
 export type UninstallStatus = 'removed' | 'missing' | 'skipped';
 
@@ -25,6 +27,7 @@ export interface UninstallEntry {
 export interface RunUninstallOptions {
   configDir?: string;
   runner?: CommandRunner;
+  providerPluginStore?: ProviderPluginStore;
   platform?: NodeJS.Platform;
   homeDir?: string;
   uid?: number;
@@ -48,18 +51,10 @@ export async function runUninstall(
   const configDir = normalizePath(options.configDir ?? globalConfigDir());
   const entries: UninstallEntry[] = [];
   const warnings: string[] = [];
-  await warnIfConfigIsNotReadable(configDir, warnings);
-  const stateDir = normalizePath(stateRoot());
-  const runDir = normalizePath(runRoot());
-  const cacheDir = normalizePath(cacheRoot());
-  const logDir = normalizePath(logsRoot());
-  const pluginDir = normalizePath(pluginRoot());
+  await warnIfConfigIsNotReadable(configDir, warnings, options.providerPluginStore);
+  const homeRoot = normalizePath(dreamuxRoot());
 
-  assertSafeOwnedDirectory(stateDir, 'dreamux state directory');
-  assertSafeOwnedDirectory(runDir, 'dreamux run directory');
-  assertSafeOwnedDirectory(cacheDir, 'dreamux cache directory');
-  assertSafeOwnedDirectory(logDir, 'dreamux logs directory');
-  assertSafeOwnedDirectory(pluginDir, 'dreamux plugin directory');
+  assertSafeOwnedDirectory(homeRoot, 'dreamux home directory');
   assertSafeOwnedDirectory(configDir, 'dreamux config directory');
 
   // Service removal (unit-only) is shared with `dreamux daemon uninstall`.
@@ -77,12 +72,10 @@ export async function runUninstall(
   });
 
   for (const entry of uniqueRemovalTargets([
-    [stateDir, 'dreamux state directory'],
-    [runDir, 'dreamux run directory'],
-    [cacheDir, 'dreamux cache directory'],
-    [logDir, 'dreamux logs directory'],
-    [pluginDir, 'dreamux plugin directory'],
-    [configDir, 'dreamux config directory'],
+    [homeRoot, 'dreamux home directory'],
+    ...(isSameOrInside(configDir, homeRoot)
+      ? []
+      : ([[configDir, 'dreamux config directory']] as Array<[string, string]>)),
   ])) {
     await removeOwnedDirectory(entry.path, entries, entry.reason, dryRun);
   }
@@ -100,51 +93,19 @@ export async function runUninstall(
 async function warnIfConfigIsNotReadable(
   configDir: string,
   warnings: string[],
+  providerPluginStore: ProviderPluginStore | undefined,
 ): Promise<void> {
   try {
     await assertNoLegacyTomlOnly({ configDir });
     const file = globalConfigFile({ configDir });
     if (!(await pathExists(file))) return;
-    await assertOwnerOnlyFile(file);
-    try {
-      assertRawConfigShape(JSON.parse(await readFile(file, 'utf8')) as unknown, file);
-    } catch (err) {
-      throw new Error(
-        `dreamux config parse error in ${file}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
+    await inspectRawConfig({ configDir, providerPluginStore });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     warnings.push(
-      `could not validate dreamux config before uninstall; continuing with fixed state/log paths: ${message}`,
+      `could not validate dreamux config before uninstall; continuing with fixed Dreamux-owned removal targets: ${message}`,
     );
   }
-}
-
-async function assertOwnerOnlyFile(file: string): Promise<void> {
-  if (process.platform === 'win32') return;
-  const mode = (await stat(file)).mode & 0o777;
-  if (mode !== 0o600) {
-    throw new Error(`dreamux config file must be mode 0600: ${file} has mode 0${mode.toString(8)}`);
-  }
-}
-
-function assertRawConfigShape(value: unknown, file: string): void {
-  if (!isRecord(value)) {
-    throw new Error(`dreamux config error in ${file}: top-level must be an object`);
-  }
-  const agents = value['agents'];
-  const dispatchers = value['dispatchers'];
-  if (agents !== undefined && !Array.isArray(agents)) {
-    throw new Error(`dreamux config error in ${file}: agents must be an array`);
-  }
-  if (dispatchers !== undefined && !Array.isArray(dispatchers)) {
-    throw new Error(`dreamux config error in ${file}: dispatchers must be an array`);
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 async function removeOwnedDirectory(

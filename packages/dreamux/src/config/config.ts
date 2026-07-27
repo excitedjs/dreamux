@@ -3,14 +3,8 @@ import { pathExists } from '../platform/fs-errors.js';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { mkdir, open, readFile, stat } from 'node:fs/promises';
-import {
-  loadAgentRuntimeProviders,
-  type ExternalAgentRuntimeModuleImporter,
-} from '../agent-runtime/external-provider.js';
-import {
-  loadChannelProviders,
-  type ExternalChannelModuleImporter,
-} from '../channel/external-channel-provider.js';
+import type { ExternalAgentRuntimeModuleImporter } from '../agent-runtime/external-provider.js';
+import type { ExternalChannelModuleImporter } from '../channel/external-channel-provider.js';
 import {
   createBuiltinProviderRegistry,
   type ProviderRegistry,
@@ -29,10 +23,8 @@ import {
 } from '@excitedjs/dreamux-utils';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 import {
-  agentProviderRefs,
   asAgentRuntimeProvider,
   asChannelProvider,
-  channelProviderRefs,
   expandHome,
   readOptionalBoolean,
   redactConfigSecrets,
@@ -44,7 +36,7 @@ import {
   stringifyChannelCollaborationSpace,
   type DispatcherChannelCollaborationSpaceConfig,
 } from './collaboration-space-config.js';
-import { prepareProviderPlugins } from './provider-plugin-loading.js';
+import { loadProviderPluginsForConfig } from './provider-plugin-loading.js';
 
 export { expandHome } from './config-helpers.js';
 export {
@@ -233,11 +225,29 @@ async function readConfigFile(
         'Run `dreamux onboard` to create it before starting the server.',
     );
   }
+  const parsed = await readConfigJson(file);
+  const providerPlugins = await loadProviderPluginsForConfig({
+    parsed,
+    providerRegistry,
+    overrides,
+  });
+  return {
+    config: await mergeWithDefaults(
+      parsed,
+      file,
+      providerRegistry,
+      providerPlugins.missingPluginRefs,
+    ),
+    providerPluginPackages: providerPlugins.packages,
+    providerPluginDiagnostics: providerPlugins.diagnostics,
+  };
+}
+
+export async function readConfigJson(file: string): Promise<unknown> {
   await assertConfigFileMode(file);
   const raw = await readFile(file, 'utf8');
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    return JSON.parse(raw) as unknown;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
@@ -245,30 +255,6 @@ async function readConfigFile(
         `Fix the JSON syntax in ${file}, then restart. Run \`dreamux onboard\` if you need to recreate the config.`,
     );
   }
-  const agentRefs = agentProviderRefs(parsed);
-  const channelRefs = channelProviderRefs(parsed);
-  const pluginPlan = await prepareProviderPlugins({
-    agentRefs,
-    channelRefs,
-    overrides,
-  });
-  await loadAgentRuntimeProviders({
-    registry: providerRegistry,
-    refs: agentRefs,
-    importModule: overrides.externalAgentRuntimeModuleImporter,
-    importNpmModule: pluginPlan.agentImporter,
-  });
-  await loadChannelProviders({
-    registry: providerRegistry,
-    refs: channelRefs,
-    importModule: overrides.externalChannelModuleImporter,
-    importNpmModule: pluginPlan.channelImporter,
-  });
-  return {
-    config: await mergeWithDefaults(parsed, file, providerRegistry),
-    providerPluginPackages: pluginPlan.packages,
-    providerPluginDiagnostics: pluginPlan.diagnostics,
-  };
 }
 
 export async function assertNoLegacyTomlOnly(
@@ -322,6 +308,7 @@ async function mergeWithDefaults(
   raw: unknown,
   file: string,
   providerRegistry: ProviderRegistry,
+  missingPluginRefs: ReadonlySet<string> = new Set(),
 ): Promise<DreamuxConfig> {
   if (!isPlainObject(raw)) {
     throw new Error(`dreamux config error in ${file}: top-level must be an object`);
@@ -329,12 +316,18 @@ async function mergeWithDefaults(
   rejectTopLevelCodex(raw, file);
   rejectUnknownKeys(raw, new Set(['agents', 'dispatchers']), file, '');
 
-  const agents = await readAgents(raw['agents'], file, providerRegistry);
+  const agents = await readAgents(
+    raw['agents'],
+    file,
+    providerRegistry,
+    missingPluginRefs,
+  );
   const dispatchers = await readDispatchers(
     raw['dispatchers'],
     file,
     agents,
     providerRegistry,
+    missingPluginRefs,
   );
   return {
     agents,
@@ -383,6 +376,7 @@ async function readAgents(
   rawAgents: unknown,
   file: string,
   providerRegistry: ProviderRegistry,
+  missingPluginRefs: ReadonlySet<string>,
 ): Promise<Record<string, ResolvedAgentConfig>> {
   if (rawAgents === undefined) return {};
   if (!Array.isArray(rawAgents)) {
@@ -422,6 +416,14 @@ async function readAgents(
       providerRegistry.getImplementation(provider.descriptor.id),
     );
     if (runtimeProvider === null) {
+      if (missingPluginRefs.has(provider.ref)) {
+        out[id] = {
+          provider: provider.ref,
+          config: rawConfig,
+          rawConfig,
+        };
+        continue;
+      }
       throw new Error(
         `dreamux config error in ${file}: ${prefix}provider='${provider.ref}' is registered but not runnable.\n` +
           'Its provider package did not yield a runnable agentRuntime ' +
@@ -451,6 +453,7 @@ async function readDispatchers(
   file: string,
   agents: Record<string, ResolvedAgentConfig>,
   providerRegistry: ProviderRegistry,
+  missingPluginRefs: ReadonlySet<string>,
 ): Promise<DispatcherConfig[]> {
   if (rawDispatchers === undefined) return [];
   if (!Array.isArray(rawDispatchers)) {
@@ -499,6 +502,7 @@ async function readDispatchers(
       prefix,
       id,
       providerRegistry,
+      missingPluginRefs,
     );
 
     const cwd = readOptionalString(raw, 'cwd', file, prefix);
@@ -560,6 +564,7 @@ async function readDispatcherChannels(
   dispatcherPrefix: string,
   dispatcherId: string,
   providerRegistry: ProviderRegistry,
+  missingPluginRefs: ReadonlySet<string>,
 ): Promise<DispatcherChannelConfig[]> {
   const prefix = `${dispatcherPrefix}channels`;
   if (!Array.isArray(rawChannels)) {
@@ -625,6 +630,17 @@ async function readDispatcherChannels(
       providerRegistry.getImplementation(provider.descriptor.id),
     );
     if (channelProvider === null) {
+      if (missingPluginRefs.has(provider.ref)) {
+        out.push({
+          id,
+          provider: provider.ref,
+          collaborationSpace,
+          config: rawConfig,
+          rawConfig,
+          identity: '',
+        });
+        continue;
+      }
       throw new Error(
         `dreamux config error in ${file}: ${channelPrefix}provider='${provider.ref}' is registered but has no channel implementation.\n` +
           'Its provider package did not yield a usable channel implementation. ' +

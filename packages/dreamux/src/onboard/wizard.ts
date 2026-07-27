@@ -26,6 +26,7 @@ import { loadAgentRuntimeProviders } from '../agent-runtime/external-provider.js
 import { ChannelProviderCatalog } from '../channel/catalog.js';
 import { loadChannelProviders } from '../channel/external-channel-provider.js';
 import { expandHome } from '../config/config.js';
+import { prepareProviderPlugins } from '../config/provider-plugin-loading.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
@@ -237,13 +238,22 @@ async function loadSelectedProviders(
   agent: ProviderSelection,
   channels: ProviderSelection[],
 ): Promise<void> {
+  const agentRefs = [agent.provider];
+  const channelRefs = channels.map((channel) => channel.provider);
+  const pluginPlan = await prepareProviderPlugins({
+    agentRefs,
+    channelRefs,
+    overrides: {},
+  });
   await loadAgentRuntimeProviders({
     registry,
-    refs: [agent.provider],
+    refs: pluginPlan.agentRefsToLoad,
+    importNpmModule: pluginPlan.agentImporter,
   });
   await loadChannelProviders({
     registry,
-    refs: channels.map((channel) => channel.provider),
+    refs: pluginPlan.channelRefsToLoad,
+    importNpmModule: pluginPlan.channelImporter,
   });
 }
 

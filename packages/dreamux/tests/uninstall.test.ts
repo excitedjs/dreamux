@@ -12,7 +12,9 @@ import { dirname, join } from 'node:path';
 
 import { runUninstall } from '../src/onboard/uninstall.js';
 import type { CommandRunner } from '../src/onboard/types.js';
+import type { ProviderPluginStore } from '../src/registry/provider-plugin-store.js';
 import {
+  dreamuxRoot,
   logsRoot,
   cacheRoot,
   pluginRoot,
@@ -41,6 +43,32 @@ class FakeRunner implements CommandRunner {
   }
 }
 
+class FakeProviderPluginStore implements Partial<ProviderPluginStore> {
+  readonly inspected: string[] = [];
+  readonly materialized: string[] = [];
+  readonly imported: string[] = [];
+
+  async inspectPackage(packageName: string) {
+    this.inspected.push(packageName);
+    return {
+      packageName,
+      ok: false,
+      version: null,
+      error: `provider plugin ${packageName} has no selected generation`,
+    };
+  }
+
+  async materializePackage(packageName: string): Promise<string> {
+    this.materialized.push(packageName);
+    return '1.0.0';
+  }
+
+  async importModule(packageName: string): Promise<Record<string, unknown>> {
+    this.imported.push(packageName);
+    return {};
+  }
+}
+
 describe('dreamux uninstall', () => {
   let root: string;
   let previousHome: string | undefined;
@@ -58,7 +86,7 @@ describe('dreamux uninstall', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('removes onboard-owned config, state, logs, and user service files', async () => {
+  it('removes onboard-owned config, Dreamux home, and user service files', async () => {
     const configDir = join(root, 'config');
     const homeDir = join(root, 'home');
     const servicePath = join(homeDir, '.config', 'systemd', 'user', 'dreamux.service');
@@ -109,6 +137,7 @@ describe('dreamux uninstall', () => {
     });
 
     expect(existsSync(configDir)).toBe(false);
+    expect(existsSync(dreamuxRoot())).toBe(false);
     expect(existsSync(stateRoot())).toBe(false);
     expect(existsSync(runRoot())).toBe(false);
     expect(existsSync(cacheRoot())).toBe(false);
@@ -125,17 +154,54 @@ describe('dreamux uninstall', () => {
       expect.arrayContaining([
         { status: 'removed', path: configDir, reason: 'dreamux config directory' },
         { status: 'removed', path: servicePath, reason: 'systemd unit' },
-        { status: 'removed', path: stateRoot(), reason: 'dreamux state directory' },
-        { status: 'removed', path: runRoot(), reason: 'dreamux run directory' },
-        { status: 'removed', path: cacheRoot(), reason: 'dreamux cache directory' },
-        { status: 'removed', path: pluginRoot(), reason: 'dreamux plugin directory' },
-        { status: 'removed', path: logsRoot(), reason: 'dreamux logs directory' },
+        { status: 'removed', path: dreamuxRoot(), reason: 'dreamux home directory' },
       ]),
     );
     expect(runner.calls.map((call) => [call.command, call.args])).toEqual([
       ['systemctl', ['--user', 'disable', '--now', 'dreamux.service']],
       ['systemctl', ['--user', 'daemon-reload']],
     ]);
+  });
+
+  it('removes the default Dreamux root as one containment-aware target', async () => {
+    const configDir = dreamuxRoot();
+    const homeDir = join(root, 'home');
+    const servicePath = join(homeDir, '.config', 'systemd', 'user', 'dreamux.service');
+    mkdirSync(configDir, { recursive: true });
+    mkdirSync(stateRoot(), { recursive: true });
+    mkdirSync(join(runRoot(), 'sockets'), { recursive: true });
+    mkdirSync(join(cacheRoot(), 'flow', 'spill'), { recursive: true });
+    mkdirSync(pluginRoot(), { recursive: true });
+    mkdirSync(logsRoot(), { recursive: true });
+    mkdirSync(dirname(servicePath), { recursive: true });
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({}), {
+      mode: 0o600,
+    });
+    writeFileSync(servicePath, '[Service]\nExecStart=dreamux serve\n');
+
+    const result = await runUninstall({
+      runner: new FakeRunner(),
+      platform: 'linux',
+      homeDir,
+    });
+
+    expect(existsSync(dreamuxRoot())).toBe(false);
+    expect(result.entries).toEqual(
+      expect.arrayContaining([
+        { status: 'removed', path: dreamuxRoot(), reason: 'dreamux home directory' },
+        { status: 'removed', path: servicePath, reason: 'systemd unit' },
+      ]),
+    );
+    expect(
+      result.entries.filter((entry) => entry.path === dreamuxRoot()),
+    ).toHaveLength(1);
+    expect(
+      result.entries.some(
+        (entry) =>
+          entry.path !== dreamuxRoot() &&
+          entry.path.startsWith(`${dreamuxRoot()}/`),
+      ),
+    ).toBe(false);
   });
 
   it('unregisters launchd services and removes the plist', async () => {
@@ -298,5 +364,58 @@ describe('dreamux uninstall', () => {
         process.env['HOME'] = previousCaseHome;
       }
     }
+  });
+
+  it('preflights missing npm plugins without materializing before uninstall', async () => {
+    const configDir = join(root, 'config');
+    const homeDir = join(root, 'home');
+    const servicePath = join(homeDir, '.config', 'systemd', 'user', 'dreamux.service');
+    mkdirSync(configDir, { recursive: true });
+    mkdirSync(dreamuxRoot(), { recursive: true });
+    mkdirSync(dirname(servicePath), { recursive: true });
+    writeFileSync(
+      join(configDir, 'config.json'),
+      JSON.stringify({
+        agents: [
+          {
+            id: 'flow',
+            provider: 'npm:@example/missing-runtime#provider',
+            config: {},
+          },
+        ],
+        dispatchers: [
+          {
+            id: 'flow',
+            cwd: join(root, 'workspace'),
+            channels: [
+              {
+                id: 'primary',
+                provider: 'builtin:feishu',
+                config: { app_id: 'app-test', app_secret: 'secret-test' },
+              },
+            ],
+            agentRuntime: 'flow',
+          },
+        ],
+      }),
+      { mode: 0o600 },
+    );
+    writeFileSync(servicePath, '[Service]\nExecStart=dreamux serve\n');
+    const pluginStore = new FakeProviderPluginStore();
+
+    const result = await runUninstall({
+      configDir,
+      runner: new FakeRunner(),
+      platform: 'linux',
+      homeDir,
+      providerPluginStore: pluginStore as unknown as ProviderPluginStore,
+    });
+
+    expect(pluginStore.inspected).toEqual(['@example/missing-runtime']);
+    expect(pluginStore.materialized).toEqual([]);
+    expect(pluginStore.imported).toEqual([]);
+    expect(result.warnings).toEqual([]);
+    expect(existsSync(configDir)).toBe(false);
+    expect(existsSync(dreamuxRoot())).toBe(false);
   });
 });

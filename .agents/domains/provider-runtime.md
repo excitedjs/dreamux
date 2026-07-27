@@ -29,9 +29,18 @@ The host package, `@excitedjs/dreamux`, depends on the built-in provider
 packages so a default install keeps the built-in path. Provider packages depend
 on `@excitedjs/dreamux-types` and must not depend on `@excitedjs/dreamux`.
 
+External `npm:` refs are not ambient Node imports. Config loading routes them
+through the Dreamux-owned local plugin store, imports only the selected
+immutable generation, and fails loud when no generation-local importer is
+available. Builtin refs bypass the plugin store and keep resolving to packages
+shipped with Dreamux.
+
 Source:
 
 - `/packages/dreamux/src/registry/builtins.ts`
+- `/packages/dreamux/src/registry/provider-loader.ts`
+- `/packages/dreamux/src/registry/provider-plugin-store.ts`
+- `/packages/dreamux/src/config/provider-plugin-loading.ts`
 - `/packages/dreamux/tests/package-boundary-guards.test.ts`
 - `/packages/dreamux/package.json`
 - `/packages/agent-runtime/codex/package.json`
@@ -91,8 +100,62 @@ Source:
 
 - `/packages/dreamux/src/config/config.ts`
 - `/packages/dreamux/src/config/config-helpers.ts`
+- `/packages/dreamux/src/config/provider-plugin-loading.ts`
 - `/packages/dreamux/src/agent-runtime/external-provider.ts`
 - `/packages/dreamux/src/channel/external-channel-provider.ts`
+
+## External NPM Plugin Store
+
+`npm:<package>[#export]` provider refs use `~/.dreamux/plugins/`, a
+Dreamux-owned persistent but rebuildable store. Each package has metadata, an
+immutable `versions/<version>/` generation, and non-importable staging dirs.
+The store materializes one package once per config load across Agent Runtime and
+Channel refs, verifies the installed package identity/version, writes
+`package-lock.json`, and imports through the generation-local
+`dreamux-import.mjs` bridge so Node import conditions are resolved from inside
+that generation.
+
+The generic provider loader remains kind-neutral. It resolves builtin refs to
+bundled packages and uses the ordinary importer only for those builtin/test
+paths. For `npm:` refs it requires an explicit generation-local
+`importNpmModule`; without one, loading fails loud instead of falling back to an
+ambient package that happens to be resolvable from the Dreamux process.
+
+Metadata is owned by `JsonDocumentStore` with warn-and-rebuild corruption
+policy. A selected complete generation starts offline without querying npm. The
+running server starts one single-flight updater after `Server.start()`;
+persisted check timestamps enforce the four-hour interval across restarts.
+Background lookup/install failures are logged, preserve the selected
+generation, and record the settled check time; aborting shutdown does not.
+
+Command modes:
+
+- `serve`, post-write `onboard`, and `daemon install` use materialize mode.
+  First materialization blocks config loading and startup.
+- Pre-merge `onboard` reads existing config in installed-only mode, so dry runs
+  and reruns over a missing old `npm:` provider do not mutate the plugin store.
+- `doctor` uses installed-only mode and reports missing or unusable plugins as
+  config-level diagnostics without synthesizing runnable providers.
+- `uninstall` uses the config-owned raw inspection path in warning-only mode;
+  it never loads or installs providers and removes `~/.dreamux` plus any
+  external config directory as containment-aware targets.
+- Builtin refs perform zero plugin-store calls in every mode.
+
+Source:
+
+- `/packages/dreamux/src/registry/provider-plugin-store.ts`
+- `/packages/dreamux/src/registry/provider-loader.ts`
+- `/packages/dreamux/src/config/provider-plugin-loading.ts`
+- `/packages/dreamux/src/config/raw-inspection.ts`
+- `/packages/dreamux/src/cli/server.ts`
+- `/packages/dreamux/src/cli/doctor.ts`
+- `/packages/dreamux/src/onboard/run.ts`
+- `/packages/dreamux/src/onboard/uninstall.ts`
+- `/packages/dreamux/src/daemon/install.ts`
+- `/packages/dreamux/tests/provider-plugin-store.test.ts`
+- `/packages/dreamux/tests/global-config.test.ts`
+- `/packages/dreamux/tests/doctor.test.ts`
+- `/packages/dreamux/tests/uninstall.test.ts`
 
 ## Runtime Create Context
 
