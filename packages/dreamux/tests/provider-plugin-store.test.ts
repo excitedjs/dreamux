@@ -310,6 +310,45 @@ describe('ProviderPluginStore', () => {
     });
   });
 
+  it('does not start update work when closed during deferred scheduling', async () => {
+    vi.useFakeTimers();
+    let releaseDelay!: () => void;
+    let markDelayStarted!: () => void;
+    const delayStarted = new Promise<void>((resolve) => {
+      markDelayStarted = resolve;
+    });
+    const delay = new Promise<number>((resolve) => {
+      releaseDelay = () => resolve(0);
+    });
+    const runner = new FakeNpmRunner();
+    const store = new ProviderPluginStore({ root, runner });
+    store.nextUpdateDelay = vi.fn(async () => {
+      markDelayStarted();
+      return await delay;
+    });
+
+    store.startUpdater(['@example/provider']);
+    await vi.advanceTimersByTimeAsync(0);
+    await delayStarted;
+    const close = store.closeUpdater();
+    releaseDelay();
+    await close;
+
+    expect(runner.latestCalls).toEqual([]);
+    expect(runner.installs).toEqual([]);
+    await expect(
+      readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(
+      readFile(
+        providerPluginGenerationRootPackageJsonPath(
+          providerPluginGenerationDir('@example/provider', '1.0.0', root),
+        ),
+        'utf8',
+      ),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('does not publish or select when aborted after npm installs before publication', async () => {
     await publishGeneration(root, '@example/provider', '1.0.0');
     await writeMetadata(root, '@example/provider', '1.0.0', 0);

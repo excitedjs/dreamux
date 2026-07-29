@@ -30,10 +30,11 @@ packages so a default install keeps the built-in path. Provider packages depend
 on `@excitedjs/dreamux-types` and must not depend on `@excitedjs/dreamux`.
 
 External `npm:` refs are not ambient Node imports. Config loading routes them
-through the Dreamux-owned local plugin store, imports only the selected
-immutable generation, and fails loud when no generation-local importer is
-available. Builtin refs bypass the plugin store and keep resolving to packages
-shipped with Dreamux.
+through the Dreamux-owned local plugin store, captures the exact generation
+selected by that config-level materialize/inspect plan, and imports runtime and
+channel providers from that immutable generation. Loading fails loud when no
+generation-local importer is available. Builtin refs bypass the plugin store and
+keep resolving to packages shipped with Dreamux.
 
 Source:
 
@@ -111,9 +112,9 @@ Dreamux-owned persistent but rebuildable store. Each package has metadata, an
 immutable `versions/<version>/` generation, and non-importable staging dirs.
 The store materializes one package once per config load across Agent Runtime and
 Channel refs, verifies the installed package identity/version, writes
-`package-lock.json`, and imports through the generation-local
-`dreamux-import.mjs` bridge so Node import conditions are resolved from inside
-that generation.
+`package-lock.json`, and imports through the exact generation captured by the
+config plan. The generation-local `dreamux-import.mjs` bridge ensures Node
+import conditions are resolved from inside that generation.
 
 The generic provider loader remains kind-neutral. It resolves builtin refs to
 bundled packages and uses the ordinary importer only for those builtin/test
@@ -142,7 +143,10 @@ Command modes:
   config-level diagnostics without synthesizing runnable providers.
 - `uninstall` uses the config-owned raw inspection path in warning-only mode;
   it never loads or installs providers and removes `~/.dreamux` plus any
-  external config directory as containment-aware targets.
+  external config directory as containment-aware targets. Recursive deletion
+  targets are checked through the platform canonical-path capability so
+  symlink-prefixed paths cannot physically overlap HOME/cwd protections or
+  operator Codex/Claude state.
 - Builtin refs perform zero plugin-store calls in every mode.
 
 Source:

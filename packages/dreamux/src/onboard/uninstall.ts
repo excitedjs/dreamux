@@ -1,7 +1,7 @@
 import { pathExists } from '../platform/fs-errors.js';
 import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, join, resolve, sep } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 
 import { ExecaCommandRunner } from './commands.js';
 import { removeUserService } from './service.js';
@@ -13,7 +13,7 @@ import {
   globalConfigFile,
 } from '../config/config.js';
 import { inspectRawConfig } from '../config/raw-inspection.js';
-import { dreamuxRoot } from '../platform/paths.js';
+import { canonicalPath, dreamuxRoot } from '../platform/paths.js';
 
 export type UninstallStatus = 'removed' | 'missing' | 'skipped';
 
@@ -52,8 +52,15 @@ export async function runUninstall(
   await warnIfConfigIsNotReadable(configDir, warnings);
   const homeRoot = normalizePath(dreamuxRoot());
 
-  assertSafeOwnedDirectory(homeRoot, 'dreamux home directory');
-  assertSafeOwnedDirectory(configDir, 'dreamux config directory');
+  const removalTargets = uniqueRemovalTargets([
+    [homeRoot, 'dreamux home directory'],
+    ...(isSameOrInside(configDir, homeRoot)
+      ? []
+      : ([[configDir, 'dreamux config directory']] as Array<[string, string]>)),
+  ]);
+  for (const entry of removalTargets) {
+    await assertSafeOwnedDirectory(entry.path, entry.reason);
+  }
 
   // Service removal (unit-only) is shared with `dreamux daemon uninstall`.
   const removal = await removeUserService({
@@ -69,12 +76,7 @@ export async function runUninstall(
     reason: `${removal.platform} unit`,
   });
 
-  for (const entry of uniqueRemovalTargets([
-    [homeRoot, 'dreamux home directory'],
-    ...(isSameOrInside(configDir, homeRoot)
-      ? []
-      : ([[configDir, 'dreamux config directory']] as Array<[string, string]>)),
-  ])) {
+  for (const entry of removalTargets) {
     await removeOwnedDirectory(entry.path, entries, entry.reason, dryRun);
   }
 
@@ -111,7 +113,7 @@ async function removeOwnedDirectory(
   reason: string,
   dryRun: boolean,
 ): Promise<void> {
-  assertSafeOwnedDirectory(path, reason);
+  await assertSafeOwnedDirectory(path, reason);
   await removePath(path, entries, reason, dryRun);
 }
 
@@ -134,27 +136,30 @@ async function removePath(
   entries.push({ path, status: 'removed', reason });
 }
 
-function assertSafeOwnedDirectory(path: string, reason: string): void {
+async function assertSafeOwnedDirectory(path: string, reason: string): Promise<void> {
   const normalized = normalizePath(path);
-  const home = normalizePath(homedir());
-  const cwd = normalizePath(process.cwd());
-  for (const protectedRoot of operatorStateRoots()) {
-    if (isSameOrInside(normalized, protectedRoot)) {
+  const [canonicalTarget, home, cwd, operatorRoots] = await Promise.all([
+    canonicalPath(normalized),
+    canonicalPath(homedir()),
+    canonicalPath(process.cwd()),
+    canonicalOperatorStateRoots(),
+  ]);
+  for (const protectedRoot of operatorRoots) {
+    if (isSameOrInside(canonicalTarget, protectedRoot)) {
       throw new Error(
         `refusing to remove unsafe ${reason}: ${path} overlaps operator Codex/Claude state ${protectedRoot}`,
       );
     }
   }
   if (
-    normalized === '/' ||
-    basename(normalized) === '' ||
-    isSameOrAncestorOf(normalized, home) ||
-    isSameOrAncestorOf(normalized, cwd)
+    canonicalTarget === '/' ||
+    isSameOrAncestorOf(canonicalTarget, home) ||
+    isSameOrAncestorOf(canonicalTarget, cwd)
   ) {
     throw new Error(`refusing to remove unsafe ${reason}: ${path}`);
   }
-  for (const protectedRoot of operatorStateRoots()) {
-    if (isSameOrInside(protectedRoot, normalized)) {
+  for (const protectedRoot of operatorRoots) {
+    if (isSameOrInside(protectedRoot, canonicalTarget)) {
       throw new Error(
         `refusing to remove unsafe ${reason}: ${path} overlaps operator Codex/Claude state ${protectedRoot}`,
       );
@@ -170,10 +175,10 @@ function normalizePath(path: string): string {
   return resolve(expandHome(path));
 }
 
-function operatorStateRoots(): string[] {
-  return uniquePaths([
-    joinHome('.codex'),
-    joinHome('.claude'),
+async function canonicalOperatorStateRoots(): Promise<string[]> {
+  return uniqueCanonicalPaths([
+    await canonicalPath(joinHome('.codex')),
+    await canonicalPath(joinHome('.claude')),
   ]);
 }
 
@@ -181,11 +186,11 @@ function joinHome(child: string): string {
   return normalizePath(join(homedir(), child));
 }
 
-function uniquePaths(paths: Array<string | undefined>): string[] {
+function uniqueCanonicalPaths(paths: Array<string | undefined>): string[] {
   const out = new Set<string>();
   for (const path of paths) {
     if (path === undefined || path.trim() === '') continue;
-    out.add(normalizePath(path));
+    out.add(resolve(path));
   }
   return Array.from(out);
 }

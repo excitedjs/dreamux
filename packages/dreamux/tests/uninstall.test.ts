@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
@@ -301,6 +302,28 @@ describe('dreamux uninstall', () => {
         { status: 'removed', path: dreamuxRoot(), reason: 'dreamux home directory' },
       ]),
     );
+  });
+
+  it('refuses symlink-prefixed targets that physically overlap operator state', async () => {
+    const runner = new FakeRunner();
+    const homeDir = join(root, 'home');
+    const aliasHome = join(root, 'alias-home');
+    const sentinel = join(homedir(), '.codex', 'sentinel');
+    mkdirSync(join(homedir(), '.codex'), { recursive: true });
+    writeFileSync(sentinel, 'keep\n');
+    symlinkSync(homeDir, aliasHome);
+
+    await expect(
+      runUninstall({
+        configDir: join(aliasHome, '.codex'),
+        runner,
+        platform: 'linux',
+        homeDir,
+      }),
+    ).rejects.toThrow(/operator Codex\/Claude state/);
+
+    expect(existsSync(sentinel)).toBe(true);
+    expect(runner.calls).toEqual([]);
   });
 
   it('warns on legacy, invalid, or non-owner-only config and still uninstalls', async () => {

@@ -28,7 +28,7 @@ import type {
 export interface ProviderPluginAccess {
   materializePackage(packageName: string): Promise<string>;
   inspectPackage(packageName: string): Promise<ProviderPluginInspection>;
-  importModule(packageName: string): Promise<ProviderModule>;
+  importModule(packageName: string, version: string): Promise<ProviderModule>;
 }
 
 export interface ProviderPluginPlan {
@@ -129,6 +129,7 @@ export async function prepareProviderPlugins(input: {
       .filter((entry) => !entry.ok)
       .map((entry) => [entry.packageName, entry]),
   );
+  const exactVersions = exactVersionsFromDiagnostics(diagnostics);
   const agentFailures = failuresForPackages(failures, agentPackages);
   const channelFailures = failuresForPackages(failures, channelPackages);
   const packageImporter: NpmProviderModuleImporter = async (
@@ -139,7 +140,11 @@ export async function prepareProviderPlugins(input: {
     if (failure !== undefined) {
       throw new Error(failure.error ?? `provider plugin ${packageName} is not installed`);
     }
-    return await store.importModule(packageName);
+    const version = exactVersions.get(packageName);
+    if (version === undefined) {
+      throw new Error(`provider plugin ${packageName} has no planned generation`);
+    }
+    return await store.importModule(packageName, version);
   };
   return {
     packages,
@@ -188,6 +193,16 @@ function failuresForPackages(
   for (const packageName of packages) {
     const failure = failures.get(packageName);
     if (failure !== undefined) out.set(packageName, failure);
+  }
+  return out;
+}
+
+function exactVersionsFromDiagnostics(
+  diagnostics: ProviderPluginInspection[],
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const entry of diagnostics) {
+    if (entry.ok && entry.version !== null) out.set(entry.packageName, entry.version);
   }
   return out;
 }

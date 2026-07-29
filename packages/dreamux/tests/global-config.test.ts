@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -9,7 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import {
   BUILT_IN_DEFAULTS,
@@ -24,6 +25,11 @@ import {
 } from '../src/config/config.js';
 import {
   adminSocketPath,
+  providerPluginGenerationDir,
+  providerPluginGenerationRootBridgePath,
+  providerPluginGenerationRootInstalledPackageJsonPath,
+  providerPluginGenerationRootLockfilePath,
+  providerPluginGenerationRootPackageJsonPath,
   providerPluginMetadataPath,
   resetRuntimeConfig,
   runRoot,
@@ -59,9 +65,100 @@ function writeConfigObjectAt(configDir: string, value: unknown): void {
   });
 }
 
+function publishProviderGenerationSync(
+  root: string,
+  packageName: string,
+  version: string,
+): void {
+  const generationRoot = providerPluginGenerationDir(packageName, version, root);
+  const packageRoot = dirname(
+    providerPluginGenerationRootInstalledPackageJsonPath(
+      generationRoot,
+      packageName,
+    ),
+  );
+  const importBridgePath = providerPluginGenerationRootBridgePath(generationRoot);
+  const modulePath = join(packageRoot, 'provider.mjs');
+  mkdirSync(packageRoot, { recursive: true });
+  writeFileSync(
+    providerPluginGenerationRootPackageJsonPath(generationRoot),
+    `${JSON.stringify({ private: true, dependencies: { [packageName]: version } })}\n`,
+  );
+  writeFileSync(providerPluginGenerationRootLockfilePath(generationRoot), '{}\n');
+  writeFileSync(
+    providerPluginGenerationRootInstalledPackageJsonPath(
+      generationRoot,
+      packageName,
+    ),
+    `${JSON.stringify({
+      name: packageName,
+      version,
+      type: 'module',
+      exports: './provider.mjs',
+    })}\n`,
+  );
+  writeFileSync(modulePath, providerFixtureSource(version));
+  writeFileSync(
+    importBridgePath,
+    `const namespace = await import(${JSON.stringify(packageName)});\nexport default namespace;\n`,
+  );
+}
+
+function writeProviderPluginMetadataSync(
+  root: string,
+  packageName: string,
+  version: string,
+  checkedAt: number,
+): void {
+  const metadataPath = providerPluginMetadataPath(packageName, root);
+  mkdirSync(dirname(metadataPath), { recursive: true });
+  writeFileSync(
+    metadataPath,
+    `${JSON.stringify({
+      version: 1,
+      selected_version: version,
+      last_check_completed_at: checkedAt,
+    })}\n`,
+  );
+}
+
+function providerFixtureSource(version: string): string {
+  return `
+export function runtime({ ref, descriptor }) {
+  return {
+    ref,
+    descriptor: { ...descriptor, kind: 'agentRuntime' },
+    getCapabilities() {
+      return { resume: { supported: true } };
+    },
+    readConfig(rawConfig) {
+      return { ...rawConfig, runtime_generation: ${JSON.stringify(version)} };
+    },
+    createRuntime() {
+      throw new Error('test runtime does not create a runtime');
+    },
+  };
+}
+
+export function channel({ ref, descriptor }) {
+  return {
+    ref,
+    descriptor: { ...descriptor, kind: 'channel' },
+    readConfig(rawConfig) {
+      return { ...rawConfig, channel_generation: ${JSON.stringify(version)} };
+    },
+    createSession() {
+      throw new Error('test channel does not create a session');
+    },
+  };
+}
+`;
+}
+
 class FakeProviderPluginStore implements Partial<ProviderPluginStore> {
   readonly materialized: string[] = [];
   readonly imported: string[] = [];
+  readonly importRequests: Array<{ packageName: string; version?: string }> = [];
   readonly inspected: string[] = [];
   readonly modules = new Map<string, Record<string, unknown>>();
   failMaterialize: Error | null = null;
@@ -82,8 +179,12 @@ class FakeProviderPluginStore implements Partial<ProviderPluginStore> {
     };
   }
 
-  async importModule(packageName: string): Promise<Record<string, unknown>> {
+  async importModule(
+    packageName: string,
+    version?: string,
+  ): Promise<Record<string, unknown>> {
     this.imported.push(packageName);
+    this.importRequests.push({ packageName, version });
     const module = this.modules.get(packageName);
     if (module === undefined) throw new Error(`missing module ${packageName}`);
     return module;
@@ -1024,8 +1125,76 @@ describe('global config (~/.dreamux/config.json)', () => {
       '@example/dreamux-provider',
       '@example/dreamux-provider',
     ]);
+    expect(pluginStore.importRequests).toEqual([
+      { packageName: '@example/dreamux-provider', version: '1.0.0' },
+      { packageName: '@example/dreamux-provider', version: '1.0.0' },
+    ]);
     expect(providerRegistry.resolve(runtimeRef).kind).toBe('agentRuntime');
     expect(providerRegistry.resolve(channelRef).kind).toBe('channel');
+  });
+
+  it('pins runtime and channel imports to the inspected plugin generation', async () => {
+    const packageName = '@example/dreamux-provider';
+    const runtimeRef = `npm:${packageName}#runtime`;
+    const channelRef = `npm:${packageName}#channel`;
+    writeConfigObject(
+      testConfigFileObject({
+        agents: [{ id: 'flow', provider: runtimeRef, config: {} }],
+        dispatchers: [
+          {
+            id: 'flow',
+            agentRuntime: 'flow',
+            channelProvider: channelRef,
+            feishu: { app_id: 'fixture-app', app_secret: 'fixture-secret' },
+          },
+        ],
+      }),
+    );
+    const pluginRoot = mkdtempSync(join(tmpdir(), 'dreamux-plugin-store-'));
+    publishProviderGenerationSync(pluginRoot, packageName, '1.0.0');
+    publishProviderGenerationSync(pluginRoot, packageName, '2.0.0');
+    writeProviderPluginMetadataSync(pluginRoot, packageName, '1.0.0', 1000);
+    let importCount = 0;
+    const importedUrls: string[] = [];
+    const pluginStore = new ProviderPluginStore({
+      root: pluginRoot,
+      importBridge: async (url) => {
+        importCount += 1;
+        importedUrls.push(url);
+        const imported = await import(`${url}?config-plan-${importCount}`);
+        if (importCount === 1) {
+          writeProviderPluginMetadataSync(pluginRoot, packageName, '2.0.0', 2000);
+        }
+        return imported as unknown;
+      },
+    });
+
+    try {
+      const { config } = await loadConfig({
+        configDir,
+        providerPluginStore: pluginStore,
+        providerPluginLoadMode: 'installed-only',
+      });
+
+      expect(config.agents['flow']?.config).toMatchObject({
+        runtime_generation: '1.0.0',
+      });
+      expect(config.dispatchers[0]?.channels[0]?.config).toMatchObject({
+        channel_generation: '1.0.0',
+      });
+      expect(importedUrls).toHaveLength(2);
+      expect(importedUrls.every((url) =>
+        url.includes('/versions/1.0.0/dreamux-import.mjs'),
+      )).toBe(true);
+      expect(
+        JSON.parse(readFileSync(
+          providerPluginMetadataPath(packageName, pluginRoot),
+          'utf8',
+        )),
+      ).toMatchObject({ selected_version: '2.0.0' });
+    } finally {
+      rmSync(pluginRoot, { recursive: true, force: true });
+    }
   });
 
   it('reports plugin materialization failures with provider ref and package', async () => {

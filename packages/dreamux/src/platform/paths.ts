@@ -39,7 +39,7 @@
 
 import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve, sep, delimiter } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -50,7 +50,7 @@ import {
   BUILT_IN_DEFAULTS,
   type DreamuxConfig,
 } from '../config/config.js';
-import { pathExists } from './fs-errors.js';
+import { isNotFound, pathExists } from './fs-errors.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -107,12 +107,27 @@ export function isUnderDreamuxRoot(path: string): boolean {
   return pathIsAtOrUnder(dreamuxRoot(), path);
 }
 
-/** realpath, falling back to a lexical resolve when the path does not exist. */
-async function canonicalPath(path: string): Promise<string> {
-  try {
-    return await realpath(path);
-  } catch {
-    return resolve(path);
+/**
+ * Canonicalize with `realpath`; if the leaf is missing, canonicalize the nearest
+ * existing parent and append the missing suffix lexically.
+ */
+export async function canonicalPath(path: string): Promise<string> {
+  const resolved = resolve(path);
+  const missingSegments: string[] = [];
+  let current = resolved;
+  while (true) {
+    try {
+      const real = await realpath(current);
+      return missingSegments.length === 0
+        ? real
+        : join(real, ...missingSegments.reverse());
+    } catch (err) {
+      if (!isNotFound(err)) throw err;
+      const parent = dirname(current);
+      if (parent === current) return resolved;
+      missingSegments.push(basename(current));
+      current = parent;
+    }
   }
 }
 

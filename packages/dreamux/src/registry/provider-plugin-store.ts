@@ -185,16 +185,30 @@ export class ProviderPluginStore {
     }
   }
 
-  async importModule(packageName: string): Promise<ProviderModule> {
+  async importModule(
+    packageName: string,
+    version?: string,
+  ): Promise<ProviderModule> {
     assertProviderPluginPackageName(packageName);
+    if (version !== undefined) {
+      return await this.importGenerationModule(packageName, version);
+    }
     const meta = await this.readMetadata(packageName);
     if (meta.selected_version === null) {
       throw new Error(`provider plugin ${packageName} has no selected generation`);
     }
-    await this.assertGenerationComplete(packageName, meta.selected_version);
+    return await this.importGenerationModule(packageName, meta.selected_version);
+  }
+
+  private async importGenerationModule(
+    packageName: string,
+    version: string,
+  ): Promise<ProviderModule> {
+    assertProviderPluginPackageName(packageName);
+    await this.assertGenerationComplete(packageName, version);
     const generationRoot = providerPluginGenerationDir(
       packageName,
-      meta.selected_version,
+      version,
       this.root,
     );
     const bridge = providerPluginGenerationRootBridgePath(generationRoot);
@@ -482,7 +496,9 @@ class ProviderPluginUpdater {
   private async runPackages(): Promise<void> {
     for (const packageName of this.packages) {
       if (this.closed) return;
-      if ((await this.store.nextUpdateDelay([packageName])) > 0) continue;
+      const nextUpdateDelay = await this.store.nextUpdateDelay([packageName]);
+      if (this.closed) return;
+      if (nextUpdateDelay > 0) continue;
       this.abortController = new AbortController();
       try {
         await this.store.checkForUpdate(packageName, this.abortController.signal);

@@ -219,11 +219,14 @@ run data, or provider-owned cache.
 Each package has one encoded path segment with `metadata.json`, immutable
 `versions/<version>/` generations, and non-importable `staging/<install>/`
 directories. Generations are imported only through their local
-`dreamux-import.mjs` bridge. `dreamux serve`, `dreamux onboard`, and
+`dreamux-import.mjs` bridge from the exact generation captured by the
+config-level materialize/inspect plan. `dreamux serve`, `dreamux onboard`, and
 `dreamux daemon install` materialize missing packages; their `--dry-run` modes
 perform installed-only no-write checks and fail explicitly for referenced
 missing npm providers. `dreamux doctor` performs installed-only checks;
-`dreamux uninstall` removes the plugin root without loading providers.
+`dreamux uninstall` removes the plugin root without loading providers, after
+canonical path checks protect HOME/cwd and operator Codex/Claude state from
+symlink-prefixed recursive deletion targets.
 
 Key source:
 
