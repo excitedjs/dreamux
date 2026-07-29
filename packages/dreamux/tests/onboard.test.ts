@@ -804,6 +804,64 @@ describe('dreamux onboard', () => {
     expect(result.doctor.ok).toBe(true);
   });
 
+  it('dry-run with a newly selected missing npm provider reports no-write diagnostics', async () => {
+    const configDir = join(root, 'config');
+    const answers = testAnswers({
+      configDir,
+      dispatcherId: 'docs',
+      dispatcherCwd: join(root, 'docs-cwd'),
+      agentRuntime: {
+        id: 'docs',
+        provider: 'npm:@example/missing-runtime#provider',
+        config: {},
+      },
+      registerService: false,
+      dryRun: true,
+      channels: [feishuOnboardChannel('app-docs', 'secret-docs')],
+    });
+
+    const result = await runOnboard({
+      answers,
+      runner: new FakeRunner(),
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: { CODEX_ACCESS_TOKEN: 'interactive-token-test' },
+    });
+
+    expect(existsSync(pluginRoot())).toBe(false);
+    expect(existsSync(join(configDir, 'config.json'))).toBe(false);
+    expect(result.doctor).toMatchObject({
+      ok: false,
+      detail: 'dry run cannot install npm provider plugins',
+      errors: [
+        expect.stringContaining(
+          'provider plugin @example/missing-runtime: provider plugin @example/missing-runtime has no selected generation',
+        ),
+      ],
+    });
+  });
+
+  it('dry-run provider selection does not materialize a newly selected npm provider', async () => {
+    await expect(
+      answersFromOptions(
+        {
+          yes: true,
+          dryRun: true,
+          configDir: join(root, 'config'),
+          agent: 'npm:@example/missing-runtime#provider',
+          channelConfigJson: JSON.stringify({
+            app_id: 'app-test',
+            app_secret: 'secret-test',
+          }),
+        },
+        false,
+      ),
+    ).rejects.toThrow(
+      /dreamux onboard --dry-run cannot install npm provider plugins/,
+    );
+    expect(existsSync(pluginRoot())).toBe(false);
+  });
+
   it('preserves a teammate-only agent (unreferenced by any dispatcher) on rerun', async () => {
     // Regression for #148 P1: agents[] is the global runtime-config map and a
     // TeamMate can resolve an agent that no dispatcher names (e.g. a `claude`

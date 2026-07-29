@@ -11,7 +11,6 @@ import {
 } from '../registry/index.js';
 import type {
   ProviderPluginInspection,
-  ProviderPluginStore,
 } from '../registry/provider-plugin-store.js';
 import {
   describeType,
@@ -36,7 +35,13 @@ import {
   stringifyChannelCollaborationSpace,
   type DispatcherChannelCollaborationSpaceConfig,
 } from './collaboration-space-config.js';
-import { loadProviderPluginsForConfig } from './provider-plugin-loading.js';
+import {
+  loadProviderPluginsForConfig,
+  type ProviderPluginAccess,
+} from './provider-plugin-loading.js';
+import {
+  validateConfigRawEnvelope,
+} from './raw-envelope.js';
 
 export { expandHome } from './config-helpers.js';
 export {
@@ -97,7 +102,7 @@ export interface ConfigPathOverrides {
     providerRegistry?: ProviderRegistry;
     externalAgentRuntimeModuleImporter?: ExternalAgentRuntimeModuleImporter;
     externalChannelModuleImporter?: ExternalChannelModuleImporter;
-    providerPluginStore?: ProviderPluginStore;
+    providerPluginStore?: ProviderPluginAccess;
     providerPluginLoadMode?: ProviderPluginLoadMode;
 }
 
@@ -156,6 +161,21 @@ export async function loadConfig(
   return {
     config: loaded.config,
     configFile: file,
+    providerRegistry,
+    providerPluginPackages: loaded.providerPluginPackages,
+    providerPluginDiagnostics: loaded.providerPluginDiagnostics,
+  };
+}
+
+export async function loadConfigJson(
+  raw: unknown,
+  file: string,
+  overrides: ConfigPathOverrides = {},
+): Promise<Omit<LoadConfigResult, 'configFile'>> {
+  const providerRegistry = providerRegistryFor(overrides);
+  const loaded = await readConfigValue(raw, file, providerRegistry, overrides);
+  return {
+    config: loaded.config,
     providerRegistry,
     providerPluginPackages: loaded.providerPluginPackages,
     providerPluginDiagnostics: loaded.providerPluginDiagnostics,
@@ -226,6 +246,19 @@ async function readConfigFile(
     );
   }
   const parsed = await readConfigJson(file);
+  return await readConfigValue(parsed, file, providerRegistry, overrides);
+}
+
+async function readConfigValue(
+  parsed: unknown,
+  file: string,
+  providerRegistry: ProviderRegistry,
+  overrides: ConfigPathOverrides,
+): Promise<{
+  config: DreamuxConfig;
+  providerPluginPackages: string[];
+  providerPluginDiagnostics: ProviderPluginInspection[];
+}> {
   const providerPlugins = await loadProviderPluginsForConfig({
     parsed,
     providerRegistry,
@@ -310,20 +343,15 @@ async function mergeWithDefaults(
   providerRegistry: ProviderRegistry,
   missingPluginRefs: ReadonlySet<string> = new Set(),
 ): Promise<DreamuxConfig> {
-  if (!isPlainObject(raw)) {
-    throw new Error(`dreamux config error in ${file}: top-level must be an object`);
-  }
-  rejectTopLevelCodex(raw, file);
-  rejectUnknownKeys(raw, new Set(['agents', 'dispatchers']), file, '');
-
+  const envelope = validateConfigRawEnvelope(raw, file);
   const agents = await readAgents(
-    raw['agents'],
+    envelope.agents,
     file,
     providerRegistry,
     missingPluginRefs,
   );
   const dispatchers = await readDispatchers(
-    raw['dispatchers'],
+    envelope.dispatchers,
     file,
     agents,
     providerRegistry,
@@ -362,30 +390,13 @@ export function defaultWorkspaceEnabled(
   );
 }
 
-function rejectTopLevelCodex(raw: Record<string, unknown>, file: string): void {
-  if (!('codex' in raw)) return;
-  throw new Error(
-    `dreamux config error in ${file}: a top-level "codex" block is no longer ` +
-      'supported. Declare a named agent under agents[] with the selected runtime ' +
-      'provider and a provider-owned config block, then reference it from each ' +
-      'dispatcher via dispatchers[].agentRuntime.',
-  );
-}
-
 async function readAgents(
-  rawAgents: unknown,
+  rawAgents: unknown[] | undefined,
   file: string,
   providerRegistry: ProviderRegistry,
   missingPluginRefs: ReadonlySet<string>,
 ): Promise<Record<string, ResolvedAgentConfig>> {
   if (rawAgents === undefined) return {};
-  if (!Array.isArray(rawAgents)) {
-    throw new Error(
-      `dreamux config error in ${file}: agents must be an array (got ${describeType(rawAgents)}).\n` +
-        'Declare named runtimes as agents[] entries, each with an id, a provider ' +
-        '(for example "builtin:<id>" or "npm:<package>"), and a provider-owned config block.',
-    );
-  }
   const out: Record<string, ResolvedAgentConfig> = {};
   for (let index = 0; index < rawAgents.length; index++) {
     const raw = rawAgents[index];
@@ -449,18 +460,13 @@ async function readAgents(
 }
 
 async function readDispatchers(
-  rawDispatchers: unknown,
+  rawDispatchers: unknown[] | undefined,
   file: string,
   agents: Record<string, ResolvedAgentConfig>,
   providerRegistry: ProviderRegistry,
   missingPluginRefs: ReadonlySet<string>,
 ): Promise<DispatcherConfig[]> {
   if (rawDispatchers === undefined) return [];
-  if (!Array.isArray(rawDispatchers)) {
-    throw new Error(
-      `dreamux config error in ${file}: dispatchers must be an array (got ${describeType(rawDispatchers)})`,
-    );
-  }
   const out: DispatcherConfig[] = [];
   const ids = new Set<string>();
   for (let index = 0; index < rawDispatchers.length; index++) {

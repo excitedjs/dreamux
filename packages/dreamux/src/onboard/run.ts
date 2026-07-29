@@ -1,10 +1,12 @@
 import { pathExists } from '../platform/fs-errors.js';
 import { homedir } from 'node:os';
+import { parseProviderRef } from '../registry/index.js';
 
 import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
 import {
   assertNoLegacyTomlOnly,
   globalConfigFile,
+  loadConfigJson,
   loadConfig,
   stringifyConfig,
   type DreamuxConfig,
@@ -128,13 +130,23 @@ export async function runOnboard(
   // may delete them manually.
 
   const loaded = answers.dryRun
-    ? null
+    ? {
+        ...(await loadConfigJson(
+          JSON.parse(stringifyConfig(dreamuxConfig)) as unknown,
+          configPath,
+          {
+            configDir: answers.configDir,
+            providerPluginLoadMode: 'installed-only',
+          },
+        )),
+        configFile: configPath,
+      }
     : await loadConfig({
         configDir: answers.configDir,
         providerPluginLoadMode: 'materialize',
       });
-  if (loaded !== null) setRuntimeConfig(loaded.config);
-  const catalogs = loaded === null ? null : catalogsFromLoadedConfig(loaded);
+  setRuntimeConfig(loaded.config);
+  const catalogs = catalogsFromLoadedConfig(loaded);
   const fallbackDirs = answers.registerService
     ? await probeStandardExecDirs(
         { platform, homeDir, env },
@@ -142,7 +154,7 @@ export async function runOnboard(
       )
     : [];
   const providerBinChecks =
-    answers.registerService && !answers.dryRun && loaded !== null && catalogs !== null
+    answers.registerService && !answers.dryRun
       ? await resolveProviderBinChecks(
           loaded.config,
           catalogs,
@@ -262,24 +274,32 @@ async function resolveProviderBinChecks(
 
 async function runDispatcherDoctor(
   answers: EffectiveOnboardAnswers,
-  loaded: LoadConfigResult | null,
-  catalogs: ProviderDiagnosticCatalogs | null,
+  loaded: LoadConfigResult,
+  catalogs: ProviderDiagnosticCatalogs,
   env: NodeJS.ProcessEnv,
   runner: CommandRunner,
 ): Promise<OnboardDoctorResult> {
   if (answers.dryRun) {
+    const selectedNpmPackages = selectedAnswerNpmPackages(answers);
+    const missingPlugins = loaded.providerPluginDiagnostics.filter(
+      (diagnostic) =>
+        !diagnostic.ok && selectedNpmPackages.has(diagnostic.packageName),
+    );
+    if (missingPlugins.length > 0) {
+      return {
+        ok: false,
+        errors: missingPlugins.map(
+          (diagnostic) =>
+            `provider plugin ${diagnostic.packageName}: ${diagnostic.error ?? 'no selected generation'}`,
+        ),
+        detail: 'dry run cannot install npm provider plugins',
+        reports: [],
+      };
+    }
     return {
       ok: true,
       errors: [],
       detail: 'dry run',
-      reports: [],
-    };
-  }
-  if (loaded === null || catalogs === null) {
-    return {
-      ok: false,
-      detail: answers.dispatcherId,
-      errors: ['onboard config was not loaded after writing'],
       reports: [],
     };
   }
@@ -313,6 +333,19 @@ async function runDispatcherDoctor(
     errors,
     reports,
   };
+}
+
+function selectedAnswerNpmPackages(answers: EffectiveOnboardAnswers): Set<string> {
+  const refs = [
+    answers.agentRuntime.provider,
+    ...answers.channels.map((channel) => channel.provider),
+  ];
+  const packages = new Set<string>();
+  for (const raw of refs) {
+    const ref = parseProviderRef(raw);
+    if (ref.source === 'npm') packages.add(ref.package);
+  }
+  return packages;
 }
 
 function providerDiagnosticErrors(reports: ProviderDiagnosticReport[]): string[] {

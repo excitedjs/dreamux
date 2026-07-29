@@ -31,8 +31,8 @@ import {
   dreamuxRoot,
   logsRoot,
   pluginRoot,
-  providerPluginGenerationBridgePath,
   providerPluginGenerationDir,
+  providerPluginGenerationRootBridgePath,
   providerPluginMetadataPath,
   providerPluginStagingDir,
   resetRuntimeConfig,
@@ -179,7 +179,8 @@ describe('runtime paths', () => {
     expect(providerPluginGenerationDir(packageName, '1.2.3')).toBe(
       join(packageDir, 'versions', '1.2.3'),
     );
-    expect(providerPluginGenerationBridgePath(packageName, '1.2.3')).toBe(
+    const generation = providerPluginGenerationDir(packageName, '1.2.3');
+    expect(providerPluginGenerationRootBridgePath(generation)).toBe(
       join(packageDir, 'versions', '1.2.3', 'dreamux-import.mjs'),
     );
     expect(providerPluginStagingDir(packageName, 'install-1')).toBe(

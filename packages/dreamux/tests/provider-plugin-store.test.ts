@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 
 import {
   ExecaProviderPluginNpmRunner,
@@ -28,6 +28,7 @@ class FakeNpmRunner implements ProviderPluginNpmRunner {
   blockInstall: Promise<void> | null = null;
   installSignal: AbortSignal | null = null;
   onLatest: ((packageName: string) => Promise<void> | void) | null = null;
+  onAfterInstallPackage: ((cwd: string) => Promise<void> | void) | null = null;
   private readonly latestWaiters: Array<() => void> = [];
 
   async latestVersion(packageName: string): Promise<string> {
@@ -49,6 +50,7 @@ class FakeNpmRunner implements ProviderPluginNpmRunner {
     if (this.blockInstall !== null) await this.blockInstall;
     if (this.failInstall) throw new Error('install failed');
     await publishFakePackage(input.cwd, input.packageName, input.version);
+    await this.onAfterInstallPackage?.(input.cwd);
   }
 
   async waitForLatestCalls(count: number): Promise<void> {
@@ -132,16 +134,23 @@ describe('ProviderPluginStore', () => {
   });
 
   it('ignores incomplete staging content', async () => {
-    await mkdir(dirname(providerPluginStagingDir('@example/provider', 'leftover', root)), {
+    const leftover = providerPluginStagingDir('@example/provider', 'leftover', root);
+    await mkdir(leftover, {
       recursive: true,
     });
+    await writeFile(
+      providerPluginGenerationRootPackageJsonPath(leftover),
+      '{"private":true,"dependencies":{"@example/provider":"9.9.9"}}\n',
+    );
     const runner = new FakeNpmRunner();
     runner.latest.set('@example/provider', '1.0.0');
     const store = new ProviderPluginStore({ root, runner });
 
     await store.materializePackage('@example/provider');
+    const module = await store.importModule('@example/provider');
 
     expect(runner.installs).toHaveLength(1);
+    expect(module['value']).toBe('1.0.0');
   });
 
   it('records settled failed background checks without changing selection', async () => {
@@ -295,6 +304,35 @@ describe('ProviderPluginStore', () => {
     releaseInstall();
     await close;
 
+    expect(JSON.parse(await readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'))).toMatchObject({
+      selected_version: '1.0.0',
+      last_check_completed_at: 0,
+    });
+  });
+
+  it('does not publish or select when aborted after npm installs before publication', async () => {
+    await publishGeneration(root, '@example/provider', '1.0.0');
+    await writeMetadata(root, '@example/provider', '1.0.0', 0);
+    const controller = new AbortController();
+    const runner = new FakeNpmRunner();
+    runner.latest.set('@example/provider', '2.0.0');
+    runner.onAfterInstallPackage = () => {
+      controller.abort(new Error('stop after npm install'));
+    };
+    const store = new ProviderPluginStore({ root, runner });
+
+    await expect(
+      store.checkForUpdate('@example/provider', controller.signal),
+    ).rejects.toThrow(/stop after npm install/);
+
+    await expect(
+      readFile(
+        providerPluginGenerationRootPackageJsonPath(
+          providerPluginGenerationDir('@example/provider', '2.0.0', root),
+        ),
+        'utf8',
+      ),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
     expect(JSON.parse(await readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'))).toMatchObject({
       selected_version: '1.0.0',
       last_check_completed_at: 0,

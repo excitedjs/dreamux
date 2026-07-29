@@ -11,12 +11,10 @@ import { isNotFound, pathExists } from '../platform/fs-errors.js';
 import { JsonDocumentStore } from '../platform/json-document-store.js';
 import {
   pluginRoot,
-  providerPluginGenerationBridgePath,
   providerPluginGenerationDir,
-  providerPluginGenerationLockfilePath,
-  providerPluginGenerationPackageJsonPath,
   providerPluginGenerationRootBridgePath,
   providerPluginGenerationRootInstalledPackageJsonPath,
+  providerPluginGenerationRootLockfilePath,
   providerPluginGenerationRootPackageJsonPath,
   providerPluginMetadataPath,
   providerPluginStagingDir,
@@ -147,11 +145,13 @@ export class ProviderPluginStore {
     await this.throwIfAborted(signal);
     const existing = await this.generationUsable(packageName, latest);
     if (existing) {
+      await this.throwIfAborted(signal);
       await this.selectVersion(packageName, latest, this.now());
       return latest;
     }
 
     await this.installGeneration(packageName, latest, signal);
+    await this.throwIfAborted(signal);
     await this.selectVersion(packageName, latest, this.now());
     return latest;
   }
@@ -192,11 +192,12 @@ export class ProviderPluginStore {
       throw new Error(`provider plugin ${packageName} has no selected generation`);
     }
     await this.assertGenerationComplete(packageName, meta.selected_version);
-    const bridge = providerPluginGenerationBridgePath(
+    const generationRoot = providerPluginGenerationDir(
       packageName,
       meta.selected_version,
       this.root,
     );
+    const bridge = providerPluginGenerationRootBridgePath(generationRoot);
     const imported = await this.importBridge(pathToFileURL(bridge).href);
     const unwrapped = unwrapBridgeModule(imported);
     if (!isRecord(unwrapped)) {
@@ -235,6 +236,7 @@ export class ProviderPluginStore {
       if (before.selected_version !== latest) {
         const existing = await this.generationUsable(packageName, latest);
         if (!existing) await this.installGeneration(packageName, latest, signal);
+        await this.throwIfAborted(signal);
         await this.selectVersion(packageName, latest, this.now());
       } else {
         await this.writeMetadata(packageName, {
@@ -292,7 +294,9 @@ export class ProviderPluginStore {
       bridgeSource(packageName),
       { mode: 0o600 },
     );
+    await this.throwIfAborted(signal);
     await this.publishGeneration(packageName, version, staging);
+    await this.throwIfAborted(signal);
     await this.assertGenerationComplete(packageName, version);
   }
 
@@ -340,17 +344,18 @@ export class ProviderPluginStore {
     packageName: string,
     version: string,
   ): Promise<void> {
+    const generationRoot = providerPluginGenerationDir(packageName, version, this.root);
     for (const path of [
-      providerPluginGenerationPackageJsonPath(packageName, version, this.root),
-      providerPluginGenerationLockfilePath(packageName, version, this.root),
-      providerPluginGenerationBridgePath(packageName, version, this.root),
+      providerPluginGenerationRootPackageJsonPath(generationRoot),
+      providerPluginGenerationRootLockfilePath(generationRoot),
+      providerPluginGenerationRootBridgePath(generationRoot),
     ]) {
       if (!(await pathExists(path))) {
         throw new Error(`provider plugin generation is missing ${path}`);
       }
     }
     await this.assertInstalledPackage(
-      providerPluginGenerationDir(packageName, version, this.root),
+      generationRoot,
       packageName,
       version,
     );

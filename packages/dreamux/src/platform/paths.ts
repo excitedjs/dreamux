@@ -184,15 +184,6 @@ export function providerPluginGenerationRootBridgePath(root: string): string { r
 export function providerPluginGenerationRootInstalledPackageJsonPath(root: string, packageName: string): string {
   return join(root, 'node_modules', ...packageName.split('/'), 'package.json');
 }
-export function providerPluginGenerationPackageJsonPath(packageName: string, version: string, root = pluginRoot()): string {
-  return providerPluginGenerationRootPackageJsonPath(providerPluginGenerationDir(packageName, version, root));
-}
-export function providerPluginGenerationLockfilePath(packageName: string, version: string, root = pluginRoot()): string {
-  return providerPluginGenerationRootLockfilePath(providerPluginGenerationDir(packageName, version, root));
-}
-export function providerPluginGenerationBridgePath(packageName: string, version: string, root = pluginRoot()): string {
-  return providerPluginGenerationRootBridgePath(providerPluginGenerationDir(packageName, version, root));
-}
 export function providerPluginStagingDir(packageName: string, installId: string, root = pluginRoot()): string {
   return join(providerPluginPackageDir(packageName, root), 'staging', safePluginSegment(installId, 'provider plugin install id'));
 }

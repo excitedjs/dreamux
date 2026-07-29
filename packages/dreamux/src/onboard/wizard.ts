@@ -140,7 +140,12 @@ export async function answersFromOptions(
   );
   const channelSelections = parseChannelSelections(options.channel);
   const registry = createBuiltinProviderRegistry();
-  await loadSelectedProviders(registry, agentSelection, channelSelections);
+  await loadSelectedProviders(
+    registry,
+    agentSelection,
+    channelSelections,
+    options.dryRun === true,
+  );
   const agentCatalog = new AgentRuntimeProviderCatalog({ registry });
   const channelCatalog = new ChannelProviderCatalog({ registry });
   const promptHost = promptHostForMode(fromInteractive);
@@ -237,14 +242,28 @@ async function loadSelectedProviders(
   registry: ProviderRegistry,
   agent: ProviderSelection,
   channels: ProviderSelection[],
+  dryRun: boolean,
 ): Promise<void> {
   const agentRefs = [agent.provider];
   const channelRefs = channels.map((channel) => channel.provider);
   const pluginPlan = await prepareProviderPlugins({
     agentRefs,
     channelRefs,
-    overrides: {},
+    overrides: {
+      providerPluginLoadMode: dryRun ? 'installed-only' : 'materialize',
+    },
   });
+  const missing = pluginPlan.diagnostics.filter((diagnostic) => !diagnostic.ok);
+  if (dryRun && missing.length > 0) {
+    throw new Error(
+      'dreamux onboard --dry-run cannot install npm provider plugins. ' +
+        missing
+          .map((diagnostic) =>
+            `${diagnostic.packageName}: ${diagnostic.error ?? 'no selected generation'}`,
+          )
+          .join('; '),
+    );
+  }
   await loadAgentRuntimeProviders({
     registry,
     refs: pluginPlan.agentRefsToLoad,

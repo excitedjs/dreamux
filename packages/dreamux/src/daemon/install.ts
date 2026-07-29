@@ -90,8 +90,24 @@ export async function runDaemonInstall(
   // re-registers an existing setup, it does not create one.
   const loaded = await loadConfig({
     configDir: globalConfigDir(),
-    providerPluginLoadMode: 'materialize',
+    providerPluginLoadMode: dryRun ? 'installed-only' : 'materialize',
   });
+  if (dryRun) {
+    const missingPlugins = loaded.providerPluginDiagnostics.filter(
+      (diagnostic) => !diagnostic.ok,
+    );
+    if (missingPlugins.length > 0) {
+      throw new Error(
+        [
+          'dreamux daemon install --dry-run cannot install npm provider plugins',
+          ...missingPlugins.map(
+            (diagnostic) =>
+              `- ${diagnostic.packageName}: ${diagnostic.error ?? 'no selected generation'}`,
+          ),
+        ].join('\n'),
+      );
+    }
+  }
   const { config } = loaded;
   const catalogs = {
     agentRuntime: new AgentRuntimeProviderCatalog({

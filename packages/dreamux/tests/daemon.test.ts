@@ -25,6 +25,7 @@ import {
 import type { CommandRunner } from '../src/onboard/types.js';
 import {
   buildServicePath,
+  pluginRoot,
   probeStandardExecDirs,
   resetRuntimeConfig,
   stateRoot,
@@ -291,6 +292,50 @@ describe('managed service working directory ownership', () => {
       status: 'created',
       reason: 'managed service working directory',
     });
+  });
+
+  it('dry-run reports missing npm providers without materializing plugins', async () => {
+    const configDir = join(root, 'config');
+    writeFileSync(
+      join(configDir, 'config.json'),
+      JSON.stringify({
+        agents: [
+          {
+            id: 'flow',
+            provider: 'npm:@example/missing-runtime#provider',
+            config: {},
+          },
+        ],
+        dispatchers: [
+          {
+            id: 'flow',
+            cwd: join(root, 'cwd'),
+            channels: [
+              {
+                id: 'primary',
+                provider: 'builtin:feishu',
+                config: { app_id: 'app-test', app_secret: 'secret-test' },
+              },
+            ],
+            agentRuntime: 'flow',
+          },
+        ],
+      }),
+      { mode: 0o600 },
+    );
+
+    await expect(
+      runDaemonInstall({
+        runner: new WorkingDirectoryOrderRunner(stateRoot()),
+        platform: 'linux',
+        homeDir: join(root, 'home'),
+        dryRun: true,
+        env: { ...process.env },
+      }),
+    ).rejects.toThrow(
+      /dreamux daemon install --dry-run cannot install npm provider plugins/,
+    );
+    expect(existsSync(pluginRoot())).toBe(false);
   });
 });
 

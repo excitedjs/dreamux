@@ -23,8 +23,13 @@ import type {
 } from '../registry/provider-loader.js';
 import type {
   ProviderPluginInspection,
-  ProviderPluginStore,
 } from '../registry/provider-plugin-store.js';
+
+export interface ProviderPluginAccess {
+  materializePackage(packageName: string): Promise<string>;
+  inspectPackage(packageName: string): Promise<ProviderPluginInspection>;
+  importModule(packageName: string): Promise<ProviderModule>;
+}
 
 export interface ProviderPluginPlan {
   packages: string[];
@@ -229,14 +234,14 @@ function registerMissingProviderDescriptors(
 
 async function providerPluginStoreFor(
   overrides: ConfigPathOverrides,
-): Promise<ProviderPluginStore> {
+): Promise<ProviderPluginAccess> {
   if (overrides.providerPluginStore !== undefined) return overrides.providerPluginStore;
   const mod = await import('../registry/provider-plugin-store.js');
   return new mod.ProviderPluginStore();
 }
 
 async function materializeProviderPluginPackages(
-  store: ProviderPluginStore,
+  store: ProviderPluginAccess,
   packages: string[],
   refs: string[],
 ): Promise<ProviderPluginInspection[]> {
@@ -264,7 +269,7 @@ function refsForPackage(refs: string[], packageName: string): string[] {
 }
 
 async function inspectProviderPluginPackages(
-  store: ProviderPluginStore,
+  store: ProviderPluginAccess,
   packages: string[],
 ): Promise<ProviderPluginInspection[]> {
   const diagnostics: ProviderPluginInspection[] = [];

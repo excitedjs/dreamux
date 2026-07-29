@@ -6,7 +6,6 @@ import { basename, join, resolve, sep } from 'node:path';
 import { ExecaCommandRunner } from './commands.js';
 import { removeUserService } from './service.js';
 import type { CommandRunner, ServicePlatform } from '../onboard/types.js';
-import type { ProviderPluginStore } from '../registry/provider-plugin-store.js';
 import {
   assertNoLegacyTomlOnly,
   expandHome,
@@ -27,7 +26,6 @@ export interface UninstallEntry {
 export interface RunUninstallOptions {
   configDir?: string;
   runner?: CommandRunner;
-  providerPluginStore?: ProviderPluginStore;
   platform?: NodeJS.Platform;
   homeDir?: string;
   uid?: number;
@@ -51,7 +49,7 @@ export async function runUninstall(
   const configDir = normalizePath(options.configDir ?? globalConfigDir());
   const entries: UninstallEntry[] = [];
   const warnings: string[] = [];
-  await warnIfConfigIsNotReadable(configDir, warnings, options.providerPluginStore);
+  await warnIfConfigIsNotReadable(configDir, warnings);
   const homeRoot = normalizePath(dreamuxRoot());
 
   assertSafeOwnedDirectory(homeRoot, 'dreamux home directory');
@@ -93,13 +91,12 @@ export async function runUninstall(
 async function warnIfConfigIsNotReadable(
   configDir: string,
   warnings: string[],
-  providerPluginStore: ProviderPluginStore | undefined,
 ): Promise<void> {
   try {
     await assertNoLegacyTomlOnly({ configDir });
     const file = globalConfigFile({ configDir });
     if (!(await pathExists(file))) return;
-    await inspectRawConfig({ configDir, providerPluginStore });
+    await inspectRawConfig({ configDir });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     warnings.push(
@@ -140,21 +137,33 @@ async function removePath(
 function assertSafeOwnedDirectory(path: string, reason: string): void {
   const normalized = normalizePath(path);
   const home = normalizePath(homedir());
+  const cwd = normalizePath(process.cwd());
+  for (const protectedRoot of operatorStateRoots()) {
+    if (isSameOrInside(normalized, protectedRoot)) {
+      throw new Error(
+        `refusing to remove unsafe ${reason}: ${path} overlaps operator Codex/Claude state ${protectedRoot}`,
+      );
+    }
+  }
   if (
     normalized === '/' ||
-    normalized === home ||
     basename(normalized) === '' ||
-    normalized === normalizePath(process.cwd())
+    isSameOrAncestorOf(normalized, home) ||
+    isSameOrAncestorOf(normalized, cwd)
   ) {
     throw new Error(`refusing to remove unsafe ${reason}: ${path}`);
   }
   for (const protectedRoot of operatorStateRoots()) {
-    if (isSameOrInside(normalized, protectedRoot)) {
+    if (isSameOrInside(protectedRoot, normalized)) {
       throw new Error(
-        `refusing to remove unsafe ${reason}: ${path} is inside operator Codex/Claude state ${protectedRoot}`,
+        `refusing to remove unsafe ${reason}: ${path} overlaps operator Codex/Claude state ${protectedRoot}`,
       );
     }
   }
+}
+
+function isSameOrAncestorOf(path: string, protectedPath: string): boolean {
+  return isSameOrInside(protectedPath, path);
 }
 
 function normalizePath(path: string): string {

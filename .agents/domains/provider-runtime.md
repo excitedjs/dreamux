@@ -132,6 +132,10 @@ Command modes:
 
 - `serve`, post-write `onboard`, and `daemon install` use materialize mode.
   First materialization blocks config loading and startup.
+- `onboard --dry-run` and `daemon install --dry-run` use installed-only
+  no-write loading. They do not materialize, run npm, or create plugin-store
+  files; a referenced missing `npm:` provider is reported as an explicit
+  dry-run diagnostic/error.
 - Pre-merge `onboard` reads existing config in installed-only mode, so dry runs
   and reruns over a missing old `npm:` provider do not mutate the plugin store.
 - `doctor` uses installed-only mode and reports missing or unusable plugins as
@@ -146,6 +150,7 @@ Source:
 - `/packages/dreamux/src/registry/provider-plugin-store.ts`
 - `/packages/dreamux/src/registry/provider-loader.ts`
 - `/packages/dreamux/src/config/provider-plugin-loading.ts`
+- `/packages/dreamux/src/config/raw-envelope.ts`
 - `/packages/dreamux/src/config/raw-inspection.ts`
 - `/packages/dreamux/src/cli/server.ts`
 - `/packages/dreamux/src/cli/doctor.ts`

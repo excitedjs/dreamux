@@ -8,11 +8,10 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 
 import { runUninstall } from '../src/onboard/uninstall.js';
 import type { CommandRunner } from '../src/onboard/types.js';
-import type { ProviderPluginStore } from '../src/registry/provider-plugin-store.js';
 import {
   dreamuxRoot,
   logsRoot,
@@ -40,32 +39,6 @@ class FakeRunner implements CommandRunner {
 
   async capture(): Promise<string> {
     return '';
-  }
-}
-
-class FakeProviderPluginStore implements Partial<ProviderPluginStore> {
-  readonly inspected: string[] = [];
-  readonly materialized: string[] = [];
-  readonly imported: string[] = [];
-
-  async inspectPackage(packageName: string) {
-    this.inspected.push(packageName);
-    return {
-      packageName,
-      ok: false,
-      version: null,
-      error: `provider plugin ${packageName} has no selected generation`,
-    };
-  }
-
-  async materializePackage(packageName: string): Promise<string> {
-    this.materialized.push(packageName);
-    return '1.0.0';
-  }
-
-  async importModule(packageName: string): Promise<Record<string, unknown>> {
-    this.imported.push(packageName);
-    return {};
   }
 }
 
@@ -274,6 +247,62 @@ describe('dreamux uninstall', () => {
     expect(runner.calls).toEqual([]);
   });
 
+  it('refuses recursive deletion targets that overlap protected roots', async () => {
+    const runner = new FakeRunner();
+    const homeDir = join(root, 'home');
+    const protectedCwdAncestor = process.cwd().split(sep).slice(0, -1).join(sep) || sep;
+    const cases = [
+      { path: homedir(), match: /refusing to remove unsafe dreamux config directory/ },
+      { path: dirname(homedir()), match: /refusing to remove unsafe dreamux config directory/ },
+      { path: process.cwd(), match: /refusing to remove unsafe dreamux config directory/ },
+      { path: protectedCwdAncestor, match: /refusing to remove unsafe dreamux config directory/ },
+      { path: join(homedir(), '.codex'), match: /operator Codex\/Claude state/ },
+      { path: join(homedir(), '.codex', 'sessions'), match: /operator Codex\/Claude state/ },
+      { path: dirname(join(homedir(), '.codex')), match: /refusing to remove unsafe dreamux config directory/ },
+    ];
+
+    for (const testCase of cases) {
+      await expect(
+        runUninstall({
+          configDir: testCase.path,
+          runner,
+          platform: 'linux',
+          homeDir,
+        }),
+      ).rejects.toThrow(testCase.match);
+    }
+    expect(runner.calls).toEqual([]);
+  });
+
+  it('removes a safe external config directory under HOME', async () => {
+    const homeDir = join(root, 'home');
+    const configDir = join(homedir(), '.config', 'dreamux');
+    const servicePath = join(homeDir, '.config', 'systemd', 'user', 'dreamux.service');
+    mkdirSync(configDir, { recursive: true });
+    mkdirSync(dreamuxRoot(), { recursive: true });
+    mkdirSync(dirname(servicePath), { recursive: true });
+    writeFileSync(join(configDir, 'config.json'), JSON.stringify({}), {
+      mode: 0o600,
+    });
+    writeFileSync(servicePath, '[Service]\nExecStart=dreamux serve\n');
+
+    const result = await runUninstall({
+      configDir,
+      runner: new FakeRunner(),
+      platform: 'linux',
+      homeDir,
+    });
+
+    expect(existsSync(configDir)).toBe(false);
+    expect(existsSync(dreamuxRoot())).toBe(false);
+    expect(result.entries).toEqual(
+      expect.arrayContaining([
+        { status: 'removed', path: configDir, reason: 'dreamux config directory' },
+        { status: 'removed', path: dreamuxRoot(), reason: 'dreamux home directory' },
+      ]),
+    );
+  });
+
   it('warns on legacy, invalid, or non-owner-only config and still uninstalls', async () => {
     const cases: Array<{
       name: string;
@@ -406,19 +435,13 @@ describe('dreamux uninstall', () => {
       { mode: 0o600 },
     );
     writeFileSync(servicePath, '[Service]\nExecStart=dreamux serve\n');
-    const pluginStore = new FakeProviderPluginStore();
-
     const result = await runUninstall({
       configDir,
       runner: new FakeRunner(),
       platform: 'linux',
       homeDir,
-      providerPluginStore: pluginStore as unknown as ProviderPluginStore,
     });
 
-    expect(pluginStore.inspected).toEqual(['@example/missing-runtime']);
-    expect(pluginStore.materialized).toEqual([]);
-    expect(pluginStore.imported).toEqual([]);
     expect(result.warnings).toEqual([]);
     expect(existsSync(configDir)).toBe(false);
     expect(existsSync(dreamuxRoot())).toBe(false);
