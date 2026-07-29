@@ -326,6 +326,66 @@ describe('dreamux uninstall', () => {
     expect(runner.calls).toEqual([]);
   });
 
+  it('removes a lexically nested config directory that symlinks outside Dreamux home', async () => {
+    const homeDir = join(root, 'home');
+    const externalConfigDir = join(root, 'external-config');
+    const nestedConfigDir = join(dreamuxRoot(), 'nested-config');
+    const servicePath = join(homeDir, '.config', 'systemd', 'user', 'dreamux.service');
+    const sentinel = join(externalConfigDir, 'sentinel');
+    mkdirSync(externalConfigDir, { recursive: true });
+    mkdirSync(dirname(nestedConfigDir), { recursive: true });
+    mkdirSync(dirname(servicePath), { recursive: true });
+    writeFileSync(join(externalConfigDir, 'config.json'), JSON.stringify({}), {
+      mode: 0o600,
+    });
+    writeFileSync(sentinel, 'remove me\n');
+    writeFileSync(servicePath, '[Service]\nExecStart=dreamux serve\n');
+    symlinkSync(externalConfigDir, nestedConfigDir);
+
+    const result = await runUninstall({
+      configDir: nestedConfigDir,
+      runner: new FakeRunner(),
+      platform: 'linux',
+      homeDir,
+    });
+
+    expect(existsSync(externalConfigDir)).toBe(false);
+    expect(existsSync(dreamuxRoot())).toBe(false);
+    expect(result.entries).toEqual(
+      expect.arrayContaining([
+        {
+          status: 'removed',
+          path: nestedConfigDir,
+          reason: 'dreamux config directory',
+        },
+        { status: 'removed', path: dreamuxRoot(), reason: 'dreamux home directory' },
+      ]),
+    );
+  });
+
+  it('refuses a lexically nested config symlink that physically overlaps Codex state', async () => {
+    const runner = new FakeRunner();
+    const homeDir = join(root, 'home');
+    const nestedConfigDir = join(dreamuxRoot(), 'nested-config');
+    const sentinel = join(homedir(), '.codex', 'sentinel');
+    mkdirSync(join(homedir(), '.codex'), { recursive: true });
+    mkdirSync(dirname(nestedConfigDir), { recursive: true });
+    writeFileSync(sentinel, 'keep\n');
+    symlinkSync(join(homedir(), '.codex'), nestedConfigDir);
+
+    await expect(
+      runUninstall({
+        configDir: nestedConfigDir,
+        runner,
+        platform: 'linux',
+        homeDir,
+      }),
+    ).rejects.toThrow(/operator Codex\/Claude state/);
+
+    expect(existsSync(sentinel)).toBe(true);
+    expect(runner.calls).toEqual([]);
+  });
+
   it('warns on legacy, invalid, or non-owner-only config and still uninstalls', async () => {
     const cases: Array<{
       name: string;

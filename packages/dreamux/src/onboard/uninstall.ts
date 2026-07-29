@@ -41,6 +41,12 @@ export interface UninstallRunResult {
   };
 }
 
+interface RemovalTarget {
+  path: string;
+  removalPath: string;
+  reason: string;
+}
+
 export async function runUninstall(
   options: RunUninstallOptions = {},
 ): Promise<UninstallRunResult> {
@@ -52,15 +58,10 @@ export async function runUninstall(
   await warnIfConfigIsNotReadable(configDir, warnings);
   const homeRoot = normalizePath(dreamuxRoot());
 
-  const removalTargets = uniqueRemovalTargets([
+  const removalTargets = await planRemovalTargets([
     [homeRoot, 'dreamux home directory'],
-    ...(isSameOrInside(configDir, homeRoot)
-      ? []
-      : ([[configDir, 'dreamux config directory']] as Array<[string, string]>)),
+    [configDir, 'dreamux config directory'],
   ]);
-  for (const entry of removalTargets) {
-    await assertSafeOwnedDirectory(entry.path, entry.reason);
-  }
 
   // Service removal (unit-only) is shared with `dreamux daemon uninstall`.
   const removal = await removeUserService({
@@ -77,7 +78,7 @@ export async function runUninstall(
   });
 
   for (const entry of removalTargets) {
-    await removeOwnedDirectory(entry.path, entries, entry.reason, dryRun);
+    await removeOwnedDirectory(entry, entries, dryRun);
   }
 
   return {
@@ -108,35 +109,77 @@ async function warnIfConfigIsNotReadable(
 }
 
 async function removeOwnedDirectory(
-  path: string,
+  target: RemovalTarget,
   entries: UninstallEntry[],
-  reason: string,
   dryRun: boolean,
 ): Promise<void> {
-  await assertSafeOwnedDirectory(path, reason);
-  await removePath(path, entries, reason, dryRun);
+  await assertSafeOwnedDirectory(target.removalPath, target.reason);
+  await removePath(target, entries, dryRun);
 }
 
 async function removePath(
-  path: string,
+  target: RemovalTarget,
   entries: UninstallEntry[],
-  reason: string,
   dryRun: boolean,
 ): Promise<void> {
-  if (!(await pathExists(path))) {
-    entries.push({ path, status: 'missing', reason });
+  if (!(await pathExists(target.removalPath))) {
+    entries.push({
+      path: target.path,
+      status: 'missing',
+      reason: target.reason,
+    });
     return;
   }
   if (!dryRun) {
-    await rm(path, {
+    await rm(target.removalPath, {
       recursive: true,
       force: true,
     });
   }
-  entries.push({ path, status: 'removed', reason });
+  entries.push({
+    path: target.path,
+    status: 'removed',
+    reason: target.reason,
+  });
 }
 
-async function assertSafeOwnedDirectory(path: string, reason: string): Promise<void> {
+async function planRemovalTargets(
+  entries: Array<[path: string, reason: string]>,
+): Promise<RemovalTarget[]> {
+  const targets: RemovalTarget[] = [];
+  for (const [path, reason] of entries) {
+    const normalized = normalizePath(path);
+    targets.push({
+      path: normalized,
+      removalPath: await assertSafeOwnedDirectory(normalized, reason),
+      reason,
+    });
+  }
+  return collapseRemovalTargets(targets);
+}
+
+function collapseRemovalTargets(targets: RemovalTarget[]): RemovalTarget[] {
+  const out: RemovalTarget[] = [];
+  for (const candidate of targets) {
+    if (out.some((existing) =>
+      isSameOrInside(candidate.removalPath, existing.removalPath),
+    )) {
+      continue;
+    }
+    for (let i = out.length - 1; i >= 0; i--) {
+      if (isSameOrInside(out[i]!.removalPath, candidate.removalPath)) {
+        out.splice(i, 1);
+      }
+    }
+    out.push(candidate);
+  }
+  return out;
+}
+
+async function assertSafeOwnedDirectory(
+  path: string,
+  reason: string,
+): Promise<string> {
   const normalized = normalizePath(path);
   const [canonicalTarget, home, cwd, operatorRoots] = await Promise.all([
     canonicalPath(normalized),
@@ -165,6 +208,7 @@ async function assertSafeOwnedDirectory(path: string, reason: string): Promise<v
       );
     }
   }
+  return canonicalTarget;
 }
 
 function isSameOrAncestorOf(path: string, protectedPath: string): boolean {
@@ -193,16 +237,6 @@ function uniqueCanonicalPaths(paths: Array<string | undefined>): string[] {
     out.add(resolve(path));
   }
   return Array.from(out);
-}
-
-function uniqueRemovalTargets(
-  entries: Array<[path: string, reason: string]>,
-): Array<{ path: string; reason: string }> {
-  const out = new Map<string, string>();
-  for (const [path, reason] of entries) {
-    if (!out.has(path)) out.set(path, reason);
-  }
-  return [...out].map(([path, reason]) => ({ path, reason }));
 }
 
 function isSameOrInside(path: string, root: string): boolean {
