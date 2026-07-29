@@ -41,7 +41,9 @@ function printUninstallResult(result: UninstallRunResult): void {
   }
   console.log('dreamux uninstall file ledger:');
   for (const entry of result.entries) {
-    console.log(`${entry.status}\t${entry.path}\t${entry.reason}`);
+    const target =
+      entry.targetPath === undefined ? '' : `\ttarget=${entry.targetPath}`;
+    console.log(`${entry.status}\t${entry.path}\t${entry.reason}${target}`);
   }
   console.log(
     `dreamux uninstall service: ${result.service.platform} ${result.service.unitPath}`,

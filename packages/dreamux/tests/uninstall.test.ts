@@ -1,9 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -12,7 +14,9 @@ import { homedir } from 'node:os';
 import { dirname, join, sep } from 'node:path';
 
 import { runUninstall } from '../src/onboard/uninstall.js';
+import { ensureDirectory, TransparentFileLedger } from '../src/onboard/ledger.js';
 import type { CommandRunner } from '../src/onboard/types.js';
+import { createUninstallCommand } from '../src/cli/commands/uninstall.js';
 import {
   dreamuxRoot,
   logsRoot,
@@ -41,6 +45,16 @@ class FakeRunner implements CommandRunner {
   async capture(): Promise<string> {
     return '';
   }
+}
+
+function expectPathEntryAbsent(path: string): void {
+  let code: unknown;
+  try {
+    lstatSync(path);
+  } catch (err) {
+    code = (err as { code?: unknown }).code;
+  }
+  expect(code).toBe('ENOENT');
 }
 
 describe('dreamux uninstall', () => {
@@ -131,9 +145,21 @@ describe('dreamux uninstall', () => {
     ).toBe(false);
     expect(result.entries).toEqual(
       expect.arrayContaining([
-        { status: 'removed', path: configDir, reason: 'dreamux config directory' },
-        { status: 'removed', path: servicePath, reason: 'systemd unit' },
-        { status: 'removed', path: dreamuxRoot(), reason: 'dreamux home directory' },
+        expect.objectContaining({
+          status: 'removed',
+          path: configDir,
+          reason: 'dreamux config directory',
+        }),
+        expect.objectContaining({
+          status: 'removed',
+          path: servicePath,
+          reason: 'systemd unit',
+        }),
+        expect.objectContaining({
+          status: 'removed',
+          path: dreamuxRoot(),
+          reason: 'dreamux home directory',
+        }),
       ]),
     );
     expect(runner.calls.map((call) => [call.command, call.args])).toEqual([
@@ -167,8 +193,16 @@ describe('dreamux uninstall', () => {
     expect(existsSync(dreamuxRoot())).toBe(false);
     expect(result.entries).toEqual(
       expect.arrayContaining([
-        { status: 'removed', path: dreamuxRoot(), reason: 'dreamux home directory' },
-        { status: 'removed', path: servicePath, reason: 'systemd unit' },
+        expect.objectContaining({
+          status: 'removed',
+          path: dreamuxRoot(),
+          reason: 'dreamux home directory',
+        }),
+        expect.objectContaining({
+          status: 'removed',
+          path: servicePath,
+          reason: 'systemd unit',
+        }),
       ]),
     );
     expect(
@@ -181,6 +215,82 @@ describe('dreamux uninstall', () => {
           entry.path.startsWith(`${dreamuxRoot()}/`),
       ),
     ).toBe(false);
+  });
+
+  it('removes a Dreamux-root leaf symlink and allows ledger mkdir to recreate it', async () => {
+    const homeDir = join(root, 'home');
+    const externalDreamux = join(root, 'external-dreamux');
+    const servicePath = join(homeDir, '.config', 'systemd', 'user', 'dreamux.service');
+    mkdirSync(externalDreamux, { recursive: true });
+    mkdirSync(dirname(dreamuxRoot()), { recursive: true });
+    mkdirSync(dirname(servicePath), { recursive: true });
+    writeFileSync(join(externalDreamux, 'config.json'), JSON.stringify({}), {
+      mode: 0o600,
+    });
+    writeFileSync(join(externalDreamux, 'sentinel'), 'remove me\n');
+    writeFileSync(servicePath, '[Service]\nExecStart=dreamux serve\n');
+    symlinkSync(externalDreamux, dreamuxRoot());
+    const externalDreamuxTarget = realpathSync(externalDreamux);
+
+    const result = await runUninstall({
+      runner: new FakeRunner(),
+      platform: 'linux',
+      homeDir,
+    });
+
+    expect(existsSync(externalDreamux)).toBe(false);
+    expectPathEntryAbsent(dreamuxRoot());
+    expect(result.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: 'removed',
+          path: dreamuxRoot(),
+          targetPath: externalDreamuxTarget,
+          reason: 'dreamux home directory',
+        }),
+      ]),
+    );
+
+    const ledger = new TransparentFileLedger();
+    await ensureDirectory(dreamuxRoot(), ledger, 'dreamux config directory');
+
+    expect(lstatSync(dreamuxRoot()).isDirectory()).toBe(true);
+    expect(ledger.entries()).toEqual([
+      {
+        path: dreamuxRoot(),
+        status: 'created',
+        reason: 'dreamux config directory',
+      },
+    ]);
+  });
+
+  it('removes an already dangling Dreamux-root leaf symlink and allows ledger mkdir', async () => {
+    const homeDir = join(root, 'home');
+    const missingTarget = join(root, 'missing-dreamux-target');
+    mkdirSync(dirname(dreamuxRoot()), { recursive: true });
+    symlinkSync(missingTarget, dreamuxRoot());
+
+    const result = await runUninstall({
+      runner: new FakeRunner(),
+      platform: 'linux',
+      homeDir,
+    });
+
+    expect(existsSync(missingTarget)).toBe(false);
+    expectPathEntryAbsent(dreamuxRoot());
+    expect(result.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: 'removed',
+          path: dreamuxRoot(),
+          reason: 'dreamux home directory',
+        }),
+      ]),
+    );
+
+    const ledger = new TransparentFileLedger();
+    await ensureDirectory(dreamuxRoot(), ledger, 'dreamux config directory');
+    expect(lstatSync(dreamuxRoot()).isDirectory()).toBe(true);
   });
 
   it('unregisters launchd services and removes the plist', async () => {
@@ -214,7 +324,11 @@ describe('dreamux uninstall', () => {
     expect(existsSync(servicePath)).toBe(false);
     expect(result.entries).toEqual(
       expect.arrayContaining([
-        { status: 'removed', path: servicePath, reason: 'launchd unit' },
+        expect.objectContaining({
+          status: 'removed',
+          path: servicePath,
+          reason: 'launchd unit',
+        }),
       ]),
     );
     expect(runner.calls.map((call) => [call.command, call.args])).toEqual([
@@ -298,8 +412,16 @@ describe('dreamux uninstall', () => {
     expect(existsSync(dreamuxRoot())).toBe(false);
     expect(result.entries).toEqual(
       expect.arrayContaining([
-        { status: 'removed', path: configDir, reason: 'dreamux config directory' },
-        { status: 'removed', path: dreamuxRoot(), reason: 'dreamux home directory' },
+        expect.objectContaining({
+          status: 'removed',
+          path: configDir,
+          reason: 'dreamux config directory',
+        }),
+        expect.objectContaining({
+          status: 'removed',
+          path: dreamuxRoot(),
+          reason: 'dreamux home directory',
+        }),
       ]),
     );
   });
@@ -341,6 +463,7 @@ describe('dreamux uninstall', () => {
     writeFileSync(sentinel, 'remove me\n');
     writeFileSync(servicePath, '[Service]\nExecStart=dreamux serve\n');
     symlinkSync(externalConfigDir, nestedConfigDir);
+    const externalConfigTarget = realpathSync(externalConfigDir);
 
     const result = await runUninstall({
       configDir: nestedConfigDir,
@@ -353,14 +476,131 @@ describe('dreamux uninstall', () => {
     expect(existsSync(dreamuxRoot())).toBe(false);
     expect(result.entries).toEqual(
       expect.arrayContaining([
-        {
+        expect.objectContaining({
           status: 'removed',
           path: nestedConfigDir,
+          targetPath: externalConfigTarget,
           reason: 'dreamux config directory',
-        },
-        { status: 'removed', path: dreamuxRoot(), reason: 'dreamux home directory' },
+        }),
+        expect.objectContaining({
+          status: 'removed',
+          path: dreamuxRoot(),
+          reason: 'dreamux home directory',
+        }),
       ]),
     );
+  });
+
+  it('removes an external config leaf symlink after deleting its physical target', async () => {
+    const homeDir = join(root, 'home');
+    const externalConfigDir = join(root, 'external-config');
+    const configAlias = join(root, 'config-link');
+    const servicePath = join(homeDir, '.config', 'systemd', 'user', 'dreamux.service');
+    mkdirSync(externalConfigDir, { recursive: true });
+    mkdirSync(dirname(servicePath), { recursive: true });
+    writeFileSync(join(externalConfigDir, 'config.json'), JSON.stringify({}), {
+      mode: 0o600,
+    });
+    writeFileSync(join(externalConfigDir, 'sentinel'), 'remove me\n');
+    writeFileSync(servicePath, '[Service]\nExecStart=dreamux serve\n');
+    symlinkSync(externalConfigDir, configAlias);
+    const externalConfigTarget = realpathSync(externalConfigDir);
+
+    const result = await runUninstall({
+      configDir: configAlias,
+      runner: new FakeRunner(),
+      platform: 'linux',
+      homeDir,
+    });
+
+    expect(existsSync(externalConfigDir)).toBe(false);
+    expectPathEntryAbsent(configAlias);
+    expect(result.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: 'removed',
+          path: configAlias,
+          targetPath: externalConfigTarget,
+          reason: 'dreamux config directory',
+        }),
+      ]),
+    );
+  });
+
+  it('removes an already dangling external config leaf symlink', async () => {
+    const homeDir = join(root, 'home');
+    const missingTarget = join(root, 'missing-config-target');
+    const configAlias = join(root, 'config-link');
+    symlinkSync(missingTarget, configAlias);
+
+    const result = await runUninstall({
+      configDir: configAlias,
+      runner: new FakeRunner(),
+      platform: 'linux',
+      homeDir,
+    });
+
+    expect(existsSync(missingTarget)).toBe(false);
+    expectPathEntryAbsent(configAlias);
+    expect(result.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: 'removed',
+          path: configAlias,
+          reason: 'dreamux config directory',
+        }),
+      ]),
+    );
+
+    const ledger = new TransparentFileLedger();
+    await ensureDirectory(configAlias, ledger, 'dreamux config directory');
+    expect(lstatSync(configAlias).isDirectory()).toBe(true);
+  });
+
+  it('removes all logical leaf symlinks sharing one physical target once', async () => {
+    const homeDir = join(root, 'home');
+    const physicalRoot = join(root, 'physical-dreamux');
+    const configAlias = join(root, 'config-link');
+    mkdirSync(physicalRoot, { recursive: true });
+    mkdirSync(dirname(dreamuxRoot()), { recursive: true });
+    writeFileSync(join(physicalRoot, 'config.json'), JSON.stringify({}), {
+      mode: 0o600,
+    });
+    writeFileSync(join(physicalRoot, 'sentinel'), 'remove me\n');
+    symlinkSync(physicalRoot, dreamuxRoot());
+    symlinkSync(physicalRoot, configAlias);
+    const physicalTarget = realpathSync(physicalRoot);
+
+    const result = await runUninstall({
+      configDir: configAlias,
+      runner: new FakeRunner(),
+      platform: 'linux',
+      homeDir,
+    });
+
+    expect(existsSync(physicalRoot)).toBe(false);
+    expectPathEntryAbsent(dreamuxRoot());
+    expectPathEntryAbsent(configAlias);
+    expect(result.entries.filter((entry) => entry.targetPath === physicalTarget)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: 'removed',
+          path: dreamuxRoot(),
+          reason: 'dreamux home directory',
+        }),
+        expect.objectContaining({
+          status: 'removed',
+          path: configAlias,
+          reason: 'dreamux config directory',
+        }),
+      ]),
+    );
+    expect(
+      result.entries.filter((entry) =>
+        entry.path === dreamuxRoot() ||
+        entry.path === configAlias,
+      ),
+    ).toHaveLength(2);
   });
 
   it('refuses a lexically nested config symlink that physically overlaps Codex state', async () => {
@@ -384,6 +624,45 @@ describe('dreamux uninstall', () => {
 
     expect(existsSync(sentinel)).toBe(true);
     expect(runner.calls).toEqual([]);
+  });
+
+  it('dry-run ledger exposes the physical recursive removal target', async () => {
+    const externalConfigDir = join(root, 'external-config');
+    const configAlias = join(root, 'config-link');
+    mkdirSync(externalConfigDir, { recursive: true });
+    mkdirSync(dreamuxRoot(), { recursive: true });
+    writeFileSync(join(externalConfigDir, 'config.json'), JSON.stringify({}), {
+      mode: 0o600,
+    });
+    symlinkSync(externalConfigDir, configAlias);
+
+    const command = createUninstallCommand();
+    const lines: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((line = '') => {
+      lines.push(String(line));
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await command.handler({
+        dryRun: true,
+        configDir: configAlias,
+      } as never);
+    } finally {
+      log.mockRestore();
+      error.mockRestore();
+    }
+
+    expect(existsSync(externalConfigDir)).toBe(true);
+    expect(existsSync(configAlias)).toBe(true);
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        `removed\t${configAlias}\tdreamux config directory\ttarget=${realpathSync(externalConfigDir)}`,
+      ]),
+    );
+    expect(lines.some((line) =>
+      line.includes(`removed\t${dreamuxRoot()}\tdreamux home directory`),
+    )).toBe(true);
+    expect(lines.some((line) => line.includes('dreamux uninstall service:'))).toBe(true);
   });
 
   it('warns on legacy, invalid, or non-owner-only config and still uninstalls', async () => {

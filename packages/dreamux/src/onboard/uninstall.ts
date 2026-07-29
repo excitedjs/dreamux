@@ -1,5 +1,5 @@
-import { pathExists } from '../platform/fs-errors.js';
-import { rm } from 'node:fs/promises';
+import { isNotFound, pathExists } from '../platform/fs-errors.js';
+import { lstat, readlink, rm, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 
@@ -19,6 +19,7 @@ export type UninstallStatus = 'removed' | 'missing' | 'skipped';
 
 export interface UninstallEntry {
   path: string;
+  targetPath?: string;
   status: UninstallStatus;
   reason: string;
 }
@@ -41,10 +42,21 @@ export interface UninstallRunResult {
   };
 }
 
+interface RemovalOperation {
+  removalPath: string;
+  targets: RemovalTarget[];
+}
+
 interface RemovalTarget {
   path: string;
   removalPath: string;
   reason: string;
+  leafSymlink?: PlannedLeafSymlink;
+}
+
+interface PlannedLeafSymlink {
+  path: string;
+  target: string;
 }
 
 export async function runUninstall(
@@ -77,8 +89,8 @@ export async function runUninstall(
     reason: `${removal.platform} unit`,
   });
 
-  for (const entry of removalTargets) {
-    await removeOwnedDirectory(entry, entries, dryRun);
+  for (const operation of removalTargets) {
+    await removeOwnedDirectory(operation, entries, dryRun);
   }
 
   return {
@@ -109,71 +121,148 @@ async function warnIfConfigIsNotReadable(
 }
 
 async function removeOwnedDirectory(
-  target: RemovalTarget,
+  operation: RemovalOperation,
   entries: UninstallEntry[],
   dryRun: boolean,
 ): Promise<void> {
-  await assertSafeOwnedDirectory(target.removalPath, target.reason);
-  await removePath(target, entries, dryRun);
+  await assertSafeOwnedDirectory(
+    operation.removalPath,
+    operation.targets[0]?.reason ?? 'dreamux-owned directory',
+  );
+  await removePath(operation, entries, dryRun);
 }
 
 async function removePath(
-  target: RemovalTarget,
+  operation: RemovalOperation,
   entries: UninstallEntry[],
   dryRun: boolean,
 ): Promise<void> {
-  if (!(await pathExists(target.removalPath))) {
-    entries.push({
-      path: target.path,
-      status: 'missing',
-      reason: target.reason,
-    });
-    return;
-  }
-  if (!dryRun) {
-    await rm(target.removalPath, {
+  const physicalExists = await pathExists(operation.removalPath);
+  if (physicalExists && !dryRun) {
+    await rm(operation.removalPath, {
       recursive: true,
       force: true,
     });
   }
-  entries.push({
+  for (const target of operation.targets) {
+    const leafStatus = dryRun
+      ? plannedLeafStatus(target)
+      : await unlinkLeafSymlinkIfUnchanged(target);
+    entries.push(removalEntry(
+      operation,
+      target,
+      targetStatus(physicalExists, leafStatus),
+    ));
+  }
+}
+
+function removalEntry(
+  operation: RemovalOperation,
+  target: RemovalTarget,
+  status: UninstallStatus,
+): UninstallEntry {
+  return {
     path: target.path,
-    status: 'removed',
+    ...(operation.removalPath === target.path
+      ? {}
+      : { targetPath: operation.removalPath }),
+    status,
     reason: target.reason,
-  });
+  };
+}
+
+function plannedLeafStatus(target: RemovalTarget): UninstallStatus {
+  return target.leafSymlink === undefined ? 'missing' : 'removed';
+}
+
+function targetStatus(
+  physicalExists: boolean,
+  leafStatus: UninstallStatus,
+): UninstallStatus {
+  if (leafStatus === 'skipped') return 'skipped';
+  if (physicalExists || leafStatus === 'removed') return 'removed';
+  return 'missing';
 }
 
 async function planRemovalTargets(
   entries: Array<[path: string, reason: string]>,
-): Promise<RemovalTarget[]> {
+): Promise<RemovalOperation[]> {
   const targets: RemovalTarget[] = [];
   for (const [path, reason] of entries) {
     const normalized = normalizePath(path);
     targets.push({
       path: normalized,
-      removalPath: await assertSafeOwnedDirectory(normalized, reason),
       reason,
+      leafSymlink: await planLeafSymlink(normalized),
+      removalPath: await assertSafeOwnedDirectory(normalized, reason),
     });
   }
   return collapseRemovalTargets(targets);
 }
 
-function collapseRemovalTargets(targets: RemovalTarget[]): RemovalTarget[] {
-  const out: RemovalTarget[] = [];
+async function planLeafSymlink(path: string): Promise<PlannedLeafSymlink | undefined> {
+  try {
+    const stat = await lstat(path);
+    if (!stat.isSymbolicLink()) return undefined;
+    return {
+      path,
+      target: await readlink(path),
+    };
+  } catch (err) {
+    if (isNotFound(err)) return undefined;
+    throw err;
+  }
+}
+
+async function unlinkLeafSymlinkIfUnchanged(
+  target: RemovalTarget,
+): Promise<UninstallStatus> {
+  const planned = target.leafSymlink;
+  if (planned === undefined) return 'missing';
+  let stat;
+  try {
+    stat = await lstat(planned.path);
+  } catch (err) {
+    if (isNotFound(err)) return 'missing';
+    throw err;
+  }
+  if (!stat.isSymbolicLink()) return 'skipped';
+  const currentTarget = await readlink(planned.path);
+  if (currentTarget !== planned.target) return 'skipped';
+  await unlink(planned.path);
+  return 'removed';
+}
+
+function collapseRemovalTargets(targets: RemovalTarget[]): RemovalOperation[] {
+  const out: RemovalOperation[] = [];
   for (const candidate of targets) {
-    if (out.some((existing) =>
-      isSameOrInside(candidate.removalPath, existing.removalPath),
-    )) {
-      continue;
-    }
+    let next: RemovalOperation | null = {
+      removalPath: candidate.removalPath,
+      targets: [candidate],
+    };
     for (let i = out.length - 1; i >= 0; i--) {
-      if (isSameOrInside(out[i]!.removalPath, candidate.removalPath)) {
-        out.splice(i, 1);
+      const existing = out[i]!;
+      if (isSameOrInside(candidate.removalPath, existing.removalPath)) {
+        addLogicalTarget(existing, candidate);
+        next = null;
+        break;
+      }
+      if (isSameOrInside(existing.removalPath, candidate.removalPath)) {
+        const removed = out.splice(i, 1)[0]!;
+        for (const target of removed.targets) addLogicalTarget(next, target);
       }
     }
-    out.push(candidate);
+    if (next !== null) out.push(next);
   }
   return out;
+}
+
+function addLogicalTarget(
+  operation: RemovalOperation,
+  target: RemovalTarget,
+): void {
+  if (operation.targets.some((existing) => existing.path === target.path)) return;
+  operation.targets.push(target);
 }
 
 async function assertSafeOwnedDirectory(
