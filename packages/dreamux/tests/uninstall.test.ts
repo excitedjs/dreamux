@@ -71,15 +71,20 @@ class FakeProviderPluginStore implements Partial<ProviderPluginStore> {
 
 describe('dreamux uninstall', () => {
   let root: string;
+  let previousConfigDir: string | undefined;
   let previousHome: string | undefined;
 
   beforeEach(() => {
     root = mkdtempSync(join(homedir(), '.dreamux-uninstall-'));
+    previousConfigDir = process.env['DREAMUX_CONFIG_DIR'];
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_CONFIG_DIR'] = dreamuxRoot();
   });
 
   afterEach(() => {
+    if (previousConfigDir === undefined) delete process.env['DREAMUX_CONFIG_DIR'];
+    else process.env['DREAMUX_CONFIG_DIR'] = previousConfigDir;
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
     resetRuntimeConfig();
