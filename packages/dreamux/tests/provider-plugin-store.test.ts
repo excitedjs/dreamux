@@ -399,6 +399,126 @@ describe('ProviderPluginStore', () => {
     });
   });
 
+  it('does not call npm when closed during internal metadata read', async () => {
+    vi.useFakeTimers();
+    await publishGeneration(root, '@example/provider', '1.0.0');
+    await writeMetadata(root, '@example/provider', '1.0.0', 0);
+    const runner = new FakeNpmRunner();
+    runner.latest.set('@example/provider', '2.0.0');
+    const store = new ProviderPluginStore({ root, runner });
+    store.nextUpdateDelay = vi.fn(async () => 0);
+    let releaseRead!: () => void;
+    let markReadStarted!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve;
+    });
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const probe = store as unknown as {
+      readMetadata(packageName: string): Promise<unknown>;
+    };
+    const original = probe.readMetadata.bind(store);
+    probe.readMetadata = async (packageName) => {
+      markReadStarted();
+      await readGate;
+      return await original(packageName);
+    };
+
+    store.startUpdater(['@example/provider']);
+    await vi.advanceTimersByTimeAsync(0);
+    await readStarted;
+    const close = store.closeUpdater();
+    releaseRead();
+    await close;
+
+    expect(runner.latestCalls).toEqual([]);
+    expect(runner.installs).toEqual([]);
+    expect(JSON.parse(await readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'))).toMatchObject({
+      selected_version: '1.0.0',
+      last_check_completed_at: 0,
+    });
+    await expect(
+      readdir(dirname(providerPluginStagingDir('@example/provider', 'unused', root))),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('does not write staging package.json when aborted after staging mkdir', async () => {
+    const runner = new FakeNpmRunner();
+    runner.latest.set('@example/provider', '2.0.0');
+    const signal = abortSignalOnCheck(3, 'stop after staging mkdir');
+    const store = new ProviderPluginStore({ root, runner, now: () => 1234 });
+
+    await expect(
+      store.materializePackage('@example/provider', signal),
+    ).rejects.toThrow(/stop after staging mkdir/);
+
+    expect(runner.latestCalls).toEqual(['@example/provider']);
+    expect(runner.installs).toEqual([]);
+    const stagingParent = dirname(providerPluginStagingDir(
+      '@example/provider',
+      'unused',
+      root,
+    ));
+    const [stagingLeaf] = await readdir(stagingParent);
+    const staging = join(stagingParent, stagingLeaf!);
+    await expect(
+      readFile(providerPluginGenerationRootPackageJsonPath(staging), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(
+      readFile(providerPluginGenerationRootBridgePath(staging), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(
+      readFile(
+        providerPluginGenerationRootPackageJsonPath(
+          providerPluginGenerationDir('@example/provider', '2.0.0', root),
+        ),
+        'utf8',
+      ),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(
+      readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('does not call npm when aborted after staging package.json write', async () => {
+    const runner = new FakeNpmRunner();
+    runner.latest.set('@example/provider', '2.0.0');
+    const signal = abortSignalOnCheck(4, 'stop after staging package write');
+    const store = new ProviderPluginStore({ root, runner, now: () => 1234 });
+
+    await expect(
+      store.materializePackage('@example/provider', signal),
+    ).rejects.toThrow(/stop after staging package write/);
+
+    expect(runner.latestCalls).toEqual(['@example/provider']);
+    expect(runner.installs).toEqual([]);
+    const stagingParent = dirname(providerPluginStagingDir(
+      '@example/provider',
+      'unused',
+      root,
+    ));
+    const [stagingLeaf] = await readdir(stagingParent);
+    const staging = join(stagingParent, stagingLeaf!);
+    await expect(
+      readFile(providerPluginGenerationRootPackageJsonPath(staging), 'utf8'),
+    ).resolves.toContain('@example/provider');
+    await expect(
+      readFile(providerPluginGenerationRootBridgePath(staging), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(
+      readFile(
+        providerPluginGenerationRootPackageJsonPath(
+          providerPluginGenerationDir('@example/provider', '2.0.0', root),
+        ),
+        'utf8',
+      ),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(
+      readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('does not publish or select when aborted after npm installs before publication', async () => {
     await publishGeneration(root, '@example/provider', '1.0.0');
     await writeMetadata(root, '@example/provider', '1.0.0', 0);
@@ -466,6 +586,31 @@ describe('ProviderPluginStore', () => {
     await expect(
       readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'),
     ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('npm runner rejects already-aborted signals before spawning npm', async () => {
+    const calls: unknown[] = [];
+    const runner = new ExecaProviderPluginNpmRunner(
+      async (...args: unknown[]) => {
+        calls.push(args);
+        return { stdout: '"1.0.0"' };
+      },
+    );
+    const controller = new AbortController();
+    controller.abort(new Error('already closed'));
+
+    await expect(
+      runner.latestVersion('@example/provider', controller.signal),
+    ).rejects.toThrow(/already closed/);
+    await expect(
+      runner.installExact({
+        packageName: '@example/provider',
+        version: '1.0.0',
+        cwd: '/tmp/dreamux-provider-install',
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow(/already closed/);
+    expect(calls).toEqual([]);
   });
 
   it('npm runner uses abortable npm commands with explicit lockfile generation', async () => {
@@ -591,6 +736,20 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error('condition was not reached');
+}
+
+function abortSignalOnCheck(check: number, message: string): AbortSignal {
+  let count = 0;
+  const reason = new Error(message);
+  return {
+    get aborted() {
+      count += 1;
+      return count >= check;
+    },
+    get reason() {
+      return reason;
+    },
+  } as AbortSignal;
 }
 
 function fakeLogger(

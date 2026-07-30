@@ -76,6 +76,7 @@ export class ExecaProviderPluginNpmRunner implements ProviderPluginNpmRunner {
     packageName: string,
     signal?: AbortSignal,
   ): Promise<string> {
+    throwIfAborted(signal);
     const result = await this.execa(
       'npm',
       ['view', packageName, 'dist-tags.latest', '--json'],
@@ -95,6 +96,7 @@ export class ExecaProviderPluginNpmRunner implements ProviderPluginNpmRunner {
     cwd: string;
     signal?: AbortSignal;
   }): Promise<void> {
+    throwIfAborted(input.signal);
     await this.execa(
       'npm',
       [
@@ -142,16 +144,16 @@ export class ProviderPluginStore {
     if (current !== null) return current;
 
     const latest = await this.runner.latestVersion(packageName, signal);
-    await this.throwIfAborted(signal);
+    throwIfAborted(signal);
     const existing = await this.generationUsable(packageName, latest);
     if (existing) {
-      await this.throwIfAborted(signal);
+      throwIfAborted(signal);
       await this.selectVersion(packageName, latest, this.now());
       return latest;
     }
 
     await this.installGeneration(packageName, latest, signal);
-    await this.throwIfAborted(signal);
+    throwIfAborted(signal);
     await this.selectVersion(packageName, latest, this.now());
     return latest;
   }
@@ -244,14 +246,15 @@ export class ProviderPluginStore {
   ): Promise<void> {
     assertProviderPluginPackageName(packageName);
     const before = await this.readMetadata(packageName);
+    throwIfAborted(signal);
     try {
       const latest = await this.runner.latestVersion(packageName, signal);
-      await this.throwIfAborted(signal);
+      throwIfAborted(signal);
       if (before.selected_version !== latest) {
         const existing = await this.generationUsable(packageName, latest);
-        await this.throwIfAborted(signal);
+        throwIfAborted(signal);
         if (!existing) await this.installGeneration(packageName, latest, signal);
-        await this.throwIfAborted(signal);
+        throwIfAborted(signal);
         await this.selectVersion(packageName, latest, this.now());
       } else {
         await this.writeMetadata(packageName, {
@@ -293,27 +296,29 @@ export class ProviderPluginStore {
     version: string,
     signal?: AbortSignal,
   ): Promise<void> {
-    await this.throwIfAborted(signal);
+    throwIfAborted(signal);
     const installId = `${this.now()}-${randomUUID()}`;
     const staging = providerPluginStagingDir(packageName, installId, this.root);
     await mkdir(staging, { recursive: true });
+    throwIfAborted(signal);
     await writeFileAtomic(
       providerPluginGenerationRootPackageJsonPath(staging),
       `${JSON.stringify(stagingPackageJson(packageName, version), null, 2)}\n`,
       { mode: 0o600 },
     );
+    throwIfAborted(signal);
     await this.runner.installExact({ packageName, version, cwd: staging, signal });
-    await this.throwIfAborted(signal);
+    throwIfAborted(signal);
     await this.assertInstalledPackage(staging, packageName, version);
-    await this.throwIfAborted(signal);
+    throwIfAborted(signal);
     await writeFileAtomic(
       providerPluginGenerationRootBridgePath(staging),
       bridgeSource(packageName),
       { mode: 0o600 },
     );
-    await this.throwIfAborted(signal);
+    throwIfAborted(signal);
     await this.publishGeneration(packageName, version, staging);
-    await this.throwIfAborted(signal);
+    throwIfAborted(signal);
     await this.assertGenerationComplete(packageName, version);
   }
 
@@ -419,12 +424,6 @@ export class ProviderPluginStore {
     await this.metadata.write(providerPluginMetadataPath(packageName, this.root), metadata);
   }
 
-  private async throwIfAborted(signal?: AbortSignal): Promise<void> {
-    if (signal?.aborted === true) {
-      throw signal.reason instanceof Error ? signal.reason : new Error('aborted');
-    }
-  }
-
   private warn(message: string): void {
     this.logger?.warn(message);
   }
@@ -433,6 +432,12 @@ export class ProviderPluginStore {
 function assertProviderPluginPackageName(packageName: string): void {
   if (!NPM_PACKAGE_PATTERN.test(packageName)) {
     throw new Error(`invalid provider plugin package name: ${packageName}`);
+  }
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted === true) {
+    throw signal.reason instanceof Error ? signal.reason : new Error('aborted');
   }
 }
 
