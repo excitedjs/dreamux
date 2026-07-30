@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import {
   ExecaProviderPluginNpmRunner,
@@ -349,6 +349,56 @@ describe('ProviderPluginStore', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('does not install when closed during generation inspection', async () => {
+    vi.useFakeTimers();
+    await publishGeneration(root, '@example/provider', '1.0.0');
+    await writeMetadata(root, '@example/provider', '1.0.0', 0);
+    const runner = new FakeNpmRunner();
+    runner.latest.set('@example/provider', '2.0.0');
+    const store = new ProviderPluginStore({ root, runner });
+    let releaseInspection!: () => void;
+    let markInspectionStarted!: () => void;
+    const inspectionStarted = new Promise<void>((resolve) => {
+      markInspectionStarted = resolve;
+    });
+    const inspection = new Promise<void>((resolve) => {
+      releaseInspection = resolve;
+    });
+    const probe = store as unknown as {
+      generationUsable(packageName: string, version: string): Promise<boolean>;
+    };
+    probe.generationUsable = async () => {
+      markInspectionStarted();
+      await inspection;
+      return false;
+    };
+
+    store.startUpdater(['@example/provider']);
+    await vi.advanceTimersByTimeAsync(0);
+    await inspectionStarted;
+    const close = store.closeUpdater();
+    releaseInspection();
+    await close;
+
+    expect(runner.latestCalls).toEqual(['@example/provider']);
+    expect(runner.installs).toEqual([]);
+    await expect(
+      readdir(dirname(providerPluginStagingDir('@example/provider', 'unused', root))),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(
+      readFile(
+        providerPluginGenerationRootPackageJsonPath(
+          providerPluginGenerationDir('@example/provider', '2.0.0', root),
+        ),
+        'utf8',
+      ),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(JSON.parse(await readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'))).toMatchObject({
+      selected_version: '1.0.0',
+      last_check_completed_at: 0,
+    });
+  });
+
   it('does not publish or select when aborted after npm installs before publication', async () => {
     await publishGeneration(root, '@example/provider', '1.0.0');
     await writeMetadata(root, '@example/provider', '1.0.0', 0);
@@ -376,6 +426,46 @@ describe('ProviderPluginStore', () => {
       selected_version: '1.0.0',
       last_check_completed_at: 0,
     });
+  });
+
+  it('does not write a bridge when aborted after installed-package verification', async () => {
+    const controller = new AbortController();
+    const runner = new FakeNpmRunner();
+    runner.latest.set('@example/provider', '2.0.0');
+    const store = new ProviderPluginStore({ root, runner });
+    const probe = store as unknown as {
+      assertInstalledPackage(
+        generationRoot: string,
+        packageName: string,
+        version: string,
+      ): Promise<void>;
+    };
+    const original = probe.assertInstalledPackage.bind(store);
+    probe.assertInstalledPackage = async (...args) => {
+      await original(...args);
+      controller.abort(new Error('stop after package verification'));
+    };
+
+    await expect(
+      store.materializePackage('@example/provider', controller.signal),
+    ).rejects.toThrow(/stop after package verification/);
+
+    expect(runner.installs).toHaveLength(1);
+    const staging = runner.installs[0]!.cwd;
+    await expect(
+      readFile(providerPluginGenerationRootBridgePath(staging), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(
+      readFile(
+        providerPluginGenerationRootPackageJsonPath(
+          providerPluginGenerationDir('@example/provider', '2.0.0', root),
+        ),
+        'utf8',
+      ),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(
+      readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('npm runner uses abortable npm commands with explicit lockfile generation', async () => {

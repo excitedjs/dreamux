@@ -249,6 +249,7 @@ export class ProviderPluginStore {
       await this.throwIfAborted(signal);
       if (before.selected_version !== latest) {
         const existing = await this.generationUsable(packageName, latest);
+        await this.throwIfAborted(signal);
         if (!existing) await this.installGeneration(packageName, latest, signal);
         await this.throwIfAborted(signal);
         await this.selectVersion(packageName, latest, this.now());
@@ -292,6 +293,7 @@ export class ProviderPluginStore {
     version: string,
     signal?: AbortSignal,
   ): Promise<void> {
+    await this.throwIfAborted(signal);
     const installId = `${this.now()}-${randomUUID()}`;
     const staging = providerPluginStagingDir(packageName, installId, this.root);
     await mkdir(staging, { recursive: true });
@@ -303,6 +305,7 @@ export class ProviderPluginStore {
     await this.runner.installExact({ packageName, version, cwd: staging, signal });
     await this.throwIfAborted(signal);
     await this.assertInstalledPackage(staging, packageName, version);
+    await this.throwIfAborted(signal);
     await writeFileAtomic(
       providerPluginGenerationRootBridgePath(staging),
       bridgeSource(packageName),
