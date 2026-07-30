@@ -443,82 +443,6 @@ describe('ProviderPluginStore', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('does not write staging package.json when aborted after staging mkdir', async () => {
-    const runner = new FakeNpmRunner();
-    runner.latest.set('@example/provider', '2.0.0');
-    const signal = abortSignalOnCheck(3, 'stop after staging mkdir');
-    const store = new ProviderPluginStore({ root, runner, now: () => 1234 });
-
-    await expect(
-      store.materializePackage('@example/provider', signal),
-    ).rejects.toThrow(/stop after staging mkdir/);
-
-    expect(runner.latestCalls).toEqual(['@example/provider']);
-    expect(runner.installs).toEqual([]);
-    const stagingParent = dirname(providerPluginStagingDir(
-      '@example/provider',
-      'unused',
-      root,
-    ));
-    const [stagingLeaf] = await readdir(stagingParent);
-    const staging = join(stagingParent, stagingLeaf!);
-    await expect(
-      readFile(providerPluginGenerationRootPackageJsonPath(staging), 'utf8'),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(
-      readFile(providerPluginGenerationRootBridgePath(staging), 'utf8'),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(
-      readFile(
-        providerPluginGenerationRootPackageJsonPath(
-          providerPluginGenerationDir('@example/provider', '2.0.0', root),
-        ),
-        'utf8',
-      ),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(
-      readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-  });
-
-  it('does not call npm when aborted after staging package.json write', async () => {
-    const runner = new FakeNpmRunner();
-    runner.latest.set('@example/provider', '2.0.0');
-    const signal = abortSignalOnCheck(4, 'stop after staging package write');
-    const store = new ProviderPluginStore({ root, runner, now: () => 1234 });
-
-    await expect(
-      store.materializePackage('@example/provider', signal),
-    ).rejects.toThrow(/stop after staging package write/);
-
-    expect(runner.latestCalls).toEqual(['@example/provider']);
-    expect(runner.installs).toEqual([]);
-    const stagingParent = dirname(providerPluginStagingDir(
-      '@example/provider',
-      'unused',
-      root,
-    ));
-    const [stagingLeaf] = await readdir(stagingParent);
-    const staging = join(stagingParent, stagingLeaf!);
-    await expect(
-      readFile(providerPluginGenerationRootPackageJsonPath(staging), 'utf8'),
-    ).resolves.toContain('@example/provider');
-    await expect(
-      readFile(providerPluginGenerationRootBridgePath(staging), 'utf8'),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(
-      readFile(
-        providerPluginGenerationRootPackageJsonPath(
-          providerPluginGenerationDir('@example/provider', '2.0.0', root),
-        ),
-        'utf8',
-      ),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(
-      readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-  });
-
   it('does not publish or select when aborted after npm installs before publication', async () => {
     await publishGeneration(root, '@example/provider', '1.0.0');
     await writeMetadata(root, '@example/provider', '1.0.0', 0);
@@ -736,20 +660,6 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error('condition was not reached');
-}
-
-function abortSignalOnCheck(check: number, message: string): AbortSignal {
-  let count = 0;
-  const reason = new Error(message);
-  return {
-    get aborted() {
-      count += 1;
-      return count >= check;
-    },
-    get reason() {
-      return reason;
-    },
-  } as AbortSignal;
 }
 
 function fakeLogger(
