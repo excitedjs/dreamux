@@ -1,7 +1,80 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const ioGates = vi.hoisted(() => {
+  interface Gate {
+    match: ((path: string) => boolean) | null;
+    path: string | null;
+    release: (() => void) | null;
+    started: (() => void) | null;
+    wait: Promise<void> | null;
+  }
+  const gate = (): Gate => ({
+    match: null,
+    path: null,
+    release: null,
+    started: null,
+    wait: null,
+  });
+  const state = {
+    mkdir: gate(),
+    writeFileAtomic: gate(),
+    reset() {
+      Object.assign(state.mkdir, gate());
+      Object.assign(state.writeFileAtomic, gate());
+    },
+  };
+  return state;
+});
+
+vi.mock('node:fs/promises', async () => {
+  const actual = await vi.importActual<typeof import('node:fs/promises')>(
+    'node:fs/promises',
+  );
+  return {
+    ...actual,
+    mkdir: async (
+      path: string | Buffer | URL,
+      options?: Parameters<typeof actual.mkdir>[1],
+    ) => {
+      const result = await actual.mkdir(path, options);
+      const text = String(path);
+      if (ioGates.mkdir.match?.(text)) {
+        ioGates.mkdir.path = text;
+        ioGates.mkdir.started?.();
+        if (ioGates.mkdir.wait !== null) await ioGates.mkdir.wait;
+      }
+      return result;
+    },
+  };
+});
+
+vi.mock('../src/platform/atomic-write.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/platform/atomic-write.js')>(
+    '../src/platform/atomic-write.js',
+  );
+  return {
+    ...actual,
+    writeFileAtomic: async (
+      path: string,
+      data: string,
+      options?: { mode?: number },
+    ) => {
+      const result = await actual.writeFileAtomic(path, data, options);
+      if (ioGates.writeFileAtomic.match?.(path)) {
+        ioGates.writeFileAtomic.path = path;
+        ioGates.writeFileAtomic.started?.();
+        if (ioGates.writeFileAtomic.wait !== null) {
+          await ioGates.writeFileAtomic.wait;
+        }
+      }
+      return result;
+    },
+  };
+});
+
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 
 import {
   ExecaProviderPluginNpmRunner,
@@ -70,6 +143,7 @@ describe('ProviderPluginStore', () => {
 
   afterEach(async () => {
     vi.useRealTimers();
+    ioGates.reset();
     await rm(root, { recursive: true, force: true });
   });
 
@@ -443,6 +517,83 @@ describe('ProviderPluginStore', () => {
     ).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('does not write a manifest when closed after staging mkdir completes', async () => {
+    vi.useFakeTimers();
+    const runner = new FakeNpmRunner();
+    runner.latest.set('@example/provider', '2.0.0');
+    const gate = gateMkdir((path) =>
+      path.includes(`${sep}staging${sep}`) && path.includes('1234-'),
+    );
+    const store = new ProviderPluginStore({ root, runner, now: () => 1234 });
+
+    store.startUpdater(['@example/provider']);
+    await vi.advanceTimersByTimeAsync(0);
+    await gate.started;
+    const close = store.closeUpdater();
+    gate.release();
+    await close;
+
+    expect(runner.latestCalls).toEqual(['@example/provider']);
+    expect(runner.installs).toEqual([]);
+    expect(ioGates.mkdir.path).toContain(`${sep}staging${sep}1234-`);
+    const staging = ioGates.mkdir.path!;
+    await expect(
+      readFile(providerPluginGenerationRootPackageJsonPath(staging), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(
+      readFile(providerPluginGenerationRootBridgePath(staging), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(
+      readFile(
+        providerPluginGenerationRootPackageJsonPath(
+          providerPluginGenerationDir('@example/provider', '2.0.0', root),
+        ),
+        'utf8',
+      ),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(
+      readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('does not call npm when closed after staging manifest write completes', async () => {
+    vi.useFakeTimers();
+    const runner = new FakeNpmRunner();
+    runner.latest.set('@example/provider', '2.0.0');
+    const gate = gateWriteFileAtomic((path) =>
+      path.endsWith(`${sep}package.json`) &&
+      path.includes(`${sep}staging${sep}1234-`),
+    );
+    const store = new ProviderPluginStore({ root, runner, now: () => 1234 });
+
+    store.startUpdater(['@example/provider']);
+    await vi.advanceTimersByTimeAsync(0);
+    await gate.started;
+    const close = store.closeUpdater();
+    gate.release();
+    await close;
+
+    expect(runner.latestCalls).toEqual(['@example/provider']);
+    expect(runner.installs).toEqual([]);
+    const manifest = ioGates.writeFileAtomic.path!;
+    await expect(readFile(manifest, 'utf8')).resolves.toContain('@example/provider');
+    const staging = dirname(manifest);
+    await expect(
+      readFile(providerPluginGenerationRootBridgePath(staging), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(
+      readFile(
+        providerPluginGenerationRootPackageJsonPath(
+          providerPluginGenerationDir('@example/provider', '2.0.0', root),
+        ),
+        'utf8',
+      ),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(
+      readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('does not publish or select when aborted after npm installs before publication', async () => {
     await publishGeneration(root, '@example/provider', '1.0.0');
     await writeMetadata(root, '@example/provider', '1.0.0', 0);
@@ -660,6 +811,43 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error('condition was not reached');
+}
+
+function gateMkdir(match: (path: string) => boolean): {
+  started: Promise<void>;
+  release: () => void;
+} {
+  return configureGate(ioGates.mkdir, match);
+}
+
+function gateWriteFileAtomic(match: (path: string) => boolean): {
+  started: Promise<void>;
+  release: () => void;
+} {
+  return configureGate(ioGates.writeFileAtomic, match);
+}
+
+function configureGate(
+  gate: {
+    match: ((path: string) => boolean) | null;
+    release: (() => void) | null;
+    started: (() => void) | null;
+    wait: Promise<void> | null;
+  },
+  match: (path: string) => boolean,
+): { started: Promise<void>; release: () => void } {
+  let release!: () => void;
+  let markStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  gate.match = match;
+  gate.started = markStarted;
+  gate.wait = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  gate.release = release;
+  return { started, release };
 }
 
 function fakeLogger(
