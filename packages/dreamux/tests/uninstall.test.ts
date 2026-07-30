@@ -5,9 +5,11 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readlinkSync,
   realpathSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
@@ -31,9 +33,11 @@ import { testSingleDispatcherFileObject } from './helpers/config.js';
 class FakeRunner implements CommandRunner {
   launchdLoaded = false;
   readonly calls: Array<{ command: string; args: string[] }> = [];
+  onRun: (() => void | Promise<void>) | null = null;
 
   async run(command: string, args: string[]): Promise<void> {
     this.calls.push({ command, args });
+    await this.onRun?.();
   }
 
   async check(command: string, args: string[]): Promise<boolean> {
@@ -55,6 +59,10 @@ function expectPathEntryAbsent(path: string): void {
     code = (err as { code?: unknown }).code;
   }
   expect(code).toBe('ENOENT');
+}
+
+function expectPathEntryExists(path: string): void {
+  expect(lstatSync(path)).toBeDefined();
 }
 
 describe('dreamux uninstall', () => {
@@ -446,6 +454,120 @@ describe('dreamux uninstall', () => {
 
     expect(existsSync(sentinel)).toBe(true);
     expect(runner.calls).toEqual([]);
+  });
+
+  it('refuses outbound leaf symlinks located inside operator state before service changes', async () => {
+    const homeDir = join(root, 'home');
+
+    for (const stateDir of ['.codex', '.claude']) {
+      const runner = new FakeRunner();
+      const externalConfigDir = join(root, `safe-${stateDir.slice(1)}-config`);
+      const configAlias = join(homedir(), stateDir, 'dreamux-config');
+      mkdirSync(externalConfigDir, { recursive: true });
+      mkdirSync(dirname(configAlias), { recursive: true });
+      writeFileSync(join(externalConfigDir, 'config.json'), JSON.stringify({}), {
+        mode: 0o600,
+      });
+      symlinkSync(externalConfigDir, configAlias);
+
+      await expect(
+        runUninstall({
+          configDir: configAlias,
+          runner,
+          platform: 'linux',
+          homeDir,
+        }),
+      ).rejects.toThrow(/operator Codex\/Claude state/);
+
+      expect(runner.calls).toEqual([]);
+      expect(existsSync(externalConfigDir)).toBe(true);
+      expectPathEntryExists(configAlias);
+      expect(readlinkSync(configAlias)).toBe(externalConfigDir);
+    }
+  });
+
+  it('skips unlinking a replaced leaf symlink even when it keeps the same target', async () => {
+    const homeDir = join(root, 'home');
+    const externalConfigDir = join(root, 'external-config');
+    const configAlias = join(root, 'config-link');
+    mkdirSync(externalConfigDir, { recursive: true });
+    writeFileSync(join(externalConfigDir, 'config.json'), JSON.stringify({}), {
+      mode: 0o600,
+    });
+    symlinkSync(externalConfigDir, configAlias);
+    const runner = new FakeRunner();
+    let replaced = false;
+    runner.onRun = () => {
+      if (replaced) return;
+      replaced = true;
+      unlinkSync(configAlias);
+      symlinkSync(externalConfigDir, configAlias);
+    };
+
+    const result = await runUninstall({
+      configDir: configAlias,
+      runner,
+      platform: 'linux',
+      homeDir,
+    });
+
+    expect(existsSync(externalConfigDir)).toBe(false);
+    expectPathEntryExists(configAlias);
+    expect(readlinkSync(configAlias)).toBe(externalConfigDir);
+    expect(result.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: 'skipped',
+          path: configAlias,
+          reason: 'dreamux config directory',
+        }),
+      ]),
+    );
+  });
+
+  it('does not unlink a logical alias after its prefix is retargeted', async () => {
+    const homeDir = join(root, 'home');
+    const prefixAlias = join(root, 'config-prefix');
+    const initialParent = join(root, 'initial-parent');
+    const nextParent = join(root, 'next-parent');
+    const externalConfigDir = join(root, 'external-config');
+    const nextConfigDir = join(root, 'next-config');
+    const configDir = join(prefixAlias, 'dreamux-config');
+    const initialLeaf = join(initialParent, 'dreamux-config');
+    const nextLeaf = join(nextParent, 'dreamux-config');
+    mkdirSync(initialParent, { recursive: true });
+    mkdirSync(nextParent, { recursive: true });
+    mkdirSync(externalConfigDir, { recursive: true });
+    mkdirSync(nextConfigDir, { recursive: true });
+    writeFileSync(join(externalConfigDir, 'config.json'), JSON.stringify({}), {
+      mode: 0o600,
+    });
+    symlinkSync(initialParent, prefixAlias);
+    symlinkSync(externalConfigDir, initialLeaf);
+    const runner = new FakeRunner();
+    let retargeted = false;
+    runner.onRun = () => {
+      if (retargeted) return;
+      retargeted = true;
+      unlinkSync(prefixAlias);
+      symlinkSync(nextParent, prefixAlias);
+      symlinkSync(nextConfigDir, nextLeaf);
+    };
+
+    await runUninstall({
+      configDir,
+      runner,
+      platform: 'linux',
+      homeDir,
+    });
+
+    expect(existsSync(externalConfigDir)).toBe(false);
+    expectPathEntryAbsent(initialLeaf);
+    expectPathEntryExists(prefixAlias);
+    expect(readlinkSync(prefixAlias)).toBe(nextParent);
+    expectPathEntryExists(nextLeaf);
+    expect(readlinkSync(nextLeaf)).toBe(nextConfigDir);
+    expect(existsSync(nextConfigDir)).toBe(true);
   });
 
   it('removes a lexically nested config directory that symlinks outside Dreamux home', async () => {

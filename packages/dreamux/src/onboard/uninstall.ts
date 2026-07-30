@@ -1,7 +1,8 @@
 import { isNotFound, pathExists } from '../platform/fs-errors.js';
 import { lstat, readlink, rm, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
+import type { BigIntStats } from 'node:fs';
 
 import { ExecaCommandRunner } from './commands.js';
 import { removeUserService } from './service.js';
@@ -56,7 +57,12 @@ interface RemovalTarget {
 
 interface PlannedLeafSymlink {
   path: string;
+  physicalPath: string;
   target: string;
+  dev: bigint;
+  ino: bigint;
+  ctimeNs: bigint;
+  mtimeNs: bigint;
 }
 
 export async function runUninstall(
@@ -190,28 +196,44 @@ async function planRemovalTargets(
   const targets: RemovalTarget[] = [];
   for (const [path, reason] of entries) {
     const normalized = normalizePath(path);
+    const leafSymlink = await planLeafSymlink(normalized, reason);
     targets.push({
       path: normalized,
       reason,
-      leafSymlink: await planLeafSymlink(normalized),
+      leafSymlink,
       removalPath: await assertSafeOwnedDirectory(normalized, reason),
     });
   }
   return collapseRemovalTargets(targets);
 }
 
-async function planLeafSymlink(path: string): Promise<PlannedLeafSymlink | undefined> {
+async function planLeafSymlink(
+  path: string,
+  reason: string,
+): Promise<PlannedLeafSymlink | undefined> {
+  const physicalPath = await physicalLeafPath(path);
+  await assertSafePhysicalLocation(physicalPath, path, reason);
   try {
-    const stat = await lstat(path);
+    const stat = await lstat(physicalPath, { bigint: true });
     if (!stat.isSymbolicLink()) return undefined;
     return {
       path,
-      target: await readlink(path),
+      physicalPath,
+      target: await readlink(physicalPath),
+      dev: stat.dev,
+      ino: stat.ino,
+      ctimeNs: stat.ctimeNs,
+      mtimeNs: stat.mtimeNs,
     };
   } catch (err) {
     if (isNotFound(err)) return undefined;
     throw err;
   }
+}
+
+async function physicalLeafPath(path: string): Promise<string> {
+  const normalized = normalizePath(path);
+  return join(await canonicalPath(dirname(normalized)), basename(normalized));
 }
 
 async function unlinkLeafSymlinkIfUnchanged(
@@ -221,16 +243,23 @@ async function unlinkLeafSymlinkIfUnchanged(
   if (planned === undefined) return 'missing';
   let stat;
   try {
-    stat = await lstat(planned.path);
+    stat = await lstat(planned.physicalPath, { bigint: true });
   } catch (err) {
     if (isNotFound(err)) return 'missing';
     throw err;
   }
-  if (!stat.isSymbolicLink()) return 'skipped';
-  const currentTarget = await readlink(planned.path);
+  if (!sameNode(stat, planned) || !stat.isSymbolicLink()) return 'skipped';
+  const currentTarget = await readlink(planned.physicalPath);
   if (currentTarget !== planned.target) return 'skipped';
-  await unlink(planned.path);
+  await unlink(planned.physicalPath);
   return 'removed';
+}
+
+function sameNode(stat: BigIntStats, planned: PlannedLeafSymlink): boolean {
+  return stat.dev === planned.dev &&
+    stat.ino === planned.ino &&
+    stat.ctimeNs === planned.ctimeNs &&
+    stat.mtimeNs === planned.mtimeNs;
 }
 
 function collapseRemovalTargets(targets: RemovalTarget[]): RemovalOperation[] {
@@ -270,34 +299,43 @@ async function assertSafeOwnedDirectory(
   reason: string,
 ): Promise<string> {
   const normalized = normalizePath(path);
-  const [canonicalTarget, home, cwd, operatorRoots] = await Promise.all([
-    canonicalPath(normalized),
+  const canonicalTarget = await canonicalPath(normalized);
+  await assertSafePhysicalLocation(canonicalTarget, path, reason);
+  return canonicalTarget;
+}
+
+async function assertSafePhysicalLocation(
+  physicalPath: string,
+  sourcePath: string,
+  reason: string,
+): Promise<void> {
+  const target = resolve(physicalPath);
+  const [home, cwd, operatorRoots] = await Promise.all([
     canonicalPath(homedir()),
     canonicalPath(process.cwd()),
     canonicalOperatorStateRoots(),
   ]);
   for (const protectedRoot of operatorRoots) {
-    if (isSameOrInside(canonicalTarget, protectedRoot)) {
+    if (isSameOrInside(target, protectedRoot)) {
       throw new Error(
-        `refusing to remove unsafe ${reason}: ${path} overlaps operator Codex/Claude state ${protectedRoot}`,
+        `refusing to remove unsafe ${reason}: ${sourcePath} overlaps operator Codex/Claude state ${protectedRoot}`,
       );
     }
   }
   if (
-    canonicalTarget === '/' ||
-    isSameOrAncestorOf(canonicalTarget, home) ||
-    isSameOrAncestorOf(canonicalTarget, cwd)
+    target === '/' ||
+    isSameOrAncestorOf(target, home) ||
+    isSameOrAncestorOf(target, cwd)
   ) {
-    throw new Error(`refusing to remove unsafe ${reason}: ${path}`);
+    throw new Error(`refusing to remove unsafe ${reason}: ${sourcePath}`);
   }
   for (const protectedRoot of operatorRoots) {
-    if (isSameOrInside(protectedRoot, canonicalTarget)) {
+    if (isSameOrInside(protectedRoot, target)) {
       throw new Error(
-        `refusing to remove unsafe ${reason}: ${path} overlaps operator Codex/Claude state ${protectedRoot}`,
+        `refusing to remove unsafe ${reason}: ${sourcePath} overlaps operator Codex/Claude state ${protectedRoot}`,
       );
     }
   }
-  return canonicalTarget;
 }
 
 function isSameOrAncestorOf(path: string, protectedPath: string): boolean {
