@@ -1,8 +1,11 @@
 # Dynamic Workflow 编排（草案 spec）
 
-状态：草案 v3 —— 已折入本方常驻评审团两席评审（v2）与奥菲利亚三席联合评审
-（Issue #309，B1–B5 / D1–D5 / L1–L3 / P2 全部裁定落实）。其中「MVP 移除
-`opts.name` 复用」（B2）待操作者最终确认。
+状态：草案 v4 —— 已折入本方常驻评审团两席评审（v2）、奥菲利亚三席联合评审
+（Issue #309，B1–B5 / D1–D5 / L1–L3 / P2 全部裁定落实）与异构 runtime 复
+审（claude-seed / trae-claude）的补充发现。MVP 范围已按操作者「先跑起来、
+精简、不过度防御」基调收敛：移除 `opts.name` 复用（B2 最终裁定砍掉）、
+双作用域 collection 形态对齐现有 `TeammateCollection` 所有权模式、
+supervised-child 原语抽取列为落地前置硬约束。
 
 按操作者要求，本提案及配套 Issue / PR 协作全部使用中文（对仓库
 "repo docs 用英文" 规则的一次性例外，不构成对该规则的修订）。
@@ -55,10 +58,10 @@ Claude Code Workflow 契约的对齐子集：
   `intent` 覆盖、`identity`（人设文本，透传给 `teammate.spawn` 现有
   `identity` → system-prompt append）。
   **MVP 每次 `agent()` 都 spawn 新 agent**；`opts.name` 复用常驻 TeamMate
-  为后续能力（评审 B2 裁定：现有 runtime 的 active-turn folding 是锁定契
-  约，多入口并发 send 会折进同一 turnId，完成归属无法区分；复用需要先建
-  立 TeamMate 级 turn 串行边界。待操作者确认）。run 结束后对结果中记录的
-  名字直接 teammate `send` 单聊续聊**不受影响**。
+  **不进 MVP**（评审 B2 最终裁定：现有 runtime 的 active-turn folding 是锁
+  定契约，多入口并发 send 会折进同一 turnId，完成归属无法区分；复用需要先
+  建立 TeamMate 级 turn 串行边界，属于后续能力）。run 结束后对结果中记录
+  的名字直接 teammate `send` 单聊续聊**不受影响**。
 - `parallel(thunks)` — 屏障；失败的 thunk 归于 `null`。
 - `pipeline(items, ...stages)` — 逐 item 分阶段流水，无跨 item 屏障。
 - `phase(title)`、`log(message)` — 进度行，经 runner→server IPC 上报后由
@@ -86,9 +89,12 @@ per-agent worktree 隔离 / cwd 覆盖（砍掉）。模型选择走 `agentType`
 
 - **runner = fork 出的受监督子进程，IPC 通信（评审 D2 裁定）。** server
   不在自己的事件循环里跑模型编写的 JS（busy-loop 会卡死所有 dispatcher，
-  与 no-sync-IO 同红线）。每个 run 由 server `fork` 一个 runner 子进程
-  （复用/抽取中立的 supervised-child primitive，不写第三份 supervisor），
-  **runner 与 server 的全部通信走父子进程 IPC channel**，不占用 admin
+  与 no-sync-IO 同红线）。每个 run 由 server `fork` 一个 runner 子进程。
+  **落地前置硬约束（评审 P1-2）**：在 `dreamux-utils` 或 core
+  `platform/` 抽取中立 `SupervisedChild` 原语（封装 spawn/fork +
+  detached + exit 回调 + SIGTERM→轮询→SIGKILL 两阶段 stop），codex、
+  claude-code、workflow-runner 三方共用——**不写第三份 supervisor**。
+  runner 与 server 的全部通信走父子进程 IPC channel，不占用 admin
   socket、不新增公共 admin 方法、不需要 per-run token（runner 是 server
   自己 fork 的同 UID 子进程，身份由父进程绑定）：
   - runner → server：`agent_start`（一次 agent() 调用）、`emit`
@@ -173,8 +179,14 @@ per-agent worktree 隔离 / cwd 覆盖（砍掉）。模型选择走 `agentType`
 
 - 新目录 `service/workflow-service/`。`WorkflowService` 是作用域持有的
   collection：`DispatcherService` 持有一个（dispatcher-scope run），每个
-  `TeamService` 持有一个（Team-scope run）。每个活跃 run 是一个
-  `WorkflowRun` entity，持有 run 记录、journal 与 runner 子进程句柄。
+  `TeamService` 持有一个（Team-scope run）——**与现有 `TeammateCollection`
+  所有权模式同构**（`DispatcherService` 持一个 dispatcher-scope
+  `TeammateCollection`，每个 `TeamService` 持一个 team-scope
+  `TeammateCollection`，见 `team-service/index.ts:134-149`）。每个活跃 run
+  是一个 `WorkflowRun` entity，持有 run 记录、journal 与 runner 子进程句
+  柄。run 记录带 `teamId` 字段（null = dispatcher 作用域），admin 方法复用
+  `teammateTargetFor` 按 `caller_kind` 路由到对应作用域的
+  `WorkflowService`——不新建路由逻辑。
 - 依赖单向注入、无反向 import：窄提交 capability（见执行模型 B5 条）、
   `CompletionRouter`（终态注册/settle）、`platform/paths.ts` 的 run 目录
   builder、supervised-child primitive。
@@ -230,7 +242,7 @@ schema 用法、run 后对具体名字 `send` 续聊。TeamLeader 系统提示�
 
 - 关键词 /"ultracode" 式触发或任何动态系统提示注入。
 - `opts.name` 复用常驻 agent（评审 B2；后续需先建立 TeamMate 级 turn
-  串行边界。待操作者确认）。
+  串行边界）。
 - `resume_from_run_id` / journal 读取复放（评审 D4/D5；journal 格式按可
   复放设计，读取端后续再做）。
 - schema 校验重试（评审 D3）。
