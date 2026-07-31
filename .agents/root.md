@@ -115,8 +115,11 @@ history and rationale; when you need current behavior, pair them with
   boundary), `agent()` spawning a fresh TeamMate per call with settle delivery
   wired to the `WorkflowRun` at spawn time (no per-call initiator override, no
   register-before-submit race), terminal delivery through the existing
-  `CompletionRouter`, write-ahead journal (write-only in MVP, no resume), and a
-  bundled `workflow` skill instead of prompt injection.
+  `CompletionRouter`, structured output via the runtime-native
+  `AgentRuntimeTextInput.outputSchema` (codex `turn/start.outputSchema` /
+  claude-code `--json-schema`, server does `JSON.parse` only — no prompt-append
+  or server-side schema validation), write-ahead journal (write-only in MVP, no
+  resume), and a bundled `workflow` skill instead of prompt injection.
 - [AgentRuntime input surface cleanup](proposals/agent-runtime-input-surface-cleanup.md)
   — draft technical design for narrowing the provider-facing runtime input
   surface: plain text `completionInput` for non-channel turns, `channelInput`
