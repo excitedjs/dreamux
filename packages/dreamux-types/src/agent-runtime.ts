@@ -86,13 +86,28 @@ export interface AgentRuntimeTextInput {
    * Optional JSON Schema constraining the model's final assistant message for
    * this turn. Provider-neutral: each runtime maps it to its native structured
    * output mechanism (e.g. codex `turn/start.outputSchema`, claude-code
-   * `--json-schema`). Runtimes that do not support structured output MUST throw
-   * when this is set rather than silently ignoring it, so callers never get
+   * `--json-schema`). Runtimes that do not support structured output MUST
+   * return `{ status: 'failed', error }` where `error` is an
+   * {@link UnsupportedAgentRuntimeFeatureError} with `feature: 'outputSchema'`
+   * when this is set — never silently ignore it, so callers never get
    * unconstrained text when they asked for a schema. When set, the settled
    * result text is expected to be valid JSON conforming to the schema; the
    * caller parses it.
    */
   outputSchema?: Record<string, unknown>;
+}
+
+/**
+ * Structural shape of an `Error` a runtime returns (as a `failed` turn
+ * `error`) when the caller requested a neutral feature the runtime does not
+ * support. Callers branch on `error.name === 'UnsupportedAgentRuntimeFeatureError'`
+ * and `error.feature` rather than `instanceof`, keeping `@excitedjs/dreamux-types`
+ * declaration-only (no runtime values). The `feature` field names the requested
+ * capability (e.g. `'outputSchema'`).
+ */
+export interface UnsupportedAgentRuntimeFeatureError extends Error {
+  name: 'UnsupportedAgentRuntimeFeatureError';
+  feature: string;
 }
 
 export interface AgentRuntimeLastResult {
