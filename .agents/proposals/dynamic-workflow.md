@@ -3,10 +3,10 @@
 状态：草案 v4 —— 已折入本方常驻评审团两席评审（v2）、奥菲利亚三席联合评审
 （Issue #309，B1–B5 / D1–D5 / L1–L3 / P2 全部裁定落实）与异构 runtime 复
 审（claude-seed / trae-claude）的补充发现。MVP 范围已按操作者「先跑起来、
-精简、不过度防御」基调收敛：`opts.name` 复用常驻 agent 保留但加「不打扰」
-约束（已有在途 turn 时 `agent()` 抛 `AgentBusyError`，不排队不折叠）、双
-作用域 collection 形态对齐现有 `TeammateCollection` 所有权模式、
-supervised-child 原语抽取列为落地前置硬约束。
+精简、不过度防御」基调收敛：MVP 砍 `opts.name` 复用（每次 `agent()`
+spawn 新 agent、完全隔离，避免在途 turn 被打扰导致结果偏差）、双作用域
+collection 形态对齐现有 `TeammateCollection` 所有权模式、supervised-child
+原语抽取列为落地前置硬约束。
 
 按操作者要求，本提案及配套 Issue / PR 协作全部使用中文（对仓库
 "repo docs 用英文" 规则的一次性例外，不构成对该规则的修订）。
@@ -58,16 +58,14 @@ Claude Code Workflow 契约的对齐子集：
   `opts`：`label`、`phase`、`schema`、`agentType`（agent-runtime id）、
   `intent` 覆盖、`identity`（人设文本，透传给 `teammate.spawn` 现有
   `identity` → system-prompt append）。
-  **MVP 支持 `opts.name` 复用常驻 TeamMate，但有「不打扰」约束（操作者决策 + 评审 B2 折衷）。**
-  现有 runtime 的 active-turn folding 是锁定契约：同一 agent 的多个在途
-  `completionInput` 会折进同一 `turnId`、只 settle 一次，`CompletionRouter`
-  对同一 `producerName:turnId` 只存一个 initiator。为避免 workflow 复用的
-  agent 被普通 send / 另一 run / 同 run 另一 `agent()` 打扰、导致结果偏差，
-  MVP 约束：**`opts.name` 调用时，若该 agent 已有在途 turn（任何来源），
-  `agent()` 立即抛 `AgentBusyError`，script 自行处理（重试 / 换 agent / 归
-  null）**——不排队、不折叠、不等待。workflow 生成的新 agent（无 `opts.name`）
-  独占归属于该 run，无此约束。run 结束后对结果中记录的名字直接 teammate
-  `send` 单聊续聊**不受影响**。
+  **MVP 每次 `agent()` 都 spawn 新 agent，完全隔离（操作者最终决策）。**
+  现有 runtime 的 active-turn folding 是锁定契约，复用常驻 agent 会引入
+  「在途 turn 被打扰 / 结果偏差」风险；即便加 `AgentBusyError` 约束，把一
+  个正在 busy 的 agent 编排进 workflow 本身也不是好事。因此 MVP **不支持**
+  `opts.name` 复用——每次 `agent()` 生成全新的、独占归属于该 run 的
+  TeamMate，与其他 run / 普通 send 完全隔离。`opts.name` 复用为后续能力
+  （需先建立 TeamMate 级 turn 串行边界）。run 结束后对结果中记录的名字直
+  接 teammate `send` 单聊续聊**不受影响**。
 - `parallel(thunks)` — 屏障；失败的 thunk 归于 `null`。
 - `pipeline(items, ...stages)` — 逐 item 分阶段流水，无跨 item 屏障。
 - `phase(title)`、`log(message)` — 进度行，经 runner→server IPC 上报后由
@@ -130,12 +128,12 @@ per-agent worktree 隔离 / cwd 覆盖（砍掉）。模型选择走 `agentType`
   at-most-once 全部沿用 router 现有策略，不在 `WorkflowRun` 另建投递
   状态机。完成渲染新增 workflow 变体文案（复用现有渲染管道与溢出目录）。
 - **终态自动 close（对模型完全静默）。** run 终态时，等全部 in-flight
-  turn 自然 settle 后，**静默 close 本 run 新生成的全部 TeamMate**（通过
-  `opts.name` 复用的常驻 agent **不 close**——run 不拥有它，close 会 stop
-  runtime + 可能 worktree cleanup，影响其他使用者）以释放 runtime 进程——
-  操作者决策。`close` 后 `send` 仍可从记录的 `session_id` 拉起续聊，agent
-  保持可寻址。任何工具描述、skill 文本、完成渲染都不提 auto-close。每次
-  `agent()` 的具体 TeamMate 名记进 journal、`workflow_status` 与终态推送。
+  turn 自然 settle 后，**静默 close 本 run 生成的全部 TeamMate**（MVP 下
+  即"驱动过的全部"，因为没有复用）以释放 runtime 进程——操作者决策。
+  `close` 后 `send` 仍可从记录的 `session_id` 拉起续聊，agent 保持可寻
+  址。任何工具描述、skill 文本、完成渲染都不提 auto-close。每次
+  `agent()` 的具体 TeamMate 名记进 journal、`workflow_status` 与终态推
+  送。
 - **提交路径 = 窄 capability，逐调用重入现有 gate（评审 B5 裁定）。**
   `WorkflowService` 不持裸 `TeammateCollection` / 裸 `TeamService` /
   bound method；注入的是 server-local 的窄提交 capability：dispatcher
@@ -239,8 +237,6 @@ schema 用法、run 后对具体名字 `send` 续聊。TeamLeader 系统提示�
 - run 结束后 agent 保持可寻址：对结果中记录的具体名字 `send` 可拉起并
   续聊（auto-close 除读面 `closed` 状态外不可感知）；`identity` 调用可
   证实人设生效。
-- `opts.name` 复用：目标 agent 有在途 turn 时 `agent()` 抛
-  `AgentBusyError`，不排队不折叠；无在途 turn 时复用其会话上下文。
 - `dispatcher.stop` / server 重启后遗留 run 标 `stopped`（fail-loud）；
   Team closing fence 升起后 workflow admission 立即关闭。
 - 日志断言：run 创建/agent settle/终态在组件日志中可见。
@@ -249,8 +245,9 @@ schema 用法、run 后对具体名字 `send` 续聊。TeamLeader 系统提示�
 ## 不做（MVP）
 
 - 关键词 /"ultracode" 式触发或任何动态系统提示注入。
-- `opts.name` 复用时的排队 / 折叠 / 等待（评审 B2；已有在途 turn 时直接
-  抛 `AgentBusyError`，不做串行边界）。
+- `opts.name` 复用常驻 agent（评审 B2 + 操作者决策：busy agent 编入
+  workflow 会导致结果偏差，MVP 完全隔离；后续需先建立 TeamMate 级
+  turn 串行边界）。
 - `resume_from_run_id` / journal 读取复放（评审 D4/D5；journal 格式按可
   复放设计，读取端后续再做）。
 - schema 校验重试（评审 D3）。
