@@ -91,6 +91,8 @@ export interface ServerOptions {
    * CLI injects a factory that writes `logs/channel/<id>.log`.
    */
   channelLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
+  /** Per-dispatcher Dynamic Workflow lifecycle logger factory. */
+  workflowLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
   /**
    * Optional sweep of the volatile runtime-socket dirs (issue #182), run once
    * after the admin-socket lock is held (single-server guarantee — every
@@ -160,6 +162,9 @@ export class Server {
       channelProviders: this.channelProviders,
       adminSocketPath: opts.adminSocketPath ?? adminSocketPath(),
       channelLoggerFactory,
+      ...(opts.workflowLoggerFactory !== undefined
+        ? { workflowLoggerFactory: opts.workflowLoggerFactory }
+        : {}),
       log: this.log,
     });
   }

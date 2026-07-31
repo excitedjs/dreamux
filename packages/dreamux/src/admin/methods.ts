@@ -1,16 +1,16 @@
 
 import type { Server } from '../server.js';
-import { bundledTeamLeaderSkillRoot } from '../platform/paths.js';
-import type {
-  ChannelToolCaller,
-  DispatcherService,
-  TeamLeaderHandle,
-} from '../service/dispatcher-service/index.js';
+import {
+  bundledSharedSkillRoot,
+  bundledTeamLeaderSkillRoot,
+} from '../platform/paths.js';
+import type { ChannelToolCaller } from '../service/dispatcher-service/index.js';
 import type { ChannelRouteOwner } from '../service/channel-service/index.js';
 import { ChannelToolAuthorizationError } from '../service/channel-service/errors.js';
 import type { SchedulerCommands } from '../service/scheduler/service.js';
-import { TeamUnavailableError } from '../service/team-collection/index.js';
+import { TeamUnavailableError } from '../service/team-collection/errors.js';
 import { AdminError } from './protocol.js';
+import { teammateTargetFor } from './teammate-target.js';
 import {
   historyQuery,
   mustDispatcherId,
@@ -40,6 +40,10 @@ export type AdminHandler = (
 const TEAM_LEADER_REQUIRED_SKILL_SOURCES = [{
   name: 'team-leader',
   path: bundledTeamLeaderSkillRoot(),
+  source: 'dreamux-core',
+}, {
+  name: 'shared',
+  path: bundledSharedSkillRoot(),
   source: 'dreamux-core',
 }] as const;
 
@@ -281,6 +285,26 @@ export const adminMethods: Record<string, AdminHandler> = {
     ).service.teammates.getCapabilities();
   },
 
+  'workflow.run': async (server, params) => {
+    const maxConcurrency = optionalInteger(params, 'max_concurrency');
+    return (await workflowTargetFor(server, params)).run({
+      script: mustNonEmptyString(params, 'script'),
+      ...(params !== undefined && Object.hasOwn(params, 'args')
+        ? { args: params['args'] }
+        : {}),
+      ...(maxConcurrency !== null ? { max_concurrency: maxConcurrency } : {}),
+    });
+  },
+  'workflow.status': async (server, params) =>
+    (await workflowTargetFor(server, params)).status(
+      { run_id: mustNonEmptyString(params, 'run_id') },
+    ),
+  'workflow.stop': async (server, params) =>
+    (await workflowTargetFor(server, params)).stop(
+      { run_id: mustNonEmptyString(params, 'run_id') },
+    ),
+  'workflow.list': async (server, params) =>
+    (await workflowTargetFor(server, params)).list(),
   'team.create': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
@@ -641,25 +665,10 @@ function optionalCollaborationContainer(
   };
 }
 
-async function teammateTargetFor(
-  dispatcher: DispatcherService,
-  params: Record<string, unknown> | undefined,
-): Promise<
-  | { callerKind: 'dispatcher'; service: DispatcherService }
-  | { callerKind: 'team_leader'; service: TeamLeaderHandle }
-> {
-  const callerKind = optionalString(params, 'caller_kind') ?? 'dispatcher';
-  if (callerKind === 'dispatcher') {
-    return { callerKind, service: dispatcher };
-  }
-  if (callerKind === 'team_leader') {
-    return {
-      callerKind,
-      service: await dispatcher.team(mustString(params, 'team_id')),
-    };
-  }
-  throw new AdminError(
-    'BAD_REQUEST',
-    "param 'caller_kind' must be dispatcher or team_leader",
-  );
+async function workflowTargetFor(
+  server: Server, params: Record<string, unknown> | undefined,
+) {
+  const id = mustDispatcherId(params);
+  mustExistingDispatcher(server, id);
+  return (await teammateTargetFor(server.getDispatcher(id), params)).service.workflows;
 }

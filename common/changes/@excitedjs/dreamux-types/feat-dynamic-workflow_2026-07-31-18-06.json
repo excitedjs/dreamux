@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux-types",
+      "comment": "Add native outputSchema support and a structural unsupported-feature error contract to text turn inputs.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types"
+}

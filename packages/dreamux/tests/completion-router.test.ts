@@ -12,6 +12,7 @@ import {
 
 function envelope(name: string, turnId: string): CompletionEnvelope {
   return {
+    kind: 'teammate',
     source: name,
     id: `${name}:${turnId}`,
     status: 'completed',

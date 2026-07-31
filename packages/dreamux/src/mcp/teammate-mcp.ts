@@ -180,6 +180,36 @@ export function teammateTools(callerKind: TeamMateMcpCallerKind): Array<Record<s
   const spawnDescription = callerKind === 'dispatcher'
     ? 'Start a resumable TeamMate agent managed by this dispatcher and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. repo is optional: omit it to let Dreamux allocate a fresh per-TeamMate work directory, or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } to choose an existing path or create a managed git worktree.'
     : 'Start a resumable TeamMate agent in this Team\'s shared workspace and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. Coordinate edits so only one TeamMate writes the shared workspace unless the work is read-only or edits are independent. This tool does not accept a repo parameter.';
+  const workflowTools = [
+    tool(
+      'workflow_run',
+      'Load the bundled `workflow` skill before use. Start a deterministic multi-agent workflow from an inline module script and return { run_id } immediately; Dreamux pushes one terminal completion when the run finishes.',
+      {
+        script: { type: 'string', minLength: 1 },
+        args: {},
+        max_concurrency: { type: 'integer', minimum: 1, maximum: 8 },
+      },
+      ['script'],
+    ),
+    tool(
+      'workflow_status',
+      'Load the bundled `workflow` skill before use. Read phase, agent progress, concrete TeamMate names, and terminal result for one workflow run.',
+      { run_id: workflowRunIdSchema() },
+      ['run_id'],
+    ),
+    tool(
+      'workflow_stop',
+      'Load the bundled `workflow` skill before use. Stop one running workflow and return its resulting status.',
+      { run_id: workflowRunIdSchema() },
+      ['run_id'],
+    ),
+    tool(
+      'workflow_list',
+      'Load the bundled `workflow` skill before use. List workflow runs in the current dispatcher or TeamLeader caller scope.',
+      {},
+      [],
+    ),
+  ];
   return [
     tool(
       'spawn',
@@ -197,7 +227,16 @@ export function teammateTools(callerKind: TeamMateMcpCallerKind): Array<Record<s
       note: { type: 'string', minLength: 1, maxLength: 2000 },
     }, ['name', 'note']),
     ...readTools,
+    ...workflowTools,
   ];
+}
+
+function workflowRunIdSchema(): Record<string, unknown> {
+  return {
+    type: 'string',
+    minLength: 1,
+    pattern: '^[a-z0-9-]+$',
+  };
 }
 
 function tool(
@@ -270,9 +309,32 @@ function mapToolCall(
       return { method: 'teammate.last', params: lastArgs(call.arguments) };
     case 'get_capabilities':
       return { method: 'teammate.capabilities', params: {} };
+    case 'workflow_run':
+      return { method: 'workflow.run', params: workflowRunArgs(call.arguments) };
+    case 'workflow_status':
+      return { method: 'workflow.status', params: workflowRunIdArgs(call.arguments) };
+    case 'workflow_stop':
+      return { method: 'workflow.stop', params: workflowRunIdArgs(call.arguments) };
+    case 'workflow_list':
+      return { method: 'workflow.list', params: {} };
     default:
       throw new Error(`unknown TeamMate tool '${String(call.name)}'`);
   }
+}
+
+function workflowRunArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'workflow_run arguments');
+  const maxConcurrency = optionalInteger(obj, 'max_concurrency');
+  return {
+    script: requireString(obj, 'script'),
+    ...(Object.hasOwn(obj, 'args') ? { args: obj['args'] } : {}),
+    ...(maxConcurrency !== null ? { max_concurrency: maxConcurrency } : {}),
+  };
+}
+
+function workflowRunIdArgs(value: unknown): Record<string, unknown> {
+  const obj = asRecord(value, 'workflow arguments');
+  return { run_id: requireString(obj, 'run_id') };
 }
 
 function negotiateProtocolVersion(params: unknown): string {

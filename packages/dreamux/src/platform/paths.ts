@@ -59,6 +59,7 @@ export const BUNDLED_SKILL_NAMES = [
   'dispatcher-workflow',
   'dreamux-maintenance',
   'team-workflow',
+  'workflow',
 ] as const;
 
 export type BundledSkillName = typeof BUNDLED_SKILL_NAMES[number];
@@ -219,12 +220,21 @@ export function bundledSkillsDir(): string {
   return join(PACKAGE_ROOT, 'skills');
 }
 
+/** Compiled entry point forked for each Dynamic Workflow run. */
+export function workflowRunnerEntryPath(): string {
+  return join(PACKAGE_ROOT, 'dist', 'service', 'workflow-service', 'runner.js');
+}
+
 export function bundledDispatcherSkillRoot(): string {
   return join(bundledSkillsDir(), 'dispatcher');
 }
 
 export function bundledTeamLeaderSkillRoot(): string {
   return join(bundledSkillsDir(), 'team-leader');
+}
+
+export function bundledSharedSkillRoot(): string {
+  return join(bundledSkillsDir(), 'shared');
 }
 
 /**
@@ -274,6 +284,15 @@ export function teammateMcpLogDir(): string {
  * Per-dispatcher TeamMate scheduling MCP stdio shim diagnostics. */
 export function teammateMcpLogPath(id: string): string {
   return join(teammateMcpLogDir(), `${dispatcherPathSegment(id)}.log`);
+}
+
+export function workflowLogDir(): string {
+  return join(logsRoot(), 'workflow');
+}
+
+/** Per-dispatcher Dynamic Workflow lifecycle diagnostics. */
+export function workflowLogPath(id: string): string {
+  return join(workflowLogDir(), `${dispatcherPathSegment(id)}.log`);
 }
 
 export function cronMcpLogDir(): string {
@@ -340,6 +359,45 @@ export function dispatcherTeamCronJobsPath(id: string, teamId: string): string {
  */
 export function dispatcherTeamTeamMateDir(id: string, teamId: string): string {
   return join(dispatcherTeamScopeDir(id, teamId), 'teammate');
+}
+
+export interface WorkflowScopePathInput {
+  dispatcherId: string;
+  teamId: string | null;
+}
+
+export interface WorkflowRunPathInput extends WorkflowScopePathInput {
+  runId: string;
+}
+
+export function validateWorkflowRunId(runId: string): string {
+  if (!/^[a-z0-9-]+$/.test(runId)) {
+    throw new Error(
+      `invalid workflow run id ${JSON.stringify(runId)}: expected lowercase letters, digits, and '-'`,
+    );
+  }
+  return runId;
+}
+
+/** The workflow collection root for one dispatcher or Team scope. */
+export function workflowScopeDir(input: WorkflowScopePathInput): string {
+  const ownerDir = input.teamId === null
+    ? dispatcherDir(input.dispatcherId)
+    : dispatcherTeamScopeDir(input.dispatcherId, input.teamId);
+  return join(ownerDir, 'workflow');
+}
+
+/** Durable state directory for one Dynamic Workflow run. */
+export function workflowRunDir(input: WorkflowRunPathInput): string {
+  return join(workflowScopeDir(input), validateWorkflowRunId(input.runId));
+}
+
+export function workflowRunRecordPath(input: WorkflowRunPathInput): string {
+  return join(workflowRunDir(input), 'record.json');
+}
+
+export function workflowRunJournalPath(input: WorkflowRunPathInput): string {
+  return join(workflowRunDir(input), 'journal.jsonl');
 }
 
 export type AgentEntityRole =

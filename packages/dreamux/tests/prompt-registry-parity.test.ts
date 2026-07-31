@@ -8,6 +8,7 @@ import { teamTools } from '../src/mcp/team-mcp.js';
 import { teammateTools } from '../src/mcp/teammate-mcp.js';
 import {
   bundledDispatcherSkillRoot,
+  bundledSharedSkillRoot,
   bundledTeamLeaderSkillRoot,
   type BundledSkillName,
 } from '../src/platform/paths.js';
@@ -62,7 +63,22 @@ const SKILL_ROOT_BY_NAME = {
   'dispatcher-workflow': bundledDispatcherSkillRoot(),
   'dreamux-maintenance': bundledDispatcherSkillRoot(),
   'team-workflow': bundledTeamLeaderSkillRoot(),
+  'workflow': bundledSharedSkillRoot(),
 } satisfies Record<BundledSkillName, string>;
+
+const SHARED_WORKFLOW_TOOLS = new Set([
+  'workflow_run',
+  'workflow_status',
+  'workflow_stop',
+  'workflow_list',
+]);
+
+function assignedSkillMentionsTool(
+  roleSkill: 'dispatcher-workflow' | 'team-workflow',
+  name: string,
+): boolean {
+  return skillMentionsTool(SHARED_WORKFLOW_TOOLS.has(name) ? 'workflow' : roleSkill, name);
+}
 
 function readBundledSkill(name: BundledSkillName): string {
   return readFileSync(join(SKILL_ROOT_BY_NAME[name], name, 'SKILL.md'), 'utf8');
@@ -97,13 +113,13 @@ describe('dispatcher prompt matches registered Dreamux MCP tools', () => {
 
   it('names dispatcher-visible tools in dispatcher-workflow', () => {
     const missing = registeredDreamuxMcpTools().filter(
-      (tool) => !skillMentionsTool('dispatcher-workflow', tool.name),
+      (tool) => !assignedSkillMentionsTool('dispatcher-workflow', tool.name),
     );
 
     expect(
       missing,
       [
-        'Dispatcher skill/registry parity drift: dispatcher-workflow must name every dispatcher-visible Dreamux MCP tool as a whole word.',
+        'Dispatcher skill/registry parity drift: assigned bundled skills must name every dispatcher-visible Dreamux MCP tool as a whole word.',
         `Missing tool(s):\n${formatTools(missing)}`,
       ].join('\n'),
     ).toEqual([]);
@@ -111,13 +127,13 @@ describe('dispatcher prompt matches registered Dreamux MCP tools', () => {
 
   it('names TeamLeader-visible tools in team-workflow', () => {
     const missing = registeredTeamLeaderMcpTools().filter(
-      (tool) => !skillMentionsTool('team-workflow', tool.name),
+      (tool) => !assignedSkillMentionsTool('team-workflow', tool.name),
     );
 
     expect(
       missing,
       [
-        'TeamLeader skill/registry parity drift: team-workflow must name every TeamLeader-visible Dreamux MCP tool as a whole word.',
+        'TeamLeader skill/registry parity drift: assigned bundled skills must name every TeamLeader-visible Dreamux MCP tool as a whole word.',
         `Missing tool(s):\n${formatTools(missing)}`,
       ].join('\n'),
     ).toEqual([]);
