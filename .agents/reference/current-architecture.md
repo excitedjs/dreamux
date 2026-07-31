@@ -23,7 +23,8 @@ Key source:
 
 ## Configuration
 
-The operator config is JSON at `~/.dreamux/config.json`.
+The operator config is JSON at the path reported by `dreamux config path`
+(normally `~/.dreamux/config.json`; `DREAMUX_CONFIG_DIR` may relocate it).
 
 Current file shape:
 
@@ -145,6 +146,13 @@ and mention gates, `/introduce`, peer-bot trust state, inbound formatting,
 reaction state, target resolution, and its `reply` / `react` /
 `list_chat_bots` tool surface.
 
+The Feishu session classifies raw chat and sender identity exactly before bot
+observation, `/introduce`, pairing, or delivery. V3 `group.allow_chats` is the
+trusted-human-group list under either non-block group policy after the global
+mention gate; an unlisted `follow-user` chat retains the `dm_policy` sender
+path. `/introduce` remains sender-scoped and does not inherit that ordinary
+delivery authority.
+
 Dreamux core injects the generic `channel-mcp` shim and routes tool calls back
 to the live Channel session or provider sessionless handler.
 
@@ -161,6 +169,7 @@ event-source leases; stop or failed start revokes them before session close.
 Read [Channel runtime](channel-runtime.md) first, then the domain contracts:
 
 - [Feishu introduce](../domains/feishu-introduce.md)
+- [Feishu pairing access](../domains/feishu-pairing-access.md)
 - [Non-blocking dispatcher inbound](../domains/non-blocking-dispatcher-inbound.md)
 
 ## Teams And TeamMates
@@ -376,8 +385,9 @@ High-level split:
 
 - `~/.dreamux/config.json`: operator-owned config.
 - `~/.dreamux/run/`: volatile run files and socket fallback root.
-- `~/.dreamux/state/`: durable server-owned dispatcher, Feishu, Team, and
-  TeamMate state.
+- `~/.dreamux/state/`: durable dispatcher, Feishu, Team, and TeamMate state;
+  most documents are server-owned, while Feishu `access.json` has an explicit
+  mixed field-ownership contract.
 - `~/.dreamux/cache/`: rebuildable cache such as completion spill files and
   Feishu attachments.
 - `~/.dreamux/logs/`: server, runtime, and MCP shim logs.
@@ -396,6 +406,13 @@ required skill sources by role and may compose authorized admin-supplied roots:
 - Dispatcher roles receive dispatcher workflow and maintenance skills;
   TeamLeader roles receive the Team workflow skill. Both roles also receive the
   shared Dynamic Workflow skill.
+- `dreamux-maintenance` uses progressive disclosure: a concise root routes to
+  seven one-level owners for service lifecycle, the host envelope, three
+  built-in provider configs, V3 Feishu access, and managed-daemon self-upgrade.
+  The root and non-upgrade references are current-state-only. The upgrade owner
+  is a narrow generic SOP that reads concrete actions from the validated staged
+  target's changelog and routed references rather than embedding release
+  history.
 - Ordinary TeamMate and team-member roles receive none by default.
 - Additional roots supplied through admin creation are persisted with the
   agent identity. TeamLeader launch always prepends the required bundled role
@@ -544,5 +561,6 @@ Key source:
   orchestration, state/file, scheduled-work, and repository contracts
 - [Runtime run root](../decisions/runtime-run-root.md)
 - [Agents config normalization](../decisions/agents-config-normalization.md)
+- [Feishu trusted allow-chats semantics](../decisions/feishu-allow-chats-trust-semantics.md)
 - Historical proposal:
   [plugin/provider architecture proposal](../archive/proposals/plugin-provider-architecture.md)

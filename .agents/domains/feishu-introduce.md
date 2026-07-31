@@ -1,7 +1,9 @@
 # Feishu event-route seam + group `/introduce`
 
-- **Status:** Implemented (issue #62, first increment). Invite-code/pairing and
-  rich attachments are deferred to follow-up PRs — see Deferred below.
+- **Status:** Implemented. The original issue #62 event-route and `/introduce`
+  increment remains current; its former pairing and attachment follow-ups have
+  landed in [Feishu pairing access V3](../decisions/feishu-pairing-access-v3.md)
+  and [Feishu inbound attachments](../decisions/feishu-inbound-attachments.md).
 - **Source:** https://github.com/excitedjs/dreamux/issues/62,
   https://github.com/excitedjs/dreamux/issues/87
 - **Affects:** `/packages/channel/feishu-channel/src/bot.ts`,
@@ -37,44 +39,33 @@ authorized to run it under the group's policy**. No `@`-mention of our bot is
 required, and the group's `require_mention` setting is ignored on this path.
 
 Authorization (`introduceDenyReason` / `canRunIntroduce` in
-`/packages/channel/feishu-channel/src/introduce.ts`) **mirrors the delivery
-gate `dreamuxFeishuGate` for the same `group.policy`**, minus the `@`-mention
-requirement introduce deliberately waives:
+`/packages/channel/feishu-channel/src/introduce.ts`) is deliberately
+sender-scoped because the command mutates peer-bot trust. It shares the delivery
+gate's group-policy boundaries but does not inherit ordinary trusted-chat
+authority, and it waives the ordinary `@`-mention requirement:
 
 - `block` → never authorized (`group_blocked`); the gate drops every group
   message, and a trust-changing command is no exception.
-- `follow-user` → `group.allow_chats` is **ignored**, exactly as the delivery
-  gate ignores it. The group needs no authorization; only the sender's
-  membership in the global `allow_users` list matters. An allow_user can
-  therefore `/introduce` in any group, including a brand-new one that is not in
-  `allow_chats`.
-- `allowlist` → the chat must be in `group.allow_chats` (the group is the unit
-  of trust) **and** the sender must be on `allow_users`. This sender check is an
-  intentional divergence from the delivery gate (issue #62): the delivery gate
-  lets any member of an allowlisted chat speak, but a trust-changing command is
-  sender-scoped — "any member of an allowlisted group" is deliberately **not** a
-  path to introduce.
+- `follow-user` → the chat need not be in `group.allow_chats`, but the sender
+  must be in the global `allow_users` list. A listed chat may authorize ordinary
+  human delivery, yet it does not grant this trust-mutation authority.
+- `allowlist` → the chat must be in `group.allow_chats` **and** the sender must
+  be on `allow_users`. Ordinary delivery trusts every exact human in the listed
+  chat, but "any member of a trusted group" is deliberately not a path to
+  introduce.
 
-An empty `allow_users` authorizes nobody. A bot sender is never on the human
-allowlist, so ambient self-introduction by an arbitrary bot does not trigger
-introduce.
+`allow_users` is structurally a string list, and `/introduce` authorization is
+an exact sender-id membership check rather than a human-only gate. An exact
+bot/app sender whose id was deliberately or manually placed in that list can
+therefore pass the current check. An empty list authorizes nobody, and ambient
+bot/app senders are denied when their ids are absent.
 
-> **Gate ↔ introduce parity.** The two paths must agree under `block` and
-> `follow-user`, and diverge under `allowlist` only by the sender check above.
-> This is asserted by a table-driven test in `tests/feishu-introduce.test.ts`
-> ("gate vs introduce parity") so accidental drift fails CI. The bug that
-> motivated this contract was exactly such a drift: issue #82 made
-> `dreamuxFeishuGate` policy-aware (so `follow-user` stopped checking
-> `allow_chats`) but left `canRunIntroduce` with a hardcoded `allow_chats`
-> requirement for *every* policy. The result: an `allow_users` sender could chat
-> in a brand-new `follow-user` group (after `@`-mentioning the bot) but could
-> never `/introduce` there — it was diagnosed as `chat_not_allowlisted`. Issues
-> #77 and #87 then built on the frozen behavior without revisiting it. The
-> awareness path now lives in
-> `/packages/channel/feishu-channel/src/feishu-channel.ts` (`observeKnownBot`,
-> gated on `allow_chats.includes`). It is the *same*
-> hardcoded-`allow_chats` shape one layer up — out of scope here (it tracks
-> `known` bots, not trust), but a candidate for the same follow-user alignment.
+> **Gate ↔ introduce split.** A table-driven test covers all group policies,
+> listed/unlisted chats, and followed/unfollowed senders. It locks the intentional
+> divergence under either non-block policy: an unfollowed exact human may deliver
+> ordinary text in a trusted chat, while `/introduce` returns
+> `sender_not_followed` and writes no trust. Under `follow-user`, an `allow_users`
+> sender can still introduce in an unlisted chat.
 
 Detection (`detectIntroduce`) is text-only and strips leading Feishu mention
 placeholder tokens before matching `^/introduce`, so an `@`-prefixed
@@ -109,10 +100,10 @@ command but sends no ack.
 ## Unauthorized-introduce diagnostic (issue #77)
 
 A `/introduce` whose sender is not authorized is **not** consumed: it falls
-through to `dreamuxFeishuGate` and is dropped like any other group message —
-most misleadingly as `bot not mentioned`, because the introduce path waives the
-mention requirement that the gate still enforces. To keep this one-glance
-diagnosable, `introduceDenyReason`
+through to `dreamuxFeishuGate` like any other group message. A trusted chat can
+therefore deliver the command text as an ordinary turn without executing the
+trust mutation; an untrusted path may drop or pair according to its ordinary
+gate inputs. To keep this one-glance diagnosable, `introduceDenyReason`
 (`/packages/channel/feishu-channel/src/introduce.ts`) is the discriminated
 source of truth — `canRunIntroduce` is its boolean projection — returning a
 stable, grep-able code: `non_group`, `empty_sender_id`, `group_blocked`,
@@ -185,13 +176,17 @@ Dispatcher Service routes it to the channel handler, which reads
 `chat-bots-store` directly when no live session is required. Same transport
 shape as `reply` / `react`; no operator CLI surface.
 
-## Deferred to follow-up PRs
+## Deferred follow-ups
 
-Not in this increment, tracked on issue #62:
+The original issue #62 follow-up list is mostly implemented. Current contracts
+are recorded in the landed
+[Feishu pairing access V3](../decisions/feishu-pairing-access-v3.md) and
+[Feishu inbound attachments](../decisions/feishu-inbound-attachments.md)
+decisions.
 
-- Invite-code pairing, the shared `Access` contract migration, and the
-  operator approve/deny surface (`access.*` admin methods + CLI).
-- Rich inbound attachments (bounded authorized downloads, token references).
+Only these items remain unimplemented:
+
+- An operator access admin/CLI surface (`access.*` admin methods + CLI).
 - `doc_comment` handling.
 
 (The one-shot discovery-context injection and the list-known-bots tool landed in

@@ -109,6 +109,20 @@ Do not use per-package `npm install`; workspace dependencies use `workspace:*`.
 - **Live Codex tests:** tests that require a real Codex install fail loudly when
   Codex is missing. Use `DREAMUX_SKIP_LIVE_CODEX=1` only when the environment
   intentionally lacks Codex.
+- **Config/state maintenance synchronization:** every change to the shape,
+  validation, default, ownership, or meaning of a Dreamux config or persisted
+  state file must update
+  `/packages/dreamux/skills/dispatcher/dreamux-maintenance/` in the same change:
+  keep `SKILL.md` routing accurate and update the single owning reference. Name
+  fully server-owned state and prohibit direct editing; for mixed state, state
+  the field boundary exactly. The root and every reference except
+  `references/self-upgrade.md` are current-state-only: they may name the one
+  accepted schema/version but must not contain upgrade detection, historical
+  formats, migrations, `Rebuild:` recipes, or delete/recreate instructions.
+  The self-upgrade reference is the narrow generic exception: it reads concrete
+  transition work from a validated staged target's changelog and owning
+  references instead of embedding release-specific history. Put historical
+  details in change notes, public docs, loader errors, and decision trails.
 
 ## Knowledge Delta
 
@@ -126,16 +140,21 @@ If yes, update `.agents/` in the same PR and run:
 
 ## Changelog Responsibility
 
-Dreamux 0.x handles incompatible config/state changes by fail-loud plus manual
-rebuild. Any change that can block or break a user's upgrade needs a Rush change
-file. Use `rush change`; never hand-edit generated changelogs.
+Dreamux 0.x handles incompatible config/state shape, version, or path changes by
+fail-loud plus manual rebuild. Any change that can block or break a user's
+upgrade needs a Rush change file. Use `rush change`; never hand-edit generated
+changelogs.
 
 Typical upgrade blockers include config/state/cache/run/log path semantics,
 persisted file formats, onboard/daemon behavior, bundled skills, dispatcher
 cwd/work directory contracts, and any manual rebuild requirement.
 
-For breaking notes, lead with `BREAKING:` and include `Rebuild:` when the user
-must recreate a file/path.
+For incompatible shape, version, or path changes, breaking notes lead with
+`BREAKING:` and include `Rebuild:` with the exact manual action. A same-shape
+semantic change may retain its state version only when the operator explicitly
+approves that tradeoff; its breaking note must lead with `BREAKING:`, immediately
+include `Review:` with the required operator check, explicitly say no rebuild is
+needed, and contain no `Rebuild:` instruction.
 
 ## Commits
 

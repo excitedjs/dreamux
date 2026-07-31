@@ -69,6 +69,23 @@ import {
 const log = (h: SessionHandle) => h.opts.log;
 const FEISHU_USER_NAME_LOOKUP_TIMEOUT_MS = 2_000;
 
+type ClassifiedInbound =
+  | { chatType: 'p2p' | 'group'; senderKind: 'human' | 'bot' }
+  | { reason: 'unsupported_chat_type' | 'sender_unknown' };
+
+function classifyInbound(event: FeishuInboundEvent): ClassifiedInbound {
+  if (event.chatType !== 'p2p' && event.chatType !== 'group') {
+    return { reason: 'unsupported_chat_type' };
+  }
+  if (event.senderType === 'user' && event.senderId !== '') {
+    return { chatType: event.chatType, senderKind: 'human' };
+  }
+  if (isBotSenderType(event.senderType) && event.senderId !== '') {
+    return { chatType: event.chatType, senderKind: 'bot' };
+  }
+  return { reason: 'sender_unknown' };
+}
+
 function pairingTokenLogFields(token: string): Record<string, unknown> {
   return { pairing_token_len: PAIRING_TOKEN_REGEX.test(token) ? 6 : token.length };
 }
@@ -78,13 +95,31 @@ export async function onMessage(
   event: FeishuInboundEvent,
   submitter: FeishuInboundSubmitter,
 ): Promise<void> {
+  // Classify once at the raw Channel boundary. Unknown chat/sender shapes must
+  // not be projected into the public gate's `is_bot_sender: false` human
+  // precondition, nor reach passive observation, /introduce, or pairing.
+  const classification = classifyInbound(event);
+  if ('reason' in classification) {
+    log(h).info(
+      {
+        chat_id: event.chatId,
+        chat_type: event.chatType,
+        sender_id: event.senderId,
+        message_id: event.messageId,
+        reason: classification.reason,
+      },
+      'feishu inbound dropped',
+    );
+    return;
+  }
+
   const access = await h.accessMutex.lock(async () =>
     loadDispatcherAccess(h.opts.stateDir),
   );
 
   if (
-    event.chatType === 'group' &&
-    isBotSenderType(event.senderType) &&
+    classification.chatType === 'group' &&
+    classification.senderKind === 'bot' &&
     access.group.allow_chats.includes(event.chatId)
   ) {
     await observeKnownBot(h.opts.stateDir, event.chatId, {
@@ -94,7 +129,7 @@ export async function onMessage(
   }
   if (detectIntroduce(event.messageType, event.rawContent, event.mentions)) {
     const denyReason = introduceDenyReason(access, {
-      chatType: event.chatType,
+      chatType: classification.chatType,
       chatId: event.chatId,
       senderId: event.senderId,
     });
@@ -126,20 +161,19 @@ export async function onMessage(
   }
 
   const trustedBots =
-    event.chatType === 'group'
+    classification.chatType === 'group'
       ? await trustedBotIds(h.opts.stateDir, event.chatId)
       : undefined;
 
-  const senderIsBot = isBotSenderType(event.senderType);
+  const senderIsBot = classification.senderKind === 'bot';
   const botMentioned = isBotMentioned(event.mentions, h.bot.botOpenId);
-  const chatType: 'p2p' | 'group' = event.chatType === 'p2p' ? 'p2p' : 'group';
   const inbound: GateInbound = {
-    chat_type: chatType,
+    chat_type: classification.chatType,
     sender_id: event.senderId,
     chat_id: event.chatId,
     is_bot_sender: senderIsBot,
     trusted_bot:
-      senderIsBot && event.chatType === 'group'
+      senderIsBot && classification.chatType === 'group'
         ? trustedBots?.has(event.senderId) ?? false
         : false,
     bot_mentioned: botMentioned,

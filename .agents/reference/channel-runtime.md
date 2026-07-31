@@ -53,6 +53,24 @@ Key source:
 
 ## Feishu Inbound Content Fidelity
 
+### Inbound trust boundary
+
+Before any content work, the Feishu session classifies raw chat/sender identity
+once. Only `p2p | group` and exact `user | bot | app` senders with non-empty ids
+proceed; unknown chat/sender shapes fail closed before access mutation, passive
+bot observation, `/introduce`, pairing, or delivery.
+
+V3 `group.allow_chats` is trusted human group membership under either non-block
+group policy after the one global mention gate. `allowlist` drops an unlisted
+chat; `follow-user` sends only an unlisted chat through the existing
+`dm_policy`/`allow_users` path. Bot/P2P behavior is unchanged, passive known-bot
+observation remains list-scoped, and `/introduce` remains sender-scoped.
+
+Current contract:
+
+- [Feishu pairing access](../domains/feishu-pairing-access.md)
+- [Feishu introduce](../domains/feishu-introduce.md)
+
 Feishu content parsing and SDK ownership stay split across the two channel
 packages. `@excitedjs/feishu-transport` parses event content once into ordered,
 untrusted `text` / `code` / `resource` parts. That sequence is the internal
@@ -493,5 +511,6 @@ Codex `turn/start` folding details.
 - [Channel input runtime assembly](../decisions/channel-input-runtime-assembly.md)
 - [Feishu inbound attachments](../decisions/feishu-inbound-attachments.md)
 - [Feishu pairing access v3](../decisions/feishu-pairing-access-v3.md)
+- [Feishu trusted allow-chats semantics](../decisions/feishu-allow-chats-trust-semantics.md)
 - Archived background:
   [plugin/provider architecture proposal](../archive/proposals/plugin-provider-architecture.md)

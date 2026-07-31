@@ -9,7 +9,9 @@ runtime socket allocation belongs in
 
 ## Operator Config
 
-`~/.dreamux/config.json` is the only Dreamux operator-editable config source.
+The path reported by `dreamux config path` is the only Dreamux operator config
+source. It is normally `~/.dreamux/config.json`, while `DREAMUX_CONFIG_DIR` may
+relocate it.
 
 It declares:
 
@@ -66,18 +68,21 @@ Key source:
 - `/packages/dreamux/src/service/worktree/paths.ts`
 - `/packages/dreamux/src/service/team-collection/index.ts`
 
-## Server-Owned State
+## Durable State
 
-`~/.dreamux/state/` is durable server-owned state. It is not an operator config
-surface.
+`~/.dreamux/state/` is durable state. It is not the Dreamux host config surface;
+each document's owner defines whether any field can be maintained externally.
 
 Important children:
 
 - `~/.dreamux/state/<dispatcher-id>/identity.json` + `turn.jsonl`: the dispatcher
   agent's authoritative runtime recovery record at the dispatcher *root* (not
   under `teammate/`), so the `teammate.*` read chokepoints never enumerate it.
-- `~/.dreamux/state/<dispatcher-id>/access.json`: dispatcher-local Feishu access
-  gate state.
+- `~/.dreamux/state/<dispatcher-id>/access.json`: dispatcher-local Feishu V3
+  access state with mixed field ownership. `version` is Channel/schema-owned;
+  `dm_policy` and `group.*` are operator policy; `allow_users` is shared between
+  live pairing/Owner approval and a quiesced operator; `pending`,
+  `observed_chats`, `warnings`, and `last_gate` are Channel runtime ledger.
 - `~/.dreamux/state/<dispatcher-id>/chat-bots.json`: Feishu known/trusted peer
   bot store owned by the Feishu Channel provider.
 - `~/.dreamux/state/<dispatcher-id>/cron-jobs.json`: durable scheduled-task
@@ -112,6 +117,14 @@ remain code-owned and are recomposed at launch rather than persisted.
 
 Legacy identity records that point at old under-state worktree paths are read
 verbatim. Dreamux does not rewrite or delete them during ordinary startup.
+
+`access.json` is always under the fixed state path above, independent of
+`DREAMUX_CONFIG_DIR`. Manual access maintenance requires an independent
+operator to keep the owning Channel fully stopped across post-stop re-read,
+exact owner-only atomic patch, current V3 validation, and restart. Preserve the
+schema and runtime-ledger fields. If the file is absent after stop, initialize
+from the full secure current default through a sibling `0600` temporary file;
+create a missing state directory at `0700`.
 
 Key source:
 
@@ -264,3 +277,4 @@ Key source:
 - [Providerized config and state compatibility](../decisions/providerized-config-state-compatibility.md)
 - [Provider architecture realignment](../decisions/provider-architecture-realignment.md)
 - [NPM package split and channel targets](../decisions/npm-package-split-and-channel-targets.md)
+- [Feishu trusted allow-chats semantics](../decisions/feishu-allow-chats-trust-semantics.md)
