@@ -172,7 +172,8 @@ per-agent worktree 隔离 / cwd 覆盖（砍掉）。模型选择走 `agentType`
   唯一写者；行格式：头行 `{ kind: 'run', version: 1, run_id,
   script_hash, caller, ... }`（未知 version 读取端 fail-loud）、
   `{ kind: 'submit', index, name, turn_id }`、`{ kind: 'result', index,
-  status }`（结果正文过大时截断/引用）、`{ kind: 'phase' | 'log' }`、
+  status, settled_at }`（MVP v1 **不记录结果正文**，仅 status；正文截断/
+  内联/引用为后续能力，待 resume 设计时再定）、`{ kind: 'phase' | 'log' }`、
   `{ kind: 'end', status }`。追加失败 → run `failed`（fail-loud）。JSONL
   追加/读取复用现有低层 primitive（与 `AgentTurnsStore` 共享，不自行
   解析他人文件）。
