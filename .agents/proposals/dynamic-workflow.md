@@ -1,12 +1,16 @@
 # Dynamic Workflow 编排（草案 spec）
 
-状态：草案 v4 —— 已折入本方常驻评审团两席评审（v2）、奥菲利亚三席联合评审
+状态：草案 v5 —— 已折入本方常驻评审团两席评审（v2）、奥菲利亚三席联合评审
 （Issue #309，B1–B5 / D1–D5 / L1–L3 / P2 全部裁定落实）与异构 runtime 复
 审（claude-seed / trae-claude）的补充发现。MVP 范围已按操作者「先跑起来、
 精简、不过度防御」基调收敛：MVP 砍 `opts.name` 复用（每次 `agent()`
 spawn 新 agent、完全隔离，避免在途 turn 被打扰导致结果偏差）、双作用域
 collection 形态对齐现有 `TeammateCollection` 所有权模式、supervised-child
-原语抽取列为落地前置硬约束。
+原语抽取列为落地前置硬约束。**v5 变更（操作者决策）：结构化输出
+（`schema`）从「prompt 附加 + server 单次 JSON 校验」改为「runtime 原生
+`outputSchema` 能力（codex `turn/start.outputSchema` / claude-code
+`--json-schema`）+ server 单次 `JSON.parse`」，从源头利用 runtime 原生能
+力，不自建校验。**
 
 按操作者要求，本提案及配套 Issue / PR 协作全部使用中文（对仓库
 "repo docs 用英文" 规则的一次性例外，不构成对该规则的修订）。
@@ -54,10 +58,18 @@ Claude Code Workflow 契约的对齐子集：
 
 - `export const meta = { name, description, phases? }` — 纯字面量。
 - `agent(prompt, opts?)` — 生成一个新 TeamMate、提交一个 turn、等待
-  settle，返回最终文本（有 `schema` 时为校验后的结构值或 `null`）。
+  settle，返回最终文本（有 `schema` 时为解析后的结构值或 `null`）。
   `opts`：`label`、`phase`、`schema`、`agentType`（agent-runtime id）、
   `intent` 覆盖、`identity`（人设文本，透传给 `teammate.spawn` 现有
   `identity` → system-prompt append）。
+  **`schema` 走 runtime 原生结构化输出能力（操作者最终决策）。** server
+  把 `schema`（JSON Schema）作为 `outputSchema` 透传给 `AgentRuntime`，
+  由 provider 映射到各自原生机制：codex `turn/start` 的 `outputSchema`
+  字段、claude-code `--json-schema` 参数。server **不在 prompt 后附加
+  schema 指令块、不做 JSON 校验/围栏提取**——模型在 runtime 原生约束下
+  直接产出符合 schema 的 JSON，server settle 后仅做一次 `JSON.parse`：
+  成功返回结构值，解析失败归 `null` 并打 WARN 日志。runtime 不支持
+  `outputSchema` 时，`agent()` 直接抛错（fail-loud，不静默降级为纯文本）。
   **MVP 每次 `agent()` 都 spawn 新 agent，完全隔离（操作者最终决策）。**
   现有 runtime 的 active-turn folding 是锁定契约，复用常驻 agent 会引入
   「在途 turn 被打扰 / 结果偏差」风险；即便加 `AgentBusyError` 约束，把一
@@ -144,10 +156,16 @@ per-agent worktree 隔离 / cwd 覆盖（砍掉）。模型选择走 `agentType`
   `max_concurrency` 请求值由 server 钳制；超额 `agent_start` 在 server
   侧排队（每 run 信号量，runner 侧不可绕过）。生命周期上限：每 run 200
   个 agent。
-- **结构化输出（`schema`），无重试（评审 D3 裁定）。** server 在 prompt
-  后附加 schema 指令块，settle 后做**一次** JSON 校验（围栏 JSON 提
-  取）：通过返回结构值，失败该次调用归 `null` 并打 WARN 日志。校验重试
-  是后续能力（需先设计 per-attempt journal）。
+- **结构化输出（`schema`）走 runtime 原生能力，无重试（评审 D3
+  裁定 + 操作者决策）。** `schema`（JSON Schema 对象）经 `AgentRuntime`
+  中性 seam 透传为 `outputSchema`，provider 映射到原生机制：codex
+  `turn/start.outputSchema`、claude-code `--json-schema`。server **不**
+  在 prompt 附加 schema 指令块、**不**做围栏 JSON 提取/校验——模型在
+  runtime 原生约束下直接产出符合 schema 的 JSON。settle 后 server 仅
+  做一次 `JSON.parse(resultText)`：成功返回结构值，解析失败该次调用归
+  `null` 并打 WARN 日志。runtime 不支持 `outputSchema` 时 `agent()`
+  直接抛错（fail-loud）。校验重试是后续能力（需先设计 per-attempt
+  journal）。
 - **journal：只写不读（评审 D4/D5 裁定，MVP 砍 resume）。** journal 是
   run 的结构化事件日志与将来 resume 的数据基础，MVP **只写入、不读取复
   放**；`resume_from_run_id` 不进 MVP 工具面。server（`WorkflowRun`）是
@@ -160,7 +178,7 @@ per-agent worktree 隔离 / cwd 覆盖（砍掉）。模型选择走 `agentType`
   解析他人文件）。
 - **日志（操作者明确要求，MVP 必做）。** journal 之外，pino 组件日志落
   `~/.dreamux/logs/workflow/<dispatcher>.log`：run 创建/终态、每次
-  `agent_start`/settle（含 producer 名与 turn_id）、schema 校验失败、
+  `agent_start`/settle（含 producer 名与 turn_id）、schema 解析失败、
   并发排队、stop、runner 退出码——关键路径全覆盖。
 - **stop 语义。** `workflow_stop`：向 runner 发 `abort` 并杀 runner →
   该 run 后续 settle 只记录不投递 → in-flight TeamMate turn 自然 settle
@@ -233,7 +251,8 @@ schema 用法、run 后对具体名字 `send` 续聊。TeamLeader 系统提示�
   fixture 的快 settle 场景——所有权接线在 spawn 时完成，结构上无窗口）。
 - busy-loop script 不劣化 server（跑在 runner 进程里；`stop` 可杀）。
 - runner 中途被杀（模拟崩溃）→ run 标 `failed`，调用者收到终态推送。
-- `schema` 调用返回解析后的结构值；不合法即归 `null`（单次校验无重试）。
+- `schema` 调用返回解析后的结构值；runtime 原生约束下产出不合法 JSON
+  即归 `null`（单次 `JSON.parse`，无重试）。
 - run 结束后 agent 保持可寻址：对结果中记录的具体名字 `send` 可拉起并
   续聊（auto-close 除读面 `closed` 状态外不可感知）；`identity` 调用可
   证实人设生效。
@@ -250,7 +269,8 @@ schema 用法、run 后对具体名字 `send` 续聊。TeamLeader 系统提示�
   turn 串行边界）。
 - `resume_from_run_id` / journal 读取复放（评审 D4/D5；journal 格式按可
   复放设计，读取端后续再做）。
-- schema 校验重试（评审 D3）。
+- schema 解析失败重试（评审 D3；runtime 原生约束 + 单次 `JSON.parse`，
+  不重试）。
 - per-run token / runner 私有 admin RPC（评审 D2；IPC 替代）。
 - token 预算统计、嵌套 `workflow()`、命名 workflow 注册表、per-agent
   worktree 隔离 / cwd 覆盖。
