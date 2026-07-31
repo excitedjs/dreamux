@@ -186,6 +186,7 @@ export class TurnManager {
         threadId,
         input.text,
         this.opts.turnCwd ?? null,
+        input.outputSchema,
       );
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));

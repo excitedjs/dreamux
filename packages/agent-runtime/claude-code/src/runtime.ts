@@ -290,6 +290,19 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 
   async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
     if (this.stopped) return { status: 'stopped' };
+    if (input.outputSchema !== undefined) {
+      // The resident stream-json session applies CLI flags at spawn time and
+      // cannot re-negotiate a per-turn JSON schema. Fail loud rather than
+      // silently ignoring the schema and returning unconstrained text.
+      // Per-turn schema support is a follow-up (one-shot `claude --print
+      // --json-schema` spawn).
+      return {
+        status: 'failed',
+        error: new Error(
+          'claude-code runtime does not support per-turn outputSchema on the resident session',
+        ),
+      };
+    }
     const key = input.sourceId;
     if (key !== undefined && key !== '' && this.seenTextInputIds.has(key)) {
       return { status: 'duplicate' };
