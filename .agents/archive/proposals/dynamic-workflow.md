@@ -1,4 +1,11 @@
-# Dynamic Workflow 编排（草案 spec）
+# Dynamic Workflow 编排（已实现 · 归档）
+
+> **状态：已实现（2026-08）。** MVP 按本 v5 终稿落地，见 PR #312
+> `feat(workflow): Dynamic Workflow MVP (v5 spec)`（squash-merged 到
+> `next`，head `ea3be94`）。本提案保留为历史上下文；当前实现以源码与
+> bundled skill `workflow` 为准。两条合并后顺手项（stop 后 status 待
+> settle 收敛的 skill 说明、未提交成功成员存活到 run 终态统一 release
+> 的资源驻留）有测试钉住，不影响本提案范围。
 
 状态：草案 v5 —— 已折入本方常驻评审团两席评审（v2）、奥菲利亚三席联合评审
 （Issue #309，B1–B5 / D1–D5 / L1–L3 / P2 全部裁定落实）与异构 runtime 复
