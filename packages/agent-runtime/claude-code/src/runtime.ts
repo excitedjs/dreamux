@@ -82,6 +82,7 @@ import {
   type TurnOutcome,
   type TurnSubmitOptions,
 } from './supervisor.js';
+import { runClaudeCodeSchemaTurn } from './schema-turn.js';
 import { renderChannelInput } from '@excitedjs/dreamux-utils';
 import { CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
 import { consoleFallbackLogger } from './logger.js';
@@ -100,7 +101,6 @@ import type {
   DreamuxLogger,
   InboundTurnInput,
   TurnSettledSignal,
-  UnsupportedAgentRuntimeFeatureError,
 } from '@excitedjs/dreamux-types';
 
 /**
@@ -292,16 +292,42 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
     if (this.stopped) return { status: 'stopped' };
     if (input.outputSchema !== undefined) {
-      // The resident stream-json session applies CLI flags at spawn time and
-      // cannot re-negotiate a per-turn JSON schema. Fail loud with a typed
-      // UnsupportedAgentRuntimeFeatureError rather than silently ignoring the
-      // schema and returning unconstrained text. Per-turn schema support is a
-      // follow-up (one-shot `claude --print --json-schema` spawn).
-      const error = unsupportedAgentRuntimeFeatureError(
-        'outputSchema',
-        'claude-code runtime does not support per-turn outputSchema on the resident session',
+      // Resident stream-json session can't re-negotiate a per-turn schema, so
+      // spawn a one-shot `claude --print --json-schema` process. Independent of
+      // the active turn slot — a normal in-flight turn is never disturbed.
+      const key = input.sourceId;
+      if (key !== undefined && key !== '' && this.seenTextInputIds.has(key)) {
+        return { status: 'duplicate' };
+      }
+      if (key !== undefined && key !== '') this.seenTextInputIds.add(key);
+      const turnId = this.nextTurnId('turn');
+      this.recordQueuedTurnStart();
+      void runClaudeCodeSchemaTurn({
+        bin: this.bin,
+        config: this.config,
+        mcpConfigJson: this.mcpConfigJson,
+        outputSchema: input.outputSchema,
+        systemPromptAppend: this.deps.systemPromptAppend,
+        skillAddDirs:
+          (this.deps.skillSources ?? []).length === 0
+            ? []
+            : [this.skillAddDirRoot],
+        disableFeatures: this.deps.disableFeatures,
+        cwd: this.cwd,
+        env: this.buildProcessEnv(this.config.extra_env),
+        prompt: input.text,
+        log: (level, msg, err) => this.log(level, msg, err),
+      }).then(
+        (resultText) => {
+          this.log(
+            'info',
+            `claude-code schema turn ${turnId} produced structured output`,
+          );
+          this.markTurnSucceeded(turnId, resultText);
+        },
+        (err) => this.markTurnFailed(turnId, err),
       );
-      return { status: 'failed', error };
+      return { status: 'submitted', turnId };
     }
     const key = input.sourceId;
     if (key !== undefined && key !== '' && this.seenTextInputIds.has(key)) {
@@ -670,14 +696,4 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   ): void {
     this.logger[level](err !== undefined ? { err } : {}, msg);
   }
-}
-
-function unsupportedAgentRuntimeFeatureError(
-  feature: string,
-  message: string,
-): UnsupportedAgentRuntimeFeatureError {
-  return Object.assign(new Error(message), {
-    name: 'UnsupportedAgentRuntimeFeatureError' as const,
-    feature,
-  });
 }

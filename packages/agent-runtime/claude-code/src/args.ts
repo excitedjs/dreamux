@@ -143,3 +143,68 @@ export function claudeCodeResidentArgs(input: ClaudeCodeResidentArgsInput): stri
   args.push(...input.config.extra_args);
   return args;
 }
+
+export interface ClaudeCodeSchemaArgsInput {
+  config: DispatcherClaudeCodeConfig;
+  /** Inline Claude Code MCP config JSON document. */
+  mcpConfigJson: string;
+  /** JSON Schema object constraining the model's structured output. */
+  outputSchema: Record<string, unknown>;
+  /**
+   * Launcher-supplied ordered dispatcher/role system-prompt content. Applied
+   * as an APPEND via `--append-system-prompt`, same as the resident transport.
+   */
+  systemPromptAppend?: readonly string[];
+  /** Runtime-owned add-dir roots that contain `.claude/skills/<name>` entries. */
+  skillAddDirs?: readonly string[];
+  /** Neutral feature names the host asked this runtime to disable. */
+  disableFeatures?: readonly string[];
+}
+
+/**
+ * Build the `claude` CLI args for a *one-shot* structured-output turn.
+ *
+ * The resident stream-json transport applies CLI flags at spawn time and cannot
+ * re-negotiate a per-turn JSON schema, so a turn that requests `outputSchema`
+ * spawns a separate short-lived `claude --print --json-schema <schema>
+ * --output-format json` process: the prompt is written to stdin (default text
+ * input format), and the single JSON result on stdout carries a pre-validated
+ * `structured_output` field the caller parses.
+ *
+ * Shares the resident transport's config threading (model / permission mode /
+ * extra args / MCP config / skills / system prompt append / disallowed tools)
+ * so the schema turn sees the same context as a normal turn. No `--resume` —
+ * each schema turn is a fresh, self-contained process.
+ */
+export function claudeCodeSchemaArgs(input: ClaudeCodeSchemaArgsInput): string[] {
+  const args = [
+    '--print',
+    '--json-schema',
+    JSON.stringify(input.outputSchema),
+    '--output-format',
+    'json',
+    '--mcp-config',
+    input.mcpConfigJson,
+  ];
+  args.push(...claudeCodeSkillAddDirArgs(input.skillAddDirs));
+  const disallowedTools = (input.disableFeatures ?? []).flatMap(
+    (feature) => CLAUDE_DISALLOWED_TOOLS_BY_FEATURE[feature] ?? [],
+  );
+  if (disallowedTools.length > 0) {
+    args.push('--disallowedTools', disallowedTools.join(','));
+  }
+  if (input.config.permission_mode !== null) {
+    args.push('--permission-mode', input.config.permission_mode);
+  }
+  if (input.config.model !== null) {
+    args.push('--model', input.config.model);
+  }
+  const systemPromptContent = claudeCodeSystemPromptAppendContent(
+    input.systemPromptAppend,
+  );
+  if (systemPromptContent !== undefined) {
+    args.push('--append-system-prompt', systemPromptContent);
+  }
+  args.push(...input.config.extra_args);
+  return args;
+}

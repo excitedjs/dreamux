@@ -1068,7 +1068,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(fleet.sessions[0]?.submitOptions[0]).toEqual({ isSynthetic: false });
   });
 
-  it('returns the structural unsupported-feature error for outputSchema', async () => {
+  it('accepts completionInput with outputSchema (one-shot schema turn)', async () => {
     const { runtime } = await makeRuntime(fakeFleet());
     await runtime.start();
 
@@ -1078,15 +1078,9 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       outputSchema: { type: 'object' },
     });
 
-    expect(result).toMatchObject({
-      status: 'failed',
-      error: {
-        name: 'UnsupportedAgentRuntimeFeatureError',
-        feature: 'outputSchema',
-        message:
-          'claude-code runtime does not support per-turn outputSchema on the resident session',
-      },
-    });
+    // outputSchema is now supported via a one-shot `claude --print --json-schema`
+    // spawn (not the resident session), so the turn is accepted as submitted.
+    expect(result).toMatchObject({ status: 'submitted' });
   });
 
   it('returns stopped for completionInput after stop', async () => {
