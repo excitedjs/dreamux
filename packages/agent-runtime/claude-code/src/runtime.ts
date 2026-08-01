@@ -297,11 +297,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       // UnsupportedAgentRuntimeFeatureError rather than silently ignoring the
       // schema and returning unconstrained text. Per-turn schema support is a
       // follow-up (one-shot `claude --print --json-schema` spawn).
-      const error = new Error(
+      const error = unsupportedAgentRuntimeFeatureError(
+        'outputSchema',
         'claude-code runtime does not support per-turn outputSchema on the resident session',
-      ) as UnsupportedAgentRuntimeFeatureError;
-      error.name = 'UnsupportedAgentRuntimeFeatureError';
-      (error as UnsupportedAgentRuntimeFeatureError).feature = 'outputSchema';
+      );
       return { status: 'failed', error };
     }
     const key = input.sourceId;
@@ -671,4 +670,14 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   ): void {
     this.logger[level](err !== undefined ? { err } : {}, msg);
   }
+}
+
+function unsupportedAgentRuntimeFeatureError(
+  feature: string,
+  message: string,
+): UnsupportedAgentRuntimeFeatureError {
+  return Object.assign(new Error(message), {
+    name: 'UnsupportedAgentRuntimeFeatureError' as const,
+    feature,
+  });
 }

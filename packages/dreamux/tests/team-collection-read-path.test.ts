@@ -1198,6 +1198,73 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
     expect(runtimes[0]?.getStatus()).toBe('stopped');
   });
 
+  it('sweeps a workflow member after its admitted Team lease materializes it', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const teams = new TeamCollection({
+      dispatcherId: 'dispatcher-a',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      worktrees: new WorktreeManager(),
+      identities: new AgentIdentityStore(log),
+      turnsStore: new AgentTurnsStore(log),
+      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      adminSocketPath: '/tmp/admin.sock',
+      leaderChannelDescriptors: () => [],
+      log,
+    });
+    await teams.create({
+      name: 'lease-stop',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'exercise workflow spawn handoff',
+    });
+    const lease = await teams.teamLeaderLease('lease-stop');
+    const leaseEntered = deferred<void>();
+    const allowSpawn = deferred<void>();
+    const owner = createOwnedTeammateOwner();
+    const spawning = teams.withTeamLeaderLease(lease, async (service) => {
+      leaseEntered.resolve();
+      await allowSpawn.promise;
+      return service.spawnOwnedTeamMate(
+        {
+          name: 'worker',
+          prompt: 'materialize before the shutdown sweep',
+          intent: 'workflow-owned member',
+          agentRuntime: 'agent-a',
+        },
+        { owner, routeSettledCompletion: async () => undefined },
+      );
+    });
+    await leaseEntered.promise;
+
+    let stopSettled = false;
+    const stopping = teams.stopAll().then(() => {
+      stopSettled = true;
+    });
+    await Promise.resolve();
+    expect(stopSettled).toBe(false);
+
+    allowSpawn.resolve();
+    await spawning;
+    await stopping;
+    expect(runtimes).toHaveLength(2);
+    expect(runtimes.map((runtime) => runtime.stopAttempts)).toEqual([1, 1]);
+    expect(runtimes.map((runtime) => runtime.getStatus()))
+      .toEqual(['stopped', 'stopped']);
+  });
+
   it('continues stopping sibling members and the leader after a member stop fails', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });

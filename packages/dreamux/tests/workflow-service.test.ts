@@ -68,7 +68,11 @@ class FakeOwnedTeammates implements OwnedTeammateOps {
   spawnAttempts = 0;
   spawnError: Error | null = null;
   spawnErrorAfterOwnership: Error | null = null;
+  releaseGate: Promise<void> | null = null;
+  releaseAttempts = 0;
   releaseAllGate: Promise<void> | null = null;
+  releaseAllError: Error | null = null;
+  releaseAllAttempts = 0;
   autoSettle: {
     status: CompletionEnvelope['status'];
     result: string | null;
@@ -119,17 +123,28 @@ class FakeOwnedTeammates implements OwnedTeammateOps {
     if (this.owners.get(name) !== owner) {
       throw new Error(`fake TeamMate ${name} has a different owner`);
     }
+    this.releaseAttempts += 1;
+    await this.releaseGate;
     this.owners.delete(name);
     this.releases.push(name);
     return { teammate: teammateStatus(name, 'closed') };
   }
 
   async releaseAllOwned(owner: OwnedTeammateOwner): Promise<void> {
+    this.releaseAllAttempts += 1;
     await this.releaseAllGate;
+    if (this.releaseAllError !== null) throw this.releaseAllError;
     const names = [...this.owners.entries()]
       .filter(([, currentOwner]) => currentOwner === owner)
       .map(([name]) => name);
     await Promise.all(names.map((name) => this.release(name, owner)));
+  }
+
+  async sweepAllOwned(): Promise<void> {
+    await Promise.all(
+      [...this.owners.entries()].map(([name, owner]) =>
+        this.release(name, owner)),
+    );
   }
 
   async settle(
@@ -589,7 +604,7 @@ describe('WorkflowService', () => {
     await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
   });
 
-  it('returns a non-submitted agent as null and releases its owner exactly once', async () => {
+  it('returns a non-submitted agent as null and auto-closes it at terminal', async () => {
     const ctx = await context(['run-agent-failed']);
     ctx.teammates.nextTurnStatus = 'failed';
     await ctx.service.run({ script: validScript() });
@@ -606,12 +621,50 @@ describe('WorkflowService', () => {
         { type: 'agent_result', index: 0, result: null },
       ]),
     );
-    expect(ctx.teammates.releases).toEqual([
-      ctx.teammates.spawns[0]?.name,
-    ]);
+    expect(ctx.teammates.releases).toEqual([]);
 
     runner.emit({ type: 'run_result', status: 'completed', result: null });
     await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
+    expect(ctx.teammates.releases).toEqual([
+      ctx.teammates.spawns[0]?.name,
+    ]);
+  });
+
+  it('leaves a non-submitted agent for the shutdown collection sweep', async () => {
+    const ctx = await context(['run-agent-failed-shutdown']);
+    ctx.teammates.nextTurnStatus = 'failed';
+    const writeStarted = deferred<void>();
+    const allowWrite = deferred<void>();
+    const releaseGate = deferred<void>();
+    ctx.teammates.releaseGate = releaseGate.promise;
+    const originalWrite = WorkflowRunStore.prototype.write;
+    vi.spyOn(WorkflowRunStore.prototype, 'write').mockImplementation(
+      async function (this: WorkflowRunStore, record) {
+        if (record.agents[0]?.status === 'failed') {
+          writeStarted.resolve();
+          await allowWrite.promise;
+        }
+        await originalWrite.call(this, record);
+      },
+    );
+    await ctx.service.run({ script: validScript() });
+    ctx.runner.latest().emit({
+      type: 'agent_start',
+      index: 0,
+      prompt: 'runtime rejects before shutdown',
+      options: {},
+    });
+    await writeStarted.promise;
+
+    const shutdown = ctx.service.stopAllForShutdown();
+    allowWrite.resolve();
+    await shutdown;
+    const sweep = ctx.teammates.sweepAllOwned();
+    await Promise.resolve();
+    expect(ctx.teammates.releaseAttempts).toBe(1);
+
+    releaseGate.resolve();
+    await sweep;
     expect(ctx.teammates.releases).toEqual([
       ctx.teammates.spawns[0]?.name,
     ]);
@@ -667,6 +720,36 @@ describe('WorkflowService', () => {
 
     expect(ctx.teammates.releases).toEqual(['residual-owner']);
     expect(ctx.initiator.received[0]?.status).toBe('completed');
+  });
+
+  it('preserves a completed result when terminal cleanup fails', async () => {
+    const ctx = await context(['run-cleanup-failed']);
+    ctx.teammates.releaseAllError = new Error('owned cleanup failed');
+    await ctx.service.run({ script: validScript() });
+
+    ctx.runner.latest().emit({
+      type: 'run_result',
+      status: 'completed',
+      result: { answer: 42 },
+    });
+    await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
+
+    expect(ctx.initiator.received[0]?.status).toBe('completed');
+    expect(JSON.parse(ctx.initiator.received[0]?.result ?? '')).toMatchObject({
+      status: 'completed',
+      result: { answer: 42 },
+      error: 'owned cleanup failed',
+    });
+    expect(await ctx.service.status({ run_id: 'run-cleanup-failed' }))
+      .toMatchObject({
+        status: 'completed',
+        result: { answer: 42 },
+        error: 'owned cleanup failed',
+      });
+    expect(ctx.log.events).toContainEqual(expect.objectContaining({
+      level: 'warn',
+      message: 'workflow terminal cleanup had failures',
+    }));
   });
 
   it('locks the run failed before a persistence error can produce agent_result', async () => {
@@ -769,9 +852,7 @@ describe('WorkflowService', () => {
     );
     expect(ctx.teammates.spawnAttempts).toBe(1);
     expect(ctx.teammates.spawns).toHaveLength(1);
-    expect(ctx.teammates.releases).toEqual([
-      ctx.teammates.spawns[0]?.name,
-    ]);
+    expect(ctx.teammates.releases).toEqual([]);
 
     runner.emit({
       type: 'run_result',
@@ -780,6 +861,9 @@ describe('WorkflowService', () => {
     });
     await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
     expect(ctx.initiator.received[0]?.status).toBe('failed');
+    expect(ctx.teammates.releases).toEqual([
+      ctx.teammates.spawns[0]?.name,
+    ]);
   });
 
   it('maps an ordinary outputSchema turn failure to null', async () => {
@@ -851,7 +935,7 @@ describe('WorkflowService', () => {
     );
   });
 
-  it('locks stop as the terminal outcome and waits for natural settle before release', async () => {
+  it('returns stop after reserving the outcome and finalizes after natural settle', async () => {
     const ctx = await context(['run-stop'], (harness) => {
       harness.onSend = (message, runner) => {
         if (message.type === 'abort') {
@@ -873,23 +957,18 @@ describe('WorkflowService', () => {
     });
     await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(1));
 
-    let stopped = false;
-    const stopTask = ctx.service.stop({ run_id: 'run-stop' }).then((result) => {
-      stopped = true;
-      return result;
+    await expect(ctx.service.stop({ run_id: 'run-stop' })).resolves.toEqual({
+      run_id: 'run-stop',
+      status: 'stopped',
     });
     await vi.waitFor(() =>
       expect(runner.sent.some((message) => message.type === 'abort')).toBe(true),
     );
-    await Promise.resolve();
-    expect(stopped).toBe(false);
     expect(ctx.teammates.releases).toEqual([]);
+    expect(ctx.initiator.received).toHaveLength(0);
 
     await ctx.teammates.settle(0, 'completed', 'late result');
-    await expect(stopTask).resolves.toEqual({
-      run_id: 'run-stop',
-      status: 'stopped',
-    });
+    await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
     expect(agentResults(runner)).toEqual([]);
     expect(ctx.teammates.releases).toEqual([
       ctx.teammates.spawns[0]?.name,
@@ -907,6 +986,185 @@ describe('WorkflowService', () => {
       agents: [{ status: 'completed' }],
     });
     expect(activeRunCount(ctx.service)).toBe(0);
+  });
+
+  it('stops for shutdown without waiting for an in-flight turn or auto-close', async () => {
+    const ctx = await context(['run-shutdown-stop']);
+    await ctx.service.run({ script: validScript() });
+    const runner = ctx.runner.latest();
+    runner.emit({
+      type: 'agent_start',
+      index: 0,
+      prompt: 'leave runtime cleanup to the shutdown sweep',
+      options: {},
+    });
+    await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(1));
+
+    await expect(ctx.service.stopAllForShutdown()).resolves.toBeUndefined();
+
+    expect(runner.stopCount).toBeGreaterThan(0);
+    expect(ctx.teammates.releases).toEqual([]);
+    const terminal = await ctx.service.status({ run_id: 'run-shutdown-stop' });
+    expect(terminal).toMatchObject({
+      status: 'stopped',
+      agents: [{ status: 'stopped' }],
+    });
+    expect(terminal.updated_at).toBe(terminal.ended_at);
+    expect(activeRunCount(ctx.service)).toBe(0);
+    expect(ctx.initiator.received).toEqual([]);
+    expect((await journalEvents('run-shutdown-stop')).map((event) => event.kind))
+      .toEqual(['run', 'submit', 'end']);
+
+    await ctx.teammates.settle(0, 'stopped', null);
+    expect(agentResults(runner)).toEqual([]);
+    expect(ctx.teammates.releases).toEqual([]);
+    expect((await journalEvents('run-shutdown-stop')).map((event) => event.kind))
+      .toEqual(['run', 'submit', 'end']);
+    expect(await ctx.service.status({ run_id: 'run-shutdown-stop' }))
+      .toEqual(terminal);
+  });
+
+  it('freezes completions before draining the latest shutdown mutation', async () => {
+    const ctx = await context(['run-shutdown-mutation']);
+    const writeStarted = deferred<void>();
+    const allowWrite = deferred<void>();
+    const originalWrite = WorkflowRunStore.prototype.write;
+    let gateFirstResult = true;
+    vi.spyOn(WorkflowRunStore.prototype, 'write').mockImplementation(
+      async function (this: WorkflowRunStore, record) {
+        if (
+          gateFirstResult &&
+          record.agents[0]?.status === 'completed' &&
+          record.agents[1]?.status === 'running'
+        ) {
+          gateFirstResult = false;
+          writeStarted.resolve();
+          await allowWrite.promise;
+        }
+        await originalWrite.call(this, record);
+      },
+    );
+    await ctx.service.run({ script: validScript(), max_concurrency: 2 });
+    const runner = ctx.runner.latest();
+    for (const index of [0, 1]) {
+      runner.emit({
+        type: 'agent_start',
+        index,
+        prompt: `agent ${index}`,
+        options: {},
+      });
+    }
+    await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(2));
+
+    const firstSettle = ctx.teammates.settle(0, 'completed', 'first');
+    await writeStarted.promise;
+    const secondSettle = ctx.teammates.settle(1, 'completed', 'second');
+    await vi.waitFor(async () =>
+      expect((await ctx.service.status({ run_id: 'run-shutdown-mutation' }))
+        .agents[1]?.status).toBe('completed'));
+    const shutdown = ctx.service.stopAllForShutdown();
+    let shutdownSettled = false;
+    void shutdown.then(() => {
+      shutdownSettled = true;
+    });
+    await Promise.resolve();
+    expect(shutdownSettled).toBe(false);
+
+    allowWrite.resolve();
+    await Promise.all([firstSettle, secondSettle, shutdown]);
+    expect((await journalEvents('run-shutdown-mutation')).map((event) =>
+      event.kind)).toEqual([
+      'run',
+      'submit',
+      'submit',
+      'result',
+      'result',
+      'end',
+    ]);
+  });
+
+  it('rejects a completion arriving after shutdown starts draining mutations', async () => {
+    const ctx = await context(['run-shutdown-late-mutation']);
+    const writeStarted = deferred<void>();
+    const allowWrite = deferred<void>();
+    const originalWrite = WorkflowRunStore.prototype.write;
+    let gateFirstResult = true;
+    vi.spyOn(WorkflowRunStore.prototype, 'write').mockImplementation(
+      async function (this: WorkflowRunStore, record) {
+        if (
+          gateFirstResult &&
+          record.agents[0]?.status === 'completed' &&
+          record.agents[1]?.status === 'running'
+        ) {
+          gateFirstResult = false;
+          writeStarted.resolve();
+          await allowWrite.promise;
+        }
+        await originalWrite.call(this, record);
+      },
+    );
+    await ctx.service.run({ script: validScript(), max_concurrency: 2 });
+    const runner = ctx.runner.latest();
+    for (const index of [0, 1]) {
+      runner.emit({
+        type: 'agent_start',
+        index,
+        prompt: `agent ${index}`,
+        options: {},
+      });
+    }
+    await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(2));
+
+    const firstSettle = ctx.teammates.settle(0, 'completed', 'first');
+    await writeStarted.promise;
+    const shutdown = ctx.service.stopAllForShutdown();
+    await vi.waitFor(() => expect(runner.stopCount).toBeGreaterThan(0));
+    for (let step = 0; step < 4; step += 1) await Promise.resolve();
+    const secondSettle = ctx.teammates.settle(1, 'completed', 'late');
+    allowWrite.resolve();
+    await Promise.all([firstSettle, secondSettle, shutdown]);
+
+    expect((await journalEvents('run-shutdown-late-mutation')).map((event) =>
+      event.kind)).toEqual(['run', 'submit', 'submit', 'result', 'end']);
+    expect(await ctx.service.status({ run_id: 'run-shutdown-late-mutation' }))
+      .toMatchObject({
+        status: 'stopped',
+        agents: [{ status: 'completed' }, { status: 'stopped' }],
+      });
+  });
+
+  it('joins auto-close already running when shutdown begins', async () => {
+    const ctx = await context(['run-shutdown-auto-close']);
+    const releaseGate = deferred<void>();
+    ctx.teammates.releaseAllGate = releaseGate.promise;
+    await ctx.service.run({ script: validScript() });
+    const runner = ctx.runner.latest();
+    runner.emit({
+      type: 'agent_start',
+      index: 0,
+      prompt: 'complete before shutdown',
+      options: {},
+    });
+    await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(1));
+    await ctx.teammates.settle(0, 'completed', 'done');
+    runner.emit({ type: 'run_result', status: 'completed', result: 'done' });
+    await vi.waitFor(() => expect(ctx.teammates.releaseAllAttempts).toBe(1));
+
+    const shutdown = ctx.service.stopAllForShutdown();
+    let shutdownSettled = false;
+    void shutdown.then(() => {
+      shutdownSettled = true;
+    });
+    await Promise.resolve();
+    expect(shutdownSettled).toBe(false);
+    expect(ctx.teammates.releaseAllAttempts).toBe(1);
+
+    releaseGate.resolve();
+    await shutdown;
+    expect(ctx.teammates.releaseAllAttempts).toBe(1);
+    expect(ctx.teammates.releases).toHaveLength(1);
+    expect(await ctx.service.status({ run_id: 'run-shutdown-auto-close' }))
+      .toMatchObject({ status: 'completed', result: 'done' });
   });
 
   it('fails on runner exit but still drains the owned turn before release', async () => {

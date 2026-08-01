@@ -686,7 +686,8 @@ export class TeamCollection {
 
   async stopAll(): Promise<void> {
     const results = await Promise.allSettled(
-      [...this.materialized].map((service) => service.stopAll()),
+      [...this.materialized].map((service) =>
+        this.routeLifecycle.run(service.id, () => service.stopAll())),
     );
     const failures = results
       .filter((result): result is PromiseRejectedResult => result.status === 'rejected')

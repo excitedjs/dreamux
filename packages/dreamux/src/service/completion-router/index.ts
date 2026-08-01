@@ -81,6 +81,12 @@ export class CompletionRouter {
     this.pending.set(completionKey, initiator);
   }
 
+  /** Mark a registered completion terminal without invoking its initiator. */
+  discard(completionKey: string): void {
+    this.pending.delete(completionKey);
+    this.rememberTerminal(completionKey);
+  }
+
   /**
    * Deliver a settled turn's completion to its registered initiator, then clear
    * the registration. No-op when the key was never registered (a turn nobody is

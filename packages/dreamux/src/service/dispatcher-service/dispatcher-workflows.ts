@@ -10,7 +10,7 @@ interface DispatcherWorkflowDeps {
   dispatcherId: string;
   teammates: Pick<
     TeammateCollection,
-    'spawnOwned' | 'release' | 'releaseAllOwned'
+    'spawnOwned' | 'releaseAllOwned'
   >;
   teams: Pick<
     TeamCollection,
@@ -36,7 +36,6 @@ export class DispatcherWorkflows {
         spawnOwned: (spawnInput, options) =>
           input.admit(() => input.teammates.spawnOwned(spawnInput, options)),
         // Owner cleanup remains available after dispatcher admission closes.
-        release: (name, owner) => input.teammates.release(name, owner),
         releaseAllOwned: (owner) => input.teammates.releaseAllOwned(owner),
       },
       router: input.router,
@@ -68,6 +67,10 @@ export class DispatcherWorkflows {
 
   stopAll(): Promise<void> {
     return this.service.stopAll();
+  }
+
+  stopAllForShutdown(): Promise<void> {
+    return this.service.stopAllForShutdown();
   }
 
   async rollbackStart(): Promise<void> {

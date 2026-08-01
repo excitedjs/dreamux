@@ -455,8 +455,7 @@ export class DispatcherService {
       if (this.preparing !== null) await this.preparing.catch(() => {});
       if (this.inputSourcesStarting !== null) await this.inputSourcesStarting.catch(() => {});
       this.coreEvents.revokeSources();
-      await collectShutdownFailure(failures, () => this.workflowOwner.stopAll());
-      await collectShutdownFailure(failures, () => this._teammates.releaseAllOwned());
+      await collectShutdownFailure(failures, () => this.workflowOwner.stopAllForShutdown());
       await this.channels.closeAll(this.log);
       if (this.preparedChannels !== null) {
         await closeAllBuilt(this.preparedChannels);
@@ -466,6 +465,7 @@ export class DispatcherService {
       this.scheduler_.stop();
       this.teams.stopSchedulers();
       await this.admittedTasks.drain();
+      await collectShutdownFailure(failures, () => this._teammates.releaseAllOwned());
       await this.collaborationSpaces.drainLifecycleTasks();
       this.scheduler_.stop();
       this.teams.stopSchedulers();
@@ -523,7 +523,7 @@ export class DispatcherService {
     this.admittedTasks.closeAdmission();
     const failures: unknown[] = [];
     await collectShutdownFailure(failures, () => this.stop());
-    await collectShutdownFailure(failures, () => this.workflowOwner.stopAll());
+    await collectShutdownFailure(failures, () => this.workflowOwner.stopAllForShutdown());
     await collectShutdownFailure(failures, () => this._teammates.stopAll());
     await collectShutdownFailure(failures, () => this.teams.stopAll());
     throwShutdownFailures(

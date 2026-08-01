@@ -38,7 +38,7 @@ const MAX_MAX_CONCURRENCY = 8;
 
 export interface WorkflowServiceOptions extends WorkflowScopePathInput {
   callerKind: WorkflowCallerKind;
-  ownedTeammates: OwnedTeammateOps;
+  ownedTeammates: Pick<OwnedTeammateOps, 'spawnOwned' | 'releaseAllOwned'>;
   router: CompletionRouter;
   completionInitiator: () => CompletionInitiator;
   log: DreamuxLogger;
@@ -149,6 +149,7 @@ export class WorkflowService implements WorkflowOps {
       ownedTeammates: this.opts.ownedTeammates,
       createRunner,
       settleTerminal: (completion) => this.opts.router.settle(key, completion),
+      discardTerminal: () => this.opts.router.discard(key),
       evict: (terminal) => this.evict(runId, terminal),
       log: this.opts.log,
       ...(this.opts.now !== undefined ? { now: this.opts.now } : {}),
@@ -187,10 +188,11 @@ export class WorkflowService implements WorkflowOps {
     await this.initialize();
     const runId = validateWorkflowRunId(input.run_id);
     const active = this.runs.get(runId);
-    const record = active === undefined
-      ? await this.status({ run_id: runId })
-      : await active.stop();
-    return { run_id: runId, status: record.status };
+    if (active === undefined) {
+      const record = await this.status({ run_id: runId });
+      return { run_id: runId, status: record.status };
+    }
+    return { run_id: runId, status: await active.stop() };
   }
 
   async list(): Promise<WorkflowListResult> {
@@ -207,12 +209,25 @@ export class WorkflowService implements WorkflowOps {
     };
   }
 
-  async stopAll(): Promise<void> {
+  stopAll(): Promise<void> {
+    return this.stopRuns(async (run) => {
+      await run.stopAndWait();
+    });
+  }
+
+  /** Stop runners and persist terminal records without waiting on agent turns. */
+  stopAllForShutdown(): Promise<void> {
+    return this.stopRuns((run) => run.stopForShutdown());
+  }
+
+  private async stopRuns(
+    stop: (run: WorkflowRun) => Promise<void>,
+  ): Promise<void> {
     this.closeAdmission();
     await this.recover();
     await Promise.allSettled([...this.runCreations]);
     const results = await Promise.allSettled(
-      [...this.runs.values()].map((run) => run.stop()),
+      [...this.runs.values()].map(stop),
     );
     const errors = results
       .filter(

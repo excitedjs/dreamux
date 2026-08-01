@@ -72,6 +72,18 @@ describe('CompletionRouter', () => {
     expect(true).toBe(true);
   });
 
+  it('discards a registered completion without invoking its initiator', async () => {
+    const r = router();
+    const initiator = new FakeInitiator([{ status: 'accepted' }]);
+    const key = completionKey('mate', 'turn-1');
+    r.register(key, initiator);
+    r.discard(key);
+
+    await r.settle(key, envelope('mate', 'turn-1'));
+
+    expect(initiator.received).toEqual([]);
+  });
+
   it('coalesces a duplicate settle via the terminal cache (at-most-once)', async () => {
     const r = router();
     const initiator = new FakeInitiator([{ status: 'accepted' }]);

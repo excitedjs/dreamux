@@ -25,6 +25,8 @@ overlapping writes.
 - `workflow_stop` stops a running `run_id`. In-flight agent turns settle before
   the stopped terminal completion is delivered.
 
+Each run can start at most 200 agents across its complete lifecycle.
+
 Use `workflow_status` for an explicit progress check or recovery, not as a polling
 loop. After a run, use a recorded concrete TeamMate name with `send` when a result
 needs an interactive follow-up.
@@ -87,7 +89,8 @@ valid JSON. A runtime that cannot provide structured output rejects that
 A failed thunk contributes `null` without discarding the other results.
 
 `pipeline(items, ...stages)` processes each item through its stages in order while
-different items can advance independently. Use it when every item needs the same
+different items can advance independently. A failed item contributes `null`
+without discarding the other items. Use it when every item needs the same
 multi-step treatment:
 
 ```js

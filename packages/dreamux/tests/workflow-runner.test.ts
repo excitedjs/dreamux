@@ -73,7 +73,10 @@ describe('workflow runner', () => {
           phase('shape');
           const piped = await pipeline(
             collected.filter(Boolean),
-            (value) => ({ value }),
+            (value) => {
+              if (value === 'third result') throw new Error('item failed');
+              return { value };
+            },
             async (value) => ({ ...value, done: true }),
           );
           return {
@@ -125,7 +128,7 @@ describe('workflow runner', () => {
         collected: [{ answer: 1 }, null, 'third result', null],
         piped: [
           { value: { answer: 1 }, done: true },
-          { value: 'third result', done: true },
+          null,
         ],
         epoch: '1970-01-01T00:00:00.000Z',
         rounded: 2,

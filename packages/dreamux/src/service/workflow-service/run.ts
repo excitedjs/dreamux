@@ -33,6 +33,7 @@ import {
   type Deferred,
   type NormalizedWorkflowAgentOptions,
 } from './run-support.js';
+import { WorkflowRunTerminal } from './run-terminal.js';
 
 const MAX_AGENTS = 200;
 
@@ -40,9 +41,10 @@ export interface WorkflowRunDeps {
   record: WorkflowRunRecord;
   store: WorkflowRunStore;
   journal: WorkflowJournal;
-  ownedTeammates: OwnedTeammateOps;
+  ownedTeammates: Pick<OwnedTeammateOps, 'spawnOwned' | 'releaseAllOwned'>;
   createRunner: WorkflowRunnerFactory;
   settleTerminal: (completion: CompletionEnvelope) => Promise<void>;
+  discardTerminal: () => void;
   evict: (run: WorkflowRun) => void;
   log: DreamuxLogger;
   now?: () => number;
@@ -61,17 +63,14 @@ export class WorkflowRun {
   private readonly record: WorkflowRunRecord;
   private readonly runner: WorkflowRunnerHandle;
   private readonly semaphore: WorkflowSemaphore;
+  private readonly terminal: WorkflowRunTerminal;
   private readonly calls = new Map<number, AgentCall>();
   private readonly runnerMessageTasks = new Set<Promise<void>>();
   private readonly agentTasks = new Set<Promise<void>>();
   private readonly teammateOwner = createOwnedTeammateOwner();
   private mutationTail: Promise<void> = Promise.resolve();
   private runnerMessageTail: Promise<void> = Promise.resolve();
-  private terminalTask: Promise<void> | null = null;
-  private terminalRequested: WorkflowTerminalStatus | null = null;
   private runnerTerminalMessageSeen = false;
-  private suppressAgentDelivery = false;
-  private acceptingAgents = true;
 
   constructor(private readonly deps: WorkflowRunDeps) {
     this.record = deps.record;
@@ -89,9 +88,9 @@ export class WorkflowRun {
         );
         if (
           !this.runnerTerminalMessageSeen &&
-          this.terminalRequested === null
+          this.terminal.requested === null
         ) {
-          this.requestTerminalObserved(
+          this.terminal.observe(
             'failed',
             null,
             `workflow runner exited before reporting a result (code=${String(exit.code)}, signal=${String(exit.signal)})`,
@@ -103,10 +102,20 @@ export class WorkflowRun {
           { run_id: this.record.run_id, err: errorInfo(error) },
           'workflow runner error',
         );
-        if (this.terminalRequested === null) {
-          this.requestTerminalObserved('failed', null, error.message);
+        if (this.terminal.requested === null) {
+          this.terminal.observe('failed', null, error.message);
         }
       },
+    });
+    this.terminal = new WorkflowRunTerminal({
+      runId: this.record.run_id,
+      status: () => this.record.status,
+      abortRunner: () => this.runner.send({ type: 'abort' }),
+      closeAdmission: (status) =>
+        this.semaphore.close(new Error(`workflow ${status}`)),
+      finalize: (status, result, error) =>
+        this.finalize(status, result, error),
+      log: deps.log,
     });
   }
 
@@ -137,43 +146,30 @@ export class WorkflowRun {
       await this.runner.start();
       await this.runner.send({ type: 'run_start', script, args });
     } catch (error) {
-      await this.requestTerminal('failed', null, errorMessage(error));
+      await this.terminal.request('failed', null, errorMessage(error));
     }
   }
 
-  async stop(): Promise<WorkflowRunRecord> {
-    if (this.terminalTask !== null) {
-      await this.terminalTask;
-      return this.snapshot();
-    }
-    if (this.record.status !== 'running') return this.snapshot();
-    // Reserve the terminal outcome before abort IPC: the runner may report its
-    // abort-induced failure before the send callback resumes this task.
-    this.reserveStop();
-    this.deps.log.info({ run_id: this.record.run_id }, 'stopping workflow run');
-    await this.runner.send({ type: 'abort' }).catch((error: unknown) => {
-      this.deps.log.warn(
-        { run_id: this.record.run_id, err: errorInfo(error) },
-        'workflow abort IPC failed; killing runner',
-      );
-    });
-    await this.requestTerminal('stopped', null, null);
+  async stop(): Promise<WorkflowTerminalStatus> {
+    return this.terminal.stop();
+  }
+
+  /** Stop through the public contract, then wait for natural settle/auto-close. */
+  async stopAndWait(): Promise<WorkflowRunRecord> {
+    await this.terminal.stopAndWait();
     return this.snapshot();
   }
 
-  closeAdmission(): void {
-    this.reserveStop();
+  /**
+   * Bound process shutdown: persist a terminal run after killing the runner,
+   * but hand owned runtime cleanup to the collection-wide force-stop sweep.
+   */
+  async stopForShutdown(): Promise<void> {
+    await this.terminal.stopForShutdown();
   }
 
-  private reserveStop(): void {
-    if (
-      this.terminalRequested !== null ||
-      this.record.status !== 'running'
-    ) return;
-    this.terminalRequested = 'stopped';
-    this.suppressAgentDelivery = true;
-    this.acceptingAgents = false;
-    this.semaphore.close(new Error('workflow stopped'));
+  closeAdmission(): void {
+    this.terminal.reserveStop();
   }
 
   private receiveRunnerMessage(message: unknown): void {
@@ -188,7 +184,7 @@ export class WorkflowRun {
     const task = this.runnerMessageTail
       .then(() => this.handleRunnerMessage(message))
       .catch((error: unknown) => {
-        this.requestTerminalObserved('failed', null, errorMessage(error));
+        this.terminal.observe('failed', null, errorMessage(error));
       });
     this.runnerMessageTail = task;
     if (message.type !== 'run_result') {
@@ -207,7 +203,7 @@ export class WorkflowRun {
       case 'emit':
         if (
           this.record.status !== 'running' ||
-          this.terminalRequested !== null
+          this.terminal.requested !== null
         ) return;
         await this.mutate(async () => {
           if (message.kind === 'phase') this.record.phase = message.message;
@@ -222,11 +218,11 @@ export class WorkflowRun {
         });
         return;
       case 'run_result':
-        if (this.terminalRequested !== null) return;
+        if (this.terminal.requested !== null) return;
         if (message.status === 'completed') {
-          await this.requestTerminal('completed', message.result ?? null, null);
+          await this.terminal.request('completed', message.result ?? null, null);
         } else {
-          await this.requestTerminal('failed', null, message.error);
+          await this.terminal.request('failed', null, message.error);
         }
         return;
     }
@@ -234,9 +230,9 @@ export class WorkflowRun {
 
   private async handleAgentStart(message: WorkflowAgentStartMessage): Promise<void> {
     if (
-      !this.acceptingAgents ||
+      !this.terminal.accepting ||
       this.record.status !== 'running' ||
-      this.terminalRequested !== null
+      this.terminal.requested !== null
     ) {
       await this.sendAgentError(message.index, 'workflow is no longer running');
       return;
@@ -306,7 +302,7 @@ export class WorkflowRun {
     let releaseSlot: (() => void) | null = null;
     try {
       releaseSlot = await this.semaphore.acquire();
-      if (this.terminalRequested !== null) {
+      if (this.terminal.requested !== null) {
         await this.completeAgent(call, 'stopped', null);
         return;
       }
@@ -314,7 +310,7 @@ export class WorkflowRun {
       call.record.phase = call.options.phase ?? this.record.phase;
       this.record.updated_at = this.now();
       await this.mutate(() => this.deps.store.write(this.record));
-      if (this.terminalRequested !== null) {
+      if (this.terminal.requested !== null) {
         await this.completeAgent(call, 'stopped', null);
         return;
       }
@@ -348,6 +344,10 @@ export class WorkflowRun {
             : {}),
         },
       );
+      if (call.completed) {
+        call.submissionReady.resolve();
+        return;
+      }
       call.record.name = spawned.teammate.name;
       call.record.turn_id = spawned.turn.status === 'submitted'
         ? spawned.turn.turnId
@@ -387,27 +387,25 @@ export class WorkflowRun {
             ? spawned.turn.error.message
             : undefined;
         await this.completeAgent(call, status, null, runnerError);
-        await this.deps.ownedTeammates.release(
-          spawned.teammate.name,
-          this.teammateOwner,
-        );
         return;
       }
       await call.settled.promise;
     } catch (error) {
       call.submissionReady.resolve();
       if (error instanceof WorkflowPersistenceError) {
-        this.requestTerminalObserved('failed', null, error.message);
+        // Fail-loud persistence deliberately enters terminal cleanup, which may
+        // stop this owned runtime mid-turn because its settle cannot be recorded.
+        this.terminal.observe('failed', null, error.message);
         return;
       }
       if (!call.completed) {
-        const stopped = this.terminalRequested === 'stopped';
+        const stopped = this.terminal.requested === 'stopped';
         await this.completeAgent(
           call,
           stopped ? 'stopped' : 'failed',
           null,
         ).catch((persistenceError: unknown) => {
-          this.requestTerminalObserved(
+          this.terminal.observe(
             'failed',
             null,
             errorMessage(persistenceError),
@@ -473,7 +471,7 @@ export class WorkflowRun {
       // Let the producer's settle route unwind before terminal auto-close.
       // Entity release drains that same route, so awaiting finalization here
       // would create a persistence-failure cleanup cycle.
-      this.requestTerminalObserved('failed', null, errorMessage(error));
+      this.terminal.observe('failed', null, errorMessage(error));
     }
   }
 
@@ -508,7 +506,7 @@ export class WorkflowRun {
         },
         'workflow agent settled',
       );
-      if (!this.suppressAgentDelivery && this.terminalRequested === null) {
+      if (!this.terminal.suppressDelivery) {
         if (runnerError !== undefined) {
           await this.runner.send({
             type: 'agent_result',
@@ -525,8 +523,8 @@ export class WorkflowRun {
       }
     } catch (error) {
       if (error instanceof WorkflowPersistenceError) throw error;
-      if (this.terminalRequested === null) {
-        this.requestTerminalObserved('failed', null, errorMessage(error));
+      if (this.terminal.requested === null) {
+        this.terminal.observe('failed', null, errorMessage(error));
       }
     } finally {
       call.settled.resolve();
@@ -534,41 +532,8 @@ export class WorkflowRun {
   }
 
   private async sendAgentError(index: number, error: string): Promise<void> {
-    if (this.suppressAgentDelivery || this.terminalRequested !== null) return;
+    if (this.terminal.suppressDelivery) return;
     await this.runner.send({ type: 'agent_result', index, error });
-  }
-
-  private requestTerminal(
-    status: WorkflowTerminalStatus,
-    result: unknown,
-    error: string | null,
-  ): Promise<void> {
-    if (this.terminalTask !== null) return this.terminalTask;
-    const terminalStatus = this.terminalRequested ?? status;
-    this.terminalRequested = terminalStatus;
-    this.acceptingAgents = false;
-    this.suppressAgentDelivery = true;
-    this.semaphore.close(new Error(`workflow ${terminalStatus}`));
-    const task = this.finalize(
-      terminalStatus,
-      terminalStatus === status ? result : null,
-      terminalStatus === status ? error : null,
-    );
-    this.terminalTask = task;
-    return task;
-  }
-
-  private requestTerminalObserved(
-    status: WorkflowTerminalStatus,
-    result: unknown,
-    error: string | null,
-  ): void {
-    void this.requestTerminal(status, result, error).catch((terminalError: unknown) => {
-      this.deps.log.error(
-        { run_id: this.record.run_id, err: errorInfo(terminalError) },
-        'workflow terminal transition failed',
-      );
-    });
   }
 
   private async finalize(
@@ -585,20 +550,25 @@ export class WorkflowRun {
     while (this.runnerMessageTasks.size > 0) {
       await Promise.allSettled([...this.runnerMessageTasks]);
     }
-    await this.drainAgentTasks();
+    const agentTasksDrained = await this.terminal.waitUnlessShutdown(
+      this.drainAgentTasks(),
+    );
+    if (this.terminal.shutdownRequested) this.freezeAgentCalls(this.now());
     await this.mutationTail;
 
-    const releases = await Promise.allSettled([
-      this.deps.ownedTeammates.releaseAllOwned(this.teammateOwner),
-    ]);
-    cleanupErrors.push(
-      ...releases
-        .filter(
-          (release): release is PromiseRejectedResult =>
-            release.status === 'rejected',
-        )
-        .map((release) => release.reason),
-    );
+    if (agentTasksDrained && !this.terminal.shutdownRequested) {
+      const releases = await Promise.allSettled([
+        this.deps.ownedTeammates.releaseAllOwned(this.teammateOwner),
+      ]);
+      cleanupErrors.push(
+        ...releases
+          .filter(
+            (release): release is PromiseRejectedResult =>
+              release.status === 'rejected',
+          )
+          .map((release) => release.reason),
+      );
+    }
     if (cleanupErrors.length > 0) {
       this.deps.log.warn(
         {
@@ -607,7 +577,6 @@ export class WorkflowRun {
         },
         'workflow terminal cleanup had failures',
       );
-      if (status !== 'stopped') status = 'failed';
       error ??= cleanupErrors.map(errorMessage).join('; ');
     }
 
@@ -646,13 +615,25 @@ export class WorkflowRun {
       2,
     );
     try {
-      await this.deps.settleTerminal({
-        kind: 'workflow',
-        source: 'workflow',
-        id: this.record.run_id,
-        status,
-        result: completionResult,
-      });
+      if (this.terminal.shutdownRequested) {
+        this.deps.discardTerminal();
+      } else {
+        const settleTask = this.deps.settleTerminal({
+          kind: 'workflow',
+          source: 'workflow',
+          id: this.record.run_id,
+          status,
+          result: completionResult,
+        });
+        if (!(await this.terminal.waitUnlessShutdown(settleTask))) {
+          void settleTask.catch((settleError: unknown) => {
+            this.deps.log.error(
+              { run_id: this.record.run_id, err: errorInfo(settleError) },
+              'workflow terminal delivery failed during shutdown',
+            );
+          });
+        }
+      }
     } finally {
       this.deps.log.info(
         {
@@ -670,6 +651,17 @@ export class WorkflowRun {
   private async drainAgentTasks(): Promise<void> {
     while (this.agentTasks.size > 0) {
       await Promise.allSettled([...this.agentTasks]);
+    }
+  }
+
+  private freezeAgentCalls(settledAt: number): void {
+    for (const call of this.calls.values()) {
+      if (call.completed) continue;
+      call.completed = true;
+      call.record.status = 'stopped';
+      call.record.settled_at = settledAt;
+      call.submissionReady.resolve();
+      call.settled.resolve();
     }
   }
 

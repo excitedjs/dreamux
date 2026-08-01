@@ -246,11 +246,15 @@ shared `CompletionRouter` with the original caller as initiator.
 
 `schema` is passed through the runtime-neutral `outputSchema` turn input. The
 run parses a successful structured result once with `JSON.parse`; unsupported
-runtime capability fails the individual `agent()` call loudly. Terminal runs
-wait for in-flight turns, silently close and evict their owned TeamMates, and
-then evict the live run entity. Stop aborts and kills the runner without
-interrupting TeamMate turns. Startup marks durable `running` records as
-`stopped`; journal replay and run resume are not implemented.
+runtime capability fails the individual `agent()` call loudly. Normal terminal
+runs wait for in-flight turns, silently close and evict their owned TeamMates,
+and then evict the live run entity. `workflow_stop` reserves `stopped` and
+returns immediately while that natural-settle finalization continues in the
+background. Dispatcher/server shutdown instead kills the runner, persists the
+terminal run without waiting for agent turns, and leaves owned runtime cleanup
+to the following collection-wide force-stop sweep. Startup marks durable
+`running` records as `stopped`; journal replay and run resume are not
+implemented.
 
 Key source:
 

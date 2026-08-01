@@ -168,7 +168,6 @@ export class TeamService {
         ),
         // Cleanup is owned by this TeamService and must remain available after
         // the outer route-closing fence rejects new generation leases.
-        release: (name, owner) => this.teammateCollection.release(name, owner),
         releaseAllOwned: (owner) =>
           this.teammateCollection.releaseAllOwned(owner),
       },
@@ -424,7 +423,7 @@ export class TeamService {
   async stopAll(): Promise<void> {
     const failures: unknown[] = [];
     try {
-      await this.workflowService.stopAll();
+      await this.workflowService.stopAllForShutdown();
     } catch (err) {
       failures.push(err);
     }

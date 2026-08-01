@@ -190,13 +190,19 @@ async function pipeline(
 
   return Promise.all(
     items.map(async (item: unknown) => {
-      let value = item;
-      for (const stage of stages) {
-        value = await Reflect.apply(stage as (...args: unknown[]) => unknown, undefined, [
-          value,
-        ]);
+      try {
+        let value = item;
+        for (const stage of stages) {
+          value = await Reflect.apply(
+            stage as (...args: unknown[]) => unknown,
+            undefined,
+            [value],
+          );
+        }
+        return value;
+      } catch {
+        return null;
       }
-      return value;
     }),
   );
 }
