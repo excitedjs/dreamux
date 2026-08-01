@@ -28,6 +28,12 @@ import {
   channelMcpLogPath,
   teammateMcpLogDir,
   teammateMcpLogPath,
+  validateWorkflowRunId,
+  workflowLogDir,
+  workflowLogPath,
+  workflowRunDir,
+  workflowRunJournalPath,
+  workflowRunRecordPath,
   dreamuxRoot,
   logsRoot,
   resetRuntimeConfig,
@@ -177,6 +183,36 @@ describe('runtime paths', () => {
     expect(teammateMcpLogPath('dispatcher-a')).toBe(
       join(logsRoot(), 'teammate-mcp', 'dispatcher-a.log'),
     );
+    expect(workflowLogDir()).toBe(join(logsRoot(), 'workflow'));
+    expect(workflowLogPath('dispatcher-a')).toBe(
+      join(logsRoot(), 'workflow', 'dispatcher-a.log'),
+    );
+  });
+
+  it('builds validated dispatcher and Team workflow run paths', () => {
+    const dispatcherRun = {
+      dispatcherId: 'dispatcher-a',
+      teamId: null,
+      runId: 'run-123',
+    };
+    expect(workflowRunDir(dispatcherRun)).toBe(
+      join(stateRoot(), 'dispatcher-a', 'workflow', 'run-123'),
+    );
+    expect(workflowRunRecordPath(dispatcherRun)).toBe(
+      join(workflowRunDir(dispatcherRun), 'record.json'),
+    );
+    expect(workflowRunJournalPath(dispatcherRun)).toBe(
+      join(workflowRunDir(dispatcherRun), 'journal.jsonl'),
+    );
+    expect(
+      workflowRunDir({ ...dispatcherRun, teamId: 'team-a' }),
+    ).toBe(
+      join(stateRoot(), 'dispatcher-a', 'team', 'team-a', 'workflow', 'run-123'),
+    );
+    expect(validateWorkflowRunId('abc-123')).toBe('abc-123');
+    for (const invalid of ['', '../run', 'Run', 'run_1']) {
+      expect(() => validateWorkflowRunId(invalid)).toThrow(/invalid workflow run id/);
+    }
   });
 
   it('rejects dispatcher ids that are not valid path segments', () => {

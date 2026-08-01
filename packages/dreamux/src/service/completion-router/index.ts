@@ -2,12 +2,26 @@ import type {
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
-export interface CompletionEnvelope {
+interface CompletionEnvelopeBase {
   source: string;
   id: string;
   status: 'completed' | 'failed' | 'stopped';
   result: string | null;
 }
+
+export interface TeammateCompletionEnvelope extends CompletionEnvelopeBase {
+  kind: 'teammate';
+}
+
+export interface WorkflowCompletionEnvelope extends CompletionEnvelopeBase {
+  kind: 'workflow';
+  source: 'workflow';
+}
+
+/** A settled producer result delivered through the shared completion router. */
+export type CompletionEnvelope =
+  | TeammateCompletionEnvelope
+  | WorkflowCompletionEnvelope;
 
 export type CompletionDeliveryResult =
   | { status: 'accepted' }
@@ -15,10 +29,10 @@ export type CompletionDeliveryResult =
   | { status: 'failed'; error: Error };
 
 /**
- * The delivery target of a settled, send-initiated turn: a dispatcher agent or a
- * team leader. The router never names which — it only forwards the completion
+ * The delivery target of a settled producer: a dispatcher agent or a team
+ * leader. The router never names which — it only forwards the completion
  * envelope into the target's inbox. Do not conflate the initiator with
- * `CompletionEnvelope.source`, which names the producer (the settling teammate).
+ * `CompletionEnvelope.source`, which names the producer.
  */
 export interface CompletionInitiator {
   completionInput(
@@ -30,10 +44,10 @@ const TERMINAL_CACHE_LIMIT = 512;
 const MAX_DELIVERY_ATTEMPTS = 3;
 
 /**
- * Per-dispatcher, per-turn completion delivery service. A delivery-initiating
- * action (`send` / `spawn` / team-create-with-prompt) registers
- * `completionKey -> initiator`, where `completionKey` is `producerName:turnId`.
- * When that turn settles, the router takes the result, calls
+ * Per-dispatcher completion delivery service. A delivery-initiating
+ * action (`send` / `spawn` / team-create-with-prompt / workflow run) registers
+ * `completionKey -> initiator`. When that producer settles, the router takes
+ * the result, calls
  * `initiator.completionInput(envelope)`, then clears the registration.
  *
  * Gating is intrinsic: only send-initiated turns register, so channel-inbound
@@ -65,6 +79,12 @@ export class CompletionRouter {
   register(completionKey: string | null, initiator: CompletionInitiator): void {
     if (completionKey === null) return;
     this.pending.set(completionKey, initiator);
+  }
+
+  /** Mark a registered completion terminal without invoking its initiator. */
+  discard(completionKey: string): void {
+    this.pending.delete(completionKey);
+    this.rememberTerminal(completionKey);
   }
 
   /**

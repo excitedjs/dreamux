@@ -21,6 +21,7 @@ export interface DispatchersOptions {
   channelProviders: ChannelProviderCatalog;
   adminSocketPath?: string;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
+  workflowLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
   log: DreamuxLogger;
 }
 
@@ -39,6 +40,9 @@ export class Dispatchers {
   private readonly channelProviders: ChannelProviderCatalog;
   private readonly adminSocketPath: string | undefined;
   private readonly channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
+  private readonly workflowLoggerFactory:
+    | ((dispatcherId: string) => DreamuxLogger)
+    | undefined;
   private readonly log: DreamuxLogger;
   /**
    * Read-only identity reader shared by {@link summarize} and {@link status}
@@ -58,6 +62,7 @@ export class Dispatchers {
     this.channelProviders = opts.channelProviders;
     this.adminSocketPath = opts.adminSocketPath;
     this.channelLoggerFactory = opts.channelLoggerFactory;
+    this.workflowLoggerFactory = opts.workflowLoggerFactory;
     this.log = opts.log;
     this.identities = new AgentIdentityStore(opts.log);
   }
@@ -142,6 +147,9 @@ export class Dispatchers {
         ? { adminSocketPath: this.adminSocketPath }
         : {}),
       channelLoggerFactory: this.channelLoggerFactory,
+      ...(this.workflowLoggerFactory !== undefined
+        ? { workflowLoggerFactory: this.workflowLoggerFactory }
+        : {}),
       log: this.log,
     };
   }

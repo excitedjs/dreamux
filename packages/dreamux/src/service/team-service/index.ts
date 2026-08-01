@@ -13,6 +13,7 @@ import {
 } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import {
+  bundledSharedSkillRoot,
   bundledTeamLeaderSkillRoot,
   dispatcherTeamCronJobsPath,
 } from '../../platform/paths.js';
@@ -31,6 +32,7 @@ import {
   type TeamMateSharedWorkspace,
   type TeammateOps,
 } from '../teammate-collection/index.js';
+import type { SpawnOwnedTeamMateOptions } from '../teammate-collection/owned-teammates.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import { teammateMcpServerDescriptor } from '../teammate-collection/mcp-config.js';
 import { teamMcpServerDescriptor } from '../team-collection/mcp-config.js';
@@ -51,10 +53,12 @@ import type {
   TeamRecord,
   TeamRouteProjection,
   TeamSummary,
+  TeamLeaderLease,
   TeamView,
 } from '../team-collection/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import { createTeamLeaderAgent } from './leader-agent.js';
+import { WorkflowService, type WorkflowOps } from '../workflow-service/index.js';
 
 export interface TeamServiceDeps {
   dispatcherId: string;
@@ -69,6 +73,10 @@ export interface TeamServiceDeps {
   ) => Promise<CompletionInitiator | null>;
   isShuttingDown: () => boolean;
   admitOperation: <T>(task: () => Promise<T>) => Promise<T>;
+  withTeamLeaderLease: <T>(
+    lease: TeamLeaderLease,
+    task: (service: TeamService) => Promise<T>,
+  ) => Promise<T>;
   adminSocketPath: string;
   leaderChannelDescriptors: (input: {
     teamId: string;
@@ -79,6 +87,7 @@ export interface TeamServiceDeps {
   agentNameSuffixGenerator?: SuffixGenerator;
   evict: (service: TeamService) => void;
   log: DreamuxLogger;
+  workflowLog: DreamuxLogger;
 }
 
 export interface TeamServiceCreateInput {
@@ -128,6 +137,7 @@ export class TeamService {
   * the `teammates` getter — never re-expose those internal verbs to callers. */
   private readonly teammateCollection: TeammateCollection;
   private readonly scheduler_: SchedulerService;
+  private readonly workflowService: WorkflowService;
 
   private constructor(private readonly deps: TeamServiceDeps, teamId: string) {
     this.id = teamId;
@@ -146,6 +156,24 @@ export class TeamService {
         ? { suffixGenerator: deps.agentNameSuffixGenerator }
         : {}),
       log: deps.log,
+    });
+    this.workflowService = new WorkflowService({
+      dispatcherId: deps.dispatcherId,
+      teamId,
+      callerKind: 'team_leader',
+      ownedTeammates: {
+        spawnOwned: (input, options) =>
+          deps.withTeamLeaderLease(this.workflowLease(), (service) =>
+            service.spawnOwnedTeamMate(input, options),
+        ),
+        // Cleanup is owned by this TeamService and must remain available after
+        // the outer route-closing fence rejects new generation leases.
+        releaseAllOwned: (owner) =>
+          this.teammateCollection.releaseAllOwned(owner),
+      },
+      router: deps.router,
+      completionInitiator: () => this.mustLeader(),
+      log: deps.workflowLog,
     });
     this.scheduler_ = new SchedulerService({
       ownerId: `${deps.dispatcherId}/team/${teamId}`,
@@ -229,6 +257,7 @@ export class TeamService {
       }
       team = await deps.store.update(team, { status: 'running' });
       service.record = team;
+      await service.workflowService.start();
       await service.scheduler_.start();
       return {
         service,
@@ -270,7 +299,9 @@ export class TeamService {
     }
     service.leader_ = service.buildLeader(identity);
     deps.trackMaterialized(service);
-    if (record.status !== 'closed') await service.scheduler_.start();
+    if (record.status !== 'closed') {
+      await service.workflowService.recover();
+    }
     return {
       service,
       schedulerLifecycle: TeamService.schedulerLifecycleFor(service),
@@ -283,6 +314,10 @@ export class TeamService {
 
   get scheduler(): SchedulerCommands {
     return this.scheduler_.commands;
+  }
+
+  get workflows(): WorkflowOps {
+    return this.workflowService;
   }
 
   /** This team's members as concrete internal ops. `TeamLeaderHandle` wraps this
@@ -334,6 +369,7 @@ export class TeamService {
       throw new Error(`Team ${JSON.stringify(this.id)} is closed`);
     }
     await this.leader.ensureStarted();
+    await this.workflowService.start();
     if (record.status === 'starting') {
       this.record = await this.deps.store.update(record, { status: 'running' });
     }
@@ -341,6 +377,9 @@ export class TeamService {
 
   async dissolve(input: TeamDissolveInput): Promise<TeamSummary> {
     requireLifecycleText(input.note, 'Team dissolve note');
+    this.workflowService.closeAdmission();
+    await this.workflowService.stopAll();
+    await this.teammateCollection.releaseAllOwned();
     this.scheduler_.stop();
     const record = this.mustRecord();
     const members = await this.members();
@@ -383,6 +422,11 @@ export class TeamService {
    * the remaining members or leader from receiving their stop attempt. */
   async stopAll(): Promise<void> {
     const failures: unknown[] = [];
+    try {
+      await this.workflowService.stopAllForShutdown();
+    } catch (err) {
+      failures.push(err);
+    }
     try {
       await this.teammateCollection.stopAll();
     } catch (err) {
@@ -453,6 +497,35 @@ export class TeamService {
     });
   }
 
+  async spawnOwnedTeamMate(
+    input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>,
+    options: SpawnOwnedTeamMateOptions,
+  ) {
+    return this.teammateCollection.spawnOwned(
+      {
+        ...input,
+        sharedWorkspace: this.sharedWorkspace(),
+      },
+      options,
+    );
+  }
+
+  closeWorkflowAdmission(): void {
+    this.workflowService.closeAdmission();
+  }
+
+  stopWorkflowsForClosing(): Promise<void> {
+    return this.workflowService.stopAll();
+  }
+
+  startWorkflowAdmission(): Promise<void> {
+    return this.workflowService.start();
+  }
+
+  recoverWorkflows(): Promise<void> {
+    return this.workflowService.recover();
+  }
+
   async memberCount(): Promise<number> {
     return (await this.members()).length;
   }
@@ -497,6 +570,11 @@ export class TeamService {
         {
           name: 'team-leader',
           path: bundledTeamLeaderSkillRoot(),
+          source: 'dreamux-core',
+        },
+        {
+          name: 'shared',
+          path: bundledSharedSkillRoot(),
           source: 'dreamux-core',
         },
         ...identity.skill_sources,
@@ -576,6 +654,10 @@ export class TeamService {
       throw new Error(`Team ${JSON.stringify(this.id)} leader is not booted`);
     }
     return this.leader_;
+  }
+
+  private workflowLease(): TeamLeaderLease {
+    return { teamId: this.id, leaderName: this.leaderName };
   }
 
   private static schedulerLifecycleFor(

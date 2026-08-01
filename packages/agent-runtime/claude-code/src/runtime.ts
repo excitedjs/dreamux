@@ -100,6 +100,7 @@ import type {
   DreamuxLogger,
   InboundTurnInput,
   TurnSettledSignal,
+  UnsupportedAgentRuntimeFeatureError,
 } from '@excitedjs/dreamux-types';
 
 /**
@@ -290,6 +291,18 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 
   async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
     if (this.stopped) return { status: 'stopped' };
+    if (input.outputSchema !== undefined) {
+      // The resident stream-json session applies CLI flags at spawn time and
+      // cannot re-negotiate a per-turn JSON schema. Fail loud with a typed
+      // UnsupportedAgentRuntimeFeatureError rather than silently ignoring the
+      // schema and returning unconstrained text. Per-turn schema support is a
+      // follow-up (one-shot `claude --print --json-schema` spawn).
+      const error = unsupportedAgentRuntimeFeatureError(
+        'outputSchema',
+        'claude-code runtime does not support per-turn outputSchema on the resident session',
+      );
+      return { status: 'failed', error };
+    }
     const key = input.sourceId;
     if (key !== undefined && key !== '' && this.seenTextInputIds.has(key)) {
       return { status: 'duplicate' };
@@ -657,4 +670,14 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   ): void {
     this.logger[level](err !== undefined ? { err } : {}, msg);
   }
+}
+
+function unsupportedAgentRuntimeFeatureError(
+  feature: string,
+  message: string,
+): UnsupportedAgentRuntimeFeatureError {
+  return Object.assign(new Error(message), {
+    name: 'UnsupportedAgentRuntimeFeatureError' as const,
+    feature,
+  });
 }

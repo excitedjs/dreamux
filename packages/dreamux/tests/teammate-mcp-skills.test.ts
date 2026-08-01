@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import {
   bundledDispatcherSkillRoot,
+  bundledSharedSkillRoot,
   bundledTeamLeaderSkillRoot,
   type BundledSkillName,
 } from '../src/platform/paths.js';
@@ -46,6 +47,7 @@ const SKILL_ROOT_BY_NAME = {
   'dispatcher-workflow': bundledDispatcherSkillRoot(),
   'dreamux-maintenance': bundledDispatcherSkillRoot(),
   'team-workflow': bundledTeamLeaderSkillRoot(),
+  'workflow': bundledSharedSkillRoot(),
 } satisfies Record<BundledSkillName, string>;
 
 function readBundledSkill(name: BundledSkillName): string {
@@ -153,6 +155,41 @@ describe('role-specific bundled Dreamux skills', () => {
     expect(skill).not.toContain('targets that TeamLeader');
     expect(skill).toContain('bind_channel({ channel_id?, meta })');
     expect(skill).not.toContain('tm spawn');
+  });
+
+  it('workflow documents the shared deterministic orchestration contract', () => {
+    const skill = readBundledSkill('workflow');
+    const description = frontmatterDescription(skill);
+
+    expect(description).toMatch(/deterministic multi-agent orchestration/i);
+    for (const tool of [
+      'workflow_run',
+      'workflow_status',
+      'workflow_stop',
+      'workflow_list',
+    ]) {
+      expect(skill).toContain(tool);
+    }
+    expect(skill).toContain('export const meta');
+    expect(skill).toContain('export default async function run()');
+    for (const scriptApi of [
+      'agent(',
+      'parallel(',
+      'pipeline(',
+      'phase(',
+      'log(',
+      'args',
+      'schema',
+    ]) {
+      expect(skill).toContain(scriptApi);
+    }
+    expect(skill).toMatch(/concurrent prompts read-only|independent edit paths/i);
+    expect(skill).toMatch(/concrete TeamMate name[\s\S]{0,100}`send`/i);
+    expect(skill).not.toMatch(/auto.?close/i);
+    expect(skill).not.toContain('Feishu');
+    expect(skill).not.toContain('chat_id');
+    expect(skill).not.toContain('process.env');
+    expect(skill).not.toContain('require(');
   });
 
   it('dispatcher prompt routes to skills without embedding repo-development policy', () => {

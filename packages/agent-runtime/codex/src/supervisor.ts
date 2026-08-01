@@ -13,18 +13,13 @@
  * SIGKILL the whole group, not just the leader, or the rust process leaks.
  */
 
-import {
-  spawn as spawnChild,
-  type ChildProcess,
-  type SpawnOptions,
-} from 'node:child_process';
 import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
   ensureOwnerOnlyDir,
   isProcessAlive,
-  killProcessGroup,
   removeEmptyLogFile,
+  SupervisedChild,
 } from '@excitedjs/dreamux-utils';
 
 export interface CodexProcessOptions {
@@ -57,7 +52,7 @@ export type CodexProcessExitHandler = (exit: CodexProcessExit) => void;
 export class CodexProcess {
   readonly socketPath: string;
   readonly cwd: string;
-  private child: ChildProcess | null = null;
+  private supervisor: SupervisedChild | null = null;
   private _pid: number | null = null;
   private reaped = false;
   private readonly exitHandlers: CodexProcessExitHandler[] = [];
@@ -77,7 +72,7 @@ export class CodexProcess {
 
   /** Spawn the daemon and resolve once its listen socket is bound. */
   async start(): Promise<void> {
-    if (this.child !== null) {
+    if (this.supervisor !== null) {
       throw new Error('CodexProcess.start: already started');
     }
     const binPath =
@@ -110,29 +105,33 @@ export class CodexProcess {
     // inherited fds, matching the previous openSync/closeSync timing.
     const stdoutHandle = await open(this.opts.stdoutLogPath, 'a', 0o600);
     const stderrHandle = await open(this.opts.stderrLogPath, 'a', 0o600);
-    const spawnOpts: SpawnOptions = {
-      cwd: this.opts.cwd,
-      env: this.opts.env ?? process.env,
-      detached: true, // its own process group, so we can group-kill on reap
-      stdio: ['ignore', stdoutHandle.fd, stderrHandle.fd],
-    };
+    const supervisor = new SupervisedChild({
+      kind: 'spawn',
+      command: binPath,
+      args,
+      options: {
+        cwd: this.opts.cwd,
+        env: this.opts.env ?? process.env,
+        stdio: ['ignore', stdoutHandle.fd, stderrHandle.fd],
+      },
+    });
+    supervisor.onError(() => {
+      /* daemon-side error, can no longer affect this process */
+    });
+    supervisor.onExit((exit) => {
+      if (this.reaped) return;
+      for (const handler of this.exitHandlers) {
+        try {
+          handler(exit);
+        } catch {
+          /* exit observers must not poison process event dispatch */
+        }
+      }
+    });
 
-    let child: ChildProcess;
+    let child;
     try {
-      child = await new Promise<ChildProcess>((resolve, reject) => {
-        let settled = false;
-        const c = spawnChild(binPath, args, spawnOpts);
-        c.once('error', (e) => {
-          if (settled) return;
-          settled = true;
-          reject(e instanceof Error ? e : new Error(String(e)));
-        });
-        c.once('spawn', () => {
-          if (settled) return;
-          settled = true;
-          resolve(c);
-        });
-      });
+      child = await supervisor.start();
     } finally {
       await stdoutHandle.close();
       await stderrHandle.close();
@@ -141,22 +140,8 @@ export class CodexProcess {
     if (child.pid === undefined) {
       throw new Error('codex daemon spawned without a pid');
     }
-    this.child = child;
+    this.supervisor = supervisor;
     this._pid = child.pid;
-    // Future post-spawn `error` emissions must not crash the supervisor.
-    child.on('error', () => {
-      /* daemon-side error, can no longer affect this process */
-    });
-    child.once('exit', (code, signal) => {
-      if (this.reaped) return;
-      for (const handler of this.exitHandlers) {
-        try {
-          handler({ code, signal });
-        } catch {
-          /* exit observers must not poison process event dispatch */
-        }
-      }
-    });
 
     try {
       await waitForSocket(
@@ -174,21 +159,7 @@ export class CodexProcess {
   async reap(): Promise<void> {
     if (this.reaped) return;
     this.reaped = true;
-    const pid = this._pid;
-    if (pid !== null) {
-      if (isProcessAlive(pid)) {
-        killProcessGroup(pid, 'SIGTERM');
-        const deadline = Date.now() + 1000;
-        while (Date.now() < deadline) {
-          if (!isProcessAlive(pid)) break;
-          await new Promise<void>((r) => setTimeout(r, 25));
-        }
-      }
-      // Always SIGKILL the group, even if the leader is already dead —
-      // a reparented child (rust binary outliving its node wrapper) is
-      // the exact failure this guards against.
-      killProcessGroup(pid, 'SIGKILL');
-    }
+    await this.supervisor?.stop();
     try {
       await rm(this.opts.socketPath, { force: true });
     } catch {
@@ -199,7 +170,7 @@ export class CodexProcess {
     // flows over the socket, so they are usually empty (issue #182 logs stage).
     await removeEmptyLogFile(this.opts.stdoutLogPath);
     await removeEmptyLogFile(this.opts.stderrLogPath);
-    this.child = null;
+    this.supervisor = null;
   }
 }
 

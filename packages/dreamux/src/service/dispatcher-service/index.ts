@@ -27,10 +27,7 @@ import { rollbackFailedInputSourceStart } from './input-source-start-rollback.js
 import { TeamChannelCoordinator } from './team-channel-coordinator.js';
 import { stopTeamRuntimes } from './team-runtime-stop.js';
 import { admittedTeammateOps } from './teammate-ops.js';
-import {
-  teamLeaderHandle,
-  type TeamLeaderHandle,
-} from './team-leader-handle.js';
+import { teamLeaderHandle, type TeamLeaderHandle } from './team-leader-handle.js';
 import { injectRestartNoticeIfNeeded } from './restart-notice.js';
 import {
   invokeDispatcherChannelTool,
@@ -47,10 +44,7 @@ import { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import { WorktreeManager } from '../worktree/manager.js';
-import {
-  runtimeStatusToIdentityStatus,
-  type AgentEntityIdentity,
-} from '../agent-entity/types.js';
+import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import { TeamCollection } from '../team-collection/index.js';
 import { SchedulerService, type SchedulerCommands } from '../scheduler/service.js';
 import { CronJobStore } from '../scheduler/store.js';
@@ -74,6 +68,12 @@ import type {
   DispatcherSummary,
   LiveDispatcherRuntimeStatus,
 } from './types.js';
+import { DispatcherWorkflows } from './dispatcher-workflows.js';
+import {
+  dispatcherRuntimeStatus,
+  dispatcherSummary,
+  liveDispatcherRuntimeStatus,
+} from './runtime-status.js';
 
 export type { ChannelToolCaller, TeamLeaderHandle };
 
@@ -109,6 +109,7 @@ export class DispatcherService {
   private shuttingDown = false;
   private readonly admittedTasks: DispatcherTaskDrain;
   private readonly teammateOps: TeammateOps;
+  private readonly workflowOwner: DispatcherWorkflows;
 
   constructor(opts: DispatcherServiceOptions) {
     this.id = opts.id;
@@ -123,6 +124,7 @@ export class DispatcherService {
     this.agentRuntimeProviders = opts.agentRuntimeProviders;
     this.adminSocket = adminSocket;
     this.router = new CompletionRouter({ dispatcherId: opts.id, log: opts.log });
+    const workflowLog = opts.workflowLoggerFactory?.(opts.id) ?? opts.log;
     const configuredChannelCount =
       opts.config.dispatchers.find((dispatcher) => dispatcher.id === opts.id)
         ?.channels.length ?? 0;
@@ -179,7 +181,6 @@ export class DispatcherService {
       teammates: this._teammates,
       admit: (task) => this.admitOperation(task),
     });
-
     this.teams = new TeamCollection({
       dispatcherId: opts.id,
       config: opts.config,
@@ -201,7 +202,17 @@ export class DispatcherService {
           }),
         ],
       log: opts.log,
+      workflowLog,
       coreEvents: this.coreEvents.publisher,
+    });
+    this.workflowOwner = new DispatcherWorkflows({
+      dispatcherId: opts.id,
+      teammates: this._teammates,
+      teams: this.teams,
+      router: this.router,
+      completionInitiator: () => this.mustAgent(),
+      admit: (task) => this.admitOperation(task),
+      log: workflowLog,
     });
 
     this.collaborationSpaces = new CollaborationSpaceService({
@@ -335,11 +346,19 @@ export class DispatcherService {
 
   private async doStartInputSources(): Promise<void> {
     this.assertNotShuttingDown();
-    await this.prepareChannels();
+    await this.workflowOwner.recover();
+    try {
+      await this.prepareChannels();
+    } catch (error) {
+      this.teams.stopSchedulers();
+      throw error;
+    }
     this.assertNotShuttingDown();
     const channels = this.preparedChannels ?? new Map<string, ChannelSession>();
     const liveChannels = new Map<string, ChannelSession>();
     try {
+      await this.workflowOwner.start();
+      this.assertNotShuttingDown();
       if (this.shouldStartRuntimeForResumeNotice()) {
         await this.startAgentRuntime();
       }
@@ -381,6 +400,8 @@ export class DispatcherService {
       this.assertNotShuttingDown();
       this.inputSourcesStarted = true;
     } catch (err) {
+      this.workflowOwner.closeAdmission();
+      await this.workflowOwner.rollbackStart();
       this.channelRoutes.revokeSessionLeases();
       this.admittedTasks.closeAdmission();
       await rollbackFailedInputSourceStart({
@@ -418,6 +439,7 @@ export class DispatcherService {
     this.stopping = true;
     this.channelRoutes.revokeSessionLeases();
     this.admittedTasks.closeAdmission();
+    this.workflowOwner.closeAdmission();
     const task = this.doStop().finally(() => {
       this.stopping = false;
       this.stoppingTask = null;
@@ -433,6 +455,7 @@ export class DispatcherService {
       if (this.preparing !== null) await this.preparing.catch(() => {});
       if (this.inputSourcesStarting !== null) await this.inputSourcesStarting.catch(() => {});
       this.coreEvents.revokeSources();
+      await collectShutdownFailure(failures, () => this.workflowOwner.stopAllForShutdown());
       await this.channels.closeAll(this.log);
       if (this.preparedChannels !== null) {
         await closeAllBuilt(this.preparedChannels);
@@ -442,6 +465,7 @@ export class DispatcherService {
       this.scheduler_.stop();
       this.teams.stopSchedulers();
       await this.admittedTasks.drain();
+      await collectShutdownFailure(failures, () => this._teammates.releaseAllOwned());
       await this.collaborationSpaces.drainLifecycleTasks();
       this.scheduler_.stop();
       this.teams.stopSchedulers();
@@ -473,26 +497,11 @@ export class DispatcherService {
   }
 
   runtimeStatus(): DispatcherRuntimeStatus {
-    const agent = this.agent;
-    const runtime = agent?.getRuntime() ?? null;
-    const identity = agent?.current() ?? null;
-    return {
-      status: runtime?.getStatus() ?? null,
-      threadId: runtime?.getCheckpoint()?.id ?? identity?.session_id ?? null,
-      lastError: identity?.last_error ?? null,
-    };
+    return dispatcherRuntimeStatus(this.agent);
   }
 
   liveRuntimeStatus(): LiveDispatcherRuntimeStatus | null {
-    const agent = this.agent;
-    const runtime = agent?.getRuntime() ?? null;
-    if (runtime === null) return null;
-    const identity = agent?.current() ?? null;
-    return {
-      status: runtime.getStatus(),
-      threadId: runtime.getCheckpoint()?.id ?? identity?.session_id ?? null,
-      lastError: identity?.last_error ?? null,
-    };
+    return liveDispatcherRuntimeStatus(this.agent);
   }
 
   setRestartIntent(consumer: RestartIntentConsumer | null): void {
@@ -500,27 +509,13 @@ export class DispatcherService {
   }
 
   private shouldStartRuntimeForResumeNotice(): boolean {
-    const identity = this.agent?.current() ?? null;
-    return (
-      identity !== null &&
-      identity.session_id !== null &&
-      this.restartIntent?.hasTarget(this.id, Date.now()) === true
-    );
+    const sessionId = this.agent?.current().session_id ?? null;
+    return sessionId !== null &&
+      this.restartIntent?.hasTarget(this.id, Date.now()) === true;
   }
 
   summary(row: DispatcherRow): DispatcherSummary {
-    const agent = this.agent;
-    const runtime = agent?.getRuntime() ?? null;
-    const identity = agent?.current() ?? null;
-    return {
-      dispatcher_id: row.dispatcher_id,
-      channel_identity: row.channel_identity,
-      status: runtime !== null
-        ? runtimeStatusToIdentityStatus(runtime.getStatus())
-        : (identity?.status ?? 'stopped'),
-      thread_id: runtime?.getCheckpoint()?.id ?? identity?.session_id ?? null,
-      enabled: row.enabled === 1,
-    };
+    return dispatcherSummary(row, this.agent);
   }
 
   async shutdown(): Promise<void> {
@@ -528,6 +523,7 @@ export class DispatcherService {
     this.admittedTasks.closeAdmission();
     const failures: unknown[] = [];
     await collectShutdownFailure(failures, () => this.stop());
+    await collectShutdownFailure(failures, () => this.workflowOwner.stopAllForShutdown());
     await collectShutdownFailure(failures, () => this._teammates.stopAll());
     await collectShutdownFailure(failures, () => this.teams.stopAll());
     throwShutdownFailures(
@@ -562,6 +558,10 @@ export class DispatcherService {
 
   get teammates(): TeammateOps {
     return this.teammateOps;
+  }
+
+  get workflows() {
+    return this.workflowOwner.ops;
   }
 
   team(teamId: string): Promise<TeamLeaderHandle> {

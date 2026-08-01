@@ -132,6 +132,7 @@ const ALLOWLIST = [
   'ProviderRef',
   'ProviderRefSource',
   'TurnSettledSignal',
+  'UnsupportedAgentRuntimeFeatureError',
 ];
 
 /** Parse the names re-exported by every `export type { ... } from '...'` block. */

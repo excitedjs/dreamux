@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-claude-code",
+      "comment": "Fail loudly when per-turn structured output schemas are unsupported.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code"
+}

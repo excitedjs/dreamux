@@ -167,6 +167,10 @@ describe('teammate-mcp stdio shim', () => {
       'status',
       'last',
       'get_capabilities',
+      'workflow_run',
+      'workflow_status',
+      'workflow_stop',
+      'workflow_list',
     ]);
 
     await expect(listTools('team_leader')).resolves.toEqual([
@@ -178,7 +182,160 @@ describe('teammate-mcp stdio shim', () => {
       'status',
       'last',
       'get_capabilities',
+      'workflow_run',
+      'workflow_status',
+      'workflow_stop',
+      'workflow_list',
     ]);
+  });
+
+  it('advertises the workflow contract through the bundled workflow skill', async () => {
+    for (const callerKind of ['dispatcher', 'team_leader'] as const) {
+      const tools = await toolSchemas(callerKind);
+      const workflowTools = tools.filter((entry) =>
+        String(entry['name']).startsWith('workflow_')
+      ) as Array<{
+        name: string;
+        description: string;
+        inputSchema: {
+          required: string[];
+          properties: Record<string, Record<string, unknown>>;
+        };
+      }>;
+      expect(workflowTools.map((tool) => tool.name)).toEqual([
+        'workflow_run',
+        'workflow_status',
+        'workflow_stop',
+        'workflow_list',
+      ]);
+      expect(workflowTools.every((tool) =>
+        tool.description.includes('bundled `workflow` skill')
+      )).toBe(true);
+      expect(JSON.stringify(workflowTools)).not.toMatch(/auto-close/i);
+
+      const run = workflowTools[0]!;
+      expect(run.inputSchema.required).toEqual(['script']);
+      expect(run.inputSchema.properties['script']).toMatchObject({
+        type: 'string',
+        minLength: 1,
+      });
+      expect(run.inputSchema.properties).toHaveProperty('args');
+      expect(run.inputSchema.properties['max_concurrency']).toMatchObject({
+        type: 'integer',
+        minimum: 1,
+        maximum: 8,
+      });
+
+      for (const tool of workflowTools.slice(1, 3)) {
+        expect(tool.inputSchema.required).toEqual(['run_id']);
+        expect(tool.inputSchema.properties['run_id']).toMatchObject({
+          type: 'string',
+          pattern: '^[a-z0-9-]+$',
+        });
+      }
+      expect(workflowTools[3]!.inputSchema.required).toEqual([]);
+      expect(workflowTools[3]!.inputSchema.properties).toEqual({});
+    }
+  });
+
+  it('maps workflow tools onto TeamLeader-scoped admin methods', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: request.method === 'workflow.run'
+        ? { run_id: 'run-1' }
+        : { ok: true },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'team_leader',
+        teamId: 'alpha',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+      const calls = [
+        {
+          name: 'workflow_run',
+          arguments: {
+            script: 'export default async function run() { return args; }',
+            args: { targets: ['api', 'lifecycle'] },
+            max_concurrency: 4,
+          },
+        },
+        { name: 'workflow_status', arguments: { run_id: 'run-1' } },
+        { name: 'workflow_stop', arguments: { run_id: 'run-1' } },
+        { name: 'workflow_list', arguments: {} },
+      ];
+
+      for (const [index, call] of calls.entries()) {
+        writeJson(input, {
+          jsonrpc: '2.0',
+          id: index + 1,
+          method: 'tools/call',
+          params: call,
+        });
+        await expect(reader.next()).resolves.toMatchObject({
+          jsonrpc: '2.0',
+          id: index + 1,
+          result: { structuredContent: expect.any(Object) as object },
+        });
+      }
+
+      expect(admin.requests).toEqual([
+        {
+          id: expect.any(String) as string,
+          method: 'workflow.run',
+          params: {
+            dispatcher_id: 'dispatcher-a',
+            caller_kind: 'team_leader',
+            team_id: 'alpha',
+            script: 'export default async function run() { return args; }',
+            args: { targets: ['api', 'lifecycle'] },
+            max_concurrency: 4,
+          },
+        },
+        {
+          id: expect.any(String) as string,
+          method: 'workflow.status',
+          params: {
+            dispatcher_id: 'dispatcher-a',
+            caller_kind: 'team_leader',
+            team_id: 'alpha',
+            run_id: 'run-1',
+          },
+        },
+        {
+          id: expect.any(String) as string,
+          method: 'workflow.stop',
+          params: {
+            dispatcher_id: 'dispatcher-a',
+            caller_kind: 'team_leader',
+            team_id: 'alpha',
+            run_id: 'run-1',
+          },
+        },
+        {
+          id: expect.any(String) as string,
+          method: 'workflow.list',
+          params: {
+            dispatcher_id: 'dispatcher-a',
+            caller_kind: 'team_leader',
+            team_id: 'alpha',
+          },
+        },
+      ]);
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
   });
 
   it('takes an optional repo input and no longer requires cwd/worktree (#199 Slice 2)', async () => {

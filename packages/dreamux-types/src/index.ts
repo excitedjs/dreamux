@@ -75,6 +75,7 @@ export type {
   AgentRuntimeSystemPrompt,
   AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
+  UnsupportedAgentRuntimeFeatureError,
 } from './agent-runtime.js';
 export type {
   ChannelBinCheck,

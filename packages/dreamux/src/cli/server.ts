@@ -30,6 +30,8 @@ import {
   logsRoot,
   serverLogPath,
   stateRoot,
+  workflowLogDir,
+  workflowLogPath,
 } from '../platform/paths.js';
 import { sweepRuntimeSocketDirs } from '../platform/runtime-sockets.js';
 
@@ -57,6 +59,7 @@ async function main(): Promise<void> {
   await mkdir(logsRoot(), { recursive: true });
   await mkdir(channelLogDir(), { recursive: true });
   await mkdir(channelMcpLogDir(), { recursive: true });
+  await mkdir(workflowLogDir(), { recursive: true });
 
   // The CLI is the only constructor of file-backed loggers; everything else
   // (tests) gets stderr-only defaults. Both stream to stderr too, so a
@@ -70,6 +73,8 @@ async function main(): Promise<void> {
     logger,
     channelLoggerFactory: (id) =>
       createLogger({ name: `channel/${id}`, filePath: channelLogPath(id) }),
+    workflowLoggerFactory: (id) =>
+      createLogger({ name: `workflow/${id}`, filePath: workflowLogPath(id) }),
     runtimeSocketSweep: () => sweepRuntimeSocketDirs(),
     legacyAdminLockPath: `${legacyAdminSocketPath()}.lock`,
   });

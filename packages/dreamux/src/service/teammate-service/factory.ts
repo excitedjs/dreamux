@@ -2,13 +2,13 @@ import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
-import type { CompletionEnvelope } from '../completion-router/index.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import {
   TeammateService,
+  type SettledCompletionRoute,
   type TeammateServiceDeps,
   type TeammateServiceOptions,
 } from './index.js';
@@ -25,11 +25,7 @@ export interface CreateTeammateServiceInput {
   log: DreamuxLogger;
   nextSubmissionSeq: () => number;
   trackSettleCapture?: (capture: Promise<void>) => void;
-  routeSettledCompletion: (
-    producerName: string,
-    turnId: string,
-    completion: CompletionEnvelope,
-  ) => Promise<void>;
+  routeSettledCompletion: SettledCompletionRoute;
 }
 
 export function createTeammateService(

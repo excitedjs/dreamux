@@ -104,7 +104,7 @@ The owner-only local `admin.sock` is Dreamux's target external control-plane
 entry point. Its current protocol is still the v0 one-request/one-response
 NDJSON shape, so it is not yet a completed stable external protocol.
 
-The product method namespaces are `teammate.*`, `team.*`, and
+The product method namespaces are `teammate.*`, `team.*`, `workflow.*`, and
 `collaboration_space.*`. Scheduler methods remain `scheduler.cron.*`, and
 provider tool calls use `channel.invoke_tool`. No `mcp.*` aliases are
 registered, and dispatcher declarations remain config-owned rather than
@@ -121,9 +121,10 @@ roots, not replacements for Dreamux's required role roots. Core requires each
 custom root to be an existing readable absolute directory, persists its
 canonical realpath, removes duplicate roots, and rejects direct-child skill
 name collisions. TeamLeader creation also fences the bundled `team-workflow`
-skill name so custom roots cannot replace the required Team workflow. The
-stored roots are restored when that TeamMate, team member, or TeamLeader is
-rebuilt. The MCP adapters neither advertise nor forward this parameter.
+and shared `workflow` skill names so custom roots cannot replace required
+coordination capabilities. The stored roots are restored when that TeamMate,
+team member, or TeamLeader is rebuilt. The MCP adapters neither advertise nor
+forward this parameter.
 
 Key source:
 
@@ -225,6 +226,43 @@ Key source:
 - `/packages/dreamux/src/service/channel-service/`
 - `/packages/dreamux/src/service/channel-binding/`
 - `/packages/dreamux/src/mcp/team-mcp.ts`
+
+## Dynamic Workflows
+
+Dynamic Workflow is a caller-scoped background orchestration capability on the
+existing TeamMate MCP. Each `DispatcherService` owns one dispatcher-scope
+`WorkflowService`, and each `TeamService` owns one Team-scope service. A live
+`WorkflowRun` owns its durable record, append-only journal, supervised runner
+child, and every fresh TeamMate it creates.
+
+The runner evaluates a trusted inline ES module in a `node:vm` context and
+communicates only over its parent IPC channel. The parent sends `run_start`,
+`agent_result`, and `abort`; the runner sends `agent_start`, progress `emit`
+events, and one `run_result`. Agent submission re-enters the owning dispatcher
+admission drain or TeamLeader generation lease. Each newly spawned TeamMate has
+its settle route injected before runtime start, so intermediate completions
+return only to the owning run. The run's single terminal completion uses the
+shared `CompletionRouter` with the original caller as initiator.
+
+`schema` is passed through the runtime-neutral `outputSchema` turn input. The
+run parses a successful structured result once with `JSON.parse`; unsupported
+runtime capability fails the individual `agent()` call loudly. Normal terminal
+runs wait for in-flight turns, silently close and evict their owned TeamMates,
+and then evict the live run entity. `workflow_stop` reserves `stopped` and
+returns immediately while that natural-settle finalization continues in the
+background. Dispatcher/server shutdown instead kills the runner, persists the
+terminal run without waiting for agent turns, and leaves owned runtime cleanup
+to the following collection-wide force-stop sweep. Startup marks durable
+`running` records as `stopped`; journal replay and run resume are not
+implemented.
+
+Key source:
+
+- `/packages/dreamux/src/service/workflow-service/`
+- `/packages/dreamux/src/service/dispatcher-service/dispatcher-workflows.ts`
+- `/packages/dreamux/src/service/teammate-collection/index.ts`
+- `/packages/dreamux/src/mcp/teammate-mcp.ts`
+- `/packages/dreamux-utils/src/supervised-child.ts`
 
 ## Collaboration Spaces
 
@@ -355,16 +393,17 @@ Key source:
 Dreamux ships bundled skills under `/packages/dreamux/skills/`. Core selects
 required skill sources by role and may compose authorized admin-supplied roots:
 
-- Dispatcher roles receive Dreamux workflow and maintenance skills; TeamLeader
-  roles receive the Team workflow skill.
+- Dispatcher roles receive dispatcher workflow and maintenance skills;
+  TeamLeader roles receive the Team workflow skill. Both roles also receive the
+  shared Dynamic Workflow skill.
 - Ordinary TeamMate and team-member roles receive none by default.
 - Additional roots supplied through admin creation are persisted with the
   agent identity. TeamLeader launch always prepends the required bundled role
   root before those additions; custom roots cannot replace or disable it.
-- Core emits only role-specific skill roots (`skills/dispatcher/` and
-  `skills/team-leader/`), never per-skill selector paths. Codex passes those
-  roots directly to `skills/extraRoots/set` so root scanning cannot expose
-  sibling skills from another role.
+- Core emits role roots (`skills/dispatcher/` or `skills/team-leader/`) plus
+  `skills/shared/`, never per-skill selector paths. Codex passes those roots
+  directly to `skills/extraRoots/set` so root scanning cannot expose sibling
+  role skills.
 - Claude Code materializes a runtime-owned add-dir root containing
   `.claude/skills/<name>` entries for each skill under the selected root, then
   passes that materialized root through `--add-dir`.

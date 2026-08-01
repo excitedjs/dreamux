@@ -91,6 +91,15 @@ Important children:
   `null`.
 - `~/.dreamux/state/<dispatcher-id>/team/`: Team durable ledgers and channel
   binding state.
+- `~/.dreamux/state/<dispatcher-id>/workflow/<run-id>/`: dispatcher-scope
+  Dynamic Workflow `record.json` and append-only `journal.jsonl`.
+- `~/.dreamux/state/<dispatcher-id>/team/<team-id>/workflow/<run-id>/`:
+  TeamLeader-scope Dynamic Workflow records and journals.
+
+Workflow records are version 1. A normal terminal transition writes
+`completed`, `failed`, or `stopped`; startup converts a leftover `running`
+record to `stopped`. Journals are server-written JSONL and are not replayed by
+the current runtime.
 
 TeamMate, team-member, and TeamLeader identities persist admin-supplied
 `skill_sources` so runtime relaunch and process restart preserve authorized
@@ -113,6 +122,8 @@ Key source:
 - `/packages/dreamux/src/service/team-collection/store.ts`
 - `/packages/dreamux/src/service/collaboration-space/store.ts`
 - `/packages/dreamux/src/service/scheduler/store.ts`
+- `/packages/dreamux/src/service/workflow-service/store.ts`
+- `/packages/dreamux/src/service/workflow-service/journal.ts`
 - `/packages/channel/feishu-channel/src/chat-bots-store.ts`
 
 ## Run Files
@@ -218,7 +229,8 @@ Key source:
 - `feishu-attachments/`: bounded inbound Feishu attachment downloads.
 
 `~/.dreamux/logs/` is server-owned log output, split by component. Codex
-app-server logs use `~/.dreamux/logs/codex-app-server/<dispatcher>.log`; MCP
+app-server logs use `~/.dreamux/logs/codex-app-server/<dispatcher>.log`; Dynamic
+Workflow lifecycle logs use `~/.dreamux/logs/workflow/<dispatcher>.log`; MCP
 shim diagnostics use component directories such as `channel-mcp/`, `team-mcp/`,
 and `teammate-mcp/`.
 

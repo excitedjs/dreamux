@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import { adminMethods } from '../src/admin/methods.js';
 import { AdminError } from '../src/admin/protocol.js';
-import { TeamUnavailableError } from '../src/service/team-collection/index.js';
+import { TeamUnavailableError } from '../src/service/team-collection/errors.js';
 import type { Server } from '../src/server.js';
 
 const stubServer = {
@@ -86,22 +86,24 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
   });
 
   it('rejects TeamLeader skill roots that shadow required bundled skills', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'dreamux-skill-shadow-'));
-    try {
-      mkdirSync(join(root, 'team-workflow'), { recursive: true });
-      await expectBadRequest('team.create', {
-        dispatcher_id: 'flow',
-        name_prefix: 'alpha',
-        leader_agent_runtime: 'codex',
-        intent: 'work',
-        skill_sources: [{
-          name: 'shadow-root',
-          path: root,
-          source: 'admin',
-        }],
-      });
-    } finally {
-      rmSync(root, { recursive: true, force: true });
+    for (const bundledSkill of ['team-workflow', 'workflow']) {
+      const root = mkdtempSync(join(tmpdir(), 'dreamux-skill-shadow-'));
+      try {
+        mkdirSync(join(root, bundledSkill), { recursive: true });
+        await expectBadRequest('team.create', {
+          dispatcher_id: 'flow',
+          name_prefix: 'alpha',
+          leader_agent_runtime: 'codex',
+          intent: 'work',
+          skill_sources: [{
+            name: 'shadow-root',
+            path: root,
+            source: 'admin',
+          }],
+        });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     }
   });
 
