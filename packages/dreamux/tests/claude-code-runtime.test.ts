@@ -405,6 +405,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       systemPrompt?: AgentRuntimeSystemPrompt;
       skillSources?: AgentRuntimeSkillSource[];
       disableFeatures?: readonly string[];
+      outputSchema?: Record<string, unknown>;
       config?: Partial<ReturnType<typeof defaultDispatcherClaudeCodeConfig>>;
       logger?: Parameters<ReturnType<typeof claudeCodeProvider>['createRuntime']>[0]['logger'];
     } = {},
@@ -455,6 +456,9 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
         : {}),
       ...(opts.disableFeatures !== undefined
         ? { disableFeatures: opts.disableFeatures }
+        : {}),
+      ...(opts.outputSchema !== undefined
+        ? { outputSchema: opts.outputSchema }
         : {}),
       ...(opts.onTurnSettled !== undefined
         ? { onTurnSettled: opts.onTurnSettled }
@@ -1087,6 +1091,30 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
           'claude-code runtime does not support per-turn outputSchema on the resident session',
       },
     });
+  });
+
+  it('applies --json-schema from the create context on resident spawn', async () => {
+    const fleet = fakeFleet();
+    const schema = {
+      type: 'object',
+      properties: { answer: { type: 'string' } },
+      required: ['answer'],
+      additionalProperties: false,
+    };
+    const { runtime } = await makeRuntime(fleet, { outputSchema: schema });
+    await runtime.start();
+    const args = fleet.sessions[0]?.spec.args ?? [];
+    const flagIndex = args.indexOf('--json-schema');
+    expect(flagIndex).toBeGreaterThanOrEqual(0);
+    expect(args[flagIndex + 1]).toBe(JSON.stringify(schema));
+  });
+
+  it('omits --json-schema when no create-context schema is set', async () => {
+    const fleet = fakeFleet();
+    const { runtime } = await makeRuntime(fleet);
+    await runtime.start();
+    const args = fleet.sessions[0]?.spec.args ?? [];
+    expect(args).not.toContain('--json-schema');
   });
 
   it('returns stopped for completionInput after stop', async () => {

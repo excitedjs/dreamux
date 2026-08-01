@@ -287,6 +287,7 @@ export class TeammateCollection implements TeammateOps, OwnedTeammateOps {
     const entity = this.entityFor(
       identity,
       route.kind === 'owned' ? route.routeSettledCompletion : undefined,
+      route.kind === 'owned' ? route.outputSchema : undefined,
     );
     if (route.kind === 'owned') {
       this.exclusivelyOwned.set(entity.name, route.owner);
@@ -569,6 +570,7 @@ export class TeammateCollection implements TeammateOps, OwnedTeammateOps {
   private entityFor(
     identity: AgentEntityIdentity,
     routeSettledCompletion?: SettledCompletionRoute,
+    outputSchema?: Record<string, unknown>,
   ): TeammateService {
     const existing = this.entities.get(identity.name);
     if (existing !== undefined) return existing;
@@ -587,6 +589,7 @@ export class TeammateCollection implements TeammateOps, OwnedTeammateOps {
             ? assertDispatcherScopedTeammate
             : assertTeamScopedAgent(this.teamScope),
         skillSources: identity.skill_sources,
+        ...(outputSchema !== undefined ? { outputSchema } : {}),
         ...(systemPromptOptions ?? {}),
       },
       config: this.opts.config,

@@ -96,6 +96,14 @@ export interface TeammateServiceOptions {
   skillSources?: readonly AgentRuntimeSkillSource[];
   disableFeatures?: readonly string[];
   systemPrompt?: AgentRuntimeSystemPrompt;
+  /**
+   * Optional JSON Schema constraining every turn's final assistant message for
+   * this runtime's lifetime. Flows into the create context so runtimes that
+   * apply schema at spawn time (e.g. claude-code `--json-schema`) pick it up;
+   * runtimes that support per-turn schema natively ignore it. In-memory only —
+   * never persisted to identity.
+   */
+  outputSchema?: Record<string, unknown>;
   runtimeId: string;
   ownsWorktreeOnClose: boolean;
   loggerFields?: Record<string, unknown>;
@@ -134,6 +142,7 @@ export class TeammateService {
   private readonly skillSources: readonly AgentRuntimeSkillSource[];
   private readonly disableFeatures: readonly string[];
   private readonly systemPrompt: AgentRuntimeSystemPrompt | undefined;
+  private readonly outputSchema: Record<string, unknown> | undefined;
   private readonly runtimeId: string;
   private readonly ownsWorktreeOnClose: boolean;
   private readonly loggerFields: Record<string, unknown>;
@@ -152,6 +161,7 @@ export class TeammateService {
     this.skillSources = options.skillSources ?? [];
     this.disableFeatures = options.disableFeatures ?? [];
     this.systemPrompt = options.systemPrompt;
+    this.outputSchema = options.outputSchema;
     this.runtimeId = options.runtimeId;
     this.ownsWorktreeOnClose = options.ownsWorktreeOnClose;
     this.loggerFields = options.loggerFields ?? { teammate: identity.name };
@@ -448,6 +458,9 @@ export class TeammateService {
         cwd: identity.cwd,
         skillSources: this.skillSources,
         disableFeatures: this.disableFeatures,
+        ...(this.outputSchema !== undefined
+          ? { outputSchema: this.outputSchema }
+          : {}),
         ...(this.systemPrompt !== undefined
           ? { systemPrompt: this.systemPrompt }
           : {}),

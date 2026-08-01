@@ -256,6 +256,19 @@ export interface AgentRuntimeCreateContext<TConfig = unknown> {
    * mechanism and ignores the rest.
    */
   disableFeatures?: readonly string[];
+  /**
+   * Optional JSON Schema constraining the model's final assistant message for
+   * the *entire resident session*. Provider-neutral: each runtime maps it to
+   * its native structured-output mechanism at spawn time (e.g. claude-code
+   * `--json-schema`, which is a CLI flag fixed for the process lifetime).
+   * Runtimes that support per-turn schema natively (e.g. codex
+   * `turn/start.outputSchema`) may ignore this create-context field and rely
+   * on the per-turn {@link AgentRuntimeTextInput.outputSchema} instead. When
+   * set, every settled turn's result text is expected to be valid JSON
+   * conforming to the schema; the caller parses it. Omitted/undefined means
+   * "no schema constraint" — the common case.
+   */
+  outputSchema?: Record<string, unknown>;
   logger?: DreamuxLogger;
   paths?: AgentRuntimePathContext;
   state?: AgentRuntimeStateCallbacks;

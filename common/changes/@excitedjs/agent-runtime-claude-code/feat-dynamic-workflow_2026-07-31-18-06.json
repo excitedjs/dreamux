@@ -2,8 +2,8 @@
   "changes": [
     {
       "packageName": "@excitedjs/agent-runtime-claude-code",
-      "comment": "Fail loudly when per-turn structured output schemas are unsupported.",
-      "type": "patch"
+      "comment": "Support structured output via the create-context outputSchema, mapped to the native --json-schema flag on the resident stream-json session. A per-turn schema matching the spawn-time one is a no-op; a differing one still fails loud.",
+      "type": "minor"
     }
   ],
   "packageName": "@excitedjs/agent-runtime-claude-code"

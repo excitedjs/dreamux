@@ -2,7 +2,7 @@
   "changes": [
     {
       "packageName": "@excitedjs/dreamux-types",
-      "comment": "Add native outputSchema support and a structural unsupported-feature error contract to text turn inputs.",
+      "comment": "Add outputSchema to AgentRuntimeCreateContext for spawn-time structured output, alongside the existing per-turn outputSchema on text turn inputs and the structural unsupported-feature error contract.",
       "type": "minor"
     }
   ],
