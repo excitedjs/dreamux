@@ -22,8 +22,11 @@ overlapping writes.
 - `workflow_status` reads the current phase, agent progress, concrete TeamMate
   names, and terminal result for one `run_id`.
 - `workflow_list` lists runs in the current caller scope.
-- `workflow_stop` stops a running `run_id`. In-flight agent turns settle before
-  the stopped terminal completion is delivered.
+- `workflow_stop` stops a running `run_id`. It reserves the terminal state and
+  returns immediately; in-flight agent turns settle before the stopped terminal
+  completion is delivered. Right after `workflow_stop` returns, `workflow_status`
+  may still read `running` until the run settles to `stopped` — do not treat a
+  transient `running` as a failed stop.
 
 Each run can start at most 200 agents across its complete lifecycle.
 
