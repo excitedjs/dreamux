@@ -25,6 +25,9 @@ For current behavior, read the linked source code too.
 - [Model-facing writing](reference/model-facing-writing.md) — current
   checklist for bundled skills, prompts, MCP descriptions, structured MCP
   results, and tests that lock model-visible text.
+- [Dynamic Workflow usage](reference/dynamic-workflow-usage.md) — user guide
+  for the beta Dynamic Workflow multi-agent orchestration capability, with
+  real review/audit/fix workflow examples.
 - [Glossary](glossary.md) — short definitions for overloaded Dreamux terms.
 - [Decision index](decisions/README.md) — ADRs, with current-trail and
   historical-background sections.
