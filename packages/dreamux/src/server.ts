@@ -25,6 +25,7 @@ import {
   setRuntimeConfig,
 } from './platform/paths.js';
 import { createLogger } from './platform/logger.js';
+import { errorInfo } from './platform/error-info.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import {
   assertNoLegacyAdminServer,
@@ -91,6 +92,8 @@ export interface ServerOptions {
    * CLI injects a factory that writes `logs/channel/<id>.log`.
    */
   channelLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
+  /** Per-dispatcher Dynamic Workflow lifecycle logger factory. */
+  workflowLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
   /**
    * Optional sweep of the volatile runtime-socket dirs (issue #182), run once
    * after the admin-socket lock is held (single-server guarantee — every
@@ -160,6 +163,9 @@ export class Server {
       channelProviders: this.channelProviders,
       adminSocketPath: opts.adminSocketPath ?? adminSocketPath(),
       channelLoggerFactory,
+      ...(opts.workflowLoggerFactory !== undefined
+        ? { workflowLoggerFactory: opts.workflowLoggerFactory }
+        : {}),
       log: this.log,
     });
   }
@@ -214,7 +220,7 @@ export class Server {
       } catch (err) {
         this.log.warn(
           {
-            err: errInfo(err),
+            err: errorInfo(err),
           },
           'runtime-socket sweep failed; continuing startup',
         );
@@ -229,7 +235,7 @@ export class Server {
         this.log.error(
           {
             dispatcher_id: row.dispatcher_id,
-            err: errInfo(err),
+            err: errorInfo(err),
           },
           'dispatcher failed to start',
         );
@@ -392,13 +398,4 @@ function assertRuntimeImplementationsLoaded(
         '(or an injected agentRuntimeProviderCatalog).',
     );
   }
-}
-
-function errInfo(err: unknown): { message: string; stack?: string } {
-  if (err instanceof Error) {
-    return err.stack !== undefined
-      ? { message: err.message, stack: err.stack }
-      : { message: err.message };
-  }
-  return { message: String(err) };
 }

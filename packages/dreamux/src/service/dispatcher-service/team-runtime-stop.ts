@@ -1,7 +1,7 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
+import { errorInfo } from '../../platform/error-info.js';
 import type { TeamCollection } from '../team-collection/index.js';
-import { errInfo } from './runtime-helpers.js';
 
 /** Sweep all materialized Team runtimes while allowing dispatcher stop to continue. */
 export async function stopTeamRuntimes(input: {
@@ -14,7 +14,7 @@ export async function stopTeamRuntimes(input: {
     return null;
   } catch (err) {
     input.log.error(
-      { dispatcher_id: input.dispatcherId, err: errInfo(err) },
+      { dispatcher_id: input.dispatcherId, err: errorInfo(err) },
       'error stopping Team runtimes',
     );
     return err;

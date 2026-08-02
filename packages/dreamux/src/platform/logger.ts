@@ -44,6 +44,8 @@ import pino, {
   type LoggerOptions,
 } from 'pino';
 
+import { errorInfo } from './error-info.js';
+
 /**
  * The neutral `DreamuxLogger` contract is pino-compatible (fields-first), so a
  * pino logger satisfies it structurally. This compile-time probe is the
@@ -180,16 +182,7 @@ export function loggerToLevelFn(
   logger: DreamuxLogger,
 ): (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void {
   return (level, msg, err) => {
-    if (err !== undefined) logger[level]({ err: serializeErr(err) }, msg);
+    if (err !== undefined) logger[level]({ err: errorInfo(err) }, msg);
     else logger[level](msg);
   };
-}
-
-function serializeErr(err: unknown): { message: string; stack?: string } {
-  if (err instanceof Error) {
-    return err.stack !== undefined
-      ? { message: err.message, stack: err.stack }
-      : { message: err.message };
-  }
-  return { message: String(err) };
 }

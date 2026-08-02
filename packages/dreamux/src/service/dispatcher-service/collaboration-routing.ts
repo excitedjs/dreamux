@@ -13,6 +13,7 @@ import type {
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
+import { errorInfo } from '../../platform/error-info.js';
 import type { ChannelService } from '../channel-service/index.js';
 import type { CollaborationSpaceService } from '../collaboration-space/index.js';
 import { CollaborationTargetOperationError } from '../collaboration-space/operation-error.js';
@@ -647,17 +648,8 @@ function logStrictOperationFailure(
       channel_id: channelId,
       operation,
       rejection_code: result.rejection.code,
-      err: errInfo(error),
+      err: errorInfo(error),
     },
     'strict channel collaboration operation rejected',
   );
-}
-
-function errInfo(error: unknown): { message: string; stack?: string } {
-  if (error instanceof Error) {
-    return error.stack === undefined
-      ? { message: error.message }
-      : { message: error.message, stack: error.stack };
-  }
-  return { message: String(error) };
 }

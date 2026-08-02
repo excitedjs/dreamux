@@ -63,9 +63,27 @@ export interface AgentRuntimeResumeCapability {
   supported: boolean;
 }
 
+export interface AgentRuntimeStructuredOutputCapability {
+  supported: boolean;
+  /**
+   * How the schema is applied:
+   * - `'create-context'`: set once at spawn time (e.g. claude-code `--json-schema`).
+   * - `'per-turn'`: set on each turn (e.g. codex `turn/start.outputSchema`).
+   * When `supported` is false, `scope` is omitted.
+   */
+  scope?: 'create-context' | 'per-turn';
+}
+
 export interface AgentRuntimeCapabilities {
   /** Whether this runtime can resume a prior checkpoint id from its create context. */
   resume: AgentRuntimeResumeCapability;
+  /**
+   * Whether this runtime supports structured output (JSON Schema on the final
+   * assistant message). Optional: a provider that omits it is treated as
+   * unsupported so core can fail-loud before submitting a schema-constrained
+   * turn, instead of relying on the runtime to return a specific error.
+   */
+  structuredOutput?: AgentRuntimeStructuredOutputCapability;
 }
 
 export interface AgentRuntimeSystemPrompt {
@@ -82,6 +100,32 @@ export interface AgentRuntimeTextInput {
   text: string;
   /** Correlation/dedupe metadata; not part of the model-visible text. */
   sourceId?: string;
+  /**
+   * Optional JSON Schema constraining the model's final assistant message for
+   * this turn. Provider-neutral: each runtime maps it to its native structured
+   * output mechanism (e.g. codex `turn/start.outputSchema`, claude-code
+   * `--json-schema`). Runtimes that do not support structured output MUST
+   * return `{ status: 'failed', error }` where `error` is an
+   * {@link UnsupportedAgentRuntimeFeatureError} with `feature: 'outputSchema'`
+   * when this is set — never silently ignore it, so callers never get
+   * unconstrained text when they asked for a schema. When set, the settled
+   * result text is expected to be valid JSON conforming to the schema; the
+   * caller parses it.
+   */
+  outputSchema?: Record<string, unknown>;
+}
+
+/**
+ * Structural shape of an `Error` a runtime returns (as a `failed` turn
+ * `error`) when the caller requested a neutral feature the runtime does not
+ * support. Callers branch on `error.name === 'UnsupportedAgentRuntimeFeatureError'`
+ * and `error.feature` rather than `instanceof`, keeping `@excitedjs/dreamux-types`
+ * declaration-only (no runtime values). The `feature` field names the requested
+ * capability (e.g. `'outputSchema'`).
+ */
+export interface UnsupportedAgentRuntimeFeatureError extends Error {
+  name: 'UnsupportedAgentRuntimeFeatureError';
+  feature: string;
 }
 
 export interface AgentRuntimeLastResult {
@@ -230,6 +274,19 @@ export interface AgentRuntimeCreateContext<TConfig = unknown> {
    * mechanism and ignores the rest.
    */
   disableFeatures?: readonly string[];
+  /**
+   * Optional JSON Schema constraining the model's final assistant message for
+   * the *entire resident session*. Provider-neutral: each runtime maps it to
+   * its native structured-output mechanism at spawn time (e.g. claude-code
+   * `--json-schema`, which is a CLI flag fixed for the process lifetime).
+   * Runtimes that support per-turn schema natively (e.g. codex
+   * `turn/start.outputSchema`) may ignore this create-context field and rely
+   * on the per-turn {@link AgentRuntimeTextInput.outputSchema} instead. When
+   * set, every settled turn's result text is expected to be valid JSON
+   * conforming to the schema; the caller parses it. Omitted/undefined means
+   * "no schema constraint" — the common case.
+   */
+  outputSchema?: Record<string, unknown>;
   logger?: DreamuxLogger;
   paths?: AgentRuntimePathContext;
   state?: AgentRuntimeStateCallbacks;

@@ -10,7 +10,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InboundTurnInput } from '@excitedjs/dreamux-types';
 
 import {
@@ -18,6 +18,7 @@ import {
   COMPLETION_INLINE_BUDGET_MAX,
   completionInlineBudget,
   ensureOwnerOnlyDir,
+  isProcessAlive,
   isPlainObject,
   pathExists,
   rejectUnknownKeys,
@@ -26,6 +27,7 @@ import {
   renderChannelInput,
   requireNonEmptyString,
   resolveCompletionBody,
+  SupervisedChild,
   teamMateCompletionOutputPath,
   type CompletionBodyInput,
 } from '../src/index.js';
@@ -86,6 +88,62 @@ describe('os', () => {
     await removeEmptyLogFile(full);
     expect(await pathExists(empty)).toBe(false);
     expect(await pathExists(full)).toBe(true);
+  });
+});
+
+describe('SupervisedChild', () => {
+  it('reports a spawned child exit', async () => {
+    const child = new SupervisedChild({
+      kind: 'spawn',
+      command: process.execPath,
+      args: ['-e', 'process.exit(7)'],
+      options: { stdio: 'ignore' },
+    });
+    const exited = new Promise<{ code: number | null }>((resolve) => {
+      child.onExit(resolve);
+    });
+
+    await child.start();
+
+    await expect(exited).resolves.toMatchObject({ code: 7 });
+    await child.stop();
+  });
+
+  it('supports fork IPC and idempotent group stop', async () => {
+    const modulePath = join(root, 'fork-child.mjs');
+    await writeFile(
+      modulePath,
+      "process.on('message', value => process.send?.({ echo: value }));\n",
+    );
+    const supervised = new SupervisedChild({
+      kind: 'fork',
+      modulePath,
+      options: { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] },
+    });
+    const child = await supervised.start();
+    const reply = new Promise<unknown>((resolve) => child.once('message', resolve));
+
+    child.send({ ping: true });
+
+    await expect(reply).resolves.toEqual({ echo: { ping: true } });
+    await Promise.all([supervised.stop(), supervised.stop()]);
+  });
+
+  it('does not let a child escape when stop races start', async () => {
+    const supervised = new SupervisedChild({
+      kind: 'spawn',
+      command: process.execPath,
+      args: ['-e', 'setInterval(() => {}, 1000)'],
+      options: { stdio: 'ignore' },
+    }, { stopTimeoutMs: 100 });
+
+    const starting = supervised.start();
+    const pid = supervised.pid;
+    await supervised.stop();
+
+    await expect(starting).rejects.toThrow(/stopped during start/);
+    expect(pid).not.toBeNull();
+    await vi.waitFor(() => expect(isProcessAlive(pid!)).toBe(false));
   });
 });
 

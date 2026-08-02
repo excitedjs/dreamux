@@ -10,8 +10,6 @@ import type {
   InboundTurnInput,
   TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
-import { resolveCompletionBody } from '@excitedjs/dreamux-utils';
-
 import {
   DISABLE_FEATURE_USER_INTERRUPT,
   HOST_INJECT_ENV,
@@ -50,6 +48,8 @@ import type {
   CompletionDeliveryResult,
   CompletionEnvelope,
 } from '../completion-router/index.js';
+import { buildCompletionTurnText } from './completion-renderer.js';
+import { TurnSubmissionReadiness } from './submission-readiness.js';
 
 /** The provider-construction inputs a {@link TeammateService} needs to launch. */
 export interface RuntimeLaunchSpec {
@@ -81,18 +81,29 @@ export interface TeammateServiceDeps {
    * via the per-dispatcher `CompletionRouter`. The collection wires this to
    * `router.settle(completionKey(producerName, turnId), envelope)`.
    */
-  routeSettledCompletion: (
-    producerName: string,
-    turnId: string,
-    completion: CompletionEnvelope,
-  ) => Promise<void>;
+  routeSettledCompletion: SettledCompletionRoute;
 }
+
+/** A per-entity destination for every turn settled by that TeamMate. */
+export type SettledCompletionRoute = (
+  producerName: string,
+  turnId: string,
+  completion: CompletionEnvelope,
+) => Promise<void>;
 
 export interface TeammateServiceOptions {
   mcpServers?: readonly AgentRuntimeMcpServer[];
   skillSources?: readonly AgentRuntimeSkillSource[];
   disableFeatures?: readonly string[];
   systemPrompt?: AgentRuntimeSystemPrompt;
+  /**
+   * Optional JSON Schema constraining every turn's final assistant message for
+   * this runtime's lifetime. Flows into the create context so runtimes that
+   * apply schema at spawn time (e.g. claude-code `--json-schema`) pick it up;
+   * runtimes that support per-turn schema natively ignore it. In-memory only —
+   * never persisted to identity.
+   */
+  outputSchema?: Record<string, unknown>;
   runtimeId: string;
   ownsWorktreeOnClose: boolean;
   loggerFields?: Record<string, unknown>;
@@ -122,11 +133,16 @@ function assertIdentityBelongsToDispatcher(
 export class TeammateService {
   private runtime: AgentRuntime | null = null;
   private starting: Promise<void> | null = null;
+  private readonly settleWrites = new Set<Promise<void>>();
+  private readonly turnSubmissions = new TurnSubmissionReadiness((settled) => {
+    this.captureSettledTurn(settled);
+  });
   private state: AgentRuntimeStateStore;
   private readonly mcpServers: readonly AgentRuntimeMcpServer[];
   private readonly skillSources: readonly AgentRuntimeSkillSource[];
   private readonly disableFeatures: readonly string[];
   private readonly systemPrompt: AgentRuntimeSystemPrompt | undefined;
+  private readonly outputSchema: Record<string, unknown> | undefined;
   private readonly runtimeId: string;
   private readonly ownsWorktreeOnClose: boolean;
   private readonly loggerFields: Record<string, unknown>;
@@ -145,6 +161,7 @@ export class TeammateService {
     this.skillSources = options.skillSources ?? [];
     this.disableFeatures = options.disableFeatures ?? [];
     this.systemPrompt = options.systemPrompt;
+    this.outputSchema = options.outputSchema;
     this.runtimeId = options.runtimeId;
     this.ownsWorktreeOnClose = options.ownsWorktreeOnClose;
     this.loggerFields = options.loggerFields ?? { teammate: identity.name };
@@ -190,17 +207,13 @@ export class TeammateService {
         error: err instanceof Error ? err : new Error(String(err)),
       };
     }
-    const result = await runtime.completionInput({
-      text,
-      sourceId: `completion:${completion.id}`,
-    });
-    if (result.status === 'submitted') {
-      await recordSubmittedTurn(this.turnsStore, this.live(), {
-        turnId: result.turnId,
-        turnOrigin: null,
-        prompt: text,
-      });
-    }
+    const result = await this.submitRuntimeTurn(
+      () => runtime.completionInput({
+        text,
+        sourceId: `completion:${completion.id}`,
+      }),
+      { turnOrigin: null, prompt: text, recordUnsubmitted: false },
+    );
     return turnResultToCompletionDelivery(result);
   }
 
@@ -221,11 +234,8 @@ export class TeammateService {
     if (input.intent !== undefined && input.intent !== '') {
       await this.state.updateIntent(input.intent);
     }
-    const turn = await this.submitPrompt(input.prompt);
-    await recordSubmittedTurn(this.turnsStore, this.live(), {
-      turnId: turn.turn_id ?? null,
+    const turn = await this.submitPrompt(input.prompt, {
       turnOrigin: input.turnOrigin,
-      prompt: input.prompt,
     });
     return { teammate: this.status(), turn };
   }
@@ -233,29 +243,35 @@ export class TeammateService {
   /** Submit the first prompt of a freshly created teammate / leader. */
   async submitInitialPrompt(
     prompt: string,
-    opts: { turnOrigin: AgentEntityTurnOrigin },
+    opts: {
+      turnOrigin: AgentEntityTurnOrigin;
+      outputSchema?: Record<string, unknown>;
+    },
   ): Promise<AgentEntityTurnResult> {
-    const turn = await this.submitPrompt(prompt);
-    await recordSubmittedTurn(this.turnsStore, this.live(), {
-      turnId: turn.turn_id ?? null,
+    return toTurnResult(await this.submitInitialPromptRuntime(prompt, opts));
+  }
+
+  /** Initial submission result before adapting it to the admin-facing DTO. */
+  async submitInitialPromptRuntime(
+    prompt: string,
+    opts: {
+      turnOrigin: AgentEntityTurnOrigin;
+      outputSchema?: Record<string, unknown>;
+    },
+  ): Promise<AgentRuntimeTurnResult> {
+    return this.submitPromptRuntime(prompt, {
       turnOrigin: opts.turnOrigin,
-      prompt,
+      outputSchema: opts.outputSchema,
     });
-    return turn;
   }
 
   async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
     await this.ensureStarted({ reopenClosed: true });
     const runtime = this.mustRuntime();
-    const result = await runtime.channelInput(input);
-    if (result.status === 'submitted') {
-      await recordSubmittedTurn(this.turnsStore, this.live(), {
-        turnId: result.turnId,
-        turnOrigin: 'channel',
-        prompt: input.text,
-      });
-    }
-    return result;
+    return this.submitRuntimeTurn(
+      () => runtime.channelInput(input),
+      { turnOrigin: 'channel', prompt: input.text, recordUnsubmitted: false },
+    );
   }
 
   async scheduledInput(input: {
@@ -268,23 +284,37 @@ export class TeammateService {
     await this.ensureStarted();
     if (input.signal.aborted) return { status: 'skipped' };
     const runtime = this.mustRuntime();
-    const result = await runtime.completionInput({
-      text: input.prompt,
-      sourceId: input.sourceId,
-    });
-    if (result.status === 'submitted') {
-      await recordSubmittedTurn(this.turnsStore, this.live(), {
-        turnId: result.turnId,
+    return this.submitRuntimeTurn(
+      () => runtime.completionInput({
+        text: input.prompt,
+        sourceId: input.sourceId,
+      }),
+      {
         turnOrigin: { kind: 'scheduled', job_id: input.jobId },
         prompt: input.prompt,
-      });
-    }
-    return result;
+        recordUnsubmitted: false,
+      },
+    );
   }
 
   async close(input: { note: string }): Promise<AgentEntityCloseResult> {
     requireLifecycleText(input.note, 'TeamMate close note');
+    return this.transitionToClosed(input.note);
+  }
+
+  /** Owner-only close that leaves no user-visible lifecycle note. */
+  async release(): Promise<AgentEntityCloseResult> {
+    return this.transitionToClosed(null);
+  }
+
+  private async transitionToClosed(
+    closeNote: string | null,
+  ): Promise<AgentEntityCloseResult> {
     await this.stop();
+    await this.turnSubmissions.drain();
+    while (this.settleWrites.size > 0) {
+      await Promise.allSettled([...this.settleWrites]);
+    }
     const identity = this.current();
     // Close-time cleanup requires both ownership from the entity profile and
     // delete-on-close metadata from the identity. Shared worktrees can still
@@ -299,7 +329,7 @@ export class TeammateService {
     const closed = await this.deps.identities.update(identity, {
       status: 'closed',
       closedAt: Date.now(),
-      closeNote: input.note,
+      closeNote,
       lastSeenAt: Date.now(),
       worktree,
     });
@@ -426,6 +456,7 @@ export class TeammateService {
         cwd: identity.cwd,
         skillSources: this.skillSources,
         disableFeatures: this.disableFeatures,
+        outputSchema: this.outputSchema,
         ...(this.systemPrompt !== undefined
           ? { systemPrompt: this.systemPrompt }
           : {}),
@@ -456,7 +487,7 @@ export class TeammateService {
       ],
       onTurnSettled: (settled: TurnSettledSignal): void => {
         if (liveRuntime === null) return;
-        this.captureSettledTurn(liveRuntime, settled);
+        this.turnSubmissions.capture(settled);
       },
     });
     liveRuntime = runtime;
@@ -468,55 +499,111 @@ export class TeammateService {
     this.runtime = runtime;
   }
 
-  private captureSettledTurn(
-    runtime: AgentRuntime,
-    settled: TurnSettledSignal,
-  ): void {
-    const capture = this.deliverSettledTurn(runtime, settled);
+  private captureSettledTurn(settled: TurnSettledSignal): void {
+    const capture = this.deliverSettledTurn(settled);
     this.deps.trackSettleCapture?.(capture);
   }
 
   /**
    * The producer side of the reverse path: when this teammate's turn settles,
-   * record the settled row and route the completion to whoever initiated the
-   * turn. The two lines run with `Promise.allSettled` so the durable record is
-   * never gated by, or lost to, delivery.
+   * record the settled row before routing the completion. A route may release
+   * the producer, so allowing its older runtime-state write to finish later
+   * could overwrite the durable closed identity with stale running state.
+   * Both operations remain best-effort and independent on failure.
    */
   private async deliverSettledTurn(
-    _runtime: AgentRuntime,
     settled: TurnSettledSignal,
   ): Promise<void> {
     const identity = this.current();
     const result = settled.result?.text ?? null;
+    if (settled.status === 'failed' && settled.error !== undefined) {
+      this.deps.log.error(
+        {
+          teammate: identity.name,
+          turn_id: settled.turnId,
+          err: {
+            name: settled.error.name,
+            message: settled.error.message,
+            stack: settled.error.stack,
+          },
+        },
+        'teammate turn failed',
+      );
+    }
     const envelope: CompletionEnvelope = {
+      kind: 'teammate',
       source: identity.name,
       id: `${identity.name}:${settled.turnId}`,
       status: settled.status,
       result,
     };
-    const record = recordSettledTurn(this.turnsStore, this.state, {
-      turnId: settled.turnId,
-      assistant: result,
-      settleStatus: settled.status,
-      assistantTruncated: settled.result?.truncated === true,
-    });
-    const route = this.deps.routeSettledCompletion(
-      identity.name,
-      settled.turnId,
-      envelope,
-    );
-    await Promise.allSettled([record, route]);
+    const settleWrite = this.turnSubmissions.persist(() =>
+      recordSettledTurn(this.turnsStore, this.state, {
+        turnId: settled.turnId,
+        assistant: result,
+        settleStatus: settled.status,
+        assistantTruncated: settled.result?.truncated === true,
+      }));
+    this.settleWrites.add(settleWrite);
+    await Promise.allSettled([settleWrite]);
+    this.settleWrites.delete(settleWrite);
+    await Promise.allSettled([
+      this.deps.routeSettledCompletion(
+        identity.name,
+        settled.turnId,
+        envelope,
+      ),
+    ]);
   }
 
-  private async submitPrompt(prompt: string): Promise<AgentEntityTurnResult> {
+  private async submitPrompt(
+    prompt: string,
+    opts: {
+      turnOrigin: AgentEntityTurnOrigin;
+      outputSchema?: Record<string, unknown>;
+    },
+  ): Promise<AgentEntityTurnResult> {
+    return toTurnResult(await this.submitPromptRuntime(prompt, opts));
+  }
+
+  /** Submit through the neutral runtime seam before adapting to admin DTOs. */
+  private async submitPromptRuntime(
+    prompt: string,
+    opts: {
+      turnOrigin: AgentEntityTurnOrigin;
+      outputSchema?: Record<string, unknown>;
+    },
+  ): Promise<AgentRuntimeTurnResult> {
     await this.ensureStarted({ reopenClosed: true });
     const runtime = this.mustRuntime();
     const submissionSeq = this.deps.nextSubmissionSeq();
-    const result = await runtime.completionInput({
-      sourceId: `teammate:${this.name}:${submissionSeq}`,
-      text: prompt,
+    const result = await this.submitRuntimeTurn(
+      () => runtime.completionInput({
+        sourceId: `teammate:${this.name}:${submissionSeq}`,
+        text: prompt,
+        outputSchema: opts.outputSchema,
+      }),
+      { turnOrigin: opts.turnOrigin, prompt, recordUnsubmitted: true },
+    );
+    return result;
+  }
+
+  private submitRuntimeTurn(
+    operation: () => Promise<AgentRuntimeTurnResult>,
+    input: {
+      turnOrigin: AgentEntityTurnOrigin | null;
+      prompt: string;
+      recordUnsubmitted: boolean;
+    },
+  ): Promise<AgentRuntimeTurnResult> {
+    return this.turnSubmissions.submit(operation, async (result) => {
+      if (result.status !== 'submitted' && !input.recordUnsubmitted) return;
+      await recordSubmittedTurn(this.turnsStore, this.live(), {
+        turnId: result.status === 'submitted' ? result.turnId : null,
+        turnOrigin: input.turnOrigin,
+        prompt: input.prompt,
+      });
     });
-    return toTurnResult(result);
   }
 
   private get turnsStore(): AgentTurnsStore {
@@ -548,28 +635,6 @@ export class TeammateService {
   private resolveCompletionSpillDir(): string {
     return dispatcherCompletionSpillDir(this.current().dispatcher_id);
   }
-}
-
-function completionStatusLine(completion: CompletionEnvelope): string {
-  switch (completion.status) {
-    case 'completed':
-      return `TeamMate ${completion.source} has finished its task.`;
-    case 'failed':
-      return `TeamMate ${completion.source}'s task failed.`;
-    case 'stopped':
-      return `TeamMate ${completion.source}'s task was stopped.`;
-  }
-}
-
-async function buildCompletionTurnText(
-  completion: CompletionEnvelope,
-  spillDir: string,
-): Promise<string> {
-  const line = completionStatusLine(completion);
-  const body = await resolveCompletionBody(completion, spillDir);
-  return body.kind === 'inline'
-    ? `${line} Output below:\n\n${body.text}`
-    : `${line} The output is too long, so the full result was saved to a file:\n\n${body.path}`;
 }
 
 function turnResultToCompletionDelivery(

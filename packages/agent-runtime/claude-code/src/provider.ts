@@ -55,6 +55,7 @@ export interface ClaudeCodeAgentRuntimeProviderOptions {
 
 export const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
   resume: { supported: true },
+  structuredOutput: { supported: true, scope: 'create-context' },
 };
 
 const DEFAULT_CLAUDE_CODE_DESCRIPTOR: AgentRuntimeProviderDescriptor = {
@@ -151,6 +152,7 @@ export function createClaudeCodeAgentRuntimeProvider(
         ...(context.disableFeatures !== undefined
           ? { disableFeatures: context.disableFeatures }
           : {}),
+        outputSchema: context.outputSchema,
         ...(systemPromptAppend !== undefined
           ? { systemPromptAppend }
           : {}),

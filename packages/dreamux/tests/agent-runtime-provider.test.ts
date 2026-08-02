@@ -132,7 +132,10 @@ describe('AgentRuntimeProviderCatalog', () => {
 
     expect(provider.ref).toBe('builtin:codex');
     expect(provider.descriptor.kind).toBe('agentRuntime');
-    expect(provider.getCapabilities()).toEqual({ resume: { supported: true } });
+    expect(provider.getCapabilities()).toEqual({
+      resume: { supported: true },
+      structuredOutput: { supported: true, scope: 'per-turn' },
+    });
   });
 
   it('creates a Codex-backed AgentRuntime without starting it', () => {
@@ -156,7 +159,10 @@ describe('AgentRuntimeProviderCatalog', () => {
 
     expect(provider.ref).toBe('builtin:claude-code');
     expect(provider.descriptor.kind).toBe('agentRuntime');
-    expect(provider.getCapabilities()).toEqual({ resume: { supported: true } });
+    expect(provider.getCapabilities()).toEqual({
+      resume: { supported: true },
+      structuredOutput: { supported: true, scope: 'create-context' },
+    });
   });
 
   it('does not expose the built-in Feishu channel through the runtime catalog', () => {

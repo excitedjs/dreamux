@@ -28,7 +28,10 @@ import {
   DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
   DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
 } from './base-prompt.js';
-import { bundledDispatcherSkillRoot } from '../../platform/paths.js';
+import {
+  bundledDispatcherSkillRoot,
+  bundledSharedSkillRoot,
+} from '../../platform/paths.js';
 
 export interface DispatcherAgentDeps {
   id: string;
@@ -81,11 +84,18 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
       ownsWorktreeOnClose: false,
       loggerFields: {},
       assertIdentityScope: assertDispatcherRootAgent,
-      skillSources: [{
-        name: 'dispatcher',
-        path: bundledDispatcherSkillRoot(),
-        source: 'dreamux-core',
-      }],
+      skillSources: [
+        {
+          name: 'dispatcher',
+          path: bundledDispatcherSkillRoot(),
+          source: 'dreamux-core',
+        },
+        {
+          name: 'shared',
+          path: bundledSharedSkillRoot(),
+          source: 'dreamux-core',
+        },
+      ],
       disableFeatures: [DISABLE_FEATURE_CRON],
       systemPrompt: {
         replace: DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,

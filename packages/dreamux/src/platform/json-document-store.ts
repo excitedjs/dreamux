@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 
 import { writeFileAtomic } from './atomic-write.js';
+import { errorMessage } from './error-info.js';
 import { isNotFound } from './fs-errors.js';
 import { LegacyStateError } from '../service/legacy-state.js';
 
@@ -65,8 +66,4 @@ export class JsonDocumentStore<TDoc> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "BREAKING: Add Dynamic Workflow orchestration with admin and MCP tools, durable run records, and a required bundled workflow skill. Rebuild: remove or rename any custom workflow skill before restarting existing Dispatcher or TeamLeader identities.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

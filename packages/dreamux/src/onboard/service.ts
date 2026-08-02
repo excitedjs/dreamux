@@ -6,6 +6,7 @@ import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { build as buildPlist } from 'plist';
 import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
 import { expandHome } from '../config/config.js';
+import { errorMessage } from '../platform/error-info.js';
 import {
   buildServicePath,
   logsRoot,
@@ -351,9 +352,6 @@ async function assertExecutable(path: string, label: string): Promise<void> {
   throw new Error(`managed service executable is not runnable: ${label}`);
 }
 
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 async function registerLaunchd(
   unitPath: string,

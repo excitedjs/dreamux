@@ -82,7 +82,10 @@ import {
   type TurnOutcome,
   type TurnSubmitOptions,
 } from './supervisor.js';
-import { renderChannelInput } from '@excitedjs/dreamux-utils';
+import {
+  renderChannelInput,
+  unsupportedFeatureError,
+} from '@excitedjs/dreamux-utils';
 import { CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
 import { consoleFallbackLogger } from './logger.js';
 import type {
@@ -145,6 +148,14 @@ export interface ClaudeCodeRuntimeDeps {
    * is applied on every resident (re)spawn.
    */
   disableFeatures?: readonly string[];
+  /**
+   * Optional JSON Schema constraining every turn's final assistant message for
+   * the resident session's lifetime. Passed straight through to
+   * `claudeCodeResidentArgs` as the native `--json-schema` flag on every
+   * (re)spawn. In-memory only — never persisted to identity, so a resumed
+   * session that did not start with a schema does not silently gain one.
+   */
+  outputSchema?: Record<string, unknown>;
   /** Fired each time a delivered turn reaches a terminal state. */
   onTurnSettled?: (settled: TurnSettledSignal) => void;
   /** Structured logger; falls back to a minimal `console.error` sink. */
@@ -290,6 +301,23 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 
   async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
     if (this.stopped) return { status: 'stopped' };
+    if (input.outputSchema !== undefined) {
+      // `--json-schema` is fixed at spawn time. A per-turn schema matching the
+      // spawn-time one is a no-op; a different one fails loud.
+      const spawnSchema = this.deps.outputSchema;
+      const matchesSpawn =
+        spawnSchema !== undefined &&
+        JSON.stringify(spawnSchema) === JSON.stringify(input.outputSchema);
+      if (!matchesSpawn) {
+        const error = unsupportedFeatureError(
+          'outputSchema',
+          spawnSchema === undefined
+            ? 'claude-code runtime does not support per-turn outputSchema on the resident session'
+            : 'claude-code runtime cannot change the output schema mid-session',
+        );
+        return { status: 'failed', error };
+      }
+    }
     const key = input.sourceId;
     if (key !== undefined && key !== '' && this.seenTextInputIds.has(key)) {
       return { status: 'duplicate' };
@@ -506,6 +534,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
           ? []
           : [this.skillAddDirRoot],
       disableFeatures: this.deps.disableFeatures,
+      outputSchema: this.deps.outputSchema,
     });
     const session = this.deps.sessionFactory({
       bin: this.bin,

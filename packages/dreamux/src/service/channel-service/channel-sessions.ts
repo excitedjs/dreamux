@@ -10,6 +10,7 @@ import type {
   DispatcherChannelConfig,
   DreamuxConfig,
 } from '../../config/config.js';
+import { errorInfo } from '../../platform/error-info.js';
 import {
   dispatcherCacheDir,
   dispatcherDir,
@@ -125,7 +126,7 @@ class ChannelSessions {
           {
             dispatcher_id: this.opts.dispatcherId,
             channel_id: channelId,
-            err: errInfo(err),
+            err: errorInfo(err),
           },
           'error closing bot',
         );
@@ -337,15 +338,6 @@ class ChannelSessions {
     );
     return dispatcherConfig?.channels ?? [];
   }
-}
-
-function errInfo(err: unknown): { message: string; stack?: string } {
-  if (err instanceof Error) {
-    return err.stack !== undefined
-      ? { message: err.message, stack: err.stack }
-      : { message: err.message };
-  }
-  return { message: String(err) };
 }
 
 export type { ChannelSessionsOptions, ChannelToolInvocation };

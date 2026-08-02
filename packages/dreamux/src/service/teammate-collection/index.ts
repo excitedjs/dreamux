@@ -3,6 +3,7 @@ import type {
   AgentRuntime,
   AgentRuntimeSystemPrompt,
 } from '@excitedjs/dreamux-types';
+import { unsupportedFeatureError } from '@excitedjs/dreamux-utils';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import {
@@ -32,8 +33,13 @@ import {
   toStatus,
   validateLastTurns,
 } from './read-helpers.js';
-import type { TeammateService } from '../teammate-service/index.js';
+import type {
+  SettledCompletionRoute,
+  TeammateService,
+} from '../teammate-service/index.js';
+import { toTurnResult } from '../teammate-service/turn-recording.js';
 import { AgentTurnsStore } from '../agent-entity/turns-store.js';
+import { throwSettledFailures } from '../shutdown-errors.js';
 import type { SuffixGenerator } from '../name-allocator.js';
 import {
   assertManagedWorktreeAvailable,
@@ -62,6 +68,12 @@ import type {
   SendTeamMateInput,
   SpawnTeamMateInput,
 } from './types.js';
+import type {
+  OwnedTeamMateSpawnResult,
+  OwnedTeammateOps,
+  OwnedTeammateOwner,
+  SpawnOwnedTeamMateOptions,
+} from './owned-teammates.js';
 
 export interface TeammateCollectionOptions {
   /** The dispatcher this collection belongs to (issue #233 ownership sinking). */
@@ -126,6 +138,10 @@ export type SpawnTeamMateRequest = SpawnTeamMateInput & {
   sharedWorkspace?: TeamMateSharedWorkspace;
 };
 
+type SpawnRoute =
+  | { kind: 'router' }
+  | ({ kind: 'owned' } & SpawnOwnedTeamMateOptions);
+
 /**
  * The narrow teammate-operations surface a dispatcher or team exposes to the
  * admin layer (issue #233). `TeammateCollection` implements it; the owning
@@ -159,13 +175,14 @@ export interface TeammateOps {
  * dispatcher id and the scope are baked into the collection, not threaded per
  * call.
  */
-export class TeammateCollection implements TeammateOps {
+export class TeammateCollection implements TeammateOps, OwnedTeammateOps {
   private readonly dispatcherId: string;
   private readonly teamScope: string | null;
   private readonly identities: AgentIdentityStore;
   private readonly turnsStore: AgentTurnsStore;
   private readonly worktrees: WorktreeManager;
   private readonly entities = new Map<string, TeammateService>();
+  private readonly exclusivelyOwned = new Map<string, OwnedTeammateOwner>();
   private submissionSeq = 0;
   private readonly inFlightSettleCaptures = new Set<Promise<void>>();
 
@@ -187,6 +204,29 @@ export class TeammateCollection implements TeammateOps {
   }
 
   async spawn(input: SpawnTeamMateRequest): Promise<AgentEntitySpawnResult> {
+    const spawned = await this.spawnWithRoute(input, { kind: 'router' });
+    return {
+      teammate: spawned.teammate,
+      turn: toTurnResult(spawned.turn),
+    };
+  }
+
+  /**
+   * Create a fresh TeamMate whose settle route is fixed before its runtime or
+   * first turn starts. The owner route replaces (rather than supplements) the
+   * collection's normal CompletionRouter path.
+   */
+  async spawnOwned(
+    input: SpawnTeamMateRequest,
+    options: SpawnOwnedTeamMateOptions,
+  ): Promise<OwnedTeamMateSpawnResult> {
+    return this.spawnWithRoute(input, { kind: 'owned', ...options });
+  }
+
+  private async spawnWithRoute(
+    input: SpawnTeamMateRequest,
+    route: SpawnRoute,
+  ): Promise<OwnedTeamMateSpawnResult> {
     if (this.opts.isShuttingDown?.())
       throw new Error(`dispatcher '${this.dispatcherId}' is shutting down`);
     requireLifecycleText(input.name, 'TeamMate spawn name');
@@ -246,13 +286,36 @@ export class TeammateCollection implements TeammateOps {
         : {}),
       status: 'starting',
     });
-    const entity = this.entityFor(identity);
-    await entity.ensureStarted();
-    const turn = await entity.submitInitialPrompt(input.prompt, {
-      turnOrigin: teamId === undefined ? 'dispatcher' : 'team_leader',
-    });
-    await this.registerCompletion(entity, turn.turn_id ?? null);
-    return { teammate: entity.status(), turn };
+    const entity = this.entityFor(
+      identity,
+      route.kind === 'owned' ? route.routeSettledCompletion : undefined,
+      route.kind === 'owned' ? route.outputSchema : undefined,
+    );
+    if (route.kind === 'owned') {
+      this.exclusivelyOwned.set(entity.name, route.owner);
+    }
+    try {
+      await entity.ensureStarted();
+      const outputSchema =
+        route.kind === 'owned' ? route.outputSchema : undefined;
+      if (outputSchema !== undefined) {
+        assertStructuredOutputSupported(entity.getRuntime());
+      }
+      const turn = await entity.submitInitialPromptRuntime(input.prompt, {
+        turnOrigin: teamId === undefined ? 'dispatcher' : 'team_leader',
+        outputSchema,
+      });
+      if (route.kind === 'router') {
+        await this.registerCompletion(
+          entity,
+          turn.status === 'submitted' ? turn.turnId : null,
+        );
+      }
+      return { teammate: entity.status(), turn };
+    } catch (error) {
+      if (route.kind === 'owned') await this.cleanupFailedOwnedSpawn(entity);
+      throw error;
+    }
   }
 
   async send(input: SendTeamMateInput): Promise<AgentEntitySendResult> {
@@ -260,6 +323,7 @@ export class TeammateCollection implements TeammateOps {
       throw new Error(`dispatcher '${this.dispatcherId}' is shutting down`);
     const teamId = this.teamScope ?? undefined;
     const entity = await this.mustEntity(input.name);
+    this.assertPubliclyAddressable(entity);
     const result = await entity.send({
       prompt: input.prompt,
       ...(input.intent !== undefined ? { intent: input.intent } : {}),
@@ -271,7 +335,9 @@ export class TeammateCollection implements TeammateOps {
 
   async close(input: CloseTeamMateInput): Promise<AgentEntityCloseResult> {
     const entity = await this.mustEntity(input.name);
+    this.assertPubliclyAddressable(entity);
     const closed = await entity.close({ note: input.note });
+    this.evictEntity(entity);
     return closed;
   }
 
@@ -393,18 +459,35 @@ export class TeammateCollection implements TeammateOps {
   /** Stop every live teammate runtime in this collection (server shutdown). */
   async stopAll(): Promise<void> {
     const results = await Promise.allSettled(
-      [...this.entities.values()].map((entity) => entity.stop()),
+      [...this.entities.values()].map(async (entity) => {
+        if (!this.exclusivelyOwned.has(entity.name)) {
+          await entity.stop();
+          return;
+        }
+        await this.releaseExclusive(entity);
+      }),
     );
     while (this.inFlightSettleCaptures.size > 0) {
       await Promise.allSettled([...this.inFlightSettleCaptures]);
     }
-    const failures = results
-      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-      .map((result) => result.reason);
-    if (failures.length === 1) throw failures[0];
-    if (failures.length > 1) {
-      throw new AggregateError(failures, 'multiple TeamMate runtimes failed to stop');
-    }
+    throwSettledFailures(results, 'multiple TeamMate runtimes failed to stop');
+  }
+
+  /** Retry cleanup for exclusive entities whose operation owner has terminated. */
+  async releaseAllOwned(owner?: OwnedTeammateOwner): Promise<void> {
+    const results = await Promise.allSettled(
+      [...this.entities.values()]
+        .filter((entity) => {
+          const currentOwner = this.exclusivelyOwned.get(entity.name);
+          return currentOwner !== undefined &&
+            (owner === undefined || currentOwner === owner);
+        })
+        .map((entity) => this.releaseExclusive(entity)),
+    );
+    throwSettledFailures(
+      results,
+      'multiple exclusively owned TeamMates failed to release',
+    );
   }
 
   async dispatcherWorkspace(): Promise<string> {
@@ -454,7 +537,11 @@ export class TeammateCollection implements TeammateOps {
   /** Build (and cache) the entity for an identity. The collection owns only
    * caller-supplied identity guidance; it does not invent default teammate role
    * policy. */
-  private entityFor(identity: AgentEntityIdentity): TeammateService {
+  private entityFor(
+    identity: AgentEntityIdentity,
+    routeSettledCompletion?: SettledCompletionRoute,
+    outputSchema?: Record<string, unknown>,
+  ): TeammateService {
     const existing = this.entities.get(identity.name);
     if (existing !== undefined) return existing;
     const systemPromptOptions = callerIdentitySystemPromptOptions(
@@ -472,6 +559,7 @@ export class TeammateCollection implements TeammateOps {
             ? assertDispatcherScopedTeammate
             : assertTeamScopedAgent(this.teamScope),
         skillSources: identity.skill_sources,
+        outputSchema,
         ...(systemPromptOptions ?? {}),
       },
       config: this.opts.config,
@@ -487,11 +575,51 @@ export class TeammateCollection implements TeammateOps {
           this.inFlightSettleCaptures.delete(capture);
         });
       },
-      routeSettledCompletion: (producerName, turnId, completion) =>
-        this.routeSettledCompletion(producerName, turnId, completion),
+      routeSettledCompletion:
+        routeSettledCompletion ??
+        ((producerName, turnId, completion) =>
+          this.routeSettledCompletion(producerName, turnId, completion)),
     });
     this.entities.set(identity.name, entity);
     return entity;
+  }
+
+  private async cleanupFailedOwnedSpawn(entity: TeammateService): Promise<void> {
+    try {
+      await entity.release();
+    } catch (cleanupError) {
+      this.opts.log.warn(
+        {
+          err: cleanupError,
+          dispatcher_id: this.dispatcherId,
+          team_id: this.teamScope,
+          teammate: entity.name,
+        },
+        'failed to clean up exclusively owned TeamMate after submission failure',
+      );
+      return;
+    }
+    this.exclusivelyOwned.delete(entity.name);
+    this.evictEntity(entity);
+  }
+
+  private assertPubliclyAddressable(entity: TeammateService): void {
+    if (!this.exclusivelyOwned.has(entity.name)) return;
+    throw new Error(
+      `TeamMate ${JSON.stringify(entity.name)} is exclusively owned by an active operation`,
+    );
+  }
+
+  private async releaseExclusive(entity: TeammateService): Promise<void> {
+    await entity.release();
+    this.exclusivelyOwned.delete(entity.name);
+    this.evictEntity(entity);
+  }
+
+  private evictEntity(entity: TeammateService): void {
+    if (this.entities.get(entity.name) === entity) {
+      this.entities.delete(entity.name);
+    }
   }
 
   private async routeSettledCompletion(
@@ -511,4 +639,22 @@ function callerIdentitySystemPromptOptions(
   return identityPrompt !== null
     ? { systemPrompt: { append: [identityPrompt] } }
     : undefined;
+}
+
+/**
+ * Fail-loud guard for structured output: when a caller requests an
+ * `outputSchema`, verify the runtime declares support before submitting the
+ * turn. A runtime that omits `structuredOutput` from its capabilities (or
+ * declares `supported: false`) is treated as unsupported — we throw
+ * `UnsupportedAgentRuntimeFeatureError` rather than letting the runtime
+ * silently ignore the schema and return unconstrained text.
+ */
+function assertStructuredOutputSupported(
+  runtime: AgentRuntime | null,
+): void {
+  if (runtime?.getCapabilities().structuredOutput?.supported === true) return;
+  throw unsupportedFeatureError(
+    'outputSchema',
+    'runtime does not support structured output (outputSchema)',
+  );
 }

@@ -13,12 +13,14 @@ import { describe, it, expect } from 'vitest';
 import {
   BUNDLED_SKILL_NAMES,
   bundledDispatcherSkillRoot,
+  bundledSharedSkillRoot,
   bundledTeamLeaderSkillRoot,
 } from '../src/platform/paths.js';
 
 const EXPECTED_SKILLS_BY_ROOT = {
   [bundledDispatcherSkillRoot()]: ['dispatcher-workflow', 'dreamux-maintenance'],
   [bundledTeamLeaderSkillRoot()]: ['team-workflow'],
+  [bundledSharedSkillRoot()]: ['workflow'],
 } satisfies Record<string, string[]>;
 
 describe('bundled Dreamux skill roots', () => {
@@ -27,6 +29,7 @@ describe('bundled Dreamux skill roots', () => {
       'dispatcher-workflow',
       'dreamux-maintenance',
       'team-workflow',
+      'workflow',
     ]);
   });
 
@@ -46,6 +49,8 @@ describe('bundled Dreamux skill roots', () => {
 
   it('keeps Dispatcher and TeamLeader skill roots disjoint for root-scanning runtimes', () => {
     expect(bundledDispatcherSkillRoot()).not.toBe(bundledTeamLeaderSkillRoot());
+    expect(bundledSharedSkillRoot()).not.toBe(bundledDispatcherSkillRoot());
+    expect(bundledSharedSkillRoot()).not.toBe(bundledTeamLeaderSkillRoot());
     expect(bundledDispatcherSkillRoot()).not.toContain('/team-leader');
     expect(bundledTeamLeaderSkillRoot()).not.toContain('/dispatcher');
   });

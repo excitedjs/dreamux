@@ -31,6 +31,8 @@ Before adding a rule, verify the real tool projection in source:
   `transfer_back`; bind has no model-supplied Team name.
 - Ordinary TeamMates and team members receive no bundled Dreamux skill by
   default.
+- Dispatchers and TeamLeaders both receive the shared `workflow` skill; its
+  four tools remain caller-scoped by the existing TeamMate MCP projection.
 - Channel reply tools exist only when the active Channel provider exposes them.
 
 Do not invent a communication path. If there is no tool or runtime delivery

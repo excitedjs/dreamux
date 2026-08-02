@@ -1,11 +1,10 @@
 import { createReadStream } from 'node:fs';
-import { appendFile, mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
 import { createInterface } from 'node:readline';
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import { isNotFound } from '../../platform/fs-errors.js';
+import { appendJsonLine } from '../../platform/jsonl.js';
 import { dispatcherAgentTurnsPath } from '../../platform/paths.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import type { AgentEntityRole, AgentEntityTurnRecord } from './types.js';
@@ -204,8 +203,7 @@ export class AgentTurnsStore {
   ): Promise<void> {
     try {
       const path = turnsPath(scope);
-      await mkdir(dirname(path), { recursive: true });
-      await appendFile(path, `${JSON.stringify(row)}\n`, { mode: 0o600 });
+      await appendJsonLine(path, row);
     } catch (err) {
       this.log.warn(
         {

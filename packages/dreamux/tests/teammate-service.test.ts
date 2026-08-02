@@ -313,6 +313,47 @@ describe('TeammateService channel input routing', () => {
     expect(runtimes[0]!.submitted).toEqual([]);
   });
 
+  it('passes an initial prompt output schema through the neutral runtime input', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const leader = await createTestTeamLeader({
+      dispatcherId: 'dispatcher-a',
+      teamId: 'alpha',
+      name: 'tl-alpha-0001',
+      agentRuntime: 'agent-a',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+    });
+    const outputSchema = {
+      type: 'object',
+      properties: { answer: { type: 'string' } },
+      required: ['answer'],
+    };
+
+    await leader.submitInitialPrompt('return structured output', {
+      turnOrigin: 'dispatcher',
+      outputSchema,
+    });
+
+    expect(runtimes[0]!.textSubmitted).toEqual([
+      {
+        text: 'return structured output',
+        sourceId: 'teammate:tl-alpha-0001:0',
+        outputSchema,
+      },
+    ]);
+  });
+
   it('reapplies stored identity when a closed teammate is reopened', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
