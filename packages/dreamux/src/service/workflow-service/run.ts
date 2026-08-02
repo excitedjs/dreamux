@@ -378,12 +378,22 @@ export class WorkflowRun {
 
       if (spawned.turn.status !== 'submitted') {
         const status =
-          spawned.turn.status === 'stopped' || spawned.turn.status === 'skipped'
-            ? 'stopped'
-            : 'failed';
+          spawned.turn.status === 'stopped' || spawned.turn.status === 'skipped' ? 'stopped' : 'failed';
+        if (spawned.turn.status === 'failed') {
+          this.deps.log.warn(
+            {
+              run_id: this.record.run_id,
+              index: call.record.index,
+              name: call.options.label,
+              err: spawned.turn.error
+                ? { name: spawned.turn.error.name, message: spawned.turn.error.message, stack: spawned.turn.error.stack }
+                : undefined,
+            },
+            'workflow agent turn failed at submission',
+          );
+        }
         const runnerError =
-          spawned.turn.status === 'failed' &&
-            isUnsupportedAgentRuntimeFeatureError(spawned.turn.error)
+          spawned.turn.status === 'failed' && isUnsupportedAgentRuntimeFeatureError(spawned.turn.error)
             ? spawned.turn.error.message
             : undefined;
         await this.completeAgent(call, status, null, runnerError);
@@ -441,9 +451,7 @@ export class WorkflowRun {
       return;
     }
 
-    let result: unknown = completion.status === 'completed'
-      ? completion.result
-      : null;
+    let result: unknown = completion.status === 'completed' ? completion.result : null;
     if (
       completion.status === 'completed' &&
       call.options.schema !== undefined &&
@@ -464,6 +472,12 @@ export class WorkflowRun {
           'workflow structured output was not valid JSON',
         );
       }
+    }
+    if (completion.status !== 'completed') {
+      this.deps.log.warn(
+        { run_id: this.record.run_id, index: call.record.index, producer: producerName, turn_id: turnId, status: completion.status },
+        'workflow agent did not complete successfully',
+      );
     }
     try {
       await this.completeAgent(call, completion.status, result);

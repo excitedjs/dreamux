@@ -520,6 +520,20 @@ export class TeammateService {
   ): Promise<void> {
     const identity = this.current();
     const result = settled.result?.text ?? null;
+    if (settled.status === 'failed' && settled.error !== undefined) {
+      this.deps.log.error(
+        {
+          teammate: identity.name,
+          turn_id: settled.turnId,
+          err: {
+            name: settled.error.name,
+            message: settled.error.message,
+            stack: settled.error.stack,
+          },
+        },
+        'teammate turn failed',
+      );
+    }
     const envelope: CompletionEnvelope = {
       kind: 'teammate',
       source: identity.name,
