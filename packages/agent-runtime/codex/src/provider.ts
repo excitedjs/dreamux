@@ -63,6 +63,7 @@ export interface CodexAgentRuntimeProviderOptions {
 
 export const CODEX_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
   resume: { supported: true },
+  structuredOutput: { supported: true, scope: 'per-turn' },
 };
 
 const DEFAULT_CODEX_DESCRIPTOR: AgentRuntimeProviderDescriptor = {

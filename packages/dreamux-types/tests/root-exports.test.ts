@@ -52,6 +52,7 @@ const ALLOWLIST = [
   'AgentRuntimeSkillSource',
   'AgentRuntimeStateCallbacks',
   'AgentRuntimeStatus',
+  'AgentRuntimeStructuredOutputCapability',
   'AgentRuntimeSystemPrompt',
   'AgentRuntimeTextInput',
   'AgentRuntimeTurnResult',

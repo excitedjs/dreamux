@@ -63,9 +63,27 @@ export interface AgentRuntimeResumeCapability {
   supported: boolean;
 }
 
+export interface AgentRuntimeStructuredOutputCapability {
+  supported: boolean;
+  /**
+   * How the schema is applied:
+   * - `'create-context'`: set once at spawn time (e.g. claude-code `--json-schema`).
+   * - `'per-turn'`: set on each turn (e.g. codex `turn/start.outputSchema`).
+   * When `supported` is false, `scope` is omitted.
+   */
+  scope?: 'create-context' | 'per-turn';
+}
+
 export interface AgentRuntimeCapabilities {
   /** Whether this runtime can resume a prior checkpoint id from its create context. */
   resume: AgentRuntimeResumeCapability;
+  /**
+   * Whether this runtime supports structured output (JSON Schema on the final
+   * assistant message). Optional: a provider that omits it is treated as
+   * unsupported so core can fail-loud before submitting a schema-constrained
+   * turn, instead of relying on the runtime to return a specific error.
+   */
+  structuredOutput?: AgentRuntimeStructuredOutputCapability;
 }
 
 export interface AgentRuntimeSystemPrompt {

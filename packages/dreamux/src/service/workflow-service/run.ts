@@ -696,5 +696,5 @@ export class WorkflowRun {
 }
 
 function isUnsupportedAgentRuntimeFeatureError(error: Error): boolean {
-  return error.name === 'UnsupportedAgentRuntimeFeatureError';
+  return error.name === 'UnsupportedAgentRuntimeFeatureError' && (error as { feature?: string }).feature === 'outputSchema';
 }

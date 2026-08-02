@@ -2,6 +2,7 @@ import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type {
   AgentRuntime,
   AgentRuntimeSystemPrompt,
+  UnsupportedAgentRuntimeFeatureError,
 } from '@excitedjs/dreamux-types';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
@@ -294,6 +295,11 @@ export class TeammateCollection implements TeammateOps, OwnedTeammateOps {
     }
     try {
       await entity.ensureStarted();
+      const outputSchema =
+        route.kind === 'owned' ? route.outputSchema : undefined;
+      if (outputSchema !== undefined) {
+        assertStructuredOutputSupported(entity.getRuntime());
+      }
       const turn = await entity.submitInitialPromptRuntime(input.prompt, {
         turnOrigin: teamId === undefined ? 'dispatcher' : 'team_leader',
         ...(route.kind === 'owned' && route.outputSchema !== undefined
@@ -669,4 +675,22 @@ function callerIdentitySystemPromptOptions(
   return identityPrompt !== null
     ? { systemPrompt: { append: [identityPrompt] } }
     : undefined;
+}
+
+/**
+ * Fail-loud guard for structured output: when a caller requests an
+ * `outputSchema`, verify the runtime declares support before submitting the
+ * turn. A runtime that omits `structuredOutput` from its capabilities (or
+ * declares `supported: false`) is treated as unsupported — we throw
+ * `UnsupportedAgentRuntimeFeatureError` rather than letting the runtime
+ * silently ignore the schema and return unconstrained text.
+ */
+function assertStructuredOutputSupported(
+  runtime: AgentRuntime | null,
+): void {
+  if (runtime?.getCapabilities().structuredOutput?.supported === true) return;
+  throw Object.assign(new Error('runtime does not support structured output (outputSchema)'), {
+    name: 'UnsupportedAgentRuntimeFeatureError' as const,
+    feature: 'outputSchema',
+  }) as UnsupportedAgentRuntimeFeatureError;
 }

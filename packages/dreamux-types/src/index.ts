@@ -72,6 +72,7 @@ export type {
   AgentRuntimeSkillSource,
   AgentRuntimeStateCallbacks,
   AgentRuntimeStatus,
+  AgentRuntimeStructuredOutputCapability,
   AgentRuntimeSystemPrompt,
   AgentRuntimeTextInput,
   AgentRuntimeTurnResult,

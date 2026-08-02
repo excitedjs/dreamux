@@ -48,6 +48,7 @@ const FAKE_RUNTIME_REF = 'test:runtime';
 
 const CAPABILITIES: AgentRuntimeCapabilities = {
   resume: { supported: false },
+  structuredOutput: { supported: true, scope: 'per-turn' },
 };
 
 class FakeRuntime implements AgentRuntime {
