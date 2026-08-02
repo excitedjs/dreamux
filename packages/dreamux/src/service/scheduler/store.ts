@@ -3,6 +3,7 @@ import { unlink } from 'node:fs/promises';
 
 import { Cron } from 'croner';
 
+import { errorMessage } from '../../platform/error-info.js';
 import { JsonDocumentStore } from '../../platform/json-document-store.js';
 import { isNotFound } from '../../platform/fs-errors.js';
 import { LegacyStateError } from '../legacy-state.js';
@@ -452,8 +453,4 @@ function optionalNumberOrNull(
     throw new LegacyStateError(`cron job store ${ctx.path} field '${key}' must be a finite number or null`);
   }
   return value;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

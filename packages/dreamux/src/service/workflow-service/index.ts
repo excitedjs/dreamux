@@ -8,6 +8,7 @@ import {
   type CompletionRouter,
 } from '../completion-router/index.js';
 import type { OwnedTeammateOps } from '../teammate-collection/owned-teammates.js';
+import { throwSettledFailures } from '../shutdown-errors.js';
 import {
   validateWorkflowRunId,
   workflowRunJournalPath,
@@ -229,15 +230,7 @@ export class WorkflowService implements WorkflowOps {
     const results = await Promise.allSettled(
       [...this.runs.values()].map(stop),
     );
-    const errors = results
-      .filter(
-        (result): result is PromiseRejectedResult => result.status === 'rejected',
-      )
-      .map((result) => result.reason);
-    if (errors.length === 1) throw errors[0];
-    if (errors.length > 1) {
-      throw new AggregateError(errors, 'multiple workflow runs failed to stop');
-    }
+    throwSettledFailures(results, 'multiple workflow runs failed to stop');
   }
 
   private initialize(): Promise<void> {

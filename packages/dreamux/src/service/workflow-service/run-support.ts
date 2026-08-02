@@ -1,14 +1,5 @@
 import type { WorkflowAgentOptions } from './protocol.js';
 
-export interface NormalizedWorkflowAgentOptions {
-  label?: string;
-  phase?: string;
-  schema?: Record<string, unknown>;
-  agentType?: string;
-  intent?: string;
-  identity?: string;
-}
-
 export class WorkflowSemaphore {
   private active = 0;
   private closedError: Error | null = null;
@@ -72,8 +63,8 @@ export class WorkflowPersistenceError extends Error {}
 
 export function normalizeAgentOptions(
   options: WorkflowAgentOptions,
-): NormalizedWorkflowAgentOptions {
-  const normalized: NormalizedWorkflowAgentOptions = {};
+): WorkflowAgentOptions {
+  const normalized: WorkflowAgentOptions = {};
   for (const key of ['label', 'phase', 'agentType', 'intent', 'identity'] as const) {
     const value = options[key];
     if (value === undefined) continue;
@@ -96,19 +87,6 @@ export function nonEmpty(value: string | undefined): string | null {
   return value;
 }
 
-export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-export function errorInfo(error: unknown): { message: string; stack?: string } {
-  if (error instanceof Error) {
-    return error.stack === undefined
-      ? { message: error.message }
-      : { message: error.message, stack: error.stack };
-  }
-  return { message: String(error) };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

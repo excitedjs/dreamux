@@ -68,9 +68,6 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     } finally {
       await stderrHandle.close();
     }
-    if (child.pid === undefined) {
-      throw new Error('claude resident child spawned without a pid');
-    }
     this.supervisor = supervisor;
     this.child = child;
     const stdin = child.stdin;

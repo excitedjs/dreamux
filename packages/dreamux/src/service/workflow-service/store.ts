@@ -9,6 +9,7 @@ import {
   workflowScopeDir,
   type WorkflowScopePathInput,
 } from '../../platform/paths.js';
+import { isRecord } from './run-support.js';
 import type {
   WorkflowAgentRecord,
   WorkflowAgentStatus,
@@ -23,13 +24,7 @@ const RUN_STATUSES = new Set<WorkflowRunStatus>([
   'failed',
   'stopped',
 ]);
-const AGENT_STATUSES = new Set<WorkflowAgentStatus>([
-  'queued',
-  'running',
-  'completed',
-  'failed',
-  'stopped',
-]);
+const AGENT_STATUSES = new Set<WorkflowAgentStatus>(['queued', ...RUN_STATUSES]);
 const CALLER_KINDS = new Set<WorkflowCallerKind>([
   'dispatcher',
   'team_leader',
@@ -174,10 +169,6 @@ function assertRecordScope(
       `workflow run ${JSON.stringify(record.run_id)} does not belong to this scope`,
     );
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function stringField(

@@ -13,6 +13,7 @@ import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import { adminSocketPath as defaultAdminSocketPath, dispatcherCronJobsPath } from '../../platform/paths.js';
+import { errorInfo } from '../../platform/error-info.js';
 import type { DispatcherRow, DispatcherStore } from '../../state/dispatcher-store.js';
 import { createDispatcherAgent } from './agent.js';
 import { handleCollaborationTargetLifecycle } from './collaboration-routing.js';
@@ -20,7 +21,7 @@ import { dispatcherMcpServerDescriptors } from './mcp-descriptors.js';
 import type { ChannelMcpCallerScope } from '../channel-service/mcp-descriptors.js';
 import { ensureDispatcherRootIdentity } from './identity.js';
 import { assertRunnableChannelShape } from './runnable-channel.js';
-import { asInboundDeliveryResult, closeAllBuilt, errInfo } from './runtime-helpers.js';
+import { asInboundDeliveryResult, closeAllBuilt } from './runtime-helpers.js';
 import { DispatcherScopedChannelRouting } from './scoped-channel-routing.js';
 import { DispatcherTaskDrain } from './inbound-task-drain.js';
 import { rollbackFailedInputSourceStart } from './input-source-start-rollback.js';
@@ -482,7 +483,7 @@ export class DispatcherService {
       if (failures.length > 0) {
         for (const failure of failures) {
           this.log.error(
-            { dispatcher_id: this.id, err: errInfo(failure) },
+            { dispatcher_id: this.id, err: errorInfo(failure) },
             'error stopping dispatcher resource',
           );
         }

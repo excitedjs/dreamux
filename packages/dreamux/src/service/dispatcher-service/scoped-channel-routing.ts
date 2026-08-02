@@ -10,6 +10,7 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { ChannelService } from '../channel-service/index.js';
+import { errorInfo } from '../../platform/error-info.js';
 import type { CollaborationSpaceService } from '../collaboration-space/index.js';
 import type { TeamCollection } from '../team-collection/index.js';
 import {
@@ -18,7 +19,6 @@ import {
   rejectedChannelOperation,
   routeTeamOrCollaborationChannelInput,
 } from './collaboration-routing.js';
-import { errInfo } from './runtime-helpers.js';
 
 interface DispatcherScopedChannelRoutingOptions {
   dispatcherId: string;
@@ -143,7 +143,7 @@ export class DispatcherScopedChannelRouting {
         channel_id: channelId,
         operation,
         rejection_code: code,
-        err: errInfo(error),
+        err: errorInfo(error),
       },
       'scoped channel operation rejected',
     );

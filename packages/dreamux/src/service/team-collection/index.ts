@@ -18,6 +18,7 @@ import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import type { SchedulerCommands } from '../scheduler/service.js';
 import type { ChannelRouteOwner } from '../channel-service/index.js';
 import { KeyedAsyncQueue } from '../serial-queue.js';
+import { throwSettledFailures } from '../shutdown-errors.js';
 import { TeamStore } from './store.js';
 import type {
   TeamCreateInput,
@@ -689,12 +690,6 @@ export class TeamCollection {
       [...this.materialized].map((service) =>
         this.routeLifecycle.run(service.id, () => service.stopAll())),
     );
-    const failures = results
-      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-      .map((result) => result.reason);
-    if (failures.length === 1) throw failures[0];
-    if (failures.length > 1) {
-      throw new AggregateError(failures, 'multiple Team runtimes failed to stop');
-    }
+    throwSettledFailures(results, 'multiple Team runtimes failed to stop');
   }
 }

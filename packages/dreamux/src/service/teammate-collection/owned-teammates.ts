@@ -1,9 +1,6 @@
 import type { AgentRuntimeTurnResult } from '@excitedjs/dreamux-types';
 
-import type {
-  AgentEntityCloseResult,
-  AgentEntityRuntimeStatus,
-} from '../agent-entity/types.js';
+import type { AgentEntityRuntimeStatus } from '../agent-entity/types.js';
 import type { SettledCompletionRoute } from '../teammate-service/index.js';
 import type { SpawnTeamMateInput } from './types.js';
 
@@ -40,9 +37,5 @@ export interface OwnedTeammateOps {
     input: SpawnTeamMateInput,
     options: SpawnOwnedTeamMateOptions,
   ): Promise<OwnedTeamMateSpawnResult>;
-  release(
-    name: string,
-    owner: OwnedTeammateOwner,
-  ): Promise<AgentEntityCloseResult>;
   releaseAllOwned(owner: OwnedTeammateOwner): Promise<void>;
 }

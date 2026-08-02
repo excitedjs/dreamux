@@ -8,12 +8,7 @@ export type WorkflowRunStatus =
 
 export type WorkflowTerminalStatus = Exclude<WorkflowRunStatus, 'running'>;
 
-export type WorkflowAgentStatus =
-  | 'queued'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'stopped';
+export type WorkflowAgentStatus = 'queued' | WorkflowRunStatus;
 
 export interface WorkflowAgentRecord {
   index: number;

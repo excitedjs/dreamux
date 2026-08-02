@@ -25,6 +25,7 @@ import {
   setRuntimeConfig,
 } from './platform/paths.js';
 import { createLogger } from './platform/logger.js';
+import { errorInfo } from './platform/error-info.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import {
   assertNoLegacyAdminServer,
@@ -219,7 +220,7 @@ export class Server {
       } catch (err) {
         this.log.warn(
           {
-            err: errInfo(err),
+            err: errorInfo(err),
           },
           'runtime-socket sweep failed; continuing startup',
         );
@@ -234,7 +235,7 @@ export class Server {
         this.log.error(
           {
             dispatcher_id: row.dispatcher_id,
-            err: errInfo(err),
+            err: errorInfo(err),
           },
           'dispatcher failed to start',
         );
@@ -397,13 +398,4 @@ function assertRuntimeImplementationsLoaded(
         '(or an injected agentRuntimeProviderCatalog).',
     );
   }
-}
-
-function errInfo(err: unknown): { message: string; stack?: string } {
-  if (err instanceof Error) {
-    return err.stack !== undefined
-      ? { message: err.message, stack: err.stack }
-      : { message: err.message };
-  }
-  return { message: String(err) };
 }

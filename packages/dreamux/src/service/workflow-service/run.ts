@@ -1,5 +1,7 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import { isUnsupportedFeatureError } from '@excitedjs/dreamux-utils';
 
+import { errorInfo, errorMessage } from '../../platform/error-info.js';
 import type { CompletionEnvelope } from '../completion-router/index.js';
 import {
   createOwnedTeammateOwner,
@@ -7,6 +9,7 @@ import {
 } from '../teammate-collection/owned-teammates.js';
 import { WorkflowJournal } from './journal.js';
 import type {
+  WorkflowAgentOptions,
   WorkflowAgentStartMessage,
   WorkflowRunnerChildMessage,
 } from './protocol.js';
@@ -24,14 +27,11 @@ import type {
 } from './types.js';
 import {
   deferred,
-  errorInfo,
-  errorMessage,
   nonEmpty,
   normalizeAgentOptions,
   WorkflowPersistenceError,
   WorkflowSemaphore,
   type Deferred,
-  type NormalizedWorkflowAgentOptions,
 } from './run-support.js';
 import { WorkflowRunTerminal } from './run-terminal.js';
 
@@ -52,7 +52,7 @@ export interface WorkflowRunDeps {
 
 interface AgentCall {
   record: WorkflowAgentRecord;
-  options: NormalizedWorkflowAgentOptions;
+  options: WorkflowAgentOptions;
   submissionReady: Deferred<void>;
   settled: Deferred<void>;
   completed: boolean;
@@ -117,10 +117,6 @@ export class WorkflowRun {
         this.finalize(status, result, error),
       log: deps.log,
     });
-  }
-
-  get id(): string {
-    return this.record.run_id;
   }
 
   snapshot(): WorkflowRunRecord {
@@ -249,7 +245,7 @@ export class WorkflowRun {
       return;
     }
 
-    let options: NormalizedWorkflowAgentOptions;
+    let options: WorkflowAgentOptions;
     try {
       options = normalizeAgentOptions(message.options);
     } catch (error) {
@@ -339,9 +335,7 @@ export class WorkflowRun {
               turnId,
               completion,
             ),
-          ...(call.options.schema !== undefined
-            ? { outputSchema: call.options.schema }
-            : {}),
+          outputSchema: call.options.schema,
         },
       );
       if (call.completed) {
@@ -393,7 +387,8 @@ export class WorkflowRun {
           );
         }
         const runnerError =
-          spawned.turn.status === 'failed' && isUnsupportedAgentRuntimeFeatureError(spawned.turn.error)
+          spawned.turn.status === 'failed' &&
+          isUnsupportedFeatureError(spawned.turn.error, 'outputSchema')
             ? spawned.turn.error.message
             : undefined;
         await this.completeAgent(call, status, null, runnerError);
@@ -571,17 +566,11 @@ export class WorkflowRun {
     await this.mutationTail;
 
     if (agentTasksDrained && !this.terminal.shutdownRequested) {
-      const releases = await Promise.allSettled([
-        this.deps.ownedTeammates.releaseAllOwned(this.teammateOwner),
-      ]);
-      cleanupErrors.push(
-        ...releases
-          .filter(
-            (release): release is PromiseRejectedResult =>
-              release.status === 'rejected',
-          )
-          .map((release) => release.reason),
-      );
+      await this.deps.ownedTeammates
+        .releaseAllOwned(this.teammateOwner)
+        .catch((releaseError: unknown) => {
+          cleanupErrors.push(releaseError);
+        });
     }
     if (cleanupErrors.length > 0) {
       this.deps.log.warn(
@@ -693,8 +682,4 @@ export class WorkflowRun {
   private now(): number {
     return this.deps.now?.() ?? Date.now();
   }
-}
-
-function isUnsupportedAgentRuntimeFeatureError(error: Error): boolean {
-  return error.name === 'UnsupportedAgentRuntimeFeatureError' && (error as { feature?: string }).feature === 'outputSchema';
 }

@@ -2,24 +2,34 @@ import type {
   DispatcherService,
   TeamLeaderHandle,
 } from '../service/dispatcher-service/index.js';
+import type { Server } from '../server.js';
 import { AdminError } from './protocol.js';
-import { mustString, optionalString } from './params.js';
+import {
+  mustDispatcherId,
+  mustExistingDispatcher,
+  mustString,
+  optionalString,
+} from './params.js';
 
-export type TeammateTarget =
+export type TeammateTarget = { dispatcher: DispatcherService } & (
   | { callerKind: 'dispatcher'; service: DispatcherService }
-  | { callerKind: 'team_leader'; service: TeamLeaderHandle };
+  | { callerKind: 'team_leader'; service: TeamLeaderHandle });
 
 /** Resolve the existing teammate caller scope for admin-facing capabilities. */
 export async function teammateTargetFor(
-  dispatcher: DispatcherService,
+  server: Server,
   params: Record<string, unknown> | undefined,
 ): Promise<TeammateTarget> {
+  const dispatcherId = mustDispatcherId(params);
+  mustExistingDispatcher(server, dispatcherId);
+  const dispatcher = server.getDispatcher(dispatcherId);
   const callerKind = optionalString(params, 'caller_kind') ?? 'dispatcher';
   if (callerKind === 'dispatcher') {
-    return { callerKind, service: dispatcher };
+    return { dispatcher, callerKind, service: dispatcher };
   }
   if (callerKind === 'team_leader') {
     return {
+      dispatcher,
       callerKind,
       service: await dispatcher.team(mustString(params, 'team_id')),
     };

@@ -53,10 +53,6 @@ export class SupervisedChild {
     private readonly options: SupervisedChildOptions = {},
   ) {}
 
-  get child(): ChildProcess | null {
-    return this.child_;
-  }
-
   get pid(): number | null {
     return this.pid_;
   }

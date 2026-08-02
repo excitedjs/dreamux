@@ -7,6 +7,7 @@ import type {
   WorkflowRunnerParentMessage,
   WorkflowScriptMeta,
 } from './protocol.js';
+import { isRecord } from './run-support.js';
 
 interface PendingAgent {
   resolve: (result: unknown) => void;
@@ -323,10 +324,6 @@ function parseParentMessage(value: unknown): WorkflowRunnerParentMessage | null 
   }
   if (value.type === 'abort') return { type: 'abort' };
   return null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function errorMessage(error: unknown): string {

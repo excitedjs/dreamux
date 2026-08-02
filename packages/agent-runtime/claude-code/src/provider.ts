@@ -152,9 +152,7 @@ export function createClaudeCodeAgentRuntimeProvider(
         ...(context.disableFeatures !== undefined
           ? { disableFeatures: context.disableFeatures }
           : {}),
-        ...(context.outputSchema !== undefined
-          ? { outputSchema: context.outputSchema }
-          : {}),
+        outputSchema: context.outputSchema,
         ...(systemPromptAppend !== undefined
           ? { systemPromptAppend }
           : {}),

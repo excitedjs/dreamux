@@ -41,7 +41,6 @@ import {
 } from '../src/service/workflow-service/index.js';
 import type { WorkflowRunRecord } from '../src/service/workflow-service/types.js';
 import type {
-  AgentEntityCloseResult,
   AgentEntityRuntimeStatus,
 } from '../src/service/agent-entity/types.js';
 
@@ -116,10 +115,10 @@ class FakeOwnedTeammates implements OwnedTeammateOps {
     };
   }
 
-  async release(
+  private async releaseOwned(
     name: string,
     owner: OwnedTeammateOwner,
-  ): Promise<AgentEntityCloseResult> {
+  ): Promise<void> {
     if (this.owners.get(name) !== owner) {
       throw new Error(`fake TeamMate ${name} has a different owner`);
     }
@@ -127,7 +126,6 @@ class FakeOwnedTeammates implements OwnedTeammateOps {
     await this.releaseGate;
     this.owners.delete(name);
     this.releases.push(name);
-    return { teammate: teammateStatus(name, 'closed') };
   }
 
   async releaseAllOwned(owner: OwnedTeammateOwner): Promise<void> {
@@ -137,13 +135,13 @@ class FakeOwnedTeammates implements OwnedTeammateOps {
     const names = [...this.owners.entries()]
       .filter(([, currentOwner]) => currentOwner === owner)
       .map(([name]) => name);
-    await Promise.all(names.map((name) => this.release(name, owner)));
+    await Promise.all(names.map((name) => this.releaseOwned(name, owner)));
   }
 
   async sweepAllOwned(): Promise<void> {
     await Promise.all(
       [...this.owners.entries()].map(([name, owner]) =>
-        this.release(name, owner)),
+        this.releaseOwned(name, owner)),
     );
   }
 
@@ -203,7 +201,6 @@ function runtimeTurnResult(
 }
 
 class FakeWorkflowRunner implements WorkflowRunnerHandle {
-  readonly pid = 1234;
   readonly sent: WorkflowRunnerParentMessage[] = [];
   startCount = 0;
   stopCount = 0;

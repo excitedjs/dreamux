@@ -156,16 +156,13 @@ export const adminMethods: Record<string, AdminHandler> = {
   },
 
   'teammate.spawn': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
+    const target = await teammateTargetFor(server, params);
     const name = mustString(params, 'name_prefix');
     const prompt = mustString(params, 'prompt');
     const intent = mustNonEmptyString(params, 'intent');
     const agentRuntime = optionalString(params, 'agent_runtime');
     const identity = optionalNonBlankString(params, 'identity');
     const skillSources = await optionalSkillSources(params);
-    const dispatcher = server.getDispatcher(id);
-    const target = await teammateTargetFor(dispatcher, params);
     if (target.callerKind === 'team_leader' && params?.['repo'] !== undefined) {
       throw new AdminError(
         'BAD_REQUEST',
@@ -176,7 +173,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const cwd =
       target.callerKind === 'team_leader' || repo === null
         ? null
-        : repo.cwd ?? (await dispatcher.workspace());
+        : repo.cwd ?? (await target.dispatcher.workspace());
     const worktree = target.callerKind === 'team_leader' ? null : repo?.worktree ?? null;
     const spawnInput = {
       name,
@@ -201,10 +198,7 @@ export const adminMethods: Record<string, AdminHandler> = {
   },
 
   'teammate.send': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
-    const dispatcher = server.getDispatcher(id);
-    const target = await teammateTargetFor(dispatcher, params);
+    const target = await teammateTargetFor(server, params);
     const name = mustString(params, 'name');
     const prompt = mustString(params, 'prompt');
     const intent = optionalString(params, 'intent');
@@ -221,10 +215,7 @@ export const adminMethods: Record<string, AdminHandler> = {
   },
 
   'teammate.close': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
-    const dispatcher = server.getDispatcher(id);
-    const target = await teammateTargetFor(dispatcher, params);
+    const target = await teammateTargetFor(server, params);
     const name = mustString(params, 'name');
     const note = mustNonEmptyString(params, 'note');
     try {
@@ -239,55 +230,41 @@ export const adminMethods: Record<string, AdminHandler> = {
   },
 
   'teammate.history': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
     return (
-      await teammateTargetFor(server.getDispatcher(id), params)
+      await teammateTargetFor(server, params)
     ).service.teammates.history(historyQuery(params));
   },
 
   'teammate.list': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
     return {
       teammates: await (
-        await teammateTargetFor(server.getDispatcher(id), params)
+        await teammateTargetFor(server, params)
       ).service.teammates.list(),
     };
   },
 
   'teammate.status': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
+    const target = await teammateTargetFor(server, params);
     const name = mustString(params, 'name');
     return {
-      teammate: await (
-        await teammateTargetFor(server.getDispatcher(id), params)
-      ).service.teammates.status(name),
+      teammate: await target.service.teammates.status(name),
     };
   },
 
   'teammate.last': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
+    const target = await teammateTargetFor(server, params);
     const name = mustString(params, 'name');
     const turns = optionalInteger(params, 'turns');
-    return (
-      await teammateTargetFor(server.getDispatcher(id), params)
-    ).service.teammates.last(name, turns ?? undefined);
+    return target.service.teammates.last(name, turns ?? undefined);
   },
 
-  'teammate.capabilities': async (server, params) => {
-    const id = mustDispatcherId(params);
-    mustExistingDispatcher(server, id);
-    return (
-      await teammateTargetFor(server.getDispatcher(id), params)
-    ).service.teammates.getCapabilities();
-  },
+  'teammate.capabilities': async (server, params) => (
+    await teammateTargetFor(server, params)
+  ).service.teammates.getCapabilities(),
 
   'workflow.run': async (server, params) => {
     const maxConcurrency = optionalInteger(params, 'max_concurrency');
-    return (await workflowTargetFor(server, params)).run({
+    return (await teammateTargetFor(server, params)).service.workflows.run({
       script: mustNonEmptyString(params, 'script'),
       ...(params !== undefined && Object.hasOwn(params, 'args')
         ? { args: params['args'] }
@@ -296,15 +273,15 @@ export const adminMethods: Record<string, AdminHandler> = {
     });
   },
   'workflow.status': async (server, params) =>
-    (await workflowTargetFor(server, params)).status(
+    (await teammateTargetFor(server, params)).service.workflows.status(
       { run_id: mustNonEmptyString(params, 'run_id') },
     ),
   'workflow.stop': async (server, params) =>
-    (await workflowTargetFor(server, params)).stop(
+    (await teammateTargetFor(server, params)).service.workflows.stop(
       { run_id: mustNonEmptyString(params, 'run_id') },
     ),
   'workflow.list': async (server, params) =>
-    (await workflowTargetFor(server, params)).list(),
+    (await teammateTargetFor(server, params)).service.workflows.list(),
   'team.create': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
@@ -663,12 +640,4 @@ function optionalCollaborationContainer(
     ...(canonicalUrl !== null ? { canonical_url: canonicalUrl } : {}),
     ...(meta !== undefined ? { meta: meta as Record<string, unknown> } : {}),
   };
-}
-
-async function workflowTargetFor(
-  server: Server, params: Record<string, unknown> | undefined,
-) {
-  const id = mustDispatcherId(params);
-  mustExistingDispatcher(server, id);
-  return (await teammateTargetFor(server.getDispatcher(id), params)).service.workflows;
 }

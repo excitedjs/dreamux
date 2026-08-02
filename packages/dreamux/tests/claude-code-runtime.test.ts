@@ -374,7 +374,10 @@ describe('builtin:claude-code provider', () => {
     const provider = claudeCodeProvider({ sessionFactory: fakeFleet().factory });
     expect(provider.ref).toBe('builtin:claude-code');
     expect(provider.descriptor.kind).toBe('agentRuntime');
-    expect(provider.getCapabilities()).toEqual({ resume: { supported: true } });
+    expect(provider.getCapabilities()).toEqual({
+      resume: { supported: true },
+      structuredOutput: { supported: true, scope: 'create-context' },
+    });
   });
 });
 
@@ -457,9 +460,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       ...(opts.disableFeatures !== undefined
         ? { disableFeatures: opts.disableFeatures }
         : {}),
-      ...(opts.outputSchema !== undefined
-        ? { outputSchema: opts.outputSchema }
-        : {}),
+      outputSchema: opts.outputSchema,
       ...(opts.onTurnSettled !== undefined
         ? { onTurnSettled: opts.onTurnSettled }
         : {}),

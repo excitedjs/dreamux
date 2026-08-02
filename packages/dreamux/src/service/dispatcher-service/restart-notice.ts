@@ -1,7 +1,7 @@
 import type { AgentRuntime, DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
-import { errInfo } from './runtime-helpers.js';
+import { errorInfo } from '../../platform/error-info.js';
 
 export async function injectRestartNoticeIfNeeded(input: {
   dispatcherId: string;
@@ -20,13 +20,13 @@ export async function injectRestartNoticeIfNeeded(input: {
     });
     if (result.status === 'failed') {
       input.log.warn(
-        { dispatcher_id: input.dispatcherId, err: errInfo(result.error) },
+        { dispatcher_id: input.dispatcherId, err: errorInfo(result.error) },
         'restart notice injection failed',
       );
     }
   } catch (err) {
     input.log.warn(
-      { dispatcher_id: input.dispatcherId, err: errInfo(err) },
+      { dispatcher_id: input.dispatcherId, err: errorInfo(err) },
       'restart notice injection errored',
     );
   }

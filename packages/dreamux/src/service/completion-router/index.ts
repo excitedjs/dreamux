@@ -2,6 +2,8 @@ import type {
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
+import { errorInfo } from '../../platform/error-info.js';
+
 interface CompletionEnvelopeBase {
   source: string;
   id: string;
@@ -132,7 +134,7 @@ export class CompletionRouter {
           {
             dispatcher_id: dispatcherId,
             source: completion.source,
-            err: errInfo(err),
+            err: errorInfo(err),
           },
           'completion delivery threw; dropping',
         );
@@ -165,7 +167,7 @@ export class CompletionRouter {
           source: completion.source,
           attempt,
           max_attempts: MAX_DELIVERY_ATTEMPTS,
-          err: errInfo(outcome.error),
+          err: errorInfo(outcome.error),
         },
         'completion delivery failed',
       );
@@ -194,13 +196,4 @@ export class CompletionRouter {
 
 export function completionKey(producerName: string, turnId: string): string {
   return `${producerName}:${turnId}`;
-}
-
-function errInfo(err: unknown): { message: string; stack?: string } {
-  if (err instanceof Error) {
-    return err.stack !== undefined
-      ? { message: err.message, stack: err.stack }
-      : { message: err.message };
-  }
-  return { message: String(err) };
 }

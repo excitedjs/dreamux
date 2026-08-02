@@ -12,7 +12,7 @@ import type {
   DispatcherSummary,
 } from '../dispatcher-service/types.js';
 import { runtimeStatusToIdentityStatus } from '../agent-entity/types.js';
-import { throwShutdownFailures } from '../shutdown-errors.js';
+import { throwSettledFailures } from '../shutdown-errors.js';
 
 export interface DispatchersOptions {
   config: DreamuxConfig;
@@ -130,10 +130,7 @@ export class Dispatchers {
     const results = await Promise.allSettled(
       [...this.services.values()].map((service) => service.shutdown()),
     );
-    const failures = results
-      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-      .map((result) => result.reason);
-    throwShutdownFailures(failures, 'multiple dispatchers failed to shut down');
+    throwSettledFailures(results, 'multiple dispatchers failed to shut down');
   }
 
   private dispatcherOptions(id: string): DispatcherServiceOptions {

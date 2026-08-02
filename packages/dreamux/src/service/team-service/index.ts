@@ -23,6 +23,10 @@ import type {
   CompletionRouter,
 } from '../completion-router/index.js';
 import { completionKey } from '../completion-router/index.js';
+import {
+  collectShutdownFailure,
+  throwShutdownFailures,
+} from '../shutdown-errors.js';
 import { cronMcpServerDescriptor } from '../scheduler/mcp-config.js';
 import { SchedulerService, type SchedulerCommands } from '../scheduler/service.js';
 import { CronJobStore } from '../scheduler/store.js';
@@ -422,28 +426,14 @@ export class TeamService {
    * the remaining members or leader from receiving their stop attempt. */
   async stopAll(): Promise<void> {
     const failures: unknown[] = [];
-    try {
-      await this.workflowService.stopAllForShutdown();
-    } catch (err) {
-      failures.push(err);
-    }
-    try {
-      await this.teammateCollection.stopAll();
-    } catch (err) {
-      failures.push(err);
-    }
-    try {
-      await this.stopLeader();
-    } catch (err) {
-      failures.push(err);
-    }
-    if (failures.length === 1) throw failures[0];
-    if (failures.length > 1) {
-      throw new AggregateError(
-        failures,
-        `multiple runtimes in Team ${JSON.stringify(this.id)} failed to stop`,
-      );
-    }
+    await collectShutdownFailure(failures, () =>
+      this.workflowService.stopAllForShutdown());
+    await collectShutdownFailure(failures, () => this.teammateCollection.stopAll());
+    await collectShutdownFailure(failures, () => this.stopLeader());
+    throwShutdownFailures(
+      failures,
+      `multiple runtimes in Team ${JSON.stringify(this.id)} failed to stop`,
+    );
   }
 
   async deliverToLeader(turn: InboundTurnInput): Promise<AgentRuntimeTurnResult> {

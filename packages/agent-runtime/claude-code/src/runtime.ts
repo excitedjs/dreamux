@@ -82,7 +82,10 @@ import {
   type TurnOutcome,
   type TurnSubmitOptions,
 } from './supervisor.js';
-import { renderChannelInput } from '@excitedjs/dreamux-utils';
+import {
+  renderChannelInput,
+  unsupportedFeatureError,
+} from '@excitedjs/dreamux-utils';
 import { CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
 import { consoleFallbackLogger } from './logger.js';
 import type {
@@ -100,7 +103,6 @@ import type {
   DreamuxLogger,
   InboundTurnInput,
   TurnSettledSignal,
-  UnsupportedAgentRuntimeFeatureError,
 } from '@excitedjs/dreamux-types';
 
 /**
@@ -307,7 +309,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
         spawnSchema !== undefined &&
         JSON.stringify(spawnSchema) === JSON.stringify(input.outputSchema);
       if (!matchesSpawn) {
-        const error = unsupportedAgentRuntimeFeatureError(
+        const error = unsupportedFeatureError(
           'outputSchema',
           spawnSchema === undefined
             ? 'claude-code runtime does not support per-turn outputSchema on the resident session'
@@ -684,14 +686,4 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   ): void {
     this.logger[level](err !== undefined ? { err } : {}, msg);
   }
-}
-
-function unsupportedAgentRuntimeFeatureError(
-  feature: string,
-  message: string,
-): UnsupportedAgentRuntimeFeatureError {
-  return Object.assign(new Error(message), {
-    name: 'UnsupportedAgentRuntimeFeatureError' as const,
-    feature,
-  });
 }

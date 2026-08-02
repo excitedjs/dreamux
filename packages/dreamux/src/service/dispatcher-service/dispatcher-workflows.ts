@@ -1,10 +1,10 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
+import { errorInfo } from '../../platform/error-info.js';
 import type { CompletionInitiator, CompletionRouter } from '../completion-router/index.js';
 import type { TeamCollection } from '../team-collection/index.js';
 import type { TeammateCollection } from '../teammate-collection/index.js';
 import { WorkflowService, type WorkflowOps } from '../workflow-service/index.js';
-import { errInfo } from './runtime-helpers.js';
 
 interface DispatcherWorkflowDeps {
   dispatcherId: string;
@@ -65,10 +65,6 @@ export class DispatcherWorkflows {
     this.input.teams.closeWorkflowAdmissions();
   }
 
-  stopAll(): Promise<void> {
-    return this.service.stopAll();
-  }
-
   stopAllForShutdown(): Promise<void> {
     return this.service.stopAllForShutdown();
   }
@@ -76,13 +72,13 @@ export class DispatcherWorkflows {
   async rollbackStart(): Promise<void> {
     await this.service.stopAll().catch((error: unknown) => {
       this.input.log.error(
-        { dispatcher_id: this.input.dispatcherId, err: errInfo(error) },
+        { dispatcher_id: this.input.dispatcherId, err: errorInfo(error) },
         'error stopping workflows after dispatcher start failure',
       );
     });
     await this.input.teammates.releaseAllOwned().catch((error: unknown) => {
       this.input.log.error(
-        { dispatcher_id: this.input.dispatcherId, err: errInfo(error) },
+        { dispatcher_id: this.input.dispatcherId, err: errorInfo(error) },
         'error releasing workflow TeamMates after dispatcher start failure',
       );
     });

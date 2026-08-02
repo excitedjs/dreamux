@@ -6,6 +6,8 @@ import type {
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
+import { errorInfo } from '../../platform/error-info.js';
+
 import {
   CronJobStore,
   type CronDeliverTarget,
@@ -248,7 +250,7 @@ export class SchedulerService {
       this.timers.delete(jobId);
       void this.dispatchAdmitted(jobId, { manual: false }).catch((err) => {
         this.log.debug(
-          { owner_id: this.ownerId, job_id: jobId, err: errInfo(err) },
+          { owner_id: this.ownerId, job_id: jobId, err: errorInfo(err) },
           'cron job dispatch rejected by owner admission',
         );
       });
@@ -285,7 +287,7 @@ export class SchedulerService {
       return { id: jobId, status };
     } catch (err) {
       this.log.error(
-        { owner_id: this.ownerId, job_id: jobId, err: errInfo(err) },
+        { owner_id: this.ownerId, job_id: jobId, err: errorInfo(err) },
         'cron job dispatch failed',
       );
       if (!opts.manual) await this.rearmAfterDispatchError(jobId);
@@ -316,7 +318,7 @@ export class SchedulerService {
       await this.rearmAfterMiss(job);
     } catch (err) {
       this.log.error(
-        { owner_id: this.ownerId, job_id: jobId, err: errInfo(err) },
+        { owner_id: this.ownerId, job_id: jobId, err: errorInfo(err) },
         'cron job re-arm after dispatch error failed',
       );
     }
@@ -460,7 +462,7 @@ export class SchedulerService {
       await this.rearmAfterMiss(job);
     } catch (err) {
       this.log.error(
-        { owner_id: this.ownerId, job_id: job.id, err: errInfo(err) },
+        { owner_id: this.ownerId, job_id: job.id, err: errorInfo(err) },
         'cron job missed rearm failed',
       );
     }
@@ -646,13 +648,4 @@ function validateTimeZone(tz: string): void {
 
 function localTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-}
-
-function errInfo(err: unknown): { message: string; stack?: string } {
-  if (err instanceof Error) {
-    return err.stack !== undefined
-      ? { message: err.message, stack: err.stack }
-      : { message: err.message };
-  }
-  return { message: String(err) };
 }

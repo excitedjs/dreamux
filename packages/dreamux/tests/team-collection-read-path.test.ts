@@ -500,12 +500,7 @@ describe('exclusively owned TeamMate submission', () => {
       note: 'must not close another owner',
     })).rejects.toThrow(/exclusively owned/);
 
-    await expect(collection.release(
-      spawned.teammate.name,
-      owner,
-    )).resolves.toMatchObject({
-      teammate: { status: 'closed', close_note: null },
-    });
+    await expect(collection.releaseAllOwned(owner)).resolves.toBeUndefined();
     await expect(collection.status(spawned.teammate.name)).resolves.toMatchObject({
       status: 'closed',
       close_note: null,
@@ -560,7 +555,7 @@ describe('exclusively owned TeamMate submission', () => {
     );
 
     expect(spawned.turn).toEqual({ status: 'failed', error });
-    await collection.release(spawned.teammate.name, owner);
+    await collection.releaseAllOwned(owner);
   });
 
   it('persists a synchronous settle after its submit before owner release', async () => {
@@ -590,8 +585,8 @@ describe('exclusively owned TeamMate submission', () => {
       },
       {
         owner,
-        routeSettledCompletion: async (producerName) => {
-          await collection.release(producerName, owner);
+        routeSettledCompletion: async () => {
+          await collection.releaseAllOwned(owner);
           released = true;
         },
       },
@@ -659,7 +654,7 @@ describe('exclusively owned TeamMate submission', () => {
     );
     runtimes[0]!.failNextStop(new Error('temporary stop failure'));
 
-    await expect(collection.release(spawned.teammate.name, owner)).rejects.toThrow(
+    await expect(collection.releaseAllOwned(owner)).rejects.toThrow(
       /temporary stop failure/,
     );
     await expect(collection.send({
@@ -720,10 +715,10 @@ describe('exclusively owned TeamMate submission', () => {
     await expect(collection.status(second.teammate.name)).resolves.toMatchObject({
       runtime_status: 'ready',
     });
-    await expect(collection.release(
-      second.teammate.name,
-      firstOwner,
-    )).rejects.toThrow(/another active operation/);
+    await expect(collection.releaseAllOwned(firstOwner)).resolves.toBeUndefined();
+    await expect(collection.status(second.teammate.name)).resolves.toMatchObject({
+      runtime_status: 'ready',
+    });
     await expect(collection.send({
       name: second.teammate.name,
       prompt: 'must remain fenced for its actual owner',
@@ -871,9 +866,9 @@ describe('exclusively owned TeamMate submission', () => {
       },
       {
         owner,
-        routeSettledCompletion: async (producerName) => {
+        routeSettledCompletion: async () => {
           routeStarted = true;
-          await collection.release(producerName, owner);
+          await collection.releaseAllOwned(owner);
           routeCompleted = true;
         },
       },

@@ -261,9 +261,7 @@ export class TeammateService {
   ): Promise<AgentRuntimeTurnResult> {
     return this.submitPromptRuntime(prompt, {
       turnOrigin: opts.turnOrigin,
-      ...(opts.outputSchema !== undefined
-        ? { outputSchema: opts.outputSchema }
-        : {}),
+      outputSchema: opts.outputSchema,
     });
   }
 
@@ -458,9 +456,7 @@ export class TeammateService {
         cwd: identity.cwd,
         skillSources: this.skillSources,
         disableFeatures: this.disableFeatures,
-        ...(this.outputSchema !== undefined
-          ? { outputSchema: this.outputSchema }
-          : {}),
+        outputSchema: this.outputSchema,
         ...(this.systemPrompt !== undefined
           ? { systemPrompt: this.systemPrompt }
           : {}),
@@ -585,9 +581,7 @@ export class TeammateService {
       () => runtime.completionInput({
         sourceId: `teammate:${this.name}:${submissionSeq}`,
         text: prompt,
-        ...(opts.outputSchema !== undefined
-          ? { outputSchema: opts.outputSchema }
-          : {}),
+        outputSchema: opts.outputSchema,
       }),
       { turnOrigin: opts.turnOrigin, prompt, recordUnsubmitted: true },
     );

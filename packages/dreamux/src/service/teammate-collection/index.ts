@@ -2,8 +2,8 @@ import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type {
   AgentRuntime,
   AgentRuntimeSystemPrompt,
-  UnsupportedAgentRuntimeFeatureError,
 } from '@excitedjs/dreamux-types';
+import { unsupportedFeatureError } from '@excitedjs/dreamux-utils';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import {
@@ -39,6 +39,7 @@ import type {
 } from '../teammate-service/index.js';
 import { toTurnResult } from '../teammate-service/turn-recording.js';
 import { AgentTurnsStore } from '../agent-entity/turns-store.js';
+import { throwSettledFailures } from '../shutdown-errors.js';
 import type { SuffixGenerator } from '../name-allocator.js';
 import {
   assertManagedWorktreeAvailable,
@@ -302,9 +303,7 @@ export class TeammateCollection implements TeammateOps, OwnedTeammateOps {
       }
       const turn = await entity.submitInitialPromptRuntime(input.prompt, {
         turnOrigin: teamId === undefined ? 'dispatcher' : 'team_leader',
-        ...(route.kind === 'owned' && route.outputSchema !== undefined
-          ? { outputSchema: route.outputSchema }
-          : {}),
+        outputSchema,
       });
       if (route.kind === 'router') {
         await this.registerCompletion(
@@ -340,29 +339,6 @@ export class TeammateCollection implements TeammateOps, OwnedTeammateOps {
     const closed = await entity.close({ note: input.note });
     this.evictEntity(entity);
     return closed;
-  }
-
-  /** Close an exclusively owned entity without publishing an operator note. */
-  async release(
-    name: string,
-    owner: OwnedTeammateOwner,
-  ): Promise<AgentEntityCloseResult> {
-    const entity = await this.mustEntity(name);
-    const currentOwner = this.exclusivelyOwned.get(entity.name);
-    if (currentOwner === undefined) {
-      throw new Error(
-        `TeamMate ${JSON.stringify(entity.name)} has no exclusive owner`,
-      );
-    }
-    if (currentOwner !== owner) {
-      throw new Error(
-        `TeamMate ${JSON.stringify(entity.name)} belongs to another active operation`,
-      );
-    }
-    const released = await entity.release();
-    this.exclusivelyOwned.delete(entity.name);
-    this.evictEntity(entity);
-    return released;
   }
 
   /**
@@ -494,13 +470,7 @@ export class TeammateCollection implements TeammateOps, OwnedTeammateOps {
     while (this.inFlightSettleCaptures.size > 0) {
       await Promise.allSettled([...this.inFlightSettleCaptures]);
     }
-    const failures = results
-      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-      .map((result) => result.reason);
-    if (failures.length === 1) throw failures[0];
-    if (failures.length > 1) {
-      throw new AggregateError(failures, 'multiple TeamMate runtimes failed to stop');
-    }
+    throwSettledFailures(results, 'multiple TeamMate runtimes failed to stop');
   }
 
   /** Retry cleanup for exclusive entities whose operation owner has terminated. */
@@ -514,16 +484,10 @@ export class TeammateCollection implements TeammateOps, OwnedTeammateOps {
         })
         .map((entity) => this.releaseExclusive(entity)),
     );
-    const failures = results
-      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-      .map((result) => result.reason);
-    if (failures.length === 1) throw failures[0];
-    if (failures.length > 1) {
-      throw new AggregateError(
-        failures,
-        'multiple exclusively owned TeamMates failed to release',
-      );
-    }
+    throwSettledFailures(
+      results,
+      'multiple exclusively owned TeamMates failed to release',
+    );
   }
 
   async dispatcherWorkspace(): Promise<string> {
@@ -595,7 +559,7 @@ export class TeammateCollection implements TeammateOps, OwnedTeammateOps {
             ? assertDispatcherScopedTeammate
             : assertTeamScopedAgent(this.teamScope),
         skillSources: identity.skill_sources,
-        ...(outputSchema !== undefined ? { outputSchema } : {}),
+        outputSchema,
         ...(systemPromptOptions ?? {}),
       },
       config: this.opts.config,
@@ -689,8 +653,8 @@ function assertStructuredOutputSupported(
   runtime: AgentRuntime | null,
 ): void {
   if (runtime?.getCapabilities().structuredOutput?.supported === true) return;
-  throw Object.assign(new Error('runtime does not support structured output (outputSchema)'), {
-    name: 'UnsupportedAgentRuntimeFeatureError' as const,
-    feature: 'outputSchema',
-  }) as UnsupportedAgentRuntimeFeatureError;
+  throw unsupportedFeatureError(
+    'outputSchema',
+    'runtime does not support structured output (outputSchema)',
+  );
 }

@@ -137,16 +137,14 @@ export class CodexProcess {
       await stderrHandle.close();
     }
 
-    if (child.pid === undefined) {
-      throw new Error('codex daemon spawned without a pid');
-    }
+    const pid = child.pid!;
     this.supervisor = supervisor;
-    this._pid = child.pid;
+    this._pid = pid;
 
     try {
       await waitForSocket(
         this.opts.socketPath,
-        child.pid,
+        pid,
         this.opts.readyTimeoutMs ?? 10000,
       );
     } catch (e) {

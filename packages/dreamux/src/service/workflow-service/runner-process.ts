@@ -9,9 +9,9 @@ import type {
   WorkflowRunnerChildMessage,
   WorkflowRunnerParentMessage,
 } from './protocol.js';
+import { isRecord } from './run-support.js';
 
 export interface WorkflowRunnerHandle {
-  readonly pid: number | null;
   start(): Promise<void>;
   send(message: WorkflowRunnerParentMessage): Promise<void>;
   stop(): Promise<void>;
@@ -45,10 +45,6 @@ export class ForkedWorkflowRunner implements WorkflowRunnerHandle {
       },
     });
     this.child.onError((error) => this.handlers.onError(error));
-  }
-
-  get pid(): number | null {
-    return this.child.pid;
   }
 
   async start(): Promise<void> {
@@ -103,8 +99,4 @@ export function isWorkflowRunnerChildMessage(
     default:
       return false;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

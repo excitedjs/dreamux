@@ -58,8 +58,4 @@ export class WorkflowJournal {
     this.tail = this.tail.then(() => appendJsonLine(this.path, event));
     return this.tail;
   }
-
-  flush(): Promise<void> {
-    return this.tail;
-  }
 }

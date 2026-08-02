@@ -1,10 +1,11 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
+import { errorInfo } from '../../platform/error-info.js';
 import type {
   WorkflowRunStatus,
   WorkflowTerminalStatus,
 } from './types.js';
-import { deferred, errorInfo } from './run-support.js';
+import { deferred } from './run-support.js';
 
 interface WorkflowRunTerminalDeps {
   runId: string;
@@ -56,10 +57,7 @@ export class WorkflowRunTerminal {
     if (this.requestedStatus === null && currentStatus !== 'running') {
       return currentStatus;
     }
-    this.reserveStop();
-    if (this.requestedStatus === 'stopped') this.signalStop();
-    this.observe(this.requestedStatus ?? 'stopped', null, null);
-    return this.requestedStatus ?? 'stopped';
+    return this.initiateStop();
   }
 
   async stopAndWait(): Promise<void> {
@@ -71,10 +69,16 @@ export class WorkflowRunTerminal {
     this.shutdownRequested_ = true;
     this.shutdownSignal.resolve();
     if (this.requestedStatus === null && this.deps.status() !== 'running') return;
+    this.initiateStop();
+    if (this.task !== null) await this.task;
+  }
+
+  private initiateStop(): WorkflowTerminalStatus {
     this.reserveStop();
     if (this.requestedStatus === 'stopped') this.signalStop();
-    this.observe(this.requestedStatus ?? 'stopped', null, null);
-    if (this.task !== null) await this.task;
+    const status = this.requestedStatus ?? 'stopped';
+    this.observe(status, null, null);
+    return status;
   }
 
   request(
