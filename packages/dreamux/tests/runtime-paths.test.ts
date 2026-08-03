@@ -230,7 +230,7 @@ describe('runtime paths', () => {
       unixSocketPathFitsBudget('x'.repeat(DREAMUX_UNIX_SOCKET_PATH_MAX_BYTES + 1)),
     ).toBe(false);
 
-    process.env['HOME'] = join(root, 'h'.repeat(90));
+    process.env['DREAMUX_ROOT'] = join(root, 'h'.repeat(90));
     expect(() => adminSocketPath()).toThrow(/too long for Unix sockets/);
   });
 

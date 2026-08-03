@@ -84,7 +84,14 @@ export function getRuntimeConfig(): DreamuxConfig {
   return currentConfig;
 }
 
+/**
+ * The dreamux home root. Overridable via the `DREAMUX_ROOT` environment variable
+ * so tests (or custom deployments) can redirect durable state into an isolated
+ * directory without hijacking `process.env.HOME`.
+ */
 export function dreamuxRoot(): string {
+  const override = process.env['DREAMUX_ROOT'];
+  if (override !== undefined && override !== '') return override;
   return join(homedir(), '.dreamux');
 }
 
@@ -95,13 +102,10 @@ function pathIsAtOrUnder(root: string, candidate: string): boolean {
 }
 
 /**
- * True when `path` resolves to, or inside, the dreamux home root
- * (`~/.dreamux`). Lexical only — a path that *symlinks* into `~/.dreamux` is not
- * caught here; use {@link isRealPathUnderDreamuxRoot} for the placement guard.
- * Managed worktree creation must fail loud rather than place a worktree under
- * Dreamux's own state/run/cache tree (issue #182 PR-4): a dispatcher workspace
- * must be a real operator project directory, never the retired state-dir
- * fallback or any other path inside `~/.dreamux`.
+ * True when `path` resolves to, or inside, the dreamux home root (`~/.dreamux`).
+ * Lexical only — symlinks are not caught; use {@link isRealPathUnderDreamuxRoot}
+ * for the placement guard. Managed worktree creation must fail loud rather than
+ * place a worktree under Dreamux's own state/run/cache tree (issue #182 PR-4).
  */
 export function isUnderDreamuxRoot(path: string): boolean {
   return pathIsAtOrUnder(dreamuxRoot(), path);
@@ -117,12 +121,9 @@ async function canonicalPath(path: string): Promise<string> {
 }
 
 /**
- * Symlink-safe variant of {@link isUnderDreamuxRoot} (issue #182 PR-4, PR #186
- * review P1): canonicalizes BOTH the dreamux root and `path` with `realpath`
- * before the containment check, so a workspace path that lives outside
- * `~/.dreamux` lexically but symlinks into it is still rejected. This is the
- * authoritative guard for managed-worktree placement, where a bypass would put
- * worktrees physically under Dreamux home.
+ * Symlink-safe variant of {@link isUnderDreamuxRoot} (issue #182 PR-4, #186):
+ * canonicalizes both the root and `path` with `realpath` before the containment
+ * check, so a workspace that symlinks into `~/.dreamux` is still rejected.
  */
 export async function isRealPathUnderDreamuxRoot(path: string): Promise<boolean> {
   const [realRoot, realPath] = await Promise.all([

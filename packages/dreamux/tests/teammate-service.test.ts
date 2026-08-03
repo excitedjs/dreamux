@@ -226,12 +226,14 @@ describe('TeammateService channel input routing', () => {
     root = mkdtempSync(join(tmpdir(), 'dreamux-teammate-service-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     mkdirSync(process.env['HOME'], { recursive: true });
   });
 
   afterEach(() => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     rmSync(root, { recursive: true, force: true });
   });
 

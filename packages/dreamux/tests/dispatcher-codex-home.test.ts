@@ -28,12 +28,14 @@ describe('global Codex home doctor', () => {
     runtimeDir = mkdtempSync(join(homedir(), '.dreamux-test-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(runtimeDir, 'home');
+    process.env['DREAMUX_ROOT'] = join(runtimeDir, 'dreamux');
     setRuntimeConfig(BUILT_IN_DEFAULTS);
   });
 
   afterEach(() => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     resetRuntimeConfig();
     rmSync(runtimeDir, { recursive: true, force: true });
   });
@@ -139,9 +141,9 @@ describe('global Codex home doctor', () => {
   it('uses the private OS temp dir for deep home dirs when XDG is absent (#182 macOS gate)', async () => {
     const previousXdg = process.env['XDG_RUNTIME_DIR'];
     const previousTmpdir = process.env['TMPDIR'];
-    // The macOS CI shape: long $HOME, no $XDG_RUNTIME_DIR, but a short PRIVATE
-    // $TMPDIR keeps the Codex socket within budget instead of failing loudly.
-    process.env['HOME'] = join(runtimeDir, 'h'.repeat(120));
+    // The macOS CI shape: long DREAMUX_ROOT, no $XDG_RUNTIME_DIR, but a short
+    // PRIVATE $TMPDIR keeps the Codex socket within budget instead of failing loudly.
+    process.env['DREAMUX_ROOT'] = join(runtimeDir, 'h'.repeat(120));
     delete process.env['XDG_RUNTIME_DIR'];
     process.env['TMPDIR'] = join(runtimeDir, 't');
 
@@ -159,7 +161,7 @@ describe('global Codex home doctor', () => {
 
   it('uses the private XDG runtime root for deep home dirs instead of failing', async () => {
     const previousXdg = process.env['XDG_RUNTIME_DIR'];
-    process.env['HOME'] = join(runtimeDir, 'h'.repeat(120));
+    process.env['DREAMUX_ROOT'] = join(runtimeDir, 'h'.repeat(120));
     process.env['XDG_RUNTIME_DIR'] = join(runtimeDir, 'xdg');
 
     try {

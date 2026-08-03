@@ -95,7 +95,7 @@ function claudeDispatcher(
 }
 
 function okOutcome(sessionId: string | null = 'session-abc'): TurnOutcome {
-  return { isError: false, text: 'done', sessionId, subtype: 'success', errors: [] };
+  return { isError: false, text: 'done', sessionId, subtype: 'success', errors: [], hasStructuredOutput: false };
 }
 
 /** A fake resident session: records turns, plays a scripted outcome sequence. */
@@ -391,12 +391,14 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     home = mkdtempSync(join(tmpdir(), 'dreamux-cc-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = home;
+    process.env['DREAMUX_ROOT'] = home;
   });
 
   afterEach(async () => {
     await Promise.all(runtimes.map((runtime) => runtime.stop().catch(() => undefined)));
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     rmSync(home, { recursive: true, force: true });
   });
 
@@ -1216,7 +1218,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
   it('surfaces an error result envelope as a degraded turn', async () => {
     const fleet = fakeFleet([
-      { isError: true, text: '', sessionId: 'session-abc', subtype: 'error_during_execution', errors: ['model overloaded'] },
+      { isError: true, text: '', sessionId: 'session-abc', subtype: 'error_during_execution', errors: ['model overloaded'], hasStructuredOutput: false },
     ]);
     const { runtime, store } = await makeRuntime(fleet);
     await runtime.start();

@@ -170,6 +170,7 @@ describe('architecture ownership gate (#233)', () => {
     root = await mkdtemp(join(tmpdir(), 'dreamux-ownership-gate-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     await mkdir(process.env['HOME'], { recursive: true });
     resetRuntimeConfig();
   });
@@ -177,6 +178,7 @@ describe('architecture ownership gate (#233)', () => {
   afterEach(async () => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     resetRuntimeConfig();
     await rm(root, { recursive: true, force: true });
   });

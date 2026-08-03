@@ -405,10 +405,15 @@ export class WorkflowRun {
       }
       if (!call.completed) {
         const stopped = this.terminal.requested === 'stopped';
+        const runnerError =
+          !stopped && isUnsupportedFeatureError(error, 'outputSchema')
+            ? errorMessage(error)
+            : undefined;
         await this.completeAgent(
           call,
           stopped ? 'stopped' : 'failed',
           null,
+          runnerError,
         ).catch((persistenceError: unknown) => {
           this.terminal.observe(
             'failed',

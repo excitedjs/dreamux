@@ -227,6 +227,22 @@ describe('workflow runner', () => {
     });
   });
 
+  it('does not spawn agents from top-level code before meta is validated', async () => {
+    const execution = await runScript(`
+      agent('spawn before meta validation');
+      export const meta = { name: 'early-agent', description: 'early agent' };
+      export default async function run() { return null; }
+    `);
+
+    expect(execution.result).toMatchObject({
+      type: 'run_result',
+      status: 'failed',
+    });
+    expect(
+      execution.messages.some((m) => m.type === 'agent_start'),
+    ).toBe(false);
+  });
+
   it('force-stops a workflow that blocks the VM event loop', async () => {
     let resolveReady: (() => void) | undefined;
     const ready = new Promise<void>((resolveReadyPromise) => {

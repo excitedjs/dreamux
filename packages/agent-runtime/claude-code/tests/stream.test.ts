@@ -84,6 +84,56 @@ describe('parseLine', () => {
     }
   });
 
+  it('prefers structured_output over result text in --json-schema mode', () => {
+    const line = parseLine(
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        result: 'unvalidated free text that must be ignored',
+        structured_output: { answer: 4 },
+        session_id: 's1',
+      }),
+    );
+    expect(line.kind).toBe('result');
+    if (line.kind === 'result') {
+      expect(line.outcome.text).toBe('{"answer":4}');
+      expect(line.outcome.hasStructuredOutput).toBe(true);
+    }
+  });
+
+  it('serializes an explicit structured_output: null as JSON null', () => {
+    const line = parseLine(
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        result: 'fallback text that must not be used',
+        structured_output: null,
+        session_id: 's1',
+      }),
+    );
+    expect(line.kind).toBe('result');
+    if (line.kind === 'result') {
+      expect(line.outcome.text).toBe('null');
+      expect(line.outcome.hasStructuredOutput).toBe(true);
+    }
+  });
+
+  it('falls back to result text when structured_output is absent', () => {
+    const line = parseLine(
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        result: 'plain text answer',
+        session_id: 's1',
+      }),
+    );
+    expect(line.kind).toBe('result');
+    if (line.kind === 'result') {
+      expect(line.outcome.text).toBe('plain text answer');
+      expect(line.outcome.hasStructuredOutput).toBe(false);
+    }
+  });
+
   it('treats any non-success result subtype as an error', () => {
     const line = parseLine(
       JSON.stringify({
@@ -214,6 +264,7 @@ describe('TurnAggregator', () => {
       sessionId: 's1',
       subtype: 'success',
       errors: [],
+      hasStructuredOutput: false,
     });
   });
 

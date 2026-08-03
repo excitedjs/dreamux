@@ -304,6 +304,7 @@ describe('WorkflowService', () => {
     home = await mkdtemp(join(tmpdir(), 'dreamux-workflow-service-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = home;
+    process.env['DREAMUX_ROOT'] = home;
   });
 
   afterEach(async () => {
@@ -313,6 +314,7 @@ describe('WorkflowService', () => {
     teammateFakes.length = 0;
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     await rm(home, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
@@ -861,6 +863,46 @@ describe('WorkflowService', () => {
     expect(ctx.teammates.releases).toEqual([
       ctx.teammates.spawns[0]?.name,
     ]);
+  });
+
+  it('propagates an unsupported outputSchema error thrown by spawnOwned', async () => {
+    const ctx = await context(['run-schema-throw']);
+    const unsupported = Object.assign(
+      new Error('claude-code runtime does not support per-turn outputSchema'),
+      {
+        name: 'UnsupportedAgentRuntimeFeatureError',
+        feature: 'outputSchema',
+      },
+    );
+    ctx.teammates.spawnError = unsupported;
+    await ctx.service.run({ script: validScript() });
+    const runner = ctx.runner.latest();
+
+    runner.emit({
+      type: 'agent_start',
+      index: 0,
+      prompt: 'structured prompt',
+      options: { schema: { type: 'object' } },
+    });
+    await vi.waitFor(() =>
+      expect(agentResults(runner)).toEqual([
+        {
+          type: 'agent_result',
+          index: 0,
+          error: 'claude-code runtime does not support per-turn outputSchema',
+        },
+      ]),
+    );
+    expect(ctx.teammates.spawnAttempts).toBe(1);
+    expect(ctx.teammates.spawns).toHaveLength(0);
+
+    runner.emit({
+      type: 'run_result',
+      status: 'failed',
+      error: 'claude-code runtime does not support per-turn outputSchema',
+    });
+    await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
+    expect(ctx.initiator.received[0]?.status).toBe('failed');
   });
 
   it('maps an ordinary outputSchema turn failure to null', async () => {

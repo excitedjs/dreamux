@@ -140,6 +140,7 @@ describe('external runtime production parity', () => {
     root = await mkdtemp(join(tmpdir(), 'dreamux-external-runtime-parity-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     await mkdir(process.env['HOME'], { recursive: true });
     resetRuntimeConfig();
     externalRuntimeModule.resetExternalRuntimeFixture();
@@ -148,6 +149,7 @@ describe('external runtime production parity', () => {
   afterEach(async () => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     resetRuntimeConfig();
     await rm(root, { recursive: true, force: true });
     externalRuntimeModule.resetExternalRuntimeFixture();

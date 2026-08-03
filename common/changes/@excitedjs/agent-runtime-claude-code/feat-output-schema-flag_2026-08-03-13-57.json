@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-claude-code",
+      "comment": "Pass --json-schema at resident session creation so structured_output is enforced for the session lifetime. Prefer structured_output over free-form result text, fail loud when a schema session returns none, and cache lastResult only after all validation passes so failed turns never leak unvalidated text.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code"
+}

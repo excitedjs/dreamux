@@ -111,6 +111,7 @@ describe('dreamux doctor command', () => {
     process.env['DREAMUX_CONFIG_DIR'] = join(root, 'config');
     process.env['DREAMUX_BIN'] = '/usr/local/bin/dreamux';
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
   });
 
   afterEach(() => {
