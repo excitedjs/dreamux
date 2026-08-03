@@ -42,7 +42,8 @@ export interface WorkflowRunRecord {
 }
 
 export interface WorkflowRunInput {
-  script: string;
+  script?: string;
+  scriptPath?: string;
   args?: unknown;
   max_concurrency?: number;
 }

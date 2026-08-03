@@ -863,6 +863,46 @@ describe('WorkflowService', () => {
     ]);
   });
 
+  it('propagates an unsupported outputSchema error thrown by spawnOwned', async () => {
+    const ctx = await context(['run-schema-throw']);
+    const unsupported = Object.assign(
+      new Error('claude-code runtime does not support per-turn outputSchema'),
+      {
+        name: 'UnsupportedAgentRuntimeFeatureError',
+        feature: 'outputSchema',
+      },
+    );
+    ctx.teammates.spawnError = unsupported;
+    await ctx.service.run({ script: validScript() });
+    const runner = ctx.runner.latest();
+
+    runner.emit({
+      type: 'agent_start',
+      index: 0,
+      prompt: 'structured prompt',
+      options: { schema: { type: 'object' } },
+    });
+    await vi.waitFor(() =>
+      expect(agentResults(runner)).toEqual([
+        {
+          type: 'agent_result',
+          index: 0,
+          error: 'claude-code runtime does not support per-turn outputSchema',
+        },
+      ]),
+    );
+    expect(ctx.teammates.spawnAttempts).toBe(1);
+    expect(ctx.teammates.spawns).toHaveLength(0);
+
+    runner.emit({
+      type: 'run_result',
+      status: 'failed',
+      error: 'claude-code runtime does not support per-turn outputSchema',
+    });
+    await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
+    expect(ctx.initiator.received[0]?.status).toBe('failed');
+  });
+
   it('maps an ordinary outputSchema turn failure to null', async () => {
     const ctx = await context(['run-schema-failed']);
     ctx.teammates.nextTurnStatus = 'failed';

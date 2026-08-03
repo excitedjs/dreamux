@@ -264,8 +264,14 @@ export const adminMethods: Record<string, AdminHandler> = {
 
   'workflow.run': async (server, params) => {
     const maxConcurrency = optionalInteger(params, 'max_concurrency');
+    const script = optionalNonBlankString(params, 'script');
+    const scriptPath = optionalNonBlankString(params, 'scriptPath');
+    if (script === null && scriptPath === null) {
+      throw new AdminError('BAD_REQUEST', 'workflow.run requires either script or scriptPath');
+    }
     return (await teammateTargetFor(server, params)).service.workflows.run({
-      script: mustNonEmptyString(params, 'script'),
+      ...(script !== null ? { script } : {}),
+      ...(scriptPath !== null ? { scriptPath } : {}),
       ...(params !== undefined && Object.hasOwn(params, 'args')
         ? { args: params['args'] }
         : {}),

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { readFile, stat } from 'node:fs/promises';
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
@@ -36,6 +37,7 @@ import type {
 const DEFAULT_MAX_CONCURRENCY = 8;
 const MIN_MAX_CONCURRENCY = 1;
 const MAX_MAX_CONCURRENCY = 8;
+const MAX_SCRIPT_BYTES = 1024 * 1024;
 
 export interface WorkflowServiceOptions extends WorkflowScopePathInput {
   callerKind: WorkflowCallerKind;
@@ -108,7 +110,8 @@ export class WorkflowService implements WorkflowOps {
   private async createRun(input: WorkflowRunInput): Promise<WorkflowRunAccepted> {
     await this.initialize();
     if (!this.accepting) throw new Error('workflow admission is closed');
-    if (typeof input.script !== 'string' || input.script.trim() === '') {
+    const script = await resolveWorkflowScript(input);
+    if (script.trim() === '') {
       throw new Error('workflow script must be non-empty');
     }
 
@@ -123,7 +126,7 @@ export class WorkflowService implements WorkflowOps {
       dispatcher_id: this.scope.dispatcherId,
       team_id: this.scope.teamId,
       caller_kind: this.opts.callerKind,
-      script_hash: createHash('sha256').update(input.script).digest('hex'),
+      script_hash: createHash('sha256').update(script).digest('hex'),
       status: 'running',
       max_concurrency: clampMaxConcurrency(input.max_concurrency),
       phase: null,
@@ -169,7 +172,7 @@ export class WorkflowService implements WorkflowOps {
       },
       'workflow run created',
     );
-    await run.start(input.script, input.args);
+    await run.start(script, input.args);
     return { run_id: runId };
   }
 
@@ -289,4 +292,24 @@ function clampMaxConcurrency(value: number | undefined): number {
     MAX_MAX_CONCURRENCY,
     Math.max(MIN_MAX_CONCURRENCY, Math.trunc(value)),
   );
+}
+
+async function resolveWorkflowScript(input: WorkflowRunInput): Promise<string> {
+  const hasScript = typeof input.script === 'string' && input.script.trim() !== '';
+  const hasScriptPath = typeof input.scriptPath === 'string' && input.scriptPath.trim() !== '';
+  if (!hasScript && !hasScriptPath) {
+    throw new Error('workflow script or scriptPath must be provided');
+  }
+  if (hasScript) return input.script as string;
+  const path = input.scriptPath as string;
+  const fileStat = await stat(path);
+  if (!fileStat.isFile()) {
+    throw new Error(`workflow scriptPath is not a regular file: ${path}`);
+  }
+  if (fileStat.size > MAX_SCRIPT_BYTES) {
+    throw new Error(
+      `workflow scriptPath exceeds ${MAX_SCRIPT_BYTES} bytes: ${path}`,
+    );
+  }
+  return await readFile(path, 'utf8');
 }

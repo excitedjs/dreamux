@@ -183,13 +183,14 @@ export function teammateTools(callerKind: TeamMateMcpCallerKind): Array<Record<s
   const workflowTools = [
     tool(
       'workflow_run',
-      'Load the bundled `workflow` skill before use. Start a deterministic multi-agent workflow from an inline module script and return { run_id } immediately; Dreamux pushes one terminal completion when the run finishes.',
+      'Load the bundled `workflow` skill before use. Start a deterministic multi-agent workflow from an inline module script (`script`) or a local file path (`scriptPath`) and return { run_id } immediately; Dreamux pushes one terminal completion when the run finishes.',
       {
         script: { type: 'string', minLength: 1 },
+        scriptPath: { type: 'string', minLength: 1 },
         args: {},
         max_concurrency: { type: 'integer', minimum: 1, maximum: 8 },
       },
-      ['script'],
+      [],
     ),
     tool(
       'workflow_status',
@@ -325,8 +326,14 @@ function mapToolCall(
 function workflowRunArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'workflow_run arguments');
   const maxConcurrency = optionalInteger(obj, 'max_concurrency');
+  const script = optionalString(obj, 'script');
+  const scriptPath = optionalString(obj, 'scriptPath');
+  if ((script === null || script.trim() === '') && (scriptPath === null || scriptPath.trim() === '')) {
+    throw new Error('workflow_run requires either script or scriptPath');
+  }
   return {
-    script: requireString(obj, 'script'),
+    ...(script !== null && script.trim() !== '' ? { script } : {}),
+    ...(scriptPath !== null && scriptPath.trim() !== '' ? { scriptPath } : {}),
     ...(Object.hasOwn(obj, 'args') ? { args: obj['args'] } : {}),
     ...(maxConcurrency !== null ? { max_concurrency: maxConcurrency } : {}),
   };

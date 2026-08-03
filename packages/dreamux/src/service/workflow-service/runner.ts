@@ -59,6 +59,9 @@ async function runWorkflow(script: string, args: unknown): Promise<void> {
     await module.link((specifier) => {
       throw new Error(`workflow imports are disabled: ${specifier}`);
     });
+    // Evaluate top-level code (meta declaration + entrypoint definition) without
+    // exposing agent/parallel/pipeline, so an invalid script cannot spawn agents
+    // before its metadata is validated.
     await module.evaluate();
 
     const namespace = module.namespace as Record<string, unknown>;
@@ -67,6 +70,9 @@ async function runWorkflow(script: string, args: unknown): Promise<void> {
     if (typeof entrypoint !== 'function') {
       throw new Error('workflow script must export a default run function');
     }
+
+    // Metadata is valid; now expose the orchestration primitives and run.
+    installWorkflowPrimitives(context);
 
     const result: unknown = await Reflect.apply(entrypoint, undefined, []);
     if (aborted) throw new Error('workflow aborted');
@@ -86,13 +92,22 @@ async function runWorkflow(script: string, args: unknown): Promise<void> {
 function createWorkflowContext(args: unknown): Context {
   return createContext({
     args,
-    agent: startAgent,
-    parallel,
-    pipeline,
     phase: (message: unknown): void => emit('phase', message),
     log: (message: unknown): void => emit('log', message),
     console: undefined,
   });
+}
+
+/** Expose orchestration primitives after metadata validation succeeds. */
+function installWorkflowPrimitives(context: Context): void {
+  const sandbox = context as Context & {
+    agent?: typeof startAgent;
+    parallel?: typeof parallel;
+    pipeline?: typeof pipeline;
+  };
+  sandbox.agent = startAgent;
+  sandbox.parallel = parallel;
+  sandbox.pipeline = pipeline;
 }
 
 async function installDeterministicIntrinsics(context: Context): Promise<void> {

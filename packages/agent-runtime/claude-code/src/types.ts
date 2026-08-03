@@ -53,6 +53,13 @@ export interface ResultEnvelope {
   readonly sessionId: string | null;
   /** Error subtypes may carry a message list; empty otherwise. */
   readonly errors: readonly string[];
+  /**
+   * Whether the `result` envelope carried a `structured_output` field (even if
+   * its value is `null`, which is a valid JSON Schema root type). The runtime
+   * uses this to fail loud when `--json-schema` was requested but Claude did
+   * not return a validated structured object.
+   */
+  readonly hasStructuredOutput: boolean;
 }
 
 /**
@@ -80,6 +87,13 @@ export interface TurnOutcome {
   readonly sessionId: string | null;
   readonly subtype: string | null;
   readonly errors: readonly string[];
+  /**
+   * Whether the turn's `result` envelope carried a `structured_output` field.
+   * Propagated from {@link ResultEnvelope.hasStructuredOutput} so the runtime
+   * can fail loud when `--json-schema` was requested but no validated object
+   * was returned.
+   */
+  readonly hasStructuredOutput: boolean;
 }
 
 /** Everything needed to spawn one resident `claude` stream-json child. */

@@ -630,7 +630,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     }
     const resultText =
       outcome.isError || outcome.text === '' ? null : outcome.text;
-    if (resultText !== null) this.lastResult = { text: resultText };
     if (outcome.isError) {
       const detail =
         outcome.errors.length > 0
@@ -638,6 +637,17 @@ export class ClaudeCodeRuntime implements AgentRuntime {
           : (outcome.subtype ?? 'unknown error');
       throw new Error(`claude turn ${turnId} returned an error result: ${detail}`);
     }
+    // When --json-schema was requested, Claude must return a validated
+    // `structured_output`; fail loud rather than surfacing free-form text.
+    if (this.deps.outputSchema !== undefined && !outcome.hasStructuredOutput) {
+      throw new Error(
+        `claude turn ${turnId} did not return structured_output for a ` +
+          `--json-schema session`,
+      );
+    }
+    // Only cache the result once all validation passes, so a failed schema turn
+    // never leaks its unvalidated free-form text through getLast().
+    if (resultText !== null) this.lastResult = { text: resultText };
     this.log('info', `claude-code turn ${turnId} completed`);
     return resultText;
   }

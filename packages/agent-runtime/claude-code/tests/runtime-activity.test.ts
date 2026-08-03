@@ -115,6 +115,7 @@ function okOutcome(): TurnOutcome {
     sessionId: 'sess-1',
     subtype: 'success',
     errors: [],
+    hasStructuredOutput: false,
   };
 }
 

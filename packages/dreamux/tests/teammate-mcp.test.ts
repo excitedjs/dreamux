@@ -214,8 +214,12 @@ describe('teammate-mcp stdio shim', () => {
       expect(JSON.stringify(workflowTools)).not.toMatch(/auto-close/i);
 
       const run = workflowTools[0]!;
-      expect(run.inputSchema.required).toEqual(['script']);
+      expect(run.inputSchema.required).toEqual([]);
       expect(run.inputSchema.properties['script']).toMatchObject({
+        type: 'string',
+        minLength: 1,
+      });
+      expect(run.inputSchema.properties['scriptPath']).toMatchObject({
         type: 'string',
         minLength: 1,
       });
