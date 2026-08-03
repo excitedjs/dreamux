@@ -50,6 +50,24 @@ roadmap prose in model-facing text:
 - put package-surface removals, upgrade notes, and historical comparisons in
   Rush change files or clearly historical decision records.
 
+`dreamux-maintenance` is also the current configuration/state companion. Its
+concise root routes each task to one directly linked reference; schemas and
+workflows have one owner instead of being copied into the root. Every change to
+a Dreamux config or persisted-state shape, validation, default, ownership, or
+meaning updates that owning reference and, when its scope changes, the root
+route in the same change. The root and non-upgrade references may name the one
+accepted schema/version and current safe edit workflow, but they must not teach
+upgrade detection, old formats, migrations, rebuild recipes, or state deletion
+as an upgrade technique. Fully server-owned state is named as non-editable;
+mixed state names the field ownership boundary exactly.
+
+The one exception is `references/self-upgrade.md`: an explicit, low-freedom
+managed-daemon transition SOP. It resolves and validates exact staged old and
+target artifacts, then reads the staged target changelog and root-routed owner
+references for concrete work. It owns sequencing, private recovery ownership,
+restart-resume, verification, and reporting, but no historical schema or
+release-specific migration body. Other references do not link deeper.
+
 Examples:
 
 - Prefer: "Cron jobs inject prompts back into this agent."
@@ -141,6 +159,12 @@ Tests should protect contracts, not prose preferences. Prefer:
 - negative gates for banned coupling or history text, such as `Feishu`,
   `chat_id`, `legacy`, `.codex/skills`, `tm spawn`, `apply_patch`, `AGENTS.md`,
   `this milestone`, or invented Dispatcher communication phrases.
+
+Provider-neutral skills keep Feishu-specific text banned. The Dispatcher-only
+`dreamux-maintenance` skill is the explicit exception for directly routed,
+built-in Feishu credential and access references. Tests reject transition and
+history text in the root and non-upgrade references, while separately locking
+the generic self-upgrade SOP and its no-release-specific-history boundary.
 
 Use exact positive strings only for stable public names and command surfaces,
 such as skill names, MCP tool names, CLI commands, and daemon subcommands.

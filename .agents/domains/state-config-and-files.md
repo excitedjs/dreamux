@@ -36,8 +36,10 @@ Source:
 
 ## Operator Config
 
-`~/.dreamux/config.json` is the only Dreamux operator-editable config source.
-It is mode `0600` because provider configs may contain secrets.
+The path reported by `dreamux config path` is the only Dreamux operator config
+source. It is normally `~/.dreamux/config.json`, may be relocated by
+`DREAMUX_CONFIG_DIR`, and is mode `0600` because provider configs may contain
+secrets.
 
 The current config shape is:
 
@@ -96,8 +98,13 @@ Rules:
 - explicitly rebuildable server state may warn and rebuild only when documented;
 - removed layouts may be detected for diagnostics, but not read as source data,
   rewritten, or deleted;
-- breaking upgrade notes need a Rush change file with `BREAKING:` and concrete
-  `Rebuild:` guidance.
+- incompatible shape, version, or path changes need a Rush change file with
+  `BREAKING:` and concrete `Rebuild:` guidance;
+- an explicitly operator-approved same-shape semantic change may retain its
+  version only when the note starts with `BREAKING:`, immediately gives a
+  `Review:` warning, explicitly says no rebuild is needed, and contains no
+  `Rebuild:` instruction. The V3 Feishu `allow_chats` trust reinterpretation is
+  the accepted instance of this exception.
 
 Source:
 
@@ -142,6 +149,15 @@ observe a partial claim. The claim is never removed, including after dissolve.
 There is no separate `status.json` recovery authority and no durable
 `runtime/<name>/` scratch under the dispatcher state root — runtime scratch is
 volatile and lives under `run/`.
+
+Feishu `access.json` is the deliberate mixed-ownership exception to the general
+server-state description. Its fixed path is
+`~/.dreamux/state/<dispatcher-id>/access.json`, independent of
+`DREAMUX_CONFIG_DIR`. `version` is Channel/schema-owned; `dm_policy` and
+`group.*` are operator policy; `allow_users` is shared authority; `pending`,
+`observed_chats`, `warnings`, and `last_gate` are Channel runtime ledger. Manual
+maintenance keeps the owner fully quiesced and preserves schema/ledger fields
+through an independent operator's atomic owner-only patch.
 
 Source:
 
@@ -259,3 +275,4 @@ Source:
 - [Json document store](../decisions/json-document-store.md)
 - [Logging](../decisions/logging.md)
 - [Global config dir](../decisions/global-config-dir.md)
+- [Feishu trusted allow-chats semantics](../decisions/feishu-allow-chats-trust-semantics.md)

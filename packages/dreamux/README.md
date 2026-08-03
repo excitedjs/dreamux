@@ -24,13 +24,15 @@ Design background:
 - Public CLI bin: `dreamux`. It owns onboarding, serving, status, doctor,
   dispatcher commands, and config commands. TeamMate and Team orchestration are
   available through Dreamux-owned MCP surfaces.
-- Bundled Dreamux skills injected at runtime by role (issue #209 slice 6):
+- Bundled Dreamux skills injected at runtime by role (issues #209 and #313):
   core hands the Dispatcher `dispatcher-workflow` and `dreamux-maintenance`, the
-  TeamLeader `team-workflow`, and the runtime applies them to its engine (Codex
-  `skills/extraRoots/set`, Claude Code `--add-dir`). The package exposes
-  role-specific skill roots so root scanning cannot cross role boundaries.
-  `dreamux onboard` does not install bundled skills into
-  dispatcher workspaces.
+  TeamLeader `team-workflow`, and both roles the shared `workflow` skill. The
+  runtime applies those role-specific plus shared roots to its engine (Codex
+  `skills/extraRoots/set`, Claude Code `--add-dir`). Role-specific roots remain
+  disjoint, while the shared root is deliberately composed into both roles.
+  For admin-created TeamLeaders, required-source normalization protects both
+  `team-workflow` and `workflow` from custom skill-root shadowing. `dreamux
+  onboard` does not install bundled skills into dispatcher workspaces.
 - Providerized dispatcher declarations, a process-local provider registry,
   server-owned state/log paths, the `builtin:feishu` Channel provider, the
   `builtin:codex` and `builtin:claude-code` Agent Runtime providers, and
@@ -107,11 +109,11 @@ logs:
 
 | Path | Purpose | Source of truth |
 |---|---|---|
-| `~/.dreamux/config.json` | User-editable provider config and local channel credentials, created by `dreamux onboard`; edit and restart to apply | the operator |
+| `dreamux config path` (normally `~/.dreamux/config.json`) | User-editable provider config and local channel credentials, created by `dreamux onboard`; edit and restart to apply | the operator |
 | `~/.dreamux/run/admin.sock` | Admin Unix socket (+ `admin.sock.lock`); volatile run file | the server |
 | `~/.dreamux/run/restart-intent.json` | One-shot daemon restart marker; volatile run file | the server |
 | `~/.dreamux/run/sockets/` | Fallback root for ephemeral Codex app-server rendezvous sockets (preferred root: `$XDG_RUNTIME_DIR/dreamux/sockets/`); random per start, never persisted | the server |
-| `~/.dreamux/state/<id>/access.json` | Dispatcher-local access-gate state | the server |
+| `~/.dreamux/state/<id>/access.json` | Dispatcher-local Feishu access state: schema/runtime ledger are Channel-owned; policy fields and quiesced `allow_users` maintenance are operator-authorized | mixed |
 | `~/.dreamux/state/<id>/identity.json` | Dispatcher root agent identity and runtime recovery state | the server |
 | `~/.dreamux/state/<id>/teammate/` | TeamMate task ledger, results, and delivery retry state | the server |
 | `~/.dreamux/cache/<id>/spill/` | Over-budget teammate completion spill files; rebuildable cache, only the path is inlined into a dispatcher turn | the server |
@@ -122,9 +124,9 @@ logs:
 | `~/.dreamux/logs/teammate-mcp/<id>.log` | TeamMate MCP shim diagnostics | the server |
 | `~/.codex/` | Codex global default home: auth, memory, and config | the operator / Codex |
 
-`rm -rf ~/.dreamux/run ~/.dreamux/cache ~/.dreamux/state ~/.dreamux/logs` is a
-run/cache/state/log recovery path (only while no server is running); dreamux
-config and global Codex auth survive.
+`~/.dreamux/run/` and `~/.dreamux/cache/` are rebuildable while no server is
+running. Durable `~/.dreamux/state/` is not a generic cleanup target; preserve
+it unless an exact state owner and documented recovery contract say otherwise.
 
 ## Configure dispatchers
 
@@ -149,7 +151,8 @@ Dispatcher declarations live in `config.json`:
         "extra_env": {
           "EXAMPLE_FLAG": "1"
         },
-        "initialize_timeout_ms": 10000
+        "initialize_timeout_ms": 10000,
+        "turn_timeout_ms": 600000
       }
     }
   ],
@@ -193,6 +196,8 @@ defaults, so any field can be omitted:
 - `extra_args` → `[]`
 - `extra_env` → `{}`
 - `initialize_timeout_ms` → `10000`
+- `turn_timeout_ms` → `600000` (accepted and defaulted by the current config
+  reader, but not passed into `CodexRuntime`; it currently has no runtime effect)
 
 Most operators never touch `bin` or `initialize_timeout_ms`. The optional
 `CODEX_HOST_CODEX_BIN` environment variable is a host-level override of the
@@ -247,39 +252,65 @@ by core; sharing one bot identity across dispatchers is an operator choice.
 Dispatcher ids use a path-safe character set so they map one-to-one to state
 directories.
 
-Access-gate allowlists are not part of `config.json`. Configure them in
-`~/.dreamux/state/<id>/access.json`:
+Access-gate allowlists are not part of `config.json`. The complete secure V3
+default used to initialize a missing `~/.dreamux/state/<id>/access.json` is:
 
 ```json
 {
-  "version": 2,
-  "allow_users": ["<USER_ID>"],
+  "version": 3,
+  "dm_policy": "pairing",
   "group": {
     "policy": "follow-user",
-    "allow_chats": ["<CHAT_ID>"],
+    "allow_chats": [],
     "require_mention": true
   },
+  "allow_users": [],
+  "pending": {},
   "observed_chats": [],
   "warnings": [],
-  "last_gate": null
+  "last_gate": {
+    "at": 0
+  }
 }
 ```
 
-`access.json` is v2-only. `allow_users` is the single global allowlist of
-sender open_ids, shared by direct messages and the group `follow-user` policy.
-`group.policy` is one of `block`, `allowlist`, or `follow-user`; under
-`allowlist` the gate consults `allow_chats`, under `follow-user` it ignores
-`allow_chats` and gates on `allow_users`. dreamux 0.x does not migrate older
-shapes: an unsupported or missing `version` fails loud at startup. To reset,
-delete the file (secure default: no one authorized) and recreate it in this v2
-shape.
+`access.json` remains version 3. `version` is Channel/schema-owned.
+`dm_policy`, `group.policy`, `group.allow_chats`, and
+`group.require_mention` are operator policy. `allow_users` is shared authority:
+live pairing/Owner approval may append it, and a quiesced operator may maintain
+it. `pending`, `observed_chats`, `warnings`, and `last_gate` are Channel-owned
+runtime ledger fields. Add real chat or sender ids only through the quiesced
+field-specific maintenance workflow below; the secure default grants neither
+chat nor sender authority.
 
-The server reads `access.json` directly at runtime and preserves runtime
-observations and warnings in the same file.
+For human group messages, `group.require_mention` runs first and `block` drops
+all human traffic. Under `allowlist`, an unlisted chat drops and a listed chat
+trusts every exactly classified human. Under `follow-user`, a listed chat has
+the same trust; an unlisted chat follows the existing `dm_policy` /
+`allow_users` / pairing path. Trusted chats bypass `dm_policy`, `allow_users`,
+and pairing, including `dm_policy: "disabled"`, but never bypass the global
+mention switch. `/introduce` stays sender-scoped and still requires
+`allow_users`.
+
+This meaning changes in place when the new server starts; V3 needs no rebuild.
+Before deploying, review every non-empty `allow_chats` entry under both
+`allowlist` and `follow-user`. Keep only groups whose human membership should
+be trusted and whose passive known-bot observation should remain enabled.
+
+The access path is always `~/.dreamux/state/<id>/access.json`;
+`DREAMUX_CONFIG_DIR` and `dreamux config path` affect `config.json` only. For a
+manual access edit, fully stop the owning Dispatcher, confirm it stopped,
+re-read after stop, apply only the requested policy/shared-authority fields via
+an owner-only sibling temporary file and atomic replacement at mode `0600`,
+validate the complete current V3 shape without printing values, and then start
+the Dispatcher. Preserve `version` and all Channel-owned ledger fields exactly.
+A missing file after confirmed stop is valid current state: start from the full
+secure V3 default shown above, create a missing state directory at `0700`, and
+atomically create the first `0600` file. This is initialization, not a rebuild.
 
 `dreamux config show`, `dreamux status`, `dreamux doctor`, and logs redact
 secret-like config keys generically. There is no CLI raw mode for printing the
-unredacted local file.
+unredacted local file. `dreamux doctor` is not an access-state validator.
 
 ## Codex configuration precedence
 

@@ -92,11 +92,14 @@ Requirements:
 
 Design constraints:
 
-- `allow_users` remains the source of truth for ordinary message delivery.
-  App Owner identity is checked only in the card action handler; it is not an
-  implicit gate bypass. If `allow_users` is empty, an Owner message still
-  triggers pairing under the normal `dm_policy` / `group.policy` rules, then
-  the Owner can approve the generated card.
+- `allow_users` remains authoritative for P2P and untrusted `follow-user`
+  sender paths. After the mention gate and human `block` gate,
+  `group.allow_chats` authorizes exact humans in trusted `allowlist` and
+  `follow-user` chats without consulting `allow_users`.
+- App Owner identity is checked only in the card action handler; it is not an
+  implicit gate bypass. An Owner pairs only when it reaches an untrusted
+  sender-gated pairing path. An exact-human Owner in a trusted chat delivers
+  directly under that chat's authority and does not pair.
 - Keep card rendering in `feishu-pairing-card.ts`, gate state transitions in
   `feishu-gate.ts`, and IO/mutation orchestration in `feishu-session-ops.ts`.
   Transport code owns only thin Feishu SDK wrappers such as card send and owner

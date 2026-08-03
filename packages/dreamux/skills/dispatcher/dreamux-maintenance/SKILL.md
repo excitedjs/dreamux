@@ -1,59 +1,70 @@
 ---
 name: dreamux-maintenance
-description: "Dreamux host operation notes. Load when diagnosing or operating dreamux serve, daemon startup, doctor/status results, dispatcher health, missing replies, stuck turns, restart behavior, config/state/run/log paths, bundled-skill injection, access state, or runtime app-server readiness."
+description: "Dreamux host operation notes. Load when diagnosing or operating dreamux serve, daemon startup, doctor/status results, Dispatcher health, missing replies, stuck turns, restart behavior, current config/state/run/log paths, bundled-skill injection, Feishu access policy, runtime app-server readiness, a Dreamux upgrade, or post-restart recovery."
 ---
 
 # Dreamux Maintenance
 
-## Scope Boundaries
+## Scope And Authorization
 
-- Prefer Dreamux-owned surfaces first: `dreamux doctor`, `dreamux status`,
-  dispatcher status, config inspection, admin socket behavior, and logs under
-  `~/.dreamux/logs/`.
-- Separate submit, execution, completion delivery, and visible channel delivery.
-  A submitted TeamMate turn or inbound channel message is not proof that the
-  final reply reached the operator.
-- Before changing persistent state, access policy, service units, shell startup
-  files, PATH, environment variables, runtime auth, or Dreamux config, name the
-  target and require explicit operator intent when the request is ambiguous.
-- Keep private paths, socket paths, app ids, tokens, secrets, and local incident
-  details out of broad channel replies and public artifacts.
+- Use Dreamux-owned surfaces first: `dreamux doctor`, `dreamux status`,
+  Dispatcher status, admin socket behavior, and logs under `~/.dreamux/logs/`.
+- Separate submit, execution, completion delivery, and visible Channel delivery.
+  A submitted turn or inbound message does not prove that a final reply reached
+  the operator.
+- Before changing config, state, a service unit, PATH, environment, runtime
+  auth, or the installed package, require explicit operator intent naming the
+  target Dispatcher and exact operation. Load the routed owner before planning
+  a file or field change.
+- Run the self-upgrade procedure only for explicit upgrade intent. Its
+  self-resuming branch has additional preconditions and private recovery
+  ownership; ordinary restart permission is not upgrade permission.
 
-## Server And Service Notes
+## Secret Safety
 
-- `dreamux serve` is the foreground server entry point. The public
-  `dreamux daemon install|uninstall|start|stop|restart` command group manages
-  the user-level service; do not invent additional daemon command shapes or
-  treat `serve` as self-daemonizing.
-- Check the service manager only for service lifecycle questions. Treat launchd
-  or systemd changes as infrastructure changes and explain before modifying
-  units, linger, environment, or shell configuration.
-- Prefer fail-loud diagnosis over silent repair. If config, state, cache, run, or
-  log paths need deletion or rebuild, name the exact path class and why it is
-  safe or unsafe.
-- `dreamux changelog` reads the installed package's offline release notes. Use it
-  before restart or onboard when an upgrade may require manual rebuild steps.
-- Logs are diagnostics, not durable state. Preserve them unless the operator asks
-  for cleanup or the retention reason is clear.
+- Never print or relay an unredacted config, `app_secret`, `extra_env`, token,
+  captured service environment, private recovery path, or complete provider
+  config to a broad Channel.
+- Report sanitized field names and outcomes. Keep private paths, ids,
+  credentials, environment values, and incident details on an operator-private
+  surface.
+- Never guess a Dispatcher id, config path, state path, provider schema, or
+  managed-service identity.
 
-## Runtime And Delivery Notes
+## Common Diagnostic Sequence
 
-- For missing replies, distinguish channel ingress, dispatcher acceptance,
-  runtime turn execution, TeamMate completion delivery, and channel egress.
-- For stuck turns, inspect the relevant runtime and Dreamux state before
-  restarting. Restarting the server is not proof that a model turn completed or
-  that a channel reply was sent.
-- Codex and Claude Code auth/config remain owned by their runtimes. Do not edit
-  global runtime auth or config unless the operator explicitly asks for that
-  operational action.
-- Bundled skills are injected at runtime by role. When skill loading is suspect,
-  inspect the runtime skill source configuration and logs rather than copying
-  bundled skill files into a dispatcher workspace.
+1. Confirm the target Dispatcher, the operator's requested outcome, and the
+   available reply surface.
+2. Identify the failing boundary: Channel ingress, Dispatcher acceptance,
+   runtime execution, TeamMate completion delivery, visible Channel egress, or
+   host/service lifecycle.
+3. Read the single routed reference whose `Read when` condition matches. Load
+   more than one only when the task genuinely crosses those owners.
+4. Inspect Dreamux-owned status, doctor output, admin behavior, and narrowly
+   relevant logs without exposing secrets. Treat logs as diagnostics, not
+   durable state.
+5. Before mutation, restate the exact authority, owner, recovery path, and
+   verification step. Stop when any required identity or private recovery
+   condition is unproven.
 
-## Reporting Notes
+## Task Routing
 
-- Report the exact interface checked, the target dispatcher/team/teammate or
-  service, the error summary, what was verified, and whether retrying is safe.
-- When reporting to a channel, keep details useful but sanitized. Mention command
-  names, package versions, high-level path classes, and behavioral status rather
-  than raw private identifiers.
+| Task | Read when | Reference |
+|---|---|---|
+| Service lifecycle and reply diagnosis | Diagnosing `dreamux serve`, daemon startup, doctor/status results, Dispatcher health, missing replies, stuck turns, restart behavior, current state/run/log paths, bundled-skill injection, or runtime app-server readiness. | [Service lifecycle](references/service-lifecycle.md) |
+| Managed Dreamux self-upgrade | The operator explicitly requests a Dreamux upgrade, or an injected restart notice requires post-restart recovery and verification. | [Self-upgrade](references/self-upgrade.md) |
+| Host config envelope | Inspecting or safely editing the current `config.json` envelope, path authority, Dispatcher/agent/channel wiring, or an opaque external provider config. | [Config envelope](references/config-envelope.md) |
+| Built-in Codex config | Inspecting or changing the current `builtin:codex` Agent Runtime provider config. | [Built-in Codex](references/builtin-codex.md) |
+| Built-in Claude Code config | Inspecting or changing the current `builtin:claude-code` Agent Runtime provider config. | [Built-in Claude Code](references/builtin-claude-code.md) |
+| Built-in Feishu credentials | Inspecting or changing the current `builtin:feishu` Channel credential config. | [Built-in Feishu](references/builtin-feishu.md) |
+| Feishu access V3 | Diagnosing Feishu access policy or safely editing current V3 `access.json`, including trusted chats and `/introduce`. | [Feishu access V3](references/feishu-access-v3.md) |
+
+## Reporting
+
+- Report the exact interface, target Dispatcher/service, sanitized error,
+  verified state, changes made, and whether retrying is safe.
+- Use the provider reply tool when visible Channel delivery is required.
+  Assistant text alone is not Channel delivery.
+- Preserve logs unless the operator explicitly requests bounded cleanup.
+- For an upgrade, follow the outcome-specific original-Channel and recovery
+  reporting contract in the self-upgrade reference.

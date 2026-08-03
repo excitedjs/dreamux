@@ -209,14 +209,10 @@ const BRANCH_CASES: TableCase[] = [
 
   // ── GROUP: allowlist ──────────────────────────────────────────────────
   //
-  // After the C3 semantic rewrite (review comment PR #255, 2026-06-27):
-  // Rule 1: group policy=allowlist AND chat ∉ allow_chats → DROP everything
-  //         (no pairing token can ever add a chat to allow_chats).
-  // Rule 2: group policy=allowlist AND chat ∈ allow_chats → ADDITIONALLY
-  //         enforce the dm_policy user-level check on top (sender must be on
-  //         allow_users to deliver; otherwise trigger a dm-kind pair).
+  // allowlist trusts listed groups as the human authorization unit. Unlisted
+  // groups drop; listed groups bypass dm_policy and allow_users after mention.
   {
-    name: 'GROUP / allowlist + allowlisted chat + known sender → deliver (rule 2叠加)',
+    name: 'GROUP / allowlist + trusted chat + known sender → deliver',
     input: { chat_type: 'group', chat_id: CHAT_ALLOWED, sender_id: SENDER_KNOWN, bot_mentioned: true },
     statePatch: {
       group: { policy: 'allowlist', allow_chats: [CHAT_ALLOWED], require_mention: true },
@@ -225,12 +221,12 @@ const BRANCH_CASES: TableCase[] = [
     expect: { action: 'deliver' },
   },
   {
-    name: 'GROUP / allowlist + allowlisted chat + stranger + mentioned → pair dm-kind (rule 2叠加 + pairing)',
+    name: 'GROUP / allowlist + trusted chat + stranger + mentioned → deliver without pairing',
     input: { chat_type: 'group', chat_id: CHAT_ALLOWED, sender_id: SENDER_STRANGER, bot_mentioned: true },
     statePatch: {
       group: { policy: 'allowlist', allow_chats: [CHAT_ALLOWED], require_mention: true },
     },
-    expect: { action: 'pair', kind: 'dm', isResend: false },
+    expect: { action: 'deliver' },
   },
   {
     name: 'GROUP / allowlist + non-allowlisted chat + not mentioned → drop rule1',
@@ -245,7 +241,7 @@ const BRANCH_CASES: TableCase[] = [
     input: { chat_type: 'group', chat_id: CHAT_STRANGER, sender_id: SENDER_STRANGER, bot_mentioned: true },
     statePatch: {
       group: { policy: 'allowlist', allow_chats: [CHAT_ALLOWED], require_mention: true },
-      // Even if the sender IS on allow_users, rule 1 drops the whole chat.
+      // Even if the sender IS on allow_users, an untrusted chat is blocked.
       allow_users: [SENDER_STRANGER],
     },
     expect: { action: 'drop', reason: 'group_not_on_allowlist' },
@@ -253,13 +249,22 @@ const BRANCH_CASES: TableCase[] = [
 
   // ── GROUP: follow-user ────────────────────────────────────────────────
   //
-  // follow-user = no group allowlist shell; dm_policy switch applies directly.
+  // follow-user = trusted chat OR the existing dm_policy sender path.
   {
     name: 'GROUP / follow-user + known sender (allow_users) → deliver',
     input: { chat_type: 'group', sender_id: SENDER_KNOWN, bot_mentioned: true, chat_id: CHAT_STRANGER },
     statePatch: {
       group: { policy: 'follow-user', allow_chats: [], require_mention: true },
       allow_users: [SENDER_KNOWN],
+    },
+    expect: { action: 'deliver' },
+  },
+  {
+    name: 'GROUP / follow-user + trusted chat + stranger → deliver without pairing',
+    input: { chat_type: 'group', sender_id: SENDER_STRANGER, bot_mentioned: true },
+    statePatch: {
+      group: { policy: 'follow-user', allow_chats: [CHAT_ALLOWED], require_mention: true },
+      allow_users: [],
     },
     expect: { action: 'deliver' },
   },
@@ -431,6 +436,79 @@ describe('A. Branch table — every distinct gate decision', () => {
       );
     });
   }
+});
+
+describe('A2. trusted allow_chats truth table', () => {
+  for (const policy of ['allowlist', 'follow-user'] as const) {
+    for (const dmPolicy of ['disabled', 'all', 'allowlist', 'pairing'] as const) {
+      it(`${policy} trusted chat delivers an exact human under dm_policy=${dmPolicy}`, () => {
+        const access = state({
+          dm_policy: dmPolicy,
+          group: { policy, allow_chats: [CHAT_ALLOWED], require_mention: true },
+          allow_users: [],
+        });
+        const result = gate({ sender_id: SENDER_STRANGER }, access);
+        expect(result.action).toEqual({ action: 'deliver' });
+        expect(result.nextState.pending).toEqual({});
+      });
+    }
+  }
+
+  for (const policy of ['allowlist', 'follow-user'] as const) {
+    it(`${policy} trusted chat still obeys require_mention=true`, () => {
+      const access = state({
+        dm_policy: 'disabled',
+        group: { policy, allow_chats: [CHAT_ALLOWED], require_mention: true },
+      });
+      expect(gate({ bot_mentioned: false }, access).action).toMatchObject({
+        action: 'drop',
+        reason: 'group_bot_not_mentioned',
+      });
+    });
+
+    it(`${policy} trusted chat has no hidden mention gate when require_mention=false`, () => {
+      const access = state({
+        dm_policy: 'disabled',
+        group: { policy, allow_chats: [CHAT_ALLOWED], require_mention: false },
+      });
+      expect(gate({ bot_mentioned: false }, access).action).toEqual({ action: 'deliver' });
+    });
+  }
+
+  for (const requireMention of [false, true]) {
+    it(`block drops a trusted human when require_mention=${requireMention}`, () => {
+      const access = state({
+        dm_policy: 'all',
+        group: {
+          policy: 'block',
+          allow_chats: [CHAT_ALLOWED],
+          require_mention: requireMention,
+        },
+      });
+      const result = gate({ bot_mentioned: true }, access);
+      expect(result.action).toMatchObject({
+        action: 'drop',
+        reason: 'group_policy_block',
+      });
+    });
+  }
+
+  it('an untrusted follow-user chat retains the existing sender path', () => {
+    const base = {
+      group: { policy: 'follow-user' as const, allow_chats: [], require_mention: false },
+      allow_users: [] as string[],
+    };
+    expect(gate({ chat_id: CHAT_STRANGER }, state({ ...base, dm_policy: 'disabled' })).action)
+      .toMatchObject({ action: 'drop', reason: 'dm_disabled' });
+    expect(gate({ chat_id: CHAT_STRANGER }, state({ ...base, dm_policy: 'all' })).action)
+      .toEqual({ action: 'deliver' });
+    expect(gate({ chat_id: CHAT_STRANGER }, state({ ...base, dm_policy: 'allowlist' })).action)
+      .toMatchObject({ action: 'drop', reason: 'group_user_not_on_allowlist' });
+    expect(gate(
+      { chat_id: CHAT_STRANGER, bot_mentioned: true },
+      state({ ...base, dm_policy: 'pairing' }),
+    ).action).toMatchObject({ action: 'pair', kind: 'dm' });
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -657,10 +735,10 @@ describe('C. Per-kind pending quota (MAX_PENDING_PER_KIND = 10)', () => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────
-// D. v3 loader fail-loud
+// D. v3 loader contract (shape fail-loud, policy string validation is shallow)
 // ──────────────────────────────────────────────────────────────────────────
 
-describe('D. v3 loader fail-loud', () => {
+describe('D. v3 loader contract', () => {
   let stateDir: string;
 
   beforeEach(() => {
@@ -713,6 +791,34 @@ describe('D. v3 loader fail-loud', () => {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, '{not json', 'utf8');
     await expect(loadDispatcherAccess(stateDir)).rejects.toThrow(/access\.json/);
+  });
+
+  it('shallow-loads a typo group policy but the gate fails closed before trusted delivery', async () => {
+    const secureDefault = defaultDispatcherAccessState();
+    writeRaw({
+      ...secureDefault,
+      dm_policy: 'disabled',
+      group: {
+        ...secureDefault.group,
+        policy: 'follow_user',
+        allow_chats: [CHAT_ALLOWED],
+      },
+    });
+
+    // The current V3 reader deliberately validates this field only as a string.
+    const loaded = await loadDispatcherAccess(stateDir);
+    expect((loaded.group as { policy: string }).policy).toBe('follow_user');
+
+    const result = gate(
+      {
+        chat_type: 'group',
+        chat_id: CHAT_ALLOWED,
+        sender_id: SENDER_STRANGER,
+        bot_mentioned: true,
+      },
+      loaded,
+    );
+    expect(result.action).toEqual({ action: 'drop', reason: 'internal' });
   });
 
   it('save → load round-trips v3 state with 0600 file mode', async () => {
@@ -777,9 +883,7 @@ describe('E. require_mention default', () => {
     expect(r.action.action).toBe('deliver');
   });
 
-  it('require_mention=false + allowlist stranger not mentioned → rule1 drop (no pairing)', () => {
-    // Rule 1 (C3): group.allowlist + chat ∉ allow_chats → drop everything,
-    // regardless of mention or require_mention setting.
+  it('require_mention=false + allowlist untrusted chat → group allowlist drop', () => {
     const access = state({
       group: { policy: 'allowlist', allow_chats: [], require_mention: false },
     });

@@ -11,6 +11,12 @@
 - **PR / Issue:** TBD. Supersede the "Invite-code pairing" deferral in
   [/.agents/domains/feishu-introduce.md](../domains/feishu-introduce.md).
 
+> **Current refinement:**
+> [Feishu trusted allow-chats semantics](feishu-allow-chats-trust-semantics.md)
+> supersedes only the ordinary human `allow_chats` delivery rows in this
+> decision. The V3 schema, pairing flow, Channel ownership boundary, Owner-card
+> approval, and all unrelated contracts below remain current.
+
 ## Context
 
 Dreamux v2 Feishu access (`DispatcherAccessState.version === 2`, implemented in
@@ -227,6 +233,12 @@ state**, matching Claudemux's ordering so a failed send never produces a
 phantom `pending` entry.
 
 Pairing triggers (gate branches):
+
+> The ordinary human group rows in this table record the original V3 decision.
+> For current `allow_chats` delivery, use the accepted refinement linked above:
+> after the global mention and `block` gates, a listed chat directly trusts
+> exact human members under either `allowlist` or `follow-user`; only an
+> unlisted `follow-user` chat reaches `dm_policy` / `allow_users` / pairing.
 
 | Inbound | Policy | Condition | Action |
 |---|---|---|---|

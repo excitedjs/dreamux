@@ -310,6 +310,11 @@ Detailed Feishu behavior lives in focused domain pages:
 - [Feishu pairing access](feishu-pairing-access.md)
 - [Non-blocking dispatcher inbound](non-blocking-dispatcher-inbound.md)
 
+The Feishu session classifies raw chat/sender identity before routing or trust
+side effects. Current V3 `allow_chats` semantics trust exact human members of a
+listed group under either non-block policy after the global mention gate;
+`/introduce` remains a distinct sender-scoped mutation path.
+
 ## Decision Trail
 
 - [Channel-scoped collaboration and core events](../decisions/channel-scoped-collaboration-and-core-events.md)
@@ -319,3 +324,4 @@ Detailed Feishu behavior lives in focused domain pages:
 - [Channel input runtime assembly](../decisions/channel-input-runtime-assembly.md)
 - [Feishu inbound attachments](../decisions/feishu-inbound-attachments.md)
 - [Feishu pairing access v3](../decisions/feishu-pairing-access-v3.md)
+- [Feishu trusted allow-chats semantics](../decisions/feishu-allow-chats-trust-semantics.md)
