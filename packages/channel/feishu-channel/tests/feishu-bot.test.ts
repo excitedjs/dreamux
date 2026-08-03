@@ -4,6 +4,7 @@ import {
   createFeishuBot,
   type CreateBotOptions,
   type FeishuInboundEvent,
+  type FeishuMessageRecalledEvent,
 } from '../src/bot.js';
 import type {
   FeishuAppOwnerIdentity,
@@ -228,6 +229,116 @@ describe('createFeishuBot inbound channel', () => {
     });
 
     expect(received[0]?.senderName).toBe('Ada Sender');
+  });
+
+  it('registers and bounds im.message.recalled_v1 without retaining raw fields', async () => {
+    const transport = new FakeTransport();
+    const bot = createFeishuBot(
+      { appId: 'app-test', appSecret: 'secret-test' },
+      { createTransport: () => transport },
+    );
+    const recalled: FeishuMessageRecalledEvent[] = [];
+
+    await bot.start({
+      onMessage: async () => {},
+      onMessageRecalled: async (event) => {
+        recalled.push(event);
+      },
+    });
+
+    expect(Object.keys(transport.routes ?? {})).toEqual([
+      'im.message.receive_v1',
+      'im.message.recalled_v1',
+    ]);
+    await transport.dispatch('im.message.recalled_v1', {
+      schema: '2.0',
+      header: {
+        event_id: 'event-recall-1',
+        event_type: 'im.message.recalled_v1',
+        token: 'must-not-be-retained',
+        app_id: 'must-not-be-retained',
+      },
+      event: {
+        chat_id: 'chat-topic',
+        message_id: 'message-root',
+        recall_type: 'message_owner',
+        recall_time: '1782660000000',
+        body: 'must-not-be-retained',
+      },
+    });
+
+    expect(recalled).toEqual([{
+      eventId: 'event-recall-1',
+      chatId: 'chat-topic',
+      messageId: 'message-root',
+      recallType: 'message_owner',
+      recallTime: '1782660000000',
+    }]);
+    expect(Object.keys(recalled[0] ?? {}).sort()).toEqual([
+      'chatId',
+      'eventId',
+      'messageId',
+      'recallTime',
+      'recallType',
+    ]);
+
+    await transport.dispatch('im.message.recalled_v1', {
+      event_id: 'event-recall-flattened',
+      chat_id: 'chat-topic',
+      message_id: 'message-root-flattened',
+      recall_type: 'message_owner',
+      recall_time: '1782660000001',
+      token: 'must-not-be-retained',
+    });
+    expect(recalled[1]).toEqual({
+      eventId: 'event-recall-flattened',
+      chatId: 'chat-topic',
+      messageId: 'message-root-flattened',
+      recallType: 'message_owner',
+      recallTime: '1782660000001',
+    });
+
+    const malformed = [
+      {
+        header: {},
+        event: {
+          chat_id: 'chat-topic',
+          message_id: 'message-root',
+          recall_type: 'message_owner',
+          recall_time: '1782660000000',
+        },
+      },
+      {
+        header: { event_id: 'event-missing-message' },
+        event: {
+          chat_id: 'chat-topic',
+          recall_type: 'message_owner',
+          recall_time: '1782660000000',
+        },
+      },
+      {
+        header: { event_id: 'event-overlong-chat' },
+        event: {
+          chat_id: 'x'.repeat(513),
+          message_id: 'message-root',
+          recall_type: 'message_owner',
+          recall_time: '1782660000000',
+        },
+      },
+      {
+        header: { event_id: 'event-invalid-recall-type' },
+        event: {
+          chat_id: 'chat-topic',
+          message_id: 'message-root',
+          recall_type: { raw: true },
+          recall_time: '1782660000000',
+        },
+      },
+    ];
+    for (const raw of malformed) {
+      await transport.dispatch('im.message.recalled_v1', raw);
+    }
+    expect(recalled).toHaveLength(2);
   });
 
   it('drops unroutable receive_v1 events before calling the handler', async () => {

@@ -42,6 +42,7 @@ For Feishu, the session owns:
 - known/trusted peer-bot state;
 - inbound message formatting and attachment normalization;
 - channel-owned reaction state;
+- provider-owned topic-close signal projection into the neutral target lifecycle;
 - Feishu MCP tool backing.
 
 Key source:
@@ -271,7 +272,12 @@ Collaboration target work has three entry points:
   without default binding, and for known unbound spaces, the create event is
   ignored without claiming a target. For `target_closed`, the target lifecycle
   path accepts the close event and asynchronously dissolves the Team and
-  releases the binding.
+  releases the binding. A `closing` record with `last_error=null` rejects
+  duplicate close signals while its close is in flight. A `closing` record with
+  `last_error` accepts one later signal, clears the error before starting the
+  retry, and again rejects concurrent duplicates. Restart recovery resumes a
+  durable `closing` record directly rather than depending on another provider
+  event.
 - **First-inbound provisioning.** When a bindable target has no existing binding
   and `envelope.container` is set on `deliver()`, `routeChannelInput` calls
   `acceptAndProvisionTarget` synchronously before routing. This may use channel
@@ -427,10 +433,12 @@ information read permission accepted by the chat-get API, such as
 `im:chat:readonly`.
 
 The Feishu session records the exact normalized target for accepted inbound
-message ids. TeamLeader egress target resolution uses that message ledger,
-rejects conflicting chat/thread selectors, and authorizes message ownership
-against the exact topic rather than the enclosing chat. Reply execution still
-uses Feishu's source-message reply API, which preserves the authorized topic.
+message ids together with whether the recorded inbound ancestry has neither
+`root_id` nor `parent_id`. TeamLeader egress target resolution uses that message
+ledger, rejects conflicting chat/thread selectors, and authorizes message
+ownership against the exact topic rather than the enclosing chat. Reply
+execution still uses Feishu's source-message reply API, which preserves the
+authorized topic.
 After exact ownership succeeds, a TeamLeader may also be authorized by the
 target's explicit group binding fallback. Group-bound leaders can therefore
 reply safely to observed topic messages, while a leader bound only to another
@@ -449,8 +457,32 @@ preserves the reply anchor across the crash window between durable target claim
 and route write. Legacy records without the metadata restore an empty `meta`
 object; the Feishu notification path skips malformed topic endpoints with a
 warning instead of sending a topic notification to the group root. The provider
-does not claim topic-created or topic-closed lifecycle support; provisioning
-begins on first accepted topic inbound.
+does not claim topic-created lifecycle support; provisioning begins on first
+accepted topic inbound.
+
+The Feishu bot registers `im.message.recalled_v1` only when the session supplies
+its named handler and normalizes only bounded event id, chat id, message id,
+recall type, and recall time fields. A recall emits neutral `target_closed` only
+when its exact message ledger entry is a topic root according to the recorded
+ancestry; topic replies, ordinary chats, unknown ids, cross-chat ids, and
+malformed events do not close a target. Topic identity never assumes
+`thread_id === message_id`. The provider emits only its recorded topic target
+and `topic_group` container through `ChannelRoutes.targetLifecycle`; Dreamux core
+continues to own acceptance, Team dissolution, and route release.
+
+`@excitedjs/feishu-transport` is the sole parser of outbound SDK and Axios error
+shapes. Its public `FeishuOutboundError` retains only bounded code, message, and
+log id fields and never retains a raw error, cause, response, request config,
+body, headers, or credentials. The Channel recognizes code `230019` only through
+that contract. When a reply to any exact observed topic message returns that
+code, the session attempts the same neutral `target_closed` delivery and then
+rethrows the original safe transport error. A lifecycle failure is logged
+without replacing the provider error. The reply path captures its session fence
+before sending and checks that exact generation immediately before lifecycle
+emission, so a send completing after session close cannot mutate core state.
+Recall handlers are also lifecycle-tracked and await delivery before provider
+acknowledgement. If an older host omits `targetLifecycle`, the session logs a
+bounded compatibility warning and preserves reply/event behavior.
 
 The built-in Feishu session subscribes to `binding.route` and
 `binding.collaboration_space` from its dispatcher-wide core event source and
@@ -484,7 +516,10 @@ Key source:
 - `/packages/dreamux/src/service/dispatcher-service/collaboration-routing.ts`
 - `/packages/channel/feishu-transport/src/parse/content.ts`
 - `/packages/channel/feishu-transport/src/transport/feishu.ts`
+- `/packages/channel/feishu-transport/src/transport/outbound-error.ts`
 - `/packages/channel/feishu-channel/src/feishu-binding-notification-card.ts`
+- `/packages/channel/feishu-channel/src/feishu-error-log.ts`
+- `/packages/channel/feishu-channel/src/feishu-target-lifecycle.ts`
 - `/packages/channel/feishu-channel/src/feishu-target-router.ts`
 - `/packages/channel/feishu-channel/src/feishu-channel.ts`
 - `/packages/channel/feishu-channel/src/provider.ts`

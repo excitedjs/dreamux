@@ -30,6 +30,7 @@ import type {
   ChannelSessionCreateContext,
   ChannelSessionlessToolContext,
   ChannelTarget,
+  ChannelTargetLifecycleEvent,
   ChannelToolCall,
   ChannelToolDescriptor,
   DreamuxLogger,
@@ -131,6 +132,12 @@ class FeishuChannelSessionAdapter implements ChannelSession {
       // keys off the actually-submitted turn — not a fabricated id.
       submitTurn: (input, envelope) =>
         routes.deliver(input, inboundEnvelopeToChannelEnvelope(this.channel_id, envelope)),
+      ...(routes.targetLifecycle !== undefined
+        ? {
+            targetLifecycle: (event: ChannelTargetLifecycleEvent) =>
+              routes.targetLifecycle!(event),
+          }
+        : {}),
     }, routes.coreEvents);
   }
 

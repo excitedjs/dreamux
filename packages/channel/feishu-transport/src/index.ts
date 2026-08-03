@@ -93,6 +93,11 @@ export {
   type InboundRoutes,
   type RouteHandler,
 } from './transport/feishu.js'
+export {
+  FeishuOutboundError,
+  isFeishuOutboundError,
+  type FeishuOutboundErrorDetails,
+} from './transport/outbound-error.js'
 export type { TransportLogger } from './transport/diagnostics.js'
 
 // ── small shared util ──

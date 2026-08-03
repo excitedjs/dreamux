@@ -19,6 +19,7 @@ import {
   commentFromBatchQuery,
   createFeishuTransport,
 } from '../src/transport/feishu'
+import { FeishuOutboundError } from '../src/index'
 import type { TransportLogger } from '../src/transport/diagnostics'
 
 /**
@@ -277,6 +278,109 @@ describe('createFeishuTransport — send', () => {
     }
     expect(card.body.elements[0]?.content).toContain('<at id="ou_sender"></at>')
     expect(card.body.elements[0]?.content).toContain('done')
+  })
+
+  test('converts SDK/Axios reply failures into the bounded public error contract', async () => {
+    const stub = stubClient()
+    const secret = 'fake-secret-must-not-survive'
+    const raw = Object.assign(new Error('Request failed with status code 400'), {
+      config: {
+        data: `{"app_secret":"${secret}"}`,
+        headers: { Authorization: `Bearer ${secret}` },
+      },
+      request: { body: secret },
+      response: {
+        headers: { authorization: secret },
+        data: {
+          code: '230019',
+          msg: 'The thread does NOT exist',
+          error: { log_id: 'upstream-log-1' },
+          body: secret,
+        },
+      },
+    })
+    stub.reply.mockRejectedValueOnce(raw as never)
+    const transport = buildTransport(stub)
+
+    let caught: unknown
+    try {
+      await transport.send(
+        { chatId: 'oc_chat', replyToMessageId: 'om_source' },
+        'sensitive outbound body',
+      )
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toBeInstanceOf(FeishuOutboundError)
+    if (!(caught instanceof FeishuOutboundError)) return
+    expect(caught).toMatchObject({
+      code: 230019,
+      message: 'The thread does NOT exist',
+      logId: 'upstream-log-1',
+    })
+    for (const key of [
+      'cause',
+      'response',
+      'request',
+      'config',
+      'body',
+      'headers',
+    ]) {
+      expect(key in caught).toBe(false)
+    }
+    expect(JSON.stringify({
+      ...caught,
+      message: caught.message,
+      stack: caught.stack,
+    })).not.toContain(secret)
+  })
+
+  test('bounds upstream message and log id fields on outbound failures', async () => {
+    const stub = stubClient()
+    stub.reply.mockRejectedValueOnce({
+      response: {
+        data: {
+          code: 230019,
+          msg: 'm'.repeat(2_000),
+          error: { log_id: 'l'.repeat(2_000) },
+        },
+      },
+    } as never)
+    const transport = buildTransport(stub)
+
+    const error = await transport.send(
+      { chatId: 'oc_chat', replyToMessageId: 'om_source' },
+      'reply',
+    ).catch((value: unknown) => value)
+
+    expect(error).toBeInstanceOf(FeishuOutboundError)
+    if (!(error instanceof FeishuOutboundError)) return
+    expect(error.code).toBe(230019)
+    expect(error.message).toHaveLength(512)
+    expect(error.logId).toHaveLength(256)
+  })
+
+  test('still sanitizes an SDK failure when its request signal was revoked', async () => {
+    const stub = stubClient()
+    const controller = new AbortController()
+    const raw = Object.assign(new Error('SDK failed after cancellation'), {
+      config: { data: 'credential-must-not-survive' },
+      response: { data: { code: 230019, msg: 'thread closed' } },
+    })
+    controller.abort(new Error('caller cancellation'))
+    stub.request.mockRejectedValueOnce(raw as never)
+    const transport = buildTransport(stub)
+
+    const error = await transport.sendCard(
+      { chatId: 'oc_chat', replyToMessageId: 'om_source' },
+      { elements: [] },
+      { signal: controller.signal },
+    ).catch((value: unknown) => value)
+
+    expect(error).toBeInstanceOf(FeishuOutboundError)
+    expect(error).toMatchObject({ code: 230019, message: 'thread closed' })
+    expect(JSON.stringify(error)).not.toContain('credential-must-not-survive')
   })
 
   test('renders a multi-card body into one im.message.create per card', async () => {

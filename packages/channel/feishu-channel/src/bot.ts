@@ -8,10 +8,10 @@
  * the core's surface into the `FeishuBot` interface the server already wires:
  *   - `start(routes)` takes one handler per Feishu event type (issue #62 seam):
  *     `onMessage` for `im.message.receive_v1` (normalized via the core's
- *     `parseInbound` into a `FeishuInboundEvent`) and an optional
+ *     `parseInbound` into a `FeishuInboundEvent`), `onMessageRecalled` for the
+ *     bounded routing fields of `im.message.recalled_v1`, and an optional
  *     `onBotMemberAdded` for `im.chat.member.bot.added_v1`. Each route awaits
- *     its handler, so the server gates and submits accepted inbound before the
- *     SDK acks.
+ *     its handler before the SDK acknowledges the event.
  *   - `send(target, text)` delegates to the core transport, preserving reply
  *     threading / @-back metadata from the in-memory inbound batch.
  *   - `botOpenId` / `botDisplayName` surface the core transport's bot-info
@@ -55,6 +55,10 @@ export type {
 
 /** The Feishu event_type carrying inbound chat messages. */
 const IM_MESSAGE_EVENT_TYPE = 'im.message.receive_v1';
+const IM_MESSAGE_RECALLED_EVENT_TYPE = 'im.message.recalled_v1';
+const FEISHU_EVENT_ID_MAX = 512;
+const FEISHU_RECALL_TYPE_MAX = 64;
+const FEISHU_RECALL_TIME_MAX = 32;
 
 export interface FeishuInboundEvent {
   messageId: string;
@@ -100,6 +104,19 @@ export interface FeishuInboundEvent {
 
 export type InboundHandler = (event: FeishuInboundEvent) => void | Promise<void>;
 
+/** Bounded routing-only projection of `im.message.recalled_v1`. */
+export interface FeishuMessageRecalledEvent {
+  eventId: string;
+  chatId: string;
+  messageId: string;
+  recallType: string;
+  recallTime: string;
+}
+
+export type MessageRecalledHandler = (
+  event: FeishuMessageRecalledEvent,
+) => void | Promise<void>;
+
 export type BotMemberAddedHandler = (
   event: FeishuBotMemberAddedEvent,
 ) => void | Promise<void>;
@@ -120,14 +137,15 @@ export type CardActionHandler = (
  * The typed event-route seam (issue #62 Phase 1). `start` takes one handler per
  * Feishu event type instead of a single message handler, so a new event type is
  * wired by adding a field here and a transport route, without growing branches
- * in `Server`. This is a small typed seam, not yet a generic
- * `eventType -> handler` registry; if a third event type lands, promote this to
- * a map. Each route still awaits its handler before the SDK acks
- * (queue-before-ACK).
+ * in `Server`. The transport adapter builds the event-type map while callers
+ * keep named, normalized handlers. Each route still awaits its handler before
+ * the SDK acks (queue-before-ACK).
  */
 export interface FeishuInboundRoutes {
   /** `im.message.receive_v1` — a chat message. */
   onMessage: InboundHandler;
+  /** `im.message.recalled_v1` — a message was recalled. */
+  onMessageRecalled?: MessageRecalledHandler;
   /** `im.chat.member.bot.added_v1` — the bot was added to a chat. Optional. */
   onBotMemberAdded?: BotMemberAddedHandler;
   /** `card.action.trigger` — the user clicked an interactive card component. */
@@ -237,6 +255,14 @@ export function createFeishuBot(
           await routes.onMessage(event);
         },
       };
+      if (routes.onMessageRecalled !== undefined) {
+        const onMessageRecalled = routes.onMessageRecalled;
+        table[IM_MESSAGE_RECALLED_EVENT_TYPE] = async (raw: unknown) => {
+          const event = normalizeMessageRecalledEvent(raw);
+          if (event === null) return;
+          await onMessageRecalled(event);
+        };
+      }
       if (routes.onBotMemberAdded !== undefined) {
         const onBotMemberAdded = routes.onBotMemberAdded;
         table[BOT_MEMBER_ADDED_EVENT_TYPE] = async (raw: unknown) => {
@@ -398,6 +424,39 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
   };
 }
 
+function normalizeMessageRecalledEvent(
+  raw: unknown,
+): FeishuMessageRecalledEvent | null {
+  const root = asRecord(raw);
+  if (root === undefined) return null;
+  const header = asRecord(root['header']);
+  const event = asRecord(root['event']) ?? root;
+  const eventId = boundedRequiredString(
+    header === undefined ? root['event_id'] : header['event_id'],
+    FEISHU_EVENT_ID_MAX,
+  );
+  const chatId = boundedRequiredString(event['chat_id'], FEISHU_EVENT_ID_MAX);
+  const messageId = boundedRequiredString(event['message_id'], FEISHU_EVENT_ID_MAX);
+  const recallType = boundedRequiredString(
+    event['recall_type'],
+    FEISHU_RECALL_TYPE_MAX,
+  );
+  const recallTime = boundedRequiredString(
+    event['recall_time'],
+    FEISHU_RECALL_TIME_MAX,
+  );
+  if (
+    eventId === undefined ||
+    chatId === undefined ||
+    messageId === undefined ||
+    recallType === undefined ||
+    recallTime === undefined
+  ) {
+    return null;
+  }
+  return { eventId, chatId, messageId, recallType, recallTime };
+}
+
 function normalizeCardActionEvent(raw: unknown): FeishuCardActionEvent {
   const root = asRecord(raw) ?? {};
   const event = asRecord(root['event']) ?? root;
@@ -450,6 +509,17 @@ function firstString(...values: unknown[]): string {
     if (typeof value === 'string') return value;
   }
   return '';
+}
+
+function boundedRequiredString(
+  value: unknown,
+  maxLength: number,
+): string | undefined {
+  return typeof value === 'string' &&
+      value !== '' &&
+      value.length <= maxLength
+    ? value
+    : undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

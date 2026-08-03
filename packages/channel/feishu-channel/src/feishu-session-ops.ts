@@ -9,8 +9,13 @@
  * at every call site with a thin getter; free functions never see the class.
  */
 
-import type { DreamuxLogger } from '@excitedjs/dreamux-types';
-import { FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER } from '@excitedjs/feishu-transport';
+import type {
+  ChannelTargetLifecycleEvent,
+  DreamuxLogger,
+} from '@excitedjs/dreamux-types';
+import {
+  FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER,
+} from '@excitedjs/feishu-transport';
 import type {
   ChannelOutboundTarget,
   FeishuBot,
@@ -37,6 +42,8 @@ import { AsyncMutex } from './lib/mutex.js';
 import type { FeishuChannelSessionOptions } from './feishu-channel.js';
 import type { PeerBot } from './chat-bots-store.js';
 import type { FeishuTargetRouter } from './feishu-target-router.js';
+import { handleFeishuReplyFailure } from './feishu-target-lifecycle.js';
+import { feishuErrorLogInfo as errInfo } from './feishu-error-log.js';
 import {
   FeishuOperationError,
   runFeishuBoundedOperation,
@@ -93,6 +100,7 @@ export interface SessionHandle {
   botDisplayName: string;
   targetRouter: FeishuTargetRouter;
   sessionFence: FeishuSessionFence;
+  targetLifecycle?: (event: ChannelTargetLifecycleEvent) => Promise<void>;
 }
 
 /** Build a package-private handle from a session's internal fields. */
@@ -104,6 +112,7 @@ export function sessionHandle(
   botDisplayName: string,
   targetRouter: FeishuTargetRouter,
   sessionFence: FeishuSessionFence = alwaysActiveSessionFence(),
+  targetLifecycle?: (event: ChannelTargetLifecycleEvent) => Promise<void>,
 ): SessionHandle {
   return {
     opts,
@@ -113,21 +122,13 @@ export function sessionHandle(
     botDisplayName,
     targetRouter,
     sessionFence,
+    ...(targetLifecycle !== undefined ? { targetLifecycle } : {}),
   };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
 // Utility
 // ─────────────────────────────────────────────────────────────────────────
-
-function errInfo(err: unknown): { message: string; stack?: string } {
-  if (err instanceof Error) {
-    return err.stack !== undefined
-      ? { message: err.message, stack: err.stack }
-      : { message: err.message };
-  }
-  return { message: String(err) };
-}
 
 const log = (h: SessionHandle): DreamuxLogger => h.opts.log;
 
@@ -160,15 +161,18 @@ export async function sendReply(
       input.text,
     );
   } catch (err) {
-    log(h).error(
-      {
-        dispatcher_id: h.opts.dispatcherId,
-        chat_id: input.chatId,
-        message_id: input.messageId,
-        err: errInfo(err),
-      },
-      'feishu send failed',
-    );
+    await handleFeishuReplyFailure({
+      dispatcherId: h.opts.dispatcherId,
+      chatId: input.chatId,
+      error: err,
+      targetRouter: h.targetRouter,
+      ...(input.messageId !== undefined ? { messageId: input.messageId } : {}),
+      ...(h.targetLifecycle !== undefined
+        ? { targetLifecycle: h.targetLifecycle }
+        : {}),
+      fence: h.sessionFence,
+      log: log(h),
+    });
     throw err;
   }
   log(h).info(

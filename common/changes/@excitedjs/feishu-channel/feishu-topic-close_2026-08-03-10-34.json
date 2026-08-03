@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Close Feishu topic collaboration targets from bounded provider signals.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

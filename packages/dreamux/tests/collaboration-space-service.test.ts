@@ -1117,12 +1117,13 @@ describe('CollaborationSpaceService', () => {
     expect(channels.boundOwners.has('topic-stale-team')).toBe(false);
   });
 
-  it('closeTarget failure leaves target in retryable closing state with error recorded', async () => {
+  it('deduplicates an in-flight close and accepts one retry after failure', async () => {
     const created: CreatedTeam[] = [];
     const dissolved: string[] = [];
     const channels = fakeChannels();
 
-    // Teams mock where dissolve fails
+    let failDissolve = true;
+    // Teams mock where the first dissolve fails and the retry succeeds.
     const teamsWithBadDissolve = {
       async claimName(prefix: string, claimToken: string) {
         return { name: `${prefix}-0000`, token: claimToken };
@@ -1178,7 +1179,12 @@ describe('CollaborationSpaceService', () => {
         return {
           async dissolve() {
             dissolved.push(name);
-            throw new Error('simulated dissolve failure');
+            if (failDissolve) throw new Error('simulated dissolve failure');
+            return {
+              team: { team_name: name },
+              leader: null,
+              member_count: 0,
+            };
           },
         };
       },
@@ -1221,6 +1227,7 @@ describe('CollaborationSpaceService', () => {
     expect(statusAfterAccept.targets).toMatchObject([
       { lifecycle_status: 'closing' },
     ]);
+    await expect(service.acceptTargetClosed(targetInput)).resolves.toBe(false);
 
     // Attempt close - it will fail
     await expect(service.closeTarget(targetInput)).rejects.toThrow(
@@ -1236,14 +1243,25 @@ describe('CollaborationSpaceService', () => {
       },
     ]);
 
-    // acceptTargetClosed should still return true (retryable)
+    // One failed close is retryable. Acceptance clears the failure before the
+    // new attempt, and a duplicate retry signal is suppressed again.
     await expect(service.acceptTargetClosed(targetInput)).resolves.toBe(true);
+    await expect(service.status({ spaceName: 'space-alpha' })).resolves.toMatchObject({
+      targets: [{ lifecycle_status: 'closing', last_error: null }],
+    });
+    await expect(service.acceptTargetClosed(targetInput)).resolves.toBe(false);
     await expect(service.provisionTarget(targetInput)).rejects.toThrow(
       /closing and cannot be provisioned/,
     );
     await expect(service.acceptAndProvisionTarget(targetInput)).rejects.toThrow(
       /closing and cannot be provisioned/,
     );
+    failDissolve = false;
+    await expect(service.closeTarget(targetInput)).resolves.toMatchObject({
+      closed: true,
+      target: { lifecycle_status: 'closed', last_error: null },
+    });
+    expect(dissolved).toHaveLength(2);
   });
 
   it('dissolve retries when release fails before the space is marked unbound', async () => {

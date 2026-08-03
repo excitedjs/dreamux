@@ -396,6 +396,85 @@ describe('DispatcherService collaboration-space routing', () => {
     },
   );
 
+  it('drains target_closed through ChannelRoutes and closes the provisioned Team', async () => {
+    const workspace = join(root, 'target-lifecycle-close-workspace');
+    mkdirSync(workspace, { recursive: true });
+    const harness = strictChannelDispatcher({
+      workspace,
+      workspaceEnabled: false,
+    });
+    const container = {
+      container_type: 'topic_group',
+      container_key: 'container-close',
+    } as const;
+    const target = {
+      target_type: 'topic',
+      target_key: 'target-close',
+      bindable: true,
+    } as const;
+
+    try {
+      await harness.dispatcher.start();
+      const routes = harness.routes();
+      if (routes.targetLifecycle === undefined) {
+        throw new Error('target lifecycle route was not installed');
+      }
+      const collaborationSpaces = (
+        harness.dispatcher as unknown as {
+          collaborationSpaces: CollaborationSpaceService;
+        }
+      ).collaborationSpaces;
+
+      await routes.targetLifecycle({
+        kind: 'target_created',
+        event_id: 'event-created',
+        container,
+        target,
+      });
+      await collaborationSpaces.drainLifecycleTasks();
+      const spaces = await harness.dispatcher.listCollaborationSpaces();
+      const spaceName = spaces.spaces[0]?.space_name;
+      if (spaceName === undefined) throw new Error('auto-bound space is missing');
+      await expect(harness.dispatcher.getCollaborationSpaceStatus({
+        spaceName,
+      })).resolves.toMatchObject({
+        targets: [{ target_key: 'target-close', lifecycle_status: 'active' }],
+      });
+      const teamName = (await harness.dispatcher.listTeams())[0]?.team_name;
+      if (teamName === undefined) throw new Error('provisioned Team is missing');
+
+      await Promise.all([
+        routes.targetLifecycle({
+          kind: 'target_closed',
+          event_id: 'event-closed',
+          container,
+          target,
+        }),
+        routes.targetLifecycle({
+          kind: 'target_closed',
+          event_id: 'event-closed-duplicate',
+          container,
+          target,
+        }),
+      ]);
+      await collaborationSpaces.drainLifecycleTasks();
+
+      await expect(harness.dispatcher.getCollaborationSpaceStatus({
+        spaceName,
+      })).resolves.toMatchObject({
+        targets: [{ target_key: 'target-close', lifecycle_status: 'closed' }],
+      });
+      await expect(harness.dispatcher.listTeams()).resolves.toContainEqual(
+        expect.objectContaining({ team_name: teamName, status: 'closed' }),
+      );
+      await expect(harness.dispatcher.team(teamName)).rejects.toThrow(
+        /not open|closed/i,
+      );
+    } finally {
+      await harness.dispatcher.stop();
+    }
+  });
+
   it('makes the live event source usable before session start triggers ensure', async () => {
     const workspace = join(root, 'start-time-ensure-workspace');
     mkdirSync(workspace, { recursive: true });

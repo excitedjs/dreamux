@@ -169,13 +169,15 @@ export class CollaborationTargetLifecycle {
       if (
         record === null ||
         record.lifecycle_status === 'closed' ||
-        record.lifecycle_status === 'detached'
+        record.lifecycle_status === 'detached' ||
+        (record.lifecycle_status === 'closing' && record.last_error === null)
       ) {
         return null;
       }
       const closing = await this.opts.store.saveTarget({
         ...record,
         lifecycle_status: 'closing',
+        last_error: null,
         close_event_id: input.eventId ?? record.close_event_id,
         updated_at: Date.now(),
       });
@@ -661,12 +663,12 @@ export class CollaborationTargetLifecycle {
       ...closing,
       lifecycle_status: 'closed',
       phase: 'closed',
+      last_error: null,
       updated_at: Date.now(),
       closed_at: Date.now(),
     });
     return { closed: true, target: targetView(closed) };
   }
-
   private async closeTargetRecord(
     record: ProvisionedTargetRecord,
   ): Promise<{ closed: boolean; target: ProvisionedTargetView | null }> {
@@ -678,13 +680,11 @@ export class CollaborationTargetLifecycle {
         targetKey: record.target_key,
       }), record.close_event_id ?? undefined));
   }
-
   private assertNotShuttingDown(): void {
     if (this.opts.isShuttingDown()) {
       throw new Error(`dispatcher '${this.opts.dispatcherId}' is shutting down`);
     }
   }
-
   private logResumeFailure(target: ProvisionedTargetRecord, error: unknown): void {
     const { dispatcherId, log } = this.opts;
     log.error(

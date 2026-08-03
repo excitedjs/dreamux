@@ -5,12 +5,14 @@ import type {
   ChannelBindingCollaborationSpaceEvent,
   ChannelBindingRouteEvent,
   ChannelTarget,
+  ChannelTargetLifecycleEvent,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 import type {
   CreateBotOptions,
   FeishuBot,
   FeishuCardActionEvent,
+  FeishuMessageRecalledEvent,
 } from './bot.js';
 import { createFeishuBot } from './bot.js';
 import {
@@ -20,6 +22,7 @@ import {
 } from './chat-bots-store.js';
 import { BUILTIN_FEISHU_PROVIDER_REF } from './provider-ref.js';
 import { AsyncMutex } from './lib/mutex.js';
+import { feishuErrorLogInfo as errInfo } from './feishu-error-log.js';
 import {
   alwaysActiveSessionFence,
   type FeishuSessionFence,
@@ -47,6 +50,7 @@ import {
 } from './feishu-session-ops.js';
 import { onMessage as sessionOnMessage } from './feishu-session-inbound.js';
 import { FeishuTargetRouter } from './feishu-target-router.js';
+import { emitFeishuTargetClosed } from './feishu-target-lifecycle.js';
 import {
   collaborationSpaceNotification,
   routeBindingNotification,
@@ -106,6 +110,10 @@ export interface FeishuInboundSubmitter {
   ): Promise<import('@excitedjs/dreamux-types').AgentRuntimeTurnResult>;
 }
 
+export interface FeishuSessionRoutes extends FeishuInboundSubmitter {
+  targetLifecycle?(event: ChannelTargetLifecycleEvent): Promise<void>;
+}
+
 export interface FeishuInboundEnvelope {
   provider: 'builtin:feishu';
   /** Retained for compatibility with the pre-topic public submitter contract. */
@@ -130,6 +138,7 @@ interface FeishuSessionLifecycle {
   controller: AbortController;
   fence: FeishuSessionFence;
   inFlight: Set<Promise<unknown>>;
+  targetLifecycle?: (event: ChannelTargetLifecycleEvent) => Promise<void>;
 }
 
 const FEISHU_BINDING_NOTIFICATION_SEND_TIMEOUT_MS = 20_000;
@@ -175,10 +184,17 @@ export class FeishuChannelSession {
    * this cost-free.
    */
   private get handle(): SessionHandle {
-    return this.handleForFence(this.lifecycle?.fence ?? this.inactiveFence);
+    const lifecycle = this.lifecycle;
+    return this.handleForFence(
+      lifecycle?.fence ?? this.inactiveFence,
+      lifecycle?.targetLifecycle,
+    );
   }
 
-  private handleForFence(fence: FeishuSessionFence): SessionHandle {
+  private handleForFence(
+    fence: FeishuSessionFence,
+    targetLifecycle?: (event: ChannelTargetLifecycleEvent) => Promise<void>,
+  ): SessionHandle {
     return sessionHandle(
       this.opts,
       this.state,
@@ -187,6 +203,7 @@ export class FeishuChannelSession {
       this.bot.botDisplayName ?? 'Dreamux bot',
       this.targetRouter,
       fence,
+      targetLifecycle,
     );
   }
 
@@ -203,7 +220,7 @@ export class FeishuChannelSession {
   }
 
   async start(
-    submitter: FeishuInboundSubmitter,
+    routes: FeishuSessionRoutes,
     coreEvents?: ChannelCoreEventSource,
   ): Promise<void> {
     if (this.lifecycle !== undefined && !this.lifecycle.controller.signal.aborted) {
@@ -219,6 +236,9 @@ export class FeishuChannelSession {
           this.lifecycle === lifecycle &&
           !controller.signal.aborted,
       },
+      ...(routes.targetLifecycle !== undefined
+        ? { targetLifecycle: routes.targetLifecycle }
+        : {}),
     };
     this.lifecycle = lifecycle;
     this.subscribeBindingNotifications(coreEvents, lifecycle);
@@ -240,10 +260,20 @@ export class FeishuChannelSession {
           await this.trackLifecycleTask(
             lifecycle,
             sessionOnMessage(
-              this.handleForFence(lifecycle.fence),
+              this.handleForFence(
+                lifecycle.fence,
+                lifecycle.targetLifecycle,
+              ),
               event,
-              submitter,
+              routes,
             ),
+          );
+        },
+        onMessageRecalled: async (event) => {
+          if (!lifecycle.fence.isCurrent()) return;
+          await this.trackLifecycleTask(
+            lifecycle,
+            this.onMessageRecalled(event, lifecycle),
           );
         },
         onCardAction: async (event) => {
@@ -405,6 +435,34 @@ export class FeishuChannelSession {
     return sessionHandleCardAction(this.handle, event);
   }
 
+  private async onMessageRecalled(
+    event: FeishuMessageRecalledEvent,
+    lifecycle: FeishuSessionLifecycle,
+  ): Promise<void> {
+    const route = this.targetRouter.recalledTopicRoot(
+      event.messageId,
+      event.chatId,
+    );
+    if (route === null) return;
+    await emitFeishuTargetClosed({
+      dispatcherId: this.opts.dispatcherId,
+      chatId: event.chatId,
+      messageId: event.messageId,
+      route,
+      signal: {
+        kind: 'message_recalled',
+        eventId: event.eventId,
+        recallType: event.recallType,
+        recallTime: event.recallTime,
+      },
+      fence: lifecycle.fence,
+      ...(lifecycle.targetLifecycle !== undefined
+        ? { targetLifecycle: lifecycle.targetLifecycle }
+        : {}),
+      log: this.opts.log,
+    });
+  }
+
   private subscribeBindingNotifications(
     coreEvents: ChannelCoreEventSource | undefined,
     lifecycle: FeishuSessionLifecycle,
@@ -485,7 +543,10 @@ export class FeishuChannelSession {
           deadlineAt:
             Date.now() + FEISHU_BINDING_NOTIFICATION_SEND_TIMEOUT_MS,
           operation: () => sessionSendCard(
-            this.handleForFence(lifecycle.fence),
+            this.handleForFence(
+              lifecycle.fence,
+              lifecycle.targetLifecycle,
+            ),
             {
               target,
               card,
@@ -549,13 +610,4 @@ export function toWireChatBot(bot: PeerBot): WireChatBot {
     open_id: bot.openId,
     ...(bot.name !== undefined && bot.name !== '' ? { name: bot.name } : {}),
   };
-}
-
-function errInfo(err: unknown): { message: string; stack?: string } {
-  if (err instanceof Error) {
-    return err.stack !== undefined
-      ? { message: err.message, stack: err.stack }
-      : { message: err.message };
-  }
-  return { message: String(err) };
 }
