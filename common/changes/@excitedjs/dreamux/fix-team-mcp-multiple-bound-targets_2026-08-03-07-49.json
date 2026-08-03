@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Expose every active Team channel binding in bound_targets while preserving bound_target as the first binding for compatibility.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

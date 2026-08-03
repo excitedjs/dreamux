@@ -19,6 +19,7 @@ import {
 } from '../src/registry/index.js';
 import { ChannelService } from '../src/service/channel-service/index.js';
 import { ChannelSessions } from '../src/service/channel-service/channel-sessions.js';
+import { ChannelBindingStore } from '../src/service/channel-binding/store.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
 const PROVIDER_REF = 'builtin:feishu';
@@ -154,6 +155,70 @@ describe('ChannelService binding ownership', () => {
     await expect(
       service.transferBack({ expectedOwner: owner, meta: { chat_id: 'chat-a' } }),
     ).resolves.toBeNull();
+  });
+
+  it('summarizes every active binding for one owner while preserving the first summary', async () => {
+    const bindings = new ChannelBindingStore();
+    const service = new ChannelService({
+      dispatcherId: 'dispatcher-a',
+      config: testDreamuxConfig([
+        testDispatcherConfig({ id: 'dispatcher-a', channelId: 'primary' }),
+      ]),
+      channelProviders: channelProviderCatalog(),
+      bindings,
+      channelLoggerFactory: () => ({}) as never,
+    });
+    const owner = {
+      kind: 'team' as const,
+      teamName: 'alpha',
+      leaderName: 'leader-a',
+    };
+
+    await bindings.bind({
+      dispatcherId: 'dispatcher-a',
+      channelId: 'flowx',
+      provider: 'npm:@example/flowx-channel',
+      target: {
+        target_type: 'task',
+        target_key: 'task-alpha',
+        bindable: true,
+      },
+      teamName: owner.teamName,
+      leaderName: owner.leaderName,
+    });
+    await bindings.bind({
+      dispatcherId: 'dispatcher-a',
+      channelId: 'feishu',
+      provider: PROVIDER_REF,
+      target: groupTarget('chat-alpha'),
+      teamName: owner.teamName,
+      leaderName: owner.leaderName,
+    });
+
+    const expected = [
+      {
+        channel_id: 'flowx',
+        provider: 'npm:@example/flowx-channel',
+        target_type: 'task',
+        target_key: 'task-alpha',
+        display: null,
+        canonical_url: null,
+      },
+      {
+        channel_id: 'feishu',
+        provider: PROVIDER_REF,
+        target_type: 'group',
+        target_key: 'chat-alpha',
+        display: null,
+        canonical_url: null,
+      },
+    ];
+    await expect(service.activeBindingSummariesForOwner(owner)).resolves.toEqual(
+      expected,
+    );
+    await expect(service.activeBindingSummaryForOwner(owner)).resolves.toEqual(
+      expected[0],
+    );
   });
 
   it('claims and conditionally releases resolved targets for automatic routing', async () => {

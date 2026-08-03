@@ -4,8 +4,14 @@ import {
   bundledSharedSkillRoot,
   bundledTeamLeaderSkillRoot,
 } from '../platform/paths.js';
-import type { ChannelToolCaller } from '../service/dispatcher-service/index.js';
-import type { ChannelRouteOwner } from '../service/channel-service/index.js';
+import type {
+  ChannelToolCaller,
+  DispatcherService,
+} from '../service/dispatcher-service/index.js';
+import type {
+  ChannelBindingSummary,
+  ChannelRouteOwner,
+} from '../service/channel-service/index.js';
 import { ChannelToolAuthorizationError } from '../service/channel-service/errors.js';
 import type { SchedulerCommands } from '../service/scheduler/service.js';
 import { TeamUnavailableError } from '../service/team-collection/errors.js';
@@ -317,7 +323,7 @@ export const adminMethods: Record<string, AdminHandler> = {
         ...(identity !== null ? { identity } : {}),
         ...(skillSources !== null ? { skillSources } : {}),
       });
-      return { ...created, bound_target: null };
+      return { ...created, bound_target: null, bound_targets: [] };
     } catch (err) {
       throw new AdminError('TEAM_CREATE_FAILED', parseMessage(err));
     }
@@ -358,7 +364,7 @@ export const adminMethods: Record<string, AdminHandler> = {
       teams: await Promise.all(
         teams.map(async (team) => ({
           ...team,
-          bound_target: await dispatcher.activeTeamBindingSummary(ownerForTeamRead(team)),
+          ...(await teamBindingFields(dispatcher, team)),
         })),
       ),
     };
@@ -372,9 +378,7 @@ export const adminMethods: Record<string, AdminHandler> = {
     const summary = await dispatcher.getTeamStatus(name);
     return {
       ...summary,
-      bound_target: await dispatcher.activeTeamBindingSummary(
-        ownerForTeamRead(summary.team),
-      ),
+      ...(await teamBindingFields(dispatcher, summary.team)),
     };
   },
 
@@ -405,7 +409,7 @@ export const adminMethods: Record<string, AdminHandler> = {
       items: await Promise.all(
         history.items.map(async (team) => ({
           ...team,
-          bound_target: await dispatcher.activeTeamBindingSummary(ownerForTeamRead(team)),
+          ...(await teamBindingFields(dispatcher, team)),
         })),
       ),
     };
@@ -484,7 +488,7 @@ export const adminMethods: Record<string, AdminHandler> = {
       teamId: name,
       note,
     });
-    return { ...dissolved, bound_target: null };
+    return { ...dissolved, bound_target: null, bound_targets: [] };
   },
 
   'collaboration_space.bind': async (server, params) => {
@@ -623,6 +627,23 @@ function ownerForTeamRead(input: {
     kind: 'team',
     teamName: input.team_name,
     leaderName: input.leader_name,
+  };
+}
+
+async function teamBindingFields(
+  dispatcher: DispatcherService,
+  team: { team_name: string; leader_name: string },
+): Promise<{
+  bound_target: ChannelBindingSummary | null;
+  bound_targets: ChannelBindingSummary[];
+}> {
+  const bound_targets = await dispatcher.activeTeamBindingSummaries(
+    ownerForTeamRead(team),
+  );
+  return {
+    // Compatibility: preserve the former first-match projection and store order.
+    bound_target: bound_targets[0] ?? null,
+    bound_targets,
   };
 }
 

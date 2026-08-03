@@ -363,19 +363,16 @@ export class ChannelService {
   async activeBindingSummaryForOwner(
     owner: ChannelRouteOwner,
   ): Promise<ChannelBindingSummary | null> {
+    return (await this.activeBindingSummariesForOwner(owner))[0] ?? null;
+  }
+
+  async activeBindingSummariesForOwner(
+    owner: ChannelRouteOwner,
+  ): Promise<ChannelBindingSummary[]> {
     const bindings = await this.bindings.list(this.dispatcherId);
-    const active = bindings.find(
-      (binding) => binding.active && ownerMatchesBinding(owner, binding),
-    );
-    if (active === undefined) return null;
-    return {
-      channel_id: active.channel_id,
-      provider: active.provider,
-      target_type: active.target_type,
-      target_key: active.target_key,
-      display: active.display,
-      canonical_url: active.canonical_url,
-    };
+    return bindings
+      .filter((binding) => binding.active && ownerMatchesBinding(owner, binding))
+      .map(bindingSummary);
   }
 
   async transferAllForOwner(owner: ChannelRouteOwner): Promise<ChannelBinding[]> {
@@ -523,4 +520,15 @@ function ownerMatchesBinding(
     binding.team_name === owner.teamName &&
     binding.leader_name === owner.leaderName
   );
+}
+
+function bindingSummary(binding: ChannelBinding): ChannelBindingSummary {
+  return {
+    channel_id: binding.channel_id,
+    provider: binding.provider,
+    target_type: binding.target_type,
+    target_key: binding.target_key,
+    display: binding.display,
+    canonical_url: binding.canonical_url,
+  };
 }

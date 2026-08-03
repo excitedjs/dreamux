@@ -118,6 +118,14 @@ core passes it to the selected Channel session's `resolveTarget(meta)`.
 The old Feishu-specific `bind_group`, `transfer_channel_back`, and
 `create.bind_group` tools are removed without aliases.
 
+Dispatcher Team read results expose every active route for the Team in
+`bound_targets`. The compatibility field `bound_target` is the first entry in
+that array, or `null` when no active route exists. The array follows binding
+store order so adding the complete projection does not change which route old
+clients observe through the singular field. `team.list`, `team.status`, and
+`team.history` share this projection; create and dissolve return an empty array
+and a null singular field.
+
 Source:
 
 - `/packages/dreamux/src/mcp/team-mcp.ts`

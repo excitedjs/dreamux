@@ -42,6 +42,9 @@ type TeamMcpCaller =
 
 const JSONRPC_VERSION = '2.0';
 const DEFAULT_MCP_PROTOCOL_VERSION = '2024-11-05';
+const TEAM_BINDING_RESULT_DESCRIPTION =
+  'Results expose every active binding in bound_targets. bound_target remains ' +
+  'the first array item, or null when the array is empty, for compatibility.';
 
 export async function runTeamMcp(opts: TeamMcpOptions): Promise<void> {
   const dispatcherId = validateDispatcherId(opts.dispatcherId);
@@ -163,11 +166,11 @@ export function teamTools(
       prompt: { type: 'string', minLength: 1, maxLength: 20000 },
       intent: { type: 'string', minLength: 1, maxLength: 2000 },
     }, ['team_name', 'prompt']),
-    tool('list', 'List Teams owned by this dispatcher (compact scan rows: team_name, status, intent, repo, leader, member count, bound channel target).', {}, []),
-    tool('status', 'Read one Team\'s detailed current status by its team_name (record, TeamLeader status, member count, active bound target).', {
+    tool('list', `List Teams owned by this dispatcher (compact scan rows: team_name, status, intent, repo, leader, member count, and active bound channel targets). ${TEAM_BINDING_RESULT_DESCRIPTION}`, {}, []),
+    tool('status', `Read one Team's detailed current status by its team_name (record, TeamLeader status, member count, and active bound channel targets). ${TEAM_BINDING_RESULT_DESCRIPTION}`, {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
     }, ['team_name']),
-    tool('history', 'Search Teams for recovery (closed included) by team_name, status, repo, intent text, and time range. A compact recovery list, not a raw event timeline. Returns { items, next_cursor }.', {
+    tool('history', `Search Teams for recovery (closed included) by team_name, status, repo, intent text, and time range. A compact recovery list, not a raw event timeline. Returns { items, next_cursor }. ${TEAM_BINDING_RESULT_DESCRIPTION}`, {
       team_name: { type: 'string', minLength: 1, maxLength: 64 },
       status: { type: 'string', enum: ['starting', 'running', 'closed'] },
       repo: { type: 'string', minLength: 1, maxLength: 4096 },
