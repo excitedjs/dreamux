@@ -9,7 +9,7 @@
  *   - `start(routes)` takes one handler per Feishu event type (issue #62 seam):
  *     `onMessage` for `im.message.receive_v1` (normalized via the core's
  *     `parseInbound` into a `FeishuInboundEvent`), `onMessageRecalled` for the
- *     bounded routing fields of `im.message.recalled_v1`, and an optional
+ *     bounded observability fields of `im.message.recalled_v1`, and an optional
  *     `onBotMemberAdded` for `im.chat.member.bot.added_v1`. Each route awaits
  *     its handler before the SDK acknowledges the event.
  *   - `send(target, text)` delegates to the core transport, preserving reply
@@ -104,7 +104,7 @@ export interface FeishuInboundEvent {
 
 export type InboundHandler = (event: FeishuInboundEvent) => void | Promise<void>;
 
-/** Bounded routing-only projection of `im.message.recalled_v1`. */
+/** Bounded observability-only projection of `im.message.recalled_v1`. */
 export interface FeishuMessageRecalledEvent {
   eventId: string;
   chatId: string;
@@ -425,6 +425,16 @@ function normalizeInboundEvent(raw: unknown): FeishuInboundEvent | null {
 }
 
 function normalizeMessageRecalledEvent(
+  raw: unknown,
+): FeishuMessageRecalledEvent | null {
+  try {
+    return projectMessageRecalledEvent(raw);
+  } catch {
+    return null;
+  }
+}
+
+function projectMessageRecalledEvent(
   raw: unknown,
 ): FeishuMessageRecalledEvent | null {
   const root = asRecord(raw);

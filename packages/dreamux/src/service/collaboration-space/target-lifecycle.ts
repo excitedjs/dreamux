@@ -7,6 +7,11 @@ import { createDefaultBoundSpace } from './default-binding.js';
 import { detachActiveTargets } from './detach-active-targets.js';
 import { publishCollaborationSpaceBindTransition } from '../binding-events.js';
 import { collaborationTeamNamePrefix, targetIntent } from './naming.js';
+import {
+  logTargetCloseCompleted,
+  logTargetCloseFailed,
+  logTargetCloseStarted,
+} from './observability.js';
 import type { CollaborationSpaceStore } from './store.js';
 import type { CollaborationRouteReconciler } from './route-reconciliation.js';
 import {
@@ -169,15 +174,13 @@ export class CollaborationTargetLifecycle {
       if (
         record === null ||
         record.lifecycle_status === 'closed' ||
-        record.lifecycle_status === 'detached' ||
-        (record.lifecycle_status === 'closing' && record.last_error === null)
+        record.lifecycle_status === 'detached'
       ) {
         return null;
       }
       const closing = await this.opts.store.saveTarget({
         ...record,
         lifecycle_status: 'closing',
-        last_error: null,
         close_event_id: input.eventId ?? record.close_event_id,
         updated_at: Date.now(),
       });
@@ -636,6 +639,7 @@ export class CollaborationTargetLifecycle {
       close_event_id: eventId ?? record.close_event_id,
       updated_at: Date.now(),
     });
+    logTargetCloseStarted(this.opts.log, this.opts.dispatcherId, closing);
     try {
       await this.opts.routes.closeTargetTeam(
         closing,
@@ -648,27 +652,20 @@ export class CollaborationTargetLifecycle {
         last_error: msg,
         updated_at: Date.now(),
       });
-      this.opts.log.error(
-        {
-          dispatcher_id: this.opts.dispatcherId,
-          space_name: closing.space_name,
-          target_key: closing.target_key,
-          err: { message: msg },
-        },
-        'collaboration target close failed (target remains in closing state for retry)',
-      );
+      logTargetCloseFailed(this.opts.log, this.opts.dispatcherId, closing, msg);
       throw err;
     }
     const closed = await this.opts.store.saveTarget({
       ...closing,
       lifecycle_status: 'closed',
       phase: 'closed',
-      last_error: null,
       updated_at: Date.now(),
       closed_at: Date.now(),
     });
+    logTargetCloseCompleted(this.opts.log, this.opts.dispatcherId, closed);
     return { closed: true, target: targetView(closed) };
   }
+
   private async closeTargetRecord(
     record: ProvisionedTargetRecord,
   ): Promise<{ closed: boolean; target: ProvisionedTargetView | null }> {
@@ -680,11 +677,13 @@ export class CollaborationTargetLifecycle {
         targetKey: record.target_key,
       }), record.close_event_id ?? undefined));
   }
+
   private assertNotShuttingDown(): void {
     if (this.opts.isShuttingDown()) {
       throw new Error(`dispatcher '${this.opts.dispatcherId}' is shutting down`);
     }
   }
+
   private logResumeFailure(target: ProvisionedTargetRecord, error: unknown): void {
     const { dispatcherId, log } = this.opts;
     log.error(

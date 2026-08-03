@@ -323,6 +323,48 @@ describe('Feishu binding notification cards', () => {
     );
   });
 
+  it('logs only bounded SDK fields for background card failures', async () => {
+    const bot = createFakeFeishuBot('app-safe-card-error');
+    const log = logger();
+    const source = eventSource();
+    const s = session({ stateDir, bot, log });
+    await start({ session: s, source });
+    const secret = 'credential-that-must-not-be-logged';
+    const raw = Object.assign(new Error('SDK request failed'), {
+      config: { data: secret, headers: { Authorization: secret } },
+      request: { body: secret },
+      response: {
+        headers: { authorization: secret },
+        data: {
+          code: 230019,
+          msg: 'm'.repeat(800),
+          error: { log_id: 'l'.repeat(400) },
+          body: secret,
+        },
+      },
+    });
+    bot.setSendError(raw);
+
+    source.emit(routeEvent({ meta: { chat_id: 'chat-safe-error' } }));
+    await vi.waitFor(() => {
+      expect(log.warn).toHaveBeenCalledTimes(2);
+    });
+    await s.close();
+
+    for (const [fields] of log.warn.mock.calls) {
+      if (typeof fields === 'string') continue;
+      expect(fields['err']).toEqual({
+        code: 230019,
+        msg: 'm'.repeat(512),
+        log_id: 'l'.repeat(256),
+      });
+    }
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain(secret);
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('config');
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('headers');
+    expect(JSON.stringify(log.warn.mock.calls)).not.toContain('body');
+  });
+
   it('aborts a timed-out attempt and immediately retries once', async () => {
     vi.useFakeTimers();
     const bot = createFakeFeishuBot('app-timeout-retry');

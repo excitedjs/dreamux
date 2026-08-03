@@ -338,6 +338,11 @@ describe('createFeishuBot inbound channel', () => {
     for (const raw of malformed) {
       await transport.dispatch('im.message.recalled_v1', raw);
     }
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    await expect(
+      transport.dispatch('im.message.recalled_v1', proxy),
+    ).resolves.toBe(true);
     expect(recalled).toHaveLength(2);
   });
 

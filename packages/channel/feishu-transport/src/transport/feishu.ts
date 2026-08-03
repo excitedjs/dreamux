@@ -20,7 +20,6 @@ import {
   type TransportDiagnostics,
   type TransportLogger,
 } from './diagnostics.js'
-import { runFeishuOutboundRequest } from './outbound-error.js'
 import {
   normalizeMessageReadItem,
   type FeishuMessageReader,
@@ -369,8 +368,7 @@ export function createFeishuTransport(
       for (const card of cards) {
         const content = cardToContent(card)
         assertCardContentFits(content)
-        const res = await runFeishuOutboundRequest(() =>
-          sendInteractiveCard(client, target, content))
+        const res = await sendInteractiveCard(client, target, content)
         const id = res.data?.message_id
         if (id) messageIds.push(id)
       }
@@ -384,8 +382,10 @@ export function createFeishuTransport(
     ): Promise<FeishuSendResult> {
       const content = JSON.stringify(card)
       assertCardContentFits(content)
-      const res = await runFeishuOutboundRequest(
-        () => sendInteractiveCard(client, target, content, options?.signal),
+      const res = await sendInteractiveCard(
+        client,
+        target,
+        content,
         options?.signal,
       )
       const id = res.data?.message_id

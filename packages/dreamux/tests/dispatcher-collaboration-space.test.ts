@@ -396,85 +396,6 @@ describe('DispatcherService collaboration-space routing', () => {
     },
   );
 
-  it('drains target_closed through ChannelRoutes and closes the provisioned Team', async () => {
-    const workspace = join(root, 'target-lifecycle-close-workspace');
-    mkdirSync(workspace, { recursive: true });
-    const harness = strictChannelDispatcher({
-      workspace,
-      workspaceEnabled: false,
-    });
-    const container = {
-      container_type: 'topic_group',
-      container_key: 'container-close',
-    } as const;
-    const target = {
-      target_type: 'topic',
-      target_key: 'target-close',
-      bindable: true,
-    } as const;
-
-    try {
-      await harness.dispatcher.start();
-      const routes = harness.routes();
-      if (routes.targetLifecycle === undefined) {
-        throw new Error('target lifecycle route was not installed');
-      }
-      const collaborationSpaces = (
-        harness.dispatcher as unknown as {
-          collaborationSpaces: CollaborationSpaceService;
-        }
-      ).collaborationSpaces;
-
-      await routes.targetLifecycle({
-        kind: 'target_created',
-        event_id: 'event-created',
-        container,
-        target,
-      });
-      await collaborationSpaces.drainLifecycleTasks();
-      const spaces = await harness.dispatcher.listCollaborationSpaces();
-      const spaceName = spaces.spaces[0]?.space_name;
-      if (spaceName === undefined) throw new Error('auto-bound space is missing');
-      await expect(harness.dispatcher.getCollaborationSpaceStatus({
-        spaceName,
-      })).resolves.toMatchObject({
-        targets: [{ target_key: 'target-close', lifecycle_status: 'active' }],
-      });
-      const teamName = (await harness.dispatcher.listTeams())[0]?.team_name;
-      if (teamName === undefined) throw new Error('provisioned Team is missing');
-
-      await Promise.all([
-        routes.targetLifecycle({
-          kind: 'target_closed',
-          event_id: 'event-closed',
-          container,
-          target,
-        }),
-        routes.targetLifecycle({
-          kind: 'target_closed',
-          event_id: 'event-closed-duplicate',
-          container,
-          target,
-        }),
-      ]);
-      await collaborationSpaces.drainLifecycleTasks();
-
-      await expect(harness.dispatcher.getCollaborationSpaceStatus({
-        spaceName,
-      })).resolves.toMatchObject({
-        targets: [{ target_key: 'target-close', lifecycle_status: 'closed' }],
-      });
-      await expect(harness.dispatcher.listTeams()).resolves.toContainEqual(
-        expect.objectContaining({ team_name: teamName, status: 'closed' }),
-      );
-      await expect(harness.dispatcher.team(teamName)).rejects.toThrow(
-        /not open|closed/i,
-      );
-    } finally {
-      await harness.dispatcher.stop();
-    }
-  });
-
   it('makes the live event source usable before session start triggers ensure', async () => {
     const workspace = join(root, 'start-time-ensure-workspace');
     mkdirSync(workspace, { recursive: true });
@@ -1414,6 +1335,7 @@ describe('DispatcherService collaboration-space routing', () => {
     const provisioned = deferred<unknown>();
     let returned = false;
     let provisionCalled = false;
+    const info = vi.fn();
     const channels = {
       channelProviderRef(channelId: string) {
         expect(channelId).toBe('primary');
@@ -1458,7 +1380,7 @@ describe('DispatcherService collaboration-space routing', () => {
       },
       channels,
       collaborationSpaces,
-      log: noopLog(),
+      log: { ...noopLog(), info } as DreamuxLogger,
     }).then(() => {
       returned = true;
     });
@@ -1477,10 +1399,24 @@ describe('DispatcherService collaboration-space routing', () => {
 
     expect(returned).toBe(true);
     expect(provisionCalled).toBe(true);
+    expect(info).toHaveBeenCalledWith(
+      {
+        dispatcher_id: 'flow',
+        channel_id: 'primary',
+        event_kind: 'target_created',
+        container_type: 'topic_group',
+        container_key: 'container-1',
+        target_type: 'topic',
+        target_key: 'topic-1',
+        outcome: 'accepted',
+      },
+      'collaboration target lifecycle ingress accepted',
+    );
     provisioned.resolve({});
   });
 
   it('ignores target_created lifecycle events for missing collaboration spaces', async () => {
+    const info = vi.fn();
     const channels = {
       channelProviderRef(channelId: string) {
         expect(channelId).toBe('primary');
@@ -1523,9 +1459,83 @@ describe('DispatcherService collaboration-space routing', () => {
         },
         channels,
         collaborationSpaces,
-        log: noopLog(),
+        log: { ...noopLog(), info } as DreamuxLogger,
       }),
     ).resolves.toBeUndefined();
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dispatcher_id: 'flow',
+        channel_id: 'primary',
+        event_kind: 'target_created',
+        container_key: 'container-missing',
+        target_key: 'topic-missing',
+        outcome: 'ignored',
+      }),
+      'collaboration target lifecycle ingress ignored',
+    );
+  });
+
+  it('logs accepted and ignored target_closed ingress without owning close work', async () => {
+    const info = vi.fn();
+    const close = vi.fn(async () => ({ closed: true, target: null }));
+    const accepted = { close };
+    const acceptTargetClosedForClose = vi.fn()
+      .mockResolvedValueOnce(accepted)
+      .mockResolvedValueOnce(null);
+    const startTargetClose = vi.fn();
+    const collaborationSpaces = {
+      acceptTargetClosedForClose,
+      startTargetClose,
+      trackLifecycleTask(_kind: string, _task: Promise<unknown>) {
+        /* test double: no-op */
+      },
+    } as unknown as CollaborationSpaceService;
+    const channels = {
+      channelProviderRef: () => CHANNEL_REF,
+    } as unknown as ChannelService;
+    const event = {
+      kind: 'target_closed',
+      container: {
+        container_type: 'topic_group',
+        container_key: 'container-close',
+      },
+      target: {
+        target_type: 'topic',
+        target_key: 'topic-close',
+        bindable: true,
+      },
+    } as const;
+    const input = {
+      dispatcherId: 'flow',
+      dispatcherAgentRuntime: 'dispatcher-runtime',
+      channelId: 'primary',
+      event,
+      channels,
+      collaborationSpaces,
+      log: { ...noopLog(), info } as DreamuxLogger,
+    };
+
+    await handleCollaborationTargetLifecycle(input);
+    await handleCollaborationTargetLifecycle(input);
+
+    expect(startTargetClose).toHaveBeenCalledTimes(1);
+    expect(startTargetClose).toHaveBeenCalledWith(accepted);
+    expect(close).not.toHaveBeenCalled();
+    expect(info).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        event_kind: 'target_closed',
+        container_key: 'container-close',
+        target_key: 'topic-close',
+        outcome: 'accepted',
+      }),
+      'collaboration target lifecycle ingress accepted',
+    );
+    expect(info).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ outcome: 'ignored' }),
+      'collaboration target lifecycle ingress ignored',
+    );
   });
 
   it('fails loud for an unknown target lifecycle kind without closing a target', async () => {

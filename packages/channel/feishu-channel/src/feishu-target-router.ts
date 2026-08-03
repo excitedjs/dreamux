@@ -24,15 +24,6 @@ export interface FeishuInboundRoute {
   container?: ChannelContainer;
 }
 
-export interface FeishuTopicRoute extends FeishuInboundRoute {
-  container: ChannelContainer;
-}
-
-interface RecordedMessageRoute {
-  route: FeishuInboundRoute;
-  isTopicRoot: boolean;
-}
-
 interface FeishuTargetRouterOptions {
   chatModes: FeishuChatModeReader;
   log: DreamuxLogger;
@@ -49,7 +40,7 @@ export class FeishuTargetRouter {
     string,
     Promise<FeishuChatMode | undefined>
   >();
-  private readonly messageRoutes = new Map<string, RecordedMessageRoute>();
+  private readonly messageTargets = new Map<string, ChannelTarget>();
 
   constructor(private readonly opts: FeishuTargetRouterOptions) {}
 
@@ -73,13 +64,7 @@ export class FeishuTargetRouter {
       }
     }
     assertRoutingActive(signal);
-    this.messageRoutes.set(event.messageId, {
-      route,
-      isTopicRoot:
-        isTopicRoute(route) &&
-        event.rootId === undefined &&
-        event.parentId === undefined,
-    });
+    this.messageTargets.set(event.messageId, route.target);
     return route;
   }
 
@@ -87,7 +72,7 @@ export class FeishuTargetRouter {
     const selector = asRecord(meta);
     const messageId = optionalString(selector, 'message_id');
     if (messageId !== undefined) {
-      const recorded = this.messageRoutes.get(messageId)?.route.target;
+      const recorded = this.messageTargets.get(messageId);
       if (recorded !== undefined) {
         assertRecordedSelectorMatches(selector, recorded);
         return recorded;
@@ -123,37 +108,13 @@ export class FeishuTargetRouter {
   }
 
   messageBelongsToTarget(messageId: string, target: ChannelTarget): boolean {
-    const recorded = this.messageRoutes.get(messageId)?.route.target;
+    const recorded = this.messageTargets.get(messageId);
     return recorded !== undefined && targetsMatch(recorded, target);
   }
 
   messageBelongsToChat(messageId: string, chatId: string): boolean {
-    const recorded = this.messageRoutes.get(messageId)?.route.target;
+    const recorded = this.messageTargets.get(messageId);
     return recorded !== undefined && targetChatId(recorded) === chatId;
-  }
-
-  recalledTopicRoot(
-    messageId: string,
-    chatId: string,
-  ): FeishuTopicRoute | null {
-    const recorded = this.messageRoutes.get(messageId);
-    return recorded?.isTopicRoot === true &&
-        isTopicRoute(recorded.route) &&
-        targetChatId(recorded.route.target) === chatId
-      ? recorded.route
-      : null;
-  }
-
-  observedTopicMessage(
-    messageId: string,
-    chatId: string,
-  ): FeishuTopicRoute | null {
-    const recorded = this.messageRoutes.get(messageId)?.route;
-    return recorded !== undefined &&
-        isTopicRoute(recorded) &&
-        targetChatId(recorded.target) === chatId
-      ? recorded
-      : null;
   }
 
   private async chatMode(
@@ -299,11 +260,6 @@ function targetsMatch(left: ChannelTarget, right: ChannelTarget): boolean {
 function targetChatId(target: ChannelTarget): string | undefined {
   const chatId = target.meta?.['chat_id'];
   return typeof chatId === 'string' && chatId !== '' ? chatId : undefined;
-}
-
-function isTopicRoute(route: FeishuInboundRoute): route is FeishuTopicRoute {
-  return route.target.target_type === 'topic' &&
-    route.container?.container_type === 'topic_group';
 }
 
 function assertRecordedSelectorMatches(

@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Close Feishu topic collaboration targets from bounded provider signals.",
+      "comment": "Expose a bounded Feishu SDK error log projection while preserving original outbound failures.",
       "type": "patch",
       "packageName": "@excitedjs/feishu-transport"
     }

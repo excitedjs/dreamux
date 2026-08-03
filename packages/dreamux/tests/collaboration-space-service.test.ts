@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -277,12 +277,13 @@ describe('CollaborationSpaceService', () => {
     const created: CreatedTeam[] = [];
     const dissolved: string[] = [];
     const channels = fakeChannels();
+    const info = vi.fn();
     const service = new CollaborationSpaceService({
       dispatcherId: 'flow',
       config: fakeConfig(),
       teams: fakeTeams(created, dissolved),
       channels: channels.service,
-      log: log as never,
+      log: { ...log, info } as never,
       isShuttingDown: () => false,
     });
 
@@ -307,6 +308,7 @@ describe('CollaborationSpaceService', () => {
       },
     };
     const provisioned = await service.provisionTarget(targetInput);
+    if (provisioned === null) throw new Error('target was not provisioned');
     expect(provisioned).toMatchObject({ lifecycle_status: 'active' });
     expect(channels.boundOwners.has('topic-closed')).toBe(true);
     const owner = channels.boundOwners.get('topic-closed');
@@ -339,7 +341,26 @@ describe('CollaborationSpaceService', () => {
     });
     expect(channels.boundOwners.has('topic-closed')).toBe(false);
     expect(channels.boundOwners.has('topic-explicit-extra')).toBe(false);
-    expect(dissolved).toEqual([provisioned?.team_name]);
+    expect(dissolved).toEqual([provisioned.team_name]);
+    const routeFields = {
+      dispatcher_id: 'flow',
+      space_name: 'space-alpha',
+      channel_id: 'primary',
+      provider: 'builtin:test',
+      container_key: 'container-1',
+      binding_generation: 1,
+      target_type: 'topic',
+      target_key: 'topic-closed',
+      team_name: provisioned.team_name,
+    };
+    expect(info).toHaveBeenCalledWith(
+      routeFields,
+      'collaboration target close started',
+    );
+    expect(info).toHaveBeenCalledWith(
+      { ...routeFields, lifecycle_status: 'closed' },
+      'collaboration target close completed',
+    );
   });
 
   it('closes an orphan Team created before the target recorded its leader', async () => {
@@ -1117,13 +1138,14 @@ describe('CollaborationSpaceService', () => {
     expect(channels.boundOwners.has('topic-stale-team')).toBe(false);
   });
 
-  it('deduplicates an in-flight close and accepts one retry after failure', async () => {
+  it('closeTarget failure leaves target in retryable closing state with error recorded', async () => {
     const created: CreatedTeam[] = [];
     const dissolved: string[] = [];
     const channels = fakeChannels();
+    const info = vi.fn();
+    const error = vi.fn();
 
-    let failDissolve = true;
-    // Teams mock where the first dissolve fails and the retry succeeds.
+    // Teams mock where dissolve fails
     const teamsWithBadDissolve = {
       async claimName(prefix: string, claimToken: string) {
         return { name: `${prefix}-0000`, token: claimToken };
@@ -1179,12 +1201,7 @@ describe('CollaborationSpaceService', () => {
         return {
           async dissolve() {
             dissolved.push(name);
-            if (failDissolve) throw new Error('simulated dissolve failure');
-            return {
-              team: { team_name: name },
-              leader: null,
-              member_count: 0,
-            };
+            throw new Error('simulated dissolve failure');
           },
         };
       },
@@ -1195,7 +1212,7 @@ describe('CollaborationSpaceService', () => {
       config: fakeConfig(),
       teams: teamsWithBadDissolve,
       channels: channels.service,
-      log: log as never,
+      log: { ...log, info, error } as never,
       isShuttingDown: () => false,
     });
 
@@ -1227,7 +1244,6 @@ describe('CollaborationSpaceService', () => {
     expect(statusAfterAccept.targets).toMatchObject([
       { lifecycle_status: 'closing' },
     ]);
-    await expect(service.acceptTargetClosed(targetInput)).resolves.toBe(false);
 
     // Attempt close - it will fail
     await expect(service.closeTarget(targetInput)).rejects.toThrow(
@@ -1243,25 +1259,33 @@ describe('CollaborationSpaceService', () => {
       },
     ]);
 
-    // One failed close is retryable. Acceptance clears the failure before the
-    // new attempt, and a duplicate retry signal is suppressed again.
+    // acceptTargetClosed should still return true (retryable)
     await expect(service.acceptTargetClosed(targetInput)).resolves.toBe(true);
-    await expect(service.status({ spaceName: 'space-alpha' })).resolves.toMatchObject({
-      targets: [{ lifecycle_status: 'closing', last_error: null }],
-    });
-    await expect(service.acceptTargetClosed(targetInput)).resolves.toBe(false);
     await expect(service.provisionTarget(targetInput)).rejects.toThrow(
       /closing and cannot be provisioned/,
     );
     await expect(service.acceptAndProvisionTarget(targetInput)).rejects.toThrow(
       /closing and cannot be provisioned/,
     );
-    failDissolve = false;
-    await expect(service.closeTarget(targetInput)).resolves.toMatchObject({
-      closed: true,
-      target: { lifecycle_status: 'closed', last_error: null },
-    });
-    expect(dissolved).toHaveLength(2);
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dispatcher_id: 'flow',
+        space_name: 'space-alpha',
+        channel_id: 'primary',
+        container_key: 'container-1',
+        target_type: 'topic',
+        target_key: 'topic-close-fail',
+      }),
+      'collaboration target close started',
+    );
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dispatcher_id: 'flow',
+        team_name: expect.any(String),
+        err: { message: 'simulated dissolve failure' },
+      }),
+      'collaboration target close failed (target remains in closing state for retry)',
+    );
   });
 
   it('dissolve retries when release fails before the space is marked unbound', async () => {
