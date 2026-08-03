@@ -39,6 +39,7 @@ describe('core event owner publishers', () => {
     root = realpathSync(mkdtempSync(join('/tmp', 'dx-core-events-')));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     mkdirSync(process.env['HOME'], { recursive: true });
     resetRuntimeConfig();
   });
@@ -46,6 +47,7 @@ describe('core event owner publishers', () => {
   afterEach(() => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
   });
@@ -309,6 +311,7 @@ describe('core event owner publishers', () => {
     const blockedHome = join(root, 'blocked-home');
     writeFileSync(blockedHome, 'not a directory');
     process.env['HOME'] = blockedHome;
+    process.env['DREAMUX_ROOT'] = blockedHome;
     resetRuntimeConfig();
 
     const log = noopLogger();

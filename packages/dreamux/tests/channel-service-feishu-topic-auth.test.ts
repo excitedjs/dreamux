@@ -72,6 +72,7 @@ describe('ChannelService Feishu topic authorization', () => {
     root = mkdtempSync(join(tmpdir(), 'dreamux-feishu-topic-auth-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     mkdirSync(process.env['HOME'], { recursive: true });
     resetRuntimeConfig();
   });
@@ -79,6 +80,7 @@ describe('ChannelService Feishu topic authorization', () => {
   afterEach(() => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
   });

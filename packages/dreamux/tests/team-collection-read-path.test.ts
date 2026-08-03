@@ -250,12 +250,14 @@ describe('TeamCollection read path (issue #233 R4)', () => {
     root = mkdtempSync(join(tmpdir(), 'dreamux-team-collection-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     mkdirSync(process.env['HOME'], { recursive: true });
   });
 
   afterEach(() => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -390,12 +392,14 @@ describe('exclusively owned TeamMate submission', () => {
     root = mkdtempSync(join(tmpdir(), 'dreamux-owned-teammate-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     mkdirSync(process.env['HOME'], { recursive: true });
   });
 
   afterEach(() => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -961,12 +965,14 @@ describe('TeamCollection route readiness recovery', () => {
     root = mkdtempSync(join(tmpdir(), 'dreamux-team-route-ready-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     mkdirSync(process.env['HOME'], { recursive: true });
   });
 
   afterEach(() => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -1096,12 +1102,14 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
     root = mkdtempSync(join(tmpdir(), 'dreamux-team-create-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     mkdirSync(process.env['HOME'], { recursive: true });
   });
 
   afterEach(() => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -1379,12 +1387,14 @@ describe('TeamCollection identity prompt launch behavior', () => {
     root = mkdtempSync(join(tmpdir(), 'dreamux-team-identity-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     mkdirSync(process.env['HOME'], { recursive: true });
   });
 
   afterEach(() => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -1511,12 +1521,14 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
     root = mkdtempSync(join(tmpdir(), 'dreamux-team-send-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     mkdirSync(process.env['HOME'], { recursive: true });
   });
 
   afterEach(() => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -2097,12 +2109,14 @@ describe('closing a team member must not remove the shared team worktree', () =>
     root = mkdtempSync(join(tmpdir(), 'dreamux-team-member-close-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     mkdirSync(process.env['HOME'], { recursive: true });
   });
 
   afterEach(() => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -2197,12 +2211,14 @@ describe('team dissolve syncs cleanup_state to the leader and members (#237)', (
     root = mkdtempSync(join(tmpdir(), 'dreamux-team-dissolve-state-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     mkdirSync(process.env['HOME'], { recursive: true });
   });
 
   afterEach(() => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     rmSync(root, { recursive: true, force: true });
   });
 

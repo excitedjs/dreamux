@@ -329,6 +329,7 @@ describe('DispatcherService collaboration-space routing', () => {
     root = realpathSync(mkdtempSync(join('/tmp', 'dx-')));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     mkdirSync(process.env['HOME'], { recursive: true });
     resetRuntimeConfig();
   });
@@ -336,6 +337,7 @@ describe('DispatcherService collaboration-space routing', () => {
   afterEach(() => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
   });

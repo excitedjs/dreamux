@@ -43,12 +43,14 @@ describe('dispatcher config projection store', () => {
     root = mkdtempSync(join(tmpdir(), 'dreamux-store-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     resetRuntimeConfig();
   });
 
   afterEach(() => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
   });
@@ -97,12 +99,14 @@ describe('dispatcher root identity authority', () => {
     root = mkdtempSync(join(tmpdir(), 'dreamux-dispatcher-identity-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     resetRuntimeConfig();
   });
 
   afterEach(() => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
   });

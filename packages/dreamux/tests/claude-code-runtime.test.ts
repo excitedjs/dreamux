@@ -391,12 +391,14 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     home = mkdtempSync(join(tmpdir(), 'dreamux-cc-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = home;
+    process.env['DREAMUX_ROOT'] = home;
   });
 
   afterEach(async () => {
     await Promise.all(runtimes.map((runtime) => runtime.stop().catch(() => undefined)));
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     rmSync(home, { recursive: true, force: true });
   });
 

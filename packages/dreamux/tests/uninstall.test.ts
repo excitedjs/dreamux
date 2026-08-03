@@ -48,11 +48,13 @@ describe('dreamux uninstall', () => {
     root = mkdtempSync(join(homedir(), '.dreamux-uninstall-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
   });
 
   afterEach(() => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
   });
@@ -246,6 +248,7 @@ describe('dreamux uninstall', () => {
       const homeDir = join(caseRoot, 'home');
       const previousCaseHome = process.env['HOME'];
       process.env['HOME'] = homeDir;
+      process.env['DREAMUX_ROOT'] = homeDir;
       const servicePath = join(
         homeDir,
         '.config',

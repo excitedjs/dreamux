@@ -304,6 +304,7 @@ describe('WorkflowService', () => {
     home = await mkdtemp(join(tmpdir(), 'dreamux-workflow-service-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = home;
+    process.env['DREAMUX_ROOT'] = home;
   });
 
   afterEach(async () => {
@@ -313,6 +314,7 @@ describe('WorkflowService', () => {
     teammateFakes.length = 0;
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     await rm(home, { recursive: true, force: true });
     vi.restoreAllMocks();
   });

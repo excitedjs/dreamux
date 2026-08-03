@@ -219,6 +219,7 @@ describe('managed service working directory ownership', () => {
     oldHome = process.env['HOME'];
     oldConfigDir = process.env['DREAMUX_CONFIG_DIR'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     process.env['DREAMUX_CONFIG_DIR'] = join(root, 'config');
     writeInstallConfig(join(root, 'config'));
   });
@@ -304,6 +305,7 @@ describe('daemon install (stable service Node, issue #83)', () => {
     oldHome = process.env['HOME'];
     oldConfigDir = process.env['DREAMUX_CONFIG_DIR'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     process.env['DREAMUX_CONFIG_DIR'] = join(root, 'config');
     writeInstallConfig(join(root, 'config'));
   });
@@ -607,11 +609,13 @@ describe('provider binary resolution from captured session PATH', () => {
     oldHome = process.env['HOME'];
     oldPath = process.env['PATH'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
   });
 
   afterEach(() => {
     if (oldHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = oldHome;
+    delete process.env['DREAMUX_ROOT'];
     if (oldPath === undefined) delete process.env['PATH'];
     else process.env['PATH'] = oldPath;
     resetRuntimeConfig();
@@ -730,6 +734,7 @@ describe('re-running daemon install refreshes the persisted service PATH', () =>
     oldConfigDir = process.env['DREAMUX_CONFIG_DIR'];
     oldPath = process.env['PATH'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     process.env['DREAMUX_CONFIG_DIR'] = join(root, 'config');
     writeInstallConfig(join(root, 'config'));
   });
@@ -853,6 +858,7 @@ describe('normal CLI invocation captures ambient process.env PATH (options.env o
     oldPath = process.env['PATH'];
     oldCodexBin = process.env['CODEX_HOST_CODEX_BIN'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     process.env['DREAMUX_CONFIG_DIR'] = join(root, 'config');
     // Normal CLI use: the host codex binary is in the ambient environment.
     process.env['CODEX_HOST_CODEX_BIN'] = process.execPath;
@@ -970,12 +976,14 @@ describe('daemon install resolves bare provider bins and includes them in the se
     oldConfigDir = process.env['DREAMUX_CONFIG_DIR'];
     oldPath = process.env['PATH'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     process.env['DREAMUX_CONFIG_DIR'] = join(root, 'config');
   });
 
   afterEach(() => {
     if (oldHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = oldHome;
+    delete process.env['DREAMUX_ROOT'];
     if (oldConfigDir === undefined) delete process.env['DREAMUX_CONFIG_DIR'];
     else process.env['DREAMUX_CONFIG_DIR'] = oldConfigDir;
     if (oldPath === undefined) delete process.env['PATH'];

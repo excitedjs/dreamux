@@ -85,14 +85,14 @@ export function getRuntimeConfig(): DreamuxConfig {
 }
 
 /**
- * The dreamux home root. Overridable via `DREAMUX_ROOT` (tests isolate state
- * into a temp dir). Reads `process.env.HOME` directly instead of `os.homedir()`
- * for reliable, platform-independent test isolation.
+ * The dreamux home root. Overridable via the `DREAMUX_ROOT` environment variable
+ * so tests (or custom deployments) can redirect durable state into an isolated
+ * directory without hijacking `process.env.HOME`.
  */
 export function dreamuxRoot(): string {
   const override = process.env['DREAMUX_ROOT'];
   if (override !== undefined && override !== '') return override;
-  return join(process.env['HOME'] ?? homedir(), '.dreamux');
+  return join(homedir(), '.dreamux');
 }
 
 /** Lexical containment: is `candidate` at or under `root` (both resolved)? */
