@@ -1,22 +1,15 @@
 import type {
+  AgentRuntime,
   AgentRuntimeMcpServer,
   AgentRuntimeSkillSource,
-  AgentRuntimeSystemPrompt,
   AgentRuntimeTurnResult,
   DreamuxLogger,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
-import {
-  DISABLE_FEATURE_CRON,
-  type AgentRuntimeProviderCatalog,
-} from '../../agent-runtime/index.js';
+import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
-import {
-  bundledSharedSkillRoot,
-  bundledTeamLeaderSkillRoot,
-  dispatcherTeamCronJobsPath,
-} from '../../platform/paths.js';
+import { dispatcherTeamCronJobsPath } from '../../platform/paths.js';
 import type {
   CompletionEnvelope,
   CompletionInitiator,
@@ -27,7 +20,6 @@ import {
   collectShutdownFailure,
   throwShutdownFailures,
 } from '../shutdown-errors.js';
-import { cronMcpServerDescriptor } from '../scheduler/mcp-config.js';
 import { SchedulerService, type SchedulerCommands } from '../scheduler/service.js';
 import { CronJobStore } from '../scheduler/store.js';
 import {
@@ -38,8 +30,6 @@ import {
 } from '../teammate-collection/index.js';
 import type { SpawnOwnedTeamMateOptions } from '../teammate-collection/owned-teammates.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
-import { teammateMcpServerDescriptor } from '../teammate-collection/mcp-config.js';
-import { teamMcpServerDescriptor } from '../team-collection/mcp-config.js';
 import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import {
   optionalLifecycleText,
@@ -52,7 +42,7 @@ import type { SuffixGenerator } from '../name-allocator.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import type { TeamStore } from '../team-collection/store.js';
 import type {
-  TeamDissolveInput,
+  TeamDissolveRecord,
   TeamLeaderSendResult,
   TeamRecord,
   TeamRouteProjection,
@@ -61,7 +51,8 @@ import type {
   TeamView,
 } from '../team-collection/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
-import { createTeamLeaderAgent } from './leader-agent.js';
+import { createTeamLeaderAgentForTeam } from './leader-agent.js';
+import { teamView } from './team-view.js';
 import { WorkflowService, type WorkflowOps } from '../workflow-service/index.js';
 
 export interface TeamServiceDeps {
@@ -77,6 +68,7 @@ export interface TeamServiceDeps {
   ) => Promise<CompletionInitiator | null>;
   isShuttingDown: () => boolean;
   admitOperation: <T>(task: () => Promise<T>) => Promise<T>;
+  availability: TeamAvailability;
   withTeamLeaderLease: <T>(
     lease: TeamLeaderLease,
     task: (service: TeamService) => Promise<T>,
@@ -92,6 +84,16 @@ export interface TeamServiceDeps {
   evict: (service: TeamService) => void;
   log: DreamuxLogger;
   workflowLog: DreamuxLogger;
+}
+
+export interface TeamAvailability {
+  admit<T>(task: () => Promise<T>): Promise<T>;
+  completionInitiator(delegate: CompletionInitiator): CompletionInitiator;
+}
+
+export interface TeamLiveWriter {
+  name: string;
+  runtime: AgentRuntime;
 }
 
 export interface TeamServiceCreateInput {
@@ -123,9 +125,9 @@ export interface TeamSchedulerLifecycle {
 /**
  * A single team entity (issue #233): holds its own {@link TeamRecord}, *has a*
  * leader {@link TeammateService} (Phase 4, at the team root), and OWNS its
- * members' team-scoped {@link TeammateCollection}. It exposes the per-team
- * domain ops (`status` / `dissolve` / `deliverToLeader` / `sharedWorkspace`)
- * and forwards admin `team_leader` target calls to its own
+ * members' team-scoped {@link TeammateCollection}. It exposes per-team runtime
+ * and resource operations while TeamCollection owns the durable dissolve state
+ * machine. Admin `team_leader` target calls are forwarded to this Team's own
  * collection (no team id — scope is baked in); the leader is never a member row.
  */
 export class TeamService {
@@ -141,6 +143,7 @@ export class TeamService {
   * the `teammates` getter — never re-expose those internal verbs to callers. */
   private readonly teammateCollection: TeammateCollection;
   private readonly scheduler_: SchedulerService;
+  private readonly schedulerCommands: SchedulerCommands;
   private readonly workflowService: WorkflowService;
 
   private constructor(private readonly deps: TeamServiceDeps, teamId: string) {
@@ -176,7 +179,8 @@ export class TeamService {
           this.teammateCollection.releaseAllOwned(owner),
       },
       router: deps.router,
-      completionInitiator: () => this.mustLeader(),
+      completionInitiator: () =>
+        deps.availability.completionInitiator(this.mustLeader()),
       log: deps.workflowLog,
     });
     this.scheduler_ = new SchedulerService({
@@ -186,11 +190,32 @@ export class TeamService {
         dispatcherId: deps.dispatcherId,
       }),
       absentRuntimeStrategy: 'submit',
+      // SchedulerService owns the potentially long runtime-idle defer. Keep
+      // only Dispatcher admission around it; Team admission guards each short
+      // public mutation and the final prompt submission separately below.
       admit: (task) => deps.admitOperation(task),
       getRuntime: () => this.leader_?.getRuntime() ?? null,
-      submitScheduled: (input) => this.mustLeader().scheduledInput(input),
+      submitScheduled: (input) =>
+        deps.availability.admit(() => this.mustLeader().scheduledInput(input)),
       log: deps.log,
     });
+    this.schedulerCommands = {
+      list: () => this.scheduler_.commands.list(),
+      create: (input) =>
+        deps.availability.admit(() => this.scheduler_.commands.create(input)),
+      update: (input) =>
+        deps.availability.admit(() => this.scheduler_.commands.update(input)),
+      delete: (id) =>
+        deps.availability.admit(() => this.scheduler_.commands.delete(id)),
+      runNow: async (id) => {
+        // Start the scheduler operation under the Team gate, but carry its
+        // potentially hour-long idle wait outside the route-lifecycle lock.
+        const pending = await deps.availability.admit(async () => ({
+          completion: this.scheduler_.commands.runNow(id),
+        }));
+        return pending.completion;
+      },
+    };
   }
 
   static async createNew(
@@ -303,9 +328,6 @@ export class TeamService {
     }
     service.leader_ = service.buildLeader(identity);
     deps.trackMaterialized(service);
-    if (record.status !== 'closed') {
-      await service.workflowService.recover();
-    }
     return {
       service,
       schedulerLifecycle: TeamService.schedulerLifecycleFor(service),
@@ -317,7 +339,7 @@ export class TeamService {
   }
 
   get scheduler(): SchedulerCommands {
-    return this.scheduler_.commands;
+    return this.schedulerCommands;
   }
 
   get workflows(): WorkflowOps {
@@ -379,7 +401,44 @@ export class TeamService {
     }
   }
 
-  async dissolve(input: TeamDissolveInput): Promise<TeamSummary> {
+  /** Every process-live runtime that may write this Team's shared workspace. */
+  liveWriters(): TeamLiveWriter[] {
+    const writers = this.teammateCollection.liveRuntimes();
+    const leaderRuntime = this.leader_?.getRuntime() ?? null;
+    if (leaderRuntime !== null) {
+      writers.unshift({ name: this.leaderName, runtime: leaderRuntime });
+    }
+    return writers;
+  }
+
+  /** Reattach every non-closed durable writer before restart recovery waits. */
+  async recoverLiveWritersForDissolve(): Promise<TeamLiveWriter[]> {
+    if (this.leader.status().status !== 'closed') {
+      await this.leader.ensureStarted();
+    }
+    await this.teammateCollection.recoverLiveRuntimesForOwnerClose();
+    return this.liveWriters();
+  }
+
+  /** Synchronize a TeamCollection-owned durable lifecycle write into this entity. */
+  replaceRecord(record: TeamRecord): void {
+    if (record.team_id !== this.id) {
+      throw new Error(`Team record ${JSON.stringify(record.team_id)} does not match ${JSON.stringify(this.id)}`);
+    }
+    this.record = record;
+  }
+
+  /**
+   * Close routes' runtime/resource half after the Team-wide idle barrier. The
+   * owning TeamCollection has already fenced admission and supplies the exact
+   * durable dissolve phase and shared cleanup state to commit atomically with
+   * logical closure.
+   */
+  async closeLogically(input: {
+    note: string;
+    dissolve: TeamDissolveRecord;
+    worktree: TeamRecord['worktree'];
+  }): Promise<TeamSummary> {
     requireLifecycleText(input.note, 'Team dissolve note');
     this.workflowService.closeAdmission();
     await this.workflowService.stopAll();
@@ -388,36 +447,55 @@ export class TeamService {
     const record = this.mustRecord();
     const members = await this.members();
     for (const member of members) {
-      await this.teammateCollection.close({
-        name: member.name,
-        note: input.note,
-      });
+      await this.teammateCollection.close({ name: member.name, note: input.note });
     }
     await this.stopLeader({ note: input.note });
-    // `dissolve` is the single authoritative cleanup site for the Team's shared
-    // worktree (issue #236): members and the leader borrow it and skip cleanup on
-    // their own `close`, so only this call removes it.
-    const cleaned = await this.deps.worktrees.cleanup({
-      source_cwd: record.repo_cwd,
-      source_repo: record.source_repo,
-      worktree: record.worktree,
-    });
+    await this.scheduler_.deleteStoreFile();
+    const closingDissolve =
+      input.dissolve.phase === 'complete' || input.dissolve.phase === 'failed'
+      ? { ...input.dissolve, phase: 'closing_resources' as const }
+      : input.dissolve;
     this.record = await this.deps.store.update(record, {
       status: 'closed',
       closedAt: Date.now(),
       closeNote: input.note,
-      worktree: cleaned,
+      worktree: input.worktree,
+      dissolve: closingDissolve,
+      expectedDissolveOperationId: input.dissolve.operation_id,
     });
-    // Propagate that single result to every borrower so a leader/member
-    // `cleanup_state` does not stay `managed-active` after the worktree is gone
-    // (issue #237). They share the one worktree, so the same identity applies.
-    await this.leader.applyWorktreeCleanup(cleaned);
-    for (const member of members) {
-      await this.teammateCollection.applyWorktreeCleanup(member.name, cleaned);
+    await this.synchronizeWorktreeCleanup(input.worktree);
+    if (closingDissolve !== input.dissolve) {
+      this.record = await this.deps.store.update(this.mustRecord(), {
+        dissolve: input.dissolve,
+        expectedDissolveOperationId: input.dissolve.operation_id,
+      });
     }
-    await this.scheduler_.deleteStoreFile();
+    return this.status();
+  }
+
+  /** Idempotently synchronize the Team-owned workspace fact to all borrowers. */
+  async synchronizeWorktreeCleanup(
+    worktree: TeamRecord['worktree'],
+  ): Promise<void> {
+    const members = await this.members();
+    await this.leader.applyWorktreeCleanup(worktree);
+    for (const member of members) {
+      await this.teammateCollection.applyWorktreeCleanup(member.name, worktree);
+    }
+  }
+
+  /** Propagate the one Team-owned physical-cleanup result to every borrower. */
+  async completeWorktreeCleanup(input: {
+    dissolve: TeamDissolveRecord;
+    worktree: TeamRecord['worktree'];
+  }): Promise<TeamSummary> {
+    await this.synchronizeWorktreeCleanup(input.worktree);
+    this.record = await this.deps.store.update(this.mustRecord(), {
+      worktree: input.worktree,
+      dissolve: input.dissolve,
+      expectedDissolveOperationId: input.dissolve.operation_id,
+    });
     const summary = await this.status();
-    // Evict so a later `get` rebuilds from disk and reads `status: closed`.
     this.deps.evict(this);
     return summary;
   }
@@ -524,53 +602,13 @@ export class TeamService {
     return this.teammateCollection.list(); // members-only; leader is `this.leader`
   }
 
-  private leaderMcpServers(leaderName: string): readonly AgentRuntimeMcpServer[] {
-    return [
-      teammateMcpServerDescriptor({
-        dispatcherId: this.deps.dispatcherId,
-        callerKind: 'team_leader',
-        teamId: this.id,
-        adminSocketPath: this.deps.adminSocketPath,
-      }),
-      cronMcpServerDescriptor({
-        dispatcherId: this.deps.dispatcherId,
-        teamId: this.id,
-        adminSocketPath: this.deps.adminSocketPath,
-      }),
-      teamMcpServerDescriptor({
-        dispatcherId: this.deps.dispatcherId,
-        callerKind: 'team_leader',
-        teamId: this.id,
-        leaderName,
-        adminSocketPath: this.deps.adminSocketPath,
-      }),
-      ...this.deps.leaderChannelDescriptors({
-        teamId: this.id,
-        leaderName,
-      }),
-    ];
-  }
-
   private buildLeader(identity: AgentEntityIdentity): TeammateService {
-    return createTeamLeaderAgent({
+    return createTeamLeaderAgentForTeam({
       dispatcherId: this.deps.dispatcherId,
+      teamId: this.id,
       identity,
-      mcpServers: this.leaderMcpServers(identity.name),
-      skillSources: [
-        {
-          name: 'team-leader',
-          path: bundledTeamLeaderSkillRoot(),
-          source: 'dreamux-core',
-        },
-        {
-          name: 'shared',
-          path: bundledSharedSkillRoot(),
-          source: 'dreamux-core',
-        },
-        ...identity.skill_sources,
-      ],
-      disableFeatures: [DISABLE_FEATURE_CRON],
-      systemPrompt: teamLeaderSystemPrompt(this.id, identity.identity_prompt),
+      adminSocketPath: this.deps.adminSocketPath,
+      leaderChannelDescriptors: this.deps.leaderChannelDescriptors,
       config: this.deps.config,
       agentRuntimeProviders: this.deps.agentRuntimeProviders,
       identities: this.deps.identities,
@@ -658,32 +696,4 @@ export class TeamService {
       stop: () => service.scheduler_.stop(),
     };
   }
-}
-
-function teamLeaderSystemPrompt(
-  teamId: string,
-  identityPrompt: string | null,
-): AgentRuntimeSystemPrompt {
-  const append = [
-    `You are the TeamLeader of Dreamux Team ${JSON.stringify(teamId)}.`,
-    'Load `team-workflow` before using this Team\'s TeamMate tools, provider-exposed channel tools, cron tools, or team transfer tool.',
-    'When a prompt-submitting TeamMate tool returns success, the task was submitted successfully; Dreamux core will push the completion back automatically, so do not poll `last` or other read tools, and end the turn naturally if there is no other work.',
-  ];
-  if (identityPrompt !== null) append.push(identityPrompt);
-  return { append };
-}
-
-export function teamView(team: TeamRecord): TeamView {
-  return {
-    team_name: team.team_id,
-    status: team.status,
-    intent: team.intent,
-    source_repo: team.source_repo,
-    leader_name: team.leader_name,
-    leader_agent_runtime: team.leader_agent_runtime,
-    created_at: team.created_at,
-    updated_at: team.updated_at,
-    closed_at: team.closed_at,
-    close_note: team.close_note,
-  };
 }

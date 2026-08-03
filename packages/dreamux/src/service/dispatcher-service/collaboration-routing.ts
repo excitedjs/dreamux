@@ -18,6 +18,7 @@ import type { ChannelService } from '../channel-service/index.js';
 import type { CollaborationSpaceService } from '../collaboration-space/index.js';
 import { CollaborationTargetOperationError } from '../collaboration-space/operation-error.js';
 import type { TeamCollection } from '../team-collection/index.js';
+import { TeamUnavailableError } from '../team-collection/errors.js';
 import { validateTeamId } from '../team-collection/types.js';
 
 const ROUTE_IDENTITY_MAX = 512;
@@ -393,14 +394,20 @@ async function deliverToFirstBoundTarget(input: {
       target,
     });
     if (routed === null) continue;
-    if (!(await input.teams.isOpenTeam(routed.owner.teamName))) {
-      return { status: 'unavailable' };
+    try {
+      return {
+        status: 'delivered',
+        result: await input.teams.deliverToLeader(
+          routed.owner.teamName,
+          input.turn,
+        ),
+      };
+    } catch (error) {
+      if (error instanceof TeamUnavailableError) {
+        return { status: 'unavailable' };
+      }
+      throw error;
     }
-    const team = await input.teams.get(routed.owner.teamName);
-    return {
-      status: 'delivered',
-      result: await team.deliverToLeader(input.turn),
-    };
   }
   return { status: 'missing' };
 }

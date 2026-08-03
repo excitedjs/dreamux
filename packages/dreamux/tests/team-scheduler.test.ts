@@ -80,6 +80,8 @@ class FakeRuntime implements AgentRuntime {
     return { status: 'submitted', turnId: `text-${this.textSubmitted.length}` };
   }
 
+  async waitIdle(): Promise<void> {}
+
   getStatus(): AgentRuntimeStatus {
     return this.status;
   }
@@ -363,7 +365,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       leaderAgentRuntime: 'agent-a',
       intent: 'lead alpha',
     });
-    await (await teams.get('alpha')).dissolve({ teamId: 'alpha', note: 'done' });
+    await dissolveTeamForTest(teams, 'alpha', 'done');
     await expect(teams.scheduler('alpha')).rejects.toBeInstanceOf(
       TeamUnavailableError,
     );
@@ -541,13 +543,12 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     const cronPath = dispatcherTeamCronJobsPath('dispatcher-a', 'alpha');
     expect(existsSync(cronPath)).toBe(true);
 
-    await team.dissolve({ teamId: 'alpha', note: 'done' });
+    await dissolveTeamForTest(teams, 'alpha', 'done');
 
     expect(existsSync(cronPath)).toBe(false);
-    await expect(team.scheduler.runNow(job.id)).resolves.toEqual({
-      id: job.id,
-      status: 'skipped',
-    });
+    await expect(team.scheduler.runNow(job.id)).rejects.toBeInstanceOf(
+      TeamUnavailableError,
+    );
   });
 
   it('projects runtime status from checkpoints', async () => {
@@ -1141,7 +1142,11 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       intent: 'lead replacement alpha',
     });
     expect(replacement.team.team_name).not.toBe(firstName);
-    await expect(oldHandle.teammates.list()).rejects.toThrow(/closed/);
+    await expect(oldHandle.teammates.list()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: member.teammate.name }),
+      ]),
+    );
     await expect(
       oldHandle.teammates.send({
         name: member.teammate.name,
@@ -1809,6 +1814,22 @@ async function seedDispatcherCheckpoint(
     },
   });
   await identities.update(identity, { sessionId });
+}
+
+async function dissolveTeamForTest(
+  teams: TeamCollection,
+  teamId: string,
+  note: string,
+) {
+  const accepted = await teams.acceptDissolve({
+    teamId,
+    note,
+    requester: { kind: 'dispatcher' },
+  });
+  teams.startAcceptedDissolve(accepted, (input) =>
+    teams.closeAcceptedResources(input),
+  );
+  return accepted.completed;
 }
 
 function makeTeams(input: {

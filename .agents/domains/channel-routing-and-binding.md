@@ -4,7 +4,8 @@ This page is the stable contract for Channel providers, provider tools, target
 normalization, Team channel binding, and TeamLeader channel authorization.
 
 Read this before changing Channel provider contracts, `channel-mcp`, Team MCP
-`bind_channel` / `transfer_back`, binding state, or inbound channel routing.
+`dissolve` / `bind_channel` / `transfer_back`, binding state, collaboration
+target close, or inbound channel routing.
 
 ## Provider Ownership
 
@@ -108,8 +109,14 @@ live on Team MCP, not on a generic Channel MCP binding surface:
 - dispatcher projection:
   `transfer_back({ channel_id?, meta })`
 - TeamLeader projection:
-  scoped `bind_channel({ channel_id?, meta })` and
+  scoped `dissolve({ note })`, `bind_channel({ channel_id?, meta })`, and
   `transfer_back({ channel_id?, meta })`
+
+Scoped `dissolve` is a Team lifecycle operation rather than a Channel-provider
+tool. It derives the Team and current leader generation from the descriptor and
+maps to the same core `team.dissolve` admin method as the Dispatcher projection;
+it accepts no Team selector. Channel providers neither branch on nor implement
+Team dissolve.
 
 `channel_id` selects the configured channel. It defaults only when the
 dispatcher has one configured channel. `meta` is provider-owned selector input;
@@ -147,7 +154,10 @@ it creates an unowned explicit route, returns the exact same explicit owner
 unchanged, and rejects another owner or any active managed claim. The caller's
 descriptor-bound Team/leader generation and route readiness are checked under
 the Team route lifecycle lease before that write; no managed intent is detached
-on this path.
+on this path. Scoped transfer-back takes the target route lock before entering
+that generation lease, then validates the lease before detaching intent or
+mutating the binding. This target-before-Team order matches collaboration target
+close and prevents the two lifecycle paths from deadlocking.
 Rows carry provider ref, target type/key, display/canonical URL, provider
 `meta`, Team name, TeamLeader name, active flag, and timestamps.
 
@@ -238,6 +248,18 @@ An explicit collaboration-space bind replay with the same repository, runtime,
 identity, and worktree policy refreshes container display/addressing metadata
 and returns `unchanged`; it emits no duplicate space event. Changing the policy
 still requires dissolve and rebind.
+
+Collaboration target close is a consumer of the TeamCollection-owned dissolve
+lifecycle, not a second close state machine. Under the exact target-generation
+lock it persists `closing` plus one opaque handoff id and accepts or joins the
+Team operation. It then releases that lock before Team-wide idle and route
+cleanup, awaits the handle's `logicalClosed` milestone, and reacquires the lock
+to mark only the same matching target `closed`. The Team operation stores a list
+of handoff ids so concurrent target consumers can join it. During route sweep,
+each target lock is reacquired and the exact handoff is checked against the
+authoritative TeamCollection record; missing or mismatched handoffs detach
+normally. Acceptance alone never means target closed, and a pre-logical failure
+leaves the target recoverably `closing` with only a public-safe error.
 
 Source:
 

@@ -1,6 +1,6 @@
 ---
 name: team-workflow
-description: MCP operation notes for Team work. Load before using this Team's TeamMate tools, provider-exposed channel tools, cron tools, or Team channel binding tools.
+description: MCP operation notes for Team work. Load before using this Team's TeamMate tools, Team dissolve or channel-transfer tools, provider-exposed channel tools, or cron tools.
 ---
 
 # Team Workflow
@@ -27,8 +27,20 @@ description: MCP operation notes for Team work. Load before using this Team's Te
 
 ## Team MCP Notes
 
-- The `team` MCP exposes only `bind_channel` and `transfer_back` in this
-  context.
+- The `team` MCP exposes only `dissolve`, `bind_channel`, and `transfer_back` in
+  this context.
+- Use `dissolve({ note })` only after this Team's work is complete and its
+  shared worktree is safe to remove. First inspect for uncommitted or untracked
+  changes, unmerged index entries, and commits that are not preserved on
+  another safe local or remote ref.
+- If deletion is unsafe or you cannot determine whether work is preserved, do
+  not call `dissolve`. Ask the user how to preserve or handle the work through
+  the current visible reply path. The required `note` is the final reason for
+  a confirmed dissolve, not a way to bypass that decision.
+- A successful self-dissolve receipt confirms durable logical-close admission.
+  Let the current turn settle naturally; Dreamux then closes the Team. Eligible
+  worktree deletion may remain `cleanup-pending` and continue in the
+  background.
 - `bind_channel({ channel_id?, meta })` binds an unowned channel target to this
   Team. The exact same explicit binding is safe to repeat. The operation
   refuses a target already owned by another Team or managed by a collaboration

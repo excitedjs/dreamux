@@ -15,13 +15,8 @@ import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import { adminSocketPath as defaultAdminSocketPath, dispatcherCronJobsPath } from '../../platform/paths.js';
 import { errorInfo } from '../../platform/error-info.js';
 import type { DispatcherRow, DispatcherStore } from '../../state/dispatcher-store.js';
-import { createDispatcherAgent } from './agent.js';
-import { handleCollaborationTargetLifecycle } from './collaboration-routing.js';
-import { dispatcherMcpServerDescriptors } from './mcp-descriptors.js';
 import type { ChannelMcpCallerScope } from '../channel-service/mcp-descriptors.js';
-import { ensureDispatcherRootIdentity } from './identity.js';
-import { assertRunnableChannelShape } from './runnable-channel.js';
-import { asInboundDeliveryResult, closeAllBuilt } from './runtime-helpers.js';
+import { closeAllBuilt } from './runtime-helpers.js';
 import { DispatcherScopedChannelRouting } from './scoped-channel-routing.js';
 import { DispatcherTaskDrain } from './inbound-task-drain.js';
 import { rollbackFailedInputSourceStart } from './input-source-start-rollback.js';
@@ -34,7 +29,6 @@ import {
   invokeDispatcherChannelTool,
   type ChannelToolCaller,
 } from './channel-tool-invocation.js';
-import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
@@ -47,6 +41,7 @@ import type { TeammateService } from '../teammate-service/index.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import { TeamCollection } from '../team-collection/index.js';
+import { TEAM_DISSOLVE_RESULT_BUDGET_MS } from '../team-collection/dissolve-lifecycle.js';
 import { SchedulerService, type SchedulerCommands } from '../scheduler/service.js';
 import { CronJobStore } from '../scheduler/store.js';
 import { ChannelService, type ChannelRouteOwner } from '../channel-service/index.js';
@@ -61,6 +56,7 @@ import type {
   TeamCreateInput,
   TeamDissolveInput,
   TeamHistoryQuery,
+  TeamLeaderLease,
   TeamLeaderSendResult,
 } from '../team-collection/types.js';
 import type {
@@ -75,6 +71,10 @@ import {
   dispatcherSummary,
   liveDispatcherRuntimeStatus,
 } from './runtime-status.js';
+import {
+  prepareDispatcherChannelResources,
+  startPreparedDispatcherChannels,
+} from './input-source-channels.js';
 
 export type { ChannelToolCaller, TeamLeaderHandle };
 
@@ -193,6 +193,7 @@ export class DispatcherService {
       initiatorFor: (producer) => this.initiatorFor(producer),
       isShuttingDown: () => this.shuttingDown || this.stopping,
       admitOperation: (task) => this.admitOperation(task),
+      trackAcceptedOperation: (task) => this.admittedTasks.trackAccepted(task),
       adminSocketPath: adminSocket,
       leaderChannelDescriptors: ({ teamId, leaderName }) =>
         [
@@ -243,13 +244,9 @@ export class DispatcherService {
     });
   }
 
-  get scheduler(): SchedulerCommands {
-    return this.scheduler_.commands;
-  }
+  get scheduler(): SchedulerCommands { return this.scheduler_.commands; }
 
-  async start(): Promise<void> {
-    return this.startInputSources();
-  }
+  async start(): Promise<void> { return this.startInputSources(); }
 
   async prepareChannels(): Promise<void> {
     this.assertNotShuttingDown();
@@ -264,51 +261,26 @@ export class DispatcherService {
 
   private async doPrepareChannels(): Promise<void> {
     this.assertNotShuttingDown();
-    const id = this.id;
-    const row = this.dispatchers.get(id);
-    if (row === null) throw new Error(`no dispatcher '${id}'`);
-    const dispatcherConfig = this.config.dispatchers.find(
-      (dispatcher) => dispatcher.id === id,
-    );
-    if (dispatcherConfig !== undefined) {
-      assertRunnableChannelShape(dispatcherConfig, this.channelProviders);
-    }
-    if (dispatcherConfig === undefined) {
-      throw new Error(`dispatcher '${id}' has no config entry`);
-    }
-
-    const workspaceCwd = await ensureDispatcherWorkspace(this.config, id);
-    const identity = await ensureDispatcherRootIdentity({
-      identities: this.identities,
-      dispatcherId: id,
-      agentRuntime: this.dispatcherAgentRuntime(),
-      cwd: workspaceCwd,
-    });
-    const agent = createDispatcherAgent({
-      id,
+    const prepared = await prepareDispatcherChannelResources({
+      dispatcherId: this.id,
       config: this.config,
+      dispatchers: this.dispatchers,
+      channelProviders: this.channelProviders,
       agentRuntimeProviders: this.agentRuntimeProviders,
       identities: this.identities,
       turnsStore: this.turnsStore,
       router: this.router,
       log: this.log,
-      mcpServers: dispatcherMcpServerDescriptors({
-        dispatcherId: id,
-        channels: this.channels.configuredChannels(),
-        channelProviders: this.channelProviders,
-        adminSocketPath: this.adminSocket,
-      }),
-      identity,
+      channels: this.channels,
+      adminSocketPath: this.adminSocket,
     });
-
-    const channels = await this.channels.build();
     try {
       this.assertNotShuttingDown();
-      this.workspaceCwd = workspaceCwd;
-      this.agent = agent;
-      this.preparedChannels = channels;
+      this.workspaceCwd = prepared.workspaceCwd;
+      this.agent = prepared.agent;
+      this.preparedChannels = prepared.sessions;
     } catch (err) {
-      await closeAllBuilt(channels);
+      await closeAllBuilt(prepared.sessions);
       throw err;
     }
   }
@@ -347,6 +319,8 @@ export class DispatcherService {
 
   private async doStartInputSources(): Promise<void> {
     this.assertNotShuttingDown();
+    await this.collaborationSpaces.recoverTeamDissolves();
+    this.assertNotShuttingDown();
     await this.workflowOwner.recover();
     try {
       await this.prepareChannels();
@@ -356,7 +330,6 @@ export class DispatcherService {
     }
     this.assertNotShuttingDown();
     const channels = this.preparedChannels ?? new Map<string, ChannelSession>();
-    const liveChannels = new Map<string, ChannelSession>();
     try {
       await this.workflowOwner.start();
       this.assertNotShuttingDown();
@@ -366,33 +339,17 @@ export class DispatcherService {
       this.assertNotShuttingDown();
       await this.collaborationSpaces.resumePendingTargets();
       this.assertNotShuttingDown();
-      for (const [channelId, session] of channels) {
-        const coreEvents = this.coreEvents.createSource(channelId);
-        const strictRoutes = this.channelRoutes.createSessionLease(channelId);
-        await session.start({
-          deliver: async (turn, envelope) =>
-            asInboundDeliveryResult(
-              await this.channelRoutes.route(channelId, turn, envelope),
-            ),
-          targetLifecycle: (event) =>
-            handleCollaborationTargetLifecycle({
-              dispatcherId: this.id,
-              dispatcherAgentRuntime: this.dispatcherAgentRuntime(),
-              channelId,
-              event,
-              channels: this.channels,
-              collaborationSpaces: this.collaborationSpaces,
-              log: this.log,
-            }),
-          coreEvents: coreEvents.source,
-          ensureCollaborationTarget: strictRoutes.ensure,
-          deliverExact: strictRoutes.deliverExact,
-        });
-        this.assertNotShuttingDown();
-        liveChannels.set(channelId, session);
-        this.channels.adopt(liveChannels);
-      }
-      if (channels.size === 0) this.channels.adopt(liveChannels);
+      await startPreparedDispatcherChannels({
+        dispatcherId: this.id,
+        dispatcherAgentRuntime: () => this.dispatcherAgentRuntime(),
+        sessions: channels,
+        channels: this.channels,
+        channelRoutes: this.channelRoutes,
+        collaborationSpaces: this.collaborationSpaces,
+        coreEvents: this.coreEvents,
+        log: this.log,
+        assertAvailable: () => this.assertNotShuttingDown(),
+      });
       this.preparedChannels = null;
       this.assertNotShuttingDown();
       await this.scheduler_.start();
@@ -441,6 +398,7 @@ export class DispatcherService {
     this.channelRoutes.revokeSessionLeases();
     this.admittedTasks.closeAdmission();
     this.workflowOwner.closeAdmission();
+    this.teams.interruptDissolvesForShutdown();
     const task = this.doStop().finally(() => {
       this.stopping = false;
       this.stoppingTask = null;
@@ -449,7 +407,6 @@ export class DispatcherService {
     this.stoppingTask = task;
     return task;
   }
-
   private async doStop(): Promise<void> {
     const failures: unknown[] = [];
     try {
@@ -465,6 +422,7 @@ export class DispatcherService {
       this.channels.clear();
       this.scheduler_.stop();
       this.teams.stopSchedulers();
+      this.teams.interruptDissolvesForShutdown();
       await this.admittedTasks.drain();
       await collectShutdownFailure(failures, () => this._teammates.releaseAllOwned());
       await this.collaborationSpaces.drainLifecycleTasks();
@@ -552,7 +510,18 @@ export class DispatcherService {
     arguments: Record<string, unknown>;
     caller: ChannelToolCaller;
   }): Promise<unknown> {
-    return invokeDispatcherChannelTool({ channels: this.channels, ...input });
+    return this.admitOperation(() => {
+      if (input.caller.kind === 'team_leader') {
+        return this.teams.withTeamLeaderLease(
+          {
+            teamId: input.caller.teamId,
+            leaderName: input.caller.leaderName,
+          },
+          () => invokeDispatcherChannelTool({ channels: this.channels, ...input }),
+        );
+      }
+      return invokeDispatcherChannelTool({ channels: this.channels, ...input });
+    });
   }
 
   workspace(): Promise<string> { return this._teammates.dispatcherWorkspace(); }
@@ -568,9 +537,11 @@ export class DispatcherService {
   team(teamId: string): Promise<TeamLeaderHandle> {
     return this.admitOperation(async () =>
       teamLeaderHandle({
-        lease: await this.teams.teamLeaderLease(teamId),
-        withService: (lease, task) =>
+        lease: await this.teams.teamLeaderReadLease(teamId),
+        withMutationService: (lease, task) =>
           this.admitOperation(() => this.teams.withTeamLeaderLease(lease, task)),
+        withReadService: (lease, task) =>
+          this.teams.withTeamLeaderReadLease(lease, task),
       }),
     );
   }
@@ -627,7 +598,26 @@ export class DispatcherService {
   }
 
   async dissolveTeam(input: TeamDissolveInput) {
-    return this.admitOperation(() => this.teamChannels.dissolve(input));
+    const deadlineAt = Date.now() + TEAM_DISSOLVE_RESULT_BUDGET_MS;
+    return this.admitOperation(async () => {
+      const accepted = await this.teamChannels.dissolve({
+        ...input,
+        decisionDeadlineAt: deadlineAt,
+      });
+      return this.teams.dispatcherDissolveResult(
+        accepted,
+        Math.max(0, deadlineAt - Date.now()),
+      );
+    });
+  }
+
+  async dissolveTeamForLeader(input: {
+    lease: TeamLeaderLease;
+    note: string;
+  }) {
+    return this.admitOperation(async () =>
+      (await this.teamChannels.dissolveForTeamLeader(input)).receipt,
+    );
   }
 
   async bindTeamChannel(input: Parameters<TeamChannelCoordinator['bind']>[0]) {
@@ -644,6 +634,16 @@ export class DispatcherService {
     meta: Record<string, unknown>;
   }) {
     return this.admitOperation(() => this.teamChannels.transferBack(input));
+  }
+
+  async transferTeamLeaderChannelBack(input: {
+    lease: TeamLeaderLease;
+    channelId?: string;
+    meta: Record<string, unknown>;
+  }) {
+    return this.admitOperation(() =>
+      this.teamChannels.transferBackForTeamLeader(input),
+    );
   }
 
   routeChannelInput(
@@ -666,8 +666,7 @@ export class DispatcherService {
     producer: AgentEntityIdentity,
   ): Promise<CompletionInitiator | null> {
     if (producer.role === 'team_member' && producer.team_id !== null) {
-      const team = await this.teams.get(producer.team_id).catch(() => null);
-      return team?.leader ?? this.mustAgent();
+      return this.teams.completionInitiatorForLeader(producer.team_id);
     }
     return this.mustAgent();
   }

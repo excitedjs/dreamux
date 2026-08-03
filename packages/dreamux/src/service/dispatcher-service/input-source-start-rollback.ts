@@ -31,6 +31,7 @@ export async function rollbackFailedInputSourceStart(input: {
   input.coreEvents.revokeSources();
   input.channels.clear();
   await closeAllBuilt(input.sessions);
+  input.teams.interruptDissolvesForShutdown();
   await input.admittedTasks.drain();
   await input.collaborationSpaces.drainLifecycleTasks();
   input.scheduler.stop();

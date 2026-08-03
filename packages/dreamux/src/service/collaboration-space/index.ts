@@ -16,6 +16,7 @@ import {
   type TeamLeaderLease,
   validateTeamId,
 } from '../team-collection/types.js';
+import { TeamDissolveInterruptedError } from '../team-collection/errors.js';
 import {
   CollaborationTargetLifecycle,
 } from './target-lifecycle.js';
@@ -290,6 +291,14 @@ export class CollaborationSpaceService {
     return this.routes.mutateTargetRoute(input, mutation);
   }
 
+  mutateLeasedTargetRoute<T>(input: {
+    lease: TeamLeaderLease;
+    channelId: string;
+    target: CollaborationSpaceProvisionInput['target'];
+  }, mutation: () => Promise<T>): Promise<T> {
+    return this.routes.mutateLeasedTargetRoute(input, mutation);
+  }
+
   bindLeasedTargetRoute(input: {
     lease: TeamLeaderLease;
     channelId: string;
@@ -306,8 +315,19 @@ export class CollaborationSpaceService {
     return this.routes.bindTargetRoute(input);
   }
 
-  dissolveTeam(input: TeamDissolveInput) {
+  dissolveTeam(input: TeamDissolveInput & { decisionDeadlineAt?: number }) {
     return this.routes.dissolveTeam(input);
+  }
+
+  dissolveTeamForLeader(input: {
+    lease: TeamLeaderLease;
+    note: string;
+  }) {
+    return this.routes.dissolveTeamForLeader(input);
+  }
+
+  recoverTeamDissolves(): Promise<void> {
+    return this.routes.recoverTeamDissolves();
   }
 
   detachTargetsForOwner(owner: ChannelRouteOwner): Promise<number> {
@@ -373,6 +393,7 @@ export class CollaborationSpaceService {
   ): void {
     const tracked = task
       .catch((err) => {
+        if (err instanceof TeamDissolveInterruptedError) return;
         this.opts.log.error(
           {
             dispatcher_id: this.dispatcherId,

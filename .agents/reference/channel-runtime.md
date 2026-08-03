@@ -191,11 +191,12 @@ projections:
   `bind_channel({ team_name, channel_id?, meta })` and
   `transfer_back({ channel_id?, meta })`
 - TeamLeader projection:
-  `bind_channel({ channel_id?, meta })` and
-  `transfer_back({ channel_id?, meta })`, both scoped to the descriptor-bound
-  current Team/leader. TeamLeader bind is create-only for unowned targets and
-  refuses collaboration-managed routes; dispatcher bind keeps replacement
-  semantics.
+  `dissolve({ note })`, `bind_channel({ channel_id?, meta })`, and
+  `transfer_back({ channel_id?, meta })`, all scoped to the descriptor-bound
+  current Team/leader. Self-dissolve maps to the existing core
+  `team.dissolve` method and accepts no Team selector; it is not a provider
+  tool. TeamLeader bind is create-only for unowned targets and refuses
+  collaboration-managed routes; dispatcher bind keeps replacement semantics.
 
 The `meta` object is provider-owned target selector input. Team peer send
 remains future work and is not part of channel binding.
@@ -327,7 +328,7 @@ intent for transfer-back; explicit bind instead commits the replacement before
 detaching intent, so a rejected bind does not destroy the managed route. Route
 publication also holds a Team lifecycle lease. Every Team close raises the
 closing fence, detaches matching collaboration intent, transfers all routes
-owned by that Team, and only then dissolves it. Managed bindings carry an opaque
+owned by that Team, and only then logically closes it. Managed bindings carry an opaque
 `claim_id`, while explicit binds clear it; reconciliation therefore releases
 only the stale matching claim and preserves an explicit replacement even when it
 names the former Team. The binding store is v3; v2 rows that already have
@@ -339,6 +340,15 @@ loud. A missing route is reclaimed only when the original Team is still
 routable. Detached targets fall back to the normal dispatcher path.
 When the space is dissolved, future deliveries also fall back unless the space
 is rebound.
+
+A collaboration target close persists a generation-specific handoff while
+holding its target lock, accepts or joins the TeamCollection-owned dissolve,
+then releases the lock while awaiting the accepted handle's `logicalClosed`
+milestone. Final target close reacquires the lock and requires the same closing
+record and handoff. The Team operation stores all joined target handoff ids;
+route reconciliation re-reads that authoritative set after acquiring each
+target lock and skips only an exact match. Thus target `closed` means Team routes
+and runtimes are logically closed, not merely that durable acceptance occurred.
 
 ## Dispatcher-Scoped Core Events
 

@@ -28,6 +28,30 @@ export interface PreparedTeamMateWorkspace {
   worktree: AgentEntityWorktreeIdentity;
 }
 
+export type WorktreeCleanupBlockedReason =
+  | 'dirty'
+  | 'unmerged'
+  | 'unique-commits';
+
+export type WorktreeCleanupAssessment =
+  | {
+      status: 'terminal';
+      worktree: AgentEntityWorktreeIdentity;
+    }
+  | {
+      status: 'eligible';
+    }
+  | {
+      status: 'blocked';
+      reason: WorktreeCleanupBlockedReason;
+      worktree: AgentEntityWorktreeIdentity;
+    };
+
+interface WorktreeAssessmentOptions {
+  /** Absolute wall-clock deadline for every Git probe in this assessment. */
+  deadlineAt?: number;
+}
+
 export class WorktreeManager {
   async prepare(input: {
     dispatcherId: string;
@@ -187,31 +211,74 @@ export class WorktreeManager {
     worktree: AgentEntityWorktreeIdentity;
   }): Promise<AgentEntityWorktreeIdentity> {
     const worktree = identity.worktree;
-    if (worktree.mode !== 'managed') {
-      return worktree;
-    }
-    if (worktree.cleanup !== 'delete-on-close') {
-      return { ...worktree, cleanup_state: 'kept', cleanup_error: null };
-    }
     try {
+      const assessment = await this.assessCleanup(identity);
+      if (assessment.status !== 'eligible') return assessment.worktree;
       const repo = identity.source_repo ?? (await this.repoRoot(identity.source_cwd));
-      const retain = await retainedState(repo, worktree);
-      if (retain !== null) {
-        return {
-          ...worktree,
-          cleanup_state: retain,
-          cleanup_error: null,
-        };
-      }
       await git(repo, ['worktree', 'remove', worktree.path]);
       return { ...worktree, cleanup_state: 'deleted', cleanup_error: null };
     } catch (err) {
+      // Git refuses dirty/unmerged removals, and a concurrent ref update can
+      // also change reachability after the caller's earlier assessment. Re-read
+      // the authoritative safety facts before classifying this as operational.
+      // A terminal/blocked result is durable truth, not an infinite retry.
+      try {
+        const latest = await this.assessCleanup(identity);
+        if (latest.status !== 'eligible') return latest.worktree;
+      } catch {
+        // Preserve the mutation failure below; a later lifecycle retry will
+        // repeat the complete assessment.
+      }
       return {
         ...worktree,
         cleanup_state: 'retained-error',
         cleanup_error: err instanceof Error ? err.message : String(err),
       };
     }
+  }
+
+  /**
+   * Assess automatic cleanup without mutating Git, the filesystem, or Dreamux
+   * state. Team dissolve uses this authoritative capability before admission
+   * and repeats it after every already-admitted shared-worktree writer is idle.
+   */
+  async assessCleanup(identity: {
+    source_cwd: string;
+    source_repo: string | null;
+    worktree: AgentEntityWorktreeIdentity;
+  }, options: WorktreeAssessmentOptions = {}): Promise<WorktreeCleanupAssessment> {
+    assertAssessmentDeadline(options);
+    const worktree = identity.worktree;
+    if (worktree.mode !== 'managed') {
+      return { status: 'terminal', worktree };
+    }
+    if (worktree.cleanup !== 'delete-on-close') {
+      return {
+        status: 'terminal',
+        worktree: { ...worktree, cleanup_state: 'kept', cleanup_error: null },
+      };
+    }
+    const repo = identity.source_repo ??
+      (await this.repoRoot(identity.source_cwd, options));
+    if (!(await pathExists(worktree.path, options))) {
+      const registered = (await listWorktrees(repo, options)).some(
+        (entry) => resolve(entry.path) === resolve(worktree.path),
+      );
+      if (!registered) {
+        return {
+          status: 'terminal',
+          worktree: { ...worktree, cleanup_state: 'deleted', cleanup_error: null },
+        };
+      }
+    }
+    const blocked = await retainedState(repo, worktree, options);
+    assertAssessmentDeadline(options);
+    if (blocked === null) return { status: 'eligible' };
+    return {
+      status: 'blocked',
+      reason: blockedReason(blocked),
+      worktree: { ...worktree, cleanup_state: blocked, cleanup_error: null },
+    };
   }
 
   /**
@@ -230,8 +297,11 @@ export class WorktreeManager {
     await writeFile(gitignore, BOUNDARY_GITIGNORE_CONTENT, 'utf8');
   }
 
-  private async repoRoot(cwd: string): Promise<string> {
-    const result = await git(cwd, ['rev-parse', '--show-toplevel']);
+  private async repoRoot(
+    cwd: string,
+    options: WorktreeAssessmentOptions = {},
+  ): Promise<string> {
+    const result = await git(cwd, ['rev-parse', '--show-toplevel'], options);
     return result.stdout.trim();
   }
 
@@ -274,21 +344,37 @@ async function boundaryGitignoreIsSafe(gitignorePath: string): Promise<boolean> 
 async function retainedState(
   repo: string,
   worktree: AgentEntityWorktreeIdentity,
-): Promise<AgentEntityWorktreeCleanupState | null> {
-  const unmerged = await git(worktree.path, ['ls-files', '-u']);
+  options: WorktreeAssessmentOptions = {},
+): Promise<
+  | Extract<
+      AgentEntityWorktreeCleanupState,
+      'retained-dirty' | 'retained-unmerged' | 'retained-unique-commits'
+    >
+  | null
+> {
+  const unmerged = await git(worktree.path, ['ls-files', '-u'], options);
   if (unmerged.stdout.trim() !== '') return 'retained-unmerged';
-  const status = await git(worktree.path, ['status', '--porcelain=v1', '-uall']);
+  const status = await git(
+    worktree.path,
+    ['status', '--porcelain=v1', '-uall'],
+    options,
+  );
   if (status.stdout.trim() !== '') return 'retained-dirty';
-  const head = await git(worktree.path, ['rev-parse', '--verify', 'HEAD']);
+  const head = await git(
+    worktree.path,
+    ['rev-parse', '--verify', 'HEAD'],
+    options,
+  );
   const headSha = head.stdout.trim();
-  const safeRefs = await safeReachabilityRefs(repo, worktree);
+  const safeRefs = await safeReachabilityRefs(repo, worktree, options);
   if (safeRefs.length === 0) return 'retained-unique-commits';
   const containsHead = await git(repo, [
-    'branch',
-    '--contains',
-    headSha,
+    'for-each-ref',
+    `--contains=${headSha}`,
     '--format=%(refname:short)',
-  ]);
+    'refs/heads',
+    'refs/remotes',
+  ], options);
   const containingRefs = new Set(
     containsHead.stdout
       .split('\n')
@@ -301,16 +387,33 @@ async function retainedState(
   return null;
 }
 
+function blockedReason(
+  state: Extract<
+    AgentEntityWorktreeCleanupState,
+    'retained-dirty' | 'retained-unmerged' | 'retained-unique-commits'
+  >,
+): WorktreeCleanupBlockedReason {
+  switch (state) {
+    case 'retained-dirty':
+      return 'dirty';
+    case 'retained-unmerged':
+      return 'unmerged';
+    case 'retained-unique-commits':
+      return 'unique-commits';
+  }
+}
+
 async function safeReachabilityRefs(
   repo: string,
   worktree: AgentEntityWorktreeIdentity,
+  options: WorktreeAssessmentOptions = {},
 ): Promise<string[]> {
   const refs = await git(repo, [
     'for-each-ref',
     '--format=%(refname:short)',
     'refs/heads',
     'refs/remotes',
-  ]);
+  ], options);
   const allRefs = refs.stdout
     .split('\n')
     .map((line) => line.trim())
@@ -319,26 +422,7 @@ async function safeReachabilityRefs(
   for (const ref of allRefs) {
     if (worktree.branch === null || ref !== worktree.branch) candidates.add(ref);
   }
-  if (worktree.base_ref !== null) {
-    const baseSha = await revParseOrNull(repo, worktree.base_ref);
-    if (baseSha !== null) {
-      for (const ref of allRefs) {
-        if (await gitOk(repo, ['merge-base', '--is-ancestor', baseSha, ref])) {
-          candidates.add(ref);
-        }
-      }
-    }
-  }
   return [...candidates];
-}
-
-async function revParseOrNull(cwd: string, ref: string): Promise<string | null> {
-  try {
-    const result = await git(cwd, ['rev-parse', '--verify', ref]);
-    return result.stdout.trim();
-  } catch {
-    return null;
-  }
 }
 
 async function assertRegisteredWorktree(input: {
@@ -365,14 +449,25 @@ async function assertRegisteredWorktree(input: {
 
 async function listWorktrees(
   repo: string,
+  options: WorktreeAssessmentOptions = {},
 ): Promise<Array<{ path: string; branch: string | null }>> {
-  const result = await git(repo, ['worktree', 'list', '--porcelain']);
+  const result = await git(repo, ['worktree', 'list', '--porcelain'], options);
   const entries: Array<{ path: string; branch: string | null }> = [];
   let current: { path: string; branch: string | null } | null = null;
   for (const line of result.stdout.split('\n')) {
     if (line.startsWith('worktree ')) {
       if (current !== null) entries.push(current);
-      current = { path: await realpath(line.slice('worktree '.length)), branch: null };
+      const listedPath = line.slice('worktree '.length);
+      current = {
+        path: await withinAssessmentDeadline(
+          realpath(listedPath).catch((err: unknown) => {
+            if (isNotFound(err)) return resolve(listedPath);
+            throw err;
+          }),
+          options,
+        ),
+        branch: null,
+      };
     } else if (line.startsWith('branch ') && current !== null) {
       current.branch = line.slice('branch '.length);
     }
@@ -381,8 +476,21 @@ async function listWorktrees(
   return entries;
 }
 
-async function git(cwd: string, args: string[]): Promise<{ stdout: string }> {
-  return execa('git', args, { cwd });
+async function git(
+  cwd: string,
+  args: string[],
+  options: WorktreeAssessmentOptions = {},
+): Promise<{ stdout: string }> {
+  const timeout = options.deadlineAt === undefined
+    ? undefined
+    : options.deadlineAt - Date.now();
+  if (timeout !== undefined && timeout <= 0) {
+    throw new Error('worktree assessment deadline exceeded');
+  }
+  return execa('git', args, {
+    cwd,
+    ...(timeout === undefined ? {} : { timeout }),
+  });
 }
 
 async function gitOk(cwd: string, args: string[]): Promise<boolean> {
@@ -394,13 +502,52 @@ async function gitOk(cwd: string, args: string[]): Promise<boolean> {
   }
 }
 
-async function pathExists(path: string): Promise<boolean> {
+async function pathExists(
+  path: string,
+  options: WorktreeAssessmentOptions = {},
+): Promise<boolean> {
   try {
-    await access(path);
+    await withinAssessmentDeadline(access(path), options);
     return true;
   } catch (err) {
     if (isNotFound(err)) return false;
     throw err;
+  }
+}
+
+function assertAssessmentDeadline(options: WorktreeAssessmentOptions): void {
+  if (
+    options.deadlineAt !== undefined &&
+    options.deadlineAt - Date.now() <= 0
+  ) {
+    throw new Error('worktree assessment deadline exceeded');
+  }
+}
+
+async function withinAssessmentDeadline<T>(
+  task: Promise<T>,
+  options: WorktreeAssessmentOptions,
+): Promise<T> {
+  if (options.deadlineAt === undefined) return task;
+  const remaining = options.deadlineAt - Date.now();
+  if (remaining <= 0) {
+    void task.catch(() => undefined);
+    throw new Error('worktree assessment deadline exceeded');
+  }
+  let timer: NodeJS.Timeout | null = null;
+  try {
+    return await Promise.race([
+      task,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('worktree assessment deadline exceeded')),
+          remaining,
+        );
+        timer.unref();
+      }),
+    ]);
+  } finally {
+    if (timer !== null) clearTimeout(timer);
   }
 }
 

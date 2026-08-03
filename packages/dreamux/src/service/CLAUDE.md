@@ -39,28 +39,41 @@ the explicit `service/index.ts` facade.
   while leaving the dispatcher runtime dormant; unbound channel inbound,
   dispatcher cron, or an explicit resume notice lazy-starts the contained agent.
   A channel session is published as live only after provider start succeeds. It
-  resolves a settled turn's delivery target via `initiatorFor` (a team
-  member → its leader's `TeammateService`; a dispatcher-owned teammate / leader →
-  the dispatcher's own `agent` `TeammateService`, the unified router path) and
+  resolves a settled turn's delivery target via `initiatorFor` (a team member →
+  `TeamCollection`'s generation-bound, availability-gated completion adapter; a
+  dispatcher-owned teammate / leader → the dispatcher's own `agent`
+  `TeammateService`, the unified router path) and
   orchestrates Team route-owner facts with ChannelService binding operations via
   `TeamChannelCoordinator` and collaboration route reconciliation.
 - **`team-collection/index.ts`** — `TeamCollection` (split out of the old
-  `TeamManager`): owns the team store and worktrees; does `create` / `list` /
-  `history`, open-Team route-owner fact lookup, and `get(id) → TeamService`.
+  `TeamManager`): owns the Team store, worktrees, create/list/history/read
+  projection, route and generation leases, and the single durable Team dissolve
+  lifecycle. The same availability fence gates every Team turn/mutation/route
+  path. Dissolve owns durable acceptance, writer capture and `waitIdle`
+  quiescence, both worktree assessments, logical/completed milestones,
+  retry/recovery, and shutdown interruption.
+  Its sibling modules are private implementation capabilities, not additional
+  aggregate owners: `runtime-registry.ts` owns materialization/cache and private
+  scheduler handles; `read-model.ts` owns public read projection;
+  `dissolve-controller.ts` owns the durable operation registry, retry/recovery,
+  and milestones; `dissolve-runner.ts` only executes accepted durable phases.
   **`team-service/index.ts`** — `TeamService`, the single per-team entity (holds
-  its own `TeamRecord`): `status` / `dissolve` / `deliverToLeader` /
-  `sharedWorkspace` plus the teammate forwards the admin `team_leader` target
-  calls and the shared `teamView` helper. The two classes were split into
-  separate files for the one-class-per-file rule (issue #233).
+  its own `TeamRecord`): status/delivery/shared-workspace/member operations plus
+  live-writer enumeration and the accepted operation's logical resource close.
+  It propagates one shared cleanup state to leader and members, but it does not
+  accept dissolve, detach routes, assess/delete worktrees, or own retry state.
   `TeamCollection` holds the Team scheduler lifecycle capability separately;
   do not add scheduler start/stop wrappers to the public `TeamService` surface.
   `DispatcherService.team()` returns only `TeamLeaderHandle` for admin/MCP
-  team-leader callers, never concrete `TeamService`; keep `dissolve`,
+  team-leader callers, never concrete `TeamService`; keep dissolve,
   scheduler lifecycle, and route ownership inside dispatcher/team-collection
   orchestration. The handle is bound to a `TeamCollection` TeamLeader lease
-  (`team_id` + current `leader_name` generation); every handle mutation rechecks
-  open/not-closing/current generation before touching members, and its teammate
-  sub-surface must not expose raw `spawn`. Route publication uses a distinct
+  (`team_id` + current `leader_name` generation); every mutation rechecks
+  open/not-closing/current generation, while reads use a separate
+  generation-checked lease that remains available during close. Its teammate
+  sub-surface must not expose raw `spawn`. Scoped self-dissolve goes through the
+  descriptor-bound `TeamChannelCoordinator` path rather than growing a second
+  state machine on this handle. Route publication uses a distinct
   routable TeamLeader lease that also starts/proves the leader before mutation;
   channel binding remains in dispatcher-side coordination, not on the handle.
 - **`dispatcher-service/` (agent-side parts)** — the dispatcher agent's parts (Phase 5, #233):
@@ -71,9 +84,10 @@ the explicit `service/index.ts` facade.
   path as child roles. `mcp-descriptors.ts` is the role-based MCP descriptor
   builder. `inbound-task-drain.ts` owns the dispatcher admission/drain gate for
   external work that may publish runtime, scheduler, route, or durable state.
-  `team-channel-coordinator.ts` coordinates explicit Team dissolve,
-  dispatcher/scoped-TeamLeader bind, and transfer with collaboration-space
-  route reconciliation. `channel-tool-invocation.ts`
+  `team-channel-coordinator.ts` maps both Dispatcher and descriptor-scoped
+  TeamLeader dissolve into the same TeamCollection lifecycle and coordinates
+  dispatcher/scoped-TeamLeader bind and transfer with collaboration-space route
+  reconciliation. `channel-tool-invocation.ts`
   keeps TeamLeader egress authorization beside channel tool dispatch.
   `teammate-ops.ts` wraps dispatcher-scope mutating teammate ops with the
   dispatcher admission gate. Dispatcher and Team schedulers also receive this
@@ -99,7 +113,15 @@ the explicit `service/index.ts` facade.
   explicit Team binds/transfers, releases managed routes by exact `claim_id`, and
   detaches stale collaboration target records. Keep route provenance here and in
   `ChannelBindingStore`; do not re-infer managed ownership from a Team owner
-  tuple elsewhere.
+  tuple elsewhere. Every operation needing both scopes takes the target lock
+  before the Team lease; scoped transfer validates its generation inside that
+  lock. Target close uses a two-phase generation handoff: persist and accept
+  under the target lock, release it while awaiting Team `logicalClosed`, then
+  reacquire and exact-match before final target close. Validate each handoff
+  through the authoritative TeamCollection record after lock acquisition; never
+  pass a stale record as a lock exemption.
+  `target-close-lifecycle.ts` contains only that target-side two-phase handoff;
+  it awaits the TeamCollection milestone and never owns a Team state machine.
 - **`teammate-collection/` + `teammate-service/` + `completion-router/`** —
   `TeammateCollection` (the collection: stores, worktrees, `spawn` / `list` /
   `history` / `close`, factory paths, per-turn router registration) +
@@ -120,6 +142,13 @@ the explicit `service/index.ts` facade.
 - **Drive every runtime through the published AgentRuntime interface.** The service
   resolves a provider from the registry-backed catalog and calls the same
   contract for codex/claude/external; it knows no runtime specifics.
+- **Team dissolve is one TeamCollection capability, not a family of wrappers.**
+  MCP/admin/provider layers only bind caller scope and project the accepted
+  handle. All Team work enters the same availability fence; every live shared
+  worktree writer must expose neutral `waitIdle()`. WorktreeManager's
+  non-destructive assessment runs before acceptance and after quiescence, and
+  cleanup reassesses immediately before mutation. Do not add a `close` alias,
+  provider branch, force-delete path, or TeamService-local state machine.
 - **Same creation path for dispatcher and teammate agents.** Both go through
   `AgentRuntimeProviderCatalog.resolve(ref).createRuntime(...)`. No parallel
   worker/runtime tree.

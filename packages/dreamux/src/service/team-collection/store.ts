@@ -10,11 +10,14 @@ import {
   dispatcherTeamNameClaimPath,
   dispatcherTeamRecordPath,
 } from '../../platform/paths.js';
-import type { TeamRecord, TeamStatus } from './types.js';
+import type { TeamDissolveRecord, TeamRecord, TeamStatus } from './types.js';
 import { validateTeamId } from './types.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
+import { KeyedAsyncQueue } from '../serial-queue.js';
 
 export class TeamStore {
+  private readonly writes = new KeyedAsyncQueue();
+
   constructor(private readonly coreEvents?: DispatcherCoreEventPublisher) {}
 
   async get(dispatcherId: string, teamId: string): Promise<TeamRecord | null> {
@@ -101,7 +104,10 @@ export class TeamStore {
   }
 
   async create(
-    input: Omit<TeamRecord, 'version' | 'created_at' | 'updated_at'>,
+    input: Omit<
+      TeamRecord,
+      'version' | 'created_at' | 'updated_at' | 'dissolve'
+    > & { dissolve?: TeamDissolveRecord | null },
     claimToken: string,
   ): Promise<TeamRecord> {
     await this.requireNameClaim(
@@ -118,6 +124,7 @@ export class TeamStore {
     const team: TeamRecord = {
       version: 1,
       ...input,
+      dissolve: input.dissolve ?? null,
       created_at: now,
       updated_at: now,
     };
@@ -164,26 +171,108 @@ export class TeamStore {
       worktree?: TeamRecord['worktree'];
       intent?: string;
       leaderName?: string;
+      dissolve?: TeamDissolveRecord | null;
+      dissolvePatch?: Partial<Pick<
+        TeamDissolveRecord,
+        'phase' | 'last_error' | 'cleanup_attempts' | 'next_retry_at'
+      >>;
+      appendTargetHandoffId?: string;
+      expectedDissolveOperationId?: string | null;
     },
   ): Promise<TeamRecord> {
-    const updated: TeamRecord = {
-      ...team,
-      ...(input.status !== undefined ? { status: input.status } : {}),
-      ...(input.closedAt !== undefined ? { closed_at: input.closedAt } : {}),
-      ...(input.closeNote !== undefined ? { close_note: input.closeNote } : {}),
-      ...(input.worktree !== undefined ? { worktree: input.worktree } : {}),
-      ...(input.leaderName !== undefined ? { leader_name: input.leaderName } : {}),
-      ...(input.intent !== undefined ? { intent: input.intent } : {}),
-      updated_at: Date.now(),
-    };
-    await this.write(updated);
-    if (
-      updated.status !== team.status ||
-      updated.leader_name !== team.leader_name
-    ) {
-      this.publishState(updated);
-    }
-    return updated;
+    const key = `${team.dispatcher_id}\0${team.team_id}`;
+    return this.writes.run(key, async () => {
+      // Merge against the authoritative current row rather than the caller's
+      // snapshot so TeamService resource writes cannot erase a concurrently
+      // persisted TeamCollection dissolve lifecycle.
+      const current =
+        (await this.get(team.dispatcher_id, team.team_id)) ?? team;
+      if (
+        input.expectedDissolveOperationId !== undefined &&
+        (current.dissolve?.operation_id ?? null) !==
+          input.expectedDissolveOperationId
+      ) {
+        throw new Error(
+          `Team ${JSON.stringify(team.team_id)} dissolve operation changed`,
+        );
+      }
+      if (
+        input.dissolve !== undefined &&
+        (input.dissolvePatch !== undefined ||
+          input.appendTargetHandoffId !== undefined)
+      ) {
+        throw new Error('Team dissolve replacement cannot be combined with a patch');
+      }
+      let nextDissolve = current.dissolve;
+      if (input.dissolve !== undefined) {
+        nextDissolve = input.dissolve;
+        if (
+          nextDissolve !== null &&
+          current.dissolve?.operation_id === nextDissolve.operation_id
+        ) {
+          nextDissolve = {
+            ...nextDissolve,
+            target_handoff_ids: [...new Set([
+              ...current.dissolve.target_handoff_ids,
+              ...nextDissolve.target_handoff_ids,
+            ])],
+          };
+        }
+      } else if (
+        input.dissolvePatch !== undefined ||
+        input.appendTargetHandoffId !== undefined
+      ) {
+        if (current.dissolve === null) {
+          throw new Error('Team has no dissolve operation to update');
+        }
+        if (
+          input.appendTargetHandoffId !== undefined &&
+          input.appendTargetHandoffId.trim() === ''
+        ) {
+          throw new Error('Team target dissolve handoff id must be non-empty');
+        }
+        nextDissolve = {
+          ...current.dissolve,
+          ...(input.dissolvePatch ?? {}),
+          ...(input.appendTargetHandoffId === undefined ||
+            current.dissolve.target_handoff_ids.includes(
+              input.appendTargetHandoffId,
+            )
+            ? {}
+            : {
+                target_handoff_ids: [
+                  ...current.dissolve.target_handoff_ids,
+                  input.appendTargetHandoffId,
+                ],
+              }),
+        };
+      }
+      const updated: TeamRecord = {
+        ...current,
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(input.closedAt !== undefined ? { closed_at: input.closedAt } : {}),
+        ...(input.closeNote !== undefined ? { close_note: input.closeNote } : {}),
+        ...(input.worktree !== undefined ? { worktree: input.worktree } : {}),
+        ...(input.leaderName !== undefined
+          ? { leader_name: input.leaderName }
+          : {}),
+        ...(input.intent !== undefined ? { intent: input.intent } : {}),
+        ...(input.dissolve !== undefined ||
+          input.dissolvePatch !== undefined ||
+          input.appendTargetHandoffId !== undefined
+          ? { dissolve: nextDissolve }
+          : {}),
+        updated_at: Date.now(),
+      };
+      await this.write(updated);
+      if (
+        updated.status !== current.status ||
+        updated.leader_name !== current.leader_name
+      ) {
+        this.publishState(updated);
+      }
+      return updated;
+    });
   }
 
   private publishState(team: TeamRecord): void {
@@ -228,5 +317,77 @@ function readTeam(dispatcherId: string, teamId: string, raw: string): TeamRecord
   ) {
     throw new Error(`invalid Team record ${JSON.stringify(teamId)}`);
   }
-  return value as unknown as TeamRecord;
+  return {
+    ...(value as unknown as TeamRecord),
+    dissolve: readDissolve(value['dissolve']),
+  };
+}
+
+function readDissolve(value: unknown): TeamDissolveRecord | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('invalid Team dissolve record');
+  }
+  const record = value as Record<string, unknown>;
+  const requesterKind = record['requester_kind'];
+  const targetHandoffIds = record['target_handoff_ids'] ?? [];
+  const leaderGenerationIsValid = requesterKind === 'team_leader'
+    ? typeof record['leader_name'] === 'string' &&
+      record['leader_name'].trim() !== ''
+    : record['leader_name'] === null;
+  const terminalRetryIsValid =
+    (record['phase'] !== 'complete' && record['phase'] !== 'failed') ||
+    record['next_retry_at'] === null;
+  const terminalErrorIsValid =
+    (record['phase'] !== 'complete' || record['last_error'] === null) &&
+    (record['phase'] !== 'failed' || record['last_error'] !== null);
+  if (
+    typeof record['operation_id'] !== 'string' ||
+    record['operation_id'].trim() === '' ||
+    (requesterKind !== 'dispatcher' &&
+      requesterKind !== 'team_leader' &&
+      requesterKind !== 'collaboration_target') ||
+    !leaderGenerationIsValid ||
+    (!Array.isArray(targetHandoffIds) ||
+      targetHandoffIds.some(
+        (handoffId) =>
+          typeof handoffId !== 'string' || handoffId.trim() === '',
+      ) ||
+      new Set(targetHandoffIds).size !== targetHandoffIds.length) ||
+    typeof record['note'] !== 'string' ||
+    record['note'].trim() === '' ||
+    typeof record['accepted_at'] !== 'number' ||
+    !isDissolvePhase(record['phase']) ||
+    !isDissolveError(record['last_error']) ||
+    !terminalRetryIsValid ||
+    !terminalErrorIsValid ||
+    !Number.isInteger(record['cleanup_attempts']) ||
+    (record['cleanup_attempts'] as number) < 0 ||
+    (record['next_retry_at'] !== null &&
+      typeof record['next_retry_at'] !== 'number')
+  ) {
+    throw new Error('invalid Team dissolve record');
+  }
+  return {
+    ...(record as unknown as TeamDissolveRecord),
+    target_handoff_ids: targetHandoffIds as string[],
+  };
+}
+
+function isDissolveError(value: unknown): boolean {
+  return value === null ||
+    value === 'worktree-dirty' ||
+    value === 'worktree-unmerged' ||
+    value === 'worktree-unique-commits' ||
+    value === 'worktree-assessment-failed' ||
+    value === 'resource-close-failed' ||
+    value === 'worktree-cleanup-failed';
+}
+
+function isDissolvePhase(value: unknown): boolean {
+  return value === 'waiting_for_team_idle' ||
+    value === 'closing_resources' ||
+    value === 'worktree_cleanup_pending' ||
+    value === 'complete' ||
+    value === 'failed';
 }

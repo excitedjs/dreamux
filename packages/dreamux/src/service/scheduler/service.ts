@@ -85,6 +85,7 @@ export class SchedulerService {
   private readonly stopWaiters = new Set<() => void>();
   private fireSeq = 0;
   private running = false;
+  private lifecycleGeneration = 0;
 
   constructor(private readonly opts: SchedulerServiceOptions) {
     this.ownerId = opts.ownerId;
@@ -119,6 +120,7 @@ export class SchedulerService {
 
   stop(): void {
     this.running = false;
+    this.lifecycleGeneration += 1;
     for (const slot of this.timers.values()) clearTimeout(slot.timer);
     this.timers.clear();
     this.abortHeldFires();
@@ -299,7 +301,16 @@ export class SchedulerService {
     jobId: string,
     opts: { manual: boolean },
   ): Promise<{ id: string; status: string }> {
-    return this.admit(() => this.dispatch(jobId, opts));
+    // Capture synchronously. An owner can stop the scheduler after a caller has
+    // crossed its short outer gate but before Dispatcher admission starts this
+    // async task. That stopped generation must never install a new long idle
+    // wait after stop() has already released the existing waiters.
+    const generation = this.lifecycleGeneration;
+    return this.admit(() =>
+      generation === this.lifecycleGeneration
+        ? this.dispatch(jobId, opts)
+        : Promise.resolve({ id: jobId, status: 'skipped' }),
+    );
   }
 
   private admit<T>(task: () => Promise<T>): Promise<T> {

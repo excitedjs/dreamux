@@ -28,8 +28,15 @@ interface TeamLeaderChannelBindInput {
 export class TeamChannelCoordinator {
   constructor(private readonly opts: TeamChannelCoordinatorOptions) {}
 
-  async dissolve(input: TeamDissolveInput) {
+  async dissolve(input: TeamDissolveInput & { decisionDeadlineAt?: number }) {
     return this.opts.collaborationSpaces.dissolveTeam(input);
+  }
+
+  async dissolveForTeamLeader(input: {
+    lease: TeamLeaderLease;
+    note: string;
+  }) {
+    return this.opts.collaborationSpaces.dissolveTeamForLeader(input);
   }
 
   async bind(input: TeamChannelBindInput) {
@@ -75,6 +82,28 @@ export class TeamChannelCoordinator {
         ...(input.expectedOwner !== undefined
           ? { expectedOwner: input.expectedOwner }
           : {}),
+        channelId,
+        target,
+      }),
+    );
+  }
+
+  async transferBackForTeamLeader(input: {
+    lease: TeamLeaderLease;
+    channelId?: string;
+    meta: Record<string, unknown>;
+  }) {
+    const channelId = this.opts.channels.resolveChannelId(input.channelId);
+    const target = await this.opts.channels.resolveTarget(input.meta, channelId);
+    const expectedOwner: ChannelRouteOwner = {
+      kind: 'team',
+      teamName: input.lease.teamId,
+      leaderName: input.lease.leaderName,
+    };
+    return this.opts.collaborationSpaces.mutateLeasedTargetRoute(
+      { lease: input.lease, channelId, target },
+      () => this.opts.channels.transferResolvedTargetBack({
+        expectedOwner,
         channelId,
         target,
       }),

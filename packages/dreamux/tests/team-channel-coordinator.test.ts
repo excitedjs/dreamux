@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ChannelRouteOwner } from '../src/service/channel-service/index.js';
 import { TeamChannelCoordinator } from '../src/service/dispatcher-service/team-channel-coordinator.js';
+import { KeyedAsyncQueue } from '../src/service/serial-queue.js';
 
 const OWNER: ChannelRouteOwner = {
   kind: 'team',
@@ -77,6 +78,13 @@ function harness(routeError?: Error) {
       events.push('collaboration.detach_target');
       return mutation();
     },
+    mutateLeasedTargetRoute: async (
+      _input: unknown,
+      mutation: () => Promise<unknown>,
+    ) => {
+      events.push('collaboration.leased_target');
+      return mutation();
+    },
     detachTargetsForOwner: async () => {
       events.push('collaboration.detach_owner');
       return 0;
@@ -136,6 +144,104 @@ describe('TeamChannelCoordinator collaboration ownership', () => {
     expect(events).toEqual([
       'collaboration.detach_target',
       'channel.transfer_back',
+    ]);
+  });
+
+  it('keeps TeamLeader transfer generation validation inside target mutation', async () => {
+    const { coordinator, events } = harness();
+
+    await expect(coordinator.transferBackForTeamLeader({
+      lease: { teamId: 'alpha', leaderName: 'leader-alpha' },
+      meta: { chat_id: 'chat-alpha' },
+    })).resolves.toBe('transferred');
+    expect(events).toEqual([
+      'collaboration.leased_target',
+      'channel.transfer_back',
+    ]);
+  });
+
+  it('takes the target lock before the scoped Team lease during close races', async () => {
+    const events: string[] = [];
+    const teamLocks = new KeyedAsyncQueue();
+    const targetLocks = new KeyedAsyncQueue();
+    const teamHeld = deferred<void>();
+    const releaseTeam = deferred<void>();
+    const transferTargetHeld = deferred<void>();
+    const held = teamLocks.run('alpha', async () => {
+      teamHeld.resolve();
+      await releaseTeam.promise;
+    });
+    await teamHeld.promise;
+    const teams = {
+      withTeamLeaderLease<T>(
+        _lease: unknown,
+        task: () => Promise<T>,
+      ): Promise<T> {
+        events.push('team.request');
+        return teamLocks.run('alpha', async () => {
+          events.push('team.acquired');
+          return task();
+        });
+      },
+    };
+    const channels = {
+      resolveChannelId: () => 'primary',
+      resolveTarget: () => ({
+        target_type: 'group',
+        target_key: 'chat-alpha',
+        bindable: true,
+      }),
+      async transferResolvedTargetBack() {
+        events.push('channel.transfer_back');
+        return 'transferred';
+      },
+    };
+    const collaborationSpaces = {
+      mutateLeasedTargetRoute<T>(
+        _input: unknown,
+        mutation: () => Promise<T>,
+      ): Promise<T> {
+        return targetLocks.run('chat-alpha', async () => {
+          events.push('transfer.target');
+          transferTargetHeld.resolve();
+          return teams.withTeamLeaderLease({}, mutation);
+        });
+      },
+      mutateTargetRoute<T>(
+        _input: unknown,
+        mutation: () => Promise<T>,
+      ): Promise<T> {
+        return targetLocks.run('chat-alpha', mutation);
+      },
+    };
+    const coordinator = new TeamChannelCoordinator({
+      teams: teams as never,
+      channels: channels as never,
+      collaborationSpaces: collaborationSpaces as never,
+    });
+
+    const transfer = coordinator.transferBackForTeamLeader({
+      lease: { teamId: 'alpha', leaderName: 'leader-alpha' },
+      meta: { chat_id: 'chat-alpha' },
+    });
+    await transferTargetHeld.promise;
+    expect(events).toEqual(['transfer.target', 'team.request']);
+    const close = targetLocks.run('chat-alpha', async () => {
+      events.push('close.target');
+      await teamLocks.run('alpha', async () => {
+        events.push('close.team');
+      });
+    });
+
+    releaseTeam.resolve();
+    await Promise.all([held, transfer, close]);
+    expect(events).toEqual([
+      'transfer.target',
+      'team.request',
+      'team.acquired',
+      'channel.transfer_back',
+      'close.target',
+      'close.team',
     ]);
   });
 

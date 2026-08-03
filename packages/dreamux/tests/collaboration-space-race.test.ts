@@ -1,10 +1,19 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { CollaborationSpaceService } from '../src/service/collaboration-space/index.js';
 import { CollaborationSpaceStore } from '../src/service/collaboration-space/store.js';
+import { CollaborationRouteReconciler } from '../src/service/collaboration-space/route-reconciliation.js';
+import { targetRouteKey } from '../src/service/collaboration-space/support.js';
+import {
+  COLLABORATION_SPACE_RECORD_VERSION,
+  type ProvisionedTargetRecord,
+} from '../src/service/collaboration-space/types.js';
+import { KeyedAsyncQueue } from '../src/service/serial-queue.js';
+import type { TeamCollection } from '../src/service/team-collection/index.js';
+import type { AcceptedTeamLogicalClose } from '../src/service/team-collection/types.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
 import {
   fakeChannels,
@@ -34,6 +43,21 @@ class SecondFindUnboundStore extends CollaborationSpaceStore {
     this.calls += 1;
     if (this.calls === 1) return space;
     return { ...space, current_binding: null, status: 'unbound' as const };
+  }
+}
+
+class FailDissolveOperationSaveStore extends CollaborationSpaceStore {
+  failNextDissolveOperationSave = false;
+
+  override async saveTarget(target: ProvisionedTargetRecord) {
+    if (
+      this.failNextDissolveOperationSave &&
+      target.team_dissolve_operation_id !== null
+    ) {
+      this.failNextDissolveOperationSave = false;
+      throw new Error('target operation-id write failed');
+    }
+    return super.saveTarget(target);
   }
 }
 
@@ -381,4 +405,216 @@ describe('CollaborationSpaceService race regressions', () => {
     expect(channels.claimIds.get(target.target_key)).toBe(originalClaim);
     expect(originalClaim).not.toBeNull();
   });
+
+  it('starts an accepted Team dissolve when target correlation persistence fails', async () => {
+    const created: CreatedTeam[] = [];
+    const dissolved: string[] = [];
+    const channels = fakeChannels();
+    const store = new FailDissolveOperationSaveStore();
+    const service = new CollaborationSpaceService({
+      dispatcherId: 'flow',
+      config: fakeConfig(),
+      teams: fakeTeams(created, dissolved),
+      channels: channels.service,
+      store,
+      log: log as never,
+      isShuttingDown: () => false,
+    });
+    const container = {
+      container_type: 'topic_group',
+      container_key: 'container-operation-save',
+    };
+    const target = {
+      target_type: 'topic',
+      target_key: 'topic-operation-save',
+      bindable: true,
+    };
+    await service.bind({
+      spaceName: 'space-operation-save',
+      container,
+      leaderAgentRuntime: 'agent-a',
+    });
+    const provisioned = await service.provisionTarget({
+      channelId: 'primary',
+      provider: 'builtin:test',
+      container,
+      target,
+    });
+    if (provisioned === null) throw new Error('target was not provisioned');
+
+    store.failNextDissolveOperationSave = true;
+    await expect(service.closeTarget({
+      channelId: 'primary',
+      provider: 'builtin:test',
+      container,
+      target,
+    })).rejects.toThrow('target operation-id write failed');
+
+    await vi.waitFor(() => {
+      expect(dissolved).toContain(provisioned.team_name);
+    });
+  });
+
+  it('checks target handoffs authoritatively after lock handoff and supports concurrent target consumers', async () => {
+    const channels = fakeChannels();
+    const locks = new KeyedAsyncQueue();
+    const operationId = 'operation-alpha';
+    const acceptedHandoffs = new Set(['handoff-b']);
+    const targetA = targetRecord('topic-a', 'active', null);
+    const targetB = targetRecord('topic-b', 'closing', 'handoff-b');
+    const targetMismatch = targetRecord(
+      'topic-mismatch',
+      'closing',
+      'handoff-not-accepted',
+    );
+    const targetOrdinary = targetRecord('topic-ordinary', 'active', null);
+    const targets = new Map(
+      [targetA, targetB, targetMismatch, targetOrdinary]
+        .map((target) => [target.target_key, target]),
+    );
+    const store = {
+      async listTargets() {
+        return [...targets.values()];
+      },
+      async getTarget(
+        _dispatcherId: string,
+        input: { targetKey: string },
+      ) {
+        return targets.get(input.targetKey) ?? null;
+      },
+      async saveTarget(target: ProvisionedTargetRecord) {
+        targets.set(target.target_key, target);
+        return target;
+      },
+    } as unknown as CollaborationSpaceStore;
+    const teams = {
+      async hasAcceptedTargetDissolveHandoff(input: {
+        teamId: string;
+        operationId: string;
+        handoffId: string;
+      }) {
+        return input.teamId === 'alpha' &&
+          input.operationId === operationId &&
+          acceptedHandoffs.has(input.handoffId);
+      },
+      async closeAcceptedResources() {
+        return {
+          team: { team_name: 'alpha', status: 'closed' },
+          leader: null,
+          member_count: 0,
+        };
+      },
+    } as unknown as TeamCollection;
+    const reconciler = new CollaborationRouteReconciler({
+      dispatcherId: 'flow',
+      teams,
+      channels: channels.service,
+      store,
+      locks,
+      isShuttingDown: () => false,
+    });
+    const lockEntered = deferred();
+    const releaseLock = deferred();
+    const held = locks.run(targetRouteKey(targetA), async () => {
+      lockEntered.resolve();
+      await releaseLock.promise;
+    });
+    await lockEntered.promise;
+    const input: AcceptedTeamLogicalClose = {
+      operationId,
+      teamId: 'alpha',
+      note: 'close targets',
+      owner: { kind: 'team', teamName: 'alpha', leaderName: 'tl-alpha' },
+      // Deliberately stale: the exact handoff is appended while the runner is
+      // blocked on the target lock and must be re-read from TeamCollection.
+      dissolve: {
+        operation_id: operationId,
+        requester_kind: 'dispatcher',
+        leader_name: null,
+        target_handoff_ids: [],
+        note: 'close targets',
+        accepted_at: 1,
+        phase: 'closing_resources',
+        last_error: null,
+        cleanup_attempts: 0,
+        next_retry_at: null,
+      },
+      worktree: {
+        mode: 'reuse-cwd',
+        slug: null,
+        path: '/tmp',
+        branch: null,
+        base_ref: null,
+        cleanup: 'keep',
+        cleanup_state: 'not-managed',
+        cleanup_error: null,
+      },
+    };
+    const close = (
+      reconciler as unknown as {
+        closeAcceptedTeam(input: AcceptedTeamLogicalClose): Promise<unknown>;
+      }
+    ).closeAcceptedTeam(input);
+    await Promise.resolve();
+    targets.set('topic-a', {
+      ...targetA,
+      lifecycle_status: 'closing',
+      team_dissolve_handoff_id: 'handoff-a',
+      team_dissolve_operation_id: operationId,
+      team_dissolve_finalize: 'close',
+    });
+    acceptedHandoffs.add('handoff-a');
+    releaseLock.resolve();
+    await Promise.all([held, close]);
+
+    expect(targets.get('topic-a')).toMatchObject({
+      lifecycle_status: 'closing',
+      team_dissolve_handoff_id: 'handoff-a',
+    });
+    expect(targets.get('topic-b')).toMatchObject({
+      lifecycle_status: 'closing',
+      team_dissolve_handoff_id: 'handoff-b',
+    });
+    expect(targets.get('topic-mismatch')).toMatchObject({
+      lifecycle_status: 'detached',
+    });
+    expect(targets.get('topic-ordinary')).toMatchObject({
+      lifecycle_status: 'detached',
+    });
+  });
 });
+
+function targetRecord(
+  targetKey: string,
+  status: ProvisionedTargetRecord['lifecycle_status'],
+  handoffId: string | null,
+): ProvisionedTargetRecord {
+  return {
+    version: COLLABORATION_SPACE_RECORD_VERSION,
+    dispatcher_id: 'flow',
+    space_name: 'space-alpha',
+    channel_id: 'primary',
+    provider: 'builtin:test',
+    container_key: 'container-1',
+    binding_generation: 1,
+    target_key: targetKey,
+    target_type: 'topic',
+    target_display: targetKey,
+    target_meta: {},
+    team_name: 'alpha',
+    leader_name: 'tl-alpha',
+    worktree_slug: 'alpha',
+    lifecycle_status: status,
+    phase: 'bound',
+    claim_event_id: null,
+    close_event_id: null,
+    team_dissolve_operation_id: handoffId === null ? null : 'operation-alpha',
+    team_dissolve_handoff_id: handoffId,
+    team_dissolve_finalize: handoffId === null ? null : 'close',
+    last_error: null,
+    created_at: 1,
+    updated_at: 1,
+    closed_at: null,
+    detached_at: null,
+  };
+}

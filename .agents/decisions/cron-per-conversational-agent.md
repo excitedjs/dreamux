@@ -56,9 +56,11 @@ on first conversational access. That remains true for TeamLeader runtimes, but
 not for TeamLeader schedulers. The eager scheduler arm is required for durable
 cron to survive daemon restarts when nobody addresses the Team first.
 
-Closed Teams are not armed. `TeamService.dissolve` stops the TeamLeader
-scheduler and deletes that Team's `cron-jobs.json`, so scheduled work cannot
-reattach to a later same-name Team with a fresh leader identity.
+Closed Teams are not armed. TeamCollection's durable dissolve closes scheduler
+admission and stops the Team scheduler at acceptance; the accepted logical
+resource close in `TeamService` deletes that Team's `cron-jobs.json`, so
+scheduled work cannot reattach to a later same-name Team with a fresh leader
+identity.
 
 ## TeamLeader cron safety
 

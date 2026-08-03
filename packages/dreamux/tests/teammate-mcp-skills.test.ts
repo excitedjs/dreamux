@@ -61,9 +61,9 @@ const MAINTENANCE_ROOT = join(
 
 const MAINTENANCE_ROUTES = [
   {
-    task: 'Service lifecycle and reply diagnosis',
+    task: 'Service lifecycle, Team dissolve, and reply diagnosis',
     readWhen:
-      'Diagnosing `dreamux serve`, daemon startup, doctor/status results, Dispatcher health, missing replies, stuck turns, restart behavior, current state/run/log paths, bundled-skill injection, or runtime app-server readiness.',
+      'Diagnosing `dreamux serve`, daemon startup, doctor/status results, Dispatcher health, missing replies, stuck turns, restart behavior, active or cleanup-pending Team dissolve, current state/run/log paths, bundled-skill injection, or runtime app-server readiness.',
     target: 'service-lifecycle.md',
   },
   {
@@ -158,8 +158,13 @@ describe('role-specific bundled Dreamux skills', () => {
     const description = frontmatterDescription(skill);
 
     expect(description).toMatch(/MCP operation notes/i);
-    expect(description).toMatch(/TeamMate|channel|cron|binding/);
-    expect(skill).toMatch(/`team` MCP exposes only `bind_channel` and `transfer_back`/);
+    expect(description).toMatch(/TeamMate/);
+    expect(description).toMatch(/dissolve/);
+    expect(description).toMatch(/channel-transfer/);
+    expect(description).toMatch(/cron/);
+    expect(skill).toMatch(
+      /`team` MCP exposes only `dissolve`, `bind_channel`, and `transfer_back`/,
+    );
     expect(skill).toMatch(/share the Team\s+workspace/);
     expect(skill).toMatch(/one TeamMate at a time to edit/);
     expect(skill).toMatch(/TeamMate completion/i);
@@ -185,9 +190,15 @@ describe('role-specific bundled Dreamux skills', () => {
     expect(skill).not.toMatch(/return(?:s|ing)? .*Dispatcher/i);
     expect(skill).not.toMatch(/Dispatcher .*outcome/i);
     expect(skill).not.toContain('dreamux-maintenance');
-    for (const dispatcherOnlyTool of ['create', 'dissolve']) {
+    for (const dispatcherOnlyTool of ['create']) {
       expect(skill).not.toContain(`\`${dispatcherOnlyTool}\``);
     }
+    expect(skill).toContain('dissolve({ note })');
+    expect(skill).toMatch(/uncommitted or untracked/);
+    expect(skill).toMatch(/unmerged index entries/);
+    expect(skill).toMatch(/safe local or remote ref/);
+    expect(skill).toMatch(/ask the user/i);
+    expect(skill).toMatch(/cleanup-pending/);
     expect(skill).not.toContain('`team.send`');
     expect(skill).not.toContain('targets that TeamLeader');
     expect(skill).toContain('bind_channel({ channel_id?, meta })');

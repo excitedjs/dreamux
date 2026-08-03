@@ -5,12 +5,20 @@ import type {
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
-import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
+import {
+  DISABLE_FEATURE_CRON,
+  type AgentRuntimeProviderCatalog,
+} from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
+import {
+  bundledSharedSkillRoot,
+  bundledTeamLeaderSkillRoot,
+} from '../../platform/paths.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import type { CompletionEnvelope } from '../completion-router/index.js';
+import { cronMcpServerDescriptor } from '../scheduler/mcp-config.js';
 import {
   createTeammateService,
 } from '../teammate-service/factory.js';
@@ -19,6 +27,8 @@ import {
   childAgentRuntimeId,
 } from '../agent-entity/runtime-profile.js';
 import type { TeammateService } from '../teammate-service/index.js';
+import { teammateMcpServerDescriptor } from '../teammate-collection/mcp-config.js';
+import { teamMcpServerDescriptor } from '../team-collection/mcp-config.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 
 export interface TeamLeaderAgentDeps {
@@ -75,4 +85,71 @@ export function createTeamLeaderAgent(
     trackSettleCapture: deps.trackSettleCapture,
     routeSettledCompletion: deps.routeSettledCompletion,
   });
+}
+
+interface TeamLeaderForTeamDeps extends Omit<
+  TeamLeaderAgentDeps,
+  'mcpServers' | 'skillSources' | 'disableFeatures' | 'systemPrompt'
+> {
+  teamId: string;
+  adminSocketPath: string;
+  leaderChannelDescriptors(input: {
+    teamId: string;
+    leaderName: string;
+  }): readonly AgentRuntimeMcpServer[];
+}
+
+export function createTeamLeaderAgentForTeam(
+  deps: TeamLeaderForTeamDeps,
+): TeammateService {
+  const { teamId, adminSocketPath, leaderChannelDescriptors, ...agentDeps } = deps;
+  const leaderName = deps.identity.name;
+  return createTeamLeaderAgent({
+    ...agentDeps,
+    mcpServers: [
+      teammateMcpServerDescriptor({
+        dispatcherId: deps.dispatcherId,
+        callerKind: 'team_leader',
+        teamId,
+        adminSocketPath,
+      }),
+      cronMcpServerDescriptor({
+        dispatcherId: deps.dispatcherId,
+        teamId,
+        adminSocketPath,
+      }),
+      teamMcpServerDescriptor({
+        dispatcherId: deps.dispatcherId,
+        callerKind: 'team_leader',
+        teamId,
+        leaderName,
+        adminSocketPath,
+      }),
+      ...leaderChannelDescriptors({ teamId, leaderName }),
+    ],
+    skillSources: [{
+      name: 'team-leader',
+      path: bundledTeamLeaderSkillRoot(),
+      source: 'dreamux-core',
+    }, {
+      name: 'shared',
+      path: bundledSharedSkillRoot(),
+      source: 'dreamux-core',
+    }, ...deps.identity.skill_sources],
+    disableFeatures: [DISABLE_FEATURE_CRON],
+    systemPrompt: teamLeaderSystemPrompt(teamId, deps.identity.identity_prompt),
+  });
+}
+
+function teamLeaderSystemPrompt(
+  teamId: string,
+  identityPrompt: string | null,
+): AgentRuntimeSystemPrompt {
+  const append = [
+    `You are the TeamLeader of Dreamux Team ${JSON.stringify(teamId)}.`,
+    'Load `team-workflow` before using this Team\'s TeamMate tools, Team tools (`dissolve`, `bind_channel`, or `transfer_back`), provider-exposed channel tools, or cron tools.',
+    'When a prompt-submitting TeamMate tool returns success, the task was submitted successfully; Dreamux core will push the completion back automatically, so do not poll `last` or other read tools, and end the turn naturally if there is no other work.',
+  ];
+  if (identityPrompt !== null) append.push(identityPrompt);
+  return { append };
 }

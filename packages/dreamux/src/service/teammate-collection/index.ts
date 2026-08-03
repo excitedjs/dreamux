@@ -199,6 +199,28 @@ export class TeammateCollection implements TeammateOps, OwnedTeammateOps {
     return this.entities.get(name)?.getRuntime() ?? null;
   }
 
+  /** Live Team-member runtimes for the Team owner's shared-worktree barrier. */
+  liveRuntimes(): Array<{ name: string; runtime: AgentRuntime }> {
+    const live: Array<{ name: string; runtime: AgentRuntime }> = [];
+    for (const entity of this.entities.values()) {
+      const runtime = entity.getRuntime();
+      if (runtime !== null) live.push({ name: entity.name, runtime });
+    }
+    return live;
+  }
+
+  /**
+   * Reattach non-closed durable Team members after a process restart so an
+   * already-accepted owner close can prove their runtime sessions idle before
+   * revalidating the shared worktree.
+   */
+  async recoverLiveRuntimesForOwnerClose(): Promise<void> {
+    for (const identity of await this.rosterList()) {
+      if (identity.status === 'closed') continue;
+      await this.entityFor(identity).ensureStarted();
+    }
+  }
+
   turns(): AgentTurnsStore {
     return this.turnsStore;
   }

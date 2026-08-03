@@ -11,6 +11,8 @@ import {
 } from './task-dispatch-reminder.js';
 import { optionalRepoInput, repoInputSchema } from './teammate-mcp.js';
 
+const TEAM_DISSOLVE_ADMIN_TIMEOUT_MS = 12_000;
+
 export type TeamMcpCallerKind = 'dispatcher' | 'team_leader';
 
 export interface TeamMcpOptions {
@@ -151,7 +153,25 @@ export function teamTools(
     channel_id: { type: 'string', minLength: 1, maxLength: 64 },
     meta: { type: 'object' },
   }, ['meta']);
-  if (callerKind === 'team_leader') return [bindChannelTool, transferBackTool];
+  if (callerKind === 'team_leader') {
+    return [
+      tool(
+        'dissolve',
+        'Dissolve this descriptor-bound Team after preserving its work. note is required and records why the Team stopped.',
+        {
+          note: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 2000,
+            pattern: '\\S',
+          },
+        },
+        ['note'],
+      ),
+      bindChannelTool,
+      transferBackTool,
+    ];
+  }
   return [
     tool('create', 'Create a Team and start its TeamLeader. name_prefix is only a requested label; create RETURNS a concrete, never-reused team.team_name with a 4-8 character random suffix, and every later status/history/dissolve/send/bind_channel call MUST use that returned team_name. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to let Dreamux allocate a plain shared work directory for the Team, or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } to choose an existing path or create a managed git worktree. prompt is optional: when supplied it is delivered as the TeamLeader\'s first turn; when omitted the leader starts idle and waits for bound-channel inbound or a later Team MCP send. To route a channel target to the Team, bind it after create with the team bind_channel tool.', {
       name_prefix: { type: 'string', minLength: 1, maxLength: 64 },
@@ -213,10 +233,14 @@ async function callTool(
       mapped.method,
       {
         dispatcher_id: ctx.dispatcherId,
-        ...callerParams(ctx.caller),
         ...mapped.params,
+        ...callerParams(ctx.caller),
       },
-      { socketPath: ctx.socketPath },
+      teamAdminRequestOptions({
+        socketPath: ctx.socketPath,
+        method: mapped.method,
+        callerKind: ctx.caller.kind,
+      }),
     );
     return {
       content: [{
@@ -238,18 +262,33 @@ async function callTool(
   }
 }
 
+/** Keep the Dispatcher dissolve timeout contract explicit and directly testable. */
+export function teamAdminRequestOptions(input: {
+  socketPath: string;
+  method: string;
+  callerKind: TeamMcpCallerKind;
+}): { socketPath: string; timeoutMs?: number } {
+  return {
+    socketPath: input.socketPath,
+    ...(input.method === 'team.dissolve' && input.callerKind === 'dispatcher'
+      ? { timeoutMs: TEAM_DISSOLVE_ADMIN_TIMEOUT_MS }
+      : {}),
+  };
+}
+
 function mapToolCall(
   call: ToolCall,
   callerKind: TeamMcpCallerKind,
 ): { method: string; params: Record<string, unknown> } {
   if (
     callerKind === 'team_leader' &&
+    call.name !== 'dissolve' &&
     call.name !== 'bind_channel' &&
     call.name !== 'transfer_back'
   ) {
     throw new Error(
       `Team tool '${String(call.name)}' is not available in this context. ` +
-        'Available Team tools: bind_channel, transfer_back.',
+        'Available Team tools: dissolve, bind_channel, transfer_back.',
     );
   }
   switch (call.name) {
@@ -264,7 +303,10 @@ function mapToolCall(
     case 'history':
       return { method: 'team.history', params: historyArgs(call.arguments) };
     case 'dissolve':
-      return { method: 'team.dissolve', params: dissolveArgs(call.arguments) };
+      return {
+        method: 'team.dissolve',
+        params: dissolveArgs(call.arguments, callerKind),
+      };
     case 'bind_channel':
       return {
         method: 'team.bind_channel',
@@ -333,12 +375,22 @@ function historyArgs(value: unknown): Record<string, unknown> {
   };
 }
 
-function dissolveArgs(value: unknown): Record<string, unknown> {
+function dissolveArgs(
+  value: unknown,
+  callerKind: TeamMcpCallerKind,
+): Record<string, unknown> {
   const obj = asRecord(value, 'dissolve arguments');
-  // Required dissolve reason (issue #182 PR-3).
+  if (callerKind === 'team_leader') {
+    for (const key of ['team_name', 'team_id', 'leader_name', 'caller_kind']) {
+      if (Object.hasOwn(obj, key)) {
+        throw new Error(`${key} is not accepted for TeamLeader dissolve`);
+      }
+    }
+    return { note: requireNonBlankString(obj, 'note') };
+  }
   return {
     team_name: requireString(obj, 'team_name'),
-    note: requireString(obj, 'note'),
+    note: requireNonBlankString(obj, 'note'),
   };
 }
 
@@ -401,6 +453,15 @@ function asRecord(value: unknown, label: string): Record<string, unknown> {
 function requireString(obj: Record<string, unknown>, key: string): string {
   const value = obj[key];
   if (typeof value !== 'string' || value.length === 0) throw new Error(`${key} must be a non-empty string`);
+  return value;
+}
+
+function requireNonBlankString(
+  obj: Record<string, unknown>,
+  key: string,
+): string {
+  const value = requireString(obj, key);
+  if (value.trim() === '') throw new Error(`${key} must be a non-empty string`);
   return value;
 }
 

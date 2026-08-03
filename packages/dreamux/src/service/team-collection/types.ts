@@ -12,6 +12,42 @@ export const TEAM_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 export type TeamStatus = 'starting' | 'running' | 'closed';
 
+export type TeamDissolveRequesterKind =
+  | 'dispatcher'
+  | 'team_leader'
+  | 'collaboration_target';
+
+export type TeamDissolvePhase =
+  | 'waiting_for_team_idle'
+  | 'closing_resources'
+  | 'worktree_cleanup_pending'
+  | 'complete'
+  | 'failed';
+
+export type TeamDissolvePublicError =
+  | 'worktree-dirty'
+  | 'worktree-unmerged'
+  | 'worktree-unique-commits'
+  | 'worktree-assessment-failed'
+  | 'resource-close-failed'
+  | 'worktree-cleanup-failed';
+
+/** Server-owned durable lifecycle fact for one accepted Team dissolve. */
+export interface TeamDissolveRecord {
+  operation_id: string;
+  requester_kind: TeamDissolveRequesterKind;
+  /** Descriptor-bound generation for TeamLeader self-dissolve. */
+  leader_name: string | null;
+  /** Opaque exact-target handoffs attached before target-owned runners start. */
+  target_handoff_ids: string[];
+  note: string;
+  accepted_at: number;
+  phase: TeamDissolvePhase;
+  last_error: TeamDissolvePublicError | null;
+  cleanup_attempts: number;
+  next_retry_at: number | null;
+}
+
 export interface TeamRecord {
   version: 1;
   dispatcher_id: string;
@@ -29,6 +65,8 @@ export interface TeamRecord {
   updated_at: number;
   closed_at: number | null;
   close_note: string | null;
+  /** Missing on older additive records and normalized to null by TeamStore. */
+  dissolve: TeamDissolveRecord | null;
 }
 
 interface TeamCreateOptions {
@@ -79,6 +117,64 @@ export interface TeamDissolveInput {
   note: string;
 }
 
+export type TeamDissolveRequester =
+  | { kind: 'dispatcher' }
+  | { kind: 'team_leader'; leaderName: string }
+  | {
+      kind: 'collaboration_target';
+      leaderName: string | null;
+      handoffId: string;
+    };
+
+export interface TeamDissolveRequest extends TeamDissolveInput {
+  requester: TeamDissolveRequester;
+  /** Dispatcher-only absolute deadline for pre-acceptance safety work. */
+  decisionDeadlineAt?: number;
+}
+
+export interface TeamDissolveReceipt {
+  accepted: true;
+  team_name: string;
+  status: 'closing';
+}
+
+export interface TeamDissolveCleanupPendingResult {
+  accepted: true;
+  team_name: string;
+  status: 'closed';
+  worktree_cleanup: 'pending';
+  message: string;
+}
+
+/** Internal accepted handle. MCP projects only its receipt or milestones. */
+export interface AcceptedTeamDissolve {
+  operationId: string;
+  teamId: string;
+  receipt: TeamDissolveReceipt;
+  logicalClosed: Promise<TeamSummary>;
+  completed: Promise<TeamSummary>;
+  /** Synchronous process-local projection of the latest durable record. */
+  dissolveSnapshot(): TeamDissolveRecord;
+}
+
+/** Input consumed by the dispatcher-side route/resource close executor. */
+export interface AcceptedTeamLogicalClose {
+  operationId: string;
+  teamId: string;
+  note: string;
+  owner: {
+    kind: 'team';
+    teamName: string;
+    leaderName: string;
+  };
+  dissolve: TeamDissolveRecord;
+  worktree: AgentEntityWorktreeIdentity;
+}
+
+export type TeamLogicalCloseExecutor = (
+  input: AcceptedTeamLogicalClose,
+) => Promise<TeamSummary>;
+
 /** Active channel target marker surfaced by the Team read tools. */
 export interface TeamChannelBindingSummary {
   channel_id: string;
@@ -107,6 +203,10 @@ export interface TeamView {
   updated_at: number;
   closed_at: number | null;
   close_note: string | null;
+  dissolve_phase: TeamDissolvePhase | null;
+  dissolve_accepted_at: number | null;
+  worktree_cleanup: AgentEntityWorktreeIdentity['cleanup_state'];
+  dissolve_error: TeamDissolvePublicError | null;
 }
 
 export interface TeamSummary {
@@ -131,6 +231,10 @@ export interface TeamListRow {
   created_at: number;
   updated_at: number;
   closed_at: number | null;
+  dissolve_phase: TeamDissolvePhase | null;
+  dissolve_accepted_at: number | null;
+  worktree_cleanup: AgentEntityWorktreeIdentity['cleanup_state'];
+  dissolve_error: TeamDissolvePublicError | null;
 }
 
 /**
@@ -173,6 +277,10 @@ export interface TeamHistoryRow {
   closed_at: number | null;
   close_note: string | null;
   close_note_preview: string | null;
+  dissolve_phase: TeamDissolvePhase | null;
+  dissolve_accepted_at: number | null;
+  worktree_cleanup: AgentEntityWorktreeIdentity['cleanup_state'];
+  dissolve_error: TeamDissolvePublicError | null;
 }
 
 export interface TeamHistoryResult {

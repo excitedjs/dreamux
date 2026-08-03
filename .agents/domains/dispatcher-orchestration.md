@@ -159,11 +159,36 @@ from create. Dispatcher-visible Team MCP tools:
 - `bind_channel`
 - `transfer_back`
 
-TeamLeader-visible Team MCP exposes scoped `bind_channel` and `transfer_back`.
-Bind derives the Team and current leader generation from the MCP descriptor,
+TeamLeader-visible Team MCP exposes exactly scoped `dissolve`, `bind_channel`,
+and `transfer_back`. `dissolve({ note })` derives the Team and current leader
+generation from the MCP descriptor and maps to the existing `team.dissolve`
+admin method; it cannot accept or override `team_name`. It durably accepts the
+one TeamCollection-owned operation and returns `status: "closing"` before the
+TeamLeader's runtime is stopped. Bind uses the same descriptor-bound generation
 and can only create an unowned explicit route or repeat the exact same one;
 dispatcher bind retains replacement semantics. Peer Team send remains future
 work; TeamLeaders use their scoped TeamMate MCP to send to Team members.
+
+`TeamCollection` owns the durable dissolve record, active-operation handle, and
+one availability fence for all Team work. The fence covers Dispatcher send,
+Channel delivery and route publication, TeamLeader member/workflow mutation,
+Team scheduler mutation and final fire, and Team-member completion injection;
+generation-checked reads remain available. Before acceptance it captures all
+live leader/member writers, requires `waitIdle()` on each, and performs a
+non-mutating worktree assessment. After durable acceptance it stops new work,
+waits every captured writer idle, and repeats that assessment before logical
+close.
+
+Logical close transfers routes, closes Team-owned workflows/runtimes/scheduler
+state, persists Team `status: "closed"`, and records the shared worktree as
+`cleanup-pending` before deletion. The accepted handle separates
+`logicalClosed` from terminal `completed`; collaboration target close awaits the
+former, while Dispatcher MCP races the latter against a 9-second method-entry
+budget using an explicit 12-second MCP-to-admin timeout. Operational cleanup
+failures retry in background and after restart; safety blockers retain the
+worktree and never force deletion. Shutdown interrupts cancellable idle waits
+and retry timers before admitted-task drain, preserving the durable phase for
+startup recovery.
 
 `team.create` may include a first `prompt`; if omitted, the TeamLeader starts
 idle and waits for later Team MCP `send` or bound-channel inbound. Team-owned

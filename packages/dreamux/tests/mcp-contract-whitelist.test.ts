@@ -261,12 +261,19 @@ describe('issue #199 Slice 1 — public MCP contract whitelist', () => {
     expect(names).not.toContain('transfer_channel_back');
   });
 
-  it('TeamLeader Team MCP exposes only scoped bind_channel and transfer_back', async () => {
+  it('TeamLeader Team MCP exposes only scoped dissolve, bind_channel, and transfer_back', async () => {
     const tools = await teamLeaderTeamTools();
     expect(tools.map((tool) => tool['name'])).toEqual([
+      'dissolve',
       'bind_channel',
       'transfer_back',
     ]);
+    const dissolve = schemaOf(tools, 'dissolve');
+    expect(dissolve.required).toEqual(['note']);
+    expect(Object.keys(dissolve.properties)).toEqual(['note']);
+    expect(dissolve.properties).not.toHaveProperty('team_name');
+    expect(dissolve.properties).not.toHaveProperty('team_id');
+    expect(dissolve.properties).not.toHaveProperty('leader_name');
     const bindTool = toolOf(tools, 'bind_channel');
     const bind = schemaOf(tools, 'bind_channel');
     expect(bind.required).toEqual(['meta']);
@@ -281,10 +288,14 @@ describe('issue #199 Slice 1 — public MCP contract whitelist', () => {
     expect(transfer.required).toEqual(['meta']);
     expect(transfer.properties).toHaveProperty('channel_id');
     expect(transfer.properties).toHaveProperty('meta');
-    const descriptions = [bindDescription, String(transferTool['description'] ?? '')];
-    expect(descriptions[1]).toMatch(/routing[- ]only/i);
-    expect(descriptions[1]).toMatch(/no .*channel[- ]message .*side effect/i);
-    expect(descriptions[1]).toMatch(/bind(?:ing)?[\s\S]{0,80}channel target/i);
+    const descriptions = [
+      String(toolOf(tools, 'dissolve')['description'] ?? ''),
+      bindDescription,
+      String(transferTool['description'] ?? ''),
+    ];
+    expect(descriptions[2]).toMatch(/routing[- ]only/i);
+    expect(descriptions[2]).toMatch(/no .*channel[- ]message .*side effect/i);
+    expect(descriptions[2]).toMatch(/bind(?:ing)?[\s\S]{0,80}channel target/i);
     for (const description of descriptions) {
       expect(description).not.toContain('Dispatcher');
       expect(description).not.toContain('dispatcher routing');

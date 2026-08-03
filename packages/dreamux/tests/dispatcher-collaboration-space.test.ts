@@ -33,6 +33,7 @@ import type { ChannelProviderCatalog } from '../src/channel/catalog.js';
 import type { ChannelService } from '../src/service/channel-service/index.js';
 import type { CollaborationSpaceService } from '../src/service/collaboration-space/index.js';
 import type { TeamCollection } from '../src/service/team-collection/index.js';
+import { TeamUnavailableError } from '../src/service/team-collection/errors.js';
 import {
   handleCollaborationTargetLifecycle,
   routeTeamOrCollaborationChannelInput,
@@ -74,6 +75,8 @@ class FakeRuntime implements AgentRuntime {
   async stop(): Promise<void> {
     this.status = 'stopped';
   }
+
+  async waitIdle(): Promise<void> {}
 
   async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
     this.submitted.push(input);
@@ -881,10 +884,37 @@ describe('DispatcherService collaboration-space routing', () => {
         ),
       ).toBe(true);
 
-      await harness.dispatcher.dissolveTeam({
+      const idle = deferred<void>();
+      vi.spyOn(harness.runtimes[0]!, 'waitIdle')
+        .mockImplementation(() => idle.promise);
+      const dissolving = harness.dispatcher.dissolveTeam({
         teamId: ensured.team_name,
         note: 'Verify exact delivery fails closed after Team dissolution.',
       });
+      void dissolving.catch(() => undefined);
+      await vi.waitFor(async () => {
+        await expect(
+          harness.dispatcher.getTeamStatus(ensured.team_name),
+        ).resolves.toMatchObject({
+          team: { dissolve_phase: 'waiting_for_team_idle' },
+        });
+      });
+      await expect(
+        routes.deliverExact!({
+          target,
+          expected_team_name: ensured.team_name,
+          turn: {
+            text: 'must not pass an accepted Team fence',
+            sourceId: 'closing-source',
+          },
+        }),
+      ).resolves.toEqual({
+        status: 'rejected',
+        rejection: { code: 'route_unavailable', retryable: true },
+      });
+      expect(harness.runtimes[0]?.submitted).toHaveLength(1);
+      idle.resolve();
+      await dissolving;
       await expect(
         routes.deliverExact!({
           target,
@@ -1592,7 +1622,9 @@ describe('DispatcherService collaboration-space routing', () => {
         return null;
       },
     } as unknown as CollaborationSpaceService;
-    const groupDelivery = vi.fn(async (): Promise<AgentRuntimeTurnResult> => ({
+    const groupDelivery = vi.fn(async (
+      _turn: InboundTurnInput,
+    ): Promise<AgentRuntimeTurnResult> => ({
       status: 'submitted',
       turnId: 'group-turn',
     }));
@@ -1600,8 +1632,11 @@ describe('DispatcherService collaboration-space routing', () => {
       async isOpenTeam(teamName: string) {
         return teamName === groupOwner.teamName;
       },
-      async get() {
-        return { deliverToLeader: groupDelivery };
+      async deliverToLeader(teamName: string, turn: InboundTurnInput) {
+        if (teamName === exactOwner.teamName) {
+          throw new TeamUnavailableError('exact Team route is unavailable');
+        }
+        return groupDelivery(turn);
       },
     } as unknown as TeamCollection;
 
@@ -1746,14 +1781,10 @@ describe('DispatcherService collaboration-space routing', () => {
       async isOpenTeam(teamName: string) {
         return teamName === routeOwner.teamName;
       },
-      async get(teamName: string) {
+      async deliverToLeader(teamName: string, turn: InboundTurnInput) {
         expect(teamName).toBe(routeOwner.teamName);
-        return {
-          async deliverToLeader(turn: InboundTurnInput) {
-            delivered.push(turn);
-            return { status: 'submitted' as const, turnId: 'team-turn' };
-          },
-        };
+        delivered.push(turn);
+        return { status: 'submitted' as const, turnId: 'team-turn' };
       },
     } as unknown as TeamCollection;
 
@@ -2128,6 +2159,90 @@ describe('DispatcherService collaboration-space routing', () => {
     release.resolve();
     await Promise.allSettled([inbound, firstStop, secondStop]);
     expect(stopped).toBe(true);
+  });
+
+  it('interrupts Team dissolve waits before draining admitted tasks', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'flow',
+        cwd: workspace,
+        agentRuntime: 'dispatcher-runtime',
+        runtimeProvider: RUNTIME_REF,
+        channelProvider: CHANNEL_REF,
+      }),
+    ]);
+    const dispatcher = new DispatcherService({
+      id: 'flow',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog([], []),
+      channelProviders: fakeChannelCatalog(),
+      channelLoggerFactory: () => noopLog(),
+      log: noopLog(),
+    });
+    const calls: string[] = [];
+    const internals = dispatcher as unknown as {
+      teams: TeamCollection;
+      admittedTasks: { drain(): Promise<void> };
+    };
+    vi.spyOn(internals.teams, 'interruptDissolvesForShutdown')
+      .mockImplementation(() => {
+        calls.push('interrupt');
+      });
+    vi.spyOn(internals.admittedTasks, 'drain').mockImplementation(async () => {
+      calls.push('drain');
+    });
+
+    await dispatcher.stop();
+
+    expect(calls).toEqual(['interrupt', 'interrupt', 'drain']);
+  });
+
+  it('interrupts Team dissolve waits before awaiting input-source recovery', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'flow',
+        cwd: workspace,
+        agentRuntime: 'dispatcher-runtime',
+        runtimeProvider: RUNTIME_REF,
+        channelProvider: CHANNEL_REF,
+      }),
+    ]);
+    const dispatcher = new DispatcherService({
+      id: 'flow',
+      config,
+      dispatchers: new DispatcherStore(config),
+      agentRuntimeProviders: fakeRuntimeCatalog([], []),
+      channelProviders: fakeChannelCatalog(),
+      channelLoggerFactory: () => noopLog(),
+      log: noopLog(),
+    });
+    const recovery = deferred<void>();
+    const calls: string[] = [];
+    const internals = dispatcher as unknown as {
+      teams: TeamCollection;
+      admittedTasks: { drain(): Promise<void> };
+      inputSourcesStarting: Promise<void> | null;
+    };
+    internals.inputSourcesStarting = recovery.promise;
+    vi.spyOn(internals.teams, 'interruptDissolvesForShutdown')
+      .mockImplementation(() => {
+        calls.push('interrupt');
+      });
+    vi.spyOn(internals.admittedTasks, 'drain').mockImplementation(async () => {
+      calls.push('drain');
+    });
+
+    const stop = dispatcher.stop();
+    expect(calls).toEqual(['interrupt']);
+
+    recovery.resolve();
+    await stop;
+    expect(calls).toEqual(['interrupt', 'interrupt', 'drain']);
   });
 
   it('drains an already-admitted Team create before stop completes', async () => {

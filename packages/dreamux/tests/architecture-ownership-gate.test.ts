@@ -226,8 +226,14 @@ describe('architecture ownership gate (#233)', () => {
     }
     assertContains(
       teamHandleSource,
-      /withService:\s*<T>\([\s\S]*lease:\s*TeamLeaderLease[\s\S]*task:\s*\(service:\s*TeamService\)\s*=>\s*Promise<T>/,
-      'scheduler command invariant violated: TeamLeaderHandle operations must route through a Team generation lease.',
+      /withMutationService:\s*<T>\([\s\S]*lease:\s*TeamLeaderLease[\s\S]*task:\s*\(service:\s*TeamService\)\s*=>\s*Promise<T>/,
+      'scheduler command invariant violated: TeamLeaderHandle mutations must route through an available Team generation lease.',
+      'dispatcher-service/team-leader-handle.ts',
+    );
+    assertContains(
+      teamHandleSource,
+      /withReadService:\s*<T>\([\s\S]*lease:\s*TeamLeaderLease[\s\S]*task:\s*\(service:\s*TeamService\)\s*=>\s*Promise<T>/,
+      'scheduler command invariant violated: TeamLeaderHandle reads must route through a Team generation lease.',
       'dispatcher-service/team-leader-handle.ts',
     );
     assertContains(
@@ -238,8 +244,8 @@ describe('architecture ownership gate (#233)', () => {
     );
     assertContains(
       dispatcherSource,
-      /lease: await this\.teams\.teamLeaderLease\(teamId\)/,
-      'scheduler command invariant violated: DispatcherService.team() must bind TeamLeaderHandle to a Team generation lease.',
+      /lease: await this\.teams\.teamLeaderReadLease\(teamId\)/,
+      'scheduler command invariant violated: DispatcherService.team() must bind TeamLeaderHandle to a read-safe Team generation lease.',
       'dispatcher-service/index.ts',
     );
     assertContains(
@@ -250,8 +256,8 @@ describe('architecture ownership gate (#233)', () => {
     );
     assertContains(
       teamSource,
-      /get scheduler\(\): SchedulerCommands\s*\{\s*return this\.scheduler_\.commands;/,
-      'scheduler command invariant violated: TeamService must expose SchedulerCommands, not concrete SchedulerService lifecycle verbs.',
+      /get scheduler\(\): SchedulerCommands\s*\{\s*return this\.schedulerCommands;/,
+      'scheduler command invariant violated: TeamService must expose availability-gated SchedulerCommands, not concrete SchedulerService lifecycle verbs.',
       'team-service/index.ts',
     );
     if (/\b(?:start|stop)Scheduler\s*\(/.test(teamSource)) {
@@ -519,11 +525,12 @@ describe('architecture ownership gate (#233)', () => {
 
   it('keeps Team read binding summaries composed in admin methods', async () => {
     const adminMethods = await readSource('admin/methods.ts');
+    const teamMethodParams = await readSource('admin/team-method-params.ts');
     assertContains(
-      adminMethods,
+      teamMethodParams,
       /async function teamBindingFields[\s\S]*dispatcher\.activeTeamBindingSummaries[\s\S]*bound_target:\s*bound_targets\[0\]\s*\?\?\s*null[\s\S]*bound_targets/,
-      'Team read composition invariant violated: admin/methods.ts must derive compatible bound_target and complete bound_targets from the plural ChannelService projection.',
-      '../admin/methods.ts',
+      'Team read composition invariant violated: admin/team-method-params.ts must derive compatible bound_target and complete bound_targets from the plural ChannelService projection.',
+      '../admin/team-method-params.ts',
     );
     assertContains(
       adminMethods,

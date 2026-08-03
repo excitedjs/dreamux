@@ -68,6 +68,8 @@ export class FakeRuntime implements AgentRuntime {
     return { status: 'submitted', turnId: `turn-${this.submitted.length}` };
   }
 
+  async waitIdle(): Promise<void> {}
+
   getStatus(): AgentRuntimeStatus {
     return this.status;
   }

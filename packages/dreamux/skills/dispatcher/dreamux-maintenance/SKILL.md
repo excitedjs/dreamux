@@ -51,7 +51,7 @@ description: "Dreamux host operation notes. Load when diagnosing or operating dr
 
 | Task | Read when | Reference |
 |---|---|---|
-| Service lifecycle and reply diagnosis | Diagnosing `dreamux serve`, daemon startup, doctor/status results, Dispatcher health, missing replies, stuck turns, restart behavior, current state/run/log paths, bundled-skill injection, or runtime app-server readiness. | [Service lifecycle](references/service-lifecycle.md) |
+| Service lifecycle, Team dissolve, and reply diagnosis | Diagnosing `dreamux serve`, daemon startup, doctor/status results, Dispatcher health, missing replies, stuck turns, restart behavior, active or cleanup-pending Team dissolve, current state/run/log paths, bundled-skill injection, or runtime app-server readiness. | [Service lifecycle](references/service-lifecycle.md) |
 | Managed Dreamux self-upgrade | The operator explicitly requests a Dreamux upgrade, or an injected restart notice requires post-restart recovery and verification. | [Self-upgrade](references/self-upgrade.md) |
 | Host config envelope | Inspecting or safely editing the current `config.json` envelope, path authority, Dispatcher/agent/channel wiring, or an opaque external provider config. | [Config envelope](references/config-envelope.md) |
 | Built-in Codex config | Inspecting or changing the current `builtin:codex` Agent Runtime provider config. | [Built-in Codex](references/builtin-codex.md) |

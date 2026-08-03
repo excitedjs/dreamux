@@ -27,6 +27,32 @@ same-version restart cautions.
 - Treat a successful submit as acceptance only. Confirm completion and then the
   provider-visible reply separately.
 
+## Team Dissolve And Cleanup State
+
+- Team state lives at
+  `~/.dreamux/state/<dispatcher-id>/team/<team-id>/record.json` and is fully
+  server-owned. Its nullable `dissolve` object contains the accepted operation,
+  requester/generation, target handoff ids, first note/time, phase, public-safe
+  error, cleanup-attempt count, and next retry time. Do not edit, clear, copy, or
+  synthesize this object manually.
+- Current phases are `waiting_for_team_idle`, `closing_resources`,
+  `worktree_cleanup_pending`, `complete`, and `failed`. Team status is separate:
+  a Team can be durably `closed` while managed worktree cleanup remains pending.
+- `cleanup-pending` means Dreamux still owns retry responsibility. Inspect Team
+  status/history and sanitized structured logs for dispatcher, Team, operation,
+  phase, attempt, and public-safe error. Do not delete the Team record or managed
+  worktree to clear the visible state.
+- Dispatcher startup restores the Team availability fence and resumes active
+  dissolve/cleanup work before normal Team, collaboration, Channel, workflow,
+  or scheduler work is published. A same-version restart is a recovery action,
+  not proof that cleanup completed; verify the terminal Team view afterward.
+- Dirty, unmerged, unique-commit, keep, and non-managed worktrees are retained.
+  Operational cleanup failures retry in the background. Escalate retained work
+  for an explicit operator decision instead of force-removing it.
+- `collaboration-spaces.json` is also fully server-owned. Its target-side
+  operation/handoff fields correlate one closing target generation with the
+  Team-owned operation; they are not safe manual repair switches.
+
 ## Bundled-Skill Injection
 
 Bundled skills are injected by role. Inspect the runtime skill-source config

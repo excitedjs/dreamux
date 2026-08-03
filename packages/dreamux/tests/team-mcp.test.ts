@@ -11,7 +11,10 @@ import {
   TEAM_DISPATCH_SUCCESS_REMINDER,
   TEAMMATE_DISPATCH_SUCCESS_REMINDER,
 } from '../src/mcp/task-dispatch-reminder.js';
-import { runTeamMcp } from '../src/mcp/team-mcp.js';
+import {
+  runTeamMcp,
+  teamAdminRequestOptions,
+} from '../src/mcp/team-mcp.js';
 
 class JsonLineReader {
   private buffer = '';
@@ -715,12 +718,20 @@ describe('team-mcp stdio shim', () => {
     }
   });
 
-  it('projects scoped bind_channel and transfer_back to TeamLeader and forwards caller scope', async () => {
+  it('projects scoped dissolve, bind_channel, and transfer_back to TeamLeader', async () => {
     const tools = await teamLeaderToolSchemas();
     expect(tools.map((tool) => tool['name'])).toEqual([
+      'dissolve',
       'bind_channel',
       'transfer_back',
     ]);
+    expect(schemaOf(tools, 'dissolve')).toMatchObject({
+      required: ['note'],
+      properties: {
+        note: { type: 'string', minLength: 1, pattern: '\\S' },
+      },
+    });
+    expect(Object.keys(schemaOf(tools, 'dissolve').properties)).toEqual(['note']);
     expect(schemaOf(tools, 'bind_channel').required).toEqual(['meta']);
     expect(schemaOf(tools, 'bind_channel').properties).toHaveProperty('channel_id');
     expect(schemaOf(tools, 'bind_channel').properties).toHaveProperty('meta');
@@ -752,8 +763,8 @@ describe('team-mcp stdio shim', () => {
         id: 1,
         method: 'tools/call',
         params: {
-          name: 'bind_channel',
-          arguments: { meta: { target: 'target-demo' } },
+          name: 'dissolve',
+          arguments: { note: 'team work is complete' },
         },
       });
       await reader.next();
@@ -763,25 +774,44 @@ describe('team-mcp stdio shim', () => {
         id: 2,
         method: 'tools/call',
         params: {
+          name: 'bind_channel',
+          arguments: { meta: { target: 'target-demo' } },
+        },
+      });
+      await reader.next();
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 3,
+        method: 'tools/call',
+        params: {
           name: 'transfer_back',
           arguments: { meta: { target: 'target-demo' } },
         },
       });
       await reader.next();
 
-      expect(admin.requests[0]?.method).toBe('team.bind_channel');
+      expect(admin.requests[0]?.method).toBe('team.dissolve');
       expect(admin.requests[0]?.params).toMatchObject({
+        caller_kind: 'team_leader',
+        team_id: 'alpha',
+        leader_name: 'alpha-leader',
+        note: 'team work is complete',
+      });
+      expect(admin.requests[0]?.params).not.toHaveProperty('team_name');
+      expect(admin.requests[1]?.method).toBe('team.bind_channel');
+      expect(admin.requests[1]?.params).toMatchObject({
         caller_kind: 'team_leader',
         team_id: 'alpha',
         leader_name: 'alpha-leader',
         meta: { target: 'target-demo' },
       });
-      expect(admin.requests[0]?.params).not.toHaveProperty('team_name');
-      expect(admin.requests[1]?.method).toBe('team.transfer_back');
+      expect(admin.requests[1]?.params).not.toHaveProperty('team_name');
+      expect(admin.requests[2]?.method).toBe('team.transfer_back');
 
       writeJson(input, {
         jsonrpc: '2.0',
-        id: 3,
+        id: 4,
         method: 'tools/call',
         params: {
           name: 'bind_channel',
@@ -799,12 +829,11 @@ describe('team-mcp stdio shim', () => {
         'list',
         'status',
         'history',
-        'dissolve',
       ];
       for (const [idx, name] of hiddenTools.entries()) {
         writeJson(input, {
           jsonrpc: '2.0',
-          id: idx + 4,
+          id: idx + 5,
           method: 'tools/call',
           params: { name, arguments: {} },
         });
@@ -813,6 +842,7 @@ describe('team-mcp stdio shim', () => {
         });
       }
       expect(admin.requests.map((request) => request.method)).toEqual([
+        'team.dissolve',
         'team.bind_channel',
         'team.transfer_back',
       ]);
@@ -822,5 +852,23 @@ describe('team-mcp stdio shim', () => {
     } finally {
       await admin.close();
     }
+  });
+
+  it('uses the explicit 12s admin timeout only for Dispatcher dissolve', () => {
+    expect(teamAdminRequestOptions({
+      socketPath: '/tmp/admin.sock',
+      method: 'team.dissolve',
+      callerKind: 'dispatcher',
+    })).toEqual({ socketPath: '/tmp/admin.sock', timeoutMs: 12_000 });
+    expect(teamAdminRequestOptions({
+      socketPath: '/tmp/admin.sock',
+      method: 'team.dissolve',
+      callerKind: 'team_leader',
+    })).toEqual({ socketPath: '/tmp/admin.sock' });
+    expect(teamAdminRequestOptions({
+      socketPath: '/tmp/admin.sock',
+      method: 'team.status',
+      callerKind: 'dispatcher',
+    })).toEqual({ socketPath: '/tmp/admin.sock' });
   });
 });

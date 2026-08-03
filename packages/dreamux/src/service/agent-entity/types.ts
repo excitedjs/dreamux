@@ -151,6 +151,7 @@ export interface CreateTeamLeaderInput {
 export type AgentEntityWorktreeCleanupState =
   | "not-managed"
   | "managed-active"
+  | "cleanup-pending"
   | "kept"
   | "deleted"
   | "retained-dirty"
