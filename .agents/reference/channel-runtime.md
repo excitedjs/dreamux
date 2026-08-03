@@ -42,6 +42,7 @@ For Feishu, the session owns:
 - known/trusted peer-bot state;
 - inbound message formatting and attachment normalization;
 - channel-owned reaction state;
+- bounded recall and outbound-failure observability;
 - Feishu MCP tool backing.
 
 Key source:
@@ -302,6 +303,16 @@ Collaboration target work has three entry points:
   old generation thereafter returns `dispatcher_unavailable` without entering
   routing or materializing a runtime.
 
+Core logs every provider-neutral lifecycle ingress after acceptance is known,
+including bounded dispatcher/channel, container, target, event kind, and an
+`accepted` or `ignored` outcome. Accepted target-close execution logs its
+bounded route and Team identity immediately before Team close, after the target
+is durably `closed`, and on the existing failure path. `TeamService` separately
+logs dissolve start, worktree cleanup start and result, and dissolve completion;
+the cleanup result carries only `cleanup_state` and bounded `cleanup_error`.
+These logs do not change lifecycle acceptance, asynchronous task ownership,
+restart recovery, retry, cleanup, retention, or shutdown behavior.
+
 Both paths bypass the dispatcher agent runtime but still go through
 `DispatcherService` and core stores. Direct inbound and strict promises are
 admitted and tracked by `DispatcherService`; session-lease revocation permanently
@@ -452,6 +463,25 @@ warning instead of sending a topic notification to the group root. The provider
 does not claim topic-created or topic-closed lifecycle support; provisioning
 begins on first accepted topic inbound.
 
+The Feishu bot registers `im.message.recalled_v1` only when the session supplies
+its named handler and normalizes only bounded event id, chat id, message id,
+recall type, and recall time fields. Malformed events are ignored. While the
+captured session fence is current, the handler writes one structured receipt log
+using exactly that normalized projection plus the dispatcher id. It never
+consults target-routing state, enters the session lifecycle task set, or calls
+`ChannelRoutes.targetLifecycle`. A message recall is not treated as a Feishu
+topic-close signal.
+
+`@excitedjs/feishu-transport` is the sole parser of outbound SDK and Axios error
+shapes. Its public log projector returns a detached primitive-only object with
+bounded `code`, `msg`, and `log_id`, or `null` for an unknown shape. It never
+retains a raw error, cause, response, request config, body, headers, or
+credentials, and projection failure is contained. Feishu send/reply/card paths
+throw the exact original value; the Channel uses the projection only to enrich
+its existing failure logs. Unknown errors retain generic message/stack logging,
+with explicit bounds. Code `230019` is outbound diagnostic data only and never
+emits or infers `target_closed`.
+
 The built-in Feishu session subscribes to `binding.route` and
 `binding.collaboration_space` from its dispatcher-wide core event source and
 ignores events whose endpoint provider is not `builtin:feishu`. Delivery is
@@ -479,12 +509,19 @@ Key source:
 - `/packages/dreamux/src/service/channel-binding/store.ts`
 - `/packages/dreamux/src/service/channel-binding/preflight.ts`
 - `/packages/dreamux/src/service/collaboration-space/`
+- `/packages/dreamux/src/service/collaboration-space/target-lifecycle.ts`
+- `/packages/dreamux/src/service/collaboration-space/observability.ts`
+- `/packages/dreamux/src/service/team-service/index.ts`
+- `/packages/dreamux/src/service/team-service/observability.ts`
+- `/packages/dreamux/src/platform/log-fields.ts`
 - `/packages/dreamux/src/mcp/collaboration-space-mcp.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 - `/packages/dreamux/src/service/dispatcher-service/collaboration-routing.ts`
 - `/packages/channel/feishu-transport/src/parse/content.ts`
 - `/packages/channel/feishu-transport/src/transport/feishu.ts`
+- `/packages/channel/feishu-transport/src/transport/outbound-error.ts`
 - `/packages/channel/feishu-channel/src/feishu-binding-notification-card.ts`
+- `/packages/channel/feishu-channel/src/feishu-error-log.ts`
 - `/packages/channel/feishu-channel/src/feishu-target-router.ts`
 - `/packages/channel/feishu-channel/src/feishu-channel.ts`
 - `/packages/channel/feishu-channel/src/provider.ts`

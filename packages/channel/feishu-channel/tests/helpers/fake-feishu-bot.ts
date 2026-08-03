@@ -18,6 +18,7 @@ import type {
   FeishuCardActionEvent,
   FeishuInboundEvent,
   FeishuInboundRoutes,
+  FeishuMessageRecalledEvent,
   FeishuSendResult,
 } from '../../src/bot.js';
 
@@ -52,6 +53,7 @@ export interface FakeFeishuBot extends FeishuBot {
   readonly messageReadRequests: FeishuMessageReadRequest[];
   readonly messageResourceRequests: FeishuMessageResourceRequest[];
   inject(event: FeishuInboundEvent): Promise<void>;
+  injectMessageRecalled(event: FeishuMessageRecalledEvent): Promise<void>;
   injectBotMemberAdded(event: FeishuBotMemberAddedEvent): Promise<void>;
   injectCardAction(event: FeishuCardActionEvent): Promise<unknown>;
   setAppOwner(owner: FeishuAppOwnerIdentity): void;
@@ -213,6 +215,10 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     async inject(event: FeishuInboundEvent): Promise<void> {
       if (routes === null) throw new Error('fake bot not started');
       await routes.onMessage(event);
+    },
+    async injectMessageRecalled(event: FeishuMessageRecalledEvent): Promise<void> {
+      if (routes === null) throw new Error('fake bot not started');
+      await routes.onMessageRecalled?.(event);
     },
     async injectBotMemberAdded(event: FeishuBotMemberAddedEvent): Promise<void> {
       if (routes === null) throw new Error('fake bot not started');

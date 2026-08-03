@@ -10,7 +10,9 @@
  */
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
-import { FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER } from '@excitedjs/feishu-transport';
+import {
+  FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER,
+} from '@excitedjs/feishu-transport';
 import type {
   ChannelOutboundTarget,
   FeishuBot,
@@ -37,6 +39,10 @@ import { AsyncMutex } from './lib/mutex.js';
 import type { FeishuChannelSessionOptions } from './feishu-channel.js';
 import type { PeerBot } from './chat-bots-store.js';
 import type { FeishuTargetRouter } from './feishu-target-router.js';
+import {
+  feishuErrorLogInfo as errInfo,
+  feishuOutboundErrorLogInfo as outboundErrInfo,
+} from './feishu-error-log.js';
 import {
   FeishuOperationError,
   runFeishuBoundedOperation,
@@ -120,15 +126,6 @@ export function sessionHandle(
 // Utility
 // ─────────────────────────────────────────────────────────────────────────
 
-function errInfo(err: unknown): { message: string; stack?: string } {
-  if (err instanceof Error) {
-    return err.stack !== undefined
-      ? { message: err.message, stack: err.stack }
-      : { message: err.message };
-  }
-  return { message: String(err) };
-}
-
 const log = (h: SessionHandle): DreamuxLogger => h.opts.log;
 
 function pairingTokenLogFields(token: string): Record<string, unknown> {
@@ -165,7 +162,7 @@ export async function sendReply(
         dispatcher_id: h.opts.dispatcherId,
         chat_id: input.chatId,
         message_id: input.messageId,
-        err: errInfo(err),
+        err: outboundErrInfo(err),
       },
       'feishu send failed',
     );
@@ -213,7 +210,7 @@ export async function sendCard(
           dispatcher_id: h.opts.dispatcherId,
           chat_id: input.target.conversationId,
           message_id: input.target.replyTo,
-          err: errInfo(err),
+          err: outboundErrInfo(err),
         },
         'feishu sendCard failed',
       );
@@ -650,7 +647,7 @@ export async function sendIntroduceAck(
         chat_id: event.chatId,
         message_id: event.messageId,
         peer_count: peers.length,
-        err: errInfo(err),
+        err: outboundErrInfo(err),
       },
       'introduce ack failed',
     );

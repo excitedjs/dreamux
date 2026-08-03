@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Expose a bounded Feishu SDK error log projection while preserving original outbound failures.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

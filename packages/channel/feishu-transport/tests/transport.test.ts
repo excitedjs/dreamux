@@ -19,6 +19,7 @@ import {
   commentFromBatchQuery,
   createFeishuTransport,
 } from '../src/transport/feishu'
+import { projectFeishuOutboundErrorLog } from '../src/index'
 import type { TransportLogger } from '../src/transport/diagnostics'
 
 /**
@@ -277,6 +278,121 @@ describe('createFeishuTransport — send', () => {
     }
     expect(card.body.elements[0]?.content).toContain('<at id="ou_sender"></at>')
     expect(card.body.elements[0]?.content).toContain('done')
+  })
+
+  test('projects SDK/Axios reply failures for logs and rethrows the exact value', async () => {
+    const stub = stubClient()
+    const secret = 'fake-secret-must-not-survive'
+    const raw = Object.assign(new Error('Request failed with status code 400'), {
+      config: {
+        data: `{"app_secret":"${secret}"}`,
+        headers: { Authorization: `Bearer ${secret}` },
+      },
+      request: { body: secret },
+      response: {
+        headers: { authorization: secret },
+        data: {
+          code: '230019',
+          msg: 'The thread does NOT exist',
+          error: { log_id: 'upstream-log-1' },
+          body: secret,
+        },
+      },
+    })
+    stub.reply.mockRejectedValueOnce(raw as never)
+    const transport = buildTransport(stub)
+
+    let caught: unknown
+    try {
+      await transport.send(
+        { chatId: 'oc_chat', replyToMessageId: 'om_source' },
+        'sensitive outbound body',
+      )
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toBe(raw)
+    const projection = projectFeishuOutboundErrorLog(caught)
+    expect(projection).toEqual({
+      code: 230019,
+      msg: 'The thread does NOT exist',
+      log_id: 'upstream-log-1',
+    })
+    expect(Object.keys(projection ?? {}).sort()).toEqual(['code', 'log_id', 'msg'])
+    expect(JSON.stringify(projection)).not.toContain(secret)
+  })
+
+  test('bounds upstream message and log id fields without wrapping failures', async () => {
+    const stub = stubClient()
+    const raw = {
+      response: {
+        data: {
+          code: 230019,
+          msg: 'm'.repeat(2_000),
+          error: { log_id: 'l'.repeat(2_000) },
+        },
+      },
+    }
+    stub.reply.mockRejectedValueOnce(raw as never)
+    const transport = buildTransport(stub)
+
+    const error = await transport.send(
+      { chatId: 'oc_chat', replyToMessageId: 'om_source' },
+      'reply',
+    ).catch((value: unknown) => value)
+
+    expect(error).toBe(raw)
+    expect(projectFeishuOutboundErrorLog(error)).toEqual({
+      code: 230019,
+      msg: 'm'.repeat(512),
+      log_id: 'l'.repeat(256),
+    })
+  })
+
+  test('projects a cancelled SDK failure while preserving the exact rejection', async () => {
+    const stub = stubClient()
+    const controller = new AbortController()
+    const raw = Object.assign(new Error('SDK failed after cancellation'), {
+      config: { data: 'credential-must-not-survive' },
+      response: { data: { code: 230019, msg: 'thread closed' } },
+    })
+    controller.abort(new Error('caller cancellation'))
+    stub.request.mockRejectedValueOnce(raw as never)
+    const transport = buildTransport(stub)
+
+    const error = await transport.sendCard(
+      { chatId: 'oc_chat', replyToMessageId: 'om_source' },
+      { elements: [] },
+      { signal: controller.signal },
+    ).catch((value: unknown) => value)
+
+    expect(error).toBe(raw)
+    const projection = projectFeishuOutboundErrorLog(error)
+    expect(projection).toEqual({ code: 230019, msg: 'thread closed' })
+    expect(JSON.stringify(projection)).not.toContain('credential-must-not-survive')
+  })
+
+  test('leaves unknown outbound errors unprojected and rethrows them unchanged', async () => {
+    const stub = stubClient()
+    const raw = new Error('unknown transport failure')
+    stub.reply.mockRejectedValueOnce(raw as never)
+    const transport = buildTransport(stub)
+
+    const error = await transport.send(
+      { chatId: 'oc_chat', replyToMessageId: 'om_source' },
+      'reply',
+    ).catch((value: unknown) => value)
+
+    expect(error).toBe(raw)
+    expect(projectFeishuOutboundErrorLog(error)).toBeNull()
+  })
+
+  test('fails closed for an error shape whose properties cannot be read', () => {
+    const { proxy, revoke } = Proxy.revocable({}, {})
+    revoke()
+
+    expect(projectFeishuOutboundErrorLog(proxy)).toBeNull()
   })
 
   test('renders a multi-card body into one im.message.create per card', async () => {

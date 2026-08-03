@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -277,12 +277,13 @@ describe('CollaborationSpaceService', () => {
     const created: CreatedTeam[] = [];
     const dissolved: string[] = [];
     const channels = fakeChannels();
+    const info = vi.fn();
     const service = new CollaborationSpaceService({
       dispatcherId: 'flow',
       config: fakeConfig(),
       teams: fakeTeams(created, dissolved),
       channels: channels.service,
-      log: log as never,
+      log: { ...log, info } as never,
       isShuttingDown: () => false,
     });
 
@@ -307,6 +308,7 @@ describe('CollaborationSpaceService', () => {
       },
     };
     const provisioned = await service.provisionTarget(targetInput);
+    if (provisioned === null) throw new Error('target was not provisioned');
     expect(provisioned).toMatchObject({ lifecycle_status: 'active' });
     expect(channels.boundOwners.has('topic-closed')).toBe(true);
     const owner = channels.boundOwners.get('topic-closed');
@@ -339,7 +341,26 @@ describe('CollaborationSpaceService', () => {
     });
     expect(channels.boundOwners.has('topic-closed')).toBe(false);
     expect(channels.boundOwners.has('topic-explicit-extra')).toBe(false);
-    expect(dissolved).toEqual([provisioned?.team_name]);
+    expect(dissolved).toEqual([provisioned.team_name]);
+    const routeFields = {
+      dispatcher_id: 'flow',
+      space_name: 'space-alpha',
+      channel_id: 'primary',
+      provider: 'builtin:test',
+      container_key: 'container-1',
+      binding_generation: 1,
+      target_type: 'topic',
+      target_key: 'topic-closed',
+      team_name: provisioned.team_name,
+    };
+    expect(info).toHaveBeenCalledWith(
+      routeFields,
+      'collaboration target close started',
+    );
+    expect(info).toHaveBeenCalledWith(
+      { ...routeFields, lifecycle_status: 'closed' },
+      'collaboration target close completed',
+    );
   });
 
   it('closes an orphan Team created before the target recorded its leader', async () => {
@@ -1121,6 +1142,8 @@ describe('CollaborationSpaceService', () => {
     const created: CreatedTeam[] = [];
     const dissolved: string[] = [];
     const channels = fakeChannels();
+    const info = vi.fn();
+    const error = vi.fn();
 
     // Teams mock where dissolve fails
     const teamsWithBadDissolve = {
@@ -1189,7 +1212,7 @@ describe('CollaborationSpaceService', () => {
       config: fakeConfig(),
       teams: teamsWithBadDissolve,
       channels: channels.service,
-      log: log as never,
+      log: { ...log, info, error } as never,
       isShuttingDown: () => false,
     });
 
@@ -1243,6 +1266,25 @@ describe('CollaborationSpaceService', () => {
     );
     await expect(service.acceptAndProvisionTarget(targetInput)).rejects.toThrow(
       /closing and cannot be provisioned/,
+    );
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dispatcher_id: 'flow',
+        space_name: 'space-alpha',
+        channel_id: 'primary',
+        container_key: 'container-1',
+        target_type: 'topic',
+        target_key: 'topic-close-fail',
+      }),
+      'collaboration target close started',
+    );
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dispatcher_id: 'flow',
+        team_name: expect.any(String),
+        err: { message: 'simulated dissolve failure' },
+      }),
+      'collaboration target close failed (target remains in closing state for retry)',
     );
   });
 

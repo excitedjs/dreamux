@@ -21,6 +21,10 @@ import {
 import { BUILTIN_FEISHU_PROVIDER_REF } from './provider-ref.js';
 import { AsyncMutex } from './lib/mutex.js';
 import {
+  feishuErrorLogInfo as errInfo,
+  feishuOutboundErrorLogInfo as outboundErrInfo,
+} from './feishu-error-log.js';
+import {
   alwaysActiveSessionFence,
   type FeishuSessionFence,
 } from './feishu-inbound-work.js';
@@ -246,6 +250,20 @@ export class FeishuChannelSession {
             ),
           );
         },
+        onMessageRecalled: (event) => {
+          if (!lifecycle.fence.isCurrent()) return;
+          this.opts.log.info(
+            {
+              dispatcher_id: this.opts.dispatcherId,
+              event_id: event.eventId,
+              chat_id: event.chatId,
+              message_id: event.messageId,
+              recall_type: event.recallType,
+              recall_time: event.recallTime,
+            },
+            'Feishu message recall received',
+          );
+        },
         onCardAction: async (event) => {
           if (!lifecycle.fence.isCurrent()) return {};
           return this.trackLifecycleTask(lifecycle, this.onCardAction(event));
@@ -337,7 +355,7 @@ export class FeishuChannelSession {
         {
           dispatcher_id: this.opts.dispatcherId,
           tool: toolName,
-          err: errInfo(err),
+          err: toolName === 'reply' ? outboundErrInfo(err) : errInfo(err),
         },
         'feishu MCP tool handler failed',
       );
@@ -525,7 +543,7 @@ export class FeishuChannelSession {
             event_kind: event.kind,
             action: event.action,
             attempt,
-            err: errInfo(err),
+            err: outboundErrInfo(err),
           },
           retrying
             ? 'Feishu binding notification failed; retrying once'
@@ -549,13 +567,4 @@ export function toWireChatBot(bot: PeerBot): WireChatBot {
     open_id: bot.openId,
     ...(bot.name !== undefined && bot.name !== '' ? { name: bot.name } : {}),
   };
-}
-
-function errInfo(err: unknown): { message: string; stack?: string } {
-  if (err instanceof Error) {
-    return err.stack !== undefined
-      ? { message: err.message, stack: err.stack }
-      : { message: err.message };
-  }
-  return { message: String(err) };
 }

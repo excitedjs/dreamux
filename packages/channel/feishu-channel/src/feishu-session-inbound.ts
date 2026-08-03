@@ -49,6 +49,7 @@ import {
   type PendingPairingEntry,
 } from './feishu-gate.js';
 import { buildPairingApprovalCard } from './feishu-pairing-card.js';
+import { feishuOutboundErrorLogInfo } from './feishu-error-log.js';
 import { BUILTIN_FEISHU_PROVIDER_REF } from './provider-ref.js';
 import {
   CHANNEL_REMINDER,
@@ -235,9 +236,7 @@ export async function onMessage(
       } catch (err) {
         log(h).error(
           {
-            err: err instanceof Error
-              ? { message: err.message, stack: err.stack }
-              : { message: String(err) },
+            err: feishuOutboundErrorLogInfo(err),
             ...pairingTokenLogFields(action.token),
             prompt_message_id: action.prompt_message_id,
             kind: action.kind,
@@ -282,11 +281,9 @@ export async function onMessage(
       });
       sentCardMessageId = sendResult.messageIds[0];
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const stack = err instanceof Error ? err.stack : undefined;
       log(h).error(
         {
-          err: { message, stack },
+          err: feishuOutboundErrorLogInfo(err),
           ...pairingTokenLogFields(action.token),
           kind: action.kind,
           chat_id: inbound.chat_id,

@@ -14,6 +14,7 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import { errorInfo } from '../../platform/error-info.js';
+import { boundedLogText } from '../../platform/log-fields.js';
 import type { ChannelService } from '../channel-service/index.js';
 import type { CollaborationSpaceService } from '../collaboration-space/index.js';
 import { CollaborationTargetOperationError } from '../collaboration-space/operation-error.js';
@@ -42,29 +43,35 @@ export async function handleCollaborationTargetLifecycle(input: {
     collaborationSpaces,
   } = input;
   const task = doHandleCollaborationTargetLifecycle({
+    dispatcherId: input.dispatcherId,
     dispatcherAgentRuntime,
     channelId,
     event,
     channels,
     collaborationSpaces,
+    log: input.log,
   });
   collaborationSpaces.trackLifecycleTask('accept', task);
   return task;
 }
 
 async function doHandleCollaborationTargetLifecycle(input: {
+  dispatcherId: string;
   dispatcherAgentRuntime: string;
   channelId: string;
   event: ChannelTargetLifecycleEvent;
   channels: ChannelService;
   collaborationSpaces: CollaborationSpaceService;
+  log: DreamuxLogger;
 }): Promise<void> {
   const {
+    dispatcherId,
     dispatcherAgentRuntime,
     channelId,
     event,
     channels,
     collaborationSpaces,
+    log,
   } = input;
   if (event.kind === 'target_created') {
     const provisionInput = provisionInputForTarget({
@@ -83,6 +90,13 @@ async function doHandleCollaborationTargetLifecycle(input: {
         dispatcherAgentRuntime,
       }),
     });
+    logTargetLifecycleIngress({
+      dispatcherId,
+      channelId,
+      event,
+      accepted: accepted !== null,
+      log,
+    });
     if (accepted === null) return;
     collaborationSpaces.startAcceptedTargetProvision(accepted);
     return;
@@ -97,6 +111,13 @@ async function doHandleCollaborationTargetLifecycle(input: {
       ...(event.event_id !== undefined ? { eventId: event.event_id } : {}),
     };
     const accepted = await collaborationSpaces.acceptTargetClosedForClose(closeInput);
+    logTargetLifecycleIngress({
+      dispatcherId,
+      channelId,
+      event,
+      accepted: accepted !== null,
+      log,
+    });
     if (accepted === null) return;
     collaborationSpaces.startTargetClose(accepted);
     return;
@@ -105,6 +126,30 @@ async function doHandleCollaborationTargetLifecycle(input: {
     `unknown channel target lifecycle event kind ${JSON.stringify(
       (event as { kind?: unknown }).kind,
     )}`,
+  );
+}
+
+function logTargetLifecycleIngress(input: {
+  dispatcherId: string;
+  channelId: string;
+  event: ChannelTargetLifecycleEvent;
+  accepted: boolean;
+  log: DreamuxLogger;
+}): void {
+  input.log.info(
+    {
+      dispatcher_id: boundedLogText(input.dispatcherId),
+      channel_id: boundedLogText(input.channelId),
+      event_kind: input.event.kind,
+      container_type: boundedLogText(input.event.container.container_type),
+      container_key: boundedLogText(input.event.container.container_key),
+      target_type: boundedLogText(input.event.target.target_type),
+      target_key: boundedLogText(input.event.target.target_key),
+      outcome: input.accepted ? 'accepted' : 'ignored',
+    },
+    input.accepted
+      ? 'collaboration target lifecycle ingress accepted'
+      : 'collaboration target lifecycle ingress ignored',
   );
 }
 

@@ -13,6 +13,10 @@ import {
 } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import {
+  logTeamWorktreeCleanupResult,
+  teamDissolveLogFields,
+} from './observability.js';
+import {
   bundledSharedSkillRoot,
   bundledTeamLeaderSkillRoot,
   dispatcherTeamCronJobsPath,
@@ -381,6 +385,8 @@ export class TeamService {
 
   async dissolve(input: TeamDissolveInput): Promise<TeamSummary> {
     requireLifecycleText(input.note, 'Team dissolve note');
+    const logFields = teamDissolveLogFields(this.deps.dispatcherId, this.id);
+    this.deps.log.info(logFields, 'Team dissolve started');
     this.workflowService.closeAdmission();
     await this.workflowService.stopAll();
     await this.teammateCollection.releaseAllOwned();
@@ -397,11 +403,13 @@ export class TeamService {
     // `dissolve` is the single authoritative cleanup site for the Team's shared
     // worktree (issue #236): members and the leader borrow it and skip cleanup on
     // their own `close`, so only this call removes it.
+    this.deps.log.info(logFields, 'Team worktree cleanup started');
     const cleaned = await this.deps.worktrees.cleanup({
       source_cwd: record.repo_cwd,
       source_repo: record.source_repo,
       worktree: record.worktree,
     });
+    logTeamWorktreeCleanupResult(this.deps.log, logFields, cleaned);
     this.record = await this.deps.store.update(record, {
       status: 'closed',
       closedAt: Date.now(),
@@ -419,6 +427,7 @@ export class TeamService {
     const summary = await this.status();
     // Evict so a later `get` rebuilds from disk and reads `status: closed`.
     this.deps.evict(this);
+    this.deps.log.info(logFields, 'Team dissolve completed');
     return summary;
   }
 

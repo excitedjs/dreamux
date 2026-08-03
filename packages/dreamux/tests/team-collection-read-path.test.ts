@@ -2272,6 +2272,7 @@ describe('team dissolve syncs cleanup_state to the leader and members (#237)', (
       prompt: 'lead',
     });
     const team = await teams.get('delta');
+    const info = vi.spyOn(log, 'info');
     const spawn = await team.spawnTeamMate({
       name: 'worker',
       prompt: 'do the work',
@@ -2290,5 +2291,70 @@ describe('team dissolve syncs cleanup_state to the leader and members (#237)', (
     expect(dissolved.leader!.repo?.cleanup_state).toBe('deleted');
     const member = await team.teammates.status(memberName);
     expect(member.repo?.cleanup_state).toBe('deleted');
+    const logFields = { dispatcher_id: 'dispatcher-a', team_name: 'delta' };
+    expect(info).toHaveBeenCalledWith(logFields, 'Team dissolve started');
+    expect(info).toHaveBeenCalledWith(logFields, 'Team worktree cleanup started');
+    expect(info).toHaveBeenCalledWith(
+      { ...logFields, cleanup_state: 'deleted', cleanup_error: null },
+      'Team worktree cleanup finished',
+    );
+    expect(info).toHaveBeenCalledWith(logFields, 'Team dissolve completed');
+  });
+
+  it('bounds the cleanup error in the authoritative dissolve result log', async () => {
+    const workspace = join(root, 'workspace-error');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const info = vi.spyOn(log, 'info');
+    const worktrees = new WorktreeManager();
+    const cleanupError = 'cleanup failure '.repeat(200);
+    vi.spyOn(worktrees, 'cleanup').mockImplementation(async ({ worktree }) => ({
+      ...worktree,
+      cleanup_state: 'retained-error',
+      cleanup_error: cleanupError,
+    }));
+    const teams = new TeamCollection({
+      dispatcherId: 'dispatcher-a',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      worktrees,
+      identities: new AgentIdentityStore(log),
+      turnsStore: new AgentTurnsStore(log),
+      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      adminSocketPath: '/tmp/admin.sock',
+      leaderChannelDescriptors: () => [],
+      log,
+    });
+    await teams.create({
+      name: 'epsilon',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'exercise cleanup logging',
+    });
+
+    await (await teams.get('epsilon')).dissolve({
+      teamId: 'epsilon',
+      note: 'team done',
+    });
+
+    expect(info).toHaveBeenCalledWith(
+      {
+        dispatcher_id: 'dispatcher-a',
+        team_name: 'epsilon',
+        cleanup_state: 'retained-error',
+        cleanup_error: cleanupError.slice(0, 1_024),
+      },
+      'Team worktree cleanup finished',
+    );
   });
 });

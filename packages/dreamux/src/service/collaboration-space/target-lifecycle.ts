@@ -7,6 +7,11 @@ import { createDefaultBoundSpace } from './default-binding.js';
 import { detachActiveTargets } from './detach-active-targets.js';
 import { publishCollaborationSpaceBindTransition } from '../binding-events.js';
 import { collaborationTeamNamePrefix, targetIntent } from './naming.js';
+import {
+  logTargetCloseCompleted,
+  logTargetCloseFailed,
+  logTargetCloseStarted,
+} from './observability.js';
 import type { CollaborationSpaceStore } from './store.js';
 import type { CollaborationRouteReconciler } from './route-reconciliation.js';
 import {
@@ -634,6 +639,7 @@ export class CollaborationTargetLifecycle {
       close_event_id: eventId ?? record.close_event_id,
       updated_at: Date.now(),
     });
+    logTargetCloseStarted(this.opts.log, this.opts.dispatcherId, closing);
     try {
       await this.opts.routes.closeTargetTeam(
         closing,
@@ -646,15 +652,7 @@ export class CollaborationTargetLifecycle {
         last_error: msg,
         updated_at: Date.now(),
       });
-      this.opts.log.error(
-        {
-          dispatcher_id: this.opts.dispatcherId,
-          space_name: closing.space_name,
-          target_key: closing.target_key,
-          err: { message: msg },
-        },
-        'collaboration target close failed (target remains in closing state for retry)',
-      );
+      logTargetCloseFailed(this.opts.log, this.opts.dispatcherId, closing, msg);
       throw err;
     }
     const closed = await this.opts.store.saveTarget({
@@ -664,6 +662,7 @@ export class CollaborationTargetLifecycle {
       updated_at: Date.now(),
       closed_at: Date.now(),
     });
+    logTargetCloseCompleted(this.opts.log, this.opts.dispatcherId, closed);
     return { closed: true, target: targetView(closed) };
   }
 
