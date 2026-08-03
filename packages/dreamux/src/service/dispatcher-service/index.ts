@@ -617,12 +617,14 @@ export class DispatcherService {
     return this.collaborationSpaces.status(input);
   }
 
-  listCollaborationSpaces() {
-    return this.collaborationSpaces.list();
-  }
+  listCollaborationSpaces() { return this.collaborationSpaces.list(); }
 
-  activeTeamBindingSummary(owner: ChannelRouteOwner) { return this.channels.activeBindingSummaryForOwner(owner); }
-  activeTeamBindingSummaries(owner: ChannelRouteOwner) { return this.channels.activeBindingSummariesForOwner(owner); }
+  activeTeamBindingSummary(owner: ChannelRouteOwner) {
+    return this.channels.activeBindingSummaryForOwner(owner);
+  }
+  activeTeamBindingSummaries(owner: ChannelRouteOwner) {
+    return this.channels.activeBindingSummariesForOwner(owner);
+  }
 
   async dissolveTeam(input: TeamDissolveInput) {
     return this.admitOperation(() => this.teamChannels.dissolve(input));
