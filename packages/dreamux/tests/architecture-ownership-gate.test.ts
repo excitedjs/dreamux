@@ -519,20 +519,26 @@ describe('architecture ownership gate (#233)', () => {
     const adminMethods = await readSource('admin/methods.ts');
     assertContains(
       adminMethods,
-      /'team\.list'[\s\S]*bound_target:\s*await dispatcher\.activeTeamBindingSummary/,
-      'Team read composition invariant violated: team.list must add bound_target in admin/methods.ts.',
+      /async function teamBindingFields[\s\S]*dispatcher\.activeTeamBindingSummaries[\s\S]*bound_target:\s*bound_targets\[0\]\s*\?\?\s*null[\s\S]*bound_targets/,
+      'Team read composition invariant violated: admin/methods.ts must derive compatible bound_target and complete bound_targets from the plural ChannelService projection.',
       '../admin/methods.ts',
     );
     assertContains(
       adminMethods,
-      /'team\.status'[\s\S]*bound_target:\s*await dispatcher\.activeTeamBindingSummary/,
-      'Team read composition invariant violated: team.status must add bound_target in admin/methods.ts.',
+      /'team\.list'[\s\S]*teamBindingFields\(dispatcher, team\)/,
+      'Team read composition invariant violated: team.list must add binding fields in admin/methods.ts.',
       '../admin/methods.ts',
     );
     assertContains(
       adminMethods,
-      /'team\.history'[\s\S]*bound_target:\s*await dispatcher\.activeTeamBindingSummary/,
-      'Team read composition invariant violated: team.history must add bound_target in admin/methods.ts.',
+      /'team\.status'[\s\S]*teamBindingFields\(dispatcher, summary\.team\)/,
+      'Team read composition invariant violated: team.status must add binding fields in admin/methods.ts.',
+      '../admin/methods.ts',
+    );
+    assertContains(
+      adminMethods,
+      /'team\.history'[\s\S]*teamBindingFields\(dispatcher, team\)/,
+      'Team read composition invariant violated: team.history must add binding fields in admin/methods.ts.',
       '../admin/methods.ts',
     );
   });

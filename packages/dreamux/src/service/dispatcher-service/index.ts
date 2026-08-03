@@ -621,9 +621,8 @@ export class DispatcherService {
     return this.collaborationSpaces.list();
   }
 
-  activeTeamBindingSummary(owner: ChannelRouteOwner) {
-    return this.channels.activeBindingSummaryForOwner(owner);
-  }
+  activeTeamBindingSummary(owner: ChannelRouteOwner) { return this.channels.activeBindingSummaryForOwner(owner); }
+  activeTeamBindingSummaries(owner: ChannelRouteOwner) { return this.channels.activeBindingSummariesForOwner(owner); }
 
   async dissolveTeam(input: TeamDissolveInput) {
     return this.admitOperation(() => this.teamChannels.dissolve(input));
