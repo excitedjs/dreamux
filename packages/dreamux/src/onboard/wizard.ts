@@ -20,26 +20,21 @@ import type {
   ProviderOnboardTextPrompt,
 } from '@excitedjs/dreamux-types';
 import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
-import { loadAgentRuntimeProviders } from '../agent-runtime/external-provider.js';
 import { ChannelProviderCatalog } from '../channel/catalog.js';
-import { loadChannelProviders } from '../channel/external-channel-provider.js';
 import { expandHome } from '../config/config.js';
 import {
   createProviderPluginSession,
-  inspectProviderPluginPackages,
-  pluginPackagesForRefs,
-  throwIfProviderPluginsUnavailable,
+  assertProviderPluginsAvailableForDryRun,
+  loadProviderPluginsForConfig,
 } from '../config/provider-plugin-loading.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
   BUILTIN_FEISHU_PROVIDER_REF,
   createBuiltinProviderRegistry,
   formatProviderRef,
-  type NpmProviderRef,
   type ProviderRegistry,
 } from '../registry/index.js';
 import type { ConfigPathOverrides, ProviderRegistryFactory } from '../config/config.js';
-import { hostAgentRefs, hostChannelRefs, validateHostConfig } from '../config/host-config.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 import type {
   CollectedOnboardAnswers,
@@ -268,25 +263,12 @@ async function loadSelectedProviders(
     );
   }
   try {
-    const packages = pluginPackagesForRefs({
+    await loadProviderPluginsForConfig({
       agentRefs,
       channelRefs,
+      providerRegistry: registry,
       overrides: {},
-    });
-    for (const packageName of packages) await context.session?.preparePackage(packageName);
-    const packageImporter = context.session === null
-      ? undefined
-      : async (_ref: NpmProviderRef, packageName: string) =>
-          await context.session!.importModule(packageName);
-    await loadAgentRuntimeProviders({
-      registry,
-      refs: agentRefs,
-      importNpmModule: packageImporter,
-    });
-    await loadChannelProviders({
-      registry,
-      refs: channelRefs,
-      importNpmModule: packageImporter,
+      session: context.session,
     });
     return context;
   } catch (err) {
@@ -313,15 +295,12 @@ export async function createOnboardProviderContext(input: {
     session,
     overrides: input.overrides,
     async assertPluginsAvailable(raw, heading) {
-      const host = validateHostConfig(raw, 'dreamux config');
-      const diagnostics = await inspectProviderPluginPackages({
-        agentRefs: hostAgentRefs(host),
-        channelRefs: hostChannelRefs(host),
+      await assertProviderPluginsAvailableForDryRun({
+        parsed: raw,
         overrides: input.overrides,
-        skipPackages: checkedPackages,
+        heading,
+        checkedPackages,
       });
-      for (const diagnostic of diagnostics) checkedPackages.add(diagnostic.packageName);
-      throwIfProviderPluginsUnavailable(heading, diagnostics);
     },
     async rejectCandidates() {
       await session?.rejectCandidates();

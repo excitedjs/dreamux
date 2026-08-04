@@ -149,18 +149,12 @@ export class ProviderPluginStore {
   });
   private updater: ProviderPluginUpdater | null = null;
   private readonly sessionOps: ProviderPluginSessionOps = {
-    prepareMaterializedCandidate: async (packageName, signal) =>
-      await this.prepareMaterializedCandidate(packageName, signal),
-    pinnedSelectedVersion: async (packageName) =>
-      await this.pinnedSelectedVersion(packageName),
-    pinnedCandidateVersion: async (packageName) =>
-      await this.pinnedCandidateVersion(packageName),
-    commitCandidate: async (packageName, version) =>
-      await this.commitCandidate(packageName, version),
-    rejectCandidate: async (packageName, version) =>
-      await this.rejectCandidate(packageName, version),
-    importModule: async (packageName, version) =>
-      await this.importGenerationModule(packageName, version),
+    prepareMaterializedCandidate: (...args) => this.prepareMaterializedCandidate(...args),
+    pinnedSelectedVersion: (packageName) => this.pinnedSelectedVersion(packageName),
+    pinnedCandidateVersion: (packageName) => this.pinnedCandidateVersion(packageName),
+    commitCandidate: (...args) => this.commitCandidate(...args),
+    rejectCandidate: (...args) => this.rejectCandidate(...args),
+    importModule: (...args) => this.importGenerationModule(...args),
   };
   constructor(options: ProviderPluginStoreOptions = {}) {
     this.root = options.root ?? pluginRoot();
@@ -189,33 +183,24 @@ export class ProviderPluginStore {
     }
     return out;
   }
-  async inspectPackage(packageName: string): Promise<ProviderPluginInspection> {
+  private async inspectPackage(packageName: string): Promise<ProviderPluginInspection> {
     assertProviderPluginPackageName(packageName);
+    let meta: ProviderPluginMetadata;
     try {
-      const meta = await this.readMetadata(packageName);
-      if (meta.selected_version === null) {
-        return pluginInspection(packageName, false, null,
-          `provider plugin ${packageName} has no selected generation`, meta);
-      }
-      await this.assertGenerationComplete(packageName, meta.selected_version);
-      return pluginInspection(packageName, true, meta.selected_version, null, meta);
+      meta = await this.readMetadata(packageName);
     } catch (err) {
       return pluginInspection(packageName, false, null, pluginErrorMessage(err));
     }
-  }
-  async importModule(
-    packageName: string,
-    version?: string,
-  ): Promise<ProviderModule> {
-    assertProviderPluginPackageName(packageName);
-    if (version !== undefined) {
-      return await this.importGenerationModule(packageName, version);
-    }
-    const meta = await this.readMetadata(packageName);
     if (meta.selected_version === null) {
-      throw new Error(`provider plugin ${packageName} has no selected generation`);
+      return pluginInspection(packageName, false, null,
+        `provider plugin ${packageName} has no selected generation`, meta);
     }
-    return await this.importGenerationModule(packageName, meta.selected_version);
+    try {
+      await this.assertGenerationComplete(packageName, meta.selected_version);
+      return pluginInspection(packageName, true, meta.selected_version, null, meta);
+    } catch (err) {
+      return pluginInspection(packageName, false, null, pluginErrorMessage(err), meta);
+    }
   }
   private async importGenerationModule(
     packageName: string,
@@ -318,7 +303,7 @@ export class ProviderPluginStore {
     }
     throwIfAborted(signal);
     const before = await this.readMetadata(packageName);
-    await this.writeSuccessfulCheckMetadata(packageName, before, latest);
+    await this.writeSuccessfulCheckMetadata(packageName, before, latest, true);
     return latest;
   }
   private async pinnedSelectedVersion(packageName: string): Promise<string | null> {
@@ -366,6 +351,7 @@ export class ProviderPluginStore {
     const installId = `${this.now()}-${randomUUID()}`;
     const staging = providerPluginStagingDir(packageName, installId, this.root);
     await this.pruneOldStaging(packageName);
+    throwIfAborted(signal);
     try {
       await mkdir(staging, { recursive: true });
       throwIfAborted(signal);
@@ -385,7 +371,7 @@ export class ProviderPluginStore {
         { mode: 0o600 },
       );
       throwIfAborted(signal);
-      await this.publishGeneration(packageName, version, staging);
+      await this.publishGeneration(packageName, version, staging, signal);
       throwIfAborted(signal);
       await this.assertGenerationComplete(packageName, version);
     } finally {
@@ -396,9 +382,11 @@ export class ProviderPluginStore {
     packageName: string,
     version: string,
     staging: string,
+    signal?: AbortSignal,
   ): Promise<void> {
     const generation = providerPluginGenerationDir(packageName, version, this.root);
     await mkdir(dirname(generation), { recursive: true });
+    throwIfAborted(signal);
     try {
       await rename(staging, generation);
     } catch (err) {
@@ -490,16 +478,21 @@ export class ProviderPluginStore {
     packageName: string,
     before: ProviderPluginMetadata,
     candidateVersion = before.candidate_version,
+    preserveLastCheckError = false,
   ): Promise<void> {
     await this.writeMetadata(packageName, {
       ...before,
       candidate_version: candidateVersion,
       last_check_completed_at: this.now(),
-      last_check_error: null,
+      last_check_error: preserveLastCheckError ? before.last_check_error : null,
     });
   }
   private warn(message: string): void {
-    this.logger?.warn(message);
+    if (this.logger !== undefined) {
+      this.logger.warn(message);
+      return;
+    }
+    console.warn(message);
   }
 }
 class StoreProviderPluginLoadSession implements ProviderPluginLoadSession {

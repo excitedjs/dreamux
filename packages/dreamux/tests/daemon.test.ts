@@ -36,6 +36,7 @@ import {
 import { testConfigFileObject, testSingleDispatcherFileObject } from './helpers/config.js';
 import {
   publishProviderPluginGenerationSync,
+  providerPluginSource,
   writeProviderPluginMetadataSync,
 } from './helpers/provider-plugin.js';
 interface Call {
@@ -185,9 +186,6 @@ class WorkingDirectoryOrderRunner extends InstallRunner {
     await super.run(command, args, options);
   }
 }
-function providerFixtureSource(readConfigBody = 'return rawConfig;'): string {
-  return `export function provider({ ref, descriptor }) { return { ref, descriptor: { ...descriptor, kind: 'agentRuntime' }, getCapabilities() { return { resume: { supported: true } }; }, readConfig(rawConfig) { ${readConfigBody} }, createRuntime() { throw new Error('test runtime does not create a runtime'); } }; }\n`;
-}
 describe('managed service working directory ownership', () => {
   let root: string;
   let oldHome: string | undefined;
@@ -292,12 +290,12 @@ describe('managed service working directory ownership', () => {
     publishProviderPluginGenerationSync({
       packageName,
       version: '1.0.0',
-      source: providerFixtureSource(),
+      source: providerPluginSource({ readConfigBody: 'return rawConfig;' }),
     });
     publishProviderPluginGenerationSync({
       packageName,
       version: '2.0.0',
-      source: providerFixtureSource('throw new Error("candidate rejected");'),
+      source: providerPluginSource({ readConfigBody: 'throw new Error("candidate rejected");' }),
     });
     writeProviderPluginMetadataSync({
       packageName,

@@ -1,18 +1,27 @@
-import type { ProviderPluginStore } from './provider-plugin-store.js';
+import { errMessage } from './provider-loader.js';
+
 export const PROVIDER_PLUGIN_UPDATE_INTERVAL_MS = 4 * 60 * 60 * 1000;
+interface ProviderPluginUpdateStore {
+  checkForUpdate(packageName: string, signal?: AbortSignal): Promise<void>;
+  nextUpdateDelay(packages: readonly string[]): Promise<number>;
+}
+
 export class ProviderPluginUpdater {
   private timer: NodeJS.Timeout | null = null;
   private flight: Promise<void> | null = null;
   private abortController: AbortController | null = null;
   private closed = false;
+
   constructor(
-    private readonly store: ProviderPluginStore,
+    private readonly store: ProviderPluginUpdateStore,
     private readonly packages: readonly string[],
     private readonly warn: (message: string) => void,
   ) {}
+
   start(): void {
     this.schedule(0);
   }
+
   async close(): Promise<void> {
     this.closed = true;
     if (this.timer !== null) clearTimeout(this.timer);
@@ -20,13 +29,13 @@ export class ProviderPluginUpdater {
     this.abortController?.abort(new Error('provider plugin updater closed'));
     await this.flight?.catch(() => undefined);
   }
+
   private schedule(delay: number): void {
     if (this.closed) return;
-    this.timer = setTimeout(() => {
-      void this.run();
-    }, delay);
+    this.timer = setTimeout(() => void this.run(), delay);
     this.timer.unref?.();
   }
+
   private async run(): Promise<void> {
     if (this.closed) return;
     this.timer = null;
@@ -34,22 +43,20 @@ export class ProviderPluginUpdater {
     try {
       await this.flight;
     } catch (err) {
-      if (!this.closed) this.warn(`provider plugin updater failed: ${errorMessage(err)}`);
+      if (!this.closed) this.warn(`provider plugin updater failed: ${errMessage(err)}`);
     } finally {
       this.flight = null;
       if (this.closed) return;
-      const delay = await this.nextDelay();
+      let delay = PROVIDER_PLUGIN_UPDATE_INTERVAL_MS;
+      try {
+        delay = await this.store.nextUpdateDelay(this.packages);
+      } catch (err) {
+        this.warn(`provider plugin updater scheduling failed: ${errMessage(err)}`);
+      }
       if (!this.closed) this.schedule(delay);
     }
   }
-  private async nextDelay(): Promise<number> {
-    try {
-      return await this.store.nextUpdateDelay(this.packages);
-    } catch (err) {
-      this.warn(`provider plugin updater scheduling failed: ${errorMessage(err)}`);
-      return PROVIDER_PLUGIN_UPDATE_INTERVAL_MS;
-    }
-  }
+
   private async runPackages(): Promise<void> {
     for (const packageName of this.packages) {
       if (this.closed) return;
@@ -64,7 +71,4 @@ export class ProviderPluginUpdater {
       }
     }
   }
-}
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

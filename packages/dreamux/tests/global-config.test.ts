@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   chmodSync,
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -25,6 +24,7 @@ import {
   stringifyConfig,
   type ProviderRegistryFactory,
 } from '../src/config/config.js';
+import { inspectConfigProviderDeclarations } from '../src/config/provider-inspection.js';
 import {
   adminSocketPath,
   providerPluginMetadataPath,
@@ -48,6 +48,7 @@ import {
 import { asAgentRuntimeDescriptor, asChannelDescriptor } from './helpers/provider.js';
 import {
   ProviderPluginStore,
+  type ProviderPluginAccess,
   type ProviderPluginInspection,
   type ProviderPluginLoadSession,
   type ProviderPluginNpmRunner,
@@ -58,7 +59,9 @@ import type {
 } from '@excitedjs/dreamux-types';
 import type { ExternalChannelProviderFactory } from '../src/channel/external-channel-provider.js';
 import {
+  publishProviderPluginGenerationRootSync,
   publishProviderPluginGenerationSync,
+  providerPluginSource,
   writeProviderPluginMetadataSync,
 } from './helpers/provider-plugin.js';
 function writeConfigObjectAt(configDir: string, value: unknown): void {
@@ -66,13 +69,48 @@ function writeConfigObjectAt(configDir: string, value: unknown): void {
     mode: 0o600,
   });
 }
-class FakeProviderPluginStore implements Partial<ProviderPluginStore> {
+function runtimePluginConfig(providerRef: string, config: Record<string, unknown> = {}): Record<string, unknown> {
+  return testConfigFileObject({
+    agents: [{ id: 'flow', provider: providerRef, config }],
+    dispatchers: [{ id: 'flow', agentRuntime: 'flow' }],
+  });
+}
+function runtimeChannelPluginConfig(runtimeRef: string, channelRef: string): Record<string, unknown> {
+  return testConfigFileObject({
+    agents: [{ id: 'flow', provider: runtimeRef, config: {} }],
+    dispatchers: [
+      {
+        id: 'flow',
+        agentRuntime: 'flow',
+        channelProvider: channelRef,
+        feishu: { app_id: 'fixture-app', app_secret: 'fixture-secret' },
+      },
+    ],
+  });
+}
+function withPluginStore(
+  options: Omit<ConstructorParameters<typeof ProviderPluginStore>[0], 'root'> = {},
+): { pluginRoot: string; pluginStore: ProviderPluginStore; cleanup(): void } {
+  const pluginRoot = mkdtempSync(join(tmpdir(), 'dreamux-plugin-store-'));
+  return {
+    pluginRoot,
+    pluginStore: new ProviderPluginStore({ root: pluginRoot, ...options }),
+    cleanup: () => rmSync(pluginRoot, { recursive: true, force: true }),
+  };
+}
+function readPluginMetadata(root: string, packageName: string): Record<string, unknown> {
+  return JSON.parse(
+    readFileSync(providerPluginMetadataPath(packageName, root), 'utf8'),
+  ) as Record<string, unknown>;
+}
+class FakeProviderPluginStore implements ProviderPluginAccess {
   readonly materialized: string[] = [];
   readonly imported: string[] = [];
   readonly importRequests: Array<{ packageName: string; version?: string }> = [];
   readonly inspected: string[] = [];
   readonly committed: string[] = [];
   readonly rejected: string[] = [];
+  readonly installedOnlySessions: string[][] = [];
   readonly modules = new Map<string, Record<string, unknown>>();
   readonly selectedModules = new Map<string, Record<string, unknown>>();
   readonly candidatePackages = new Set<string>();
@@ -82,10 +120,13 @@ class FakeProviderPluginStore implements Partial<ProviderPluginStore> {
   failCommitPackages = new Set<string>();
   selectedAvailable = true;
   createMaterializingSession(packages: Iterable<string>): ProviderPluginLoadSession {
-    return new FakeProviderPluginLoadSession(this, packages, true);
+    return new FakeProviderPluginLoadSession(this, [...new Set(packages)].sort(), true);
   }
   createInstalledOnlySession(packages: Iterable<string>): ProviderPluginLoadSession {
-    return new FakeProviderPluginLoadSession(this, packages, false);
+    const uniquePackages = [...new Set(packages)].sort();
+    this.installedOnlySessions.push(uniquePackages);
+    const version = `${this.installedOnlySessions.length}.0.0`;
+    return new FakeProviderPluginLoadSession(this, uniquePackages, false, version);
   }
   async inspectPackages(packages: Iterable<string>): Promise<ProviderPluginInspection[]> {
     return [...new Set(packages)].sort().map((packageName) => {
@@ -93,7 +134,7 @@ class FakeProviderPluginStore implements Partial<ProviderPluginStore> {
       return { packageName, ok: true, version: '1.0.0', error: null, lastCheckError: null };
     });
   }
-  async importModule(packageName: string, version?: string): Promise<Record<string, unknown>> {
+  async importPreparedModule(packageName: string, version: string): Promise<Record<string, unknown>> {
     this.imported.push(packageName);
     this.importRequests.push({ packageName, version });
     const module = version === 'selected'
@@ -105,10 +146,12 @@ class FakeProviderPluginStore implements Partial<ProviderPluginStore> {
 }
 class FakeProviderPluginLoadSession implements ProviderPluginLoadSession {
   readonly prepared = new Map<string, 'candidate' | 'selected'>();
-  private readonly packages: readonly string[];
-  constructor(private readonly store: FakeProviderPluginStore, packages: Iterable<string>, private readonly materializing: boolean) {
-    this.packages = [...new Set(packages)].sort();
-  }
+  constructor(
+    private readonly store: FakeProviderPluginStore,
+    private readonly packages: readonly string[],
+    private readonly materializing: boolean,
+    private readonly selectedVersion = 'selected',
+  ) {}
   get candidatePackages(): readonly string[] {
     return [...this.prepared.entries()]
       .filter(([, source]) => source === 'candidate')
@@ -117,14 +160,16 @@ class FakeProviderPluginLoadSession implements ProviderPluginLoadSession {
   }
   async preparePackage(packageName: string): Promise<string> {
     const prepared = this.prepared.get(packageName);
-    if (prepared !== undefined) return prepared === 'candidate' ? '1.0.0' : 'selected';
+    if (prepared !== undefined) {
+      return prepared === 'candidate' ? '1.0.0' : this.selectedVersion;
+    }
     if (this.materializing && this.store.candidatePackages.has(packageName)) {
       this.prepared.set(packageName, 'candidate');
       return '1.0.0';
     }
     if (this.store.selectedPackages.has(packageName)) {
       this.prepared.set(packageName, 'selected');
-      return 'selected';
+      return this.selectedVersion;
     }
     if (!this.materializing) throw new Error(`provider plugin ${packageName} has no selected generation`);
     this.prepared.set(packageName, 'candidate');
@@ -134,7 +179,7 @@ class FakeProviderPluginLoadSession implements ProviderPluginLoadSession {
   }
   async importModule(packageName: string): Promise<Record<string, unknown>> {
     const version = await this.preparePackage(packageName);
-    return await this.store.importModule(packageName, version);
+    return await this.store.importPreparedModule(packageName, version);
   }
   async commit(): Promise<void> {
     for (const packageName of this.candidatePackages) {
@@ -188,24 +233,13 @@ class PublishingInstallRunner implements ProviderPluginNpmRunner {
     cwd: string;
   }): Promise<void> {
     this.installCalls.push(input.packageName);
-    const packageRoot = join(input.cwd, 'node_modules', ...input.packageName.split('/'));
-    mkdirSync(packageRoot, { recursive: true });
-    writeFileSync(
-      join(input.cwd, 'package-lock.json'),
-      '{}\n',
-      { mode: 0o600 },
-    );
-    writeFileSync(
-      join(packageRoot, 'package.json'),
-      `${JSON.stringify({
-        name: input.packageName,
-        version: input.version,
-        type: 'module',
-        exports: './provider.mjs',
-      })}\n`,
-      { mode: 0o600 },
-    );
-    writeFileSync(join(packageRoot, 'provider.mjs'), this.source, { mode: 0o600 });
+    publishProviderPluginGenerationRootSync({
+      generationRoot: input.cwd,
+      packageName: input.packageName,
+      version: input.version,
+      source: this.source,
+      packageExports: './provider.mjs',
+    });
   }
 }
 function trackingRegistryFactory(attempts: string[]): ProviderRegistryFactory {
@@ -214,17 +248,6 @@ function trackingRegistryFactory(attempts: string[]): ProviderRegistryFactory {
     attempts.push(`registry-${attempts.length + 1}`);
     return registry;
   };
-}
-function providerSource(readConfigBody: string): string {
-  return `
-export function provider({ ref, descriptor }) { return {
-  ref,
-  descriptor: { ...descriptor, kind: 'agentRuntime' },
-  getCapabilities() { return { resume: { supported: true } }; },
-  readConfig(rawConfig) { ${readConfigBody} },
-  createRuntime() { throw new Error('test runtime does not create a runtime'); },
-}; }
-`;
 }
 function runtimeFactory(
   readConfig: (rawConfig: Record<string, unknown>) => Record<string, unknown>,
@@ -574,119 +597,111 @@ describe('global config (~/.dreamux/config.json)', () => {
       /enabled must be a boolean/,
     );
   });
-  it('rejects a leftover top-level codex block with migration guidance', async () => {
-    writeConfigObject({
-      codex: { approval_policy: 'never' },
-      dispatchers: [],
-    });
-    await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
-      /top-level "codex" block is no longer supported/,
-    );
-    await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
-      /agents\[\] with the selected runtime provider/,
-    );
-  });
-  it('rejects pre-providerized dispatcher config without rewriting it', async () => {
-    const file = globalConfigFile({ configDir });
-    const original = JSON.stringify({
-      dispatchers: [
-        {
-          id: 'flow',
-          feishu: { app_id: 'app-flow', app_secret: 'secret-flow' },
-          codex: { approval_policy: 'never' },
-        },
+  for (const testCase of [
+    {
+      name: 'leftover top-level codex block',
+      raw: { codex: { approval_policy: 'never' }, dispatchers: [] },
+      loader: loadOrInitConfig,
+      errors: [
+        /top-level "codex" block is no longer supported/,
+        /agents\[\] with the selected runtime provider/,
       ],
-    });
-    writeConfigText(file, original);
-    await expect(loadConfig({ configDir })).rejects.toThrow(
-      /feishu is not supported by the providerized config v2 schema/,
-    );
-    await expect(loadConfig({ configDir })).rejects.toThrow(/channels\[\]/);
-    expect(readFileSync(file, 'utf8')).toBe(original);
-  });
-  it('fails loud on the old inline dispatchers[].runtime shape with rebuild guidance', async () => {
-    const file = globalConfigFile({ configDir });
-    const original = JSON.stringify({
-      agents: [],
-      dispatchers: [
-        {
+    },
+    {
+      name: 'dispatcher missing agentRuntime',
+      raw: {
+        agents: [{ id: 'codex', provider: 'builtin:codex', config: {} }],
+        dispatchers: [{
           id: 'flow',
-          channels: [
-            {
-              id: 'primary',
-              provider: 'builtin:feishu',
-              config: { app_id: 'app-flow', app_secret: 'secret-flow' },
-            },
-          ],
-          runtime: {
-            provider: 'builtin:codex',
-            config: { approval_policy: 'never' },
-          },
-        },
-      ],
-    });
-    writeConfigText(file, original);
-    await expect(loadConfig({ configDir })).rejects.toThrow(
-      /dispatchers\[0\]\.runtime is no longer supported/,
-    );
-    await expect(loadConfig({ configDir })).rejects.toThrow(/agentRuntime/);
-    expect(readFileSync(file, 'utf8')).toBe(original);
-  });
-  it('fails loud when a dispatcher is missing agentRuntime', async () => {
-    writeConfigObject({
-      agents: [{ id: 'codex', provider: 'builtin:codex', config: {} }],
-      dispatchers: [
-        {
-          id: 'flow',
-          channels: [
-            {
-              id: 'primary',
-              provider: 'builtin:feishu',
-              config: { app_id: 'app-flow', app_secret: 'secret-flow' },
-            },
-          ],
-        },
-      ],
-    });
-    await expect(loadConfig({ configDir })).rejects.toThrow(
-      /dispatchers\[0\]\.agentRuntime is required/,
-    );
-  });
-  it('fails loud on a dangling agentRuntime reference', async () => {
-    writeConfigObject(
-      testConfigFileObject({
+          channels: [{
+            id: 'primary',
+            provider: 'builtin:feishu',
+            config: { app_id: 'app-flow', app_secret: 'secret-flow' },
+          }],
+        }],
+      },
+      errors: [/dispatchers\[0\]\.agentRuntime is required/],
+    },
+    {
+      name: 'dangling agentRuntime reference',
+      raw: testConfigFileObject({
         agents: [{ id: 'codex', provider: 'builtin:codex', config: {} }],
         dispatchers: [{ id: 'flow', agentRuntime: 'does-not-exist' }],
       }),
-    );
-    await expect(loadConfig({ configDir })).rejects.toThrow(
-      /agentRuntime='does-not-exist' does not match any agents\[\]\.id/,
-    );
-    await expect(loadConfig({ configDir })).rejects.toThrow(/Known agents: 'codex'/);
-  });
-  it('fails loud on a duplicate agents[].id', async () => {
-    writeConfigObject(
-      testConfigFileObject({
+      errors: [
+        /agentRuntime='does-not-exist' does not match any agents\[\]\.id/,
+        /Known agents: 'codex'/,
+      ],
+    },
+    {
+      name: 'duplicate agents[].id',
+      raw: testConfigFileObject({
         agents: [
           { id: 'codex', provider: 'builtin:codex', config: {} },
           { id: 'codex', provider: 'builtin:codex', config: {} },
         ],
         dispatchers: [{ id: 'flow', agentRuntime: 'codex' }],
       }),
-    );
-    await expect(loadConfig({ configDir })).rejects.toThrow(
-      /agents\[1\]\.id duplicates agent 'codex'/,
-    );
-  });
-  it('fails loud when top-level agents is not an array', async () => {
-    writeConfigObject({
-      agents: { codex: { provider: 'builtin:codex' } },
-      dispatchers: [],
+      errors: [/agents\[1\]\.id duplicates agent 'codex'/],
+    },
+    {
+      name: 'top-level agents is not an array',
+      raw: { agents: { codex: { provider: 'builtin:codex' } }, dispatchers: [] },
+      errors: [/agents must be an array \(got object\)/],
+    },
+  ]) {
+    it(`fails loud on ${testCase.name}`, async () => {
+      writeConfigObject(testCase.raw);
+      for (const error of testCase.errors) {
+        await expect((testCase.loader ?? loadConfig)({ configDir })).rejects.toThrow(error);
+      }
     });
-    await expect(loadConfig({ configDir })).rejects.toThrow(
-      /agents must be an array \(got object\)/,
-    );
-  });
+  }
+  for (const testCase of [
+    {
+      name: 'pre-providerized dispatcher config',
+      raw: {
+        dispatchers: [{
+          id: 'flow',
+          feishu: { app_id: 'app-flow', app_secret: 'secret-flow' },
+          codex: { approval_policy: 'never' },
+        }],
+      },
+      errors: [
+        /feishu is not supported by the providerized config v2 schema/,
+        /channels\[\]/,
+      ],
+    },
+    {
+      name: 'old inline dispatchers[].runtime shape',
+      raw: {
+        agents: [],
+        dispatchers: [{
+          id: 'flow',
+          channels: [{
+            id: 'primary',
+            provider: 'builtin:feishu',
+            config: { app_id: 'app-flow', app_secret: 'secret-flow' },
+          }],
+          runtime: {
+            provider: 'builtin:codex',
+            config: { approval_policy: 'never' },
+          },
+        }],
+      },
+      errors: [/dispatchers\[0\]\.runtime is no longer supported/, /agentRuntime/],
+    },
+  ]) {
+    it(`does not rewrite ${testCase.name}`, async () => {
+      const file = globalConfigFile({ configDir });
+      const original = JSON.stringify(testCase.raw);
+      writeConfigText(file, original);
+      for (const error of testCase.errors) {
+        await expect(loadConfig({ configDir })).rejects.toThrow(error);
+      }
+      expect(readFileSync(file, 'utf8')).toBe(original);
+    });
+  }
   it('resolves an agent shared by two dispatchers (cross-dispatcher reuse)', async () => {
     writeConfigObject(
       testConfigFileObject({
@@ -790,17 +805,33 @@ describe('global config (~/.dreamux/config.json)', () => {
     expect(config.dispatchers[0]?.runtime).toEqual(config.agents['codex-safe']);
     expect(config.dispatchers[1]?.runtime).toEqual(config.agents['codex-yolo']);
   });
-  it('rejects an invalid agent approval_policy', async () => {
-    writeConfigObject(
-      testSingleDispatcherFileObject({
-        id: 'flow',
-        codex: { approval_policy: 'ask-every-time' },
-      }),
-    );
-    await expect(loadOrInitConfig({ configDir })).rejects.toThrow(
-      /agents\[0\]\.config\.approval_policy='ask-every-time'/,
-    );
-  });
+  for (const testCase of [
+    {
+      name: 'invalid agent approval_policy',
+      config: { approval_policy: 'ask-every-time' },
+      error: /agents\[0\]\.config\.approval_policy='ask-every-time'/,
+      loader: loadOrInitConfig,
+    },
+    {
+      name: 'empty agent config.bin',
+      config: { bin: '   ' },
+      error: /agents\[0\]\.config\.bin must be a non-empty string/,
+      loader: loadConfig,
+    },
+    {
+      name: 'non-positive agent config.initialize_timeout_ms',
+      config: { initialize_timeout_ms: 0 },
+      error: /agents\[0\]\.config\.initialize_timeout_ms must be > 0/,
+      loader: loadConfig,
+    },
+  ]) {
+    it(`rejects ${testCase.name}`, async () => {
+      writeConfigObject(
+        testSingleDispatcherFileObject({ id: 'flow', codex: testCase.config }),
+      );
+      await expect(testCase.loader({ configDir })).rejects.toThrow(testCase.error);
+    });
+  }
   it('defaults agent config.bin and initialize_timeout_ms', async () => {
     writeConfigObject(
       testSingleDispatcherFileObject({ id: 'flow', codex: {} }),
@@ -821,28 +852,6 @@ describe('global config (~/.dreamux/config.json)', () => {
     const codex = dispatcherCodexConfig(config.dispatchers[0]!);
     expect(codex.bin).toBe('/opt/custom-codex');
     expect(codex.initialize_timeout_ms).toBe(30000);
-  });
-  it('rejects an empty agent config.bin', async () => {
-    writeConfigObject(
-      testSingleDispatcherFileObject({
-        id: 'flow',
-        codex: { bin: '   ' },
-      }),
-    );
-    await expect(loadConfig({ configDir })).rejects.toThrow(
-      /agents\[0\]\.config\.bin must be a non-empty string/,
-    );
-  });
-  it('rejects a non-positive agent config.initialize_timeout_ms', async () => {
-    writeConfigObject(
-      testSingleDispatcherFileObject({
-        id: 'flow',
-        codex: { initialize_timeout_ms: 0 },
-      }),
-    );
-    await expect(loadConfig({ configDir })).rejects.toThrow(
-      /agents\[0\]\.config\.initialize_timeout_ms must be > 0/,
-    );
   });
   it('accepts the providerized dispatcher config v2 schema', async () => {
     writeConfigObject(
@@ -924,14 +933,7 @@ describe('global config (~/.dreamux/config.json)', () => {
   });
   it('loads external npm runtime providers before validating runtime config', async () => {
     const providerRef = 'npm:@example/dreamux-runtime#provider';
-    writeConfigObject(
-      testConfigFileObject({
-        agents: [
-          { id: 'flow', provider: providerRef, config: { provider_option: 'kept' } },
-        ],
-        dispatchers: [{ id: 'flow', agentRuntime: 'flow' }],
-      }),
-    );
+    writeConfigObject(runtimePluginConfig(providerRef, { provider_option: 'kept' }));
     const { config, providerRegistry } = await loadConfig({
       configDir,
       externalAgentRuntimeModuleImporter: async (packageName) => {
@@ -964,16 +966,11 @@ describe('global config (~/.dreamux/config.json)', () => {
   });
   it('keeps injected runtime importers from touching the plugin store', async () => {
     const providerRef = 'npm:@example/dreamux-runtime#provider';
-    writeConfigObject(
-      testConfigFileObject({
-        agents: [{ id: 'flow', provider: providerRef, config: {} }],
-        dispatchers: [{ id: 'flow', agentRuntime: 'flow' }],
-      }),
-    );
+    writeConfigObject(runtimePluginConfig(providerRef));
     const pluginStore = new FakeProviderPluginStore();
     await loadConfig({
       configDir,
-      providerPluginStore: pluginStore as unknown as ProviderPluginStore,
+      providerPluginStore: pluginStore,
       externalAgentRuntimeModuleImporter: async () => ({ provider: externalRuntimeFactory }),
     });
     expect(pluginStore.materialized).toEqual([]);
@@ -989,7 +986,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     const pluginStore = new FakeProviderPluginStore();
     await loadConfig({
       configDir,
-      providerPluginStore: pluginStore as unknown as ProviderPluginStore,
+      providerPluginStore: pluginStore,
     });
     expect(pluginStore.materialized).toEqual([]);
     expect(pluginStore.imported).toEqual([]);
@@ -1010,7 +1007,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     await expect(
       loadConfig({
         configDir,
-        providerPluginStore: pluginStore as unknown as ProviderPluginStore,
+        providerPluginStore: pluginStore,
       }),
     ).rejects.toThrow(/agentRuntime='missing-agent'/);
     expect(pluginStore.materialized).toEqual([]);
@@ -1021,19 +1018,7 @@ describe('global config (~/.dreamux/config.json)', () => {
   it('materializes one npm package once across runtime and channel refs', async () => {
     const runtimeRef = 'npm:@example/dreamux-provider#runtime';
     const channelRef = 'npm:@example/dreamux-provider#channel';
-    writeConfigObject(
-      testConfigFileObject({
-        agents: [{ id: 'flow', provider: runtimeRef, config: {} }],
-        dispatchers: [
-          {
-            id: 'flow',
-            agentRuntime: 'flow',
-            channelProvider: channelRef,
-            feishu: { app_id: 'fixture-app', app_secret: 'fixture-secret' },
-          },
-        ],
-      }),
-    );
+    writeConfigObject(runtimeChannelPluginConfig(runtimeRef, channelRef));
     const pluginStore = new FakeProviderPluginStore();
     pluginStore.modules.set('@example/dreamux-provider', {
       runtime: externalRuntimeFactory,
@@ -1041,7 +1026,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     });
     const { providerPluginPackages, providerRegistry } = await loadConfig({
       configDir,
-      providerPluginStore: pluginStore as unknown as ProviderPluginStore,
+      providerPluginStore: pluginStore,
     });
     expect(providerPluginPackages).toEqual(['@example/dreamux-provider']);
     expect(pluginStore.materialized).toEqual(['@example/dreamux-provider']);
@@ -1059,12 +1044,7 @@ describe('global config (~/.dreamux/config.json)', () => {
   it('rejects a bad candidate and retries selected-only with fresh registry and raw config', async () => {
     const packageName = '@example/dreamux-provider';
     const runtimeRef = `npm:${packageName}#runtime`;
-    writeConfigObject(
-      testConfigFileObject({
-        agents: [{ id: 'flow', provider: runtimeRef, config: { keep: true } }],
-        dispatchers: [{ id: 'flow', agentRuntime: 'flow' }],
-      }),
-    );
+    writeConfigObject(runtimePluginConfig(runtimeRef, { keep: true }));
     const pluginStore = new FakeProviderPluginStore();
     pluginStore.candidatePackages.add(packageName);
     pluginStore.selectedPackages.add(packageName);
@@ -1081,7 +1061,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     }));
     const loaded = await loadConfig({
       configDir,
-      providerPluginStore: pluginStore as unknown as ProviderPluginStore,
+      providerPluginStore: pluginStore,
       providerRegistryFactory: trackingRegistryFactory(registryAttempts),
     });
     expect(loaded.providerPluginWarnings.join('\n')).toMatch(
@@ -1102,15 +1082,49 @@ describe('global config (~/.dreamux/config.json)', () => {
     expect(rawSnapshots[0]).not.toBe(rawSnapshots[1]);
     expect(rawSnapshots[1]).toEqual({ keep: true });
   });
+  it('does not reject a candidate when an unrelated selected provider fails', async () => {
+    const candidatePackage = '@example/candidate-provider';
+    const selectedPackage = '@example/selected-provider';
+    const candidateRef = `npm:${candidatePackage}#runtime`;
+    const selectedRef = `npm:${selectedPackage}#runtime`;
+    writeConfigObject(
+      testConfigFileObject({
+        agents: [
+          { id: 'candidate', provider: candidateRef, config: {} },
+          { id: 'selected', provider: selectedRef, config: {} },
+        ],
+        dispatchers: [
+          { id: 'flow', agentRuntime: 'candidate' },
+          { id: 'docs', agentRuntime: 'selected' },
+        ],
+      }),
+    );
+    const pluginStore = new FakeProviderPluginStore();
+    pluginStore.candidatePackages.add(candidatePackage);
+    pluginStore.selectedPackages.add(selectedPackage);
+    pluginStore.modules.set(candidatePackage, runtimeModule((raw) => raw));
+    pluginStore.selectedModules.set(
+      selectedPackage,
+      throwingRuntime('selected provider readConfig failed'),
+    );
+    await expect(
+      loadConfig({
+        configDir,
+        providerPluginStore: pluginStore,
+      }),
+    ).rejects.toThrow(/selected provider readConfig failed/);
+    expect(pluginStore.rejected).toEqual([]);
+    expect(pluginStore.committed).toEqual([]);
+    expect(pluginStore.candidatePackages.has(candidatePackage)).toBe(true);
+    expect(pluginStore.importRequests).toEqual([
+      { packageName: candidatePackage, version: '1.0.0' },
+      { packageName: selectedPackage, version: 'selected' },
+    ]);
+  });
   it('preserves candidate and selected-only causes when fallback validation fails', async () => {
     const packageName = '@example/dreamux-provider';
     const runtimeRef = `npm:${packageName}#runtime`;
-    writeConfigObject(
-      testConfigFileObject({
-        agents: [{ id: 'flow', provider: runtimeRef, config: {} }],
-        dispatchers: [{ id: 'flow', agentRuntime: 'flow' }],
-      }),
-    );
+    writeConfigObject(runtimePluginConfig(runtimeRef));
     const pluginStore = new FakeProviderPluginStore();
     pluginStore.candidatePackages.add(packageName);
     pluginStore.selectedPackages.add(packageName);
@@ -1119,7 +1133,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     await expect(
       loadConfig({
         configDir,
-        providerPluginStore: pluginStore as unknown as ProviderPluginStore,
+        providerPluginStore: pluginStore,
       }),
     ).rejects.toThrow(/candidate cause.*selected cause/);
     expect(pluginStore.rejected).toEqual([packageName]);
@@ -1129,19 +1143,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     const channelPackage = '@example/channel-provider';
     const runtimeRef = `npm:${runtimePackage}#runtime`;
     const channelRef = `npm:${channelPackage}#channel`;
-    writeConfigObject(
-      testConfigFileObject({
-        agents: [{ id: 'flow', provider: runtimeRef, config: {} }],
-        dispatchers: [
-          {
-            id: 'flow',
-            agentRuntime: 'flow',
-            channelProvider: channelRef,
-            feishu: { app_id: 'fixture-app', app_secret: 'fixture-secret' },
-          },
-        ],
-      }),
-    );
+    writeConfigObject(runtimeChannelPluginConfig(runtimeRef, channelRef));
     const pluginStore = new FakeProviderPluginStore();
     pluginStore.modules.set(runtimePackage, { runtime: externalRuntimeFactory });
     pluginStore.modules.set(channelPackage, { channel: externalChannelFactory() });
@@ -1150,7 +1152,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     await expect(
       loadConfig({
         configDir,
-        providerPluginStore: pluginStore as unknown as ProviderPluginStore,
+        providerPluginStore: pluginStore,
       }),
     ).rejects.toThrow(/runtime metadata write failed/);
     expect(pluginStore.imported.sort()).toEqual([channelPackage, runtimePackage].sort());
@@ -1161,19 +1163,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     const packageName = '@example/dreamux-provider';
     const runtimeRef = `npm:${packageName}#runtime`;
     const channelRef = `npm:${packageName}#channel`;
-    writeConfigObject(
-      testConfigFileObject({
-        agents: [{ id: 'flow', provider: runtimeRef, config: {} }],
-        dispatchers: [
-          {
-            id: 'flow',
-            agentRuntime: 'flow',
-            channelProvider: channelRef,
-            feishu: { app_id: 'fixture-app', app_secret: 'fixture-secret' },
-          },
-        ],
-      }),
-    );
+    writeConfigObject(runtimeChannelPluginConfig(runtimeRef, channelRef));
     const pluginRoot = mkdtempSync(join(tmpdir(), 'dreamux-plugin-store-'));
     publishProviderPluginGenerationSync({ root: pluginRoot, packageName, version: '1.0.0' });
     publishProviderPluginGenerationSync({ root: pluginRoot, packageName, version: '2.0.0' });
@@ -1217,28 +1207,42 @@ describe('global config (~/.dreamux/config.json)', () => {
       expect(importedUrls.every((url) =>
         url.includes('/versions/1.0.0/dreamux-import.mjs'),
       )).toBe(true);
-      expect(
-        JSON.parse(readFileSync(
-          providerPluginMetadataPath(packageName, pluginRoot),
-          'utf8',
-        )),
-      ).toMatchObject({ selected_version: '2.0.0' });
+      expect(readPluginMetadata(pluginRoot, packageName)).toMatchObject({
+        selected_version: '2.0.0',
+      });
     } finally {
       rmSync(pluginRoot, { recursive: true, force: true });
     }
   });
+  it('uses one installed-only inspection session across same-package runtime and channel refs', async () => {
+    const packageName = '@example/inspection-provider';
+    const channelRef = `npm:${packageName}#channel`;
+    writeConfigObject(runtimeChannelPluginConfig(`npm:${packageName}#runtime`, channelRef));
+    const pluginStore = new FakeProviderPluginStore();
+    pluginStore.selectedPackages.add(packageName);
+    pluginStore.modules.set(packageName, {
+      runtime: externalRuntimeFactory,
+      channel: externalChannelFactory(),
+    });
+    const inspection = await inspectConfigProviderDeclarations({
+      configDir,
+      providerPluginStore: pluginStore,
+    });
+    expect(inspection.failures).toEqual([]);
+    expect(pluginStore.installedOnlySessions).toEqual([[packageName]]);
+    expect(pluginStore.importRequests).toEqual(
+      Array.from({ length: 2 }, () => ({ packageName, version: '1.0.0' })),
+    );
+    expect(inspection.agents[0]?.config).toMatchObject({
+      parsed_by_provider: true,
+    });
+    expect(inspection.dispatchers[0]?.channels[0]?.provider).toBe(channelRef);
+  });
   it('reports plugin materialization failures with provider ref and package', async () => {
     const providerRef = 'npm:@example/broken-runtime#provider';
-    writeConfigObject(
-      testConfigFileObject({
-        agents: [{ id: 'flow', provider: providerRef, config: {} }],
-        dispatchers: [{ id: 'flow', agentRuntime: 'flow' }],
-      }),
-    );
+    writeConfigObject(runtimePluginConfig(providerRef));
     const runner = new FailingInstallRunner();
-    const pluginRoot = mkdtempSync(join(tmpdir(), 'dreamux-plugin-store-'));
-    const pluginStore = new ProviderPluginStore({
-      root: pluginRoot,
+    const { pluginRoot, pluginStore, cleanup } = withPluginStore({
       runner,
       now: () => 5000,
     });
@@ -1252,25 +1256,18 @@ describe('global config (~/.dreamux/config.json)', () => {
       expect(runner.installCalls).toEqual(['@example/broken-runtime']);
       expect(existsSync(providerPluginMetadataPath('@example/broken-runtime', pluginRoot))).toBe(false);
     } finally {
-      rmSync(pluginRoot, { recursive: true, force: true });
+      cleanup();
     }
   });
   it('retries first-use after candidate rejection and reuses the published generation', async () => {
     const packageName = '@example/retry-runtime';
     const providerRef = `npm:${packageName}#provider`;
-    writeConfigObject(
-      testConfigFileObject({
-        agents: [{ id: 'flow', provider: providerRef, config: {} }],
-        dispatchers: [{ id: 'flow', agentRuntime: 'flow' }],
-      }),
-    );
-    const pluginRoot = mkdtempSync(join(tmpdir(), 'dreamux-plugin-store-'));
+    writeConfigObject(runtimePluginConfig(providerRef));
     const runner = new PublishingInstallRunner(
       '1.0.0',
-      providerSource('throw new Error("candidate readConfig failed");'),
+      providerPluginSource({ readConfigBody: 'throw new Error("candidate readConfig failed");' }),
     );
-    const pluginStore = new ProviderPluginStore({
-      root: pluginRoot,
+    const { pluginRoot, pluginStore, cleanup } = withPluginStore({
       runner,
       now: () => 5000,
     });
@@ -1280,10 +1277,7 @@ describe('global config (~/.dreamux/config.json)', () => {
       ).rejects.toThrow(/candidate readConfig failed/);
       expect(runner.latestCalls).toEqual([packageName]);
       expect(runner.installCalls).toEqual([packageName]);
-      expect(JSON.parse(readFileSync(
-        providerPluginMetadataPath(packageName, pluginRoot),
-        'utf8',
-      ))).toMatchObject({
+      expect(readPluginMetadata(pluginRoot, packageName)).toMatchObject({
         selected_version: null,
         candidate_version: null,
         last_check_completed_at: 5000,
@@ -1293,27 +1287,17 @@ describe('global config (~/.dreamux/config.json)', () => {
       ).rejects.toThrow(/candidate readConfig failed/);
       expect(runner.latestCalls).toEqual([packageName, packageName]);
       expect(runner.installCalls).toEqual([packageName]);
-      expect(JSON.parse(readFileSync(
-        providerPluginMetadataPath(packageName, pluginRoot),
-        'utf8',
-      ))).toMatchObject({
+      expect(readPluginMetadata(pluginRoot, packageName)).toMatchObject({
         selected_version: null,
         candidate_version: null,
       });
     } finally {
-      rmSync(pluginRoot, { recursive: true, force: true });
+      cleanup();
     }
   });
   it('awaits an external runtime provider whose readConfig is async (#209 F4)', async () => {
     const providerRef = 'npm:@example/dreamux-async-runtime#provider';
-    writeConfigObject(
-      testConfigFileObject({
-        agents: [
-          { id: 'flow', provider: providerRef, config: { provider_option: 'kept' } },
-        ],
-        dispatchers: [{ id: 'flow', agentRuntime: 'flow' }],
-      }),
-    );
+    writeConfigObject(runtimePluginConfig(providerRef, { provider_option: 'kept' }));
     const asyncFactory: ExternalAgentRuntimeProviderFactory = ({
       ref,
       descriptor,
@@ -1341,12 +1325,7 @@ describe('global config (~/.dreamux/config.json)', () => {
   });
   it('fails loud when an external runtime async readConfig rejects (#209 F4)', async () => {
     const providerRef = 'npm:@example/dreamux-bad-runtime#provider';
-    writeConfigObject(
-      testConfigFileObject({
-        agents: [{ id: 'flow', provider: providerRef, config: {} }],
-        dispatchers: [{ id: 'flow', agentRuntime: 'flow' }],
-      }),
-    );
+    writeConfigObject(runtimePluginConfig(providerRef));
     const rejectingFactory: ExternalAgentRuntimeProviderFactory = ({
       ref,
       descriptor,
@@ -1372,14 +1351,7 @@ describe('global config (~/.dreamux/config.json)', () => {
     ).rejects.toThrow(/async config validation failed: bad flow/);
   });
   it('fails loudly when an external npm runtime package cannot be imported', async () => {
-    writeConfigObject(
-      testConfigFileObject({
-        agents: [
-          { id: 'flow', provider: 'npm:@example/missing-runtime', config: {} },
-        ],
-        dispatchers: [{ id: 'flow', agentRuntime: 'flow' }],
-      }),
-    );
+    writeConfigObject(runtimePluginConfig('npm:@example/missing-runtime'));
     await expect(
       loadConfig({
         configDir,
@@ -1453,69 +1425,56 @@ describe('global config (~/.dreamux/config.json)', () => {
       remote_control: true,
     });
   });
-  it('rejects non-boolean remote_control under a claude-code agent config', async () => {
-    writeConfigObject(
-      testConfigFileObject({
-        agents: [
-          {
-            id: 'flow',
-            provider: 'builtin:claude-code',
-            config: { bin: 'claude', remote_control: 'yes' },
-          },
-        ],
-        dispatchers: [{ id: 'flow', agentRuntime: 'flow' }],
-      }),
-    );
-    await expect(loadConfig({ configDir })).rejects.toThrow(
-      /remote_control must be a boolean/,
-    );
-  });
-  it('rejects codex-only keys under a claude-code agent config (runtime-owned validation)', async () => {
-    writeConfigObject(
-      testConfigFileObject({
-        agents: [
-          {
-            id: 'flow',
-            provider: 'builtin:claude-code',
-            config: { bin: 'claude', approval_policy: 'never' },
-          },
-        ],
-        dispatchers: [{ id: 'flow', agentRuntime: 'flow' }],
-      }),
-    );
-    await expect(loadConfig({ configDir })).rejects.toThrow(
-      /approval_policy is not supported/,
-    );
-  });
-  it('rejects two channels using the same provider ref on one dispatcher (#209 Decision #4)', async () => {
-    const fileObject = testSingleDispatcherFileObject({ id: 'flow' });
-    const dispatcher = (fileObject['dispatchers'] as Record<string, unknown>[])[0]!;
-    (dispatcher['channels'] as unknown[]).push({
-      id: 'secondary',
-      provider: 'builtin:feishu',
-      config: {
-        app_id: 'app-flow-secondary',
-        app_secret: 'secret-flow-secondary',
+  for (const testCase of [
+    {
+      name: 'non-boolean remote_control under a claude-code agent config',
+      config: { bin: 'claude', remote_control: 'yes' },
+      error: /remote_control must be a boolean/,
+    },
+    {
+      name: 'codex-only keys under a claude-code agent config',
+      config: { bin: 'claude', approval_policy: 'never' },
+      error: /approval_policy is not supported/,
+    },
+  ]) {
+    it(`rejects ${testCase.name}`, async () => {
+      writeConfigObject(
+        testConfigFileObject({
+          agents: [{ id: 'flow', provider: 'builtin:claude-code', config: testCase.config }],
+          dispatchers: [{ id: 'flow', agentRuntime: 'flow' }],
+        }),
+      );
+      await expect(loadConfig({ configDir })).rejects.toThrow(testCase.error);
+    });
+  }
+  for (const testCase of [
+    {
+      name: 'two channels using the same provider ref on one dispatcher (#209 Decision #4)',
+      channel: {
+        id: 'secondary',
+        provider: 'builtin:feishu',
+        config: { app_id: 'app-flow-secondary', app_secret: 'secret-flow-secondary' },
       },
+      error: /each provider may appear at most once per dispatcher/,
+    },
+    {
+      name: 'duplicate channel ids within a dispatcher',
+      channel: {
+        id: 'primary',
+        provider: 'builtin:feishu',
+        config: { app_id: 'app-flow-2', app_secret: 'secret-flow-2' },
+      },
+      error: /channel ids must be unique per dispatcher/,
+    },
+  ]) {
+    it(`rejects ${testCase.name}`, async () => {
+      const fileObject = testSingleDispatcherFileObject({ id: 'flow' });
+      const dispatcher = (fileObject['dispatchers'] as Record<string, unknown>[])[0]!;
+      (dispatcher['channels'] as unknown[]).push(testCase.channel);
+      writeConfigObject(fileObject);
+      await expect(loadConfig({ configDir })).rejects.toThrow(testCase.error);
     });
-    writeConfigObject(fileObject);
-    await expect(loadConfig({ configDir })).rejects.toThrow(
-      /each provider may appear at most once per dispatcher/,
-    );
-  });
-  it('rejects duplicate channel ids within a dispatcher', async () => {
-    const fileObject = testSingleDispatcherFileObject({ id: 'flow' });
-    const dispatcher = (fileObject['dispatchers'] as Record<string, unknown>[])[0]!;
-    (dispatcher['channels'] as unknown[]).push({
-      id: 'primary',
-      provider: 'builtin:feishu',
-      config: { app_id: 'app-flow-2', app_secret: 'secret-flow-2' },
-    });
-    writeConfigObject(fileObject);
-    await expect(loadConfig({ configDir })).rejects.toThrow(
-      /channel ids must be unique per dispatcher/,
-    );
-  });
+  }
   it('rejects unknown channel config fields via the channel provider', async () => {
     writeConfigObject(
       testSingleDispatcherFileObject({
@@ -1568,32 +1527,18 @@ describe('global config (~/.dreamux/config.json)', () => {
     await expect(loadConfig({ configDir })).rejects.toThrow(/dispatchers\[0\]\.id/);
     await expect(loadConfig({ configDir })).rejects.toThrow(/ASCII letters/);
   });
-  it('requires non-empty Feishu app_id and app_secret values', async () => {
-    writeConfigObject(
-      testSingleDispatcherFileObject({
+  for (const [name, feishu, error] of [
+    ['app_id', { app_id: '', app_secret: 'secret-flow' }, /feishu channel config requires a non-empty app_id/],
+    ['app_secret', { app_id: 'app-flow', app_secret: '   ' }, /feishu channel config requires a non-empty app_secret/],
+  ] as const) {
+    it(`requires non-empty Feishu ${name}`, async () => {
+      writeConfigObject(testSingleDispatcherFileObject({
         id: 'flow',
-        feishu: {
-          app_id: '',
-          app_secret: 'secret-flow',
-        },
-      }),
-    );
-    await expect(loadConfig({ configDir })).rejects.toThrow(
-      /feishu channel config requires a non-empty app_id/,
-    );
-    writeConfigObject(
-      testSingleDispatcherFileObject({
-        id: 'flow',
-        feishu: {
-          app_id: 'app-flow',
-          app_secret: '   ',
-        },
-      }),
-    );
-    await expect(loadConfig({ configDir })).rejects.toThrow(
-      /feishu channel config requires a non-empty app_secret/,
-    );
-  });
+        feishu,
+      }));
+      await expect(loadConfig({ configDir })).rejects.toThrow(error);
+    });
+  }
   it('expandHome expands ~/ and bare ~', async () => {
     expect(expandHome('~/x')).toMatch(/[/\\]x$/);
     expect(expandHome('~/x').startsWith('/')).toBe(true);

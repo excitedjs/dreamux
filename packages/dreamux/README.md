@@ -246,8 +246,9 @@ restart; they do not hot-reload the running server or replace the selected
 generation before validation. Ambient global packages, `NODE_PATH`, the process
 working directory, and Dreamux's own dependency tree do not satisfy `npm:`
 provider refs. Builtin refs still resolve to packages shipped with Dreamux and
-do not use the plugin store. Dry-run commands and `doctor` inspect installed
-generations only and never run npm.
+do not use the plugin store. Dry-run commands and `doctor` inspect selected
+generations only and never run npm; `doctor` still runs diagnostics for
+available declarations while reporting missing provider plugins explicitly.
 
 Edit and restart `dreamux serve` to apply dispatcher declaration changes.
 Channel ids must be unique within a dispatcher, and each dispatcher may declare

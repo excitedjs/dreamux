@@ -2,19 +2,25 @@ import { pathExists } from '../platform/fs-errors.js';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { mkdir, open, readFile, stat } from 'node:fs/promises';
-import type { ExternalAgentRuntimeModuleImporter } from '../agent-runtime/external-provider.js';
-import type { ExternalChannelModuleImporter } from '../channel/external-channel-provider.js';
+import {
+  ExternalAgentRuntimeProviderContractError,
+  ExternalAgentRuntimeProviderLoadError,
+  type ExternalAgentRuntimeModuleImporter,
+} from '../agent-runtime/external-provider.js';
+import {
+  ExternalChannelProviderContractError,
+  ExternalChannelProviderLoadError,
+  type ExternalChannelModuleImporter,
+} from '../channel/external-channel-provider.js';
 import {
   createBuiltinProviderRegistry,
+  parseProviderRef,
   type ProviderRegistry,
 } from '../registry/index.js';
 import { errMessage } from '../registry/provider-loader.js';
 import {
-  asAgentRuntimeProvider,
-  asChannelProvider,
   expandHome,
   redactConfigSecrets,
-  resolveConfigProvider,
 } from './config-helpers.js';
 import {
   defaultChannelCollaborationSpaceConfig,
@@ -24,19 +30,20 @@ import {
 import {
   loadProviderPluginsForConfig,
   createProviderPluginSession,
-  inspectProviderPluginsForConfig,
-  type ProviderPluginInspectionPlan,
 } from './provider-plugin-loading.js';
 import {
-  freshHostSnapshot,
   hostAgentRefs,
   hostChannelRefs,
   validateHostConfig,
   type HostAgentConfig,
-  type HostChannelConfig,
   type HostConfig,
   type HostDispatcherConfig,
 } from './host-config.js';
+import {
+  ProviderReadConfigError,
+  readHostAgentConfig,
+  readHostChannelConfig,
+} from './provider-readers.js';
 import type {
   ProviderPluginAccess,
   ProviderPluginLoadSession,
@@ -48,16 +55,16 @@ export {
   type DispatcherChannelCollaborationSpaceConfig,
 } from './collaboration-space-config.js';
 export interface DreamuxConfig {
-    agents: Record<string, ResolvedAgentConfig>;
-    dispatchers: DispatcherConfig[];
+  agents: Record<string, ResolvedAgentConfig>;
+  dispatchers: DispatcherConfig[];
 }
 export interface DreamuxWorkspaceConfig {
   enabled: boolean;
 }
 export interface ResolvedAgentConfig {
   provider: string;
-    config: DispatcherProviderConfig;
-    rawConfig?: DispatcherProviderConfig;
+  config: DispatcherProviderConfig;
+  rawConfig?: DispatcherProviderConfig;
 }
 export interface DispatcherConfig {
   id: string;
@@ -65,21 +72,21 @@ export interface DispatcherConfig {
   enabled: boolean;
   workspace: DreamuxWorkspaceConfig;
   channels: DispatcherChannelConfig[];
-    agentRuntime: string;
-    runtime: DispatcherRuntimeConfig;
+  agentRuntime: string;
+  runtime: DispatcherRuntimeConfig;
 }
 export interface DispatcherChannelConfig {
   id: string;
   provider: string;
-    collaborationSpace?: DispatcherChannelCollaborationSpaceConfig;
-    config: DispatcherProviderConfig;
-    rawConfig?: DispatcherProviderConfig;
-    identity?: string;
+  collaborationSpace?: DispatcherChannelCollaborationSpaceConfig;
+  config: DispatcherProviderConfig;
+  rawConfig?: DispatcherProviderConfig;
+  identity?: string;
 }
 export interface DispatcherRuntimeConfig {
   provider: string;
-    config: DispatcherProviderConfig;
-    rawConfig?: DispatcherProviderConfig;
+  config: DispatcherProviderConfig;
+  rawConfig?: DispatcherProviderConfig;
 }
 export type DispatcherProviderConfig = Record<string, unknown>;
 export const BUILT_IN_DEFAULTS: DreamuxConfig = {
@@ -88,11 +95,11 @@ export const BUILT_IN_DEFAULTS: DreamuxConfig = {
 };
 export const DEFAULT_CONFIG_JSON = stringifyConfig(BUILT_IN_DEFAULTS);
 export interface ConfigPathOverrides {
-    configDir?: string;
-    providerRegistryFactory?: ProviderRegistryFactory;
-    externalAgentRuntimeModuleImporter?: ExternalAgentRuntimeModuleImporter;
-    externalChannelModuleImporter?: ExternalChannelModuleImporter;
-    providerPluginStore?: ProviderPluginAccess;
+  configDir?: string;
+  providerRegistryFactory?: ProviderRegistryFactory;
+  externalAgentRuntimeModuleImporter?: ExternalAgentRuntimeModuleImporter;
+  externalChannelModuleImporter?: ExternalChannelModuleImporter;
+  providerPluginStore?: ProviderPluginAccess;
 }
 export type ProviderRegistryFactory = () => ProviderRegistry;
 export interface LoadConfigResult {
@@ -121,18 +128,9 @@ export async function loadOrInitConfig(
   await assertNoLegacyTomlOnly(overrides);
   await mkdir(dirname(file), { recursive: true });
   const createdOnThisBoot = await atomicWriteIfAbsent(file, DEFAULT_CONFIG_JSON);
-  const loaded = await readConfigFile(file, overrides, {
-    operation: 'materializing-strict',
-    allowSelectedFallback: true,
-    commit: true,
-  });
   return {
-    config: loaded.config,
-    configFile: file,
+    ...(await readConfigFileResult(file, overrides, materializingStrict())),
     createdOnThisBoot,
-    providerRegistry: loaded.providerRegistry,
-    providerPluginPackages: loaded.providerPluginPackages,
-    providerPluginWarnings: loaded.providerPluginWarnings,
   };
 }
 export async function loadConfig(
@@ -140,56 +138,19 @@ export async function loadConfig(
 ): Promise<LoadConfigResult> {
   const file = globalConfigFile(overrides);
   await assertNoLegacyTomlOnly(overrides);
-  const loaded = await readConfigFile(file, overrides, {
-    operation: 'materializing-strict',
-    allowSelectedFallback: true,
-    commit: true,
-  });
-  return {
-    config: loaded.config,
-    configFile: file,
-    providerRegistry: loaded.providerRegistry,
-    providerPluginPackages: loaded.providerPluginPackages,
-    providerPluginWarnings: loaded.providerPluginWarnings,
-  };
+  return await readConfigFileResult(file, overrides, materializingStrict());
 }
 export async function loadConfigInstalledOnly(
   overrides: ConfigPathOverrides = {},
 ): Promise<LoadConfigResult> {
   const file = globalConfigFile(overrides);
   await assertNoLegacyTomlOnly(overrides);
-  const loaded = await readConfigFile(file, overrides, {
+  return await readConfigFileResult(file, overrides, {
     operation: 'installed-only-strict',
     allowSelectedFallback: false,
     commit: false,
   });
-  return {
-    config: loaded.config,
-    configFile: file,
-    providerRegistry: loaded.providerRegistry,
-    providerPluginPackages: loaded.providerPluginPackages,
-    providerPluginWarnings: loaded.providerPluginWarnings,
-  };
 }
-export async function loadConfigJsonStrict(
-  raw: unknown,
-  file: string,
-  overrides: ConfigPathOverrides = {},
-  options: StrictConfigLoadOptions = {
-    operation: 'materializing-strict',
-    allowSelectedFallback: true,
-    commit: true,
-  },
-): Promise<Omit<LoadConfigResult, 'configFile'>> {
-  const loaded = await readConfigValue(raw, file, overrides, options);
-  return {
-    config: loaded.config,
-    providerRegistry: loaded.providerRegistry,
-    providerPluginPackages: loaded.providerPluginPackages,
-    providerPluginWarnings: loaded.providerPluginWarnings,
-  };
-}
-export const loadConfigJson = loadConfigJsonStrict;
 export async function loadConfigJsonWithSession(input: {
   raw: unknown;
   file: string;
@@ -217,19 +178,6 @@ export async function loadConfigJsonWithSession(input: {
     providerPluginPackages: attempt.result.providerPluginPackages,
     providerPluginWarnings: attempt.result.providerPluginWarnings,
   };
-}
-export async function inspectConfigPlugins(
-  overrides: ConfigPathOverrides = {},
-): Promise<ProviderPluginInspectionPlan & { configFile: string }> {
-  const file = globalConfigFile(overrides);
-  await assertNoLegacyTomlOnly(overrides);
-  const parsed = await readConfigJson(file);
-  validateHostConfig(parsed, file);
-  const inspection = await inspectProviderPluginsForConfig({
-    parsed,
-    overrides,
-  });
-  return { ...inspection, configFile: file };
 }
 export function stringifyConfig(config: DreamuxConfig): string {
   return `${JSON.stringify(configFileShape(config), null, 2)}\n`;
@@ -298,6 +246,13 @@ async function readConfigFile(
   const parsed = await readConfigJson(file);
   return await readConfigValue(parsed, file, overrides, options);
 }
+async function readConfigFileResult(
+  file: string,
+  overrides: ConfigPathOverrides,
+  options: StrictConfigLoadOptions,
+): Promise<LoadConfigResult> {
+  return { ...(await readConfigFile(file, overrides, options)), configFile: file };
+}
 async function readConfigValue(
   parsed: unknown,
   file: string,
@@ -326,8 +281,7 @@ async function readConfigValue(
   if (
     attempt.ok === false &&
     options.allowSelectedFallback &&
-    session !== null &&
-    session.candidatePackages.length > 0
+    isCandidateBackedProviderFailure(attempt.error, session)
   ) {
     await session.rejectCandidates();
     if (await session.canUseSelectedOnly()) {
@@ -419,6 +373,13 @@ interface StrictConfigLoadOptions {
   allowSelectedFallback: boolean;
   commit: boolean;
 }
+function materializingStrict(): StrictConfigLoadOptions {
+  return {
+    operation: 'materializing-strict',
+    allowSelectedFallback: true,
+    commit: true,
+  };
+}
 type StrictConfigAttempt =
   | {
       ok: true;
@@ -451,7 +412,7 @@ async function strictConfigAttempt(input: {
       ok: true,
       result: {
         config: await mergeWithDefaults(
-          freshHostSnapshot(input.host),
+          structuredClone(input.host) as HostConfig,
           input.file,
           providerRegistry,
         ),
@@ -496,38 +457,12 @@ async function readAgents(
 ): Promise<Record<string, ResolvedAgentConfig>> {
   const out: Record<string, ResolvedAgentConfig> = {};
   for (const [index, raw] of rawAgents.entries()) {
-    const prefix = `agents[${index}].`;
-    const provider = resolveConfigProvider(
-      raw.provider,
-      'agentRuntime',
+    out[raw.id] = await readHostAgentConfig(
+      raw,
       file,
-      prefix,
       providerRegistry,
+      `agents[${index}].`,
     );
-    const runtimeProvider = asAgentRuntimeProvider(
-      providerRegistry.getImplementation(provider.descriptor.id),
-    );
-    if (runtimeProvider === null) {
-      throw new Error(
-        `dreamux config error in ${file}: ${prefix}provider='${provider.ref}' is registered but not runnable.\n` +
-          'Its provider package did not yield a runnable agentRuntime ' +
-          'implementation. Pass a providerRegistry seeded with the builtin ' +
-          'descriptors (the default) so the loader can resolve the package, or ' +
-          'register a valid implementation before config validation.',
-      );
-    }
-    const parsedConfig =
-      ((await runtimeProvider.readConfig?.(raw.rawConfig, {
-        providerRef: provider.ref,
-        agentId: raw.id,
-        file,
-        prefix: `${prefix}config.`,
-      })) as DispatcherProviderConfig | undefined) ?? raw.rawConfig;
-    out[raw.id] = {
-      provider: provider.ref,
-      config: parsedConfig,
-      rawConfig: raw.rawConfig,
-    };
   }
   return out;
 }
@@ -540,8 +475,14 @@ async function readDispatchers(
   const out: DispatcherConfig[] = [];
   for (const [index, raw] of rawDispatchers.entries()) {
     const prefix = `dispatchers[${index}].`;
-    const channels = await readDispatcherChannels(
-      raw.channels, file, prefix, raw.id, providerRegistry,
+    const channels = await Promise.all(
+      raw.channels.map((channel, channelIndex) =>
+        readHostChannelConfig(channel, file, providerRegistry, {
+          dispatcherId: raw.id,
+          dispatcherPrefix: prefix,
+          channelIndex,
+        }),
+      ),
     );
     const agent = agents[raw.agentRuntime]!;
     out.push({
@@ -560,55 +501,33 @@ async function readDispatchers(
   }
   return out;
 }
-async function readDispatcherChannels(
-  rawChannels: HostChannelConfig[],
-  file: string,
-  dispatcherPrefix: string,
-  dispatcherId: string,
-  providerRegistry: ProviderRegistry,
-): Promise<DispatcherChannelConfig[]> {
-  const out: DispatcherChannelConfig[] = [];
-  for (const [index, raw] of rawChannels.entries()) {
-    const channelPrefix = `${dispatcherPrefix}channels[${index}].`;
-    const provider = resolveConfigProvider(
-      raw.provider,
-      'channel',
-      file,
-      channelPrefix,
-      providerRegistry,
-    );
-    const channelProvider = asChannelProvider(
-      providerRegistry.getImplementation(provider.descriptor.id),
-    );
-    if (channelProvider === null) {
-      throw new Error(
-        `dreamux config error in ${file}: ${channelPrefix}provider='${provider.ref}' is registered but has no channel implementation.\n` +
-          'Its provider package did not yield a usable channel implementation. ' +
-          'Pass a providerRegistry seeded with the builtin descriptors (the ' +
-          'default) so the loader can resolve the package, or register a valid ' +
-          'implementation before config validation.',
-      );
-    }
-    const parsed =
-      ((await channelProvider.readConfig?.(raw.rawConfig, {
-        dispatcher_id: dispatcherId,
-        channel_id: raw.id,
-        provider: provider.ref,
-      })) as DispatcherProviderConfig | undefined) ?? raw.rawConfig;
-    let identity = '';
-    try {
-      identity = channelProvider.getIdentity?.(parsed) ?? '';
-    } catch {
-      identity = '';
-    }
-    out.push({
-      id: raw.id,
-      provider: provider.ref,
-      collaborationSpace: raw.collaborationSpace,
-      config: parsed,
-      rawConfig: raw.rawConfig,
-      identity,
-    });
+function isCandidateBackedProviderFailure(
+  error: unknown,
+  session: ProviderPluginLoadSession | null,
+): session is ProviderPluginLoadSession {
+  if (session === null) return false;
+  const failure = providerFailure(error);
+  if (failure === null) return false;
+  const parsed = parseProviderRef(failure.providerRef);
+  return parsed.source === 'npm' &&
+    session.candidatePackages.includes(parsed.package);
+}
+
+function providerFailure(error: unknown): { providerRef: string } | null {
+  if (
+    error instanceof ExternalAgentRuntimeProviderLoadError ||
+    error instanceof ExternalChannelProviderLoadError
+  ) {
+    return { providerRef: error.providerRef };
   }
-  return out;
+  if (
+    error instanceof ExternalAgentRuntimeProviderContractError ||
+    error instanceof ExternalChannelProviderContractError
+  ) {
+    return { providerRef: error.providerRef };
+  }
+  if (error instanceof ProviderReadConfigError) {
+    return { providerRef: error.providerRef };
+  }
+  return null;
 }

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   ExecaProviderPluginNpmRunner,
   ProviderPluginStore,
@@ -11,12 +11,16 @@ import {
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import {
   providerPluginGenerationDir,
-  providerPluginGenerationRootBridgePath,
-  providerPluginGenerationRootLockfilePath,
   providerPluginGenerationRootPackageJsonPath,
   providerPluginMetadataPath,
   providerPluginStagingDir,
 } from '../src/platform/paths.js';
+import {
+  providerPluginSource,
+  publishProviderPluginGenerationRootSync,
+  readProviderPluginMetadataSync,
+  writeProviderPluginMetadataSync,
+} from './helpers/provider-plugin.js';
 class FakeNpmRunner implements ProviderPluginNpmRunner {
   readonly installs: Array<{ packageName: string; version: string; cwd: string }> = [];
   readonly latestCalls: string[] = [];
@@ -69,7 +73,7 @@ describe('ProviderPluginStore', () => {
     runner.latest.set('@example/provider', '1.2.3');
     const store = new ProviderPluginStore({ root, runner, now: () => 1000 });
     const version = await prepareAndCommit(store, '@example/provider');
-    const module = await store.importModule('@example/provider');
+    const module = await importSelected(store, '@example/provider');
     expect(version).toBe('1.2.3');
     expect(runner.latestCalls).toEqual(['@example/provider']);
     expect(runner.installs).toHaveLength(1);
@@ -86,12 +90,12 @@ describe('ProviderPluginStore', () => {
     runner.latest.set(packageName, '1.0.0');
     const store = new ProviderPluginStore({ root, runner });
     await prepareAndCommit(store, packageName);
-    const module = await store.importModule(packageName);
+    const module = await importSelected(store, packageName);
     expect(module['condition']).toBe('import-only');
   });
   it('reads additive v1 metadata fields as null when they are absent', async () => {
     await publishGeneration(root, '@example/provider', '1.0.0');
-    await writeMetadata(root, '@example/provider', '1.0.0', 123);
+    await writeMetadata(root, '@example/provider', '1.0.0', 123, { omitAdditive: true });
     const store = new ProviderPluginStore({ root, runner: new FakeNpmRunner() });
     await expect(store.inspectPackages(['@example/provider'])).resolves.toEqual([
       {
@@ -113,7 +117,7 @@ describe('ProviderPluginStore', () => {
         '@example/provider',
       ),
     ).resolves.toBe('1.0.0');
-    const module = await store.importModule('@example/provider');
+    const module = await importSelected(store, '@example/provider');
     expect(module['loadedFrom']).toBe('esm');
     expect(runner.latestCalls).toEqual([]);
     expect(runner.installs).toEqual([]);
@@ -130,7 +134,7 @@ describe('ProviderPluginStore', () => {
       last_check_completed_at: 1111,
       last_check_error: null,
     });
-    await expect(store.importModule('@example/provider')).rejects.toThrow(
+    await expect(importSelected(store, '@example/provider')).rejects.toThrow(
       /no selected generation/,
     );
     await session.commit();
@@ -140,7 +144,7 @@ describe('ProviderPluginStore', () => {
       last_check_completed_at: 1111,
       last_check_error: null,
     });
-    expect((await store.importModule('@example/provider'))['value']).toBe('1.0.0');
+    expect((await importSelected(store, '@example/provider'))['value']).toBe('1.0.0');
   });
   it('rejects a candidate without changing the selected generation or check error', async () => {
     await publishGeneration(root, '@example/provider', '1.0.0', 'selected');
@@ -160,7 +164,36 @@ describe('ProviderPluginStore', () => {
       last_check_completed_at: 1000,
       last_check_error: 'previous background failure',
     });
-    expect((await store.importModule('@example/provider'))['value']).toBe('selected');
+    expect((await importSelected(store, '@example/provider'))['value']).toBe('selected');
+  });
+  it('foreground and inspection preserve updater-owned check errors', async () => {
+    await writeMetadata(root, '@example/provider', '1.0.0', 1000, {
+      lastCheckError: 'background registry failure',
+    });
+    const store = new ProviderPluginStore({ root, runner: new FakeNpmRunner() });
+    await expect(store.inspectPackages(['@example/provider'])).resolves.toEqual([
+      {
+        packageName: '@example/provider',
+        ok: false,
+        version: null,
+        error: expect.stringContaining('missing'),
+        lastCheckError: 'background registry failure',
+      },
+    ]);
+    const runner = new FakeNpmRunner();
+    runner.latest.set('@example/provider', '1.0.0');
+    const materializing = new ProviderPluginStore({ root, runner, now: () => 2000 });
+    await expect(
+      materializing.createMaterializingSession(['@example/provider']).preparePackage(
+        '@example/provider',
+      ),
+    ).resolves.toBe('1.0.0');
+    await expectMetadata(root, '@example/provider', {
+      selected_version: '1.0.0',
+      candidate_version: '1.0.0',
+      last_check_completed_at: 2000,
+      last_check_error: 'background registry failure',
+    });
   });
   it('recovers a published generation that was not selected', async () => {
     await publishGeneration(root, '@example/provider', '2.0.0');
@@ -173,6 +206,32 @@ describe('ProviderPluginStore', () => {
       selected_version: '2.0.0',
       last_check_completed_at: 2000,
     });
+  });
+  it('recovers an incomplete selected generation through a fresh materialization', async () => {
+    await writeMetadata(root, '@example/provider', '1.0.0', 1000, {
+      lastCheckError: 'background failure',
+    });
+    const runner = new FakeNpmRunner();
+    runner.latest.set('@example/provider', '1.0.0');
+    const warnings: string[] = [];
+    const store = new ProviderPluginStore({
+      root,
+      runner,
+      now: () => 2000,
+      logger: fakeLogger(warnings),
+    });
+    await expect(prepareAndCommit(store, '@example/provider')).resolves.toBe('1.0.0');
+    expect(runner.installs.map((entry) => entry.packageName)).toEqual([
+      '@example/provider',
+    ]);
+    expect(warnings.join('\n')).toContain('selected generation 1.0.0 is incomplete');
+    await expectMetadata(root, '@example/provider', {
+      selected_version: '1.0.0',
+      candidate_version: null,
+      last_check_completed_at: 2000,
+      last_check_error: 'background failure',
+    });
+    expect((await importSelected(store, '@example/provider'))['value']).toBe('1.0.0');
   });
   it('ignores incomplete staging content', async () => {
     const leftover = providerPluginStagingDir('@example/provider', 'leftover', root);
@@ -187,7 +246,7 @@ describe('ProviderPluginStore', () => {
     runner.latest.set('@example/provider', '1.0.0');
     const store = new ProviderPluginStore({ root, runner });
     await prepareAndCommit(store, '@example/provider');
-    const module = await store.importModule('@example/provider');
+    const module = await importSelected(store, '@example/provider');
     expect(runner.installs).toHaveLength(1);
     expect(module['value']).toBe('1.0.0');
   });
@@ -248,9 +307,9 @@ describe('ProviderPluginStore', () => {
       const runner = new FakeNpmRunner();
       runner.latest.set(testCase.name, testCase.latest);
       const store = new ProviderPluginStore({ root, runner, now: () => testCase.now });
-      const before = await store.importModule(testCase.name);
+      const before = await importSelected(store, testCase.name);
       await store.checkForUpdate(testCase.name);
-      const after = await store.importModule(testCase.name);
+      const after = await importSelected(store, testCase.name);
       if (testCase.candidate === testCase.latest) expect(runner.installs).toEqual([]);
       expect(before['value']).toBe(testCase.selectedValue);
       expect(after['value']).toBe(testCase.selectedValue);
@@ -360,6 +419,40 @@ describe('ProviderPluginStore', () => {
       last_check_completed_at: 0,
     });
   });
+  it('does not start staging when closed after pruning settles', async () => {
+    await publishGeneration(root, '@example/provider', '1.0.0');
+    await writeMetadata(root, '@example/provider', '1.0.0', 0);
+    const oldStaging = providerPluginStagingDir('@example/provider', 'old', root);
+    const stagingRoot = dirname(oldStaging);
+    await mkdir(oldStaging, { recursive: true });
+    await utimes(oldStaging, new Date(1), new Date(1));
+    const controller = new AbortController();
+    const runner = new FakeNpmRunner();
+    runner.latest.set('@example/provider', '2.0.0');
+    let nowCalls = 0;
+    const store = new ProviderPluginStore({
+      root,
+      runner,
+      now: () => {
+        nowCalls += 1;
+        if (nowCalls === 2) {
+          controller.abort(new Error('closed during staging prune'));
+        }
+        return 24 * 60 * 60 * 1000 + 10;
+      },
+    });
+    await expect(
+      store.checkForUpdate('@example/provider', controller.signal),
+    ).rejects.toThrow(/closed during staging prune/);
+    expect(runner.installs).toEqual([]);
+    await expect(readdir(oldStaging)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readdir(stagingRoot)).resolves.toEqual([]);
+    await expectGenerationMissing(root, '@example/provider', '2.0.0');
+    await expectMetadata(root, '@example/provider', {
+      selected_version: '1.0.0',
+      last_check_completed_at: 0,
+    });
+  });
   it('does not start update work when closed during deferred scheduling', async () => {
     vi.useFakeTimers();
     let releaseDelay!: () => void;
@@ -387,14 +480,7 @@ describe('ProviderPluginStore', () => {
     await expect(
       readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'),
     ).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(
-      readFile(
-        providerPluginGenerationRootPackageJsonPath(
-          providerPluginGenerationDir('@example/provider', '1.0.0', root),
-        ),
-        'utf8',
-      ),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
+    await expectGenerationMissing(root, '@example/provider', '1.0.0');
   });
   it('does not publish or select when aborted after npm installs before publication', async () => {
     await publishGeneration(root, '@example/provider', '1.0.0');
@@ -409,14 +495,7 @@ describe('ProviderPluginStore', () => {
     await expect(
       store.checkForUpdate('@example/provider', controller.signal),
     ).rejects.toThrow(/stop after npm install/);
-    await expect(
-      readFile(
-        providerPluginGenerationRootPackageJsonPath(
-          providerPluginGenerationDir('@example/provider', '2.0.0', root),
-        ),
-        'utf8',
-      ),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
+    await expectGenerationMissing(root, '@example/provider', '2.0.0');
     await expectMetadata(root, '@example/provider', {
       selected_version: '1.0.0',
       last_check_completed_at: 0,
@@ -432,17 +511,8 @@ describe('ProviderPluginStore', () => {
     );
     const controller = new AbortController();
     controller.abort(new Error('already closed'));
-    await expect(
-      runner.latestVersion('@example/provider', controller.signal),
-    ).rejects.toThrow(/already closed/);
-    await expect(
-      runner.installExact({
-        packageName: '@example/provider',
-        version: '1.0.0',
-        cwd: '/tmp/dreamux-provider-install',
-        signal: controller.signal,
-      }),
-    ).rejects.toThrow(/already closed/);
+    await expect(runner.latestVersion('@example/provider', controller.signal)).rejects.toThrow(/already closed/);
+    await expect(installExample(runner, controller.signal)).rejects.toThrow(/already closed/);
     expect(calls).toEqual([]);
   });
   it('npm runner uses abortable npm commands with explicit lockfile generation', async () => {
@@ -455,12 +525,7 @@ describe('ProviderPluginStore', () => {
     );
     const controller = new AbortController();
     await runner.latestVersion('@example/provider', controller.signal);
-    await runner.installExact({
-      packageName: '@example/provider',
-      version: '1.0.0',
-      cwd: '/tmp/dreamux-provider-install',
-      signal: controller.signal,
-    });
+    await installExample(runner, controller.signal);
     expect(calls[0]).toEqual([
       'npm',
       ['view', '@example/provider', 'dist-tags.latest', '--json'],
@@ -486,94 +551,52 @@ async function publishGeneration(
   version: string,
   value = version,
 ): Promise<void> {
-  const generation = providerPluginGenerationDir(packageName, version, root);
-  await publishFakePackage(generation, packageName, version, value);
-  await writeFile(
-    providerPluginGenerationRootPackageJsonPath(generation),
-    `${JSON.stringify({ private: true, dependencies: { [packageName]: version } })}\n`,
-  );
-  await writeFile(providerPluginGenerationRootLockfilePath(generation), '{}\n');
-  await writeFile(
-    providerPluginGenerationRootBridgePath(generation),
-    `const namespace = await import(${JSON.stringify(packageName)});\nexport default namespace;\n`,
-  );
+  publishProviderPluginGenerationRootSync({
+    generationRoot: providerPluginGenerationDir(packageName, version, root),
+    packageName,
+    version,
+    source: providerPluginSource({ version: value }),
+  });
 }
 async function publishFakePackage(
-  root: string,
+  generationRoot: string,
   packageName: string,
   version: string,
-  value = version,
 ): Promise<void> {
-  const pkgDir = join(
-    root,
-    'node_modules',
-    ...packageName.split('/'),
-  );
-  await mkdir(pkgDir, { recursive: true });
-  await writeFile(
-    join(pkgDir, 'package.json'),
-    `${JSON.stringify({
-      name: packageName,
-      version,
-      type: 'module',
-      exports:
-        packageName === '@example/import-conditions'
-          ? {
-              '.': {
-                import: './import-only.js',
-              },
-            }
-          : { import: './esm.js', require: './require.cjs' },
-    })}\n`,
-  );
-  await writeFile(join(pkgDir, 'esm.js'), `export const loadedFrom = 'esm';\nexport const value = ${JSON.stringify(value)};\n`);
-  await writeFile(join(pkgDir, 'require.cjs'), "module.exports = { loadedFrom: 'require' };\n");
-  await writeFile(
-    join(pkgDir, 'import-only.js'),
-    "export const condition = 'import-only';\n",
-  );
-  await writeFile(join(pkgDir, 'default.js'), "export const condition = 'default';\n");
-  await writeFile(providerPluginGenerationRootLockfilePath(root), '{}\n');
+  publishProviderPluginGenerationRootSync({
+    generationRoot,
+    packageName,
+    version,
+    source: packageName === '@example/import-conditions'
+      ? "export const condition = 'import-only';\n"
+      : providerPluginSource({ version }),
+    packageExports: packageName === '@example/import-conditions' ? { '.': { import: './provider.mjs' } } : undefined,
+  });
 }
 async function writeMetadata(
   root: string,
   packageName: string,
-  version: string,
+  version: string | null,
   checkedAt: number,
   options: {
     candidateVersion?: string | null;
     lastCheckError?: string | null;
+    omitAdditive?: boolean;
   } = {},
 ): Promise<void> {
-  await mkdir(providerPluginGenerationDir(packageName, version, root), {
-    recursive: true,
-  });
-  await mkdir(join(providerPluginMetadataPath(packageName, root), '..'), {
-    recursive: true,
-  });
-  await writeFile(
-    providerPluginMetadataPath(packageName, root),
-    `${JSON.stringify({
-      version: 1,
-      selected_version: version,
-      ...(options.candidateVersion === undefined
-        ? {}
-        : { candidate_version: options.candidateVersion }),
-      last_check_completed_at: checkedAt,
-      ...(options.lastCheckError === undefined
-        ? {}
-        : { last_check_error: options.lastCheckError }),
-    })}\n`,
-  );
+  if (version !== null) {
+    await mkdir(providerPluginGenerationDir(packageName, version, root), {
+      recursive: true,
+    });
+  }
+  writeProviderPluginMetadataSync({ root, packageName, version, checkedAt, ...options });
 }
 async function expectMetadata(
   root: string,
   packageName: string,
   expected: Record<string, unknown>,
 ): Promise<void> {
-  expect(
-    JSON.parse(await readFile(providerPluginMetadataPath(packageName, root), 'utf8')),
-  ).toMatchObject(expected);
+  expect(readProviderPluginMetadataSync(packageName, root)).toMatchObject(expected);
 }
 async function waitUntil(predicate: () => boolean): Promise<void> {
   for (let i = 0; i < 50; i++) {
@@ -610,4 +633,35 @@ async function prepareAndCommit(
   const version = await session.preparePackage(packageName);
   await session.commit();
   return version;
+}
+async function importSelected(
+  store: ProviderPluginStore,
+  packageName: string,
+): Promise<Record<string, unknown>> {
+  return await store.createInstalledOnlySession([packageName]).importModule(packageName);
+}
+async function expectGenerationMissing(
+  root: string,
+  packageName: string,
+  version: string,
+): Promise<void> {
+  await expect(
+    readFile(
+      providerPluginGenerationRootPackageJsonPath(
+        providerPluginGenerationDir(packageName, version, root),
+      ),
+      'utf8',
+    ),
+  ).rejects.toMatchObject({ code: 'ENOENT' });
+}
+async function installExample(
+  runner: ExecaProviderPluginNpmRunner,
+  signal: AbortSignal,
+): Promise<void> {
+  await runner.installExact({
+    packageName: '@example/provider',
+    version: '1.0.0',
+    cwd: '/tmp/dreamux-provider-install',
+    signal,
+  });
 }

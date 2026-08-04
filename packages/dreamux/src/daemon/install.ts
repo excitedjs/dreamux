@@ -8,6 +8,7 @@
  * unit (never config / state / logs); that is the boundary against the
  * top-level `dreamux uninstall`.
  */
+
 import { ExecaCommandRunner } from '../onboard/commands.js';
 import { homedir } from 'node:os';
 import {

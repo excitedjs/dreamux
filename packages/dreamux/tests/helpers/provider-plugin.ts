@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
   providerPluginGenerationDir,
@@ -13,10 +13,38 @@ export function publishProviderPluginGenerationSync(input: {
   packageName: string;
   version: string;
   source?: string;
+  packageExports?: unknown;
 }): void {
-  const { root, packageName, version, source = providerFixtureSource(version) } = input;
-  const generationRoot = providerPluginGenerationDir(packageName, version, root);
-  const packageJsonPath = providerPluginGenerationRootInstalledPackageJsonPath(generationRoot, packageName);
+  publishProviderPluginGenerationRootSync({
+    generationRoot: providerPluginGenerationDir(
+      input.packageName,
+      input.version,
+      input.root,
+    ),
+    packageName: input.packageName,
+    version: input.version,
+    source: input.source,
+    packageExports: input.packageExports,
+  });
+}
+export function publishProviderPluginGenerationRootSync(input: {
+  generationRoot: string;
+  packageName: string;
+  version: string;
+  source?: string;
+  packageExports?: unknown;
+}): void {
+  const {
+    generationRoot,
+    packageName,
+    version,
+    source = providerPluginSource({ version }),
+    packageExports = { import: './provider.mjs', require: './require.cjs' },
+  } = input;
+  const packageJsonPath = providerPluginGenerationRootInstalledPackageJsonPath(
+    generationRoot,
+    packageName,
+  );
   const packageRoot = dirname(packageJsonPath);
   mkdirSync(packageRoot, { recursive: true });
   writeFileSync(
@@ -26,9 +54,13 @@ export function publishProviderPluginGenerationSync(input: {
   writeFileSync(providerPluginGenerationRootLockfilePath(generationRoot), '{}\n');
   writeFileSync(
     packageJsonPath,
-    json({ name: packageName, version, type: 'module', exports: './provider.mjs' }),
+    json({ name: packageName, version, type: 'module', exports: packageExports }),
   );
   writeFileSync(join(packageRoot, 'provider.mjs'), source);
+  writeFileSync(
+    join(packageRoot, 'require.cjs'),
+    "module.exports = { loadedFrom: 'require' };\n",
+  );
   writeFileSync(
     providerPluginGenerationRootBridgePath(generationRoot),
     `const namespace = await import(${JSON.stringify(packageName)});\nexport default namespace;\n`,
@@ -37,12 +69,21 @@ export function publishProviderPluginGenerationSync(input: {
 export function writeProviderPluginMetadataSync(input: {
   root?: string;
   packageName: string;
-  version: string;
+  version: string | null;
   checkedAt: number;
   candidateVersion?: string | null;
   lastCheckError?: string | null;
+  omitAdditive?: boolean;
 }): void {
-  const { root, packageName, version, checkedAt, candidateVersion, lastCheckError } = input;
+  const {
+    root,
+    packageName,
+    version,
+    checkedAt,
+    candidateVersion,
+    lastCheckError,
+    omitAdditive,
+  } = input;
   const metadataPath = providerPluginMetadataPath(packageName, root);
   mkdirSync(dirname(metadataPath), { recursive: true });
   writeFileSync(
@@ -50,17 +91,39 @@ export function writeProviderPluginMetadataSync(input: {
     json({
       version: 1,
       selected_version: version,
-      candidate_version: candidateVersion ?? null,
+      ...(omitAdditive === true
+        ? {}
+        : {
+            candidate_version: candidateVersion ?? null,
+            last_check_error: lastCheckError ?? null,
+          }),
       last_check_completed_at: checkedAt,
-      last_check_error: lastCheckError ?? null,
     }),
   );
 }
-function json(value: unknown): string { return `${JSON.stringify(value)}\n`; }
-function providerFixtureSource(version: string): string {
+export function readProviderPluginMetadataSync(
+  packageName: string,
+  root?: string,
+): Record<string, unknown> {
+  return JSON.parse(
+    readFileSync(providerPluginMetadataPath(packageName, root), 'utf8'),
+  ) as Record<string, unknown>;
+}
+function json(value: unknown): string {
+  return `${JSON.stringify(value)}\n`;
+}
+export function providerPluginSource(options: {
+  version?: string;
+  readConfigBody?: string;
+  collectBody?: string;
+  channelDiagnostic?: string;
+} = {}): string {
+  const { version, readConfigBody, collectBody, channelDiagnostic } = options;
   return `
-export function provider({ ref, descriptor }) { return { ref, descriptor: { ...descriptor, kind: 'agentRuntime' }, getCapabilities() { return { resume: { supported: true } }; }, readConfig(rawConfig) { return { ...rawConfig, runtime_generation: ${JSON.stringify(version)} }; }, createRuntime() { throw new Error('test runtime does not create a runtime'); } }; }
+export const loadedFrom = 'esm';
+export const value = ${JSON.stringify(version)};
+export function provider({ ref, descriptor }) { return { ref, descriptor: { ...descriptor, kind: 'agentRuntime' }, getCapabilities() { return { resume: { supported: true } }; }, readConfig(rawConfig) { ${readConfigBody ?? `return { ...rawConfig, runtime_generation: ${JSON.stringify(version)} };`} }, ${collectBody === undefined ? '' : `onboard: { collect() { ${collectBody} } },`} createRuntime() { throw new Error('test runtime does not create a runtime'); } }; }
+export function channel({ ref, descriptor }) { return { ref, descriptor: { ...descriptor, kind: 'channel' }, readConfig(rawConfig) { return { ...rawConfig, channel_generation: ${JSON.stringify(version)} }; }, ${channelDiagnostic ?? ''} createSession() { throw new Error('test channel does not create a session'); } }; }
 export const runtime = provider;
-export function channel({ ref, descriptor }) { return { ref, descriptor: { ...descriptor, kind: 'channel' }, readConfig(rawConfig) { return { ...rawConfig, channel_generation: ${JSON.stringify(version)} }; }, createSession() { throw new Error('test channel does not create a session'); } }; }
 `;
 }

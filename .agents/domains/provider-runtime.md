@@ -148,9 +148,11 @@ registry/config snapshot, surfacing the rejection warning. First-use failures
 with no selected generation fail loud and retry immediately on the next explicit
 start; the four-hour gate constrains only the background updater.
 
-Inspection is a separate no-write API. It returns available/unavailable plugin
-diagnostics and never fabricates provider implementations or a pseudo
-`DreamuxConfig`.
+Inspection is a separate no-write API. It returns declaration-level
+available/unavailable plugin diagnostics and never fabricates provider
+implementations or a pseudo `DreamuxConfig`. Doctor imports selected
+generations only for available declarations and continues their diagnostics
+while reporting unavailable refs explicitly.
 
 Command modes:
 
@@ -161,10 +163,12 @@ Command modes:
   no-write loading. They do not materialize, run npm, or create plugin-store
   files; a referenced missing `npm:` provider is reported as an explicit
   dry-run diagnostic/error.
-- Pre-merge `onboard` reads existing config in installed-only mode, so dry runs
-  and reruns over a missing old `npm:` provider do not mutate the plugin store.
+- Pre-merge `onboard` reads only the host-owned raw envelope for preservation
+  and merge, so dry runs and reruns over a missing old `npm:` provider do not
+  mutate the plugin store or publish an unresolved `DreamuxConfig`.
 - `doctor` uses installed-only inspection and reports missing/unusable plugins
-  plus persisted update errors without synthesizing runnable providers.
+  plus persisted update errors without synthesizing runnable providers; available
+  declarations still run provider diagnostics.
 - `uninstall` uses the config-owned raw inspection path in warning-only mode;
   it never loads or installs providers and removes `~/.dreamux` plus any
   external config directory as containment-aware targets. Recursive deletion

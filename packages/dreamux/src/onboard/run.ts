@@ -3,12 +3,10 @@ import { homedir } from 'node:os';
 import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
 import {
   assertNoLegacyTomlOnly,
-  configFileShape,
   createBuiltinProviderRegistry,
   globalConfigFile,
   loadConfigJsonWithSession,
   readConfigJson,
-  stringifyConfig,
   type DreamuxConfig,
   type LoadConfigResult,
 } from '../config/config.js';
@@ -30,14 +28,13 @@ import {
 } from '../provider-diagnostics.js';
 import { createOnboardProviderContext } from './wizard.js';
 import {
-  freshHostSnapshot,
   hostAgentRefs,
   hostChannelRefs,
   validateHostConfig,
   type HostConfig,
 } from '../config/host-config.js';
 import { ExecaCommandRunner } from './commands.js';
-import { dreamuxConfigFromAnswers } from './config-files.js';
+import { configFileShapeFromAnswers } from './config-files.js';
 import {
   ensureDirectory,
   TransparentFileLedger,
@@ -88,9 +85,8 @@ export async function runOnboard(
   const platform = options.platform ?? process.platform;
   const homeDir = options.homeDir ?? homedir();
   const configPath = globalConfigFile({ configDir: answers.configDir });
-  const existingConfig = await readExistingDreamuxConfig(answers.configDir);
-  const dreamuxConfig = dreamuxConfigFromAnswers(answers, existingConfig);
-  const dreamuxConfigFileShape = configFileShape(dreamuxConfig);
+  const existingConfig = await readExistingHostConfig(answers.configDir);
+  const dreamuxConfigFileShape = configFileShapeFromAnswers(answers, existingConfig);
   const providerContext =
     options.providerContext ??
     (await directRunProviderContext({
@@ -107,7 +103,6 @@ export async function runOnboard(
         probe: options.nodeProbe,
       })
     : process.execPath;
-  setRuntimeConfig(dreamuxConfig);
   await ensureDirectory(answers.configDir, ledger, 'dreamux config directory', {
     dryRun: answers.dryRun,
   });
@@ -119,7 +114,7 @@ export async function runOnboard(
   });
   await writeTextFile(
     configPath,
-    stringifyConfig(dreamuxConfig),
+    `${JSON.stringify(dreamuxConfigFileShape, null, 2)}\n`,
     ledger,
     'dreamux global config',
     { mode: 0o600, dryRun: answers.dryRun },
@@ -235,15 +230,14 @@ function formatServiceLaunchFailure(errors: string[]): string {
     '- rerun dreamux onboard from the desired Node/runtime install, or pass explicit binary paths',
   ].join('\n');
 }
-async function readExistingDreamuxConfig(
+async function readExistingHostConfig(
   configDir: string,
-): Promise<DreamuxConfig | undefined> {
+): Promise<HostConfig | undefined> {
   const configPath = globalConfigFile({ configDir });
   await assertNoLegacyTomlOnly({ configDir });
   if (!(await pathExists(configPath))) return undefined;
   const raw = await readConfigJson(configPath);
-  const host = validateHostConfig(raw, configPath);
-  return dreamuxConfigFromHost(freshHostSnapshot(host));
+  return structuredClone(validateHostConfig(raw, configPath)) as HostConfig;
 }
 async function directRunProviderContext(input: {
   raw: unknown;
@@ -259,41 +253,6 @@ async function directRunProviderContext(input: {
     overrides: { configDir: input.configDir },
     dryRun: input.dryRun,
   });
-}
-function dreamuxConfigFromHost(host: HostConfig): DreamuxConfig {
-  const agents: DreamuxConfig['agents'] = {};
-  for (const agent of host.agents) {
-    agents[agent.id] = {
-      provider: agent.provider,
-      config: structuredClone(agent.rawConfig),
-      rawConfig: structuredClone(agent.rawConfig),
-    };
-  }
-  return {
-    agents,
-    dispatchers: host.dispatchers.map((dispatcher) => {
-      const runtime = agents[dispatcher.agentRuntime]!;
-      return {
-        id: dispatcher.id,
-        cwd: dispatcher.cwd,
-        enabled: dispatcher.enabled,
-        workspace: dispatcher.workspace,
-        channels: dispatcher.channels.map((channel) => ({
-          id: channel.id,
-          provider: channel.provider,
-          collaborationSpace: channel.collaborationSpace,
-          config: structuredClone(channel.rawConfig),
-          rawConfig: structuredClone(channel.rawConfig),
-        })),
-        agentRuntime: dispatcher.agentRuntime,
-        runtime: {
-          provider: runtime.provider,
-          config: structuredClone(runtime.config),
-          rawConfig: structuredClone(runtime.rawConfig ?? runtime.config),
-        },
-      };
-    }),
-  };
 }
 function catalogsFromLoadedConfig(
   loaded: LoadConfigResult,

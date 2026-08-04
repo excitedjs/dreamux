@@ -1,8 +1,16 @@
-import { describeType, isPlainObject, readOptionalString, readProviderConfigObject, rejectUnknownKeys, requireNonEmptyString } from '@excitedjs/dreamux-utils';
+import {
+  describeType,
+  isPlainObject,
+  readOptionalString,
+  readProviderConfigObject,
+  rejectUnknownKeys,
+  requireNonEmptyString,
+} from '@excitedjs/dreamux-utils';
 import { parseProviderRef } from '../registry/index.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 import {
   readChannelCollaborationSpace,
+  stringifyChannelCollaborationSpace,
   type DispatcherChannelCollaborationSpaceConfig,
 } from './collaboration-space-config.js';
 import { readOptionalBoolean } from './config-helpers.js';
@@ -12,23 +20,75 @@ const AGENT_KEYS = new Set(['id', 'provider', 'config']);
 const DISPATCHER_KEYS = new Set(['id', 'cwd', 'enabled', 'workspace', 'channels', 'agentRuntime']);
 const CHANNEL_KEYS = new Set(['id', 'provider', 'config', 'collaborationSpace']);
 const WORKSPACE_KEYS = new Set(['enabled']);
-export interface HostConfig { agents: HostAgentConfig[]; dispatchers: HostDispatcherConfig[]; }
-export interface HostAgentConfig { id: string; provider: string; rawConfig: DispatcherProviderConfig; }
-export interface HostDispatcherConfig { id: string; cwd: string | null; enabled: boolean; workspace: DreamuxWorkspaceConfig; channels: HostChannelConfig[]; agentRuntime: string; }
+export interface HostConfig {
+  agents: HostAgentConfig[];
+  dispatchers: HostDispatcherConfig[];
+}
+export interface HostAgentConfig {
+  id: string;
+  provider: string;
+  rawConfig: DispatcherProviderConfig;
+}
+export interface HostDispatcherConfig {
+  id: string;
+  cwd: string | null;
+  enabled: boolean;
+  workspace: DreamuxWorkspaceConfig;
+  channels: HostChannelConfig[];
+  agentRuntime: string;
+}
 export interface HostChannelConfig {
-  id: string; provider: string; rawConfig: DispatcherProviderConfig;
+  id: string;
+  provider: string;
+  rawConfig: DispatcherProviderConfig;
   collaborationSpace?: DispatcherChannelCollaborationSpaceConfig;
 }
 export function validateHostConfig(raw: unknown, file: string): HostConfig {
   const envelope = validateConfigRawEnvelope(raw, file);
   const agents = validateHostAgents(envelope.agents, file);
-  const dispatchers = validateHostDispatchers(envelope.dispatchers, file, new Set(agents.map((agent) => agent.id)));
+  const dispatchers = validateHostDispatchers(
+    envelope.dispatchers,
+    file,
+    new Set(agents.map((agent) => agent.id)),
+  );
   return { agents, dispatchers };
 }
-export function freshHostSnapshot(host: HostConfig): HostConfig { return structuredClone(host) as HostConfig; }
-export function hostAgentRefs(host: HostConfig): string[] { return host.agents.map((agent) => agent.provider); }
+export function hostAgentRefs(host: HostConfig): string[] {
+  return host.agents.map((agent) => agent.provider);
+}
 export function hostChannelRefs(host: HostConfig): string[] {
-  return host.dispatchers.flatMap((dispatcher) => dispatcher.channels.map((channel) => channel.provider));
+  return host.dispatchers.flatMap((dispatcher) =>
+    dispatcher.channels.map((channel) => channel.provider),
+  );
+}
+export function hostConfigFileShape(host: HostConfig): Record<string, unknown> {
+  return {
+    agents: host.agents.map((agent) => ({
+      id: agent.id,
+      provider: agent.provider,
+      config: structuredClone(agent.rawConfig),
+    })),
+    dispatchers: host.dispatchers.map((dispatcher) => ({
+      id: dispatcher.id,
+      cwd: dispatcher.cwd,
+      enabled: dispatcher.enabled,
+      workspace: { enabled: dispatcher.workspace.enabled },
+      channels: dispatcher.channels.map(channelFileShape),
+      agentRuntime: dispatcher.agentRuntime,
+    })),
+  };
+}
+function channelFileShape(channel: HostChannelConfig): Record<string, unknown> {
+  const collaborationSpace =
+    channel.collaborationSpace?.defaultBinding.enabled === true
+      ? { collaborationSpace: stringifyChannelCollaborationSpace(channel.collaborationSpace) }
+      : {};
+  return {
+    id: channel.id,
+    provider: channel.provider,
+    ...collaborationSpace,
+    config: structuredClone(channel.rawConfig),
+  };
 }
 function validateHostAgents(rawAgents: unknown[] | undefined, file: string): HostAgentConfig[] {
   if (rawAgents === undefined) return [];
@@ -41,11 +101,23 @@ function validateHostAgents(rawAgents: unknown[] | undefined, file: string): Hos
     const id = requireNonEmptyString(raw, 'id', file, prefix);
     if (ids.has(id)) throw configError(file, `agents[${index}].id duplicates agent '${id}'`);
     ids.add(id);
-    out.push({ id, provider: canonicalProviderRef(requireNonEmptyString(raw, 'provider', file, prefix), file, `${prefix}provider`), rawConfig: providerConfig(raw, file, `${prefix}config`) });
+    out.push({
+      id,
+      provider: canonicalProviderRef(
+        requireNonEmptyString(raw, 'provider', file, prefix),
+        file,
+        `${prefix}provider`,
+      ),
+      rawConfig: providerConfig(raw, file, `${prefix}config`),
+    });
   }
   return out;
 }
-function validateHostDispatchers(rawDispatchers: unknown[] | undefined, file: string, agentIds: ReadonlySet<string>): HostDispatcherConfig[] {
+function validateHostDispatchers(
+  rawDispatchers: unknown[] | undefined,
+  file: string,
+  agentIds: ReadonlySet<string>,
+): HostDispatcherConfig[] {
   if (rawDispatchers === undefined) return [];
   const out: HostDispatcherConfig[] = [];
   const ids = new Set<string>();
@@ -65,7 +137,14 @@ function validateHostDispatchers(rawDispatchers: unknown[] | undefined, file: st
     const id = validateDispatcherId(requireNonEmptyString(raw, 'id', file, prefix), `${prefix}id`);
     if (ids.has(id)) throw configError(file, `dispatchers[${index}].id duplicates dispatcher '${id}'`);
     ids.add(id);
-    out.push({ id, cwd: readOptionalString(raw, 'cwd', file, prefix), enabled: readOptionalBoolean(raw, 'enabled', true, file, prefix), workspace: readWorkspaceConfig(raw['workspace'], file, `${prefix}workspace.`), channels: validateHostChannels(raw['channels'], file, prefix), agentRuntime: validateHostAgentRuntime(raw, prefix, file, agentIds) });
+    out.push({
+      id,
+      cwd: readOptionalString(raw, 'cwd', file, prefix),
+      enabled: readOptionalBoolean(raw, 'enabled', true, file, prefix),
+      workspace: readWorkspaceConfig(raw['workspace'], file, `${prefix}workspace.`),
+      channels: validateHostChannels(raw['channels'], file, prefix),
+      agentRuntime: validateHostAgentRuntime(raw, prefix, file, agentIds),
+    });
   }
   return out;
 }
@@ -91,16 +170,34 @@ function validateHostChannels(rawChannels: unknown, file: string, dispatcherPref
       throw configError(file, `${channelPrefix}id='${id}' duplicates another channel in this dispatcher; channel ids must be unique per dispatcher.`);
     }
     channelIds.add(id);
-    const provider = canonicalProviderRef(requireNonEmptyString(raw, 'provider', file, channelPrefix), file, `${channelPrefix}provider`);
+    const provider = canonicalProviderRef(
+      requireNonEmptyString(raw, 'provider', file, channelPrefix),
+      file,
+      `${channelPrefix}provider`,
+    );
     if (providerRefs.has(provider)) {
       throw configError(file, `${channelPrefix}provider='${provider}' duplicates another channel in this dispatcher; each provider may appear at most once per dispatcher.`);
     }
     providerRefs.add(provider);
-    out.push({ id, provider, rawConfig: providerConfig(raw, file, `${channelPrefix}config`), collaborationSpace: readChannelCollaborationSpace(raw['collaborationSpace'], file, `${channelPrefix}collaborationSpace.`) });
+    out.push({
+      id,
+      provider,
+      rawConfig: providerConfig(raw, file, `${channelPrefix}config`),
+      collaborationSpace: readChannelCollaborationSpace(
+        raw['collaborationSpace'],
+        file,
+        `${channelPrefix}collaborationSpace.`,
+      ),
+    });
   }
   return out;
 }
-function validateHostAgentRuntime(raw: Record<string, unknown>, prefix: string, file: string, agentIds: ReadonlySet<string>): string {
+function validateHostAgentRuntime(
+  raw: Record<string, unknown>,
+  prefix: string,
+  file: string,
+  agentIds: ReadonlySet<string>,
+): string {
   if (!('agentRuntime' in raw)) {
     throw configError(
       file,

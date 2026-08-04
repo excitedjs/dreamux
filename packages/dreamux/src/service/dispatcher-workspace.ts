@@ -105,7 +105,12 @@ export async function diagnoseDispatcherWorkspace(
   config: DreamuxConfig,
   dispatcherId: string,
 ): Promise<DispatcherWorkspaceDiagnosis> {
-  const cwd = configuredDispatcherCwd(config, dispatcherId);
+  return await diagnoseDispatcherWorkspaceCwd(configuredDispatcherCwd(config, dispatcherId));
+}
+
+export async function diagnoseDispatcherWorkspaceCwd(
+  cwd: string | null,
+): Promise<DispatcherWorkspaceDiagnosis> {
   if (cwd === null) {
     return {
       ok: false,

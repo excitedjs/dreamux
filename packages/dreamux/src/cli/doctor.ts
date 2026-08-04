@@ -1,23 +1,24 @@
 import { readFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 import {
-  BUILT_IN_DEFAULTS,
+  expandHome,
   globalConfigDir,
   globalConfigFile,
-  inspectConfigPlugins,
-  loadConfigInstalledOnly,
-  type DreamuxConfig,
 } from '../config/config.js';
+import type { HostConfig } from '../config/host-config.js';
+import {
+  inspectConfigProviderDeclarations,
+  type ConfigProviderInspection,
+} from '../config/provider-inspection.js';
 import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
 import { ChannelProviderCatalog } from '../channel/catalog.js';
 import {
   createBuiltinProviderRegistry,
   type ProviderRegistry,
 } from '../registry/index.js';
-import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
 import {
-  providerBinChecksForConfig,
-  runDispatcherProviderDiagnostics,
+  providerBinChecksForDeclarations,
+  runProviderDeclarationDiagnostics,
   type ProviderDiagnosticCatalogs,
   type ProviderDiagnosticReport,
 } from '../provider-diagnostics.js';
@@ -25,10 +26,9 @@ import { pathExists } from '../platform/fs-errors.js';
 import {
   dispatcherCronJobsPath,
   dispatcherTeamCronJobsPath,
-  setRuntimeConfig,
   stateRoot,
 } from '../platform/paths.js';
-import { diagnoseDispatcherWorkspace } from '../service/dispatcher-workspace.js';
+import { diagnoseDispatcherWorkspaceCwd } from '../service/dispatcher-workspace.js';
 import {
   detectLegacyDispatcherState,
   legacyDispatcherStateMessage,
@@ -97,7 +97,6 @@ export interface DreamuxDoctorResult {
   checks: DoctorCheck[];
   dispatchers: DispatcherDoctorReport[];
 }
-type ProviderBinaryCheck = ProviderBinCheck;
 export async function runDreamuxDoctor(
   options: DoctorOptions = {},
 ): Promise<DreamuxDoctorResult> {
@@ -105,27 +104,31 @@ export async function runDreamuxDoctor(
   const checks: DoctorCheck[] = [];
   const configDir = globalConfigDir();
   const {
-    config,
     configFile,
     catalogs,
-    providerDependentConfigAvailable,
+    host,
+    providers,
   } = await readConfigForDoctor(configDir, checks);
-  setRuntimeConfig(config);
   checks.push({
     name: 'state directory',
     ok: await pathExists(stateRoot()),
     detail: stateRoot(),
   });
   const doctorEnv = options.env ?? process.env;
-  for (const check of providerBinaryChecks(catalogs, config, doctorEnv, false)) {
+  for (const check of providerBinChecksForDeclarations({
+    ...providers,
+    catalogs,
+    env: doctorEnv,
+    scope: 'foreground',
+  })) {
     checks.push({
       name: check.name,
       ok: await runner.check(check.bin, check.args, { env: doctorEnv }),
       detail: check.bin,
     });
   }
-  if (providerDependentConfigAvailable) {
-    for (const dispatcher of config.dispatchers) {
+  if (host !== null) {
+    for (const dispatcher of host.dispatchers) {
       if (dispatcher.enabled === false) {
         checks.push({
           name: `dispatcher ${dispatcher.id} workspace`,
@@ -133,7 +136,9 @@ export async function runDreamuxDoctor(
           detail: 'disabled; workspace cwd contract not enforced',
         });
       } else {
-        const diagnosis = await diagnoseDispatcherWorkspace(config, dispatcher.id);
+        const diagnosis = await diagnoseDispatcherWorkspaceCwd(
+          dispatcher.cwd === null ? null : expandHome(dispatcher.cwd),
+        );
         checks.push({
           name: `dispatcher ${dispatcher.id} workspace`,
           ok: diagnosis.ok,
@@ -200,26 +205,24 @@ export async function runDreamuxDoctor(
       await systemdLingerCheck(runner, options.userName ?? userInfo().username),
     );
   }
-  if (providerDependentConfigAvailable) {
+  if (host !== null) {
     await addManagedServiceLaunchChecks(
       checks,
       service,
       runner,
       options.nodeProbe ?? defaultServiceNodeProbe,
       catalogs,
-      config,
+      providers,
     );
   }
-  const dispatchers = providerDependentConfigAvailable
-    ? await readDispatchers(
-        catalogs,
-        config,
-        runner,
-        options.env ?? process.env,
-        service,
-      )
-    : [];
-  if (providerDependentConfigAvailable && dispatchers.length === 0) {
+  const dispatchers = await readDispatchers(
+    catalogs,
+    providers.dispatchers,
+    runner,
+    options.env ?? process.env,
+    service,
+  );
+  if (host !== null && host.dispatchers.length === 0) {
     checks.push({
       name: 'dispatchers',
       ok: false,
@@ -260,40 +263,28 @@ async function readConfigForDoctor(
   configDir: string,
   checks: DoctorCheck[],
 ): Promise<{
-  config: DreamuxConfig;
   configFile: string;
   catalogs: ProviderDiagnosticCatalogs;
-  providerDependentConfigAvailable: boolean;
+  host: HostConfig | null;
+  providers: Pick<ConfigProviderInspection, 'agents' | 'dispatchers'>;
 }> {
   try {
-    const inspection = await inspectConfigPlugins({ configDir });
-    addProviderPluginChecks(checks, inspection.diagnostics);
-    if (inspection.diagnostics.some((diagnostic) => !diagnostic.ok)) {
-      checks.push({
-        name: 'config',
-        ok: true,
-        detail: inspection.configFile,
-      });
-      return {
-        config: BUILT_IN_DEFAULTS,
-        configFile: inspection.configFile,
-        catalogs: catalogsFromRegistry(createBuiltinProviderRegistry()),
-        providerDependentConfigAvailable: false,
-      };
-    }
-    const loaded = await loadConfigInstalledOnly({
-      configDir,
-    });
+    const inspection = await inspectConfigProviderDeclarations({ configDir });
+    addProviderPluginChecks(checks, inspection.pluginDiagnostics);
+    addProviderInspectionFailures(checks, inspection.failures);
     checks.push({
       name: 'config',
       ok: true,
-      detail: loaded.configFile,
+      detail: inspection.configFile,
     });
     return {
-      config: loaded.config,
-      configFile: loaded.configFile,
-      catalogs: catalogsFromRegistry(loaded.providerRegistry),
-      providerDependentConfigAvailable: true,
+      configFile: inspection.configFile,
+      catalogs: catalogsFromRegistry(inspection.providerRegistry),
+      host: inspection.host,
+      providers: {
+        agents: inspection.agents,
+        dispatchers: inspection.dispatchers,
+      },
     };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
@@ -303,10 +294,10 @@ async function readConfigForDoctor(
       detail,
     });
     return {
-      config: BUILT_IN_DEFAULTS,
       configFile: globalConfigFile({ configDir }),
       catalogs: catalogsFromRegistry(createBuiltinProviderRegistry()),
-      providerDependentConfigAvailable: false,
+      host: null,
+      providers: { agents: [], dispatchers: [] },
     };
   }
 }
@@ -343,6 +334,22 @@ function providerPluginDiagnosticDetail(diagnostic: {
     ? base
     : `${base}; last update error: ${diagnostic.lastCheckError}`;
 }
+function addProviderInspectionFailures(
+  checks: DoctorCheck[],
+  failures: ConfigProviderInspection['failures'],
+): void {
+  for (const failure of failures) {
+    const owner =
+      failure.kind === 'agentRuntime'
+        ? `agent ${failure.id}`
+        : `dispatcher ${failure.dispatcherId} channel ${failure.id}`;
+    checks.push({
+      name: `${owner} provider config`,
+      ok: false,
+      detail: `${failure.provider}: ${failure.reason}`,
+    });
+  }
+}
 function catalogsFromRegistry(
   registry: ProviderRegistry,
 ): ProviderDiagnosticCatalogs {
@@ -353,14 +360,14 @@ function catalogsFromRegistry(
 }
 async function readDispatchers(
   catalogs: ProviderDiagnosticCatalogs,
-  config: DreamuxConfig,
+  dispatchers: ConfigProviderInspection['dispatchers'],
   runner: CommandRunner,
   env: NodeJS.ProcessEnv,
   service: ServiceStatus,
 ): Promise<DispatcherDoctorReport[]> {
   return Promise.all(
-    config.dispatchers.map(async (dispatcher) => {
-      const foreground = await runDispatcherProviderDiagnostics({
+    dispatchers.map(async (dispatcher) => {
+      const foreground = await runProviderDeclarationDiagnostics({
         dispatcher,
         catalogs,
         runner,
@@ -368,7 +375,7 @@ async function readDispatchers(
         scope: 'foreground',
       });
       const managedService = service.installed
-        ? await runDispatcherProviderDiagnostics({
+        ? await runProviderDeclarationDiagnostics({
             dispatcher,
             catalogs,
             runner,
@@ -500,7 +507,7 @@ async function addManagedServiceLaunchChecks(
   runner: CommandRunner,
   probe: ServiceNodeProbe,
   catalogs: ProviderDiagnosticCatalogs,
-  config: DreamuxConfig,
+  providers: Pick<ConfigProviderInspection, 'agents' | 'dispatchers'>,
 ): Promise<void> {
   if (!service.installed) return;
   const env = service.environment;
@@ -543,7 +550,12 @@ async function addManagedServiceLaunchChecks(
       'ExecStart is missing in the installed service; rerun dreamux onboard',
     ),
   );
-  for (const check of providerBinaryChecks(catalogs, config, serviceEnv, true)) {
+  for (const check of providerBinChecksForDeclarations({
+    ...providers,
+    catalogs,
+    env: serviceEnv,
+    scope: 'managedService',
+  })) {
     checks.push(
       await checkHelpLaunch(
         check.name,
@@ -555,19 +567,6 @@ async function addManagedServiceLaunchChecks(
       ),
     );
   }
-}
-function providerBinaryChecks(
-  catalogs: ProviderDiagnosticCatalogs,
-  config: DreamuxConfig,
-  env: NodeJS.ProcessEnv,
-  managedService = false,
-): ProviderBinaryCheck[] {
-  return providerBinChecksForConfig({
-    config,
-    catalogs,
-    env,
-    scope: managedService ? 'managedService' : 'foreground',
-  });
 }
 async function checkNodeLaunch(
   nodeBin: string,

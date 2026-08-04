@@ -103,8 +103,9 @@ Environment overrides:
   DREAMUX_CONFIG_DIR        Overrides ~/.dreamux (where config.json lives)
 Dispatcher declarations:
   Edit ~/.dreamux/config.json dispatchers[] and restart dreamux serve.
-  Provider refs load through the registry before config validation.
-  Built-in refs are resolved through the same provider loading path as npm:<package>[#export].
+  Provider refs load through the registry before provider-owned config parsing.
+  npm:<package>[#export] refs use the local plugin-store load session; built-in
+  refs bypass the plugin store.
 `);
 }
 main().catch((err) => {
