@@ -4,17 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { AdminRequest, AdminResponse } from '../src/admin/protocol.js';
 import {
   TEAM_DISPATCH_SUCCESS_REMINDER,
   TEAMMATE_DISPATCH_SUCCESS_REMINDER,
 } from '../src/mcp/task-dispatch-reminder.js';
-import {
-  runTeamMcp,
-  teamAdminRequestOptions,
-} from '../src/mcp/team-mcp.js';
+import { runTeamMcp } from '../src/mcp/team-mcp.js';
 
 class JsonLineReader {
   private buffer = '';
@@ -854,21 +851,75 @@ describe('team-mcp stdio shim', () => {
     }
   });
 
-  it('uses the explicit 12s admin timeout only for Dispatcher dissolve', () => {
-    expect(teamAdminRequestOptions({
-      socketPath: '/tmp/admin.sock',
-      method: 'team.dissolve',
-      callerKind: 'dispatcher',
-    })).toEqual({ socketPath: '/tmp/admin.sock', timeoutMs: 12_000 });
-    expect(teamAdminRequestOptions({
-      socketPath: '/tmp/admin.sock',
-      method: 'team.dissolve',
-      callerKind: 'team_leader',
-    })).toEqual({ socketPath: '/tmp/admin.sock' });
-    expect(teamAdminRequestOptions({
-      socketPath: '/tmp/admin.sock',
-      method: 'team.status',
-      callerKind: 'dispatcher',
-    })).toEqual({ socketPath: '/tmp/admin.sock' });
+  it('uses the explicit 12s admin timeout only for Dispatcher dissolve through tools/call', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: { accepted: true },
+    }));
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    try {
+      const callAndReadTimeouts = async (input: {
+        callerKind: 'dispatcher' | 'team_leader';
+        name: 'dissolve' | 'status';
+        arguments: Record<string, unknown>;
+      }): Promise<unknown[]> => {
+        const mcpInput = new PassThrough();
+        const output = new PassThrough();
+        const reader = new JsonLineReader(output);
+        const run = runTeamMcp({
+          dispatcherId: 'dispatcher-a',
+          callerKind: input.callerKind,
+          teamId: input.callerKind === 'team_leader' ? 'alpha' : undefined,
+          leaderName:
+            input.callerKind === 'team_leader' ? 'alpha-leader' : undefined,
+          adminSocketPath: admin.socketPath,
+          input: mcpInput,
+          output,
+          log: () => {},
+        });
+
+        timeoutSpy.mockClear();
+        writeJson(mcpInput, {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: input.name, arguments: input.arguments },
+        });
+        expect(await reader.next()).toMatchObject({
+          jsonrpc: '2.0',
+          id: 1,
+          result: { structuredContent: { accepted: true } },
+        });
+        const delays = timeoutSpy.mock.calls.map((call) => call[1]);
+        mcpInput.end();
+        await run;
+        return delays;
+      };
+
+      expect(await callAndReadTimeouts({
+        callerKind: 'dispatcher',
+        name: 'dissolve',
+        arguments: { team_name: 'alpha', note: 'done' },
+      })).toEqual([12_000]);
+      expect(await callAndReadTimeouts({
+        callerKind: 'team_leader',
+        name: 'dissolve',
+        arguments: { note: 'done' },
+      })).toEqual([10_000]);
+      expect(await callAndReadTimeouts({
+        callerKind: 'dispatcher',
+        name: 'status',
+        arguments: { team_name: 'alpha' },
+      })).toEqual([10_000]);
+      expect(admin.requests.map((request) => request.method)).toEqual([
+        'team.dissolve',
+        'team.dissolve',
+        'team.status',
+      ]);
+    } finally {
+      timeoutSpy.mockRestore();
+      await admin.close();
+    }
   });
 });

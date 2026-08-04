@@ -262,8 +262,8 @@ async function callTool(
   }
 }
 
-/** Keep the Dispatcher dissolve timeout contract explicit and directly testable. */
-export function teamAdminRequestOptions(input: {
+/** Keep the Dispatcher dissolve timeout contract explicit at the admin boundary. */
+function teamAdminRequestOptions(input: {
   socketPath: string;
   method: string;
   callerKind: TeamMcpCallerKind;
