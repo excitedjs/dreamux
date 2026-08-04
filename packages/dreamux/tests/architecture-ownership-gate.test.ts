@@ -183,6 +183,37 @@ describe('architecture ownership gate (#233)', () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  it('keeps Team dissolve settlement and generation authority in its controller', async () => {
+    const controller = await readServiceSource(
+      'team-collection/dissolve-controller.ts',
+    );
+    const runner = await readServiceSource('team-collection/dissolve-runner.ts');
+    expect(runner).not.toMatch(
+      /operation\.(?:logical|completed)\.(?:resolve|reject)\s*\(/,
+    );
+    expect(runner).not.toMatch(/\.operations\.delete\s*\(/);
+    expect(runner).not.toMatch(/operation_id\s*(?:===|!==)/);
+    assertContains(
+      controller,
+      /private async loadCurrentOperation\s*\(/,
+      'Team dissolve ownership invariant violated: current-operation generation checks must stay in TeamDissolveController.',
+      'team-collection/dissolve-controller.ts',
+    );
+    for (const operation of [
+      'failOpen',
+      'markLogicalClosed',
+      'finishClosed',
+      'suspend',
+    ]) {
+      assertContains(
+        controller,
+        new RegExp(`private (?:async )?${operation}\\s*\\(`),
+        `Team dissolve ownership invariant violated: ${operation} settlement must stay in TeamDissolveController.`,
+        'team-collection/dissolve-controller.ts',
+      );
+    }
+  });
+
   it('keeps TeammateService free of scheduler ownership', async () => {
     assertNoHits(
       'T1/cron-ownership invariant violated: TeammateService must carry no SchedulerService field/type or constructor.',

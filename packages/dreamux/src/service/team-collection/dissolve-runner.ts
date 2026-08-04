@@ -1,5 +1,4 @@
 import type { AgentEntityWorktreeIdentity } from '../agent-entity/types.js';
-import type { ChannelRouteOwner } from '../channel-service/index.js';
 import type { TeamService } from '../team-service/index.js';
 import type {
   WorktreeCleanupAssessment,
@@ -16,12 +15,18 @@ import type {
   TeamDissolvePublicError,
   TeamDissolveRecord,
   TeamRecord,
+  TeamSummary,
 } from './types.js';
+
+type TeamDissolveTerminalError =
+  | TeamDissolveFailedError
+  | TeamDissolveBlockedError;
 
 interface TeamDissolveRunnerOptions {
   worktrees: WorktreeManager;
-  mustTeam(teamId: string): Promise<TeamRecord>;
   getService(teamId: string): Promise<TeamService>;
+  /** Controller-owned authoritative generation check and snapshot refresh. */
+  loadCurrent(operation: TeamDissolveOperation): Promise<TeamRecord>;
   assessWorktree(record: TeamRecord): Promise<WorktreeCleanupAssessment>;
   persistDissolve(
     operation: TeamDissolveOperation,
@@ -36,35 +41,34 @@ interface TeamDissolveRunnerOptions {
     cause: unknown,
   ): Promise<void>;
   scheduleRetry(operation: TeamDissolveOperation): void;
-  failBeforeLogicalClose(
+  failOpen(
     operation: TeamDissolveOperation,
     publicError: TeamDissolvePublicError,
     cause: unknown,
   ): Promise<void>;
-  completeFailedOpenOperation(
+  logicalClosed(operation: TeamDissolveOperation, summary: TeamSummary): void;
+  finishClosed(
     operation: TeamDissolveOperation,
-    error: TeamDissolveFailedError | TeamDissolveBlockedError,
+    summary: TeamSummary,
+    error: TeamDissolveTerminalError | null,
   ): Promise<void>;
-  finish(operation: TeamDissolveOperation): Promise<void>;
   suspend(operation: TeamDissolveOperation): void;
-  requireOwner(operation: TeamDissolveOperation): Promise<ChannelRouteOwner>;
 }
 
-/** Executes one accepted operation; durable ownership stays in its controller. */
+/** Stateless phase executor; its controller owns all lifecycle settlement. */
 export class TeamDissolveRunner {
   constructor(private readonly opts: TeamDissolveRunnerOptions) {}
 
   async run(operation: TeamDissolveOperation): Promise<void> {
-    const current = await this.opts.mustTeam(operation.teamId);
-    if (current.dissolve?.operation_id !== operation.record.operation_id) return;
-    operation.record = current.dissolve;
+    const current = await this.opts.loadCurrent(operation);
     if (
       current.status !== 'closed' &&
       this.suspendIfInterrupted(operation)
     ) return;
     if (operation.record.phase === 'failed' && current.status !== 'closed') {
-      await this.opts.completeFailedOpenOperation(
+      await this.opts.failOpen(
         operation,
+        operation.record.last_error ?? 'resource-close-failed',
         new TeamDissolveFailedError(publicDissolveErrorMessage(
           operation.record.last_error ?? 'resource-close-failed',
         )),
@@ -90,17 +94,9 @@ export class TeamDissolveRunner {
           return;
         }
         if (closeAlreadyBegan) {
-          await this.opts.deferRetry(
-            operation,
-            'resource-close-failed',
-            error,
-          );
+          await this.opts.deferRetry(operation, 'resource-close-failed', error);
         } else {
-          await this.opts.failBeforeLogicalClose(
-            operation,
-            'resource-close-failed',
-            error,
-          );
+          await this.opts.failOpen(operation, 'resource-close-failed', error);
         }
         return;
       }
@@ -115,11 +111,13 @@ export class TeamDissolveRunner {
       return;
     }
 
+    // Re-read through the controller after every writer is idle. This is both
+    // the authoritative operation-generation check and the snapshot used by
+    // the required second non-destructive worktree assessment.
+    const revalidated = await this.opts.loadCurrent(operation);
     let assessment: WorktreeCleanupAssessment;
     try {
-      assessment = await this.opts.assessWorktree(
-        await this.opts.mustTeam(operation.teamId),
-      );
+      assessment = await this.opts.assessWorktree(revalidated);
     } catch (error) {
       if (this.suspendIfInterrupted(operation)) return;
       if (closeAlreadyBegan) {
@@ -129,7 +127,7 @@ export class TeamDissolveRunner {
           error,
         );
       } else {
-        await this.opts.failBeforeLogicalClose(
+        await this.opts.failOpen(
           operation,
           'worktree-assessment-failed',
           error,
@@ -140,9 +138,13 @@ export class TeamDissolveRunner {
     if (this.suspendIfInterrupted(operation)) return;
     if (assessment.status === 'blocked') {
       if (closeAlreadyBegan) {
-        await this.finishSafetyBlockedClose(operation, assessment);
+        await this.finishSafetyBlockedClose(
+          operation,
+          revalidated,
+          assessment,
+        );
       } else {
-        await this.opts.failBeforeLogicalClose(
+        await this.opts.failOpen(
           operation,
           publicErrorForSafety(assessment.reason),
           new TeamDissolveBlockedError(assessment.reason),
@@ -151,7 +153,7 @@ export class TeamDissolveRunner {
       return;
     }
 
-    await this.startLogicalClose(operation, assessment);
+    await this.startLogicalClose(operation, revalidated, assessment);
   }
 
   private suspendIfInterrupted(operation: TeamDissolveOperation): boolean {
@@ -166,19 +168,19 @@ export class TeamDissolveRunner {
   ): Promise<void> {
     const service = await this.opts.getService(operation.teamId);
     const summary = await service.status();
-    operation.logical.resolve(summary);
+    this.opts.logicalClosed(operation, summary);
     if (operation.record.phase === 'complete') {
-      await this.opts.finish(operation);
-      operation.completed.resolve(summary);
+      await this.opts.finishClosed(operation, summary, null);
       return;
     }
     if (operation.record.phase === 'failed') {
-      await this.opts.finish(operation);
-      operation.completed.reject(new TeamDissolveFailedError(
-        publicDissolveErrorMessage(
+      await this.opts.finishClosed(
+        operation,
+        summary,
+        new TeamDissolveFailedError(publicDissolveErrorMessage(
           operation.record.last_error ?? 'resource-close-failed',
-        ),
-      ));
+        )),
+      );
       return;
     }
     if (
@@ -210,31 +212,30 @@ export class TeamDissolveRunner {
       await this.opts.deferRetry(operation, 'resource-close-failed', error);
       return;
     }
-    const recovered = (await this.opts.mustTeam(operation.teamId)).dissolve;
-    if (recovered?.operation_id !== operation.record.operation_id) return;
-    operation.record = recovered;
-    if (recovered.phase === 'worktree_cleanup_pending') {
+    const recovered = await this.opts.loadCurrent(operation);
+    const recoveredPhase = recovered.dissolve!.phase;
+    if (recoveredPhase === 'worktree_cleanup_pending') {
       try {
         await this.runPhysicalCleanup(operation);
       } catch (error) {
         await this.opts.deferRetry(operation, 'worktree-cleanup-failed', error);
       }
-    } else if (recovered.phase === 'complete') {
-      const completed = await service.status();
-      await this.opts.finish(operation);
-      operation.completed.resolve(completed);
-    } else if (recovered.phase === 'failed') {
-      await this.opts.finish(operation);
-      operation.completed.reject(new TeamDissolveFailedError(
-        publicDissolveErrorMessage(
+    } else if (recoveredPhase === 'complete') {
+      await this.opts.finishClosed(operation, await service.status(), null);
+    } else if (recoveredPhase === 'failed') {
+      await this.opts.finishClosed(
+        operation,
+        await service.status(),
+        new TeamDissolveFailedError(publicDissolveErrorMessage(
           operation.record.last_error ?? 'resource-close-failed',
-        ),
-      ));
+        )),
+      );
     }
   }
 
   private async startLogicalClose(
     operation: TeamDissolveOperation,
+    current: TeamRecord,
     assessment: WorktreeCleanupAssessment,
   ): Promise<void> {
     try {
@@ -253,26 +254,28 @@ export class TeamDissolveRunner {
         last_error: null,
         next_retry_at: null,
       };
-      const worktree: AgentEntityWorktreeIdentity = terminalWorktree ??
-        (await this.opts.mustTeam(operation.teamId)).worktree;
+      const worktree = terminalWorktree ?? current.worktree;
       const logicalWorktree = terminalWorktree ?? {
         ...worktree,
         cleanup_state: 'cleanup-pending' as const,
         cleanup_error: null,
       };
       const summary = await operation.logicalClose!({
-        operationId: operation.record.operation_id,
+        operationId: operation.operationId,
         teamId: operation.teamId,
         note: operation.record.note,
-        owner: await this.opts.requireOwner(operation),
+        owner: {
+          kind: 'team',
+          teamName: current.team_id,
+          leaderName: operation.leaderName,
+        },
         dissolve: nextRecord,
         worktree: logicalWorktree,
       });
-      operation.record = nextRecord;
-      operation.logical.resolve(summary);
-      if (nextRecord.phase === 'complete') {
-        await this.opts.finish(operation);
-        operation.completed.resolve(summary);
+      await this.opts.loadCurrent(operation);
+      this.opts.logicalClosed(operation, summary);
+      if (operation.record.phase === 'complete') {
+        await this.opts.finishClosed(operation, summary, null);
         return;
       }
       try {
@@ -291,7 +294,7 @@ export class TeamDissolveRunner {
     const interrupt = operation.interrupt;
     if (interrupt.isInterrupted()) throw new TeamDissolveInterruptedError();
     const idle = Promise.all(
-      operation.writers.map(async (writer) => writer.runtime.waitIdle!()),
+      operation.writers.map(async (writer) => writer.waitIdle!()),
     ).then(() => 'idle' as const);
     void idle.catch(() => undefined);
     const result = await Promise.race([
@@ -304,7 +307,7 @@ export class TeamDissolveRunner {
   private async runPhysicalCleanup(
     operation: TeamDissolveOperation,
   ): Promise<void> {
-    const team = await this.opts.mustTeam(operation.teamId);
+    const team = await this.opts.loadCurrent(operation);
     const service = await this.opts.getService(operation.teamId);
     const cleaned = await this.opts.worktrees.cleanup({
       source_cwd: team.repo_cwd,
@@ -326,13 +329,14 @@ export class TeamDissolveRunner {
         last_error: publicErrorForSafety(cleaned.cleanup_state),
         next_retry_at: null,
       };
-      await service.completeWorktreeCleanup({
+      const summary = await service.completeWorktreeCleanup({
         dissolve: failed,
         worktree: { ...cleaned, cleanup_error: null },
       });
-      operation.record = failed;
-      await this.opts.finish(operation);
-      operation.completed.reject(
+      await this.opts.loadCurrent(operation);
+      await this.opts.finishClosed(
+        operation,
+        summary,
         new TeamDissolveFailedError('Managed worktree became unsafe to delete'),
       );
       return;
@@ -347,13 +351,13 @@ export class TeamDissolveRunner {
       dissolve: complete,
       worktree: { ...cleaned, cleanup_error: null },
     });
-    operation.record = complete;
-    await this.opts.finish(operation);
-    operation.completed.resolve(summary);
+    await this.opts.loadCurrent(operation);
+    await this.opts.finishClosed(operation, summary, null);
   }
 
   private async finishSafetyBlockedClose(
     operation: TeamDissolveOperation,
+    current: TeamRecord,
     assessment: Extract<WorktreeCleanupAssessment, { status: 'blocked' }>,
   ): Promise<void> {
     const publicError = publicErrorForSafety(assessment.reason);
@@ -366,29 +370,24 @@ export class TeamDissolveRunner {
     const terminalError = new TeamDissolveBlockedError(assessment.reason);
     try {
       const summary = await operation.logicalClose!({
-        operationId: operation.record.operation_id,
+        operationId: operation.operationId,
         teamId: operation.teamId,
         note: operation.record.note,
-        owner: await this.opts.requireOwner(operation),
+        owner: {
+          kind: 'team',
+          teamName: current.team_id,
+          leaderName: operation.leaderName,
+        },
         dissolve: failed,
         worktree: assessment.worktree,
       });
-      operation.record = failed;
-      operation.logical.resolve(summary);
-      await this.opts.finish(operation);
-      operation.completed.reject(terminalError);
+      await this.opts.loadCurrent(operation);
+      await this.opts.finishClosed(operation, summary, terminalError);
     } catch (error) {
-      const latest = await this.opts.mustTeam(operation.teamId);
-      if (
-        latest.status === 'closed' &&
-        latest.dissolve?.operation_id === operation.record.operation_id &&
-        latest.dissolve.phase === 'failed'
-      ) {
-        operation.record = latest.dissolve;
+      const latest = await this.opts.loadCurrent(operation);
+      if (latest.status === 'closed' && operation.record.phase === 'failed') {
         const summary = await (await this.opts.getService(operation.teamId)).status();
-        operation.logical.resolve(summary);
-        await this.opts.finish(operation);
-        operation.completed.reject(terminalError);
+        await this.opts.finishClosed(operation, summary, terminalError);
         return;
       }
       await this.opts.deferRetry(operation, publicError, error);

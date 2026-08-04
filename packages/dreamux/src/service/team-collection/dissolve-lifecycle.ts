@@ -65,7 +65,11 @@ export class DissolveInterruptSignal {
 }
 
 export interface TeamDissolveOperation {
-  teamId: string;
+  /** Immutable accepted generation; `record` is only its mutable snapshot. */
+  readonly operationId: string;
+  readonly teamId: string;
+  /** Immutable TeamLeader generation captured with the accepted operation. */
+  readonly leaderName: string;
   record: TeamDissolveRecord;
   writers: TeamLiveWriter[];
   logicalClose: TeamLogicalCloseExecutor | null;
@@ -81,6 +85,7 @@ export interface TeamDissolveOperation {
 
 export function newDissolveOperation(input: {
   teamId: string;
+  leaderName: string;
   record: TeamDissolveRecord;
   writers: TeamLiveWriter[];
 }): TeamDissolveOperation {
@@ -100,7 +105,9 @@ export function newDissolveOperation(input: {
     dissolveSnapshot: () => readRecord(),
   };
   const operation: TeamDissolveOperation = {
+    operationId: input.record.operation_id,
     teamId: input.teamId,
+    leaderName: input.leaderName,
     record: input.record,
     writers: input.writers,
     logicalClose: null,

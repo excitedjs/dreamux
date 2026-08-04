@@ -1,5 +1,4 @@
 import type {
-  AgentRuntime,
   AgentRuntimeMcpServer,
   AgentRuntimeSkillSource,
   AgentRuntimeTurnResult,
@@ -90,11 +89,7 @@ export interface TeamAvailability {
   admit<T>(task: () => Promise<T>): Promise<T>;
   completionInitiator(delegate: CompletionInitiator): CompletionInitiator;
 }
-
-export interface TeamLiveWriter {
-  name: string;
-  runtime: AgentRuntime;
-}
+export interface TeamLiveWriter { name: string; waitIdle: (() => Promise<void>) | undefined; }
 
 export interface TeamServiceCreateInput {
   teamId: string;
@@ -403,10 +398,16 @@ export class TeamService {
 
   /** Every process-live runtime that may write this Team's shared workspace. */
   liveWriters(): TeamLiveWriter[] {
-    const writers = this.teammateCollection.liveRuntimes();
+    const writers = this.teammateCollection.liveRuntimes().map(
+      ({ name, runtime }) => ({
+        name, waitIdle: runtime.waitIdle?.bind(runtime),
+      }),
+    );
     const leaderRuntime = this.leader_?.getRuntime() ?? null;
     if (leaderRuntime !== null) {
-      writers.unshift({ name: this.leaderName, runtime: leaderRuntime });
+      writers.unshift({
+        name: this.leaderName, waitIdle: leaderRuntime.waitIdle?.bind(leaderRuntime),
+      });
     }
     return writers;
   }

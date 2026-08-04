@@ -55,8 +55,15 @@ the explicit `service/index.ts` facade.
   Its sibling modules are private implementation capabilities, not additional
   aggregate owners: `runtime-registry.ts` owns materialization/cache and private
   scheduler handles; `read-model.ts` owns public read projection;
-  `dissolve-controller.ts` owns the durable operation registry, retry/recovery,
-  and milestones; `dissolve-runner.ts` only executes accepted durable phases.
+  `dissolve-controller.ts` owns the immutable operation/TeamLeader generation,
+  authoritative current-operation refresh, process-local operation registry,
+  retry/recovery orchestration, every logical/completed milestone settlement,
+  closing-fence finalization, registry removal, shutdown suspension, and
+  terminal logging.
+  `dissolve-runner.ts` is a stateless accepted-phase executor: it requests those
+  controller operations and never settles milestones, removes operations,
+  finalizes a fence, or logs a lifecycle terminal itself. Captured live writers
+  expose only their name and neutral `waitIdle` capability, not their runtimes.
   **`team-service/index.ts`** — `TeamService`, the single per-team entity (holds
   its own `TeamRecord`): status/delivery/shared-workspace/member operations plus
   live-writer enumeration and the accepted operation's logical resource close.
@@ -99,6 +106,12 @@ the explicit `service/index.ts` facade.
   resume-notice injection. `team-runtime-stop.ts` keeps Team runtime stop
   failures contained so dispatcher shutdown can keep sweeping later-owned
   resources before returning an aggregate error.
+  `input-source-channels.ts` is a stateless helper for dispatcher preparation
+  and ordered Channel session publication. It owns no lifecycle state and is
+  unrelated to Team dissolve; keeping those two cohesive sequences outside the
+  699-line `DispatcherService` owner avoids violating the 700-physical-line
+  source gate. Moving them back without replacing this boundary would force an
+  equally artificial extraction or compressed composition-root code.
 - **`channel-service/`** — the dispatcher-local core Channel service. It wraps the
   private live `ChannelSessions` helper, owns channel-tool dispatch, provider
   target resolution, TeamLeader egress checks, and all `ChannelBindingStore`

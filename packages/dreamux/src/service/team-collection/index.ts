@@ -51,7 +51,6 @@ import {
   TeamService,
 } from '../team-service/index.js';
 import {
-  TeamDissolveFailedError,
   TeamUnavailableError,
 } from './errors.js';
 import { isActiveDissolve } from './dissolve-lifecycle.js';
@@ -490,12 +489,10 @@ export class TeamCollection {
   async closeAcceptedResources(
     input: AcceptedTeamLogicalClose,
   ): Promise<TeamSummary> {
-    const current = await this.mustTeam(input.teamId);
-    if (current.dissolve?.operation_id !== input.operationId) {
-      throw new TeamDissolveFailedError(
-        `Team ${JSON.stringify(input.teamId)} dissolve operation changed`,
-      );
-    }
+    const current = await this.dissolves.requireCurrentRecord({
+      teamId: input.teamId,
+      operationId: input.operationId,
+    });
     const service = await this.get(input.teamId);
     if (current.status === 'closed') return service.status();
     return service.closeLogically({

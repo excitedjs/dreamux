@@ -58,6 +58,13 @@ interface TeamDissolveControllerOptions {
   assertNewCloseAvailable(teamId: string): void;
 }
 
+class StaleTeamDissolveOperationError extends TeamDissolveFailedError {
+  constructor() {
+    super('Team dissolve operation changed');
+    this.name = 'StaleTeamDissolveOperationError';
+  }
+}
+
 /** The one durable dissolve state-machine capability owned by TeamCollection. */
 export class TeamDissolveController {
   private readonly operations = new Map<string, TeamDissolveOperation>();
@@ -66,21 +73,21 @@ export class TeamDissolveController {
   constructor(private readonly opts: TeamDissolveControllerOptions) {
     this.runner = new TeamDissolveRunner({
       worktrees: opts.worktrees,
-      mustTeam: (teamId) => opts.mustTeam(teamId),
       getService: (teamId) => opts.getService(teamId),
+      loadCurrent: (operation) => this.loadCurrentOperation(operation),
       assessWorktree: (record) => this.assessWorktree(record),
       persistDissolve: (operation, patch) =>
         this.persistDissolve(operation, patch),
       deferRetry: (operation, publicError, cause) =>
         this.deferRetry(operation, publicError, cause),
       scheduleRetry: (operation) => this.scheduleRetry(operation),
-      failBeforeLogicalClose: (operation, publicError, cause) =>
-        this.failBeforeLogicalClose(operation, publicError, cause),
-      completeFailedOpenOperation: (operation, error) =>
-        this.completeFailedOpenOperation(operation, error),
-      finish: (operation) => this.finish(operation),
+      failOpen: (operation, publicError, cause) =>
+        this.failOpen(operation, publicError, cause),
+      logicalClosed: (operation, summary) =>
+        this.markLogicalClosed(operation, summary),
+      finishClosed: (operation, summary, error) =>
+        this.finishClosed(operation, summary, error),
       suspend: (operation) => this.suspend(operation),
-      requireOwner: (operation) => this.requireOwner(operation),
     });
   }
 
@@ -125,6 +132,7 @@ export class TeamDissolveController {
       }
       const operation = this.operationFor(
         teamId,
+        current.leader_name,
         active,
         service.liveWriters(),
       );
@@ -186,7 +194,12 @@ export class TeamDissolveController {
       expectedDissolveOperationId: priorOperationId,
     });
     service.replaceRecord(saved);
-    const operation = this.operationFor(teamId, accepted, writers);
+    const operation = this.operationFor(
+      teamId,
+      saved.leader_name,
+      saved.dissolve!,
+      writers,
+    );
     this.opts.activateClosing(saved, service);
     this.opts.log.info(
       {
@@ -217,6 +230,22 @@ export class TeamDissolveController {
     this.launch(operation);
   }
 
+  /**
+   * Authoritative operation-generation check for the logical-close executor.
+   * The runner and TeamCollection resource boundary both enter through this
+   * one controller capability; TeamStore still performs the write-time CAS.
+   */
+  async requireCurrentRecord(input: {
+    teamId: string;
+    operationId: string;
+  }): Promise<TeamRecord> {
+    const operation = this.operations.get(input.operationId);
+    if (operation === undefined || operation.teamId !== input.teamId) {
+      throw new StaleTeamDissolveOperationError();
+    }
+    return this.loadCurrentOperation(operation);
+  }
+
   /** Restore durable gates and lifecycle work before ordinary Team work. */
   async recover(logicalClose: TeamLogicalCloseExecutor): Promise<void> {
     const toStart: TeamDissolveOperation[] = [];
@@ -234,6 +263,7 @@ export class TeamDissolveController {
         this.requireIdleCapability(writers);
         const operation = this.operationFor(
           current.team_id,
+          current.leader_name,
           active,
           writers,
         );
@@ -286,6 +316,7 @@ export class TeamDissolveController {
 
   private operationFor(
     teamId: string,
+    leaderName: string,
     record: TeamDissolveRecord,
     writers: TeamLiveWriter[],
   ): TeamDissolveOperation {
@@ -294,12 +325,18 @@ export class TeamDissolveController {
       if (existing.teamId !== teamId) {
         throw new Error('Team dissolve operation belongs to another Team');
       }
-      existing.record = record;
+      if (existing.leaderName !== leaderName) {
+        throw new StaleTeamDissolveOperationError();
+      }
+      // A join may have read before the active runner advanced its local
+      // snapshot. Never let that older same-operation projection move the
+      // process-local handle backwards; durable handoff appends remain in store.
       return existing;
     }
     this.requireIdleCapability(writers);
     const operation = newDissolveOperation({
       teamId: validateTeamId(teamId),
+      leaderName,
       record,
       writers,
     });
@@ -309,7 +346,7 @@ export class TeamDissolveController {
 
   private requireIdleCapability(writers: TeamLiveWriter[]): void {
     const missing = writers.find(
-      (writer) => writer.runtime.waitIdle === undefined,
+      (writer) => writer.waitIdle === undefined,
     );
     if (missing !== undefined) {
       throw new TeamDissolveFailedError(
@@ -330,7 +367,7 @@ export class TeamDissolveController {
   }
 
   private launch(operation: TeamDissolveOperation): void {
-    if (this.operations.get(operation.record.operation_id) !== operation) return;
+    if (this.operations.get(operation.operationId) !== operation) return;
     if (operation.runner !== null || operation.retryTimer !== null) return;
     if (this.opts.isShuttingDown()) {
       this.suspend(operation);
@@ -352,11 +389,15 @@ export class TeamDissolveController {
           this.suspend(operation);
           return;
         }
+        if (error instanceof StaleTeamDissolveOperationError) {
+          this.suspend(operation, error, 'stale-operation');
+          return;
+        }
         this.opts.log.error(
           {
             dispatcher_id: this.opts.dispatcherId,
             team_id: operation.teamId,
-            operation_id: operation.record.operation_id,
+            operation_id: operation.operationId,
             phase: operation.record.phase,
             err: teamErrorInfo(error),
           },
@@ -369,7 +410,7 @@ export class TeamDissolveController {
           {
             dispatcher_id: this.opts.dispatcherId,
             team_id: operation.teamId,
-            operation_id: operation.record.operation_id,
+            operation_id: operation.operationId,
             phase: operation.record.phase,
             err: teamErrorInfo(error),
           },
@@ -382,20 +423,42 @@ export class TeamDissolveController {
       });
   }
 
-  /** Reload authority, then let the runner remain the sole phase interpreter. */
+  /** Reload authority, then let the stateless runner interpret the phase. */
   private async reloadUnexpectedFailure(
     operation: TeamDissolveOperation,
   ): Promise<void> {
+    try {
+      await this.loadCurrentOperation(operation);
+    } catch (error) {
+      if (error instanceof StaleTeamDissolveOperationError) {
+        this.suspend(operation, error, 'stale-operation');
+        return;
+      }
+      throw error;
+    }
+    this.scheduleInMemoryRetry(operation);
+  }
+
+  /** The sole authoritative durable-generation check and snapshot adoption. */
+  private async loadCurrentOperation(
+    operation: TeamDissolveOperation,
+  ): Promise<TeamRecord> {
     const current = await this.opts.mustTeam(operation.teamId);
-    if (current.dissolve?.operation_id !== operation.record.operation_id) {
-      const error = new TeamDissolveFailedError('Team dissolve operation changed');
-      operation.logical.reject(error);
-      operation.completed.reject(error);
-      this.operations.delete(operation.record.operation_id);
-      return;
+    this.adoptCurrent(operation, current);
+    return current;
+  }
+
+  private adoptCurrent(
+    operation: TeamDissolveOperation,
+    current: TeamRecord,
+  ): void {
+    if (
+      current.leader_name !== operation.leaderName ||
+      current.dissolve?.operation_id !== operation.operationId
+    ) {
+      throw new StaleTeamDissolveOperationError();
     }
     operation.record = current.dissolve;
-    this.scheduleInMemoryRetry(operation);
   }
 
   private async persistDissolve(
@@ -405,26 +468,31 @@ export class TeamDissolveController {
       'phase' | 'last_error' | 'cleanup_attempts' | 'next_retry_at'
     >>,
   ): Promise<TeamRecord> {
-    const current = await this.opts.mustTeam(operation.teamId);
-    if (current.dissolve?.operation_id !== operation.record.operation_id) {
-      throw new TeamDissolveFailedError('Team dissolve operation changed');
+    const current = await this.loadCurrentOperation(operation);
+    const priorPhase = operation.record.phase;
+    let saved: TeamRecord;
+    try {
+      saved = await this.opts.store.update(current, {
+        dissolvePatch: patch,
+        expectedDissolveOperationId: operation.operationId,
+      });
+    } catch (error) {
+      // Convert only an actual generation change to the controller's typed
+      // stale result. Other storage failures retain their original cause.
+      await this.loadCurrentOperation(operation);
+      throw error;
     }
-    const saved = await this.opts.store.update(current, {
-      dissolvePatch: patch,
-      expectedDissolveOperationId: operation.record.operation_id,
-    });
-    const dissolve = saved.dissolve!;
     this.opts.replaceCachedRecord(operation.teamId, saved);
-    operation.record = dissolve;
-    if (patch.phase !== undefined && patch.phase !== current.dissolve.phase) {
+    this.adoptCurrent(operation, saved);
+    if (patch.phase !== undefined && patch.phase !== priorPhase) {
       this.opts.log.info(
         {
           dispatcher_id: this.opts.dispatcherId,
           team_id: operation.teamId,
-          operation_id: operation.record.operation_id,
+          operation_id: operation.operationId,
           phase: patch.phase,
-          attempt: dissolve.cleanup_attempts,
-          next_retry_at: dissolve.next_retry_at,
+          attempt: operation.record.cleanup_attempts,
+          next_retry_at: operation.record.next_retry_at,
         },
         'Team dissolve phase advanced',
       );
@@ -432,25 +500,33 @@ export class TeamDissolveController {
     return saved;
   }
 
-  private async failBeforeLogicalClose(
+  /** Terminal operation: persist/recover an open failure, reopen, then reject. */
+  private async failOpen(
     operation: TeamDissolveOperation,
     publicError: TeamDissolvePublicError,
     cause: unknown,
   ): Promise<void> {
-    await this.persistDissolve(operation, {
-      phase: 'failed',
-      last_error: publicError,
-      next_retry_at: null,
-    });
+    if (operation.record.phase !== 'failed') {
+      await this.persistDissolve(operation, {
+        phase: 'failed',
+        last_error: publicError,
+        next_retry_at: null,
+      });
+    }
     const error = cause instanceof TeamDissolveBlockedError
       ? cause
+      : cause instanceof TeamDissolveFailedError
+      ? cause
       : new TeamDissolveFailedError(publicDissolveErrorMessage(publicError));
-    await this.completeFailedOpenOperation(operation, error);
+    await this.opts.endClosing(operation.teamId, true);
+    operation.logical.reject(error);
+    operation.completed.reject(error);
+    this.removeOperation(operation);
     this.opts.log.warn(
       {
         dispatcher_id: this.opts.dispatcherId,
         team_id: operation.teamId,
-        operation_id: operation.record.operation_id,
+        operation_id: operation.operationId,
         phase: operation.record.phase,
         error: publicError,
         err: teamErrorInfo(cause),
@@ -459,26 +535,11 @@ export class TeamDissolveController {
     );
   }
 
-  private async completeFailedOpenOperation(
-    operation: TeamDissolveOperation,
-    error: TeamDissolveFailedError | TeamDissolveBlockedError,
-  ): Promise<void> {
-    await this.opts.endClosing(operation.teamId, true);
-    operation.logical.reject(error);
-    operation.completed.reject(error);
-    this.operations.delete(operation.record.operation_id);
-  }
-
   private async deferRetry(
     operation: TeamDissolveOperation,
     publicError: TeamDissolvePublicError,
     cause: unknown,
   ): Promise<void> {
-    const current = await this.opts.mustTeam(operation.teamId);
-    if (current.dissolve?.operation_id !== operation.record.operation_id) {
-      throw new TeamDissolveFailedError('Team dissolve operation changed');
-    }
-    operation.record = current.dissolve;
     if (!isActiveDissolve(operation.record)) {
       throw new TeamDissolveFailedError(
         'terminal Team dissolve cannot be deferred',
@@ -495,7 +556,7 @@ export class TeamDissolveController {
       {
         dispatcher_id: this.opts.dispatcherId,
         team_id: operation.teamId,
-        operation_id: operation.record.operation_id,
+        operation_id: operation.operationId,
         phase: operation.record.phase,
         attempt: attempts,
         error: publicError,
@@ -526,7 +587,7 @@ export class TeamDissolveController {
   private scheduleInMemoryRetry(operation: TeamDissolveOperation): void {
     if (
       this.opts.isShuttingDown() ||
-      this.operations.get(operation.record.operation_id) !== operation
+      this.operations.get(operation.operationId) !== operation
     ) {
       this.suspend(operation);
       return;
@@ -540,43 +601,71 @@ export class TeamDissolveController {
     this.scheduleRetry(operation);
   }
 
-  private suspend(operation: TeamDissolveOperation): void {
+  /**
+   * Terminal process-local operation: settle and unregister without touching
+   * the durable fence. Shutdown recovery or the new durable generation owns it.
+   */
+  private suspend(
+    operation: TeamDissolveOperation,
+    error: TeamDissolveFailedError | TeamDissolveInterruptedError =
+      new TeamDissolveInterruptedError(),
+    reason: 'shutdown' | 'stale-operation' = 'shutdown',
+  ): void {
     if (operation.retryTimer !== null) {
       clearTimeout(operation.retryTimer);
       operation.retryTimer = null;
     }
-    const error = new TeamDissolveInterruptedError();
     operation.logical.reject(error);
     operation.completed.reject(error);
-    this.operations.delete(operation.record.operation_id);
-  }
-
-  private async finish(operation: TeamDissolveOperation): Promise<void> {
-    await this.opts.endClosing(operation.teamId, false);
-    this.operations.delete(operation.record.operation_id);
+    this.removeOperation(operation);
     this.opts.log.info(
       {
         dispatcher_id: this.opts.dispatcherId,
         team_id: operation.teamId,
-        operation_id: operation.record.operation_id,
+        operation_id: operation.operationId,
+        phase: operation.record.phase,
+        reason,
+        fence_finalization: 'preserved',
+      },
+      'Team dissolve local operation suspended',
+    );
+  }
+
+  /** Controller-owned publication of the post-resource-close milestone. */
+  private markLogicalClosed(
+    operation: TeamDissolveOperation,
+    summary: TeamSummary,
+  ): void {
+    operation.logical.resolve(summary);
+  }
+
+  /** Terminal closed operation: release fence, settle, unregister, and log. */
+  private async finishClosed(
+    operation: TeamDissolveOperation,
+    summary: TeamSummary,
+    error: TeamDissolveFailedError | TeamDissolveBlockedError | null,
+  ): Promise<void> {
+    await this.opts.endClosing(operation.teamId, false);
+    operation.logical.resolve(summary);
+    if (error === null) operation.completed.resolve(summary);
+    else operation.completed.reject(error);
+    this.removeOperation(operation);
+    this.opts.log.info(
+      {
+        dispatcher_id: this.opts.dispatcherId,
+        team_id: operation.teamId,
+        operation_id: operation.operationId,
         phase: operation.record.phase,
         cleanup_attempts: operation.record.cleanup_attempts,
+        outcome: error === null ? 'complete' : 'failed',
       },
       'Team dissolve reached a terminal state',
     );
   }
 
-  private async requireOwner(
-    operation: TeamDissolveOperation,
-  ): Promise<ChannelRouteOwner> {
-    const team = await this.opts.mustTeam(operation.teamId);
-    if (team.dissolve?.operation_id !== operation.record.operation_id) {
-      throw new TeamDissolveFailedError('Team dissolve operation changed');
+  private removeOperation(operation: TeamDissolveOperation): void {
+    if (this.operations.get(operation.operationId) === operation) {
+      this.operations.delete(operation.operationId);
     }
-    return {
-      kind: 'team',
-      teamName: team.team_id,
-      leaderName: team.leader_name,
-    };
   }
 }
