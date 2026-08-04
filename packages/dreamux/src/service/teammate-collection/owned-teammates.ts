@@ -1,7 +1,7 @@
 import type { AgentRuntimeTurnResult } from '@excitedjs/dreamux-types';
 
 import type { AgentEntityRuntimeStatus } from '../agent-entity/types.js';
-import type { SettledCompletionRoute } from '../teammate-service/index.js';
+import type { SettledCompletionRoute } from '../teammate-service/types.js';
 import type { SpawnTeamMateInput } from './types.js';
 
 declare const ownedTeammateOwnerBrand: unique symbol;

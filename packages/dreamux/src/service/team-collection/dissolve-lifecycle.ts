@@ -1,5 +1,4 @@
-import type { TeamLiveWriter } from '../team-service/index.js';
-import { TeamDissolveInterruptedError } from './errors.js';
+import type { TeamLiveWriter } from '../team-service/types.js';
 import type {
   AcceptedTeamDissolve,
   TeamDissolveCleanupPendingResult,
@@ -8,7 +7,6 @@ import type {
   TeamSummary,
 } from './types.js';
 
-export const TEAM_DISSOLVE_RESULT_BUDGET_MS = 9_000;
 export const TEAM_DISSOLVE_RETRY_MIN_MS = 1_000;
 export const TEAM_DISSOLVE_RETRY_MAX_MS = 60_000;
 
@@ -153,36 +151,4 @@ export function projectInProgressDissolve(
     };
   }
   return handle.receipt;
-}
-
-/** Project a bounded Dispatcher result without cancelling accepted work. */
-export async function projectDispatcherDissolveResult(
-  handle: AcceptedTeamDissolve,
-  budgetMs: number = TEAM_DISSOLVE_RESULT_BUDGET_MS,
-): Promise<
-  TeamSummary |
-  AcceptedTeamDissolve['receipt'] |
-  TeamDissolveCleanupPendingResult
-> {
-  let timer: NodeJS.Timeout | null = null;
-  const timeout = new Promise<'timeout'>((resolve) => {
-    timer = setTimeout(() => resolve('timeout'), budgetMs);
-    timer.unref();
-  });
-  try {
-    const outcome = await Promise.race([
-      handle.completed.then((summary) => ({ summary })),
-      timeout,
-    ]);
-    return outcome === 'timeout'
-      ? projectInProgressDissolve(handle)
-      : outcome.summary;
-  } catch (error) {
-    if (error instanceof TeamDissolveInterruptedError) {
-      return projectInProgressDissolve(handle);
-    }
-    throw error;
-  } finally {
-    if (timer !== null) clearTimeout(timer);
-  }
 }

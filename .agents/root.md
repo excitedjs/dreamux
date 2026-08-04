@@ -168,6 +168,9 @@ history and rationale; when you need current behavior, pair them with
   — active design for exposing descriptor-bound `dissolve` to TeamLeaders,
   persisting one shared Team close lifecycle, and retrying eligible managed
   worktree deletion across bounded MCP responses and server restarts.
+- [Service large-file declaration and seam refactor](proposals/service-large-file-declaration-and-seam-refactor.md)
+  — active behavior-preserving refactor for owner-local service type contracts,
+  Dispatcher dissolve projection, and TeamLeader channel-tool lease coordination.
 - [Post-#110 architecture sustainability](proposals/post-110-architecture-sustainability.md)
   — diagnostic of why agent-written code drifted from the intended architecture
   after the #110 pluginization inflection (load-bearing invariants are prose with

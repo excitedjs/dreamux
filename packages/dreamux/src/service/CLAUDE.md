@@ -6,10 +6,10 @@ agent and orchestrates teammates. `server.ts` is wiring only — all per-dispatc
 orchestration lives here. One service class per file/dir; a class with helpers
 gets a directory whose `index.ts` is the class and siblings are its helpers.
 `service/index.ts` is the only package-internal service facade (`Dispatchers`,
-`DispatcherService`, `TeamService`, `ChannelToolAuthorizationError` from
-`channel-service/errors.ts`). Sub-service directories must not re-export sibling
-modules; callers import the owning module directly unless the symbol belongs on
-the explicit `service/index.ts` facade.
+`DispatcherService`, `TeamService`, `WorkflowService`, and
+`ChannelToolAuthorizationError` from `channel-service/errors.ts`). Sub-service
+directories must not re-export sibling modules; callers import the owning module
+directly unless the symbol belongs on the explicit `service/index.ts` facade.
 
 ## What goes where
 
@@ -92,10 +92,12 @@ the explicit `service/index.ts` facade.
   builder. `inbound-task-drain.ts` owns the dispatcher admission/drain gate for
   external work that may publish runtime, scheduler, route, or durable state.
   `team-channel-coordinator.ts` maps both Dispatcher and descriptor-scoped
-  TeamLeader dissolve into the same TeamCollection lifecycle and coordinates
-  dispatcher/scoped-TeamLeader bind and transfer with collaboration-space route
-  reconciliation. `channel-tool-invocation.ts`
-  keeps TeamLeader egress authorization beside channel tool dispatch.
+  TeamLeader dissolve into the same TeamCollection lifecycle, owns the bounded
+  Dispatcher result projection, keeps TeamLeader channel-tool invocation inside
+  its exact generation lease, and coordinates dispatcher/scoped-TeamLeader bind
+  and transfer with collaboration-space route reconciliation.
+  `channel-tool-invocation.ts` keeps TeamLeader egress authorization beside
+  channel tool dispatch.
   `teammate-ops.ts` wraps dispatcher-scope mutating teammate ops with the
   dispatcher admission gate. Dispatcher and Team schedulers also receive this
   gate in their options and expose only `SchedulerCommands` to external callers,
@@ -106,12 +108,11 @@ the explicit `service/index.ts` facade.
   resume-notice injection. `team-runtime-stop.ts` keeps Team runtime stop
   failures contained so dispatcher shutdown can keep sweeping later-owned
   resources before returning an aggregate error.
-  `input-source-channels.ts` is a stateless helper for dispatcher preparation
-  and ordered Channel session publication. It owns no lifecycle state and is
-  unrelated to Team dissolve; keeping those two cohesive sequences outside the
-  699-line `DispatcherService` owner avoids violating the 700-physical-line
-  source gate. Moving them back without replacing this boundary would force an
-  equally artificial extraction or compressed composition-root code.
+  `input-source-lifecycle.ts` owns dispatcher preparation/start single-flight
+  state, prepared Channel sessions, dispatcher agent/workspace publication,
+  ordered Channel session publication, and failed-start rollback. It applies the
+  aggregate availability fact internally; `DispatcherService` retains public
+  facade methods plus the aggregate stop ordering across every owned service.
 - **`channel-service/`** — the dispatcher-local core Channel service. It wraps the
   private live `ChannelSessions` helper, owns channel-tool dispatch, provider
   target resolution, TeamLeader egress checks, and all `ChannelBindingStore`

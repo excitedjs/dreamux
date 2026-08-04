@@ -5,7 +5,7 @@ import type {
 import type {
   SpawnTeamMateRequest,
   TeammateOps,
-} from '../teammate-collection/index.js';
+} from '../teammate-collection/types.js';
 import type { TeamLeaderLease } from '../team-collection/types.js';
 import type { TeamService } from '../team-service/index.js';
 import type { WorkflowOps } from '../workflow-service/index.js';

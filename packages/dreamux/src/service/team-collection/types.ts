@@ -1,12 +1,71 @@
 import {
   assertNotReservedAgentName,
+  type AgentEntityIdentity,
   type AgentEntityIdentityStatus,
   type AgentEntityRuntimeStatus,
   type AgentEntityTurnResult,
   type AgentEntityWorktreeIdentity,
 } from '../agent-entity/types.js';
-import type { AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
+import type {
+  AgentRuntimeMcpServer,
+  AgentRuntimeSkillSource,
+  DreamuxLogger,
+} from '@excitedjs/dreamux-types';
+
+import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
+import type { DreamuxConfig } from '../../config/config.js';
+import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
+import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
+import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
+import type {
+  CompletionInitiator,
+  CompletionRouter,
+} from '../completion-router/index.js';
+import type { SuffixGenerator } from '../name-allocator.js';
 import type { TeamMateWorktreeRequest } from '../teammate-collection/types.js';
+import type { WorktreeManager } from '../worktree/manager.js';
+
+export interface TeamCollectionOptions {
+  /** The dispatcher this collection belongs to (issue #233 ownership sinking). */
+  dispatcherId: string;
+  config: DreamuxConfig;
+  agentRuntimeProviders: AgentRuntimeProviderCatalog;
+  worktrees: WorktreeManager;
+  /**
+   * The dispatcher's identity + turns store pair (issue #233 R4). Supplied by
+   * `DispatcherService` (the same pair the dispatcher agent + dispatcher-scope
+   * collection share) and forwarded into every per-team collection so no team
+   * news its own. Read-path probes (`leaderState` / `memberCount`) read the
+   * identity store directly, never a throwaway collection. The stores are
+   * stateless (paths by role + team_id), so one pair safely serves all scopes.
+   */
+  identities: AgentIdentityStore;
+  turnsStore: AgentTurnsStore;
+  // Shared per-dispatcher deps `DispatcherService` always supplies; forwarded
+  // unchanged into each team's own collection so it stays topology-free (#233).
+  router: CompletionRouter;
+  initiatorFor: (
+    producer: AgentEntityIdentity,
+  ) => Promise<CompletionInitiator | null>;
+  isShuttingDown: () => boolean;
+  admitOperation?: <T>(task: () => Promise<T>) => Promise<T>;
+  trackAcceptedOperation?: <T>(task: () => Promise<T>) => Promise<T>;
+  adminSocketPath: string;
+  /**
+   * Build a team_leader's channel-egress MCP descriptors from the dispatcher's
+   * live channels. Channels are dispatcher-owned, so the team layer only asks
+   * for its own leader's set — it never reaches into the channel layer itself.
+   */
+  leaderChannelDescriptors: (input: {
+    teamId: string;
+    leaderName: string;
+  }) => readonly AgentRuntimeMcpServer[];
+  log: DreamuxLogger;
+  workflowLog?: DreamuxLogger;
+  coreEvents?: DispatcherCoreEventPublisher;
+  nameSuffixGenerator?: SuffixGenerator;
+  agentNameSuffixGenerator?: SuffixGenerator;
+}
 
 export const TEAM_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 

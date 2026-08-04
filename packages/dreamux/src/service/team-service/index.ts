@@ -1,6 +1,5 @@
 import type {
   AgentRuntimeMcpServer,
-  AgentRuntimeSkillSource,
   AgentRuntimeTurnResult,
   DreamuxLogger,
   InboundTurnInput,
@@ -19,15 +18,18 @@ import {
   collectShutdownFailure,
   throwShutdownFailures,
 } from '../shutdown-errors.js';
-import { SchedulerService, type SchedulerCommands } from '../scheduler/service.js';
+import { SchedulerService } from '../scheduler/service.js';
+import type { SchedulerCommands } from '../scheduler/types.js';
 import { CronJobStore } from '../scheduler/store.js';
 import {
   TeammateCollection,
-  type SpawnTeamMateRequest,
-  type TeamMateSharedWorkspace,
-  type TeammateOps,
 } from '../teammate-collection/index.js';
 import type { SpawnOwnedTeamMateOptions } from '../teammate-collection/owned-teammates.js';
+import type {
+  SpawnTeamMateRequest,
+  TeamMateSharedWorkspace,
+  TeammateOps,
+} from '../teammate-collection/types.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import {
@@ -52,6 +54,12 @@ import type {
 import type { WorktreeManager } from '../worktree/manager.js';
 import { createTeamLeaderAgentForTeam } from './leader-agent.js';
 import { teamView } from './team-view.js';
+import type {
+  TeamAvailability,
+  TeamLiveWriter,
+  TeamSchedulerLifecycle,
+  TeamServiceCreateInput,
+} from './types.js';
 import { WorkflowService, type WorkflowOps } from '../workflow-service/index.js';
 
 export interface TeamServiceDeps {
@@ -85,24 +93,6 @@ export interface TeamServiceDeps {
   workflowLog: DreamuxLogger;
 }
 
-export interface TeamAvailability {
-  admit<T>(task: () => Promise<T>): Promise<T>;
-  completionInitiator(delegate: CompletionInitiator): CompletionInitiator;
-}
-export interface TeamLiveWriter { name: string; waitIdle: (() => Promise<void>) | undefined; }
-
-export interface TeamServiceCreateInput {
-  teamId: string;
-  name: string;
-  nameClaimToken: string;
-  prompt?: string;
-  leaderAgentRuntime: string;
-  intent: string;
-  identity?: string;
-  skillSources?: readonly AgentRuntimeSkillSource[];
-  workspace: TeamMateSharedWorkspace;
-}
-
 export interface TeamServiceCreateOutput {
   service: TeamService;
   schedulerLifecycle: TeamSchedulerLifecycle;
@@ -110,11 +100,6 @@ export interface TeamServiceCreateOutput {
     teammate: AgentEntityRuntimeStatus;
     turn: AgentEntityTurnResult | null;
   };
-}
-
-export interface TeamSchedulerLifecycle {
-  start(): Promise<void>;
-  stop(): void;
 }
 
 /**

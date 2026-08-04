@@ -1,4 +1,4 @@
-import type { TeammateOps } from '../teammate-collection/index.js';
+import type { TeammateOps } from '../teammate-collection/types.js';
 
 export function admittedTeammateOps(input: {
   teammates: TeammateOps;

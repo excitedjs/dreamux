@@ -3,19 +3,19 @@ import { requireLifecycleText } from '../agent-entity/types.js';
 import { defaultWorkspaceEnabled } from '../../config/config.js';
 import { dispatcherWorkspace } from '../worktree/workspaces.js';
 import type { KeyedAsyncQueue } from '../serial-queue.js';
-import type { SchedulerCommands } from '../scheduler/service.js';
+import type { SchedulerCommands } from '../scheduler/types.js';
 import { throwSettledFailures } from '../shutdown-errors.js';
 import {
   TeamService,
-  type TeamSchedulerLifecycle,
   type TeamServiceDeps,
 } from '../team-service/index.js';
+import type { TeamSchedulerLifecycle } from '../team-service/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import { teamErrorInfo } from './errors.js';
 import { isActiveDissolve } from './dissolve-lifecycle.js';
-import type { TeamCollectionOptions } from './index.js';
 import type { TeamStore } from './store.js';
 import type {
+  TeamCollectionOptions,
   TeamCreateAtNameInput,
   TeamCreateResult,
   TeamLeaderLease,

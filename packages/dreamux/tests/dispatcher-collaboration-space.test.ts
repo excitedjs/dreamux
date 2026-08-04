@@ -2226,9 +2226,10 @@ describe('DispatcherService collaboration-space routing', () => {
     const internals = dispatcher as unknown as {
       teams: TeamCollection;
       admittedTasks: { drain(): Promise<void> };
-      inputSourcesStarting: Promise<void> | null;
+      inputSources: { waitForSettledStart(): Promise<void> };
     };
-    internals.inputSourcesStarting = recovery.promise;
+    vi.spyOn(internals.inputSources, 'waitForSettledStart')
+      .mockReturnValue(recovery.promise);
     vi.spyOn(internals.teams, 'interruptDissolvesForShutdown')
       .mockImplementation(() => {
         calls.push('interrupt');

@@ -13,77 +13,52 @@ import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { DispatcherService } from '../src/service/dispatcher-service/index.js';
-import { TeamDissolveInterruptedError } from '../src/service/team-collection/errors.js';
-import {
-  TEAM_DISSOLVE_RESULT_BUDGET_MS,
-  projectDispatcherDissolveResult,
-} from '../src/service/team-collection/dissolve-lifecycle.js';
-import type {
-  AcceptedTeamDissolve,
-  TeamDissolveRecord,
-  TeamSummary,
-} from '../src/service/team-collection/types.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 
 const execFileAsync = promisify(execFile);
 
 describe('Dispatcher Team dissolve timing contract', () => {
-  it('starts the exact 9s decision budget at method entry', async () => {
-    const record = dissolveRecord('waiting_for_team_idle');
-    const handle = acceptedHandle(record);
-    const dissolve = vi.fn(async () => handle);
-    const project = vi.fn(async () => handle.receipt);
-    const now = vi.spyOn(Date, 'now');
-    now.mockReturnValueOnce(1_000).mockReturnValue(10_000);
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('captures the result-budget origin before blocked dispatcher admission', async () => {
+    const receipt = { accepted: true, team_name: 'alpha', status: 'closing' };
+    const dissolve = vi.fn(async () => receipt);
+    let releaseAdmission!: () => void;
+    const admissionDelay = new Promise<void>((resolve) => {
+      releaseAdmission = resolve;
+    });
+    const admitOperation = vi.fn(
+      async <T>(task: () => Promise<T>): Promise<T> => {
+        await admissionDelay;
+        return task();
+      },
+    );
     const context = {
       teamChannels: { dissolve },
-      teams: { dispatcherDissolveResult: project },
-      admitOperation: async <T>(task: () => Promise<T>) => task(),
+      admitOperation,
     };
     const invoke = DispatcherService.prototype.dissolveTeam as unknown as (
       this: typeof context,
       input: { teamId: string; note: string },
     ) => Promise<unknown>;
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
 
-    await expect(invoke.call(context, {
+    const result = invoke.call(context, {
       teamId: 'alpha',
       note: 'finish safely',
-    })).resolves.toEqual(handle.receipt);
-    expect(TEAM_DISSOLVE_RESULT_BUDGET_MS).toBe(9_000);
-    expect(dissolve).toHaveBeenCalledWith({
-      teamId: 'alpha',
-      note: 'finish safely',
-      decisionDeadlineAt: 10_000,
     });
-    expect(project).toHaveBeenCalledWith(handle, 0);
-  });
+    expect(admitOperation).toHaveBeenCalledOnce();
+    expect(dissolve).not.toHaveBeenCalled();
+    now.mockReturnValue(5_000);
+    releaseAdmission();
 
-  it('projects cleanup-pending after timeout without budget-external state I/O', async () => {
-    const record = dissolveRecord('worktree_cleanup_pending');
-    const handle = acceptedHandle(record);
-    await expect(projectDispatcherDissolveResult(handle, 0)).resolves.toEqual({
-      accepted: true,
-      team_name: 'alpha',
-      status: 'closed',
-      worktree_cleanup: 'pending',
-      message: 'Managed worktree cleanup continues in the background.',
-    });
-  });
-
-  it('preserves cleanup-pending projection across shutdown interruption', async () => {
-    const record = dissolveRecord('worktree_cleanup_pending');
-    const handle = {
-      ...acceptedHandle(record),
-      completed: Promise.reject(new TeamDissolveInterruptedError()),
-    };
-    await expect(projectDispatcherDissolveResult(handle, 9_000)).resolves
-      .toEqual({
-        accepted: true,
-        team_name: 'alpha',
-        status: 'closed',
-        worktree_cleanup: 'pending',
-        message: 'Managed worktree cleanup continues in the background.',
-      });
+    await expect(result).resolves.toEqual(receipt);
+    expect(dissolve).toHaveBeenCalledWith(
+      { teamId: 'alpha', note: 'finish safely' },
+      1_000,
+    );
   });
 });
 
@@ -207,30 +182,3 @@ describe('authoritative managed-worktree dissolve preflight', () => {
     expect(existsSync(identity.worktree.path)).toBe(true);
   });
 });
-
-function dissolveRecord(phase: TeamDissolveRecord['phase']): TeamDissolveRecord {
-  return {
-    operation_id: 'operation-alpha',
-    requester_kind: 'dispatcher',
-    leader_name: null,
-    target_handoff_ids: [],
-    note: 'finish safely',
-    accepted_at: 1,
-    phase,
-    last_error: null,
-    cleanup_attempts: 0,
-    next_retry_at: null,
-  };
-}
-
-function acceptedHandle(record: TeamDissolveRecord): AcceptedTeamDissolve {
-  const pending = new Promise<TeamSummary>(() => {});
-  return {
-    operationId: record.operation_id,
-    teamId: 'alpha',
-    receipt: { accepted: true, team_name: 'alpha', status: 'closing' },
-    logicalClosed: pending,
-    completed: pending,
-    dissolveSnapshot: () => record,
-  };
-}

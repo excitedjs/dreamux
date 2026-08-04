@@ -5,7 +5,8 @@ import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { requireLifecycleText } from '../agent-entity/types.js';
 import type { ChannelRouteOwner } from '../channel-service/index.js';
 import type { KeyedAsyncQueue } from '../serial-queue.js';
-import type { TeamLiveWriter, TeamService } from '../team-service/index.js';
+import type { TeamService } from '../team-service/index.js';
+import type { TeamLiveWriter } from '../team-service/types.js';
 import type {
   WorktreeCleanupAssessment,
   WorktreeManager,
@@ -18,10 +19,8 @@ import {
   teamErrorInfo,
 } from './errors.js';
 import {
-  TEAM_DISSOLVE_RESULT_BUDGET_MS,
   isActiveDissolve,
   newDissolveOperation,
-  projectDispatcherDissolveResult,
   retryDelayMs,
   type TeamDissolveOperation,
 } from './dissolve-lifecycle.js';
@@ -32,7 +31,6 @@ import {
 import type { TeamStore } from './store.js';
 import type {
   AcceptedTeamDissolve,
-  TeamDissolveCleanupPendingResult,
   TeamDissolvePublicError,
   TeamDissolveRecord,
   TeamDissolveRequest,
@@ -285,18 +283,6 @@ export class TeamDissolveController {
         this.suspend(operation);
       }
     }
-  }
-
-  /** Project bounded Dispatcher timing without cancelling durable work. */
-  async dispatcherResult(
-    handle: AcceptedTeamDissolve,
-    budgetMs: number = TEAM_DISSOLVE_RESULT_BUDGET_MS,
-  ): Promise<
-    TeamSummary |
-    AcceptedTeamDissolve['receipt'] |
-    TeamDissolveCleanupPendingResult
-  > {
-    return projectDispatcherDissolveResult(handle, budgetMs);
   }
 
   private validateRequester(

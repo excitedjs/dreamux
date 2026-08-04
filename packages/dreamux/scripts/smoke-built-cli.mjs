@@ -1,10 +1,44 @@
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const packageJsonUrl = new URL('../package.json', import.meta.url);
 const packageRoot = dirname(fileURLToPath(packageJsonUrl));
 const bin = join(packageRoot, 'bin', 'dreamux');
+
+const serverModule = await import(
+  pathToFileURL(join(packageRoot, 'dist', 'server.js')).href
+);
+if (typeof serverModule.Server !== 'function') {
+  throw new Error('dreamux built package main does not export Server');
+}
+
+const serviceModule = await import(
+  pathToFileURL(join(packageRoot, 'dist', 'service', 'index.js')).href
+);
+const expectedServiceExports = [
+  'ChannelToolAuthorizationError',
+  'DispatcherService',
+  'Dispatchers',
+  'TeamService',
+  'WorkflowService',
+];
+const actualServiceExports = Object.keys(serviceModule).sort();
+if (
+  actualServiceExports.length !== expectedServiceExports.length ||
+  actualServiceExports.some(
+    (name, index) => name !== expectedServiceExports[index],
+  )
+) {
+  throw new Error(
+    `dreamux built service facade exports ${JSON.stringify(actualServiceExports)}`,
+  );
+}
+for (const name of expectedServiceExports) {
+  if (typeof serviceModule[name] !== 'function') {
+    throw new Error(`dreamux built service facade export ${name} is not a value`);
+  }
+}
 
 const child = spawn(bin, ['--version'], {
   env: {
@@ -49,5 +83,5 @@ child.once('exit', (code, signal) => {
     if (stderr.trim() !== '') console.error(`stderr:\n${stderr.trim()}`);
     process.exit(1);
   }
-  console.log(`dreamux built CLI smoke ok: ${version}`);
+  console.log(`dreamux built package/service/CLI smoke ok: ${version}`);
 });

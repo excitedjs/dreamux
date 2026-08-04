@@ -1,21 +1,23 @@
 import { Cron } from 'croner';
 
-import type {
-  AgentRuntime,
-  AgentRuntimeTurnResult,
-  DreamuxLogger,
-} from '@excitedjs/dreamux-types';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import { errorInfo } from '../../platform/error-info.js';
 
 import {
-  CronJobStore,
   type CronDeliverTarget,
+  type CronJobStore,
   type CronJob,
   type CronJobAction,
   type CronJobUpdateInput,
   MIN_CRON_INTERVAL_MS,
 } from './store.js';
+import type {
+  CronCreateRequest,
+  CronUpdateRequest,
+  SchedulerCommands,
+  SchedulerServiceOptions,
+} from './types.js';
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const MAX_JOBS_PER_OWNER = 128;
@@ -24,53 +26,6 @@ const MAX_DEFER_MS = 60 * 60 * 1000;
 interface TimerSlot {
   dueAt: number;
   timer: NodeJS.Timeout;
-}
-
-export interface CronCreateRequest {
-  cron: string;
-  prompt: string;
-  title?: string;
-  recurring?: boolean;
-  tz?: string;
-  action?: Record<string, unknown>;
-  deliver?: CronDeliverTarget;
-}
-
-export interface CronUpdateRequest {
-  id: string;
-  cron?: string;
-  prompt?: string;
-  title?: string | null;
-  recurring?: boolean;
-  tz?: string;
-  action?: Record<string, unknown>;
-  deliver?: CronDeliverTarget | null;
-  enabled?: boolean;
-}
-
-export interface SchedulerServiceOptions {
-  ownerId: string;
-  store: CronJobStore;
-  absentRuntimeStrategy: 'miss' | 'submit';
-  admit<T>(task: () => Promise<T>): Promise<T>;
-  getRuntime(): AgentRuntime | null;
-  submitScheduled(input: {
-    jobId: string;
-    prompt: string;
-    sourceId: string;
-    /** Aborted once this held fire has been stopped, deleted, or superseded. */
-    signal: AbortSignal;
-  }): Promise<AgentRuntimeTurnResult>;
-  log: DreamuxLogger;
-  now?: () => number;
-}
-
-export interface SchedulerCommands {
-  list(): Promise<{ jobs: CronJob[] }>;
-  create(input: CronCreateRequest): Promise<CronJob>;
-  update(input: CronUpdateRequest): Promise<CronJob>;
-  delete(id: string): Promise<{ id: string; deleted: boolean }>;
-  runNow(id: string): Promise<{ id: string; status: string }>;
 }
 
 export class SchedulerService {

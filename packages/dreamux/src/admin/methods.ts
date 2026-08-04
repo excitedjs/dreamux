@@ -2,7 +2,7 @@
 import type { Server } from '../server.js';
 import type { ChannelToolCaller } from '../service/dispatcher-service/index.js';
 import { ChannelToolAuthorizationError } from '../service/channel-service/errors.js';
-import type { SchedulerCommands } from '../service/scheduler/service.js';
+import type { SchedulerCommands } from '../service/scheduler/types.js';
 import {
   TeamDissolveBlockedError,
   TeamDissolveFailedError,

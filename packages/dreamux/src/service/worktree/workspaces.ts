@@ -7,12 +7,9 @@ import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type {
   SpawnTeamMateRequest,
   TeamMateSharedWorkspace,
-} from '../teammate-collection/index.js';
+} from '../teammate-collection/types.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
-import {
-  type PreparedTeamMateWorkspace,
-  WorktreeManager,
-} from './manager.js';
+import { WorktreeManager } from './manager.js';
 
 export async function resolveSpawnWorkspace(input: {
   config: DreamuxConfig;
@@ -20,7 +17,7 @@ export async function resolveSpawnWorkspace(input: {
   dispatcherId: string;
   name: string;
   request: SpawnTeamMateRequest;
-}): Promise<PreparedTeamMateWorkspace | TeamMateSharedWorkspace> {
+}): Promise<TeamMateSharedWorkspace> {
   if (input.request.sharedWorkspace !== undefined) {
     return input.request.sharedWorkspace;
   }

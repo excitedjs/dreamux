@@ -1,48 +1,39 @@
 import type {
-  AgentRuntime,
   AgentRuntimeMcpServer,
   AgentRuntimeTurnResult,
   ChannelInboundEnvelope,
-  ChannelSession,
   DreamuxLogger,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
-import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
-import type { ChannelProviderCatalog } from '../../channel/catalog.js';
-import type { DreamuxConfig } from '../../config/config.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import { adminSocketPath as defaultAdminSocketPath, dispatcherCronJobsPath } from '../../platform/paths.js';
 import { errorInfo } from '../../platform/error-info.js';
-import type { DispatcherRow, DispatcherStore } from '../../state/dispatcher-store.js';
+import type { DispatcherRow } from '../../state/dispatcher-store.js';
 import type { ChannelMcpCallerScope } from '../channel-service/mcp-descriptors.js';
-import { closeAllBuilt } from './runtime-helpers.js';
 import { DispatcherScopedChannelRouting } from './scoped-channel-routing.js';
 import { DispatcherTaskDrain } from './inbound-task-drain.js';
-import { rollbackFailedInputSourceStart } from './input-source-start-rollback.js';
+import { DispatcherInputSourceLifecycle } from './input-source-lifecycle.js';
 import { TeamChannelCoordinator } from './team-channel-coordinator.js';
 import { stopTeamRuntimes } from './team-runtime-stop.js';
 import { admittedTeammateOps } from './teammate-ops.js';
 import { teamLeaderHandle, type TeamLeaderHandle } from './team-leader-handle.js';
-import { injectRestartNoticeIfNeeded } from './restart-notice.js';
-import {
-  invokeDispatcherChannelTool,
-  type ChannelToolCaller,
-} from './channel-tool-invocation.js';
+import type { ChannelToolCaller } from './channel-tool-invocation.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
 } from '../shutdown-errors.js';
 import { CompletionRouter, type CompletionInitiator } from '../completion-router/index.js';
-import { TeammateCollection, type TeammateOps } from '../teammate-collection/index.js';
+import { TeammateCollection } from '../teammate-collection/index.js';
+import type { TeammateOps } from '../teammate-collection/types.js';
 import { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import { TeamCollection } from '../team-collection/index.js';
-import { TEAM_DISSOLVE_RESULT_BUDGET_MS } from '../team-collection/dissolve-lifecycle.js';
-import { SchedulerService, type SchedulerCommands } from '../scheduler/service.js';
+import { SchedulerService } from '../scheduler/service.js';
+import type { SchedulerCommands } from '../scheduler/types.js';
 import { CronJobStore } from '../scheduler/store.js';
 import { ChannelService, type ChannelRouteOwner } from '../channel-service/index.js';
 import { CollaborationSpaceService } from '../collaboration-space/index.js';
@@ -71,20 +62,12 @@ import {
   dispatcherSummary,
   liveDispatcherRuntimeStatus,
 } from './runtime-status.js';
-import {
-  prepareDispatcherChannelResources,
-  startPreparedDispatcherChannels,
-} from './input-source-channels.js';
 
 export type { ChannelToolCaller, TeamLeaderHandle };
 
 export class DispatcherService {
   readonly id: string;
-  private readonly config: DreamuxConfig;
-  private readonly dispatchers: DispatcherStore;
-  private readonly channelProviders: ChannelProviderCatalog;
   private readonly log: DreamuxLogger;
-  private readonly router: CompletionRouter;
   private readonly _teammates: TeammateCollection;
   private readonly teams: TeamCollection;
   private readonly channels: ChannelService;
@@ -92,19 +75,9 @@ export class DispatcherService {
   private readonly coreEvents: DispatcherCoreEventBus;
   private readonly teamChannels: TeamChannelCoordinator;
   private readonly channelRoutes: DispatcherScopedChannelRouting;
-  private agent: TeammateService | null = null;
+  private readonly inputSources: DispatcherInputSourceLifecycle;
   private readonly scheduler_: SchedulerService;
-  private readonly identities: AgentIdentityStore;
-  private readonly turnsStore: AgentTurnsStore;
-  private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
-  private readonly adminSocket: string;
   private restartIntent: RestartIntentConsumer | null = null;
-  private starting: Promise<void> | null = null;
-  private preparing: Promise<void> | null = null;
-  private inputSourcesStarting: Promise<void> | null = null;
-  private preparedChannels: Map<string, ChannelSession> | null = null;
-  private inputSourcesStarted = false;
-  private workspaceCwd: string | null = null;
   private stopping = false;
   private stoppingTask: Promise<void> | null = null;
   private shuttingDown = false;
@@ -117,14 +90,9 @@ export class DispatcherService {
     this.admittedTasks = new DispatcherTaskDrain(
       () => `dispatcher '${this.id}' is shutting down`,
     );
-    this.config = opts.config;
-    this.dispatchers = opts.dispatchers;
-    this.channelProviders = opts.channelProviders;
     this.log = opts.log;
     const adminSocket = opts.adminSocketPath ?? defaultAdminSocketPath();
-    this.agentRuntimeProviders = opts.agentRuntimeProviders;
-    this.adminSocket = adminSocket;
-    this.router = new CompletionRouter({ dispatcherId: opts.id, log: opts.log });
+    const router = new CompletionRouter({ dispatcherId: opts.id, log: opts.log });
     const workflowLog = opts.workflowLoggerFactory?.(opts.id) ?? opts.log;
     const configuredChannelCount =
       opts.config.dispatchers.find((dispatcher) => dispatcher.id === opts.id)
@@ -138,8 +106,6 @@ export class DispatcherService {
     const worktrees = new WorktreeManager();
     const identities = new AgentIdentityStore(opts.log, this.coreEvents.publisher);
     const turnsStore = new AgentTurnsStore(opts.log, this.coreEvents.publisher);
-    this.identities = identities;
-    this.turnsStore = turnsStore;
 
     this.channels = new ChannelService({
       dispatcherId: opts.id,
@@ -160,7 +126,7 @@ export class DispatcherService {
       }),
       absentRuntimeStrategy: 'submit',
       admit: (task) => this.admitOperation(task),
-      getRuntime: () => this.agent?.getRuntime() ?? null,
+      getRuntime: () => this.inputSources.agent?.getRuntime() ?? null,
       submitScheduled: (input) => this.mustAgent().scheduledInput(input),
       log: opts.log,
     });
@@ -173,7 +139,7 @@ export class DispatcherService {
       worktrees,
       identities,
       turnsStore,
-      router: this.router,
+      router,
       initiatorFor: (producer) => this.initiatorFor(producer),
       isShuttingDown: () => this.shuttingDown || this.stopping,
       log: opts.log,
@@ -189,7 +155,7 @@ export class DispatcherService {
       worktrees,
       identities,
       turnsStore,
-      router: this.router,
+      router,
       initiatorFor: (producer) => this.initiatorFor(producer),
       isShuttingDown: () => this.shuttingDown || this.stopping,
       admitOperation: (task) => this.admitOperation(task),
@@ -211,7 +177,7 @@ export class DispatcherService {
       dispatcherId: opts.id,
       teammates: this._teammates,
       teams: this.teams,
-      router: this.router,
+      router,
       completionInitiator: () => this.mustAgent(),
       admit: (task) => this.admitOperation(task),
       log: workflowLog,
@@ -233,7 +199,7 @@ export class DispatcherService {
     });
     this.channelRoutes = new DispatcherScopedChannelRouting({
       dispatcherId: this.id,
-      dispatcherAgentRuntime: () => this.dispatcherAgentRuntime(),
+      dispatcherAgentRuntime: () => this.inputSources.dispatcherAgentRuntime(),
       channels: this.channels,
       teams: this.teams,
       collaborationSpaces: this.collaborationSpaces,
@@ -242,154 +208,44 @@ export class DispatcherService {
       fallback: (turn) => this.mustAgent().channelInput(turn),
       isUnavailable: () => this.shuttingDown || this.stopping,
     });
+    this.inputSources = new DispatcherInputSourceLifecycle({
+      dispatcherId: opts.id,
+      config: opts.config,
+      dispatchers: opts.dispatchers,
+      channelProviders: opts.channelProviders,
+      agentRuntimeProviders: opts.agentRuntimeProviders,
+      identities,
+      turnsStore,
+      router,
+      log: opts.log,
+      channels: this.channels,
+      adminSocketPath: adminSocket,
+      channelRoutes: this.channelRoutes,
+      collaborationSpaces: this.collaborationSpaces,
+      coreEvents: this.coreEvents,
+      scheduler: this.scheduler_,
+      teams: this.teams,
+      admittedTasks: this.admittedTasks,
+      workflows: this.workflowOwner,
+      isUnavailable: () => this.shuttingDown || this.stopping,
+      restartIntent: () => this.restartIntent,
+    });
   }
 
-  get scheduler(): SchedulerCommands { return this.scheduler_.commands; }
+  get scheduler(): SchedulerCommands {
+    return this.scheduler_.commands;
+  }
 
-  async start(): Promise<void> { return this.startInputSources(); }
+  async start(): Promise<void> {
+    return this.startInputSources();
+  }
 
   async prepareChannels(): Promise<void> {
-    this.assertNotShuttingDown();
-    if (this.preparedChannels !== null || this.inputSourcesStarted) return;
-    if (this.preparing !== null) return this.preparing;
-    const promise = this.doPrepareChannels().finally(() => {
-      this.preparing = null;
-    });
-    this.preparing = promise;
-    return promise;
-  }
-
-  private async doPrepareChannels(): Promise<void> {
-    this.assertNotShuttingDown();
-    const prepared = await prepareDispatcherChannelResources({
-      dispatcherId: this.id,
-      config: this.config,
-      dispatchers: this.dispatchers,
-      channelProviders: this.channelProviders,
-      agentRuntimeProviders: this.agentRuntimeProviders,
-      identities: this.identities,
-      turnsStore: this.turnsStore,
-      router: this.router,
-      log: this.log,
-      channels: this.channels,
-      adminSocketPath: this.adminSocket,
-    });
-    try {
-      this.assertNotShuttingDown();
-      this.workspaceCwd = prepared.workspaceCwd;
-      this.agent = prepared.agent;
-      this.preparedChannels = prepared.sessions;
-    } catch (err) {
-      await closeAllBuilt(prepared.sessions);
-      throw err;
-    }
-  }
-
-  private async startAgentRuntime(): Promise<void> {
-    if (this.mustAgent().getRuntime() !== null) return;
-    if (this.starting !== null) return this.starting;
-    const promise = this.doStartAgentRuntime().finally(() => {
-      this.starting = null;
-    });
-    this.starting = promise;
-    return promise;
-  }
-
-  private async doStartAgentRuntime(): Promise<void> {
-    await this.mustAgent().ensureStarted();
-    await injectRestartNoticeIfNeeded({
-      dispatcherId: this.id,
-      runtime: this.mustRuntime(),
-      restartIntent: this.restartIntent,
-      now: Date.now(),
-      log: this.log,
-    });
+    return this.inputSources.prepareChannels();
   }
 
   async startInputSources(): Promise<void> {
-    this.assertNotShuttingDown();
-    if (this.inputSourcesStarted) return;
-    if (this.inputSourcesStarting !== null) return this.inputSourcesStarting;
-    const promise = this.doStartInputSources().finally(() => {
-      this.inputSourcesStarting = null;
-    });
-    this.inputSourcesStarting = promise;
-    return promise;
-  }
-
-  private async doStartInputSources(): Promise<void> {
-    this.assertNotShuttingDown();
-    await this.collaborationSpaces.recoverTeamDissolves();
-    this.assertNotShuttingDown();
-    await this.workflowOwner.recover();
-    try {
-      await this.prepareChannels();
-    } catch (error) {
-      this.teams.stopSchedulers();
-      throw error;
-    }
-    this.assertNotShuttingDown();
-    const channels = this.preparedChannels ?? new Map<string, ChannelSession>();
-    try {
-      await this.workflowOwner.start();
-      this.assertNotShuttingDown();
-      if (this.shouldStartRuntimeForResumeNotice()) {
-        await this.startAgentRuntime();
-      }
-      this.assertNotShuttingDown();
-      await this.collaborationSpaces.resumePendingTargets();
-      this.assertNotShuttingDown();
-      await startPreparedDispatcherChannels({
-        dispatcherId: this.id,
-        dispatcherAgentRuntime: () => this.dispatcherAgentRuntime(),
-        sessions: channels,
-        channels: this.channels,
-        channelRoutes: this.channelRoutes,
-        collaborationSpaces: this.collaborationSpaces,
-        coreEvents: this.coreEvents,
-        log: this.log,
-        assertAvailable: () => this.assertNotShuttingDown(),
-      });
-      this.preparedChannels = null;
-      this.assertNotShuttingDown();
-      await this.scheduler_.start();
-      this.assertNotShuttingDown();
-      await this.teams.startSchedulers();
-      this.assertNotShuttingDown();
-      this.inputSourcesStarted = true;
-    } catch (err) {
-      this.workflowOwner.closeAdmission();
-      await this.workflowOwner.rollbackStart();
-      this.channelRoutes.revokeSessionLeases();
-      this.admittedTasks.closeAdmission();
-      await rollbackFailedInputSourceStart({
-        dispatcherId: this.id,
-        sessions: channels,
-        channels: this.channels,
-        coreEvents: this.coreEvents,
-        scheduler: this.scheduler_,
-        teams: this.teams,
-        admittedTasks: this.admittedTasks,
-        collaborationSpaces: this.collaborationSpaces,
-        agent: this.agent,
-        log: this.log,
-      });
-      this.preparedChannels = null;
-      this.inputSourcesStarted = false;
-      if (!this.shuttingDown && !this.stopping) this.admittedTasks.openAdmission();
-      throw err;
-    }
-
-    const id = this.id;
-    const row = this.dispatchers.get(id);
-    this.log.info(
-      {
-        dispatcher_id: id,
-        channel_identity: row?.channel_identity ?? '',
-        cwd: this.workspaceCwd,
-      },
-      'dispatcher ready',
-    );
+    return this.inputSources.start();
   }
 
   stop(): Promise<void> {
@@ -410,15 +266,11 @@ export class DispatcherService {
   private async doStop(): Promise<void> {
     const failures: unknown[] = [];
     try {
-      if (this.preparing !== null) await this.preparing.catch(() => {});
-      if (this.inputSourcesStarting !== null) await this.inputSourcesStarting.catch(() => {});
+      await this.inputSources.waitForSettledStart();
       this.coreEvents.revokeSources();
       await collectShutdownFailure(failures, () => this.workflowOwner.stopAllForShutdown());
       await this.channels.closeAll(this.log);
-      if (this.preparedChannels !== null) {
-        await closeAllBuilt(this.preparedChannels);
-        this.preparedChannels = null;
-      }
+      await this.inputSources.closePreparedChannels();
       this.channels.clear();
       this.scheduler_.stop();
       this.teams.stopSchedulers();
@@ -434,9 +286,9 @@ export class DispatcherService {
         log: this.log,
       });
       if (teamStopError !== null) failures.push(teamStopError);
-      this.inputSourcesStarted = false;
+      this.inputSources.markStopped();
       await collectShutdownFailure(failures, async () => {
-        await this.agent?.stop();
+        await this.inputSources.agent?.stop();
       });
       if (failures.length > 0) {
         for (const failure of failures) {
@@ -447,7 +299,7 @@ export class DispatcherService {
         }
       }
     } finally {
-      this.inputSourcesStarted = false;
+      this.inputSources.markStopped();
     }
     throwShutdownFailures(
       failures,
@@ -456,25 +308,19 @@ export class DispatcherService {
   }
 
   runtimeStatus(): DispatcherRuntimeStatus {
-    return dispatcherRuntimeStatus(this.agent);
+    return dispatcherRuntimeStatus(this.inputSources.agent);
   }
 
   liveRuntimeStatus(): LiveDispatcherRuntimeStatus | null {
-    return liveDispatcherRuntimeStatus(this.agent);
+    return liveDispatcherRuntimeStatus(this.inputSources.agent);
   }
 
   setRestartIntent(consumer: RestartIntentConsumer | null): void {
     this.restartIntent = consumer;
   }
 
-  private shouldStartRuntimeForResumeNotice(): boolean {
-    const sessionId = this.agent?.current().session_id ?? null;
-    return sessionId !== null &&
-      this.restartIntent?.hasTarget(this.id, Date.now()) === true;
-  }
-
   summary(row: DispatcherRow): DispatcherSummary {
-    return dispatcherSummary(row, this.agent);
+    return dispatcherSummary(row, this.inputSources.agent);
   }
 
   async shutdown(): Promise<void> {
@@ -503,28 +349,15 @@ export class DispatcherService {
     return this.channels.channelMcpServerDescriptorsForCaller(scope);
   }
 
-  async invokeChannelTool(input: {
-    providerRef?: string;
-    channelId?: string;
-    name: string;
-    arguments: Record<string, unknown>;
-    caller: ChannelToolCaller;
-  }): Promise<unknown> {
-    return this.admitOperation(() => {
-      if (input.caller.kind === 'team_leader') {
-        return this.teams.withTeamLeaderLease(
-          {
-            teamId: input.caller.teamId,
-            leaderName: input.caller.leaderName,
-          },
-          () => invokeDispatcherChannelTool({ channels: this.channels, ...input }),
-        );
-      }
-      return invokeDispatcherChannelTool({ channels: this.channels, ...input });
-    });
+  async invokeChannelTool(
+    input: Parameters<TeamChannelCoordinator['invokeChannelTool']>[0],
+  ): Promise<unknown> {
+    return this.admitOperation(() => this.teamChannels.invokeChannelTool(input));
   }
 
-  workspace(): Promise<string> { return this._teammates.dispatcherWorkspace(); }
+  workspace(): Promise<string> {
+    return this._teammates.dispatcherWorkspace();
+  }
 
   get teammates(): TeammateOps {
     return this.teammateOps;
@@ -568,13 +401,17 @@ export class DispatcherService {
     );
   }
 
-  listTeams() { return this.teams.list(); }
+  listTeams() {
+    return this.teams.list();
+  }
 
   async getTeamStatus(teamId: string) {
     return this.admitOperation(async () => (await this.teams.get(teamId)).status());
   }
 
-  getTeamHistory(input: TeamHistoryQuery) { return this.teams.history(input); }
+  getTeamHistory(input: TeamHistoryQuery) {
+    return this.teams.history(input);
+  }
 
   bindCollaborationSpace(input: CollaborationSpaceBindInput) {
     return this.admitOperation(() => this.collaborationSpaces.bind(input));
@@ -588,7 +425,9 @@ export class DispatcherService {
     return this.collaborationSpaces.status(input);
   }
 
-  listCollaborationSpaces() { return this.collaborationSpaces.list(); }
+  listCollaborationSpaces() {
+    return this.collaborationSpaces.list();
+  }
 
   activeTeamBindingSummary(owner: ChannelRouteOwner) {
     return this.channels.activeBindingSummaryForOwner(owner);
@@ -598,25 +437,16 @@ export class DispatcherService {
   }
 
   async dissolveTeam(input: TeamDissolveInput) {
-    const deadlineAt = Date.now() + TEAM_DISSOLVE_RESULT_BUDGET_MS;
-    return this.admitOperation(async () => {
-      const accepted = await this.teamChannels.dissolve({
-        ...input,
-        decisionDeadlineAt: deadlineAt,
-      });
-      return this.teams.dispatcherDissolveResult(
-        accepted,
-        Math.max(0, deadlineAt - Date.now()),
-      );
-    });
+    const publicMethodEnteredAt = Date.now();
+    return this.admitOperation(() => this.teamChannels.dissolve(input, publicMethodEnteredAt));
   }
 
   async dissolveTeamForLeader(input: {
     lease: TeamLeaderLease;
     note: string;
   }) {
-    return this.admitOperation(async () =>
-      (await this.teamChannels.dissolveForTeamLeader(input)).receipt,
+    return this.admitOperation(() =>
+      this.teamChannels.dissolveForTeamLeader(input),
     );
   }
 
@@ -671,29 +501,11 @@ export class DispatcherService {
     return this.mustAgent();
   }
 
-  private mustRuntime(): AgentRuntime {
-    const runtime = this.mustAgent().getRuntime();
-    if (runtime === null) {
-      throw new Error(`dispatcher '${this.id}' agent runtime is not running`);
-    }
-    return runtime;
-  }
-
   private mustAgent(): TeammateService {
-    const agent = this.agent;
+    const agent = this.inputSources.agent;
     if (agent === null) {
       throw new Error(`dispatcher '${this.id}' agent is not prepared`);
     }
     return agent;
-  }
-
-  private dispatcherAgentRuntime(): string {
-    const dispatcherConfig = this.config.dispatchers.find(
-      (dispatcher) => dispatcher.id === this.id,
-    );
-    if (dispatcherConfig === undefined) {
-      throw new Error(`dispatcher '${this.id}' has no config entry`);
-    }
-    return dispatcherConfig.agentRuntime;
   }
 }

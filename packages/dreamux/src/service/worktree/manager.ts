@@ -19,14 +19,10 @@ import type {
   AgentEntityWorktreeCleanupState,
   AgentEntityWorktreeIdentity,
 } from '../agent-entity/types.js';
-import type { TeamMateWorktreeRequest } from '../teammate-collection/types.js';
-
-export interface PreparedTeamMateWorkspace {
-  sourceCwd: string;
-  sourceRepo: string | null;
-  runtimeCwd: string;
-  worktree: AgentEntityWorktreeIdentity;
-}
+import type {
+  TeamMateSharedWorkspace,
+  TeamMateWorktreeRequest,
+} from '../teammate-collection/types.js';
 
 export type WorktreeCleanupBlockedReason =
   | 'dirty'
@@ -65,7 +61,7 @@ export class WorktreeManager {
      */
     dispatcherWorkspace?: string;
     request?: TeamMateWorktreeRequest;
-  }): Promise<PreparedTeamMateWorkspace> {
+  }): Promise<TeamMateSharedWorkspace> {
     const sourceCwd = resolve(input.cwd);
     const mode = input.request?.mode ?? 'reuse-cwd';
     if (mode === 'reuse-cwd') {
@@ -173,7 +169,7 @@ export class WorktreeManager {
     dispatcherWorkspace: string;
     slug: string;
     workspaceEnabled: boolean;
-  }): Promise<PreparedTeamMateWorkspace> {
+  }): Promise<TeamMateSharedWorkspace> {
     const dispatcherWorkspace = await realpath(input.dispatcherWorkspace);
     if (await isRealPathUnderDreamuxRoot(dispatcherWorkspace)) {
       throw new Error(

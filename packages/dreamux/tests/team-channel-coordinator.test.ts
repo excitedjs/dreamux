@@ -1,8 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ChannelRouteOwner } from '../src/service/channel-service/index.js';
 import { TeamChannelCoordinator } from '../src/service/dispatcher-service/team-channel-coordinator.js';
 import { KeyedAsyncQueue } from '../src/service/serial-queue.js';
+import { TeamDissolveInterruptedError } from '../src/service/team-collection/errors.js';
+import type {
+  AcceptedTeamDissolve,
+  TeamDissolveRecord,
+  TeamSummary,
+} from '../src/service/team-collection/types.js';
 
 const OWNER: ChannelRouteOwner = {
   kind: 'team',
@@ -17,6 +23,46 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
+
+function dissolveRecord(
+  phase: TeamDissolveRecord['phase'],
+): TeamDissolveRecord {
+  return {
+    operation_id: 'operation-alpha',
+    requester_kind: 'dispatcher',
+    leader_name: null,
+    target_handoff_ids: [],
+    note: 'finish safely',
+    accepted_at: 1,
+    phase,
+    last_error: null,
+    cleanup_attempts: 0,
+    next_retry_at: null,
+  };
+}
+
+function acceptedHandle(
+  record: TeamDissolveRecord,
+  completed: Promise<TeamSummary> = new Promise<TeamSummary>(() => {}),
+): AcceptedTeamDissolve {
+  return {
+    operationId: record.operation_id,
+    teamId: 'alpha',
+    receipt: { accepted: true, team_name: 'alpha', status: 'closing' },
+    logicalClosed: new Promise<TeamSummary>(() => {}),
+    completed,
+    dissolveSnapshot: () => record,
+  };
+}
+
+function completedSummary(): TeamSummary {
+  return { completed: true } as unknown as TeamSummary;
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 function harness(routeError?: Error) {
   const events: string[] = [];
@@ -72,7 +118,10 @@ function harness(routeError?: Error) {
     dissolveTeam: async () => {
       events.push('collaboration.detach_owner');
       events.push('channel.transfer_all');
-      return team.dissolve();
+      return acceptedHandle(
+        dissolveRecord('complete'),
+        team.dissolve() as Promise<never>,
+      );
     },
     mutateTargetRoute: async (_input: unknown, mutation: () => Promise<unknown>) => {
       events.push('collaboration.detach_target');
@@ -249,7 +298,7 @@ describe('TeamChannelCoordinator collaboration ownership', () => {
     const { coordinator, events } = harness();
 
     await expect(
-      coordinator.dissolve({ teamId: 'alpha', note: 'done' }),
+      coordinator.dissolve({ teamId: 'alpha', note: 'done' }, Date.now()),
     ).resolves.toBe('dissolved');
     expect(events).toEqual([
       'collaboration.detach_owner',
@@ -331,7 +380,10 @@ describe('TeamChannelCoordinator collaboration ownership', () => {
           events.push('collaboration.detach_owner');
           events.push('channel.transfer_all');
           try {
-            return await team.dissolve();
+            return acceptedHandle(
+              dissolveRecord('complete'),
+              team.dissolve() as Promise<never>,
+            );
           } finally {
             closing = false;
           }
@@ -344,7 +396,10 @@ describe('TeamChannelCoordinator collaboration ownership', () => {
       meta: { chat_id: 'chat-alpha' },
     });
     await routeLocked.promise;
-    const dissolve = coordinator.dissolve({ teamId: 'alpha', note: 'done' });
+    const dissolve = coordinator.dissolve(
+      { teamId: 'alpha', note: 'done' },
+      Date.now(),
+    );
     await closingAnnounced.promise;
     continueBind.resolve();
 
@@ -355,5 +410,214 @@ describe('TeamChannelCoordinator collaboration ownership', () => {
       'channel.transfer_all',
       'team.dissolve',
     ]);
+  });
+});
+
+describe('TeamChannelCoordinator caller policy', () => {
+  it('derives the absolute 9s deadline and spends only the remaining projection budget', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(2_000);
+    const record = dissolveRecord('waiting_for_team_idle');
+    const dissolveTeam = vi.fn(async () => acceptedHandle(record));
+    const coordinator = new TeamChannelCoordinator({
+      teams: {} as never,
+      channels: {} as never,
+      collaborationSpaces: { dissolveTeam } as never,
+    });
+
+    const result = coordinator.dissolve(
+      { teamId: 'alpha', note: 'finish safely' },
+      1_000,
+    );
+    await vi.advanceTimersByTimeAsync(7_999);
+    let settled = false;
+    void result.finally(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(result).resolves.toEqual({
+      accepted: true,
+      team_name: 'alpha',
+      status: 'closing',
+    });
+    expect(dissolveTeam).toHaveBeenCalledWith({
+      teamId: 'alpha',
+      note: 'finish safely',
+      decisionDeadlineAt: 10_000,
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('returns the completed summary and clears the losing timer', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const summary = completedSummary();
+    const coordinator = new TeamChannelCoordinator({
+      teams: {} as never,
+      channels: {} as never,
+      collaborationSpaces: {
+        dissolveTeam: async () => acceptedHandle(
+          dissolveRecord('complete'),
+          Promise.resolve(summary),
+        ),
+      } as never,
+    });
+
+    await expect(coordinator.dissolve(
+      { teamId: 'alpha', note: 'finish safely' },
+      1_000,
+    )).resolves.toBe(summary);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('projects cleanup-pending on timeout without cancelling accepted work', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    const record = dissolveRecord('worktree_cleanup_pending');
+    const completed = deferred<TeamSummary>();
+    let backgroundSettled = false;
+    void completed.promise.then(() => {
+      backgroundSettled = true;
+    });
+    const coordinator = new TeamChannelCoordinator({
+      teams: {} as never,
+      channels: {} as never,
+      collaborationSpaces: {
+        dissolveTeam: async () => acceptedHandle(record, completed.promise),
+      } as never,
+    });
+
+    const result = coordinator.dissolve(
+      { teamId: 'alpha', note: 'finish safely' },
+      1_000,
+    );
+    await vi.runAllTimersAsync();
+    await expect(result).resolves.toEqual({
+      accepted: true,
+      team_name: 'alpha',
+      status: 'closed',
+      worktree_cleanup: 'pending',
+      message: 'Managed worktree cleanup continues in the background.',
+    });
+
+    completed.resolve(completedSummary());
+    await Promise.resolve();
+    expect(backgroundSettled).toBe(true);
+  });
+
+  it('projects the current phase on shutdown interruption and clears its timer', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const record = dissolveRecord('worktree_cleanup_pending');
+    const coordinator = new TeamChannelCoordinator({
+      teams: {} as never,
+      channels: {} as never,
+      collaborationSpaces: {
+        dissolveTeam: async () => acceptedHandle(
+          record,
+          Promise.reject(new TeamDissolveInterruptedError()),
+        ),
+      } as never,
+    });
+
+    await expect(coordinator.dissolve(
+      { teamId: 'alpha', note: 'finish safely' },
+      1_000,
+    )).resolves.toEqual({
+      accepted: true,
+      team_name: 'alpha',
+      status: 'closed',
+      worktree_cleanup: 'pending',
+      message: 'Managed worktree cleanup continues in the background.',
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('returns only the accepted receipt for TeamLeader self-dissolve', async () => {
+    const handle = acceptedHandle(dissolveRecord('waiting_for_team_idle'));
+    const dissolveTeamForLeader = vi.fn(async () => handle);
+    const coordinator = new TeamChannelCoordinator({
+      teams: {} as never,
+      channels: {} as never,
+      collaborationSpaces: { dissolveTeamForLeader } as never,
+    });
+    const input = {
+      lease: { teamId: 'alpha', leaderName: 'leader-alpha' },
+      note: 'finish safely',
+    };
+
+    await expect(coordinator.dissolveForTeamLeader(input)).resolves
+      .toBe(handle.receipt);
+    expect(dissolveTeamForLeader).toHaveBeenCalledWith(input);
+  });
+
+  it('keeps TeamLeader channel tools inside the exact generation lease', async () => {
+    const events: string[] = [];
+    const withTeamLeaderLease = vi.fn(async (
+      _lease: unknown,
+      task: () => Promise<unknown>,
+    ) => {
+      events.push('lease.enter');
+      try {
+        return await task();
+      } finally {
+        events.push('lease.exit');
+      }
+    });
+    const coordinator = new TeamChannelCoordinator({
+      teams: { withTeamLeaderLease } as never,
+      channels: {
+        authorizeTeamLeaderEgress: async () => {
+          events.push('channel.authorize');
+        },
+        invokeTool: async () => {
+          events.push('channel.invoke');
+          return 'invoked';
+        },
+      } as never,
+      collaborationSpaces: {} as never,
+    });
+
+    await expect(coordinator.invokeChannelTool({
+      channelId: 'primary',
+      name: 'reply',
+      arguments: { text: 'done' },
+      caller: {
+        kind: 'team_leader',
+        teamId: 'alpha',
+        leaderName: 'leader-alpha',
+      },
+    })).resolves.toBe('invoked');
+    expect(withTeamLeaderLease).toHaveBeenCalledWith(
+      { teamId: 'alpha', leaderName: 'leader-alpha' },
+      expect.any(Function),
+    );
+    expect(events).toEqual([
+      'lease.enter',
+      'channel.authorize',
+      'channel.invoke',
+      'lease.exit',
+    ]);
+  });
+
+  it('does not acquire a Team lease for Dispatcher channel tools', async () => {
+    const withTeamLeaderLease = vi.fn();
+    const invokeTool = vi.fn(async () => 'invoked');
+    const coordinator = new TeamChannelCoordinator({
+      teams: { withTeamLeaderLease } as never,
+      channels: { invokeTool } as never,
+      collaborationSpaces: {} as never,
+    });
+
+    await expect(coordinator.invokeChannelTool({
+      name: 'reply',
+      arguments: { text: 'done' },
+      caller: { kind: 'dispatcher' },
+    })).resolves.toBe('invoked');
+    expect(withTeamLeaderLease).not.toHaveBeenCalled();
+    expect(invokeTool).toHaveBeenCalledOnce();
   });
 });
