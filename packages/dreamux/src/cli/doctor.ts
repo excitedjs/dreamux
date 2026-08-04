@@ -1,11 +1,11 @@
 import { readFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
-
 import {
   BUILT_IN_DEFAULTS,
   globalConfigDir,
   globalConfigFile,
-  loadConfig,
+  inspectConfigPlugins,
+  loadConfigInstalledOnly,
   type DreamuxConfig,
 } from '../config/config.js';
 import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
@@ -58,7 +58,6 @@ import {
   parseSystemdUnit,
   systemdDetail,
 } from './service-status-parse.js';
-
 export interface DoctorOptions {
   env?: NodeJS.ProcessEnv;
   runner?: CommandRunner;
@@ -68,7 +67,6 @@ export interface DoctorOptions {
   nodeProbe?: ServiceNodeProbe;
     userName?: string;
 }
-
 export interface ServiceStatus {
   platform: 'launchd' | 'systemd';
   unitPath: string;
@@ -81,19 +79,16 @@ export interface ServiceStatus {
   environment: Record<string, string> | null;
   execStart: string[] | null;
 }
-
 export interface DoctorCheck {
   name: string;
   ok: boolean;
   detail: string;
   severity?: 'warn';
 }
-
 export interface DispatcherDoctorReport {
   id: string;
   providers: ProviderDiagnosticReport[];
 }
-
 export interface DreamuxDoctorResult {
   ok: boolean;
   configFile: string;
@@ -102,21 +97,20 @@ export interface DreamuxDoctorResult {
   checks: DoctorCheck[];
   dispatchers: DispatcherDoctorReport[];
 }
-
 type ProviderBinaryCheck = ProviderBinCheck;
-
 export async function runDreamuxDoctor(
   options: DoctorOptions = {},
 ): Promise<DreamuxDoctorResult> {
   const runner = options.runner ?? new ExecaCommandRunner();
   const checks: DoctorCheck[] = [];
   const configDir = globalConfigDir();
-  const { config, configFile, catalogs } = await readConfigForDoctor(
-    configDir,
-    checks,
-  );
+  const {
+    config,
+    configFile,
+    catalogs,
+    providerDependentConfigAvailable,
+  } = await readConfigForDoctor(configDir, checks);
   setRuntimeConfig(config);
-
   checks.push({
     name: 'state directory',
     ok: await pathExists(stateRoot()),
@@ -130,63 +124,64 @@ export async function runDreamuxDoctor(
       detail: check.bin,
     });
   }
-  for (const dispatcher of config.dispatchers) {
-    if (dispatcher.enabled === false) {
+  if (providerDependentConfigAvailable) {
+    for (const dispatcher of config.dispatchers) {
+      if (dispatcher.enabled === false) {
+        checks.push({
+          name: `dispatcher ${dispatcher.id} workspace`,
+          ok: true,
+          detail: 'disabled; workspace cwd contract not enforced',
+        });
+      } else {
+        const diagnosis = await diagnoseDispatcherWorkspace(config, dispatcher.id);
+        checks.push({
+          name: `dispatcher ${dispatcher.id} workspace`,
+          ok: diagnosis.ok,
+          detail: diagnosis.detail,
+        });
+      }
+      const legacy = await detectLegacyDispatcherState(dispatcher.id);
       checks.push({
-        name: `dispatcher ${dispatcher.id} workspace`,
-        ok: true,
-        detail: 'disabled; workspace cwd contract not enforced',
+        name: `dispatcher ${dispatcher.id} legacy state`,
+        ok: legacy.length === 0,
+        detail:
+          legacy.length === 0
+            ? 'no pre-#199 state paths found'
+            : legacyDispatcherStateMessage(dispatcher.id, legacy),
       });
-    } else {
-      const diagnosis = await diagnoseDispatcherWorkspace(config, dispatcher.id);
+      const bindingLegacy =
+        (await detectLegacyChannelBindingStore(dispatcher.id)) ??
+        (await detectAmbiguousV2ChannelBindingRoutes(dispatcher.id));
       checks.push({
-        name: `dispatcher ${dispatcher.id} workspace`,
-        ok: diagnosis.ok,
-        detail: diagnosis.detail,
+        name: `dispatcher ${dispatcher.id} channel bindings`,
+        ok: bindingLegacy === null,
+        detail:
+          bindingLegacy ??
+          'channel binding store is current (v3), non-overlapping reusable v2, or absent',
       });
-    }
-    const legacy = await detectLegacyDispatcherState(dispatcher.id);
-    checks.push({
-      name: `dispatcher ${dispatcher.id} legacy state`,
-      ok: legacy.length === 0,
-      detail:
-        legacy.length === 0
-          ? 'no pre-#199 state paths found'
-          : legacyDispatcherStateMessage(dispatcher.id, legacy),
-    });
-    const bindingLegacy =
-      (await detectLegacyChannelBindingStore(dispatcher.id)) ??
-      (await detectAmbiguousV2ChannelBindingRoutes(dispatcher.id));
-    checks.push({
-      name: `dispatcher ${dispatcher.id} channel bindings`,
-      ok: bindingLegacy === null,
-      detail:
-        bindingLegacy ??
-        'channel binding store is current (v3), non-overlapping reusable v2, or absent',
-    });
-    const cronLegacy = await detectLegacyCronJobStore(
-      dispatcherCronJobsPath(dispatcher.id),
-      dispatcher.id,
-    );
-    checks.push({
-      name: `dispatcher ${dispatcher.id} cron jobs`,
-      ok: cronLegacy === null,
-      detail: cronLegacy ?? 'cron job store is current (v1) or absent',
-    });
-    for (const team of await new TeamStore().list(dispatcher.id)) {
-      if (team.status === 'closed') continue;
-      const teamCronLegacy = await detectLegacyCronJobStore(
-        dispatcherTeamCronJobsPath(dispatcher.id, team.team_id),
+      const cronLegacy = await detectLegacyCronJobStore(
+        dispatcherCronJobsPath(dispatcher.id),
         dispatcher.id,
       );
       checks.push({
-        name: `dispatcher ${dispatcher.id} team ${team.team_id} cron jobs`,
-        ok: teamCronLegacy === null,
-        detail: teamCronLegacy ?? 'cron job store is current (v1) or absent',
+        name: `dispatcher ${dispatcher.id} cron jobs`,
+        ok: cronLegacy === null,
+        detail: cronLegacy ?? 'cron job store is current (v1) or absent',
       });
+      for (const team of await new TeamStore().list(dispatcher.id)) {
+        if (team.status === 'closed') continue;
+        const teamCronLegacy = await detectLegacyCronJobStore(
+          dispatcherTeamCronJobsPath(dispatcher.id, team.team_id),
+          dispatcher.id,
+        );
+        checks.push({
+          name: `dispatcher ${dispatcher.id} team ${team.team_id} cron jobs`,
+          ok: teamCronLegacy === null,
+          detail: teamCronLegacy ?? 'cron job store is current (v1) or absent',
+        });
+      }
     }
   }
-
   const service = await getServiceStatus({
     runner,
     platform: options.platform,
@@ -205,30 +200,32 @@ export async function runDreamuxDoctor(
       await systemdLingerCheck(runner, options.userName ?? userInfo().username),
     );
   }
-  await addManagedServiceLaunchChecks(
-    checks,
-    service,
-    runner,
-    options.nodeProbe ?? defaultServiceNodeProbe,
-    catalogs,
-    config,
-  );
-
-  const dispatchers = await readDispatchers(
-    catalogs,
-    config,
-    runner,
-    options.env ?? process.env,
-    service,
-  );
-  if (dispatchers.length === 0) {
+  if (providerDependentConfigAvailable) {
+    await addManagedServiceLaunchChecks(
+      checks,
+      service,
+      runner,
+      options.nodeProbe ?? defaultServiceNodeProbe,
+      catalogs,
+      config,
+    );
+  }
+  const dispatchers = providerDependentConfigAvailable
+    ? await readDispatchers(
+        catalogs,
+        config,
+        runner,
+        options.env ?? process.env,
+        service,
+      )
+    : [];
+  if (providerDependentConfigAvailable && dispatchers.length === 0) {
     checks.push({
       name: 'dispatchers',
       ok: false,
       detail: 'no dispatchers are configured',
     });
   }
-
   const ok =
     checks.every((check) => check.ok) &&
     dispatchers.every((dispatcher) =>
@@ -243,7 +240,6 @@ export async function runDreamuxDoctor(
     dispatchers,
   };
 }
-
 export function printDoctorResult(result: DreamuxDoctorResult): void {
   console.log(`dreamux doctor: ${result.ok ? 'ok' : 'failed'}`);
   console.log(`config: ${result.configFile}`);
@@ -260,7 +256,6 @@ export function printDoctorResult(result: DreamuxDoctorResult): void {
     printDispatcherDoctor(dispatcher);
   }
 }
-
 async function readConfigForDoctor(
   configDir: string,
   checks: DoctorCheck[],
@@ -268,13 +263,27 @@ async function readConfigForDoctor(
   config: DreamuxConfig;
   configFile: string;
   catalogs: ProviderDiagnosticCatalogs;
+  providerDependentConfigAvailable: boolean;
 }> {
   try {
-    const loaded = await loadConfig({
+    const inspection = await inspectConfigPlugins({ configDir });
+    addProviderPluginChecks(checks, inspection.diagnostics);
+    if (inspection.diagnostics.some((diagnostic) => !diagnostic.ok)) {
+      checks.push({
+        name: 'config',
+        ok: true,
+        detail: inspection.configFile,
+      });
+      return {
+        config: BUILT_IN_DEFAULTS,
+        configFile: inspection.configFile,
+        catalogs: catalogsFromRegistry(createBuiltinProviderRegistry()),
+        providerDependentConfigAvailable: false,
+      };
+    }
+    const loaded = await loadConfigInstalledOnly({
       configDir,
-      providerPluginLoadMode: 'installed-only',
     });
-    addProviderPluginChecks(checks, loaded.providerPluginDiagnostics);
     checks.push({
       name: 'config',
       ok: true,
@@ -284,6 +293,7 @@ async function readConfigForDoctor(
       config: loaded.config,
       configFile: loaded.configFile,
       catalogs: catalogsFromRegistry(loaded.providerRegistry),
+      providerDependentConfigAvailable: true,
     };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
@@ -296,10 +306,10 @@ async function readConfigForDoctor(
       config: BUILT_IN_DEFAULTS,
       configFile: globalConfigFile({ configDir }),
       catalogs: catalogsFromRegistry(createBuiltinProviderRegistry()),
+      providerDependentConfigAvailable: false,
     };
   }
 }
-
 function addProviderPluginChecks(
   checks: DoctorCheck[],
   diagnostics: Array<{
@@ -307,20 +317,32 @@ function addProviderPluginChecks(
     ok: boolean;
     version: string | null;
     error: string | null;
+    lastCheckError: string | null;
   }>,
 ): void {
   for (const diagnostic of diagnostics) {
     checks.push({
       name: `provider plugin ${diagnostic.packageName}`,
       ok: diagnostic.ok,
-      detail: diagnostic.ok
-        ? `selected generation ${diagnostic.version ?? 'unknown'}`
-        : (diagnostic.error ??
-          `provider plugin ${diagnostic.packageName} is not installed or usable`),
+      detail: providerPluginDiagnosticDetail(diagnostic),
     });
   }
 }
-
+function providerPluginDiagnosticDetail(diagnostic: {
+  packageName: string;
+  ok: boolean;
+  version: string | null;
+  error: string | null;
+  lastCheckError: string | null;
+}): string {
+  const base = diagnostic.ok
+    ? `selected generation ${diagnostic.version ?? 'unknown'}`
+    : (diagnostic.error ??
+      `provider plugin ${diagnostic.packageName} is not installed or usable`);
+  return diagnostic.lastCheckError === null
+    ? base
+    : `${base}; last update error: ${diagnostic.lastCheckError}`;
+}
 function catalogsFromRegistry(
   registry: ProviderRegistry,
 ): ProviderDiagnosticCatalogs {
@@ -329,7 +351,6 @@ function catalogsFromRegistry(
     channel: new ChannelProviderCatalog({ registry }),
   };
 }
-
 async function readDispatchers(
   catalogs: ProviderDiagnosticCatalogs,
   config: DreamuxConfig,
@@ -362,7 +383,6 @@ async function readDispatchers(
     }),
   );
 }
-
 async function getServiceStatus(options: DoctorOptions): Promise<ServiceStatus> {
   const runner = options.runner ?? new ExecaCommandRunner();
   const unit = serviceUnitPath(options.platform, options.homeDir ?? homedir());
@@ -371,7 +391,6 @@ async function getServiceStatus(options: DoctorOptions): Promise<ServiceStatus> 
   }
   return systemdStatus(unit.path, runner);
 }
-
 async function launchdStatus(
   unitPath: string,
   runner: CommandRunner,
@@ -404,7 +423,6 @@ async function launchdStatus(
     execStart: unitFile.execStart,
   };
 }
-
 async function systemdStatus(
   unitPath: string,
   runner: CommandRunner,
@@ -448,7 +466,6 @@ async function systemdStatus(
     execStart: unitFile.execStart,
   };
 }
-
 async function systemdLingerCheck(
   runner: CommandRunner,
   userName: string,
@@ -477,7 +494,6 @@ async function systemdLingerCheck(
     };
   }
 }
-
 async function addManagedServiceLaunchChecks(
   checks: DoctorCheck[],
   service: ServiceStatus,
@@ -504,7 +520,6 @@ async function addManagedServiceLaunchChecks(
     });
     return;
   }
-
   const serviceEnv = env as Record<string, string>;
   const nodeBin = serviceEnv['DREAMUX_NODE_BIN'];
   checks.push(await checkNodeLaunch(nodeBin, serviceEnv, runner));
@@ -517,7 +532,6 @@ async function addManagedServiceLaunchChecks(
       detail: `${nodeBin} resolves into ${manager}-managed Node; a version switch or cleanup will break the managed service. Rerun dreamux onboard to repin to a stable Node.`,
     });
   }
-
   const dreamuxBin = service.execStart?.[0];
   checks.push(
     await checkHelpLaunch(
@@ -542,7 +556,6 @@ async function addManagedServiceLaunchChecks(
     );
   }
 }
-
 function providerBinaryChecks(
   catalogs: ProviderDiagnosticCatalogs,
   config: DreamuxConfig,
@@ -556,7 +569,6 @@ function providerBinaryChecks(
     scope: managedService ? 'managedService' : 'foreground',
   });
 }
-
 async function checkNodeLaunch(
   nodeBin: string,
   env: NodeJS.ProcessEnv,
@@ -580,7 +592,6 @@ async function checkNodeLaunch(
     };
   }
 }
-
 async function checkHelpLaunch(
   name: string,
   command: string | undefined,
@@ -599,13 +610,11 @@ async function checkHelpLaunch(
     detail: ok ? command : `${command} failed under installed service environment; rerun dreamux onboard`,
   };
 }
-
 function printDispatcherDoctor(dispatcher: DispatcherDoctorReport): void {
   for (const report of dispatcher.providers) {
     printProviderDoctor(dispatcher.id, report);
   }
 }
-
 function printProviderDoctor(
   dispatcherId: string,
   report: ProviderDiagnosticReport,

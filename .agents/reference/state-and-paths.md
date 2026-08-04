@@ -220,13 +220,23 @@ Each package has one encoded path segment with `metadata.json`, immutable
 `versions/<version>/` generations, and non-importable `staging/<install>/`
 directories. Generations are imported only through their local
 `dreamux-import.mjs` bridge from the exact generation captured by the
-config-level materialize/inspect plan. `dreamux serve`, `dreamux onboard`, and
-`dreamux daemon install` materialize missing packages; their `--dry-run` modes
-perform installed-only no-write checks and fail explicitly for referenced
-missing npm providers. `dreamux doctor` performs installed-only checks;
-`dreamux uninstall` removes the plugin root without loading providers, after
-canonical path checks protect HOME/cwd and operator Codex/Claude state from
-symlink-prefixed recursive deletion targets.
+config-level load session. `metadata.json` remains version 1 and records
+`selected_version`, optional `candidate_version`, `last_check_completed_at`,
+and optional `last_check_error`; missing candidate/error fields from older v1
+documents default to null. A selected version is written only after a complete
+strict provider/config load succeeds. Background updates publish only
+candidates and never import provider code.
+
+`dreamux serve`, `dreamux onboard`, and `dreamux daemon install` may materialize
+missing packages during strict load; their `--dry-run` modes perform
+installed-only no-write checks and fail explicitly for referenced missing npm
+providers. `dreamux doctor` performs installed-only inspection and reports
+unavailable plugins plus the last update error; `dreamux uninstall` removes the
+plugin root without loading providers, after canonical path checks protect
+HOME/cwd and operator Codex/Claude state from symlink-prefixed recursive
+deletion targets. Each install attempt cleans its own staging directory, and a
+later install prunes only package-local staging directories older than 24 hours;
+published generations are retained.
 
 Key source:
 

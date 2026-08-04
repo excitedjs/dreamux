@@ -1,5 +1,4 @@
 import type { NpmProviderRef } from '@excitedjs/dreamux-types';
-
 import type { ConfigPathOverrides } from './config.js';
 import {
   loadAgentRuntimeProviders,
@@ -8,159 +7,167 @@ import {
   loadChannelProviders,
 } from '../channel/external-channel-provider.js';
 import {
-  agentProviderRefs,
-  channelProviderRefs,
-} from './config-helpers.js';
-import {
   parseProviderRef,
-  type ProviderDescriptor,
-  type ProviderKind,
   type ProviderRegistry,
 } from '../registry/index.js';
 import type {
   NpmProviderModuleImporter,
   ProviderModule,
 } from '../registry/provider-loader.js';
+import { errMessage } from '../registry/provider-loader.js';
 import type {
+  ProviderPluginAccess,
+  ProviderPluginLoadSession,
   ProviderPluginInspection,
 } from '../registry/provider-plugin-store.js';
-
-export interface ProviderPluginAccess {
-  materializePackage(packageName: string): Promise<string>;
-  inspectPackage(packageName: string): Promise<ProviderPluginInspection>;
-  importModule(packageName: string, version: string): Promise<ProviderModule>;
-}
-
-export interface ProviderPluginPlan {
-  packages: string[];
-  diagnostics: ProviderPluginInspection[];
-  agentRefsToLoad: string[];
-  channelRefsToLoad: string[];
-  missingAgentDescriptors: ProviderDescriptor[];
-  missingChannelDescriptors: ProviderDescriptor[];
-  agentImporter?: NpmProviderModuleImporter;
-  channelImporter?: NpmProviderModuleImporter;
-}
-
+import { hostAgentRefs, hostChannelRefs, validateHostConfig } from './host-config.js';
 export interface LoadedProviderPlugins {
   packages: string[];
-  diagnostics: ProviderPluginInspection[];
-  missingPluginRefs: ReadonlySet<string>;
+  session: ProviderPluginLoadSession | null;
 }
-
-export async function loadProviderPluginsForConfig(input: {
+export interface ProviderPluginInspectionPlan {
+  diagnostics: ProviderPluginInspection[];
+  unavailableRefs: string[];
+}
+export function formatMissingProviderPluginError(
+  heading: string,
+  diagnostics: readonly ProviderPluginInspection[],
+): Error {
+  const missing = diagnostics.filter((diagnostic) => !diagnostic.ok);
+  return new Error(
+    [
+      heading,
+      ...missing.map(
+        (diagnostic) =>
+          `- ${diagnostic.packageName}: ${diagnostic.error ?? 'no selected generation'}`,
+      ),
+    ].join('\n'),
+  );
+}
+export function throwIfProviderPluginsUnavailable(
+  heading: string,
+  diagnostics: readonly ProviderPluginInspection[],
+): void {
+  const missing = diagnostics.filter((diagnostic) => !diagnostic.ok);
+  if (missing.length > 0) throw formatMissingProviderPluginError(heading, missing);
+}
+export async function assertProviderPluginsAvailableForDryRun(input: {
   parsed: unknown;
-  providerRegistry: ProviderRegistry;
   overrides: ConfigPathOverrides;
-}): Promise<LoadedProviderPlugins> {
-  const pluginPlan = await prepareProviderPlugins({
-    agentRefs: agentProviderRefs(input.parsed),
-    channelRefs: channelProviderRefs(input.parsed),
+  heading: string;
+}): Promise<void> {
+  const host = validateHostConfig(input.parsed, 'dreamux config');
+  const diagnostics = await inspectProviderPluginPackages({
+    agentRefs: hostAgentRefs(host),
+    channelRefs: hostChannelRefs(host),
     overrides: input.overrides,
+  });
+  throwIfProviderPluginsUnavailable(input.heading, diagnostics);
+}
+export async function inspectProviderPluginPackages(input: {
+  agentRefs: string[];
+  channelRefs: string[];
+  overrides: ConfigPathOverrides;
+  skipPackages?: ReadonlySet<string>;
+}): Promise<ProviderPluginInspection[]> {
+  const packages = pluginPackagesForRefs(input)
+    .filter((packageName) => input.skipPackages?.has(packageName) !== true);
+  if (packages.length === 0) return [];
+  const store = await providerPluginStoreFor(input.overrides);
+  return await store.inspectPackages(packages);
+}
+export async function loadProviderPluginsForConfig(input: {
+  agentRefs: string[];
+  channelRefs: string[];
+  providerRegistry: ProviderRegistry;
+  overrides: Pick<
+    ConfigPathOverrides,
+    | 'externalAgentRuntimeModuleImporter'
+    | 'externalChannelModuleImporter'
+    | 'providerPluginStore'
+  >;
+  session: ProviderPluginLoadSession | null;
+}): Promise<LoadedProviderPlugins> {
+  const pluginPlan = await prepareProviderPluginImporters({
+    agentRefs: input.agentRefs,
+    channelRefs: input.channelRefs,
+    overrides: input.overrides,
+    session: input.session,
   });
   await loadAgentRuntimeProviders({
     registry: input.providerRegistry,
-    refs: pluginPlan.agentRefsToLoad,
+    refs: input.agentRefs,
     importModule: input.overrides.externalAgentRuntimeModuleImporter,
     importNpmModule: pluginPlan.agentImporter,
   });
   await loadChannelProviders({
     registry: input.providerRegistry,
-    refs: pluginPlan.channelRefsToLoad,
+    refs: input.channelRefs,
     importModule: input.overrides.externalChannelModuleImporter,
     importNpmModule: pluginPlan.channelImporter,
   });
-  registerMissingProviderDescriptors(input.providerRegistry, [
-    ...pluginPlan.missingAgentDescriptors,
-    ...pluginPlan.missingChannelDescriptors,
-  ]);
   return {
     packages: pluginPlan.packages,
-    diagnostics: pluginPlan.diagnostics,
-    missingPluginRefs: new Set(
-      [
-        ...pluginPlan.missingAgentDescriptors,
-        ...pluginPlan.missingChannelDescriptors,
-      ].map((descriptor) => descriptor.ref.raw),
-    ),
+    session: pluginPlan.session,
   };
 }
-
-export async function prepareProviderPlugins(input: {
+async function prepareProviderPluginImporters(input: {
   agentRefs: string[];
   channelRefs: string[];
-  overrides: ConfigPathOverrides;
-}): Promise<ProviderPluginPlan> {
-  const agentNpmRefs = npmRefsFromRefs(input.agentRefs);
-  const channelNpmRefs = npmRefsFromRefs(input.channelRefs);
-  const agentPackages = input.overrides.externalAgentRuntimeModuleImporter === undefined
-    ? npmPackagesFromParsedRefs(agentNpmRefs)
-    : [];
-  const channelPackages = input.overrides.externalChannelModuleImporter === undefined
-    ? npmPackagesFromParsedRefs(channelNpmRefs)
-    : [];
-  const packages = [...new Set([...agentPackages, ...channelPackages])].sort();
+  overrides: Pick<
+    ConfigPathOverrides,
+    | 'externalAgentRuntimeModuleImporter'
+    | 'externalChannelModuleImporter'
+    | 'providerPluginStore'
+  >;
+  session: ProviderPluginLoadSession | null;
+}): Promise<{
+  packages: string[];
+  agentImporter?: NpmProviderModuleImporter;
+  channelImporter?: NpmProviderModuleImporter;
+  session: ProviderPluginLoadSession | null;
+}> {
+  const packages = pluginPackagesForRefs(input);
   if (packages.length === 0) {
     return {
       packages: [],
-      diagnostics: [],
-      agentRefsToLoad: input.agentRefs,
-      channelRefsToLoad: input.channelRefs,
-      missingAgentDescriptors: [],
-      missingChannelDescriptors: [],
       agentImporter: injectedImporter(
         input.overrides.externalAgentRuntimeModuleImporter,
       ),
       channelImporter: injectedImporter(
         input.overrides.externalChannelModuleImporter,
       ),
+      session: null,
     };
   }
-
-  const store = await providerPluginStoreFor(input.overrides);
-  const mode = input.overrides.providerPluginLoadMode ?? 'materialize';
-  const refs = [...input.agentRefs, ...input.channelRefs];
-  const diagnostics =
-    mode === 'materialize'
-      ? await materializeProviderPluginPackages(store, packages, refs)
-      : await inspectProviderPluginPackages(store, packages);
-  const failures = new Map(
-    diagnostics
-      .filter((entry) => !entry.ok)
-      .map((entry) => [entry.packageName, entry]),
-  );
-  const exactVersions = exactVersionsFromDiagnostics(diagnostics);
-  const agentFailures = failuresForPackages(failures, agentPackages);
-  const channelFailures = failuresForPackages(failures, channelPackages);
+  if (input.session === null) {
+    throw new Error(
+      `provider plugin load session is required for ${packages.join(', ')}`,
+    );
+  }
+  const session = input.session;
+  for (const packageName of packages) {
+    try {
+      await session.preparePackage(packageName);
+    } catch (err) {
+      const matchingRefs = refsForPackage(
+        [...input.agentRefs, ...input.channelRefs],
+        packageName,
+      );
+      throw new Error(
+        `failed to prepare provider plugin package ${JSON.stringify(packageName)} for ${matchingRefs.join(', ')}: ${errMessage(err)}`,
+        { cause: err },
+      );
+    }
+  }
   const packageImporter: NpmProviderModuleImporter = async (
     _ref,
     packageName,
   ): Promise<ProviderModule> => {
-    const failure = failures.get(packageName);
-    if (failure !== undefined) {
-      throw new Error(failure.error ?? `provider plugin ${packageName} is not installed`);
-    }
-    const version = exactVersions.get(packageName);
-    if (version === undefined) {
-      throw new Error(`provider plugin ${packageName} has no planned generation`);
-    }
-    return await store.importModule(packageName, version);
+    return await session.importModule(packageName);
   };
   return {
     packages,
-    diagnostics,
-    agentRefsToLoad: refsToLoad(input.agentRefs, agentFailures),
-    channelRefsToLoad: refsToLoad(input.channelRefs, channelFailures),
-    missingAgentDescriptors: missingDescriptors(
-      agentNpmRefs,
-      agentFailures,
-      'agentRuntime',
-    ),
-    missingChannelDescriptors: missingDescriptors(
-      channelNpmRefs,
-      channelFailures,
-      'channel',
-    ),
     agentImporter:
       input.overrides.externalAgentRuntimeModuleImporter === undefined
         ? packageImporter
@@ -169,9 +176,67 @@ export async function prepareProviderPlugins(input: {
       input.overrides.externalChannelModuleImporter === undefined
         ? packageImporter
         : injectedImporter(input.overrides.externalChannelModuleImporter),
+    session,
   };
 }
-
+export async function inspectProviderPluginsForConfig(input: {
+  parsed: unknown;
+  overrides: ConfigPathOverrides;
+}): Promise<ProviderPluginInspectionPlan> {
+  const host = validateHostConfig(input.parsed, 'dreamux config');
+  const agentRefs = hostAgentRefs(host);
+  const channelRefs = hostChannelRefs(host);
+  const diagnostics = await inspectProviderPluginPackages({
+    agentRefs,
+    channelRefs,
+    overrides: input.overrides,
+  });
+  const failures = new Map(
+    diagnostics
+      .filter((entry) => !entry.ok)
+      .map((entry) => [entry.packageName, entry]),
+  );
+  return {
+    diagnostics,
+    unavailableRefs: [...agentRefs, ...channelRefs].filter((raw) => {
+      const ref = parseProviderRef(raw);
+      return ref.source === 'npm' && failures.has(ref.package);
+    }),
+  };
+}
+export async function createProviderPluginSession(input: {
+  agentRefs: string[];
+  channelRefs: string[];
+  overrides: ConfigPathOverrides;
+  operation: 'materializing-strict' | 'installed-only-strict';
+  signal?: AbortSignal;
+}): Promise<ProviderPluginLoadSession | null> {
+  const packages = pluginPackagesForRefs(input);
+  if (packages.length === 0) return null;
+  const store = await providerPluginStoreFor(input.overrides);
+  return input.operation === 'materializing-strict'
+    ? store.createMaterializingSession(packages, input.signal)
+    : store.createInstalledOnlySession(packages);
+}
+export function pluginPackagesForRefs(input: {
+  agentRefs: string[];
+  channelRefs: string[];
+  overrides: Pick<
+    ConfigPathOverrides,
+    | 'externalAgentRuntimeModuleImporter'
+    | 'externalChannelModuleImporter'
+  >;
+}): string[] {
+  const agentNpmRefs = npmRefsFromRefs(input.agentRefs);
+  const channelNpmRefs = npmRefsFromRefs(input.channelRefs);
+  const agentPackages = input.overrides.externalAgentRuntimeModuleImporter === undefined
+    ? npmPackagesFromParsedRefs(agentNpmRefs)
+    : [];
+  const channelPackages = input.overrides.externalChannelModuleImporter === undefined
+    ? npmPackagesFromParsedRefs(channelNpmRefs)
+    : [];
+  return [...new Set([...agentPackages, ...channelPackages])].sort();
+}
 function npmRefsFromRefs(refs: string[]): NpmProviderRef[] {
   const out = new Map<string, NpmProviderRef>();
   for (const raw of refs) {
@@ -180,73 +245,15 @@ function npmRefsFromRefs(refs: string[]): NpmProviderRef[] {
   }
   return [...out.values()];
 }
-
 function npmPackagesFromParsedRefs(refs: NpmProviderRef[]): string[] {
   return [...new Set(refs.map((ref) => ref.package))];
 }
-
-function failuresForPackages(
-  failures: ReadonlyMap<string, ProviderPluginInspection>,
-  packages: string[],
-): Map<string, ProviderPluginInspection> {
-  const out = new Map<string, ProviderPluginInspection>();
-  for (const packageName of packages) {
-    const failure = failures.get(packageName);
-    if (failure !== undefined) out.set(packageName, failure);
-  }
-  return out;
-}
-
-function exactVersionsFromDiagnostics(
-  diagnostics: ProviderPluginInspection[],
-): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const entry of diagnostics) {
-    if (entry.ok && entry.version !== null) out.set(entry.packageName, entry.version);
-  }
-  return out;
-}
-
-function refsToLoad(
-  refs: string[],
-  failures: ReadonlyMap<string, ProviderPluginInspection>,
-): string[] {
-  return refs.filter((raw) => {
-    const parsed = parseProviderRef(raw);
-    return parsed.source !== 'npm' || !failures.has(parsed.package);
-  });
-}
-
-function missingDescriptors(
-  refs: NpmProviderRef[],
-  failures: ReadonlyMap<string, ProviderPluginInspection>,
-  kind: ProviderKind,
-): ProviderDescriptor[] {
-  return refs
-    .filter((ref) => failures.has(ref.package))
-    .map((ref) => ({
-      id: ref.raw,
-      kind,
-      ref,
-    }));
-}
-
 function injectedImporter(
   importer: ((packageName: string) => Promise<ProviderModule>) | undefined,
 ): NpmProviderModuleImporter | undefined {
   if (importer === undefined) return undefined;
   return async (_ref, packageName) => await importer(packageName);
 }
-
-function registerMissingProviderDescriptors(
-  registry: ProviderRegistry,
-  descriptors: ProviderDescriptor[],
-): void {
-  for (const descriptor of descriptors) {
-    if (!registry.hasRef(descriptor.ref)) registry.register(descriptor);
-  }
-}
-
 async function providerPluginStoreFor(
   overrides: ConfigPathOverrides,
 ): Promise<ProviderPluginAccess> {
@@ -254,46 +261,9 @@ async function providerPluginStoreFor(
   const mod = await import('../registry/provider-plugin-store.js');
   return new mod.ProviderPluginStore();
 }
-
-async function materializeProviderPluginPackages(
-  store: ProviderPluginAccess,
-  packages: string[],
-  refs: string[],
-): Promise<ProviderPluginInspection[]> {
-  const diagnostics: ProviderPluginInspection[] = [];
-  for (const packageName of packages) {
-    try {
-      const version = await store.materializePackage(packageName);
-      diagnostics.push({ packageName, ok: true, version, error: null });
-    } catch (err) {
-      const matchingRefs = refsForPackage(refs, packageName);
-      throw new Error(
-        `failed to materialize provider plugin package ${JSON.stringify(packageName)} for ${matchingRefs.join(', ')}: ${errorMessage(err)}`,
-        { cause: err },
-      );
-    }
-  }
-  return diagnostics;
-}
-
 function refsForPackage(refs: string[], packageName: string): string[] {
   return refs.filter((raw) => {
     const parsed = parseProviderRef(raw);
     return parsed.source === 'npm' && parsed.package === packageName;
   });
-}
-
-async function inspectProviderPluginPackages(
-  store: ProviderPluginAccess,
-  packages: string[],
-): Promise<ProviderPluginInspection[]> {
-  const diagnostics: ProviderPluginInspection[] = [];
-  for (const packageName of packages) {
-    diagnostics.push(await store.inspectPackage(packageName));
-  }
-  return diagnostics;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

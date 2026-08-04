@@ -117,6 +117,7 @@ logs:
 | `~/.dreamux/cache/<id>/spill/` | Over-budget teammate completion spill files; rebuildable cache, only the path is inlined into a dispatcher turn | the server |
 | `~/.dreamux/cache/<id>/` | Per-dispatcher provider cache root; providers own subdirectories such as Feishu attachment cache | the server |
 | `~/.dreamux/cache/claude-code/` | Claude Code MCP config and skill adapters; rebuildable provider cache | the server |
+| `~/.dreamux/plugins/` | Rebuildable external `npm:` provider generations and metadata | the server |
 | `~/.dreamux/logs/codex-app-server/<id>.log` | Codex app-server stdout/stderr | the server |
 | `~/.dreamux/logs/channel/<id>.log` | Per-dispatcher channel logs | the server |
 | `~/.dreamux/logs/teammate-mcp/<id>.log` | TeamMate MCP shim diagnostics | the server |
@@ -238,10 +239,15 @@ External provider refs look like npm package refs or package export refs, for
 example `npm:@example/dreamux-provider` and
 `npm:@example/dreamux-provider#channel`. Dreamux installs external provider
 packages into `~/.dreamux/plugins/` on first materializing config load and
-imports the selected immutable generation from that private store. Ambient
-global packages, `NODE_PATH`, the process working directory, and Dreamux's own
-dependency tree do not satisfy `npm:` provider refs. Builtin refs still resolve
-to packages shipped with Dreamux and do not use the plugin store.
+imports a pinned immutable generation from that private store. A generation
+becomes selected only after the full provider factory, contract, and config
+validation succeeds. Background checks publish candidate generations for a later
+restart; they do not hot-reload the running server or replace the selected
+generation before validation. Ambient global packages, `NODE_PATH`, the process
+working directory, and Dreamux's own dependency tree do not satisfy `npm:`
+provider refs. Builtin refs still resolve to packages shipped with Dreamux and
+do not use the plugin store. Dry-run commands and `doctor` inspect installed
+generations only and never run npm.
 
 Edit and restart `dreamux serve` to apply dispatcher declaration changes.
 Channel ids must be unique within a dispatcher, and each dispatcher may declare

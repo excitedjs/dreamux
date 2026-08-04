@@ -8,7 +8,6 @@
  * unit (never config / state / logs); that is the boundary against the
  * top-level `dreamux uninstall`.
  */
-
 import { ExecaCommandRunner } from '../onboard/commands.js';
 import { homedir } from 'node:os';
 import {
@@ -30,6 +29,7 @@ import {
   type DreamuxConfig,
   globalConfigDir,
   loadConfig,
+  loadConfigInstalledOnly,
 } from '../config/config.js';
 import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
 import { ChannelProviderCatalog } from '../channel/catalog.js';
@@ -37,16 +37,20 @@ import {
   providerBinChecksForConfig,
   type ProviderDiagnosticCatalogs,
 } from '../provider-diagnostics.js';
+import {
+  assertProviderPluginsAvailableForDryRun,
+} from '../config/provider-plugin-loading.js';
+import { readConfigJson, globalConfigFile } from '../config/config.js';
 import { dreamuxBinPath } from '../platform/package-bin.js';
 import {
   probeStandardExecDirs,
   setRuntimeConfig,
   type ExecDirProbe,
 } from '../platform/paths.js';
-
 export interface DaemonInstallOptions {
   startService?: boolean;
   dryRun?: boolean;
+  onWarnings?: (warnings: string[]) => void;
   runner?: CommandRunner;
   platform?: NodeJS.Platform;
   homeDir?: string;
@@ -57,12 +61,11 @@ export interface DaemonInstallOptions {
   /** Optional Homebrew-directory presence probe (tests). */
   execDirProbe?: ExecDirProbe;
 }
-
 export interface DaemonInstallResult {
   service: ServiceInstallResult;
   files: OnboardFileLedgerEntry[];
+  warnings: string[];
 }
-
 function serviceProviderBinChecks(
   config: DreamuxConfig,
   env: NodeJS.ProcessEnv,
@@ -75,7 +78,6 @@ function serviceProviderBinChecks(
     scope: 'managedService',
   });
 }
-
 export async function runDaemonInstall(
   options: DaemonInstallOptions = {},
 ): Promise<DaemonInstallResult> {
@@ -85,30 +87,21 @@ export async function runDaemonInstall(
   const homeDir = options.homeDir ?? homedir();
   const dryRun = options.dryRun ?? false;
   const startService = options.startService ?? true;
-
   // Fail loudly when the operator has not run onboard yet — daemon install
   // re-registers an existing setup, it does not create one.
-  const loaded = await loadConfig({
-    configDir: globalConfigDir(),
-    providerPluginLoadMode: dryRun ? 'installed-only' : 'materialize',
-  });
+  const configDir = globalConfigDir();
   if (dryRun) {
-    const missingPlugins = loaded.providerPluginDiagnostics.filter(
-      (diagnostic) => !diagnostic.ok,
-    );
-    if (missingPlugins.length > 0) {
-      throw new Error(
-        [
-          'dreamux daemon install --dry-run cannot install npm provider plugins',
-          ...missingPlugins.map(
-            (diagnostic) =>
-              `- ${diagnostic.packageName}: ${diagnostic.error ?? 'no selected generation'}`,
-          ),
-        ].join('\n'),
-      );
-    }
+    await assertProviderPluginsAvailableForDryRun({
+      parsed: await readConfigJson(globalConfigFile({ configDir })),
+      overrides: { configDir },
+      heading: 'dreamux daemon install --dry-run cannot install npm provider plugins',
+    });
   }
+  const loaded = dryRun
+    ? await loadConfigInstalledOnly({ configDir })
+    : await loadConfig({ configDir });
   const { config } = loaded;
+  options.onWarnings?.(loaded.providerPluginWarnings);
   const catalogs = {
     agentRuntime: new AgentRuntimeProviderCatalog({
       registry: loaded.providerRegistry,
@@ -118,7 +111,6 @@ export async function runDaemonInstall(
     }),
   };
   setRuntimeConfig(config);
-
   const fallbackDirs = await probeStandardExecDirs(
     { platform, homeDir, env },
     options.execDirProbe,
@@ -162,7 +154,6 @@ export async function runDaemonInstall(
     env,
     fallbackDirs,
   };
-
   if (!dryRun) {
     const launch = await validateManagedServiceLaunch(answers, runner);
     if (!launch.ok) {
@@ -175,7 +166,6 @@ export async function runDaemonInstall(
       );
     }
   }
-
   const ledger = new TransparentFileLedger();
   const service = await installUserService({
     answers,
@@ -185,9 +175,8 @@ export async function runDaemonInstall(
     homeDir,
     uid: options.uid,
   });
-  return { service, files: ledger.entries() };
+  return { service, files: ledger.entries(), warnings: loaded.providerPluginWarnings };
 }
-
 export interface DaemonUninstallOptions {
   dryRun?: boolean;
   runner?: CommandRunner;
@@ -195,7 +184,6 @@ export interface DaemonUninstallOptions {
   homeDir?: string;
   uid?: number;
 }
-
 export async function runDaemonUninstall(
   options: DaemonUninstallOptions = {},
 ): Promise<ServiceRemoveResult> {

@@ -45,16 +45,26 @@ startup.
 
 Builtin provider descriptors are registered eagerly for both `agentRuntime`
 (`builtin:codex`, `builtin:claude-code`) and `channel` (`builtin:feishu`).
-External refs in `agents[].provider` and
-`dispatchers[].channels[].provider` are loaded before config validation by
-materializing the referenced package into the Dreamux-owned local plugin store,
-importing the selected immutable generation, selecting its default export or
-`#named` export, calling the provider factory with the seed descriptor, and
-registering the returned provider implementation into the same registry instance
-used by config validation and server startup. A missing package, registry or
-installation failure, missing export, invalid provider contract, incomplete
-capability declaration, or descriptor mismatch fails startup loudly with the
-selected provider ref.
+Dreamux-owned config structure and cross-references are validated before npm
+lookup, plugin-store writes, or provider imports. External refs in
+`agents[].provider` and `dispatchers[].channels[].provider` are then resolved by
+one strict plugin load session: the session prepares the referenced package in
+the Dreamux-owned local plugin store, imports the pinned immutable generation,
+selects its default export or `#named` export, calls the provider factory with
+the seed descriptor, and registers the returned provider implementation into
+the same registry instance used by provider config validation and server
+startup.
+
+Plugin metadata `selected_version` means that a complete strict attempt
+successfully imported the provider package, selected the factory export,
+validated the provider contract, registered the implementation, and completed
+provider `readConfig`. Background updates record only `candidate_version`;
+serve and daemon may reject a bad candidate and retry selected-only with a fresh
+registry/config snapshot, while first-use configs without a selected generation
+fail loudly. A missing package, registry or installation failure, missing
+export, invalid provider contract, incomplete capability declaration, descriptor
+mismatch, or provider `readConfig` failure fails the relevant strict attempt
+with the selected provider ref.
 
 External `npm:` refs are never satisfied by ambient Node resolution: not a
 global install, `NODE_PATH`, the operator working directory, or Dreamux's own

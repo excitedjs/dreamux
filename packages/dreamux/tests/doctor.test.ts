@@ -7,9 +7,7 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-
 import { build as buildPlist } from 'plist';
-
 import {
   runDreamuxDoctor,
   type DreamuxDoctorResult,
@@ -34,7 +32,10 @@ import {
   testConfigFileObject,
   testSingleDispatcherFileObject,
 } from './helpers/config.js';
-
+import {
+  publishProviderPluginGenerationSync,
+  writeProviderPluginMetadataSync,
+} from './helpers/provider-plugin.js';
 class FakeRunner implements CommandRunner {
   systemdEnabled = false;
   systemdActive = false;
@@ -43,11 +44,9 @@ class FakeRunner implements CommandRunner {
   readonly nodeVersions = new Map<string, string>();
   readonly failedHelpCommands = new Set<string>();
   readonly calls: Array<{ command: string; args: string[] }> = [];
-
   async run(command: string, args: string[]): Promise<void> {
     this.calls.push({ command, args });
   }
-
   async check(command: string, args: string[]): Promise<boolean> {
     this.calls.push({ command, args });
     if (args[0] === '--help') return !this.failedHelpCommands.has(command);
@@ -63,7 +62,6 @@ class FakeRunner implements CommandRunner {
     }
     return false;
   }
-
   async capture(command: string, args: string[]): Promise<string> {
     this.calls.push({ command, args });
     if (args[0] === '--version') {
@@ -87,7 +85,6 @@ class FakeRunner implements CommandRunner {
     throw new Error(`unexpected capture: ${command} ${args.join(' ')}`);
   }
 }
-
 describe('dreamux doctor command', () => {
   let root: string;
   let oldConfigDir: string | undefined;
@@ -96,7 +93,6 @@ describe('dreamux doctor command', () => {
   let oldCodexBin: string | undefined;
   let oldDreamuxBin: string | undefined;
   let oldHome: string | undefined;
-
   beforeEach(() => {
     root = mkdtempSync(join(homedir(), '.dreamux-doctor-'));
     oldConfigDir = process.env['DREAMUX_CONFIG_DIR'];
@@ -112,7 +108,6 @@ describe('dreamux doctor command', () => {
     process.env['DREAMUX_BIN'] = '/usr/local/bin/dreamux';
     process.env['HOME'] = join(root, 'home');
   });
-
   afterEach(() => {
     restoreEnv('DREAMUX_CONFIG_DIR', oldConfigDir);
     restoreEnv('CODEX_HOST_RUNTIME_DIR', oldRuntimeDir);
@@ -123,20 +118,17 @@ describe('dreamux doctor command', () => {
     resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
   });
-
   it('reports global Codex home health', async () => {
     const runner = new FakeRunner();
     runner.nodeVersions.set('codex', 'codex-cli 0.137.0');
     writeConfig();
     writeDispatcherHome({ auth: true });
-
     const result = await runDreamuxDoctor({
       runner,
       platform: 'linux',
       homeDir: join(root, 'home'),
       env: {},
     });
-
     // The dispatcher workspace cwd contract (issue #182 PR-4) is diagnosed
     // per dispatcher; a configured cwd reports ok.
     expect(
@@ -157,20 +149,17 @@ describe('dreamux doctor command', () => {
       ),
     ).toBe(false);
   });
-
   it('fails loud when the Codex binary is below the 0.137 floor', async () => {
     const runner = new FakeRunner();
     runner.nodeVersions.set('codex', 'codex-cli 0.136.0');
     writeConfig();
     writeDispatcherHome({ auth: true });
-
     const result = await runDreamuxDoctor({
       runner,
       platform: 'linux',
       homeDir: join(root, 'home'),
       env: {},
     });
-
     expect(result.ok).toBe(false);
     const foreground = runtimeProviderReport(
       result,
@@ -183,7 +172,6 @@ describe('dreamux doctor command', () => {
       'requires codex >= 0.137.0',
     );
   });
-
   it('fails loud when a dispatcher declares no workspace cwd (#182 PR-4)', async () => {
     const runner = new FakeRunner();
     runner.nodeVersions.set('codex', 'codex-cli 0.137.0');
@@ -208,14 +196,12 @@ describe('dreamux doctor command', () => {
       { mode: 0o600 },
     );
     writeDispatcherHome({ auth: true });
-
     const result = await runDreamuxDoctor({
       runner,
       platform: 'linux',
       homeDir: join(root, 'home'),
       env: {},
     });
-
     const workspaceCheck = result.checks.find(
       (check) => check.name === 'dispatcher flow workspace',
     );
@@ -223,7 +209,6 @@ describe('dreamux doctor command', () => {
     expect(workspaceCheck?.detail).toMatch(/no configured `cwd`/);
     expect(result.ok).toBe(false);
   });
-
   it('does not fail the workspace check for a disabled dispatcher with no cwd (#182 PR-4, PR#186 P3)', async () => {
     const runner = new FakeRunner();
     runner.nodeVersions.set('codex', 'codex-cli 0.137.0');
@@ -250,21 +235,18 @@ describe('dreamux doctor command', () => {
       { mode: 0o600 },
     );
     writeDispatcherHome({ auth: true });
-
     const result = await runDreamuxDoctor({
       runner,
       platform: 'linux',
       homeDir: join(root, 'home'),
       env: {},
     });
-
     const workspaceCheck = result.checks.find(
       (check) => check.name === 'dispatcher flow workspace',
     );
     expect(workspaceCheck?.ok).toBe(true);
     expect(workspaceCheck?.detail).toMatch(/disabled/);
   });
-
   it('still preflights disabled dispatcher channel-binding state', async () => {
     const runner = new FakeRunner();
     runner.nodeVersions.set('codex', 'codex-cli 0.137.0');
@@ -338,14 +320,12 @@ describe('dreamux doctor command', () => {
         },
       ],
     });
-
     const result = await runDreamuxDoctor({
       runner,
       platform: 'linux',
       homeDir: join(root, 'home'),
       env: {},
     });
-
     expect(result.ok).toBe(false);
     expect(
       result.checks.find((check) => check.name === 'dispatcher flow workspace'),
@@ -359,22 +339,18 @@ describe('dreamux doctor command', () => {
       ),
     });
   });
-
   it('does not expose Feishu app secrets in doctor results', async () => {
     const runner = new FakeRunner();
     writeConfig();
     writeDispatcherHome({ auth: true });
-
     const result = await runDreamuxDoctor({
       runner,
       platform: 'linux',
       homeDir: join(root, 'home'),
       env: {},
     });
-
     expect(JSON.stringify(result)).not.toContain('secret-test');
   });
-
   it('reports missing npm provider plugins as diagnostics without installing', async () => {
     const runner = new FakeRunner();
     const configPath = join(root, 'config', 'config.json');
@@ -396,14 +372,12 @@ describe('dreamux doctor command', () => {
       { mode: 0o600 },
     );
     mkdirSync(stateRoot(), { recursive: true });
-
     const result = await runDreamuxDoctor({
       runner,
       platform: 'linux',
       homeDir: join(root, 'home'),
       env: {},
     });
-
     expect(result.checks.find((check) => check.name === 'config')).toMatchObject({
       ok: true,
     });
@@ -415,17 +389,55 @@ describe('dreamux doctor command', () => {
       ok: false,
       detail: expect.stringContaining('no selected generation'),
     });
-    const report = runtimeProviderReport(
-      result,
-      'flow',
-      'npm:@example/missing-runtime#provider',
-      'foreground',
-    );
-    expect(report?.result.ok).toBe(false);
-    expect(report?.result.detail).toContain('not runnable');
+    expect(result.dispatchers).toEqual([]);
     expect(runner.calls.some((call) => call.command === 'npm')).toBe(false);
   });
-
+  it('reports a selected provider plugin last update error as a warning detail', async () => {
+    const runner = new FakeRunner();
+    runner.nodeVersions.set('codex', 'codex-cli 0.137.0');
+    const packageName = '@example/doctor-runtime';
+    const providerRef = `npm:${packageName}#provider`;
+    const configPath = join(root, 'config', 'config.json');
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        testConfigFileObject({
+          agents: [{ id: 'flow', provider: providerRef, config: {} }],
+          dispatchers: [{ id: 'flow', cwd: defaultDispatcherCwd('flow'), agentRuntime: 'flow' }],
+        }),
+      ),
+      { mode: 0o600 },
+    );
+    publishProviderPluginGenerationSync({
+      packageName,
+      version: '1.0.0',
+    });
+    writeProviderPluginMetadataSync({
+      packageName,
+      version: '1.0.0',
+      checkedAt: 1000,
+      lastCheckError: 'registry temporarily unavailable',
+    });
+    mkdirSync(stateRoot(), { recursive: true });
+    writeDispatcherHome({ auth: true });
+    const result = await runDreamuxDoctor({
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+    });
+    expect(result.ok, JSON.stringify(result, null, 2)).toBe(true);
+    expect(
+      result.checks.find((check) => check.name === `provider plugin ${packageName}`),
+    ).toMatchObject({
+      ok: true,
+      detail: expect.stringContaining(
+        'last update error: registry temporarily unavailable',
+      ),
+    });
+    expect(runner.calls.some((call) => call.command === 'npm')).toBe(false);
+  });
   it('preflights non-closed Team cron stores', async () => {
     const runner = new FakeRunner();
     writeConfig();
@@ -436,14 +448,12 @@ describe('dreamux doctor command', () => {
     writeFileSync(cronPath, JSON.stringify({ version: 99, jobs: [] }), {
       mode: 0o600,
     });
-
     const result = await runDreamuxDoctor({
       runner,
       platform: 'linux',
       homeDir: join(root, 'home'),
       env: {},
     });
-
     expect(result.ok).toBe(false);
     expect(
       result.checks.find(
@@ -454,19 +464,16 @@ describe('dreamux doctor command', () => {
       detail: expect.stringContaining('not version 1'),
     });
   });
-
   it('checks a Claude Code runtime without requiring Codex home state', async () => {
     const runner = new FakeRunner();
     writeClaudeCodeConfig();
     mkdirSync(stateRoot(), { recursive: true });
-
     const result = await runDreamuxDoctor({
       runner,
       platform: 'linux',
       homeDir: join(root, 'home'),
       env: {},
     });
-
     expect(result.ok, JSON.stringify(result, null, 2)).toBe(true);
     expect(result.checks.find((check) => check.name === 'claude-code binary')).toMatchObject({
       ok: true,
@@ -492,7 +499,6 @@ describe('dreamux doctor command', () => {
     expect(runner.calls).toContainEqual({ command: 'claude', args: ['--help'] });
     expect(runner.calls).not.toContainEqual({ command: 'codex', args: ['--help'] });
   });
-
   it('checks managed-service dispatcher auth when a service is installed', async () => {
     const runner = new FakeRunner();
     writeConfig();
@@ -500,14 +506,12 @@ describe('dreamux doctor command', () => {
     const servicePath = join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service');
     mkdirSync(dirname(servicePath), { recursive: true });
     writeFileSync(servicePath, '[Service]\nExecStart=/usr/local/bin/dreamux serve\n');
-
     const result = await runDreamuxDoctor({
       runner,
       platform: 'linux',
       homeDir: join(root, 'home'),
       env: { CODEX_ACCESS_TOKEN: 'interactive-token-test' },
     });
-
     expect(result.ok).toBe(false);
     expect(
       runtimeProviderReport(result, 'flow', 'builtin:codex', 'foreground')
@@ -524,7 +528,6 @@ describe('dreamux doctor command', () => {
       'missing Codex auth state',
     );
   });
-
   it('checks the installed systemd service environment instead of recomputing it', async () => {
     const runner = new FakeRunner();
     writeConfig();
@@ -543,14 +546,12 @@ describe('dreamux doctor command', () => {
       ].join('\n'),
     );
     runner.nodeVersions.set('/service/node', 'v18.0.0');
-
     const result = await runDreamuxDoctor({
       runner,
       platform: 'linux',
       homeDir: join(root, 'home'),
       env: {},
     });
-
     expect(result.ok).toBe(false);
     expect(
       result.checks.find((check) => check.name === 'managed service Node binary'),
@@ -570,7 +571,6 @@ describe('dreamux doctor command', () => {
       '/service/codex\\x20literal',
     );
   });
-
   it('checks the managed-service Claude Code runtime binary when configured', async () => {
     const runner = new FakeRunner();
     runner.lingerEnabled = true;
@@ -589,14 +589,12 @@ describe('dreamux doctor command', () => {
       ].join('\n'),
     );
     runner.nodeVersions.set('/service/node', 'v22.7.0');
-
     const result = await runDreamuxDoctor({
       runner,
       platform: 'linux',
       homeDir: join(root, 'home'),
       env: {},
     });
-
     expect(result.ok, JSON.stringify(result, null, 2)).toBe(true);
     expect(
       result.checks.find(
@@ -606,7 +604,6 @@ describe('dreamux doctor command', () => {
     expect(runner.calls).toContainEqual({ command: 'claude', args: ['--help'] });
     expect(runner.calls).not.toContainEqual({ command: 'codex', args: ['--help'] });
   });
-
   it('warns (without failing) when the service Node is bound to a version manager', async () => {
     const runner = new FakeRunner();
     runner.lingerEnabled = true; // not under test here; keep the linger check green
@@ -636,14 +633,12 @@ describe('dreamux doctor command', () => {
       ].join('\n'),
     );
     runner.nodeVersions.set(nvmNode, 'v22.7.0');
-
     const result = await runDreamuxDoctor({
       runner,
       platform: 'linux',
       homeDir: join(root, 'home'),
       env: {},
     });
-
     // The Node runs today, so the binary check stays green and result.ok holds.
     expect(result.ok).toBe(true);
     expect(
@@ -658,7 +653,6 @@ describe('dreamux doctor command', () => {
       detail: expect.stringContaining('nvm'),
     });
   });
-
   it('flags a system-looking shim that realpaths into a version manager', async () => {
     const runner = new FakeRunner();
     runner.lingerEnabled = true; // not under test here; keep the linger check green
@@ -685,7 +679,6 @@ describe('dreamux doctor command', () => {
           ? '/Users/u/Library/Application Support/fnm/node-versions/v22/installation/bin/node'
           : path,
     };
-
     const result = await runDreamuxDoctor({
       runner,
       platform: 'linux',
@@ -693,7 +686,6 @@ describe('dreamux doctor command', () => {
       env: {},
       nodeProbe: shimProbe,
     });
-
     expect(result.ok).toBe(true);
     expect(
       result.checks.find(
@@ -701,7 +693,6 @@ describe('dreamux doctor command', () => {
       ),
     ).toMatchObject({ ok: true, severity: 'warn', detail: expect.stringContaining('fnm') });
   });
-
   it('does not warn when the service Node is a stable system path', async () => {
     const runner = new FakeRunner();
     writeConfig();
@@ -724,7 +715,6 @@ describe('dreamux doctor command', () => {
       isExecutable: async () => true,
       realpath: async (path) => path,
     };
-
     const result = await runDreamuxDoctor({
       runner,
       platform: 'linux',
@@ -732,14 +722,12 @@ describe('dreamux doctor command', () => {
       env: {},
       nodeProbe: stableProbe,
     });
-
     expect(
       result.checks.find(
         (check) => check.name === 'managed service Node stability',
       ),
     ).toBeUndefined();
   });
-
   it('checks the installed launchd plist environment instead of failing unconditionally', async () => {
     const runner = new FakeRunner();
     runner.launchdLoaded = true;
@@ -770,7 +758,6 @@ describe('dreamux doctor command', () => {
       }),
     );
     runner.nodeVersions.set('/service/node', 'v22.7.0');
-
     const result = await runDreamuxDoctor({
       runner,
       platform: 'darwin',
@@ -778,7 +765,6 @@ describe('dreamux doctor command', () => {
       uid: 501,
       env: {},
     });
-
     expect(result.ok, JSON.stringify(result, null, 2)).toBe(true);
     expect(result.service.environment).toMatchObject({
       DREAMUX_NODE_BIN: '/service/node',
@@ -799,14 +785,12 @@ describe('dreamux doctor command', () => {
       args: ['--help'],
     });
   });
-
   it('flags disabled systemd lingering on an installed service', async () => {
     const runner = new FakeRunner();
     runner.lingerEnabled = false;
     writeConfig();
     writeDispatcherHome({ auth: true });
     writeValidSystemdUnit();
-
     const result = await runDreamuxDoctor({
       runner,
       platform: 'linux',
@@ -814,20 +798,17 @@ describe('dreamux doctor command', () => {
       userName: 'someone',
       env: {},
     });
-
     const linger = result.checks.find((check) => check.name === 'systemd linger');
     expect(linger).toMatchObject({ ok: false });
     expect(linger?.detail).toContain('enable-linger');
     expect(result.ok).toBe(false);
   });
-
   it('passes the linger check when lingering is enabled', async () => {
     const runner = new FakeRunner();
     runner.lingerEnabled = true;
     writeConfig();
     writeDispatcherHome({ auth: true });
     writeValidSystemdUnit();
-
     const result = await runDreamuxDoctor({
       runner,
       platform: 'linux',
@@ -835,34 +816,28 @@ describe('dreamux doctor command', () => {
       userName: 'someone',
       env: {},
     });
-
     expect(result.checks.find((check) => check.name === 'systemd linger')).toMatchObject({
       ok: true,
     });
   });
-
   it('skips the linger check when no service is installed', async () => {
     const runner = new FakeRunner();
     writeConfig();
     writeDispatcherHome({ auth: true });
-
     const result = await runDreamuxDoctor({
       runner,
       platform: 'linux',
       homeDir: join(root, 'home'),
       env: {},
     });
-
     expect(result.checks.find((check) => check.name === 'systemd linger')).toBeUndefined();
   });
-
   it('runs per-agent diagnostics for both codex and claude dispatchers (#148)', async () => {
     // A config with one codex dispatcher and one claude dispatcher: each agent's
     // provider-self-reported diagnostic must run independently. The codex check
     // includes version + home validation; the claude check is bin-only.
     const runner = new FakeRunner();
     runner.nodeVersions.set('codex', 'codex-cli 0.137.0');
-
     // Write a config with two dispatchers, each backed by a different provider.
     const configPath = join(root, 'config', 'config.json');
     mkdirSync(dirname(configPath), { recursive: true });
@@ -913,20 +888,17 @@ describe('dreamux doctor command', () => {
       ),
       { mode: 0o600 },
     );
-
     // Provide codex-home state for the 'flow' dispatcher only.
     writeDispatcherHome({ auth: true });
     // Provide a minimal state dir so the docs dispatcher check doesn't fail for
     // missing state root (claude has no home requirement).
     mkdirSync(stateRoot(), { recursive: true });
-
     const result = await runDreamuxDoctor({
       runner,
       platform: 'linux',
       homeDir: join(root, 'home'),
       env: {},
     });
-
     // The codex dispatcher must have a per-dispatcher report with the codex provider.
     const codexReport = runtimeProviderReport(
       result,
@@ -936,7 +908,6 @@ describe('dreamux doctor command', () => {
     );
     expect(codexReport).toBeDefined();
     expect(codexReport?.result.ok).toBe(true);
-
     // The claude dispatcher must have a per-dispatcher report with the claude provider.
     const claudeReport = runtimeProviderReport(
       result,
@@ -948,12 +919,10 @@ describe('dreamux doctor command', () => {
     // claude-code diagnostic: no home state requirement, just bin check.
     expect(claudeReport?.result.ok).toBe(true);
     expect(claudeReport?.result.detail).toContain('no host-managed');
-
     // Global binary checks must include BOTH codex and claude bins (deduplicated).
     expect(runner.calls).toContainEqual({ command: 'codex', args: ['--help'] });
     expect(runner.calls).toContainEqual({ command: 'claude', args: ['--help'] });
   });
-
   function writeValidSystemdUnit(): void {
     const servicePath = join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service');
     mkdirSync(dirname(servicePath), { recursive: true });
@@ -969,7 +938,6 @@ describe('dreamux doctor command', () => {
       ].join('\n'),
     );
   }
-
   function writeConfig(): void {
     const configPath = join(root, 'config', 'config.json');
     mkdirSync(dirname(configPath), { recursive: true });
@@ -995,12 +963,10 @@ describe('dreamux doctor command', () => {
       { mode: 0o600 },
     );
   }
-
   function writeJson(path: string, value: unknown): void {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   }
-
   function writeClaudeCodeConfig(): void {
     const configPath = join(root, 'config', 'config.json');
     mkdirSync(dirname(configPath), { recursive: true });
@@ -1035,7 +1001,6 @@ describe('dreamux doctor command', () => {
       { mode: 0o600 },
     );
   }
-
   function writeTeamRecord(
     dispatcherId: string,
     teamId: string,
@@ -1056,7 +1021,6 @@ describe('dreamux doctor command', () => {
       { mode: 0o600 },
     );
   }
-
   function writeDispatcherHome(options: { auth: boolean }): void {
     mkdirSync(dispatcherCodexHome('flow'), { recursive: true });
     if (options.auth) {
@@ -1065,7 +1029,6 @@ describe('dreamux doctor command', () => {
     mkdirSync(stateRoot(), { recursive: true });
   }
 });
-
 function restoreEnv(name: string, value: string | undefined): void {
   if (value === undefined) {
     delete process.env[name];
@@ -1073,7 +1036,6 @@ function restoreEnv(name: string, value: string | undefined): void {
     process.env[name] = value;
   }
 }
-
 function runtimeProviderReport(
   result: DreamuxDoctorResult,
   dispatcherId: string,
@@ -1082,7 +1044,6 @@ function runtimeProviderReport(
 ): ProviderDiagnosticReport | undefined {
   return providerReport(result, dispatcherId, 'agentRuntime', provider, scope);
 }
-
 function providerReport(
   result: DreamuxDoctorResult,
   dispatcherId: string,

@@ -1,15 +1,12 @@
 import type { Argv, CommandModule } from 'yargs';
-
 import {
   runUninstall,
   type UninstallRunResult,
 } from '../../onboard/uninstall.js';
-
 interface UninstallArgv {
   dryRun?: boolean;
   configDir?: string;
 }
-
 export function createUninstallCommand(): CommandModule<{}, UninstallArgv> {
   return {
     command: 'uninstall',
@@ -31,10 +28,14 @@ export function createUninstallCommand(): CommandModule<{}, UninstallArgv> {
         configDir: argv.configDir,
       });
       printUninstallResult(result);
+      if (result.failures.length > 0) {
+        throw new Error(
+          `dreamux uninstall failed after ${result.failures.length} operation(s); see file ledger above`,
+        );
+      }
     },
   };
 }
-
 function printUninstallResult(result: UninstallRunResult): void {
   for (const warning of result.warnings) {
     console.error(`warning: ${warning}`);
@@ -43,9 +44,13 @@ function printUninstallResult(result: UninstallRunResult): void {
   for (const entry of result.entries) {
     const target =
       entry.targetPath === undefined ? '' : `\ttarget=${entry.targetPath}`;
-    console.log(`${entry.status}\t${entry.path}\t${entry.reason}${target}`);
+    const detail = entry.detail === undefined ? '' : `\tdetail=${entry.detail}`;
+    console.log(`${entry.status}\t${entry.path}\t${entry.reason}${target}${detail}`);
   }
   console.log(
     `dreamux uninstall service: ${result.service.platform} ${result.service.unitPath}`,
   );
+  for (const failure of result.failures) {
+    console.error(`failure: ${failure.path}: ${failure.reason}: ${failure.error}`);
+  }
 }

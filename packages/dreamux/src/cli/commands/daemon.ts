@@ -1,5 +1,4 @@
 import type { Argv, CommandModule } from 'yargs';
-
 import {
   runDaemonInstall,
   runDaemonUninstall,
@@ -17,22 +16,18 @@ import { ExecaCommandRunner } from '../../onboard/commands.js';
 import { validateDispatcherId } from '../../state/dispatcher-id.js';
 import { printServiceWarnings } from './service-output.js';
 import { noopHandler, type DreamuxCommand } from './types.js';
-
 interface DaemonInstallArgv {
   start?: boolean;
   dryRun?: boolean;
 }
-
 interface DaemonUninstallArgv {
   dryRun?: boolean;
 }
-
 interface DaemonRestartArgv {
   notifyResumed?: boolean;
   dispatcher?: string[];
   announce?: string;
 }
-
 export function createDaemonCommand(): CommandModule {
   return {
     command: 'daemon <command>',
@@ -51,7 +46,6 @@ export function createDaemonCommand(): CommandModule {
     handler: noopHandler,
   };
 }
-
 function createDaemonInstallCommand(): CommandModule<{}, DaemonInstallArgv> {
   return {
     command: 'install',
@@ -68,15 +62,22 @@ function createDaemonInstallCommand(): CommandModule<{}, DaemonInstallArgv> {
           describe: 'Print the planned actions without writing or registering',
         }) as Argv<DaemonInstallArgv>,
     handler: async (argv) => {
+      let printedWarnings = false;
       const result = await runDaemonInstall({
         startService: argv.start !== false,
         dryRun: argv.dryRun === true,
+        onWarnings: (warnings) => {
+          printedWarnings = true;
+          printProviderWarnings(warnings);
+        },
       });
-      printDaemonInstallResult(result);
+      printDaemonInstallResult({
+        ...result,
+        warnings: printedWarnings ? [] : result.warnings,
+      });
     },
   };
 }
-
 function createDaemonUninstallCommand(): CommandModule<{}, DaemonUninstallArgv> {
   return {
     command: 'uninstall',
@@ -97,7 +98,6 @@ function createDaemonUninstallCommand(): CommandModule<{}, DaemonUninstallArgv> 
     },
   };
 }
-
 function createDaemonStartCommand(): CommandModule {
   return {
     command: 'start',
@@ -105,7 +105,6 @@ function createDaemonStartCommand(): CommandModule {
     handler: async () => runDaemonControl('start'),
   };
 }
-
 function createDaemonStopCommand(): CommandModule {
   return {
     command: 'stop',
@@ -113,7 +112,6 @@ function createDaemonStopCommand(): CommandModule {
     handler: async () => runDaemonControl('stop'),
   };
 }
-
 function createDaemonRestartCommand(): CommandModule<{}, DaemonRestartArgv> {
   return {
     command: 'restart',
@@ -138,7 +136,6 @@ function createDaemonRestartCommand(): CommandModule<{}, DaemonRestartArgv> {
     handler: handleDaemonRestart,
   };
 }
-
 async function runDaemonControl(verb: DaemonVerb): Promise<void> {
   const result = await controlUserService(verb, {
     runner: new ExecaCommandRunner(),
@@ -150,13 +147,11 @@ async function runDaemonControl(verb: DaemonVerb): Promise<void> {
     `dreamux daemon ${verb}: ${result.platform}${issued === '' ? ' (no-op)' : ` (${issued})`}`,
   );
 }
-
 async function handleDaemonRestart(argv: DaemonRestartArgv): Promise<void> {
   if (argv.notifyResumed !== true) {
     await runDaemonControl('restart');
     return;
   }
-
   const targets = (argv.dispatcher ?? []).map((id) => validateDispatcherId(id));
   if (targets.length === 0) {
     throw new Error('--notify-resumed requires at least one --dispatcher <id>');
@@ -171,8 +166,8 @@ async function handleDaemonRestart(argv: DaemonRestartArgv): Promise<void> {
     runControl: () => runDaemonControl('restart'),
   });
 }
-
 function printDaemonInstallResult(result: DaemonInstallResult): void {
+  printProviderWarnings(result.warnings);
   console.log('dreamux daemon install file ledger:');
   for (const entry of result.files) {
     console.log(`${entry.status}\t${entry.path}\t${entry.reason}`);
@@ -181,4 +176,7 @@ function printDaemonInstallResult(result: DaemonInstallResult): void {
     `dreamux daemon install service: ${result.service.platform} ${result.service.unitPath}`,
   );
   printServiceWarnings(result.service.lingerEnabled, result.service.warnings);
+}
+function printProviderWarnings(warnings: readonly string[]): void {
+  for (const warning of warnings) console.error(`warning: ${warning}`);
 }

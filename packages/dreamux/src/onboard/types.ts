@@ -1,33 +1,28 @@
 import type { ProviderDiagnosticResult } from '@excitedjs/dreamux-types';
 import type { ProviderDiagnosticReport } from '../provider-diagnostics.js';
-
+import type { ConfigPathOverrides, ProviderRegistryFactory } from '../config/config.js';
+import type { ProviderPluginLoadSession } from '../registry/provider-plugin-store.js';
 export type OnboardFileStatus = 'created' | 'modified' | 'unchanged' | 'skipped';
-
 export interface OnboardFileLedgerEntry {
   path: string;
   status: OnboardFileStatus;
   reason: string;
 }
-
 export interface OnboardFileLedger {
   entries(): OnboardFileLedgerEntry[];
   record(path: string, status: OnboardFileStatus, reason: string): void;
 }
-
 export type ServicePlatform = 'launchd' | 'systemd';
-
 export interface OnboardAgentRuntimeConfig {
   id: string;
   provider: string;
   config: Record<string, unknown>;
 }
-
 export interface OnboardChannelConfig {
   id: string;
   provider: string;
   config: Record<string, unknown>;
 }
-
 export interface OnboardAnswers {
   configDir: string;
   dispatcherId: string;
@@ -39,11 +34,20 @@ export interface OnboardAnswers {
   dreamuxBin: string;
   dryRun: boolean;
 }
-
+export interface OnboardProviderContext {
+  registryFactory: ProviderRegistryFactory;
+  session: ProviderPluginLoadSession | null;
+  overrides: ConfigPathOverrides;
+  assertPluginsAvailable(raw: unknown, heading: string): Promise<void>;
+  rejectCandidates(): Promise<void>;
+}
+export interface CollectedOnboardAnswers {
+  answers: OnboardAnswers;
+  providerContext: OnboardProviderContext;
+}
 export interface OnboardDoctorResult extends ProviderDiagnosticResult {
   reports: ProviderDiagnosticReport[];
 }
-
 export interface OnboardRunResult {
   files: OnboardFileLedgerEntry[];
   doctor: OnboardDoctorResult;
@@ -58,7 +62,6 @@ export interface OnboardRunResult {
       }
     | null;
 }
-
 export interface CommandRunner {
   run(
     command: string,

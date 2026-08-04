@@ -1,13 +1,13 @@
 import { pathExists } from '../platform/fs-errors.js';
 import { homedir } from 'node:os';
-import { parseProviderRef } from '../registry/index.js';
-
 import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
 import {
   assertNoLegacyTomlOnly,
+  configFileShape,
+  createBuiltinProviderRegistry,
   globalConfigFile,
-  loadConfigJson,
-  loadConfig,
+  loadConfigJsonWithSession,
+  readConfigJson,
   stringifyConfig,
   type DreamuxConfig,
   type LoadConfigResult,
@@ -28,6 +28,14 @@ import {
   type ProviderDiagnosticCatalogs,
   type ProviderDiagnosticReport,
 } from '../provider-diagnostics.js';
+import { createOnboardProviderContext } from './wizard.js';
+import {
+  freshHostSnapshot,
+  hostAgentRefs,
+  hostChannelRefs,
+  validateHostConfig,
+  type HostConfig,
+} from '../config/host-config.js';
 import { ExecaCommandRunner } from './commands.js';
 import { dreamuxConfigFromAnswers } from './config-files.js';
 import {
@@ -49,17 +57,17 @@ import type {
   OnboardAnswers,
   OnboardDoctorResult,
   OnboardFileLedger,
+  OnboardProviderContext,
   OnboardRunResult,
 } from '../onboard/types.js';
-
 type EffectiveOnboardAnswers = OnboardAnswers & {
   nodeBin: string;
   providerBinChecks: ProviderBinCheck[];
   fallbackDirs: string[];
 };
-
 export interface RunOnboardOptions {
   answers: OnboardAnswers;
+  providerContext?: OnboardProviderContext;
   runner?: CommandRunner;
   ledger?: OnboardFileLedger;
   platform?: NodeJS.Platform;
@@ -70,7 +78,6 @@ export interface RunOnboardOptions {
   /** Optional Homebrew-directory presence probe (tests). */
   execDirProbe?: ExecDirProbe;
 }
-
 export async function runOnboard(
   options: RunOnboardOptions,
 ): Promise<OnboardRunResult> {
@@ -83,6 +90,15 @@ export async function runOnboard(
   const configPath = globalConfigFile({ configDir: answers.configDir });
   const existingConfig = await readExistingDreamuxConfig(answers.configDir);
   const dreamuxConfig = dreamuxConfigFromAnswers(answers, existingConfig);
+  const dreamuxConfigFileShape = configFileShape(dreamuxConfig);
+  const providerContext =
+    options.providerContext ??
+    (await directRunProviderContext({
+      raw: dreamuxConfigFileShape,
+      file: configPath,
+      configDir: answers.configDir,
+      dryRun: answers.dryRun,
+    }));
   const serviceNodeBin = answers.registerService && !answers.dryRun
     ? await selectServiceNodeBin({
         platform,
@@ -92,7 +108,6 @@ export async function runOnboard(
       })
     : process.execPath;
   setRuntimeConfig(dreamuxConfig);
-
   await ensureDirectory(answers.configDir, ledger, 'dreamux config directory', {
     dryRun: answers.dryRun,
   });
@@ -109,7 +124,6 @@ export async function runOnboard(
     'dreamux global config',
     { mode: 0o600, dryRun: answers.dryRun },
   );
-
   await ensureDirectory(
     dispatcherDir(answers.dispatcherId),
     ledger,
@@ -128,23 +142,27 @@ export async function runOnboard(
   // capability, so onboarding creates no skill dir or symlinks. Pre-existing old
   // symlinks are outside Dreamux-owned state and are left untouched; operators
   // may delete them manually.
-
-  const loaded = answers.dryRun
-    ? {
-        ...(await loadConfigJson(
-          JSON.parse(stringifyConfig(dreamuxConfig)) as unknown,
-          configPath,
-          {
-            configDir: answers.configDir,
-            providerPluginLoadMode: 'installed-only',
-          },
-        )),
-        configFile: configPath,
-      }
-    : await loadConfig({
+  let loaded: LoadConfigResult;
+  if (answers.dryRun) {
+    await providerContext.assertPluginsAvailable(
+      dreamuxConfigFileShape,
+      'dreamux onboard --dry-run cannot install npm provider plugins',
+    );
+  }
+  loaded = {
+    ...(await loadConfigJsonWithSession({
+      raw: dreamuxConfigFileShape,
+      file: configPath,
+      overrides: {
+        ...providerContext.overrides,
         configDir: answers.configDir,
-        providerPluginLoadMode: 'materialize',
-      });
+        providerRegistryFactory: providerContext.registryFactory,
+      },
+      session: providerContext.session,
+      commit: !answers.dryRun,
+    })),
+    configFile: configPath,
+  };
   setRuntimeConfig(loaded.config);
   const catalogs = catalogsFromLoadedConfig(loaded);
   const fallbackDirs = answers.registerService
@@ -175,7 +193,6 @@ export async function runOnboard(
     env,
     fallbackDirs,
   };
-
   const doctor = await runDispatcherDoctor(
     effectiveAnswers,
     loaded,
@@ -195,7 +212,6 @@ export async function runOnboard(
       throw new Error(formatServiceLaunchFailure(serviceLaunch.errors));
     }
   }
-
   const service = effectiveAnswers.registerService
     ? await installUserService({
         answers: effectiveAnswers,
@@ -206,14 +222,12 @@ export async function runOnboard(
         uid: options.uid,
       })
     : null;
-
   return {
     files: ledger.entries(),
     doctor,
     service,
   };
 }
-
 function formatServiceLaunchFailure(errors: string[]): string {
   return [
     'dreamux managed service launch environment is not ready',
@@ -221,18 +235,66 @@ function formatServiceLaunchFailure(errors: string[]): string {
     '- rerun dreamux onboard from the desired Node/runtime install, or pass explicit binary paths',
   ].join('\n');
 }
-
-async function readExistingDreamuxConfig(configDir: string) {
+async function readExistingDreamuxConfig(
+  configDir: string,
+): Promise<DreamuxConfig | undefined> {
   const configPath = globalConfigFile({ configDir });
   await assertNoLegacyTomlOnly({ configDir });
   if (!(await pathExists(configPath))) return undefined;
-  const loaded = await loadConfig({
-    configDir,
-    providerPluginLoadMode: 'installed-only',
-  });
-  return loaded.config;
+  const raw = await readConfigJson(configPath);
+  const host = validateHostConfig(raw, configPath);
+  return dreamuxConfigFromHost(freshHostSnapshot(host));
 }
-
+async function directRunProviderContext(input: {
+  raw: unknown;
+  file: string;
+  configDir: string;
+  dryRun: boolean;
+}): Promise<OnboardProviderContext> {
+  const host = validateHostConfig(input.raw, input.file);
+  return await createOnboardProviderContext({
+    agentRefs: hostAgentRefs(host),
+    channelRefs: hostChannelRefs(host),
+    registryFactory: createBuiltinProviderRegistry,
+    overrides: { configDir: input.configDir },
+    dryRun: input.dryRun,
+  });
+}
+function dreamuxConfigFromHost(host: HostConfig): DreamuxConfig {
+  const agents: DreamuxConfig['agents'] = {};
+  for (const agent of host.agents) {
+    agents[agent.id] = {
+      provider: agent.provider,
+      config: structuredClone(agent.rawConfig),
+      rawConfig: structuredClone(agent.rawConfig),
+    };
+  }
+  return {
+    agents,
+    dispatchers: host.dispatchers.map((dispatcher) => {
+      const runtime = agents[dispatcher.agentRuntime]!;
+      return {
+        id: dispatcher.id,
+        cwd: dispatcher.cwd,
+        enabled: dispatcher.enabled,
+        workspace: dispatcher.workspace,
+        channels: dispatcher.channels.map((channel) => ({
+          id: channel.id,
+          provider: channel.provider,
+          collaborationSpace: channel.collaborationSpace,
+          config: structuredClone(channel.rawConfig),
+          rawConfig: structuredClone(channel.rawConfig),
+        })),
+        agentRuntime: dispatcher.agentRuntime,
+        runtime: {
+          provider: runtime.provider,
+          config: structuredClone(runtime.config),
+          rawConfig: structuredClone(runtime.rawConfig ?? runtime.config),
+        },
+      };
+    }),
+  };
+}
 function catalogsFromLoadedConfig(
   loaded: LoadConfigResult,
 ): ProviderDiagnosticCatalogs {
@@ -245,7 +307,6 @@ function catalogsFromLoadedConfig(
     }),
   };
 }
-
 async function resolveProviderBinChecks(
   config: DreamuxConfig,
   catalogs: ProviderDiagnosticCatalogs,
@@ -271,7 +332,6 @@ async function resolveProviderBinChecks(
     })),
   );
 }
-
 async function runDispatcherDoctor(
   answers: EffectiveOnboardAnswers,
   loaded: LoadConfigResult,
@@ -280,22 +340,6 @@ async function runDispatcherDoctor(
   runner: CommandRunner,
 ): Promise<OnboardDoctorResult> {
   if (answers.dryRun) {
-    const selectedNpmPackages = selectedAnswerNpmPackages(answers);
-    const missingPlugins = loaded.providerPluginDiagnostics.filter(
-      (diagnostic) =>
-        !diagnostic.ok && selectedNpmPackages.has(diagnostic.packageName),
-    );
-    if (missingPlugins.length > 0) {
-      return {
-        ok: false,
-        errors: missingPlugins.map(
-          (diagnostic) =>
-            `provider plugin ${diagnostic.packageName}: ${diagnostic.error ?? 'no selected generation'}`,
-        ),
-        detail: 'dry run cannot install npm provider plugins',
-        reports: [],
-      };
-    }
     return {
       ok: true,
       errors: [],
@@ -334,20 +378,6 @@ async function runDispatcherDoctor(
     reports,
   };
 }
-
-function selectedAnswerNpmPackages(answers: EffectiveOnboardAnswers): Set<string> {
-  const refs = [
-    answers.agentRuntime.provider,
-    ...answers.channels.map((channel) => channel.provider),
-  ];
-  const packages = new Set<string>();
-  for (const raw of refs) {
-    const ref = parseProviderRef(raw);
-    if (ref.source === 'npm') packages.add(ref.package);
-  }
-  return packages;
-}
-
 function providerDiagnosticErrors(reports: ProviderDiagnosticReport[]): string[] {
   return reports.flatMap((report) => {
     const prefix = `${report.kind} ${report.id} (${report.provider})`;
@@ -357,7 +387,6 @@ function providerDiagnosticErrors(reports: ProviderDiagnosticReport[]): string[]
     return report.result.ok ? [] : [`${prefix}: ${report.result.detail}`];
   });
 }
-
 function formatDoctorFailure(
   answers: EffectiveOnboardAnswers,
   doctor: OnboardDoctorResult,

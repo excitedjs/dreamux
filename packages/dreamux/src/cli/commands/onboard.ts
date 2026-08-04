@@ -1,5 +1,4 @@
 import type { Argv, CommandModule } from 'yargs';
-
 import { runOnboard } from '../../onboard/run.js';
 import type { OnboardRunResult } from '../../onboard/types.js';
 import {
@@ -7,20 +6,18 @@ import {
   type OnboardCliOptions,
 } from '../../onboard/wizard.js';
 import { printServiceWarnings } from './service-output.js';
-
 export function createOnboardCommand(): CommandModule<{}, OnboardCliOptions> {
   return {
     command: 'onboard',
     describe: 'Run first-time setup',
     builder: buildOnboardOptions,
     handler: async (argv) => {
-      const answers = await collectOnboardAnswers(argv);
-      const result = await runOnboard({ answers });
+      const { answers, providerContext } = await collectOnboardAnswers(argv);
+      const result = await runOnboard({ answers, providerContext });
       printOnboardResult(result);
     },
   };
 }
-
 function buildOnboardOptions(y: Argv): Argv<OnboardCliOptions> {
   return y
     .option('yes', {
@@ -77,7 +74,6 @@ function buildOnboardOptions(y: Argv): Argv<OnboardCliOptions> {
       describe: 'Absolute dreamux bin path used by the service unit',
     }) as Argv<OnboardCliOptions>;
 }
-
 function printOnboardResult(result: OnboardRunResult): void {
   console.log('dreamux onboard file ledger:');
   for (const entry of result.files) {

@@ -1,81 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-const ioGates = vi.hoisted(() => {
-  interface Gate {
-    match: ((path: string) => boolean) | null;
-    path: string | null;
-    release: (() => void) | null;
-    started: (() => void) | null;
-    wait: Promise<void> | null;
-  }
-  const gate = (): Gate => ({
-    match: null,
-    path: null,
-    release: null,
-    started: null,
-    wait: null,
-  });
-  const state = {
-    mkdir: gate(),
-    writeFileAtomic: gate(),
-    reset() {
-      Object.assign(state.mkdir, gate());
-      Object.assign(state.writeFileAtomic, gate());
-    },
-  };
-  return state;
-});
-
-vi.mock('node:fs/promises', async () => {
-  const actual = await vi.importActual<typeof import('node:fs/promises')>(
-    'node:fs/promises',
-  );
-  return {
-    ...actual,
-    mkdir: async (
-      path: string | Buffer | URL,
-      options?: Parameters<typeof actual.mkdir>[1],
-    ) => {
-      const result = await actual.mkdir(path, options);
-      const text = String(path);
-      if (ioGates.mkdir.match?.(text)) {
-        ioGates.mkdir.path = text;
-        ioGates.mkdir.started?.();
-        if (ioGates.mkdir.wait !== null) await ioGates.mkdir.wait;
-      }
-      return result;
-    },
-  };
-});
-
-vi.mock('../src/platform/atomic-write.js', async () => {
-  const actual = await vi.importActual<typeof import('../src/platform/atomic-write.js')>(
-    '../src/platform/atomic-write.js',
-  );
-  return {
-    ...actual,
-    writeFileAtomic: async (
-      path: string,
-      data: string,
-      options?: { mode?: number },
-    ) => {
-      const result = await actual.writeFileAtomic(path, data, options);
-      if (ioGates.writeFileAtomic.match?.(path)) {
-        ioGates.writeFileAtomic.path = path;
-        ioGates.writeFileAtomic.started?.();
-        if (ioGates.writeFileAtomic.wait !== null) {
-          await ioGates.writeFileAtomic.wait;
-        }
-      }
-      return result;
-    },
-  };
-});
-
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, sep } from 'node:path';
-
+import { join } from 'node:path';
 import {
   ExecaProviderPluginNpmRunner,
   ProviderPluginStore,
@@ -91,7 +17,6 @@ import {
   providerPluginMetadataPath,
   providerPluginStagingDir,
 } from '../src/platform/paths.js';
-
 class FakeNpmRunner implements ProviderPluginNpmRunner {
   readonly installs: Array<{ packageName: string; version: string; cwd: string }> = [];
   readonly latestCalls: string[] = [];
@@ -103,7 +28,6 @@ class FakeNpmRunner implements ProviderPluginNpmRunner {
   onLatest: ((packageName: string) => Promise<void> | void) | null = null;
   onAfterInstallPackage: ((cwd: string) => Promise<void> | void) | null = null;
   private readonly latestWaiters: Array<() => void> = [];
-
   async latestVersion(packageName: string): Promise<string> {
     this.latestCalls.push(packageName);
     for (const waiter of this.latestWaiters.splice(0)) waiter();
@@ -111,7 +35,6 @@ class FakeNpmRunner implements ProviderPluginNpmRunner {
     if (this.failLatest) throw new Error('latest failed');
     return this.latest.get(packageName) ?? '1.0.0';
   }
-
   async installExact(input: {
     packageName: string;
     version: string;
@@ -125,7 +48,6 @@ class FakeNpmRunner implements ProviderPluginNpmRunner {
     await publishFakePackage(input.cwd, input.packageName, input.version);
     await this.onAfterInstallPackage?.(input.cwd);
   }
-
   async waitForLatestCalls(count: number): Promise<void> {
     if (this.latestCalls.length >= count) return;
     await new Promise<void>((resolve) => {
@@ -133,80 +55,125 @@ class FakeNpmRunner implements ProviderPluginNpmRunner {
     });
   }
 }
-
 describe('ProviderPluginStore', () => {
   let root: string;
-
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'dreamux-provider-plugins-'));
   });
-
   afterEach(async () => {
     vi.useRealTimers();
-    ioGates.reset();
     await rm(root, { recursive: true, force: true });
   });
-
-  it('installs a missing package, selects it, and imports through the bridge', async () => {
+  it('installs a missing package, commits the load session, and imports through the bridge', async () => {
     const runner = new FakeNpmRunner();
     runner.latest.set('@example/provider', '1.2.3');
     const store = new ProviderPluginStore({ root, runner, now: () => 1000 });
-
-    const version = await store.materializePackage('@example/provider');
+    const version = await prepareAndCommit(store, '@example/provider');
     const module = await store.importModule('@example/provider');
-
     expect(version).toBe('1.2.3');
     expect(runner.latestCalls).toEqual(['@example/provider']);
     expect(runner.installs).toHaveLength(1);
     expect(module['loadedFrom']).toBe('esm');
-    expect(JSON.parse(await readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'))).toMatchObject({
+    await expectMetadata(root, '@example/provider', {
       version: 1,
       selected_version: '1.2.3',
       last_check_completed_at: 1000,
     });
   });
-
   it('uses Node import conditional exports through the generation bridge', async () => {
     const packageName = '@example/import-conditions';
     const runner = new FakeNpmRunner();
     runner.latest.set(packageName, '1.0.0');
     const store = new ProviderPluginStore({ root, runner });
-
-    await store.materializePackage(packageName);
+    await prepareAndCommit(store, packageName);
     const module = await store.importModule(packageName);
-
     expect(module['condition']).toBe('import-only');
   });
-
+  it('reads additive v1 metadata fields as null when they are absent', async () => {
+    await publishGeneration(root, '@example/provider', '1.0.0');
+    await writeMetadata(root, '@example/provider', '1.0.0', 123);
+    const store = new ProviderPluginStore({ root, runner: new FakeNpmRunner() });
+    await expect(store.inspectPackages(['@example/provider'])).resolves.toEqual([
+      {
+        packageName: '@example/provider',
+        ok: true,
+        version: '1.0.0',
+        error: null,
+        lastCheckError: null,
+      },
+    ]);
+  });
   it('uses a complete selected generation without querying npm', async () => {
     await publishGeneration(root, '@example/provider', '1.0.0');
     await writeMetadata(root, '@example/provider', '1.0.0', 123);
     const runner = new FakeNpmRunner();
     const store = new ProviderPluginStore({ root, runner });
-
-    await expect(store.materializePackage('@example/provider')).resolves.toBe('1.0.0');
+    await expect(
+      store.createMaterializingSession(['@example/provider']).preparePackage(
+        '@example/provider',
+      ),
+    ).resolves.toBe('1.0.0');
     const module = await store.importModule('@example/provider');
-
     expect(module['loadedFrom']).toBe('esm');
     expect(runner.latestCalls).toEqual([]);
     expect(runner.installs).toEqual([]);
   });
-
+  it('commits a prepared first-use candidate only when the load session commits', async () => {
+    const runner = new FakeNpmRunner();
+    runner.latest.set('@example/provider', '1.0.0');
+    const store = new ProviderPluginStore({ root, runner, now: () => 1111 });
+    const session = store.createMaterializingSession(['@example/provider']);
+    await expect(session.preparePackage('@example/provider')).resolves.toBe('1.0.0');
+    await expectMetadata(root, '@example/provider', {
+      selected_version: null,
+      candidate_version: '1.0.0',
+      last_check_completed_at: 1111,
+      last_check_error: null,
+    });
+    await expect(store.importModule('@example/provider')).rejects.toThrow(
+      /no selected generation/,
+    );
+    await session.commit();
+    await expectMetadata(root, '@example/provider', {
+      selected_version: '1.0.0',
+      candidate_version: null,
+      last_check_completed_at: 1111,
+      last_check_error: null,
+    });
+    expect((await store.importModule('@example/provider'))['value']).toBe('1.0.0');
+  });
+  it('rejects a candidate without changing the selected generation or check error', async () => {
+    await publishGeneration(root, '@example/provider', '1.0.0', 'selected');
+    await publishGeneration(root, '@example/provider', '2.0.0', 'candidate');
+    await writeMetadata(root, '@example/provider', '1.0.0', 1000, {
+      candidateVersion: '2.0.0',
+      lastCheckError: 'previous background failure',
+    });
+    const store = new ProviderPluginStore({ root, runner: new FakeNpmRunner() });
+    const session = store.createMaterializingSession(['@example/provider']);
+    await expect(session.preparePackage('@example/provider')).resolves.toBe('2.0.0');
+    expect((await session.importModule('@example/provider'))['value']).toBe('candidate');
+    await session.rejectCandidates();
+    await expectMetadata(root, '@example/provider', {
+      selected_version: '1.0.0',
+      candidate_version: null,
+      last_check_completed_at: 1000,
+      last_check_error: 'previous background failure',
+    });
+    expect((await store.importModule('@example/provider'))['value']).toBe('selected');
+  });
   it('recovers a published generation that was not selected', async () => {
     await publishGeneration(root, '@example/provider', '2.0.0');
     const runner = new FakeNpmRunner();
     runner.latest.set('@example/provider', '2.0.0');
     const store = new ProviderPluginStore({ root, runner, now: () => 2000 });
-
-    await expect(store.materializePackage('@example/provider')).resolves.toBe('2.0.0');
-
+    await expect(prepareAndCommit(store, '@example/provider')).resolves.toBe('2.0.0');
     expect(runner.installs).toEqual([]);
-    expect(JSON.parse(await readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'))).toMatchObject({
+    await expectMetadata(root, '@example/provider', {
       selected_version: '2.0.0',
       last_check_completed_at: 2000,
     });
   });
-
   it('ignores incomplete staging content', async () => {
     const leftover = providerPluginStagingDir('@example/provider', 'leftover', root);
     await mkdir(leftover, {
@@ -219,60 +186,82 @@ describe('ProviderPluginStore', () => {
     const runner = new FakeNpmRunner();
     runner.latest.set('@example/provider', '1.0.0');
     const store = new ProviderPluginStore({ root, runner });
-
-    await store.materializePackage('@example/provider');
+    await prepareAndCommit(store, '@example/provider');
     const module = await store.importModule('@example/provider');
-
     expect(runner.installs).toHaveLength(1);
     expect(module['value']).toBe('1.0.0');
   });
-
+  it('prunes only package-local orphan staging entries older than one day', async () => {
+    const oldStaging = providerPluginStagingDir('@example/provider', 'old', root);
+    const recentStaging = providerPluginStagingDir('@example/provider', 'recent', root);
+    const otherPackageStaging = providerPluginStagingDir('@example/other', 'old', root);
+    await mkdir(oldStaging, { recursive: true });
+    await mkdir(recentStaging, { recursive: true });
+    await mkdir(otherPackageStaging, { recursive: true });
+    const old = new Date(1_000);
+    const recent = new Date(100_000);
+    await utimes(oldStaging, old, old);
+    await utimes(recentStaging, recent, recent);
+    await utimes(otherPackageStaging, old, old);
+    const runner = new FakeNpmRunner();
+    runner.latest.set('@example/provider', '1.0.0');
+    const store = new ProviderPluginStore({
+      root,
+      runner,
+      now: () => 1_000 + 24 * 60 * 60 * 1000 + 1,
+    });
+    await prepareAndCommit(store, '@example/provider');
+    await expect(readdir(oldStaging)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readdir(recentStaging)).resolves.toEqual([]);
+    await expect(readdir(otherPackageStaging)).resolves.toEqual([]);
+  });
   it('records settled failed background checks without changing selection', async () => {
     await publishGeneration(root, '@example/provider', '1.0.0');
-    await writeMetadata(root, '@example/provider', '1.0.0', 0);
+    await publishGeneration(root, '@example/provider', '1.5.0');
+    await writeMetadata(root, '@example/provider', '1.0.0', 0, {
+      candidateVersion: '1.5.0',
+    });
     const runner = new FakeNpmRunner();
     runner.failInstall = true;
     runner.latest.set('@example/provider', '2.0.0');
     const store = new ProviderPluginStore({ root, runner, now: () => 9000 });
-
     await store.checkForUpdate('@example/provider');
-
-    expect(JSON.parse(await readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'))).toMatchObject({
+    await expectMetadata(root, '@example/provider', {
       selected_version: '1.0.0',
+      candidate_version: '1.5.0',
       last_check_completed_at: 9000,
+      last_check_error: 'install failed',
     });
   });
-
-  it('records settled no-update background checks', async () => {
-    await publishGeneration(root, '@example/provider', '1.0.0');
-    await writeMetadata(root, '@example/provider', '1.0.0', 0);
-    const runner = new FakeNpmRunner();
-    runner.latest.set('@example/provider', '1.0.0');
-    const store = new ProviderPluginStore({ root, runner, now: () => 7000 });
-
-    await store.checkForUpdate('@example/provider');
-
-    expect(JSON.parse(await readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'))).toMatchObject({
-      selected_version: '1.0.0',
-      last_check_completed_at: 7000,
-    });
+  it('applies successful background update state-table transitions', async () => {
+    const cases = [
+      { name: '@example/no-update', latest: '1.0.0', selectedValue: '1.0.0', candidate: '1.5.0', expected: null, now: 7000 },
+      { name: '@example/same-candidate', latest: '2.0.0', selectedValue: '1.0.0', candidate: '2.0.0', expected: '2.0.0', now: 8000 },
+      { name: '@example/new-candidate', latest: '2.0.0', selectedValue: 'old', candidate: null, expected: '2.0.0', now: 10_000 },
+    ];
+    for (const testCase of cases) {
+      await publishGeneration(root, testCase.name, '1.0.0', testCase.selectedValue);
+      if (testCase.candidate !== null) await publishGeneration(root, testCase.name, testCase.candidate);
+      await writeMetadata(root, testCase.name, '1.0.0', 0, {
+        lastCheckError: 'stale error',
+      });
+      const runner = new FakeNpmRunner();
+      runner.latest.set(testCase.name, testCase.latest);
+      const store = new ProviderPluginStore({ root, runner, now: () => testCase.now });
+      const before = await store.importModule(testCase.name);
+      await store.checkForUpdate(testCase.name);
+      const after = await store.importModule(testCase.name);
+      if (testCase.candidate === testCase.latest) expect(runner.installs).toEqual([]);
+      expect(before['value']).toBe(testCase.selectedValue);
+      expect(after['value']).toBe(testCase.selectedValue);
+      await expectMetadata(root, testCase.name, {
+        selected_version: '1.0.0',
+        candidate_version: testCase.expected,
+        last_check_completed_at: testCase.now,
+        last_check_error: null,
+      });
+    }
   });
-
-  it('selects a newer generation for the next process without changing imported old module', async () => {
-    await publishGeneration(root, '@example/provider', '1.0.0', 'old');
-    await writeMetadata(root, '@example/provider', '1.0.0', 0);
-    const runner = new FakeNpmRunner();
-    runner.latest.set('@example/provider', '2.0.0');
-    const store = new ProviderPluginStore({ root, runner, now: () => 10_000 });
-
-    const oldModule = await store.importModule('@example/provider');
-    await store.checkForUpdate('@example/provider');
-    const nextModule = await store.importModule('@example/provider');
-
-    expect(oldModule['value']).toBe('old');
-    expect(nextModule['value']).toBe('2.0.0');
-  });
-
   it('honors persisted four-hour check timing', async () => {
     await publishGeneration(root, '@example/provider', '1.0.0');
     await writeMetadata(root, '@example/provider', '1.0.0', 1000);
@@ -281,34 +270,27 @@ describe('ProviderPluginStore', () => {
       runner: new FakeNpmRunner(),
       now: () => 1000 + PROVIDER_PLUGIN_UPDATE_INTERVAL_MS - 10,
     });
-
     await expect(store.nextUpdateDelay(['@example/provider'])).resolves.toBe(10);
   });
-
   it('does not immediately recheck after first materialization in the same process', async () => {
     vi.useFakeTimers();
     const runner = new FakeNpmRunner();
     runner.latest.set('@example/provider', '1.0.0');
     const store = new ProviderPluginStore({ root, runner, now: () => 1000 });
-
-    await store.materializePackage('@example/provider');
+    await prepareAndCommit(store, '@example/provider');
     store.startUpdater(['@example/provider']);
     await vi.advanceTimersByTimeAsync(0);
-
     expect(runner.latestCalls).toEqual(['@example/provider']);
     await store.closeUpdater();
   });
-
   it('does not start an updater timer for an empty package set', async () => {
     vi.useFakeTimers();
     const runner = new FakeNpmRunner();
     const store = new ProviderPluginStore({ root, runner });
-
     store.startUpdater([]);
     expect(vi.getTimerCount()).toBe(0);
     await store.closeUpdater();
   });
-
   it('logs and rearms after a non-abort updater store error', async () => {
     vi.useFakeTimers();
     const runner = new FakeNpmRunner();
@@ -336,12 +318,10 @@ describe('ProviderPluginStore', () => {
         }
       }),
     });
-
     try {
       store.startUpdater(['@example/provider']);
       await vi.advanceTimersByTimeAsync(0);
       await warningsSettled;
-
       expect(warnings).toEqual(
         expect.arrayContaining([
           expect.stringContaining('provider plugin update check failed'),
@@ -359,7 +339,6 @@ describe('ProviderPluginStore', () => {
       await store.closeUpdater();
     }
   });
-
   it('aborts an in-flight update without advancing metadata', async () => {
     await publishGeneration(root, '@example/provider', '1.0.0');
     await writeMetadata(root, '@example/provider', '1.0.0', 0);
@@ -370,20 +349,17 @@ describe('ProviderPluginStore', () => {
       releaseInstall = resolve;
     });
     const store = new ProviderPluginStore({ root, runner });
-
     store.startUpdater(['@example/provider']);
     await waitUntil(() => runner.installSignal !== null);
     const close = store.closeUpdater();
     expect(runner.installSignal?.aborted).toBe(true);
     releaseInstall();
     await close;
-
-    expect(JSON.parse(await readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'))).toMatchObject({
+    await expectMetadata(root, '@example/provider', {
       selected_version: '1.0.0',
       last_check_completed_at: 0,
     });
   });
-
   it('does not start update work when closed during deferred scheduling', async () => {
     vi.useFakeTimers();
     let releaseDelay!: () => void;
@@ -400,14 +376,12 @@ describe('ProviderPluginStore', () => {
       markDelayStarted();
       return await delay;
     });
-
     store.startUpdater(['@example/provider']);
     await vi.advanceTimersByTimeAsync(0);
     await delayStarted;
     const close = store.closeUpdater();
     releaseDelay();
     await close;
-
     expect(runner.latestCalls).toEqual([]);
     expect(runner.installs).toEqual([]);
     await expect(
@@ -422,178 +396,6 @@ describe('ProviderPluginStore', () => {
       ),
     ).rejects.toMatchObject({ code: 'ENOENT' });
   });
-
-  it('does not install when closed during generation inspection', async () => {
-    vi.useFakeTimers();
-    await publishGeneration(root, '@example/provider', '1.0.0');
-    await writeMetadata(root, '@example/provider', '1.0.0', 0);
-    const runner = new FakeNpmRunner();
-    runner.latest.set('@example/provider', '2.0.0');
-    const store = new ProviderPluginStore({ root, runner });
-    let releaseInspection!: () => void;
-    let markInspectionStarted!: () => void;
-    const inspectionStarted = new Promise<void>((resolve) => {
-      markInspectionStarted = resolve;
-    });
-    const inspection = new Promise<void>((resolve) => {
-      releaseInspection = resolve;
-    });
-    const probe = store as unknown as {
-      generationUsable(packageName: string, version: string): Promise<boolean>;
-    };
-    probe.generationUsable = async () => {
-      markInspectionStarted();
-      await inspection;
-      return false;
-    };
-
-    store.startUpdater(['@example/provider']);
-    await vi.advanceTimersByTimeAsync(0);
-    await inspectionStarted;
-    const close = store.closeUpdater();
-    releaseInspection();
-    await close;
-
-    expect(runner.latestCalls).toEqual(['@example/provider']);
-    expect(runner.installs).toEqual([]);
-    await expect(
-      readdir(dirname(providerPluginStagingDir('@example/provider', 'unused', root))),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(
-      readFile(
-        providerPluginGenerationRootPackageJsonPath(
-          providerPluginGenerationDir('@example/provider', '2.0.0', root),
-        ),
-        'utf8',
-      ),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-    expect(JSON.parse(await readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'))).toMatchObject({
-      selected_version: '1.0.0',
-      last_check_completed_at: 0,
-    });
-  });
-
-  it('does not call npm when closed during internal metadata read', async () => {
-    vi.useFakeTimers();
-    await publishGeneration(root, '@example/provider', '1.0.0');
-    await writeMetadata(root, '@example/provider', '1.0.0', 0);
-    const runner = new FakeNpmRunner();
-    runner.latest.set('@example/provider', '2.0.0');
-    const store = new ProviderPluginStore({ root, runner });
-    store.nextUpdateDelay = vi.fn(async () => 0);
-    let releaseRead!: () => void;
-    let markReadStarted!: () => void;
-    const readStarted = new Promise<void>((resolve) => {
-      markReadStarted = resolve;
-    });
-    const readGate = new Promise<void>((resolve) => {
-      releaseRead = resolve;
-    });
-    const probe = store as unknown as {
-      readMetadata(packageName: string): Promise<unknown>;
-    };
-    const original = probe.readMetadata.bind(store);
-    probe.readMetadata = async (packageName) => {
-      markReadStarted();
-      await readGate;
-      return await original(packageName);
-    };
-
-    store.startUpdater(['@example/provider']);
-    await vi.advanceTimersByTimeAsync(0);
-    await readStarted;
-    const close = store.closeUpdater();
-    releaseRead();
-    await close;
-
-    expect(runner.latestCalls).toEqual([]);
-    expect(runner.installs).toEqual([]);
-    expect(JSON.parse(await readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'))).toMatchObject({
-      selected_version: '1.0.0',
-      last_check_completed_at: 0,
-    });
-    await expect(
-      readdir(dirname(providerPluginStagingDir('@example/provider', 'unused', root))),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-  });
-
-  it('does not write a manifest when closed after staging mkdir completes', async () => {
-    vi.useFakeTimers();
-    const runner = new FakeNpmRunner();
-    runner.latest.set('@example/provider', '2.0.0');
-    const gate = gateMkdir((path) =>
-      path.includes(`${sep}staging${sep}`) && path.includes('1234-'),
-    );
-    const store = new ProviderPluginStore({ root, runner, now: () => 1234 });
-
-    store.startUpdater(['@example/provider']);
-    await vi.advanceTimersByTimeAsync(0);
-    await gate.started;
-    const close = store.closeUpdater();
-    gate.release();
-    await close;
-
-    expect(runner.latestCalls).toEqual(['@example/provider']);
-    expect(runner.installs).toEqual([]);
-    expect(ioGates.mkdir.path).toContain(`${sep}staging${sep}1234-`);
-    const staging = ioGates.mkdir.path!;
-    await expect(
-      readFile(providerPluginGenerationRootPackageJsonPath(staging), 'utf8'),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(
-      readFile(providerPluginGenerationRootBridgePath(staging), 'utf8'),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(
-      readFile(
-        providerPluginGenerationRootPackageJsonPath(
-          providerPluginGenerationDir('@example/provider', '2.0.0', root),
-        ),
-        'utf8',
-      ),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(
-      readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-  });
-
-  it('does not call npm when closed after staging manifest write completes', async () => {
-    vi.useFakeTimers();
-    const runner = new FakeNpmRunner();
-    runner.latest.set('@example/provider', '2.0.0');
-    const gate = gateWriteFileAtomic((path) =>
-      path.endsWith(`${sep}package.json`) &&
-      path.includes(`${sep}staging${sep}1234-`),
-    );
-    const store = new ProviderPluginStore({ root, runner, now: () => 1234 });
-
-    store.startUpdater(['@example/provider']);
-    await vi.advanceTimersByTimeAsync(0);
-    await gate.started;
-    const close = store.closeUpdater();
-    gate.release();
-    await close;
-
-    expect(runner.latestCalls).toEqual(['@example/provider']);
-    expect(runner.installs).toEqual([]);
-    const manifest = ioGates.writeFileAtomic.path!;
-    await expect(readFile(manifest, 'utf8')).resolves.toContain('@example/provider');
-    const staging = dirname(manifest);
-    await expect(
-      readFile(providerPluginGenerationRootBridgePath(staging), 'utf8'),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(
-      readFile(
-        providerPluginGenerationRootPackageJsonPath(
-          providerPluginGenerationDir('@example/provider', '2.0.0', root),
-        ),
-        'utf8',
-      ),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(
-      readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-  });
-
   it('does not publish or select when aborted after npm installs before publication', async () => {
     await publishGeneration(root, '@example/provider', '1.0.0');
     await writeMetadata(root, '@example/provider', '1.0.0', 0);
@@ -604,11 +406,9 @@ describe('ProviderPluginStore', () => {
       controller.abort(new Error('stop after npm install'));
     };
     const store = new ProviderPluginStore({ root, runner });
-
     await expect(
       store.checkForUpdate('@example/provider', controller.signal),
     ).rejects.toThrow(/stop after npm install/);
-
     await expect(
       readFile(
         providerPluginGenerationRootPackageJsonPath(
@@ -617,52 +417,11 @@ describe('ProviderPluginStore', () => {
         'utf8',
       ),
     ).rejects.toMatchObject({ code: 'ENOENT' });
-    expect(JSON.parse(await readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'))).toMatchObject({
+    await expectMetadata(root, '@example/provider', {
       selected_version: '1.0.0',
       last_check_completed_at: 0,
     });
   });
-
-  it('does not write a bridge when aborted after installed-package verification', async () => {
-    const controller = new AbortController();
-    const runner = new FakeNpmRunner();
-    runner.latest.set('@example/provider', '2.0.0');
-    const store = new ProviderPluginStore({ root, runner });
-    const probe = store as unknown as {
-      assertInstalledPackage(
-        generationRoot: string,
-        packageName: string,
-        version: string,
-      ): Promise<void>;
-    };
-    const original = probe.assertInstalledPackage.bind(store);
-    probe.assertInstalledPackage = async (...args) => {
-      await original(...args);
-      controller.abort(new Error('stop after package verification'));
-    };
-
-    await expect(
-      store.materializePackage('@example/provider', controller.signal),
-    ).rejects.toThrow(/stop after package verification/);
-
-    expect(runner.installs).toHaveLength(1);
-    const staging = runner.installs[0]!.cwd;
-    await expect(
-      readFile(providerPluginGenerationRootBridgePath(staging), 'utf8'),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(
-      readFile(
-        providerPluginGenerationRootPackageJsonPath(
-          providerPluginGenerationDir('@example/provider', '2.0.0', root),
-        ),
-        'utf8',
-      ),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(
-      readFile(providerPluginMetadataPath('@example/provider', root), 'utf8'),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
-  });
-
   it('npm runner rejects already-aborted signals before spawning npm', async () => {
     const calls: unknown[] = [];
     const runner = new ExecaProviderPluginNpmRunner(
@@ -673,7 +432,6 @@ describe('ProviderPluginStore', () => {
     );
     const controller = new AbortController();
     controller.abort(new Error('already closed'));
-
     await expect(
       runner.latestVersion('@example/provider', controller.signal),
     ).rejects.toThrow(/already closed/);
@@ -687,7 +445,6 @@ describe('ProviderPluginStore', () => {
     ).rejects.toThrow(/already closed/);
     expect(calls).toEqual([]);
   });
-
   it('npm runner uses abortable npm commands with explicit lockfile generation', async () => {
     const calls: unknown[] = [];
     const runner = new ExecaProviderPluginNpmRunner(
@@ -697,7 +454,6 @@ describe('ProviderPluginStore', () => {
       },
     );
     const controller = new AbortController();
-
     await runner.latestVersion('@example/provider', controller.signal);
     await runner.installExact({
       packageName: '@example/provider',
@@ -705,7 +461,6 @@ describe('ProviderPluginStore', () => {
       cwd: '/tmp/dreamux-provider-install',
       signal: controller.signal,
     });
-
     expect(calls[0]).toEqual([
       'npm',
       ['view', '@example/provider', 'dist-tags.latest', '--json'],
@@ -725,7 +480,6 @@ describe('ProviderPluginStore', () => {
     ]);
   });
 });
-
 async function publishGeneration(
   root: string,
   packageName: string,
@@ -744,7 +498,6 @@ async function publishGeneration(
     `const namespace = await import(${JSON.stringify(packageName)});\nexport default namespace;\n`,
   );
 }
-
 async function publishFakePackage(
   root: string,
   packageName: string,
@@ -782,12 +535,15 @@ async function publishFakePackage(
   await writeFile(join(pkgDir, 'default.js'), "export const condition = 'default';\n");
   await writeFile(providerPluginGenerationRootLockfilePath(root), '{}\n');
 }
-
 async function writeMetadata(
   root: string,
   packageName: string,
   version: string,
   checkedAt: number,
+  options: {
+    candidateVersion?: string | null;
+    lastCheckError?: string | null;
+  } = {},
 ): Promise<void> {
   await mkdir(providerPluginGenerationDir(packageName, version, root), {
     recursive: true,
@@ -800,11 +556,25 @@ async function writeMetadata(
     `${JSON.stringify({
       version: 1,
       selected_version: version,
+      ...(options.candidateVersion === undefined
+        ? {}
+        : { candidate_version: options.candidateVersion }),
       last_check_completed_at: checkedAt,
+      ...(options.lastCheckError === undefined
+        ? {}
+        : { last_check_error: options.lastCheckError }),
     })}\n`,
   );
 }
-
+async function expectMetadata(
+  root: string,
+  packageName: string,
+  expected: Record<string, unknown>,
+): Promise<void> {
+  expect(
+    JSON.parse(await readFile(providerPluginMetadataPath(packageName, root), 'utf8')),
+  ).toMatchObject(expected);
+}
 async function waitUntil(predicate: () => boolean): Promise<void> {
   for (let i = 0; i < 50; i++) {
     if (predicate()) return;
@@ -812,44 +582,6 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
   }
   throw new Error('condition was not reached');
 }
-
-function gateMkdir(match: (path: string) => boolean): {
-  started: Promise<void>;
-  release: () => void;
-} {
-  return configureGate(ioGates.mkdir, match);
-}
-
-function gateWriteFileAtomic(match: (path: string) => boolean): {
-  started: Promise<void>;
-  release: () => void;
-} {
-  return configureGate(ioGates.writeFileAtomic, match);
-}
-
-function configureGate(
-  gate: {
-    match: ((path: string) => boolean) | null;
-    release: (() => void) | null;
-    started: (() => void) | null;
-    wait: Promise<void> | null;
-  },
-  match: (path: string) => boolean,
-): { started: Promise<void>; release: () => void } {
-  let release!: () => void;
-  let markStarted!: () => void;
-  const started = new Promise<void>((resolve) => {
-    markStarted = resolve;
-  });
-  gate.match = match;
-  gate.started = markStarted;
-  gate.wait = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  gate.release = release;
-  return { started, release };
-}
-
 function fakeLogger(
   warnings: string[],
   onWarn?: (message: string) => void,
@@ -869,4 +601,13 @@ function fakeLogger(
     debug: noop,
     trace: noop,
   };
+}
+async function prepareAndCommit(
+  store: ProviderPluginStore,
+  packageName: string,
+): Promise<string> {
+  const session = store.createMaterializingSession([packageName]);
+  const version = await session.preparePackage(packageName);
+  await session.commit();
+  return version;
 }
