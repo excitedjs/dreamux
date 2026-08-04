@@ -1,6 +1,9 @@
 # Local provider plugin store
 
-- **Status:** Implemented; current owner docs are
+- **Status:** Implemented in the current PR branch; candidate promotion and
+  config-load ownership are under active correction in
+  [Provider plugin load-session hardening](../../proposals/provider-plugin-load-session-hardening.md).
+  Current owner docs are
   [Current architecture](../../reference/current-architecture.md),
   [State and paths](../../reference/state-and-paths.md), and
   [Provider references and capability registry](../../decisions/provider-references-and-capability-registry.md)
