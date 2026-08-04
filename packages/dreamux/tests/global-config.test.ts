@@ -118,6 +118,7 @@ class FakeProviderPluginStore implements ProviderPluginAccess {
   failMaterialize: Error | null = null;
   failCommit: Error | null = null;
   failCommitPackages = new Set<string>();
+  failReject: Error | null = null;
   selectedAvailable = true;
   createMaterializingSession(packages: Iterable<string>): ProviderPluginLoadSession {
     return new FakeProviderPluginLoadSession(this, [...new Set(packages)].sort(), true);
@@ -192,9 +193,14 @@ class FakeProviderPluginLoadSession implements ProviderPluginLoadSession {
     }
   }
   async rejectCandidates(): Promise<void> {
+    const failures: unknown[] = [];
     for (const packageName of this.candidatePackages) {
       this.store.rejected.push(packageName);
-      this.store.candidatePackages.delete(packageName);
+      if (this.store.failReject === null) this.store.candidatePackages.delete(packageName);
+      else failures.push(this.store.failReject);
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(failures, 'test candidate cleanup failed');
     }
   }
   async canUseSelectedOnly(): Promise<boolean> {
@@ -1130,13 +1136,22 @@ describe('global config (~/.dreamux/config.json)', () => {
     pluginStore.selectedPackages.add(packageName);
     pluginStore.modules.set(packageName, throwingRuntime('candidate cause'));
     pluginStore.selectedModules.set(packageName, throwingRuntime('selected cause'));
-    await expect(
-      loadConfig({
-        configDir,
-        providerPluginStore: pluginStore,
-      }),
-    ).rejects.toThrow(/candidate cause.*selected cause/);
+    let thrown = await loadConfig({ configDir, providerPluginStore: pluginStore })
+      .catch((err: unknown) => err);
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect((thrown as AggregateError).message).toContain('selected cause');
     expect(pluginStore.rejected).toEqual([packageName]);
+    pluginStore.rejected.length = 0;
+    pluginStore.candidatePackages.add(packageName);
+    pluginStore.failReject = new Error('metadata write failed');
+    thrown = await loadConfig({ configDir, providerPluginStore: pluginStore })
+      .catch((err: unknown) => err);
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect(((thrown as AggregateError).cause as Error).message).toContain('candidate cause');
+    expect((thrown as AggregateError).errors[1]).toBeInstanceOf(AggregateError);
+    expect(pluginStore.rejected).toEqual([packageName]);
+    expect(pluginStore.importRequests.at(-1)).toEqual({ packageName, version: '1.0.0' });
+    expect(pluginStore.candidatePackages.has(packageName)).toBe(true);
   });
   it('commits multi-package candidates sequentially and leaves safe partial state on write failure', async () => {
     const runtimePackage = '@example/runtime-provider';

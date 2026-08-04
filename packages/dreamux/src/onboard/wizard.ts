@@ -26,6 +26,7 @@ import {
   createProviderPluginSession,
   assertProviderPluginsAvailableForDryRun,
   loadProviderPluginsForConfig,
+  rejectProviderPluginCandidatesAfterFailure,
 } from '../config/provider-plugin-loading.js';
 import {
   BUILTIN_CODEX_PROVIDER_REF,
@@ -191,7 +192,7 @@ export async function answersFromOptions(
     };
     return { answers, providerContext };
   } catch (err) {
-    await providerContext.rejectCandidates();
+    await rejectProviderPluginCandidatesAfterFailure(providerContext.session, err);
     throw err;
   }
 }
@@ -272,7 +273,7 @@ async function loadSelectedProviders(
     });
     return context;
   } catch (err) {
-    await context.rejectCandidates();
+    await rejectProviderPluginCandidatesAfterFailure(context.session, err);
     throw err;
   }
 }
@@ -301,9 +302,6 @@ export async function createOnboardProviderContext(input: {
         heading,
         checkedPackages,
       });
-    },
-    async rejectCandidates() {
-      await session?.rejectCandidates();
     },
   };
 }

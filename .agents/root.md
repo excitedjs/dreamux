@@ -107,12 +107,6 @@ history and rationale; when you need current behavior, pair them with
 
 ## Active Proposals
 
-- [Provider plugin load-session hardening](proposals/provider-plugin-load-session-hardening.md)
-  — PR #308 follow-up that makes selected generations fully validated,
-  stages background candidates, separates strict config loading from
-  non-materializing inspection, bounds staging cleanup, and removes defensive
-  uninstall/test machinery.
-
 - [AgentRuntime input surface cleanup](proposals/agent-runtime-input-surface-cleanup.md)
   — draft technical design for narrowing the provider-facing runtime input
   surface: plain text `completionInput` for non-channel turns, `channelInput`

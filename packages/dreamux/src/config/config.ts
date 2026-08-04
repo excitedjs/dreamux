@@ -30,6 +30,7 @@ import {
 import {
   loadProviderPluginsForConfig,
   createProviderPluginSession,
+  rejectProviderPluginCandidatesAfterFailure,
 } from './provider-plugin-loading.js';
 import {
   hostAgentRefs,
@@ -168,7 +169,7 @@ export async function loadConfigJsonWithSession(input: {
     session: input.session,
   });
   if (attempt.ok === false) {
-    await input.session?.rejectCandidates();
+    await rejectProviderPluginCandidatesAfterFailure(input.session, attempt.error);
     throw attempt.error;
   }
   if (input.commit) await attempt.result.session?.commit();
@@ -283,7 +284,7 @@ async function readConfigValue(
     options.allowSelectedFallback &&
     isCandidateBackedProviderFailure(attempt.error, session)
   ) {
-    await session.rejectCandidates();
+    await rejectProviderPluginCandidatesAfterFailure(session, attempt.error);
     if (await session.canUseSelectedOnly()) {
       const retrySession = session.selectedOnly();
       const retry = await strictConfigAttempt({

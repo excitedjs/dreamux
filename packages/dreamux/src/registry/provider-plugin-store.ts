@@ -533,8 +533,25 @@ class StoreProviderPluginLoadSession implements ProviderPluginLoadSession {
     }
   }
   async rejectCandidates(): Promise<void> {
+    const failures: unknown[] = [];
     for (const [packageName, entry] of this.prepared) {
-      if (entry.source === 'candidate') await this.ops.rejectCandidate(packageName, entry.version);
+      if (entry.source !== 'candidate') continue;
+      try {
+        await this.ops.rejectCandidate(packageName, entry.version);
+      } catch (err) {
+        const failure = new Error(
+          `failed to reject provider plugin candidate ${packageName}@${entry.version}: ${pluginErrorMessage(err)}`,
+          { cause: err },
+        );
+        Object.assign(failure, { packageName, version: entry.version });
+        failures.push(failure);
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures,
+        'failed to reject provider plugin candidate generation(s)',
+      );
     }
   }
   async canUseSelectedOnly(): Promise<boolean> {

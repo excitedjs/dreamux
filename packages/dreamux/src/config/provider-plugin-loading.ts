@@ -110,6 +110,21 @@ export async function loadProviderPluginsForConfig(input: {
     session: pluginPlan.session,
   };
 }
+export async function rejectProviderPluginCandidatesAfterFailure(
+  session: ProviderPluginLoadSession | null,
+  cause: unknown,
+): Promise<void> {
+  if (session === null) return;
+  try {
+    await session.rejectCandidates();
+  } catch (cleanupError) {
+    throw new AggregateError(
+      [cause, cleanupError],
+      `provider plugin candidate load failed, and candidate cleanup failed: ${errMessage(cause)}; cleanup: ${errMessage(cleanupError)}`,
+      { cause },
+    );
+  }
+}
 async function prepareProviderPluginImporters(input: {
   agentRefs: string[];
   channelRefs: string[];

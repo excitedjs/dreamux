@@ -1,10 +1,10 @@
 # Provider plugin load-session hardening
 
-- **Status:** Proposed follow-up for PR #308
+- **Status:** Implemented and archived for PR #308
 - **Date:** 2026-08-04
 - **Affects:** npm provider materialization, config loading, update promotion,
   diagnostics, uninstall, plugin-store persistence
-- **Background:** [Local provider plugin store](../archive/proposals/local-provider-plugin-store.md)
+- **Background:** [Local provider plugin store](local-provider-plugin-store.md)
 
 ## Intent
 

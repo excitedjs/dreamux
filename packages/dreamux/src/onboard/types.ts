@@ -39,7 +39,6 @@ export interface OnboardProviderContext {
   session: ProviderPluginLoadSession | null;
   overrides: ConfigPathOverrides;
   assertPluginsAvailable(raw: unknown, heading: string): Promise<void>;
-  rejectCandidates(): Promise<void>;
 }
 export interface CollectedOnboardAnswers {
   answers: OnboardAnswers;
