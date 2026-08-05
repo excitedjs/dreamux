@@ -196,7 +196,10 @@ describe('role-specific bundled Dreamux skills', () => {
     expect(skill).toContain('dissolve({ note })');
     expect(skill).toMatch(/uncommitted or untracked/);
     expect(skill).toMatch(/unmerged index entries/);
-    expect(skill).toMatch(/safe local or remote ref/);
+    expect(skill).toMatch(/non-forced `git worktree remove <path>`/);
+    expect(skill).toMatch(/preserves the managed branch and\s+its commits/);
+    expect(skill).toMatch(/Branch or ref deletion is a separate destructive capability/);
+    expect(skill).not.toMatch(/safe local or remote ref|unique commits?/i);
     expect(skill).toMatch(/ask the user/i);
     expect(skill).toMatch(/cleanup-pending/);
     expect(skill).not.toContain('`team.send`');
@@ -373,6 +376,11 @@ describe('dreamux-maintenance progressive disclosure', () => {
     expect(reference).toContain('~/.dreamux/state/');
     expect(reference).toContain('~/.dreamux/run/');
     expect(reference).toContain('~/.dreamux/logs/');
+    expect(reference).toMatch(/Dirty or unmerged worktrees require an explicit operator decision/);
+    expect(reference).toMatch(/non-forced `git worktree remove <path>`/);
+    expect(reference).toMatch(/preserves the managed branch and its commits/);
+    expect(reference).toMatch(/Branch or ref deletion is a separate destructive capability/);
+    expect(reference).not.toMatch(/unique-commit/);
     expect(reference).toContain(
       'dreamux daemon restart --notify-resumed --dispatcher <current-id>',
     );

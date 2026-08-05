@@ -185,10 +185,13 @@ state, persists Team `status: "closed"`, and records the shared worktree as
 `logicalClosed` from terminal `completed`; collaboration target close awaits the
 former, while Dispatcher MCP races the latter against a 9-second method-entry
 budget using an explicit 12-second MCP-to-admin timeout. Operational cleanup
-failures retry in background and after restart; safety blockers retain the
-worktree and never force deletion. Shutdown interrupts cancellable idle waits
-and retry timers before admitted-task drain, preserving the durable phase for
-startup recovery.
+failures retry in background and after restart. Dirty/unmerged work retains the
+worktree and requires user action; `cleanup: keep` and non-managed workspaces
+are terminally retained. Clean `delete-on-close` cleanup performs no ref or
+history scan and uses only non-forced `git worktree remove <path>`, preserving
+the managed branch and commits. Branch/ref deletion is outside Team dissolve.
+Shutdown interrupts cancellable idle waits and retry timers before admitted-task
+drain, preserving the durable phase for startup recovery.
 
 `team.create` may include a first `prompt`; if omitted, the TeamLeader starts
 idle and waits for later Team MCP `send` or bound-channel inbound. Team-owned

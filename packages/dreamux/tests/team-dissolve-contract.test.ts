@@ -148,23 +148,22 @@ describe('authoritative managed-worktree dissolve preflight', () => {
     });
   });
 
-  it('requires unique commits to be preserved on another local or remote ref', async () => {
+  it('removes only the worktree and preserves its branch-only unique commit', async () => {
     const { repo, manager, identity, git } = await fixture('unique');
     writeFileSync(join(identity.worktree.path, 'unique.txt'), 'unique\n');
     await git(identity.worktree.path, ['add', 'unique.txt']);
     await git(identity.worktree.path, ['commit', '-qm', 'unique work']);
     const head = await git(identity.worktree.path, ['rev-parse', 'HEAD']);
-    await expect(manager.assessCleanup(identity)).resolves.toMatchObject({
-      status: 'blocked',
-      reason: 'unique-commits',
-    });
+    const branch = identity.worktree.branch!;
+    const retainingRefs = (await git(repo, [
+      'for-each-ref',
+      '--format=%(refname)',
+      `--contains=${head}`,
+      'refs/heads',
+      'refs/remotes',
+    ])).split('\n').filter(Boolean);
+    expect(retainingRefs).toEqual([`refs/heads/${branch}`]);
 
-    await git(repo, ['branch', 'preserved-local', head]);
-    await expect(manager.assessCleanup(identity)).resolves.toEqual({
-      status: 'eligible',
-    });
-    await git(repo, ['branch', '-D', 'preserved-local']);
-    await git(repo, ['update-ref', 'refs/remotes/origin/preserved', head]);
     await expect(manager.assessCleanup(identity)).resolves.toEqual({
       status: 'eligible',
     });
@@ -172,6 +171,17 @@ describe('authoritative managed-worktree dissolve preflight', () => {
       cleanup_state: 'deleted',
     });
     expect(existsSync(identity.worktree.path)).toBe(false);
+    expect(await git(repo, ['worktree', 'list', '--porcelain']))
+      .not.toContain(identity.worktree.path);
+    expect(await git(repo, [
+      'rev-parse',
+      '--verify',
+      `refs/heads/${branch}`,
+    ])).toBe(head);
+    await expect(git(repo, ['cat-file', '-e', `${head}^{commit}`]))
+      .resolves.toBe('');
+    await expect(git(repo, ['show', `${branch}:unique.txt`]))
+      .resolves.toBe('unique');
   });
 
   it('honors an absolute deadline before any assessment probe', async () => {

@@ -46,9 +46,14 @@ same-version restart cautions.
   dissolve/cleanup work before normal Team, collaboration, Channel, workflow,
   or scheduler work is published. A same-version restart is a recovery action,
   not proof that cleanup completed; verify the terminal Team view afterward.
-- Dirty, unmerged, unique-commit, keep, and non-managed worktrees are retained.
-  Operational cleanup failures retry in the background. Escalate retained work
-  for an explicit operator decision instead of force-removing it.
+- Dirty or unmerged worktrees require an explicit operator decision and are
+  never force-removed. `cleanup: keep` and non-managed workspaces are terminally
+  retained. For a clean managed `delete-on-close` worktree, Dreamux runs only
+  non-forced `git worktree remove <path>`: it does not use ref reachability as
+  an eligibility check and it preserves the managed branch and its commits.
+  Operational removal failures retry in the background.
+- Branch or ref deletion is a separate destructive capability that requires its
+  own explicit design and authorization; Team dissolve never performs it.
 - `collaboration-spaces.json` is also fully server-owned. Its target-side
   operation/handoff fields correlate one closing target generation with the
   Team-owned operation; they are not safe manual repair switches.

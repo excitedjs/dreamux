@@ -1,3 +1,15 @@
+import { execFile } from 'node:child_process';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TeamStore } from '../src/service/team-collection/store.js';
@@ -8,10 +20,13 @@ import {
   waitFor,
 } from './helpers/team-dissolve-fixture.js';
 import {
+  deferred,
   FakeInitiator,
   FakeRuntime,
 } from './helpers/fake-team-runtime.js';
 
+const execFileAsync = promisify(execFile);
+const recoveryRoots: string[] = [];
 let fixture: ReturnType<typeof createTeamDissolveFixture>;
 
 beforeEach(() => {
@@ -20,6 +35,9 @@ beforeEach(() => {
 
 afterEach(() => {
   fixture.cleanup();
+  for (const root of recoveryRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 function makeTeams(
@@ -33,6 +51,184 @@ function terminalAssessments(worktrees: WorktreeManager) {
 }
 
 describe('Team dissolve recovery and cleanup', () => {
+  it('reopens only the exact legacy unique-cleanup failure and resumes normal cleanup', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dreamux-legacy-team-cleanup-'));
+    recoveryRoots.push(root);
+    const repo = join(root, 'source');
+    mkdirSync(repo, { recursive: true });
+    const git = async (cwd: string, args: string[]) =>
+      (await execFileAsync('git', args, { cwd })).stdout.trim();
+    await git(repo, ['init', '-q']);
+    await git(repo, ['config', 'user.email', 'test@example.com']);
+    await git(repo, ['config', 'user.name', 'Test']);
+    writeFileSync(join(repo, 'tracked.txt'), 'base\n');
+    await git(repo, ['add', 'tracked.txt']);
+    await git(repo, ['commit', '-qm', 'base']);
+
+    const first = makeTeams({ runtimes: [], worktrees: new WorktreeManager() });
+    await first.create({
+      name: 'legacy-unique',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'resume the exact obsolete cleanup failure',
+      repoCwd: repo,
+      worktree: {
+        mode: 'managed',
+        slug: 'legacy-unique',
+        branch: 'dreamux/legacy-unique',
+        cleanup: 'delete-on-close',
+      },
+    });
+    await first.create({
+      name: 'unrelated-failure',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'remain terminal during recovery',
+      repoCwd: repo,
+      worktree: {
+        mode: 'managed',
+        slug: 'unrelated-failure',
+        branch: 'dreamux/unrelated-failure',
+        cleanup: 'delete-on-close',
+      },
+    });
+    await first.stopAll();
+
+    const store = new TeamStore();
+    const legacy = (await store.get('dispatcher-a', 'legacy-unique'))!;
+    const legacyDissolve = {
+      operation_id: 'legacy-unique-operation',
+      requester_kind: 'collaboration_target' as const,
+      leader_name: null,
+      target_handoff_ids: ['handoff-a', 'handoff-b'],
+      note: 'resume only physical cleanup',
+      accepted_at: 1_700_000_000_000,
+      phase: 'failed' as const,
+      last_error: 'worktree-unique-commits' as const,
+      cleanup_attempts: 7,
+      next_retry_at: null,
+    };
+    await store.update(legacy, {
+      status: 'closed',
+      closedAt: 1_700_000_000_100,
+      closeNote: legacyDissolve.note,
+      worktree: {
+        ...legacy.worktree,
+        cleanup_state: 'retained-unique-commits',
+        cleanup_error: 'obsolete reachability decision',
+      },
+      dissolve: legacyDissolve,
+      expectedDissolveOperationId: null,
+    });
+
+    const unrelated = (await store.get('dispatcher-a', 'unrelated-failure'))!;
+    await store.update(unrelated, {
+      status: 'closed',
+      closedAt: 1_700_000_000_200,
+      closeNote: 'keep this failed record terminal',
+      worktree: {
+        ...unrelated.worktree,
+        cleanup_state: 'retained-unique-commits',
+        cleanup_error: 'unrelated failure detail',
+      },
+      dissolve: {
+        operation_id: 'unrelated-failed-operation',
+        requester_kind: 'team_leader',
+        leader_name: unrelated.leader_name,
+        target_handoff_ids: [],
+        note: 'keep this failed record terminal',
+        accepted_at: 1_700_000_000_050,
+        phase: 'failed',
+        last_error: 'worktree-cleanup-failed',
+        cleanup_attempts: 3,
+        next_retry_at: null,
+      },
+      expectedDissolveOperationId: null,
+    });
+    const unrelatedBefore = await store.get(
+      'dispatcher-a',
+      'unrelated-failure',
+    );
+
+    const cleanupGate = deferred<void>();
+    const recoveredWorktrees = new WorktreeManager();
+    const assess = vi.spyOn(recoveredWorktrees, 'assessCleanup');
+    const removeWorktree = recoveredWorktrees.cleanup.bind(recoveredWorktrees);
+    const cleanup = vi.spyOn(recoveredWorktrees, 'cleanup')
+      .mockImplementation(async (identity) => {
+        await cleanupGate.promise;
+        return removeWorktree(identity);
+      });
+    const recovered = makeTeams({ runtimes: [], worktrees: recoveredWorktrees });
+    await recovered.recoverDissolves((input) =>
+      recovered.closeAcceptedResources(input),
+    );
+    await waitFor(() => cleanup.mock.calls.length === 1);
+
+    const migrated = (await store.get('dispatcher-a', 'legacy-unique'))!;
+    expect(migrated).toMatchObject({
+      status: 'closed',
+      closed_at: 1_700_000_000_100,
+      close_note: legacyDissolve.note,
+      worktree: {
+        cleanup_state: 'cleanup-pending',
+        cleanup_error: null,
+      },
+      dissolve: {
+        ...legacyDissolve,
+        phase: 'worktree_cleanup_pending',
+        last_error: null,
+        next_retry_at: null,
+      },
+    });
+    expect(cleanup).toHaveBeenCalledWith(expect.objectContaining({
+      worktree: expect.objectContaining({
+        path: legacy.worktree.path,
+        cleanup_state: 'cleanup-pending',
+      }),
+    }));
+    expect(await store.get('dispatcher-a', 'unrelated-failure'))
+      .toEqual(unrelatedBefore);
+    expect(existsSync(unrelated.worktree.path)).toBe(true);
+    await expect(recovered.sendToLeader('legacy-unique', {
+      prompt: 'must remain gated while cleanup resumes',
+      initiator: new FakeInitiator(),
+    })).rejects.toThrow(/closed|closing/);
+
+    cleanupGate.resolve();
+    await cleanup.mock.results[0]!.value;
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline) {
+      const current = await store.get('dispatcher-a', 'legacy-unique');
+      if (current?.dissolve?.phase === 'complete') break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(await store.get('dispatcher-a', 'legacy-unique')).toMatchObject({
+      status: 'closed',
+      worktree: { cleanup_state: 'deleted', cleanup_error: null },
+      dissolve: {
+        operation_id: legacyDissolve.operation_id,
+        requester_kind: legacyDissolve.requester_kind,
+        target_handoff_ids: legacyDissolve.target_handoff_ids,
+        note: legacyDissolve.note,
+        accepted_at: legacyDissolve.accepted_at,
+        phase: 'complete',
+        last_error: null,
+        cleanup_attempts: legacyDissolve.cleanup_attempts,
+        next_retry_at: null,
+      },
+    });
+    expect(assess).toHaveBeenCalledOnce();
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(existsSync(legacy.worktree.path)).toBe(false);
+    expect(await git(repo, [
+      'rev-parse',
+      '--verify',
+      `refs/heads/${legacy.worktree.branch!}`,
+    ])).not.toBe('');
+    expect(await store.get('dispatcher-a', 'unrelated-failure'))
+      .toEqual(unrelatedBefore);
+    await recovered.stopAll();
+  }, 10_000);
+
   it('resolves logicalClosed immediately on recovered closed cleanup-pending before future retry', async () => {
     const firstRuntimes: FakeRuntime[] = [];
     const firstWorktrees = new WorktreeManager();

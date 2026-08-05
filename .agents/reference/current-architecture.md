@@ -253,9 +253,13 @@ then repeats the non-destructive `WorktreeManager.assessCleanup()` preflight.
 `TeamService` owns resource shutdown and propagation of the one shared worktree
 identity to leader and members; `WorktreeManager` alone assesses and removes a
 managed worktree. Logical close durably commits routes/runtimes closed and
-`cleanup-pending` before physical deletion. Clean deletion failures retain
-durable retry responsibility with bounded exponential backoff; dirty,
-unmerged, unique-commit, keep, and non-managed outcomes are never force-deleted.
+`cleanup-pending` before physical deletion. Assessment checks only dirty and
+unmerged state; it does not enumerate refs or walk repository history.
+`cleanup: keep` and non-managed outcomes are terminally retained. Clean managed
+`delete-on-close` cleanup calls non-forced `git worktree remove <path>` and
+preserves the managed branch and its commits. Removal failures retain durable
+retry responsibility with bounded exponential backoff; branch/ref deletion is
+not part of Team dissolve.
 Dispatcher projection has a 9-second decision/result budget and an explicit
 12-second MCP admin timeout; TeamLeader self-dissolve returns its durable
 accepted receipt without awaiting self-termination.

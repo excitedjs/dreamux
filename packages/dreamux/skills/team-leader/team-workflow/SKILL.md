@@ -31,12 +31,16 @@ description: MCP operation notes for Team work. Load before using this Team's Te
   this context.
 - Use `dissolve({ note })` only after this Team's work is complete and its
   shared worktree is safe to remove. First inspect for uncommitted or untracked
-  changes, unmerged index entries, and commits that are not preserved on
-  another safe local or remote ref.
-- If deletion is unsafe or you cannot determine whether work is preserved, do
-  not call `dissolve`. Ask the user how to preserve or handle the work through
-  the current visible reply path. The required `note` is the final reason for
-  a confirmed dissolve, not a way to bypass that decision.
+  changes and unmerged index entries. For `delete-on-close`, Dreamux uses
+  non-forced `git worktree remove <path>` and preserves the managed branch and
+  its commits.
+- If the worktree is dirty or unmerged, or you cannot determine that it is
+  clean, do not call `dissolve`. Ask the user how to preserve or handle the work
+  through the current visible reply path. The required `note` is the final
+  reason for a confirmed dissolve, not a way to bypass that decision.
+- Branch or ref deletion is a separate destructive capability and is not part
+  of Team dissolve. Never infer authorization to delete a branch from
+  `delete-on-close`.
 - A successful self-dissolve receipt confirms durable logical-close admission.
   Let the current turn settle naturally; Dreamux then closes the Team. Eligible
   worktree deletion may remain `cleanup-pending` and continue in the

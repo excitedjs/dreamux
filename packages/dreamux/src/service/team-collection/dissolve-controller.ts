@@ -248,9 +248,39 @@ export class TeamDissolveController {
   async recover(logicalClose: TeamLogicalCloseExecutor): Promise<void> {
     const toStart: TeamDissolveOperation[] = [];
     for (const record of await this.opts.store.list(this.opts.dispatcherId)) {
-      if (!isActiveDissolve(record.dissolve)) continue;
+      if (
+        !isActiveDissolve(record.dissolve) &&
+        !isObsoleteUniqueCleanupFailure(record)
+      ) continue;
       await this.opts.routeLifecycle.run(record.team_id, async () => {
-        const current = await this.opts.mustTeam(record.team_id);
+        let current = await this.opts.mustTeam(record.team_id);
+        if (isObsoleteUniqueCleanupFailure(current)) {
+          const operationId = current.dissolve!.operation_id;
+          current = await this.opts.store.update(current, {
+            worktree: {
+              ...current.worktree,
+              cleanup_state: 'cleanup-pending',
+              cleanup_error: null,
+            },
+            dissolvePatch: {
+              phase: 'worktree_cleanup_pending',
+              last_error: null,
+              next_retry_at: null,
+            },
+            expectedDissolveOperationId: operationId,
+          });
+          this.opts.replaceCachedRecord(current.team_id, current);
+          this.opts.log.info(
+            {
+              dispatcher_id: this.opts.dispatcherId,
+              team_id: current.team_id,
+              operation_id: operationId,
+              phase: current.dissolve!.phase,
+              cleanup_attempts: current.dissolve!.cleanup_attempts,
+            },
+            'Team dissolve cleanup recovery reopened',
+          );
+        }
         const active = current.dissolve;
         if (active === null || !isActiveDissolve(active)) return;
         const service = await this.opts.getService(current.team_id);
@@ -654,4 +684,13 @@ export class TeamDissolveController {
       this.operations.delete(operation.operationId);
     }
   }
+}
+
+function isObsoleteUniqueCleanupFailure(record: TeamRecord): boolean {
+  return record.status === 'closed' &&
+    record.worktree.mode === 'managed' &&
+    record.worktree.cleanup === 'delete-on-close' &&
+    record.worktree.cleanup_state === 'retained-unique-commits' &&
+    record.dissolve?.phase === 'failed' &&
+    record.dissolve.last_error === 'worktree-unique-commits';
 }

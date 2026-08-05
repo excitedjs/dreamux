@@ -419,7 +419,6 @@ export function publicErrorForSafety(
     case 'unmerged':
     case 'retained-unmerged':
       return 'worktree-unmerged';
-    case 'unique-commits':
     case 'retained-unique-commits':
       return 'worktree-unique-commits';
   }

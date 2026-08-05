@@ -26,8 +26,7 @@ import type {
 
 export type WorktreeCleanupBlockedReason =
   | 'dirty'
-  | 'unmerged'
-  | 'unique-commits';
+  | 'unmerged';
 
 export type WorktreeCleanupAssessment =
   | {
@@ -214,10 +213,9 @@ export class WorktreeManager {
       await git(repo, ['worktree', 'remove', worktree.path]);
       return { ...worktree, cleanup_state: 'deleted', cleanup_error: null };
     } catch (err) {
-      // Git refuses dirty/unmerged removals, and a concurrent ref update can
-      // also change reachability after the caller's earlier assessment. Re-read
-      // the authoritative safety facts before classifying this as operational.
-      // A terminal/blocked result is durable truth, not an infinite retry.
+      // Git's non-forced removal is the final authority. Re-read the cheap
+      // dirty/unmerged facts before classifying its refusal as operational. A
+      // terminal/blocked result is durable truth, not an infinite retry.
       try {
         const latest = await this.assessCleanup(identity);
         if (latest.status !== 'eligible') return latest.worktree;
@@ -267,7 +265,7 @@ export class WorktreeManager {
         };
       }
     }
-    const blocked = await retainedState(repo, worktree, options);
+    const blocked = await retainedState(worktree, options);
     assertAssessmentDeadline(options);
     if (blocked === null) return { status: 'eligible' };
     return {
@@ -338,13 +336,12 @@ async function boundaryGitignoreIsSafe(gitignorePath: string): Promise<boolean> 
 }
 
 async function retainedState(
-  repo: string,
   worktree: AgentEntityWorktreeIdentity,
   options: WorktreeAssessmentOptions = {},
 ): Promise<
   | Extract<
       AgentEntityWorktreeCleanupState,
-      'retained-dirty' | 'retained-unmerged' | 'retained-unique-commits'
+      'retained-dirty' | 'retained-unmerged'
     >
   | null
 > {
@@ -356,37 +353,13 @@ async function retainedState(
     options,
   );
   if (status.stdout.trim() !== '') return 'retained-dirty';
-  const head = await git(
-    worktree.path,
-    ['rev-parse', '--verify', 'HEAD'],
-    options,
-  );
-  const headSha = head.stdout.trim();
-  const safeRefs = await safeReachabilityRefs(repo, worktree, options);
-  if (safeRefs.length === 0) return 'retained-unique-commits';
-  const containsHead = await git(repo, [
-    'for-each-ref',
-    `--contains=${headSha}`,
-    '--format=%(refname:short)',
-    'refs/heads',
-    'refs/remotes',
-  ], options);
-  const containingRefs = new Set(
-    containsHead.stdout
-      .split('\n')
-      .map((line) => line.replace(/^\*\s*/, '').trim())
-      .filter((line) => line !== ''),
-  );
-  if (!safeRefs.some((ref) => containingRefs.has(ref))) {
-    return 'retained-unique-commits';
-  }
   return null;
 }
 
 function blockedReason(
   state: Extract<
     AgentEntityWorktreeCleanupState,
-    'retained-dirty' | 'retained-unmerged' | 'retained-unique-commits'
+    'retained-dirty' | 'retained-unmerged'
   >,
 ): WorktreeCleanupBlockedReason {
   switch (state) {
@@ -394,31 +367,7 @@ function blockedReason(
       return 'dirty';
     case 'retained-unmerged':
       return 'unmerged';
-    case 'retained-unique-commits':
-      return 'unique-commits';
   }
-}
-
-async function safeReachabilityRefs(
-  repo: string,
-  worktree: AgentEntityWorktreeIdentity,
-  options: WorktreeAssessmentOptions = {},
-): Promise<string[]> {
-  const refs = await git(repo, [
-    'for-each-ref',
-    '--format=%(refname:short)',
-    'refs/heads',
-    'refs/remotes',
-  ], options);
-  const allRefs = refs.stdout
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((ref) => ref !== '');
-  const candidates = new Set<string>();
-  for (const ref of allRefs) {
-    if (worktree.branch === null || ref !== worktree.branch) candidates.add(ref);
-  }
-  return [...candidates];
 }
 
 async function assertRegisteredWorktree(input: {

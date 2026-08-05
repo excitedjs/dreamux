@@ -1,7 +1,7 @@
 # Proposal: scoped Team dissolve and durable worktree cleanup
 
-- **Status:** Proposed; revised after resident-panel review
-- **Date:** 2026-08-03
+- **Status:** Proposed; revised after resident-panel review and Alpha live gate
+- **Date:** 2026-08-05
 - **Affects:** `@excitedjs/dreamux` Team MCP projection, Team lifecycle
   persistence and orchestration, managed-worktree cleanup, admin IPC caller
   scoping, bundled Dispatcher and TeamLeader guidance
@@ -16,9 +16,10 @@ no `close` alias and no second cleanup state machine.
 
 A dissolve must never lose responsibility for a managed
 `delete-on-close` worktree because an MCP request reached its ten-second
-deadline or `dreamux serve` restarted. Unsafe automatic deletion remains
-fail-closed: dirty, unmerged, or unpreserved unique work is reported before
-Team shutdown so the user can choose how to preserve or discard it.
+deadline or `dreamux serve` restarted. Automatic cleanup removes only the
+worktree with non-forced `git worktree remove`; it never deletes the managed
+branch or the commits retained by that branch. Dirty or unmerged work remains
+fail-closed so the user can choose how to preserve or discard it.
 
 ## Scope
 
@@ -104,8 +105,7 @@ Before a TeamLeader calls `dissolve`, the bundled `team-workflow` instructs it
 to inspect the current worktree for:
 
 - uncommitted or untracked changes;
-- unmerged index entries;
-- commits that have not been preserved on another safe local or remote ref.
+- unmerged index entries.
 
 If work is unsafe or the result is uncertain, the TeamLeader asks the user how
 to proceed through the current visible reply path and does not dissolve. With a
@@ -116,10 +116,9 @@ This prompt check is guidance, not authority. Before any persisted dissolve
 state, closing fence, scheduler stop, route detach, or agent stop,
 `WorktreeManager` performs the same decision through a single non-destructive
 cleanup-assessment capability. A managed `delete-on-close` worktree assessed as
-dirty, unmerged, or containing unpreserved unique commits rejects dissolve with
-a public-safe `TEAM_DISSOLVE_BLOCKED` result and leaves the Team and worktree
-unchanged. Non-managed and `cleanup: keep` workspaces need no automatic-delete
-eligibility.
+dirty or unmerged rejects dissolve with a public-safe `TEAM_DISSOLVE_BLOCKED`
+result and leaves the Team and worktree unchanged. Non-managed and
+`cleanup: keep` workspaces need no automatic-delete eligibility.
 
 After acceptance closes new admission, `TeamService` waits for Team-wide
 workspace quiescence: the TeamLeader and every already-admitted live member
@@ -128,6 +127,35 @@ assessment before destructive Team shutdown. If any admitted turn changed the
 worktree after acceptance, Dreamux records a recoverable dissolve failure,
 releases the gate, restores safe admission, and leaves the Team running rather
 than deleting new work.
+
+### Worktree-only deletion at repository scale
+
+`delete-on-close` deletes only the linked worktree. It calls exactly the
+non-forced form `git worktree remove <path>` and never calls `--force`,
+`git branch -D`, `git update-ref -d`, or any equivalent ref-deletion command.
+The managed branch therefore remains a Git ref after worktree removal and
+continues to retain its commits. HEAD reachability from a second local or remote
+ref is neither required nor relevant to worktree-only cleanup.
+
+`WorktreeManager` must not enumerate refs or walk repository history during
+cleanup assessment. In particular, delete-on-close must not invoke
+`for-each-ref --contains`, another `for-each-ref` reachability scan, `rev-list`
+ancestry traversal, or a per-ref substitute. This keeps acceptance independent
+of repository ref count and history depth without increasing the Dispatcher
+budget or MCP timeout.
+
+Dirty and unmerged checks remain cheap, bounded safety classification before
+acceptance and after Team-wide quiescence. Physical cleanup still uses the
+non-forced Git command as the final authority: if Git refuses removal, cleanup
+re-reads the worktree state and projects a dirty/unmerged retained result when
+applicable; otherwise it records a retryable operational error. `cleanup: keep`
+remains terminal-kept. The same assessment capability is used before
+acceptance, after quiescence, during physical cleanup, and during restart retry.
+
+Deleting the managed branch is a separate destructive product capability. If
+Dreamux ever adds it, that change requires its own explicit design, user-facing
+contract, safety proof, tests, and authorization; it must not be inferred from
+`delete-on-close`.
 
 ## Durable Dissolve Lifecycle
 
@@ -145,9 +173,12 @@ It contains no model prompt or provider data and records at least:
 
 Existing Team records normalize a missing dissolve record to no pending work.
 The additive durable-format change and public behavior change receive a Rush
-change file. `Team.status` remains `starting | running | closed`: the dissolve
-phase is a separate lifecycle fact, so `closed` means routes and agents are
-closed even when worktree cleanup is still pending.
+change file. The later delete-on-close semantic correction receives a separate
+Rush change note that leads with `BREAKING:`, immediately includes `Review:`,
+and explicitly states that no rebuild is required. `Team.status` remains
+`starting | running | closed`: the dissolve phase is a separate lifecycle fact,
+so `closed` means routes and agents are closed even when worktree cleanup is
+still pending.
 
 The dissolve record is written atomically before an accepted response. A
 same-generation retry while active joins the existing operation and returns the
@@ -315,11 +346,28 @@ once for the shared worktree and propagates its one authoritative result to all
 borrowers, preserving the existing single-owner invariant.
 
 - `deleted`, `kept`, and `not-managed` are terminal.
-- Dirty, unmerged, or unique-commit outcomes are safety-blocked and are never
-  force-deleted. They should normally be caught before acceptance; a later
-  external filesystem change records a visible blocked failure.
+- Dirty or unmerged outcomes are safety-blocked and are never force-deleted.
+  They should normally be caught before acceptance; a later external filesystem
+  change records a visible blocked failure.
 - Operational deletion errors remain pending, persist the error and next retry
   time, and retry with bounded exponential backoff and no fixed attempt limit.
+
+The persisted readers continue to accept the previously emitted
+`retained-unique-commits` cleanup state and `worktree-unique-commits` dissolve
+error so Alpha-created records remain readable. Those values no longer express
+a current deletion blocker. During startup recovery, `TeamCollection` recognizes
+only the exact closed-Team terminal tuple `cleanup: delete-on-close`,
+`cleanup_state: retained-unique-commits`, dissolve `phase: failed`, and
+`last_error: worktree-unique-commits`. Under the Team lifecycle serializer and
+store CAS it preserves the operation identity, requester, first note,
+acceptance time, and handoffs while atomically reopening the record as
+`worktree_cleanup_pending`, clearing the obsolete public error and retry time,
+and setting the shared cleanup state to `cleanup-pending`. Normal recovery then
+reassesses dirty/unmerged state and attempts the same non-forced worktree
+removal. Other failed records remain terminal. This compatibility belongs to
+the persisted Team lifecycle owner, not `WorktreeManager`. It reopens only the
+cleanup phase: `Team.status` stays `closed`, the closing gate stays active, and
+no Team work resumes.
 
 In-flight attempts are tracked by the Dispatcher operation drain. Retry timers
 are owner-managed rather than sleeping inside the drain: shutdown cancels
@@ -332,8 +380,9 @@ Team work or forgetting deletion.
 
 Dreamux guarantees durable retry responsibility for a worktree that was eligible
 for automatic deletion. It cannot guarantee forced physical deletion against
-permanent filesystem/Git failures or later dirty/unmerged/unique work; those
-conditions remain observable and never bypass data-safety retention.
+permanent filesystem/Git failures or later dirty/unmerged work; those conditions
+remain observable and never bypass data-safety retention. Worktree deletion does
+not delete the managed branch.
 
 ## Errors and Observability
 
@@ -383,8 +432,28 @@ state, and safe last error without exposing machine-local paths. Existing
   worktree that exceeds the response budget or has a transient deletion error is
   retried in background and after restart until deleted or a safety blocker is
   observed.
-- Dirty, unmerged, and unique-commit worktrees are never force-deleted; preflight
-  rejection leaves Team, routes, agents, scheduler, and worktree unchanged.
+- Dirty and unmerged worktrees are never force-deleted; preflight rejection
+  leaves Team, routes, agents, scheduler, and worktree unchanged.
+- A seeded restart test proves that the exact persisted closed-Team
+  `retained-unique-commits` / `worktree-unique-commits` terminal tuple is
+  atomically reopened as cleanup-pending and reaches deletion through the normal
+  recovery runner, while unrelated failed records remain terminal and readable.
+- A deterministic large-ref regression test structurally proves delete-on-close
+  never invokes `for-each-ref --contains`, any other ref enumeration, or an
+  ancestry/history walk. A managed-branch-only commit does not block worktree
+  removal; the test proves the non-forced remove deletes only the worktree and
+  leaves the managed branch pointing at the same commit. The assertions do not
+  depend on repository size or wall-clock slowness.
+- An MCP/admin acceptance-boundary test drives the real `tools/call` projection:
+  the clean worktree-only path persists acceptance before returning success
+  with `structuredContent`; a genuine pre-acceptance assessment failure returns
+  `TEAM_DISSOLVE_FAILED` without `structuredContent` or a persisted dissolve
+  record.
+- The live Alpha fixture is re-read before validation to prove it is still
+  running, clean, and unmerged-free. No ref-reachability precondition is needed.
+  The fixed installed artifact must make Dispatcher `team.dissolve` return a
+  terminal structured result and remove both the managed directory and its Git
+  worktree registration without direct state or worktree mutation.
 - Restart restores active Team gates and resumes pending phases before inbound,
   collaboration provisioning, workflows, or Team schedulers can revive work.
 - Dispatcher shutdown interrupts `waiting_for_team_idle` before admitted-task
@@ -398,15 +467,20 @@ state, and safe last error without exposing machine-local paths. Existing
   rather than being weakened.
 - Model-facing gates are updated together: current architecture, dispatcher
   orchestration and skill references, service topology, agent-activity decision,
-  bundled `team-workflow`, Team MCP schema/whitelist tests, skill tests, contract
-  parity, admin scope tests, and real worktree integration tests.
+  bundled `team-workflow`, the owning
+  `dreamux-maintenance/references/service-lifecycle.md`, Team MCP
+  schema/whitelist tests, skill tests, contract parity, admin scope tests, and
+  real worktree integration tests. Current-state guidance says delete-on-close
+  removes only the worktree and preserves its branch; transition detail is kept
+  in the generated Rush change note rather than the maintenance reference.
 - Focused tests, full Rush build/test, `.agents/scripts/check.sh`, and CI pass.
 
 ## Out of Scope
 
 - Letting a TeamLeader select, inspect, or dissolve another Team.
 - Adding a duplicate `close` alias or renaming dispatcher `team.dissolve`.
-- Force-deleting dirty, unmerged, unique-commit, or `cleanup: keep` worktrees.
+- Force-deleting dirty, unmerged, or `cleanup: keep` worktrees.
+- Deleting the managed branch or any other Git ref as part of worktree cleanup.
 - Deleting external channel containers or sending an automatic provider message.
 - Reopening a logically closed Team or reusing a concrete Team name.
 - Adding runtime-specific or channel-specific branches to Dreamux core.
