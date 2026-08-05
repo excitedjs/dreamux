@@ -3,9 +3,10 @@
 This is the current ownership map for Dreamux local files. It is a reference
 page, not a decision record. For rationale, follow the linked decisions.
 
-Path builders belong in `/packages/dreamux/src/platform/paths.ts`; volatile
-runtime socket allocation belongs in
-`/packages/dreamux/src/platform/runtime-sockets.ts`.
+Filesystem path builders belong in `/packages/dreamux/src/platform/paths.ts`;
+managed-service executable `PATH` composition belongs in
+`/packages/dreamux/src/platform/service-path.ts`; volatile runtime socket
+allocation belongs in `/packages/dreamux/src/platform/runtime-sockets.ts`.
 
 ## Operator Config
 
@@ -187,8 +188,8 @@ Dreamux-supplied fallback.
 
 `withServicePath(env, input)` returns a copy of `env` with `PATH` set to
 `buildServicePath(input)`; it never mutates the caller's env or `process.env`.
-`env`/`homeDir`/`platform` are passed explicitly by callers — the path builders
-never read `process.env`.
+`env`/`homeDir`/`platform` are passed explicitly by callers — the service PATH
+helpers never read `process.env`.
 
 The callers (`runOnboard` in `onboard/run.ts` and `runDaemonInstall` in
 `daemon/install.ts`) resolve the *effective* values before persisting them into

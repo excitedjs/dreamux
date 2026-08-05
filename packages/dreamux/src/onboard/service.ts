@@ -13,7 +13,6 @@ import {
 } from '../platform/paths.js';
 import {
   buildServicePath,
-  userLocalBinDirs,
   withServicePath,
 } from '../platform/service-path.js';
 
@@ -313,9 +312,6 @@ export function withUserLocalBinPath(
   const sessionPath = env['PATH'] ?? '';
   return withServicePath(env, { stableDirs: [], sessionPath, fallbackDirs });
 }
-
-/** Re-exported for service-level callers; canonical impl is in platform/service-path.ts. */
-export { userLocalBinDirs };
 
 function managedServicePath(answers: ServiceInstallAnswers): string {
   // Service PATH order: stable Dreamux-owned dirs (Node bin, provider bin dirs,

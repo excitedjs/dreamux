@@ -41,7 +41,7 @@ Two settled shape rules govern where code lives:
 | `mcp/` | stdio MCP shim processes (`channel-mcp`, `teammate-mcp`, `team-mcp`) — the generic `channel-mcp` shim serves provider-supplied `tools/list` metadata locally and forwards `tools/call` to `channel.invoke_tool`; channel binding (`bind_channel` / `transfer_back`) is a core Team capability on the Team MCP, #209 | thin JSON-RPC bridges that forward to the admin socket |
 | `admin/` | admin Unix-socket server + protocol + methods | cross-process control; methods are thin and delegate to the Dispatcher Service |
 | `config/` | operator config schema / parse / validate (`config.ts`) | the only operator-editable config source |
-| `platform/` | runtime-neutral infrastructure: `paths.ts` (sole neutral path builder), `runtime-sockets` (volatile socket allocation), `logger`, `package-bin`, `atomic-write`, `fs-errors` | shared and runtime-agnostic; per-runtime path derivation lives in each provider package |
+| `platform/` | runtime-neutral infrastructure: `paths.ts` (filesystem path builders), `service-path.ts` (managed-service executable `PATH` composition), `runtime-sockets` (volatile socket allocation), `logger`, `package-bin`, `atomic-write`, `fs-errors` | shared and runtime-agnostic; per-runtime path derivation lives in each provider package |
 | `state/` | server-owned dispatcher state: `dispatcher-store`, `dispatcher-id` | config-backed dispatcher projections and local state identifiers |
 | `cli/` `onboard/` `daemon/` | operator-facing surfaces | CLI command tree, onboarding, native user-level service manager |
 
