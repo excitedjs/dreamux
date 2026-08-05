@@ -29,8 +29,8 @@ import { DispatcherService } from '../src/service/dispatcher-service/index.js';
 import { CronJobStore } from '../src/service/scheduler/store.js';
 import {
   TeamCollection,
-  TeamUnavailableError,
 } from '../src/service/team-collection/index.js';
+import { TeamUnavailableError } from '../src/service/team-collection/errors.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
 import { ensureDispatcherIdentity } from '../src/service/dispatcher-service/identity.js';
 import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
@@ -325,6 +325,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     root = mkdtempSync(join(tmpdir(), 'dreamux-team-scheduler-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     mkdirSync(process.env['HOME'], { recursive: true });
     resetRuntimeConfig();
   });
@@ -332,6 +333,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
   afterEach(() => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
   });
@@ -689,6 +691,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     expect(dispatcherContext?.disableFeatures).toEqual(['userInterrupt', 'cron']);
     expect(dispatcherContext?.skillSources?.map((source) => source.name)).toEqual([
       'dispatcher',
+      'shared',
     ]);
     expect(dispatcherContext?.systemPrompt?.replace).toMatch(/Dreamux Dispatcher/i);
     expect(dispatcherContext?.systemPrompt?.append).toEqual([
@@ -714,6 +717,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     expect(leaderContext?.disableFeatures).toEqual(['userInterrupt', 'cron']);
     expect(leaderContext?.skillSources?.map((source) => source.name)).toEqual([
       'team-leader',
+      'shared',
     ]);
     const append = leaderContext?.systemPrompt?.append ?? [];
     expect(append).toHaveLength(4);
@@ -851,10 +855,12 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     }]);
     expect(skillSourceNames(contexts, 'admin-team-leader')).toEqual([
       'team-leader',
+      'shared',
       'admin-team-leader',
     ]);
     expect(skillSourcesFor(contexts, 'admin-team-leader')).toEqual([
       expect.objectContaining({ name: 'team-leader', source: 'dreamux-core' }),
+      expect.objectContaining({ name: 'shared', source: 'dreamux-core' }),
       {
         name: 'admin-team-leader',
         path: realpathSync(leaderRoot),
@@ -911,10 +917,12 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     }]);
     expect(skillSourceNames(rebuiltContexts, 'admin-team-leader')).toEqual([
       'team-leader',
+      'shared',
       'admin-team-leader',
     ]);
     expect(skillSourcesFor(rebuiltContexts, 'admin-team-leader')).toEqual([
       expect.objectContaining({ name: 'team-leader', source: 'dreamux-core' }),
+      expect.objectContaining({ name: 'shared', source: 'dreamux-core' }),
       {
         name: 'admin-team-leader',
         path: realpathSync(leaderRoot),

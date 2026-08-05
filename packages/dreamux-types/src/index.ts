@@ -72,9 +72,11 @@ export type {
   AgentRuntimeSkillSource,
   AgentRuntimeStateCallbacks,
   AgentRuntimeStatus,
+  AgentRuntimeStructuredOutputCapability,
   AgentRuntimeSystemPrompt,
   AgentRuntimeTextInput,
   AgentRuntimeTurnResult,
+  UnsupportedAgentRuntimeFeatureError,
 } from './agent-runtime.js';
 export type {
   ChannelBinCheck,

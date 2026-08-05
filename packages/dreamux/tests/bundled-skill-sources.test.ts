@@ -6,19 +6,24 @@
  * packages own native layout translation from those roots.
  */
 import { join } from 'node:path';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { describe, it, expect } from 'vitest';
 
 import {
   BUNDLED_SKILL_NAMES,
   bundledDispatcherSkillRoot,
+  bundledSharedSkillRoot,
   bundledTeamLeaderSkillRoot,
 } from '../src/platform/paths.js';
+
+const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
 const EXPECTED_SKILLS_BY_ROOT = {
   [bundledDispatcherSkillRoot()]: ['dispatcher-workflow', 'dreamux-maintenance'],
   [bundledTeamLeaderSkillRoot()]: ['team-workflow'],
+  [bundledSharedSkillRoot()]: ['workflow'],
 } satisfies Record<string, string[]>;
 
 describe('bundled Dreamux skill roots', () => {
@@ -27,6 +32,7 @@ describe('bundled Dreamux skill roots', () => {
       'dispatcher-workflow',
       'dreamux-maintenance',
       'team-workflow',
+      'workflow',
     ]);
   });
 
@@ -46,7 +52,32 @@ describe('bundled Dreamux skill roots', () => {
 
   it('keeps Dispatcher and TeamLeader skill roots disjoint for root-scanning runtimes', () => {
     expect(bundledDispatcherSkillRoot()).not.toBe(bundledTeamLeaderSkillRoot());
+    expect(bundledSharedSkillRoot()).not.toBe(bundledDispatcherSkillRoot());
+    expect(bundledSharedSkillRoot()).not.toBe(bundledTeamLeaderSkillRoot());
     expect(bundledDispatcherSkillRoot()).not.toContain('/team-leader');
     expect(bundledTeamLeaderSkillRoot()).not.toContain('/dispatcher');
+  });
+
+  it('documents role-specific plus shared workflow injection and name protection', () => {
+    const documents = [
+      readFileSync(join(REPO_ROOT, 'packages/dreamux/README.md'), 'utf8'),
+      readFileSync(join(REPO_ROOT, '.agents/reference/dispatcher-skill.md'), 'utf8'),
+    ];
+
+    for (const document of documents) {
+      for (const roleSkill of [
+        'dispatcher-workflow',
+        'dreamux-maintenance',
+        'team-workflow',
+      ]) {
+        expect(document).toContain(roleSkill);
+      }
+      expect(document).toMatch(
+        /both[\s\S]{0,100}(?:shared )?`workflow`|shared `workflow`[\s\S]{0,100}both/,
+      );
+      expect(document).toMatch(
+        /required-source[\s\S]{0,180}`workflow`[\s\S]{0,100}(?:shadow|custom)/,
+      );
+    }
   });
 });

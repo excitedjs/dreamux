@@ -108,10 +108,10 @@ describe('canRunIntroduce — allowlist policy: sender-scoped, not group-scoped'
 });
 
 describe('canRunIntroduce — follow-user policy: allow_chats is ignored', () => {
-  // The bug this PR fixes: under `follow-user` the delivery gate ignores
-  // `allow_chats`, but introduce used to demand the chat be named anyway, so an
-  // `allow_users` sender could chat in a brand-new group yet never `/introduce`
-  // there. Authorization must now mirror the gate: only `allow_users` matters.
+  // Ordinary delivery now trusts a listed `allow_chats` group under
+  // `follow-user`. `/introduce` intentionally stays sender-scoped: it checks
+  // `allow_users` without requiring the chat to be listed, so an allowed sender
+  // may introduce even in an unlisted group.
   it('authorizes an allow_user in a group that is NOT in allow_chats', () => {
     const access = state({
       allow_users: ['user-a'],
@@ -253,6 +253,20 @@ describe('introduceDenyReason — stable diagnostic codes (issue #77)', () => {
     ).toBe('sender_not_followed');
   });
 
+  it('uses exact sender-id membership without imposing a human-only allow_users gate', () => {
+    const access = state({
+      allow_users: ['ou_bot_manually_allowed'],
+      group: { policy: 'allowlist', allow_chats: ['chat-a'] },
+    });
+    expect(
+      introduceDenyReason(access, {
+        chatType: 'group',
+        chatId: 'chat-a',
+        senderId: 'ou_bot_manually_allowed',
+      }),
+    ).toBeNull();
+  });
+
   it('reports sender_not_followed under follow-user for a non-allow_user (NOT chat_not_allowlisted)', () => {
     // The regression guard for this PR: a stranger in an unconfigured follow-user
     // group must be denied for being off the allowlist, never for the chat being
@@ -291,24 +305,12 @@ describe('introduceDenyReason — stable diagnostic codes (issue #77)', () => {
   });
 });
 
-describe('gate vs introduce parity — C3 semantic rewrite removes all intentional divergence', () => {
-  // The user asked review to verify that the normal delivery gate and the
-  // introduce gate agree under all group policies after the C3 semantic
-  // rewrite (PR #255 review comment, 2026-06-27).
-  //
-  // HISTORICAL NOTE: Before C3 there was ONE intentional divergence between
-  // gate and introduce under policy=allowlist + chatInList + !senderInList
-  // (issue #62). The gate used to let any member of an allowlisted chat
-  // speak (chat-scoped delivery), while introduce additionally required the
-  // sender on allow_users (sender-scoped, because /introduce changes trust).
-  // After C3 rule 2 the gate itself performs the SAME sender-scoped
-  // user-allowlist check on TOP of the group allowlist shell. So gate and
-  // introduce now agree in all 12 (3 policies × 2 chatInList × 2 senderInList)
-  // combinations.
-  //
-  // Introduce waives the @-mention requirement; for parity with the gate we
-  // simulate a bot mention so both checks proceed under the same premise.
-  // dm_policy defaults to 'pairing' (state helper default).
+describe('gate vs introduce table — ordinary trusted-chat delivery intentionally diverges', () => {
+  // Ordinary delivery trusts an exact human in allow_chats under either
+  // non-block group policy. /introduce mutates peer trust and therefore still
+  // requires allow_users; this table is load-bearing for that deliberate split.
+  // The mention is present so both paths proceed under the same premise, and
+  // dm_policy defaults to pairing for each state.
   const POLICIES = ['block', 'follow-user', 'allowlist'] as const;
   const MENTION = true;
 
@@ -342,8 +344,24 @@ describe('gate vs introduce parity — C3 semantic rewrite removes all intention
               senderId: 'user-a',
             }) === null;
 
-          // C3: gate and introduce agree in all 12 combinations.
-          expect(introAuthorized).toBe(gateDelivers);
+          const expectedGateDelivery =
+            policy !== 'block' &&
+            (chatInList || (policy === 'follow-user' && senderInList));
+          const expectedIntroduceAuthorization =
+            senderInList &&
+            (policy === 'follow-user' || (policy === 'allowlist' && chatInList));
+
+          expect(gateDelivers).toBe(expectedGateDelivery);
+          expect(introAuthorized).toBe(expectedIntroduceAuthorization);
+          if (policy !== 'block' && chatInList && !senderInList) {
+            expect(gateDelivers).toBe(true);
+            expect(introAuthorized).toBe(false);
+            expect(introduceDenyReason(access, {
+              chatType: 'group',
+              chatId: 'chat-a',
+              senderId: 'user-a',
+            })).toBe('sender_not_followed');
+          }
         });
       }
     }

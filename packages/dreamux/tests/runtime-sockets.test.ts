@@ -31,6 +31,7 @@ describe('runtime socket allocation', () => {
     previousXdg = process.env['XDG_RUNTIME_DIR'];
     previousTmpdir = process.env['TMPDIR'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     delete process.env['XDG_RUNTIME_DIR'];
     // Pin TMPDIR to a shared-tmp value so the private-OS-temp candidate is
     // excluded by default; tests that exercise it set TMPDIR explicitly. This
@@ -43,6 +44,7 @@ describe('runtime socket allocation', () => {
   afterEach(() => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     if (previousXdg === undefined) delete process.env['XDG_RUNTIME_DIR'];
     else process.env['XDG_RUNTIME_DIR'] = previousXdg;
     if (previousTmpdir === undefined) delete process.env['TMPDIR'];
@@ -95,11 +97,11 @@ describe('runtime socket allocation', () => {
   });
 
   it('uses a private OS temp dir when XDG is absent and the run root is over budget (#182 macOS gate)', () => {
-    // Reproduce the macOS CI failure: no XDG_RUNTIME_DIR and a long per-run HOME
+    // Reproduce the macOS CI failure: no XDG_RUNTIME_DIR and a long DREAMUX_ROOT
     // push ~/.dreamux/run/sockets over the sun_path budget. A short, PRIVATE
     // TMPDIR (the macOS $TMPDIR analog) must keep the socket within budget
-    // without touching shared /tmp or depending on the long durable HOME.
-    process.env['HOME'] = join(root, 'h'.repeat(120));
+    // without touching shared /tmp or depending on the long durable root.
+    process.env['DREAMUX_ROOT'] = join(root, 'h'.repeat(120));
     resetRuntimeConfig();
     const privateTmp = join(root, 't'); // short, under the real (short) home
     const path = allocateRuntimeSocketPath('test socket', { TMPDIR: privateTmp });
@@ -125,7 +127,7 @@ describe('runtime socket allocation', () => {
   });
 
   it('fails loudly when even the dreamux-owned fallback is over budget', () => {
-    process.env['HOME'] = join(root, 'h'.repeat(120));
+    process.env['DREAMUX_ROOT'] = join(root, 'h'.repeat(120));
     // TMPDIR pinned to shared /tmp (beforeEach) is excluded, so no private-temp
     // candidate rescues an over-budget run root here.
     expect(() => allocateRuntimeSocketPath('test socket', {})).toThrow(

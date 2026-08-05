@@ -1,9 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type {
-  AgentRuntimeMcpServer,
-  DreamuxLogger,
-} from '@excitedjs/dreamux-types';
+import type { AgentRuntimeMcpServer, DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
@@ -21,6 +18,7 @@ import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import type { SchedulerCommands } from '../scheduler/service.js';
 import type { ChannelRouteOwner } from '../channel-service/index.js';
 import { KeyedAsyncQueue } from '../serial-queue.js';
+import { throwSettledFailures } from '../shutdown-errors.js';
 import { TeamStore } from './store.js';
 import type {
   TeamCreateInput,
@@ -55,6 +53,7 @@ import {
   type TeamSchedulerLifecycle,
   type TeamServiceDeps,
 } from '../team-service/index.js';
+import { TeamUnavailableError, teamErrorInfo } from './errors.js';
 
 /** Share one in-flight promise per key; a concurrent same-key call joins it. */
 function dedupe<T>(
@@ -104,6 +103,7 @@ export interface TeamCollectionOptions {
     leaderName: string;
   }) => readonly AgentRuntimeMcpServer[];
   log: DreamuxLogger;
+  workflowLog?: DreamuxLogger;
   coreEvents?: DispatcherCoreEventPublisher;
   nameSuffixGenerator?: SuffixGenerator;
   agentNameSuffixGenerator?: SuffixGenerator;
@@ -455,13 +455,16 @@ export class TeamCollection {
       }
       const current = await this.requireOpenTeamRouteOwner(id);
       this.routeClosing.add(id);
+      this.cache.get(id)?.closeWorkflowAdmission();
       return current;
     });
     try {
+      await this.cache.get(id)?.stopWorkflowsForClosing();
       return await task(owner);
     } finally {
       await this.routeLifecycle.run(id, async () => {
         this.routeClosing.delete(id);
+        await this.cache.get(id)?.startWorkflowAdmission();
       });
     }
   }
@@ -541,11 +544,14 @@ export class TeamCollection {
       initiatorFor: this.opts.initiatorFor,
       isShuttingDown: this.opts.isShuttingDown,
       admitOperation: this.opts.admitOperation ?? ((task) => task()),
+      withTeamLeaderLease: (lease, task) =>
+        this.withTeamLeaderLease(lease, task),
       store: this.store,
       adminSocketPath: this.opts.adminSocketPath,
       leaderChannelDescriptors: this.opts.leaderChannelDescriptors,
       trackMaterialized: (service) => this.materialized.add(service),
       log: this.opts.log,
+      workflowLog: this.opts.workflowLog ?? this.opts.log,
       ...(this.opts.agentNameSuffixGenerator !== undefined
         ? { agentNameSuffixGenerator: this.opts.agentNameSuffixGenerator }
         : {}),
@@ -650,49 +656,40 @@ export class TeamCollection {
         await schedulerLifecycle.lifecycle.start();
       } catch (err) {
         this.opts.log.error(
-          { dispatcher_id: this.dispatcherId, team_id: team.team_id, err: errInfo(err) },
+          { dispatcher_id: this.dispatcherId, team_id: team.team_id, err: teamErrorInfo(err) },
           'TeamLeader scheduler start failed',
         );
       }
     }
   }
 
-  stopSchedulers(): void {
-    for (const schedulerLifecycle of this.schedulerLifecycles.values()) {
-      schedulerLifecycle.lifecycle.stop();
+  async startWorkflows(): Promise<void> {
+    for (const team of await this.store.list(this.dispatcherId)) {
+      if (team.status === 'closed') continue;
+      await (await this.get(team.team_id)).startWorkflowAdmission();
     }
   }
 
-  /**
-   * Stop every live team's runtimes on server shutdown (issue #233). The
-   * materialized set also retains failed create/rebuild attempts that never
-   * reached the live cache, so their partially booted runtimes remain owned.
-   * This never reads the durable store or lazily starts a runtime.
-   */
+  async recoverWorkflows(): Promise<void> {
+    for (const team of await this.store.list(this.dispatcherId)) {
+      if (team.status === 'closed') continue;
+      await (await this.get(team.team_id)).recoverWorkflows();
+    }
+  }
+
+  closeWorkflowAdmissions(): void {
+    for (const service of this.materialized) service.closeWorkflowAdmission();
+  }
+
+  stopSchedulers(): void {
+    for (const item of this.schedulerLifecycles.values()) item.lifecycle.stop();
+  }
+
   async stopAll(): Promise<void> {
     const results = await Promise.allSettled(
-      [...this.materialized].map((service) => service.stopAll()),
+      [...this.materialized].map((service) =>
+        this.routeLifecycle.run(service.id, () => service.stopAll())),
     );
-    const failures = results
-      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-      .map((result) => result.reason);
-    if (failures.length === 1) throw failures[0];
-    if (failures.length > 1) {
-      throw new AggregateError(failures, 'multiple Team runtimes failed to stop');
-    }
+    throwSettledFailures(results, 'multiple Team runtimes failed to stop');
   }
-}
-
-export class TeamUnavailableError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'TeamUnavailableError';
-  }
-}
-
-function errInfo(err: unknown): Record<string, unknown> {
-  if (err instanceof Error) {
-    return { type: err.name, message: err.message, stack: err.stack };
-  }
-  return { value: String(err) };
 }

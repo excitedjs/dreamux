@@ -1,27 +1,36 @@
 # Reference: bundled Dreamux skills
 
 `/packages/dreamux/skills/` contains Dreamux-owned skills shipped in the npm
-package. The skill directories are grouped by role so runtimes that scan parent
-directories do not expose another role's skills:
+package. Role-specific skill directories stay separate so runtimes that scan
+parent directories do not expose another role's skills; a shared root is
+deliberately composed into both Dispatcher and TeamLeader runtimes:
 
 - `skills/dispatcher/dispatcher-workflow` is injected only into Dispatcher
   runtimes. It covers provider-visible replies and dispatcher-visible
   TeamMate/Team/cron MCP cautions.
 - `skills/dispatcher/dreamux-maintenance` is injected only into Dispatcher
-  runtimes. It covers Dreamux host/server operation, `dreamux doctor` /
-  `status` / `changelog` cautions, service/config/state/run/log diagnosis,
-  missing-reply and stuck-turn troubleshooting, and bundled-skill injection
-  diagnosis.
+  runtimes. Its concise root owns authorization, common diagnosis, reporting,
+  and a seven-row routing table. One-level references separately own service
+  lifecycle, the host envelope, each built-in provider schema, current V3
+  Feishu access, and the managed-daemon self-upgrade SOP. The root and every
+  non-upgrade reference remain current-state-only. The self-upgrade reference
+  is the narrow generic transition exception: it stages the target package and
+  reads that target's changelog and routed owner references rather than carrying
+  release-specific schemas or migration recipes.
 - `skills/team-leader/team-workflow` is injected only into TeamLeader runtimes.
   It covers team-scoped TeamMate MCP cautions, shared Team workspace
   coordination, provider-visible bound-channel replies, TeamLeader cron
   cautions, and the scoped `transfer_back` tool.
+- The shared `workflow` skill at `skills/shared/workflow` is injected into both
+  Dispatcher and TeamLeader runtimes. It owns the Dynamic Workflow tool and
+  deterministic runner contract.
 
 Ordinary TeamMate and team-member runtimes receive no bundled Dreamux skill by
 default.
 
-The skills intentionally avoid fixed workflow recipes. They are guardrails for
-which role can see which MCP surface and what mistakes to avoid.
+The workflow skills intentionally avoid fixed recipes. Maintenance adds one
+low-freedom exception for an explicitly requested, restart-safe managed-daemon
+self-upgrade; ordinary diagnosis loads only the relevant routed reference.
 
 When changing bundled skills, prompts, MCP descriptions, or tests that lock
 model-visible wording, also follow
@@ -30,20 +39,24 @@ model-visible wording, also follow
 ## Injection Strategy
 
 Bundled skills are injected at runtime by role. Dispatcher and TeamLeader launch
-sites pass role-specific skill roots through the Agent Runtime create context as
-`skillSources`; the runtime package applies those roots to its engine:
+sites pass their role-specific root plus the shared root through the Agent
+Runtime create context as `skillSources`; the runtime package applies those
+roots to its engine:
 
-- Codex dedupes the supplied role roots and calls `skills/extraRoots/set` after
+- Codex dedupes the supplied roots and calls `skills/extraRoots/set` after
   initialize and before thread start/resume. The package layout deliberately
-  gives Dispatcher and TeamLeader skills different roots.
+  gives Dispatcher and TeamLeader skills different role roots while composing
+  the shared root into both.
 - Claude Code materializes runtime-owned `.claude/skills/<name>` add-dir roots
   and passes them through `--add-dir`.
 
 Admin-supplied custom skill roots use the same neutral create-context shape, but
 core first normalizes them into canonical absolute readable directories and
 collapses duplicate roots while rejecting duplicate direct-child skill names.
-TeamLeader roots also reserve the bundled `team-workflow` skill name, so custom
-roots cannot shadow the required Team workflow skill.
+For TeamLeader creation, required-source normalization includes both the
+role-specific and shared roots. It therefore reserves the bundled
+`team-workflow` and `workflow` names so custom roots cannot shadow either
+required skill.
 
 `dreamux onboard` and dispatcher startup do not install bundled skills into a
 workspace. Bundled skills are package-shipped runtime injection sources.

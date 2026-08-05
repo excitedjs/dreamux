@@ -190,6 +190,9 @@ function assertCapabilities(
   }
   const capabilities = value as Partial<AgentRuntimeCapabilities>;
   assertResumeCapability(capabilities.resume, context);
+  if (capabilities.structuredOutput !== undefined) {
+    assertStructuredOutputCapability(capabilities.structuredOutput, context);
+  }
 }
 
 function assertResumeCapability(
@@ -198,5 +201,21 @@ function assertResumeCapability(
 ): void {
   if (!isRecord(value) || typeof value['supported'] !== 'boolean') {
     context.fail('capabilities.resume.supported must be a boolean');
+  }
+}
+
+function assertStructuredOutputCapability(
+  value: unknown,
+  context: ProviderContractContext,
+): void {
+  if (!isRecord(value) || typeof value['supported'] !== 'boolean') {
+    context.fail('capabilities.structuredOutput.supported must be a boolean');
+    return;
+  }
+  const scope = (value as Record<string, unknown>)['scope'];
+  if (scope !== undefined && scope !== 'create-context' && scope !== 'per-turn') {
+    context.fail(
+      "capabilities.structuredOutput.scope must be 'create-context' or 'per-turn' when present",
+    );
   }
 }

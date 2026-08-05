@@ -44,6 +44,14 @@ export interface ClaudeCodeResidentArgsInput {
    * maps only the names Claude Code understands and ignores the rest.
    */
   disableFeatures?: readonly string[];
+  /**
+   * Optional JSON Schema constraining every turn's final assistant message for
+   * the resident session's lifetime. Maps to the native `--json-schema` CLI
+   * flag, which is fixed at spawn time — Claude Code cannot change it
+   * mid-session, so a per-turn schema request on a running session fails
+   * loudly instead. Omitted/undefined means "no schema constraint".
+   */
+  outputSchema?: Record<string, unknown>;
 }
 
 /**
@@ -139,6 +147,13 @@ export function claudeCodeResidentArgs(input: ClaudeCodeResidentArgsInput): stri
     input.resumeSessionId !== ''
   ) {
     args.push('--resume', input.resumeSessionId);
+  }
+  // Structured output: `--json-schema` is a spawn-time CLI flag, so it can only
+  // be set from the create context (never per-turn). When present, every turn's
+  // final assistant message must conform to this schema; Claude Code validates
+  // it and surfaces a pre-parsed `structured_output` on the `result` event.
+  if (input.outputSchema !== undefined) {
+    args.push('--json-schema', JSON.stringify(input.outputSchema));
   }
   args.push(...input.config.extra_args);
   return args;

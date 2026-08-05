@@ -21,12 +21,3 @@ export async function closeAllBuilt(
     }
   }
 }
-
-export function errInfo(err: unknown): { message: string; stack?: string } {
-  if (err instanceof Error) {
-    return err.stack !== undefined
-      ? { message: err.message, stack: err.stack }
-      : { message: err.message };
-  }
-  return { message: String(err) };
-}

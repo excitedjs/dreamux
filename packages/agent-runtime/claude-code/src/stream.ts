@@ -113,12 +113,24 @@ function parseResult(o: JsonObject): ResultEnvelope {
   } else {
     isError = o['is_error'] === true || errors.length > 0;
   }
+  // In --json-schema mode Claude Code surfaces the validated object in
+  // `structured_output`; prefer it over the free-form `result` text so the
+  // workflow always receives clean, schema-conformant JSON to parse.
+  //
+  // Presence is checked by key, not by nullish: a JSON Schema `null` root type
+  // is a valid structured output, so an explicit `structured_output: null` must
+  // serialize to the JSON text `"null"` rather than falling back to `result`.
+  const hasStructuredOutput = 'structured_output' in o;
+  const text = hasStructuredOutput
+    ? JSON.stringify(o['structured_output'])
+    : str(o['result']);
   return {
     subtype,
     isError,
-    text: str(o['result']),
+    text,
     sessionId: str(o['session_id']),
     errors,
+    hasStructuredOutput,
   };
 }
 
@@ -309,6 +321,7 @@ export class TurnAggregator {
       sessionId: r.sessionId ?? this.initSessionId,
       subtype: r.subtype,
       errors: r.errors,
+      hasStructuredOutput: r.hasStructuredOutput,
     };
   }
 }

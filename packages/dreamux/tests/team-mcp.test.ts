@@ -364,26 +364,46 @@ describe('team-mcp stdio shim', () => {
     }
   });
 
-  it('forwards redesigned read verbs and preserves bound_target results (#182 PR-7)', async () => {
-    const boundTarget = {
-      channel_id: 'primary',
-      provider: 'builtin:test',
-      target_type: 'group',
-      target_key: 'target-alpha',
-      display: 'Alpha',
-      canonical_url: null,
-    };
+  it('forwards all bound targets and preserves the compatible first target', async () => {
+    const boundTargets = [
+      {
+        channel_id: 'flowx',
+        provider: 'npm:@example/flowx-channel',
+        target_type: 'task',
+        target_key: 'task-alpha',
+        display: 'Alpha task',
+        canonical_url: null,
+      },
+      {
+        channel_id: 'feishu',
+        provider: 'builtin:test',
+        target_type: 'group',
+        target_key: 'target-alpha',
+        display: 'Alpha group',
+        canonical_url: null,
+      },
+    ];
+    const boundTarget = boundTargets[0];
     const admin = await startFakeAdminServer((request) => {
       const results: Record<string, unknown> = {
         'team.list': {
-          teams: [{ team_name: 'alpha', bound_target: boundTarget }],
+          teams: [{
+            team_name: 'alpha',
+            bound_target: boundTarget,
+            bound_targets: boundTargets,
+          }],
         },
         'team.status': {
           team: { team_name: 'alpha' },
           bound_target: boundTarget,
+          bound_targets: boundTargets,
         },
         'team.history': {
-          items: [{ team_name: 'alpha', bound_target: boundTarget }],
+          items: [{
+            team_name: 'alpha',
+            bound_target: boundTarget,
+            bound_targets: boundTargets,
+          }],
           next_cursor: null,
         },
         'team.send': {
@@ -458,7 +478,11 @@ describe('team-mcp stdio shim', () => {
       expect(listResponse).toMatchObject({
         result: {
           structuredContent: {
-            teams: [{ team_name: 'alpha', bound_target: boundTarget }],
+            teams: [{
+              team_name: 'alpha',
+              bound_target: boundTarget,
+              bound_targets: boundTargets,
+            }],
           },
         },
       });
@@ -468,6 +492,7 @@ describe('team-mcp stdio shim', () => {
           structuredContent: {
             team: { team_name: 'alpha' },
             bound_target: boundTarget,
+            bound_targets: boundTargets,
           },
         },
       });
@@ -475,7 +500,11 @@ describe('team-mcp stdio shim', () => {
       expect(historyResponse).toMatchObject({
         result: {
           structuredContent: {
-            items: [{ team_name: 'alpha', bound_target: boundTarget }],
+            items: [{
+              team_name: 'alpha',
+              bound_target: boundTarget,
+              bound_targets: boundTargets,
+            }],
             next_cursor: null,
           },
         },

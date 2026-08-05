@@ -44,10 +44,12 @@ import {
 import { readConfigJson, globalConfigFile } from '../config/config.js';
 import { dreamuxBinPath } from '../platform/package-bin.js';
 import {
-  probeStandardExecDirs,
   setRuntimeConfig,
-  type ExecDirProbe,
 } from '../platform/paths.js';
+import {
+  probeStandardExecDirs,
+  type ExecDirProbe,
+} from '../platform/service-path.js';
 export interface DaemonInstallOptions {
   startService?: boolean;
   dryRun?: boolean;

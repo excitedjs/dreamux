@@ -118,6 +118,14 @@ core passes it to the selected Channel session's `resolveTarget(meta)`.
 The old Feishu-specific `bind_group`, `transfer_channel_back`, and
 `create.bind_group` tools are removed without aliases.
 
+Dispatcher Team read results expose every active route for the Team in
+`bound_targets`. The compatibility field `bound_target` is the first entry in
+that array, or `null` when no active route exists. The array follows binding
+store order so adding the complete projection does not change which route old
+clients observe through the singular field. `team.list`, `team.status`, and
+`team.history` share this projection; create and dissolve return an empty array
+and a null singular field.
+
 Source:
 
 - `/packages/dreamux/src/mcp/team-mcp.ts`
@@ -302,6 +310,11 @@ Detailed Feishu behavior lives in focused domain pages:
 - [Feishu pairing access](feishu-pairing-access.md)
 - [Non-blocking dispatcher inbound](non-blocking-dispatcher-inbound.md)
 
+The Feishu session classifies raw chat/sender identity before routing or trust
+side effects. Current V3 `allow_chats` semantics trust exact human members of a
+listed group under either non-block policy after the global mention gate;
+`/introduce` remains a distinct sender-scoped mutation path.
+
 ## Decision Trail
 
 - [Channel-scoped collaboration and core events](../decisions/channel-scoped-collaboration-and-core-events.md)
@@ -311,3 +324,4 @@ Detailed Feishu behavior lives in focused domain pages:
 - [Channel input runtime assembly](../decisions/channel-input-runtime-assembly.md)
 - [Feishu inbound attachments](../decisions/feishu-inbound-attachments.md)
 - [Feishu pairing access v3](../decisions/feishu-pairing-access-v3.md)
+- [Feishu trusted allow-chats semantics](../decisions/feishu-allow-chats-trust-semantics.md)

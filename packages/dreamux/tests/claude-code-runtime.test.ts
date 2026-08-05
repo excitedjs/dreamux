@@ -95,7 +95,7 @@ function claudeDispatcher(
 }
 
 function okOutcome(sessionId: string | null = 'session-abc'): TurnOutcome {
-  return { isError: false, text: 'done', sessionId, subtype: 'success', errors: [] };
+  return { isError: false, text: 'done', sessionId, subtype: 'success', errors: [], hasStructuredOutput: false };
 }
 
 /** A fake resident session: records turns, plays a scripted outcome sequence. */
@@ -374,7 +374,10 @@ describe('builtin:claude-code provider', () => {
     const provider = claudeCodeProvider({ sessionFactory: fakeFleet().factory });
     expect(provider.ref).toBe('builtin:claude-code');
     expect(provider.descriptor.kind).toBe('agentRuntime');
-    expect(provider.getCapabilities()).toEqual({ resume: { supported: true } });
+    expect(provider.getCapabilities()).toEqual({
+      resume: { supported: true },
+      structuredOutput: { supported: true, scope: 'create-context' },
+    });
   });
 });
 
@@ -388,12 +391,14 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     home = mkdtempSync(join(tmpdir(), 'dreamux-cc-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = home;
+    process.env['DREAMUX_ROOT'] = home;
   });
 
   afterEach(async () => {
     await Promise.all(runtimes.map((runtime) => runtime.stop().catch(() => undefined)));
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     rmSync(home, { recursive: true, force: true });
   });
 
@@ -405,6 +410,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       systemPrompt?: AgentRuntimeSystemPrompt;
       skillSources?: AgentRuntimeSkillSource[];
       disableFeatures?: readonly string[];
+      outputSchema?: Record<string, unknown>;
       config?: Partial<ReturnType<typeof defaultDispatcherClaudeCodeConfig>>;
       logger?: Parameters<ReturnType<typeof claudeCodeProvider>['createRuntime']>[0]['logger'];
     } = {},
@@ -456,6 +462,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       ...(opts.disableFeatures !== undefined
         ? { disableFeatures: opts.disableFeatures }
         : {}),
+      outputSchema: opts.outputSchema,
       ...(opts.onTurnSettled !== undefined
         ? { onTurnSettled: opts.onTurnSettled }
         : {}),
@@ -1068,6 +1075,51 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(fleet.sessions[0]?.submitOptions[0]).toEqual({ isSynthetic: false });
   });
 
+  it('returns the structural unsupported-feature error for outputSchema', async () => {
+    const { runtime } = await makeRuntime(fakeFleet());
+    await runtime.start();
+
+    const result = await runtime.completionInput({
+      text: 'return structured output',
+      sourceId: 'completion:schema',
+      outputSchema: { type: 'object' },
+    });
+
+    expect(result).toMatchObject({
+      status: 'failed',
+      error: {
+        name: 'UnsupportedAgentRuntimeFeatureError',
+        feature: 'outputSchema',
+        message:
+          'claude-code runtime does not support per-turn outputSchema on the resident session',
+      },
+    });
+  });
+
+  it('applies --json-schema from the create context on resident spawn', async () => {
+    const fleet = fakeFleet();
+    const schema = {
+      type: 'object',
+      properties: { answer: { type: 'string' } },
+      required: ['answer'],
+      additionalProperties: false,
+    };
+    const { runtime } = await makeRuntime(fleet, { outputSchema: schema });
+    await runtime.start();
+    const args = fleet.sessions[0]?.spec.args ?? [];
+    const flagIndex = args.indexOf('--json-schema');
+    expect(flagIndex).toBeGreaterThanOrEqual(0);
+    expect(args[flagIndex + 1]).toBe(JSON.stringify(schema));
+  });
+
+  it('omits --json-schema when no create-context schema is set', async () => {
+    const fleet = fakeFleet();
+    const { runtime } = await makeRuntime(fleet);
+    await runtime.start();
+    const args = fleet.sessions[0]?.spec.args ?? [];
+    expect(args).not.toContain('--json-schema');
+  });
+
   it('returns stopped for completionInput after stop', async () => {
     const fleet = fakeFleet([okOutcome('session-abc')]);
     const { runtime } = await makeRuntime(fleet);
@@ -1166,7 +1218,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
   it('surfaces an error result envelope as a degraded turn', async () => {
     const fleet = fakeFleet([
-      { isError: true, text: '', sessionId: 'session-abc', subtype: 'error_during_execution', errors: ['model overloaded'] },
+      { isError: true, text: '', sessionId: 'session-abc', subtype: 'error_during_execution', errors: ['model overloaded'], hasStructuredOutput: false },
     ]);
     const { runtime, store } = await makeRuntime(fleet);
     await runtime.start();

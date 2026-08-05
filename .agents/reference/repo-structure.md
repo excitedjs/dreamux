@@ -45,12 +45,12 @@ verbatim through the move):
 | `src/cli/` | Entry-point CLIs: `dreamux.ts` (single public command tree), `server.ts` and `server-ctl.ts` as internal delegated modules |
 | `src/agent-runtime/` | Generic AgentRuntime provider catalog/loader, host create-context seams, and bundled skill source selection |
 | `src/config/` | Operator config loading, provider ref validation, and provider-owned raw config parsing |
-| `src/service/` | Dispatcher lifecycle, Team/TeamMate collections + services, Team binding/routing, and runtime/channel session orchestration |
+| `src/service/` | Dispatcher lifecycle, Team/TeamMate and Dynamic Workflow collections + services, Team binding/routing, and runtime/channel session orchestration |
 | `src/mcp/` | Dreamux-owned MCP shims: Team, TeamMate, and provider-tool channel shim |
 | `src/platform/` | Centralized paths, logging, runtime sockets, and process helpers |
 | `src/server.ts` | Top-level `Server` class wiring everything together |
 | `bin/dreamux` | Public CLI launcher (`dreamux serve`, `dreamux dispatcher ...`) |
-| `skills/` | Bundled Dreamux skills injected at runtime by role (#209 slice 6): core hands them to Dispatcher/TeamLeader runtimes as `skillSources` and the runtime applies them (Codex `skills/extraRoots/set`, Claude Code `--add-dir`) — no longer symlinked into the workspace |
+| `skills/` | Bundled Dreamux role and shared skills injected into Dispatcher/TeamLeader runtimes as `skillSources` (Codex `skills/extraRoots/set`, Claude Code `--add-dir`) — never symlinked into the workspace |
 | `tests/` | vitest: smoke, bin-launcher, dispatcher Codex home doctor, codex live integration |
 
 ## Installation — the rush path only

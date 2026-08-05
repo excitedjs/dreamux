@@ -12,7 +12,7 @@ import type {
   DispatcherSummary,
 } from '../dispatcher-service/types.js';
 import { runtimeStatusToIdentityStatus } from '../agent-entity/types.js';
-import { throwShutdownFailures } from '../shutdown-errors.js';
+import { throwSettledFailures } from '../shutdown-errors.js';
 
 export interface DispatchersOptions {
   config: DreamuxConfig;
@@ -21,6 +21,7 @@ export interface DispatchersOptions {
   channelProviders: ChannelProviderCatalog;
   adminSocketPath?: string;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
+  workflowLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
   log: DreamuxLogger;
 }
 
@@ -39,6 +40,9 @@ export class Dispatchers {
   private readonly channelProviders: ChannelProviderCatalog;
   private readonly adminSocketPath: string | undefined;
   private readonly channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
+  private readonly workflowLoggerFactory:
+    | ((dispatcherId: string) => DreamuxLogger)
+    | undefined;
   private readonly log: DreamuxLogger;
   /**
    * Read-only identity reader shared by {@link summarize} and {@link status}
@@ -58,6 +62,7 @@ export class Dispatchers {
     this.channelProviders = opts.channelProviders;
     this.adminSocketPath = opts.adminSocketPath;
     this.channelLoggerFactory = opts.channelLoggerFactory;
+    this.workflowLoggerFactory = opts.workflowLoggerFactory;
     this.log = opts.log;
     this.identities = new AgentIdentityStore(opts.log);
   }
@@ -125,10 +130,7 @@ export class Dispatchers {
     const results = await Promise.allSettled(
       [...this.services.values()].map((service) => service.shutdown()),
     );
-    const failures = results
-      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-      .map((result) => result.reason);
-    throwShutdownFailures(failures, 'multiple dispatchers failed to shut down');
+    throwSettledFailures(results, 'multiple dispatchers failed to shut down');
   }
 
   private dispatcherOptions(id: string): DispatcherServiceOptions {
@@ -142,6 +144,9 @@ export class Dispatchers {
         ? { adminSocketPath: this.adminSocketPath }
         : {}),
       channelLoggerFactory: this.channelLoggerFactory,
+      ...(this.workflowLoggerFactory !== undefined
+        ? { workflowLoggerFactory: this.workflowLoggerFactory }
+        : {}),
       log: this.log,
     };
   }

@@ -99,6 +99,7 @@ describe('dreamux uninstall', () => {
     previousConfigDir = process.env['DREAMUX_CONFIG_DIR'];
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     process.env['DREAMUX_CONFIG_DIR'] = dreamuxRoot();
   });
   afterEach(() => {
@@ -106,6 +107,7 @@ describe('dreamux uninstall', () => {
     else process.env['DREAMUX_CONFIG_DIR'] = previousConfigDir;
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     resetRuntimeConfig();
     rmSync(root, { recursive: true, force: true });
   });
@@ -784,6 +786,7 @@ describe('dreamux uninstall', () => {
       const homeDir = join(caseRoot, 'home');
       const previousCaseHome = process.env['HOME'];
       process.env['HOME'] = homeDir;
+      process.env['DREAMUX_ROOT'] = join(caseRoot, 'dreamux');
       const servicePath = join(
         homeDir,
         '.config',

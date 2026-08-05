@@ -13,11 +13,13 @@ import {
 import {
   dispatcherDir,
   logsRoot,
-  probeStandardExecDirs,
   setRuntimeConfig,
   stateRoot,
-  type ExecDirProbe,
 } from '../platform/paths.js';
+import {
+  probeStandardExecDirs,
+  type ExecDirProbe,
+} from '../platform/service-path.js';
 import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
 import { ChannelProviderCatalog } from '../channel/catalog.js';
 import {

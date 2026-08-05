@@ -17,6 +17,7 @@ export interface DispatcherServiceOptions {
   channelProviders: ChannelProviderCatalog;
   adminSocketPath?: string;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
+  workflowLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
   log: DreamuxLogger;
 }
 

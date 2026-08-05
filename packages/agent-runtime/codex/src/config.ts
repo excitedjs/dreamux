@@ -29,13 +29,10 @@ import {
  * `bin` is the dispatcher's Codex binary path; the `CODEX_HOST_CODEX_BIN`
  * environment variable is a host-level override that takes precedence over it
  * (resolved by the codex builtin's `resolveCodexBinPath`).
- * `initialize_timeout_ms` is that
- * dispatcher's handshake timeout. `turn_timeout_ms` bounds a single TeamMate
- * worker turn (issue #126): if a per-task Codex app-server reaches `running`
- * but its turn never emits `turn/completed` (a stall in turn execution —
- * commonly auth, network, or model quota), the worker fails that task instead
- * of leaving it `running` forever. It does not affect the dispatcher's own
- * long-lived runtime, only per-task workers.
+ * `initialize_timeout_ms` is that dispatcher's handshake timeout.
+ * `turn_timeout_ms` is accepted and defaulted by this config reader, but the
+ * current `CodexRuntime` does not consume it. It therefore has no runtime
+ * effect; documenting that gap must not be confused with wiring a timeout.
  */
 export interface DispatcherCodexConfig {
   bin: string;
@@ -48,28 +45,26 @@ export interface DispatcherCodexConfig {
 }
 
 /**
- * Default `dispatchers[].runtime.config.bin`. The Codex binary path is
+ * Default `agents[].config.bin`. The Codex binary path is
  * dispatcher-local; `CODEX_HOST_CODEX_BIN` is a host-level override above it,
  * not the source.
  */
 export const DEFAULT_CODEX_BIN = 'codex';
 
-/** Default `dispatchers[].runtime.config.initialize_timeout_ms` (handshake timeout, ms). */
+/** Default `agents[].config.initialize_timeout_ms` (handshake timeout, ms). */
 export const DEFAULT_INITIALIZE_TIMEOUT_MS = 10_000;
 
 /**
- * Default per-turn deadline for a `builtin:codex` TeamMate worker (ms).
- * Generous enough not to interrupt a legitimately long tool-using turn, but
- * finite so a worker whose turn stalls after start cannot sit `running` with no
- * visible outcome (issue #126). Operators override via
- * `dispatchers[].runtime.config.turn_timeout_ms`.
+ * Default accepted value for `agents[].config.turn_timeout_ms` (ms). The reader
+ * validates and returns it, but `CodexRuntime` currently does not consume it,
+ * so changing this value has no runtime effect.
  */
 export const DEFAULT_CODEX_TURN_TIMEOUT_MS = 600_000;
 
-/** Default `dispatchers[].runtime.config.approval_policy` when omitted. */
+/** Default `agents[].config.approval_policy` when omitted. */
 export const DEFAULT_APPROVAL_POLICY = 'never';
 
-/** Default `dispatchers[].runtime.config.sandbox_mode` when omitted. */
+/** Default `agents[].config.sandbox_mode` when omitted. */
 export const DEFAULT_SANDBOX_MODE = 'workspace-write';
 
 export const ALLOWED_APPROVAL_POLICIES = new Set([

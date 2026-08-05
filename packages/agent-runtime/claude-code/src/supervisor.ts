@@ -7,14 +7,13 @@
  * `claude-code/rpc.ts`.
  */
 
-import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { mkdir, open } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import {
-  isProcessAlive,
-  killProcessGroup,
   removeEmptyLogFile,
+  SupervisedChild,
 } from '@excitedjs/dreamux-utils';
 import { ClaudeCodeStreamRpc } from './rpc.js';
 import type {
@@ -26,8 +25,8 @@ import type {
 
 /** The live session: spawns and supervises the real `claude` child. */
 class LiveClaudeCodeSession implements ClaudeCodeSession {
+  private supervisor: SupervisedChild | null = null;
   private child: ChildProcess | null = null;
-  private pid: number | null = null;
   private exited = false;
   private stopped = false;
   private rpc: ClaudeCodeStreamRpc | null = null;
@@ -49,41 +48,28 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     // handle is closed once the child owns the inherited fd (the finally),
     // matching the timing discipline in codex/supervisor.ts.
     const stderrHandle = await open(this.spec.stderrLogPath, 'a', 0o600);
-    const spawnOpts: SpawnOptions = {
-      cwd: this.spec.cwd,
-      env: this.spec.env,
-      // Own process group so a leaked grandchild is group-killable on reap.
-      detached: true,
-      stdio: ['pipe', 'pipe', stderrHandle.fd],
-    };
+    const supervisor = new SupervisedChild({
+      kind: 'spawn',
+      command: this.spec.bin,
+      args: this.spec.args,
+      options: {
+        cwd: this.spec.cwd,
+        env: this.spec.env,
+        stdio: ['pipe', 'pipe', stderrHandle.fd],
+      },
+    });
+    supervisor.onError((error) => {
+      this.spec.log?.('warn', 'claude resident child error', error);
+    });
+    supervisor.onExit(() => this.onChildExit());
     let child: ChildProcess;
     try {
-      child = await new Promise<ChildProcess>((resolve, reject) => {
-        let settled = false;
-        const c = spawn(this.spec.bin, this.spec.args, spawnOpts);
-        c.once('error', (e) => {
-          if (settled) return;
-          settled = true;
-          reject(e instanceof Error ? e : new Error(String(e)));
-        });
-        c.once('spawn', () => {
-          if (settled) return;
-          settled = true;
-          resolve(c);
-        });
-      });
+      child = await supervisor.start();
     } finally {
       await stderrHandle.close();
     }
-    if (child.pid === undefined) {
-      throw new Error('claude resident child spawned without a pid');
-    }
+    this.supervisor = supervisor;
     this.child = child;
-    this.pid = child.pid;
-    // Post-spawn `error` must not crash the host event loop.
-    child.on('error', (err) => {
-      this.spec.log?.('warn', 'claude resident child error', err);
-    });
     const stdin = child.stdin;
     if (stdin === null) {
       throw new Error('claude resident child spawned without stdin');
@@ -104,7 +90,6 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
       rpc.onStdoutChunk(chunk);
     });
     if (this.spec.remoteControl) rpc.enableRemoteControl();
-    child.once('exit', () => this.onChildExit());
   }
 
   async submitTurn(
@@ -144,23 +129,11 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     this.rpc?.failPending(
       new Error('claude resident session stopped mid-turn'),
     );
-    const pid = this.pid;
-    if (pid !== null) {
-      if (isProcessAlive(pid)) {
-        killProcessGroup(pid, 'SIGTERM');
-        const deadline = Date.now() + 1000;
-        while (Date.now() < deadline) {
-          if (!isProcessAlive(pid)) break;
-          await new Promise<void>((r) => setTimeout(r, 25));
-        }
-      }
-      // Always SIGKILL the group — a reparented grandchild outliving its leader
-      // is the exact leak this guards against.
-      killProcessGroup(pid, 'SIGKILL');
-    }
+    await this.supervisor?.stop();
     this.exited = true;
     this.rpc = null;
     this.child = null;
+    this.supervisor = null;
     // The child is gone, so its inherited stderr fd is released. Drop the stderr
     // log if it stayed empty — claude traffic flows over the resident stream, so
     // it usually captures nothing (issue #182 logs stage).

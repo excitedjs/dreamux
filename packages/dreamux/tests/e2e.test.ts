@@ -252,6 +252,7 @@ describe('dreamux cross-module e2e', () => {
     runtimeDir = mkdtempSync(join(tmpdir(), 'dreamux-e2e-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(runtimeDir, 'home');
+    process.env['DREAMUX_ROOT'] = join(runtimeDir, 'dreamux');
     writeReadyDispatcherWorkspace('flow');
     // Onboard the canonical sender onto the global allow-user list so a
     // mentioned group message is delivered (empty `allow_users` authorizes
@@ -283,6 +284,7 @@ describe('dreamux cross-module e2e', () => {
     await fake?.close();
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
     rmSync(runtimeDir, { recursive: true, force: true });
   });
 

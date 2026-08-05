@@ -6,13 +6,16 @@ import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { build as buildPlist } from 'plist';
 import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
 import { expandHome } from '../config/config.js';
+import { errorMessage } from '../platform/error-info.js';
 import {
-  buildServicePath,
   logsRoot,
   stateRoot,
+} from '../platform/paths.js';
+import {
+  buildServicePath,
   userLocalBinDirs,
   withServicePath,
-} from '../platform/paths.js';
+} from '../platform/service-path.js';
 
 import {
   ensureDirectory,
@@ -300,8 +303,8 @@ export async function resolveServiceExecutable(
  * binaries during `onboard`/`daemon install`. Captured session PATH leads, then
  * the caller's captured fresh-install fallback dirs.
  * Stable Dreamux-owned dirs are added at service render time (see
- * managedServicePath). Delegates to {@link withServicePath} in paths.ts. Never
- * mutates env.
+ * managedServicePath). Delegates to {@link withServicePath} in
+ * platform/service-path.ts. Never mutates env.
  */
 export function withUserLocalBinPath(
   env: NodeJS.ProcessEnv,
@@ -311,14 +314,14 @@ export function withUserLocalBinPath(
   return withServicePath(env, { stableDirs: [], sessionPath, fallbackDirs });
 }
 
-/** Re-exported for service-level callers; canonical impl is in paths.ts. */
+/** Re-exported for service-level callers; canonical impl is in platform/service-path.ts. */
 export { userLocalBinDirs };
 
 function managedServicePath(answers: ServiceInstallAnswers): string {
   // Service PATH order: stable Dreamux-owned dirs (Node bin, provider bin dirs,
   // dreamux bin) → captured session PATH (original order) → fresh-install
-  // fallback dirs from paths.ts. De-duped via buildServicePath. Never reads
-  // process.env; platform/homeDir/env passed explicitly.
+  // fallback dirs from platform/service-path.ts. De-duped via buildServicePath.
+  // Never reads process.env; platform/homeDir/env passed explicitly.
   const stableDirs = [
     dirname(answers.nodeBin),
     ...serviceProviderBinChecks(answers).flatMap((check) => absoluteDir(check.bin)),
@@ -351,9 +354,6 @@ async function assertExecutable(path: string, label: string): Promise<void> {
   throw new Error(`managed service executable is not runnable: ${label}`);
 }
 
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 async function registerLaunchd(
   unitPath: string,

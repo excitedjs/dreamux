@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux-utils",
+      "comment": "Add a neutral SupervisedChild process-group lifecycle primitive.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-utils"
+}

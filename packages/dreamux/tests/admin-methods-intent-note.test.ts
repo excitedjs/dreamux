@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import { adminMethods } from '../src/admin/methods.js';
 import { AdminError } from '../src/admin/protocol.js';
-import { TeamUnavailableError } from '../src/service/team-collection/index.js';
+import { TeamUnavailableError } from '../src/service/team-collection/errors.js';
 import type { Server } from '../src/server.js';
 
 const stubServer = {
@@ -86,22 +86,24 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
   });
 
   it('rejects TeamLeader skill roots that shadow required bundled skills', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'dreamux-skill-shadow-'));
-    try {
-      mkdirSync(join(root, 'team-workflow'), { recursive: true });
-      await expectBadRequest('team.create', {
-        dispatcher_id: 'flow',
-        name_prefix: 'alpha',
-        leader_agent_runtime: 'codex',
-        intent: 'work',
-        skill_sources: [{
-          name: 'shadow-root',
-          path: root,
-          source: 'admin',
-        }],
-      });
-    } finally {
-      rmSync(root, { recursive: true, force: true });
+    for (const bundledSkill of ['team-workflow', 'workflow']) {
+      const root = mkdtempSync(join(tmpdir(), 'dreamux-skill-shadow-'));
+      try {
+        mkdirSync(join(root, bundledSkill), { recursive: true });
+        await expectBadRequest('team.create', {
+          dispatcher_id: 'flow',
+          name_prefix: 'alpha',
+          leader_agent_runtime: 'codex',
+          intent: 'work',
+          skill_sources: [{
+            name: 'shadow-root',
+            path: root,
+            source: 'admin',
+          }],
+        });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     }
   });
 
@@ -492,15 +494,25 @@ describe('Team admin read methods compose channel binding summaries', () => {
     });
   });
 
-  it('adds bound_target for Team read summaries in the admin layer', async () => {
-    const binding = {
-      channel_id: 'primary',
-      provider: 'builtin:feishu',
-      target_type: 'group',
-      target_key: 'chat-alpha',
-      display: 'Alpha',
-      canonical_url: null,
-    };
+  it('adds complete and compatible binding fields to Team read summaries', async () => {
+    const bindings = [
+      {
+        channel_id: 'flowx',
+        provider: 'npm:@example/flowx-channel',
+        target_type: 'task',
+        target_key: 'task-alpha',
+        display: 'Alpha task',
+        canonical_url: null,
+      },
+      {
+        channel_id: 'feishu',
+        provider: 'builtin:feishu',
+        target_type: 'group',
+        target_key: 'chat-alpha',
+        display: 'Alpha group',
+        canonical_url: null,
+      },
+    ];
     const owners: Array<Record<string, unknown>> = [];
     const dispatcher = {
       listTeams: async () => [
@@ -553,9 +565,9 @@ describe('Team admin read methods compose channel binding summaries', () => {
         ],
         next_cursor: null,
       }),
-      activeTeamBindingSummary: async (owner: Record<string, unknown>) => {
+      activeTeamBindingSummaries: async (owner: Record<string, unknown>) => {
         owners.push(owner);
-        return binding;
+        return bindings;
       },
     };
     const server = {
@@ -566,7 +578,11 @@ describe('Team admin read methods compose channel binding summaries', () => {
     await expect(
       adminMethods['team.list']!(server, { dispatcher_id: 'flow' }),
     ).resolves.toMatchObject({
-      teams: [{ team_name: 'alpha', bound_target: binding }],
+      teams: [{
+        team_name: 'alpha',
+        bound_target: bindings[0],
+        bound_targets: bindings,
+      }],
     });
     await expect(
       adminMethods['team.status']!(server, {
@@ -575,12 +591,17 @@ describe('Team admin read methods compose channel binding summaries', () => {
       }),
     ).resolves.toMatchObject({
       team: { team_name: 'alpha' },
-      bound_target: binding,
+      bound_target: bindings[0],
+      bound_targets: bindings,
     });
     await expect(
       adminMethods['team.history']!(server, { dispatcher_id: 'flow' }),
     ).resolves.toMatchObject({
-      items: [{ team_name: 'alpha', bound_target: binding }],
+      items: [{
+        team_name: 'alpha',
+        bound_target: bindings[0],
+        bound_targets: bindings,
+      }],
       next_cursor: null,
     });
     expect(owners).toEqual([
@@ -588,5 +609,42 @@ describe('Team admin read methods compose channel binding summaries', () => {
       { kind: 'team', teamName: 'alpha', leaderName: 'alpha-leader' },
       { kind: 'team', teamName: 'alpha', leaderName: 'alpha-leader' },
     ]);
+  });
+
+  it('returns empty binding fields for Team create and dissolve', async () => {
+    const created = { team: { team_name: 'alpha' }, turn: null };
+    const dissolved = { team: { team_name: 'alpha', status: 'closed' } };
+    const dispatcher = {
+      createTeam: async () => created,
+      dissolveTeam: async () => dissolved,
+    };
+    const server = {
+      repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
+      getDispatcher: () => dispatcher,
+    } as unknown as Server;
+
+    await expect(
+      adminMethods['team.create']!(server, {
+        dispatcher_id: 'flow',
+        name_prefix: 'alpha',
+        leader_agent_runtime: 'codex',
+        intent: 'lead alpha',
+      }),
+    ).resolves.toEqual({
+      ...created,
+      bound_target: null,
+      bound_targets: [],
+    });
+    await expect(
+      adminMethods['team.dissolve']!(server, {
+        dispatcher_id: 'flow',
+        team_name: 'alpha',
+        note: 'done',
+      }),
+    ).resolves.toEqual({
+      ...dissolved,
+      bound_target: null,
+      bound_targets: [],
+    });
   });
 });

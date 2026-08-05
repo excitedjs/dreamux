@@ -126,14 +126,28 @@ Source:
 
 ## Changelog Responsibility
 
-Dreamux 0.x handles incompatible config/state/cache/run/log/workspace changes
-by fail-loud plus explicit rebuild/delete/onboard guidance. Any change that can
-block or break an upgrade needs a Rush change file.
+Dreamux 0.x handles incompatible config/state/cache/run/log/workspace shape,
+version, or path changes by fail-loud plus explicit rebuild/delete/onboard
+guidance. Any change that can block or break an upgrade needs a Rush change
+file.
 
-Breaking notes should start with `BREAKING:` and include `Rebuild:` when the
-operator must recreate a file/path or rerun an install/onboard action.
+Incompatible shape, version, or path notes start with `BREAKING:` and include
+`Rebuild:` with the exact action. A same-shape semantic change may retain its
+state version only with explicit operator approval; its note starts with
+`BREAKING:`, immediately adds `Review:` with the required check, explicitly
+says no rebuild is needed, and contains no `Rebuild:` instruction. The V3
+Feishu `allow_chats` trust change is the accepted example.
 
 Use `rush change`; do not hand-edit generated changelogs.
+
+The Dispatcher-only `dreamux-maintenance` skill keeps its root and ordinary
+references current-state-only. Its sole transition exception is a generic,
+explicit-intent managed-daemon self-upgrade SOP. That SOP stages and validates
+exact old and target artifacts, selects the full `(oldVersion, targetVersion]`
+range from the staged changelog, and routes concrete config/provider work
+through the staged target's owner references. Release-specific transitions
+remain in Rush change notes, public docs, loader errors, and decisions; they are
+not copied into the skill.
 
 Source:
 
@@ -151,3 +165,4 @@ Source:
 - [NPM release OIDC](../decisions/npm-release-oidc.md)
 - [Anti-leak guardrail](../decisions/anti-leak-guardrail.md)
 - [No sync IO lint gate](../decisions/no-sync-io-lint-gate.md)
+- [Maintenance progressive disclosure and self-upgrade SOP](../archive/proposals/dreamux-maintenance-progressive-disclosure.md)

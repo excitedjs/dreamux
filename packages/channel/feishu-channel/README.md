@@ -54,6 +54,41 @@ of the Lark SDK.
 Test doubles are deliberately test-local and are not part of the published
 package API.
 
+## Feishu access and trusted groups
+
+The Channel accepts only exactly classified inbound identities. `chat_type`
+must be `p2p` or `group`; a human is exactly `sender_type: "user"` with a
+non-empty sender id, and a bot is exactly `sender_type: "bot" | "app"` with a
+non-empty sender id. Other chat types fail with `unsupported_chat_type`, and
+other sender shapes fail with `sender_unknown`, before bot observation,
+`/introduce`, pairing, or delivery.
+
+The public `dreamuxFeishuGate` input is unchanged: it still has `chat_type` and
+`is_bot_sender` and has no `sender_kind`. Callers must perform the exact
+classification above first. Passing `is_bot_sender: false` asserts a known
+human; negating `isBotSenderType(...)` alone is not sufficient because unknown
+sender types are not humans.
+
+Feishu access state remains `access.json` version 3. For human group messages,
+`group.require_mention` runs first and `group.policy: "block"` remains the kill
+switch. Under `allowlist`, an unlisted chat is dropped and a listed chat trusts
+every exactly classified human member. Under `follow-user`, a listed chat has
+the same trust, while an unlisted chat follows `dm_policy` and `allow_users` as
+before. A trusted chat therefore bypasses `dm_policy`, `allow_users`, and
+pairing, including when `dm_policy` is `disabled`; it does not bypass the global
+mention switch. Bot/trusted-bot and P2P behavior are unchanged.
+
+This is an in-place authorization semantic change, not a state-shape change:
+version 3 needs no rebuild. Before deploying, review every non-empty
+`group.allow_chats` entry under both `group.policy: "allowlist"` and
+`"follow-user"`. Keep only groups whose human membership should be trusted and
+whose passive known-bot observation should remain enabled. The new meaning
+takes effect when the new server starts.
+
+`/introduce` deliberately remains sender-scoped. A human outside `allow_users`
+may deliver ordinary text in a trusted chat but cannot mutate peer-bot trust;
+the command is diagnosed as `sender_not_followed` and writes no trust.
+
 ## Feishu topic-group permission
 
 Topic collaboration routing reads the enclosing chat through Feishu's

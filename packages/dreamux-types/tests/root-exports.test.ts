@@ -52,6 +52,7 @@ const ALLOWLIST = [
   'AgentRuntimeSkillSource',
   'AgentRuntimeStateCallbacks',
   'AgentRuntimeStatus',
+  'AgentRuntimeStructuredOutputCapability',
   'AgentRuntimeSystemPrompt',
   'AgentRuntimeTextInput',
   'AgentRuntimeTurnResult',
@@ -132,6 +133,7 @@ const ALLOWLIST = [
   'ProviderRef',
   'ProviderRefSource',
   'TurnSettledSignal',
+  'UnsupportedAgentRuntimeFeatureError',
 ];
 
 /** Parse the names re-exported by every `export type { ... } from '...'` block. */

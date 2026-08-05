@@ -12,6 +12,7 @@ import {
 
 function envelope(name: string, turnId: string): CompletionEnvelope {
   return {
+    kind: 'teammate',
     source: name,
     id: `${name}:${turnId}`,
     status: 'completed',
@@ -69,6 +70,18 @@ describe('CompletionRouter', () => {
     await r.settle(completionKey('ghost', 'turn-1'), envelope('ghost', 'turn-1'));
     // Nothing to assert beyond not throwing; an unregistered key simply drops.
     expect(true).toBe(true);
+  });
+
+  it('discards a registered completion without invoking its initiator', async () => {
+    const r = router();
+    const initiator = new FakeInitiator([{ status: 'accepted' }]);
+    const key = completionKey('mate', 'turn-1');
+    r.register(key, initiator);
+    r.discard(key);
+
+    await r.settle(key, envelope('mate', 'turn-1'));
+
+    expect(initiator.received).toEqual([]);
   });
 
   it('coalesces a duplicate settle via the terminal cache (at-most-once)', async () => {

@@ -510,6 +510,7 @@ describe('codex live integration', () => {
 
       mkdirSync(dispatcherCwd, { recursive: true });
       process.env['HOME'] = runtimeHome;
+    process.env['DREAMUX_ROOT'] = runtimeHome;
       process.env['CODEX_HOME'] = isolatedCodexHome;
       // Onboard the live sender onto the global allow-user list so the folded
       // group messages are delivered (empty `allow_users` authorizes nobody
@@ -634,6 +635,7 @@ describe('codex live integration', () => {
         await server?.shutdown();
         if (previousHome === undefined) delete process.env['HOME'];
         else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
         if (previousCodexHome === undefined) delete process.env['CODEX_HOME'];
         else process.env['CODEX_HOME'] = previousCodexHome;
         rmSync(dir, { recursive: true, force: true });

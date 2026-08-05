@@ -5,10 +5,8 @@ import type {
 
 import type { ChannelService } from '../channel-service/index.js';
 import type { KeyedAsyncQueue } from '../serial-queue.js';
-import {
-  TeamUnavailableError,
-  type TeamCollection,
-} from '../team-collection/index.js';
+import type { TeamCollection } from '../team-collection/index.js';
+import { TeamUnavailableError } from '../team-collection/errors.js';
 import {
   CollaborationTargetOperationError,
   type CollaborationTargetOperationFailureCode,
