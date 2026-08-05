@@ -79,13 +79,12 @@ routing. `meta` is provider-owned; the active channel provider's tool schema
 and results are the authority for the target selector.
 
 Dispatcher `dissolve({ team_name, note })` keeps its existing name and schema.
-Its 9-second server budget starts at method entry, including the authoritative
-worktree preflight; the MCP shim uses an explicit 12-second admin timeout. A
-terminal operation returns the normal closed summary, an accepted operation may
-return `status: "closing"`, and a logically closed operation whose managed
-worktree still has durable retry responsibility returns
-`status: "closed", worktree_cleanup: "pending"`. A bounded result never cancels
-the stored operation.
+Its 9-second pre-acceptance deadline starts at method entry, including the
+authoritative worktree preflight, and runs within the normal 10-second admin
+timeout. Successful Dispatcher and TeamLeader dissolve calls return the durable
+`status: "closing"` accepted receipt immediately. Logical close and worktree
+cleanup remain server-owned background work and are observed through Team read
+surfaces rather than the dissolve response.
 
 Dispatcher `cron` MCP tools are `cron_create`, `cron_list`, `cron_update`,
 `cron_delete`, and `cron_run_now`. Cron prompts are injected back into the

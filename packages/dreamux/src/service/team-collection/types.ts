@@ -197,23 +197,14 @@ export interface TeamDissolveReceipt {
   status: 'closing';
 }
 
-export interface TeamDissolveCleanupPendingResult {
-  accepted: true;
-  team_name: string;
-  status: 'closed';
-  worktree_cleanup: 'pending';
-  message: string;
-}
-
-/** Internal accepted handle. MCP projects only its receipt or milestones. */
+/**
+ * Internal handle. MCP projects only its receipt; target close joins logical
+ * closure.
+ */
 export interface AcceptedTeamDissolve {
   operationId: string;
-  teamId: string;
   receipt: TeamDissolveReceipt;
   logicalClosed: Promise<TeamSummary>;
-  completed: Promise<TeamSummary>;
-  /** Synchronous process-local projection of the latest durable record. */
-  dissolveSnapshot(): TeamDissolveRecord;
 }
 
 /** Input consumed by the dispatcher-side route/resource close executor. */

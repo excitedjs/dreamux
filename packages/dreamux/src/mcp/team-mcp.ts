@@ -11,8 +11,6 @@ import {
 } from './task-dispatch-reminder.js';
 import { optionalRepoInput, repoInputSchema } from './teammate-mcp.js';
 
-const TEAM_DISSOLVE_ADMIN_TIMEOUT_MS = 12_000;
-
 export type TeamMcpCallerKind = 'dispatcher' | 'team_leader';
 
 export interface TeamMcpOptions {
@@ -236,11 +234,7 @@ async function callTool(
         ...mapped.params,
         ...callerParams(ctx.caller),
       },
-      teamAdminRequestOptions({
-        socketPath: ctx.socketPath,
-        method: mapped.method,
-        callerKind: ctx.caller.kind,
-      }),
+      { socketPath: ctx.socketPath },
     );
     return {
       content: [{
@@ -260,20 +254,6 @@ async function callTool(
     const prefix = err instanceof AdminClientError ? `[${err.code}] ` : '';
     return { content: [{ type: 'text', text: `${prefix}${parseMessage(err)}` }], isError: true };
   }
-}
-
-/** Keep the Dispatcher dissolve timeout contract explicit at the admin boundary. */
-function teamAdminRequestOptions(input: {
-  socketPath: string;
-  method: string;
-  callerKind: TeamMcpCallerKind;
-}): { socketPath: string; timeoutMs?: number } {
-  return {
-    socketPath: input.socketPath,
-    ...(input.method === 'team.dissolve' && input.callerKind === 'dispatcher'
-      ? { timeoutMs: TEAM_DISSOLVE_ADMIN_TIMEOUT_MS }
-      : {}),
-  };
 }
 
 function mapToolCall(

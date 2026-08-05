@@ -1121,7 +1121,16 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     });
     expect(oldHandle.teammates).not.toHaveProperty('spawn');
 
-    await dispatcher.dissolveTeam({ teamId: firstName, note: 'done' });
+    await expect(
+      dispatcher.dissolveTeam({ teamId: firstName, note: 'done' }),
+    ).resolves.toEqual({
+      accepted: true,
+      team_name: firstName,
+      status: 'closing',
+    });
+    await waitFor(async () =>
+      (await dispatcher.getTeamStatus(firstName)).team.status === 'closed'
+    );
     await expect(
       oldHandle.teammates.send({
         name: member.teammate.name,
@@ -1829,7 +1838,7 @@ async function dissolveTeamForTest(
   teams.startAcceptedDissolve(accepted, (input) =>
     teams.closeAcceptedResources(input),
   );
-  return accepted.completed;
+  return accepted.logicalClosed;
 }
 
 function makeTeams(input: {
@@ -1857,10 +1866,13 @@ function makeTeams(input: {
   });
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs = 2000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error('waitFor timed out');

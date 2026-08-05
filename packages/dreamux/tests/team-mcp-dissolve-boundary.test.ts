@@ -12,7 +12,7 @@ import { dirname, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { promisify } from 'node:util';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAdminSocketServer } from '../src/admin/socket.js';
 import { runTeamMcp } from '../src/mcp/team-mcp.js';
@@ -97,13 +97,16 @@ describe('Team MCP dissolve pre-acceptance boundary', () => {
         },
       },
     });
-    await expect(accepted!.completed).resolves.toMatchObject({
-      team: {
+    await vi.waitFor(async () => {
+      expect(await new TeamStore().get('dispatcher-a', 'alpha')).toMatchObject({
         status: 'closed',
-        dissolve_phase: 'complete',
-        worktree_cleanup: 'deleted',
-      },
-    });
+        worktree: { cleanup_state: 'deleted' },
+        dissolve: {
+          operation_id: accepted!.operationId,
+          phase: 'complete',
+        },
+      });
+    }, { timeout: 5_000 });
   });
 
   it('maps a real assessment exception before acceptance without structuredContent', async () => {

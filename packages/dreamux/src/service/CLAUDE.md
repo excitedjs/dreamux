@@ -50,18 +50,17 @@ directly unless the symbol belongs on the explicit `service/index.ts` facade.
   projection, route and generation leases, and the single durable Team dissolve
   lifecycle. The same availability fence gates every Team turn/mutation/route
   path. Dissolve owns durable acceptance, writer capture and `waitIdle`
-  quiescence, both worktree assessments, logical/completed milestones,
-  retry/recovery, and shutdown interruption.
+  quiescence, both worktree assessments, the `logicalClosed` milestone,
+  durable terminal-state observation, retry/recovery, and shutdown interruption.
   Its sibling modules are private implementation capabilities, not additional
   aggregate owners: `runtime-registry.ts` owns materialization/cache and private
   scheduler handles; `read-model.ts` owns public read projection;
   `dissolve-controller.ts` owns the immutable operation/TeamLeader generation,
   authoritative current-operation refresh, process-local operation registry,
-  retry/recovery orchestration, every logical/completed milestone settlement,
-  closing-fence finalization, registry removal, shutdown suspension, and
-  terminal logging.
+  retry/recovery orchestration, `logicalClosed` settlement, closing-fence
+  finalization, registry removal, shutdown suspension, and terminal logging.
   `dissolve-runner.ts` is a stateless accepted-phase executor: it requests those
-  controller operations and never settles milestones, removes operations,
+  controller operations and never settles `logicalClosed`, removes operations,
   finalizes a fence, or logs a lifecycle terminal itself. Captured live writers
   expose only their name and neutral `waitIdle` capability, not their runtimes.
   **`team-service/index.ts`** — `TeamService`, the single per-team entity (holds
@@ -92,10 +91,11 @@ directly unless the symbol belongs on the explicit `service/index.ts` facade.
   builder. `inbound-task-drain.ts` owns the dispatcher admission/drain gate for
   external work that may publish runtime, scheduler, route, or durable state.
   `team-channel-coordinator.ts` maps both Dispatcher and descriptor-scoped
-  TeamLeader dissolve into the same TeamCollection lifecycle, owns the bounded
-  Dispatcher result projection, keeps TeamLeader channel-tool invocation inside
-  its exact generation lease, and coordinates dispatcher/scoped-TeamLeader bind
-  and transfer with collaboration-space route reconciliation.
+  TeamLeader dissolve into the same TeamCollection lifecycle, derives the
+  Dispatcher pre-acceptance deadline and returns only the durable accepted
+  receipt, keeps TeamLeader channel-tool invocation inside its exact generation
+  lease, and coordinates dispatcher/scoped-TeamLeader bind and transfer with
+  collaboration-space route reconciliation.
   `channel-tool-invocation.ts` keeps TeamLeader egress authorization beside
   channel tool dispatch.
   `teammate-ops.ts` wraps dispatcher-scope mutating teammate ops with the

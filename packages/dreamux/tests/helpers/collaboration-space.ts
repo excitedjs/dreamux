@@ -41,12 +41,9 @@ export function fakeTeams(created: CreatedTeam[], dissolved: string[]) {
     leaderName: string;
     note: string;
     logicalMilestone: Promise<never>;
-    completedMilestone: Promise<never>;
     started: boolean;
     resolveLogical: (value: never) => void;
-    resolveCompleted: (value: never) => void;
     rejectLogical: (error: unknown) => void;
-    rejectCompleted: (error: unknown) => void;
     targetHandoffs: Set<string>;
   }>();
   let nextName = 0;
@@ -157,29 +154,19 @@ export function fakeTeams(created: CreatedTeam[], dissolved: string[]) {
         return fakeHandle(operationId, existing);
       }
       let resolveLogical!: (value: never) => void;
-      let resolveCompleted!: (value: never) => void;
       let rejectLogical!: (error: unknown) => void;
-      let rejectCompleted!: (error: unknown) => void;
       const logicalMilestone = new Promise<never>((done, fail) => {
         resolveLogical = done;
         rejectLogical = fail;
       });
-      const completedMilestone = new Promise<never>((done, fail) => {
-        resolveCompleted = done;
-        rejectCompleted = fail;
-      });
       void logicalMilestone.catch(() => undefined);
-      void completedMilestone.catch(() => undefined);
       const operation = {
         teamName: input.teamId,
         leaderName: leader,
         note: input.note,
         resolveLogical,
-        resolveCompleted,
         rejectLogical,
-        rejectCompleted,
         logicalMilestone,
-        completedMilestone,
         targetHandoffs: new Set(
           input.requester.handoffId === undefined
             ? []
@@ -232,11 +219,9 @@ export function fakeTeams(created: CreatedTeam[], dissolved: string[]) {
       }).then(
         (summary) => {
           operation.resolveLogical(summary as never);
-          queueMicrotask(() => operation.resolveCompleted(summary as never));
         },
         (error) => {
           operation.rejectLogical(error);
-          operation.rejectCompleted(error);
         },
       );
     },
@@ -270,33 +255,18 @@ function fakeHandle(
   operation: {
     teamName: string;
     logicalMilestone: Promise<never>;
-    completedMilestone: Promise<never>;
     targetHandoffs: Set<string>;
     started: boolean;
   },
 ): AcceptedTeamDissolve {
   return {
     operationId,
-    teamId: operation.teamName,
     receipt: {
       accepted: true,
       team_name: operation.teamName,
       status: 'closing',
     },
     logicalClosed: operation.logicalMilestone,
-    completed: operation.completedMilestone,
-    dissolveSnapshot: () => ({
-      operation_id: operationId,
-      requester_kind: 'dispatcher',
-      leader_name: null,
-      target_handoff_ids: [...operation.targetHandoffs],
-      note: 'fake target close',
-      accepted_at: 1,
-      phase: operation.started ? 'complete' : 'waiting_for_team_idle',
-      last_error: null,
-      cleanup_attempts: 0,
-      next_retry_at: null,
-    }),
   };
 }
 

@@ -117,7 +117,7 @@ describe('Team dissolve quiescence and shutdown', () => {
       },
     });
 
-    await expect(accepted.completed).rejects.toBeInstanceOf(
+    await expect(accepted.logicalClosed).rejects.toBeInstanceOf(
       TeamDissolveInterruptedError,
     );
     expect(await new TeamStore().get('dispatcher-a', 'alpha')).toMatchObject({
@@ -199,9 +199,17 @@ describe('Team dissolve quiescence and shutdown', () => {
     expect(joined).toBe(accepted);
 
     teams.interruptDissolvesForShutdown();
-    await expect(joined.completed).rejects.toBeInstanceOf(
+    await expect(joined.logicalClosed).rejects.toBeInstanceOf(
       TeamDissolveInterruptedError,
     );
+    expect(await new TeamStore().get('dispatcher-a', 'alpha')).toMatchObject({
+      status: 'running',
+      dissolve: {
+        operation_id: accepted.operationId,
+        phase: 'waiting_for_team_idle',
+        note: 'suspend one joined operation',
+      },
+    });
     expect(() => teams.startAcceptedDissolve(joined, close)).not.toThrow();
     expect(close).not.toHaveBeenCalled();
     await teams.stopAll();
@@ -273,9 +281,17 @@ describe('Team dissolve quiescence and shutdown', () => {
     await Promise.resolve();
     expect(close).not.toHaveBeenCalled();
     memberIdle.resolve();
-    await expect(joined.completed).resolves.toMatchObject({
-      team: { status: 'closed' },
+    await vi.waitFor(async () => {
+      expect(await new TeamStore().get('dispatcher-a', 'alpha')).toMatchObject({
+        status: 'closed',
+        dissolve: {
+          operation_id: joined.operationId,
+          phase: 'complete',
+        },
+      });
     });
+    await expect((await recovered.get('alpha')).status()).resolves
+      .toMatchObject({ team: { status: 'closed' } });
     expect(close).toHaveBeenCalledTimes(1);
     await recovered.stopAll();
   });

@@ -234,11 +234,11 @@ is never cached in the collection's entity map.
 `TeamCollection` owns the single durable Team dissolve lifecycle. An accepted
 operation is stored on the Team record before its receipt, carries the first
 note, requester/generation, target handoffs, phase, public-safe error, attempt
-count, and next retry time, and projects one process-local handle with separate
-`logicalClosed` and `completed` milestones. `Team.status` stays
-`starting | running | closed`; dissolve phase and worktree cleanup are separate
-facts. Active same-generation requests join the stored operation, while a stale
-TeamLeader generation cannot join it.
+count, and next retry time, and projects one process-local handle with an opaque
+operation id, the accepted receipt, and a `logicalClosed` milestone.
+`Team.status` stays `starting | running | closed`; dissolve phase and worktree
+cleanup are separate facts. Active same-generation requests join the stored
+operation, while a stale TeamLeader generation cannot join it.
 
 The same `TeamCollection` availability fence gates Dispatcher send, bound and
 strict inbound delivery, route publication, TeamLeader member/workflow
@@ -260,17 +260,20 @@ unmerged state; it does not enumerate refs or walk repository history.
 preserves the managed branch and its commits. Removal failures retain durable
 retry responsibility with bounded exponential backoff; branch/ref deletion is
 not part of Team dissolve.
-Dispatcher projection has a 9-second decision/result budget and an explicit
-12-second MCP admin timeout; TeamLeader self-dissolve returns its durable
-accepted receipt without awaiting self-termination.
+Dispatcher and TeamLeader projections both return the durable accepted receipt
+without awaiting `logicalClosed`. Terminal cleanup is observed through Team
+status/history and structured lifecycle logs, not another process-local handle
+promise. Dispatcher pre-acceptance work has a 9-second method-entry deadline
+under the normal 10-second MCP admin timeout; there is no post-accept result
+timer or lifecycle projection.
 
 Startup restores active Team fences, materializes every live writer, rechecks
 idle, and resumes persisted dissolve/cleanup phases before publishing normal
 Team, collaboration, Channel, workflow, or scheduler work. Shutdown interrupts
 cancellable dissolve idle waits and retry timers before admitted-task drain,
 but drains an active physical cleanup attempt. Interruption settles only the
-process-local milestones with a typed recoverable result and leaves the durable
-phase and cleanup responsibility for restart.
+process-local `logicalClosed` milestone with a typed recoverable result and
+leaves the durable phase and cleanup responsibility for restart.
 
 Key source:
 

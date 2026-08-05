@@ -83,8 +83,8 @@ export class TeamDissolveController {
         this.failOpen(operation, publicError, cause),
       logicalClosed: (operation, summary) =>
         this.markLogicalClosed(operation, summary),
-      finishClosed: (operation, summary, error) =>
-        this.finishClosed(operation, summary, error),
+      finishClosed: (operation, summary) =>
+        this.finishClosed(operation, summary),
       suspend: (operation) => this.suspend(operation),
     });
   }
@@ -221,9 +221,6 @@ export class TeamDissolveController {
     // terminal result or shutdown suspension and removed its local operation.
     // The shared handle is already settled and restart owns any durable resume.
     if (operation === undefined) return;
-    if (operation.teamId !== handle.teamId) {
-      throw new Error('accepted Team dissolve handle is no longer current');
-    }
     operation.logicalClose ??= logicalClose;
     this.launch(operation);
   }
@@ -346,7 +343,8 @@ export class TeamDissolveController {
       }
       // A join may have read before the active runner advanced its local
       // snapshot. Never let that older same-operation projection move the
-      // process-local handle backwards; durable handoff appends remain in store.
+      // process-local operation snapshot backwards; durable handoff appends
+      // remain in store.
       return existing;
     }
     this.requireIdleCapability(writers);
@@ -536,7 +534,6 @@ export class TeamDissolveController {
       : new TeamDissolveFailedError(publicDissolveErrorMessage(publicError));
     await this.opts.endClosing(operation.teamId, true);
     operation.logical.reject(error);
-    operation.completed.reject(error);
     this.removeOperation(operation);
     this.opts.log.warn(
       {
@@ -632,7 +629,6 @@ export class TeamDissolveController {
       operation.retryTimer = null;
     }
     operation.logical.reject(error);
-    operation.completed.reject(error);
     this.removeOperation(operation);
     this.opts.log.info(
       {
@@ -659,12 +655,9 @@ export class TeamDissolveController {
   private async finishClosed(
     operation: TeamDissolveOperation,
     summary: TeamSummary,
-    error: TeamDissolveFailedError | TeamDissolveBlockedError | null,
   ): Promise<void> {
     await this.opts.endClosing(operation.teamId, false);
     operation.logical.resolve(summary);
-    if (error === null) operation.completed.resolve(summary);
-    else operation.completed.reject(error);
     this.removeOperation(operation);
     this.opts.log.info(
       {
@@ -673,7 +666,7 @@ export class TeamDissolveController {
         operation_id: operation.operationId,
         phase: operation.record.phase,
         cleanup_attempts: operation.record.cleanup_attempts,
-        outcome: error === null ? 'complete' : 'failed',
+        outcome: operation.record.phase,
       },
       'Team dissolve reached a terminal state',
     );

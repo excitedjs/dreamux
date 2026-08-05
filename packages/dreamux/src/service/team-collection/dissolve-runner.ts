@@ -18,10 +18,6 @@ import type {
   TeamSummary,
 } from './types.js';
 
-type TeamDissolveTerminalError =
-  | TeamDissolveFailedError
-  | TeamDissolveBlockedError;
-
 interface TeamDissolveRunnerOptions {
   worktrees: WorktreeManager;
   getService(teamId: string): Promise<TeamService>;
@@ -50,7 +46,6 @@ interface TeamDissolveRunnerOptions {
   finishClosed(
     operation: TeamDissolveOperation,
     summary: TeamSummary,
-    error: TeamDissolveTerminalError | null,
   ): Promise<void>;
   suspend(operation: TeamDissolveOperation): void;
 }
@@ -170,17 +165,11 @@ export class TeamDissolveRunner {
     const summary = await service.status();
     this.opts.logicalClosed(operation, summary);
     if (operation.record.phase === 'complete') {
-      await this.opts.finishClosed(operation, summary, null);
+      await this.opts.finishClosed(operation, summary);
       return;
     }
     if (operation.record.phase === 'failed') {
-      await this.opts.finishClosed(
-        operation,
-        summary,
-        new TeamDissolveFailedError(publicDissolveErrorMessage(
-          operation.record.last_error ?? 'resource-close-failed',
-        )),
-      );
+      await this.opts.finishClosed(operation, summary);
       return;
     }
     if (
@@ -221,15 +210,9 @@ export class TeamDissolveRunner {
         await this.opts.deferRetry(operation, 'worktree-cleanup-failed', error);
       }
     } else if (recoveredPhase === 'complete') {
-      await this.opts.finishClosed(operation, await service.status(), null);
+      await this.opts.finishClosed(operation, await service.status());
     } else if (recoveredPhase === 'failed') {
-      await this.opts.finishClosed(
-        operation,
-        await service.status(),
-        new TeamDissolveFailedError(publicDissolveErrorMessage(
-          operation.record.last_error ?? 'resource-close-failed',
-        )),
-      );
+      await this.opts.finishClosed(operation, await service.status());
     }
   }
 
@@ -275,7 +258,7 @@ export class TeamDissolveRunner {
       await this.opts.loadCurrent(operation);
       this.opts.logicalClosed(operation, summary);
       if (operation.record.phase === 'complete') {
-        await this.opts.finishClosed(operation, summary, null);
+        await this.opts.finishClosed(operation, summary);
         return;
       }
       try {
@@ -334,11 +317,7 @@ export class TeamDissolveRunner {
         worktree: { ...cleaned, cleanup_error: null },
       });
       await this.opts.loadCurrent(operation);
-      await this.opts.finishClosed(
-        operation,
-        summary,
-        new TeamDissolveFailedError('Managed worktree became unsafe to delete'),
-      );
+      await this.opts.finishClosed(operation, summary);
       return;
     }
     const complete: TeamDissolveRecord = {
@@ -352,7 +331,7 @@ export class TeamDissolveRunner {
       worktree: { ...cleaned, cleanup_error: null },
     });
     await this.opts.loadCurrent(operation);
-    await this.opts.finishClosed(operation, summary, null);
+    await this.opts.finishClosed(operation, summary);
   }
 
   private async finishSafetyBlockedClose(
@@ -367,7 +346,6 @@ export class TeamDissolveRunner {
       last_error: publicError,
       next_retry_at: null,
     };
-    const terminalError = new TeamDissolveBlockedError(assessment.reason);
     try {
       const summary = await operation.logicalClose!({
         operationId: operation.operationId,
@@ -382,12 +360,12 @@ export class TeamDissolveRunner {
         worktree: assessment.worktree,
       });
       await this.opts.loadCurrent(operation);
-      await this.opts.finishClosed(operation, summary, terminalError);
+      await this.opts.finishClosed(operation, summary);
     } catch (error) {
       const latest = await this.opts.loadCurrent(operation);
       if (latest.status === 'closed' && operation.record.phase === 'failed') {
         const summary = await (await this.opts.getService(operation.teamId)).status();
-        await this.opts.finishClosed(operation, summary, terminalError);
+        await this.opts.finishClosed(operation, summary);
         return;
       }
       await this.opts.deferRetry(operation, publicError, error);

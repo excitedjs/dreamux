@@ -51,7 +51,16 @@ async function dissolveTeamForTest(
   teams.startAcceptedDissolve(accepted, (input) =>
     teams.closeAcceptedResources(input),
   );
-  return accepted.completed;
+  await vi.waitFor(async () => {
+    expect(await new TeamStore().get('dispatcher-a', teamId)).toMatchObject({
+      status: 'closed',
+      dissolve: {
+        operation_id: accepted.operationId,
+        phase: 'complete',
+      },
+    });
+  }, { timeout: 5_000 });
+  return (await teams.get(teamId)).status();
 }
 
 /**

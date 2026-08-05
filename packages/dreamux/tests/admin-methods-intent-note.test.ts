@@ -657,7 +657,11 @@ describe('Team admin read methods compose channel binding summaries', () => {
 
   it('returns empty binding fields for Team create and dissolve', async () => {
     const created = { team: { team_name: 'alpha' }, turn: null };
-    const dissolved = { team: { team_name: 'alpha', status: 'closed' } };
+    const dissolved = {
+      accepted: true,
+      team_name: 'alpha',
+      status: 'closing',
+    };
     const dispatcher = {
       createTeam: async () => created,
       dissolveTeam: async () => dissolved,

@@ -14,12 +14,12 @@ only its descriptor-bound current Team. Dispatcher and TeamLeader projections
 use the same tool name and one durable Team-close capability; this change adds
 no `close` alias and no second cleanup state machine.
 
-A dissolve must never lose responsibility for a managed
-`delete-on-close` worktree because an MCP request reached its ten-second
-deadline or `dreamux serve` restarted. Automatic cleanup removes only the
-worktree with non-forced `git worktree remove`; it never deletes the managed
-branch or the commits retained by that branch. Dirty or unmerged work remains
-fail-closed so the user can choose how to preserve or discard it.
+A dissolve must never lose responsibility for a managed `delete-on-close`
+worktree after the MCP caller receives its accepted receipt or `dreamux serve`
+restarts. Automatic cleanup removes only the worktree with non-forced
+`git worktree remove`; it never deletes the managed branch or the commits
+retained by that branch. Dirty or unmerged work remains fail-closed so the user
+can choose how to preserve or discard it.
 
 ## Scope
 
@@ -35,9 +35,10 @@ fail-closed so the user can choose how to preserve or discard it.
 - Split logical Team closure from physical worktree deletion. Logical closure
   releases routes and agents and can complete while eligible worktree deletion
   continues durably in the background.
-- Give non-self callers a ten-second bounded result: preserve the existing
-  completed response when cleanup finishes in budget, otherwise report the
-  exact accepted/closed phase without cancelling background work.
+- Return the same durable accepted receipt immediately to Dispatcher and
+  TeamLeader callers. Neither MCP projection waits for logical close or
+  physical worktree cleanup; accepted cleanup remains server-owned background
+  work.
 - Teach the bundled TeamLeader workflow to inspect and preserve work before
   dissolve and to ask the user when deletion is unsafe or uncertain.
 
@@ -65,8 +66,8 @@ way as scoped `team.bind_channel`.
 
 ### Result timing
 
-A TeamLeader is closing the runtime that is executing its MCP call. Its
-`dissolve` therefore returns immediately after durable acceptance:
+Both Dispatcher and TeamLeader `dissolve` return immediately after durable
+acceptance:
 
 ```json
 {
@@ -76,28 +77,24 @@ A TeamLeader is closing the runtime that is executing its MCP call. Its
 }
 ```
 
-The requesting turn must then settle naturally before its runtime is stopped.
-The same TeamLeader call cannot observe post-turn logical closure or worktree
-deletion; no ten-second cleanup race is applied to this self path.
+For a TeamLeader, the requesting turn then settles naturally before its runtime
+is stopped. Neither caller observes post-accept logical closure or worktree
+deletion through this MCP response. The prior Dispatcher-only terminal-lifecycle
+race, terminal-summary projection, cleanup-pending projection, and extended
+`12_000ms` admin timeout are removed. The projection-only cleanup-pending result
+DTO, durable-snapshot accessor on the accepted handle, timer helper, and their
+tests are deleted rather than retained as unused compatibility surface.
 
-A Dispatcher dissolve starts the same accepted operation and applies a
-`9_000ms` server-side result budget, leaving enough room to return within the
-operator's ten-second boundary:
-
-- if logical closure and worktree handling reach a terminal state in budget,
-  return the existing completed Team summary shape;
-- if logical closure has completed and only eligible worktree deletion remains,
-  return `status: "closed"` with `worktree_cleanup: "pending"` and state that
-  cleanup continues in the background;
-- if earlier close phases remain, return `accepted: true` with
-  `status: "closing"` instead of allowing the admin client to time out.
-
-The Team MCP shim explicitly uses a `12_000ms` admin request timeout for
-Dispatcher `dissolve`; it must not inherit the current `10_000ms` default. The
-three-second gap gives socket and JSON-RPC handling bounded overhead while still
-returning the server's decision inside ten seconds. TeamLeader self-dissolve
-returns immediately and does not need the extended timeout. Reaching either
-budget never cancels or detaches the accepted lifecycle task.
+Pre-acceptance validation remains synchronous and authoritative: caller scope,
+generation, required runtime capability, and worktree safety must be known
+before Dreamux persists acceptance. The Dispatcher keeps a `9_000ms`
+method-entry-to-acceptance deadline so this validation finishes inside the
+normal `10_000ms` admin timeout. That deadline never waits for logical close or
+cleanup and never cancels an operation after acceptance. `DispatcherService`
+captures the method-entry time before `admitOperation`; `TeamChannelCoordinator`
+derives and forwards the absolute deadline; `TeamCollection` consumes it only
+while accepting the operation. Admission queueing must not move the deadline's
+origin.
 
 ### Worktree safety and user decision
 
@@ -246,19 +243,17 @@ restart there is no live accepted turn to preserve, but recovered live writers
 must still be quiesced before revalidation and shutdown; recovery never assumes
 that leader-only idle proves a shared worktree is stable.
 
-The accepted handle exposes two internal milestones in addition to the
-caller-specific receipt:
+The accepted handle contains only its opaque `operationId`, the caller-specific
+receipt, and `logicalClosed`. The milestone resolves only after routes and
+runtimes are closed, Team `status: "closed"` is durable, and any worktree-cleanup
+responsibility is durable; it rejects if the operation unwinds while the Team
+remains running. Team identity stays authoritative on the controller-owned
+operation keyed by `operationId`; the handle carries no duplicate `teamId`.
 
-- `logicalClosed`, which resolves only after routes and runtimes are closed,
-  Team `status: "closed"` is durable, and any worktree-cleanup responsibility is
-  durable; it rejects if the operation unwinds while the Team remains running;
-- `completed`, which resolves only after worktree handling reaches a terminal
-  result and rejects for a terminal lifecycle failure.
-
-TeamLeader MCP returns only the receipt. Dispatcher MCP races `completed`
-against its result budget and derives an in-progress response from the durable
-phase. Internal lifecycle consumers join the milestone they actually require;
-durable acceptance alone is never interpreted as logical closure.
+Both MCP projections return only the receipt. Collaboration target close joins
+`logicalClosed`; terminal cleanup and recovery are observed from persisted Team
+read surfaces and structured lifecycle logs. Durable acceptance alone is never
+interpreted as logical closure by internal consumers.
 
 ### Shutdown interruption
 
@@ -275,9 +270,9 @@ Shutdown interruption is recoverable suspension, not dissolve failure:
 - keep the durable phase, first note, cleanup responsibility, and availability
   gate intact;
 - do not reopen Team admission or restart its scheduler in the stopping process;
-- settle the process-local `logicalClosed`/`completed` milestones with a typed
-  recoverable interruption so a collaboration target join leaves its record in
-  `closing` rather than marking it `closed`;
+- settle the process-local `logicalClosed` milestone with a typed recoverable
+  interruption so a collaboration target join leaves its record in `closing`
+  rather than marking it `closed`;
 - let the admitted lifecycle task return so the existing drain can complete,
   then continue the normal runtime-stop order;
 - on the next Dispatcher start, restore the gate and resume the persisted phase
@@ -423,15 +418,18 @@ state, and safe last error without exposing machine-local paths. Existing
   available.
 - Same-generation retries join one task and preserve the first note; stale
   generations fail.
-- Dispatcher dissolve uses a `9_000ms` server decision budget and an explicit
-  `12_000ms` MCP-to-admin timeout. It returns the existing completed result when
-  terminal in budget, otherwise returns closing or
-  closed-with-cleanup-pending without cancelling the operation; tests prove the
-  `10_000ms` default admin timeout is not used for this call.
+- Dispatcher and TeamLeader dissolve both return the durable accepted receipt
+  without awaiting `logicalClosed`. Dispatcher pre-acceptance
+  validation remains bounded by a `9_000ms` method-entry deadline under the
+  normal `10_000ms` admin timeout; tests prove no post-accept timer or extended
+  MCP timeout remains. A Dispatcher facade test blocks admission and proves the
+  deadline still starts at public method entry. A real
+  `runTeamMcp -> tools/call -> sendAdminRequest` boundary test proves Dispatcher
+  dissolve, TeamLeader dissolve, and an ordinary Team method all use the default
+  `10_000ms` timeout without exposing a production helper or test-only export.
 - Logical close persists before worktree deletion. A clean eligible managed
-  worktree that exceeds the response budget or has a transient deletion error is
-  retried in background and after restart until deleted or a safety blocker is
-  observed.
+  worktree with a transient deletion error is retried in background and after
+  restart until deleted or a safety blocker is observed.
 - Dirty and unmerged worktrees are never force-deleted; preflight rejection
   leaves Team, routes, agents, scheduler, and worktree unchanged.
 - A seeded restart test proves that the exact persisted closed-Team
@@ -451,9 +449,12 @@ state, and safe last error without exposing machine-local paths. Existing
   record.
 - The live Alpha fixture is re-read before validation to prove it is still
   running, clean, and unmerged-free. No ref-reachability precondition is needed.
-  The fixed installed artifact must make Dispatcher `team.dissolve` return a
-  terminal structured result and remove both the managed directory and its Git
-  worktree registration without direct state or worktree mutation.
+  The fixed installed artifact must make Dispatcher `team.dissolve` immediately
+  return the accepted `status: "closing"` receipt with `structuredContent`.
+  Independent Team status/history and Git read-only checks then prove the
+  background operation reached its terminal phase and removed both the managed
+  directory and its Git worktree registration without direct state or worktree
+  mutation.
 - Restart restores active Team gates and resumes pending phases before inbound,
   collaboration provisioning, workflows, or Team schedulers can revive work.
 - Dispatcher shutdown interrupts `waiting_for_team_idle` before admitted-task
@@ -466,8 +467,9 @@ state, and safe last error without exposing machine-local paths. Existing
   worktree single-owner, and cleanup-state propagation contracts stay covered
   rather than being weakened.
 - Model-facing gates are updated together: current architecture, dispatcher
-  orchestration and skill references, service topology, agent-activity decision,
-  bundled `team-workflow`, the owning
+  orchestration and skill references, service topology,
+  `packages/dreamux/src/service/CLAUDE.md`, agent-activity decision, bundled
+  `team-workflow`, the owning
   `dreamux-maintenance/references/service-lifecycle.md`, Team MCP
   schema/whitelist tests, skill tests, contract parity, admin scope tests, and
   real worktree integration tests. Current-state guidance says delete-on-close

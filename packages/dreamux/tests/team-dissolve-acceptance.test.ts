@@ -168,7 +168,17 @@ describe('Team dissolve acceptance and availability', () => {
     await Promise.resolve();
     expect(close).not.toHaveBeenCalled();
     memberIdle.resolve();
-    await expect(accepted.completed).resolves.toMatchObject({
+    await vi.waitFor(async () => {
+      expect(await new TeamStore().get('dispatcher-a', 'alpha')).toMatchObject({
+        status: 'closed',
+        close_note: 'first accepted note',
+        dissolve: {
+          operation_id: accepted.operationId,
+          phase: 'complete',
+        },
+      });
+    });
+    await expect(team.status()).resolves.toMatchObject({
       team: { status: 'closed', close_note: 'first accepted note' },
     });
     expect(close).toHaveBeenCalledTimes(1);
@@ -176,17 +186,19 @@ describe('Team dissolve acceptance and availability', () => {
     await teams.stopAll();
   });
 
-  it('does not let an older active-join snapshot regress the operation view', async () => {
+  it('does not let an older active join regress the durable operation view', async () => {
     const runtimes: FakeRuntime[] = [];
     const worktrees = new WorktreeManager();
     vi.spyOn(worktrees, 'assessCleanup').mockResolvedValue({
       status: 'eligible',
     });
-    vi.spyOn(worktrees, 'cleanup').mockImplementation(async (identity) => ({
-      ...identity.worktree,
-      cleanup_state: 'retained-error',
-      cleanup_error: 'keep cleanup pending',
-    }));
+    const cleanup = vi.spyOn(worktrees, 'cleanup').mockImplementation(
+      async (identity) => ({
+        ...identity.worktree,
+        cleanup_state: 'retained-error',
+        cleanup_error: 'keep cleanup pending',
+      }),
+    );
     const teams = makeTeams({ runtimes, worktrees });
     await teams.create({
       name: 'alpha',
@@ -225,17 +237,41 @@ describe('Team dissolve acceptance and availability', () => {
     await expect(accepted.logicalClosed).resolves.toMatchObject({
       team: { status: 'closed' },
     });
-    expect(accepted.dissolveSnapshot().phase)
-      .toBe('worktree_cleanup_pending');
+    expect((await new TeamStore().get('dispatcher-a', 'alpha'))?.dissolve)
+      .toMatchObject({
+        operation_id: accepted.operationId,
+        note: 'first note',
+        phase: 'worktree_cleanup_pending',
+      });
 
     releaseJoin.resolve();
     await expect(joining).resolves.toBe(accepted);
-    expect(accepted.dissolveSnapshot()).toMatchObject({
-      note: 'first note',
-      phase: 'worktree_cleanup_pending',
+    expect((await new TeamStore().get('dispatcher-a', 'alpha'))?.dissolve)
+      .toMatchObject({
+        operation_id: accepted.operationId,
+        note: 'first note',
+        phase: 'worktree_cleanup_pending',
+      });
+    await vi.waitFor(async () => {
+      expect((await new TeamStore().get('dispatcher-a', 'alpha'))?.dissolve)
+        .toMatchObject({
+          operation_id: accepted.operationId,
+          phase: 'worktree_cleanup_pending',
+          next_retry_at: expect.any(Number),
+        });
     });
+    expect(cleanup).toHaveBeenCalledOnce();
     teams.interruptDissolvesForShutdown();
+    expect(await new TeamStore().get('dispatcher-a', 'alpha')).toMatchObject({
+      status: 'closed',
+      dissolve: {
+        operation_id: accepted.operationId,
+        phase: 'worktree_cleanup_pending',
+        next_retry_at: expect.any(Number),
+      },
+    });
     await teams.stopAll();
+    expect(cleanup).toHaveBeenCalledOnce();
   });
 
   it('rejects missing waitIdle and first-preflight blockers before any lifecycle mutation', async () => {
@@ -411,7 +447,7 @@ describe('Team dissolve acceptance and availability', () => {
     const close = vi.fn((input) => teams.closeAcceptedResources(input));
     teams.startAcceptedDissolve(accepted, close);
     idle.resolve();
-    await expect(accepted.completed).rejects.toBeInstanceOf(
+    await expect(accepted.logicalClosed).rejects.toBeInstanceOf(
       TeamDissolveBlockedError,
     );
     expect(close).not.toHaveBeenCalled();

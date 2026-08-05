@@ -181,15 +181,18 @@ close.
 
 Logical close transfers routes, closes Team-owned workflows/runtimes/scheduler
 state, persists Team `status: "closed"`, and records the shared worktree as
-`cleanup-pending` before deletion. The accepted handle separates
-`logicalClosed` from terminal `completed`; collaboration target close awaits the
-former, while Dispatcher MCP races the latter against a 9-second method-entry
-budget using an explicit 12-second MCP-to-admin timeout. Operational cleanup
-failures retry in background and after restart. Dirty/unmerged work retains the
-worktree and requires user action; `cleanup: keep` and non-managed workspaces
-are terminally retained. Clean `delete-on-close` cleanup performs no ref or
-history scan and uses only non-forced `git worktree remove <path>`, preserving
-the managed branch and commits. Branch/ref deletion is outside Team dissolve.
+`cleanup-pending` before deletion. The accepted handle exposes only its opaque
+operation id, receipt, and `logicalClosed`; collaboration target close awaits
+that milestone, while both Dispatcher and TeamLeader MCP return only the durable
+accepted receipt. Terminal cleanup is observed from persisted Team read surfaces
+and lifecycle logs. Dispatcher pre-acceptance validation has a 9-second
+method-entry deadline under the normal 10-second admin timeout; `logicalClosed`
+does not participate in the response. Operational cleanup failures retry in
+background and after restart. Dirty/unmerged work retains the worktree and
+requires user action; `cleanup: keep` and non-managed workspaces are terminally
+retained. Clean `delete-on-close` cleanup performs no ref or history scan and
+uses only non-forced `git worktree remove <path>`, preserving the managed branch
+and commits. Branch/ref deletion is outside Team dissolve.
 Shutdown interrupts cancellable idle waits and retry timers before admitted-task
 drain, preserving the durable phase for startup recovery.
 

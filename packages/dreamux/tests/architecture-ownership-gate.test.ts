@@ -496,7 +496,7 @@ describe('architecture ownership gate (#233)', () => {
     );
     const runner = await readServiceSource('team-collection/dissolve-runner.ts');
     expect(runner).not.toMatch(
-      /operation\.(?:logical|completed)\.(?:resolve|reject)\s*\(/,
+      /operation\.logical\.(?:resolve|reject)\s*\(/,
     );
     expect(runner).not.toMatch(/\.operations\.delete\s*\(/);
     expect(runner).not.toMatch(/operation_id\s*(?:===|!==)/);

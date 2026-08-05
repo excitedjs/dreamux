@@ -663,13 +663,14 @@ describe('team-mcp stdio shim', () => {
     }
   });
 
-  it('omits the reminder when dissolving a Team without submitting a turn', async () => {
+  it('returns the accepted dissolve receipt without a turn reminder', async () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: true,
       result: {
-        team: { team_name: 'alpha', status: 'closed' },
-        leader: { name: 'alpha-leader', status: 'closed' },
+        accepted: true,
+        team_name: 'alpha',
+        status: 'closing',
       },
     }));
     try {
@@ -701,7 +702,9 @@ describe('team-mcp stdio shim', () => {
         result: {
           content: [{ text: 'dissolve forwarded to dreamux serve' }],
           structuredContent: {
-            team: { team_name: 'alpha', status: 'closed' },
+            accepted: true,
+            team_name: 'alpha',
+            status: 'closing',
           },
         },
       });
@@ -851,7 +854,7 @@ describe('team-mcp stdio shim', () => {
     }
   });
 
-  it('uses the explicit 12s admin timeout only for Dispatcher dissolve through tools/call', async () => {
+  it('uses the normal 10s admin timeout for every Team tools/call path', async () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: true,
@@ -901,7 +904,7 @@ describe('team-mcp stdio shim', () => {
         callerKind: 'dispatcher',
         name: 'dissolve',
         arguments: { team_name: 'alpha', note: 'done' },
-      })).toEqual([12_000]);
+      })).toEqual([10_000]);
       expect(await callAndReadTimeouts({
         callerKind: 'team_leader',
         name: 'dissolve',

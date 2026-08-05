@@ -22,7 +22,7 @@ describe('Dispatcher Team dissolve timing contract', () => {
     vi.restoreAllMocks();
   });
 
-  it('captures the result-budget origin before blocked dispatcher admission', async () => {
+  it('captures the acceptance-deadline origin before blocked dispatcher admission', async () => {
     const receipt = { accepted: true, team_name: 'alpha', status: 'closing' };
     const dissolve = vi.fn(async () => receipt);
     let releaseAdmission!: () => void;
@@ -59,6 +59,7 @@ describe('Dispatcher Team dissolve timing contract', () => {
       { teamId: 'alpha', note: 'finish safely' },
       1_000,
     );
+    expect(now).toHaveBeenCalledOnce();
   });
 });
 

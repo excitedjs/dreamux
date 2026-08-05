@@ -891,7 +891,11 @@ describe('DispatcherService collaboration-space routing', () => {
         teamId: ensured.team_name,
         note: 'Verify exact delivery fails closed after Team dissolution.',
       });
-      void dissolving.catch(() => undefined);
+      await expect(dissolving).resolves.toEqual({
+        accepted: true,
+        team_name: ensured.team_name,
+        status: 'closing',
+      });
       await vi.waitFor(async () => {
         await expect(
           harness.dispatcher.getTeamStatus(ensured.team_name),
@@ -914,7 +918,13 @@ describe('DispatcherService collaboration-space routing', () => {
       });
       expect(harness.runtimes[0]?.submitted).toHaveLength(1);
       idle.resolve();
-      await dissolving;
+      await vi.waitFor(async () => {
+        await expect(
+          harness.dispatcher.getTeamStatus(ensured.team_name),
+        ).resolves.toMatchObject({
+          team: { status: 'closed', dissolve_phase: 'complete' },
+        });
+      });
       await expect(
         routes.deliverExact!({
           target,

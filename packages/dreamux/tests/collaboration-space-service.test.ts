@@ -12,7 +12,6 @@ import type { TeamCollection } from '../src/service/team-collection/index.js';
 import { TeamDissolveBlockedError } from '../src/service/team-collection/errors.js';
 import type {
   AcceptedTeamDissolve,
-  TeamDissolveRecord,
   TeamSummary,
 } from '../src/service/team-collection/types.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
@@ -1040,7 +1039,7 @@ describe('CollaborationSpaceService', () => {
       teamId: provisioned.team_name,
       note: 'simulate completed shutdown compensation',
     });
-    await accepted.completed;
+    await accepted.logicalClosed;
     await store.saveTarget({
       ...provisioned,
       lifecycle_status: 'failed',
@@ -1254,7 +1253,7 @@ describe('CollaborationSpaceService', () => {
       });
   });
 
-  it('persists target closed at logicalClosed without waiting for completed', async () => {
+  it('persists target closed only after logicalClosed settles', async () => {
     const created: CreatedTeam[] = [];
     const dissolved: string[] = [];
     const channels = fakeChannels();
@@ -1263,9 +1262,7 @@ describe('CollaborationSpaceService', () => {
       unknown
     >;
     const logical = deferred<TeamSummary>();
-    const completed = deferred<TeamSummary>();
     let accepted = false;
-    let record: TeamDissolveRecord | null = null;
     const teams = {
       ...baseTeams,
       async acceptDissolve(input: {
@@ -1274,29 +1271,14 @@ describe('CollaborationSpaceService', () => {
         requester: { handoffId: string };
       }): Promise<AcceptedTeamDissolve> {
         accepted = true;
-        record = {
-          operation_id: 'operation-target',
-          requester_kind: 'collaboration_target',
-          leader_name: null,
-          target_handoff_ids: [input.requester.handoffId],
-          note: input.note,
-          accepted_at: 1,
-          phase: 'worktree_cleanup_pending',
-          last_error: null,
-          cleanup_attempts: 0,
-          next_retry_at: null,
-        };
         return {
-          operationId: record.operation_id,
-          teamId: input.teamId,
+          operationId: 'operation-target',
           receipt: {
             accepted: true,
             team_name: input.teamId,
             status: 'closing',
           },
           logicalClosed: logical.promise,
-          completed: completed.promise,
-          dissolveSnapshot: () => record!,
         };
       },
       startAcceptedDissolve() {},
@@ -1332,10 +1314,6 @@ describe('CollaborationSpaceService', () => {
     });
     await waitFor(() => accepted);
     expect(closeSettled).toBe(false);
-    let completionSettled = false;
-    void completed.promise.then(() => {
-      completionSettled = true;
-    });
     logical.resolve({
       team: { team_name: provisioned!.team_name, status: 'closed' },
       leader: null,
@@ -1345,12 +1323,6 @@ describe('CollaborationSpaceService', () => {
       closed: true,
       target: { lifecycle_status: 'closed' },
     });
-    expect(completionSettled).toBe(false);
-    completed.resolve({
-      team: { team_name: provisioned!.team_name, status: 'closed' },
-      leader: null,
-      member_count: 0,
-    } as TeamSummary);
   });
 
   it('dissolve retries when release fails before the space is marked unbound', async () => {

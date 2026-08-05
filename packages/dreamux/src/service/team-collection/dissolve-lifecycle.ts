@@ -1,7 +1,6 @@
 import type { TeamLiveWriter } from '../team-service/types.js';
 import type {
   AcceptedTeamDissolve,
-  TeamDissolveCleanupPendingResult,
   TeamDissolveRecord,
   TeamLogicalCloseExecutor,
   TeamSummary,
@@ -21,9 +20,9 @@ export class DissolveMilestone<T> {
       this.resolvePromise = resolve;
       this.rejectPromise = reject;
     });
-    // Self-dissolve returns only the receipt, so milestones may have no public
-    // waiter. Keep a rejection observer attached without changing what later
-    // consumers observe from the original promise.
+    // Public dissolve calls return only the receipt, so logical closure may
+    // have no waiter. Keep a rejection observer attached without changing what
+    // later target-close consumers observe from the original promise.
     void this.promise.catch(() => undefined);
   }
 
@@ -72,7 +71,6 @@ export interface TeamDissolveOperation {
   writers: TeamLiveWriter[];
   logicalClose: TeamLogicalCloseExecutor | null;
   logical: DissolveMilestone<TeamSummary>;
-  completed: DissolveMilestone<TeamSummary>;
   interrupt: DissolveInterruptSignal;
   runner: Promise<void> | null;
   retryTimer: NodeJS.Timeout | null;
@@ -88,19 +86,14 @@ export function newDissolveOperation(input: {
   writers: TeamLiveWriter[];
 }): TeamDissolveOperation {
   const logical = new DissolveMilestone<TeamSummary>();
-  const completed = new DissolveMilestone<TeamSummary>();
-  let readRecord = (): TeamDissolveRecord => input.record;
   const handle: AcceptedTeamDissolve = {
     operationId: input.record.operation_id,
-    teamId: input.teamId,
     receipt: {
       accepted: true,
       team_name: input.teamId,
       status: 'closing',
     },
     logicalClosed: logical.promise,
-    completed: completed.promise,
-    dissolveSnapshot: () => readRecord(),
   };
   const operation: TeamDissolveOperation = {
     operationId: input.record.operation_id,
@@ -110,14 +103,12 @@ export function newDissolveOperation(input: {
     writers: input.writers,
     logicalClose: null,
     logical,
-    completed,
     interrupt: new DissolveInterruptSignal(),
     runner: null,
     retryTimer: null,
     needsRecoveryIdle: false,
     handle,
   };
-  readRecord = () => operation.record;
   return operation;
 }
 
@@ -132,23 +123,4 @@ export function isActiveDissolve(
   record: TeamDissolveRecord | null,
 ): boolean {
   return record !== null && record.phase !== 'complete' && record.phase !== 'failed';
-}
-
-export function projectInProgressDissolve(
-  handle: AcceptedTeamDissolve,
-): AcceptedTeamDissolve['receipt'] | TeamDissolveCleanupPendingResult {
-  const current = handle.dissolveSnapshot();
-  if (
-    current.operation_id === handle.operationId &&
-    current.phase === 'worktree_cleanup_pending'
-  ) {
-    return {
-      accepted: true,
-      team_name: handle.teamId,
-      status: 'closed',
-      worktree_cleanup: 'pending',
-      message: 'Managed worktree cleanup continues in the background.',
-    };
-  }
-  return handle.receipt;
 }

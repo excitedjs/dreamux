@@ -471,7 +471,7 @@ describe('Team dissolve recovery and cleanup', () => {
         next_retry_at: null,
       },
     });
-    await expect(accepted.completed).rejects.toBeInstanceOf(
+    await expect(accepted.logicalClosed).rejects.toBeInstanceOf(
       TeamDissolveFailedError,
     );
     expect(close).not.toHaveBeenCalled();
