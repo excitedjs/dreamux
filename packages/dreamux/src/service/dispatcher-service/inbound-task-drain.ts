@@ -24,6 +24,17 @@ export class DispatcherTaskDrain {
     return tracked;
   }
 
+  /**
+   * Track work whose durable acceptance already crossed the normal admission
+   * gate. Shutdown must drain this task even if admission closes between the
+   * accepting request and runner publication.
+   */
+  trackAccepted<T>(task: () => Promise<T>): Promise<T> {
+    const tracked = Promise.resolve().then(task);
+    this.track(tracked);
+    return tracked;
+  }
+
   private track<T>(task: Promise<T>): void {
     this.tasks.add(task);
     void task.finally(() => {

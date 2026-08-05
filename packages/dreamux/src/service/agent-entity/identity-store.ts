@@ -549,15 +549,36 @@ function readWorktreeIdentity(
       typeof record['base_ref'] === 'string' ? record['base_ref'] : null,
     cleanup:
       record['cleanup'] === 'delete-on-close' ? 'delete-on-close' : 'keep',
-    cleanup_state:
-      typeof record['cleanup_state'] === 'string'
-        ? (record['cleanup_state'] as AgentEntityWorktreeIdentity['cleanup_state'])
-        : mode === 'managed'
-          ? 'managed-active'
-          : 'not-managed',
+    cleanup_state: readWorktreeCleanupState(record['cleanup_state']) ??
+      (mode === 'managed' ? 'managed-active' : 'not-managed'),
     cleanup_error:
       typeof record['cleanup_error'] === 'string'
         ? record['cleanup_error']
         : null,
   };
+}
+
+const WORKTREE_CLEANUP_STATES = new Set<
+  AgentEntityWorktreeIdentity['cleanup_state']
+>([
+  'not-managed',
+  'managed-active',
+  'cleanup-pending',
+  'kept',
+  'deleted',
+  'retained-dirty',
+  'retained-unmerged',
+  'retained-unique-commits',
+  'retained-error',
+]);
+
+function readWorktreeCleanupState(
+  value: unknown,
+): AgentEntityWorktreeIdentity['cleanup_state'] | null {
+  return typeof value === 'string' &&
+    WORKTREE_CLEANUP_STATES.has(
+      value as AgentEntityWorktreeIdentity['cleanup_state'],
+    )
+    ? value as AgentEntityWorktreeIdentity['cleanup_state']
+    : null;
 }

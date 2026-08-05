@@ -3,6 +3,8 @@ import type { ChannelTarget } from '@excitedjs/dreamux-types';
 import type { ChannelRouteOwner, ChannelService } from '../channel-service/index.js';
 import type { TeamCollection } from '../team-collection/index.js';
 import type {
+  AcceptedTeamDissolve,
+  AcceptedTeamLogicalClose,
   TeamDissolveInput,
   TeamLeaderLease,
 } from '../team-collection/types.js';
@@ -116,94 +118,181 @@ export class CollaborationRouteReconciler {
     return this.opts.locks.run(routeKey({
       channelId: input.channelId,
       targetKey: input.target.target_key,
-    }), async () => {
-      const latest = await this.latestTarget(input.channelId, input.target.target_key);
-      if (
-        latest !== null &&
-        latest.lifecycle_status !== 'closed' &&
-        latest.lifecycle_status !== 'detached' &&
-        input.expectedOwner !== undefined &&
-        !targetCanBelongToOwner(latest, input.expectedOwner)
-      ) {
-        return mutation();
-      }
-      if (
-        latest !== null &&
-        latest.lifecycle_status !== 'closed' &&
-        latest.lifecycle_status !== 'detached'
-      ) {
-        await this.saveDetached(latest);
-      }
-      return mutation();
-    });
+    }), () => this.mutateTargetRouteUnderLock(input, mutation));
+  }
+
+  /** Target lock precedes the Team generation lease across scoped mutation. */
+  async mutateLeasedTargetRoute<T>(input: {
+    lease: TeamLeaderLease;
+    channelId: string;
+    target: ChannelTarget;
+  }, mutation: () => Promise<T>): Promise<T> {
+    const expectedOwner: ChannelRouteOwner = {
+      kind: 'team',
+      teamName: input.lease.teamId,
+      leaderName: input.lease.leaderName,
+    };
+    return this.opts.locks.run(routeKey({
+      channelId: input.channelId,
+      targetKey: input.target.target_key,
+    }), () => this.opts.teams.withTeamLeaderLease(input.lease, () =>
+      this.mutateTargetRouteUnderLock({
+        channelId: input.channelId,
+        target: input.target,
+        expectedOwner,
+      }, mutation),
+    ));
   }
 
   async detachTargetsForOwner(owner: ChannelRouteOwner): Promise<number> {
-    return this.detachTargetsForOwnerExcept(owner, null);
+    return this.detachOwnedTargets(owner, null);
   }
 
-  /** Close a Team only after every collaboration intent and channel route is released. */
+  /** Accept and start the Dispatcher-facing Team dissolve capability. */
   async dissolveTeam(
-    input: TeamDissolveInput,
-    lockedTarget: ProvisionedTargetRecord | null = null,
-  ) {
-    return this.opts.teams.withTeamRouteClosing(input.teamId, async (owner) => {
-      await this.detachTargetsForOwnerExcept(owner, lockedTarget);
-      await this.opts.channels.transferAllForOwner(owner);
-      return (await this.opts.teams.get(input.teamId)).dissolve(input);
+    input: TeamDissolveInput & { decisionDeadlineAt?: number },
+  ): Promise<AcceptedTeamDissolve> {
+    const accepted = await this.opts.teams.acceptDissolve({
+      ...input,
+      requester: { kind: 'dispatcher' },
     });
+    this.startTeamDissolve(accepted);
+    return accepted;
   }
 
-  /**
-   * Target lifecycle callers already hold this target's route lock. Skip that
-   * one during the all-owner detach sweep, but close every other route before
-   * dissolving the Team. A previously closed Team still gets route cleanup.
-   */
-  async closeTargetTeam(
+  async dissolveTeamForLeader(input: {
+    lease: TeamLeaderLease;
+    note: string;
+  }): Promise<AcceptedTeamDissolve> {
+    const accepted = await this.opts.teams.acceptDissolve({
+      teamId: input.lease.teamId,
+      note: input.note,
+      requester: {
+        kind: 'team_leader',
+        leaderName: input.lease.leaderName,
+      },
+    });
+    this.startTeamDissolve(accepted);
+    return accepted;
+  }
+
+  /** Accept a target-owned join; caller persists the operation id before start. */
+  async acceptTargetTeamDissolve(
     record: ProvisionedTargetRecord,
     note: string,
-  ): Promise<void> {
-    if (await this.opts.teams.isOpenTeam(record.team_name)) {
-      await this.dissolveTeam({ teamId: record.team_name, note }, record);
-      return;
+  ): Promise<AcceptedTeamDissolve | null> {
+    try {
+      return await this.opts.teams.acceptDissolve({
+        teamId: record.team_name,
+        note,
+        requester: {
+          kind: 'collaboration_target',
+          leaderName: record.leader_name,
+          handoffId: requireTargetHandoffId(record),
+        },
+      });
+    } catch (error) {
+      if (!(await this.opts.teams.isOpenTeam(record.team_name))) return null;
+      throw error;
     }
-    if (record.leader_name === null) {
-      await this.releaseClaimedRoute(record, targetFromRecord(record));
-      return;
-    }
-    const owner = ownerForTarget(record);
-    await this.detachTargetsForOwnerExcept(owner, record);
-    await this.opts.channels.transferAllForOwner(owner);
   }
 
-  private async detachTargetsForOwnerExcept(
+  startTeamDissolve(accepted: AcceptedTeamDissolve): void {
+    this.opts.teams.startAcceptedDissolve(
+      accepted,
+      (input) => this.closeAcceptedTeam(input),
+    );
+  }
+
+  async recoverTeamDissolves(): Promise<void> {
+    await this.opts.teams.recoverDissolves((input) =>
+      this.closeAcceptedTeam(input),
+    );
+  }
+
+  /** Caller holds the exact target lock while finalizing its close record. */
+  async releaseClaimedTargetRoute(record: ProvisionedTargetRecord): Promise<void> {
+    await this.releaseClaimedRoute(record, targetFromRecord(record));
+  }
+
+  private async closeAcceptedTeam(
+    input: AcceptedTeamLogicalClose,
+  ) {
+    await this.detachOwnedTargets(input.owner, {
+      teamId: input.teamId,
+      operationId: input.operationId,
+    });
+    await this.opts.channels.transferAllForOwner(input.owner);
+    return this.opts.teams.closeAcceptedResources(input);
+  }
+
+  private async detachOwnedTargets(
     owner: ChannelRouteOwner,
-    lockedTarget: ProvisionedTargetRecord | null,
+    accepted: {
+      teamId: string;
+      operationId: string;
+    } | null,
   ): Promise<number> {
     const targets = await this.opts.store.listTargets(this.opts.dispatcherId);
     let detached = 0;
     for (const target of targets) {
       if (!targetCanBelongToOwner(target, owner)) continue;
-      if (
-        lockedTarget !== null &&
-        targetRouteKey(target) === targetRouteKey(lockedTarget)
-      ) {
-        continue;
-      }
-      const wasDetached = target.lifecycle_status === 'detached';
       const result = await this.opts.locks.run(targetRouteKey(target), async () => {
-        const latest = await this.latestTarget(target.channel_id, target.target_key);
+        const latest = await this.opts.store.getTarget(this.opts.dispatcherId, {
+          channelId: target.channel_id,
+          containerKey: target.container_key,
+          bindingGeneration: target.binding_generation,
+          targetKey: target.target_key,
+        });
         if (latest === null || !targetCanBelongToOwner(latest, owner)) return null;
-        const next = latest.lifecycle_status === 'closed' ||
-          latest.lifecycle_status === 'detached'
-          ? latest
-          : await this.saveDetached(latest);
+        if (
+          accepted !== null &&
+          latest.lifecycle_status === 'closing' &&
+          latest.team_dissolve_handoff_id !== null &&
+          await this.opts.teams.hasAcceptedTargetDissolveHandoff({
+            ...accepted,
+            handoffId: latest.team_dissolve_handoff_id,
+          })
+        ) {
+          return null;
+        }
+        const wasDetached = latest.lifecycle_status === 'detached';
+        const next = latest.lifecycle_status === 'closed' || wasDetached
+          ? latest : await this.saveDetached(latest);
         await this.releaseClaimedRoute(next, targetFromRecord(next));
-        return next;
+        return wasDetached ? null : next;
       });
-      if (!wasDetached && result?.lifecycle_status === 'detached') detached += 1;
+      if (result?.lifecycle_status === 'detached') detached += 1;
     }
     return detached;
+  }
+
+  private async mutateTargetRouteUnderLock<T>(input: {
+    channelId: string;
+    target: ChannelTarget;
+    expectedOwner?: ChannelRouteOwner;
+  }, mutation: () => Promise<T>): Promise<T> {
+    const latest = await this.latestTarget(
+      input.channelId,
+      input.target.target_key,
+    );
+    if (
+      latest !== null &&
+      latest.lifecycle_status !== 'closed' &&
+      latest.lifecycle_status !== 'detached' &&
+      input.expectedOwner !== undefined &&
+      !targetCanBelongToOwner(latest, input.expectedOwner)
+    ) {
+      return mutation();
+    }
+    if (
+      latest !== null &&
+      latest.lifecycle_status !== 'closed' &&
+      latest.lifecycle_status !== 'detached'
+    ) {
+      await this.saveDetached(latest);
+    }
+    return mutation();
   }
 
   async releaseInactiveTargetRoute(
@@ -362,6 +451,14 @@ export class CollaborationRouteReconciler {
       throw new Error(`dispatcher '${this.opts.dispatcherId}' is shutting down`);
     }
   }
+}
+
+function requireTargetHandoffId(target: ProvisionedTargetRecord): string {
+  const handoffId = target.team_dissolve_handoff_id;
+  if (handoffId === null || handoffId.trim() === '') {
+    throw new Error('collaboration target dissolve handoff is unavailable');
+  }
+  return handoffId;
 }
 
 function routeBelongsToTarget(

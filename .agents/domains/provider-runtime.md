@@ -180,19 +180,25 @@ Source:
 
 ## Activity And Scheduling
 
-`AgentRuntime.waitIdle?()` is the optional neutral activity hook. Runtimes that
-omit it are treated by core as always idle. It is not a lifecycle status and it
-is not a capability flag.
+`AgentRuntime.waitIdle?()` is the optional neutral activity hook. General core
+consumers may treat an omitted hook as already idle. Durable Team dissolve is
+the strict exception: every process-live TeamLeader or member writer must expose
+`waitIdle()` before acceptance, because its shared worktree cannot otherwise be
+proven quiescent. It is not a lifecycle status or a capability flag.
 
-The scheduler is the current consumer. It races `waitIdle()` against its own
-maximum defer window before injecting scheduled prompt input. Restart notices do
-not use `waitIdle`; their startup skip latch is about real inbound that raced
-during startup, not turn activity.
+The scheduler races `waitIdle()` against its own maximum defer window before
+injecting scheduled prompt input. Team dissolve waits for every captured live
+writer without a normal-operation timeout and races that wait only against its
+typed shutdown interruption. Restart notices do not use `waitIdle`; their
+startup skip latch is about real inbound that raced during startup, not turn
+activity.
 
 Source:
 
 - `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/dreamux/src/service/scheduler/service.ts`
+- `/packages/dreamux/src/service/team-collection/dissolve-runner.ts`
+- `/packages/dreamux/src/service/team-service/index.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
 

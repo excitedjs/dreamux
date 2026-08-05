@@ -76,6 +76,12 @@ export interface ProvisionedTargetRecord {
   phase: ProvisionedTargetPhase;
   claim_event_id: string | null;
   close_event_id: string | null;
+  /** Provider-neutral handoff to the TeamCollection-owned dissolve lifecycle. */
+  team_dissolve_operation_id: string | null;
+  /** Opaque durable join written before Team dissolve acceptance. */
+  team_dissolve_handoff_id: string | null;
+  /** Target-owned post-logical-close action for the exact handoff. */
+  team_dissolve_finalize: 'close' | 'retry-claim' | null;
   last_error: string | null;
   created_at: number;
   updated_at: number;

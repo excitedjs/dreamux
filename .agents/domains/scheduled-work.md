@@ -47,7 +47,8 @@ Source:
 ## Runtime Activity
 
 `AgentRuntime.waitIdle?()` is the neutral activity hook. It resolves when no
-turn is in progress. Runtimes that omit it are treated as already idle.
+turn is in progress. For scheduler deferral, a runtime that omits it is treated
+as already idle.
 
 The scheduler is the current consumer. For each fire, it races:
 
@@ -58,10 +59,17 @@ The scheduler is the current consumer. For each fire, it races:
 This is intentionally caller-owned timeout logic. The runtime owns no
 scheduler-specific timeout, cancellation, or subscription mechanism.
 
+Durable Team dissolve is a separate strict consumer of the same neutral hook.
+It rejects acceptance unless every process-live shared-worktree writer exposes
+`waitIdle()`, then waits for the captured TeamLeader and members before its
+second worktree assessment. That lifecycle rule does not change scheduler
+fallback semantics.
+
 Source:
 
 - `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/dreamux/src/service/scheduler/service.ts`
+- `/packages/dreamux/src/service/team-collection/dissolve-runner.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
 

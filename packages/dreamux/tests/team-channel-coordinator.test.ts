@@ -1,7 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ChannelRouteOwner } from '../src/service/channel-service/index.js';
 import { TeamChannelCoordinator } from '../src/service/dispatcher-service/team-channel-coordinator.js';
+import { KeyedAsyncQueue } from '../src/service/serial-queue.js';
+import type {
+  AcceptedTeamDissolve,
+  TeamSummary,
+} from '../src/service/team-collection/types.js';
 
 const OWNER: ChannelRouteOwner = {
   kind: 'team',
@@ -16,6 +21,18 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
+
+function acceptedHandle(): AcceptedTeamDissolve {
+  return {
+    operationId: 'operation-alpha',
+    receipt: { accepted: true, team_name: 'alpha', status: 'closing' },
+    logicalClosed: new Promise<TeamSummary>(() => {}),
+  };
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function harness(routeError?: Error) {
   const events: string[] = [];
@@ -71,10 +88,18 @@ function harness(routeError?: Error) {
     dissolveTeam: async () => {
       events.push('collaboration.detach_owner');
       events.push('channel.transfer_all');
-      return team.dissolve();
+      await team.dissolve();
+      return acceptedHandle();
     },
     mutateTargetRoute: async (_input: unknown, mutation: () => Promise<unknown>) => {
       events.push('collaboration.detach_target');
+      return mutation();
+    },
+    mutateLeasedTargetRoute: async (
+      _input: unknown,
+      mutation: () => Promise<unknown>,
+    ) => {
+      events.push('collaboration.leased_target');
       return mutation();
     },
     detachTargetsForOwner: async () => {
@@ -139,12 +164,114 @@ describe('TeamChannelCoordinator collaboration ownership', () => {
     ]);
   });
 
+  it('keeps TeamLeader transfer generation validation inside target mutation', async () => {
+    const { coordinator, events } = harness();
+
+    await expect(coordinator.transferBackForTeamLeader({
+      lease: { teamId: 'alpha', leaderName: 'leader-alpha' },
+      meta: { chat_id: 'chat-alpha' },
+    })).resolves.toBe('transferred');
+    expect(events).toEqual([
+      'collaboration.leased_target',
+      'channel.transfer_back',
+    ]);
+  });
+
+  it('takes the target lock before the scoped Team lease during close races', async () => {
+    const events: string[] = [];
+    const teamLocks = new KeyedAsyncQueue();
+    const targetLocks = new KeyedAsyncQueue();
+    const teamHeld = deferred<void>();
+    const releaseTeam = deferred<void>();
+    const transferTargetHeld = deferred<void>();
+    const held = teamLocks.run('alpha', async () => {
+      teamHeld.resolve();
+      await releaseTeam.promise;
+    });
+    await teamHeld.promise;
+    const teams = {
+      withTeamLeaderLease<T>(
+        _lease: unknown,
+        task: () => Promise<T>,
+      ): Promise<T> {
+        events.push('team.request');
+        return teamLocks.run('alpha', async () => {
+          events.push('team.acquired');
+          return task();
+        });
+      },
+    };
+    const channels = {
+      resolveChannelId: () => 'primary',
+      resolveTarget: () => ({
+        target_type: 'group',
+        target_key: 'chat-alpha',
+        bindable: true,
+      }),
+      async transferResolvedTargetBack() {
+        events.push('channel.transfer_back');
+        return 'transferred';
+      },
+    };
+    const collaborationSpaces = {
+      mutateLeasedTargetRoute<T>(
+        _input: unknown,
+        mutation: () => Promise<T>,
+      ): Promise<T> {
+        return targetLocks.run('chat-alpha', async () => {
+          events.push('transfer.target');
+          transferTargetHeld.resolve();
+          return teams.withTeamLeaderLease({}, mutation);
+        });
+      },
+      mutateTargetRoute<T>(
+        _input: unknown,
+        mutation: () => Promise<T>,
+      ): Promise<T> {
+        return targetLocks.run('chat-alpha', mutation);
+      },
+    };
+    const coordinator = new TeamChannelCoordinator({
+      teams: teams as never,
+      channels: channels as never,
+      collaborationSpaces: collaborationSpaces as never,
+    });
+
+    const transfer = coordinator.transferBackForTeamLeader({
+      lease: { teamId: 'alpha', leaderName: 'leader-alpha' },
+      meta: { chat_id: 'chat-alpha' },
+    });
+    await transferTargetHeld.promise;
+    expect(events).toEqual(['transfer.target', 'team.request']);
+    const close = targetLocks.run('chat-alpha', async () => {
+      events.push('close.target');
+      await teamLocks.run('alpha', async () => {
+        events.push('close.team');
+      });
+    });
+
+    releaseTeam.resolve();
+    await Promise.all([held, transfer, close]);
+    expect(events).toEqual([
+      'transfer.target',
+      'team.request',
+      'team.acquired',
+      'channel.transfer_back',
+      'close.target',
+      'close.team',
+    ]);
+  });
+
   it('detaches every collaboration target before Team route release and close', async () => {
     const { coordinator, events } = harness();
 
     await expect(
-      coordinator.dissolve({ teamId: 'alpha', note: 'done' }),
-    ).resolves.toBe('dissolved');
+      coordinator.dissolve({ teamId: 'alpha', note: 'done' }, Date.now()),
+    ).resolves.toEqual({
+      accepted: true,
+      team_name: 'alpha',
+      status: 'closing',
+    });
     expect(events).toEqual([
       'collaboration.detach_owner',
       'channel.transfer_all',
@@ -225,7 +352,8 @@ describe('TeamChannelCoordinator collaboration ownership', () => {
           events.push('collaboration.detach_owner');
           events.push('channel.transfer_all');
           try {
-            return await team.dissolve();
+            await team.dissolve();
+            return acceptedHandle();
           } finally {
             closing = false;
           }
@@ -238,16 +366,134 @@ describe('TeamChannelCoordinator collaboration ownership', () => {
       meta: { chat_id: 'chat-alpha' },
     });
     await routeLocked.promise;
-    const dissolve = coordinator.dissolve({ teamId: 'alpha', note: 'done' });
+    const dissolve = coordinator.dissolve(
+      { teamId: 'alpha', note: 'done' },
+      Date.now(),
+    );
     await closingAnnounced.promise;
     continueBind.resolve();
 
     await expect(bind).rejects.toThrow(/closing/);
-    await expect(dissolve).resolves.toBe('dissolved');
+    await expect(dissolve).resolves.toEqual({
+      accepted: true,
+      team_name: 'alpha',
+      status: 'closing',
+    });
     expect(events).toEqual([
       'collaboration.detach_owner',
       'channel.transfer_all',
       'team.dissolve',
     ]);
+  });
+});
+
+describe('TeamChannelCoordinator caller policy', () => {
+  it('derives the exact absolute 9s acceptance deadline without a post-accept timer', async () => {
+    const handle = acceptedHandle();
+    const dissolveTeam = vi.fn(async () => handle);
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    const coordinator = new TeamChannelCoordinator({
+      teams: {} as never,
+      channels: {} as never,
+      collaborationSpaces: { dissolveTeam } as never,
+    });
+
+    await expect(coordinator.dissolve(
+      { teamId: 'alpha', note: 'finish safely' },
+      1_000,
+    )).resolves.toBe(handle.receipt);
+    expect(dissolveTeam).toHaveBeenCalledWith({
+      teamId: 'alpha',
+      note: 'finish safely',
+      decisionDeadlineAt: 10_000,
+    });
+    expect(timeoutSpy).not.toHaveBeenCalled();
+  });
+
+  it('returns only the accepted receipt for TeamLeader self-dissolve', async () => {
+    const handle = acceptedHandle();
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    const dissolveTeamForLeader = vi.fn(async () => handle);
+    const coordinator = new TeamChannelCoordinator({
+      teams: {} as never,
+      channels: {} as never,
+      collaborationSpaces: { dissolveTeamForLeader } as never,
+    });
+    const input = {
+      lease: { teamId: 'alpha', leaderName: 'leader-alpha' },
+      note: 'finish safely',
+    };
+
+    await expect(coordinator.dissolveForTeamLeader(input)).resolves
+      .toBe(handle.receipt);
+    expect(dissolveTeamForLeader).toHaveBeenCalledWith(input);
+    expect(timeoutSpy).not.toHaveBeenCalled();
+  });
+
+  it('keeps TeamLeader channel tools inside the exact generation lease', async () => {
+    const events: string[] = [];
+    const withTeamLeaderLease = vi.fn(async (
+      _lease: unknown,
+      task: () => Promise<unknown>,
+    ) => {
+      events.push('lease.enter');
+      try {
+        return await task();
+      } finally {
+        events.push('lease.exit');
+      }
+    });
+    const coordinator = new TeamChannelCoordinator({
+      teams: { withTeamLeaderLease } as never,
+      channels: {
+        authorizeTeamLeaderEgress: async () => {
+          events.push('channel.authorize');
+        },
+        invokeTool: async () => {
+          events.push('channel.invoke');
+          return 'invoked';
+        },
+      } as never,
+      collaborationSpaces: {} as never,
+    });
+
+    await expect(coordinator.invokeChannelTool({
+      channelId: 'primary',
+      name: 'reply',
+      arguments: { text: 'done' },
+      caller: {
+        kind: 'team_leader',
+        teamId: 'alpha',
+        leaderName: 'leader-alpha',
+      },
+    })).resolves.toBe('invoked');
+    expect(withTeamLeaderLease).toHaveBeenCalledWith(
+      { teamId: 'alpha', leaderName: 'leader-alpha' },
+      expect.any(Function),
+    );
+    expect(events).toEqual([
+      'lease.enter',
+      'channel.authorize',
+      'channel.invoke',
+      'lease.exit',
+    ]);
+  });
+
+  it('does not acquire a Team lease for Dispatcher channel tools', async () => {
+    const withTeamLeaderLease = vi.fn();
+    const invokeTool = vi.fn(async () => 'invoked');
+    const coordinator = new TeamChannelCoordinator({
+      teams: { withTeamLeaderLease } as never,
+      channels: { invokeTool } as never,
+      collaborationSpaces: {} as never,
+    });
+
+    await expect(coordinator.invokeChannelTool({
+      name: 'reply',
+      arguments: { text: 'done' },
+      caller: { kind: 'dispatcher' },
+    })).resolves.toBe('invoked');
+    expect(withTeamLeaderLease).not.toHaveBeenCalled();
+    expect(invokeTool).toHaveBeenCalledOnce();
   });
 });

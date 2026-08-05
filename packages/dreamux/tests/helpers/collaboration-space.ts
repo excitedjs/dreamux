@@ -1,5 +1,9 @@
 import type { ChannelRouteOwner, ChannelService } from '../../src/service/channel-service/index.js';
 import type { TeamCollection } from '../../src/service/team-collection/index.js';
+import type {
+  AcceptedTeamDissolve,
+  TeamLogicalCloseExecutor,
+} from '../../src/service/team-collection/types.js';
 import { testDreamuxConfig } from './config.js';
 
 export const log = {
@@ -32,6 +36,16 @@ export function fakeTeams(created: CreatedTeam[], dissolved: string[]) {
   const open = new Map<string, string>();
   const allocated = new Set<string>();
   const known = new Set<string>();
+  const operations = new Map<string, {
+    teamName: string;
+    leaderName: string;
+    note: string;
+    logicalMilestone: Promise<never>;
+    started: boolean;
+    resolveLogical: (value: never) => void;
+    rejectLogical: (error: unknown) => void;
+    targetHandoffs: Set<string>;
+  }>();
   let nextName = 0;
   return {
     async claimName(prefix: string, claimToken: string) {
@@ -117,20 +131,143 @@ export function fakeTeams(created: CreatedTeam[], dissolved: string[]) {
       if (leader === undefined) throw new Error(`Team ${name} is not open`);
       return task({ kind: 'team' as const, teamName: name, leaderName: leader });
     },
-    async get(name: string) {
-      return {
-        async dissolve() {
-          dissolved.push(name);
-          open.delete(name);
-          return {
-            team: { team_name: name },
-            leader: null,
-            member_count: 0,
-          };
+    async acceptDissolve(input: {
+      teamId: string;
+      note: string;
+      requester: { kind: string; leaderName?: string; handoffId?: string };
+    }): Promise<AcceptedTeamDissolve> {
+      const leader = open.get(input.teamId);
+      if (leader === undefined) throw new Error(`Team ${input.teamId} is not open`);
+      if (
+        input.requester.kind !== 'dispatcher' &&
+        input.requester.leaderName !== null &&
+        input.requester.leaderName !== leader
+      ) {
+        throw new Error(`Team ${input.teamId} generation is not current`);
+      }
+      const operationId = `operation-${input.teamId}`;
+      const existing = operations.get(operationId);
+      if (existing !== undefined) {
+        if (input.requester.handoffId !== undefined) {
+          existing.targetHandoffs.add(input.requester.handoffId);
+        }
+        return fakeHandle(operationId, existing);
+      }
+      let resolveLogical!: (value: never) => void;
+      let rejectLogical!: (error: unknown) => void;
+      const logicalMilestone = new Promise<never>((done, fail) => {
+        resolveLogical = done;
+        rejectLogical = fail;
+      });
+      void logicalMilestone.catch(() => undefined);
+      const operation = {
+        teamName: input.teamId,
+        leaderName: leader,
+        note: input.note,
+        resolveLogical,
+        rejectLogical,
+        logicalMilestone,
+        targetHandoffs: new Set(
+          input.requester.handoffId === undefined
+            ? []
+            : [input.requester.handoffId],
+        ),
+        started: false,
+      };
+      operations.set(operationId, operation);
+      return fakeHandle(operationId, operation);
+    },
+    startAcceptedDissolve(
+      handle: AcceptedTeamDissolve,
+      close: TeamLogicalCloseExecutor,
+    ) {
+      const operation = operations.get(handle.operationId);
+      if (operation === undefined) throw new Error('missing fake operation');
+      if (operation.started) return;
+      operation.started = true;
+      void close({
+        operationId: handle.operationId,
+        teamId: operation.teamName,
+        note: operation.note,
+        owner: {
+          kind: 'team',
+          teamName: operation.teamName,
+          leaderName: operation.leaderName,
         },
+        dissolve: {
+          operation_id: handle.operationId,
+          requester_kind: 'dispatcher',
+          leader_name: null,
+          target_handoff_ids: [...operation.targetHandoffs],
+          note: operation.note,
+          accepted_at: Date.now(),
+          phase: 'complete',
+          last_error: null,
+          cleanup_attempts: 0,
+          next_retry_at: null,
+        },
+        worktree: {
+          mode: 'reuse-cwd',
+          slug: null,
+          path: '/tmp',
+          branch: null,
+          base_ref: null,
+          cleanup: 'keep',
+          cleanup_state: 'not-managed',
+          cleanup_error: null,
+        },
+      }).then(
+        (summary) => {
+          operation.resolveLogical(summary as never);
+        },
+        (error) => {
+          operation.rejectLogical(error);
+        },
+      );
+    },
+    async closeAcceptedResources(input: { teamId: string }) {
+      dissolved.push(input.teamId);
+      open.delete(input.teamId);
+      return {
+        team: { team_name: input.teamId },
+        leader: null,
+        member_count: 0,
       };
     },
+    async recoverDissolves() {},
+    async hasAcceptedTargetDissolveHandoff(input: {
+      teamId: string;
+      operationId: string;
+      handoffId: string;
+    }) {
+      const operation = operations.get(input.operationId);
+      return operation?.teamName === input.teamId &&
+        operation.targetHandoffs.has(input.handoffId);
+    },
+    async get(name: string) {
+      return { id: name };
+    },
   } as unknown as TeamCollection;
+}
+
+function fakeHandle(
+  operationId: string,
+  operation: {
+    teamName: string;
+    logicalMilestone: Promise<never>;
+    targetHandoffs: Set<string>;
+    started: boolean;
+  },
+): AcceptedTeamDissolve {
+  return {
+    operationId,
+    receipt: {
+      accepted: true,
+      team_name: operation.teamName,
+      status: 'closing',
+    },
+    logicalClosed: operation.logicalMilestone,
+  };
 }
 
 export function fakeChannels() {

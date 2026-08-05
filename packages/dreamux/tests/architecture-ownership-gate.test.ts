@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
@@ -28,6 +29,30 @@ interface SourceHit {
   line: number;
   text: string;
 }
+
+interface MovedDeclaration {
+  name: string;
+  owner: string;
+  implementationImport: './index.js' | './service.js';
+}
+
+const MOVED_DECLARATIONS: readonly MovedDeclaration[] = [
+  { name: 'TeamAvailability', owner: 'service/team-service/types.ts', implementationImport: './index.js' },
+  { name: 'TeamLiveWriter', owner: 'service/team-service/types.ts', implementationImport: './index.js' },
+  { name: 'TeamServiceCreateInput', owner: 'service/team-service/types.ts', implementationImport: './index.js' },
+  { name: 'TeamSchedulerLifecycle', owner: 'service/team-service/types.ts', implementationImport: './index.js' },
+  { name: 'TeamCollectionOptions', owner: 'service/team-collection/types.ts', implementationImport: './index.js' },
+  { name: 'TeamMateSharedWorkspace', owner: 'service/teammate-collection/types.ts', implementationImport: './index.js' },
+  { name: 'SpawnTeamMateRequest', owner: 'service/teammate-collection/types.ts', implementationImport: './index.js' },
+  { name: 'TeammateOps', owner: 'service/teammate-collection/types.ts', implementationImport: './index.js' },
+  { name: 'CronCreateRequest', owner: 'service/scheduler/types.ts', implementationImport: './service.js' },
+  { name: 'CronUpdateRequest', owner: 'service/scheduler/types.ts', implementationImport: './service.js' },
+  { name: 'SchedulerServiceOptions', owner: 'service/scheduler/types.ts', implementationImport: './service.js' },
+  { name: 'SchedulerCommands', owner: 'service/scheduler/types.ts', implementationImport: './service.js' },
+  { name: 'TeammateServiceDeps', owner: 'service/teammate-service/types.ts', implementationImport: './index.js' },
+  { name: 'SettledCompletionRoute', owner: 'service/teammate-service/types.ts', implementationImport: './index.js' },
+  { name: 'TeammateServiceOptions', owner: 'service/teammate-service/types.ts', implementationImport: './index.js' },
+];
 
 function toPosixPath(path: string): string {
   return path.replace(/\\/g, '/');
@@ -153,6 +178,192 @@ function noopLog(): DreamuxLogger {
   return log as DreamuxLogger;
 }
 
+function parseSource(file: string, source: string): ts.SourceFile {
+  return ts.createSourceFile(
+    file,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+}
+
+interface MovedDeclarationScan {
+  definitions: Map<string, SourceHit[]>;
+  importViolations: SourceHit[];
+  compatibilityReexports: SourceHit[];
+}
+
+function sourceModulePath(file: string, moduleSpecifier: string): string | null {
+  if (!moduleSpecifier.startsWith('.')) return null;
+  const resolved = resolve(dirname(file), moduleSpecifier);
+  return resolved.endsWith('.js')
+    ? resolved.slice(0, -'.js'.length) + '.ts'
+    : resolved;
+}
+
+function sourceHit(
+  sourceFile: ts.SourceFile,
+  node: ts.Node,
+  text = node.getText(sourceFile),
+): SourceHit {
+  return {
+    file: sourceFile.fileName,
+    line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1,
+    text,
+  };
+}
+
+function namespaceMovedDeclarations(
+  sourceFile: ts.SourceFile,
+  namespaceName: string,
+): MovedDeclaration[] {
+  const declarations = new Map<string, MovedDeclaration>();
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isQualifiedName(node) &&
+      ts.isIdentifier(node.left) &&
+      node.left.text === namespaceName
+    ) {
+      const declaration = MOVED_DECLARATIONS.find(
+        (candidate) => candidate.name === node.right.text,
+      );
+      if (declaration !== undefined) declarations.set(declaration.name, declaration);
+    }
+    if (
+      ts.isPropertyAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === namespaceName
+    ) {
+      const declaration = MOVED_DECLARATIONS.find(
+        (candidate) => candidate.name === node.name.text,
+      );
+      if (declaration !== undefined) declarations.set(declaration.name, declaration);
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+  return [...declarations.values()];
+}
+
+function scanMovedDeclarationSource(
+  file: string,
+  source: string,
+): MovedDeclarationScan {
+  const sourceFile = parseSource(file, source);
+  const movedByName = new Map(
+    MOVED_DECLARATIONS.map((declaration) => [declaration.name, declaration]),
+  );
+  const declarationsByOwner = new Map<string, MovedDeclaration[]>();
+  for (const declaration of MOVED_DECLARATIONS) {
+    const owner = join(SRC_ROOT, declaration.owner);
+    const declarations = declarationsByOwner.get(owner) ?? [];
+    declarations.push(declaration);
+    declarationsByOwner.set(owner, declarations);
+  }
+  const definitions = new Map<string, SourceHit[]>();
+  const importViolations: SourceHit[] = [];
+  const compatibilityReexports: SourceHit[] = [];
+
+  for (const statement of sourceFile.statements) {
+    if (
+      (ts.isInterfaceDeclaration(statement) ||
+        ts.isTypeAliasDeclaration(statement)) &&
+      movedByName.has(statement.name.text)
+    ) {
+      const name = statement.name.text;
+      const hits = definitions.get(name) ?? [];
+      hits.push(sourceHit(sourceFile, statement.name, name));
+      definitions.set(name, hits);
+    }
+
+    if (ts.isImportDeclaration(statement)) {
+      const importClause = statement.importClause;
+      if (
+        importClause === undefined ||
+        !ts.isStringLiteral(statement.moduleSpecifier)
+      ) {
+        continue;
+      }
+      const importedFile = sourceModulePath(
+        file,
+        statement.moduleSpecifier.text,
+      );
+      const namedBindings = importClause.namedBindings;
+      if (namedBindings !== undefined && ts.isNamedImports(namedBindings)) {
+        for (const specifier of namedBindings.elements) {
+          const importedName = (specifier.propertyName ?? specifier.name).text;
+          const declaration = movedByName.get(importedName);
+          if (declaration === undefined) continue;
+          const expectedOwner = join(SRC_ROOT, declaration.owner);
+          if (
+            importedFile !== expectedOwner ||
+            (!importClause.isTypeOnly && !specifier.isTypeOnly)
+          ) {
+            importViolations.push(sourceHit(sourceFile, specifier));
+          }
+        }
+      } else if (
+        namedBindings !== undefined &&
+        ts.isNamespaceImport(namedBindings)
+      ) {
+        const referencedDeclarations = namespaceMovedDeclarations(
+          sourceFile,
+          namedBindings.name.text,
+        );
+        const ownerDeclarations =
+          importedFile === null
+            ? []
+            : declarationsByOwner.get(importedFile) ?? [];
+        const relevantDeclarations = new Map(
+          [...referencedDeclarations, ...ownerDeclarations].map((declaration) => [
+            declaration.name,
+            declaration,
+          ]),
+        );
+        for (const declaration of relevantDeclarations.values()) {
+          if (
+            importedFile !== join(SRC_ROOT, declaration.owner) ||
+            !importClause.isTypeOnly
+          ) {
+            importViolations.push(
+              sourceHit(
+                sourceFile,
+                namedBindings,
+                `${namedBindings.getText(sourceFile)} (${declaration.name})`,
+              ),
+            );
+          }
+        }
+      }
+    }
+
+    if (!ts.isExportDeclaration(statement)) continue;
+    const exportClause = statement.exportClause;
+    if (exportClause !== undefined && ts.isNamedExports(exportClause)) {
+      for (const specifier of exportClause.elements) {
+        const exportedName = (specifier.propertyName ?? specifier.name).text;
+        if (movedByName.has(exportedName)) {
+          compatibilityReexports.push(sourceHit(sourceFile, specifier));
+        }
+      }
+      continue;
+    }
+    const moduleSpecifier = statement.moduleSpecifier;
+    if (
+      moduleSpecifier !== undefined &&
+      ts.isStringLiteral(moduleSpecifier) &&
+      declarationsByOwner.has(
+        sourceModulePath(file, moduleSpecifier.text) ?? '',
+      )
+    ) {
+      compatibilityReexports.push(sourceHit(sourceFile, statement));
+    }
+  }
+
+  return { definitions, importViolations, compatibilityReexports };
+}
+
 function fakeRuntimeCatalog(): AgentRuntimeProviderCatalog {
   return {
     list: () => [],
@@ -181,6 +392,133 @@ describe('architecture ownership gate (#233)', () => {
     delete process.env['DREAMUX_ROOT'];
     resetRuntimeConfig();
     await rm(root, { recursive: true, force: true });
+  });
+
+  it('keeps extracted service contracts single-owned and type-only at every consumer', async () => {
+    const definitions = new Map<string, SourceHit[]>();
+    const importViolations: SourceHit[] = [];
+    const compatibilityReexports: SourceHit[] = [];
+    const files = await sourceFilesUnder(SRC_ROOT);
+
+    for (const file of files) {
+      const source = await readFile(file, 'utf8');
+      const scan = scanMovedDeclarationSource(file, source);
+      for (const [name, hits] of scan.definitions) {
+        definitions.set(name, [...(definitions.get(name) ?? []), ...hits]);
+      }
+      importViolations.push(...scan.importViolations);
+      compatibilityReexports.push(...scan.compatibilityReexports);
+    }
+
+    for (const declaration of MOVED_DECLARATIONS) {
+      const hits = definitions.get(declaration.name) ?? [];
+      const expectedOwner = join(SRC_ROOT, declaration.owner);
+      if (hits.length !== 1 || hits[0]?.file !== expectedOwner) {
+        failInvariant(
+          'Extracted service contract ownership invariant violated: each moved declaration must have exactly one owner-local definition.',
+          `${declaration.name} expected at ${packagePath(expectedOwner)}; found:\n${formatHits(hits) || '(none)'}`,
+        );
+      }
+    }
+    assertNoHits(
+      'Extracted service contract import invariant violated: moved declarations must be imported type-only and directly from their owner.',
+      importViolations,
+    );
+    assertNoHits(
+      'Extracted service contract export invariant violated: moved declarations must not have compatibility re-exports.',
+      compatibilityReexports,
+    );
+
+    for (const owner of new Set(
+      MOVED_DECLARATIONS.map((declaration) => declaration.owner),
+    )) {
+      const declaration = MOVED_DECLARATIONS.find(
+        (candidate) => candidate.owner === owner,
+      );
+      if (declaration === undefined) continue;
+      const file = join(SRC_ROOT, owner);
+      const sourceFile = parseSource(file, await readFile(file, 'utf8'));
+      const reverseImport = sourceFile.statements.find((statement) =>
+        ts.isImportDeclaration(statement) &&
+        ts.isStringLiteral(statement.moduleSpecifier) &&
+        statement.moduleSpecifier.text === declaration.implementationImport,
+      );
+      if (reverseImport !== undefined) {
+        const line = sourceFile.getLineAndCharacterOfPosition(
+          reverseImport.getStart(sourceFile),
+        ).line + 1;
+        failInvariant(
+          'Extracted service contract layering invariant violated: a type owner must not import its corresponding implementation.',
+          `${packagePath(file)}:${line}: ${reverseImport.getText(sourceFile)}`,
+        );
+      }
+    }
+  });
+
+  it('detects duplicate definitions and invalid access to moved contracts', () => {
+    const fixture = join(SRC_ROOT, 'service/fixture/consumer.ts');
+    const duplicateDefinitions = scanMovedDeclarationSource(
+      join(SRC_ROOT, 'service/scheduler/types.ts'),
+      'export interface SchedulerCommands {}\nexport interface SchedulerCommands {}\n',
+    );
+    expect(
+      duplicateDefinitions.definitions.get('SchedulerCommands'),
+    ).toHaveLength(2);
+
+    const directNamespace = scanMovedDeclarationSource(
+      fixture,
+      "import * as Contracts from '../scheduler/types.js';\ntype Commands = Contracts.SchedulerCommands;\n",
+    );
+    expect(directNamespace.importViolations).toHaveLength(4);
+
+    const indirectImports = scanMovedDeclarationSource(
+      fixture,
+      "import type * as Contracts from '../scheduler/service.js';\nimport type { SchedulerCommands } from '../scheduler/service.js';\ntype Commands = Contracts.SchedulerCommands;\n",
+    );
+    expect(indirectImports.importViolations).toHaveLength(2);
+
+    const compatibilityReexport = scanMovedDeclarationSource(
+      join(SRC_ROOT, 'service/scheduler/service.ts'),
+      "export type { SchedulerCommands } from './types.js';\n",
+    );
+    expect(compatibilityReexport.compatibilityReexports).toHaveLength(1);
+
+    const validNamespace = scanMovedDeclarationSource(
+      fixture,
+      "import type * as Contracts from '../scheduler/types.js';\ntype Commands = Contracts.SchedulerCommands;\n",
+    );
+    expect(validNamespace.importViolations).toEqual([]);
+  });
+
+  it('keeps Team dissolve settlement and generation authority in its controller', async () => {
+    const controller = await readServiceSource(
+      'team-collection/dissolve-controller.ts',
+    );
+    const runner = await readServiceSource('team-collection/dissolve-runner.ts');
+    expect(runner).not.toMatch(
+      /operation\.logical\.(?:resolve|reject)\s*\(/,
+    );
+    expect(runner).not.toMatch(/\.operations\.delete\s*\(/);
+    expect(runner).not.toMatch(/operation_id\s*(?:===|!==)/);
+    assertContains(
+      controller,
+      /private async loadCurrentOperation\s*\(/,
+      'Team dissolve ownership invariant violated: current-operation generation checks must stay in TeamDissolveController.',
+      'team-collection/dissolve-controller.ts',
+    );
+    for (const operation of [
+      'failOpen',
+      'markLogicalClosed',
+      'finishClosed',
+      'suspend',
+    ]) {
+      assertContains(
+        controller,
+        new RegExp(`private (?:async )?${operation}\\s*\\(`),
+        `Team dissolve ownership invariant violated: ${operation} settlement must stay in TeamDissolveController.`,
+        'team-collection/dissolve-controller.ts',
+      );
+    }
   });
 
   it('keeps TeammateService free of scheduler ownership', async () => {
@@ -226,8 +564,14 @@ describe('architecture ownership gate (#233)', () => {
     }
     assertContains(
       teamHandleSource,
-      /withService:\s*<T>\([\s\S]*lease:\s*TeamLeaderLease[\s\S]*task:\s*\(service:\s*TeamService\)\s*=>\s*Promise<T>/,
-      'scheduler command invariant violated: TeamLeaderHandle operations must route through a Team generation lease.',
+      /withMutationService:\s*<T>\([\s\S]*lease:\s*TeamLeaderLease[\s\S]*task:\s*\(service:\s*TeamService\)\s*=>\s*Promise<T>/,
+      'scheduler command invariant violated: TeamLeaderHandle mutations must route through an available Team generation lease.',
+      'dispatcher-service/team-leader-handle.ts',
+    );
+    assertContains(
+      teamHandleSource,
+      /withReadService:\s*<T>\([\s\S]*lease:\s*TeamLeaderLease[\s\S]*task:\s*\(service:\s*TeamService\)\s*=>\s*Promise<T>/,
+      'scheduler command invariant violated: TeamLeaderHandle reads must route through a Team generation lease.',
       'dispatcher-service/team-leader-handle.ts',
     );
     assertContains(
@@ -238,8 +582,8 @@ describe('architecture ownership gate (#233)', () => {
     );
     assertContains(
       dispatcherSource,
-      /lease: await this\.teams\.teamLeaderLease\(teamId\)/,
-      'scheduler command invariant violated: DispatcherService.team() must bind TeamLeaderHandle to a Team generation lease.',
+      /lease: await this\.teams\.teamLeaderReadLease\(teamId\)/,
+      'scheduler command invariant violated: DispatcherService.team() must bind TeamLeaderHandle to a read-safe Team generation lease.',
       'dispatcher-service/index.ts',
     );
     assertContains(
@@ -250,8 +594,8 @@ describe('architecture ownership gate (#233)', () => {
     );
     assertContains(
       teamSource,
-      /get scheduler\(\): SchedulerCommands\s*\{\s*return this\.scheduler_\.commands;/,
-      'scheduler command invariant violated: TeamService must expose SchedulerCommands, not concrete SchedulerService lifecycle verbs.',
+      /get scheduler\(\): SchedulerCommands\s*\{\s*return this\.schedulerCommands;/,
+      'scheduler command invariant violated: TeamService must expose availability-gated SchedulerCommands, not concrete SchedulerService lifecycle verbs.',
       'team-service/index.ts',
     );
     if (/\b(?:start|stop)Scheduler\s*\(/.test(teamSource)) {
@@ -519,11 +863,12 @@ describe('architecture ownership gate (#233)', () => {
 
   it('keeps Team read binding summaries composed in admin methods', async () => {
     const adminMethods = await readSource('admin/methods.ts');
+    const teamMethodParams = await readSource('admin/team-method-params.ts');
     assertContains(
-      adminMethods,
+      teamMethodParams,
       /async function teamBindingFields[\s\S]*dispatcher\.activeTeamBindingSummaries[\s\S]*bound_target:\s*bound_targets\[0\]\s*\?\?\s*null[\s\S]*bound_targets/,
-      'Team read composition invariant violated: admin/methods.ts must derive compatible bound_target and complete bound_targets from the plural ChannelService projection.',
-      '../admin/methods.ts',
+      'Team read composition invariant violated: admin/team-method-params.ts must derive compatible bound_target and complete bound_targets from the plural ChannelService projection.',
+      '../admin/team-method-params.ts',
     );
     assertContains(
       adminMethods,

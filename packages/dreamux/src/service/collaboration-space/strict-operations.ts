@@ -117,6 +117,9 @@ export class CollaborationTargetStrictOperations {
     turn: InboundTurnInput;
   }): Promise<AgentRuntimeTurnResult> {
     return this.withVerifiedActiveTarget(input, async (record) => {
+      // `withVerifiedActiveTarget` holds the Team availability lease across
+      // this callback. Submit through that admitted service; re-entering the
+      // non-reentrant Team queue here would deadlock the exact-delivery path.
       const team = await this.opts.teams.get(record.team_name);
       return team.deliverToLeader(input.turn);
     });

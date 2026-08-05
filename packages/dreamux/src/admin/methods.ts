@@ -1,26 +1,27 @@
 
 import type { Server } from '../server.js';
-import {
-  bundledSharedSkillRoot,
-  bundledTeamLeaderSkillRoot,
-} from '../platform/paths.js';
-import type {
-  ChannelToolCaller,
-  DispatcherService,
-} from '../service/dispatcher-service/index.js';
-import type {
-  ChannelBindingSummary,
-  ChannelRouteOwner,
-} from '../service/channel-service/index.js';
+import type { ChannelToolCaller } from '../service/dispatcher-service/index.js';
 import { ChannelToolAuthorizationError } from '../service/channel-service/errors.js';
-import type { SchedulerCommands } from '../service/scheduler/service.js';
-import { TeamUnavailableError } from '../service/team-collection/errors.js';
+import type { SchedulerCommands } from '../service/scheduler/types.js';
+import {
+  TeamDissolveBlockedError,
+  TeamDissolveFailedError,
+  TeamUnavailableError,
+} from '../service/team-collection/errors.js';
 import { AdminError } from './protocol.js';
 import { teammateTargetFor } from './teammate-target.js';
+import {
+  TEAM_LEADER_REQUIRED_SKILL_SOURCES,
+  mustTeamIdParam,
+  mustTeamMateNameParam,
+  teamBindingFields,
+  teamCallerKind,
+} from './team-method-params.js';
 import {
   historyQuery,
   mustDispatcherId,
   mustExistingDispatcher,
+  mustNonBlankString,
   mustNonEmptyString,
   mustRecord,
   mustString,
@@ -42,16 +43,6 @@ export type AdminHandler = (
   server: Server,
   params: Record<string, unknown> | undefined,
 ) => Promise<unknown> | unknown;
-
-const TEAM_LEADER_REQUIRED_SKILL_SOURCES = [{
-  name: 'team-leader',
-  path: bundledTeamLeaderSkillRoot(),
-  source: 'dreamux-core',
-}, {
-  name: 'shared',
-  path: bundledSharedSkillRoot(),
-  source: 'dreamux-core',
-}] as const;
 
 export const adminMethods: Record<string, AdminHandler> = {
   'server.status': async (server) => ({
@@ -155,6 +146,9 @@ export const adminMethods: Record<string, AdminHandler> = {
     } catch (err) {
       if (err instanceof ChannelToolAuthorizationError) {
         throw new AdminError(err.code, err.message);
+      }
+      if (err instanceof TeamUnavailableError) {
+        throw new AdminError('TEAM_NOT_FOUND', err.message);
       }
       if (err instanceof AdminError) throw err;
       throw new AdminError('CHANNEL_TOOL_FAILED', parseMessage(err));
@@ -348,6 +342,7 @@ export const adminMethods: Record<string, AdminHandler> = {
         ...(intent !== null ? { intent } : {}),
       });
     } catch (err) {
+      if (err instanceof AdminError) throw err;
       if (err instanceof TeamUnavailableError) {
         throw new AdminError('TEAM_NOT_FOUND', err.message);
       }
@@ -456,19 +451,34 @@ export const adminMethods: Record<string, AdminHandler> = {
     mustExistingDispatcher(server, id);
     const channelId = optionalString(params, 'channel_id');
     const callerKind = teamCallerKind(params);
-    const expectedOwner =
-      callerKind === 'team_leader'
-        ? {
-            kind: 'team' as const,
-            teamName: mustString(params, 'team_id'),
-            leaderName: mustString(params, 'leader_name'),
-          }
-        : undefined;
-    const binding = await server.getDispatcher(id).transferTeamChannelBack({
-      ...(expectedOwner !== undefined ? { expectedOwner } : {}),
-      ...(channelId !== null ? { channelId } : {}),
-      meta: mustRecord(params, 'meta'),
-    });
+    if (callerKind === 'team_leader' && Object.hasOwn(params ?? {}, 'team_name')) {
+      throw new AdminError(
+        'BAD_REQUEST',
+        "param 'team_name' is not accepted for a team_leader caller",
+      );
+    }
+    const dispatcher = server.getDispatcher(id);
+    let binding;
+    try {
+      binding = callerKind === 'team_leader'
+        ? await dispatcher.transferTeamLeaderChannelBack({
+            lease: {
+              teamId: mustTeamIdParam(params, 'team_id'),
+              leaderName: mustTeamMateNameParam(params, 'leader_name'),
+            },
+            ...(channelId !== null ? { channelId } : {}),
+            meta: mustRecord(params, 'meta'),
+          })
+        : await dispatcher.transferTeamChannelBack({
+            ...(channelId !== null ? { channelId } : {}),
+            meta: mustRecord(params, 'meta'),
+          });
+    } catch (err) {
+      if (err instanceof TeamUnavailableError) {
+        throw new AdminError('TEAM_NOT_FOUND', err.message);
+      }
+      throw err;
+    }
     return {
       transferred: binding !== null,
       binding,
@@ -482,13 +492,47 @@ export const adminMethods: Record<string, AdminHandler> = {
   'team.dissolve': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);
-    const name = mustString(params, 'team_name');
-    const note = mustNonEmptyString(params, 'note');
-    const dissolved = await server.getDispatcher(id).dissolveTeam({
-      teamId: name,
-      note,
-    });
-    return { ...dissolved, bound_target: null, bound_targets: [] };
+    const callerKind = teamCallerKind(params);
+    const note = mustNonBlankString(params, 'note');
+    if (callerKind === 'team_leader' && Object.hasOwn(params ?? {}, 'team_name')) {
+      throw new AdminError(
+        'BAD_REQUEST',
+        "param 'team_name' is not accepted for a team_leader caller",
+      );
+    }
+    const leaderLease = callerKind === 'team_leader'
+      ? {
+          teamId: mustTeamIdParam(params, 'team_id'),
+          leaderName: mustTeamMateNameParam(params, 'leader_name'),
+        }
+      : null;
+    const dispatcherTeamId = callerKind === 'dispatcher'
+      ? mustTeamIdParam(params, 'team_name')
+      : null;
+    try {
+      const dispatcher = server.getDispatcher(id);
+      const dissolved = callerKind === 'team_leader'
+        ? await dispatcher.dissolveTeamForLeader({
+            lease: leaderLease!,
+            note,
+          })
+        : await dispatcher.dissolveTeam({
+            teamId: dispatcherTeamId!,
+            note,
+          });
+      return { ...dissolved, bound_target: null, bound_targets: [] };
+    } catch (err) {
+      if (err instanceof TeamUnavailableError) {
+        throw new AdminError('TEAM_NOT_FOUND', err.message);
+      }
+      if (err instanceof TeamDissolveBlockedError) {
+        throw new AdminError('TEAM_DISSOLVE_BLOCKED', err.reason);
+      }
+      if (err instanceof TeamDissolveFailedError) {
+        throw new AdminError('TEAM_DISSOLVE_FAILED', err.message);
+      }
+      throw new AdminError('TEAM_DISSOLVE_FAILED', parseMessage(err));
+    }
   },
 
   'collaboration_space.bind': async (server, params) => {
@@ -605,46 +649,6 @@ function channelToolCaller(
     'BAD_REQUEST',
     "param 'caller_kind' must be dispatcher or team_leader",
   );
-}
-
-function teamCallerKind(
-  params: Record<string, unknown> | undefined,
-): 'dispatcher' | 'team_leader' {
-  // Omitted caller_kind preserves the existing dispatcher-scoped admin contract.
-  const kind = optionalString(params, 'caller_kind') ?? 'dispatcher';
-  if (kind === 'dispatcher' || kind === 'team_leader') return kind;
-  throw new AdminError(
-    'BAD_REQUEST',
-    "param 'caller_kind' must be dispatcher or team_leader",
-  );
-}
-
-function ownerForTeamRead(input: {
-  team_name: string;
-  leader_name: string;
-}): ChannelRouteOwner {
-  return {
-    kind: 'team',
-    teamName: input.team_name,
-    leaderName: input.leader_name,
-  };
-}
-
-async function teamBindingFields(
-  dispatcher: DispatcherService,
-  team: { team_name: string; leader_name: string },
-): Promise<{
-  bound_target: ChannelBindingSummary | null;
-  bound_targets: ChannelBindingSummary[];
-}> {
-  const bound_targets = await dispatcher.activeTeamBindingSummaries(
-    ownerForTeamRead(team),
-  );
-  return {
-    // Compatibility: preserve the former first-match projection and store order.
-    bound_target: bound_targets[0] ?? null,
-    bound_targets,
-  };
 }
 
 function optionalCollaborationContainer(

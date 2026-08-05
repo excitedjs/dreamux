@@ -207,10 +207,15 @@ Channel binding is a Team MCP capability. The Team MCP is caller-scoped:
   TeamLeader,
   `bind_channel({ team_name, channel_id?, meta })` and
   `transfer_back({ channel_id?, meta })`
-- TeamLeaders see scoped `bind_channel({ channel_id?, meta })` and
+- TeamLeaders see exactly `dissolve({ note })`, scoped
+  `bind_channel({ channel_id?, meta })`, and
   `transfer_back({ channel_id?, meta })`. TeamLeader bind can claim only an
   unowned target (or return the exact explicit binding idempotently); it cannot
-  replace another owner or consume a collaboration-managed route.
+  replace another owner or consume a collaboration-managed route. Self-dissolve
+  derives both Team and leader generation from the MCP descriptor and maps to
+  the same `team.dissolve` admin method as Dispatcher
+  `dissolve({ team_name, note })`; it accepts no Team selector. There is no
+  `close` alias or provider-specific branch.
 
 `channel_id` defaults to the dispatcher's sole configured channel and is
 required only when the dispatcher has more than one configured channel.
@@ -225,6 +230,50 @@ completion router that its owning `TeamCollection` injects. The per-team
 `TeammateCollection` is members-only: it spawns and caches team members under
 `team/<team>/teammate/<name>/`, while the TeamLeader lives at the team root and
 is never cached in the collection's entity map.
+
+`TeamCollection` owns the single durable Team dissolve lifecycle. An accepted
+operation is stored on the Team record before its receipt, carries the first
+note, requester/generation, target handoffs, phase, public-safe error, attempt
+count, and next retry time, and projects one process-local handle with an opaque
+operation id, the accepted receipt, and a `logicalClosed` milestone.
+`Team.status` stays `starting | running | closed`; dissolve phase and worktree
+cleanup are separate facts. Active same-generation requests join the stored
+operation, while a stale TeamLeader generation cannot join it.
+
+The same `TeamCollection` availability fence gates Dispatcher send, bound and
+strict inbound delivery, route publication, TeamLeader member/workflow
+mutations, Team scheduler mutations and final timer fire, and member-completion
+injection back into the leader. Reads use a generation-checked read lease and
+remain available while closing. Acceptance captures the TeamLeader plus every
+live member runtime that can write the shared worktree and requires each to
+provide the neutral `waitIdle()` capability. It closes workflow admission and
+stops the Team scheduler before returning, waits for all captured writers, and
+then repeats the non-destructive `WorktreeManager.assessCleanup()` preflight.
+
+`TeamService` owns resource shutdown and propagation of the one shared worktree
+identity to leader and members; `WorktreeManager` alone assesses and removes a
+managed worktree. Logical close durably commits routes/runtimes closed and
+`cleanup-pending` before physical deletion. Assessment checks only dirty and
+unmerged state; it does not enumerate refs or walk repository history.
+`cleanup: keep` and non-managed outcomes are terminally retained. Clean managed
+`delete-on-close` cleanup calls non-forced `git worktree remove <path>` and
+preserves the managed branch and its commits. Removal failures retain durable
+retry responsibility with bounded exponential backoff; branch/ref deletion is
+not part of Team dissolve.
+Dispatcher and TeamLeader projections both return the durable accepted receipt
+without awaiting `logicalClosed`. Terminal cleanup is observed through Team
+status/history and structured lifecycle logs, not another process-local handle
+promise. Dispatcher pre-acceptance work has a 9-second method-entry deadline
+under the normal 10-second MCP admin timeout; there is no post-accept result
+timer or lifecycle projection.
+
+Startup restores active Team fences, materializes every live writer, rechecks
+idle, and resumes persisted dissolve/cleanup phases before publishing normal
+Team, collaboration, Channel, workflow, or scheduler work. Shutdown interrupts
+cancellable dissolve idle waits and retry timers before admitted-task drain,
+but drains an active physical cleanup attempt. Interruption settles only the
+process-local `logicalClosed` milestone with a typed recoverable result and
+leaves the durable phase and cleanup responsibility for restart.
 
 Key source:
 
@@ -306,11 +355,13 @@ worktree policy; `repo` is optional and omitted repo follows that dispatcher's
 default workspace policy. It does not call provider Channel MCP to create the
 external space. A dispatcher channel may also enable core-owned
 `collaborationSpace.defaultBinding` so unknown provider containers with neutral
-`container` membership auto-bind without an explicit MCP call. Dissolve releases
-Dreamux routing/provisioning ownership without deleting the external container
+`container` membership auto-bind without an explicit MCP call.
+Collaboration-space dissolve releases Dreamux routing/provisioning ownership
+without deleting the external container
 or dissolving already provisioned Teams, and it prevents implicit auto-rebind of
-that known unbound space. Team cleanup still belongs to `TeamService.dissolve`
-when a target lifecycle close or explicit Team operation dissolves that Team.
+that known unbound space. Explicit Team dissolve and collaboration target close
+both join the TeamCollection-owned durable lifecycle; `TeamService` owns only
+the accepted operation's logical resource close.
 
 Binding is one process-writer-serialized store transition: the unbound check,
 container uniqueness, next generation, and complete policy write commit
@@ -333,8 +384,14 @@ routable. Route publication also holds a TeamCollection route lease. Every Team
 close path raises the matching closing fence, detaches all matching collaboration
 intent, transfers every owned channel route, and only then dissolves the Team;
 a waiting bind or repair therefore cannot publish a route to the Team being
-closed. Public target views expose a fixed failure summary; raw downstream
-errors remain local diagnostics and are not returned through MCP/status views.
+closed. A target-owned close persists an opaque generation handoff, accepts or
+joins the Team dissolve under the target lock, releases that lock while waiting
+for Team-wide quiescence, and marks the target closed only after
+`logicalClosed`. The Team record can hold multiple target handoff ids; the
+route sweep reacquires each target lock and checks the exact handoff against the
+authoritative Team record, so mismatches detach normally. Public target views
+expose a fixed failure summary; raw downstream errors remain local diagnostics
+and are not returned through MCP/status views.
 
 Strict Channel ensure and exact delivery stay on this same owner graph. Ensure
 reuses `acceptAndProvisionTarget` and returns only after the active/bound target,

@@ -58,7 +58,7 @@
       "name": "smoke-built-cli",
       "commandKind": "bulk",
       "summary": "Run each project's built CLI smoke checks.",
-      "description": "Bulk-runs built CLI smoke checks across packages that declare a `smoke-built-cli` script. Run after `rush build`; the dreamux check starts `bin/dreamux --version` in a fresh Node process so ESM initialization cycles fail before publish.",
+      "description": "Bulk-runs built smoke checks across packages that declare a `smoke-built-cli` script. Run after `rush build`; the dreamux check loads the package main (`dist/server.js`), asserts the exact value exports of `dist/service/index.js`, and starts `bin/dreamux --version` so ESM initialization cycles fail before publish.",
       "enableParallelism": true,
       "ignoreMissingScript": true,
       "incremental": false

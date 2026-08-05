@@ -167,6 +167,11 @@ describe('collaboration target per-target repo close cleanup', () => {
 
     // Team dissolved.
     expect(await teams.isOpenTeam(teamName)).toBe(false);
+    await waitFor(async () => {
+      if (existsSync(managedPath)) return false;
+      const worktrees = await listWorktrees();
+      return worktrees.length === 1 && worktrees[0] === sourceRepo;
+    });
     // Managed worktree directory gone from disk.
     expect(existsSync(managedPath)).toBe(false);
     // git worktree registration gone: only the source repo remains.
@@ -174,3 +179,15 @@ describe('collaboration target per-target repo close cleanup', () => {
     expect(worktreesAfterClose).toEqual([sourceRepo]);
   });
 });
+
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs = 2_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('waitFor timed out');
+}

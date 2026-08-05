@@ -5,6 +5,9 @@ import type {
   TeamDissolveInput,
   TeamLeaderLease,
 } from '../team-collection/types.js';
+import { invokeDispatcherChannelTool } from './channel-tool-invocation.js';
+
+const TEAM_DISSOLVE_ACCEPTANCE_BUDGET_MS = 9_000;
 
 interface TeamChannelCoordinatorOptions {
   teams: TeamCollection;
@@ -28,8 +31,46 @@ interface TeamLeaderChannelBindInput {
 export class TeamChannelCoordinator {
   constructor(private readonly opts: TeamChannelCoordinatorOptions) {}
 
-  async dissolve(input: TeamDissolveInput) {
-    return this.opts.collaborationSpaces.dissolveTeam(input);
+  async dissolve(input: TeamDissolveInput, publicMethodEnteredAt: number) {
+    const acceptanceDeadlineAt =
+      publicMethodEnteredAt + TEAM_DISSOLVE_ACCEPTANCE_BUDGET_MS;
+    const accepted = await this.opts.collaborationSpaces.dissolveTeam({
+      ...input,
+      decisionDeadlineAt: acceptanceDeadlineAt,
+    });
+    return accepted.receipt;
+  }
+
+  async dissolveForTeamLeader(input: {
+    lease: TeamLeaderLease;
+    note: string;
+  }) {
+    return (await this.opts.collaborationSpaces.dissolveTeamForLeader(input))
+      .receipt;
+  }
+
+  async invokeChannelTool(
+    input: Omit<
+      Parameters<typeof invokeDispatcherChannelTool>[0],
+      'channels'
+    >,
+  ): Promise<unknown> {
+    if (input.caller.kind === 'team_leader') {
+      return this.opts.teams.withTeamLeaderLease(
+        {
+          teamId: input.caller.teamId,
+          leaderName: input.caller.leaderName,
+        },
+        () => invokeDispatcherChannelTool({
+          channels: this.opts.channels,
+          ...input,
+        }),
+      );
+    }
+    return invokeDispatcherChannelTool({
+      channels: this.opts.channels,
+      ...input,
+    });
   }
 
   async bind(input: TeamChannelBindInput) {
@@ -75,6 +116,28 @@ export class TeamChannelCoordinator {
         ...(input.expectedOwner !== undefined
           ? { expectedOwner: input.expectedOwner }
           : {}),
+        channelId,
+        target,
+      }),
+    );
+  }
+
+  async transferBackForTeamLeader(input: {
+    lease: TeamLeaderLease;
+    channelId?: string;
+    meta: Record<string, unknown>;
+  }) {
+    const channelId = this.opts.channels.resolveChannelId(input.channelId);
+    const target = await this.opts.channels.resolveTarget(input.meta, channelId);
+    const expectedOwner: ChannelRouteOwner = {
+      kind: 'team',
+      teamName: input.lease.teamId,
+      leaderName: input.lease.leaderName,
+    };
+    return this.opts.collaborationSpaces.mutateLeasedTargetRoute(
+      { lease: input.lease, channelId, target },
+      () => this.opts.channels.transferResolvedTargetBack({
+        expectedOwner,
         channelId,
         target,
       }),

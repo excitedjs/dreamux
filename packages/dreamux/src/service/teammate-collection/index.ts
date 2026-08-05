@@ -2,10 +2,10 @@ import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type {
   AgentRuntime,
   AgentRuntimeSystemPrompt,
+  DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 import { unsupportedFeatureError } from '@excitedjs/dreamux-utils';
 import type { DreamuxConfig } from '../../config/config.js';
-import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import {
   agentRuntimeCapability,
   defaultAgentRuntime,
@@ -33,10 +33,8 @@ import {
   toStatus,
   validateLastTurns,
 } from './read-helpers.js';
-import type {
-  SettledCompletionRoute,
-  TeammateService,
-} from '../teammate-service/index.js';
+import type { TeammateService } from '../teammate-service/index.js';
+import type { SettledCompletionRoute } from '../teammate-service/types.js';
 import { toTurnResult } from '../teammate-service/turn-recording.js';
 import { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import { throwSettledFailures } from '../shutdown-errors.js';
@@ -66,7 +64,8 @@ import {
 import type {
   CloseTeamMateInput,
   SendTeamMateInput,
-  SpawnTeamMateInput,
+  SpawnTeamMateRequest,
+  TeammateOps,
 } from './types.js';
 import type {
   OwnedTeamMateSpawnResult,
@@ -127,41 +126,9 @@ export interface TeammateCollectionOptions {
   log: DreamuxLogger;
 }
 
-export interface TeamMateSharedWorkspace {
-  sourceCwd: string;
-  sourceRepo: string | null;
-  runtimeCwd: string;
-  worktree: AgentEntityWorktreeIdentity;
-}
-
-export type SpawnTeamMateRequest = SpawnTeamMateInput & {
-  sharedWorkspace?: TeamMateSharedWorkspace;
-};
-
 type SpawnRoute =
   | { kind: 'router' }
   | ({ kind: 'owned' } & SpawnOwnedTeamMateOptions);
-
-/**
- * The narrow teammate-operations surface a dispatcher or team exposes to the
- * admin layer (issue #233). `TeammateCollection` implements it; the owning
- * service hands it out via a `get teammates()` so callers can drive the
- * collection without the service re-forwarding each verb. `Omit` hides the
- * scope-internal inputs — `sharedWorkspace` (injected by `TeamService.spawnTeamMate`)
- * and the history `teamId` (the scope is baked into the collection) — and the
- * lifecycle methods (`turns` / `stopAll` / `dispatcherWorkspace`) stay off the
- * interface entirely.
- */
-export interface TeammateOps {
-  spawn(input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>): Promise<AgentEntitySpawnResult>;
-  send(input: SendTeamMateInput): Promise<AgentEntitySendResult>;
-  close(input: CloseTeamMateInput): Promise<AgentEntityCloseResult>;
-  list(): Promise<AgentEntityRuntimeStatus[]>;
-  status(name: string): Promise<AgentEntityRuntimeStatus>;
-  history(input: Omit<AgentEntityHistoryQuery, 'teamId'>): Promise<AgentEntityHistoryResult>;
-  last(name: string, turns?: number): Promise<AgentEntityLastResult>;
-  getCapabilities(): AgentEntityCapabilities;
-}
 
 /**
  * A scoped teammate collection (issue #233): one instance per scope — one for the
@@ -197,6 +164,28 @@ export class TeammateCollection implements TeammateOps, OwnedTeammateOps {
   /** The live runtime for a cached entity, or null (drives status projection). */
   private runtimeFor(name: string): AgentRuntime | null {
     return this.entities.get(name)?.getRuntime() ?? null;
+  }
+
+  /** Live Team-member runtimes for the Team owner's shared-worktree barrier. */
+  liveRuntimes(): Array<{ name: string; runtime: AgentRuntime }> {
+    const live: Array<{ name: string; runtime: AgentRuntime }> = [];
+    for (const entity of this.entities.values()) {
+      const runtime = entity.getRuntime();
+      if (runtime !== null) live.push({ name: entity.name, runtime });
+    }
+    return live;
+  }
+
+  /**
+   * Reattach non-closed durable Team members after a process restart so an
+   * already-accepted owner close can prove their runtime sessions idle before
+   * revalidating the shared worktree.
+   */
+  async recoverLiveRuntimesForOwnerClose(): Promise<void> {
+    for (const identity of await this.rosterList()) {
+      if (identity.status === 'closed') continue;
+      await this.entityFor(identity).ensureStarted();
+    }
   }
 
   turns(): AgentTurnsStore {

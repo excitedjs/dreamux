@@ -78,6 +78,14 @@ an existing channel target to a Team, and
 routing. `meta` is provider-owned; the active channel provider's tool schema
 and results are the authority for the target selector.
 
+Dispatcher `dissolve({ team_name, note })` keeps its existing name and schema.
+Its 9-second pre-acceptance deadline starts at method entry, including the
+authoritative worktree preflight, and runs within the normal 10-second admin
+timeout. Successful Dispatcher and TeamLeader dissolve calls return the durable
+`status: "closing"` accepted receipt immediately. Logical close and worktree
+cleanup remain server-owned background work and are observed through Team read
+surfaces rather than the dissolve response.
+
 Dispatcher `cron` MCP tools are `cron_create`, `cron_list`, `cron_update`,
 `cron_delete`, and `cron_run_now`. Cron prompts are injected back into the
 Dispatcher; they are not a TeamMate spawn target or channel delivery mechanism by
@@ -97,13 +105,16 @@ TeamLeader `spawn` does not accept a `repo` input because the Team workspace is
 already selected when the Team is created. Team-scoped TeamMates share that
 workspace, so concurrent editing needs an explicit non-conflict boundary.
 
-TeamLeader `team` MCP exposes `bind_channel({ channel_id?, meta })` and
-`transfer_back({ channel_id?, meta })`. Bind always targets the
-descriptor-bound current Team and can claim only an unowned target (or repeat
+TeamLeader `team` MCP exposes exactly `dissolve({ note })`,
+`bind_channel({ channel_id?, meta })`, and
+`transfer_back({ channel_id?, meta })`. Self-dissolve always targets the
+descriptor-bound Team and leader generation, accepts no Team selector, and
+returns only the durable `status: "closing"` receipt so its own tool response can
+settle before runtime shutdown. Bind can claim only an unowned target (or repeat
 the exact explicit binding); another owner or an active collaboration-managed
-route is refused. TeamLeaders cannot create, send to, list, inspect, dissolve,
-or select Teams through this projection. `transfer_back` remains a routing-only
-state change with no channel-message side effect.
+route is refused. TeamLeaders cannot create, send to, list, inspect, or select
+Teams through this projection. `transfer_back` remains a routing-only state
+change with no channel-message side effect.
 
 TeamLeader `cron` MCP tools are `cron_create`, `cron_list`, `cron_update`,
 `cron_delete`, and `cron_run_now`. Cron prompts are injected back into that

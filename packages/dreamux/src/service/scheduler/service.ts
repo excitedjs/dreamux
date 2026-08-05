@@ -1,21 +1,23 @@
 import { Cron } from 'croner';
 
-import type {
-  AgentRuntime,
-  AgentRuntimeTurnResult,
-  DreamuxLogger,
-} from '@excitedjs/dreamux-types';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import { errorInfo } from '../../platform/error-info.js';
 
 import {
-  CronJobStore,
   type CronDeliverTarget,
+  type CronJobStore,
   type CronJob,
   type CronJobAction,
   type CronJobUpdateInput,
   MIN_CRON_INTERVAL_MS,
 } from './store.js';
+import type {
+  CronCreateRequest,
+  CronUpdateRequest,
+  SchedulerCommands,
+  SchedulerServiceOptions,
+} from './types.js';
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const MAX_JOBS_PER_OWNER = 128;
@@ -24,53 +26,6 @@ const MAX_DEFER_MS = 60 * 60 * 1000;
 interface TimerSlot {
   dueAt: number;
   timer: NodeJS.Timeout;
-}
-
-export interface CronCreateRequest {
-  cron: string;
-  prompt: string;
-  title?: string;
-  recurring?: boolean;
-  tz?: string;
-  action?: Record<string, unknown>;
-  deliver?: CronDeliverTarget;
-}
-
-export interface CronUpdateRequest {
-  id: string;
-  cron?: string;
-  prompt?: string;
-  title?: string | null;
-  recurring?: boolean;
-  tz?: string;
-  action?: Record<string, unknown>;
-  deliver?: CronDeliverTarget | null;
-  enabled?: boolean;
-}
-
-export interface SchedulerServiceOptions {
-  ownerId: string;
-  store: CronJobStore;
-  absentRuntimeStrategy: 'miss' | 'submit';
-  admit<T>(task: () => Promise<T>): Promise<T>;
-  getRuntime(): AgentRuntime | null;
-  submitScheduled(input: {
-    jobId: string;
-    prompt: string;
-    sourceId: string;
-    /** Aborted once this held fire has been stopped, deleted, or superseded. */
-    signal: AbortSignal;
-  }): Promise<AgentRuntimeTurnResult>;
-  log: DreamuxLogger;
-  now?: () => number;
-}
-
-export interface SchedulerCommands {
-  list(): Promise<{ jobs: CronJob[] }>;
-  create(input: CronCreateRequest): Promise<CronJob>;
-  update(input: CronUpdateRequest): Promise<CronJob>;
-  delete(id: string): Promise<{ id: string; deleted: boolean }>;
-  runNow(id: string): Promise<{ id: string; status: string }>;
 }
 
 export class SchedulerService {
@@ -85,6 +40,7 @@ export class SchedulerService {
   private readonly stopWaiters = new Set<() => void>();
   private fireSeq = 0;
   private running = false;
+  private lifecycleGeneration = 0;
 
   constructor(private readonly opts: SchedulerServiceOptions) {
     this.ownerId = opts.ownerId;
@@ -119,6 +75,7 @@ export class SchedulerService {
 
   stop(): void {
     this.running = false;
+    this.lifecycleGeneration += 1;
     for (const slot of this.timers.values()) clearTimeout(slot.timer);
     this.timers.clear();
     this.abortHeldFires();
@@ -299,7 +256,16 @@ export class SchedulerService {
     jobId: string,
     opts: { manual: boolean },
   ): Promise<{ id: string; status: string }> {
-    return this.admit(() => this.dispatch(jobId, opts));
+    // Capture synchronously. An owner can stop the scheduler after a caller has
+    // crossed its short outer gate but before Dispatcher admission starts this
+    // async task. That stopped generation must never install a new long idle
+    // wait after stop() has already released the existing waiters.
+    const generation = this.lifecycleGeneration;
+    return this.admit(() =>
+      generation === this.lifecycleGeneration
+        ? this.dispatch(jobId, opts)
+        : Promise.resolve({ id: jobId, status: 'skipped' }),
+    );
   }
 
   private admit<T>(task: () => Promise<T>): Promise<T> {

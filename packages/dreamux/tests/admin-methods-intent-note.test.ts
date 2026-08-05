@@ -137,6 +137,51 @@ describe('admin layer enforces required non-empty intent/note (#182 PR-3)', () =
     const base = { dispatcher_id: 'flow', team_name: 'alpha' };
     await expectBadRequest('team.dissolve', base);
     await expectBadRequest('team.dissolve', { ...base, note: '' });
+    await expectBadRequest('team.dissolve', { ...base, note: '   ' });
+    await expectBadRequest('team.dissolve', {
+      dispatcher_id: 'flow',
+      team_name: 'bad/team',
+      note: 'done',
+    });
+  });
+
+  it('binds TeamLeader dissolve to raw admin scope and rejects overrides', async () => {
+    const seen: unknown[] = [];
+    const server = {
+      repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
+      getDispatcher: () => ({
+        dissolveTeamForLeader: async (input: unknown) => {
+          seen.push(input);
+          return { accepted: true, team_name: 'alpha', status: 'closing' };
+        },
+      }),
+    } as unknown as Server;
+    const scoped = {
+      dispatcher_id: 'flow',
+      caller_kind: 'team_leader',
+      team_id: 'alpha',
+      leader_name: 'tl-alpha',
+      note: 'work preserved',
+    };
+    await expect(
+      adminMethods['team.dissolve']!(server, scoped),
+    ).resolves.toMatchObject({ status: 'closing' });
+    expect(seen).toEqual([{
+      lease: { teamId: 'alpha', leaderName: 'tl-alpha' },
+      note: 'work preserved',
+    }]);
+    await expectBadRequest('team.dissolve', {
+      ...scoped,
+      team_name: 'beta',
+    });
+    await expectBadRequest('team.dissolve', {
+      ...scoped,
+      team_id: 'bad/team',
+    });
+    await expectBadRequest('team.dissolve', {
+      ...scoped,
+      leader_name: '   ',
+    });
   });
 
   it('rejects team.send for TeamLeader callers and requires a non-empty prompt', async () => {
@@ -281,7 +326,7 @@ describe('Team channel admin methods replace the old binding methods (#209 slice
     const channelStub = {
       repos: { dispatchers: { get: () => ({ dispatcher_id: 'flow' }) } },
       getDispatcher: () => ({
-        transferTeamChannelBack: async (input: Record<string, unknown>) => {
+        transferTeamLeaderChannelBack: async (input: Record<string, unknown>) => {
           seen.push(input);
           return null;
         },
@@ -298,9 +343,8 @@ describe('Team channel admin methods replace the old binding methods (#209 slice
 
     expect(transferred).toMatchObject({ transferred: false, binding: null });
     expect(seen[0]).toMatchObject({
-      expectedOwner: {
-        kind: 'team',
-        teamName: 'alpha',
+      lease: {
+        teamId: 'alpha',
         leaderName: 'alpha-leader',
       },
       meta: { chat_id: 'chat-demo' },
@@ -613,7 +657,11 @@ describe('Team admin read methods compose channel binding summaries', () => {
 
   it('returns empty binding fields for Team create and dissolve', async () => {
     const created = { team: { team_name: 'alpha' }, turn: null };
-    const dissolved = { team: { team_name: 'alpha', status: 'closed' } };
+    const dissolved = {
+      accepted: true,
+      team_name: 'alpha',
+      status: 'closing',
+    };
     const dispatcher = {
       createTeam: async () => created,
       dissolveTeam: async () => dissolved,

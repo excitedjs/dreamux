@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add scoped TeamLeader dissolve and durable server-owned Team dissolve and target-handoff state. Existing Team records normalize an absent dissolve fact to null, so no rebuild is required; accepted and cleanup-pending work resumes after restart.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

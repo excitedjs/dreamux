@@ -21,8 +21,9 @@ describe('TeamLeaderHandle', () => {
     const service = { workflows } as unknown as TeamService;
     const handle = teamLeaderHandle({
       lease,
-      withService: (_lease, task) =>
+      withMutationService: (_lease, task) =>
         queue.run(lease.teamId, () => task(service)),
+      withReadService: async (_lease, task) => task(service),
     });
 
     const starting = handle.workflows.run({
@@ -48,8 +49,9 @@ describe('TeamLeaderHandle', () => {
     const service = { workflows } as unknown as TeamService;
     const handle = teamLeaderHandle({
       lease,
-      withService: (_lease, task) =>
+      withMutationService: (_lease, task) =>
         queue.run(lease.teamId, () => task(service)),
+      withReadService: async (_lease, task) => task(service),
     });
 
     const stopping = handle.workflows.stop({ run_id: 'run-1' });

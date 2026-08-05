@@ -7,21 +7,8 @@ import { dirname, join } from 'node:path';
 
 const execFileAsync = promisify(execFile);
 
-import type {
-  AgentRuntime,
-  AgentRuntimeCapabilities,
-  AgentRuntimeCreateContext,
-  AgentRuntimeLastResult,
-  AgentRuntimeProvider,
-  AgentRuntimeStatus,
-  AgentRuntimeTextInput,
-  AgentRuntimeTurnResult,
-  DreamuxLogger,
-  InboundTurnInput,
-  TurnSettledSignal,
-} from '@excitedjs/dreamux-types';
+import type { AgentRuntimeCreateContext } from '@excitedjs/dreamux-types';
 
-import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import { TeamCollection } from '../src/service/team-collection/index.js';
 import { TeamStore } from '../src/service/team-collection/store.js';
 import {
@@ -37,202 +24,43 @@ import { TeammateCollection } from '../src/service/teammate-collection/index.js'
 import { createOwnedTeammateOwner } from '../src/service/teammate-collection/owned-teammates.js';
 import {
   CompletionRouter,
-  type CompletionDeliveryResult,
   type CompletionEnvelope,
 } from '../src/service/completion-router/index.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import { fakeChannels } from './helpers/collaboration-space.js';
+import {
+  deferred,
+  FakeInitiator,
+  FakeRuntime,
+  FAKE_RUNTIME_REF,
+  fakeRuntimeCatalog,
+  noopLog,
+} from './helpers/fake-team-runtime.js';
 
-const FAKE_RUNTIME_REF = 'test:runtime';
-
-const CAPABILITIES: AgentRuntimeCapabilities = {
-  resume: { supported: false },
-  structuredOutput: { supported: true, scope: 'per-turn' },
-};
-
-class FakeRuntime implements AgentRuntime {
-  readonly providerRef = FAKE_RUNTIME_REF;
-  readonly submitted: InboundTurnInput[] = [];
-  readonly textSubmitted: AgentRuntimeTextInput[] = [];
-  stopAttempts = 0;
-  private status: AgentRuntimeStatus = 'declared';
-  private onTurnSettled: ((settled: TurnSettledSignal) => void) | undefined;
-  private readonly queuedStopErrors: Error[] = [];
-
-  constructor(
-    private readonly opts: {
-      settleImmediately?: boolean;
-      lastText?: string;
-      startError?: Error;
-      submitError?: Error;
-      stopError?: Error;
-      completionResult?: AgentRuntimeTurnResult;
-    } = {},
-  ) {}
-
-  setOnTurnSettled(onTurnSettled: (settled: TurnSettledSignal) => void): void {
-    this.onTurnSettled = onTurnSettled;
-  }
-
-  settle(turnId: string, status: TurnSettledSignal['status'] = 'completed'): void {
-    this.onTurnSettled?.({
-      turnId,
-      status,
-      result: { text: this.opts.lastText ?? null },
-    });
-  }
-
-  async start(): Promise<void> {
-    if (this.opts.startError !== undefined) throw this.opts.startError;
-    this.status = 'ready';
-  }
-
-  async resume(): Promise<void> {
-    this.status = 'ready';
-  }
-
-  async stop(): Promise<void> {
-    this.stopAttempts += 1;
-    const error = this.queuedStopErrors.shift() ?? this.opts.stopError;
-    if (error !== undefined) throw error;
-    this.status = 'stopped';
-  }
-
-  failNextStop(error: Error): void {
-    this.queuedStopErrors.push(error);
-  }
-
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
-    if (this.opts.submitError !== undefined) throw this.opts.submitError;
-    this.submitted.push(input);
-    const turnId = `turn-${this.submitted.length}`;
-    if (this.opts.settleImmediately) {
-      queueMicrotask(() =>
-        this.onTurnSettled?.({
-          turnId,
-          status: 'completed',
-          result: { text: this.opts.lastText ?? null },
-        }),
-      );
-    }
-    return { status: 'submitted', turnId };
-  }
-
-  async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
-    if (this.opts.submitError !== undefined) throw this.opts.submitError;
-    this.textSubmitted.push(input);
-    this.submitted.push({ sourceId: input.sourceId ?? '', text: input.text });
-    if (this.opts.completionResult !== undefined) {
-      return this.opts.completionResult;
-    }
-    const turnId = `turn-${this.submitted.length}`;
-    if (this.opts.settleImmediately) {
-      this.onTurnSettled?.({
-        turnId,
-        status: 'completed',
-        result: { text: this.opts.lastText ?? null },
-      });
-    }
-    return { status: 'submitted', turnId };
-  }
-
-  getStatus(): AgentRuntimeStatus {
-    return this.status;
-  }
-
-  getCheckpoint(): { id: string } | null {
-    return { id: 'thread-fake' };
-  }
-
-  wasCheckpointResumed(): boolean {
-    return false;
-  }
-
-  async getLast(): Promise<AgentRuntimeLastResult> {
-    return { text: this.opts.lastText ?? 'fake last' };
-  }
-
-  async getContext(): Promise<null> {
-    return null;
-  }
-
-  getCapabilities(): AgentRuntimeCapabilities {
-    return CAPABILITIES;
-  }
-}
-
-function fakeRuntimeCatalog(
-  runtimes: FakeRuntime[],
-  opts: {
-    settleImmediately?: boolean;
-    lastText?: string;
-    startError?: Error;
-    submitError?: Error;
-    stopError?: Error;
-    completionResult?: AgentRuntimeTurnResult;
-    createRuntime?: () => FakeRuntime;
-  } = {},
-  contexts: AgentRuntimeCreateContext[] = [],
-): AgentRuntimeProviderCatalog {
-  const provider: AgentRuntimeProvider = {
-    ref: FAKE_RUNTIME_REF,
-    descriptor: {
-      id: 'test-runtime',
-      kind: 'agentRuntime',
-      ref: { source: 'builtin', id: 'test-runtime', raw: FAKE_RUNTIME_REF },
-    },
-    getCapabilities: () => CAPABILITIES,
-    createRuntime(context: AgentRuntimeCreateContext) {
-      contexts.push(context);
-      const runtime = opts.createRuntime?.() ?? new FakeRuntime(opts);
-      if (context.onTurnSettled !== undefined) {
-        runtime.setOnTurnSettled(context.onTurnSettled);
-      }
-      runtimes.push(runtime);
-      return runtime;
-    },
-  };
-  return {
-    list: () => [provider],
-    resolve(ref: string) {
-      if (ref !== FAKE_RUNTIME_REF) {
-        throw new Error(`unexpected runtime provider ${JSON.stringify(ref)}`);
-      }
-      return provider;
-    },
-  } as AgentRuntimeProviderCatalog;
-}
-
-class FakeInitiator {
-  readonly completions: CompletionEnvelope[] = [];
-
-  async completionInput(
-    completion: CompletionEnvelope,
-  ): Promise<CompletionDeliveryResult> {
-    this.completions.push(completion);
-    return { status: 'accepted' };
-  }
-}
-
-function noopLog(): DreamuxLogger {
-  const log = {
-    error: () => undefined,
-    warn: () => undefined,
-    info: () => undefined,
-    debug: () => undefined,
-    trace: () => undefined,
-    child: () => log,
-  };
-  return log as DreamuxLogger;
-}
-
-function deferred<T>() {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  const promise = new Promise<T>((res) => {
-    resolve = res;
+async function dissolveTeamForTest(
+  teams: TeamCollection,
+  teamId: string,
+  note: string,
+) {
+  const accepted = await teams.acceptDissolve({
+    teamId,
+    note,
+    requester: { kind: 'dispatcher' },
   });
-  return { promise, resolve };
+  teams.startAcceptedDissolve(accepted, (input) =>
+    teams.closeAcceptedResources(input),
+  );
+  await vi.waitFor(async () => {
+    expect(await new TeamStore().get('dispatcher-a', teamId)).toMatchObject({
+      status: 'closed',
+      dissolve: {
+        operation_id: accepted.operationId,
+        phase: 'complete',
+      },
+    });
+  }, { timeout: 5_000 });
+  return (await teams.get(teamId)).status();
 }
 
 /**
@@ -1448,7 +1276,9 @@ describe('TeamCollection identity prompt launch behavior', () => {
     expect(append[1]).toMatch(/TeamMate/i);
     expect(append[1]).toMatch(/channel/i);
     expect(append[1]).toMatch(/cron/i);
-    expect(append[1]).toMatch(/transfer/i);
+    for (const tool of ['dissolve', 'bind_channel', 'transfer_back']) {
+      expect(append[1]).toContain(tool);
+    }
     expect(append[2]).toMatch(/task was submitted successfully[\s\S]*end the turn naturally/i);
     expect(append[3]).toBe('architecture reviewer');
     expect(contexts[0]?.systemPrompt).not.toHaveProperty('replace');
@@ -1709,8 +1539,7 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       leaderAgentRuntime: 'agent-a',
       intent: 'lead alpha',
     });
-    const team = await teams.get('alpha');
-    await team.dissolve({ teamId: 'alpha', note: 'done' });
+    await dissolveTeamForTest(teams, 'alpha', 'done');
     await expect(
       teams.sendToLeader('alpha', {
         prompt: 'should not revive',
@@ -1776,10 +1605,11 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
     const firstProjection = await teams.requireRoutableTeamProjection(firstName);
     expect(firstProjection.runtime_cwd).not.toBe(sourceRepo);
 
-    await (await teams.get(firstName)).dissolve({
-      teamId: firstName,
-      note: 'replace the workspace mode',
-    });
+    await dissolveTeamForTest(
+      teams,
+      firstName,
+      'replace the workspace mode',
+    );
     await expect(teams.create({
       name: firstName,
       leaderAgentRuntime: 'agent-a',
@@ -2191,7 +2021,7 @@ describe('closing a team member must not remove the shared team worktree', () =>
     expect(await countWorktrees()).toBe(2);
 
     // Dissolve is the one place that cleans the shared worktree.
-    await team.dissolve({ teamId: 'gamma', note: 'team done' });
+    await dissolveTeamForTest(teams, 'gamma', 'team done');
     expect(await countWorktrees()).toBe(1);
   });
 });
@@ -2284,7 +2114,7 @@ describe('team dissolve syncs cleanup_state to the leader and members (#237)', (
     const before = await team.status();
     expect(before.leader!.repo?.cleanup_state).toBe('managed-active');
 
-    const dissolved = await team.dissolve({ teamId: 'delta', note: 'team done' });
+    const dissolved = await dissolveTeamForTest(teams, 'delta', 'team done');
 
     // The worktree is actually gone, AND the persisted/displayed state agrees.
     expect(dissolved.leader!.repo?.cleanup_state).toBe('deleted');

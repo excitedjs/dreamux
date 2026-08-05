@@ -150,6 +150,29 @@ There is no separate `status.json` recovery authority and no durable
 `runtime/<name>/` scratch under the dispatcher state root — runtime scratch is
 volatile and lives under `run/`.
 
+Each Team `record.json` is fully server-owned. Its nullable `dissolve` object is
+the TeamCollection authority for one accepted operation: operation id,
+requester kind and TeamLeader generation when applicable, collaboration-target
+handoff ids, first accepted note/time, current phase, public-safe error,
+cleanup-attempt count, and next retry time. Valid phases are
+`waiting_for_team_idle`, `closing_resources`, `worktree_cleanup_pending`,
+`complete`, and `failed`. Do not edit, remove, or manufacture this object by
+hand; active records and pending cleanup are reconciled at Dispatcher startup.
+
+Team `status` remains independently `starting | running | closed`. A closed Team
+may have dissolve phase `worktree_cleanup_pending`, which means routes and
+runtimes are durably closed while the server still owns physical managed
+worktree cleanup. The shared `cleanup-pending` state is written to Team,
+TeamLeader, and member identities before deletion; the single Team operation
+later propagates its terminal or retained result to every borrower.
+
+`collaboration-spaces.json` is also fully server-owned. A closing target may
+hold one exact `team_dissolve_operation_id`, one generation-specific
+`team_dissolve_handoff_id`, and its finalization intent. The corresponding Team
+operation holds a list of target handoff ids because multiple target consumers
+may join the same dissolve. These fields are lock-handoff correlation, not an
+independent target-side dissolve state machine.
+
 Feishu `access.json` is the deliberate mixed-ownership exception to the general
 server-state description. Its fixed path is
 `~/.dreamux/state/<dispatcher-id>/access.json`, independent of

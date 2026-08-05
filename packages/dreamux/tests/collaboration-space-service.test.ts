@@ -9,6 +9,11 @@ import { CollaborationSpaceService } from '../src/service/collaboration-space/in
 import { CollaborationSpaceStore } from '../src/service/collaboration-space/store.js';
 import { PUBLIC_TARGET_LIFECYCLE_ERROR } from '../src/service/collaboration-space/view.js';
 import type { TeamCollection } from '../src/service/team-collection/index.js';
+import { TeamDissolveBlockedError } from '../src/service/team-collection/errors.js';
+import type {
+  AcceptedTeamDissolve,
+  TeamSummary,
+} from '../src/service/team-collection/types.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
 import {
   fakeChannels,
@@ -1030,10 +1035,11 @@ describe('CollaborationSpaceService', () => {
     const provisioned = await service.provisionTarget(input);
     if (provisioned === null) throw new Error('target was not provisioned');
     expect(provisioned.team_name).toMatch(/^space-target-[a-z0-9]{4,8}$/);
-    await service.dissolveTeam({
+    const accepted = await service.dissolveTeam({
       teamId: provisioned.team_name,
       note: 'simulate completed shutdown compensation',
     });
+    await accepted.logicalClosed;
     await store.saveTarget({
       ...provisioned,
       lifecycle_status: 'failed',
@@ -1122,65 +1128,16 @@ describe('CollaborationSpaceService', () => {
     const dissolved: string[] = [];
     const channels = fakeChannels();
 
-    // Teams mock where dissolve fails
+    // Team logical resource close fails after durable dissolve acceptance.
+    const baseTeams = fakeTeams(created, dissolved) as unknown as Record<
+      string,
+      unknown
+    >;
     const teamsWithBadDissolve = {
-      async claimName(prefix: string, claimToken: string) {
-        return { name: `${prefix}-0000`, token: claimToken };
-      },
-      async create(input: CreatedTeam & { name: string }) {
-        created.push(input);
-        return {
-          team: { team_name: input.name, leader_name: `${input.name}-leader` },
-          leader: null,
-          member_count: 0,
-          turn: null,
-        };
-      },
-      async isOpenTeam(name: string) {
-        return created.some((t) => t.name === name);
-      },
-      async hasTeam(name: string) {
-        return created.some((t) => t.name === name);
-      },
-      async requireOpenTeamRouteOwner(name: string) {
-        const match = created.find((t) => t.name === name);
-        if (match === undefined) throw new Error(`Team ${name} is not open`);
-        return { kind: 'team' as const, teamName: name, leaderName: `${name}-leader` };
-      },
-      async requireRoutableTeamOwner(name: string) {
-        const match = created.find((t) => t.name === name);
-        if (match === undefined) throw new Error(`Team ${name} is not routable`);
-        return { kind: 'team' as const, teamName: name, leaderName: `${name}-leader` };
-      },
-      async withRoutableTeamProjection<T>(name: string, task: (projection: {
-        team_name: string;
-        leader_name: string;
-        leader_agent_runtime: string;
-        runtime_cwd: string;
-      }) => Promise<T>) {
-        const match = created.find((t) => t.name === name);
-        if (match === undefined) throw new Error(`Team ${name} is not routable`);
-        return task({
-          team_name: name,
-          leader_name: `${name}-leader`,
-          leader_agent_runtime: 'agent-a',
-          runtime_cwd: `/tmp/dreamux-test/${name}`,
-        });
-      },
-      async withTeamRouteClosing<T>(name: string, task: (owner: {
-        kind: 'team'; teamName: string; leaderName: string;
-      }) => Promise<T>) {
-        const match = created.find((t) => t.name === name);
-        if (match === undefined) throw new Error(`Team ${name} is not open`);
-        return task({ kind: 'team', teamName: name, leaderName: `${name}-leader` });
-      },
-      async get(name: string) {
-        return {
-          async dissolve() {
-            dissolved.push(name);
-            throw new Error('simulated dissolve failure');
-          },
-        };
+      ...baseTeams,
+      async closeAcceptedResources(input: { teamId: string }) {
+        dissolved.push(input.teamId);
+        throw new Error('simulated dissolve failure');
       },
     } as unknown as TeamCollection;
 
@@ -1244,6 +1201,128 @@ describe('CollaborationSpaceService', () => {
     await expect(service.acceptAndProvisionTarget(targetInput)).rejects.toThrow(
       /closing and cannot be provisioned/,
     );
+  });
+
+  it('records a safe error when Team dissolve is rejected before logical close', async () => {
+    const created: CreatedTeam[] = [];
+    const dissolved: string[] = [];
+    const channels = fakeChannels();
+    const baseTeams = fakeTeams(created, dissolved) as unknown as Record<
+      string,
+      unknown
+    >;
+    const teams = {
+      ...baseTeams,
+      async acceptDissolve() {
+        throw new TeamDissolveBlockedError('dirty');
+      },
+    } as unknown as TeamCollection;
+    const service = new CollaborationSpaceService({
+      dispatcherId: 'flow',
+      config: fakeConfig(),
+      teams,
+      channels: channels.service,
+      log: log as never,
+      isShuttingDown: () => false,
+    });
+    await service.bind({
+      spaceName: 'space-alpha',
+      container: { container_type: 'topic_group', container_key: 'container-1' },
+      leaderAgentRuntime: 'agent-a',
+    });
+    const input = {
+      channelId: 'primary',
+      provider: 'builtin:test',
+      container: { container_type: 'topic_group', container_key: 'container-1' },
+      target: {
+        target_type: 'topic',
+        target_key: 'topic-preflight-fail',
+        bindable: true,
+      },
+    };
+    await service.provisionTarget(input);
+    await expect(service.acceptTargetClosed(input)).rejects.toMatchObject({
+      reason: 'dirty',
+    });
+    await expect(service.status({ spaceName: 'space-alpha' }))
+      .resolves.toMatchObject({
+        targets: [{
+          lifecycle_status: 'closing',
+          last_error: PUBLIC_TARGET_LIFECYCLE_ERROR,
+        }],
+      });
+  });
+
+  it('persists target closed only after logicalClosed settles', async () => {
+    const created: CreatedTeam[] = [];
+    const dissolved: string[] = [];
+    const channels = fakeChannels();
+    const baseTeams = fakeTeams(created, dissolved) as unknown as Record<
+      string,
+      unknown
+    >;
+    const logical = deferred<TeamSummary>();
+    let accepted = false;
+    const teams = {
+      ...baseTeams,
+      async acceptDissolve(input: {
+        teamId: string;
+        note: string;
+        requester: { handoffId: string };
+      }): Promise<AcceptedTeamDissolve> {
+        accepted = true;
+        return {
+          operationId: 'operation-target',
+          receipt: {
+            accepted: true,
+            team_name: input.teamId,
+            status: 'closing',
+          },
+          logicalClosed: logical.promise,
+        };
+      },
+      startAcceptedDissolve() {},
+    } as unknown as TeamCollection;
+    const service = new CollaborationSpaceService({
+      dispatcherId: 'flow',
+      config: fakeConfig(),
+      teams,
+      channels: channels.service,
+      log: log as never,
+      isShuttingDown: () => false,
+    });
+    await service.bind({
+      spaceName: 'space-alpha',
+      container: { container_type: 'topic_group', container_key: 'container-1' },
+      leaderAgentRuntime: 'agent-a',
+    });
+    const input = {
+      channelId: 'primary',
+      provider: 'builtin:test',
+      container: { container_type: 'topic_group', container_key: 'container-1' },
+      target: {
+        target_type: 'topic',
+        target_key: 'topic-logical-milestone',
+        bindable: true,
+      },
+    };
+    const provisioned = await service.provisionTarget(input);
+    await service.acceptTargetClosed(input);
+    let closeSettled = false;
+    const close = service.closeTarget(input).finally(() => {
+      closeSettled = true;
+    });
+    await waitFor(() => accepted);
+    expect(closeSettled).toBe(false);
+    logical.resolve({
+      team: { team_name: provisioned!.team_name, status: 'closed' },
+      leader: null,
+      member_count: 0,
+    } as TeamSummary);
+    await expect(close).resolves.toMatchObject({
+      closed: true,
+      target: { lifecycle_status: 'closed' },
+    });
   });
 
   it('dissolve retries when release fails before the space is marked unbound', async () => {
@@ -1772,6 +1851,7 @@ describe('CollaborationSpaceService', () => {
 
     await expect(service.provisionTarget(input)).rejects.toThrow(/shutting down/);
     expect(created).toHaveLength(1);
+    await waitFor(() => dissolved.length === 1);
     expect(dissolved).toHaveLength(1);
     expect(channels.boundOwners.has(input.target.target_key)).toBe(false);
     await expect(service.status({ spaceName: 'space-alpha' })).resolves.toMatchObject({
@@ -1834,6 +1914,7 @@ describe('CollaborationSpaceService', () => {
 
     await expect(service.provisionTarget(input)).rejects.toThrow(/shutting down/);
     expect(created).toHaveLength(1);
+    await waitFor(() => dissolved.length === 1);
     expect(dissolved).toHaveLength(1);
     expect(channels.boundOwners.has(input.target.target_key)).toBe(false);
     await expect(service.status({ spaceName: 'space-alpha' })).resolves.toMatchObject({
@@ -1898,6 +1979,7 @@ describe('CollaborationSpaceService', () => {
 
     await expect(provisioning).rejects.toThrow(/shutting down/);
     expect(created).toHaveLength(1);
+    await waitFor(() => dissolved.length === 1);
     expect(dissolved).toHaveLength(1);
     expect(channels.boundOwners.has(input.target.target_key)).toBe(false);
     await expect(service.status({ spaceName: 'space-alpha' })).resolves.toMatchObject({
@@ -1913,3 +1995,12 @@ describe('CollaborationSpaceService', () => {
     expect(channels.boundOwners.has(input.target.target_key)).toBe(true);
   });
 });
+
+async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error('waitFor timed out');
+}

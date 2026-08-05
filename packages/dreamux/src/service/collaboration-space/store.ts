@@ -490,6 +490,19 @@ function normalizeSpace(row: Record<string, unknown>): CollaborationSpaceRecord 
 function normalizeTarget(row: Record<string, unknown>): ProvisionedTargetRecord {
   return {
     ...(row as unknown as ProvisionedTargetRecord),
+    team_dissolve_operation_id:
+      typeof row['team_dissolve_operation_id'] === 'string'
+        ? row['team_dissolve_operation_id']
+        : null,
+    team_dissolve_handoff_id:
+      typeof row['team_dissolve_handoff_id'] === 'string'
+        ? row['team_dissolve_handoff_id']
+        : null,
+    team_dissolve_finalize:
+      row['team_dissolve_finalize'] === 'close' ||
+      row['team_dissolve_finalize'] === 'retry-claim'
+        ? row['team_dissolve_finalize']
+        : null,
     target_meta: asRecord(row['target_meta']),
   };
 }

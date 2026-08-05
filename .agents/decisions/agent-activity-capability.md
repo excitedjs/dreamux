@@ -1,11 +1,12 @@
 # Agent activity capability (busy/idle) on the neutral runtime contract
 
-- **Status:** Accepted (design); implementation pending
+- **Status:** Accepted and implemented
 - **Date:** 2026-06-24
 - **Affects:** `@excitedjs/dreamux-types` (`agent-runtime.ts`),
   `@excitedjs/agent-runtime-codex`, `@excitedjs/agent-runtime-claude-code`,
-  `/packages/dreamux/src/service/dispatcher-service/` (restart-notice injection),
-  any core consumer that must act only when an agent is idle
+  `/packages/dreamux/src/service/scheduler/`,
+  `/packages/dreamux/src/service/team-collection/`, any core consumer that must
+  act only when an agent is idle
 - **PR / Issue:** surfaced by the scheduled-tasks design
   ([`.agents/proposals/scheduled-tasks.md`](../proposals/scheduled-tasks.md))
 
@@ -68,7 +69,8 @@ interface AgentRuntime {
   keeps external providers non-breaking (a provider that omits `waitIdle` is
   treated as always-idle, no contract change forced on it).
 
-**The scheduler is the only consumer of `waitIdle()`.** An earlier draft claimed
+**The scheduler and durable Team dissolve are the two current consumers of
+`waitIdle()`.** An earlier draft claimed
 the restart-notice's "skip if busy" and the scheduler's "defer until idle" were
 the same problem and should share one deferred-injection mechanism. That was
 wrong (corrected 2026-06-25): the restart-notice is injected at the end of
@@ -78,9 +80,26 @@ idle by definition. Its existing `inboundSubmitted` skip latch is a *different*
 concern — "a real Feishu inbound raced in during startup, so don't double-wake
 the thread" — not "wait for the active turn to end". So **restart-notice keeps
 its original direct injection unchanged**, does NOT use `waitIdle`, and there is
-no shared "deferred system-injection" helper. `waitIdle()` exists solely for the
-scheduler's defer-until-idle; the scheduler inlines
+no shared "deferred system-injection" helper. `waitIdle()` exists for the
+scheduler's defer-until-idle and TeamCollection's strict writer-quiescence
+boundary. The scheduler inlines
 `await Promise.race([runtime.waitIdle?.() ?? Promise.resolve(), maxDefer])`.
+
+Team dissolve intentionally does **not** use the optional-capability fallback.
+Before durable acceptance, `TeamCollection` captures the TeamLeader and every
+live member runtime that can write the shared Team worktree and requires
+`waitIdle` to exist on each one. Missing capability fails acceptance rather than
+claiming an unobservable writer is idle. The shared Team availability gate then
+blocks new turn-producing and mutating work, including scheduler final fire and
+member-completion injection, while the lifecycle awaits all captured writers.
+After idle it repeats its non-destructive worktree assessment before logical
+close. Restart recovery materializes nonclosed writers and repeats the same
+quiescence; it never treats leader-only idle as Team-wide idle.
+
+Shutdown does not add cancellation to the neutral runtime contract. The
+TeamCollection lifecycle races each ordinary `waitIdle()` promise against its
+own typed interruption signal before dispatcher admitted-task drain, observes
+the losing promises, and leaves the durable dissolve phase for restart.
 
 **Sequencing** (per "Codex protocol bumps update the codex package first; core
 stays behind the neutral interface"): land the neutral `waitIdle?()` contract →
@@ -95,9 +114,11 @@ scheduler consumes it.
   `getStatus()` lifecycle reads stay; they are "does a runtime exist / what is
   its lifecycle", not "is it mid-turn".
 - **Foot-gun (race):** after `await waitIdle()` resolves, a user turn can begin
-  before the injection runs (unavoidable with any signal style). Acceptable for
-  fire-and-forget scheduling; a caller that cares uses its own local submit
-  guard and re-waits. No atomic "run-when-idle" primitive in the first cut.
+  before the next action (unavoidable with any signal style). Acceptable for
+  fire-and-forget scheduling. Team dissolve closes its owner-level availability
+  gate before waiting, so no new admitted Team writer can cross that gap; it
+  also repeats worktree assessment before mutation. The neutral contract still
+  has no atomic "run-when-idle" primitive.
 - **Enforcement:** the neutral-contract field guard (the dreamux-types lint gate)
   keeps the new types neutral; provider implementations are covered by each
   provider's own tests. A core consumer test should pin "inject is deferred while

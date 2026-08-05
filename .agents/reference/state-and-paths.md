@@ -88,14 +88,23 @@ Important children:
 - `~/.dreamux/state/<dispatcher-id>/cron-jobs.json`: durable scheduled-task
   definitions owned by the scheduler service.
 - `~/.dreamux/state/<dispatcher-id>/collaboration-spaces.json`: dispatcher-local
-  collaboration-space bindings and target provisioning records. This is
-  Dreamux core state, not Channel provider state.
+  collaboration-space bindings and target provisioning records, including the
+  target-owned Team-dissolve operation/handoff correlation used while a target
+  is closing. This is fully server-owned Dreamux core state, not Channel
+  provider or operator state.
 - `~/.dreamux/state/<dispatcher-id>/teammate/`: TeamMate durable task ledgers.
   Each `identity.json` may include `identity_prompt`, the persisted append-only
   model-facing role guidance for that TeamMate; old records without it read as
   `null`.
-- `~/.dreamux/state/<dispatcher-id>/team/`: Team durable ledgers and channel
-  binding state.
+- `~/.dreamux/state/<dispatcher-id>/team/<team-id>/record.json`: fully
+  server-owned Team state. Its nullable `dissolve` fact is owned by
+  `TeamCollection` and records the accepted operation, caller/generation,
+  target handoff ids, first note/time, lifecycle phase, public-safe error,
+  cleanup attempt count, and next retry time. Do not edit, clear, or synthesize
+  this object manually; active and cleanup-pending phases are startup recovery
+  responsibility.
+- `~/.dreamux/state/<dispatcher-id>/team/`: the remaining Team durable agent,
+  cron, workflow, and permanent name-claim records.
 - `~/.dreamux/state/<dispatcher-id>/workflow/<run-id>/`: dispatcher-scope
   Dynamic Workflow `record.json` and append-only `journal.jsonl`.
 - `~/.dreamux/state/<dispatcher-id>/team/<team-id>/workflow/<run-id>/`:
@@ -105,6 +114,13 @@ Workflow records are version 1. A normal terminal transition writes
 `completed`, `failed`, or `stopped`; startup converts a leftover `running`
 record to `stopped`. Journals are server-written JSONL and are not replayed by
 the current runtime.
+
+Team `status` remains `starting | running | closed`; the nullable dissolve phase
+is a separate fact. At logical close, a managed worktree can be
+`cleanup-pending` while routes and runtimes are already durably closed. The Team,
+TeamLeader, and Team members receive the same shared cleanup state before
+physical cleanup, and terminal or retry results are propagated from the one
+Team-owned operation.
 
 TeamMate, team-member, and TeamLeader identities persist admin-supplied
 `skill_sources` so runtime relaunch and process restart preserve authorized

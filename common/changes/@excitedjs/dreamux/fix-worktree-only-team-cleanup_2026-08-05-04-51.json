@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: Review: delete-on-close no longer checks Git ref reachability and removes only the linked worktree with non-forced git worktree remove, preserving its managed branch and commits. No rebuild is required. Startup resumes cleanup only for the exact closed managed delete-on-close record with cleanup_state retained-unique-commits, dissolve phase failed, and last_error worktree-unique-commits; normal dirty/unmerged assessment and worktree-only removal then continue.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

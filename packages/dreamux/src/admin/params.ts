@@ -34,6 +34,17 @@ export function mustNonEmptyString(
   return value;
 }
 
+export function mustNonBlankString(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): string {
+  const value = mustString(params, key);
+  if (value.trim() === '') {
+    throw new AdminError('BAD_REQUEST', `param '${key}' must be a non-empty string`);
+  }
+  return value;
+}
+
 export function mustRecord(
   params: Record<string, unknown> | undefined,
   key: string,

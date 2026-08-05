@@ -1,113 +1,52 @@
 import { randomUUID } from 'node:crypto';
 
-import type { AgentRuntimeMcpServer, DreamuxLogger } from '@excitedjs/dreamux-types';
+import type {
+  AgentRuntimeTurnResult,
+  InboundTurnInput,
+} from '@excitedjs/dreamux-types';
 
-import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
-import type { DreamuxConfig } from '../../config/config.js';
 import type { WorktreeManager } from '../worktree/manager.js';
-import { dispatcherWorkspace } from '../worktree/workspaces.js';
-import { defaultWorkspaceEnabled } from '../../config/config.js';
-import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
-import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import type {
   CompletionInitiator,
-  CompletionRouter,
 } from '../completion-router/index.js';
 import { requireLifecycleText } from '../agent-entity/types.js';
-import type { AgentEntityIdentity } from '../agent-entity/types.js';
-import type { SchedulerCommands } from '../scheduler/service.js';
+import type { SchedulerCommands } from '../scheduler/types.js';
 import type { ChannelRouteOwner } from '../channel-service/index.js';
 import { KeyedAsyncQueue } from '../serial-queue.js';
-import { throwSettledFailures } from '../shutdown-errors.js';
 import { TeamStore } from './store.js';
 import type {
   TeamCreateInput,
   TeamCreateAtNameInput,
   TeamCreateResult,
+  AcceptedTeamDissolve,
+  AcceptedTeamLogicalClose,
+  TeamDissolveRequest,
   TeamHistoryQuery,
   TeamHistoryResult,
-  TeamHistoryRow,
   TeamLeaderLease,
   TeamLeaderSendResult,
   TeamListRow,
   TeamNameClaim,
   TeamRecord,
   TeamRouteProjection,
+  TeamLogicalCloseExecutor,
+  TeamSummary,
+  TeamCollectionOptions,
 } from './types.js';
 import { validateTeamId } from './types.js';
 import {
-  clampTeamHistoryLimit,
-  decodeTeamCursor,
-  encodeTeamCursor,
-  matchesTeamHistoryQuery,
-  previewTeamText,
-} from './read-helpers.js';
-import type { AgentEntityIdentityStatus } from '../agent-entity/types.js';
-import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
-import {
   claimConcreteName,
-  type SuffixGenerator,
 } from '../name-allocator.js';
 import {
   TeamService,
-  type TeamSchedulerLifecycle,
-  type TeamServiceDeps,
 } from '../team-service/index.js';
-import { TeamUnavailableError, teamErrorInfo } from './errors.js';
-
-/** Share one in-flight promise per key; a concurrent same-key call joins it. */
-function dedupe<T>(
-  inFlight: Map<string, Promise<T>>,
-  key: string,
-  start: () => Promise<T>,
-): Promise<T> {
-  const existing = inFlight.get(key);
-  if (existing !== undefined) return existing;
-  const promise = start().finally(() => inFlight.delete(key));
-  inFlight.set(key, promise);
-  return promise;
-}
-
-export interface TeamCollectionOptions {
-  /** The dispatcher this collection belongs to (issue #233 ownership sinking). */
-  dispatcherId: string;
-  config: DreamuxConfig;
-  agentRuntimeProviders: AgentRuntimeProviderCatalog;
-  worktrees: WorktreeManager;
-  /**
-   * The dispatcher's identity + turns store pair (issue #233 R4). Supplied by
-   * `DispatcherService` (the same pair the dispatcher agent + dispatcher-scope
-   * collection share) and forwarded into every per-team collection so no team
-   * news its own. Read-path probes (`leaderState` / `memberCount`) read the
-   * identity store directly, never a throwaway collection. The stores are
-   * stateless (paths by role + team_id), so one pair safely serves all scopes.
-   */
-  identities: AgentIdentityStore;
-  turnsStore: AgentTurnsStore;
-  // Shared per-dispatcher deps `DispatcherService` always supplies; forwarded
-  // unchanged into each team's own collection so it stays topology-free (#233).
-  router: CompletionRouter;
-  initiatorFor: (
-    producer: AgentEntityIdentity,
-  ) => Promise<CompletionInitiator | null>;
-  isShuttingDown: () => boolean;
-  admitOperation?: <T>(task: () => Promise<T>) => Promise<T>;
-  adminSocketPath: string;
-  /**
-   * Build a team_leader's channel-egress MCP descriptors from the dispatcher's
-   * live channels. Channels are dispatcher-owned, so the team layer only asks
-   * for its own leader's set — it never reaches into the channel layer itself.
-   */
-  leaderChannelDescriptors: (input: {
-    teamId: string;
-    leaderName: string;
-  }) => readonly AgentRuntimeMcpServer[];
-  log: DreamuxLogger;
-  workflowLog?: DreamuxLogger;
-  coreEvents?: DispatcherCoreEventPublisher;
-  nameSuffixGenerator?: SuffixGenerator;
-  agentNameSuffixGenerator?: SuffixGenerator;
-}
+import {
+  TeamUnavailableError,
+} from './errors.js';
+import { isActiveDissolve } from './dissolve-lifecycle.js';
+import { TeamDissolveController } from './dissolve-controller.js';
+import { TeamCollectionReadModel } from './read-model.js';
+import { TeamRuntimeRegistry } from './runtime-registry.js';
 
 /**
  * The dispatcher's team collection (issue #233): one per dispatcher, owned by
@@ -116,35 +55,14 @@ export interface TeamCollectionOptions {
  * / `TeammateCollection.entityFor`): cached live {@link TeamService} if any, else
  * rebuilt from the persisted {@link TeamRecord} and cached. Each `TeamService`
  * OWNS its per-team {@link TeammateCollection} (`teamScope: team_id`) built from
- * the shared deps forwarded here; live cache ≡ process lifetime, `dissolve`
- * evicts so a later `get` reads `status: closed`.
+ * the shared deps forwarded here. Closed services may remain cached for read
+ * projections; durable status plus the shared fence prevents reuse, and
+ * physical-cleanup completion may evict the cache entry.
  */
 export class TeamCollection {
   private readonly dispatcherId: string;
   private readonly store: TeamStore;
   private readonly worktrees: WorktreeManager;
-  /** Live {@link TeamService} cache keyed by team id (issue #233 factory). */
-  private readonly cache = new Map<string, TeamService>();
-  /**
-   * Owner-only scheduler lifecycle capabilities for cached Teams. `TeamService`
-   * exposes only `SchedulerCommands`; start/stop stay inside this collection.
-   */
-  private readonly schedulerLifecycles = new Map<
-    string,
-    {
-      service: TeamService;
-      lifecycle: TeamSchedulerLifecycle;
-    }
-  >();
-  /**
-   * Every service constructed by this collection, including a create/rebuild
-   * attempt that failed before entering the live cache. Shutdown must retain
-   * ownership of those partially booted runtimes so it can retry cleanup.
-   */
-  private readonly materialized = new Set<TeamService>();
-  /** In-flight cache-miss `get`, so a cold-cache race rebuilds one TeamService
-   * (one leader runtime), not two (issue #233 concurrency guard). */
-  private readonly rebuilding = new Map<string, Promise<TeamService>>();
   /**
    * Serializes route publication with the start of Team closure. The closing
    * marker is deliberately separate from persisted Team status: it is a
@@ -152,11 +70,61 @@ export class TeamCollection {
    */
   private readonly routeLifecycle = new KeyedAsyncQueue();
   private readonly routeClosing = new Set<string>();
+  private readonly dissolves: TeamDissolveController;
+  private readonly reads: TeamCollectionReadModel;
+  private readonly runtimes: TeamRuntimeRegistry;
 
   constructor(private readonly opts: TeamCollectionOptions) {
     this.dispatcherId = opts.dispatcherId;
     this.worktrees = opts.worktrees;
     this.store = new TeamStore(opts.coreEvents);
+    this.reads = new TeamCollectionReadModel({
+      dispatcherId: this.dispatcherId,
+      store: this.store,
+      identities: opts.identities,
+    });
+    this.runtimes = new TeamRuntimeRegistry({
+      dispatcherId: this.dispatcherId,
+      collection: opts,
+      store: this.store,
+      worktrees: this.worktrees,
+      routeLifecycle: this.routeLifecycle,
+      mustTeam: (teamId) => this.mustTeam(teamId),
+      admitAvailable: (teamId, task) =>
+        this.withTeamAvailable(teamId, () => task()),
+      completionInitiator: (teamId, delegate) =>
+        this.completionInitiatorThroughAvailability(
+          teamId,
+          (_service, completion) => delegate.completionInput(completion),
+        ),
+      withTeamLeaderLease: (lease, task) =>
+        this.withTeamLeaderLease(lease, task),
+    });
+    this.dissolves = new TeamDissolveController({
+      dispatcherId: this.dispatcherId,
+      store: this.store,
+      worktrees: this.worktrees,
+      routeLifecycle: this.routeLifecycle,
+      log: opts.log,
+      isShuttingDown: opts.isShuttingDown,
+      ...(opts.trackAcceptedOperation !== undefined
+        ? { trackAcceptedOperation: opts.trackAcceptedOperation }
+        : {}),
+      mustTeam: (teamId) => this.mustTeam(teamId),
+      getService: (teamId) => this.get(teamId),
+      activateClosing: (record, service) =>
+        this.activateTeamClosingFence(record, service),
+      endClosing: (teamId, reopen) => this.endTeamClosing(teamId, reopen),
+      replaceCachedRecord: (teamId, record) =>
+        this.runtimes.replaceCachedRecord(teamId, record),
+      assertNewCloseAvailable: (teamId) => {
+        if (this.routeClosing.has(teamId)) {
+          throw new TeamUnavailableError(
+            `Team ${JSON.stringify(teamId)} is closing`,
+          );
+        }
+      },
+    });
   }
 
   async claimName(
@@ -210,121 +178,24 @@ export class TeamCollection {
           `Team ${JSON.stringify(teamId)} is closing`,
         );
       }
-      return this.doCreate(input, teamId, claimToken);
+      return this.runtimes.create(input, teamId, claimToken);
     });
-  }
-
-  private async doCreate(
-    input: TeamCreateAtNameInput,
-    teamId: string,
-    nameClaimToken: string,
-  ): Promise<TeamCreateResult> {
-    requireLifecycleText(input.intent, 'Team create intent');
-    const existing = await this.store.get(this.dispatcherId, teamId);
-    if (existing !== null) {
-      throw new Error(
-        `Team ${JSON.stringify(teamId)} already exists; concrete Team names are never reused`,
-      );
-    }
-    const workspaceRoot = await dispatcherWorkspace(
-      this.opts.config,
-      this.dispatcherId,
-    );
-    const workspace =
-      input.worktree === undefined && input.repoCwd === undefined
-        ? await this.worktrees.prepareDefaultWorkspace({
-            dispatcherWorkspace: workspaceRoot,
-            slug: teamId,
-            workspaceEnabled: defaultWorkspaceEnabled(
-              this.opts.config,
-              this.dispatcherId,
-            ),
-          })
-        : await this.worktrees.prepare({
-            dispatcherId: this.dispatcherId,
-            teammateName: `team-${teamId}`,
-            cwd: input.repoCwd ?? workspaceRoot,
-            dispatcherWorkspace: workspaceRoot,
-            request: input.worktree ?? {
-              mode: 'managed',
-              slug: `team-${teamId}`,
-              cleanup: 'keep',
-            },
-          });
-    const { service, schedulerLifecycle, leaderResult } =
-      await TeamService.createNew(
-        { ...this.depsBase(), evict: (evicted) => this.evict(teamId, evicted) },
-        {
-          teamId,
-          name: input.name,
-          nameClaimToken,
-          ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
-          leaderAgentRuntime: input.leaderAgentRuntime,
-          intent: input.intent,
-          ...(input.identity !== undefined ? { identity: input.identity } : {}),
-          ...(input.skillSources !== undefined
-            ? { skillSources: input.skillSources }
-            : {}),
-          workspace,
-        },
-      );
-    // Cache the live service so later `get`s reuse this leader + collection and
-    // record mutations route through it (issue #233).
-    this.cache.set(teamId, service);
-    this.schedulerLifecycles.set(teamId, {
-      service,
-      lifecycle: schedulerLifecycle,
-    });
-    return {
-      team: service.view(),
-      leader: leaderResult.teammate,
-      member_count: await service.memberCount(),
-      turn: leaderResult.turn,
-    };
   }
 
   async list(): Promise<TeamListRow[]> {
-    const teams = await this.store.list(this.dispatcherId);
-    const out: TeamListRow[] = [];
-    for (const team of teams) {
-      out.push(await this.listRow(team));
-    }
-    return out;
+    return this.reads.list();
   }
 
   async history(
     input: TeamHistoryQuery,
   ): Promise<TeamHistoryResult> {
-    const teams = await this.store.list(this.dispatcherId);
-    const rows: TeamHistoryRow[] = [];
-    for (const team of teams) {
-      const row = await this.historyRow(team);
-      if (matchesTeamHistoryQuery(row, input)) rows.push(row);
-    }
-    rows.sort(
-      (a, b) =>
-        b.updated_at - a.updated_at ||
-        b.created_at - a.created_at ||
-        a.team_name.localeCompare(b.team_name),
-    );
-    const start = input.cursor !== undefined ? decodeTeamCursor(input.cursor) : 0;
-    const limit = clampTeamHistoryLimit(input.limit);
-    const items = rows.slice(start, start + limit);
-    const next = start + items.length;
-    return {
-      items,
-      next_cursor: next < rows.length ? encodeTeamCursor(next) : null,
-    };
+    return this.reads.history(input);
   }
 
   /** Get-or-rebuild the team's service; a cold-cache miss is deduped (#233). */
   async get(teamId: string): Promise<TeamService> {
     const id = validateTeamId(teamId);
-    const cached = this.cache.get(id);
-    if (cached !== undefined) return cached;
-    return dedupe(this.rebuilding, id, async () =>
-      this.serviceFor(await this.mustTeam(id)),
-    );
+    return this.runtimes.get(id);
   }
 
   async requireOpenTeamRouteOwner(teamId: string): Promise<ChannelRouteOwner> {
@@ -355,16 +226,9 @@ export class TeamCollection {
     teamId: string,
   ): Promise<TeamRouteProjection> {
     const id = validateTeamId(teamId);
-    if (this.routeClosing.has(id)) {
-      throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
-    }
-    await this.mustOpenTeam(id);
-    const service = await this.get(id);
-    await service.ensureRouteReady();
-    if (this.routeClosing.has(id)) {
-      throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
-    }
-    return service.routeProjection();
+    return this.withTeamAvailable(id, (service) =>
+      this.ensureRoutableProjection(service),
+    );
   }
 
   /**
@@ -377,19 +241,24 @@ export class TeamCollection {
     task: (projection: TeamRouteProjection) => Promise<T>,
   ): Promise<T> {
     const id = validateTeamId(teamId);
-    return this.routeLifecycle.run(id, async () => {
-      if (this.routeClosing.has(id)) {
-        throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
-      }
-      return task(await this.requireRoutableTeamProjection(id));
-    });
+    return this.withTeamAvailable(id, async (service) =>
+      task(await this.ensureRoutableProjection(service)),
+    );
   }
 
   async teamLeaderLease(teamId: string): Promise<TeamLeaderLease> {
     const id = validateTeamId(teamId);
-    return this.routeLifecycle.run(id, async () => {
-      const service = await this.currentOpenService(id);
+    return this.withTeamAvailable(id, async (service) => {
       return { teamId: id, leaderName: service.leaderName };
+    });
+  }
+
+  /** Read-safe generation lease used to construct a handle while closing. */
+  async teamLeaderReadLease(teamId: string): Promise<TeamLeaderLease> {
+    const id = validateTeamId(teamId);
+    return this.routeLifecycle.run(id, async () => {
+      const record = await this.mustTeam(id);
+      return { teamId: id, leaderName: record.leader_name };
     });
   }
 
@@ -398,14 +267,30 @@ export class TeamCollection {
     task: (service: TeamService) => Promise<T>,
   ): Promise<T> {
     const id = validateTeamId(lease.teamId);
-    return this.routeLifecycle.run(id, async () => {
-      const service = await this.currentOpenService(id);
+    return this.withTeamAvailable(id, async (service) => {
       if (service.leaderName !== lease.leaderName) {
         throw new TeamUnavailableError(
           `Team ${JSON.stringify(id)} generation is no longer current`,
         );
       }
       return task(service);
+    });
+  }
+
+  /** Generation-only read lease; durable closing keeps Team read paths alive. */
+  async withTeamLeaderReadLease<T>(
+    lease: TeamLeaderLease,
+    task: (service: TeamService) => Promise<T>,
+  ): Promise<T> {
+    const id = validateTeamId(lease.teamId);
+    return this.routeLifecycle.run(id, async () => {
+      const record = await this.mustTeam(id);
+      if (record.leader_name !== lease.leaderName) {
+        throw new TeamUnavailableError(
+          `Team ${JSON.stringify(id)} generation is no longer current`,
+        );
+      }
+      return task(await this.get(id));
     });
   }
 
@@ -418,18 +303,14 @@ export class TeamCollection {
     task: (projection: TeamRouteProjection) => Promise<T>,
   ): Promise<T> {
     const id = validateTeamId(lease.teamId);
-    return this.routeLifecycle.run(id, async () => {
-      if (this.routeClosing.has(id)) {
-        throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
-      }
-      const service = await this.currentOpenService(id);
+    return this.withTeamAvailable(id, async (service) => {
       if (service.leaderName !== lease.leaderName) {
         throw new TeamUnavailableError(
           `Team ${JSON.stringify(id)} generation is no longer current`,
         );
       }
       await service.ensureRouteReady();
-      if (this.routeClosing.has(id) || service.leaderName !== lease.leaderName) {
+      if (service.leaderName !== lease.leaderName) {
         throw new TeamUnavailableError(
           `Team ${JSON.stringify(id)} generation is no longer routable`,
         );
@@ -449,23 +330,12 @@ export class TeamCollection {
     task: (owner: ChannelRouteOwner) => Promise<T>,
   ): Promise<T> {
     const id = validateTeamId(teamId);
-    const owner = await this.routeLifecycle.run(id, async () => {
-      if (this.routeClosing.has(id)) {
-        throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
-      }
-      const current = await this.requireOpenTeamRouteOwner(id);
-      this.routeClosing.add(id);
-      this.cache.get(id)?.closeWorkflowAdmission();
-      return current;
-    });
+    const owner = await this.beginTeamClosing(id);
     try {
-      await this.cache.get(id)?.stopWorkflowsForClosing();
+      await this.runtimes.stopCachedWorkflowsForClosing(id);
       return await task(owner);
     } finally {
-      await this.routeLifecycle.run(id, async () => {
-        this.routeClosing.delete(id);
-        await this.cache.get(id)?.startWorkflowAdmission();
-      });
+      await this.endTeamClosing(id, true);
     }
   }
 
@@ -478,13 +348,160 @@ export class TeamCollection {
     },
   ): Promise<TeamLeaderSendResult> {
     const id = validateTeamId(teamId);
-    await this.mustOpenTeam(id);
-    return (await this.get(id)).sendToLeader(input);
+    return this.withTeamAvailable(id, (service) =>
+      service.sendToLeader(input),
+    );
+  }
+
+  async deliverToLeader(
+    teamId: string,
+    turn: InboundTurnInput,
+  ): Promise<AgentRuntimeTurnResult> {
+    const id = validateTeamId(teamId);
+    return this.withTeamAvailable(id, (service) =>
+      service.deliverToLeader(turn),
+    );
+  }
+
+  /** Resolve a generation-bound completion target without exposing the leader. */
+  async completionInitiatorForLeader(
+    teamId: string,
+  ): Promise<CompletionInitiator | null> {
+    const id = validateTeamId(teamId);
+    const record = await this.store.get(this.dispatcherId, id);
+    if (record === null) return null;
+    const leaderName = record.leader_name;
+    return this.completionInitiatorThroughAvailability(
+      id,
+      async (service, completion) => {
+        if (service.leaderName !== leaderName) {
+          return {
+            status: 'unsupported',
+            reason: 'TeamLeader generation is no longer current',
+          };
+        }
+        return service.leader.completionInput(completion);
+      },
+    );
+  }
+
+  /**
+   * Persist and fence one Team dissolve before returning an accepted handle.
+   * The route lifecycle queue atomically orders writer capture, both safety
+   * preconditions, durable acceptance, and the shared availability fence.
+   */
+  async acceptDissolve(
+    request: TeamDissolveRequest,
+  ): Promise<AcceptedTeamDissolve> {
+    return this.dissolves.accept(request);
+  }
+
+  /** Start or join the one runner for a durably accepted operation. */
+  startAcceptedDissolve(
+    handle: AcceptedTeamDissolve,
+    logicalClose: TeamLogicalCloseExecutor,
+  ): void {
+    this.dissolves.start(handle, logicalClose);
+  }
+
+  /** Resume durable gates and lifecycle work before any normal Team work. */
+  async recoverDissolves(
+    logicalClose: TeamLogicalCloseExecutor,
+  ): Promise<void> {
+    await this.dissolves.recover(logicalClose);
+  }
+
+  /**
+   * Interrupt only cancellable idle waits and owner retry timers. Physical
+   * cleanup and resource-close attempts stay tracked through shutdown drain.
+   */
+  interruptDissolvesForShutdown(): void {
+    this.dissolves.interruptForShutdown();
+  }
+
+  /** TeamService resource half, called only by the dispatcher route owner. */
+  async closeAcceptedResources(
+    input: AcceptedTeamLogicalClose,
+  ): Promise<TeamSummary> {
+    const current = await this.dissolves.requireCurrentRecord({
+      teamId: input.teamId,
+      operationId: input.operationId,
+    });
+    const service = await this.get(input.teamId);
+    if (current.status === 'closed') return service.status();
+    return service.closeLogically({
+      note: input.note,
+      dissolve: input.dissolve,
+      worktree: input.worktree,
+    });
+  }
+
+  /**
+   * Raise the one process-local Team closing fence. Callers hold the Team's
+   * route-lifecycle queue and have already decided whether this is a new
+   * ordinary close or an idempotent durable dissolve recovery/join.
+   */
+  private activateTeamClosingFence(
+    record: TeamRecord,
+    service: TeamService,
+  ): ChannelRouteOwner {
+    this.routeClosing.add(record.team_id);
+    this.runtimes.closeAdmissionAndStopScheduler(record.team_id, service);
+    return {
+      kind: 'team',
+      teamName: record.team_id,
+      leaderName: record.leader_name,
+    };
+  }
+
+  private completionInitiatorThroughAvailability(
+    teamId: string,
+    deliver: (
+      service: TeamService,
+      completion: Parameters<CompletionInitiator['completionInput']>[0],
+    ) => ReturnType<CompletionInitiator['completionInput']>,
+  ): CompletionInitiator {
+    return {
+      completionInput: async (completion) => {
+        try {
+          return await this.withTeamAvailable(teamId, (service) =>
+            deliver(service, completion),
+          );
+        } catch (error) {
+          if (error instanceof TeamUnavailableError) {
+            return {
+              status: 'unsupported',
+              reason: 'Team is closing or unavailable',
+            };
+          }
+          throw error;
+        }
+      },
+    };
   }
 
   async isOpenTeam(teamId: string): Promise<boolean> {
     const team = await this.store.get(this.dispatcherId, validateTeamId(teamId));
     return team !== null && team.status !== 'closed';
+  }
+
+  /**
+   * Authoritative lock-free handoff check for a target route lock holder. The
+   * target lifecycle must not reacquire the Team route lock while it owns a
+   * target lock, but it must also never decide from a stale runner snapshot.
+   */
+  async hasAcceptedTargetDissolveHandoff(input: {
+    teamId: string;
+    operationId: string;
+    handoffId: string;
+  }): Promise<boolean> {
+    const team = await this.store.get(
+      this.dispatcherId,
+      validateTeamId(input.teamId),
+    );
+    return team?.dissolve?.operation_id === input.operationId &&
+      isActiveDissolve(team.dissolve) &&
+      team.dissolve.target_handoff_ids.includes(input.handoffId);
   }
 
   async hasTeam(teamId: string): Promise<boolean> {
@@ -493,128 +510,53 @@ export class TeamCollection {
     ) !== null;
   }
 
-  private async currentOpenService(teamId: string): Promise<TeamService> {
+  private async withTeamAvailable<T>(
+    teamId: string,
+    task: (service: TeamService) => Promise<T>,
+  ): Promise<T> {
     const id = validateTeamId(teamId);
-    if (this.routeClosing.has(id)) {
-      throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
-    }
-    await this.mustOpenTeam(id);
-    const service = await this.get(id);
-    if (this.routeClosing.has(id)) {
-      throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
-    }
-    return service;
-  }
-
-  /** Rebuild a team's live service from its record and cache it (issue #233). */
-  private async serviceFor(record: TeamRecord): Promise<TeamService> {
-    const { service, schedulerLifecycle } = await TeamService.rebuild(
-      {
-        ...this.depsBase(),
-        evict: (evicted) => this.evict(record.team_id, evicted),
-      },
-      record,
-    );
-    this.cache.set(record.team_id, service);
-    this.schedulerLifecycles.set(record.team_id, {
-      service,
-      lifecycle: schedulerLifecycle,
+    return this.routeLifecycle.run(id, async () => {
+      const record = await this.mustOpenTeam(id);
+      if (this.routeClosing.has(id) || isActiveDissolve(record.dissolve)) {
+        throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
+      }
+      const service = await this.get(id);
+      return task(service);
     });
-    return service;
   }
 
-  private evict(teamId: string, expectedService: TeamService): void {
-    if (this.cache.get(teamId) !== expectedService) return;
-    this.cache.delete(teamId);
-    const lifecycle = this.schedulerLifecycles.get(teamId);
-    if (lifecycle?.service === expectedService) {
-      this.schedulerLifecycles.delete(teamId);
-    }
+  private async ensureRoutableProjection(
+    service: TeamService,
+  ): Promise<TeamRouteProjection> {
+    await service.ensureRouteReady();
+    return service.routeProjection();
   }
 
-  private depsBase(): Omit<TeamServiceDeps, 'evict'> {
-    return {
-      dispatcherId: this.dispatcherId,
-      config: this.opts.config,
-      agentRuntimeProviders: this.opts.agentRuntimeProviders,
-      worktrees: this.worktrees,
-      identities: this.opts.identities,
-      turnsStore: this.opts.turnsStore,
-      router: this.opts.router,
-      initiatorFor: this.opts.initiatorFor,
-      isShuttingDown: this.opts.isShuttingDown,
-      admitOperation: this.opts.admitOperation ?? ((task) => task()),
-      withTeamLeaderLease: (lease, task) =>
-        this.withTeamLeaderLease(lease, task),
-      store: this.store,
-      adminSocketPath: this.opts.adminSocketPath,
-      leaderChannelDescriptors: this.opts.leaderChannelDescriptors,
-      trackMaterialized: (service) => this.materialized.add(service),
-      log: this.opts.log,
-      workflowLog: this.opts.workflowLog ?? this.opts.log,
-      ...(this.opts.agentNameSuffixGenerator !== undefined
-        ? { agentNameSuffixGenerator: this.opts.agentNameSuffixGenerator }
-        : {}),
-    };
+  private async beginTeamClosing(teamId: string): Promise<ChannelRouteOwner> {
+    const id = validateTeamId(teamId);
+    return this.routeLifecycle.run(id, async () => {
+      const record = await this.mustOpenTeam(id);
+      if (this.routeClosing.has(id) || isActiveDissolve(record.dissolve)) {
+        throw new TeamUnavailableError(`Team ${JSON.stringify(id)} is closing`);
+      }
+      const service = await this.get(id);
+      return this.activateTeamClosingFence(record, service);
+    });
   }
 
-  private async listRow(team: TeamRecord): Promise<TeamListRow> {
-    return {
-      team_name: team.team_id,
-      status: team.status,
-      intent: team.intent,
-      source_repo: team.source_repo,
-      leader_name: team.leader_name,
-      leader_state: await this.leaderState(team),
-      member_count: await this.memberCount(team),
-      created_at: team.created_at,
-      updated_at: team.updated_at,
-      closed_at: team.closed_at,
-    };
-  }
-
-  private async historyRow(team: TeamRecord): Promise<TeamHistoryRow> {
-    return {
-      team_name: team.team_id,
-      status: team.status,
-      intent: team.intent,
-      source_repo: team.source_repo,
-      leader_name: team.leader_name,
-      leader_agent_runtime: team.leader_agent_runtime,
-      leader_state: await this.leaderState(team),
-      member_count: await this.memberCount(team),
-      created_at: team.created_at,
-      updated_at: team.updated_at,
-      closed_at: team.closed_at,
-      close_note: team.close_note,
-      close_note_preview:
-        team.close_note !== null ? previewTeamText(team.close_note) : null,
-    };
-  }
-
-  private async leaderState(
-    team: TeamRecord,
-  ): Promise<AgentEntityIdentityStatus | null> {
-    // Read-only probe straight from the shared identity store (issue #233 R4):
-    // the leader lives at the team root, so the get is team-scoped. Equivalent to
-    // the old throwaway-collection `status(name)` — that probe held no entities,
-    // so its projection was already just `identity.status` with no live runtime.
-    // The `.catch(() => null)` matches the old `status(...).catch(() => null)`:
-    // this is a scan probe, so one unreadable team record (malformed leader_name,
-    // legacy state, IO error) must degrade to a null leader_state for that row,
-    // not throw and poison the whole list/history scan.
-    const leader = await this.opts.identities
-      .get(this.dispatcherId, team.leader_name, team.team_id)
-      .catch(() => null);
-    return leader?.status ?? null;
-  }
-
-  private async memberCount(team: TeamRecord): Promise<number> {
-    // Members-only roster, read straight from the shared identity store (issue
-    // #233 R4): a team-scope list returns only that team's members. Equivalent to
-    // the old throwaway-collection `list().length` — same store call, no entities.
-    return (await this.opts.identities.list(this.dispatcherId, team.team_id))
-      .length;
+  private async endTeamClosing(
+    teamId: string,
+    reopen: boolean,
+  ): Promise<void> {
+    const id = validateTeamId(teamId);
+    await this.routeLifecycle.run(id, async () => {
+      const current = await this.store.get(this.dispatcherId, id);
+      if (current !== null && isActiveDissolve(current.dissolve)) return;
+      if (reopen && current !== null && current.status !== 'closed') {
+        await this.runtimes.reopen(id);
+      }
+      this.routeClosing.delete(id);
+    });
   }
 
   private async mustTeam(teamId: string): Promise<TeamRecord> {
@@ -635,61 +577,30 @@ export class TeamCollection {
 
   async scheduler(teamId: string): Promise<SchedulerCommands> {
     await this.mustOpenTeam(teamId);
-    return (await this.get(teamId)).scheduler;
+    return this.runtimes.scheduler(validateTeamId(teamId));
   }
 
   async startSchedulers(): Promise<void> {
-    const teams = await this.store.list(this.dispatcherId);
-    for (const team of teams) {
-      if (team.status === 'closed') continue;
-      try {
-        const service = await this.get(team.team_id);
-        const schedulerLifecycle = this.schedulerLifecycles.get(service.id);
-        if (
-          schedulerLifecycle === undefined ||
-          schedulerLifecycle.service !== service
-        ) {
-          throw new Error(
-            `Team ${JSON.stringify(service.id)} scheduler lifecycle is unavailable`,
-          );
-        }
-        await schedulerLifecycle.lifecycle.start();
-      } catch (err) {
-        this.opts.log.error(
-          { dispatcher_id: this.dispatcherId, team_id: team.team_id, err: teamErrorInfo(err) },
-          'TeamLeader scheduler start failed',
-        );
-      }
-    }
+    await this.runtimes.startSchedulers();
   }
 
   async startWorkflows(): Promise<void> {
-    for (const team of await this.store.list(this.dispatcherId)) {
-      if (team.status === 'closed') continue;
-      await (await this.get(team.team_id)).startWorkflowAdmission();
-    }
+    await this.runtimes.startWorkflows();
   }
 
   async recoverWorkflows(): Promise<void> {
-    for (const team of await this.store.list(this.dispatcherId)) {
-      if (team.status === 'closed') continue;
-      await (await this.get(team.team_id)).recoverWorkflows();
-    }
+    await this.runtimes.recoverWorkflows();
   }
 
   closeWorkflowAdmissions(): void {
-    for (const service of this.materialized) service.closeWorkflowAdmission();
+    this.runtimes.closeWorkflowAdmissions();
   }
 
   stopSchedulers(): void {
-    for (const item of this.schedulerLifecycles.values()) item.lifecycle.stop();
+    this.runtimes.stopSchedulers();
   }
 
   async stopAll(): Promise<void> {
-    const results = await Promise.allSettled(
-      [...this.materialized].map((service) =>
-        this.routeLifecycle.run(service.id, () => service.stopAll())),
-    );
-    throwSettledFailures(results, 'multiple Team runtimes failed to stop');
+    await this.runtimes.stopAll();
   }
 }

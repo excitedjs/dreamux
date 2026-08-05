@@ -1,16 +1,111 @@
 import {
   assertNotReservedAgentName,
+  type AgentEntityIdentity,
   type AgentEntityIdentityStatus,
   type AgentEntityRuntimeStatus,
   type AgentEntityTurnResult,
   type AgentEntityWorktreeIdentity,
 } from '../agent-entity/types.js';
-import type { AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
+import type {
+  AgentRuntimeMcpServer,
+  AgentRuntimeSkillSource,
+  DreamuxLogger,
+} from '@excitedjs/dreamux-types';
+
+import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
+import type { DreamuxConfig } from '../../config/config.js';
+import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
+import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
+import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
+import type {
+  CompletionInitiator,
+  CompletionRouter,
+} from '../completion-router/index.js';
+import type { SuffixGenerator } from '../name-allocator.js';
 import type { TeamMateWorktreeRequest } from '../teammate-collection/types.js';
+import type { WorktreeManager } from '../worktree/manager.js';
+
+export interface TeamCollectionOptions {
+  /** The dispatcher this collection belongs to (issue #233 ownership sinking). */
+  dispatcherId: string;
+  config: DreamuxConfig;
+  agentRuntimeProviders: AgentRuntimeProviderCatalog;
+  worktrees: WorktreeManager;
+  /**
+   * The dispatcher's identity + turns store pair (issue #233 R4). Supplied by
+   * `DispatcherService` (the same pair the dispatcher agent + dispatcher-scope
+   * collection share) and forwarded into every per-team collection so no team
+   * news its own. Read-path probes (`leaderState` / `memberCount`) read the
+   * identity store directly, never a throwaway collection. The stores are
+   * stateless (paths by role + team_id), so one pair safely serves all scopes.
+   */
+  identities: AgentIdentityStore;
+  turnsStore: AgentTurnsStore;
+  // Shared per-dispatcher deps `DispatcherService` always supplies; forwarded
+  // unchanged into each team's own collection so it stays topology-free (#233).
+  router: CompletionRouter;
+  initiatorFor: (
+    producer: AgentEntityIdentity,
+  ) => Promise<CompletionInitiator | null>;
+  isShuttingDown: () => boolean;
+  admitOperation?: <T>(task: () => Promise<T>) => Promise<T>;
+  trackAcceptedOperation?: <T>(task: () => Promise<T>) => Promise<T>;
+  adminSocketPath: string;
+  /**
+   * Build a team_leader's channel-egress MCP descriptors from the dispatcher's
+   * live channels. Channels are dispatcher-owned, so the team layer only asks
+   * for its own leader's set — it never reaches into the channel layer itself.
+   */
+  leaderChannelDescriptors: (input: {
+    teamId: string;
+    leaderName: string;
+  }) => readonly AgentRuntimeMcpServer[];
+  log: DreamuxLogger;
+  workflowLog?: DreamuxLogger;
+  coreEvents?: DispatcherCoreEventPublisher;
+  nameSuffixGenerator?: SuffixGenerator;
+  agentNameSuffixGenerator?: SuffixGenerator;
+}
 
 export const TEAM_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 export type TeamStatus = 'starting' | 'running' | 'closed';
+
+export type TeamDissolveRequesterKind =
+  | 'dispatcher'
+  | 'team_leader'
+  | 'collaboration_target';
+
+export type TeamDissolvePhase =
+  | 'waiting_for_team_idle'
+  | 'closing_resources'
+  | 'worktree_cleanup_pending'
+  | 'complete'
+  | 'failed';
+
+export type TeamDissolvePublicError =
+  | 'worktree-dirty'
+  | 'worktree-unmerged'
+  | 'worktree-unique-commits'
+  | 'worktree-assessment-failed'
+  | 'resource-close-failed'
+  | 'worktree-cleanup-failed';
+
+/** Server-owned durable lifecycle fact for one accepted Team dissolve. */
+export interface TeamDissolveRecord {
+  operation_id: string;
+  requester_kind: TeamDissolveRequesterKind;
+  /** Descriptor-bound generation for TeamLeader self-dissolve. */
+  leader_name: string | null;
+  /** Opaque exact-target handoffs attached before target-owned runners start. */
+  target_handoff_ids: string[];
+  note: string;
+  accepted_at: number;
+  phase: TeamDissolvePhase;
+  last_error: TeamDissolvePublicError | null;
+  cleanup_attempts: number;
+  next_retry_at: number | null;
+}
 
 export interface TeamRecord {
   version: 1;
@@ -29,6 +124,8 @@ export interface TeamRecord {
   updated_at: number;
   closed_at: number | null;
   close_note: string | null;
+  /** Missing on older additive records and normalized to null by TeamStore. */
+  dissolve: TeamDissolveRecord | null;
 }
 
 interface TeamCreateOptions {
@@ -79,6 +176,55 @@ export interface TeamDissolveInput {
   note: string;
 }
 
+export type TeamDissolveRequester =
+  | { kind: 'dispatcher' }
+  | { kind: 'team_leader'; leaderName: string }
+  | {
+      kind: 'collaboration_target';
+      leaderName: string | null;
+      handoffId: string;
+    };
+
+export interface TeamDissolveRequest extends TeamDissolveInput {
+  requester: TeamDissolveRequester;
+  /** Dispatcher-only absolute deadline for pre-acceptance safety work. */
+  decisionDeadlineAt?: number;
+}
+
+export interface TeamDissolveReceipt {
+  accepted: true;
+  team_name: string;
+  status: 'closing';
+}
+
+/**
+ * Internal handle. MCP projects only its receipt; target close joins logical
+ * closure.
+ */
+export interface AcceptedTeamDissolve {
+  operationId: string;
+  receipt: TeamDissolveReceipt;
+  logicalClosed: Promise<TeamSummary>;
+}
+
+/** Input consumed by the dispatcher-side route/resource close executor. */
+export interface AcceptedTeamLogicalClose {
+  operationId: string;
+  teamId: string;
+  note: string;
+  owner: {
+    kind: 'team';
+    teamName: string;
+    leaderName: string;
+  };
+  dissolve: TeamDissolveRecord;
+  worktree: AgentEntityWorktreeIdentity;
+}
+
+export type TeamLogicalCloseExecutor = (
+  input: AcceptedTeamLogicalClose,
+) => Promise<TeamSummary>;
+
 /** Active channel target marker surfaced by the Team read tools. */
 export interface TeamChannelBindingSummary {
   channel_id: string;
@@ -107,6 +253,10 @@ export interface TeamView {
   updated_at: number;
   closed_at: number | null;
   close_note: string | null;
+  dissolve_phase: TeamDissolvePhase | null;
+  dissolve_accepted_at: number | null;
+  worktree_cleanup: AgentEntityWorktreeIdentity['cleanup_state'];
+  dissolve_error: TeamDissolvePublicError | null;
 }
 
 export interface TeamSummary {
@@ -131,6 +281,10 @@ export interface TeamListRow {
   created_at: number;
   updated_at: number;
   closed_at: number | null;
+  dissolve_phase: TeamDissolvePhase | null;
+  dissolve_accepted_at: number | null;
+  worktree_cleanup: AgentEntityWorktreeIdentity['cleanup_state'];
+  dissolve_error: TeamDissolvePublicError | null;
 }
 
 /**
@@ -173,6 +327,10 @@ export interface TeamHistoryRow {
   closed_at: number | null;
   close_note: string | null;
   close_note_preview: string | null;
+  dissolve_phase: TeamDissolvePhase | null;
+  dissolve_accepted_at: number | null;
+  worktree_cleanup: AgentEntityWorktreeIdentity['cleanup_state'];
+  dissolve_error: TeamDissolvePublicError | null;
 }
 
 export interface TeamHistoryResult {
