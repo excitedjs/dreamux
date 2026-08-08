@@ -133,3 +133,9 @@ export default async function run() {
 Scripts cannot import modules or use host process, filesystem, network, or timer
 APIs. `Date.now()`, `Math.random()`, and `new Date()` without arguments are also
 unavailable so orchestration stays deterministic.
+
+## References
+
+| Task | Load when | Reference |
+| --- | --- | --- |
+| Code review run | Carrying a pull-request or git-range review as one workflow run: eligibility gate, multi-lens finders, confidence-scored verification, one synthesized report. | [Code review](references/code-review.md) |
