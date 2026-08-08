@@ -383,6 +383,16 @@ describe('workflow runner', () => {
       'workflow meta phases must contain strings or objects with string title',
     ],
     [
+      `export const meta = {
+        name: 'bad',
+        description: 'bad',
+        whenToUse: true,
+        phases: ['valid'],
+      };
+      agent('must not start');`,
+      'workflow meta whenToUse must be a string',
+    ],
+    [
       `const description = 'dynamic';
       export const meta = { name: 'bad', description };
       agent('must not start');`,
