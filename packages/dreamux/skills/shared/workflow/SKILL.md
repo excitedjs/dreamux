@@ -28,7 +28,8 @@ overlapping writes.
   may still read `running` until the run settles to `stopped` — do not treat a
   transient `running` as a failed stop.
 
-Each run can start at most 200 agents across its complete lifecycle.
+`max_concurrency` defaults to 16 and accepts values from 1 through 16. Each run
+can start at most 1000 agents across its complete lifecycle.
 
 Use `workflow_status` for an explicit progress check or recovery, not as a polling
 loop. After a run, use a recorded concrete TeamMate name with `send` when a result
@@ -36,7 +37,8 @@ needs an interactive follow-up.
 
 ## Script Entry
 
-Provide one module with literal metadata and a default async entry function:
+Dreamux accepts two script entry forms. The existing module form exports
+metadata and a default async entry function:
 
 ```js
 export const meta = {
@@ -73,6 +75,49 @@ export default async function run() {
 `args` is the exact value supplied to `workflow_run`. Return plain serializable
 data from `run()`.
 
+The ultracode form exports literal metadata and then places the workflow body at
+top level:
+
+```js
+export const meta = {
+  name: 'review-and-summarize',
+  description: 'Review several areas and combine the findings',
+  whenToUse: 'Use when the review targets are known before execution.',
+  phases: [
+    { title: 'review', detail: 'Independent review passes' },
+    { title: 'summary', model: 'documentary metadata only' },
+  ],
+};
+
+phase('review');
+const reviews = await parallel([
+  () => agent('Review the API. Return concise findings.', {
+    label: 'api-review',
+    phase: 'review',
+  }),
+  () => agent('Review the lifecycle. Return concise findings.', {
+    label: 'lifecycle-review',
+    phase: 'review',
+  }),
+]);
+
+phase('summary');
+return agent(`Combine these findings:\n${JSON.stringify(reviews)}`, {
+  label: 'summary',
+  phase: 'summary',
+});
+```
+
+For the ultracode form, `meta` must be a recursively plain literal object, and
+the script may not import modules or export anything else. Dreamux wraps the
+top-level body in the canonical async entry function. The module form remains
+unchanged, including its existing module-evaluation semantics.
+
+Metadata requires string `name` and `description`. `whenToUse` is an optional
+string. `phases` may contain strings or objects shaped as
+`{ title, detail?, model? }`; `detail` and `model` are descriptive metadata
+only. A phase's `model` does not select an agent runtime or model.
+
 ## Script API
 
 `agent(prompt, opts?)` starts a fresh TeamMate and waits for its settled turn.
@@ -83,18 +128,24 @@ Options are:
 - `intent` and `identity` for the TeamMate's task and persona;
 - `schema` for a JSON Schema object handled by the selected runtime.
 
-Without `schema`, `agent()` returns final text or `null` when that call fails. With
-`schema`, it returns the parsed JSON value or `null` when the runtime result is not
-valid JSON. A runtime that cannot provide structured output rejects that
-`agent()` call.
+Without `schema`, `agent()` returns final text or `null` when the turn fails.
+With `schema`, Dreamux passes the schema through the runtime's native
+structured-output mechanism and returns the parsed JSON value; an ordinary
+failed native turn retains the existing `null` result. A runtime that cannot
+provide structured output, or a runtime-reported successful schema result that
+is empty or invalid JSON, rejects that `agent()` call. When directly awaited,
+the rejection fails the workflow unless the script catches it.
 
-`parallel(thunks)` starts its thunk functions together and waits at one barrier.
-A failed thunk contributes `null` without discarding the other results.
+`parallel(thunks)` accepts at most 4096 functions, starts them together, and
+waits at one barrier. The size limit is checked before any thunk runs. A failed
+thunk contributes `null` without discarding the other results.
 
 `pipeline(items, ...stages)` processes each item through its stages in order while
-different items can advance independently. A failed item contributes `null`
-without discarding the other items. Use it when every item needs the same
-multi-step treatment:
+different items can advance independently. It accepts at most 4096 items and
+checks that limit before any stage runs. Every stage receives
+`(previousResult, originalItem, index)`. A failed item contributes `null`
+without discarding the other items or failing the workflow. Use it when every
+item needs the same multi-step treatment:
 
 ```js
 export const meta = {
@@ -106,8 +157,8 @@ export const meta = {
 export default async function run() {
   const reports = await pipeline(
     args.targets,
-    (target) => agent(`Inspect ${target}`, {
-      label: `inspect-${target}`,
+    (target, originalTarget, index) => agent(`Inspect ${target}`, {
+      label: `inspect-${index}-${originalTarget}`,
       phase: 'inspect',
       schema: {
         type: 'object',
@@ -119,10 +170,11 @@ export default async function run() {
         additionalProperties: false,
       },
     }),
-    (report) => agent(`Rank this report: ${JSON.stringify(report)}`, {
-      label: 'rank',
-      phase: 'rank',
-    }),
+    (report, originalTarget, index) =>
+      agent(`Rank ${originalTarget}: ${JSON.stringify(report)}`, {
+        label: `rank-${index}`,
+        phase: 'rank',
+      }),
   );
   log(`Processed ${reports.length} targets`);
   return reports;

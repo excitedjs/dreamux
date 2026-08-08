@@ -2,10 +2,14 @@
 
 > 适用版本：Dreamux 0.22.x-beta · 能力状态：Beta（接口稳定，行为可能微调）
 
-Dynamic Workflow 是 Dreamux 的**确定性多 Agent 编排原语**。你写一段
-JavaScript（`meta` + `agent()` / `parallel()` / `pipeline()` / `phase()` /
-`log()`），一次提交，宿主在后台确定性地执行整个编排图，终态通过完成投递
-推回给你。
+Dynamic Workflow is Dreamux's deterministic multi-agent orchestration
+primitive. Submit JavaScript metadata plus calls to `agent()`, `parallel()`,
+`pipeline()`, `phase()`, and `log()` once; the host executes the fixed graph in
+the background and delivers one terminal result.
+
+Scripts may use either the original ES module entry (`export default async
+function run()`) or the ultracode entry, where the executable body follows
+`export const meta` at top level and can use top-level `await` and `return`.
 
 它对齐 Claude Code 的 `Workflow` 工具形态，但 `agent()` 驱动的是
 Dreamux 的 **TeamMate**——你可以用 codex、claude-code 等任意已接入的
@@ -190,14 +194,48 @@ export default async function run() {
 
 ```js
 export const meta = {
-  name: 'my-workflow',        // 可读名称，用于日志和状态展示
-  description: '一句话描述',  // 出现在 workflow 列表和权限确认中
-  phases: ['phase1', 'phase2'], // 阶段名列表，用于进度分组
+  name: 'my-workflow',        // required compatibility identifier
+  description: 'What this workflow does', // required compatibility summary
+  whenToUse: 'Use when every target is known before execution.', // optional
+  phases: [
+    'phase1',
+    { title: 'phase2', detail: 'Phase description', model: 'metadata only' },
+  ],
 };
 ```
 
-`meta` 必须是**纯字面量**——不能用变量、函数调用、模板插值。这是为了
-让宿主在不执行脚本的情况下就能读取元信息。
+`name` and `description` are required strings. `whenToUse` is an optional
+string. Each `phases` entry may be a string or
+`{ title, detail?, model? }`; `model` is descriptive metadata and does not
+select an agent model or runtime.
+
+Metadata is accepted for workflow-dialect compatibility and validated before
+the orchestration body can start agents. It is not persisted on the run,
+projected by `workflow_status` or `workflow_list`, or used for permission
+confirmation.
+
+Ultracode metadata must be a recursively plain literal tree: no variables,
+calls, interpolation, computed properties, methods, shorthand properties, or
+spread. Ultracode scripts may export only `meta`. The existing module form is
+evaluated unchanged and retains its existing metadata-validation semantics.
+
+An ultracode entry places its executable body directly after metadata:
+
+```js
+export const meta = {
+  name: 'inspect-targets',
+  description: 'Inspect every requested target',
+  phases: [{ title: 'inspect', detail: 'Run one inspection per target' }],
+};
+
+phase('inspect');
+const reports = await pipeline(
+  args.targets,
+  (target, originalTarget, index) =>
+    agent(`Inspect ${target}`, { label: `inspect-${index}-${originalTarget}` }),
+);
+return reports;
+```
 
 ### 3.2 `agent(prompt, opts?)`
 
@@ -214,9 +252,18 @@ const result = await agent('任务描述', {
 });
 ```
 
-**返回值：**
-- 无 `schema`：TeamMate 的最终文本（`string`），失败时 `null`
-- 有 `schema`：解析后的 JSON 对象，失败或非合法 JSON 时 `null`
+**Return and failure behavior:**
+- without `schema`, a successful call returns the TeamMate's final text and an
+  ordinary failed turn returns `null`;
+- with `schema`, Dreamux asks the selected runtime for native structured output
+  and returns the parsed JSON value; an ordinary failed native turn retains the
+  existing `null` result;
+- unsupported structured output, or a runtime-reported successful schema result
+  that is empty or invalid JSON, rejects the `agent()` promise.
+
+A directly awaited rejection fails the workflow unless the script catches it.
+`parallel()` and `pipeline()` intentionally contain a rejected thunk or item as
+`null`, preserving the other results.
 
 **重要：** 每次 `agent()` 都 spawn 新 TeamMate，不复用。这是故意的——
 避免在途 turn 被打扰导致结果偏差。
@@ -234,6 +281,8 @@ const results = await parallel([
 // results: [resultA, resultB, resultC]，顺序与 thunks 一致
 ```
 
+- At most 4096 functions are accepted. The limit is checked atomically before
+  any thunk runs.
 - 某个 thunk 失败 → 对应位置是 `null`，**不影响**其他结果
 - 所有 thunk 并行启动，总耗时 ≈ 最慢的那个
 
@@ -245,18 +294,22 @@ const results = await parallel([
 ```js
 const reports = await pipeline(
   args.targets,                          // 输入列表
-  (target) => agent(`检查 ${target}`, {  // 阶段 1：检查
-    label: `inspect-${target}`,
+  (target, originalTarget, index) => agent(`Inspect ${target}`, {
+    label: `inspect-${index}-${originalTarget}`,
     phase: 'inspect',
     schema: INSPECT_SCHEMA,
   }),
-  (report) => agent(`评级`, {            // 阶段 2：评级
-    label: 'rank',
+  (report, originalTarget, index) => agent(`Rank ${originalTarget}`, {
+    label: `rank-${index}`,
     phase: 'rank',
   }),
 );
 ```
 
+- At most 4096 items are accepted. The limit is checked atomically before any
+  stage runs.
+- Every stage receives `(previousResult, originalItem, index)`. For the first
+  stage, `previousResult` and `originalItem` are the same value.
 - 每个 item 独立经过所有 stage
 - 某个 item 在某个 stage 失败 → 该 item 后续 stage 不再执行，最终贡献 `null`
 - 适用于「每个元素都要做同样多步处理」的场景
@@ -292,7 +345,7 @@ export default async function run() {
 workflow_run({
   script: "<上面的脚本字符串>",
   args: { ... },          // 可选，脚本里用 args 访问
-  max_concurrency: 8,     // 可选，最大并行 agent 数（服务端可钳制）
+  max_concurrency: 16,    // optional; defaults to 16, valid range 1..16
 })
 // → { run_id: "run-abc123" }
 ```
@@ -350,7 +403,10 @@ workflow_stop({ run_id: "run-abc123" })
 
 ### 5.3 生命周期上限
 
-- 每个 run 最多启动 **200 个 agent**
+- Each run can start at most **1000 agents**.
+- Each `parallel()` call accepts at most **4096 functions**.
+- Each `pipeline()` call accepts at most **4096 items**.
+- `max_concurrency` defaults to **16** and accepts **1..16**.
 - 单个 agent 的 turn 超时由 runtime 配置决定
 
 ### 5.4 结构化输出的 runtime 支持
@@ -360,8 +416,11 @@ workflow_stop({ run_id: "run-abc123" })
 | codex | `turn/start.outputSchema` | 每 turn |
 | claude-code | `--json-schema` flag | 每 turn（spawn 时） |
 
-不支持 `schema` 的 runtime 会**拒绝**该 `agent()` 调用（fail-loud，不
-会静默降级）。
+Unsupported `schema` fails that `agent()` call loudly. Dreamux does not emulate
+schema validation in prompts or silently degrade to free-form text. A built-in
+runtime reports a completed schema turn only after its native mechanism has
+produced structured output; Dreamux then parses the JSON text once. Empty or
+invalid JSON after reported success is an agent error, not a successful `null`.
 
 ---
 

@@ -188,7 +188,7 @@ export function teammateTools(callerKind: TeamMateMcpCallerKind): Array<Record<s
         script: { type: 'string', minLength: 1 },
         scriptPath: { type: 'string', minLength: 1 },
         args: {},
-        max_concurrency: { type: 'integer', minimum: 1, maximum: 8 },
+        max_concurrency: { type: 'integer', minimum: 1, maximum: 16 },
       },
       [],
     ),
@@ -326,6 +326,12 @@ function mapToolCall(
 function workflowRunArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'workflow_run arguments');
   const maxConcurrency = optionalInteger(obj, 'max_concurrency');
+  if (
+    maxConcurrency !== null &&
+    (maxConcurrency < 1 || maxConcurrency > 16)
+  ) {
+    throw new Error('max_concurrency must be between 1 and 16');
+  }
   const script = optionalString(obj, 'script');
   const scriptPath = optionalString(obj, 'scriptPath');
   if ((script === null || script.trim() === '') && (scriptPath === null || scriptPath.trim() === '')) {

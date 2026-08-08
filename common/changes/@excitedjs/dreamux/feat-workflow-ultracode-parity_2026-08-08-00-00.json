@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "BREAKING: Add ultracode-compatible top-level Workflow scripts and metadata, three-argument pipeline stages, runtime-native structured-output enforcement, and higher bounded Workflow concurrency and call limits. A directly awaited schema-constrained agent call now rejects when a runtime reports successful completion with empty or invalid JSON instead of returning null. Review: confirm Workflow scripts that directly await schema calls handle this fail-loud result where partial failure is intended; no persisted state or config rebuild is needed.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

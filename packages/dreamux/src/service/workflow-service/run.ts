@@ -7,6 +7,7 @@ import {
   createOwnedTeammateOwner,
   type OwnedTeammateOps,
 } from '../teammate-collection/owned-teammates.js';
+import { WORKFLOW_AGENT_SYSTEM_PROMPT } from './agent-policy.js';
 import { WorkflowJournal } from './journal.js';
 import type {
   WorkflowAgentOptions,
@@ -34,9 +35,7 @@ import {
   type Deferred,
 } from './run-support.js';
 import { WorkflowRunTerminal } from './run-terminal.js';
-
-const MAX_AGENTS = 200;
-
+const MAX_AGENTS = 1000;
 export interface WorkflowRunDeps {
   record: WorkflowRunRecord;
   store: WorkflowRunStore;
@@ -335,6 +334,7 @@ export class WorkflowRun {
               turnId,
               completion,
             ),
+          systemPromptAppend: [WORKFLOW_AGENT_SYSTEM_PROMPT],
           outputSchema: call.options.schema,
         },
       );
@@ -452,15 +452,20 @@ export class WorkflowRun {
     }
 
     let result: unknown = completion.status === 'completed' ? completion.result : null;
+    let runnerError: string | undefined;
     if (
       completion.status === 'completed' &&
-      call.options.schema !== undefined &&
-      completion.result !== null
+      call.options.schema !== undefined
     ) {
       try {
+        if (completion.result === null) {
+          throw new Error('structured output result was empty');
+        }
         result = JSON.parse(completion.result) as unknown;
       } catch (error) {
         result = null;
+        runnerError =
+          'runtime reported successful structured output that was not valid JSON';
         this.deps.log.warn(
           {
             run_id: this.record.run_id,
@@ -480,7 +485,12 @@ export class WorkflowRun {
       );
     }
     try {
-      await this.completeAgent(call, completion.status, result);
+      await this.completeAgent(
+        call,
+        runnerError === undefined ? completion.status : 'failed',
+        result,
+        runnerError,
+      );
     } catch (error) {
       // Let the producer's settle route unwind before terminal auto-close.
       // Entity release drains that same route, so awaiting finalization here

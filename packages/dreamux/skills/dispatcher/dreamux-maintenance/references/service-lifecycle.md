@@ -1,8 +1,8 @@
 # Service Lifecycle And Reply Diagnosis
 
-This reference owns current serve/daemon lifecycle, missing-reply and stuck-turn
-diagnosis, bundled-skill injection, runtime app-server readiness, and
-same-version restart cautions.
+This reference owns current serve/daemon lifecycle, missing-reply, stuck-turn,
+and Workflow run-state diagnosis, bundled-skill injection, runtime app-server
+readiness, and same-version restart cautions.
 
 ## Server And Service
 
@@ -26,6 +26,31 @@ same-version restart cautions.
   restart. A restart does not prove that a turn completed or a reply was sent.
 - Treat a successful submit as acceptance only. Confirm completion and then the
   provider-visible reply separately.
+
+## Workflow Run State
+
+- Dispatcher-scoped Workflow state lives under
+  `~/.dreamux/state/<dispatcher-id>/workflow/<run-id>/`; TeamLeader-scoped
+  Workflow state lives under
+  `~/.dreamux/state/<dispatcher-id>/team/<team-id>/workflow/<run-id>/`. Each
+  run's `record.json` and append-only `journal.jsonl` are fully server-owned. Do
+  not edit, truncate, copy over, synthesize, or delete either file as a repair
+  action.
+- Use `workflow_status` and `workflow_list` in the original caller scope for
+  public run inspection. Treat `record.json` and `journal.jsonl` as narrow
+  diagnostics only when the supported surfaces are insufficient; sanitize
+  scripts, arguments, results, prompts, paths, ids, and errors before reporting.
+- `workflow_run.max_concurrency` defaults to 16 and accepts only 1 through 16.
+  Do not change durable state to override that bound. A run can start at most
+  1000 agents across its complete lifecycle; `parallel()` accepts at most 4096
+  functions and `pipeline()` accepts at most 4096 items per call.
+- A returned `{ run_id }` is a durable acceptance receipt, not proof that script
+  normalization, metadata validation, runtime execution, completion delivery,
+  or visible Channel delivery succeeded. Inspect the run's terminal state and
+  then the delivery boundary separately.
+- Startup marks a durable `running` Workflow record as `stopped`; Workflow
+  journal replay and run resume are not supported. A restart is therefore not a
+  way to continue a Workflow and must not be presented as one.
 
 ## Team Dissolve And Cleanup State
 

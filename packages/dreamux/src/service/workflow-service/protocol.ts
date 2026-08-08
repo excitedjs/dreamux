@@ -62,5 +62,13 @@ export type WorkflowRunnerChildMessage =
 export interface WorkflowScriptMeta {
   name: string;
   description: string;
-  phases?: string[];
+  whenToUse?: string;
+  phases?: Array<
+    | string
+    | {
+        title: string;
+        detail?: string;
+        model?: string;
+      }
+  >;
 }

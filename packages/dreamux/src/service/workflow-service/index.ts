@@ -34,9 +34,9 @@ import type {
   WorkflowStopResult,
 } from './types.js';
 
-const DEFAULT_MAX_CONCURRENCY = 8;
+const DEFAULT_MAX_CONCURRENCY = 16;
 const MIN_MAX_CONCURRENCY = 1;
-const MAX_MAX_CONCURRENCY = 8;
+const MAX_MAX_CONCURRENCY = 16;
 const MAX_SCRIPT_BYTES = 1024 * 1024;
 
 export interface WorkflowServiceOptions extends WorkflowScopePathInput {

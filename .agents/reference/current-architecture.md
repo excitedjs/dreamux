@@ -293,26 +293,51 @@ existing TeamMate MCP. Each `DispatcherService` owns one dispatcher-scope
 `WorkflowRun` owns its durable record, append-only journal, supervised runner
 child, and every fresh TeamMate it creates.
 
-The runner evaluates a trusted inline ES module in a `node:vm` context and
-communicates only over its parent IPC channel. The parent sends `run_start`,
-`agent_result`, and `abort`; the runner sends `agent_start`, progress `emit`
-events, and one `run_result`. Agent submission re-enters the owning dispatcher
-admission drain or TeamLeader generation lease. Each newly spawned TeamMate has
-its settle route injected before runtime start, so intermediate completions
-return only to the owning run. The run's single terminal completion uses the
-shared `CompletionRouter` with the original caller as initiator.
+The runner normalizes a trusted inline script and evaluates the canonical ES
+module in a `node:vm` context, communicating only over its parent IPC channel.
+The workflow-service normalizer uses the package's direct production `acorn`
+dependency to select one of two entry forms by parsed default-export presence.
+Legacy modules with a default export are evaluated byte-for-byte unchanged.
+Ultracode scripts without a default export must contain one recursively plain
+literal `export const meta`, may contain no imports or other exports, and have
+their remaining top-level statements source-range wrapped in a generated
+default async entry function. Both forms accept optional string `whenToUse` and
+phase strings or `{ title, detail?, model? }` metadata objects; phase `model` is
+inert metadata and does not select a runtime model.
 
-`schema` is passed through the runtime-neutral `outputSchema` turn input. The
-run parses a successful structured result once with `JSON.parse`; unsupported
-runtime capability fails the individual `agent()` call loudly. Normal terminal
-runs wait for in-flight turns, silently close and evict their owned TeamMates,
-and then evict the live run entity. `workflow_stop` reserves `stopped` and
-returns immediately while that natural-settle finalization continues in the
-background. Dispatcher/server shutdown instead kills the runner, persists the
-terminal run without waiting for agent turns, and leaves owned runtime cleanup
-to the following collection-wide force-stop sweep. Startup marks durable
-`running` records as `stopped`; journal replay and run resume are not
-implemented.
+The parent sends `run_start`, `agent_result`, and `abort`; the runner sends
+`agent_start`, progress `emit` events, and one `run_result`. Agent submission
+re-enters the owning dispatcher admission drain or TeamLeader generation lease.
+Each newly spawned TeamMate has its settle route injected before runtime start,
+so intermediate completions return only to the owning run. The run's single
+terminal completion uses the shared `CompletionRouter` with the original caller
+as initiator. `workflow_run` still creates the durable run and registers that
+terminal route before runner startup, so normalization, syntax, entry, and
+metadata failures become durable asynchronous failed runs after the immediate
+`{ run_id }` receipt. The durable `script_hash` remains over original source.
+
+Every workflow-owned TeamMate receives an operation-owned workflow-role append
+prompt at its creation boundary. `schema` remains a separate value passed
+through the runtime-neutral `outputSchema` turn input. The run parses a
+successful structured result once with `JSON.parse`; unsupported runtime
+capability, an empty result, or invalid JSON after runtime-reported success
+fails that individual `agent()` call loudly through `agent_result.error`.
+Directly awaiting one of those errors rejects the workflow entry; `parallel()`
+and `pipeline()` preserve their item-level `null` containment.
+
+`parallel()` accepts at most 4096 functions and `pipeline()` accepts at most
+4096 items, rejecting atomically before starting work. Every pipeline stage
+receives `(previousResult, originalItem, index)`. A run defaults to and is
+bounded at 16 concurrent agents, with a lifetime limit of 1000 agent calls.
+
+Normal terminal runs wait for in-flight turns, silently close and evict their
+owned TeamMates, and then evict the live run entity. `workflow_stop` reserves
+`stopped` and returns immediately while that natural-settle finalization
+continues in the background. Dispatcher/server shutdown instead kills the
+runner, persists the terminal run without waiting for agent turns, and leaves
+owned runtime cleanup to the following collection-wide force-stop sweep.
+Startup marks durable `running` records as `stopped`; journal replay and run
+resume are not implemented.
 
 Key source:
 
@@ -546,9 +571,15 @@ guidance from MCP `identity` is rendered from the persisted
 create context: initial create/spawn, close/reopen, process restart, Team
 rebuild, and runtime resume.
 Prompt-policy ownership stays outside the generic `TeammateService` runtime
-container: `TeamService` supplies the TeamLeader default and TeamLeader identity
-fragments, while `TeammateCollection` supplies only caller-provided TeamMate or
-team-member identity fragments.
+container. `TeamService` supplies the TeamLeader default and TeamLeader identity
+fragments. Owned operations may supply host-private append fragments through
+their collection creation options; Dynamic Workflow uses that capability for
+its workflow-role contract without widening the public Agent Runtime ABI.
+`TeammateCollection` is the single TeamMate/member entity-construction boundary:
+it composes operation-owned append fragments first and the persisted
+caller-provided identity fragment second, then supplies the ordered result in
+the runtime create context. `outputSchema` remains a separate neutral turn
+field, not prompt text.
 
 Runtime adapters must implement selected `systemPrompt.append` semantics. Claude
 Code folds append prompt fragments into `--append-system-prompt` before the

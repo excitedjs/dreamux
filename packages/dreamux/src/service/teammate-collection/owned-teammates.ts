@@ -19,6 +19,7 @@ export function createOwnedTeammateOwner(): OwnedTeammateOwner {
 export interface SpawnOwnedTeamMateOptions {
   owner: OwnedTeammateOwner;
   routeSettledCompletion: SettledCompletionRoute;
+  systemPromptAppend?: readonly string[];
   outputSchema?: Record<string, unknown>;
 }
 

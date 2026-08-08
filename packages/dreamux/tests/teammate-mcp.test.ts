@@ -227,7 +227,7 @@ describe('teammate-mcp stdio shim', () => {
       expect(run.inputSchema.properties['max_concurrency']).toMatchObject({
         type: 'integer',
         minimum: 1,
-        maximum: 8,
+        maximum: 16,
       });
 
       for (const tool of workflowTools.slice(1, 3)) {
@@ -334,6 +334,75 @@ describe('teammate-mcp stdio shim', () => {
           },
         },
       ]);
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
+  it('accepts workflow concurrency 16 and rejects values above it before admin', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: { run_id: 'run-16' },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'dispatcher',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'workflow_run',
+          arguments: {
+            script: 'export const meta = { name: "x", description: "x" }; return null;',
+            max_concurrency: 16,
+          },
+        },
+      });
+      await expect(reader.next()).resolves.toMatchObject({
+        id: 1,
+        result: { structuredContent: { run_id: 'run-16' } },
+      });
+      expect(admin.requests).toHaveLength(1);
+      expect(admin.requests[0]?.params).toMatchObject({ max_concurrency: 16 });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: {
+          name: 'workflow_run',
+          arguments: {
+            script: 'export const meta = { name: "x", description: "x" }; return null;',
+            max_concurrency: 17,
+          },
+        },
+      });
+      await expect(reader.next()).resolves.toMatchObject({
+        id: 2,
+        result: {
+          isError: true,
+          content: [{
+            type: 'text',
+            text: 'max_concurrency must be between 1 and 16',
+          }],
+        },
+      });
+      expect(admin.requests).toHaveLength(1);
 
       input.end();
       await run;
