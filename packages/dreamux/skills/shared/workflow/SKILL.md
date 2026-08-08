@@ -138,4 +138,4 @@ unavailable so orchestration stays deterministic.
 
 | Task | Load when | Reference |
 | --- | --- | --- |
-| Code review run | Carrying a pull-request or git-range review as one workflow run: eligibility gate, multi-lens finders, confidence-scored verification, one synthesized report. | [Code review](references/code-review.md) |
+| Code review run | Carrying a change review (pull/merge request, git range, or working-tree diff) as one workflow run: eligibility gate, multi-lens finders, confidence-scored verification, one synthesized report. | [Code review](references/code-review.md) |
