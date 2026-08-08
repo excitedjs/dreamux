@@ -5,9 +5,9 @@ import type {
   WorkflowAgentResultMessage,
   WorkflowRunnerChildMessage,
   WorkflowRunnerParentMessage,
-  WorkflowScriptMeta,
 } from './protocol.js';
 import { isRecord } from './run-support.js';
+import { assertWorkflowScriptMeta } from './script-meta.js';
 import { normalizeWorkflowScript } from './script-normalizer.js';
 
 interface PendingAgent {
@@ -67,7 +67,7 @@ async function runWorkflow(script: string, args: unknown): Promise<void> {
     await module.evaluate();
 
     const namespace = module.namespace as Record<string, unknown>;
-    assertWorkflowMeta(namespace.meta);
+    assertWorkflowScriptMeta(namespace.meta, 'legacy');
     const entrypoint = namespace.default;
     if (typeof entrypoint !== 'function') {
       throw new Error('workflow script must export a default run function');
@@ -302,39 +302,6 @@ async function sendAndFlush(message: WorkflowRunnerChildMessage): Promise<void> 
       else reject(error);
     });
   });
-}
-
-function assertWorkflowMeta(value: unknown): asserts value is WorkflowScriptMeta {
-  if (!isRecord(value)) {
-    throw new Error('workflow script must export meta');
-  }
-  if (typeof value.name !== 'string' || typeof value.description !== 'string') {
-    throw new Error('workflow meta must include string name and description');
-  }
-  if (
-    value.phases !== undefined &&
-    (!Array.isArray(value.phases) ||
-      value.phases.some((phase: unknown) => !isWorkflowPhase(phase)))
-  ) {
-    throw new Error(
-      'workflow meta phases must contain strings or objects with string title',
-    );
-  }
-  if (value.whenToUse !== undefined && typeof value.whenToUse !== 'string') {
-    throw new Error('workflow meta whenToUse must be a string');
-  }
-}
-
-function isWorkflowPhase(value: unknown): boolean {
-  return (
-    typeof value === 'string' ||
-    (
-      isRecord(value) &&
-      typeof value.title === 'string' &&
-      (value.detail === undefined || typeof value.detail === 'string') &&
-      (value.model === undefined || typeof value.model === 'string')
-    )
-  );
 }
 
 function parseParentMessage(value: unknown): WorkflowRunnerParentMessage | null {

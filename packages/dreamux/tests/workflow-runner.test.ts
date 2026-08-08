@@ -409,6 +409,46 @@ describe('workflow runner', () => {
     },
   );
 
+  it.each([
+    [
+      'legacy module',
+      `export const meta = {
+        name: 'legacy-invalid',
+        description: 'legacy metadata',
+        whenToUse: true,
+        phases: 'invalid',
+      };
+      export default async function run() {
+        return agent('must not start');
+      }`,
+      'workflow meta phases must contain strings or objects with string title',
+    ],
+    [
+      'ultracode',
+      `export const meta = {
+        name: 'ultracode-invalid',
+        description: 'ultracode metadata',
+        whenToUse: true,
+        phases: 'invalid',
+      };
+      return agent('must not start');`,
+      'workflow meta whenToUse must be a string',
+    ],
+  ])(
+    'preserves %s metadata validation semantics before agents start',
+    async (_dialect, script, error) => {
+      const execution = await runScript(script);
+
+      expect(execution.result).toEqual({
+        type: 'run_result',
+        status: 'failed',
+        error,
+      });
+      expect(execution.messages.some((message) => message.type === 'agent_start'))
+        .toBe(false);
+    },
+  );
+
   it('executes both issue #318 acceptance fixtures unmodified', async () => {
     const deepResearch = await readFile(
       join(PACKAGE_ROOT, 'tests', 'fixtures', 'workflows', 'deep-research-max.mjs'),

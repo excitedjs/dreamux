@@ -11,6 +11,7 @@ import {
 } from 'acorn';
 
 import { isRecord } from './run-support.js';
+import { assertWorkflowScriptMeta } from './script-meta.js';
 
 /**
  * Normalize both supported workflow entry dialects to one default-exported
@@ -26,7 +27,7 @@ export function normalizeWorkflowScript(source: string): string {
     throw new Error('workflow script must export const meta');
   }
   const meta = readUltracodeMeta(metaExport);
-  assertWorkflowMeta(meta);
+  assertWorkflowScriptMeta(meta, 'ultracode');
 
   const body = program.body
     .filter((statement) => statement !== metaExport)
@@ -210,34 +211,4 @@ function plainPropertyName(property: Property): string {
     if (typeof key === 'string' || typeof key === 'number') return String(key);
   }
   throw new Error('workflow meta object keys must be non-computed literals');
-}
-
-function assertWorkflowMeta(
-  value: Record<string, unknown>,
-): void {
-  if (typeof value.name !== 'string' || typeof value.description !== 'string') {
-    throw new Error('workflow meta must include string name and description');
-  }
-  if (value.whenToUse !== undefined && typeof value.whenToUse !== 'string') {
-    throw new Error('workflow meta whenToUse must be a string');
-  }
-  if (value.phases === undefined) return;
-  if (!Array.isArray(value.phases)) {
-    throw new Error('workflow meta phases must be an array');
-  }
-  for (const phase of value.phases) assertWorkflowPhase(phase);
-}
-
-function assertWorkflowPhase(phase: unknown): void {
-  if (typeof phase === 'string') return;
-  if (!isRecord(phase) || typeof phase.title !== 'string') {
-    throw new Error(
-      'workflow meta phases must contain strings or objects with string title',
-    );
-  }
-  for (const key of ['detail', 'model'] as const) {
-    if (phase[key] !== undefined && typeof phase[key] !== 'string') {
-      throw new Error(`workflow meta phase ${key} must be a string`);
-    }
-  }
 }
