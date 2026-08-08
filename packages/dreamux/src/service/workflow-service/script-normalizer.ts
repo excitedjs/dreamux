@@ -11,7 +11,6 @@ import {
 } from 'acorn';
 
 import { isRecord } from './run-support.js';
-import { assertWorkflowScriptMeta } from './script-meta.js';
 
 /**
  * Normalize both supported workflow entry dialects to one default-exported
@@ -26,8 +25,7 @@ export function normalizeWorkflowScript(source: string): string {
   if (metaExport === null) {
     throw new Error('workflow script must export const meta');
   }
-  const meta = readUltracodeMeta(metaExport);
-  assertWorkflowScriptMeta(meta, 'ultracode');
+  readUltracodeMeta(metaExport);
 
   const body = program.body
     .filter((statement) => statement !== metaExport)

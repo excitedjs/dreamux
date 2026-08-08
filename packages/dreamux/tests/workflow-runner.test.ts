@@ -421,7 +421,6 @@ describe('workflow runner', () => {
       export default async function run() {
         return agent('must not start');
       }`,
-      'workflow meta phases must contain strings or objects with string title',
     ],
     [
       'ultracode',
@@ -432,17 +431,17 @@ describe('workflow runner', () => {
         phases: 'invalid',
       };
       return agent('must not start');`,
-      'workflow meta whenToUse must be a string',
     ],
   ])(
-    'preserves %s metadata validation semantics before agents start',
-    async (_dialect, script, error) => {
+    'rejects malformed %s metadata before agents start',
+    async (_dialect, script) => {
       const execution = await runScript(script);
 
       expect(execution.result).toEqual({
         type: 'run_result',
         status: 'failed',
-        error,
+        error:
+          'workflow meta phases must contain strings or objects with string title',
       });
       expect(execution.messages.some((message) => message.type === 'agent_start'))
         .toBe(false);

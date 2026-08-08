@@ -67,7 +67,7 @@ async function runWorkflow(script: string, args: unknown): Promise<void> {
     await module.evaluate();
 
     const namespace = module.namespace as Record<string, unknown>;
-    assertWorkflowScriptMeta(namespace.meta, 'legacy');
+    assertWorkflowScriptMeta(namespace.meta);
     const entrypoint = namespace.default;
     if (typeof entrypoint !== 'function') {
       throw new Error('workflow script must export a default run function');
