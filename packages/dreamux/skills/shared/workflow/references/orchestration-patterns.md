@@ -6,6 +6,17 @@ for `pipeline` versus `parallel`, and the reusable quality patterns that make
 a run's output trustworthy. Snippets are fragments of a script body (either
 entry form).
 
+## Contents
+
+- [Prompt discipline](#prompt-discipline) — output contract, failure
+  plumbing, persona options
+- [pipeline versus parallel](#pipeline-versus-parallel) — barrier rules and
+  the smell test
+- [Quality patterns](#quality-patterns) — adversarial verify, judge panel,
+  loop-until-dry, sweeps, critics
+- [Scale to the ask](#scale-to-the-ask) — fan-out sizing and budget
+  arithmetic
+
 ## Prompt discipline
 
 Every workflow TeamMate receives the workflow output contract: its final
@@ -21,14 +32,19 @@ message. Write prompts accordingly.
   script, not the other TeamMates' output. Embed everything it needs —
   the item under work, rubrics, false-positive lists, prior known results —
   directly in the prompt string. Never write "as discussed above".
-- **Failure plumbing.** An ordinary failed turn settles `agent()` to `null`;
-  `.filter(Boolean)` before aggregating. A schema call REJECTS (rather than
-  returning `null`) when the runtime cannot provide structured output or
-  reports success with an empty or invalid JSON result. Inside `parallel`
-  and `pipeline` a rejection is contained as that item's `null`; a directly
-  awaited rejection fails the whole run — correct for load-bearing calls
-  (a gate, a scope decision), wrap in try/catch only where partial failure
-  is genuinely acceptable.
+- **Failure plumbing.** An ordinary failed turn settles `agent()` to `null`.
+  `parallel` and `pipeline` keep results index-aligned with their inputs, so
+  account required coverage positionally first — which input failed, whether
+  a load-bearing step (a discovery, a verifier set) is missing — and report
+  the gap; only then drop nulls with `.filter(Boolean)` where item identity
+  no longer matters. Blind filtering turns missing coverage into a
+  false-clean result. A schema call REJECTS (rather than returning `null`)
+  when the runtime cannot provide structured output or reports success with
+  an empty or invalid JSON result. Inside `parallel` and `pipeline` a
+  rejection is contained as that item's `null`; a directly awaited rejection
+  fails the whole run — correct for load-bearing calls (a gate, a scope
+  decision), wrap in try/catch only where partial failure is genuinely
+  acceptable.
 - **Persona through options.** Use `intent` for the durable task description
   and `identity` for a persona; keep the prompt itself about the work.
 

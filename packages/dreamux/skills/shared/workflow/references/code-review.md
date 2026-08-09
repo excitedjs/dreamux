@@ -5,6 +5,15 @@ recipe: carrying a full code review as a single `workflow_run` — an eligibilit
 gate, context collection, independent multi-lens finders, per-finding
 confidence scoring, and one synthesized report.
 
+## Contents
+
+- [Stage design](#stage-design) — the five stages and their failure accounting
+- [Prompt discipline](#prompt-discipline) — output contract, rejection
+  semantics, self-contained prompts
+- [TeamMate budget](#teammate-budget) — cost arithmetic against the run caps
+- [Script](#script) — the complete runnable module
+- [Invocation](#invocation) — call shape and result fields
+
 The review target is any change the Team workspace can read: a GitHub pull
 request, a GitLab merge request, a local branch or commit range, or an
 uncommitted working-tree diff. Use this recipe when the operator wants one
@@ -21,7 +30,10 @@ instead.
    contents) of the repository's agent guidance files (`CLAUDE.md`,
    `AGENTS.md`) at the root and in directories the change touches; one
    summarizes the change (intent, scope, risk areas). Both results feed every
-   later prompt.
+   later prompt. When guidance discovery fails, the guidance lens is skipped
+   and recorded as missing coverage — it must not audit against a silently
+   empty list. A missing summary is tolerable: finders read the change
+   themselves, and the placeholder is visible in their prompts.
 3. **Find** — independent finder lenses run in parallel, each blind to the
    others: guidance-file compliance, a shallow bug scan limited to the changed
    hunks, git history and blame context, review comments on prior change
@@ -36,13 +48,15 @@ instead.
    rather than introduced; does the cited guidance actually say that), using a
    fixed 0-100 rubric. Findings advance through `pipeline` independently of
    one another: each finding's vote aggregation follows its own three votes
-   without waiting for the other findings.
+   without waiting for the other findings. A finding that keeps fewer than two
+   settled votes is returned as `unverified` — verifier failure must not
+   silently launder a finding into a clean report.
 5. **Report** — findings that keep at least two settled votes and average 80 or
    higher survive; one TeamMate formats the final review comment, noting
-   incomplete coverage when any lens failed.
+   incomplete coverage and unverified findings when there are any.
 
-The run returns the report plus a `coverage` record; the caller decides where
-the report goes. When a channel reply tool is available, post it there; or
+The run returns the report plus `coverage` and `unverified` records; the
+caller decides where the report goes. When a channel reply tool is available, post it there; or
 have a follow-up `send` to the reporter TeamMate publish it with the forge's
 own tooling (for example `gh` for GitHub or `glab` for GitLab) once the
 operator confirms.
@@ -57,8 +71,10 @@ can therefore ask for data directly, without output-format boilerplate. With
 Failure semantics drive the script structure:
 
 - An ordinary failed turn settles the `agent()` call to `null`. `parallel`
-  and `pipeline` contain per-item failures as `null` entries — always
-  `.filter(Boolean)` before aggregating.
+  and `pipeline` contain per-item failures as `null` entries and keep results
+  index-aligned with their inputs — account required coverage positionally
+  first (which lens failed, which finding lost its verifiers), then drop
+  nulls with `.filter(Boolean)` only where item identity no longer matters.
 - A schema call rejects — it does not return `null` — when the runtime cannot
   provide structured output or reports success with an empty or invalid JSON
   result. A directly awaited rejection fails the whole run; that is the right
@@ -211,7 +227,10 @@ const ctx = await parallel([
     { label: 'summary', phase: 'context', intent: 'Change summarizer' },
   ),
 ]);
-const guidancePaths = (ctx[0] && ctx[0].paths) || [];
+// a null discovery result is a coverage gap, distinct from a successful
+// empty list (a repo that simply has no guidance files)
+const guidanceFailed = !ctx[0];
+const guidancePaths = guidanceFailed ? [] : ctx[0].paths;
 const summary = ctx[1] || '(summary unavailable)';
 
 const lenses = [
@@ -224,8 +243,13 @@ const lenses = [
 ];
 
 phase('find');
+// without discovered guidance files the guidance lens has nothing real to
+// audit — skip it and record the gap instead of auditing an empty list
+const activeLenses = guidanceFailed
+  ? lenses.filter((lens) => lens.key !== 'guidance')
+  : lenses;
 // parallel() preserves order, so a null entry identifies the failed lens
-const lensResults = await parallel(lenses.map((lens) => () =>
+const lensResults = await parallel(activeLenses.map((lens) => () =>
   agent(
     `Code review this change through one lens: ${target}\n${lens.prompt}\n` +
     `${FALSE_POSITIVES}\nChange summary:\n${summary}`,
@@ -237,15 +261,13 @@ const lensResults = await parallel(lenses.map((lens) => () =>
     },
   ),
 ));
-const failedLenses = lenses
-  .filter((lens, i) => !lensResults[i])
-  .map((lens) => lens.key);
+const failedLenses = [
+  ...(guidanceFailed ? ['guidance'] : []),
+  ...activeLenses.filter((lens, i) => !lensResults[i]).map((lens) => lens.key),
+];
 if (failedLenses.length === lenses.length) {
   return { error: 'every finder lens failed; the change was not reviewed', failedLenses };
 }
-const coverage = failedLenses.length
-  ? { complete: false, failedLenses }
-  : { complete: true };
 if (failedLenses.length) {
   log(`coverage incomplete: failed lenses ${failedLenses.join(', ')}`);
 }
@@ -262,12 +284,19 @@ log(`${found.length} raw findings, ${unique.length} unique`);
 const checkedLenses = lenses
   .filter((lens) => !failedLenses.includes(lens.key))
   .map((lens) => lens.key);
-const noIssuesReport = coverage.complete
+function coverageRecord(unverifiedCount) {
+  return {
+    complete: failedLenses.length === 0 && unverifiedCount === 0,
+    failedLenses,
+    unverifiedFindings: unverifiedCount,
+  };
+}
+const noIssuesReport = failedLenses.length === 0
   ? 'No issues found. Checked for bugs, security, history, and guidance-file compliance.'
   : `No issues found by the lenses that completed (${checkedLenses.join(', ')}). ` +
     `Coverage is incomplete: ${failedLenses.join(', ')} failed.`;
 if (!unique.length) {
-  return { issues: [], coverage, report: noIssuesReport };
+  return { issues: [], unverified: [], coverage: coverageRecord(0), report: noIssuesReport };
 }
 
 phase('verify');
@@ -296,28 +325,44 @@ const judged = await pipeline(
     return { ...finding, confidence: Math.round(average), votes: settled.length, index };
   },
 );
+// pipeline() results are index-aligned with `unique`: a null entry or a
+// finding with fewer than two settled votes is unverified, not clean
+const unverified = unique.filter((f, i) => {
+  const j = judged[i];
+  return !j || j.votes < 2;
+});
 const confirmed = judged
   .filter(Boolean)
   .filter((f) => f.votes >= 2 && f.confidence >= 80);
-log(`${confirmed.length} findings at >=80 confidence`);
+const coverage = coverageRecord(unverified.length);
+log(`${confirmed.length} findings at >=80 confidence, ${unverified.length} unverified`);
 
 phase('report');
+const unverifiedNote = unverified.length
+  ? ` ${unverified.length} finding(s) could not be verified (verifier failures) ` +
+    `and are returned in \`unverified\` for manual triage.`
+  : '';
 if (!confirmed.length) {
-  return { issues: [], coverage, report: noIssuesReport };
+  const reportText = unverified.length
+    ? `No issues confirmed.${unverifiedNote}`
+    : noIssuesReport;
+  return { issues: [], unverified, coverage, report: reportText };
 }
 const report = await agent(
   `Write the final code review comment for the change: ${target}\n` +
   `Confirmed issues (JSON): ${JSON.stringify(confirmed)}\n` +
+  `Unverified findings — verifiers failed, no confidence claim (JSON): ${JSON.stringify(unverified)}\n` +
   `Coverage (JSON): ${JSON.stringify(coverage)}\n` +
   `Format: a "### Code review" heading, "Found N issues:", then a numbered list; ` +
   `each item is a brief description with the flag reason in parentheses and a ` +
   `citation on the next line — file#line when the finding carries a line number, ` +
-  `the file path alone otherwise; never invent a line number. If coverage is ` +
-  `incomplete, end with one line naming the failed lenses. Brief, no emojis. ` +
-  `Return markdown only.`,
+  `the file path alone otherwise; never invent a line number. If there are ` +
+  `unverified findings, add a short "Unverified" section listing them without ` +
+  `confidence claims. If coverage is incomplete, end with one line naming the ` +
+  `failed lenses. Brief, no emojis. Return markdown only.`,
   { label: 'report', phase: 'report', intent: 'Review report writer' },
 );
-return { issues: confirmed, coverage, report };
+return { issues: confirmed, unverified, coverage, report };
 ```
 
 The verify stage shows the three-argument stage signature: stage one returns
@@ -343,7 +388,8 @@ Team workspace:
 
 `max_concurrency` defaults to 16; lower it only when the workspace or runtime
 provider needs gentler fan-out. After the terminal completion, read `issues`
-for the structured findings, `coverage` for whether every finder lens
-completed, and `report` for the formatted comment; use the reporter TeamMate's
-concrete name with `send` for follow-ups such as posting the comment through
-the forge's tooling or re-checking one finding interactively.
+for the confirmed findings, `unverified` for findings whose verifiers failed,
+`coverage` for whether every finder lens ran and every finding was verified,
+and `report` for the formatted comment; use the reporter TeamMate's concrete
+name with `send` for follow-ups such as posting the comment through the
+forge's tooling or re-checking one finding interactively.
