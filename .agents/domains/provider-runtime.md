@@ -123,6 +123,60 @@ Source:
 - `/packages/dreamux/src/service/teammate-service/factory.ts`
 - `/packages/dreamux/tests/package-boundary-guards.test.ts`
 
+## Codex Portable Output Schema
+
+Dreamux core passes the neutral `AgentRuntimeTextInput.outputSchema` unchanged.
+`@excitedjs/agent-runtime-codex` privately compiles it for Codex strict
+structured output; no Codex branch, retry loop, or schema validator exists in
+core.
+
+The accepted portable vocabulary is intentionally narrow:
+
+- one non-null closed root object;
+- nested closed object schemas and arrays with exactly one `items` schema;
+- `object`, `array`, `string`, `number`, `integer`, `boolean`, and `null`;
+- exactly `[T, "null"]` for nullable values, with no other unions;
+- `description`, primitive-value `enum`, and numeric `minimum` / `maximum`.
+
+Every object property is required on the Codex wire schema. An originally
+optional non-nullable property gains `null` in its wire type (and enum when
+present). The private restoration plan recursively removes only those optional
+`null` placeholders. Required nullable fields remain present as `null`.
+
+Compilation validates and clones the input. Open objects, schema-valued
+`additionalProperties`, optional-nullable properties, tuples, missing or
+ambiguous types, non-null unions, references/composition/conditionals,
+unsupported bounds, unknown keywords, and other unsupported shapes return
+`UnsupportedAgentRuntimeFeatureError` with `feature: "outputSchema"` before
+pending submission accounting or `turn/start`. Errors include the schema path;
+constraints are never silently dropped.
+
+Each active Codex turn slot owns either no codec or one authoritative private
+codec. Its fingerprint canonically covers both the wire schema and restoration
+plan. Compatible structured followers may fold into the active turn; a different
+fingerprint or structured/unstructured mixing fails before another
+`turn/start`. After Codex accepts the primary turn, the codec is bound to that
+exact native turn id.
+
+Restoration runs once, behind the existing pending-turn mutual-exclusion guard,
+before `onTurnCompleted`. A successful restoration is the only structured text
+seen by `CodexRuntime.recordCollectedTurn()`, so `lastResult` and completed
+settlement use the neutral restored JSON. Parse or shape restoration failure does
+not call `onTurnCompleted` or mutate `lastResult`; it emits one ordinary failed
+`TurnSettledSignal` with `text: null`. Submission failure, stop, app-server
+teardown/restart, and late completion clear or discard in-memory codecs through
+the same turn lifecycle and never restore or settle twice.
+
+Source:
+
+- `/packages/agent-runtime/codex/src/output-schema-codec.ts`
+- `/packages/agent-runtime/codex/src/turn-manager.ts`
+- `/packages/agent-runtime/codex/src/runtime.ts`
+- `/packages/agent-runtime/codex/tests/output-schema-codec.test.ts`
+- `/packages/agent-runtime/codex/tests/turn-manager.test.ts`
+- `/packages/agent-runtime/codex/tests/runtime-output-schema.test.ts`
+- `/packages/dreamux/tests/codex-live.test.ts`
+
 ## Bundled Skills
 
 Dreamux ships bundled skills under `/packages/dreamux/skills/`, but it does not

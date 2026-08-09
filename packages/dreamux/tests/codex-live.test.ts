@@ -17,10 +17,10 @@
  * (e.g. dev machines without codex, or pre-merge sandboxes). The skip
  * emits a loud `console.warn` so it's visible in test output.
  *
- * The issue #63 mid-turn model gate needs a usable Codex model login, not just
- * the app-server binary. It runs by default outside CI. CI loud-skips that one
- * gate unless `DREAMUX_RUN_LIVE_MODEL_GATE=1` is set, because public CI cannot
- * assume an operator's interactive Codex auth is available.
+ * The real-model gates need a usable Codex model login, not just the app-server
+ * binary. They run by default outside CI. CI loud-skips them unless
+ * `DREAMUX_RUN_LIVE_MODEL_GATE=1` is set, because public CI cannot assume an
+ * operator's interactive Codex auth is available.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -37,7 +37,10 @@ import {
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { CodexProcess } from '@excitedjs/agent-runtime-codex';
+import {
+  CodexProcess,
+  CodexRuntime,
+} from '@excitedjs/agent-runtime-codex';
 import { CodexWsClient, type CodexWsClientOptions } from '@excitedjs/agent-runtime-codex';
 import { performInitializeHandshake } from '@excitedjs/agent-runtime-codex';
 import {
@@ -57,6 +60,11 @@ import { codexAgentRuntimeCatalog } from './helpers/fake-agent-runtime.js';
 import { saveDispatcherAccess } from '@excitedjs/feishu-channel';
 import { dispatcherDir } from '../src/platform/paths.js';
 import type { DreamuxConfig } from '../src/config/config.js';
+import type {
+  AgentRuntimePathContext,
+  AgentRuntimeStateCallbacks,
+  TurnSettledSignal,
+} from '@excitedjs/dreamux-types';
 import type {
   ServerNotification,
   ThreadStartResponse,
@@ -247,6 +255,9 @@ function createIsolatedCodexHome(dir: string): string {
       'approval_policy = "never"',
       'sandbox_mode = "danger-full-access"',
       '',
+      '[features]',
+      'apps = false',
+      '',
       '[apps._default]',
       'enabled = false',
       'destructive_enabled = false',
@@ -358,9 +369,9 @@ describe('codex live integration', () => {
   // From here on we know codex is on PATH and reports a parseable version.
   if (!runModelGate) {
     console.warn(
-      `[codex-live] issue #63 mid-turn model gate SKIPPED in CI. ` +
+      `[codex-live] live model gates SKIPPED in CI. ` +
         `Set ${MODEL_GATE_ENV}=1 in an environment with usable Codex model auth ` +
-        `to verify the real model/tool folding path.`,
+        `to verify structured output and model/tool folding paths.`,
     );
   }
 
@@ -485,6 +496,147 @@ describe('codex live integration', () => {
       }
     },
     60_000,
+  );
+
+  (runModelGate ? it : it.skip)(
+    `runs the portable optional-field schema through real codex ${detection.version}`,
+    async () => {
+      const operatorHome = homedir();
+      const previousCodexHome = process.env['CODEX_HOME'];
+      const dir = mkdtempSync(join(operatorHome, '.dreamux-codex-schema-live-'));
+      const isolatedCodexHome = createIsolatedCodexHome(dir);
+      const cwd = join(dir, 'cwd');
+      const socketPath = join(dir, 'codex.sock');
+      const settled: TurnSettledSignal[] = [];
+      let client: RecordingCodexWsClient | null = null;
+      const paths: AgentRuntimePathContext = {
+        cacheDir: () => join(dir, 'cache'),
+        logsDir: () => join(dir, 'logs'),
+        runtimeSocketDirs: () => [dir],
+      };
+      const state: AgentRuntimeStateCallbacks = {
+        async setStatus(): Promise<void> {},
+        async setCheckpoint(): Promise<void> {},
+      };
+      process.env['CODEX_HOME'] = isolatedCodexHome;
+
+      const runtime = new CodexRuntime(
+        { runtime_id: 'schema-live', checkpoint_id: null },
+        {
+          cwd,
+          state,
+          paths,
+          allocateSocketPath: () => socketPath,
+          codexBinPath: 'codex',
+          resolveExtraArgs: () => codexArgsToCli(
+            parseCodexArgs('{"sandboxMode":"danger-full-access"}'),
+          ),
+          codexClientFactory: (path) => {
+            client = new RecordingCodexWsClient({ socketPath: path });
+            return client;
+          },
+          codexHomeDoctor: () => {
+            /* real Codex auth is supplied through the isolated CODEX_HOME */
+          },
+          onTurnSettled: (signal) => settled.push(signal),
+        },
+      );
+
+      try {
+        await runtime.start();
+        const outputSchema = {
+          type: 'object',
+          properties: {
+            kind: {
+              type: 'string',
+              enum: ['portable'],
+            },
+            score: {
+              type: 'integer',
+              minimum: 7,
+              maximum: 7,
+            },
+            nullableFlag: {
+              type: ['boolean', 'null'],
+            },
+            optionalNote: {
+              type: 'string',
+              enum: ['present'],
+            },
+          },
+          required: ['kind', 'score', 'nullableFlag'],
+          additionalProperties: false,
+        };
+        await expect(runtime.completionInput({
+          sourceId: 'portable-output-schema-live',
+          text: [
+            'Return the requested structured result.',
+            'Use kind "portable", score 7, nullableFlag null, and optionalNote null.',
+          ].join(' '),
+          outputSchema,
+        })).resolves.toMatchObject({ status: 'submitted' });
+        try {
+          await waitFor(
+            () => settled.length === 1,
+            120_000,
+            'portable structured-output turn settled',
+          );
+        } catch (err) {
+          const liveClient = client!;
+          const suffix = notificationDebugSummary(liveClient);
+          const turnStart = turnStartRequests(liveClient)[0];
+          throw new Error(
+            `${err instanceof Error ? err.message : String(err)}; ` +
+              `turn/start error=${turnStart?.error ?? 'none'}; ` +
+              `recent notifications: ${suffix}`,
+          );
+        }
+
+        const settledTurn = settled[0];
+        if (settledTurn?.status !== 'completed') {
+          const liveClient = client!;
+          throw new Error(
+            `portable structured-output turn ${settledTurn?.status ?? 'missing'}: ` +
+              `${settledTurn?.error?.message ?? 'no settlement error'}; ` +
+              `recent notifications: ${notificationDebugSummary(liveClient)}`,
+          );
+        }
+        expect(settledTurn).toMatchObject({
+          status: 'completed',
+          result: { text: expect.any(String) as string },
+        });
+        const resultText = settledTurn.result?.text;
+        expect(resultText).not.toBeNull();
+        expect(JSON.parse(resultText ?? '')).toEqual({
+          kind: 'portable',
+          score: 7,
+          nullableFlag: null,
+        });
+        expect(await runtime.getLast()).toEqual({ text: resultText });
+
+        const liveClient = client!;
+        const request = turnStartRequests(liveClient)[0];
+        const params = request?.params as {
+          outputSchema?: Record<string, unknown>;
+        };
+        expect(params.outputSchema).toMatchObject({
+          required: ['kind', 'nullableFlag', 'optionalNote', 'score'],
+          properties: {
+            kind: { enum: ['portable'] },
+            score: { minimum: 7, maximum: 7 },
+            nullableFlag: { type: ['boolean', 'null'] },
+            optionalNote: { type: ['string', 'null'] },
+          },
+          additionalProperties: false,
+        });
+      } finally {
+        await runtime.stop();
+        if (previousCodexHome === undefined) delete process.env['CODEX_HOME'];
+        else process.env['CODEX_HOME'] = previousCodexHome;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    180_000,
   );
 
   (runModelGate ? it : it.skip)(

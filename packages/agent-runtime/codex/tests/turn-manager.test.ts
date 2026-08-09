@@ -162,6 +162,89 @@ describe('TurnManager text input submission', () => {
       },
     ]);
   });
+
+  it('compiles and restores optional output fields before completion', async () => {
+    const client = new FoldingFakeCodexClient(['turn-1']);
+    const completed: CollectedTurn[] = [];
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+      onTurnCompleted: (turn) => completed.push(turn),
+    });
+    const outputSchema = optionalValueSchema();
+
+    await expect(manager.submitTextInput({
+      text: 'return optional JSON',
+      outputSchema,
+    })).resolves.toEqual({ status: 'submitted', turnId: 'turn-1' });
+
+    expect(client.outputSchemas).toEqual([{
+      type: 'object',
+      properties: {
+        value: { type: ['string', 'null'] },
+      },
+      required: ['value'],
+      additionalProperties: false,
+    }]);
+    expect(client.outputSchemas[0]).not.toBe(outputSchema);
+
+    client.emitCompleted('thread-1', 'turn-1', '{"value":null}');
+    await waitFor(() => completed.length === 1);
+    expect(completed[0]?.items).toContainEqual(
+      expect.objectContaining({ type: 'agentMessage', text: '{}' }),
+    );
+  });
+
+  it('rejects incompatible schemas before turn/start and slot admission', async () => {
+    const client = new DelayedFakeCodexClient();
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+    });
+
+    await expect(manager.submitTextInput({
+      text: 'invalid schema',
+      outputSchema: {
+        type: 'object',
+        properties: { value: { type: ['string', 'number'] } },
+        additionalProperties: false,
+      },
+    })).resolves.toMatchObject({
+      status: 'failed',
+      error: {
+        name: 'UnsupportedAgentRuntimeFeatureError',
+        feature: 'outputSchema',
+        message: expect.stringContaining('$.properties.value.type'),
+      },
+    });
+    expect(client.inputs).toEqual([]);
+    expect(manager.isBusy()).toBe(false);
+  });
+
+  it('discards a failed submission codec before the next turn', async () => {
+    const client = new FailOnceFakeCodexClient();
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+    });
+
+    await expect(manager.submitTextInput({
+      text: 'structured failure',
+      outputSchema: optionalValueSchema(),
+    })).resolves.toMatchObject({ status: 'failed' });
+    expect(manager.isBusy()).toBe(false);
+
+    await expect(manager.submitTextInput({
+      text: 'plain successor',
+    })).resolves.toEqual({ status: 'submitted', turnId: 'turn-2' });
+    expect(client.outputSchemas).toEqual([
+      expect.any(Object),
+      undefined,
+    ]);
+  });
 });
 
 describe('TurnManager turn settlement', () => {
@@ -272,6 +355,161 @@ describe('TurnManager turn settlement', () => {
     await flush();
 
     expect(completed.map((turn) => turn.turnId)).toEqual(['turn-1']);
+  });
+
+  it('folds compatible structured submissions and restores exactly once', async () => {
+    const client = new FoldingFakeCodexClient(['turn-1', 'turn-2']);
+    const completed: CollectedTurn[] = [];
+    const settled: TurnSettledSignal[] = [];
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+      onTurnCompleted: (turn) => completed.push(turn),
+      onTurnSettled: (turn) => settled.push(turn),
+    });
+
+    await expect(manager.submitTextInput({
+      text: 'first',
+      outputSchema: optionalValueSchema(),
+    })).resolves.toEqual({ status: 'submitted', turnId: 'turn-1' });
+    await expect(manager.submitTextInput({
+      text: 'folded',
+      outputSchema: {
+        additionalProperties: false,
+        required: [],
+        properties: { value: { type: 'string' } },
+        type: 'object',
+      },
+    })).resolves.toEqual({ status: 'submitted', turnId: 'turn-1' });
+    expect(client.inputs).toEqual(['first', 'folded']);
+
+    client.emitCompleted('thread-1', 'turn-1', '{"value":null}');
+    client.emitCompleted('thread-1', 'turn-2', '{"value":"ignored"}');
+    await waitFor(() => completed.length === 1);
+    await flush();
+
+    expect(completed[0]?.items).toContainEqual(
+      expect.objectContaining({ text: '{}' }),
+    );
+    expect(settled).toEqual([]);
+  });
+
+  it('rejects incompatible structured folding without another turn/start', async () => {
+    const client = new FoldingFakeCodexClient(['turn-1']);
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+    });
+
+    await manager.submitTextInput({
+      text: 'optional',
+      outputSchema: optionalValueSchema(),
+    });
+    await expect(manager.submitTextInput({
+      text: 'required nullable',
+      outputSchema: requiredNullableValueSchema(),
+    })).resolves.toMatchObject({
+      status: 'failed',
+      error: {
+        name: 'UnsupportedAgentRuntimeFeatureError',
+        feature: 'outputSchema',
+      },
+    });
+    expect(client.inputs).toEqual(['optional']);
+  });
+
+  it.each([
+    ['structured then plain', true],
+    ['plain then structured', false],
+  ])('rejects active-turn mixing for %s', async (_label, structuredFirst) => {
+    const client = new FoldingFakeCodexClient(['turn-1']);
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+    });
+    const structured = {
+      text: 'structured',
+      outputSchema: optionalValueSchema(),
+    };
+    const plain = { text: 'plain' };
+
+    await manager.submitTextInput(structuredFirst ? structured : plain);
+    await expect(
+      manager.submitTextInput(structuredFirst ? plain : structured),
+    ).resolves.toMatchObject({
+      status: 'failed',
+      error: {
+        name: 'UnsupportedAgentRuntimeFeatureError',
+        feature: 'outputSchema',
+      },
+    });
+    expect(client.inputs).toHaveLength(1);
+  });
+
+  it('settles restoration failure without forwarding completion', async () => {
+    const client = new FoldingFakeCodexClient(['turn-1']);
+    const completed: CollectedTurn[] = [];
+    const settled: TurnSettledSignal[] = [];
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+      onTurnCompleted: (turn) => completed.push(turn),
+      onTurnSettled: (turn) => settled.push(turn),
+    });
+
+    await manager.submitTextInput({
+      text: 'invalid restored shape',
+      outputSchema: {
+        type: 'object',
+        properties: {
+          values: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['values'],
+        additionalProperties: false,
+      },
+    });
+    client.emitCompleted('thread-1', 'turn-1', '{"values":{}}');
+    await waitFor(() => settled.length === 1);
+
+    expect(completed).toEqual([]);
+    expect(settled[0]).toMatchObject({
+      turnId: 'turn-1',
+      status: 'failed',
+      result: { text: null },
+      error: {
+        message: expect.stringContaining('$.values: expected array'),
+      },
+    });
+  });
+
+  it('drops structured late completion after stop without restoring twice', async () => {
+    const client = new FoldingFakeCodexClient(['turn-1']);
+    const completed: CollectedTurn[] = [];
+    const settled: TurnSettledSignal[] = [];
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+      onTurnCompleted: (turn) => completed.push(turn),
+      onTurnSettled: (turn) => settled.push(turn),
+    });
+
+    await manager.submitTextInput({
+      text: 'wait',
+      outputSchema: optionalValueSchema(),
+    });
+    await manager.stop();
+    client.emitCompleted('thread-1', 'turn-1', '{');
+    await flush();
+
+    expect(completed).toEqual([]);
+    expect(settled).toEqual([
+      { turnId: 'turn-1', status: 'stopped', result: { text: null } },
+    ]);
   });
 
   it('starts a fresh subscription for a sequential send after the previous turn completed', async () => {
@@ -405,6 +643,23 @@ function input(messageId: string, text: string) {
   };
 }
 
+function optionalValueSchema(): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties: { value: { type: 'string' } },
+    additionalProperties: false,
+  };
+}
+
+function requiredNullableValueSchema(): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties: { value: { type: ['string', 'null'] } },
+    required: ['value'],
+    additionalProperties: false,
+  };
+}
+
 /** A fake client that acks turn/start but never emits turn/completed. */
 class ManualFakeCodexClient {
   readonly inputs: string[] = [];
@@ -473,6 +728,7 @@ class FakeCodexClient {
 
 class FoldingFakeCodexClient {
   readonly inputs: string[] = [];
+  readonly outputSchemas: Array<Record<string, unknown> | undefined> = [];
   private readonly handlers: NotificationHandler[] = [];
   private nextIndex = 0;
 
@@ -486,8 +742,10 @@ class FoldingFakeCodexClient {
     if (method !== 'turn/start') throw new Error(`unexpected method ${method}`);
     const p = params as {
       input: Array<{ text: string }>;
+      outputSchema?: Record<string, unknown>;
     };
     this.inputs.push(p.input[0]?.text ?? '');
+    this.outputSchemas.push(p.outputSchema);
     const turnId = this.turnIds[this.nextIndex++];
     if (turnId === undefined) throw new Error('no scripted turn id');
     return { turn: { id: turnId } } as TurnStartResponse as R;
@@ -514,6 +772,25 @@ class FoldingFakeCodexClient {
 
   private emit(notification: ServerNotification): void {
     for (const handler of this.handlers) handler(notification);
+  }
+}
+
+class FailOnceFakeCodexClient {
+  readonly outputSchemas: Array<Record<string, unknown> | undefined> = [];
+  private readonly handlers: NotificationHandler[] = [];
+  private requests = 0;
+
+  onNotification(handler: NotificationHandler): void {
+    this.handlers.push(handler);
+  }
+
+  async request<R>(method: string, params: unknown): Promise<R> {
+    if (method !== 'turn/start') throw new Error(`unexpected method ${method}`);
+    this.requests += 1;
+    const p = params as { outputSchema?: Record<string, unknown> };
+    this.outputSchemas.push(p.outputSchema);
+    if (this.requests === 1) throw new Error('turn/start rejected');
+    return { turn: { id: 'turn-2' } } as TurnStartResponse as R;
   }
 }
 

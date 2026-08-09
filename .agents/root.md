@@ -111,7 +111,6 @@ history and rationale; when you need current behavior, pair them with
 - [Non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md)
 
 ## Active Proposals
-
 - [AgentRuntime input surface cleanup](proposals/agent-runtime-input-surface-cleanup.md)
   — draft technical design for narrowing the provider-facing runtime input
   surface: plain text `completionInput` for non-channel turns, `channelInput`
@@ -184,6 +183,10 @@ history still matters.
 
 ## Archive
 
+- [Codex portable output schema adapter](archive/proposals/codex-portable-output-schema.md)
+  — implemented private Codex schema compilation, result restoration, and
+  active-turn compatibility; current behavior is documented in
+  [Provider Runtime](domains/provider-runtime.md#codex-portable-output-schema).
 - [Workflow ultracode dialect parity](archive/proposals/workflow-ultracode-dialect-parity.md)
   — implemented issue #318 requests 1-4; current behavior is documented in
   [Dynamic Workflow usage](reference/dynamic-workflow-usage.md) and

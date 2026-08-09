@@ -9,13 +9,21 @@
  */
 
 import {
+  extractAssistantText,
   subscribeTurnCollection,
   submitTurnStart,
   type CollectedTurn,
   type TurnCollector,
 } from './events.js';
+import {
+  compileCodexOutputSchema,
+  type CodexOutputSchemaCodec,
+} from './output-schema-codec.js';
 import type { CodexWsClient } from './rpc.js';
-import { DEFAULT_MESSAGE_ID_DEDUPE_WINDOW } from '@excitedjs/dreamux-utils';
+import {
+  DEFAULT_MESSAGE_ID_DEDUPE_WINDOW,
+  unsupportedFeatureError,
+} from '@excitedjs/dreamux-utils';
 import type {
   InboundTurnInput,
   InboundDeliveryResult,
@@ -25,6 +33,7 @@ import type {
 
 interface ActiveTurnSlot {
   collector: TurnCollector;
+  codec: CodexOutputSchemaCodec | null;
   turnId: string | null;
   candidateTurnId: string | null;
   primaryFailed: boolean;
@@ -73,7 +82,10 @@ export class TurnManager {
    * `stop()` each still-pending turn is settled as `stopped` so a teammate turn
    * interrupted by teardown is not lost.
    */
-  private readonly pendingTurnIds = new Set<string>();
+  private readonly pendingTurns = new Map<
+    string,
+    { codec: CodexOutputSchemaCodec | null }
+  >();
   private idlePromise: Promise<void> | null = null;
   private idleResolve: (() => void) | null = null;
   private readonly log: NonNullable<TurnManagerOptions['log']>;
@@ -92,7 +104,7 @@ export class TurnManager {
   }
 
   isBusy(): boolean {
-    return this.activeTurnSlot !== null || this.pendingTurnIds.size > 0;
+    return this.activeTurnSlot !== null || this.pendingTurns.size > 0;
   }
 
   waitIdle(): Promise<void> {
@@ -123,7 +135,14 @@ export class TurnManager {
       return { status: 'failed', error };
     }
 
-    const activeTurn = this.claimActiveTurnSlot(threadId);
+    let activeTurn: ReturnType<TurnManager['claimActiveTurnSlot']>;
+    try {
+      activeTurn = this.claimActiveTurnSlot(threadId, null);
+    } catch (err) {
+      const error = asError(err);
+      this.log('error', error.message, error);
+      return { status: 'failed', error };
+    }
     activeTurn.slot.pendingSubmissions += 1;
 
     let res: Awaited<ReturnType<typeof submitTurnStart>>;
@@ -176,7 +195,24 @@ export class TurnManager {
       return { status: 'failed', error };
     }
 
-    const activeTurn = this.claimActiveTurnSlot(threadId);
+    let codec: CodexOutputSchemaCodec | null = null;
+    if (input.outputSchema !== undefined) {
+      try {
+        codec = compileCodexOutputSchema(input.outputSchema);
+      } catch (err) {
+        const error = asError(err);
+        this.log('error', error.message, error);
+        return { status: 'failed', error };
+      }
+    }
+    let activeTurn: ReturnType<TurnManager['claimActiveTurnSlot']>;
+    try {
+      activeTurn = this.claimActiveTurnSlot(threadId, codec);
+    } catch (err) {
+      const error = asError(err);
+      this.log('error', error.message, error);
+      return { status: 'failed', error };
+    }
     activeTurn.slot.pendingSubmissions += 1;
 
     let res: Awaited<ReturnType<typeof submitTurnStart>>;
@@ -186,7 +222,7 @@ export class TurnManager {
         threadId,
         input.text,
         this.opts.turnCwd ?? null,
-        input.outputSchema,
+        activeTurn.slot.codec?.wireSchema,
       );
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
@@ -214,30 +250,37 @@ export class TurnManager {
     this.stopped = true;
     const activeSlot = this.activeTurnSlot;
     this.activeTurnSlot = null;
+    if (activeSlot !== null) activeSlot.codec = null;
     if (activeSlot !== null && activeSlot.turnId === null) {
       activeSlot.rejectTurnId(new Error('codex turn stopped before acceptance'));
     }
     // Any turn still in flight at teardown will never reach `turn/completed`
     // (the WS is closing). Settle each as `stopped` so an interrupted teammate
     // turn is delivered with a status rather than vanishing.
-    for (const turnId of this.pendingTurnIds) {
+    for (const turnId of this.pendingTurns.keys()) {
       this.opts.onTurnSettled?.({
         turnId,
         status: 'stopped',
         result: { text: null },
       });
     }
-    this.pendingTurnIds.clear();
+    this.pendingTurns.clear();
     this.activeTurnId = null;
     this.resolveIdleWaitersIfIdle();
   }
 
-  private claimActiveTurnSlot(threadId: string): {
+  private claimActiveTurnSlot(
+    threadId: string,
+    codec: CodexOutputSchemaCodec | null,
+  ): {
     slot: ActiveTurnSlot;
     primary: boolean;
   } {
     const active = this.activeTurnSlot;
-    if (active !== null) return { slot: active, primary: false };
+    if (active !== null) {
+      assertCompatibleCodec(active.codec, codec);
+      return { slot: active, primary: false };
+    }
 
     let resolveTurnId!: (turnId: string) => void;
     let rejectTurnId!: (err: Error) => void;
@@ -251,6 +294,7 @@ export class TurnManager {
     turnIdPromise.catch(() => undefined);
     const slot: ActiveTurnSlot = {
       collector: subscribeTurnCollection(this.opts.client, threadId),
+      codec,
       turnId: null,
       candidateTurnId: null,
       primaryFailed: false,
@@ -296,6 +340,7 @@ export class TurnManager {
     }
     if (slot.primaryFailed && slot.pendingSubmissions === 0) {
       if (this.activeTurnSlot === slot) this.activeTurnSlot = null;
+      slot.codec = null;
       slot.rejectTurnId(error);
       this.resolveIdleWaitersIfIdle();
     }
@@ -320,27 +365,43 @@ export class TurnManager {
   private trackTurn(
     turnId: string,
     collector: TurnCollector,
-    slot?: ActiveTurnSlot,
+    slot: ActiveTurnSlot,
   ): void {
-    if (this.pendingTurnIds.has(turnId)) return;
-    this.pendingTurnIds.add(turnId);
+    if (this.pendingTurns.has(turnId)) return;
+    this.pendingTurns.set(turnId, { codec: slot.codec });
     this.activeTurnId = turnId;
     void collector.awaitTurn(turnId).then(
       (turn) => {
         // Only forward completion if this turn was still pending. If `stop()`
         // already settled it as `stopped`, the delete returns false and we drop
         // the late completion so a turn is never settled twice.
-        if (this.pendingTurnIds.delete(turnId)) {
+        const pending = this.pendingTurns.get(turnId);
+        if (pending !== undefined && this.pendingTurns.delete(turnId)) {
           if (this.activeTurnSlot === slot) this.activeTurnSlot = null;
           if (this.activeTurnId === turnId) this.activeTurnId = null;
-          this.opts.onTurnCompleted?.(turn);
+          let completedTurn: CollectedTurn;
+          try {
+            completedTurn = pending.codec === null
+              ? turn
+              : restoreCollectedTurn(turn, pending.codec);
+          } catch (err) {
+            this.opts.onTurnSettled?.({
+              turnId,
+              status: 'failed',
+              result: { text: null },
+              error: asError(err),
+            });
+            this.resolveIdleWaitersIfIdle();
+            return;
+          }
+          this.opts.onTurnCompleted?.(completedTurn);
           this.resolveIdleWaitersIfIdle();
         }
       },
       (err) => {
         // Same mutual-exclusion guard as the completed path: only settle as
         // `failed` if `stop()` did not already settle it as `stopped`.
-        if (this.pendingTurnIds.delete(turnId)) {
+        if (this.pendingTurns.delete(turnId)) {
           if (this.activeTurnSlot === slot) this.activeTurnSlot = null;
           if (this.activeTurnId === turnId) this.activeTurnId = null;
           this.opts.onTurnSettled?.({
@@ -385,4 +446,57 @@ export class TurnManager {
     this.idleResolve = null;
     resolve?.();
   }
+}
+
+function assertCompatibleCodec(
+  active: CodexOutputSchemaCodec | null,
+  candidate: CodexOutputSchemaCodec | null,
+): void {
+  if (active === null && candidate === null) return;
+  if (active !== null && candidate !== null) {
+    if (active.fingerprint === candidate.fingerprint) return;
+    throw unsupportedFeatureError(
+      'outputSchema',
+      'codex active turn has an incompatible outputSchema',
+    );
+  }
+  throw unsupportedFeatureError(
+    'outputSchema',
+    active === null
+      ? 'codex cannot fold structured output into an active unstructured turn'
+      : 'codex cannot fold unstructured input into an active structured turn',
+  );
+}
+
+function restoreCollectedTurn(
+  turn: CollectedTurn,
+  codec: CodexOutputSchemaCodec,
+): CollectedTurn {
+  const text = extractAssistantText(turn);
+  if (text === null) {
+    throw new Error(
+      `codex outputSchema restoration for turn ${turn.turnId}: ` +
+        'completed turn has no assistant JSON text',
+    );
+  }
+  const restoredText = codec.restore(text);
+  let replaced = false;
+  const items = [...turn.items].reverse().map((item) => {
+    if (replaced || item.type !== 'agentMessage' || item.text !== text) {
+      return item;
+    }
+    replaced = true;
+    return { ...item, text: restoredText };
+  }).reverse();
+  if (!replaced) {
+    throw new Error(
+      `codex outputSchema restoration for turn ${turn.turnId}: ` +
+        'assistant JSON text was not found',
+    );
+  }
+  return { ...turn, items };
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
