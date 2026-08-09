@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Unsubscribe Codex turn collectors after completion, failure, rejected turn/start, direct-run cleanup, and runtime stop so stale collectors cannot observe later turns.",
+      "type": "patch",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "053700@gmail.com"
+}

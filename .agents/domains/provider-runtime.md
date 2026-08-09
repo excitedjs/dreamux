@@ -167,9 +167,17 @@ not call `onTurnCompleted` or mutate `lastResult`; it emits one ordinary failed
 teardown/restart, and late completion clear or discard in-memory codecs through
 the same turn lifecycle and never restore or settle twice.
 
+Each collector owns and unregisters exactly one Codex notification handler.
+Normal completion and terminal failure close it automatically; rejected
+`turn/start`, runtime stop, and direct `runTurn` cleanup dispose it explicitly.
+An abandoned collector therefore cannot buffer a later turn or accumulate
+handlers on the resident Codex client.
+
 Source:
 
 - `/packages/agent-runtime/codex/src/output-schema-codec.ts`
+- `/packages/agent-runtime/codex/src/events.ts`
+- `/packages/agent-runtime/codex/src/rpc.ts`
 - `/packages/agent-runtime/codex/src/turn-manager.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
 - `/packages/agent-runtime/codex/tests/output-schema-codec.test.ts`

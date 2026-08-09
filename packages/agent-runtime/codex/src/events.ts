@@ -25,6 +25,7 @@ export interface CollectedTurn {
 
 export interface TurnCollector {
   awaitTurn(turnId?: string): Promise<CollectedTurn>;
+  dispose(): void;
 }
 
 /**
@@ -83,6 +84,7 @@ export function subscribeTurnCollection(
   let firstFailure: Error | null = null;
   let unscopedFailure: Error | null = null;
   let closed = false;
+  let unsubscribe = (): void => {};
   let awaiting:
     | {
         turnId: string | null;
@@ -93,8 +95,12 @@ export function subscribeTurnCollection(
     | null = null;
 
   const closeCollector = (): void => {
+    if (closed) return;
     closed = true;
     itemsByTurn.clear();
+    completedByTurn.clear();
+    failuresByTurn.clear();
+    unsubscribe();
   };
 
   const resolveAwaiting = (): void => {
@@ -135,7 +141,7 @@ export function subscribeTurnCollection(
     }
   };
 
-  client.onNotification((notif) => {
+  unsubscribe = client.onNotification((notif) => {
     const p = (notif.params ?? {}) as Record<string, unknown>;
     const nThreadId = typeof p['threadId'] === 'string' ? (p['threadId'] as string) : null;
     const matches = acceptAnyThread || nThreadId === threadId;
@@ -226,6 +232,13 @@ export function subscribeTurnCollection(
       };
       return promise;
     },
+    dispose(): void {
+      if (awaiting !== null) {
+        awaiting.reject(new Error('codex turn collector disposed'));
+        awaiting = null;
+      }
+      closeCollector();
+    },
   };
 }
 
@@ -272,8 +285,12 @@ export async function runTurn(
   cwd: string | null,
 ): Promise<CollectedTurn> {
   const collector = subscribeTurnCollection(client, threadId);
-  const res = await submitTurnStart(client, threadId, prompt, cwd);
-  return collector.awaitTurn(res.turn.id);
+  try {
+    const res = await submitTurnStart(client, threadId, prompt, cwd);
+    return await collector.awaitTurn(res.turn.id);
+  } finally {
+    collector.dispose();
+  }
 }
 
 /**

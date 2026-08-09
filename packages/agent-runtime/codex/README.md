@@ -73,6 +73,11 @@ structured with the same compiled wire schema and restoration plan, or both are
 unstructured. Structured/unstructured mixing and incompatible schemas fail
 before another `turn/start`.
 
+Each turn collector owns one notification subscription. It unsubscribes on
+normal completion, terminal failure, explicit disposal, or runtime stop. A
+rejected `turn/start` therefore cannot leave a stale collector observing or
+buffering notifications from a later turn.
+
 See
 [Provider Runtime](../../../.agents/domains/provider-runtime.md#codex-portable-output-schema)
 for the complete current lifecycle and failure contract.

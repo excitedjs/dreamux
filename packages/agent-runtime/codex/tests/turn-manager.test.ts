@@ -245,6 +245,49 @@ describe('TurnManager text input submission', () => {
       undefined,
     ]);
   });
+
+  it.each([
+    ['plain failure before structured recovery', false],
+    ['structured failure before plain recovery', true],
+  ])('disposes the abandoned collector after %s', async (_label, failedStructured) => {
+    const client = new RecoveringFakeCodexClient();
+    const completed: CollectedTurn[] = [];
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+      onTurnCompleted: (turn) => completed.push(turn),
+    });
+
+    await expect(manager.submitTextInput(
+      failedStructured
+        ? { text: 'failed structured', outputSchema: optionalValueSchema() }
+        : { text: 'failed plain' },
+    )).resolves.toMatchObject({ status: 'failed' });
+    expect(client.handlerCount).toBe(0);
+
+    await expect(manager.submitTextInput(
+      failedStructured
+        ? { text: 'plain recovery' }
+        : { text: 'structured recovery', outputSchema: optionalValueSchema() },
+    )).resolves.toEqual({ status: 'submitted', turnId: 'turn-2' });
+    expect(client.handlerCount).toBe(1);
+
+    client.emitCompleted(
+      'thread-1',
+      'turn-2',
+      failedStructured ? 'plain result' : '{"value":null}',
+    );
+    await waitFor(() => completed.length === 1);
+
+    expect(completed[0]?.items).toContainEqual(
+      expect.objectContaining({
+        type: 'agentMessage',
+        text: failedStructured ? 'plain result' : '{}',
+      }),
+    );
+    expect(client.handlerCount).toBe(0);
+  });
 });
 
 describe('TurnManager turn settlement', () => {
@@ -560,6 +603,7 @@ describe('TurnManager turn settlement', () => {
     expect(settled).toEqual([
       { turnId: 'turn-1', status: 'stopped', result: { text: null } },
     ]);
+    expect(client.handlerCount).toBe(0);
   });
 
   it('does not re-settle a completed turn as stopped', async () => {
@@ -663,10 +707,18 @@ function requiredNullableValueSchema(): Record<string, unknown> {
 /** A fake client that acks turn/start but never emits turn/completed. */
 class ManualFakeCodexClient {
   readonly inputs: string[] = [];
+  private readonly handlers = new Set<NotificationHandler>();
   private nextTurnId = 1;
 
-  onNotification(_handler: NotificationHandler): void {
-    /* no notifications are ever emitted */
+  get handlerCount(): number {
+    return this.handlers.size;
+  }
+
+  onNotification(handler: NotificationHandler): () => void {
+    this.handlers.add(handler);
+    return () => {
+      this.handlers.delete(handler);
+    };
   }
 
   async request<R>(method: string, params: unknown): Promise<R> {
@@ -681,11 +733,14 @@ class FakeCodexClient {
   readonly inputs: string[] = [];
   readonly methods: string[] = [];
   readonly outputSchemas: Array<Record<string, unknown> | undefined> = [];
-  private readonly handlers: NotificationHandler[] = [];
+  private readonly handlers = new Set<NotificationHandler>();
   private nextTurnId = 1;
 
-  onNotification(handler: NotificationHandler): void {
-    this.handlers.push(handler);
+  onNotification(handler: NotificationHandler): () => void {
+    this.handlers.add(handler);
+    return () => {
+      this.handlers.delete(handler);
+    };
   }
 
   async request<R>(method: string, params: unknown): Promise<R> {
@@ -729,13 +784,16 @@ class FakeCodexClient {
 class FoldingFakeCodexClient {
   readonly inputs: string[] = [];
   readonly outputSchemas: Array<Record<string, unknown> | undefined> = [];
-  private readonly handlers: NotificationHandler[] = [];
+  private readonly handlers = new Set<NotificationHandler>();
   private nextIndex = 0;
 
   constructor(private readonly turnIds: string[]) {}
 
-  onNotification(handler: NotificationHandler): void {
-    this.handlers.push(handler);
+  onNotification(handler: NotificationHandler): () => void {
+    this.handlers.add(handler);
+    return () => {
+      this.handlers.delete(handler);
+    };
   }
 
   async request<R>(method: string, params: unknown): Promise<R> {
@@ -777,11 +835,14 @@ class FoldingFakeCodexClient {
 
 class FailOnceFakeCodexClient {
   readonly outputSchemas: Array<Record<string, unknown> | undefined> = [];
-  private readonly handlers: NotificationHandler[] = [];
+  private readonly handlers = new Set<NotificationHandler>();
   private requests = 0;
 
-  onNotification(handler: NotificationHandler): void {
-    this.handlers.push(handler);
+  onNotification(handler: NotificationHandler): () => void {
+    this.handlers.add(handler);
+    return () => {
+      this.handlers.delete(handler);
+    };
   }
 
   async request<R>(method: string, params: unknown): Promise<R> {
@@ -794,17 +855,66 @@ class FailOnceFakeCodexClient {
   }
 }
 
+class RecoveringFakeCodexClient {
+  private readonly handlers = new Set<NotificationHandler>();
+  private requests = 0;
+
+  get handlerCount(): number {
+    return this.handlers.size;
+  }
+
+  onNotification(handler: NotificationHandler): () => void {
+    this.handlers.add(handler);
+    return () => {
+      this.handlers.delete(handler);
+    };
+  }
+
+  async request<R>(method: string): Promise<R> {
+    if (method !== 'turn/start') throw new Error(`unexpected method ${method}`);
+    this.requests += 1;
+    if (this.requests === 1) throw new Error('turn/start rejected');
+    return { turn: { id: 'turn-2' } } as TurnStartResponse as R;
+  }
+
+  emitCompleted(threadId: string, turnId: string, text: string): void {
+    this.emit({
+      method: 'item/completed',
+      params: {
+        threadId,
+        turnId,
+        completedAtMs: Date.now(),
+        item: { type: 'agentMessage', id: `item-${turnId}`, text },
+      },
+    });
+    this.emit({
+      method: 'turn/completed',
+      params: {
+        threadId,
+        turn: { id: turnId, items: [] },
+      },
+    });
+  }
+
+  private emit(notification: ServerNotification): void {
+    for (const handler of this.handlers) handler(notification);
+  }
+}
+
 class DelayedFakeCodexClient {
   readonly inputs: string[] = [];
-  private readonly handlers: NotificationHandler[] = [];
+  private readonly handlers = new Set<NotificationHandler>();
   private readonly pending: Array<(turnId: string) => void> = [];
 
   get handlerCount(): number {
-    return this.handlers.length;
+    return this.handlers.size;
   }
 
-  onNotification(handler: NotificationHandler): void {
-    this.handlers.push(handler);
+  onNotification(handler: NotificationHandler): () => void {
+    this.handlers.add(handler);
+    return () => {
+      this.handlers.delete(handler);
+    };
   }
 
   request<R>(method: string, params: unknown): Promise<R> {
@@ -856,13 +966,16 @@ class DelayedFakeCodexClient {
  * With willRetry=true (transient) a normal turn/completed follows.
  */
 class ErroringFakeCodexClient {
-  private readonly handlers: NotificationHandler[] = [];
+  private readonly handlers = new Set<NotificationHandler>();
   private nextTurnId = 1;
 
   constructor(private readonly willRetry: boolean) {}
 
-  onNotification(handler: NotificationHandler): void {
-    this.handlers.push(handler);
+  onNotification(handler: NotificationHandler): () => void {
+    this.handlers.add(handler);
+    return () => {
+      this.handlers.delete(handler);
+    };
   }
 
   async request<R>(method: string, params: unknown): Promise<R> {
