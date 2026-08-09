@@ -121,6 +121,47 @@ describe('TurnManager text input submission', () => {
     ).resolves.toEqual({ status: 'duplicate' });
     expect(client.inputs).toEqual(['Restart completed.']);
   });
+
+  it('passes outputSchema to turn/start and settles the validated JSON text', async () => {
+    const client = new FakeCodexClient();
+    const completed: CollectedTurn[] = [];
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+      onTurnCompleted: (turn) => completed.push(turn),
+    });
+    const outputSchema = {
+      type: 'object',
+      properties: { answer: { type: 'number' } },
+      required: ['answer'],
+      additionalProperties: false,
+    };
+
+    await expect(manager.submitTextInput({
+      text: '{"answer":4}',
+      sourceId: 'structured',
+      outputSchema,
+    })).resolves.toEqual({
+      status: 'submitted',
+      turnId: 'turn-1',
+    });
+    await waitFor(() => completed.length === 1);
+
+    expect(client.outputSchemas).toEqual([outputSchema]);
+    expect(completed).toEqual([
+      {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        items: [
+          expect.objectContaining({
+            type: 'agentMessage',
+            text: '{"answer":4}',
+          }),
+        ],
+      },
+    ]);
+  });
 });
 
 describe('TurnManager turn settlement', () => {
@@ -384,6 +425,7 @@ class ManualFakeCodexClient {
 class FakeCodexClient {
   readonly inputs: string[] = [];
   readonly methods: string[] = [];
+  readonly outputSchemas: Array<Record<string, unknown> | undefined> = [];
   private readonly handlers: NotificationHandler[] = [];
   private nextTurnId = 1;
 
@@ -397,9 +439,11 @@ class FakeCodexClient {
     const p = params as {
       threadId: string;
       input: Array<{ text: string }>;
+      outputSchema?: Record<string, unknown>;
     };
     const text = p.input[0]?.text ?? '';
     this.inputs.push(text);
+    this.outputSchemas.push(p.outputSchema);
     const turnId = `turn-${this.nextTurnId++}`;
     queueMicrotask(() => {
       this.emit({

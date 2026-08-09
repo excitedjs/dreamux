@@ -5,14 +5,17 @@ import type {
   WorkflowAgentResultMessage,
   WorkflowRunnerChildMessage,
   WorkflowRunnerParentMessage,
-  WorkflowScriptMeta,
 } from './protocol.js';
 import { isRecord } from './run-support.js';
+import { assertWorkflowScriptMeta } from './script-meta.js';
+import { normalizeWorkflowScript } from './script-normalizer.js';
 
 interface PendingAgent {
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
 }
+
+const MAX_HELPER_ITEMS = 4096;
 
 const pendingAgents = new Map<number, PendingAgent>();
 let nextAgentIndex = 0;
@@ -49,7 +52,8 @@ async function runWorkflow(script: string, args: unknown): Promise<void> {
 
     const context = createWorkflowContext(args);
     await installDeterministicIntrinsics(context);
-    const module = new SourceTextModule(script, {
+    const normalizedScript = normalizeWorkflowScript(script);
+    const module = new SourceTextModule(normalizedScript, {
       context,
       identifier: 'dreamux-workflow.mjs',
       importModuleDynamically: async (specifier) => {
@@ -65,7 +69,7 @@ async function runWorkflow(script: string, args: unknown): Promise<void> {
     await module.evaluate();
 
     const namespace = module.namespace as Record<string, unknown>;
-    assertWorkflowMeta(namespace.meta);
+    assertWorkflowScriptMeta(namespace.meta);
     const entrypoint = namespace.default;
     if (typeof entrypoint !== 'function') {
       throw new Error('workflow script must export a default run function');
@@ -179,6 +183,9 @@ async function parallel(thunks: unknown): Promise<unknown[]> {
   if (!Array.isArray(thunks)) {
     throw new Error('parallel expects an array of functions');
   }
+  if (thunks.length > MAX_HELPER_ITEMS) {
+    throw new Error(`parallel supports at most ${MAX_HELPER_ITEMS} functions`);
+  }
   return Promise.all(
     thunks.map(async (thunk: unknown) => {
       try {
@@ -200,19 +207,22 @@ async function pipeline(
   if (!Array.isArray(items)) {
     throw new Error('pipeline expects an array of items');
   }
+  if (items.length > MAX_HELPER_ITEMS) {
+    throw new Error(`pipeline supports at most ${MAX_HELPER_ITEMS} items`);
+  }
   if (stages.some((stage) => typeof stage !== 'function')) {
     throw new Error('pipeline stages must be functions');
   }
 
   return Promise.all(
-    items.map(async (item: unknown) => {
+    items.map(async (item: unknown, index: number) => {
       try {
         let value = item;
         for (const stage of stages) {
           value = await Reflect.apply(
             stage as (...args: unknown[]) => unknown,
             undefined,
-            [value],
+            [value, item, index],
           );
         }
         return value;
@@ -294,22 +304,6 @@ async function sendAndFlush(message: WorkflowRunnerChildMessage): Promise<void> 
       else reject(error);
     });
   });
-}
-
-function assertWorkflowMeta(value: unknown): asserts value is WorkflowScriptMeta {
-  if (!isRecord(value)) {
-    throw new Error('workflow script must export meta');
-  }
-  if (typeof value.name !== 'string' || typeof value.description !== 'string') {
-    throw new Error('workflow meta must include string name and description');
-  }
-  if (
-    value.phases !== undefined &&
-    (!Array.isArray(value.phases) ||
-      value.phases.some((phase: unknown) => typeof phase !== 'string'))
-  ) {
-    throw new Error('workflow meta phases must be an array of strings');
-  }
 }
 
 function parseParentMessage(value: unknown): WorkflowRunnerParentMessage | null {

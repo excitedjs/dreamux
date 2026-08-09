@@ -42,6 +42,7 @@
     "@excitedjs/dreamux-types": "workspace:*",
     "@excitedjs/dreamux-utils": "workspace:*",
     "@excitedjs/feishu-channel": "workspace:*",
+    "acorn": "^8.16.0",
     "croner": "^10.0.1",
     "smol-toml": "^1.6.1",
     "yargs": "^17.7.2",

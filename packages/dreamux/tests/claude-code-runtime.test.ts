@@ -1112,6 +1112,39 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(args[flagIndex + 1]).toBe(JSON.stringify(schema));
   });
 
+  it('fails a completed schema turn that lacks native structured_output', async () => {
+    const settled: TurnSettledSignal[] = [];
+    const schema = {
+      type: 'object',
+      properties: { answer: { type: 'string' } },
+      required: ['answer'],
+      additionalProperties: false,
+    };
+    const fleet = fakeFleet([okOutcome('session-abc')]);
+    const { runtime } = await makeRuntime(fleet, {
+      outputSchema: schema,
+      onTurnSettled: (signal) => settled.push(signal),
+    });
+    await runtime.start();
+
+    await expect(runtime.completionInput({
+      text: 'return structured output',
+      sourceId: 'completion:schema-native',
+      outputSchema: schema,
+    })).resolves.toMatchObject({ status: 'submitted' });
+    await waitFor(() => settled.length === 1);
+
+    expect(settled).toEqual([
+      expect.objectContaining({
+        status: 'failed',
+        result: { text: null },
+        error: expect.objectContaining({
+          message: expect.stringContaining('did not return structured_output'),
+        }),
+      }),
+    ]);
+  });
+
   it('omits --json-schema when no create-context schema is set', async () => {
     const fleet = fakeFleet();
     const { runtime } = await makeRuntime(fleet);

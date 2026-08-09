@@ -8,6 +8,7 @@
 #      (link graph; flags orphans)
 #   3. every decision record is listed in .agents/decisions/README.md
 #   4. every /packages/... file path cited by service-topology.md exists
+#   5. current reference docs contain no Han text (repo English rule)
 #
 # Exits 0 on success, non-zero with a noisy list of failures otherwise.
 # Run before committing KB changes, and from CI.
@@ -206,6 +207,23 @@ if [ -f "$service_topology" ]; then
       | sort -u
   )
 fi
+
+# ---------- 5) current reference docs contain no Han text ----------
+while IFS= read -r violation; do
+  echo "non-English Han text in current reference: $violation" >&2
+  errors=$((errors + 1))
+done < <(
+  perl -Mutf8 -CS -e '
+    for my $file (@ARGV) {
+      open my $fh, q{<:encoding(UTF-8)}, $file or die $!;
+      my $line = 0;
+      while (<$fh>) {
+        ++$line;
+        print qq{$file:$line\n} if /\p{Han}/;
+      }
+    }
+  ' "$KB_ROOT"/reference/*.md
+)
 
 if [ "$errors" -gt 0 ]; then
   echo "" >&2

@@ -9,6 +9,11 @@ import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js'
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 import { validateTeamId } from '../service/team-collection/types.js';
 import {
+  MAX_WORKFLOW_MAX_CONCURRENCY,
+  MIN_WORKFLOW_MAX_CONCURRENCY,
+  parseWorkflowMaxConcurrency,
+} from '../service/workflow-service/limits.js';
+import {
   appendTaskDispatchSuccessReminder,
   appendStructuredTaskDispatchSuccessReminder,
   TEAMMATE_DISPATCH_SUCCESS_REMINDER,
@@ -188,7 +193,11 @@ export function teammateTools(callerKind: TeamMateMcpCallerKind): Array<Record<s
         script: { type: 'string', minLength: 1 },
         scriptPath: { type: 'string', minLength: 1 },
         args: {},
-        max_concurrency: { type: 'integer', minimum: 1, maximum: 8 },
+        max_concurrency: {
+          type: 'integer',
+          minimum: MIN_WORKFLOW_MAX_CONCURRENCY,
+          maximum: MAX_WORKFLOW_MAX_CONCURRENCY,
+        },
       },
       [],
     ),
@@ -325,7 +334,10 @@ function mapToolCall(
 
 function workflowRunArgs(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'workflow_run arguments');
-  const maxConcurrency = optionalInteger(obj, 'max_concurrency');
+  const hasMaxConcurrency = Object.hasOwn(obj, 'max_concurrency');
+  const maxConcurrency = parseWorkflowMaxConcurrency(
+    hasMaxConcurrency ? obj['max_concurrency'] : undefined,
+  );
   const script = optionalString(obj, 'script');
   const scriptPath = optionalString(obj, 'scriptPath');
   if ((script === null || script.trim() === '') && (scriptPath === null || scriptPath.trim() === '')) {
@@ -335,7 +347,7 @@ function workflowRunArgs(value: unknown): Record<string, unknown> {
     ...(script !== null && script.trim() !== '' ? { script } : {}),
     ...(scriptPath !== null && scriptPath.trim() !== '' ? { scriptPath } : {}),
     ...(Object.hasOwn(obj, 'args') ? { args: obj['args'] } : {}),
-    ...(maxConcurrency !== null ? { max_concurrency: maxConcurrency } : {}),
+    ...(hasMaxConcurrency ? { max_concurrency: maxConcurrency } : {}),
   };
 }
 

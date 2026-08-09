@@ -569,7 +569,7 @@ describe('WorkflowService', () => {
     await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
   });
 
-  it('passes outputSchema once and maps invalid structured output to null without retry', async () => {
+  it('passes outputSchema and workflow role guidance once, then fails invalid successful JSON', async () => {
     const ctx = await context(['run-schema']);
     await ctx.service.run({ script: validScript() });
     const runner = ctx.runner.latest();
@@ -587,20 +587,80 @@ describe('WorkflowService', () => {
     await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(1));
 
     expect(ctx.teammates.spawns[0]?.options.outputSchema).toEqual(schema);
+    expect(ctx.teammates.spawns[0]?.options.systemPromptAppend).toEqual([
+      'You are executing one agent call inside a Dreamux workflow. Your final ' +
+        'response is the return value consumed by the workflow, not a human-facing ' +
+        'progress message. Return only the requested value. When an output schema is ' +
+        "provided, use the runtime's structured-output mechanism and satisfy the " +
+        'schema exactly.',
+    ]);
     await ctx.teammates.settle(0, 'completed', 'not valid JSON');
     await vi.waitFor(() =>
       expect(agentResults(runner)).toEqual([
-        { type: 'agent_result', index: 0, result: null },
+        {
+          type: 'agent_result',
+          index: 0,
+          error:
+            'runtime reported successful structured output that was not valid JSON',
+        },
       ]),
     );
     expect(ctx.teammates.spawns).toHaveLength(1);
+    expect(await ctx.service.status({ run_id: 'run-schema' })).toMatchObject({
+      agents: [{ status: 'failed' }],
+    });
     expect(ctx.log.events).toContainEqual(expect.objectContaining({
       level: 'warn',
       message: 'workflow structured output was not valid JSON',
     }));
 
-    runner.emit({ type: 'run_result', status: 'completed', result: null });
+    runner.emit({
+      type: 'run_result',
+      status: 'failed',
+      error:
+        'runtime reported successful structured output that was not valid JSON',
+    });
     await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
+    expect(ctx.initiator.received[0]?.status).toBe('failed');
+  });
+
+  it('fails an empty successful structured result with an accurate runner error', async () => {
+    const ctx = await context(['run-schema-empty']);
+    await ctx.service.run({ script: validScript() });
+    const runner = ctx.runner.latest();
+
+    runner.emit({
+      type: 'agent_start',
+      index: 0,
+      prompt: 'structured prompt',
+      options: { schema: { type: 'object' } },
+    });
+    await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(1));
+    await ctx.teammates.settle(0, 'completed', null);
+
+    await vi.waitFor(() =>
+      expect(agentResults(runner)).toEqual([
+        {
+          type: 'agent_result',
+          index: 0,
+          error: 'runtime reported successful structured output that was empty',
+        },
+      ]),
+    );
+    expect(await ctx.service.status({ run_id: 'run-schema-empty' }))
+      .toMatchObject({ agents: [{ status: 'failed' }] });
+    expect(ctx.log.events).toContainEqual(expect.objectContaining({
+      level: 'warn',
+      message: 'workflow structured output was empty',
+    }));
+
+    runner.emit({
+      type: 'run_result',
+      status: 'failed',
+      error: 'runtime reported successful structured output that was empty',
+    });
+    await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
+    expect(ctx.initiator.received[0]?.status).toBe('failed');
   });
 
   it('returns a non-submitted agent as null and auto-closes it at terminal', async () => {
@@ -929,12 +989,43 @@ describe('WorkflowService', () => {
     expect(ctx.initiator.received[0]?.status).toBe('completed');
   });
 
-  it('clamps concurrency to 1..8 and queues excess agent starts server-side', async () => {
-    const ctx = await context(['run-lower-clamp', 'run-upper-clamp']);
-    await ctx.service.run({ script: validScript(), max_concurrency: 0 });
+  it('defaults concurrency, rejects invalid values, and queues excess agent starts server-side', async () => {
+    const ctx = await context([
+      'run-default-concurrency',
+      'run-queued-concurrency',
+    ]);
+    await ctx.service.run({ script: validScript() });
+    const defaultRunner = ctx.runner.latest();
+    expect(
+      (await ctx.service.status({ run_id: 'run-default-concurrency' }))
+        .max_concurrency,
+    ).toBe(16);
+    defaultRunner.emit({
+      type: 'run_result',
+      status: 'completed',
+      result: null,
+    });
+    await vi.waitFor(() =>
+      expect(ctx.initiator.received.some(
+        (item) => item.id === 'run-default-concurrency',
+      )).toBe(true),
+    );
+
+    for (const maxConcurrency of [0, 17, 1.5, Number.POSITIVE_INFINITY]) {
+      await expect(ctx.service.run({
+        script: validScript(),
+        max_concurrency: maxConcurrency,
+      })).rejects.toThrow(
+        'workflow max_concurrency must be an integer between 1 and 16',
+      );
+    }
+    expect(ctx.runner.runners).toHaveLength(1);
+
+    await ctx.service.run({ script: validScript(), max_concurrency: 1 });
     const firstRunner = ctx.runner.latest();
     expect(
-      (await ctx.service.status({ run_id: 'run-lower-clamp' })).max_concurrency,
+      (await ctx.service.status({ run_id: 'run-queued-concurrency' }))
+        .max_concurrency,
     ).toBe(1);
 
     firstRunner.emit({
@@ -958,21 +1049,46 @@ describe('WorkflowService', () => {
     await ctx.teammates.settle(1, 'completed', 'two');
     firstRunner.emit({ type: 'run_result', status: 'completed', result: null });
     await vi.waitFor(() =>
-      expect(ctx.initiator.received.some((item) => item.id === 'run-lower-clamp'))
-        .toBe(true),
-    );
-
-    await ctx.service.run({ script: validScript(), max_concurrency: 99 });
-    const secondRunner = ctx.runner.latest();
-    expect(
-      (await ctx.service.status({ run_id: 'run-upper-clamp' })).max_concurrency,
-    ).toBe(8);
-    secondRunner.emit({ type: 'run_result', status: 'completed', result: null });
-    await vi.waitFor(() =>
-      expect(ctx.initiator.received.some((item) => item.id === 'run-upper-clamp'))
+      expect(ctx.initiator.received.some(
+        (item) => item.id === 'run-queued-concurrency',
+      ))
         .toBe(true),
     );
   });
+
+  it('accepts 1000 lifetime agent calls and rejects call 1001 before spawn', async () => {
+    const ctx = await context(['run-agent-limit']);
+    ctx.teammates.nextTurnStatus = 'failed';
+    await ctx.service.run({ script: validScript(), max_concurrency: 16 });
+    const runner = ctx.runner.latest();
+
+    for (let index = 0; index < 1001; index += 1) {
+      runner.emit({
+        type: 'agent_start',
+        index,
+        prompt: `agent ${index}`,
+        options: {},
+      });
+    }
+
+    await vi.waitFor(() => expect(ctx.teammates.spawnAttempts).toBe(1000), {
+      timeout: 10_000,
+    });
+    await vi.waitFor(() =>
+      expect(agentResults(runner)).toContainEqual({
+        type: 'agent_result',
+        index: 1000,
+        error: 'workflow agent lifecycle limit of 1000 exceeded',
+      }), { timeout: 10_000 });
+    expect(ctx.teammates.spawnAttempts).toBe(1000);
+
+    runner.emit({
+      type: 'run_result',
+      status: 'failed',
+      error: 'workflow agent lifecycle limit of 1000 exceeded',
+    });
+    await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
+  }, 20_000);
 
   it('returns stop after reserving the outcome and finalizes after natural settle', async () => {
     const ctx = await context(['run-stop'], (harness) => {
@@ -1369,7 +1485,7 @@ function workflowRecord(
     caller_kind: 'dispatcher',
     script_hash: 'abc123',
     status: 'running',
-    max_concurrency: 8,
+    max_concurrency: 16,
     phase: null,
     last_log: null,
     agents: [],

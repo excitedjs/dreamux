@@ -279,6 +279,7 @@ export class TeammateCollection implements TeammateOps, OwnedTeammateOps {
       identity,
       route.kind === 'owned' ? route.routeSettledCompletion : undefined,
       route.kind === 'owned' ? route.outputSchema : undefined,
+      route.kind === 'owned' ? route.systemPromptAppend : undefined,
     );
     if (route.kind === 'owned') {
       this.exclusivelyOwned.set(entity.name, route.owner);
@@ -523,17 +524,21 @@ export class TeammateCollection implements TeammateOps, OwnedTeammateOps {
     throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
   }
 
-  /** Build (and cache) the entity for an identity. The collection owns only
-   * caller-supplied identity guidance; it does not invent default teammate role
-   * policy. */
+  /**
+   * Build (and cache) the entity for an identity. Exclusive operation guidance
+   * precedes the caller-supplied identity guidance at this single composition
+   * boundary.
+   */
   private entityFor(
     identity: AgentEntityIdentity,
     routeSettledCompletion?: SettledCompletionRoute,
     outputSchema?: Record<string, unknown>,
+    operationSystemPromptAppend?: readonly string[],
   ): TeammateService {
     const existing = this.entities.get(identity.name);
     if (existing !== undefined) return existing;
-    const systemPromptOptions = callerIdentitySystemPromptOptions(
+    const systemPromptOptions = ownedTeammateSystemPromptOptions(
+      operationSystemPromptAppend,
       identity.identity_prompt,
     );
     const entity = createTeammateService({
@@ -622,12 +627,15 @@ export class TeammateCollection implements TeammateOps, OwnedTeammateOps {
   }
 }
 
-function callerIdentitySystemPromptOptions(
+function ownedTeammateSystemPromptOptions(
+  operationAppend: readonly string[] | undefined,
   identityPrompt: string | null,
 ): { systemPrompt: AgentRuntimeSystemPrompt } | undefined {
-  return identityPrompt !== null
-    ? { systemPrompt: { append: [identityPrompt] } }
-    : undefined;
+  const append = [
+    ...(operationAppend ?? []),
+    ...(identityPrompt !== null ? [identityPrompt] : []),
+  ];
+  return append.length > 0 ? { systemPrompt: { append } } : undefined;
 }
 
 /**
