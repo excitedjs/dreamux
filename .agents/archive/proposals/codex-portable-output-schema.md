@@ -1,6 +1,9 @@
 # Codex portable output schema adapter
 
-- **Status:** Draft for review
+- **Status:** Implemented historical proposal; current behavior is documented in
+  [Provider Runtime](../../domains/provider-runtime.md#codex-portable-output-schema)
+  and the
+  [Codex package README](../../../packages/agent-runtime/codex/README.md#portable-structured-output)
 - **Date:** 2026-08-09
 - **Affects:** `@excitedjs/agent-runtime-codex`, Workflow schema portability,
   Codex `turn/start.outputSchema`, runtime contract tests
@@ -72,7 +75,7 @@ structured-output surface:
 - `description`;
 - `properties`, `required`, `additionalProperties: false`;
 - one schema-valued `items`;
-- `enum`;
+- primitive-value `enum`;
 - numeric `minimum` and `maximum`, which the current Codex app-server live
   boundary accepts and existing Workflow score schemas use.
 

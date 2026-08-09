@@ -1,7 +1,7 @@
 {
   "name": "@excitedjs/agent-runtime-codex",
   "version": "0.3.4",
-  "description": "Built-in Codex Agent Runtime provider for Dreamux (alias builtin:codex). Implements the @excitedjs/dreamux-types AgentRuntimeProvider contract against the Codex app-server; depends on @excitedjs/dreamux-types only, never on @excitedjs/dreamux core (issue excitedjs/dreamux#209).",
+  "description": "Built-in Codex Agent Runtime provider for Dreamux (alias builtin:codex). Implements the @excitedjs/dreamux-types AgentRuntimeProvider contract against the Codex app-server; depends only on provider-neutral Dreamux contracts and utilities, never on @excitedjs/dreamux core (issue excitedjs/dreamux#209).",
   "license": "MIT",
   "repository": {
     "type": "git",

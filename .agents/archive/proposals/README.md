@@ -5,6 +5,7 @@ implementation guidance; use the linked decisions and reference docs first.
 
 | Proposal | Current pointer |
 |---|---|
+| [Codex portable output schema adapter](codex-portable-output-schema.md) | Implemented in `@excitedjs/agent-runtime-codex`; see [Provider Runtime](../../domains/provider-runtime.md#codex-portable-output-schema) and the [Codex package README](../../../packages/agent-runtime/codex/README.md#portable-structured-output) |
 | [Concrete entity name suffix length](concrete-name-suffix-length.md) | [Current architecture](../../reference/current-architecture.md), [Dispatcher orchestration](../../domains/dispatcher-orchestration.md), [Service topology](../../reference/service-topology.md) |
 | [Dynamic Workflow 编排](dynamic-workflow.md) | Implemented in PR #312 (`feat(workflow): Dynamic Workflow MVP`); see bundled skill `workflow` and `service/workflow-service/` |
 | [Workflow ultracode dialect parity](workflow-ultracode-dialect-parity.md) | Implemented issue #318 requests 1-4; see [Dynamic Workflow usage](../../reference/dynamic-workflow-usage.md), [Current architecture](../../reference/current-architecture.md), and bundled skill `workflow` |

@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-codex",
+      "comment": "Compile the supported provider-neutral outputSchema subset into Codex strict schemas, restore optional-field semantics on completed JSON, and reject incompatible schemas or active-turn folding before submission.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex"
+}
