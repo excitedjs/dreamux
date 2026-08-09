@@ -104,15 +104,12 @@ function ultracodeMetaExport(
   ) {
     return null;
   }
-  const declarator = declaration.declarations[0];
+  const declarator = declaration.declarations[0]!;
   if (
-    declarator === undefined ||
     declarator.id.type !== 'Identifier' ||
-    declarator.id.name !== 'meta' ||
-    declarator.init === undefined ||
-    declarator.init === null
+    declarator.id.name !== 'meta'
   ) return null;
-  return { statement, initializer: declarator.init };
+  return { statement, initializer: declarator.init! };
 }
 
 function validateUltracodeMeta(
