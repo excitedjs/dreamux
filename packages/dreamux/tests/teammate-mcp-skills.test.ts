@@ -61,9 +61,10 @@ const MAINTENANCE_ROOT = join(
 
 const MAINTENANCE_ROUTES = [
   {
-    task: 'Service lifecycle, Team dissolve, and reply diagnosis',
+    task:
+      'Service lifecycle, Workflow run state, Team dissolve, and reply diagnosis',
     readWhen:
-      'Diagnosing `dreamux serve`, daemon startup, doctor/status results, Dispatcher health, missing replies, stuck turns, restart behavior, active or cleanup-pending Team dissolve, current state/run/log paths, bundled-skill injection, or runtime app-server readiness.',
+      'Diagnosing `dreamux serve`, daemon startup, doctor/status results, Dispatcher health, missing replies, stuck turns, Workflow run records or journals, restart behavior, active or cleanup-pending Team dissolve, current state/run/log paths, bundled-skill injection, or runtime app-server readiness.',
     target: 'service-lifecycle.md',
   },
   {
@@ -308,6 +309,7 @@ describe('dreamux-maintenance progressive disclosure', () => {
       'Dispatcher health',
       'missing replies',
       'stuck turns',
+      'Workflow run state',
       'restart behavior',
       'current config/state/run/log paths',
       'bundled-skill injection',
@@ -371,6 +373,20 @@ describe('dreamux-maintenance progressive disclosure', () => {
     expect(reference).toMatch(/runtime app-server readiness/);
     expect(reference).toMatch(/Channel ingress[\s\S]{0,160}Channel egress/);
     expect(reference).toMatch(/restart does not prove[\s\S]{0,100}reply was sent/);
+    expect(reference).toContain(
+      '~/.dreamux/state/<dispatcher-id>/workflow/<run-id>/',
+    );
+    expect(reference).toContain(
+      '~/.dreamux/state/<dispatcher-id>/team/<team-id>/workflow/<run-id>/',
+    );
+    expect(reference).toMatch(
+      /`record\.json` and append-only `journal\.jsonl` are fully server-owned/,
+    );
+    expect(reference).toMatch(
+      /`workflow_run\.max_concurrency` defaults to 16 and accepts only 1 through 16/,
+    );
+    expect(reference).toMatch(/returned `\{ run_id \}` is a durable acceptance receipt/);
+    expect(reference).toMatch(/journal replay and run resume are not supported/);
     expect(reference).toMatch(/Bundled skills are injected by role/);
     expect(reference).toMatch(/instead of copying bundled skills into a workspace/);
     expect(reference).toContain('~/.dreamux/state/');

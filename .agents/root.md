@@ -184,6 +184,10 @@ history still matters.
 
 ## Archive
 
+- [Workflow ultracode dialect parity](archive/proposals/workflow-ultracode-dialect-parity.md)
+  — implemented issue #318 requests 1-4; current behavior is documented in
+  [Dynamic Workflow usage](reference/dynamic-workflow-usage.md) and
+  [Current architecture](reference/current-architecture.md).
 - [Archive index](archive/README.md)
 - [Archived proposals](archive/proposals/README.md)
 

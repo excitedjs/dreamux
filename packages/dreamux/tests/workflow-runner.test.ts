@@ -1,5 +1,6 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,6 +13,7 @@ import type {
   WorkflowRunResultMessage,
 } from '../src/service/workflow-service/protocol.js';
 import { ForkedWorkflowRunner } from '../src/service/workflow-service/runner-process.js';
+import { normalizeWorkflowScript } from '../src/service/workflow-service/script-normalizer.js';
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const RUNNER_PATH = join(
@@ -44,6 +46,31 @@ afterEach(async () => {
 });
 
 describe('workflow runner', () => {
+  it.each([
+    [
+      'default declaration',
+      [
+        '/* preserve leading source */',
+        "export const meta = { name: 'legacy', description: 'legacy module' };",
+        'export default async function run() {',
+        '  return args;',
+        '}',
+        '',
+      ].join('\r\n'),
+    ],
+    [
+      'named default export',
+      [
+        "export const meta = { name: 'legacy', description: 'legacy module' };",
+        'async function run() { return args; }',
+        'export { run as default };',
+        '',
+      ].join('\r\n'),
+    ],
+  ])('returns legacy module source byte-for-byte unchanged for %s', (_kind, source) => {
+    expect(normalizeWorkflowScript(source)).toBe(source);
+  });
+
   it('runs the workflow API through the child IPC channel', async () => {
     const agentStarts: WorkflowAgentStartMessage[] = [];
     const execution = await runScript(
@@ -73,11 +100,16 @@ describe('workflow runner', () => {
           phase('shape');
           const piped = await pipeline(
             collected.filter(Boolean),
-            (value) => {
+            (value, original, index) => {
               if (value === 'third result') throw new Error('item failed');
-              return { value };
+              return { value, original, index };
             },
-            async (value) => ({ ...value, done: true }),
+            async (value, original, index) => ({
+              ...value,
+              laterOriginal: original,
+              laterIndex: index,
+              done: true,
+            }),
           );
           return {
             collected,
@@ -127,7 +159,14 @@ describe('workflow runner', () => {
       result: {
         collected: [{ answer: 1 }, null, 'third result', null],
         piped: [
-          { value: { answer: 1 }, done: true },
+          {
+            value: { answer: 1 },
+            original: { answer: 1 },
+            index: 0,
+            laterOriginal: { answer: 1 },
+            laterIndex: 0,
+            done: true,
+          },
           null,
         ],
         epoch: '1970-01-01T00:00:00.000Z',
@@ -164,6 +203,399 @@ describe('workflow runner', () => {
       },
     });
     expect(execution.exit).toEqual({ code: 0, signal: null });
+  });
+
+  it('runs an ultracode top-level body with literal object metadata', async () => {
+    const execution = await runScript(
+      `
+        export const meta = {
+          name: 'ultracode',
+          description: 'top-level workflow body',
+          whenToUse: 'when compatibility matters',
+          phases: [
+            'prepare',
+            { title: 'finish', detail: 'return the value', model: 'inert' },
+          ],
+          future: { enabled: true, weight: 2, fallback: null },
+        };
+
+        function shape(value) {
+          return { value, phase: 'finish' };
+        }
+
+        phase('prepare');
+        const value = await Promise.resolve(args.value);
+        if (value === null) return { early: true };
+        phase('finish');
+        return shape(value);
+      `,
+      { value: 42 },
+    );
+
+    expect(execution.result).toEqual({
+      type: 'run_result',
+      status: 'completed',
+      result: { value: 42, phase: 'finish' },
+    });
+    expect(execution.messages.filter((message) => message.type === 'emit'))
+      .toEqual([
+        { type: 'emit', kind: 'phase', message: 'prepare' },
+        { type: 'emit', kind: 'phase', message: 'finish' },
+      ]);
+  });
+
+  it('passes stable original items and zero-based indexes to every pipeline stage', async () => {
+    const execution = await runScript(`
+      export const meta = { name: 'pipeline-args', description: 'pipeline args' };
+      const items = [{ id: 'a' }, { id: 'b' }];
+      return pipeline(
+        items,
+        (previous, original, index) => ({
+          firstPrevious: previous.id,
+          firstOriginal: original.id,
+          firstIndex: index,
+        }),
+        (previous, original, index) => ({
+          ...previous,
+          laterOriginal: original.id,
+          laterIndex: index,
+        }),
+      );
+    `);
+
+    expect(execution.result).toEqual({
+      type: 'run_result',
+      status: 'completed',
+      result: [
+        {
+          firstPrevious: 'a',
+          firstOriginal: 'a',
+          firstIndex: 0,
+          laterOriginal: 'a',
+          laterIndex: 0,
+        },
+        {
+          firstPrevious: 'b',
+          firstOriginal: 'b',
+          firstIndex: 1,
+          laterOriginal: 'b',
+          laterIndex: 1,
+        },
+      ],
+    });
+  });
+
+  it('rejects direct agent errors while helpers contain them as null', async () => {
+    const direct = await runScript(
+      `
+        export const meta = { name: 'direct-error', description: 'direct error' };
+        export default async function run() {
+          return agent('direct');
+        }
+      `,
+      undefined,
+      (message, child) => {
+        if (message.type === 'agent_start') {
+          send(child, {
+            type: 'agent_result',
+            index: message.index,
+            error: 'invalid structured output',
+          });
+        }
+      },
+    );
+    expect(direct.result).toEqual({
+      type: 'run_result',
+      status: 'failed',
+      error: 'invalid structured output',
+    });
+
+    const contained = await runScript(
+      `
+        export const meta = { name: 'contained-error', description: 'contained error' };
+        export default async function run() {
+          const parallelResult = await parallel([() => agent('parallel')]);
+          const pipelineResult = await pipeline(
+            ['item'],
+            () => agent('pipeline'),
+            () => 'must not run',
+          );
+          return { parallelResult, pipelineResult };
+        }
+      `,
+      undefined,
+      (message, child) => {
+        if (message.type === 'agent_start') {
+          send(child, {
+            type: 'agent_result',
+            index: message.index,
+            error: 'invalid structured output',
+          });
+        }
+      },
+    );
+    expect(contained.result).toEqual({
+      type: 'run_result',
+      status: 'completed',
+      result: {
+        parallelResult: [null],
+        pipelineResult: [null],
+      },
+    });
+  });
+
+  it('accepts 4096 helper inputs and rejects 4097 before invoking work', async () => {
+    const execution = await runScript(`
+      export const meta = { name: 'helper-limits', description: 'helper limits' };
+      let thunkCalls = 0;
+      let stageCalls = 0;
+      let parallelError = null;
+      let pipelineError = null;
+      try {
+        await parallel(Array.from({ length: 4097 }, () => () => {
+          thunkCalls += 1;
+          return true;
+        }));
+      } catch (error) {
+        parallelError = error.message;
+      }
+      try {
+        await pipeline(Array.from({ length: 4097 }, (_, index) => index), () => {
+          stageCalls += 1;
+          return true;
+        });
+      } catch (error) {
+        pipelineError = error.message;
+      }
+      const parallelAccepted = await parallel(
+        Array.from({ length: 4096 }, (_, index) => () => index),
+      );
+      const pipelineAccepted = await pipeline(
+        Array.from({ length: 4096 }, (_, index) => index),
+        (value) => value,
+      );
+      return {
+        thunkCalls,
+        stageCalls,
+        parallelError,
+        pipelineError,
+        parallelAccepted: parallelAccepted.length,
+        pipelineAccepted: pipelineAccepted.length,
+      };
+    `);
+
+    expect(execution.result).toEqual({
+      type: 'run_result',
+      status: 'completed',
+      result: {
+        thunkCalls: 0,
+        stageCalls: 0,
+        parallelError: 'parallel supports at most 4096 functions',
+        pipelineError: 'pipeline supports at most 4096 items',
+        parallelAccepted: 4096,
+        pipelineAccepted: 4096,
+      },
+    });
+  });
+
+  it.each([
+    [
+      `export const meta = {
+        name: 'bad',
+        description: 'bad',
+        phases: [{ title: 1 }],
+      };
+      agent('must not start');`,
+      'workflow meta phases must contain strings or objects with string title',
+    ],
+    [
+      `export const meta = {
+        name: 'bad',
+        description: 'bad',
+        whenToUse: true,
+        phases: ['valid'],
+      };
+      agent('must not start');`,
+      'workflow meta whenToUse must be a string',
+    ],
+    [
+      `const description = 'dynamic';
+      export const meta = { name: 'bad', description };
+      agent('must not start');`,
+      'workflow meta must be a recursively plain literal tree',
+    ],
+    [
+      `export const meta = { name: 'bad', description: 'bad' };
+      export const extra = true;
+      agent('must not start');`,
+      'ultracode workflow scripts may only export const meta',
+    ],
+    [
+      `export const meta = { name: 'bad', description: 'bad' };
+      export * as default from './other.mjs';
+      agent('must not start');`,
+      'ultracode workflow scripts may only export const meta',
+    ],
+  ])(
+    'rejects invalid ultracode metadata or exports before agents start',
+    async (script, error) => {
+      const execution = await runScript(script);
+
+      expect(execution.result).toEqual({
+        type: 'run_result',
+        status: 'failed',
+        error,
+      });
+      expect(execution.messages.some((message) => message.type === 'agent_start'))
+        .toBe(false);
+    },
+  );
+
+  it.each([
+    [
+      'legacy module',
+      `export const meta = {
+        name: 'legacy-invalid',
+        description: 'legacy metadata',
+        whenToUse: true,
+        phases: 'invalid',
+      };
+      export default async function run() {
+        return agent('must not start');
+      }`,
+    ],
+    [
+      'ultracode',
+      `export const meta = {
+        name: 'ultracode-invalid',
+        description: 'ultracode metadata',
+        whenToUse: true,
+        phases: 'invalid',
+      };
+      return agent('must not start');`,
+    ],
+  ])(
+    'rejects malformed %s metadata before agents start',
+    async (_dialect, script) => {
+      const execution = await runScript(script);
+
+      expect(execution.result).toEqual({
+        type: 'run_result',
+        status: 'failed',
+        error:
+          'workflow meta phases must contain strings or objects with string title',
+      });
+      expect(execution.messages.some((message) => message.type === 'agent_start'))
+        .toBe(false);
+    },
+  );
+
+  it('executes both issue #318 acceptance fixtures unmodified', async () => {
+    const deepResearch = await readFile(
+      join(PACKAGE_ROOT, 'tests', 'fixtures', 'workflows', 'deep-research-max.mjs'),
+      'utf8',
+    );
+    const deepExecution = await runScript(
+      deepResearch,
+      { question: 'How does fixture compatibility work?', angles: 1, maxSources: 1 },
+      (message, child) => {
+        if (message.type !== 'agent_start') return;
+        let result: unknown;
+        if (message.prompt.startsWith('Decompose this research question')) {
+          result = {
+            angles: [{ name: 'compatibility', queries: ['workflow parity'] }],
+          };
+        } else if (message.prompt.startsWith('Research angle')) {
+          result = {
+            sources: [{
+              url: 'https://example.com/source',
+              title: 'Example source',
+              why: 'fixture',
+            }],
+          };
+        } else if (message.prompt.startsWith('Fetch ')) {
+          result = {
+            claims: [{
+              text: 'The fixture executed.',
+              quote: 'The fixture executed.',
+            }],
+          };
+        } else if (message.prompt.startsWith('You are skeptic')) {
+          result = { refuted: false, reasoning: 'synthetic verification' };
+        } else if (message.prompt.startsWith('Write a research report')) {
+          result = '# Synthetic report';
+        } else if (message.prompt.startsWith('Question:')) {
+          result = { gaps: [] };
+        } else {
+          throw new Error(`unexpected deep-research prompt: ${message.prompt}`);
+        }
+        send(child, { type: 'agent_result', index: message.index, result });
+      },
+    );
+    expect(deepExecution.result).toEqual({
+      type: 'run_result',
+      status: 'completed',
+      result: {
+        question: 'How does fixture compatibility work?',
+        report: '# Synthetic report',
+        claimCount: 1,
+        gaps: [],
+      },
+    });
+
+    const codeReview = await readFile(
+      join(PACKAGE_ROOT, 'tests', 'fixtures', 'workflows', 'code-review-max.mjs'),
+      'utf8',
+    );
+    let emittedFinding = false;
+    const reviewExecution = await runScript(
+      codeReview,
+      { target: 'HEAD~1..HEAD', maxRounds: 1 },
+      (message, child) => {
+        if (message.type !== 'agent_start') return;
+        let result: unknown;
+        if (message.prompt.startsWith('Inspect ')) {
+          result = { eligible: true, reason: 'synthetic fixture run' };
+        } else if (message.prompt.startsWith('For ')) {
+          result = { paths: [] };
+        } else if (message.prompt.startsWith('View ')) {
+          result = 'Synthetic change summary';
+        } else if (message.prompt.startsWith('Code review ')) {
+          result = {
+            findings: emittedFinding
+              ? []
+              : [{
+                  file: 'src/example.ts',
+                  line: 1,
+                  title: 'Synthetic issue',
+                  detail: 'Fixture finding',
+                  reason: 'bug',
+                }],
+          };
+          emittedFinding = true;
+        } else if (message.prompt.startsWith('Confidence-score')) {
+          result = { score: 100, reasoning: 'synthetic verification' };
+        } else if (message.prompt.startsWith('Write the final code review')) {
+          result = '### Code review\nFound 1 issue.';
+        } else {
+          throw new Error(`unexpected code-review prompt: ${message.prompt}`);
+        }
+        send(child, { type: 'agent_result', index: message.index, result });
+      },
+    );
+    expect(reviewExecution.result).toMatchObject({
+      type: 'run_result',
+      status: 'completed',
+      result: {
+        issues: [{
+          file: 'src/example.ts',
+          confidence: 100,
+          votes: 3,
+          index: 0,
+        }],
+        report: '### Code review\nFound 1 issue.',
+      },
+    });
   });
 
   it.each([

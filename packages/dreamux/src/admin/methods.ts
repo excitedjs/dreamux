@@ -3,6 +3,7 @@ import type { Server } from '../server.js';
 import type { ChannelToolCaller } from '../service/dispatcher-service/index.js';
 import { ChannelToolAuthorizationError } from '../service/channel-service/errors.js';
 import type { SchedulerCommands } from '../service/scheduler/types.js';
+import { parseWorkflowMaxConcurrency } from '../service/workflow-service/limits.js';
 import {
   TeamDissolveBlockedError,
   TeamDissolveFailedError,
@@ -263,7 +264,13 @@ export const adminMethods: Record<string, AdminHandler> = {
   ).service.teammates.getCapabilities(),
 
   'workflow.run': async (server, params) => {
-    const maxConcurrency = optionalInteger(params, 'max_concurrency');
+    const rawMaxConcurrency = params?.['max_concurrency'];
+    let maxConcurrency: number;
+    try {
+      maxConcurrency = parseWorkflowMaxConcurrency(rawMaxConcurrency);
+    } catch (error) {
+      throw new AdminError('BAD_REQUEST', parseMessage(error));
+    }
     const script = optionalNonBlankString(params, 'script');
     const scriptPath = optionalNonBlankString(params, 'scriptPath');
     if (script === null && scriptPath === null) {
@@ -275,7 +282,9 @@ export const adminMethods: Record<string, AdminHandler> = {
       ...(params !== undefined && Object.hasOwn(params, 'args')
         ? { args: params['args'] }
         : {}),
-      ...(maxConcurrency !== null ? { max_concurrency: maxConcurrency } : {}),
+      ...(rawMaxConcurrency !== undefined && rawMaxConcurrency !== null
+        ? { max_concurrency: maxConcurrency }
+        : {}),
     });
   },
   'workflow.status': async (server, params) =>

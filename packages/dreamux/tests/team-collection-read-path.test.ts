@@ -236,6 +236,7 @@ describe('exclusively owned TeamMate submission', () => {
     createRuntime: () => FakeRuntime;
     initiator: FakeInitiator;
     turnsStore?: AgentTurnsStore;
+    contexts?: AgentRuntimeCreateContext[];
   }): TeammateCollection {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
@@ -254,7 +255,7 @@ describe('exclusively owned TeamMate submission', () => {
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(input.runtimes, {
         createRuntime: input.createRuntime,
-      }),
+      }, input.contexts ?? []),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
       turnsStore: input.turnsStore ?? new AgentTurnsStore(log),
@@ -268,11 +269,13 @@ describe('exclusively owned TeamMate submission', () => {
 
   it('fixes the owner route before first submission and passes outputSchema', async () => {
     const runtimes: FakeRuntime[] = [];
+    const contexts: AgentRuntimeCreateContext[] = [];
     const initiator = new FakeInitiator();
     const ownedCompletions: CompletionEnvelope[] = [];
     let runtimeIndex = 0;
     const collection = createCollection({
       runtimes,
+      contexts,
       initiator,
       createRuntime: () =>
         runtimeIndex++ === 0
@@ -288,18 +291,21 @@ describe('exclusively owned TeamMate submission', () => {
       required: ['answer'],
     };
     const owner = createOwnedTeammateOwner();
+    const workflowRole = 'workflow-owned role guidance';
 
     const spawned = await collection.spawnOwned(
       {
         name: 'worker',
         prompt: 'return structured output',
         intent: 'exclusive task',
+        identity: 'caller identity guidance',
         agentRuntime: 'agent-a',
         cwd: join(root, 'workspace'),
         worktree: { mode: 'reuse-cwd' },
       },
       {
         owner,
+        systemPromptAppend: [workflowRole],
         outputSchema,
         routeSettledCompletion: async (_producerName, _turnId, completion) => {
           ownedCompletions.push(completion);
@@ -313,6 +319,9 @@ describe('exclusively owned TeamMate submission', () => {
       text: 'return structured output',
       sourceId: 'teammate:worker-aaaa:1',
       outputSchema,
+    });
+    expect(contexts[0]?.systemPrompt).toEqual({
+      append: [workflowRole, 'caller identity guidance'],
     });
     expect(ownedCompletions).toEqual([
       expect.objectContaining({

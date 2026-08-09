@@ -126,11 +126,18 @@ describe('workflow admin methods', () => {
       dispatcher_id: 'dispatcher-a',
       script: '',
     })).rejects.toMatchObject({ name: 'AdminError', code: 'BAD_REQUEST' });
-    await expect(adminMethods['workflow.run']!(server, {
-      dispatcher_id: 'dispatcher-a',
-      script: 'export default async function run() {}',
-      max_concurrency: 1.5,
-    })).rejects.toMatchObject({ name: 'AdminError', code: 'BAD_REQUEST' });
+    for (const maxConcurrency of [0, 17, 1.5, null]) {
+      await expect(adminMethods['workflow.run']!(server, {
+        dispatcher_id: 'dispatcher-a',
+        script: 'export default async function run() {}',
+        max_concurrency: maxConcurrency,
+      })).rejects.toMatchObject({
+        name: 'AdminError',
+        code: 'BAD_REQUEST',
+        message:
+          'workflow max_concurrency must be an integer between 1 and 16',
+      });
+    }
     await expect(adminMethods['workflow.status']!(server, {
       dispatcher_id: 'dispatcher-a',
       run_id: '',
