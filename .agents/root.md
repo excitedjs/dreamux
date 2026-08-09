@@ -112,6 +112,9 @@ history and rationale; when you need current behavior, pair them with
 
 ## Active Proposals
 
+- [Codex portable output schema adapter](proposals/codex-portable-output-schema.md)
+  — compile the neutral Workflow schema subset into Codex strict structured
+  output and restore optional-field semantics inside the Codex runtime package.
 - [AgentRuntime input surface cleanup](proposals/agent-runtime-input-surface-cleanup.md)
   — draft technical design for narrowing the provider-facing runtime input
   surface: plain text `completionInput` for non-channel turns, `channelInput`
