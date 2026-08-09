@@ -325,10 +325,13 @@ fails that individual `agent()` call loudly through `agent_result.error`.
 Directly awaiting one of those errors rejects the workflow entry; `parallel()`
 and `pipeline()` preserve their item-level `null` containment.
 
-`parallel()` accepts at most 4096 functions and `pipeline()` accepts at most
-4096 items, rejecting atomically before starting work. Every pipeline stage
-receives `(previousResult, originalItem, index)`. A run defaults to and is
-bounded at 16 concurrent agents, with a lifetime limit of 1000 agent calls.
+Workflow-service owns run-concurrency admission and rejects invalid values
+before creating a durable run. The runner enforces bounded helper inputs
+atomically before starting work, and the service enforces a bounded agent-call
+lifecycle. Every pipeline stage receives
+`(previousResult, originalItem, index)`. See
+[Dynamic Workflow usage](dynamic-workflow-usage.md#53-exact-limits) for the
+single user-facing owner of the exact numeric limits.
 
 Normal terminal runs wait for in-flight turns, silently close and evict their
 owned TeamMates, and then evict the live run entity. `workflow_stop` reserves

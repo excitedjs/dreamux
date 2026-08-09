@@ -7,10 +7,12 @@ import {
   type ObjectExpression,
   type Program,
   type Property,
-  type VariableDeclaration,
 } from 'acorn';
 
-import { isRecord } from './run-support.js';
+interface UltracodeMetaExport {
+  statement: ExportNamedDeclaration;
+  initializer: Expression;
+}
 
 /**
  * Normalize both supported workflow entry dialects to one default-exported
@@ -25,13 +27,16 @@ export function normalizeWorkflowScript(source: string): string {
   if (metaExport === null) {
     throw new Error('workflow script must export const meta');
   }
-  readUltracodeMeta(metaExport);
+  validateUltracodeMeta(metaExport.initializer);
 
   const body = program.body
-    .filter((statement) => statement !== metaExport)
+    .filter((statement) => statement !== metaExport.statement)
     .map((statement) => source.slice(statement.start, statement.end))
     .join('\n');
-  const metaSource = source.slice(metaExport.start, metaExport.end);
+  const metaSource = source.slice(
+    metaExport.statement.start,
+    metaExport.statement.end,
+  );
   return `${metaSource}\nexport default async function run() {\n${body}\n}\n`;
 }
 
@@ -44,20 +49,20 @@ function parseWorkflowScript(source: string): Program {
   });
 }
 
-function findUltracodeMetaExport(program: Program): ExportNamedDeclaration | null {
-  let metaExport: ExportNamedDeclaration | null = null;
+function findUltracodeMetaExport(program: Program): UltracodeMetaExport | null {
+  let metaExport: UltracodeMetaExport | null = null;
   for (const statement of program.body) {
     if (statement.type === 'ImportDeclaration') {
       throw new Error('workflow imports are disabled');
     }
-    if (
-      statement.type !== 'ExportNamedDeclaration' &&
-      statement.type !== 'ExportAllDeclaration'
-    ) {
-      continue;
+    if (statement.type === 'ExportAllDeclaration') {
+      throw new Error(
+        'ultracode workflow scripts may only export const meta',
+      );
     }
+    if (statement.type !== 'ExportNamedDeclaration') continue;
     const candidate = ultracodeMetaExport(statement);
-    if (candidate === null || metaExport !== null) {
+    if (candidate === null) {
       throw new Error(
         'ultracode workflow scripts may only export const meta',
       );
@@ -72,33 +77,20 @@ function hasDefaultExport(program: Program): boolean {
     if (statement.type === 'ExportDefaultDeclaration') return true;
     if (statement.type === 'ExportNamedDeclaration') {
       return statement.specifiers.some(
-        (specifier) => exportedName(specifier.exported) === 'default',
+        (specifier) =>
+          specifier.exported.type === 'Identifier'
+            ? specifier.exported.name === 'default'
+            : specifier.exported.value === 'default',
       );
     }
-    return statement.type === 'ExportAllDeclaration' &&
-      statement.exported !== null &&
-      exportedName(statement.exported) === 'default';
+    return false;
   });
 }
 
-function exportedName(
-  exported:
-    | { type: string; name?: string; value?: unknown }
-    | null
-    | undefined,
-): string | null {
-  if (exported === null || exported === undefined) return null;
-  if (exported.type === 'Identifier') return exported.name ?? null;
-  return typeof exported.value === 'string' ? exported.value : null;
-}
-
 function ultracodeMetaExport(
-  statement: ExportNamedDeclaration | {
-    type: 'ExportAllDeclaration';
-  },
-): ExportNamedDeclaration | null {
+  statement: ExportNamedDeclaration,
+): UltracodeMetaExport | null {
   if (
-    statement.type !== 'ExportNamedDeclaration' ||
     statement.specifiers.length !== 0 ||
     statement.source !== null ||
     statement.declaration?.type !== 'VariableDeclaration'
@@ -112,43 +104,44 @@ function ultracodeMetaExport(
   ) {
     return null;
   }
-  const [declarator] = declaration.declarations;
-  return declarator?.id.type === 'Identifier' &&
-      declarator.id.name === 'meta' &&
-      declarator.init !== null
-    ? statement
-    : null;
+  const declarator = declaration.declarations[0];
+  if (
+    declarator === undefined ||
+    declarator.id.type !== 'Identifier' ||
+    declarator.id.name !== 'meta' ||
+    declarator.init === undefined ||
+    declarator.init === null
+  ) return null;
+  return { statement, initializer: declarator.init };
 }
 
-function readUltracodeMeta(
-  statement: ExportNamedDeclaration,
-): Record<string, unknown> {
-  const declaration = statement.declaration as VariableDeclaration;
-  const initializer = declaration.declarations[0]?.init;
-  if (initializer === undefined || initializer === null) {
+function validateUltracodeMeta(
+  initializer: Expression,
+): void {
+  if (initializer.type !== 'ObjectExpression') {
+    validatePlainLiteral(initializer);
     throw new Error('workflow meta must be a plain literal object');
   }
-  const value = readPlainLiteral(initializer);
-  if (!isRecord(value)) {
-    throw new Error('workflow meta must be a plain literal object');
-  }
-  return value;
+  validateObjectLiteral(initializer);
 }
 
-function readPlainLiteral(expression: Expression): unknown {
+function validatePlainLiteral(expression: Expression): void {
   switch (expression.type) {
     case 'Literal':
-      return readPrimitiveLiteral(expression);
+      validatePrimitiveLiteral(expression);
+      return;
     case 'ArrayExpression':
-      return readArrayLiteral(expression);
+      validateArrayLiteral(expression);
+      return;
     case 'ObjectExpression':
-      return readObjectLiteral(expression);
+      validateObjectLiteral(expression);
+      return;
     default:
       throw new Error('workflow meta must be a recursively plain literal tree');
   }
 }
 
-function readPrimitiveLiteral(literal: Literal): unknown {
+function validatePrimitiveLiteral(literal: Literal): void {
   if (
     literal.regex !== undefined ||
     literal.bigint !== undefined ||
@@ -161,34 +154,29 @@ function readPrimitiveLiteral(literal: Literal): unknown {
   ) {
     throw new Error('workflow meta must be a recursively plain literal tree');
   }
-  return literal.value;
 }
 
-function readArrayLiteral(array: ArrayExpression): unknown[] {
-  return array.elements.map((element) => {
+function validateArrayLiteral(array: ArrayExpression): void {
+  for (const element of array.elements) {
     if (element === null || element.type === 'SpreadElement') {
       throw new Error(
         'workflow meta must be a recursively plain literal tree',
       );
     }
-    return readPlainLiteral(element);
-  });
+    validatePlainLiteral(element);
+  }
 }
 
-function readObjectLiteral(object: ObjectExpression): Record<string, unknown> {
-  const value: Record<string, unknown> = Object.create(null) as Record<
-    string,
-    unknown
-  >;
+function validateObjectLiteral(object: ObjectExpression): void {
   for (const entry of object.properties) {
     if (entry.type === 'SpreadElement' || !isPlainProperty(entry)) {
       throw new Error(
         'workflow meta must be a recursively plain literal tree',
       );
     }
-    value[plainPropertyName(entry)] = readPlainLiteral(entry.value);
+    validatePlainPropertyName(entry);
+    validatePlainLiteral(entry.value);
   }
-  return value;
 }
 
 function isPlainProperty(entry: Property): entry is Property & {
@@ -202,11 +190,14 @@ function isPlainProperty(entry: Property): entry is Property & {
   );
 }
 
-function plainPropertyName(property: Property): string {
-  if (property.key.type === 'Identifier') return property.key.name;
+function validatePlainPropertyName(property: Property): void {
+  if (property.key.type === 'Identifier') return;
   if (property.key.type === 'Literal') {
-    const key = readPrimitiveLiteral(property.key);
-    if (typeof key === 'string' || typeof key === 'number') return String(key);
+    validatePrimitiveLiteral(property.key);
+    if (
+      typeof property.key.value === 'string' ||
+      typeof property.key.value === 'number'
+    ) return;
   }
   throw new Error('workflow meta object keys must be non-computed literals');
 }

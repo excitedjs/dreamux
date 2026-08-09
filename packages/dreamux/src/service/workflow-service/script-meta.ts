@@ -1,5 +1,18 @@
-import type { WorkflowScriptMeta } from './protocol.js';
 import { isRecord } from './run-support.js';
+
+interface WorkflowScriptMeta {
+  name: string;
+  description: string;
+  whenToUse?: string;
+  phases?: Array<
+    | string
+    | {
+        title: string;
+        detail?: string;
+        model?: string;
+      }
+  >;
+}
 
 export function assertWorkflowScriptMeta(
   value: unknown,

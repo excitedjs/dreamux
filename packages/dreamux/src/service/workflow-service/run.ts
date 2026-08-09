@@ -451,31 +451,33 @@ export class WorkflowRun {
       return;
     }
 
-    let result: unknown = completion.status === 'completed' ? completion.result : null;
+    let status = completion.status;
+    let result: unknown = completion.status === 'completed'
+      ? completion.result
+      : null;
     let runnerError: string | undefined;
-    if (
-      completion.status === 'completed' &&
-      call.options.schema !== undefined
-    ) {
-      try {
-        if (completion.result === null) {
-          throw new Error('structured output result was empty');
-        }
-        result = JSON.parse(completion.result) as unknown;
-      } catch (error) {
-        result = null;
+    if (completion.status === 'completed' && call.options.schema !== undefined) {
+      status = 'failed';
+      result = null;
+      if (completion.result === null) {
         runnerError =
-          'runtime reported successful structured output that was not valid JSON';
+          'runtime reported successful structured output that was empty';
         this.deps.log.warn(
-          {
-            run_id: this.record.run_id,
-            index: call.record.index,
-            producer: producerName,
-            turn_id: turnId,
-            err: errorInfo(error),
-          },
-          'workflow structured output was not valid JSON',
+          { run_id: this.record.run_id, index: call.record.index, producer: producerName, turn_id: turnId },
+          'workflow structured output was empty',
         );
+      } else {
+        try {
+          result = JSON.parse(completion.result) as unknown;
+          status = 'completed';
+        } catch {
+          runnerError =
+            'runtime reported successful structured output that was not valid JSON';
+          this.deps.log.warn(
+            { run_id: this.record.run_id, index: call.record.index, producer: producerName, turn_id: turnId },
+            'workflow structured output was not valid JSON',
+          );
+        }
       }
     }
     if (completion.status !== 'completed') {
@@ -485,12 +487,7 @@ export class WorkflowRun {
       );
     }
     try {
-      await this.completeAgent(
-        call,
-        runnerError === undefined ? completion.status : 'failed',
-        result,
-        runnerError,
-      );
+      await this.completeAgent(call, status, result, runnerError);
     } catch (error) {
       // Let the producer's settle route unwind before terminal auto-close.
       // Entity release drains that same route, so awaiting finalization here

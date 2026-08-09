@@ -28,8 +28,9 @@ overlapping writes.
   may still read `running` until the run settles to `stopped` — do not treat a
   transient `running` as a failed stop.
 
-`max_concurrency` defaults to 16 and accepts values from 1 through 16. Each run
-can start at most 1000 agents across its complete lifecycle.
+`max_concurrency` defaults to 16 and accepts only integers from 1 through 16.
+Invalid values are rejected before a run is created rather than clamped. Each
+run can start at most 1000 agents across its complete lifecycle.
 
 Use `workflow_status` for an explicit progress check or recovery, not as a polling
 loop. After a run, use a recorded concrete TeamMate name with `send` when a result

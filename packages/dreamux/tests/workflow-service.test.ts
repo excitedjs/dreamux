@@ -624,6 +624,45 @@ describe('WorkflowService', () => {
     expect(ctx.initiator.received[0]?.status).toBe('failed');
   });
 
+  it('fails an empty successful structured result with an accurate runner error', async () => {
+    const ctx = await context(['run-schema-empty']);
+    await ctx.service.run({ script: validScript() });
+    const runner = ctx.runner.latest();
+
+    runner.emit({
+      type: 'agent_start',
+      index: 0,
+      prompt: 'structured prompt',
+      options: { schema: { type: 'object' } },
+    });
+    await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(1));
+    await ctx.teammates.settle(0, 'completed', null);
+
+    await vi.waitFor(() =>
+      expect(agentResults(runner)).toEqual([
+        {
+          type: 'agent_result',
+          index: 0,
+          error: 'runtime reported successful structured output that was empty',
+        },
+      ]),
+    );
+    expect(await ctx.service.status({ run_id: 'run-schema-empty' }))
+      .toMatchObject({ agents: [{ status: 'failed' }] });
+    expect(ctx.log.events).toContainEqual(expect.objectContaining({
+      level: 'warn',
+      message: 'workflow structured output was empty',
+    }));
+
+    runner.emit({
+      type: 'run_result',
+      status: 'failed',
+      error: 'runtime reported successful structured output that was empty',
+    });
+    await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
+    expect(ctx.initiator.received[0]?.status).toBe('failed');
+  });
+
   it('returns a non-submitted agent as null and auto-closes it at terminal', async () => {
     const ctx = await context(['run-agent-failed']);
     ctx.teammates.nextTurnStatus = 'failed';
@@ -950,11 +989,10 @@ describe('WorkflowService', () => {
     expect(ctx.initiator.received[0]?.status).toBe('completed');
   });
 
-  it('defaults and clamps concurrency to 1..16 and queues excess agent starts server-side', async () => {
+  it('defaults concurrency, rejects invalid values, and queues excess agent starts server-side', async () => {
     const ctx = await context([
       'run-default-concurrency',
-      'run-lower-clamp',
-      'run-upper-clamp',
+      'run-queued-concurrency',
     ]);
     await ctx.service.run({ script: validScript() });
     const defaultRunner = ctx.runner.latest();
@@ -973,10 +1011,21 @@ describe('WorkflowService', () => {
       )).toBe(true),
     );
 
-    await ctx.service.run({ script: validScript(), max_concurrency: 0 });
+    for (const maxConcurrency of [0, 17, 1.5, Number.POSITIVE_INFINITY]) {
+      await expect(ctx.service.run({
+        script: validScript(),
+        max_concurrency: maxConcurrency,
+      })).rejects.toThrow(
+        'workflow max_concurrency must be an integer between 1 and 16',
+      );
+    }
+    expect(ctx.runner.runners).toHaveLength(1);
+
+    await ctx.service.run({ script: validScript(), max_concurrency: 1 });
     const firstRunner = ctx.runner.latest();
     expect(
-      (await ctx.service.status({ run_id: 'run-lower-clamp' })).max_concurrency,
+      (await ctx.service.status({ run_id: 'run-queued-concurrency' }))
+        .max_concurrency,
     ).toBe(1);
 
     firstRunner.emit({
@@ -1000,18 +1049,9 @@ describe('WorkflowService', () => {
     await ctx.teammates.settle(1, 'completed', 'two');
     firstRunner.emit({ type: 'run_result', status: 'completed', result: null });
     await vi.waitFor(() =>
-      expect(ctx.initiator.received.some((item) => item.id === 'run-lower-clamp'))
-        .toBe(true),
-    );
-
-    await ctx.service.run({ script: validScript(), max_concurrency: 99 });
-    const secondRunner = ctx.runner.latest();
-    expect(
-      (await ctx.service.status({ run_id: 'run-upper-clamp' })).max_concurrency,
-    ).toBe(16);
-    secondRunner.emit({ type: 'run_result', status: 'completed', result: null });
-    await vi.waitFor(() =>
-      expect(ctx.initiator.received.some((item) => item.id === 'run-upper-clamp'))
+      expect(ctx.initiator.received.some(
+        (item) => item.id === 'run-queued-concurrency',
+      ))
         .toBe(true),
     );
   });

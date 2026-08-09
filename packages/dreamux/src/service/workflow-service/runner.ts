@@ -15,6 +15,8 @@ interface PendingAgent {
   reject: (error: Error) => void;
 }
 
+const MAX_HELPER_ITEMS = 4096;
+
 const pendingAgents = new Map<number, PendingAgent>();
 let nextAgentIndex = 0;
 let started = false;
@@ -181,8 +183,8 @@ async function parallel(thunks: unknown): Promise<unknown[]> {
   if (!Array.isArray(thunks)) {
     throw new Error('parallel expects an array of functions');
   }
-  if (thunks.length > 4096) {
-    throw new Error('parallel supports at most 4096 functions');
+  if (thunks.length > MAX_HELPER_ITEMS) {
+    throw new Error(`parallel supports at most ${MAX_HELPER_ITEMS} functions`);
   }
   return Promise.all(
     thunks.map(async (thunk: unknown) => {
@@ -205,8 +207,8 @@ async function pipeline(
   if (!Array.isArray(items)) {
     throw new Error('pipeline expects an array of items');
   }
-  if (items.length > 4096) {
-    throw new Error('pipeline supports at most 4096 items');
+  if (items.length > MAX_HELPER_ITEMS) {
+    throw new Error(`pipeline supports at most ${MAX_HELPER_ITEMS} items`);
   }
   if (stages.some((stage) => typeof stage !== 'function')) {
     throw new Error('pipeline stages must be functions');

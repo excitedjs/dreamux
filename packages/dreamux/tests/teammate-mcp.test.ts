@@ -342,7 +342,7 @@ describe('teammate-mcp stdio shim', () => {
     }
   });
 
-  it('accepts workflow concurrency 16 and rejects values above it before admin', async () => {
+  it('accepts workflow concurrency 16 and rejects invalid values before admin', async () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: true,
@@ -380,28 +380,31 @@ describe('teammate-mcp stdio shim', () => {
       expect(admin.requests).toHaveLength(1);
       expect(admin.requests[0]?.params).toMatchObject({ max_concurrency: 16 });
 
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/call',
-        params: {
-          name: 'workflow_run',
-          arguments: {
-            script: 'export const meta = { name: "x", description: "x" }; return null;',
-            max_concurrency: 17,
+      for (const [index, maxConcurrency] of [0, 17, 1.5, null].entries()) {
+        writeJson(input, {
+          jsonrpc: '2.0',
+          id: index + 2,
+          method: 'tools/call',
+          params: {
+            name: 'workflow_run',
+            arguments: {
+              script: 'export const meta = { name: "x", description: "x" }; return null;',
+              max_concurrency: maxConcurrency,
+            },
           },
-        },
-      });
-      await expect(reader.next()).resolves.toMatchObject({
-        id: 2,
-        result: {
-          isError: true,
-          content: [{
-            type: 'text',
-            text: 'max_concurrency must be between 1 and 16',
-          }],
-        },
-      });
+        });
+        await expect(reader.next()).resolves.toMatchObject({
+          id: index + 2,
+          result: {
+            isError: true,
+            content: [{
+              type: 'text',
+              text:
+                'workflow max_concurrency must be an integer between 1 and 16',
+            }],
+          },
+        });
+      }
       expect(admin.requests).toHaveLength(1);
 
       input.end();

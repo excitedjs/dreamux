@@ -58,17 +58,3 @@ export type WorkflowRunnerChildMessage =
   | WorkflowAgentStartMessage
   | WorkflowEmitMessage
   | WorkflowRunResultMessage;
-
-export interface WorkflowScriptMeta {
-  name: string;
-  description: string;
-  whenToUse?: string;
-  phases?: Array<
-    | string
-    | {
-        title: string;
-        detail?: string;
-        model?: string;
-      }
-  >;
-}

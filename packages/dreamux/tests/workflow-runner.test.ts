@@ -13,6 +13,7 @@ import type {
   WorkflowRunResultMessage,
 } from '../src/service/workflow-service/protocol.js';
 import { ForkedWorkflowRunner } from '../src/service/workflow-service/runner-process.js';
+import { normalizeWorkflowScript } from '../src/service/workflow-service/script-normalizer.js';
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const RUNNER_PATH = join(
@@ -45,6 +46,31 @@ afterEach(async () => {
 });
 
 describe('workflow runner', () => {
+  it.each([
+    [
+      'default declaration',
+      [
+        '/* preserve leading source */',
+        "export const meta = { name: 'legacy', description: 'legacy module' };",
+        'export default async function run() {',
+        '  return args;',
+        '}',
+        '',
+      ].join('\r\n'),
+    ],
+    [
+      'named default export',
+      [
+        "export const meta = { name: 'legacy', description: 'legacy module' };",
+        'async function run() { return args; }',
+        'export { run as default };',
+        '',
+      ].join('\r\n'),
+    ],
+  ])('returns legacy module source byte-for-byte unchanged for %s', (_kind, source) => {
+    expect(normalizeWorkflowScript(source)).toBe(source);
+  });
+
   it('runs the workflow API through the child IPC channel', async () => {
     const agentStarts: WorkflowAgentStartMessage[] = [];
     const execution = await runScript(
@@ -401,6 +427,12 @@ describe('workflow runner', () => {
     [
       `export const meta = { name: 'bad', description: 'bad' };
       export const extra = true;
+      agent('must not start');`,
+      'ultracode workflow scripts may only export const meta',
+    ],
+    [
+      `export const meta = { name: 'bad', description: 'bad' };
+      export * as default from './other.mjs';
       agent('must not start');`,
       'ultracode workflow scripts may only export const meta',
     ],

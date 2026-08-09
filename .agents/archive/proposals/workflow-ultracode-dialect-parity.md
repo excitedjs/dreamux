@@ -28,6 +28,9 @@ options remain supported.
 
 ## Source facts
 
+This section records the implementation baseline when the proposal was
+approved. It is historical context, not current behavior.
+
 The current runner evaluates user text directly as an ES module and requires a
 default exported function. A top-level `return`, as used by both acceptance
 scripts, is therefore a syntax error
@@ -258,13 +261,12 @@ The workflow limits become:
 - maximum inputs to one `parallel()` call: 4096;
 - maximum inputs to one `pipeline()` call: 4096.
 
-The server-side semaphore remains the concurrency authority. Raising the cap
-does not permit the script process or a runtime provider to bypass it.
-
-The MCP `workflow_run.max_concurrency` schema and its contract tests must accept
-16 and reject values above 16 during MCP schema validation. Admin inputs
-continue to reach the service clamp, which remains the server-side authority;
-this slice does not introduce a second limits object or public constant.
+Workflow-service owns one private `max_concurrency` parser and the server-side
+semaphore remains the execution authority. MCP imports the same owner constants
+for its schema, while MCP, admin, and direct service calls all use the same
+parser. Omitted values default to 16; non-integer or out-of-range values are
+rejected before durable run creation rather than clamped. The parser and
+constants are internal implementation capabilities, not public or barrel ABI.
 
 The 1000-call limit counts calls accepted from the runner, including calls that
 later fail or are stopped. A rejected 1001st call reports the explicit lifecycle
@@ -289,11 +291,12 @@ limit and does not spawn a TeamMate.
   including stable original item and zero-based index.
 - `parallel()` and `pipeline()` reject 4097 inputs before any work starts and
   accept 4096.
-- Service tests prove default and upper concurrency 16, lifetime call 1000, and
-  rejection of call 1001.
-- MCP schema tests prove `max_concurrency: 16` reaches the service and values
-  above 16 are rejected before service invocation; service tests independently
-  prove admin/direct inputs are clamped to 16.
+- Service tests prove the default and accepted upper concurrency are 16,
+  invalid direct inputs are rejected before run creation, the lifetime call
+  limit is 1000, and call 1001 is rejected.
+- MCP schema and mapping tests prove `max_concurrency: 16` reaches the service.
+  MCP and admin tests prove non-integer and out-of-range values use the same
+  service-owned validation contract and are rejected before run creation.
 - Workflow-owned TeamMate creation supplies the workflow-role system prompt and
   schema through separate neutral fields for both built-in runtime capability
   shapes.

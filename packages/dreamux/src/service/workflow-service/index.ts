@@ -17,6 +17,7 @@ import {
   type WorkflowScopePathInput,
 } from '../../platform/paths.js';
 import { WorkflowJournal } from './journal.js';
+import { parseWorkflowMaxConcurrency } from './limits.js';
 import { WorkflowRun } from './run.js';
 import {
   ForkedWorkflowRunner,
@@ -34,9 +35,6 @@ import type {
   WorkflowStopResult,
 } from './types.js';
 
-const DEFAULT_MAX_CONCURRENCY = 16;
-const MIN_MAX_CONCURRENCY = 1;
-const MAX_MAX_CONCURRENCY = 16;
 const MAX_SCRIPT_BYTES = 1024 * 1024;
 
 export interface WorkflowServiceOptions extends WorkflowScopePathInput {
@@ -110,6 +108,7 @@ export class WorkflowService implements WorkflowOps {
   private async createRun(input: WorkflowRunInput): Promise<WorkflowRunAccepted> {
     await this.initialize();
     if (!this.accepting) throw new Error('workflow admission is closed');
+    const maxConcurrency = parseWorkflowMaxConcurrency(input.max_concurrency);
     const script = await resolveWorkflowScript(input);
     if (script.trim() === '') {
       throw new Error('workflow script must be non-empty');
@@ -128,7 +127,7 @@ export class WorkflowService implements WorkflowOps {
       caller_kind: this.opts.callerKind,
       script_hash: createHash('sha256').update(script).digest('hex'),
       status: 'running',
-      max_concurrency: clampMaxConcurrency(input.max_concurrency),
+      max_concurrency: maxConcurrency,
       phase: null,
       last_log: null,
       agents: [],
@@ -281,17 +280,6 @@ export class WorkflowService implements WorkflowOps {
 
 export function workflowCompletionKey(runId: string): string {
   return completionKey('workflow', validateWorkflowRunId(runId));
-}
-
-function clampMaxConcurrency(value: number | undefined): number {
-  if (value === undefined) return DEFAULT_MAX_CONCURRENCY;
-  if (!Number.isFinite(value)) {
-    throw new Error('workflow max_concurrency must be a finite number');
-  }
-  return Math.min(
-    MAX_MAX_CONCURRENCY,
-    Math.max(MIN_MAX_CONCURRENCY, Math.trunc(value)),
-  );
 }
 
 async function resolveWorkflowScript(input: WorkflowRunInput): Promise<string> {

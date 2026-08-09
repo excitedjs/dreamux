@@ -26,10 +26,7 @@ const SERVICE_REEXPORT_SELECTORS = [
 
 export default [
   {
-    ignores: [
-      'tests/fixtures/workflows/code-review-max.mjs',
-      'tests/fixtures/workflows/deep-research-max.mjs',
-    ],
+    ignores: ['tests/fixtures/workflows/*.mjs'],
   },
   ...withCoreImportBoundary(baseConfig),
   {
