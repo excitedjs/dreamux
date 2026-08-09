@@ -154,9 +154,6 @@ The codec is in-memory execution state only. It is never persisted.
 - Runtime teardown/restart discards all in-memory codecs together with the old
   `TurnManager`. Interrupted turns settle stopped through the existing teardown
   path. A new process never restores a result from the old client.
-- A currently pending structured turn without its expected codec is an internal
-  contract failure and settles failed; it is never passed through as
-  unstructured text.
 
 ## Active-turn folding
 

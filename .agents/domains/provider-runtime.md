@@ -161,9 +161,9 @@ exact native turn id.
 Restoration runs once, behind the existing pending-turn mutual-exclusion guard,
 before `onTurnCompleted`. A successful restoration is the only structured text
 seen by `CodexRuntime.recordCollectedTurn()`, so `lastResult` and completed
-settlement use the neutral restored JSON. Parse, shape, or missing-codec failure
-does not call `onTurnCompleted` or mutate `lastResult`; it emits one ordinary
-failed `TurnSettledSignal` with `text: null`. Submission failure, stop, app-server
+settlement use the neutral restored JSON. Parse or shape restoration failure does
+not call `onTurnCompleted` or mutate `lastResult`; it emits one ordinary failed
+`TurnSettledSignal` with `text: null`. Submission failure, stop, app-server
 teardown/restart, and late completion clear or discard in-memory codecs through
 the same turn lifecycle and never restore or settle twice.
 

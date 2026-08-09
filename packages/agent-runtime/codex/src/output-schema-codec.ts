@@ -273,7 +273,6 @@ function schemaType(
   const nonNull = value.find((entry) => entry !== 'null');
   if (
     typeof nonNull !== 'string' ||
-    nonNull === 'null' ||
     !SUPPORTED_TYPES.has(nonNull as SupportedType)
   ) {
     fail(path, 'only nullable [T, "null"] unions are supported');

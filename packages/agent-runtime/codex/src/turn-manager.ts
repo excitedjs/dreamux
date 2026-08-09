@@ -34,7 +34,6 @@ import type {
 interface ActiveTurnSlot {
   collector: TurnCollector;
   codec: CodexOutputSchemaCodec | null;
-  expectsStructuredOutput: boolean;
   turnId: string | null;
   candidateTurnId: string | null;
   primaryFailed: boolean;
@@ -85,10 +84,7 @@ export class TurnManager {
    */
   private readonly pendingTurns = new Map<
     string,
-    {
-      codec: CodexOutputSchemaCodec | null;
-      expectsStructuredOutput: boolean;
-    }
+    { codec: CodexOutputSchemaCodec | null }
   >();
   private idlePromise: Promise<void> | null = null;
   private idleResolve: (() => void) | null = null;
@@ -299,7 +295,6 @@ export class TurnManager {
     const slot: ActiveTurnSlot = {
       collector: subscribeTurnCollection(this.opts.client, threadId),
       codec,
-      expectsStructuredOutput: codec !== null,
       turnId: null,
       candidateTurnId: null,
       primaryFailed: false,
@@ -373,10 +368,7 @@ export class TurnManager {
     slot: ActiveTurnSlot,
   ): void {
     if (this.pendingTurns.has(turnId)) return;
-    this.pendingTurns.set(turnId, {
-      codec: slot.codec,
-      expectsStructuredOutput: slot.expectsStructuredOutput,
-    });
+    this.pendingTurns.set(turnId, { codec: slot.codec });
     this.activeTurnId = turnId;
     void collector.awaitTurn(turnId).then(
       (turn) => {
@@ -389,15 +381,6 @@ export class TurnManager {
           if (this.activeTurnId === turnId) this.activeTurnId = null;
           let completedTurn: CollectedTurn;
           try {
-            if (
-              pending.expectsStructuredOutput &&
-              pending.codec === null
-            ) {
-              throw new Error(
-                `codex outputSchema restoration for turn ${turnId}: ` +
-                  'structured turn has no codec',
-              );
-            }
             completedTurn = pending.codec === null
               ? turn
               : restoreCollectedTurn(turn, pending.codec);
