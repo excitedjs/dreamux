@@ -27,19 +27,25 @@ instead.
    hunks, git history and blame context, review comments on prior change
    requests touching the same files, guidance stated in code comments of the
    modified files, and concrete security issues introduced by the change. The
-   barrier is justified: deduplication needs every lens's output at once.
+   barrier is justified: deduplication needs every lens's output at once —
+   and it is where coverage is accounted: lens results are index-aligned with
+   the lens list, so a failed lens is recorded as missing coverage instead of
+   being silently dropped by `.filter(Boolean)`.
 4. **Verify** — each unique finding is scored by three TeamMates with distinct
    focus questions (does it reproduce on the changed lines; is it pre-existing
    rather than introduced; does the cited guidance actually say that), using a
-   fixed 0-100 rubric. Findings advance through `pipeline` independently — a
-   finding from a fast lens is verified while slower work continues.
+   fixed 0-100 rubric. Findings advance through `pipeline` independently of
+   one another: each finding's vote aggregation follows its own three votes
+   without waiting for the other findings.
 5. **Report** — findings that keep at least two settled votes and average 80 or
-   higher survive; one TeamMate formats the final review comment.
+   higher survive; one TeamMate formats the final review comment, noting
+   incomplete coverage when any lens failed.
 
-The run returns the report; the caller decides where it goes. Post it through
-the channel, or have a follow-up `send` to the reporter TeamMate publish it
-with the forge's own tooling (for example `gh` for GitHub or `glab` for
-GitLab) once the operator confirms.
+The run returns the report plus a `coverage` record; the caller decides where
+the report goes. When a channel reply tool is available, post it there; or
+have a follow-up `send` to the reporter TeamMate publish it with the forge's
+own tooling (for example `gh` for GitHub or `glab` for GitLab) once the
+operator confirms.
 
 ## Prompt discipline
 
@@ -82,8 +88,10 @@ counts, and match fan-out to what the operator asked for.
 ## Script
 
 The script uses the top-level entry: the body follows `export const meta`
-directly, `await` and early `return` work at top level, and helper functions
-stay at module scope.
+directly, and `await` and early `return` work at top level. Dreamux wraps
+everything after the meta export — constants and helper functions included —
+into the canonical entry function; hoisting inside the wrapped body keeps the
+helpers callable exactly as written.
 
 ```js
 export const meta = {
@@ -216,7 +224,8 @@ const lenses = [
 ];
 
 phase('find');
-const found = (await parallel(lenses.map((lens) => () =>
+// parallel() preserves order, so a null entry identifies the failed lens
+const lensResults = await parallel(lenses.map((lens) => () =>
   agent(
     `Code review this change through one lens: ${target}\n${lens.prompt}\n` +
     `${FALSE_POSITIVES}\nChange summary:\n${summary}`,
@@ -227,7 +236,20 @@ const found = (await parallel(lenses.map((lens) => () =>
       schema: FINDINGS_SCHEMA,
     },
   ),
-))).filter(Boolean).flatMap((r) => r.findings);
+));
+const failedLenses = lenses
+  .filter((lens, i) => !lensResults[i])
+  .map((lens) => lens.key);
+if (failedLenses.length === lenses.length) {
+  return { error: 'every finder lens failed; the change was not reviewed', failedLenses };
+}
+const coverage = failedLenses.length
+  ? { complete: false, failedLenses }
+  : { complete: true };
+if (failedLenses.length) {
+  log(`coverage incomplete: failed lenses ${failedLenses.join(', ')}`);
+}
+const found = lensResults.filter(Boolean).flatMap((r) => r.findings);
 
 const seen = new Set();
 const unique = [];
@@ -236,8 +258,16 @@ for (const f of found) {
   if (!seen.has(key)) { seen.add(key); unique.push(f); }
 }
 log(`${found.length} raw findings, ${unique.length} unique`);
+
+const checkedLenses = lenses
+  .filter((lens) => !failedLenses.includes(lens.key))
+  .map((lens) => lens.key);
+const noIssuesReport = coverage.complete
+  ? 'No issues found. Checked for bugs, security, history, and guidance-file compliance.'
+  : `No issues found by the lenses that completed (${checkedLenses.join(', ')}). ` +
+    `Coverage is incomplete: ${failedLenses.join(', ')} failed.`;
 if (!unique.length) {
-  return { issues: [], report: 'No issues found. Checked for bugs, security, history, and guidance-file compliance.' };
+  return { issues: [], coverage, report: noIssuesReport };
 }
 
 phase('verify');
@@ -273,17 +303,21 @@ log(`${confirmed.length} findings at >=80 confidence`);
 
 phase('report');
 if (!confirmed.length) {
-  return { issues: [], report: 'No issues found. Checked for bugs, security, history, and guidance-file compliance.' };
+  return { issues: [], coverage, report: noIssuesReport };
 }
 const report = await agent(
   `Write the final code review comment for the change: ${target}\n` +
   `Confirmed issues (JSON): ${JSON.stringify(confirmed)}\n` +
+  `Coverage (JSON): ${JSON.stringify(coverage)}\n` +
   `Format: a "### Code review" heading, "Found N issues:", then a numbered list; ` +
   `each item is a brief description with the flag reason in parentheses and a ` +
-  `file#line citation on the next line. Brief, no emojis. Return markdown only.`,
+  `citation on the next line — file#line when the finding carries a line number, ` +
+  `the file path alone otherwise; never invent a line number. If coverage is ` +
+  `incomplete, end with one line naming the failed lenses. Brief, no emojis. ` +
+  `Return markdown only.`,
   { label: 'report', phase: 'report', intent: 'Review report writer' },
 );
-return { issues: confirmed, report };
+return { issues: confirmed, coverage, report };
 ```
 
 The verify stage shows the three-argument stage signature: stage one returns
@@ -309,7 +343,7 @@ Team workspace:
 
 `max_concurrency` defaults to 16; lower it only when the workspace or runtime
 provider needs gentler fan-out. After the terminal completion, read `issues`
-for the structured findings and `report` for the formatted comment; use the
-reporter TeamMate's concrete name with `send` for follow-ups such as posting
-the comment through the forge's tooling or re-checking one finding
-interactively.
+for the structured findings, `coverage` for whether every finder lens
+completed, and `report` for the formatted comment; use the reporter TeamMate's
+concrete name with `send` for follow-ups such as posting the comment through
+the forge's tooling or re-checking one finding interactively.
