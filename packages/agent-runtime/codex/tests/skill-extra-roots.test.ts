@@ -34,15 +34,18 @@ class FakeClient {
   readonly threadResumeCalls: unknown[] = [];
   readonly turnStartCalls: unknown[] = [];
   threadResumeError: Error | null = null;
-  private readonly handlers: Array<(notification: unknown) => void> = [];
+  private readonly handlers = new Set<(notification: unknown) => void>();
   private nextTurnId = 1;
   failExtraRoots = false;
   /** When set, `skills/extraRoots/set` rejects with this error instead. */
   extraRootsError: Error | null = null;
 
   onClose(): void {}
-  onNotification(handler: (notification: unknown) => void): void {
-    this.handlers.push(handler);
+  onNotification(handler: (notification: unknown) => void): () => void {
+    this.handlers.add(handler);
+    return () => {
+      this.handlers.delete(handler);
+    };
   }
   setServerRequestHandler(): void {}
   async ready(): Promise<void> {}

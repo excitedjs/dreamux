@@ -250,7 +250,10 @@ export class TurnManager {
     this.stopped = true;
     const activeSlot = this.activeTurnSlot;
     this.activeTurnSlot = null;
-    if (activeSlot !== null) activeSlot.codec = null;
+    if (activeSlot !== null) {
+      activeSlot.collector.dispose();
+      activeSlot.codec = null;
+    }
     if (activeSlot !== null && activeSlot.turnId === null) {
       activeSlot.rejectTurnId(new Error('codex turn stopped before acceptance'));
     }
@@ -340,6 +343,7 @@ export class TurnManager {
     }
     if (slot.primaryFailed && slot.pendingSubmissions === 0) {
       if (this.activeTurnSlot === slot) this.activeTurnSlot = null;
+      slot.collector.dispose();
       slot.codec = null;
       slot.rejectTurnId(error);
       this.resolveIdleWaitersIfIdle();

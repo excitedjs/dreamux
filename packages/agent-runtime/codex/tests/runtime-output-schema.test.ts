@@ -128,7 +128,7 @@ describe('CodexRuntime portable output schema settlement', () => {
 });
 
 class RuntimeFakeClient {
-  private readonly notificationHandlers: NotificationHandler[] = [];
+  private readonly notificationHandlers = new Set<NotificationHandler>();
   private readonly closeHandlers: Array<(reason: Error) => void> = [];
   private nextTurnId = 1;
 
@@ -139,8 +139,11 @@ class RuntimeFakeClient {
   onClose(handler: (reason: Error) => void): void {
     this.closeHandlers.push(handler);
   }
-  onNotification(handler: NotificationHandler): void {
-    this.notificationHandlers.push(handler);
+  onNotification(handler: NotificationHandler): () => void {
+    this.notificationHandlers.add(handler);
+    return () => {
+      this.notificationHandlers.delete(handler);
+    };
   }
   setServerRequestHandler(): void {}
   async ready(): Promise<void> {}

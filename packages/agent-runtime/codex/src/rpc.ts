@@ -45,7 +45,7 @@ export class CodexWsClient {
     number,
     { resolve: (v: unknown) => void; reject: (e: Error) => void }
   >();
-  private readonly notifHandlers: NotificationHandler[] = [];
+  private readonly notifHandlers = new Set<NotificationHandler>();
   private readonly closeHandlers: CloseHandler[] = [];
   private serverReqHandler: ServerRequestHandler = async () => {
     throw new Error(
@@ -93,8 +93,11 @@ export class CodexWsClient {
     return this.opened;
   }
 
-  onNotification(handler: NotificationHandler): void {
-    this.notifHandlers.push(handler);
+  onNotification(handler: NotificationHandler): () => void {
+    this.notifHandlers.add(handler);
+    return () => {
+      this.notifHandlers.delete(handler);
+    };
   }
 
   /**

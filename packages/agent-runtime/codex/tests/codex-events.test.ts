@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  runTurn,
   subscribeTurnCollection,
   type TurnTraceEvent,
 } from '../src/events.js';
@@ -22,15 +23,29 @@ import type { CodexWsClient } from '../src/rpc.js';
 /** Minimal CodexWsClient stub exposing only the onNotification seam + emit. */
 function fakeClient(): {
   client: CodexWsClient;
-  emit: (notif: { method: string; params: unknown }) => void;
+  emit: (notification: { method: string; params: unknown }) => void;
+  handlerCount: () => number;
 } {
-  let handler: ((n: { method: string; params: unknown }) => void) | null = null;
+  const handlers = new Set<
+    (notification: { method: string; params: unknown }) => void
+  >();
   const client = {
-    onNotification(h: (n: { method: string; params: unknown }) => void): void {
-      handler = h;
+    onNotification(
+      handler: (notification: { method: string; params: unknown }) => void,
+    ): () => void {
+      handlers.add(handler);
+      return () => {
+        handlers.delete(handler);
+      };
     },
   } as unknown as CodexWsClient;
-  return { client, emit: (notif) => handler?.(notif) };
+  return {
+    client,
+    emit: (notification) => {
+      for (const handler of handlers) handler(notification);
+    },
+    handlerCount: () => handlers.size,
+  };
 }
 
 describe('subscribeTurnCollection (issue #126 PR8)', () => {
@@ -74,7 +89,7 @@ describe('subscribeTurnCollection (issue #126 PR8)', () => {
   });
 
   it('acceptAnyThread resolves on a turn/completed with a mismatched threadId', async () => {
-    const { client, emit } = fakeClient();
+    const { client, emit, handlerCount } = fakeClient();
     const collector = subscribeTurnCollection(client, 'thread-A', {
       acceptAnyThread: true,
     });
@@ -98,5 +113,31 @@ describe('subscribeTurnCollection (issue #126 PR8)', () => {
     const turn = await collector.awaitTurn();
     expect(turn.turnId).toBe('t1');
     expect(turn.items.map((i) => i.type)).toEqual(['agentMessage']);
+    expect(handlerCount()).toBe(0);
+  });
+
+  it('disposes a pending collector and unsubscribes idempotently', async () => {
+    const { client, handlerCount } = fakeClient();
+    const collector = subscribeTurnCollection(client, 'thread-A');
+    const pending = collector.awaitTurn('turn-never-accepted');
+
+    expect(handlerCount()).toBe(1);
+    collector.dispose();
+    collector.dispose();
+
+    await expect(pending).rejects.toThrow('codex turn collector disposed');
+    expect(handlerCount()).toBe(0);
+  });
+
+  it('unsubscribes runTurn when turn/start is rejected', async () => {
+    const { client, handlerCount } = fakeClient();
+    client.request = async () => {
+      throw new Error('turn/start rejected');
+    };
+
+    await expect(
+      runTurn(client, 'thread-A', 'work', null),
+    ).rejects.toThrow('turn/start rejected');
+    expect(handlerCount()).toBe(0);
   });
 });
