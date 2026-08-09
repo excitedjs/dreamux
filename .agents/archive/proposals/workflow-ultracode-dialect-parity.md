@@ -124,9 +124,11 @@ interface WorkflowScriptMeta {
 }
 ```
 
-`packages/dreamux/src/service/workflow-service/protocol.ts` remains the owning
-type location for `WorkflowScriptMeta` and must be updated to this shape rather
-than duplicating it in the normalizer or runner.
+Final implementation review moved `WorkflowScriptMeta` to the private
+`packages/dreamux/src/service/workflow-service/script-meta.ts` owner beside its
+runtime validator. Metadata is child-local validation state rather than an IPC
+message, so `protocol.ts` remains limited to parent/runner message contracts;
+the normalizer and runner do not duplicate the metadata shape.
 
 For ultracode form, `name`, `description`, `whenToUse`, phase `title`, phase
 `detail`, and phase `model` values must be literal strings when present.
