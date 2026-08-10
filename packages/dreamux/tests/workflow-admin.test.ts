@@ -72,8 +72,8 @@ describe('workflow admin methods', () => {
 
     await expect(adminMethods['workflow.run']!(server, {
       dispatcher_id: 'dispatcher-a',
-      script: 'export default async function run() { return args; }',
-      args: { targets: ['api', 'lifecycle'] },
+      script: 'export const meta = { name: "x", description: "x" }; return args;',
+      args: { targets: ['api', { area: 'lifecycle' }] },
       max_concurrency: 4,
     })).resolves.toEqual({ run_id: 'run-1' });
     await expect(adminMethods['workflow.status']!(server, {
@@ -89,9 +89,18 @@ describe('workflow admin methods', () => {
     })).resolves.toMatchObject({ runs: [{ run_id: 'run-1' }] });
 
     expect(workflows.run).toHaveBeenCalledWith({
-      script: 'export default async function run() { return args; }',
-      args: { targets: ['api', 'lifecycle'] },
+      script: 'export const meta = { name: "x", description: "x" }; return args;',
+      args: { targets: ['api', { area: 'lifecycle' }] },
       max_concurrency: 4,
+    });
+    await expect(adminMethods['workflow.run']!(server, {
+      dispatcher_id: 'dispatcher-a',
+      script: 'export const meta = { name: "x", description: "x" }; return args;',
+      args: ['api', { area: 'lifecycle' }],
+    })).resolves.toEqual({ run_id: 'run-1' });
+    expect(workflows.run).toHaveBeenLastCalledWith({
+      script: 'export const meta = { name: "x", description: "x" }; return args;',
+      args: ['api', { area: 'lifecycle' }],
     });
     expect(workflows.status).toHaveBeenCalledWith({ run_id: 'run-1' });
     expect(workflows.stop).toHaveBeenCalledWith({ run_id: 'run-1' });
@@ -108,12 +117,12 @@ describe('workflow admin methods', () => {
       dispatcher_id: 'dispatcher-a',
       caller_kind: 'team_leader',
       team_id: 'alpha',
-      script: 'export default async function run() { return "done"; }',
+      script: 'export const meta = { name: "x", description: "x" }; return "done";',
     })).resolves.toEqual({ run_id: 'run-1' });
 
     expect(team).toHaveBeenCalledWith('alpha');
     expect(teamWorkflows.run).toHaveBeenCalledWith({
-      script: 'export default async function run() { return "done"; }',
+      script: 'export const meta = { name: "x", description: "x" }; return "done";',
     });
     expect(dispatcherWorkflows.run).not.toHaveBeenCalled();
   });
@@ -129,7 +138,7 @@ describe('workflow admin methods', () => {
     for (const maxConcurrency of [0, 17, 1.5, null]) {
       await expect(adminMethods['workflow.run']!(server, {
         dispatcher_id: 'dispatcher-a',
-        script: 'export default async function run() {}',
+        script: 'export const meta = { name: "x", description: "x" }; return null;',
         max_concurrency: maxConcurrency,
       })).rejects.toMatchObject({
         name: 'AdminError',

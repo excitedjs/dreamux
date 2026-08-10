@@ -18,7 +18,8 @@ overlapping writes.
 
 - `workflow_run` accepts an inline `script`, optional `args`, and optional
   `max_concurrency`. It returns `{ run_id }` immediately; Dreamux pushes one
-  terminal completion when the run finishes.
+  terminal completion when the run finishes. Pass object and array `args`
+  directly as JSON values; do not use `JSON.stringify`.
 - `workflow_status` reads the current phase, agent progress, concrete TeamMate
   names, and terminal result for one `run_id`.
 - `workflow_list` lists runs in the current caller scope.
@@ -38,46 +39,8 @@ needs an interactive follow-up.
 
 ## Script Entry
 
-Dreamux accepts two script entry forms. The existing module form exports
-metadata and a default async entry function:
-
-```js
-export const meta = {
-  name: 'review-and-summarize',
-  description: 'Review several areas and combine the findings',
-  phases: ['review', 'summary'],
-};
-
-export default async function run() {
-  phase('review');
-  const reviews = await parallel([
-    () => agent('Review the API. Return concise findings.', {
-      label: 'api-review',
-      phase: 'review',
-      intent: 'API contract reviewer',
-    }),
-    () => agent('Review the lifecycle. Return concise findings.', {
-      label: 'lifecycle-review',
-      phase: 'review',
-      intent: 'Lifecycle reviewer',
-    }),
-  ]);
-
-  phase('summary');
-  const summary = await agent(`Combine these findings:\n${JSON.stringify(reviews)}`, {
-    label: 'summary',
-    phase: 'summary',
-    intent: 'Technical editor',
-  });
-  return { reviews, summary };
-}
-```
-
-`args` is the exact value supplied to `workflow_run`. Return plain serializable
-data from `run()`.
-
-The ultracode form exports literal metadata and then places the workflow body at
-top level:
+Dreamux accepts one script entry form. The first statement is literal metadata,
+and the executable body follows it directly at top level:
 
 ```js
 export const meta = {
@@ -103,21 +66,28 @@ const reviews = await parallel([
 ]);
 
 phase('summary');
-return agent(`Combine these findings:\n${JSON.stringify(reviews)}`, {
+const summary = await agent(`Combine these findings:\n${JSON.stringify(reviews)}`, {
   label: 'summary',
   phase: 'summary',
+  intent: 'Technical editor',
 });
+return { reviews, summary };
 ```
 
-For the ultracode form, `meta` must be a recursively plain literal object, and
-the script may not import modules or export anything else. Dreamux wraps the
-top-level body in the canonical async entry function. The module form remains
-unchanged, including its existing module-evaluation semantics.
+Comments and whitespace may precede `meta`, but no executable statement may.
+`meta` must be a recursively plain literal object. Scripts may not import
+modules or export anything else, including a default entry function. Top-level
+`await`, early `return`, helpers, loops, and promise chaining are supported.
 
 Metadata requires string `name` and `description`. `whenToUse` is an optional
-string. `phases` may contain strings or objects shaped as
-`{ title, detail?, model? }`; `detail` and `model` are descriptive metadata
-only. A phase's `model` does not select an agent runtime or model.
+string. `phases` contains objects shaped as `{ title, detail?, model? }`;
+`detail` and `model` are descriptive metadata only. A phase's `model` does not
+select an agent runtime or model. Unknown recursively plain literal metadata
+keys are accepted and currently ignored.
+
+`args` is the exact JSON value supplied to `workflow_run`: object, array,
+string, finite number, boolean, or `null`. Omitted `args` is `undefined`.
+JSON-looking strings remain strings; Dreamux does not parse them.
 
 ## Script API
 
@@ -152,34 +122,32 @@ item needs the same multi-step treatment:
 export const meta = {
   name: 'inspect-and-rank',
   description: 'Inspect each target, then rank the reports',
-  phases: ['inspect', 'rank'],
+  phases: [{ title: 'inspect' }, { title: 'rank' }],
 };
 
-export default async function run() {
-  const reports = await pipeline(
-    args.targets,
-    (target, originalTarget, index) => agent(`Inspect ${target}`, {
-      label: `inspect-${index}-${originalTarget}`,
-      phase: 'inspect',
-      schema: {
-        type: 'object',
-        properties: {
-          target: { type: 'string' },
-          risks: { type: 'array', items: { type: 'string' } },
-        },
-        required: ['target', 'risks'],
-        additionalProperties: false,
+const reports = await pipeline(
+  args.targets,
+  (target, originalTarget, index) => agent(`Inspect ${target}`, {
+    label: `inspect-${index}-${originalTarget}`,
+    phase: 'inspect',
+    schema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string' },
+        risks: { type: 'array', items: { type: 'string' } },
       },
+      required: ['target', 'risks'],
+      additionalProperties: false,
+    },
+  }),
+  (report, originalTarget, index) =>
+    agent(`Rank ${originalTarget}: ${JSON.stringify(report)}`, {
+      label: `rank-${index}`,
+      phase: 'rank',
     }),
-    (report, originalTarget, index) =>
-      agent(`Rank ${originalTarget}: ${JSON.stringify(report)}`, {
-        label: `rank-${index}`,
-        phase: 'rank',
-      }),
-  );
-  log(`Processed ${reports.length} targets`);
-  return reports;
-}
+);
+log(`Processed ${reports.length} targets`);
+return reports;
 ```
 
 `phase(title)` records the current phase. `log(message)` records a progress line.

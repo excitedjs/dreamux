@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: Review: remove default-export Workflow entry functions and place executable bodies directly after export const meta; pass object and array workflow_run.args values directly instead of JSON.stringify. No rebuild is required; persisted state and config remain compatible.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

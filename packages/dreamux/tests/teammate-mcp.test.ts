@@ -223,7 +223,12 @@ describe('teammate-mcp stdio shim', () => {
         type: 'string',
         minLength: 1,
       });
-      expect(run.inputSchema.properties).toHaveProperty('args');
+      expect(run.inputSchema.properties['args']).toEqual({
+        type: ['object', 'array', 'string', 'number', 'boolean', 'null'],
+        description:
+          'Optional direct JSON value available as the script-global args. ' +
+          'Pass objects and arrays directly; do not JSON.stringify them.',
+      });
       expect(run.inputSchema.properties['max_concurrency']).toMatchObject({
         type: 'integer',
         minimum: 1,
@@ -267,8 +272,9 @@ describe('teammate-mcp stdio shim', () => {
         {
           name: 'workflow_run',
           arguments: {
-            script: 'export default async function run() { return args; }',
-            args: { targets: ['api', 'lifecycle'] },
+            script:
+              'export const meta = { name: "x", description: "x" }; return args;',
+            args: { targets: ['api', { area: 'lifecycle' }] },
             max_concurrency: 4,
           },
         },
@@ -299,8 +305,9 @@ describe('teammate-mcp stdio shim', () => {
             dispatcher_id: 'dispatcher-a',
             caller_kind: 'team_leader',
             team_id: 'alpha',
-            script: 'export default async function run() { return args; }',
-            args: { targets: ['api', 'lifecycle'] },
+            script:
+              'export const meta = { name: "x", description: "x" }; return args;',
+            args: { targets: ['api', { area: 'lifecycle' }] },
             max_concurrency: 4,
           },
         },

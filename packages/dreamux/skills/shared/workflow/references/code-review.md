@@ -104,10 +104,9 @@ counts, and match fan-out to what the operator asked for.
 ## Script
 
 The script uses the top-level entry: the body follows `export const meta`
-directly, and `await` and early `return` work at top level. Dreamux wraps
-everything after the meta export — constants and helper functions included —
-into the canonical entry function; hoisting inside the wrapped body keeps the
-helpers callable exactly as written.
+directly, and `await` and early `return` work at top level. Constants and helper
+functions remain in the same private async execution scope, so normal function
+hoisting applies exactly as written.
 
 ```js
 export const meta = {
@@ -373,7 +372,7 @@ only the vote array, and stage two recovers the finding and its position from
 
 ```
 workflow_run({
-  script: <the module above>,
+  script: <the script above>,
   args: { target: 'https://github.com/owner/repo/pull/123' },
 })
 ```

@@ -111,10 +111,6 @@ history and rationale; when you need current behavior, pair them with
 - [Non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md)
 
 ## Active Proposals
-- [Workflow top-level scripts and JSON args](proposals/workflow-top-level-json-args.md)
-  — replace the default-export compatibility dialect with one native-style
-  top-level Workflow script form and expose `workflow_run.args` as a direct
-  structured JSON value.
 - [AgentRuntime input surface cleanup](proposals/agent-runtime-input-surface-cleanup.md)
   — draft technical design for narrowing the provider-facing runtime input
   surface: plain text `completionInput` for non-channel turns, `channelInput`
@@ -187,6 +183,10 @@ history still matters.
 
 ## Archive
 
+- [Workflow top-level scripts and JSON args](archive/proposals/workflow-top-level-json-args.md)
+  — implemented issue #323; current behavior is documented in
+  [Dynamic Workflow usage](reference/dynamic-workflow-usage.md) and
+  [Current architecture](reference/current-architecture.md#dynamic-workflows).
 - [Codex portable output schema adapter](archive/proposals/codex-portable-output-schema.md)
   — implemented private Codex schema compilation, result restoration, and
   active-turn compatibility; current behavior is documented in

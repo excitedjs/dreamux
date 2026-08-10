@@ -293,17 +293,17 @@ existing TeamMate MCP. Each `DispatcherService` owns one dispatcher-scope
 `WorkflowRun` owns its durable record, append-only journal, supervised runner
 child, and every fresh TeamMate it creates.
 
-The runner normalizes a trusted inline script and evaluates the canonical ES
-module in a `node:vm` context, communicating only over its parent IPC channel.
-The workflow-service normalizer uses the package's direct production `acorn`
-dependency to select one of two entry forms by parsed default-export presence.
-Legacy modules with a default export are evaluated byte-for-byte unchanged.
-Ultracode scripts without a default export must contain one recursively plain
-literal `export const meta`, may contain no imports or other exports, and have
-their remaining top-level statements source-range wrapped in a generated
-default async entry function. Both forms accept optional string `whenToUse` and
-phase strings or `{ title, detail?, model? }` metadata objects; phase `model` is
-inert metadata and does not select a runtime model.
+The runner compiles one trusted top-level script dialect and evaluates a private
+async closure in a `node:vm` context, communicating only over its parent IPC
+channel. The workflow-service compiler uses the package's direct production
+`acorn` dependency. The first statement must be one recursively plain literal
+`export const meta`; imports, pre-meta executable statements, default exports,
+and every other export are rejected. The remaining source is the executable
+body, with original body line numbers preserved in runtime stacks. Metadata
+accepts optional string `whenToUse` and phase objects shaped as
+`{ title, detail?, model? }`; phase `model` is inert metadata and does not select
+a runtime model. Unknown recursively plain literal metadata keys are accepted
+and currently ignored.
 
 The parent sends `run_start`, `agent_result`, and `abort`; the runner sends
 `agent_start`, progress `emit` events, and one `run_result`. Agent submission
@@ -312,9 +312,16 @@ Each newly spawned TeamMate has its settle route injected before runtime start,
 so intermediate completions return only to the owning run. The run's single
 terminal completion uses the shared `CompletionRouter` with the original caller
 as initiator. `workflow_run` still creates the durable run and registers that
-terminal route before runner startup, so normalization, syntax, entry, and
+terminal route before runner startup, so compilation, dialect, syntax, and
 metadata failures become durable asynchronous failed runs after the immediate
 `{ run_id }` receipt. The durable `script_hash` remains over original source.
+
+`workflow_run.args` is an optional direct JSON value. MCP and admin pass the
+received object, array, string, finite number, boolean, or `null` through
+unchanged; omitted args reach the runner as `undefined`. A private
+Workflow-service validator rejects non-JSON values, cycles, sparse/extended
+arrays, and non-plain objects before durable run creation. Dreamux never parses
+JSON-looking strings.
 
 Every workflow-owned TeamMate receives an operation-owned workflow-role append
 prompt at its creation boundary. `schema` remains a separate value passed

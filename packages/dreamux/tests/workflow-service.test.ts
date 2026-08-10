@@ -395,6 +395,83 @@ describe('WorkflowService', () => {
     ])));
   });
 
+  it.each([
+    ['object', { question: 'direct', nested: ['a', 2, true, null] }],
+    ['array', [{ id: 1 }, 'two', false, null]],
+    ['string', '{"question":"text"}'],
+    ['number', 3.5],
+    ['boolean', false],
+    ['null', null],
+  ])('passes explicit JSON %s args to the runner unchanged', async (_kind, args) => {
+    const ctx = await context(['run-json-args']);
+
+    await ctx.service.run({ script: validScript(), args });
+
+    expect(ctx.runner.latest().sent[0]).toEqual({
+      type: 'run_start',
+      script: validScript(),
+      args,
+    });
+  });
+
+  it('passes omitted args as undefined without treating them as explicit input', async () => {
+    const ctx = await context(['run-omitted-args']);
+
+    await ctx.service.run({ script: validScript() });
+
+    expect(ctx.runner.latest().sent[0]).toEqual({
+      type: 'run_start',
+      script: validScript(),
+      args: undefined,
+    });
+  });
+
+  it('rejects non-JSON args before durable run creation', async () => {
+    const cycle: Record<string, unknown> = {};
+    cycle['self'] = cycle;
+    const sparse = new Array<unknown>(2);
+    sparse[1] = 'present';
+    const nonPlain = Object.create({ inherited: true }) as Record<string, unknown>;
+    nonPlain['own'] = 'value';
+    const symbolKeyed = { valid: true } as Record<PropertyKey, unknown>;
+    symbolKeyed[Symbol('hidden')] = 'invalid';
+    const accessor = {};
+    Object.defineProperty(accessor, 'value', {
+      enumerable: true,
+      get: () => 'invalid',
+    });
+    const arrayWithExtra = ['valid'] as unknown[] & { extra?: string };
+    arrayWithExtra.extra = 'invalid';
+    const ctx = await context([
+      'run-json-args-must-not-be-consumed',
+    ]);
+    const cases: Array<[string, unknown]> = [
+      ['explicit undefined', undefined],
+      ['NaN', Number.NaN],
+      ['infinity', Number.POSITIVE_INFINITY],
+      ['function', () => undefined],
+      ['symbol', Symbol('invalid')],
+      ['bigint', BigInt(1)],
+      ['cycle', cycle],
+      ['sparse array', sparse],
+      ['array with undefined', [undefined]],
+      ['non-plain object', nonPlain],
+      ['date', new Date(0)],
+      ['symbol-keyed object', symbolKeyed],
+      ['accessor object', accessor],
+      ['array with extra property', arrayWithExtra],
+    ];
+
+    for (const [_label, args] of cases) {
+      await expect(ctx.service.run({
+        script: validScript(),
+        args,
+      })).rejects.toThrow(/^workflow args at /);
+    }
+    expect(ctx.runner.runners).toHaveLength(0);
+    await expect(ctx.service.list()).resolves.toEqual({ runs: [] });
+  });
+
   it('waits for an admitted run creation before sweeping live runs on stop', async () => {
     const ctx = await context(['run-create-stop-race']);
     const createStarted = deferred<void>();
@@ -1436,7 +1513,7 @@ describe('WorkflowService', () => {
 function validScript(): string {
   return `
     export const meta = { name: 'test', description: 'test workflow' };
-    export default async function run() { return null; }
+    return null;
   `;
 }
 

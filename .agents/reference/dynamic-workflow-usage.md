@@ -8,9 +8,9 @@ primitive. Submit JavaScript metadata plus calls to `agent()`, `parallel()`,
 `pipeline()`, `phase()`, and `log()` once; the host executes the fixed graph in
 the background and delivers one terminal result.
 
-Scripts may use either the original ES module entry (`export default async
-function run()`) or the ultracode entry, where the executable body follows
-`export const meta` at top level and may use top-level `await` and `return`.
+Scripts use one entry form: literal `export const meta` is the first statement,
+followed by the executable body at top level. The body may use top-level
+`await`, early `return`, helpers, loops, and promise chaining.
 Each `agent()` call drives a fresh Dreamux TeamMate through any configured agent
 runtime, including Codex and Claude Code.
 
@@ -43,36 +43,34 @@ combines the findings.
 export const meta = {
   name: 'pr-review',
   description: '3 reviewers parallel, then 1 summary',
-  phases: ['review', 'summary'],
+  phases: [{ title: 'review' }, { title: 'summary' }],
 };
 
-export default async function run() {
-  phase('review');
-  const reviews = await parallel([
-    () => agent('Review correctness and lifecycle behavior. Return concise findings.', {
-      label: 'correctness',
-      phase: 'review',
-      intent: 'Correctness reviewer',
-    }),
-    () => agent('Review architecture layering and code reuse. Return concise findings.', {
-      label: 'architecture',
-      phase: 'review',
-      intent: 'Architecture reviewer',
-    }),
-    () => agent('Review test coverage and contract protection. Return concise findings.', {
-      label: 'testing',
-      phase: 'review',
-      intent: 'Test reviewer',
-    }),
-  ]);
+phase('review');
+const reviews = await parallel([
+  () => agent('Review correctness and lifecycle behavior. Return concise findings.', {
+    label: 'correctness',
+    phase: 'review',
+    intent: 'Correctness reviewer',
+  }),
+  () => agent('Review architecture layering and code reuse. Return concise findings.', {
+    label: 'architecture',
+    phase: 'review',
+    intent: 'Architecture reviewer',
+  }),
+  () => agent('Review test coverage and contract protection. Return concise findings.', {
+    label: 'testing',
+    phase: 'review',
+    intent: 'Test reviewer',
+  }),
+]);
 
-  phase('summary');
-  const summary = await agent(
-    `Combine these findings by severity and give a final verdict:\n${JSON.stringify(reviews)}`,
-    { label: 'summary', phase: 'summary', intent: 'Technical editor' },
-  );
-  return { reviews, summary };
-}
+phase('summary');
+const summary = await agent(
+  `Combine these findings by severity and give a final verdict:\n${JSON.stringify(reviews)}`,
+  { label: 'summary', phase: 'summary', intent: 'Technical editor' },
+);
+return { reviews, summary };
 ```
 
 Key properties:
@@ -90,7 +88,7 @@ without parsing free-form text.
 export const meta = {
   name: 'code-reuse-audit',
   description: 'Audit code reuse and return structured findings',
-  phases: ['audit', 'summary'],
+  phases: [{ title: 'audit' }, { title: 'summary' }],
 };
 
 const FINDING_SCHEMA = {
@@ -116,27 +114,25 @@ const FINDING_SCHEMA = {
   additionalProperties: false,
 };
 
-export default async function run() {
-  phase('audit');
-  const audits = await parallel([
-    () => agent('Review duplicated and copied code.', {
-      label: 'duplication', phase: 'audit', schema: FINDING_SCHEMA,
-    }),
-    () => agent('Review dead code and unused public members.', {
-      label: 'dead-code', phase: 'audit', schema: FINDING_SCHEMA,
-    }),
-    () => agent('Review repeated logic that should share one helper.', {
-      label: 'consolidation', phase: 'audit', schema: FINDING_SCHEMA,
-    }),
-  ]);
+phase('audit');
+const audits = await parallel([
+  () => agent('Review duplicated and copied code.', {
+    label: 'duplication', phase: 'audit', schema: FINDING_SCHEMA,
+  }),
+  () => agent('Review dead code and unused public members.', {
+    label: 'dead-code', phase: 'audit', schema: FINDING_SCHEMA,
+  }),
+  () => agent('Review repeated logic that should share one helper.', {
+    label: 'consolidation', phase: 'audit', schema: FINDING_SCHEMA,
+  }),
+]);
 
-  phase('summary');
-  const summary = await agent(
-    `Combine these audits and sort by net lines removed:\n${JSON.stringify(audits)}`,
-    { label: 'summary', phase: 'summary' },
-  );
-  return { audits, summary };
-}
+phase('summary');
+const summary = await agent(
+  `Combine these audits and sort by net lines removed:\n${JSON.stringify(audits)}`,
+  { label: 'summary', phase: 'summary' },
+);
+return { audits, summary };
 ```
 
 The `schema` option requests runtime-native structured output. Codex receives
@@ -152,30 +148,32 @@ The phases are sequential because each prompt consumes the previous result.
 export const meta = {
   name: 'fix-and-verify',
   description: 'Locate, implement, and verify a fix',
-  phases: ['locate', 'implement', 'verify'],
+  phases: [
+    { title: 'locate' },
+    { title: 'implement' },
+    { title: 'verify' },
+  ],
 };
 
-export default async function run() {
-  phase('locate');
-  const locations = await agent(
-    'Locate every finding in source and return file, line, and code context.',
-    { label: 'locate', phase: 'locate', intent: 'Code investigator' },
-  );
+phase('locate');
+const locations = await agent(
+  'Locate every finding in source and return file, line, and code context.',
+  { label: 'locate', phase: 'locate', intent: 'Code investigator' },
+);
 
-  phase('implement');
-  const result = await agent(
-    `Implement every accepted fix and run build plus lint.\n\nLocations:\n${locations}`,
-    { label: 'implement', phase: 'implement', intent: 'Senior engineer' },
-  );
+phase('implement');
+const result = await agent(
+  `Implement every accepted fix and run build plus lint.\n\nLocations:\n${locations}`,
+  { label: 'implement', phase: 'implement', intent: 'Senior engineer' },
+);
 
-  phase('verify');
-  const verification = await agent(
-    'Run the focused build, lint, and tests. Report exact results and failures.',
-    { label: 'verify', phase: 'verify', intent: 'CI verifier' },
-  );
+phase('verify');
+const verification = await agent(
+  'Run the focused build, lint, and tests. Report exact results and failures.',
+  { label: 'verify', phase: 'verify', intent: 'CI verifier' },
+);
 
-  return { locations, implementation: result, verification };
-}
+return { locations, implementation: result, verification };
 ```
 
 Each call creates an independent TeamMate. The returned object becomes the
@@ -193,28 +191,29 @@ export const meta = {
   description: 'What this workflow does',
   whenToUse: 'Use when every target is known before execution.',
   phases: [
-    'phase1',
+    { title: 'phase1' },
     { title: 'phase2', detail: 'Phase description', model: 'metadata only' },
   ],
 };
 ```
 
 `name` and `description` are required strings. `whenToUse` is an optional
-string. Each `phases` entry may be a string or
-`{ title, detail?, model? }`. `detail` and `model` are descriptive compatibility
-metadata; `model` does not select an agent model or runtime.
+string. Each `phases` entry is `{ title, detail?, model? }`. `detail` and
+`model` are descriptive compatibility metadata; `model` does not select an
+agent model or runtime. Unknown recursively plain literal keys on `meta` and
+phase objects are accepted and currently ignored.
 
 Metadata is validated before the orchestration body can start agents. It is not
 persisted on the run, projected by `workflow_status` or `workflow_list`, or used
 for permission confirmation.
 
-Ultracode metadata must be a recursively plain literal object: no variables,
-calls, interpolation, computed properties, methods, shorthand properties, or
-spread. An ultracode script may export only `meta`. The existing module form is
-evaluated byte-for-byte unchanged and retains normal module evaluation
-semantics.
+Metadata must be a recursively plain literal object: no variables, calls,
+interpolation, computed properties, methods, shorthand properties, or spread.
+Comments and whitespace may precede `meta`, but it must be the first parsed
+statement. The script may export only `meta`; default exports and named exports
+are rejected.
 
-An ultracode entry places its executable body directly after metadata:
+The executable body follows metadata directly:
 
 ```js
 export const meta = {
@@ -322,13 +321,18 @@ reported by `workflow_status`.
 
 ### 3.6 `args`
 
-The exact `args` value supplied to `workflow_run` is available as a global:
+The exact `args` value supplied to `workflow_run` is available as a global.
+Pass objects and arrays directly; do not call `JSON.stringify`. JSON-looking
+strings stay strings:
 
 ```js
-export default async function run() {
-  return pipeline(args.targets, ...);
-}
+const reports = await pipeline(args.targets, ...);
+return reports;
 ```
+
+Accepted values are object, array, string, finite number, boolean, and `null`.
+Omitted `args` is `undefined`. Non-JSON values are rejected before a durable
+run is created.
 
 ---
 
@@ -349,9 +353,12 @@ workflow_run({
 through 16. Invalid values are rejected before a run is created; they are not
 clamped.
 
+`args` is also optional. Supply direct JSON values; do not encode an object or
+array as JSON text.
+
 For an admitted request, `workflow_run` returns `run_id` immediately. Script
-normalization, compilation, entry, or metadata failures happen asynchronously
-and produce a durable failed run plus its terminal completion.
+compilation, entry, or metadata failures happen asynchronously and produce a
+durable failed run plus its terminal completion.
 
 ### 4.2 Status
 
