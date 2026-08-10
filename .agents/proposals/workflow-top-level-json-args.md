@@ -97,6 +97,10 @@ default-export execution path.
 remains documentary metadata and does not select an Agent Runtime. String phase
 entries are removed so the public dialect matches the native object form.
 
+Unknown recursively plain literal keys on `meta` and phase objects are accepted
+and ignored by the current runtime projection. They remain available for future
+native-compatible metadata without changing execution or durable run state.
+
 The compiler materializes the literal metadata directly from the parsed AST and
 validates it before Workflow primitives are installed. Invalid metadata,
 imports, or exports cannot start agents.
@@ -108,7 +112,7 @@ The existing compatibility normalizer becomes a single-dialect compiler:
 1. Parse with Acorn using module syntax plus allowed top-level `await` and
    `return`.
 2. Require the first statement to be the sole literal `meta` export.
-3. Reject imports and every other export.
+3. Reject static imports and every other export.
 4. Materialize and validate metadata before exposing `agent`, `parallel`,
    `pipeline`, `phase`, or `log`.
 5. Execute the remaining source inside one private async VM closure and await
@@ -117,6 +121,15 @@ The existing compatibility normalizer becomes a single-dialect compiler:
 The private closure is an implementation detail required to give top-level
 `return` its native script semantics. It is not an ES module export, is not
 visible to script authors, and is not an alternate entry form.
+
+The compiler preserves the executable body's original line numbers by padding
+the private closure prefix to the lines occupied by the removed metadata
+declaration. Runtime stacks therefore point at the submitted script rather than
+at a fixed generated-source offset.
+
+Dynamic `import()` remains a runtime fail-loud operation through the existing VM
+hook. The compiler does not add a recursive general-purpose AST walker solely
+to reject an import expression that may never execute.
 
 The submitted source and `script_hash` remain unchanged. The compiler does not
 rewrite the persisted source or add a default export.
@@ -133,17 +146,23 @@ rewrite the persisted source or add a default export.
 - `null`.
 
 The MCP tool schema explicitly describes these JSON types instead of using an
-untyped empty schema. Its description tells callers to pass objects and arrays
-directly and not to apply `JSON.stringify`.
+untyped empty schema. It uses only the top-level JSON type union and a
+description telling callers to pass objects and arrays directly and not to
+apply `JSON.stringify`; MCP does not duplicate recursive JSON validation in its
+schema or mapper.
 
 The MCP, admin, service, runner IPC, and VM context preserve the value. An
 object arrives as a JavaScript object, an array as a JavaScript array, and an
 omitted argument as `undefined`. Dreamux does not parse JSON-looking strings;
 such a string remains a string.
 
-Direct service input is validated as JSON-compatible before durable run
-creation so non-finite numbers, unsupported JavaScript values, cycles, or
-non-plain objects fail synchronously without creating a run.
+One private Workflow-service recursive validator is the runtime authority.
+`WorkflowRunInput.args` remains `unknown`; no public `JsonValue` DTO or generic
+Dreamux-utils JSON engine is added. MCP and admin only forward their received
+value. Before durable run creation, the validator rejects non-finite numbers,
+`undefined` values when explicitly supplied, functions, symbols, bigint,
+cycles, sparse arrays, arrays containing non-JSON values, and non-plain
+objects. Omitted args remain valid and become `undefined` in the script.
 
 ## Failure Semantics
 
@@ -166,6 +185,9 @@ redesign.
 
 - The default-export detection and byte-for-byte legacy-module pass-through.
 - The module-form runner lookup/invocation of `namespace.default`.
+- The independent runtime metadata DTO/validator in `script-meta.ts`, the
+  `assertWorkflowScriptMeta()` call, and the `module.namespace.meta` validation
+  path. The AST compiler is the single metadata owner.
 - All model-facing examples and guidance using
   `export default async function run()`.
 - Tests whose purpose is preserving default-export or named-default entry
@@ -180,6 +202,9 @@ export rejection, and source-range extraction.
 
 - `workflow_run` tool metadata exposes `args` as a structured JSON-value union,
   with direct object/array guidance.
+- MCP uses only the top-level JSON type union. The Workflow-service private
+  validator is the single recursive JSON-compatibility owner; MCP/admin do not
+  duplicate it and no public JSON-value DTO is added.
 - MCP mapping proves nested object and array arguments reach
   `workflow.run` unchanged.
 - Admin and direct Workflow service tests prove object/array values reach the
@@ -190,17 +215,22 @@ export rejection, and source-range extraction.
   added.
 - Direct service calls reject non-JSON-compatible args before durable run
   creation.
-- The two checked-in native acceptance fixtures and the shared
-  `deep-research.mjs` shape execute as top-level scripts without source
-  modification.
+- The two checked-in native acceptance fixtures execute as top-level scripts
+  without source modification.
 - Top-level `await`, early `return`, helpers, loops, promise chaining, repeated
   `phase()`, deterministic-intrinsic failures, abort, and forced-stop behavior
   remain covered.
 - Default exports, named default exports, other named exports, export-all,
-  imports, pre-meta executable statements, non-literal metadata, and string
-  phase entries fail before any agent starts.
+  static imports, pre-meta executable statements, non-literal metadata, and
+  string phase entries fail before any agent starts.
+- Dynamic `import()` retains execution-time fail-loud behavior through the VM
+  hook; no recursive AST import-expression scanner is added.
 - The runner no longer reads or invokes `module.namespace.default`.
+- `script-meta.ts`, `assertWorkflowScriptMeta()`, and runtime namespace metadata
+  validation are deleted; the compiler owns metadata exactly once.
 - The compiler generates no ES module entry export.
+- Runtime stack line numbers for executable body failures match the submitted
+  script's line numbers rather than a generated-wrapper offset.
 - Current skill and KB docs describe only the top-level dialect and structured
   JSON args. Historical two-dialect rationale remains under `.agents/archive/`
   and is not presented as current behavior.
