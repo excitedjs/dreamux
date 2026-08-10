@@ -111,6 +111,10 @@ history and rationale; when you need current behavior, pair them with
 - [Non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md)
 
 ## Active Proposals
+- [Workflow top-level scripts and JSON args](proposals/workflow-top-level-json-args.md)
+  — replace the default-export compatibility dialect with one native-style
+  top-level Workflow script form and expose `workflow_run.args` as a direct
+  structured JSON value.
 - [AgentRuntime input surface cleanup](proposals/agent-runtime-input-surface-cleanup.md)
   — draft technical design for narrowing the provider-facing runtime input
   surface: plain text `completionInput` for non-channel turns, `channelInput`
