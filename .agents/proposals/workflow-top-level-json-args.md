@@ -223,6 +223,10 @@ export rejection, and source-range extraction.
 - Default exports, named default exports, other named exports, export-all,
   static imports, pre-meta executable statements, non-literal metadata, and
   string phase entries fail before any agent starts.
+- Compiler/runner tests prove unknown recursively plain literal keys on both the
+  root `meta` object and phase objects are accepted and ignored without changing
+  execution or durable run state, while invalid types for known fields still
+  fail loudly.
 - Dynamic `import()` retains execution-time fail-loud behavior through the VM
   hook; no recursive AST import-expression scanner is added.
 - The runner no longer reads or invokes `module.namespace.default`.
@@ -238,9 +242,10 @@ export rejection, and source-range extraction.
   persisted state or config schema changes.
 - Focused runner, MCP, admin, service, skill, build, source/test typecheck, lint,
   full test, Rush change, KB, diff, and public secret gates pass.
-- A breaking `@excitedjs/dreamux` Rush change leads with `BREAKING:`, tells
-  operators to remove default-export entry functions and pass object/array args
-  directly, and explicitly says no rebuild is required.
+- A breaking `@excitedjs/dreamux` Rush change leads with `BREAKING:` and
+  immediately includes `Review:` telling operators to remove default-export
+  entry functions and pass object/array args directly. It explicitly says no
+  rebuild is required and contains no `Rebuild:` instruction.
 
 ## Out Of Scope
 
