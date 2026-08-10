@@ -96,6 +96,59 @@ describe('workflow runner', () => {
     });
   });
 
+  it.each([
+    [
+      'single-line metadata',
+      "export const meta={name:'strict',description:'single line'};",
+    ],
+    [
+      'short-line metadata',
+      [
+        'export',
+        'const',
+        'meta',
+        '=',
+        '{',
+        'description',
+        ':',
+        "'strict'",
+        ',',
+        'name',
+        ':',
+        "'short lines'",
+        '}',
+        ';',
+      ].join('\n'),
+    ],
+  ])('preserves strict execution for %s', async (_layout, metadata) => {
+    const assignment = await runScript([
+      metadata,
+      'workflowStrictLeak = 1;',
+      'return null;',
+    ].join('\n'));
+
+    expect(assignment.result).toEqual({
+      type: 'run_result',
+      status: 'failed',
+      error: 'workflowStrictLeak is not defined',
+    });
+    const thisSemantics = await runScript([
+      metadata,
+      'return {',
+      '  topLevel: this === undefined,',
+      '  nested: (function() { return this === undefined; })(),',
+      '};',
+    ].join('\n'));
+    expect(thisSemantics.result).toEqual({
+      type: 'run_result',
+      status: 'completed',
+      result: {
+        topLevel: true,
+        nested: true,
+      },
+    });
+  });
+
   it('runs the workflow API through the child IPC channel', async () => {
     const agentStarts: WorkflowAgentStartMessage[] = [];
     const execution = await runScript(

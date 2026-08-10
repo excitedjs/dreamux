@@ -38,6 +38,7 @@ export function compileWorkflowScript(source: string): string {
 
 function privateClosurePrefix(removedMeta: string): string {
   const lines = removedMeta.split(/(\r\n|\r|\n)/);
+  const strictOpening = 'async function(){"use strict";';
   const contentIndexes = lines
     .map((_line, index) => index)
     .filter((index) => index % 2 === 0);
@@ -45,7 +46,7 @@ function privateClosurePrefix(removedMeta: string): string {
   const lastContentIndex = contentIndexes.at(-1)!;
   if (firstContentIndex === lastContentIndex) {
     const line = lines[firstContentIndex]!;
-    const prefix = '(async()=>{';
+    const prefix = `(${strictOpening}`;
     return prefix + ' '.repeat(line.length - prefix.length);
   }
   return lines.map((line, index) => {
@@ -53,7 +54,7 @@ function privateClosurePrefix(removedMeta: string): string {
     if (index === firstContentIndex) {
       return `(${' '.repeat(Math.max(0, line.length - 1))}`;
     }
-    if (index === lastContentIndex) return 'async()=>{';
+    if (index === lastContentIndex) return strictOpening;
     return ' '.repeat(line.length);
   }).join('');
 }
