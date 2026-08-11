@@ -144,6 +144,7 @@ while (bugs.length < 10) {
   bugs.push(...result.bugs);
   log(`${bugs.length}/10 found`);
 }
+if (bugs.length < 10) log(`stopped short: ${bugs.length}/10 — no more found`);
 ```
 
 Always pair the target with a dry-pass exit and `log()` the shortfall — a
@@ -160,9 +161,17 @@ shapes when the task calls for it:
   to a fixer → re-check, bounded by attempts, with every iteration logged;
 - **staged escalation** — a cheap pass filters the easy majority, and only
   survivors reach the expensive treatment (the confidence-gated verify stage
-  in [code-review.md](code-review.md) is this shape).
+  in [code-review.md](code-review.md) is this shape);
+- **completeness critic** — after synthesis, one agent asks "what is missing —
+  an angle never searched, a claim left unverified, a source unread?" What it
+  surfaces becomes the next round's work or is reported as a known gap. Pair it
+  with loop-until-dry: the loop proves discovery is exhausted, the critic proves
+  verification and coverage are.
 
 Whatever the shape, the standing rules from
 [orchestration-patterns.md](orchestration-patterns.md) still bind: positional
 coverage accounting before `.filter(Boolean)`, no silent caps, self-contained
 prompts, and budget arithmetic against the run limits before choosing sizes.
+And because scripts run in the deterministic sandbox, `Date.now()`,
+`Math.random()`, and argless `new Date()` throw — derive variation from an
+item's index, and take any timestamp from `args` instead of reading the clock.

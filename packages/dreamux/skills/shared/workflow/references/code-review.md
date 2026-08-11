@@ -35,9 +35,14 @@ instead.
    file, line, and title. For an exhaustive audit, repeat find/verify rounds
    until two consecutive rounds surface nothing new, carrying already-seen
    findings in each round's prompts.
-4. **Verify.** Score each finding with parallel verifier TeamMates (three
-   votes normally; two for a quick pass), each given the finding, the
-   guidance paths, the false-positive list, and this rubric verbatim:
+4. **Verify.** Score each finding with parallel verifier TeamMates — three
+   normally, two for a quick pass — but give each verifier a *distinct focus
+   question* rather than re-asking the same one: does the defect reproduce on
+   the changed lines; is it pre-existing rather than introduced by this change;
+   does the cited guidance file or code comment actually say that. Diverse
+   focus catches failure modes that identical skeptics miss. Each verifier
+   receives the finding, the guidance paths, the false-positive list, its
+   focus question, and this rubric verbatim:
    - 0: Not confident at all. False positive that does not stand up to light
      scrutiny, or a pre-existing issue.
    - 25: Somewhat confident. Might be real, might be a false positive; could
@@ -51,9 +56,13 @@ instead.
    - 100: Absolutely certain. Double checked and confirmed; will happen
      frequently; evidence directly confirms it.
    Verifiers also check that the stated failure scenario is concrete and
-   actually leads to the claimed outcome. Keep findings that average 80 or
-   higher. At max effort, findings in the 50-79 band may be reported too —
-   in their own clearly labeled section, never as confirmed issues.
+   actually leads to the claimed outcome. Score toward the low end when you
+   cannot independently corroborate the finding — an uncorroborated finding is
+   a 0 or 25, not a hopeful 50. Keep a finding only when at least two verifiers
+   settled a vote and those votes average 80 or higher; fewer than two settled
+   votes is unverified coverage, not a pass. At
+   max effort, findings in the 50-79 band may be reported too — in their own
+   clearly labeled section, never as confirmed issues.
 5. **Report.** One TeamMate writes the review comment: a short verdict, then
    numbered issues (grouped by severity when findings carry one), each with
    the flag reason in parentheses and a file#line citation — file path alone
@@ -133,8 +142,8 @@ const findings = dedupe((await parallel(LENSES.map((lens) => () =>
 phase('verify');
 const scored = await pipeline(
   findings,
-  (f) => parallel([0, 1, 2].map(() => () =>
-    agent(rubricPrompt(f), { phase: 'verify', schema: SCORE_SCHEMA }))),
+  (f) => parallel(FOCUS_QUESTIONS.map((focus) => () =>
+    agent(rubricPrompt(f, focus), { phase: 'verify', schema: SCORE_SCHEMA }))),
   (votes, f) => ({ ...f, votes: (votes || []).filter(Boolean) }),
 );
 const confirmed = scored.filter(Boolean)
