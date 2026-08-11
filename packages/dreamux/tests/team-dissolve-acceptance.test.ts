@@ -140,7 +140,10 @@ describe('Team dissolve acceptance and availability', () => {
         leaderName: created.team.leader_name,
       }, async () => undefined),
     ).rejects.toBeInstanceOf(TeamUnavailableError);
-    await expect(team.workflows.run({ script: 'export default {}' }))
+    await expect(team.workflows.run({
+      script:
+        'export const meta = { name: "x", description: "x" }; return null;',
+    }))
       .rejects.toThrow(/admission is closed/);
     const scheduler = await teams.scheduler('alpha');
     await expect(scheduler.create({

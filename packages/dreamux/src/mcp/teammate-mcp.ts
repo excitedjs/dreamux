@@ -192,7 +192,12 @@ export function teammateTools(callerKind: TeamMateMcpCallerKind): Array<Record<s
       {
         script: { type: 'string', minLength: 1 },
         scriptPath: { type: 'string', minLength: 1 },
-        args: {},
+        args: {
+          type: ['object', 'array', 'string', 'number', 'boolean', 'null'],
+          description:
+            'Optional direct JSON value available as the script-global args. ' +
+            'Pass objects and arrays directly; do not JSON.stringify them.',
+        },
         max_concurrency: {
           type: 'integer',
           minimum: MIN_WORKFLOW_MAX_CONCURRENCY,

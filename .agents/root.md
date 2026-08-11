@@ -183,6 +183,10 @@ history still matters.
 
 ## Archive
 
+- [Workflow top-level scripts and JSON args](archive/proposals/workflow-top-level-json-args.md)
+  — implemented issue #323; current behavior is documented in
+  [Dynamic Workflow usage](reference/dynamic-workflow-usage.md) and
+  [Current architecture](reference/current-architecture.md#dynamic-workflows).
 - [Codex portable output schema adapter](archive/proposals/codex-portable-output-schema.md)
   — implemented private Codex schema compilation, result restoration, and
   active-turn compatibility; current behavior is documented in

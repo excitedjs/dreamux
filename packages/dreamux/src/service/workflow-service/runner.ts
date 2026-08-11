@@ -1,4 +1,9 @@
-import { createContext, SourceTextModule, type Context } from 'node:vm';
+import {
+  createContext,
+  Script,
+  SourceTextModule,
+  type Context,
+} from 'node:vm';
 
 import type {
   WorkflowAgentOptions,
@@ -7,8 +12,7 @@ import type {
   WorkflowRunnerParentMessage,
 } from './protocol.js';
 import { isRecord } from './run-support.js';
-import { assertWorkflowScriptMeta } from './script-meta.js';
-import { normalizeWorkflowScript } from './script-normalizer.js';
+import { compileWorkflowScript } from './script-compiler.js';
 
 interface PendingAgent {
   resolve: (result: unknown) => void;
@@ -50,35 +54,19 @@ async function runWorkflow(script: string, args: unknown): Promise<void> {
   try {
     if (aborted) throw new Error('workflow aborted');
 
+    const compiledSource = compileWorkflowScript(script);
     const context = createWorkflowContext(args);
     await installDeterministicIntrinsics(context);
-    const normalizedScript = normalizeWorkflowScript(script);
-    const module = new SourceTextModule(normalizedScript, {
-      context,
-      identifier: 'dreamux-workflow.mjs',
+    // Metadata is valid; now expose the orchestration primitives and run the
+    // submitted top-level body through one private async closure.
+    installWorkflowPrimitives(context);
+    const compiled = new Script(compiledSource, {
+      filename: 'dreamux-workflow.mjs',
       importModuleDynamically: async (specifier) => {
         throw new Error(`workflow imports are disabled: ${specifier}`);
       },
     });
-    await module.link((specifier) => {
-      throw new Error(`workflow imports are disabled: ${specifier}`);
-    });
-    // Evaluate top-level code (meta declaration + entrypoint definition) without
-    // exposing agent/parallel/pipeline, so an invalid script cannot spawn agents
-    // before its metadata is validated.
-    await module.evaluate();
-
-    const namespace = module.namespace as Record<string, unknown>;
-    assertWorkflowScriptMeta(namespace.meta);
-    const entrypoint = namespace.default;
-    if (typeof entrypoint !== 'function') {
-      throw new Error('workflow script must export a default run function');
-    }
-
-    // Metadata is valid; now expose the orchestration primitives and run.
-    installWorkflowPrimitives(context);
-
-    const result: unknown = await Reflect.apply(entrypoint, undefined, []);
+    const result: unknown = await compiled.runInContext(context);
     if (aborted) throw new Error('workflow aborted');
     if (pendingAgents.size > 0) {
       throw new Error('workflow completed with unawaited agent calls');

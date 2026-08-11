@@ -45,7 +45,7 @@ readiness, and same-version restart cautions.
   1000 agents across its complete lifecycle; `parallel()` accepts at most 4096
   functions and `pipeline()` accepts at most 4096 items per call.
 - A returned `{ run_id }` is a durable acceptance receipt, not proof that script
-  normalization, metadata validation, runtime execution, completion delivery,
+  compilation, metadata validation, runtime execution, completion delivery,
   or visible Channel delivery succeeded. Inspect the run's terminal state and
   then the delivery boundary separately.
 - Startup marks a durable `running` Workflow record as `stopped`; Workflow

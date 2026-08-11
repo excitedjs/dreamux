@@ -16,6 +16,7 @@ import {
   workflowRunnerEntryPath,
   type WorkflowScopePathInput,
 } from '../../platform/paths.js';
+import { validateWorkflowArgs } from './json-args.js';
 import { WorkflowJournal } from './journal.js';
 import { parseWorkflowMaxConcurrency } from './limits.js';
 import { WorkflowRun } from './run.js';
@@ -109,6 +110,7 @@ export class WorkflowService implements WorkflowOps {
     await this.initialize();
     if (!this.accepting) throw new Error('workflow admission is closed');
     const maxConcurrency = parseWorkflowMaxConcurrency(input.max_concurrency);
+    if (Object.hasOwn(input, 'args')) validateWorkflowArgs(input.args);
     const script = await resolveWorkflowScript(input);
     if (script.trim() === '') {
       throw new Error('workflow script must be non-empty');

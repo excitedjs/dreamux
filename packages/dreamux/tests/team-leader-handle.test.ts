@@ -27,7 +27,8 @@ describe('TeamLeaderHandle', () => {
     });
 
     const starting = handle.workflows.run({
-      script: 'export default async function run() {}',
+      script:
+        'export const meta = { name: "x", description: "x" }; return null;',
     });
 
     await expect(withTimeout(agentLeaseEntered.promise)).resolves.toBeUndefined();

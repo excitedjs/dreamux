@@ -223,7 +223,9 @@ describe('role-specific bundled Dreamux skills', () => {
       expect(skill).toContain(tool);
     }
     expect(skill).toContain('export const meta');
-    expect(skill).toContain('export default async function run()');
+    expect(skill).not.toContain('export default');
+    expect(skill).toContain('do not use `JSON.stringify`');
+    expect(skill).toContain('Omitted `args` is `undefined`');
     for (const scriptApi of [
       'agent(',
       'parallel(',

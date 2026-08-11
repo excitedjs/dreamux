@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Script } from 'node:vm';
 
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 
@@ -13,7 +14,7 @@ import type {
   WorkflowRunResultMessage,
 } from '../src/service/workflow-service/protocol.js';
 import { ForkedWorkflowRunner } from '../src/service/workflow-service/runner-process.js';
-import { normalizeWorkflowScript } from '../src/service/workflow-service/script-normalizer.js';
+import { compileWorkflowScript } from '../src/service/workflow-service/script-compiler.js';
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const RUNNER_PATH = join(
@@ -46,29 +47,106 @@ afterEach(async () => {
 });
 
 describe('workflow runner', () => {
+  it('preserves submitted body line numbers in runtime stacks', async () => {
+    const source = [
+      '',
+      '/* leading comment */',
+      'export const meta = {',
+      "  name: 'stack-lines',",
+      "  description: 'preserve body lines',",
+      '};',
+      '',
+      "throw new Error('line marker');",
+    ].join('\n');
+    const compiled = compileWorkflowScript(source);
+
+    await expect(
+      new Script(compiled, { filename: 'submitted-workflow.mjs' })
+        .runInNewContext(),
+    ).rejects.toMatchObject({
+      stack: expect.stringContaining('submitted-workflow.mjs:8'),
+    });
+  });
+
+  it('compiles metadata split across short lines and preserves body stack lines', async () => {
+    const source = [
+      'export',
+      'const',
+      'meta',
+      '=',
+      '{',
+      'description',
+      ':',
+      "'x'",
+      ',',
+      'name',
+      ':',
+      "'y'",
+      '}',
+      ';',
+      'throw new Error("short-line marker");',
+    ].join('\n');
+    const compiled = compileWorkflowScript(source);
+
+    await expect(
+      new Script(compiled, { filename: 'short-line-workflow.mjs' })
+        .runInNewContext(),
+    ).rejects.toMatchObject({
+      stack: expect.stringContaining('short-line-workflow.mjs:15'),
+    });
+  });
+
   it.each([
     [
-      'default declaration',
-      [
-        '/* preserve leading source */',
-        "export const meta = { name: 'legacy', description: 'legacy module' };",
-        'export default async function run() {',
-        '  return args;',
-        '}',
-        '',
-      ].join('\r\n'),
+      'single-line metadata',
+      "export const meta={name:'strict',description:'single line'};",
     ],
     [
-      'named default export',
+      'short-line metadata',
       [
-        "export const meta = { name: 'legacy', description: 'legacy module' };",
-        'async function run() { return args; }',
-        'export { run as default };',
-        '',
-      ].join('\r\n'),
+        'export',
+        'const',
+        'meta',
+        '=',
+        '{',
+        'description',
+        ':',
+        "'strict'",
+        ',',
+        'name',
+        ':',
+        "'short lines'",
+        '}',
+        ';',
+      ].join('\n'),
     ],
-  ])('returns legacy module source byte-for-byte unchanged for %s', (_kind, source) => {
-    expect(normalizeWorkflowScript(source)).toBe(source);
+  ])('preserves strict execution for %s', async (_layout, metadata) => {
+    const assignment = await runScript([
+      metadata,
+      'workflowStrictLeak = 1;',
+      'return null;',
+    ].join('\n'));
+
+    expect(assignment.result).toEqual({
+      type: 'run_result',
+      status: 'failed',
+      error: 'workflowStrictLeak is not defined',
+    });
+    const thisSemantics = await runScript([
+      metadata,
+      'return {',
+      '  topLevel: this === undefined,',
+      '  nested: (function() { return this === undefined; })(),',
+      '};',
+    ].join('\n'));
+    expect(thisSemantics.result).toEqual({
+      type: 'run_result',
+      status: 'completed',
+      result: {
+        topLevel: true,
+        nested: true,
+      },
+    });
   });
 
   it('runs the workflow API through the child IPC channel', async () => {
@@ -78,54 +156,52 @@ describe('workflow runner', () => {
         export const meta = {
           name: 'research',
           description: 'exercise the workflow runner',
-          phases: ['collect', 'shape'],
+          phases: [{ title: 'collect' }, { title: 'shape' }],
         };
 
-        export default async function run() {
-          phase('collect');
-          log('topic:' + args.topic);
-          const collected = await parallel([
-            () => agent('first:' + args.topic, {
-              label: 'first',
-              phase: 'collect',
-              schema: { type: 'object' },
-              agentType: 'codex',
-              intent: 'research',
-              identity: 'focused researcher',
-            }),
-            () => agent('expected failure'),
-            () => agent('third'),
-            () => { throw new Error('thunk failure'); },
-          ]);
-          phase('shape');
-          const piped = await pipeline(
-            collected.filter(Boolean),
-            (value, original, index) => {
-              if (value === 'third result') throw new Error('item failed');
-              return { value, original, index };
-            },
-            async (value, original, index) => ({
-              ...value,
-              laterOriginal: original,
-              laterIndex: index,
-              done: true,
-            }),
-          );
-          return {
-            collected,
-            piped,
-            epoch: new Date(0).toISOString(),
-            rounded: Math.round(1.5),
-            hidden: [
-              typeof process,
-              typeof require,
-              typeof Buffer,
-              typeof fetch,
-              typeof setTimeout,
-              typeof console,
-            ],
-          };
-        }
+        phase('collect');
+        log('topic:' + args.topic);
+        const collected = await parallel([
+          () => agent('first:' + args.topic, {
+            label: 'first',
+            phase: 'collect',
+            schema: { type: 'object' },
+            agentType: 'codex',
+            intent: 'research',
+            identity: 'focused researcher',
+          }),
+          () => agent('expected failure'),
+          () => agent('third'),
+          () => { throw new Error('thunk failure'); },
+        ]);
+        phase('shape');
+        const piped = await pipeline(
+          collected.filter(Boolean),
+          (value, original, index) => {
+            if (value === 'third result') throw new Error('item failed');
+            return { value, original, index };
+          },
+          async (value, original, index) => ({
+            ...value,
+            laterOriginal: original,
+            laterIndex: index,
+            done: true,
+          }),
+        );
+        return {
+          collected,
+          piped,
+          epoch: new Date(0).toISOString(),
+          rounded: Math.round(1.5),
+          hidden: [
+            typeof process,
+            typeof require,
+            typeof Buffer,
+            typeof fetch,
+            typeof setTimeout,
+            typeof console,
+          ],
+        };
       `,
       { topic: 'ipc' },
       (message, child) => {
@@ -205,7 +281,7 @@ describe('workflow runner', () => {
     expect(execution.exit).toEqual({ code: 0, signal: null });
   });
 
-  it('runs an ultracode top-level body with literal object metadata', async () => {
+  it('runs a top-level body with literal object metadata', async () => {
     const execution = await runScript(
       `
         export const meta = {
@@ -213,7 +289,7 @@ describe('workflow runner', () => {
           description: 'top-level workflow body',
           whenToUse: 'when compatibility matters',
           phases: [
-            'prepare',
+            { title: 'prepare' },
             { title: 'finish', detail: 'return the value', model: 'inert' },
           ],
           future: { enabled: true, weight: 2, fallback: null },
@@ -289,9 +365,7 @@ describe('workflow runner', () => {
     const direct = await runScript(
       `
         export const meta = { name: 'direct-error', description: 'direct error' };
-        export default async function run() {
-          return agent('direct');
-        }
+        return agent('direct');
       `,
       undefined,
       (message, child) => {
@@ -313,15 +387,13 @@ describe('workflow runner', () => {
     const contained = await runScript(
       `
         export const meta = { name: 'contained-error', description: 'contained error' };
-        export default async function run() {
-          const parallelResult = await parallel([() => agent('parallel')]);
-          const pipelineResult = await pipeline(
-            ['item'],
-            () => agent('pipeline'),
-            () => 'must not run',
-          );
-          return { parallelResult, pipelineResult };
-        }
+        const parallelResult = await parallel([() => agent('parallel')]);
+        const pipelineResult = await pipeline(
+          ['item'],
+          () => agent('pipeline'),
+          () => 'must not run',
+        );
+        return { parallelResult, pipelineResult };
       `,
       undefined,
       (message, child) => {
@@ -340,6 +412,44 @@ describe('workflow runner', () => {
       result: {
         parallelResult: [null],
         pipelineResult: [null],
+      },
+    });
+  });
+
+  it.each([
+    ['object', { question: 'why', nested: { values: [1, true, null] } }],
+    ['array', ['a', 2, false, null]],
+    ['string', '{"question":"still a string"}'],
+    ['number', 42],
+    ['boolean', true],
+    ['null', null],
+    ['omitted', undefined],
+  ])('exposes %s args with direct JavaScript semantics', async (_kind, args) => {
+    const execution = await runScript(`
+      export const meta = { name: 'args', description: 'direct JSON args' };
+      return {
+        value: args,
+        question: args && args.question,
+        isArray: Array.isArray(args),
+        mapped: Array.isArray(args) ? args.map((value) => String(value)) : null,
+        type: typeof args,
+      };
+    `, args);
+
+    expect(execution.result).toEqual({
+      type: 'run_result',
+      status: 'completed',
+      result: {
+        value: args,
+        question:
+          args === null
+            ? null
+            : typeof args === 'object' && !Array.isArray(args)
+              ? (args as { question?: unknown }).question
+              : undefined,
+        isArray: Array.isArray(args),
+        mapped: Array.isArray(args) ? args.map((value) => String(value)) : null,
+        type: typeof args,
       },
     });
   });
@@ -406,38 +516,57 @@ describe('workflow runner', () => {
         phases: [{ title: 1 }],
       };
       agent('must not start');`,
-      'workflow meta phases must contain strings or objects with string title',
+      'workflow meta phases must contain objects with string title',
     ],
     [
       `export const meta = {
         name: 'bad',
         description: 'bad',
         whenToUse: true,
-        phases: ['valid'],
+        phases: [{ title: 'valid' }],
       };
       agent('must not start');`,
       'workflow meta whenToUse must be a string',
     ],
     [
-      `const description = 'dynamic';
-      export const meta = { name: 'bad', description };
+      `export const meta = description;
       agent('must not start');`,
       'workflow meta must be a recursively plain literal tree',
+    ],
+    [
+      `export const meta = {
+        name: 'bad',
+        description: 'bad',
+        phases: ['string phase'],
+      };
+      agent('must not start');`,
+      'workflow meta phases must contain objects with string title',
     ],
     [
       `export const meta = { name: 'bad', description: 'bad' };
       export const extra = true;
       agent('must not start');`,
-      'ultracode workflow scripts may only export const meta',
+      'workflow scripts may only export const meta',
     ],
     [
       `export const meta = { name: 'bad', description: 'bad' };
       export * as default from './other.mjs';
       agent('must not start');`,
-      'ultracode workflow scripts may only export const meta',
+      'workflow scripts may only export const meta',
+    ],
+    [
+      `export const meta = { name: 'bad', description: 'bad' };
+      export default async function run() { return null; }`,
+      'workflow scripts may only export const meta',
+    ],
+    [
+      `export const meta = { name: 'bad', description: 'bad' };
+      function run() { return null; }
+      export { run as default };`,
+      'workflow scripts may only export const meta',
     ],
   ])(
-    'rejects invalid ultracode metadata or exports before agents start',
+    'rejects invalid metadata or exports before agents start',
     async (script, error) => {
       const execution = await runScript(script);
 
@@ -451,44 +580,22 @@ describe('workflow runner', () => {
     },
   );
 
-  it.each([
-    [
-      'legacy module',
-      `export const meta = {
-        name: 'legacy-invalid',
-        description: 'legacy metadata',
-        whenToUse: true,
-        phases: 'invalid',
+  it('accepts unknown plain-literal metadata keys without projecting them', async () => {
+    const execution = await runScript(`
+      export const meta = {
+        name: 'future-meta',
+        description: 'future-compatible metadata',
+        future: { enabled: true },
+        phases: [{ title: 'run', futurePhase: { weight: 2 } }],
       };
-      export default async function run() {
-        return agent('must not start');
-      }`,
-    ],
-    [
-      'ultracode',
-      `export const meta = {
-        name: 'ultracode-invalid',
-        description: 'ultracode metadata',
-        whenToUse: true,
-        phases: 'invalid',
-      };
-      return agent('must not start');`,
-    ],
-  ])(
-    'rejects malformed %s metadata before agents start',
-    async (_dialect, script) => {
-      const execution = await runScript(script);
-
-      expect(execution.result).toEqual({
-        type: 'run_result',
-        status: 'failed',
-        error:
-          'workflow meta phases must contain strings or objects with string title',
-      });
-      expect(execution.messages.some((message) => message.type === 'agent_start'))
-        .toBe(false);
-    },
-  );
+      return 'ok';
+    `);
+    expect(execution.result).toEqual({
+      type: 'run_result',
+      status: 'completed',
+      result: 'ok',
+    });
+  });
 
   it('executes both issue #318 acceptance fixtures unmodified', async () => {
     const deepResearch = await readFile(
@@ -605,7 +712,7 @@ describe('workflow runner', () => {
   ])('fails loudly for nondeterministic expression %s', async (expression, error) => {
     const execution = await runScript(`
       export const meta = { name: 'invalid', description: 'invalid' };
-      export default async function run() { return ${expression}; }
+      return ${expression};
     `);
 
     expect(execution.result).toEqual({
@@ -615,28 +722,43 @@ describe('workflow runner', () => {
     });
   });
 
-  it.each([
-    [
-      "import fs from 'node:fs';",
-      'workflow imports are disabled: node:fs',
-    ],
-    [
-      '',
-      'workflow imports are disabled: node:fs',
-    ],
-  ])('rejects static and dynamic imports', async (staticImport, error) => {
+  it('rejects static imports before agents start', async () => {
     const execution = await runScript(`
-      ${staticImport}
       export const meta = { name: 'imports', description: 'imports' };
-      export default async function run() {
-        ${staticImport === '' ? "return import('node:fs');" : 'return fs;'}
-      }
+      import fs from 'node:fs';
+      agent('must not start');
+      return fs;
     `);
 
     expect(execution.result).toEqual({
       type: 'run_result',
       status: 'failed',
-      error,
+      error: 'workflow imports are disabled',
+    });
+    expect(execution.messages.some((message) => message.type === 'agent_start'))
+      .toBe(false);
+  });
+
+  it('fails dynamic import only when its expression executes', async () => {
+    const skipped = await runScript(`
+      export const meta = { name: 'imports', description: 'imports' };
+      if (false) await import('node:fs');
+      return 'ok';
+    `);
+    expect(skipped.result).toEqual({
+      type: 'run_result',
+      status: 'completed',
+      result: 'ok',
+    });
+
+    const executed = await runScript(`
+      export const meta = { name: 'imports', description: 'imports' };
+      return import('node:fs');
+    `);
+    expect(executed.result).toEqual({
+      type: 'run_result',
+      status: 'failed',
+      error: 'workflow imports are disabled: node:fs',
     });
   });
 
@@ -644,7 +766,7 @@ describe('workflow runner', () => {
     const execution = await runScript(
       `
         export const meta = { name: 'abort', description: 'abort' };
-        export default async function run() { return agent('wait'); }
+        return agent('wait');
       `,
       undefined,
       (message, child) => {
@@ -663,12 +785,13 @@ describe('workflow runner', () => {
     const execution = await runScript(`
       agent('spawn before meta validation');
       export const meta = { name: 'early-agent', description: 'early agent' };
-      export default async function run() { return null; }
+      return null;
     `);
 
-    expect(execution.result).toMatchObject({
+    expect(execution.result).toEqual({
       type: 'run_result',
       status: 'failed',
+      error: 'workflow script must start with export const meta',
     });
     expect(
       execution.messages.some((m) => m.type === 'agent_start'),
@@ -721,8 +844,8 @@ describe('workflow runner', () => {
           type: 'run_start',
           script: `
             export const meta = { name: 'busy', description: 'busy loop' };
-            export default async function run(){ while(true){} }
             log('busy-loop-ready');
+            while(true){}
           `,
           args: undefined,
         }),
