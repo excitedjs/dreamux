@@ -29,9 +29,12 @@ instead.
    - review comments on prior change requests touching the same files;
    - guidance stated in code comments of the modified files;
    - concrete security issues introduced by the change.
-   Deduplicate across lenses by file, line, and title. For an exhaustive
-   audit, repeat find/verify rounds until two consecutive rounds surface
-   nothing new, carrying already-seen findings in each round's prompts.
+   Every finding must state a concrete failure scenario — the specific
+   inputs or state that produce the wrong outcome; a defect that cannot be
+   stated as a scenario is not reportable. Deduplicate across lenses by
+   file, line, and title. For an exhaustive audit, repeat find/verify rounds
+   until two consecutive rounds surface nothing new, carrying already-seen
+   findings in each round's prompts.
 4. **Verify.** Score each finding with parallel verifier TeamMates (three
    votes normally; two for a quick pass), each given the finding, the
    guidance paths, the false-positive list, and this rubric verbatim:
@@ -47,16 +50,18 @@ instead.
      a guidance file.
    - 100: Absolutely certain. Double checked and confirmed; will happen
      frequently; evidence directly confirms it.
-   Keep findings that average 80 or higher. At max effort, findings in the
-   50-79 band may be reported too — in their own clearly labeled section,
-   never as confirmed issues.
+   Verifiers also check that the stated failure scenario is concrete and
+   actually leads to the claimed outcome. Keep findings that average 80 or
+   higher. At max effort, findings in the 50-79 band may be reported too —
+   in their own clearly labeled section, never as confirmed issues.
 5. **Report.** One TeamMate writes the review comment: a short verdict, then
    numbered issues (grouped by severity when findings carry one), each with
    the flag reason in parentheses and a file#line citation — file path alone
-   when no line is known; never invent a line number. Brief, no emojis. Post
-   the returned report through the channel reply tool, or have a follow-up
-   `send` to the reporter publish it with the forge's tooling (`gh`, `glab`)
-   once the operator confirms.
+   when no line is known; never invent a line number. Brief, no emojis. When a
+   channel reply tool is available, post the returned report through it;
+   otherwise return the report for the caller, or have a follow-up `send` to
+   the reporter publish it with the forge's tooling (`gh`, `glab`) once the
+   operator confirms.
 
 ## False positives
 
