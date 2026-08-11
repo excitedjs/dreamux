@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Extend the bundled workflow code-review reference with effort-level presets (quick/standard/max), repeat-until-dry find/verify rounds with seen-key deduplication, a cumulative range mode with a cross-change finder lens and range-scoped false-positive rule, finder severity estimates, and a severity-grouped report format. Documentation-only bundled skill content; no runtime behavior change.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}
