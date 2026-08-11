@@ -81,7 +81,7 @@ Three practical consequences:
   receipt, not the result. Save the id, wait for the terminal completion that
   Dreamux pushes, and build the next run's `args` from that completion's
   `result`; feeding the receipt into the next run is the classic mistake.
-  `workflow_status(run_id)` is for explicit recovery, not a polling loop.
+  `workflow_status({ run_id })` is for explicit recovery, not a polling loop.
 - return STRUCTURED results (not just prose) from each run so the next run's
   `args` can be built from them mechanically;
 - after a run, follow up interactively with a recorded concrete TeamMate name

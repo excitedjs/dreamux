@@ -98,6 +98,11 @@ Match fan-out to what the operator asked for; the script takes an
 | `standard` (default) | 1 | 3 | a normal pull-request review |
 | `max` | up to 3, stop after 2 dry | 3 | "thoroughly audit this", release gates, cumulative range reviews; additionally reports plausible findings (50-79) in a separate, clearly labeled section |
 
+A single-pass preset (`quick`, `standard`) fulfils its coverage promise with
+one completed pass; only multi-round runs are held to two-dry-round
+convergence, and `coverage.stoppedAtRoundCap` records a multi-round run that
+exited any other way.
+
 The evidence standard for CONFIRMATION is constant across presets: every
 verifier checks all acceptance conditions, and a confirmed finding always
 needs at least two settled votes averaging 80. A lower effort level reduces
@@ -329,8 +334,12 @@ if (RANGE_MODE) {
       },
     },
   );
-  if (!resolved || typeof resolved.range !== 'string' || !resolved.range.trim()) {
-    throw new Error(`range resolution failed for ${target}; no exact range produced`);
+  if (
+    !resolved ||
+    typeof resolved.range !== 'string' ||
+    !/^\S+\.\.\S+$/.test(resolved.range.trim())
+  ) {
+    throw new Error(`range resolution failed for ${target}; expected an exact <base>..<head> range`);
   }
   resolvedRange = resolved;
   reviewTarget = resolved.repoPath
@@ -506,8 +515,9 @@ for (let round = 1; round <= MAX_ROUNDS && dry < 2; round++) {
       const average = settled.length
         ? settled.reduce((sum, vote) => sum + vote.score, 0) / settled.length
         : 0;
-      // tier on the raw mean; round only the displayed confidence, so 79.67
-      // never rounds its way into confirmed
+      // tier on the raw mean; display at one decimal so the shown confidence
+      // never crosses a tier boundary (79.67 tiers plausible and shows 79.7,
+      // not 80 — integer votes make one-decimal display tier-safe)
       const tier = settled.length < 2
         ? 'unverified'
         : average >= 80
@@ -515,7 +525,7 @@ for (let round = 1; round <= MAX_ROUNDS && dry < 2; round++) {
           : PLAUSIBLE_TIER && average >= 50
             ? 'plausible'
             : 'rejected';
-      return { ...finding, confidence: Math.round(average), votes: settled.length, tier, index };
+      return { ...finding, confidence: Math.round(average * 10) / 10, votes: settled.length, tier, index };
     },
   );
   // pipeline() results are index-aligned with `fresh`: a null entry or a
@@ -529,10 +539,11 @@ for (let round = 1; round <= MAX_ROUNDS && dry < 2; round++) {
   log(`round ${round}: ${confirmed.length} confirmed, ${plausible.length} plausible, ${unverified.length} unverified total`);
 }
 
-// convergence means two consecutive dry rounds; exiting for any other
-// reason (round cap, single-pass preset, a failed round) is a different
-// coverage fact even when the final round happened to be dry
-const stoppedAtRoundCap = dry < 2;
+// a single-pass preset fulfils its coverage promise in one completed pass;
+// only multi-round runs require two consecutive dry rounds, and exiting a
+// multi-round run any other way (round cap, a failed round) is recorded even
+// when the final round happened to be dry
+const stoppedAtRoundCap = MAX_ROUNDS > 1 && dry < 2;
 const coverage = {
   complete: !guidanceFailed && roundFailures.length === 0 &&
     unverified.length === 0 && !stoppedAtRoundCap,
