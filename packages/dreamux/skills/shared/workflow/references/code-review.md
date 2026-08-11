@@ -7,7 +7,7 @@ per-finding confidence scoring, and one severity-ordered synthesized report.
 
 ## Contents
 
-- [Stage design](#stage-design) — the five stages and their failure accounting
+- [Stage design](#stage-design) — the stages and their failure accounting
 - [Effort levels](#effort-levels) — quick / standard / max presets
 - [Cumulative range mode](#cumulative-range-mode) — reviewing many merged
   changes as one diff
@@ -26,10 +26,15 @@ instead.
 
 ## Stage design
 
-1. **Gate** — one TeamMate checks eligibility and the run exits early when
+1. **Resolve** (range mode only) — one TeamMate pins a fuzzy cumulative target
+   ("changes #312 through head") to one exact `base..head` range inside the
+   repository; every later prompt receives the resolved target, never the
+   fuzzy description. The call is awaited bare: an unresolvable target must
+   fail the run, not fan out agents against a guess.
+2. **Gate** — one TeamMate checks eligibility and the run exits early when
    review is not needed: the change is closed or a draft, is automated or
    trivially safe, or already carries a review from this Team.
-2. **Context** — two TeamMates in parallel: one lists the file paths (not
+3. **Context** — two TeamMates in parallel: one lists the file paths (not
    contents) of the repository's agent guidance files (`CLAUDE.md`,
    `AGENTS.md`) at the root and in directories the change touches; one
    summarizes the change (intent, scope, risk areas). Both results feed every
@@ -37,7 +42,7 @@ instead.
    and recorded as missing coverage — it must not audit against a silently
    empty list. A missing summary is tolerable: finders read the change
    themselves, and the placeholder is visible in their prompts.
-3. **Find** — independent finder lenses run in parallel, each blind to the
+4. **Find** — independent finder lenses run in parallel, each blind to the
    others: guidance-file compliance, a shallow bug scan limited to the changed
    hunks, git history and blame context, review comments on prior change
    requests touching the same files, guidance stated in code comments of the
@@ -45,25 +50,33 @@ instead.
    barrier is justified: deduplication needs every lens's output at once —
    and it is where coverage is accounted: lens results are index-aligned with
    the lens list, so a failed lens is recorded as missing coverage instead of
-   being silently dropped by `.filter(Boolean)`. At max effort the find/verify
-   pair repeats as rounds: each round's prompts carry every already-seen
-   finding key, and the loop stops after two consecutive rounds produce
-   nothing fresh (or at the round cap). Fixed single passes miss the tail of
-   an unknown-size finding population; deduplicate each round against
-   everything SEEN, never against the accepted list, or judge-rejected
-   findings reappear every round and the loop never converges.
-4. **Verify** — each fresh finding is scored by verifier TeamMates with
-   distinct focus questions (does it reproduce on the changed lines; is it
-   pre-existing rather than introduced; does the cited guidance actually say
-   that), using a fixed 0-100 rubric. Findings advance through `pipeline`
-   independently of one another: each finding's vote aggregation follows its
-   own votes without waiting for the other findings. A finding that keeps
-   fewer than two settled votes is returned as `unverified` — verifier
-   failure must not silently launder a finding into a clean report.
-5. **Report** — findings that keep at least two settled votes and average 80
+   being silently dropped by `.filter(Boolean)`. Deduplication is by finding
+   key against everything SEEN — including the other lenses of the same round,
+   so six lenses reporting one defect yield one finding, not six — and never
+   against the accepted list, or judge-rejected findings reappear every round
+   and the loop never converges. At max effort the find/verify pair repeats as
+   rounds: each round's prompts carry every already-seen finding key, and the
+   loop records whether it CONVERGED (two consecutive dry rounds) or STOPPED
+   AT THE ROUND CAP while findings were still arriving — the two are different
+   coverage facts. A round in which every finder fails is recorded and ends
+   the loop with the results already accumulated; the hard error is reserved
+   for a run that never produced any review output.
+5. **Verify** — each fresh finding is scored by verifier TeamMates. Every
+   verifier checks ALL acceptance conditions — reproduces on the changed
+   lines, introduced by this change rather than pre-existing, and any cited
+   guidance or comment actually says what the finding claims — against a
+   fixed 0-100 rubric; each verifier additionally carries a distinct emphasis
+   so the votes stay diverse. Focus emphasis adds attention; it never removes
+   required evidence. Findings advance through `pipeline` independently of
+   one another. A finding that keeps fewer than two settled votes is returned
+   as `unverified` — verifier failure must not silently launder a finding
+   into a clean report.
+6. **Report** — findings that keep at least two settled votes and average 80
    or higher survive; one TeamMate writes the final review comment with a
    one-paragraph verdict first, then issues grouped by severity, then an
-   Unverified section, then exact coverage gaps.
+   Unverified section, then exact coverage gaps. The no-findings message is
+   generated from the coverage record — a run with failed lenses or rounds
+   never claims "checked all lenses".
 
 The run returns the report plus `coverage` and `unverified` records; the
 caller decides where the report goes. When a channel reply tool is available,
@@ -74,7 +87,7 @@ GitLab) once the operator confirms.
 ## Effort levels
 
 Match fan-out to what the operator asked for; the script takes an
-`args.effort` preset:
+`args.effort` preset and fails loudly on any other value:
 
 | Preset | Rounds | Verifier votes | Use when |
 | --- | --- | --- | --- |
@@ -82,10 +95,11 @@ Match fan-out to what the operator asked for; the script takes an
 | `standard` (default) | 1 | 3 | a normal pull-request review |
 | `max` | up to 3, stop after 2 dry | 3 | "thoroughly audit this", release gates, cumulative range reviews |
 
-The confirmation bar is constant across presets — at least two settled votes
-and an average of 80 — so a lower effort level produces fewer, not weaker,
-findings. Raising effort widens coverage (more rounds, more lenses in range
-mode); it never lowers the evidence standard.
+The evidence standard is constant across presets: every verifier checks all
+acceptance conditions, and confirmation always needs at least two settled
+votes averaging 80. A lower effort level reduces vote redundancy and round
+count — fewer, not weaker, findings. Raising effort widens coverage (more
+rounds, more lenses in range mode); it never changes what counts as evidence.
 
 ## Cumulative range mode
 
@@ -93,13 +107,13 @@ Reviewing many merged changes as one diff (a release window, "everything since
 tag X") differs from a single change request in two ways, both handled by
 `args.rangeMode`:
 
-- **Resolve first.** When the target is a description like "PRs #312 through
-  head" rather than an exact range, add a resolve TeamMate ahead of the gate
-  that turns it into `<baseSha>..<headSha>` inside the repository (find the
-  named squash commit; fall back to the earliest merge at or after the named
-  number, since PR numbers are not contiguous; base is that commit's first
-  parent). Pass the resolved range through returned values — later prompts
-  must be self-contained.
+- **Resolve first.** The script's resolve stage turns a fuzzy target into
+  `<baseSha>..<headSha>` inside the repository before any other agent starts
+  (find the named squash commit; fall back to the earliest merge at or after
+  the named number, since change numbers are not contiguous; base is that
+  commit's first parent; an already-exact range passes through unchanged).
+  The resolved target is threaded into every later prompt — prompts stay
+  self-contained and no agent ever receives the fuzzy description.
 - **The cross-change lens.** A range contains changes that evolved the same
   subsystems in sequence, so range mode adds a seventh finder lens looking
   specifically for bad interactions BETWEEN the changes: a later change
@@ -128,8 +142,8 @@ Failure semantics drive the script structure:
 - A schema call rejects — it does not return `null` — when the runtime cannot
   provide structured output or reports success with an empty or invalid JSON
   result. A directly awaited rejection fails the whole run; that is the right
-  outcome for load-bearing calls like the gate, and the reason the gate below
-  is awaited bare while per-finding work runs inside helpers.
+  outcome for load-bearing calls like the resolver and the gate, and the
+  reason both are awaited bare while per-finding work runs inside helpers.
 
 Keep prompts self-contained: a finder must not depend on another finder's
 output, and everything a verifier needs (the finding, the rubric, the
@@ -143,18 +157,20 @@ changes related to the broader change; and real issues on lines the change did
 not modify.
 
 Ask finders for a severity estimate (`high` / `medium` / `low`) alongside each
-finding. Severity is the finder's input for the report's grouping; the
+finding — the field is required and enum-constrained, because the report's
+grouping depends on it. Severity is the finder's input for grouping only; the
 verifiers' confidence score stays the only acceptance gate, so a "high
 severity" label never rescues a low-confidence finding.
 
 ## TeamMate budget
 
 One round costs `1 (gate) + 2 (context) + L (find) + votes × findings
-(verify) + 1 (report)` TeamMates, where `L` is 6 lenses (7 in range mode).
-The 1000-TeamMate lifetime cap per run leaves ample headroom for a single
-round (hundreds of findings) and comfortably supports max-effort rounds; still
-count `L finders + votes × fresh findings` per extra round before choosing
-round counts, and match fan-out to what the operator asked for.
+(verify) + 1 (report)` TeamMates, plus one resolver in range mode, where `L`
+is 6 lenses (7 in range mode). The 1000-TeamMate lifetime cap per run leaves
+ample headroom for a single round (hundreds of findings) and comfortably
+supports max-effort rounds; still count `L finders + votes × fresh findings`
+per extra round before choosing round counts, and match fan-out to what the
+operator asked for.
 
 ## Script
 
@@ -169,6 +185,7 @@ export const meta = {
   description: 'Multi-lens code review with confidence-scored findings and one report',
   whenToUse: 'One-shot review of a change request, git range, or working-tree diff.',
   phases: [
+    { title: 'resolve', detail: 'range mode: pin a fuzzy target to one exact base..head' },
     { title: 'gate', detail: 'eligibility check with early exit' },
     { title: 'context', detail: 'guidance discovery and change summary' },
     { title: 'find', detail: 'independent finder lenses, repeated until dry at max effort' },
@@ -182,8 +199,16 @@ const target = input.target;
 if (!target) {
   return { error: 'args.target is required: a PR/MR URL or number, a git range, or a working-tree description' };
 }
-const EFFORT = input.effort || 'standard'; // quick | standard | max
-const MAX_ROUNDS = input.maxRounds || (EFFORT === 'max' ? 3 : 1);
+const EFFORT = input.effort === undefined ? 'standard' : input.effort;
+if (!['quick', 'standard', 'max'].includes(EFFORT)) {
+  return { error: `invalid effort ${JSON.stringify(EFFORT)}: use quick, standard, or max` };
+}
+const MAX_ROUNDS = input.maxRounds === undefined
+  ? (EFFORT === 'max' ? 3 : 1)
+  : input.maxRounds;
+if (!Number.isInteger(MAX_ROUNDS) || MAX_ROUNDS < 1 || MAX_ROUNDS > 10) {
+  return { error: `invalid maxRounds ${JSON.stringify(input.maxRounds)}: use an integer from 1 to 10` };
+}
 const VOTES = EFFORT === 'quick' ? 2 : 3;
 const RANGE_MODE = Boolean(input.rangeMode);
 
@@ -204,6 +229,12 @@ const RUBRIC =
   '75: Highly confident. Double checked; very likely real and will be hit in practice; directly impacts functionality or is directly mentioned in a guidance file.\n' +
   '100: Absolutely certain. Double checked and confirmed; will happen frequently; evidence directly confirms it.';
 
+const ACCEPTANCE_CONDITIONS =
+  'Check ALL acceptance conditions before scoring: (1) the defect reproduces on ' +
+  'the changed lines of this exact target; (2) it is introduced by this change, ' +
+  'not pre-existing; (3) any guidance file or code comment the finding cites ' +
+  'actually says what the finding claims. A finding failing any condition scores low.';
+
 const FINDINGS_SCHEMA = {
   type: 'object',
   properties: {
@@ -220,9 +251,9 @@ const FINDINGS_SCHEMA = {
             type: 'string',
             description: 'guidance | bug | history | prior-review | cross-change | comment | security',
           },
-          severity: { type: 'string', description: 'high | medium | low' },
+          severity: { type: 'string', enum: ['high', 'medium', 'low'] },
         },
-        required: ['file', 'title', 'detail', 'reason'],
+        required: ['file', 'title', 'detail', 'reason', 'severity'],
         additionalProperties: false,
       },
     },
@@ -245,9 +276,49 @@ function findingKey(f) {
   return `${f.file}:${f.line || 0}:${f.title.toLowerCase().replace(/\s+/g, ' ').trim()}`;
 }
 
+let reviewTarget = target;
+let resolvedRange = null;
+if (RANGE_MODE) {
+  phase('resolve');
+  // awaited bare: an unresolvable target must fail the run, not fan out
+  // agents against a guess
+  const resolved = await agent(
+    `In the repository this workspace can read, resolve this review target into ` +
+    `one exact git range:\n${target}\n` +
+    `If it names a change number ("changes #312 through head"), find that squash ` +
+    `commit; if no commit carries that number, use the earliest merge at or after ` +
+    `it (change numbers are not contiguous). The base is that commit's first ` +
+    `parent and the head is the branch tip. If the target is already an exact ` +
+    `range, return it unchanged. Return the range expression "<baseSha>..<headSha>" ` +
+    `and the repository path.`,
+    {
+      label: 'resolve',
+      phase: 'resolve',
+      intent: 'Range resolver',
+      schema: {
+        type: 'object',
+        properties: {
+          range: { type: 'string' },
+          repoPath: { type: 'string' },
+        },
+        required: ['range'],
+        additionalProperties: false,
+      },
+    },
+  );
+  if (!resolved || typeof resolved.range !== 'string' || !resolved.range.trim()) {
+    return { error: 'range resolution failed; no exact range produced', target };
+  }
+  resolvedRange = resolved;
+  reviewTarget = resolved.repoPath
+    ? `the git range ${resolved.range} in the repository at ${resolved.repoPath}`
+    : `the git range ${resolved.range}`;
+  log(`resolved target: ${reviewTarget}`);
+}
+
 phase('gate');
 const gate = await agent(
-  `Inspect this change: ${target}. Decide whether it should be code reviewed. ` +
+  `Inspect this change: ${reviewTarget}. Decide whether it should be code reviewed. ` +
   `Ineligible if: closed; a draft; an automated or trivial change that is ` +
   `obviously fine; or it already has a review comment from this Team.`,
   {
@@ -269,7 +340,7 @@ if (!gate || !gate.eligible) {
 phase('context');
 const ctx = await parallel([
   () => agent(
-    `For this change: ${target}. List the file paths (NOT contents) of the ` +
+    `For this change: ${reviewTarget}. List the file paths (NOT contents) of the ` +
     `repository's agent guidance files — CLAUDE.md and AGENTS.md — at the ` +
     `repository root and in directories whose files the change modifies.`,
     {
@@ -285,7 +356,7 @@ const ctx = await parallel([
     },
   ),
   () => agent(
-    `View this change: ${target}. Summarize it: intent, scope, key files, risk ` +
+    `View this change: ${reviewTarget}. Summarize it: intent, scope, key files, risk ` +
     `areas. Concise prose only.`,
     { label: 'summary', phase: 'context', intent: 'Change summarizer' },
   ),
@@ -322,10 +393,10 @@ const activeLenses = guidanceFailed
   ? lenses.filter((lens) => lens.key !== 'guidance')
   : lenses;
 
-const focusQuestions = [
-  'does it reproduce on the changed lines',
-  'is it pre-existing rather than introduced by this change',
-  'does the cited guidance file or code comment actually say that',
+const emphases = [
+  'reproduction on the changed lines',
+  'whether it is pre-existing rather than introduced',
+  'whether the cited guidance or comment actually says that',
 ].slice(0, VOTES);
 
 const seen = new Set();
@@ -333,14 +404,15 @@ const confirmed = [];
 const unverified = [];
 const roundFailures = [];
 let dry = 0;
+let lastRoundHadFresh = false;
 for (let round = 1; round <= MAX_ROUNDS && dry < 2; round++) {
   phase('find');
   // parallel() preserves order, so a null entry identifies the failed lens
   const lensResults = await parallel(activeLenses.map((lens) => () =>
     agent(
-      `Code review this change through one lens: ${target}\n${lens.prompt}\n` +
+      `Code review this change through one lens: ${reviewTarget}\n${lens.prompt}\n` +
       `${FALSE_POSITIVES}\nChange summary:\n${summary}\n` +
-      `Estimate severity (high/medium/low) for each finding.\n` +
+      `Give each finding a severity: high, medium, or low.\n` +
       `Known findings, do NOT repeat any of these keys:\n${JSON.stringify([...seen])}\n` +
       `Round ${round}: dig where earlier rounds have not.`,
       {
@@ -355,33 +427,50 @@ for (let round = 1; round <= MAX_ROUNDS && dry < 2; round++) {
     ...(guidanceFailed ? ['guidance'] : []),
     ...activeLenses.filter((lens, i) => !lensResults[i]).map((lens) => lens.key),
   ];
-  if (failedLenses.length === lenses.length) {
-    return { error: 'every finder lens failed; the change was not reviewed', failedLenses };
-  }
   if (failedLenses.length) roundFailures.push({ round, failedLenses });
+  if (failedLenses.length === lenses.length) {
+    // reserve the hard error for a run that never produced any review output;
+    // otherwise keep the accumulated results and report the gap
+    if (!confirmed.length && !unverified.length && seen.size === 0) {
+      return { error: 'every finder lens failed; the change was not reviewed', failedLenses };
+    }
+    log(`round ${round}: every lens failed; stopping with accumulated results`);
+    lastRoundHadFresh = false;
+    break;
+  }
   const found = lensResults.filter(Boolean).flatMap((r) => r.findings)
     .filter((f) => f && typeof f.file === 'string' && typeof f.title === 'string');
-  // dedupe against everything SEEN, not against the accepted list, or
-  // judge-rejected findings reappear every round and the loop never converges
-  const fresh = found.filter((f) => !seen.has(findingKey(f)));
+  // dedupe against everything SEEN — including this round's other lenses, so
+  // one defect reported by six lenses becomes one finding — and never against
+  // the accepted list, or judge-rejected findings reappear every round and
+  // the loop never converges
+  const fresh = [];
+  for (const f of found) {
+    const key = findingKey(f);
+    if (!seen.has(key)) {
+      seen.add(key);
+      fresh.push(f);
+    }
+  }
+  lastRoundHadFresh = fresh.length > 0;
   if (!fresh.length) {
     dry += 1;
     log(`round ${round}: no fresh findings (dry ${dry}/2)`);
     continue;
   }
   dry = 0;
-  fresh.forEach((f) => seen.add(findingKey(f)));
   log(`round ${round}: ${fresh.length} fresh findings`);
 
   phase('verify');
   const judged = await pipeline(
     fresh,
-    (finding) => parallel(focusQuestions.map((focus) => () =>
+    (finding) => parallel(emphases.map((emphasis) => () =>
       agent(
-        `Confidence-score this code review finding for the change: ${target}\n` +
+        `Confidence-score this code review finding for the change: ${reviewTarget}\n` +
         `Finding: ${JSON.stringify(finding)}\n` +
         `Guidance files: ${JSON.stringify(guidancePaths)}\n` +
-        `Focus question: ${focus}.\n${FALSE_POSITIVES}\n` +
+        `${ACCEPTANCE_CONDITIONS}\n` +
+        `Your particular emphasis: ${emphasis}.\n${FALSE_POSITIVES}\n` +
         `Score with this rubric verbatim:\n${RUBRIC}`,
         { phase: 'verify', intent: 'Finding verifier', schema: SCORE_SCHEMA },
       ),
@@ -404,22 +493,34 @@ for (let round = 1; round <= MAX_ROUNDS && dry < 2; round++) {
   log(`round ${round}: ${confirmed.length} confirmed total, ${unverified.length} unverified total`);
 }
 
+// stopping at the round cap while findings were still arriving is a
+// different coverage fact from converging on two dry rounds
+const stoppedAtRoundCap = MAX_ROUNDS > 1 && dry < 2 && lastRoundHadFresh;
 const coverage = {
-  complete: !guidanceFailed && roundFailures.length === 0 && unverified.length === 0,
+  complete: !guidanceFailed && roundFailures.length === 0 &&
+    unverified.length === 0 && !stoppedAtRoundCap,
   guidanceDiscoveryFailed: guidanceFailed,
   roundFailures,
+  stoppedAtRoundCap,
   unverifiedFindings: unverified.length,
 };
 
 phase('report');
 if (!confirmed.length) {
-  const report = unverified.length
-    ? `No issues confirmed. ${unverified.length} finding(s) could not be verified (verifier failures) and are returned in \`unverified\` for manual triage.`
+  const gaps = [];
+  if (guidanceFailed) gaps.push('guidance discovery failed');
+  if (roundFailures.length) {
+    gaps.push(`lens failures: ${roundFailures.map((r) => `round ${r.round} (${r.failedLenses.join(', ')})`).join('; ')}`);
+  }
+  if (stoppedAtRoundCap) gaps.push('stopped at the round cap while findings were still arriving');
+  if (unverified.length) gaps.push(`${unverified.length} finding(s) unverified after verifier failures`);
+  const report = gaps.length
+    ? `No issues confirmed. Coverage is incomplete: ${gaps.join('; ')}. See coverage and unverified for details.`
     : 'No issues found. Checked all lenses across all rounds.';
-  return { issues: [], unverified, coverage, report };
+  return { issues: [], unverified, coverage, resolvedRange, report };
 }
 const report = await agent(
-  `Write the final code review comment for the change: ${target}\n` +
+  `Write the final code review comment for the change: ${reviewTarget}\n` +
   `Confirmed issues (JSON): ${JSON.stringify(confirmed)}\n` +
   `Unverified findings — verifiers failed, no confidence claim (JSON): ${JSON.stringify(unverified)}\n` +
   `Coverage (JSON): ${JSON.stringify(coverage)}\n` +
@@ -430,11 +531,11 @@ const report = await agent(
   `path alone otherwise; never invent a line number. If there are unverified ` +
   `findings, add a short "Unverified" section listing them without confidence ` +
   `claims. End with one line stating coverage gaps exactly (failed lenses per ` +
-  `round, guidance discovery, unverified count). Brief, no emojis. ` +
-  `Return markdown only.`,
+  `round, guidance discovery, round-cap stop, unverified count). Brief, no ` +
+  `emojis. Return markdown only.`,
   { label: 'report', phase: 'report', intent: 'Review report writer' },
 );
-return { issues: confirmed, unverified, coverage, report };
+return { issues: confirmed, unverified, coverage, resolvedRange, report };
 ```
 
 The verify stage shows the three-argument stage signature: stage one returns
@@ -458,17 +559,19 @@ Team workspace:
 - a local git range (`'main...feature'`);
 - a working-tree description (`'the uncommitted diff in the workspace'`).
 
-The other `args` fields are optional: `effort` (`'quick'` / `'standard'` /
-`'max'`), `maxRounds` (overrides the preset's round cap), and `rangeMode`
-(adds the cross-change lens and the range-scoped false-positive rule; pair it
-with a resolve step per [Cumulative range mode](#cumulative-range-mode) when
-the target is not yet an exact range). `agentType` follows the runtime default
-unless each call is given one explicitly.
+The other `args` fields are optional and validated before any agent starts:
+`effort` must be `'quick'`, `'standard'`, or `'max'`; `maxRounds` must be an
+integer from 1 to 10 and overrides the preset's round cap; `rangeMode` runs
+the resolve stage first and adds the cross-change lens plus the range-scoped
+false-positive rule. `agentType` follows the runtime default unless each call
+is given one explicitly.
 
 `max_concurrency` defaults to 16; lower it only when the workspace or runtime
 provider needs gentler fan-out. After the terminal completion, read `issues`
 for the confirmed findings, `unverified` for findings whose verifiers failed,
-`coverage` for whether every lens ran in every round and every finding was
-verified, and `report` for the formatted comment; use the reporter TeamMate's
-concrete name with `send` for follow-ups such as posting the comment through
-the forge's tooling or re-checking one finding interactively.
+`coverage` for whether every lens ran in every round, the loop converged
+rather than stopping at the round cap, and every finding was verified,
+`resolvedRange` for the exact range in range mode, and `report` for the
+formatted comment; use the reporter TeamMate's concrete name with `send` for
+follow-ups such as posting the comment through the forge's tooling or
+re-checking one finding interactively.
