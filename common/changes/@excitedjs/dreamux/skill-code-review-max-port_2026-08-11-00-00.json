@@ -2,7 +2,7 @@
   "changes": [
     {
       "packageName": "@excitedjs/dreamux",
-      "comment": "Extend the bundled workflow code-review reference with effort-level presets (quick/standard/max) validated fail-loud, repeat-until-dry find/verify rounds with cross-lens seen-key deduplication, an in-script range resolver plus cross-change finder lens for cumulative range mode, all-conditions verifier prompts with distinct emphases, a required concrete failure scenario per finding, required enum severity feeding a severity-grouped report, a labeled plausible tier at max effort, and coverage facts distinguishing convergence from round-cap stops; add an ultracode orchestration techniques reference (archetypes, scouting, run chaining, worked compositions). Documentation-only bundled skill content; no runtime behavior change.",
+      "comment": "Rework the bundled workflow code-review reference into a method-first recipe (flow, verbatim scoring rubric, false-positive discipline, effort scaling, cumulative-range guidance) with a compact adaptation sketch instead of a paste-ready script, and add an ultracode orchestration techniques reference (archetypes, scouting, run chaining, compact worked compositions). Documentation-only bundled skill content; no runtime behavior change.",
       "type": "patch"
     }
   ],

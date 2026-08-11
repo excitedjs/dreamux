@@ -96,18 +96,7 @@ set before expensive downstream work:
 ```js
 const all = await parallel(angles.map((a) => () =>
   agent(searchPrompt(a), { phase: 'search', schema: SOURCES_SCHEMA })));
-// account failures positionally BEFORE dropping nulls — a failed angle is
-// missing coverage, not an angle that found nothing
-const failedAngles = angles.filter((a, i) => !all[i]).map((a) => a.name);
-if (failedAngles.length) log(`failed angles: ${failedAngles.join(', ')}`);
-const seen = new Set();
-const sources = [];
-for (const result of all.filter(Boolean)) {
-  for (const s of result.sources) {
-    const key = s.url.replace(/[#?].*$/, '');
-    if (!seen.has(key)) { seen.add(key); sources.push(s); }
-  }
-}
+const sources = dedupeByUrl(all.filter(Boolean).flatMap((r) => r.sources));
 // only now fan out the expensive per-source work
 const reports = await pipeline(sources, fetchStage, verifyStage);
 ```
@@ -115,57 +104,31 @@ const reports = await pipeline(sources, fetchStage, verifyStage);
 The barrier earns its latency because the dedup needs every angle's output at
 once; the per-source work that follows goes back to `pipeline`.
 
-**The exhaustive-discovery loop** — finders → dedup vs SEEN → diverse
-verification → repeat until dry, the composition behind every "audit
-everything" request:
+**The exhaustive-discovery loop** — finders → dedup vs SEEN → verification →
+repeat until dry, the composition behind every "audit everything" request:
 
 ```js
 const seen = new Set();
 const accepted = [];
-const unverified = [];
-const roundFailures = [];
 let dry = 0;
-for (let round = 1; round <= MAX_ROUNDS && dry < 2; round++) {
-  const thunks = finderThunks(seen);
-  const results = await parallel(thunks);
-  const failed = results.filter((r) => !r).length;
-  if (failed) roundFailures.push({ round, failed });
-  if (failed === thunks.length) {
-    log(`round ${round}: every finder failed`); // an outage is not convergence
-    break;
-  }
-  const found = results.filter(Boolean).flatMap((r) => r.findings);
-  const fresh = [];
-  for (const f of found) {
-    if (!seen.has(key(f))) { seen.add(key(f)); fresh.push(f); }
-  }
-  if (!fresh.length) { dry += 1; continue; }
+while (dry < 2) {
+  const found = (await parallel(finderThunks(seen))).filter(Boolean)
+    .flatMap((r) => r.findings)
+    .filter((f) => !seen.has(key(f)));
+  if (!found.length) { dry += 1; continue; }
   dry = 0;
-  const judged = await pipeline(fresh, verifyStage, aggregateStage);
-  for (let i = 0; i < fresh.length; i++) {
-    if (!judged[i]) unverified.push(fresh[i]); // verifier outage, not rejection
-    else if (judged[i].accepted) accepted.push(judged[i]);
-  }
+  found.forEach((f) => seen.add(key(f)));
+  const judged = await pipeline(found, verifyStage, aggregateStage);
+  accepted.push(...judged.filter(Boolean).filter((f) => f.accepted));
 }
-const converged = dry >= 2;
-// report roundFailures, unverified, and converged with the results — exiting
-// at the cap, an outage, or unverified findings are coverage facts, not a
-// clean finish
 ```
 
-Four load-bearing details, all learned the hard way: dedupe against SEEN (not
-against `accepted`, or judge-rejected findings reappear every round and the
-loop never converges); dedupe INSIDE the fresh-collection loop (not with a
-plain `filter` against the pre-round set, or the same finding from several
-concurrent finders enters the round several times); account failed finders
-positionally before `.filter(Boolean)` and treat an all-finder outage as an
-outage, never as a dry round — otherwise two rounds of failures read as
-convergence; bound the loop with an explicit round cap, reporting whether
-it converged or stopped at the cap; and route verifier-failed findings into
-an unverified record positionally instead of `.filter(Boolean)`-ing them
-away — a run must not display converged while silently missing verdicts. The complete accounting contract lives in
-[code-review.md](code-review.md); this sketch stays minimal but must not
-contradict it.
+Dedupe against SEEN, not against `accepted` — otherwise judge-rejected
+findings reappear every round and the loop never converges. When adapting the
+sketch, remember the standing failure-plumbing rules from
+[orchestration-patterns.md](orchestration-patterns.md): note failed positions
+before filtering nulls, and bound loops when the finding population may not
+converge.
 
 ## Loop-until-count
 

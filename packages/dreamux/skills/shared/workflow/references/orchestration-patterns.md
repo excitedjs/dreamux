@@ -125,25 +125,19 @@ Compose these freely; pick by task.
   ```js
   const seen = new Set();
   let dry = 0;
-  for (let round = 1; round <= MAX_ROUNDS && dry < 2; round++) {
-    const thunks = finderThunks(seen);
-    const results = await parallel(thunks);
-    if (results.every((r) => !r)) break; // an outage is not a dry round
-    const fresh = [];
-    for (const f of results.filter(Boolean).flatMap((r) => r.findings)) {
-      // add to seen INSIDE the loop: the same finding from several
-      // concurrent finders must collapse to one entry
-      if (!seen.has(key(f))) { seen.add(key(f)); fresh.push(f); }
-    }
-    if (!fresh.length) { dry += 1; continue; }
+  while (dry < 2) {
+    const found = (await parallel(finderThunks(seen))).filter(Boolean)
+      .flatMap((r) => r.findings)
+      .filter((f) => !seen.has(key(f)));
+    if (!found.length) { dry += 1; continue; }
     dry = 0;
+    found.forEach((f) => seen.add(key(f)));
     // ...verify and accept...
   }
   ```
 
-  Bound the loop with an explicit round cap and report whether it converged
-  (two dry rounds) or stopped early. Budget first: rounds multiply TeamMate
-  count, and a run stops at 1000 TeamMates total.
+  Budget first: rounds multiply TeamMate count, and a run stops at 1000
+  TeamMates total.
 - **Multi-modal sweep.** Run parallel searchers that each look a different
   way (by file structure, by content, by naming convention, by history),
   each blind to the others. One search angle rarely finds everything.
