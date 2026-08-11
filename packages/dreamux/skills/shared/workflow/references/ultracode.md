@@ -75,8 +75,13 @@ decisions between phases (is the map good enough? which design won? is the
 implementation ready for review?) are exactly the parts that should stay with
 the TeamLeader, interactive and revisable.
 
-Two practical consequences:
+Three practical consequences:
 
+- `workflow_run` returns only `{ run_id }` immediately — a durable acceptance
+  receipt, not the result. Save the id, wait for the terminal completion that
+  Dreamux pushes, and build the next run's `args` from that completion's
+  `result`; feeding the receipt into the next run is the classic mistake.
+  `workflow_status(run_id)` is for explicit recovery, not a polling loop.
 - return STRUCTURED results (not just prose) from each run so the next run's
   `args` can be built from them mechanically;
 - after a run, follow up interactively with a recorded concrete TeamMate name
@@ -91,6 +96,10 @@ set before expensive downstream work:
 ```js
 const all = await parallel(angles.map((a) => () =>
   agent(searchPrompt(a), { phase: 'search', schema: SOURCES_SCHEMA })));
+// account failures positionally BEFORE dropping nulls — a failed angle is
+// missing coverage, not an angle that found nothing
+const failedAngles = angles.filter((a, i) => !all[i]).map((a) => a.name);
+if (failedAngles.length) log(`failed angles: ${failedAngles.join(', ')}`);
 const seen = new Set();
 const sources = [];
 for (const result of all.filter(Boolean)) {
@@ -113,10 +122,18 @@ everything" request:
 ```js
 const seen = new Set();
 const accepted = [];
+const roundFailures = [];
 let dry = 0;
-while (dry < 2) {
-  const found = (await parallel(finderThunks(seen))).filter(Boolean)
-    .flatMap((r) => r.findings);
+for (let round = 1; round <= MAX_ROUNDS && dry < 2; round++) {
+  const thunks = finderThunks(seen);
+  const results = await parallel(thunks);
+  const failed = results.filter((r) => !r).length;
+  if (failed) roundFailures.push({ round, failed });
+  if (failed === thunks.length) {
+    log(`round ${round}: every finder failed`); // an outage is not convergence
+    break;
+  }
+  const found = results.filter(Boolean).flatMap((r) => r.findings);
   const fresh = [];
   for (const f of found) {
     if (!seen.has(key(f))) { seen.add(key(f)); fresh.push(f); }
@@ -126,13 +143,22 @@ while (dry < 2) {
   const judged = await pipeline(fresh, verifyStage, aggregateStage);
   accepted.push(...judged.filter(Boolean).filter((f) => f.accepted));
 }
+const converged = dry >= 2;
+// report roundFailures and converged with the results — exiting at the cap
+// or on an outage is a coverage fact, not a clean finish
 ```
 
-Two load-bearing details, both learned the hard way: dedupe against SEEN (not
+Four load-bearing details, all learned the hard way: dedupe against SEEN (not
 against `accepted`, or judge-rejected findings reappear every round and the
-loop never converges), and dedupe INSIDE the fresh-collection loop (not with a
+loop never converges); dedupe INSIDE the fresh-collection loop (not with a
 plain `filter` against the pre-round set, or the same finding from several
-concurrent finders enters the round several times).
+concurrent finders enters the round several times); account failed finders
+positionally before `.filter(Boolean)` and treat an all-finder outage as an
+outage, never as a dry round — otherwise two rounds of failures read as
+convergence; and bound the loop with an explicit round cap, reporting whether
+it converged or stopped at the cap. The complete accounting contract lives in
+[code-review.md](code-review.md); this sketch stays minimal but must not
+contradict it.
 
 ## Loop-until-count
 

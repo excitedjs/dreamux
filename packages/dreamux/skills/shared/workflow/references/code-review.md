@@ -210,18 +210,20 @@ export const meta = {
 
 const input = args || {};
 const target = input.target;
+// fail-loud paths throw: a normal return settles the run as completed, which
+// would make invalid input look like a successful review to automated callers
 if (!target) {
-  return { error: 'args.target is required: a PR/MR URL or number, a git range, or a working-tree description' };
+  throw new Error('args.target is required: a PR/MR URL or number, a git range, or a working-tree description');
 }
 const EFFORT = input.effort === undefined ? 'standard' : input.effort;
 if (!['quick', 'standard', 'max'].includes(EFFORT)) {
-  return { error: `invalid effort ${JSON.stringify(EFFORT)}: use quick, standard, or max` };
+  throw new Error(`invalid effort ${JSON.stringify(EFFORT)}: use quick, standard, or max`);
 }
 const MAX_ROUNDS = input.maxRounds === undefined
   ? (EFFORT === 'max' ? 3 : 1)
   : input.maxRounds;
 if (!Number.isInteger(MAX_ROUNDS) || MAX_ROUNDS < 1 || MAX_ROUNDS > 10) {
-  return { error: `invalid maxRounds ${JSON.stringify(input.maxRounds)}: use an integer from 1 to 10` };
+  throw new Error(`invalid maxRounds ${JSON.stringify(input.maxRounds)}: use an integer from 1 to 10`);
 }
 const VOTES = EFFORT === 'quick' ? 2 : 3;
 const PLAUSIBLE_TIER = EFFORT === 'max';
@@ -328,7 +330,7 @@ if (RANGE_MODE) {
     },
   );
   if (!resolved || typeof resolved.range !== 'string' || !resolved.range.trim()) {
-    return { error: 'range resolution failed; no exact range produced', target };
+    throw new Error(`range resolution failed for ${target}; no exact range produced`);
   }
   resolvedRange = resolved;
   reviewTarget = resolved.repoPath
@@ -426,7 +428,7 @@ const plausible = [];
 const unverified = [];
 const roundFailures = [];
 let dry = 0;
-let lastRoundHadFresh = false;
+let completedFinderRounds = 0;
 for (let round = 1; round <= MAX_ROUNDS && dry < 2; round++) {
   phase('find');
   // parallel() preserves order, so a null entry identifies the failed lens
@@ -454,15 +456,15 @@ for (let round = 1; round <= MAX_ROUNDS && dry < 2; round++) {
   ];
   if (failedLenses.length) roundFailures.push({ round, failedLenses });
   if (failedLenses.length === lenses.length) {
-    // reserve the hard error for a run that never produced any review output;
-    // otherwise keep the accumulated results and report the gap
-    if (!confirmed.length && !unverified.length && seen.size === 0) {
-      return { error: 'every finder lens failed; the change was not reviewed', failedLenses };
+    // reserve the hard error for a run in which no finder round ever
+    // completed; a clean earlier round is review output worth keeping
+    if (completedFinderRounds === 0) {
+      throw new Error(`every finder lens failed in round ${round}; the change was not reviewed`);
     }
     log(`round ${round}: every lens failed; stopping with accumulated results`);
-    lastRoundHadFresh = false;
     break;
   }
+  completedFinderRounds += 1;
   const found = lensResults.filter(Boolean).flatMap((r) => r.findings)
     .filter((f) => f && typeof f.file === 'string' && typeof f.title === 'string');
   // dedupe against everything SEEN — including this round's other lenses, so
@@ -477,7 +479,6 @@ for (let round = 1; round <= MAX_ROUNDS && dry < 2; round++) {
       fresh.push(f);
     }
   }
-  lastRoundHadFresh = fresh.length > 0;
   if (!fresh.length) {
     dry += 1;
     log(`round ${round}: no fresh findings (dry ${dry}/2)`);
@@ -505,23 +506,33 @@ for (let round = 1; round <= MAX_ROUNDS && dry < 2; round++) {
       const average = settled.length
         ? settled.reduce((sum, vote) => sum + vote.score, 0) / settled.length
         : 0;
-      return { ...finding, confidence: Math.round(average), votes: settled.length, index };
+      // tier on the raw mean; round only the displayed confidence, so 79.67
+      // never rounds its way into confirmed
+      const tier = settled.length < 2
+        ? 'unverified'
+        : average >= 80
+          ? 'confirmed'
+          : PLAUSIBLE_TIER && average >= 50
+            ? 'plausible'
+            : 'rejected';
+      return { ...finding, confidence: Math.round(average), votes: settled.length, tier, index };
     },
   );
   // pipeline() results are index-aligned with `fresh`: a null entry or a
   // finding with fewer than two settled votes is unverified, not clean
   for (let i = 0; i < fresh.length; i++) {
     const j = judged[i];
-    if (!j || j.votes < 2) unverified.push(fresh[i]);
-    else if (j.confidence >= 80) confirmed.push(j);
-    else if (PLAUSIBLE_TIER && j.confidence >= 50) plausible.push(j);
+    if (!j || j.tier === 'unverified') unverified.push(fresh[i]);
+    else if (j.tier === 'confirmed') confirmed.push(j);
+    else if (j.tier === 'plausible') plausible.push(j);
   }
   log(`round ${round}: ${confirmed.length} confirmed, ${plausible.length} plausible, ${unverified.length} unverified total`);
 }
 
-// stopping at the round cap while findings were still arriving is a
-// different coverage fact from converging on two dry rounds
-const stoppedAtRoundCap = MAX_ROUNDS > 1 && dry < 2 && lastRoundHadFresh;
+// convergence means two consecutive dry rounds; exiting for any other
+// reason (round cap, single-pass preset, a failed round) is a different
+// coverage fact even when the final round happened to be dry
+const stoppedAtRoundCap = dry < 2;
 const coverage = {
   complete: !guidanceFailed && roundFailures.length === 0 &&
     unverified.length === 0 && !stoppedAtRoundCap,
@@ -532,19 +543,16 @@ const coverage = {
 };
 
 phase('report');
-if (!confirmed.length) {
+if (!confirmed.length && !plausible.length) {
   const gaps = [];
   if (guidanceFailed) gaps.push('guidance discovery failed');
   if (roundFailures.length) {
     gaps.push(`lens failures: ${roundFailures.map((r) => `round ${r.round} (${r.failedLenses.join(', ')})`).join('; ')}`);
   }
-  if (stoppedAtRoundCap) gaps.push('stopped at the round cap while findings were still arriving');
+  if (stoppedAtRoundCap) gaps.push('stopped before two-dry-round convergence');
   if (unverified.length) gaps.push(`${unverified.length} finding(s) unverified after verifier failures`);
-  if (plausible.length) {
-    gaps.push(`${plausible.length} plausible (unconfirmed) finding(s) at max effort`);
-  }
   const report = gaps.length
-    ? `No issues confirmed. ${gaps.join('; ')}. See coverage, plausible, and unverified for details.`
+    ? `No issues confirmed. ${gaps.join('; ')}. See coverage and unverified for details.`
     : 'No issues found. Checked all lenses across all rounds.';
   return { issues: [], plausible, unverified, coverage, resolvedRange, report };
 }
@@ -555,16 +563,18 @@ const report = await agent(
   `Unverified findings — verifiers failed, no confidence claim (JSON): ${JSON.stringify(unverified)}\n` +
   `Coverage (JSON): ${JSON.stringify(coverage)}\n` +
   `Structure: a "### Code review" heading; a one-paragraph verdict on the change ` +
-  `as a whole; then issues grouped by severity (high, then medium, then low) as ` +
-  `numbered items, each with the flag reason in parentheses and a citation on ` +
-  `the next line — file#line when the finding carries a line number, the file ` +
-  `path alone otherwise; never invent a line number. If there are plausible ` +
-  `findings, add a "Plausible (unconfirmed)" section after the confirmed issues, ` +
-  `stating each one's confidence and never presenting it as confirmed. If there ` +
-  `are unverified findings, add a short "Unverified" section listing them without ` +
-  `confidence claims. End with one line stating coverage gaps exactly (failed ` +
-  `lenses per round, guidance discovery, round-cap stop, unverified count). ` +
-  `Brief, no emojis. Return markdown only.`,
+  `as a whole (when nothing is confirmed, say so plainly); then confirmed issues ` +
+  `grouped by severity (high, then medium, then low) as numbered items, each with ` +
+  `the flag reason in parentheses, its failure scenario, and a citation on the ` +
+  `next line — file#line when the finding carries a line number, the file path ` +
+  `alone otherwise; never invent a line number. If there are plausible findings, ` +
+  `add a "Plausible (unconfirmed)" section after the confirmed issues with the ` +
+  `same per-item detail (title, citation, failure scenario, stated confidence), ` +
+  `never presenting them as confirmed. If there are unverified findings, add a ` +
+  `short "Unverified" section listing them without confidence claims. End with ` +
+  `one line stating coverage gaps exactly (failed lenses per round, guidance ` +
+  `discovery, convergence status, unverified count). Brief, no emojis. ` +
+  `Return markdown only.`,
   { label: 'report', phase: 'report', intent: 'Review report writer' },
 );
 return { issues: confirmed, plausible, unverified, coverage, resolvedRange, report };
