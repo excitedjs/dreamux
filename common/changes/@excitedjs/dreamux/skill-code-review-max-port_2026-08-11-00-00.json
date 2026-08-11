@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Rework the bundled workflow code-review reference into a method-first recipe (flow, verbatim scoring rubric, false-positive discipline, effort scaling, cumulative-range guidance) with a compact adaptation sketch instead of a paste-ready script, and add an ultracode orchestration techniques reference (archetypes, scouting, run chaining, compact worked compositions). Documentation-only bundled skill content; no runtime behavior change.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}
