@@ -70,10 +70,13 @@ instead.
    required evidence. Findings advance through `pipeline` independently of
    one another. A finding that keeps fewer than two settled votes is returned
    as `unverified` — verifier failure must not silently launder a finding
-   into a clean report.
+   into a clean report. At `max` effort, findings that verify into the 50-79
+   band with two settled votes survive as a separate PLAUSIBLE tier instead
+   of being silently dropped — broader coverage, explicitly labeled.
 6. **Report** — findings that keep at least two settled votes and average 80
    or higher survive; one TeamMate writes the final review comment with a
-   one-paragraph verdict first, then issues grouped by severity, then an
+   one-paragraph verdict first, then confirmed issues grouped by severity,
+   then (at max effort) a clearly labeled Plausible section, then an
    Unverified section, then exact coverage gaps. The no-findings message is
    generated from the coverage record — a run with failed lenses or rounds
    never claims "checked all lenses".
@@ -93,13 +96,18 @@ Match fan-out to what the operator asked for; the script takes an
 | --- | --- | --- | --- |
 | `quick` | 1 | 2 | a fast sanity pass; both votes must settle, so flakes surface as `unverified` rather than confirmations |
 | `standard` (default) | 1 | 3 | a normal pull-request review |
-| `max` | up to 3, stop after 2 dry | 3 | "thoroughly audit this", release gates, cumulative range reviews |
+| `max` | up to 3, stop after 2 dry | 3 | "thoroughly audit this", release gates, cumulative range reviews; additionally reports plausible findings (50-79) in a separate, clearly labeled section |
 
-The evidence standard is constant across presets: every verifier checks all
-acceptance conditions, and confirmation always needs at least two settled
-votes averaging 80. A lower effort level reduces vote redundancy and round
-count — fewer, not weaker, findings. Raising effort widens coverage (more
-rounds, more lenses in range mode); it never changes what counts as evidence.
+The evidence standard for CONFIRMATION is constant across presets: every
+verifier checks all acceptance conditions, and a confirmed finding always
+needs at least two settled votes averaging 80. A lower effort level reduces
+vote redundancy and round count — fewer, not weaker, findings. Raising effort
+widens coverage: more rounds, more lenses in range mode, and at `max` a
+second, clearly labeled PLAUSIBLE tier — findings with two settled votes
+averaging 50-79 are returned in `plausible` and reported under their own
+heading, never mixed with confirmed issues. Widening reporting to
+labeled-uncertain findings is how max broadens coverage without ever
+relabeling uncertainty as confirmation.
 
 ## Cumulative range mode
 
@@ -156,6 +164,12 @@ by a guidance file; issues explicitly silenced in code; intentional behavior
 changes related to the broader change; and real issues on lines the change did
 not modify.
 
+Every finding must carry a concrete failure scenario — the specific inputs or
+state that produce the wrong outcome or crash. A defect that cannot be stated
+as a scenario is not reportable; this single requirement kills most
+plausible-but-vague findings before verification spends votes on them, and
+gives verifiers a concrete claim to check instead of a vibe.
+
 Ask finders for a severity estimate (`high` / `medium` / `low`) alongside each
 finding — the field is required and enum-constrained, because the report's
 grouping depends on it. Severity is the finder's input for grouping only; the
@@ -210,6 +224,7 @@ if (!Number.isInteger(MAX_ROUNDS) || MAX_ROUNDS < 1 || MAX_ROUNDS > 10) {
   return { error: `invalid maxRounds ${JSON.stringify(input.maxRounds)}: use an integer from 1 to 10` };
 }
 const VOTES = EFFORT === 'quick' ? 2 : 3;
+const PLAUSIBLE_TIER = EFFORT === 'max';
 const RANGE_MODE = Boolean(input.rangeMode);
 
 const FALSE_POSITIVES =
@@ -233,7 +248,9 @@ const ACCEPTANCE_CONDITIONS =
   'Check ALL acceptance conditions before scoring: (1) the defect reproduces on ' +
   'the changed lines of this exact target; (2) it is introduced by this change, ' +
   'not pre-existing; (3) any guidance file or code comment the finding cites ' +
-  'actually says what the finding claims. A finding failing any condition scores low.';
+  'actually says what the finding claims; (4) the stated failure scenario is ' +
+  'concrete and actually leads to the claimed wrong outcome. A finding failing ' +
+  'any condition scores low.';
 
 const FINDINGS_SCHEMA = {
   type: 'object',
@@ -247,13 +264,17 @@ const FINDINGS_SCHEMA = {
           line: { type: 'integer' },
           title: { type: 'string' },
           detail: { type: 'string' },
+          failureScenario: {
+            type: 'string',
+            description: 'concrete inputs or state that produce the wrong outcome or crash',
+          },
           reason: {
             type: 'string',
             description: 'guidance | bug | history | prior-review | cross-change | comment | security',
           },
           severity: { type: 'string', enum: ['high', 'medium', 'low'] },
         },
-        required: ['file', 'title', 'detail', 'reason', 'severity'],
+        required: ['file', 'title', 'detail', 'failureScenario', 'reason', 'severity'],
         additionalProperties: false,
       },
     },
@@ -401,6 +422,7 @@ const emphases = [
 
 const seen = new Set();
 const confirmed = [];
+const plausible = [];
 const unverified = [];
 const roundFailures = [];
 let dry = 0;
@@ -412,6 +434,9 @@ for (let round = 1; round <= MAX_ROUNDS && dry < 2; round++) {
     agent(
       `Code review this change through one lens: ${reviewTarget}\n${lens.prompt}\n` +
       `${FALSE_POSITIVES}\nChange summary:\n${summary}\n` +
+      `Every finding must state a concrete failure scenario: the specific inputs ` +
+      `or state that produce the wrong outcome or crash. A defect you cannot state ` +
+      `as a scenario is not reportable.\n` +
       `Give each finding a severity: high, medium, or low.\n` +
       `Known findings, do NOT repeat any of these keys:\n${JSON.stringify([...seen])}\n` +
       `Round ${round}: dig where earlier rounds have not.`,
@@ -489,8 +514,9 @@ for (let round = 1; round <= MAX_ROUNDS && dry < 2; round++) {
     const j = judged[i];
     if (!j || j.votes < 2) unverified.push(fresh[i]);
     else if (j.confidence >= 80) confirmed.push(j);
+    else if (PLAUSIBLE_TIER && j.confidence >= 50) plausible.push(j);
   }
-  log(`round ${round}: ${confirmed.length} confirmed total, ${unverified.length} unverified total`);
+  log(`round ${round}: ${confirmed.length} confirmed, ${plausible.length} plausible, ${unverified.length} unverified total`);
 }
 
 // stopping at the round cap while findings were still arriving is a
@@ -514,28 +540,34 @@ if (!confirmed.length) {
   }
   if (stoppedAtRoundCap) gaps.push('stopped at the round cap while findings were still arriving');
   if (unverified.length) gaps.push(`${unverified.length} finding(s) unverified after verifier failures`);
+  if (plausible.length) {
+    gaps.push(`${plausible.length} plausible (unconfirmed) finding(s) at max effort`);
+  }
   const report = gaps.length
-    ? `No issues confirmed. Coverage is incomplete: ${gaps.join('; ')}. See coverage and unverified for details.`
+    ? `No issues confirmed. ${gaps.join('; ')}. See coverage, plausible, and unverified for details.`
     : 'No issues found. Checked all lenses across all rounds.';
-  return { issues: [], unverified, coverage, resolvedRange, report };
+  return { issues: [], plausible, unverified, coverage, resolvedRange, report };
 }
 const report = await agent(
   `Write the final code review comment for the change: ${reviewTarget}\n` +
   `Confirmed issues (JSON): ${JSON.stringify(confirmed)}\n` +
+  `Plausible findings — two settled votes at 50-79 confidence, unconfirmed (JSON): ${JSON.stringify(plausible)}\n` +
   `Unverified findings — verifiers failed, no confidence claim (JSON): ${JSON.stringify(unverified)}\n` +
   `Coverage (JSON): ${JSON.stringify(coverage)}\n` +
   `Structure: a "### Code review" heading; a one-paragraph verdict on the change ` +
   `as a whole; then issues grouped by severity (high, then medium, then low) as ` +
   `numbered items, each with the flag reason in parentheses and a citation on ` +
   `the next line — file#line when the finding carries a line number, the file ` +
-  `path alone otherwise; never invent a line number. If there are unverified ` +
-  `findings, add a short "Unverified" section listing them without confidence ` +
-  `claims. End with one line stating coverage gaps exactly (failed lenses per ` +
-  `round, guidance discovery, round-cap stop, unverified count). Brief, no ` +
-  `emojis. Return markdown only.`,
+  `path alone otherwise; never invent a line number. If there are plausible ` +
+  `findings, add a "Plausible (unconfirmed)" section after the confirmed issues, ` +
+  `stating each one's confidence and never presenting it as confirmed. If there ` +
+  `are unverified findings, add a short "Unverified" section listing them without ` +
+  `confidence claims. End with one line stating coverage gaps exactly (failed ` +
+  `lenses per round, guidance discovery, round-cap stop, unverified count). ` +
+  `Brief, no emojis. Return markdown only.`,
   { label: 'report', phase: 'report', intent: 'Review report writer' },
 );
-return { issues: confirmed, unverified, coverage, resolvedRange, report };
+return { issues: confirmed, plausible, unverified, coverage, resolvedRange, report };
 ```
 
 The verify stage shows the three-argument stage signature: stage one returns
@@ -568,7 +600,9 @@ is given one explicitly.
 
 `max_concurrency` defaults to 16; lower it only when the workspace or runtime
 provider needs gentler fan-out. After the terminal completion, read `issues`
-for the confirmed findings, `unverified` for findings whose verifiers failed,
+for the confirmed findings, `plausible` for max-effort findings in the 50-79
+band (labeled, never mixed with confirmed), `unverified` for findings whose
+verifiers failed,
 `coverage` for whether every lens ran in every round, the loop converged
 rather than stopping at the round cap, and every finding was verified,
 `resolvedRange` for the exact range in range mode, and `report` for the
