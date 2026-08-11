@@ -122,6 +122,7 @@ everything" request:
 ```js
 const seen = new Set();
 const accepted = [];
+const unverified = [];
 const roundFailures = [];
 let dry = 0;
 for (let round = 1; round <= MAX_ROUNDS && dry < 2; round++) {
@@ -141,11 +142,15 @@ for (let round = 1; round <= MAX_ROUNDS && dry < 2; round++) {
   if (!fresh.length) { dry += 1; continue; }
   dry = 0;
   const judged = await pipeline(fresh, verifyStage, aggregateStage);
-  accepted.push(...judged.filter(Boolean).filter((f) => f.accepted));
+  for (let i = 0; i < fresh.length; i++) {
+    if (!judged[i]) unverified.push(fresh[i]); // verifier outage, not rejection
+    else if (judged[i].accepted) accepted.push(judged[i]);
+  }
 }
 const converged = dry >= 2;
-// report roundFailures and converged with the results — exiting at the cap
-// or on an outage is a coverage fact, not a clean finish
+// report roundFailures, unverified, and converged with the results — exiting
+// at the cap, an outage, or unverified findings are coverage facts, not a
+// clean finish
 ```
 
 Four load-bearing details, all learned the hard way: dedupe against SEEN (not
@@ -155,8 +160,10 @@ plain `filter` against the pre-round set, or the same finding from several
 concurrent finders enters the round several times); account failed finders
 positionally before `.filter(Boolean)` and treat an all-finder outage as an
 outage, never as a dry round — otherwise two rounds of failures read as
-convergence; and bound the loop with an explicit round cap, reporting whether
-it converged or stopped at the cap. The complete accounting contract lives in
+convergence; bound the loop with an explicit round cap, reporting whether
+it converged or stopped at the cap; and route verifier-failed findings into
+an unverified record positionally instead of `.filter(Boolean)`-ing them
+away — a run must not display converged while silently missing verdicts. The complete accounting contract lives in
 [code-review.md](code-review.md); this sketch stays minimal but must not
 contradict it.
 

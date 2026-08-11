@@ -124,9 +124,12 @@ tag X") differs from a single change request in two ways, both handled by
   `<baseSha>..<headSha>` inside the repository before any other agent starts
   (find the named squash commit; fall back to the earliest merge at or after
   the named number, since change numbers are not contiguous; base is that
-  commit's first parent; an already-exact range passes through unchanged).
-  The resolved target is threaded into every later prompt — prompts stay
-  self-contained and no agent ever receives the fuzzy description.
+  commit's first parent; an already-exact two-dot range passes through
+  unchanged, and three-dot syntax is normalized to the equivalent
+  merge-base two-dot range — the validated output form is exactly one
+  `..` between two endpoints). The resolved target is threaded into every
+  later prompt — prompts stay self-contained and no agent ever receives the
+  fuzzy description.
 - **The cross-change lens.** A range contains changes that evolved the same
   subsystems in sequence, so range mode adds a seventh finder lens looking
   specifically for bad interactions BETWEEN the changes: a later change
@@ -317,8 +320,10 @@ if (RANGE_MODE) {
     `commit; if no commit carries that number, use the earliest merge at or after ` +
     `it (change numbers are not contiguous). The base is that commit's first ` +
     `parent and the head is the branch tip. If the target is already an exact ` +
-    `range, return it unchanged. Return the range expression "<baseSha>..<headSha>" ` +
-    `and the repository path.`,
+    `two-dot range, return it unchanged; if it uses three-dot syntax ` +
+    `(a...b), resolve the merge base and return the equivalent ` +
+    `"<mergeBase>..<head>" two-dot range. Return the range expression ` +
+    `"<baseSha>..<headSha>" and the repository path.`,
     {
       label: 'resolve',
       phase: 'resolve',
@@ -334,11 +339,16 @@ if (RANGE_MODE) {
       },
     },
   );
-  if (
-    !resolved ||
-    typeof resolved.range !== 'string' ||
-    !/^\S+\.\.\S+$/.test(resolved.range.trim())
-  ) {
+  // exactly two endpoints around one '..': endpoints may contain single dots
+  // (tags like v1.2.3) but a '..'-split must yield two clean parts, which
+  // also rejects 'a..b..c' and the three-dot 'a...b' form the resolver is
+  // required to normalize away
+  const rangeParts = resolved && typeof resolved.range === 'string'
+    ? resolved.range.trim().split('..')
+    : [];
+  const exactRange = rangeParts.length === 2 && rangeParts.every((part) =>
+    part.length > 0 && !part.startsWith('.') && !part.endsWith('.') && !/\s/.test(part));
+  if (!exactRange) {
     throw new Error(`range resolution failed for ${target}; expected an exact <base>..<head> range`);
   }
   resolvedRange = resolved;
