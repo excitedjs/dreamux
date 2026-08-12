@@ -133,6 +133,17 @@ export class Dispatchers {
     throwSettledFailures(results, 'multiple dispatchers failed to shut down');
   }
 
+  /**
+   * Broadcast workflow-terminal shutdown signals and Team-dissolve interrupts
+   * through every already-materialized dispatcher, before the server drains
+   * accepted admin requests. Never materializes a new dispatcher.
+   */
+  signalShutdown(): void {
+    for (const service of this.services.values()) {
+      service.signalShutdownBroadcast();
+    }
+  }
+
   private dispatcherOptions(id: string): DispatcherServiceOptions {
     return {
       id,

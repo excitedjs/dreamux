@@ -337,6 +337,11 @@ export class Server {
     this.log.info('shutting down');
     const failures: unknown[] = [];
     this.acceptingAdminRequests = false;
+    // Broadcast workflow-terminal signals and Team-dissolve interrupts through
+    // already-materialized dispatchers before draining accepted admin requests,
+    // so public stop waits cannot block the drain on a grace window shutdown
+    // is about to freeze.
+    this.dispatchers.signalShutdown();
     await collectShutdownFailure(failures, () => this.drainAdminRequests());
     await collectShutdownFailure(failures, () => this.dispatchers.shutdown());
     await collectShutdownFailure(failures, async () => {

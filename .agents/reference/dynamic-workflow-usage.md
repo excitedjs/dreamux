@@ -383,10 +383,16 @@ Lists runs in the current dispatcher or TeamLeader caller scope.
 workflow_stop({ run_id: 'run-abc123' })
 ```
 
-Reserves the stopped outcome and returns immediately. In-flight agent turns
-settle before the stopped terminal completion is delivered. Immediately after
-the call, `workflow_status` may briefly remain `running`; this does not mean the
-stop failed.
+Waits for the run's one terminal finalization and returns `{ run_id, status }`
+with the durable record's real status (usually `stopped`). The first stop
+intent starts a five-second natural-settle grace: submitted agent turns may
+settle inside the window and keep their natural result; afterwards the
+remaining turns are owner-cancelled and recorded `stopped`. A stop may join a
+natural `completed`/`failed` finalization already in progress and returns that
+status. A returned `stopped` means the durable record, end journal, terminal
+delivery routing, and owned TeamMate release have all completed. A stop taken
+over by server shutdown rejects with `SERVER_SHUTTING_DOWN` instead of a
+terminal status.
 
 ---
 

@@ -183,6 +183,11 @@ history still matters.
 
 ## Archive
 
+- [Workflow stop ownership and Team dissolve](archive/proposals/workflow-stop-owned-teammates.md)
+  — implemented issue #328; current behavior is documented in
+  [Dynamic Workflow usage](reference/dynamic-workflow-usage.md#44-stop),
+  [Current architecture](reference/current-architecture.md#dynamic-workflows),
+  and the bundled `workflow` skill.
 - [Workflow top-level scripts and JSON args](archive/proposals/workflow-top-level-json-args.md)
   — implemented issue #323; current behavior is documented in
   [Dynamic Workflow usage](reference/dynamic-workflow-usage.md) and

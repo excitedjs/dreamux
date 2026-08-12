@@ -4,6 +4,7 @@ import type { ChannelToolCaller } from '../service/dispatcher-service/index.js';
 import { ChannelToolAuthorizationError } from '../service/channel-service/errors.js';
 import type { SchedulerCommands } from '../service/scheduler/types.js';
 import { parseWorkflowMaxConcurrency } from '../service/workflow-service/limits.js';
+import { WorkflowStopInterruptedError } from '../service/workflow-service/run-terminal.js';
 import {
   TeamDissolveBlockedError,
   TeamDissolveFailedError,
@@ -291,10 +292,19 @@ export const adminMethods: Record<string, AdminHandler> = {
     (await teammateTargetFor(server, params)).service.workflows.status(
       { run_id: mustNonEmptyString(params, 'run_id') },
     ),
-  'workflow.stop': async (server, params) =>
-    (await teammateTargetFor(server, params)).service.workflows.stop(
-      { run_id: mustNonEmptyString(params, 'run_id') },
-    ),
+  'workflow.stop': async (server, params) => {
+    const target = await teammateTargetFor(server, params);
+    try {
+      return await target.service.workflows.stop({
+        run_id: mustNonEmptyString(params, 'run_id'),
+      });
+    } catch (error) {
+      if (error instanceof WorkflowStopInterruptedError) {
+        throw new AdminError('SERVER_SHUTTING_DOWN', error.message);
+      }
+      throw error;
+    }
+  },
   'workflow.list': async (server, params) =>
     (await teammateTargetFor(server, params)).service.workflows.list(),
   'team.create': async (server, params) => {

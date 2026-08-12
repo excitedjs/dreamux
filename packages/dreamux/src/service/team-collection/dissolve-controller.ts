@@ -86,6 +86,21 @@ export class TeamDissolveController {
       finishClosed: (operation, summary) =>
         this.finishClosed(operation, summary),
       suspend: (operation) => this.suspend(operation),
+      recoverWriters: async (teamId) => {
+        try {
+          const writers = await (await this.opts.getService(teamId))
+            .recoverLiveWritersForDissolve();
+          this.requireIdleCapability(writers);
+          return writers;
+        } catch (error) {
+          // Observe late rejections after the runner race moved on.
+          this.opts.log.warn(
+            { dispatcher_id: this.opts.dispatcherId, team_id: teamId, err: teamErrorInfo(error) },
+            'Team dissolve writer recovery failed',
+          );
+          throw error;
+        }
+      },
     });
   }
 
@@ -128,12 +143,10 @@ export class TeamDissolveController {
         service.replaceRecord(joined);
         active = joined.dissolve!;
       }
-      const operation = this.operationFor(
-        teamId,
-        current.leader_name,
-        active,
-        service.liveWriters(),
-      );
+      // A join materializing a missing operation resumes the durable record.
+      const isNewOperation = !this.operations.has(active.operation_id);
+      const operation = this.operationFor(teamId, current.leader_name, active, service.liveWriters());
+      if (isNewOperation) { operation.recovered = true; operation.needsRecoveryIdle = current.status !== 'closed'; }
       this.opts.activateClosing(current, service);
       return operation.handle;
     }
@@ -282,17 +295,15 @@ export class TeamDissolveController {
         if (active === null || !isActiveDissolve(active)) return;
         const service = await this.opts.getService(current.team_id);
         this.opts.activateClosing(current, service);
-        const writers = current.status === 'closed'
-          ? service.liveWriters()
-          : await service.recoverLiveWritersForDissolve();
-        this.requireIdleCapability(writers);
+        // Compute new-materialization before any writer work.
+        const isNewOperation = !this.operations.has(active.operation_id);
         const operation = this.operationFor(
           current.team_id,
           current.leader_name,
           active,
-          writers,
+          service.liveWriters(),
         );
-        operation.needsRecoveryIdle = current.status !== 'closed';
+        if (isNewOperation) { operation.needsRecoveryIdle = current.status !== 'closed'; operation.recovered = true; }
         operation.logicalClose ??= logicalClose;
         toStart.push(operation);
       });

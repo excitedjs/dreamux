@@ -65,6 +65,8 @@ export interface TeamCollectionOptions {
   coreEvents?: DispatcherCoreEventPublisher;
   nameSuffixGenerator?: SuffixGenerator;
   agentNameSuffixGenerator?: SuffixGenerator;
+  /** Team-owned Workflow natural-settle grace after a stop intent (test seam). */
+  workflowStopGraceMs?: number;
 }
 
 export const TEAM_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;

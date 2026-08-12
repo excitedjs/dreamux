@@ -1,5 +1,6 @@
 import type { AgentEntityWorktreeIdentity } from '../agent-entity/types.js';
 import type { TeamService } from '../team-service/index.js';
+import type { TeamLiveWriter } from '../team-service/types.js';
 import type {
   WorktreeCleanupAssessment,
   WorktreeCleanupBlockedReason,
@@ -24,6 +25,8 @@ interface TeamDissolveRunnerOptions {
   /** Controller-owned authoritative generation check and snapshot refresh. */
   loadCurrent(operation: TeamDissolveOperation): Promise<TeamRecord>;
   assessWorktree(record: TeamRecord): Promise<WorktreeCleanupAssessment>;
+  /** Reattach the team's durable writers for a recovered idle barrier. */
+  recoverWriters(teamId: string): Promise<TeamLiveWriter[]>;
   persistDissolve(
     operation: TeamDissolveOperation,
     patch: Partial<Pick<
@@ -75,12 +78,30 @@ export class TeamDissolveRunner {
       return;
     }
 
-    const closeAlreadyBegan = operation.record.phase !== 'waiting_for_team_idle';
+    // A recovered operation whose durable phase is still
+    // `waiting_for_team_idle` was already durably accepted before the restart:
+    // it is a recovery operation and must defer retry, never fail open. The
+    // immutable in-memory `recovered` flag preserves that identity even when
+    // the durable cleanup-attempt marker's first persist fails and an
+    // in-memory retry re-reads attempts=0; once persisted, the durable counter
+    // keeps the identity across later retries too. `deferRetry` is the only
+    // writer that increments the counter, so a fresh dissolve's initial
+    // failures still fail open.
+    const closeAlreadyBegan =
+      operation.record.phase !== 'waiting_for_team_idle' ||
+      operation.recovered ||
+      operation.record.cleanup_attempts > 0;
     if (
       operation.record.phase === 'waiting_for_team_idle' ||
       operation.needsRecoveryIdle
     ) {
       try {
+        // Stop Team-owned Workflows before waiting for captured writers, so a
+        // never-settling Workflow-owned TeamMate is cancelled with bounded
+        // grace instead of holding the idle barrier open forever. The stop
+        // races the dissolve shutdown interrupt.
+        await this.stopTeamWorkflows(operation);
+        await this.recoverWritersForIdle(operation);
         await this.waitForTeamIdle(operation);
         operation.needsRecoveryIdle = false;
       } catch (error) {
@@ -269,6 +290,60 @@ export class TeamDissolveRunner {
     } catch (error) {
       await this.opts.deferRetry(operation, 'resource-close-failed', error);
     }
+  }
+
+  /**
+   * Stop Team-owned Workflows before the captured-writer idle barrier, racing
+   * the operation's shutdown interrupt. A stop left running after an
+   * interruption resolves or rejects in the background without affecting the
+   * suspended durable operation.
+   */
+  private async stopTeamWorkflows(
+    operation: TeamDissolveOperation,
+  ): Promise<void> {
+    const interrupt = operation.interrupt;
+    if (interrupt.isInterrupted()) throw new TeamDissolveInterruptedError();
+    const service = await this.opts.getService(operation.teamId);
+    const stop = service.stopWorkflowsForClosing();
+    void stop.catch(() => undefined);
+    const result = await Promise.race([
+      stop.then(() => 'stopped' as const),
+      interrupt.promise.then(() => 'interrupted' as const),
+    ]);
+    if (result === 'interrupted') throw new TeamDissolveInterruptedError();
+  }
+
+  /**
+   * Operation-owned, interruptible writer reattachment for recovered
+   * operations. It races the operation's shutdown interrupt so a
+   * never-settling runtime start can never block the admin path or let
+   * worktree cleanup proceed. Interrupting the race does NOT cancel the
+   * neutral `runtime.start`: a late or never-settling start remains owned
+   * by, and may be awaited by, the collection-wide sweep (TeammateService
+   * stop deliberately awaits in-flight starts). The sweep also advances the
+   * collection's sweep generation before snapshotting, so a materialization
+   * this recovery left in flight can never publish another member after the
+   * proven barrier, while a new recovery after an ordinary stop/reopen stays
+   * legitimate. A late completion after interruption is discarded without
+   * mutating the removed operation, and a late rejection is observed by the
+   * owner without reaching this runner.
+   */
+  private async recoverWritersForIdle(
+    operation: TeamDissolveOperation,
+  ): Promise<void> {
+    if (!operation.needsRecoveryIdle) return;
+    const interrupt = operation.interrupt;
+    if (interrupt.isInterrupted()) throw new TeamDissolveInterruptedError();
+    const recovery = this.opts.recoverWriters(operation.teamId);
+    void recovery.catch(() => undefined);
+    const result = await Promise.race([
+      recovery.then((writers) => ({ kind: 'writers' as const, writers })),
+      interrupt.promise.then(() => ({ kind: 'interrupted' as const })),
+    ]);
+    if (result.kind === 'interrupted' || interrupt.isInterrupted()) {
+      throw new TeamDissolveInterruptedError();
+    }
+    operation.writers = result.writers;
   }
 
   private async waitForTeamIdle(

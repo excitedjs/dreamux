@@ -276,7 +276,14 @@ export class DispatcherService {
       this.teams.stopSchedulers();
       this.teams.interruptDissolvesForShutdown();
       await this.admittedTasks.drain();
+      const sweepFailures = failures.length;
       await collectShutdownFailure(failures, () => this._teammates.releaseAllOwned());
+      if (failures.length === sweepFailures) {
+        // Owner completion: the collection-wide sweep proved every owned
+        // TeamMate released, so the per-run takeover records may resolve and
+        // idempotent stops return durable terminal status again.
+        this.workflowOwner.clearShutdownTakeovers();
+      }
       await this.collaborationSpaces.drainLifecycleTasks();
       this.scheduler_.stop();
       this.teams.stopSchedulers();
@@ -317,6 +324,21 @@ export class DispatcherService {
 
   setRestartIntent(consumer: RestartIntentConsumer | null): void {
     this.restartIntent = consumer;
+  }
+
+  /**
+   * Server shutdown broadcast through an already-materialized dispatcher:
+   * wake dispatcher- and Team-scope Workflow terminal publication/grace waits
+   * and interrupt Team dissolve idle waits/retry timers before the accepted
+   * admin requests drain, so a public stop cannot wait for a grace window
+   * shutdown is about to freeze. This is a narrow owner capability, not early
+   * full Dispatcher shutdown: it must not flip this service's availability;
+   * `shuttingDown` stays owned by `shutdown()` after the accepted admin drain.
+   */
+  signalShutdownBroadcast(): void {
+    this.workflowOwner.interruptForShutdown();
+    this.teams.interruptWorkflowsForShutdown();
+    this.teams.interruptDissolvesForShutdown();
   }
 
   summary(row: DispatcherRow): DispatcherSummary {

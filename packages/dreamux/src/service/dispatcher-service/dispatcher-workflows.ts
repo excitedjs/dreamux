@@ -69,6 +69,16 @@ export class DispatcherWorkflows {
     return this.service.stopAllForShutdown();
   }
 
+  /** Wake live run terminal waits for the server shutdown broadcast. */
+  interruptForShutdown(): void {
+    this.service.interruptForShutdown();
+  }
+
+  /** Resolve takeover records after the collection-wide owner sweep succeeds. */
+  clearShutdownTakeovers(): void {
+    this.service.clearShutdownTakeovers();
+  }
+
   async rollbackStart(): Promise<void> {
     await this.service.stopAll().catch((error: unknown) => {
       this.input.log.error(

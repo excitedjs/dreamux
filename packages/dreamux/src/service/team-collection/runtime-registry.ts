@@ -196,6 +196,13 @@ export class TeamRuntimeRegistry {
     for (const service of this.materialized) service.closeWorkflowAdmission();
   }
 
+  /** Wake Workflow terminal waits through already-materialized Team services. */
+  interruptWorkflowsForShutdown(): void {
+    for (const service of this.materialized) {
+      service.interruptWorkflowsForShutdown();
+    }
+  }
+
   stopSchedulers(): void {
     for (const scheduler of this.schedulers.values()) scheduler.lifecycle.stop();
   }
@@ -263,6 +270,9 @@ export class TeamRuntimeRegistry {
       workflowLog: collection.workflowLog ?? collection.log,
       ...(collection.agentNameSuffixGenerator !== undefined
         ? { agentNameSuffixGenerator: collection.agentNameSuffixGenerator }
+        : {}),
+      ...(collection.workflowStopGraceMs !== undefined
+        ? { workflowStopGraceMs: collection.workflowStopGraceMs }
         : {}),
     };
   }

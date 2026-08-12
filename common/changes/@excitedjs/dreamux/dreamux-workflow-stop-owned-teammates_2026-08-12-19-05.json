@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Workflow stop now awaits the shared finalization and returns the durable terminal status: the first stop intent records an immutable 5-second natural-settle deadline, submitted turns settle inside the grace window, and remaining turns are owner-cancelled through the existing OwnedTeammateOps release boundary before the run claims them stopped. Successful owner release is now a prerequisite for every normal terminal status, including natural completed/failed, and a pre-terminal release failure rejects loudly and stays retryable. Server shutdown broadcasts Workflow-terminal signals and Team-dissolve interrupts through materialized dispatchers before the accepted admin drain, and a public stop taken over by shutdown rejects with SERVER_SHUTTING_DOWN. Team dissolve stops Team-owned workflows interruptibly before its captured-writer idle barrier.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

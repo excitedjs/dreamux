@@ -419,6 +419,15 @@ export class TeamCollection {
     this.dissolves.interruptForShutdown();
   }
 
+  /**
+   * Wake Workflow terminal publication/grace waits through every
+   * already-materialized Team service for the server shutdown broadcast.
+   * Never materializes a new Team.
+   */
+  interruptWorkflowsForShutdown(): void {
+    this.runtimes.interruptWorkflowsForShutdown();
+  }
+
   /** TeamService resource half, called only by the dispatcher route owner. */
   async closeAcceptedResources(
     input: AcceptedTeamLogicalClose,

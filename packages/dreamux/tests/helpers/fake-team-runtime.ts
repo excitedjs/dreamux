@@ -29,6 +29,7 @@ export class FakeRuntime implements AgentRuntime {
   readonly providerRef = FAKE_RUNTIME_REF;
   readonly submitted: InboundTurnInput[] = [];
   readonly textSubmitted: AgentRuntimeTextInput[] = [];
+  completionGate: { entered(): void; release: Promise<void> } | null = null;
   stopAttempts = 0;
   private status: AgentRuntimeStatus = 'declared';
   private onTurnSettled: ((settled: TurnSettledSignal) => void) | undefined;
@@ -39,6 +40,7 @@ export class FakeRuntime implements AgentRuntime {
       settleImmediately?: boolean;
       lastText?: string;
       startError?: Error;
+      startGate?: () => Promise<void>;
       submitError?: Error;
       stopError?: Error;
       completionResult?: AgentRuntimeTurnResult;
@@ -59,6 +61,7 @@ export class FakeRuntime implements AgentRuntime {
   }
 
   async start(): Promise<void> {
+    if (this.opts.startGate !== undefined) await this.opts.startGate();
     if (this.opts.startError !== undefined) throw this.opts.startError;
     this.status = 'ready';
   }
@@ -98,6 +101,8 @@ export class FakeRuntime implements AgentRuntime {
     if (this.opts.submitError !== undefined) throw this.opts.submitError;
     this.textSubmitted.push(input);
     this.submitted.push({ sourceId: input.sourceId ?? '', text: input.text });
+    this.completionGate?.entered();
+    if (this.completionGate !== null) await this.completionGate.release;
     if (this.opts.completionResult !== undefined) {
       return this.opts.completionResult;
     }
@@ -147,11 +152,12 @@ export function fakeRuntimeCatalog(
     settleImmediately?: boolean;
     lastText?: string;
     startError?: Error;
+    startGate?: () => Promise<void>;
     submitError?: Error;
     stopError?: Error;
     completionResult?: AgentRuntimeTurnResult;
     waitIdle?: () => Promise<void>;
-    createRuntime?: () => FakeRuntime;
+    createRuntime?: (context: AgentRuntimeCreateContext) => FakeRuntime;
   } = {},
   contexts: AgentRuntimeCreateContext[] = [],
 ): AgentRuntimeProviderCatalog {
@@ -165,7 +171,7 @@ export function fakeRuntimeCatalog(
     getCapabilities: () => CAPABILITIES,
     createRuntime(context: AgentRuntimeCreateContext) {
       contexts.push(context);
-      const runtime = opts.createRuntime?.() ?? new FakeRuntime(opts);
+      const runtime = opts.createRuntime?.(context) ?? new FakeRuntime(opts);
       if (context.onTurnSettled !== undefined) {
         runtime.setOnTurnSettled(context.onTurnSettled);
       }

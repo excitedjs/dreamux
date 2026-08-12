@@ -32,9 +32,17 @@ import {
   normalizeAgentOptions,
   WorkflowPersistenceError,
   WorkflowSemaphore,
-  type Deferred,
 } from './run-support.js';
-import { WorkflowRunTerminal } from './run-terminal.js';
+import {
+  type WorkflowShutdownTakeoverKind,
+  WorkflowOwnerReleaseError,
+  WorkflowRunTerminal,
+  WORKFLOW_STOP_GRACE_MS,
+} from './run-terminal.js';
+import {
+  type AgentCall,
+  WorkflowRunFinalizer,
+} from './run-finalization.js';
 const MAX_AGENTS = 1000;
 export interface WorkflowRunDeps {
   record: WorkflowRunRecord;
@@ -44,17 +52,15 @@ export interface WorkflowRunDeps {
   createRunner: WorkflowRunnerFactory;
   settleTerminal: (completion: CompletionEnvelope) => Promise<void>;
   discardTerminal: () => void;
-  evict: (run: WorkflowRun) => void;
+  evict: (
+    run: WorkflowRun,
+    takeover: WorkflowShutdownTakeoverKind | null,
+    detachedSettle: Promise<void> | null,
+  ) => void;
   log: DreamuxLogger;
   now?: () => number;
-}
-
-interface AgentCall {
-  record: WorkflowAgentRecord;
-  options: WorkflowAgentOptions;
-  submissionReady: Deferred<void>;
-  settled: Deferred<void>;
-  completed: boolean;
+  /** Natural-settle grace after the first stop intent (test seam). */
+  stopGraceMs?: number;
 }
 
 /** One live workflow entity: durable state, journal, child and owned agents. */
@@ -63,6 +69,7 @@ export class WorkflowRun {
   private readonly runner: WorkflowRunnerHandle;
   private readonly semaphore: WorkflowSemaphore;
   private readonly terminal: WorkflowRunTerminal;
+  private readonly finalizer: WorkflowRunFinalizer;
   private readonly calls = new Map<number, AgentCall>();
   private readonly runnerMessageTasks = new Set<Promise<void>>();
   private readonly agentTasks = new Set<Promise<void>>();
@@ -113,7 +120,29 @@ export class WorkflowRun {
       closeAdmission: (status) =>
         this.semaphore.close(new Error(`workflow ${status}`)),
       finalize: (status, result, error) =>
-        this.finalize(status, result, error),
+        this.finalizer.finalize(status, result, error),
+      log: deps.log,
+      now: this.now.bind(this),
+      stopGraceMs: deps.stopGraceMs ?? WORKFLOW_STOP_GRACE_MS,
+    });
+    this.finalizer = new WorkflowRunFinalizer({
+      record: this.record,
+      journal: deps.journal,
+      store: deps.store,
+      ownedTeammates: deps.ownedTeammates,
+      owner: this.teammateOwner,
+      stopRunner: () => this.runner.stop(),
+      terminal: this.terminal,
+      calls: this.calls,
+      runnerMessageTasks: this.runnerMessageTasks,
+      agentTasks: this.agentTasks,
+      mutationTail: () => this.mutationTail,
+      mutate: (task) => this.mutate(task),
+      now: this.now.bind(this),
+      settleTerminal: deps.settleTerminal,
+      discardTerminal: deps.discardTerminal,
+      evict: (takeover, detachedSettle) =>
+        deps.evict(this, takeover, detachedSettle),
       log: deps.log,
     });
   }
@@ -161,6 +190,11 @@ export class WorkflowRun {
    */
   async stopForShutdown(): Promise<void> {
     await this.terminal.stopForShutdown();
+  }
+
+  /** Wake terminal publication/grace waits for shutdown takeover. */
+  signalShutdown(): void {
+    this.terminal.signalShutdown();
   }
 
   closeAdmission(): void {
@@ -214,10 +248,25 @@ export class WorkflowRun {
         return;
       case 'run_result':
         if (this.terminal.requested !== null) return;
-        if (message.status === 'completed') {
-          await this.terminal.request('completed', message.result ?? null, null);
-        } else {
-          await this.terminal.request('failed', null, message.error);
+        try {
+          if (message.status === 'completed') {
+            await this.terminal.request('completed', message.result ?? null, null);
+          } else {
+            await this.terminal.request('failed', null, message.error);
+          }
+        } catch (error) {
+          // A pre-terminal owner-release failure already left the run loud,
+          // durably running, and retryable. Re-observing the same terminal
+          // message would start an invisible immediate retry; keep the
+          // failure pre-terminal until an explicit stop or owner-close retry.
+          if (error instanceof WorkflowOwnerReleaseError) {
+            this.deps.log.error(
+              { run_id: this.record.run_id, err: errorInfo(error) },
+              'workflow terminal transition failed; run remains retryable',
+            );
+            return;
+          }
+          throw error;
         }
         return;
     }
@@ -269,10 +318,23 @@ export class WorkflowRun {
       settled: deferred(),
       completed: false,
     };
-    this.calls.set(message.index, call);
-    this.record.agents.push(record);
-    this.record.updated_at = createdAt;
-    await this.mutate(() => this.deps.store.write(this.record));
+    const priorUpdatedAt = this.record.updated_at;
+    // Publish the call and roll back its first durable write inside the one
+    // serialized mutation: a rejection restores calls/agents/updated_at
+    // before the tail admits any later queued write, so no later mutation can
+    // snapshot this not-yet-durable agent and persist a durable phantom. The
+    // call never executes on failure.
+    await this.mutate(() => {
+      this.calls.set(message.index, call);
+      this.record.agents.push(record);
+      this.record.updated_at = createdAt;
+      return this.deps.store.write(this.record).catch((writeError: unknown) => {
+        this.calls.delete(message.index);
+        this.record.agents.pop();
+        this.record.updated_at = priorUpdatedAt;
+        throw writeError;
+      });
+    });
 
     this.deps.log.info(
       {
@@ -555,129 +617,6 @@ export class WorkflowRun {
   private async sendAgentError(index: number, error: string): Promise<void> {
     if (this.terminal.suppressDelivery) return;
     await this.runner.send({ type: 'agent_result', index, error });
-  }
-
-  private async finalize(
-    requestedStatus: WorkflowTerminalStatus,
-    result: unknown,
-    requestedError: string | null,
-  ): Promise<void> {
-    let status = requestedStatus;
-    let error = requestedError;
-    const cleanupErrors: unknown[] = [];
-    await this.runner.stop().catch((runnerError: unknown) => {
-      cleanupErrors.push(runnerError);
-    });
-    while (this.runnerMessageTasks.size > 0) {
-      await Promise.allSettled([...this.runnerMessageTasks]);
-    }
-    const agentTasksDrained = await this.terminal.waitUnlessShutdown(
-      this.drainAgentTasks(),
-    );
-    if (this.terminal.shutdownRequested) this.freezeAgentCalls(this.now());
-    await this.mutationTail;
-
-    if (agentTasksDrained && !this.terminal.shutdownRequested) {
-      await this.deps.ownedTeammates
-        .releaseAllOwned(this.teammateOwner)
-        .catch((releaseError: unknown) => {
-          cleanupErrors.push(releaseError);
-        });
-    }
-    if (cleanupErrors.length > 0) {
-      this.deps.log.warn(
-        {
-          run_id: this.record.run_id,
-          errors: cleanupErrors.map(errorInfo),
-        },
-        'workflow terminal cleanup had failures',
-      );
-      error ??= cleanupErrors.map(errorMessage).join('; ');
-    }
-
-    const endedAt = this.now();
-    this.record.status = status;
-    this.record.result = status === 'completed' ? result : null;
-    this.record.error = error;
-    this.record.ended_at = endedAt;
-    this.record.updated_at = endedAt;
-    try {
-      await this.deps.journal.append({
-        kind: 'end',
-        status,
-        ended_at: endedAt,
-      });
-    } catch (journalError) {
-      status = 'failed';
-      error = `workflow journal append failed: ${errorMessage(journalError)}`;
-      this.record.status = status;
-      this.record.result = null;
-      this.record.error = error;
-    }
-    await this.deps.store.write(this.record);
-
-    const completionResult = JSON.stringify(
-      {
-        run_id: this.record.run_id,
-        status,
-        result: this.record.result,
-        error: this.record.error,
-        agents: this.record.agents
-          .filter((agent) => agent.name !== null)
-          .map((agent) => ({ index: agent.index, name: agent.name })),
-      },
-      null,
-      2,
-    );
-    try {
-      if (this.terminal.shutdownRequested) {
-        this.deps.discardTerminal();
-      } else {
-        const settleTask = this.deps.settleTerminal({
-          kind: 'workflow',
-          source: 'workflow',
-          id: this.record.run_id,
-          status,
-          result: completionResult,
-        });
-        if (!(await this.terminal.waitUnlessShutdown(settleTask))) {
-          void settleTask.catch((settleError: unknown) => {
-            this.deps.log.error(
-              { run_id: this.record.run_id, err: errorInfo(settleError) },
-              'workflow terminal delivery failed during shutdown',
-            );
-          });
-        }
-      }
-    } finally {
-      this.deps.log.info(
-        {
-          run_id: this.record.run_id,
-          status,
-          agent_count: this.record.agents.length,
-          err: error === null ? undefined : { message: error },
-        },
-        'workflow run terminal',
-      );
-      this.deps.evict(this);
-    }
-  }
-
-  private async drainAgentTasks(): Promise<void> {
-    while (this.agentTasks.size > 0) {
-      await Promise.allSettled([...this.agentTasks]);
-    }
-  }
-
-  private freezeAgentCalls(settledAt: number): void {
-    for (const call of this.calls.values()) {
-      if (call.completed) continue;
-      call.completed = true;
-      call.record.status = 'stopped';
-      call.record.settled_at = settledAt;
-      call.submissionReady.resolve();
-      call.settled.resolve();
-    }
   }
 
   private mutate<T>(task: () => Promise<T>): Promise<T> {

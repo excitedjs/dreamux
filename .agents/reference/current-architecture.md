@@ -247,8 +247,11 @@ injection back into the leader. Reads use a generation-checked read lease and
 remain available while closing. Acceptance captures the TeamLeader plus every
 live member runtime that can write the shared worktree and requires each to
 provide the neutral `waitIdle()` capability. It closes workflow admission and
-stops the Team scheduler before returning, waits for all captured writers, and
-then repeats the non-destructive `WorktreeManager.assessCleanup()` preflight.
+stops the Team scheduler before returning. The accepted runner first stops
+Team-owned Workflows interruptibly — racing the dissolve shutdown interrupt,
+with the workflow stop grace bounding a never-settling owned turn — then waits
+for all captured writers, and then repeats the non-destructive
+`WorktreeManager.assessCleanup()` preflight.
 
 `TeamService` owns resource shutdown and propagation of the one shared worktree
 identity to leader and members; `WorktreeManager` alone assesses and removes a
@@ -341,11 +344,24 @@ lifecycle. Every pipeline stage receives
 single user-facing owner of the exact numeric limits.
 
 Normal terminal runs wait for in-flight turns, silently close and evict their
-owned TeamMates, and then evict the live run entity. `workflow_stop` reserves
-`stopped` and returns immediately while that natural-settle finalization
-continues in the background. Dispatcher/server shutdown instead kills the
-runner, persists the terminal run without waiting for agent turns, and leaves
-owned runtime cleanup to the following collection-wide force-stop sweep.
+owned TeamMates, and then evict the live run entity. `workflow_stop` awaits the
+one shared finalization and returns the durable record's real status. The first
+stop intent records one immutable deadline (`intent time + 5 seconds`): queued
+calls are recorded `stopped` without spawning, a publication cutoff waits for
+every established call's spawn boundary, submitted calls settle naturally for
+the remaining time, and at the deadline the run releases its exclusive owned
+TeamMates through `releaseAllOwned` and claims every still-incomplete call as
+`stopped` before any further await. Successful owner release is a prerequisite
+for every normal terminal status; a pre-terminal release failure rejects the
+attempt without `end`, terminal record, delivery, or eviction and stays
+retryable against the original deadline. Server shutdown first rejects new
+admin admission, then synchronously broadcasts Workflow-terminal shutdown
+signals and Team-dissolve interrupts through already-materialized Dispatchers
+and Teams before draining accepted admin requests: shutdown finalization
+freezes unresolved calls and skips a per-run release that has not begun,
+leaving owned runtime cleanup to the collection-wide force-stop sweep, while a
+public stop taken over by shutdown rejects with
+`WorkflowStopInterruptedError` (`SERVER_SHUTTING_DOWN` at the admin boundary).
 Startup marks durable `running` records as `stopped`; journal replay and run
 resume are not implemented.
 

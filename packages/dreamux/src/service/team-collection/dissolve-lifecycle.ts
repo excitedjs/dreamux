@@ -76,6 +76,17 @@ export interface TeamDissolveOperation {
   retryTimer: NodeJS.Timeout | null;
   /** Restart recovery must re-quiesce reattached writers before resuming. */
   needsRecoveryIdle: boolean;
+  /**
+   * Immutable in-memory recovery/resume identity: the operation was newly
+   * materialized from a durably accepted dissolve that predates this
+   * process's knowledge of it — restart recovery, or an active-join on a
+   * pre-existing durable record. A join of an operation this process already
+   * created (a fresh accept or an earlier recovery) never relabels it. The
+   * flag survives the durable cleanup-attempt marker's first persist failure,
+   * so retries keep deferring instead of failing open a Team that was
+   * already accepted before restart.
+   */
+  recovered: boolean;
   handle: AcceptedTeamDissolve;
 }
 
@@ -107,6 +118,7 @@ export function newDissolveOperation(input: {
     runner: null,
     retryTimer: null,
     needsRecoveryIdle: false,
+    recovered: false,
     handle,
   };
   return operation;

@@ -10,6 +10,7 @@ import {
 } from '../completion-router/index.js';
 import type { OwnedTeammateOps } from '../teammate-collection/owned-teammates.js';
 import { throwSettledFailures } from '../shutdown-errors.js';
+import { errorInfo } from '../../platform/error-info.js';
 import {
   validateWorkflowRunId,
   workflowRunJournalPath,
@@ -20,6 +21,10 @@ import { validateWorkflowArgs } from './json-args.js';
 import { WorkflowJournal } from './journal.js';
 import { parseWorkflowMaxConcurrency } from './limits.js';
 import { WorkflowRun } from './run.js';
+import {
+  type WorkflowShutdownTakeoverKind,
+  WorkflowStopInterruptedError,
+} from './run-terminal.js';
 import {
   ForkedWorkflowRunner,
   type WorkflowRunnerFactory,
@@ -48,6 +53,8 @@ export interface WorkflowServiceOptions extends WorkflowScopePathInput {
   runnerEntryPath?: string;
   generateRunId?: () => string;
   now?: () => number;
+  /** Natural-settle grace after the first stop intent (test seam). */
+  stopGraceMs?: number;
 }
 
 export interface WorkflowOps {
@@ -66,6 +73,17 @@ export class WorkflowService implements WorkflowOps {
   private initializeTask: Promise<void> | null = null;
   private initialized = false;
   private accepting = false;
+  /**
+   * Run ids whose terminal finalization was taken over by shutdown, keyed by
+   * which part of the terminal barrier remains unproven. A public stop that
+   * lands on such a durable-only record rejects; a run that terminalized
+   * truthfully before the broadcast is never recorded here and keeps its
+   * idempotent already-terminal read contract.
+   */
+  private readonly shutdownTakeovers = new Map<
+    string,
+    WorkflowShutdownTakeoverKind
+  >();
 
   constructor(private readonly opts: WorkflowServiceOptions) {
     this.scope = {
@@ -155,9 +173,13 @@ export class WorkflowService implements WorkflowOps {
       createRunner,
       settleTerminal: (completion) => this.opts.router.settle(key, completion),
       discardTerminal: () => this.opts.router.discard(key),
-      evict: (terminal) => this.evict(runId, terminal),
+      evict: (terminal, takeover, detachedSettle) =>
+        this.evict(runId, terminal, takeover, detachedSettle),
       log: this.opts.log,
       ...(this.opts.now !== undefined ? { now: this.opts.now } : {}),
+      ...(this.opts.stopGraceMs !== undefined
+        ? { stopGraceMs: this.opts.stopGraceMs }
+        : {}),
     });
     await run.initialize();
     this.opts.router.register(key, initiator);
@@ -195,6 +217,14 @@ export class WorkflowService implements WorkflowOps {
     const active = this.runs.get(runId);
     if (active === undefined) {
       const record = await this.status({ run_id: runId });
+      // A durable-only stop rejects only for a run whose shutdown finalization
+      // actually evicted it as a takeover: frozen before owner release (its
+      // release was skipped for the collection-wide sweep), or detached at
+      // terminal routing. A run that terminalized truthfully before the
+      // broadcast keeps its idempotent already-terminal read contract.
+      if (this.shutdownTakeovers.has(runId)) {
+        throw new WorkflowStopInterruptedError();
+      }
       return { run_id: runId, status: record.status };
     }
     return { run_id: runId, status: await active.stop() };
@@ -218,6 +248,33 @@ export class WorkflowService implements WorkflowOps {
     return this.stopRuns(async (run) => {
       await run.stopAndWait();
     });
+  }
+
+  /**
+   * Owner-completion seam: resolve per-run shutdown takeover records after
+   * the owning collection-wide owned-TeamMate sweep succeeds. The sweep
+   * proves owned release, so `frozen` takeovers resolve and later idempotent
+   * stops return the durable terminal status. `routing-detached` takeovers
+   * keep rejecting: the sweep cannot prove the outcome of a terminal routing
+   * settle that had already started. Never called on sweep failure — the
+   * records keep delayed public stops rejecting loudly.
+   */
+  clearShutdownTakeovers(): void {
+    for (const [runId, kind] of this.shutdownTakeovers) {
+      if (kind === 'frozen') this.shutdownTakeovers.delete(runId);
+    }
+  }
+
+  /**
+   * Wake every live run's terminal publication/grace waits for shutdown
+   * takeover. This is the narrow per-run signal broadcast before the accepted
+   * admin drain, not an early full stop: not-yet-started finalization is left
+   * to the shutdown sweep's `stopAllForShutdown`. Runs whose finalization is
+   * taken over record that fact at eviction, so a delayed public stop on the
+   * frozen durable record rejects instead of reporting an unproven barrier.
+   */
+  interruptForShutdown(): void {
+    for (const run of this.runs.values()) run.signalShutdown();
   }
 
   /** Stop runners and persist terminal records without waiting on agent turns. */
@@ -271,8 +328,34 @@ export class WorkflowService implements WorkflowOps {
     }
   }
 
-  private evict(runId: string, expected: WorkflowRun): void {
-    if (this.runs.get(runId) === expected) this.runs.delete(runId);
+  private evict(
+    runId: string,
+    expected: WorkflowRun,
+    takeover: WorkflowShutdownTakeoverKind | null,
+    detachedSettle: Promise<void> | null,
+  ): void {
+    if (this.runs.get(runId) !== expected) return;
+    this.runs.delete(runId);
+    if (takeover !== null) this.shutdownTakeovers.set(runId, takeover);
+    if (takeover !== 'routing-detached' || detachedSettle === null) return;
+    // The router contract guarantees settle() resolves with a terminal
+    // outcome; once this detached settle resolves, the routing barrier is
+    // proven and only this matching tombstone clears. The chaining happens
+    // after the tombstone is recorded, so an already-resolved settle cannot
+    // race ahead of it. A rejection (outside the router contract) stays loud
+    // and does not prove terminal, so the tombstone remains.
+    void detachedSettle
+      .then(() => {
+        if (this.shutdownTakeovers.get(runId) === 'routing-detached') {
+          this.shutdownTakeovers.delete(runId);
+        }
+      })
+      .catch((settleError: unknown) => {
+        this.opts.log.error(
+          { run_id: runId, err: errorInfo(settleError) },
+          'workflow detached routing settle rejected; takeover entry retained',
+        );
+      });
   }
 
   private now(): number {

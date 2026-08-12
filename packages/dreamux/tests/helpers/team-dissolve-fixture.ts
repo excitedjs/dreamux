@@ -15,12 +15,14 @@ import {
   noopLog,
   type FakeRuntime,
 } from './fake-team-runtime.js';
+import type { AgentRuntimeCreateContext } from '@excitedjs/dreamux-types';
 
 interface MakeTeamsInput {
   runtimes: FakeRuntime[];
   worktrees: WorktreeManager;
-  createRuntime?: () => FakeRuntime;
+  createRuntime?: (context: AgentRuntimeCreateContext) => FakeRuntime;
   isShuttingDown?: () => boolean;
+  workflowStopGraceMs?: number;
 }
 
 export function createTeamDissolveFixture() {
@@ -62,6 +64,9 @@ export function createTeamDissolveFixture() {
         leaderChannelDescriptors: () => [],
         log,
         agentNameSuffixGenerator: () => suffixes.shift()!,
+        ...(input.workflowStopGraceMs !== undefined
+          ? { workflowStopGraceMs: input.workflowStopGraceMs }
+          : {}),
       });
     },
     terminalAssessments(worktrees: WorktreeManager) {

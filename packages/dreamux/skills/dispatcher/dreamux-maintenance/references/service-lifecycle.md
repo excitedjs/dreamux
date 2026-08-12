@@ -48,9 +48,25 @@ readiness, and same-version restart cautions.
   compilation, metadata validation, runtime execution, completion delivery,
   or visible Channel delivery succeeded. Inspect the run's terminal state and
   then the delivery boundary separately.
-- Startup marks a durable `running` Workflow record as `stopped`; Workflow
-  journal replay and run resume are not supported. A restart is therefore not a
-  way to continue a Workflow and must not be presented as one.
+- A successful active `workflow_stop` is a truthful terminal barrier: it returns
+  `{ run_id, status }` only after status/list, the durable record and end
+  journal, terminal delivery routing, and the release of every TeamMate
+  exclusively owned by that run all agree. The first stop intent grants
+  submitted agent turns a five-second natural-settle grace, then owner-cancels
+  the remaining turns. A stop can also join an in-flight natural
+  `completed`/`failed` finish and returns that status.
+- A pre-terminal owner-release failure rejects the stop (and any natural
+  terminal attempt) without writing `end`, a terminal record, or a delivery:
+  the run stays process-live with a durable `running` record and closed
+  admission, and a later stop or owner-close path retries against the original
+  deadline. This is a retryable stop state, not a durable defect — do not edit
+  the run's files to clear it. A server shutdown interrupting a public stop
+  rejects it with `SERVER_SHUTTING_DOWN`.
+- Shutdown finalization freezes unresolved agent calls as `stopped` in the
+  durable record and leaves owned runtime cleanup to the collection-wide sweep.
+  Startup likewise marks a durable `running` Workflow record as `stopped`;
+  Workflow journal replay and run resume are not supported. A restart is
+  therefore not a way to continue a Workflow and must not be presented as one.
 
 ## Team Dissolve And Cleanup State
 

@@ -131,6 +131,17 @@ type SpawnRoute =
   | ({ kind: 'owned' } & SpawnOwnedTeamMateOptions);
 
 /**
+ * Neutral owner-close recovery lease: no collection-wide sweep has begun
+ * since it was acquired and none is active. A recovery validates the lease
+ * before materializing every member: a pre-sweep recovery can never publish
+ * after the proven barrier; a new recovery gets a fresh lease; acquired
+ * while any sweep is active, it stays invalid forever.
+ */
+export interface OwnerCloseRecoveryLease {
+  valid(): boolean;
+}
+
+/**
  * A scoped teammate collection (issue #233): one instance per scope — one for the
  * dispatcher's own teammates (`teamScope: null`), one per team
  * (`teamScope: team_id`). The dispatcher-scope collection is owned by
@@ -177,13 +188,31 @@ export class TeammateCollection implements TeammateOps, OwnedTeammateOps {
   }
 
   /**
-   * Reattach non-closed durable Team members after a process restart so an
-   * already-accepted owner close can prove their runtime sessions idle before
-   * revalidating the shared worktree.
+   * Owner-completion seam for owner-close recovery materialization. A
+   * collection-wide sweep (`stopAll`, or `releaseAllOwned` with no owner)
+   * advances the sweep generation before snapshotting and marks itself
+   * active until it settles. A recovery validates its lease before
+   * materializing any member, so pre-sweep continuations can never publish
+   * after the proven barrier; a fresh recovery gets a fresh lease.
    */
-  async recoverLiveRuntimesForOwnerClose(): Promise<void> {
+  private sweepGeneration = 0;
+  private activeSweeps = 0;
+
+  acquireOwnerCloseRecoveryLease(): OwnerCloseRecoveryLease {
+    const generation = this.sweepGeneration;
+    const acquiredDuringSweep = this.activeSweeps > 0;
+    return { valid: () => !acquiredDuringSweep && generation === this.sweepGeneration && this.activeSweeps === 0 };
+  }
+
+  /**
+   * Reattach non-closed durable Team members after a process restart so an
+   * owner close can prove their runtime sessions idle before revalidation.
+   * The lease is validated before each member: no publish after a snapshot.
+   */
+  async recoverLiveRuntimesForOwnerClose(lease: OwnerCloseRecoveryLease): Promise<void> {
     for (const identity of await this.rosterList()) {
       if (identity.status === 'closed') continue;
+      if (!lease.valid()) return;
       await this.entityFor(identity).ensureStarted();
     }
   }
@@ -448,36 +477,50 @@ export class TeammateCollection implements TeammateOps, OwnedTeammateOps {
 
   /** Stop every live teammate runtime in this collection (server shutdown). */
   async stopAll(): Promise<void> {
-    const results = await Promise.allSettled(
-      [...this.entities.values()].map(async (entity) => {
-        if (!this.exclusivelyOwned.has(entity.name)) {
-          await entity.stop();
-          return;
-        }
-        await this.releaseExclusive(entity);
-      }),
-    );
-    while (this.inFlightSettleCaptures.size > 0) {
-      await Promise.allSettled([...this.inFlightSettleCaptures]);
+    this.sweepGeneration += 1;
+    this.activeSweeps += 1;
+    try {
+      const results = await Promise.allSettled(
+        [...this.entities.values()].map(async (entity) => {
+          if (!this.exclusivelyOwned.has(entity.name)) {
+            await entity.stop();
+            return;
+          }
+          await this.releaseExclusive(entity);
+        }),
+      );
+      while (this.inFlightSettleCaptures.size > 0) {
+        await Promise.allSettled([...this.inFlightSettleCaptures]);
+      }
+      throwSettledFailures(results, 'multiple TeamMate runtimes failed to stop');
+    } finally {
+      this.activeSweeps -= 1;
     }
-    throwSettledFailures(results, 'multiple TeamMate runtimes failed to stop');
   }
 
   /** Retry cleanup for exclusive entities whose operation owner has terminated. */
   async releaseAllOwned(owner?: OwnedTeammateOwner): Promise<void> {
-    const results = await Promise.allSettled(
-      [...this.entities.values()]
-        .filter((entity) => {
-          const currentOwner = this.exclusivelyOwned.get(entity.name);
-          return currentOwner !== undefined &&
-            (owner === undefined || currentOwner === owner);
-        })
-        .map((entity) => this.releaseExclusive(entity)),
-    );
-    throwSettledFailures(
-      results,
-      'multiple exclusively owned TeamMates failed to release',
-    );
+    if (owner === undefined) {
+      this.sweepGeneration += 1;
+      this.activeSweeps += 1;
+    }
+    try {
+      const results = await Promise.allSettled(
+        [...this.entities.values()]
+          .filter((entity) => {
+            const currentOwner = this.exclusivelyOwned.get(entity.name);
+            return currentOwner !== undefined &&
+              (owner === undefined || currentOwner === owner);
+          })
+          .map((entity) => this.releaseExclusive(entity)),
+      );
+      throwSettledFailures(
+        results,
+        'multiple exclusively owned TeamMates failed to release',
+      );
+    } finally {
+      if (owner === undefined) this.activeSweeps -= 1;
+    }
   }
 
   async dispatcherWorkspace(): Promise<string> {

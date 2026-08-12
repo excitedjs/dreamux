@@ -91,6 +91,8 @@ export interface TeamServiceDeps {
   evict: (service: TeamService) => void;
   log: DreamuxLogger;
   workflowLog: DreamuxLogger;
+  /** Team-owned Workflow natural-settle grace after a stop intent (test seam). */
+  workflowStopGraceMs?: number;
 }
 
 export interface TeamServiceCreateOutput {
@@ -162,6 +164,9 @@ export class TeamService {
       completionInitiator: () =>
         deps.availability.completionInitiator(this.mustLeader()),
       log: deps.workflowLog,
+      ...(deps.workflowStopGraceMs !== undefined
+        ? { stopGraceMs: deps.workflowStopGraceMs }
+        : {}),
     });
     this.scheduler_ = new SchedulerService({
       ownerId: `${deps.dispatcherId}/team/${teamId}`,
@@ -399,10 +404,12 @@ export class TeamService {
 
   /** Reattach every non-closed durable writer before restart recovery waits. */
   async recoverLiveWritersForDissolve(): Promise<TeamLiveWriter[]> {
-    if (this.leader.status().status !== 'closed') {
-      await this.leader.ensureStarted();
-    }
-    await this.teammateCollection.recoverLiveRuntimesForOwnerClose();
+    // Capture the owner-close recovery lease before any runtime start: a
+    // leader start blocked across a sweep cannot let the old continuation
+    // materialize members after it (stopLeader awaits the start).
+    const lease = this.teammateCollection.acquireOwnerCloseRecoveryLease();
+    if (this.leader.status().status !== 'closed') await this.leader.ensureStarted();
+    await this.teammateCollection.recoverLiveRuntimesForOwnerClose(lease);
     return this.liveWriters();
   }
 
@@ -492,7 +499,10 @@ export class TeamService {
     const failures: unknown[] = [];
     await collectShutdownFailure(failures, () =>
       this.workflowService.stopAllForShutdown());
+    const sweepFailures = failures.length;
     await collectShutdownFailure(failures, () => this.teammateCollection.stopAll());
+    // Owner completion: the Team sweep proved every owned TeamMate released.
+    if (failures.length === sweepFailures) this.workflowService.clearShutdownTakeovers();
     await collectShutdownFailure(failures, () => this.stopLeader());
     throwShutdownFailures(
       failures,
@@ -566,6 +576,11 @@ export class TeamService {
 
   closeWorkflowAdmission(): void {
     this.workflowService.closeAdmission();
+  }
+
+  /** Wake Team-owned Workflow terminal waits for the shutdown broadcast. */
+  interruptWorkflowsForShutdown(): void {
+    this.workflowService.interruptForShutdown();
   }
 
   stopWorkflowsForClosing(): Promise<void> {

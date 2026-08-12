@@ -2392,10 +2392,16 @@ describe('DispatcherService collaboration-space routing', () => {
     const calls: string[] = [];
     const dispatcherError = new Error('dispatcher shutdown failed');
     const mutable = server as unknown as {
-      dispatchers: { shutdown: () => Promise<void> };
+      dispatchers: {
+        signalShutdown: () => void;
+        shutdown: () => Promise<void>;
+      };
       admin: { close: () => Promise<void> } | null;
     };
     mutable.dispatchers = {
+      signalShutdown: () => {
+        calls.push('signal');
+      },
       shutdown: async () => {
         calls.push('dispatchers');
         throw dispatcherError;
@@ -2408,16 +2414,25 @@ describe('DispatcherService collaboration-space routing', () => {
     };
 
     await expect(server.shutdown()).rejects.toBe(dispatcherError);
-    expect(calls).toEqual(['dispatchers', 'admin']);
+    expect(calls).toEqual(['signal', 'dispatchers', 'admin']);
     expect(mutable.admin).toBeNull();
 
     mutable.dispatchers = {
+      signalShutdown: () => {
+        calls.push('signal-retry');
+      },
       shutdown: async () => {
         calls.push('dispatchers-retry');
       },
     };
     await expect(server.shutdown()).resolves.toBeUndefined();
-    expect(calls).toEqual(['dispatchers', 'admin', 'dispatchers-retry']);
+    expect(calls).toEqual([
+      'signal',
+      'dispatchers',
+      'admin',
+      'signal-retry',
+      'dispatchers-retry',
+    ]);
   });
 
   it('drains accepted admin requests before dispatcher shutdown and rejects late requests', async () => {
@@ -2452,10 +2467,16 @@ describe('DispatcherService collaboration-space routing', () => {
     await accepted.promise;
 
     const mutable = server as unknown as {
-      dispatchers: { shutdown: () => Promise<void> };
+      dispatchers: {
+        signalShutdown: () => void;
+        shutdown: () => Promise<void>;
+      };
       admin: { close: () => Promise<void> } | null;
     };
     mutable.dispatchers = {
+      signalShutdown: () => {
+        calls.push('signal');
+      },
       shutdown: async () => {
         calls.push('dispatchers');
       },
@@ -2471,12 +2492,19 @@ describe('DispatcherService collaboration-space routing', () => {
     expect(() => server.admitAdminRequest(async () => 'late')).toThrow(
       /shutting down/,
     );
-    expect(calls).toEqual(['request-start']);
+    // The workflow-signal broadcast runs before the accepted admin drain.
+    expect(calls).toEqual(['request-start', 'signal']);
 
     release.resolve();
     await expect(request).resolves.toBe('ok');
     await expect(shutdown).resolves.toBeUndefined();
-    expect(calls).toEqual(['request-start', 'request-done', 'dispatchers', 'admin']);
+    expect(calls).toEqual([
+      'request-start',
+      'signal',
+      'request-done',
+      'dispatchers',
+      'admin',
+    ]);
   });
 
   it('does not materialize a new dispatcher after dispatcher shutdown starts', async () => {

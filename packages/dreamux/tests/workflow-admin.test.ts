@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { adminMethods } from '../src/admin/methods.js';
 import type { Server } from '../src/server.js';
 import type { WorkflowOps } from '../src/service/workflow-service/index.js';
+import { WorkflowStopInterruptedError } from '../src/service/workflow-service/run-terminal.js';
 import type { WorkflowRunRecord } from '../src/service/workflow-service/types.js';
 
 function runningRecord(runId = 'run-1'): WorkflowRunRecord {
@@ -125,6 +126,21 @@ describe('workflow admin methods', () => {
       script: 'export const meta = { name: "x", description: "x" }; return "done";',
     });
     expect(dispatcherWorkflows.run).not.toHaveBeenCalled();
+  });
+
+  it('maps a shutdown-interrupted stop to SERVER_SHUTTING_DOWN', async () => {
+    const workflows = workflowOps();
+    workflows.stop.mockRejectedValueOnce(new WorkflowStopInterruptedError());
+    const { server } = serverWith({ dispatcherWorkflows: workflows });
+
+    await expect(adminMethods['workflow.stop']!(server, {
+      dispatcher_id: 'dispatcher-a',
+      run_id: 'run-1',
+    })).rejects.toMatchObject({
+      name: 'AdminError',
+      code: 'SERVER_SHUTTING_DOWN',
+    });
+    expect(workflows.stop).toHaveBeenCalledWith({ run_id: 'run-1' });
   });
 
   it('rejects malformed inputs before invoking WorkflowOps', async () => {
