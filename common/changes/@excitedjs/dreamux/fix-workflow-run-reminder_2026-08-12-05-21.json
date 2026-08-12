@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Tell agents in successful workflow_run results to await Dreamux's automatic completion push instead of polling workflow status.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

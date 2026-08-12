@@ -242,11 +242,13 @@ async function callTool(
         text: appendTaskDispatchSuccessReminder(
           `${call.name} forwarded to dreamux serve`,
           result,
+          mapped.method,
           TEAM_DISPATCH_SUCCESS_REMINDER,
         ),
       }],
       structuredContent: appendStructuredTaskDispatchSuccessReminder(
         result,
+        mapped.method,
         TEAM_DISPATCH_SUCCESS_REMINDER,
       ),
     };
