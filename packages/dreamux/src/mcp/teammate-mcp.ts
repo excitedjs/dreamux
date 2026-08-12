@@ -389,11 +389,13 @@ async function forwardToolCall(
         text: appendTaskDispatchSuccessReminder(
           `${label} forwarded to dreamux serve`,
           result,
+          method,
           TEAMMATE_DISPATCH_SUCCESS_REMINDER,
         ),
       }],
       structuredContent: appendStructuredTaskDispatchSuccessReminder(
         result,
+        method,
         TEAMMATE_DISPATCH_SUCCESS_REMINDER,
       ),
     };

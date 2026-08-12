@@ -10,6 +10,7 @@ import type { AdminRequest, AdminResponse } from '../src/admin/protocol.js';
 import {
   TEAM_DISPATCH_SUCCESS_REMINDER,
   TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+  WORKFLOW_RUN_SUCCESS_REMINDER,
 } from '../src/mcp/task-dispatch-reminder.js';
 import { runTeamMateMcp } from '../src/mcp/teammate-mcp.js';
 
@@ -248,12 +249,18 @@ describe('teammate-mcp stdio shim', () => {
   });
 
   it('maps workflow tools onto TeamLeader-scoped admin methods', async () => {
+    const workflowResults: Record<string, unknown> = {
+      'workflow.run': { run_id: 'run-1' },
+      'workflow.status': { run_id: 'run-1', status: 'running' },
+      'workflow.stop': { run_id: 'run-1', status: 'stopped' },
+      'workflow.list': {
+        runs: [{ run_id: 'run-1', status: 'running' }],
+      },
+    };
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: true,
-      result: request.method === 'workflow.run'
-        ? { run_id: 'run-1' }
-        : { ok: true },
+      result: workflowResults[request.method] ?? {},
     }));
     try {
       const input = new PassThrough();
@@ -282,6 +289,7 @@ describe('teammate-mcp stdio shim', () => {
         { name: 'workflow_stop', arguments: { run_id: 'run-1' } },
         { name: 'workflow_list', arguments: {} },
       ];
+      const responses: unknown[] = [];
 
       for (const [index, call] of calls.entries()) {
         writeJson(input, {
@@ -290,11 +298,57 @@ describe('teammate-mcp stdio shim', () => {
           method: 'tools/call',
           params: call,
         });
-        await expect(reader.next()).resolves.toMatchObject({
+        const response = await reader.next();
+        expect(response).toMatchObject({
           jsonrpc: '2.0',
           id: index + 1,
           result: { structuredContent: expect.any(Object) as object },
         });
+        responses.push(response);
+      }
+
+      const [runResponse, statusResponse, stopResponse, listResponse] = responses;
+      expect(runResponse).toMatchObject({
+        result: {
+          content: [{
+            text: expect.stringContaining(WORKFLOW_RUN_SUCCESS_REMINDER) as string,
+          }],
+          structuredContent: {
+            run_id: 'run-1',
+            reminder: WORKFLOW_RUN_SUCCESS_REMINDER,
+          },
+        },
+      });
+      expect(JSON.stringify(runResponse)).not.toContain(
+        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+      );
+      expect(statusResponse).toMatchObject({
+        result: {
+          content: [{ text: 'workflow_status forwarded to dreamux serve' }],
+          structuredContent: { run_id: 'run-1', status: 'running' },
+        },
+      });
+      expect(stopResponse).toMatchObject({
+        result: {
+          content: [{ text: 'workflow_stop forwarded to dreamux serve' }],
+          structuredContent: { run_id: 'run-1', status: 'stopped' },
+        },
+      });
+      expect(listResponse).toMatchObject({
+        result: {
+          content: [{ text: 'workflow_list forwarded to dreamux serve' }],
+          structuredContent: {
+            runs: [{ run_id: 'run-1', status: 'running' }],
+          },
+        },
+      });
+      for (const response of [statusResponse, stopResponse, listResponse]) {
+        expect(JSON.stringify(response)).not.toContain(
+          WORKFLOW_RUN_SUCCESS_REMINDER,
+        );
+        expect(JSON.stringify(response)).not.toContain(
+          TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+        );
       }
 
       expect(admin.requests).toEqual([
@@ -341,6 +395,69 @@ describe('teammate-mcp stdio shim', () => {
           },
         },
       ]);
+
+      input.end();
+      await run;
+    } finally {
+      await admin.close();
+    }
+  });
+
+  it('returns a workflow_run admin error without any reminder', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: false,
+      error: {
+        code: 'WORKFLOW_START_FAILED',
+        message: 'workflow could not start',
+      },
+    }));
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const reader = new JsonLineReader(output);
+      const run = runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'dispatcher',
+        adminSocketPath: admin.socketPath,
+        input,
+        output,
+        log: () => {},
+      });
+
+      writeJson(input, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {
+          name: 'workflow_run',
+          arguments: {
+            script:
+              'export const meta = { name: "x", description: "x" }; return null;',
+          },
+        },
+      });
+
+      const response = (await reader.next()) as {
+        result: Record<string, unknown>;
+      };
+      expect(response).toMatchObject({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          isError: true,
+          content: [{
+            text: '[WORKFLOW_START_FAILED] workflow could not start',
+          }],
+        },
+      });
+      expect(response.result).not.toHaveProperty('structuredContent');
+      expect(JSON.stringify(response)).not.toContain(
+        WORKFLOW_RUN_SUCCESS_REMINDER,
+      );
+      expect(JSON.stringify(response)).not.toContain(
+        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+      );
 
       input.end();
       await run;
