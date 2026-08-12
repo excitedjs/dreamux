@@ -319,6 +319,26 @@ describe('teammate-mcp stdio shim', () => {
           },
         },
       });
+      const successfulRunResult = runResponse as {
+        result: {
+          content: Array<{ text: string }>;
+          structuredContent: { reminder: string };
+        };
+      };
+      const structuredReminder =
+        successfulRunResult.result.structuredContent.reminder;
+      expect(structuredReminder).toBe(WORKFLOW_RUN_SUCCESS_REMINDER);
+      expect(structuredReminder).toMatch(/background/i);
+      expect(structuredReminder).toMatch(/automatically pushes/i);
+      expect(structuredReminder).toMatch(/terminal completion/i);
+      expect(structuredReminder).toMatch(/caller'?s current context/i);
+      expect(structuredReminder).toMatch(
+        /unless the user explicitly asks[\s\S]*do not call or poll workflow_status/i,
+      );
+      expect(structuredReminder).toMatch(/wait for the system push/i);
+      expect(successfulRunResult.result.content[0]?.text).toContain(
+        structuredReminder,
+      );
       expect(JSON.stringify(runResponse)).not.toContain(
         TEAMMATE_DISPATCH_SUCCESS_REMINDER,
       );

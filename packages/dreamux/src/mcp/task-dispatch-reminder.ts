@@ -51,20 +51,17 @@ function taskDispatchSuccessReminder(
 }
 
 function hasNonEmptyRunId(result: unknown): boolean {
-  if (result === null || typeof result !== 'object' || Array.isArray(result)) {
-    return false;
-  }
-  const runId = (result as Record<string, unknown>)['run_id'];
+  if (!isRecord(result)) return false;
+  const runId = result['run_id'];
   return typeof runId === 'string' && runId.trim() !== '';
 }
 
 function hasSubmittedTurn(result: unknown): boolean {
-  if (result === null || typeof result !== 'object' || Array.isArray(result)) {
-    return false;
-  }
-  const turn = (result as Record<string, unknown>)['turn'];
-  if (turn === null || typeof turn !== 'object' || Array.isArray(turn)) {
-    return false;
-  }
-  return (turn as Record<string, unknown>)['status'] === 'submitted';
+  if (!isRecord(result)) return false;
+  const turn = result['turn'];
+  return isRecord(turn) && turn['status'] === 'submitted';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
