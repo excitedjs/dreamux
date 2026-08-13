@@ -76,27 +76,20 @@ aggregate `@modelcontextprotocol/sdk` package. Protocol parsing, schema
 validation, version negotiation, modern result envelopes, discovery, request
 cancellation, and JSON-RPC error framing belong to the SDK.
 
-The selected `@modelcontextprotocol/server` runtime dependency and
-`@modelcontextprotocol/client` test dependency must be the same exact official
-release, without `^`, `~`, tag, Git, preview-registry, or fork references. The
-selected release must include a complete initialization lifecycle gate: on a
-connection-scoped non-HTTP legacy server, requests other than `initialize` and
-`ping` fail until the server has both completed `initialize` and received
-`notifications/initialized`. [Official TypeScript SDK PR #2122](https://github.com/modelcontextprotocol/typescript-sdk/pull/2122)
-identifies the same defect, but its head at
-`18fd2a3c4ac7acb51422072484544eb2039ec46d` is not sufficient: it gates only
-until the negotiated protocol version is set while processing `initialize`, so
-the interval between the initialize response and
-`notifications/initialized` remains open. A selectable release must close that
-interval as well.
+The implementation pins the official `@modelcontextprotocol/server` runtime
+dependency and `@modelcontextprotocol/client` test dependency to exact version
+`2.0.0`, without `^`, `~`, tag, Git, preview-registry, or fork references.
 
-Official release `2.0.0` is not selectable because its dual-era stdio entry
-classifies a claim-less opening as legacy and serves pre-initialize
-`tools/list`. Dreamux does not compensate with a transport wrapper, prototype
-patch, fork, vendored SDK, private registry build, or hand-written JSON-RPC
-lifecycle gate. Implementation cannot satisfy this specification until an
-official release contains the complete behavior; the exact selected version is
-then recorded in the package manifest and lockfile.
+The operator explicitly accepts one known behavior in that official release:
+dual-era `serveStdio({ legacy: 'serve' })` classifies a claim-less opening as
+legacy and can serve `tools/list` before a standards-conforming legacy
+initialization has completed. This SDK-owned compatibility behavior does not
+affect the verified Codex or Claude Code clients, both of which complete the
+official handshake before tool use. Dreamux does not add a transport wrapper,
+prototype patch, fork, vendored SDK, private registry build, or hand-written
+JSON-RPC lifecycle gate to make the SDK stricter. A later exact SDK upgrade may
+adopt a stricter official lifecycle without preserving this permissiveness,
+provided the three supported revisions and live runtime gates still pass.
 
 ## Client Baseline Verification
 
@@ -134,11 +127,9 @@ Dreamux serves both official protocol eras from one tool definition graph:
   supported modern revision list;
 - a connection is pinned to one era by the official stdio serving entry and
   cannot switch eras later;
-- on a legacy connection, only `initialize` and `ping` are callable until a
-  successful `initialize` is followed by `notifications/initialized`;
-  `tools/list` and `tools/call` receive the official SDK's invalid-request
-  failure both before `initialize` and after its response but before the
-  notification;
+- Dreamux does not promise stricter pre-initialization rejection than the
+  selected official SDK provides; compliant clients still complete
+  `initialize` and `notifications/initialized` before tool use;
 - no Dreamux code hand-writes or post-processes JSON-RPC envelopes, protocol
   version fields, modern `resultType`, discovery results, or cancellation
   responses.
@@ -363,10 +354,11 @@ The replacement suite must cover:
   counter-offer rather than negotiating the old revision;
 - unsupported modern-version rejection with `-32022`;
 - rejection or non-recognition of the non-standard bare `initialized` method;
-- rejection of `tools/list` and `tools/call` before `initialize`;
-- rejection of both methods after a successful initialize response but before
-  `notifications/initialized`, followed by successful listing and invocation
-  only after that notification on the same standards-conforming connection;
+- successful standards-conforming legacy initialization followed by listing
+  and invocation on the same connection;
+- live verification that installed Codex and Claude Code complete their
+  handshake before tool use despite the selected SDK's accepted permissive
+  pre-initialization behavior;
 - discovery advertising only `2026-07-28`, including after every SDK upgrade;
 - deterministic caller-specific `tools/list` results;
 - advertised input and output schemas plus runtime validation;
