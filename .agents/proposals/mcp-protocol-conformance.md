@@ -1,9 +1,9 @@
 # MCP Protocol Conformance
 
-- **Status:** Proposed
+- **Status:** Proposed amendment to the implementation at `bb98f911b5ab5133a2304121658fb657258144b3`
 - **Date:** 2026-08-13
 - **Baseline:** `6204d719cd0e1306af62380492fe5793b43a448b`
-- **Affects:** `/packages/dreamux/src/mcp/`, `/packages/dreamux-types/src/channel.ts`, `/packages/channel/feishu-channel/src/tools/`, MCP descriptor assembly, and MCP protocol tests
+- **Affects:** `/packages/dreamux/src/mcp/`, including the restored `/packages/dreamux/src/mcp/task-dispatch-reminder.ts`, `/packages/dreamux-types/src/channel.ts`, `/packages/channel/feishu-channel/src/tools/`, MCP descriptor assembly, and MCP protocol tests
 
 ## Intent
 
@@ -22,7 +22,11 @@ compatibility shims.
 
 ## Source Findings
 
-Dreamux currently implements MCP framing independently in:
+These findings describe the original `6204d719...` baseline that motivated the
+official-SDK refactor. The 2026-08-14 amendment changes only the successful-result
+content contract of the branch implementation at `bb98f911...`.
+
+At that baseline, Dreamux implements MCP framing independently in:
 
 - `/packages/dreamux/src/mcp/teammate-mcp.ts`
 - `/packages/dreamux/src/mcp/team-mcp.ts`
@@ -42,11 +46,12 @@ That duplication has already produced observable protocol drift:
 - advertised `inputSchema` constraints and handler validation are separate
   implementations, so length, range, pattern, additional-property, and enum
   constraints can diverge;
-- tools do not advertise `outputSchema`, and successful result text is a
-  generic forwarding acknowledgement rather than the serialized structured
-  result recommended for clients that consume only content blocks;
-- `/packages/dreamux/src/mcp/task-dispatch-reminder.ts` inserts model guidance
-  into `structuredContent`, so structured output is not a pure domain result;
+- tools do not advertise `outputSchema`; every successful result begins with a
+  generic forwarding acknowledgement, while selected accepted submissions
+  append an operation-local reminder to that text;
+- `/packages/dreamux/src/mcp/task-dispatch-reminder.ts` also inserts the same
+  reminder into `structuredContent`, so structured output is not a pure domain
+  result;
 - provider-owned channel tool descriptors cannot express output schemas or
   standard tool metadata through `/packages/dreamux-types/src/channel.ts`;
 - five copies of protocol framing, error projection, and tool registration
@@ -75,6 +80,15 @@ The implementation uses `@modelcontextprotocol/server` rather than the legacy
 aggregate `@modelcontextprotocol/sdk` package. Protocol parsing, schema
 validation, version negotiation, modern result envelopes, discovery, request
 cancellation, and JSON-RPC error framing belong to the SDK.
+
+The operator explicitly approves one standards tradeoff in the successful
+result shape. All three target tool specifications say servers **SHOULD** also
+serialize structured results into a text content block for backwards
+compatibility. Dreamux intentionally does not follow that `SHOULD` for ordinary
+successes: duplicating the same object consumes model context, while the
+supported Codex and Claude Code clients consume object `structuredContent`.
+This is not a claim that the recommendation is absent or mandatory; it is a
+documented exception for Dreamux's supported-client contract.
 
 The implementation pins the official `@modelcontextprotocol/server` runtime
 dependency and `@modelcontextprotocol/client` test dependency to exact version
@@ -166,7 +180,9 @@ Each domain MCP module owns only:
 - its caller-specific tool visibility;
 - model-facing names, titles, descriptions, annotations, and schemas;
 - mapping validated tool arguments to canonical admin methods;
-- descriptor-bound scope fields that the model cannot override; and
+- descriptor-bound scope fields that the model cannot override;
+- projection of successful admin/domain values into canonical results;
+- operation-local success-text selection; and
 - projection of admin/domain failures into tool execution errors.
 
 The existing five CLI commands and separate descriptor-scoped processes remain.
@@ -212,41 +228,72 @@ Submission-receipt projectors and their schemas are load-bearing: a mismatch
 must be caught by tests before a side-effecting handler can report failure after
 Dreamux has already accepted the operation.
 
+`McpToolDefinition` alone may carry an optional success-text selector whose
+input is the already projected canonical result and whose output is one reminder
+string or no string. The selector is runtime execution policy: it is not part of
+`McpToolMetadata`, `tools/list`, an admin DTO, or the neutral
+`ChannelToolDescriptor`. Team and TeamMate adapters attach selectors to the
+submission tools they own. The shared executor does not switch on tool names or
+interpret domain fields; it only formats the selector's output into the MCP
+envelope.
+
 Tool order is deterministic. Caller-specific visibility is determined before
 registration, so an unavailable tool is absent from `tools/list` and calling
 it produces the SDK's protocol-level unknown-tool error.
 
 ## Successful Results
 
-Successful object results use both standard result channels:
+Every successful object result uses `structuredContent` as its one canonical
+domain-value channel. Ordinary successes leave `content` empty so the same JSON
+payload is not charged to the model context twice:
 
 ```json
 {
-  "content": [
-    {
-      "type": "text",
-      "text": "{\"status\":\"submitted\",\"turn_id\":\"turn-1\"}"
-    }
-  ],
+  "content": [],
   "structuredContent": {
-    "status": "submitted",
-    "turn_id": "turn-1"
+    "jobs": []
   }
 }
 ```
 
 `structuredContent` is the exact public domain value validated against the
-advertised `outputSchema`. The first text block is `JSON.stringify` of that
-same value for model and legacy-client compatibility. It is not a generic
-"forwarded" acknowledgement and is not a JSON string nested inside
-`structuredContent`.
+advertised `outputSchema`. Dreamux does not serialize that value again into a
+text block and does not put a JSON string inside `structuredContent`. This is an
+intentional, operator-approved exception to the three tool specifications'
+backwards-compatibility `SHOULD`, justified by context efficiency for the three
+supported revisions and the verified Codex and Claude Code clients. Clients
+that consume only legacy text content are outside the supported client contract.
 
-Model guidance is not business data. The general no-polling and
-completion-delivery rule remains owned by the dispatcher and TeamLeader role
-system prompts. Relevant tool descriptions state only the operation's actual
-completion point. The dynamic reminder implementation in
-`/packages/dreamux/src/mcp/task-dispatch-reminder.ts` is removed from both text
-and `structuredContent`; the rule is not copied into MCP server instructions.
+Model guidance is not business data and never enters `structuredContent`.
+However, a successful prompt-submission receipt adds exactly one text content
+block when Dreamux has accepted asynchronous work whose completion will be
+pushed later:
+
+- `team.create` and `team.send` add the Team reminder only when
+  `result.turn.status === "submitted"`;
+- `teammate.spawn` and `teammate.send` add the TeamMate reminder only when
+  `result.turn.status === "submitted"`; and
+- the model-facing `workflow_run` MCP tool, which maps to the `workflow.run`
+  admin method, adds the workflow reminder only when the canonical result has a
+  non-empty `run_id`.
+
+Those reminders tell the model not to poll status/read tools and to wait for
+Dreamux's completion push. Idle Team creation, duplicate/stopped/failed turns,
+read tools, other mutations, and every error return no success reminder. The
+general no-polling rule remains in the dispatcher and TeamLeader role prompts;
+the result block is the conditional, operation-local signal that a particular
+submission was accepted. MCP server instructions remain unused for this rule.
+
+The three existing reminder texts are restored unchanged as
+`TEAM_DISPATCH_SUCCESS_REMINDER`, `TEAMMATE_DISPATCH_SUCCESS_REMINDER`, and
+`WORKFLOW_RUN_SUCCESS_REMINDER` in
+`/packages/dreamux/src/mcp/task-dispatch-reminder.ts`. That module is the single
+owner of the text and the reusable `turn.status === "submitted"` / non-empty
+`run_id` selectors. It has no structured-result mutation helper. The Team and
+TeamMate adapters choose the appropriate selector; the shared executor emits
+exactly `{ content: [], structuredContent: value }` when it returns no string,
+or exactly one `{ type: "text", text: reminder }` block alongside the same
+`structuredContent` when it returns a string.
 
 ## Error Contract
 
@@ -362,7 +409,12 @@ The replacement suite must cover:
 - discovery advertising only `2026-07-28`, including after every SDK upgrade;
 - deterministic caller-specific `tools/list` results;
 - advertised input and output schemas plus runtime validation;
-- object-valued `structuredContent` with equivalent serialized JSON text;
+- object-valued `structuredContent` with exact `content: []` for ordinary
+  successes and no duplicate JSON text or generic acknowledgement;
+- an operation-local no-poll reminder text block only for successfully
+  submitted Team, TeamMate, and workflow work, with negative coverage for
+  idle/unsubmitted/error and unrelated-tool results; reminder-bearing results
+  have exactly one text block and unchanged canonical `structuredContent`;
 - protocol error versus `isError` separation;
 - no reminder or other model guidance inside structured output;
 - provider-owned channel descriptors and result validation;
@@ -451,8 +503,12 @@ The proposal is complete when:
 - unknown tools and malformed protocol traffic fail through official protocol
   errors, known-tool schema failures use the SDK's `isError` result, and
   admin/domain failures remain sanitized tool execution errors;
-- every successful tool call returns structured JSON plus equivalent JSON text
-  and passes its advertised output schema;
+- every ordinary successful tool call returns schema-valid `structuredContent`
+  with exact `content: []`, without a duplicate JSON text block or generic
+  acknowledgement;
+- successfully submitted Team, TeamMate, and workflow work returns the matching
+  no-poll/wait-for-push reminder as its exact single text content block without
+  changing or contaminating `structuredContent`;
 - Feishu channel tools use the same structured result contract through the
   neutral provider descriptor;
 - no model guidance contaminates structured output;

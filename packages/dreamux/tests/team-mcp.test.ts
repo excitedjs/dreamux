@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { AdminRequest, AdminResponse } from '../src/admin/protocol.js';
 import { SANITIZED_TOOL_ERROR } from '../src/mcp/server.js';
+import { TEAM_DISPATCH_SUCCESS_REMINDER } from '../src/mcp/task-dispatch-reminder.js';
 import {
   runTeamMcp,
   type TeamMcpCallerKind,
@@ -100,13 +101,21 @@ function schemaOf(tools: Tool[], name: string): {
   };
 }
 
-function expectCanonicalResult(
+function expectOrdinarySuccess(
   result: CallToolResult,
   value: Record<string, unknown>,
 ): void {
-  expect(result.structuredContent).toEqual(value);
-  expect(result.content[0]).toEqual({ type: 'text', text: JSON.stringify(value) });
-  expect(JSON.stringify(result)).not.toMatch(/do not poll|system push|reminder/i);
+  expect(result).toEqual({ content: [], structuredContent: value });
+}
+
+function expectSubmittedSuccess(
+  result: CallToolResult,
+  value: Record<string, unknown>,
+): void {
+  expect(result).toEqual({
+    content: [{ type: 'text', text: TEAM_DISPATCH_SUCCESS_REMINDER }],
+    structuredContent: value,
+  });
 }
 
 describe('team MCP', () => {
@@ -196,7 +205,7 @@ describe('team MCP', () => {
         identity: 'architecture lead',
         prompt: 'start',
       };
-      expectCanonicalResult(await callTool(mcp.client, 'create', args), adminResult);
+      expectSubmittedSuccess(await callTool(mcp.client, 'create', args), adminResult);
       expect(admin.requests[0]).toMatchObject({
         method: 'team.create',
         params: {
@@ -231,7 +240,7 @@ describe('team MCP', () => {
     }));
     const mcp = await openTeamMcp('dispatcher', admin.socketPath);
     try {
-      expectCanonicalResult(
+      expectOrdinarySuccess(
         await callTool(mcp.client, 'create', {
           name_prefix: 'alpha',
           leader_agent_runtime: 'codex',
@@ -314,10 +323,10 @@ describe('team MCP', () => {
         prompt: 'follow up',
         intent: 'lead alpha follow-up',
       });
-      expectCanonicalResult(list, results['team.list'] as Record<string, unknown>);
-      expectCanonicalResult(status, results['team.status'] as Record<string, unknown>);
-      expectCanonicalResult(history, results['team.history'] as Record<string, unknown>);
-      expectCanonicalResult(send, results['team.send'] as Record<string, unknown>);
+      expectOrdinarySuccess(list, results['team.list'] as Record<string, unknown>);
+      expectOrdinarySuccess(status, results['team.status'] as Record<string, unknown>);
+      expectOrdinarySuccess(history, results['team.history'] as Record<string, unknown>);
+      expectSubmittedSuccess(send, results['team.send'] as Record<string, unknown>);
       expect(admin.requests.map((request) => request.method)).toEqual([
         'team.list',
         'team.status',
@@ -355,7 +364,7 @@ describe('team MCP', () => {
     }));
     const mcp = await openTeamMcp('dispatcher', admin.socketPath);
     try {
-      expectCanonicalResult(
+      expectOrdinarySuccess(
         await callTool(mcp.client, 'send', {
           team_name: 'alpha',
           prompt: 'Continue.',
@@ -446,7 +455,7 @@ describe('team MCP', () => {
     }));
     const mcp = await openTeamMcp('dispatcher', admin.socketPath);
     try {
-      expectCanonicalResult(
+      expectOrdinarySuccess(
         await callTool(mcp.client, 'dissolve', {
           team_name: 'alpha',
           note: 'done',

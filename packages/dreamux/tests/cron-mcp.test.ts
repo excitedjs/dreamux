@@ -89,7 +89,8 @@ describe('cron MCP descriptor-bound target', () => {
     const mcp = await openCronMcp({ teamId: 'alpha' });
     await expect(
       mcp.call({ cron: '* * * * *', prompt: 'remind' }),
-    ).resolves.toMatchObject({
+    ).resolves.toEqual({
+      content: [],
       structuredContent: {
         id: 'job-1',
         dispatcher_id: 'dispatcher-a',

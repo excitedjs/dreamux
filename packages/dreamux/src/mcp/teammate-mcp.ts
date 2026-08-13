@@ -26,6 +26,10 @@ import {
   toolMetadata,
   type PublicErrorRule,
 } from './tool-catalog.js';
+import {
+  teammateDispatchSuccessText,
+  workflowRunSuccessText,
+} from './task-dispatch-reminder.js';
 
 export type TeamMateMcpCallerKind = 'dispatcher' | 'team_leader';
 
@@ -290,10 +294,19 @@ function teammateToolMetadata(callerKind: TeamMateMcpCallerKind): McpToolMetadat
  * last, and projects the admin value into the public MCP result.
  */
 function teammateToolDefinitions(scope: TeamMateMcpScope): McpToolDefinition[] {
-  return teammateToolMetadata(scope.callerKind).map((metadata) => ({
-    ...metadata,
-    handler: (args) => callTool(metadata.name, args, scope),
-  }));
+  return teammateToolMetadata(scope.callerKind).map((metadata) => {
+    const successText =
+      metadata.name === 'spawn' || metadata.name === 'send'
+        ? teammateDispatchSuccessText
+        : metadata.name === 'workflow_run'
+          ? workflowRunSuccessText
+          : undefined;
+    return {
+      ...metadata,
+      ...(successText !== undefined ? { successText } : {}),
+      handler: (args) => callTool(metadata.name, args, scope),
+    };
+  });
 }
 
 async function callTool(

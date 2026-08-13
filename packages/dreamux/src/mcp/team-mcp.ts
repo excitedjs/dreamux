@@ -23,6 +23,7 @@ import {
   type PublicErrorRule,
 } from './tool-catalog.js';
 import { repoInputSchema } from './teammate-mcp.js';
+import { teamDispatchSuccessText } from './task-dispatch-reminder.js';
 
 export type TeamMcpCallerKind = 'dispatcher' | 'team_leader';
 
@@ -282,10 +283,17 @@ function teamCreateSchema(): Record<string, unknown> {
 }
 
 function teamToolDefinitions(scope: TeamMcpScope): McpToolDefinition[] {
-  return teamToolMetadata(scope.caller.kind).map((metadata) => ({
-    ...metadata,
-    handler: (args) => callTool(metadata.name, args, scope),
-  }));
+  return teamToolMetadata(scope.caller.kind).map((metadata) => {
+    const selectsSuccessText =
+      metadata.name === 'create' || metadata.name === 'send';
+    return {
+      ...metadata,
+      ...(selectsSuccessText
+        ? { successText: teamDispatchSuccessText }
+        : {}),
+      handler: (args) => callTool(metadata.name, args, scope),
+    };
+  });
 }
 
 async function callTool(

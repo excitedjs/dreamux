@@ -100,14 +100,15 @@ describe('collaboration-space MCP', () => {
         leader_agent_runtime: 'agent-a',
         identity: 'default leader identity',
       });
-      expect(bind).toMatchObject({
-        content: [{ text: JSON.stringify({ space }) }],
+      expect(bind).toEqual({
+        content: [],
         structuredContent: { space },
       });
       await expect(callTool(mcp.client, 'dissolve', {
         space_name: 'space-alpha',
         note: 'switch repo',
-      })).resolves.toMatchObject({
+      })).resolves.toEqual({
+        content: [],
         structuredContent: {
           space: { ...space, status: 'unbound' },
           detached_targets: 1,
@@ -116,8 +117,12 @@ describe('collaboration-space MCP', () => {
       });
       await expect(
         callTool(mcp.client, 'status', { space_name: 'space-alpha' }),
-      ).resolves.toMatchObject({ structuredContent: { space, targets: [] } });
-      await expect(callTool(mcp.client, 'list', {})).resolves.toMatchObject({
+      ).resolves.toEqual({
+        content: [],
+        structuredContent: { space, targets: [] },
+      });
+      await expect(callTool(mcp.client, 'list', {})).resolves.toEqual({
+        content: [],
         structuredContent: { spaces: [] },
       });
 

@@ -9,6 +9,10 @@ import { describe, expect, it } from 'vitest';
 import type { AdminRequest, AdminResponse } from '../src/admin/protocol.js';
 import { SANITIZED_TOOL_ERROR } from '../src/mcp/server.js';
 import {
+  TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+  WORKFLOW_RUN_SUCCESS_REMINDER,
+} from '../src/mcp/task-dispatch-reminder.js';
+import {
   runTeamMateMcp,
   type TeamMateMcpCallerKind,
 } from '../src/mcp/teammate-mcp.js';
@@ -98,17 +102,22 @@ function schemaOf(tools: Tool[], name: string): {
   };
 }
 
-function expectCanonicalResult(
+function expectOrdinarySuccess(
   result: CallToolResult,
   value: Record<string, unknown>,
 ): void {
-  expect(result.structuredContent).toEqual(value);
-  expect(result.content[0]).toEqual({
-    type: 'text',
-    text: JSON.stringify(value),
+  expect(result).toEqual({ content: [], structuredContent: value });
+}
+
+function expectReminderSuccess(
+  result: CallToolResult,
+  value: Record<string, unknown>,
+  reminder: string,
+): void {
+  expect(result).toEqual({
+    content: [{ type: 'text', text: reminder }],
+    structuredContent: value,
   });
-  expect(result).not.toHaveProperty('reminder');
-  expect(JSON.stringify(result)).not.toMatch(/do not poll|system push|reminder/i);
 }
 
 describe('teammate MCP', () => {
@@ -216,10 +225,10 @@ describe('teammate MCP', () => {
       const status = await callTool(mcp.client, 'workflow_status', { run_id: 'run-1' });
       const stop = await callTool(mcp.client, 'workflow_stop', { run_id: 'run-1' });
       const list = await callTool(mcp.client, 'workflow_list', {});
-      expectCanonicalResult(run, { run_id: 'run-1' });
-      expectCanonicalResult(status, workflowRecord);
-      expectCanonicalResult(stop, { run_id: 'run-1', status: 'stopped' });
-      expectCanonicalResult(list, { runs: [workflowRecord] });
+      expectReminderSuccess(run, { run_id: 'run-1' }, WORKFLOW_RUN_SUCCESS_REMINDER);
+      expectOrdinarySuccess(status, workflowRecord);
+      expectOrdinarySuccess(stop, { run_id: 'run-1', status: 'stopped' });
+      expectOrdinarySuccess(list, { runs: [workflowRecord] });
       expect(admin.requests.map((request) => request.method)).toEqual([
         'workflow.run',
         'workflow.status',
@@ -286,9 +295,10 @@ describe('teammate MCP', () => {
     const mcp = await openTeammateMcp('dispatcher', admin.socketPath);
     try {
       const script = 'export const meta = { name: "x", description: "x" }; return null;';
-      expectCanonicalResult(
+      expectReminderSuccess(
         await callTool(mcp.client, 'workflow_run', { script, max_concurrency: 16 }),
         { run_id: 'run-16' },
+        WORKFLOW_RUN_SUCCESS_REMINDER,
       );
       for (const maxConcurrency of [0, 17, 1.5, null]) {
         await expect(
@@ -300,6 +310,26 @@ describe('teammate MCP', () => {
       }
       expect(admin.requests).toHaveLength(1);
       expect(admin.requests[0]?.params).toMatchObject({ max_concurrency: 16 });
+    } finally {
+      await mcp.close();
+      await admin.close();
+    }
+  });
+
+  it('does not add workflow success text for an empty projected run id', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: { run_id: '' },
+    }));
+    const mcp = await openTeammateMcp('dispatcher', admin.socketPath);
+    try {
+      expectOrdinarySuccess(
+        await callTool(mcp.client, 'workflow_run', {
+          script: 'export const meta = { name: "x", description: "x" }; return null;',
+        }),
+        { run_id: '' },
+      );
     } finally {
       await mcp.close();
       await admin.close();
@@ -372,7 +402,7 @@ describe('teammate MCP', () => {
         branch: 'dreamux/reviewer',
         cleanup: 'delete-on-close',
       };
-      expectCanonicalResult(
+      expectReminderSuccess(
         await callTool(mcp.client, 'spawn', {
           name_prefix: 'reviewer',
           prompt: 'Review the change.',
@@ -382,6 +412,7 @@ describe('teammate MCP', () => {
           identity: 'architecture reviewer',
         }),
         receipt,
+        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
       );
       expect(admin.requests[0]).toMatchObject({
         method: 'teammate.spawn',
@@ -411,6 +442,32 @@ describe('teammate MCP', () => {
     }
   });
 
+  it('adds TeamMate success text only to a submitted send receipt', async () => {
+    const receipt = {
+      teammate: { name: 'reviewer', status: 'running' },
+      turn: { status: 'submitted', turn_id: 'turn-2' },
+    };
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: receipt,
+    }));
+    const mcp = await openTeammateMcp('dispatcher', admin.socketPath);
+    try {
+      expectReminderSuccess(
+        await callTool(mcp.client, 'send', {
+          name: 'reviewer',
+          prompt: 'Continue.',
+        }),
+        receipt,
+        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+      );
+    } finally {
+      await mcp.close();
+      await admin.close();
+    }
+  });
+
   it('returns failed send and close domain results without model guidance', async () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
@@ -425,7 +482,7 @@ describe('teammate MCP', () => {
     }));
     const mcp = await openTeammateMcp('dispatcher', admin.socketPath);
     try {
-      expectCanonicalResult(
+      expectOrdinarySuccess(
         await callTool(mcp.client, 'send', {
           name: 'reviewer',
           prompt: 'Continue.',
@@ -435,7 +492,7 @@ describe('teammate MCP', () => {
           turn: { status: 'failed', error: 'runtime unavailable' },
         },
       );
-      expectCanonicalResult(
+      expectOrdinarySuccess(
         await callTool(mcp.client, 'close', { name: 'reviewer', note: 'done' }),
         { teammate: { name: 'reviewer', status: 'closed' } },
       );
@@ -498,7 +555,11 @@ describe('teammate MCP', () => {
         intent: 'implementation',
         identity: 'developer',
       };
-      expectCanonicalResult(await callTool(mcp.client, 'spawn', args), receipt);
+      expectReminderSuccess(
+        await callTool(mcp.client, 'spawn', args),
+        receipt,
+        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+      );
       expect(admin.requests[0]).toMatchObject({
         method: 'teammate.spawn',
         params: {
@@ -536,7 +597,7 @@ describe('teammate MCP', () => {
         verbs: ['spawn', 'send'],
         agent_runtimes: [{ id: 'codex' }, { id: 'claude-code' }],
       };
-      expectCanonicalResult(
+      expectOrdinarySuccess(
         await callTool(mcp.client, 'get_capabilities', {}),
         expected,
       );
@@ -571,7 +632,7 @@ describe('teammate MCP', () => {
     }));
     const mcp = await openTeammateMcp('dispatcher', admin.socketPath);
     try {
-      expectCanonicalResult(
+      expectOrdinarySuccess(
         await callTool(mcp.client, 'history', {
           name: 'reviewer',
           status: 'closed',
@@ -585,7 +646,7 @@ describe('teammate MCP', () => {
         }),
         { items: [], next_cursor: null },
       );
-      expectCanonicalResult(
+      expectOrdinarySuccess(
         await callTool(mcp.client, 'last', { name: 'reviewer' }),
         {
           teammate: { name: 'reviewer' },
@@ -594,7 +655,7 @@ describe('teammate MCP', () => {
           turns: [],
         },
       );
-      expectCanonicalResult(
+      expectOrdinarySuccess(
         await callTool(mcp.client, 'last', { name: 'reviewer', turns: 5 }),
         {
           teammate: { name: 'reviewer' },

@@ -90,8 +90,14 @@ describe('shared MCP protocol conformance', () => {
       expect((await listedTools(connection.client)).map((tool) => tool.name)).toEqual([
         'echo',
       ]);
-      await expect(callTool(connection.client, 'echo', { value: 'modern' })).resolves.toMatchObject({
-        content: [{ type: 'text', text: '{"echoed":"modern"}' }],
+      await expect(callTool(connection.client, 'echo', { value: 'modern' })).resolves.toEqual({
+        _meta: {
+          'io.modelcontextprotocol/serverInfo': {
+            name: 'dreamux-conformance-test',
+            version: '1.0.0',
+          },
+        },
+        content: [],
         structuredContent: { echoed: 'modern' },
       });
     } finally {
@@ -117,8 +123,9 @@ describe('shared MCP protocol conformance', () => {
           outputSchema: ECHO_TOOL.outputSchema,
           annotations: ECHO_TOOL.annotations,
         });
-        await expect(callTool(connection.client, 'echo', { value: version })).resolves.toMatchObject({
-          content: [{ type: 'text', text: JSON.stringify({ echoed: version }) }],
+        expect(tool).not.toHaveProperty('successText');
+        await expect(callTool(connection.client, 'echo', { value: version })).resolves.toEqual({
+          content: [],
           structuredContent: { echoed: version },
         });
       } finally {
@@ -214,6 +221,27 @@ describe('shared MCP protocol conformance', () => {
             text: expect.stringMatching(/output validation error/i),
           }),
         ],
+      });
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it('emits only selector-owned success text beside unchanged structured content', async () => {
+    const successTextTool: McpToolDefinition = {
+      ...ECHO_TOOL,
+      name: 'echo_with_success_text',
+      successText: () => 'Operation-specific success text.',
+    };
+    const connection = await connectMcpClient((transport) =>
+      serve(transport, [successTextTool]),
+    );
+    try {
+      await expect(
+        callTool(connection.client, 'echo_with_success_text', { value: 'valid' }),
+      ).resolves.toEqual({
+        content: [{ type: 'text', text: 'Operation-specific success text.' }],
+        structuredContent: { echoed: 'valid' },
       });
     } finally {
       await connection.close();

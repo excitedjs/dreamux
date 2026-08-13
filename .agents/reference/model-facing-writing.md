@@ -151,10 +151,10 @@ or an old concept, fix the projection rather than documenting around it.
 
 Every Dreamux-owned tool keeps its canonical successful-result projector beside
 its output schema. Successful objects appear unchanged in `structuredContent`
-and as `JSON.stringify` in the first text block. Keep top-level output objects
-closed unless a named JSON-valued extension field is intentionally open. Do not
-return generic forwarding acknowledgements, nest JSON strings inside structured
-content, or copy prompt guidance into result fields.
+with exact `content: []` for ordinary calls. Keep top-level output objects closed
+unless a named JSON-valued extension field is intentionally open. Do not return
+duplicate JSON text, generic forwarding acknowledgements, nested JSON strings,
+or prompt guidance in structured fields.
 
 Known-tool input-schema failures are normal MCP tool results with `isError`.
 Unknown tools and malformed protocol requests are SDK-owned protocol errors.
@@ -163,8 +163,14 @@ allowlists; other admin and provider failures use the fixed sanitized tool
 error while full detail stays in out-of-band logs.
 
 The general no-polling and completion-delivery rule belongs in Dispatcher and
-TeamLeader role prompts. Tool descriptions state the actual acceptance or
-completion point, and tool results contain business data only.
+TeamLeader role prompts. A bound Dreamux tool definition may select one
+operation-local success text without changing its canonical structured result:
+submitted Team and TeamMate create/send receipts carry their matching reminder,
+and a `workflow_run` receipt with a non-empty `run_id` carries the workflow
+reminder. Idle, failed, read, unrelated, and ordinary mutation results carry no
+text. `/packages/dreamux/src/mcp/task-dispatch-reminder.ts` is the sole owner of
+those three texts and selectors; the selector is not public tool metadata,
+admin data, or a Channel provider contract.
 
 ## Tests
 

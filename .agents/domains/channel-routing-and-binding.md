@@ -56,7 +56,8 @@ The built-in Feishu tools publish closed input/output schemas and canonical
 results: `reply` returns `{ message_ids }`, `react` returns `{ reaction_id }`,
 and both live and sessionless `list_chat_bots` return
 `{ chat_id, known, trusted }`. Core forwards those values without interpreting
-provider fields; the shared MCP server validates and renders them.
+provider fields; the shared MCP server validates them and renders each ordinary
+success as exact `content: []` plus unchanged object `structuredContent`.
 
 Source:
 

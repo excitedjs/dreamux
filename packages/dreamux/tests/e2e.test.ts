@@ -275,7 +275,8 @@ describe('dreamux cross-module e2e', () => {
       },
     });
 
-    expect(response).toMatchObject({
+    expect(response).toEqual({
+      content: [],
       structuredContent: { message_ids: ['message-fake-1'] },
     });
     expect(bot.sentMessages).toEqual([
@@ -328,7 +329,8 @@ describe('dreamux cross-module e2e', () => {
       },
     });
 
-    expect(response).toMatchObject({
+    expect(response).toEqual({
+      content: [],
       structuredContent: { message_ids: ['message-fake-1'] },
     });
     expect(bot.sentMessages).toHaveLength(1);

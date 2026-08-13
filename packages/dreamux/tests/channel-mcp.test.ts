@@ -209,8 +209,8 @@ describe('channel MCP provider catalog', () => {
         callTool(connection.client, 'repository_report', {
           repository: 'excitedjs/dreamux',
         }),
-      ).resolves.toMatchObject({
-        content: [{ type: 'text', text: '{"summary":"provider result"}' }],
+      ).resolves.toEqual({
+        content: [],
         structuredContent: { summary: 'provider result' },
       });
       expect(admin.requests).toHaveLength(1);

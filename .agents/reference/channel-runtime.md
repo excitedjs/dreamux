@@ -185,8 +185,8 @@ tool. Successful results are canonical values: `reply` returns
 `{ message_ids: string[] }`, `react` returns `{ reaction_id: string }`, and
 `list_chat_bots` returns `{ chat_id, known, trusted }`. The live and sessionless
 paths produce the same `list_chat_bots` result shape. The shared server exposes
-the value as structured content plus equivalent JSON text and validates it
-against the provider output schema.
+the value unchanged as `structuredContent` with exact `content: []` and
+validates it against the provider output schema.
 
 Key source:
 

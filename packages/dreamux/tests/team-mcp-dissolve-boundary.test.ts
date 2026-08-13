@@ -85,7 +85,8 @@ describe('Team MCP dissolve pre-acceptance boundary', () => {
 
     const response = await call.response;
     idle.resolve();
-    expect(response).toMatchObject({
+    expect(response).toEqual({
+      content: [],
       structuredContent: {
         accepted: true,
         team_name: 'alpha',

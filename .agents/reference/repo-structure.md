@@ -56,9 +56,11 @@ verbatim through the move):
 `/packages/dreamux/src/mcp/server.ts` is the sole MCP transport, negotiation,
 registration, protocol-error, and result-framing owner. Domain adapters build
 caller-bound definitions with `/packages/dreamux/src/mcp/tool-catalog.ts`; they
-do not parse JSON-RPC or construct wire envelopes. The source tree contains no
-MCP task-dispatch reminder module because role guidance is prompt-owned rather
-than result data.
+do not parse JSON-RPC or construct wire envelopes.
+`/packages/dreamux/src/mcp/task-dispatch-reminder.ts` owns the three conditional
+Team, TeamMate, and workflow success texts and selects them from canonical
+submission receipts. It does not mutate structured results or expose reminder
+policy through tool metadata, admin DTOs, or Channel provider descriptors.
 
 ## Installation — the rush path only
 

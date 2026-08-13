@@ -264,6 +264,10 @@ MCP process diagnostics use component directories such as `channel-mcp/`,
 `team-mcp/`, and `teammate-mcp/`. MCP stdout is reserved for official stdio
 protocol frames. Transport, schema, handler, and shutdown diagnostics go only
 to those component loggers or stderr and are not persisted as MCP state.
+Successful MCP envelopes are transient wire data rather than state: ordinary
+calls carry exact `content: []` plus canonical object `structuredContent`, and
+the conditional Team, TeamMate, or workflow success text is likewise never
+persisted.
 
 Key source:
 

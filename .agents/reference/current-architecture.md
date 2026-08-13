@@ -113,14 +113,23 @@ than the MCP wire.
 Each domain module supplies a deterministic, caller-bound tool catalog. It owns
 tool visibility, metadata, schemas, canonical admin-method mapping, scope that
 model input cannot override, public-error allowlists, and successful-result
-projection. The shared executor emits each successful object as both
-`structuredContent` and an equivalent JSON text block, validates it against the
-advertised output schema, and sanitizes unapproved handler failures. The admin
-socket remains an independently validated product control plane and contains no
-MCP protocol types or envelopes.
+projection. The shared executor emits each ordinary successful object unchanged
+as `structuredContent` with exact `content: []`, validates it against the
+advertised output schema, and sanitizes unapproved handler failures. An
+execution-only selector on a bound tool definition may add exactly one text
+block without changing `structuredContent`; that selector is not advertised as
+tool metadata or carried through provider descriptors. The admin socket remains
+an independently validated product control plane and contains no MCP protocol
+types or envelopes.
 
-General completion-delivery and no-polling guidance lives in role prompts, not
-in tool result data. MCP adapters return only the operation's canonical result.
+General completion-delivery and no-polling guidance lives in role prompts. The
+narrow result-level signal is operation-local: submitted `team.create` /
+`team.send` and `teammate.spawn` / `teammate.send` receipts, plus
+`workflow_run` receipts with a non-empty `run_id`, carry one matching no-poll
+reminder text block. Idle, failed, read, unrelated, and ordinary mutation
+results carry no text. `/packages/dreamux/src/mcp/task-dispatch-reminder.ts`
+owns the three texts and their reusable selectors; it never mutates structured
+results.
 
 Key source:
 
@@ -131,6 +140,7 @@ Key source:
 - `/packages/dreamux/src/mcp/cron-mcp.ts`
 - `/packages/dreamux/src/mcp/team-mcp.ts`
 - `/packages/dreamux/src/mcp/teammate-mcp.ts`
+- `/packages/dreamux/src/mcp/task-dispatch-reminder.ts`
 
 ## Admin Control Plane
 

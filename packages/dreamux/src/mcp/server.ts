@@ -72,8 +72,8 @@ export class PublicToolError extends Error {
 
 /**
  * The canonical public value a tool handler resolves with. It is validated
- * against the advertised `outputSchema` (when present) by the SDK, serialized
- * as the first text content block, and echoed as `structuredContent`.
+ * against the advertised `outputSchema` (when present) by the SDK and returned
+ * unchanged as `structuredContent`.
  */
 export type McpToolResult = Record<string, unknown>;
 
@@ -105,9 +105,11 @@ export interface McpToolMetadata {
   icons?: Icon[];
 }
 
-/** A fully bound tool: advertisement metadata plus its handler closure. */
+/** A fully bound tool: advertisement metadata plus its execution policy. */
 export interface McpToolDefinition extends McpToolMetadata {
   handler: McpToolHandler;
+  /** Optional operation-local text selected from the projected success value. */
+  successText?: (result: McpToolResult) => string | undefined;
 }
 
 export interface McpServerIdentity {
@@ -253,11 +255,12 @@ function buildMcpServer(
 }
 
 /**
- * The single MCP-adapter-owned execution projector. It formats a handler's
- * canonical value into both standard result channels, formats an explicitly
- * public tool error as an `isError` result, and turns every other failure into
- * a fixed sanitized error after logging it in full out of band. It never
- * exposes a raw `Error.message` to the model.
+ * The single MCP-adapter-owned execution projector. It emits the handler's
+ * canonical value as structured content, adds only text selected by that
+ * definition's optional success policy, formats an explicitly public tool
+ * error as an `isError` result, and turns every other failure into a fixed
+ * sanitized error after logging it in full out of band. It never exposes a raw
+ * `Error.message` to the model.
  */
 async function executeTool(
   tool: McpToolDefinition,
@@ -266,8 +269,12 @@ async function executeTool(
 ): Promise<CallToolResult> {
   try {
     const value = await tool.handler(args);
+    const successText = tool.successText?.(value);
     return {
-      content: [{ type: 'text', text: JSON.stringify(value) }],
+      content:
+        successText === undefined
+          ? []
+          : [{ type: 'text', text: successText }],
       structuredContent: value,
     };
   } catch (err) {

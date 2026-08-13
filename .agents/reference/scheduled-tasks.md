@@ -93,7 +93,9 @@ catalog supplies closed input schemas, canonical output schemas, standard tool
 annotations, and descriptor-bound dispatcher or Team scope. The adapter maps
 SDK-validated arguments to the existing `scheduler.cron.*` admin methods and
 projects explicit public job/result shapes; it does not own scheduling state or
-duplicate admin validation.
+duplicate admin validation. Cron calls are ordinary MCP successes and therefore
+return those projected objects unchanged as `structuredContent` with exact
+`content: []`.
 
 Key source:
 
