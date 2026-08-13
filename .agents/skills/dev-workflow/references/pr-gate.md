@@ -13,10 +13,10 @@ updates one public GitHub PR. Target `next`, as owned by
 If the repository default branch differs from `next`, stop and ask rather than
 following the drift.
 
-Keep the English PR body public-safe. Link the task's solution-review Issue,
-summarize intent and scope, list exact validation and limitations, and use the
-repository's normal Issue-closing syntax when merge should close it. Follow the
-release reference for change files, CI, and merge topology.
+Keep the English PR body public-safe. Link the task's solution-review Issue when
+one exists, summarize intent and scope, list exact validation and limitations,
+and use the repository's normal Issue-closing syntax when merge should close that
+Issue. Follow the release reference for change files, CI, and merge topology.
 
 ## Wait for normal CI
 
