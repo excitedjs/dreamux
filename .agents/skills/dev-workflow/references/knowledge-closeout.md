@@ -1,8 +1,8 @@
 # TeamLeader Knowledge Closeout
 
 Run this stage after implementation review and accepted corrections are complete,
-but before preparing or pushing the GitHub PR head. The TeamLeader owns every write
-in this stage.
+but before committing and pushing the GitHub PR. The TeamLeader owns every write in
+this stage.
 
 ## Reconcile the task with reality
 
@@ -70,5 +70,5 @@ knowledge or task script. Check that links and cited paths resolve against the
 current repository; the general knowledge checker does not replace the task check.
 
 When closeout passes, record the knowledge links or justified `N/A` results in the
-task README, set `State: pr`, and include all task and knowledge changes in the
-intended PR head.
+task README, set `State: done`, and include all task and knowledge changes in the
+commit that will be pushed for the PR.

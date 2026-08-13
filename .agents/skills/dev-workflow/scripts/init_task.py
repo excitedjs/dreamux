@@ -20,8 +20,6 @@ STATES = {
     "implementation",
     "review",
     "knowledge-closeout",
-    "pr",
-    "merge",
     "done",
     "blocked",
 }
@@ -119,7 +117,6 @@ def task_readme(domain: str, slug: str, title: str, goal: str) -> str:
 
 ## Delivery
 
-- Exact head: Not created.
 - Pull request / CI / merge: Not started.
 - Knowledge closeout: Pending.
 """

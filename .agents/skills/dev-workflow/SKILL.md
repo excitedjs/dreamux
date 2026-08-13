@@ -84,17 +84,18 @@ prototype or add temporary diagnostic code. An initial request such as "fix X" o
 7. **Close task and repository knowledge.** After accepted review findings and
    local checks are clear, have the TeamLeader reconcile the task with the actual
    diff, record durable decisions, and align affected Dreamux knowledge owners with
-   current code facts. Complete this knowledge closeout before preparing the PR
-   head. Follow [knowledge-closeout.md](references/knowledge-closeout.md).
+   current code facts. Complete this knowledge closeout, set the task to `done`,
+   then prepare the PR. Follow
+   [knowledge-closeout.md](references/knowledge-closeout.md).
 
-8. **Prepare and gate the GitHub PR.** Commit and push the reviewed,
-   knowledge-complete head and open or update one GitHub PR targeting `next`. Route
-   the exact pushed head through final review, wait for CI, and clear accepted
-   findings before presenting it as ready. Follow [pr-gate.md](references/pr-gate.md).
+8. **Prepare the GitHub PR and wait for CI.** Commit and push the reviewed,
+   knowledge-complete workspace with its completed task record, then open or update
+   one GitHub PR targeting `next`. Wait for the repository's normal CI; do not run a
+   second implementation review merely because the commit was pushed. Follow
+   [pr-gate.md](references/pr-gate.md).
 
 9. **Merge into `next`.** Merge only with operator authority under the repository's
-   normal GitHub and squash-merge rules. Confirm the resulting commit on `next` and
-   update the task delivery record.
+   normal GitHub and squash-merge rules. Confirm the resulting commit on `next`.
 
 10. **Offer to dissolve the Team.** Only after every required stage is complete and
     the merge into `next` is confirmed, ask the operator whether to dissolve the

@@ -46,18 +46,17 @@ Keep these fields current and concise:
 - development approval source, time, and approved boundary;
 - blockers and next action;
 - lineage and related-task links;
-- delivery summary for exact head, pull request, CI, and merge;
+- delivery summary for pull request, CI, and merge when recorded;
 - knowledge-closeout status and links.
 
 Use one of these states:
 
 `intake`, `clarification`, `solution`, `awaiting-development-approval`,
-`implementation`, `review`, `knowledge-closeout`, `pr`, `merge`, `done`, or
-`blocked`.
+`implementation`, `review`, `knowledge-closeout`, `done`, or `blocked`.
 
 Do not keep a parallel progress file or free-form maturity field. Preserve only
 milestones that another TeamLeader cannot safely reconstruct: development approval,
-material re-approval, review adjudication, exact-head validation, and merge.
+material re-approval, review adjudication, and merge.
 
 ## Keep the requirement current
 

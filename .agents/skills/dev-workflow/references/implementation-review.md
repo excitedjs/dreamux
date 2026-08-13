@@ -18,10 +18,6 @@ Do not serialize or paraphrase the workspace diff into the prompt, and do not as
 review agents to repeat those checks. They read the current shared workspace and
 the applicable repository guidance directly.
 
-When this review is used for the final PR gate, first require a clean worktree at
-the recorded pushed head and name the explicit base and head commits. The current
-workspace must represent that immutable range, not an uncommitted replacement.
-
 ## Review the one-file fast path once
 
 Load and follow `team-workflow`, then start exactly one separate read-only TeamMate
