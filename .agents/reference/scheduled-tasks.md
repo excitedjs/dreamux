@@ -1,7 +1,7 @@
 # Reference: scheduled tasks
 
-Dreamux has a per-dispatcher in-process scheduler for durable cron-style jobs.
-The implemented milestone covers resident dispatcher-agent execution end to end:
+Dreamux has an in-process scheduler for durable cron-style jobs owned by each
+dispatcher and non-closed Team. Its current prompt-agent execution covers
 contract/activity support, provider busy/idle reporting, durable storage,
 `prompt-agent` scheduled injection, and the conversational management surface
 (admin methods, the `dreamux cron` CLI, and the Cron MCP). `spawn-teammate` and
@@ -88,6 +88,13 @@ cron` CLI (`cli/commands/cron-mcp.ts`) drives them, and the Cron MCP
 injected into each conversational agent — the dispatcher agent and every
 TeamLeader — but not regular teammates/team members.
 
+The Cron MCP uses the shared official-SDK stdio server. Its caller-specific
+catalog supplies closed input schemas, canonical output schemas, standard tool
+annotations, and descriptor-bound dispatcher or Team scope. The adapter maps
+SDK-validated arguments to the existing `scheduler.cron.*` admin methods and
+projects explicit public job/result shapes; it does not own scheduling state or
+duplicate admin validation.
+
 Key source:
 
 - `/packages/dreamux/src/service/scheduler/service.ts`
@@ -95,6 +102,8 @@ Key source:
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 - `/packages/dreamux/src/service/team-service/index.ts`
 - `/packages/dreamux/src/admin/methods.ts`
+- `/packages/dreamux/src/mcp/server.ts`
+- `/packages/dreamux/src/mcp/tool-catalog.ts`
 - `/packages/dreamux/src/mcp/cron-mcp.ts`
 
 ## Tests

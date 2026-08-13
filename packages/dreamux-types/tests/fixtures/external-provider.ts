@@ -269,7 +269,17 @@ class FixtureChannelSession implements ChannelSession {
   }
 
   tools(): readonly ChannelToolDescriptor[] {
-    return [{ name: 'echo', description: 'echo a message' }];
+    return [
+      {
+        name: 'echo',
+        description: 'echo a message',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          additionalProperties: false,
+        },
+      },
+    ];
   }
 
   // Optional ChannelSession methods: a strict implementer names these param

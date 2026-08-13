@@ -206,11 +206,7 @@ export function createFeishuChannelProvider(
       return config.appId;
     },
     tools(): readonly ChannelToolDescriptor[] {
-      return buildToolCatalog().map((tool) => ({
-        name: tool.name as string,
-        description: tool.description as string,
-        inputSchema: tool.inputSchema,
-      }));
+      return buildToolCatalog();
     },
     onboard: {
       async collect(_context, prompts): Promise<Record<string, unknown>> {

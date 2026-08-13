@@ -40,48 +40,102 @@ for (const name of expectedServiceExports) {
   }
 }
 
-const child = spawn(bin, ['--version'], {
-  env: {
-    ...process.env,
-    DREAMUX_NODE_BIN: process.execPath,
-  },
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
+async function runCli(args) {
+  const child = spawn(bin, args, {
+    env: {
+      ...process.env,
+      DREAMUX_NODE_BIN: process.execPath,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 
-let stdout = '';
-let stderr = '';
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => {
+    stdout += chunk;
+  });
+  child.stderr.on('data', (chunk) => {
+    stderr += chunk;
+  });
 
-child.stdout.setEncoding('utf8');
-child.stderr.setEncoding('utf8');
-child.stdout.on('data', (chunk) => {
-  stdout += chunk;
-});
-child.stderr.on('data', (chunk) => {
-  stderr += chunk;
-});
+  const { code, signal } = await new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('exit', (exitCode, exitSignal) =>
+      resolve({ code: exitCode, signal: exitSignal }),
+    );
+  });
+  return { code, signal, stdout, stderr };
+}
 
-child.once('error', (err) => {
-  console.error(`dreamux built CLI smoke failed to start: ${err.message}`);
-  process.exit(1);
-});
+function describeResult(result) {
+  return `code=${result.code} signal=${result.signal ?? 'none'} stdout=${JSON.stringify(result.stdout)} stderr=${JSON.stringify(result.stderr)}`;
+}
 
-child.once('exit', (code, signal) => {
-  if (signal !== null) {
-    console.error(`dreamux built CLI smoke terminated by ${signal}`);
-    if (stderr.trim() !== '') console.error(stderr.trim());
-    process.exit(1);
+function requireSuccessful(result, label) {
+  if (result.signal !== null || result.code !== 0) {
+    throw new Error(`${label} failed: ${describeResult(result)}`);
   }
-  if (code !== 0) {
-    console.error(`dreamux built CLI smoke exited with code ${code}`);
-    if (stdout.trim() !== '') console.error(`stdout:\n${stdout.trim()}`);
-    if (stderr.trim() !== '') console.error(`stderr:\n${stderr.trim()}`);
-    process.exit(code ?? 1);
+}
+
+function requireFailedWith(result, expected, label) {
+  if (
+    result.signal !== null ||
+    result.code === null ||
+    result.code === 0 ||
+    !result.stderr.includes(expected)
+  ) {
+    throw new Error(`${label} did not fail as expected: ${describeResult(result)}`);
   }
-  const version = stdout.trim();
-  if (version === '') {
-    console.error('dreamux built CLI smoke produced empty --version output');
-    if (stderr.trim() !== '') console.error(`stderr:\n${stderr.trim()}`);
-    process.exit(1);
-  }
-  console.log(`dreamux built package/service/CLI smoke ok: ${version}`);
-});
+}
+
+const versionResult = await runCli(['--version']);
+requireSuccessful(versionResult, 'dreamux --version');
+const version = versionResult.stdout.trim();
+if (version === '') {
+  throw new Error(
+    `dreamux built CLI produced empty --version output: ${describeResult(versionResult)}`,
+  );
+}
+
+requireFailedWith(
+  await runCli(['channel-mcp', '--dispatcher', 'smoke']),
+  'channel-mcp requires --channel-tools-b64',
+  'channel-mcp missing catalog',
+);
+requireFailedWith(
+  await runCli([
+    'channel-mcp',
+    '--dispatcher',
+    'smoke',
+    '--channel-tools-b64',
+    '!!!!W10=',
+  ]),
+  '--channel-tools-b64 must be valid canonical base64',
+  'channel-mcp malformed base64 catalog',
+);
+requireFailedWith(
+  await runCli([
+    'channel-mcp',
+    '--dispatcher',
+    'smoke',
+    '--channel-tools-b64',
+    Buffer.from('not-json', 'utf8').toString('base64'),
+  ]),
+  '--channel-tools-b64 did not decode to valid JSON',
+  'channel-mcp non-JSON catalog',
+);
+requireFailedWith(
+  await runCli([
+    'channel-mcp',
+    '--dispatcher',
+    'smoke',
+    '--channel-tools-b64',
+    Buffer.from('[]', 'utf8').toString('base64'),
+  ]),
+  'channel tool catalog must not be empty',
+  'channel-mcp empty catalog',
+);
+
+console.log(`dreamux built package/service/CLI/MCP smoke ok: ${version}`);

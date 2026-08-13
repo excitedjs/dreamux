@@ -12,21 +12,18 @@
  * through it (replacing the old per-tool switch block).
  */
 
-import type { DreamuxLogger } from '@excitedjs/dreamux-types';
-import { listChatBots, type PeerBot } from '../chat-bots-store.js';
+import type {
+  ChannelToolAnnotations,
+  ChannelToolDescriptor,
+  DreamuxLogger,
+} from '@excitedjs/dreamux-types';
+import type { PeerBot } from '../chat-bots-store.js';
 import type { WireChatBot } from '../feishu-channel.js';
-import { toWireChatBot } from '../feishu-channel.js';
 
 /** Logger shape used by the Feishu channel session — pino-style, fields-first. */
 export type ChannelLogger = DreamuxLogger;
 
 export type FeishuToolName = 'reply' | 'react' | 'list_chat_bots';
-
-export interface FeishuToolResultEnvelope {
-  status: 'ok' | 'not_found' | 'error';
-  message: string;
-  details?: Record<string, unknown>;
-}
 
 /**
  * Minimal context each tool handler runs against. The session adapter builds
@@ -64,13 +61,35 @@ export interface FeishuMcpListChatBotsResultInternal {
   trusted: WireChatBot[];
 }
 
+export type FeishuToolResult =
+  | { message_ids: string[] }
+  | { reaction_id: string }
+  | FeishuMcpListChatBotsResultInternal;
+
+/** @deprecated Feishu tools now return their canonical result directly. */
+export type FeishuToolResultEnvelope = FeishuToolResult;
+
 export interface FeishuToolDef<TInput = unknown> {
   name: FeishuToolName;
+  title: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  outputSchema: Record<string, unknown>;
+  annotations: ChannelToolAnnotations;
   parse(raw: unknown): TInput;
-  handle(ctx: FeishuToolContext, input: TInput): Promise<FeishuToolResultEnvelope>;
+  handle(ctx: FeishuToolContext, input: TInput): Promise<FeishuToolResult>;
 }
+
+const mutatingAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+} as const;
+
+const readOnlyAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+} as const;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Reply
@@ -89,19 +108,22 @@ const replyInputSchema = {
   properties: {
     chat_id: {
       type: 'string',
+      minLength: 1,
       description: 'Feishu chat id from the inbound <channel source="feishu"> block.',
     },
     message_id: {
       type: 'string',
+      minLength: 1,
       description: 'Optional source message id to reply under (threads the reply).',
     },
     text: {
       type: 'string',
+      minLength: 1,
       description: 'Message text to send.',
     },
     mention_user_ids: {
       type: 'array',
-      items: { type: 'string' },
+      items: { type: 'string', minLength: 1 },
       description: 'Optional Feishu user open_ids to @-mention inline in the reply.',
     },
   },
@@ -124,19 +146,27 @@ function parseReplyInput(raw: unknown): ReplyInput {
 
 const replyDef: FeishuToolDef<ReplyInput> = {
   name: 'reply',
+  title: 'Reply in Feishu',
   description: 'Send a Feishu message through this dispatcher channel.',
   inputSchema: replyInputSchema,
+  outputSchema: closedObjectSchema(
+    {
+      message_ids: {
+        type: 'array',
+        minItems: 1,
+        items: { type: 'string', minLength: 1 },
+      },
+    },
+    ['message_ids'],
+  ),
+  annotations: mutatingAnnotations,
   parse: parseReplyInput,
   async handle(ctx, input) {
     const result = await ctx.session.sendText(input.chatId, input.text, {
       messageId: input.messageId,
       mentionUserIds: input.mentionUserIds,
     });
-    return {
-      status: 'ok',
-      message: 'reply sent',
-      details: { message_ids: result.message_ids },
-    };
+    return { message_ids: result.message_ids };
   },
 };
 
@@ -156,14 +186,17 @@ const reactInputSchema = {
   properties: {
     message_id: {
       type: 'string',
+      minLength: 1,
       description: 'Feishu message id to react to.',
     },
     chat_id: {
       type: 'string',
+      minLength: 1,
       description: 'Feishu chat id from the inbound <channel source="feishu"> block.',
     },
     emoji: {
       type: 'string',
+      minLength: 1,
       description: 'Feishu reaction emoji key.',
     },
   },
@@ -182,16 +215,18 @@ function parseReactInput(raw: unknown): ReactInput {
 
 const reactDef: FeishuToolDef<ReactInput> = {
   name: 'react',
+  title: 'React in Feishu',
   description: 'Add a model-owned Feishu reaction through this dispatcher channel.',
   inputSchema: reactInputSchema,
+  outputSchema: closedObjectSchema(
+    { reaction_id: { type: 'string', minLength: 1 } },
+    ['reaction_id'],
+  ),
+  annotations: mutatingAnnotations,
   parse: parseReactInput,
   async handle(ctx, input) {
     const result = await ctx.session.react(input.chatId, input.messageId, input.emoji);
-    return {
-      status: 'ok',
-      message: 'reaction added',
-      details: { reaction_id: result.reaction_id },
-    };
+    return { reaction_id: result.reaction_id };
   },
 };
 
@@ -209,6 +244,7 @@ const listChatBotsInputSchema = {
   properties: {
     chat_id: {
       type: 'string',
+      minLength: 1,
       description: 'Feishu chat id from the inbound <channel source="feishu"> block.',
     },
   },
@@ -220,37 +256,32 @@ function parseListChatBotsInput(raw: unknown): ListChatBotsInput {
   return { chatId: requireString(obj, 'chat_id') };
 }
 
-interface ListChatBotsDetails {
-  chat_id: string;
-  known: Array<{ open_id: string; name?: string }>;
-  trusted: Array<{ open_id: string; name?: string }>;
-}
+const wireChatBotSchema = closedObjectSchema(
+  {
+    open_id: { type: 'string', minLength: 1 },
+    name: { type: 'string', minLength: 1 },
+  },
+  ['open_id'],
+);
 
 const listChatBotsDef: FeishuToolDef<ListChatBotsInput> = {
   name: 'list_chat_bots',
+  title: 'List Feishu chat bots',
   description:
     'List the peer bots known and trusted in a Feishu group chat (names + open_ids). Use to recover bot identities after a context compaction.',
   inputSchema: listChatBotsInputSchema,
+  outputSchema: closedObjectSchema(
+    {
+      chat_id: { type: 'string', minLength: 1 },
+      known: { type: 'array', items: wireChatBotSchema },
+      trusted: { type: 'array', items: wireChatBotSchema },
+    },
+    ['chat_id', 'known', 'trusted'],
+  ),
+  annotations: readOnlyAnnotations,
   parse: parseListChatBotsInput,
   async handle(ctx, input) {
-    // `listChatBots` resolves against the session state dir. The session
-    // adapter also exposes a direct method for the same projection; going
-    // through the state dir here keeps tool handlers independent of
-    // session-private caches.
-    const listing = await listChatBots(ctx.stateDir, input.chatId);
-    const details: ListChatBotsDetails = {
-      chat_id: input.chatId,
-      known: listing.known.map(toWireChatBot),
-      trusted: listing.trusted.map(toWireChatBot),
-    };
-    // Include the raw listing in the top-level `details` *and* flattened, so
-    // the envelope mirrors the legacy `{ chat_id, known, trusted }` wire shape
-    // callers already depend on.
-    return {
-      status: 'ok',
-      message: 'chat bots listed',
-      details: details as unknown as Record<string, unknown>,
-    };
+    return ctx.session.listKnownChatBots(input.chatId);
   },
 };
 
@@ -264,15 +295,30 @@ export const FEISHU_TOOLS: FeishuToolDef[] = [
   listChatBotsDef,
 ];
 
-/** Project `FEISHU_TOOLS` into the `{name, description, inputSchema}` shape `tools/list` returns. */
+/** Project `FEISHU_TOOLS` into the neutral provider descriptor shape. */
 export function buildToolCatalog(
-  defs: FeishuToolDef[] = FEISHU_TOOLS,
-): Array<{ name: string; description: string; inputSchema: Record<string, unknown> }> {
+  defs: readonly FeishuToolDef[] = FEISHU_TOOLS,
+): ChannelToolDescriptor[] {
   return defs.map((d) => ({
     name: d.name,
+    title: d.title,
     description: d.description,
     inputSchema: d.inputSchema,
+    outputSchema: d.outputSchema,
+    annotations: d.annotations,
   }));
+}
+
+function closedObjectSchema(
+  properties: Record<string, unknown>,
+  required: string[],
+): Record<string, unknown> {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties,
+    required,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────

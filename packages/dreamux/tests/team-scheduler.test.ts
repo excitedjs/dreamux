@@ -313,7 +313,16 @@ function capturingChannelCatalog(
       sessions.push(session);
       return session;
     },
-    tools: () => [{ name: 'reply' }],
+    tools: () => [
+      {
+        name: 'reply',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          additionalProperties: false,
+        },
+      },
+    ],
   };
   registry.registerImplementation(descriptor.id, provider);
   return new ChannelProviderCatalog({ registry });

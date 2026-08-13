@@ -66,14 +66,55 @@ export interface ChannelTargetLifecycleEvent {
   meta?: Record<string, unknown>;
 }
 
+/**
+ * Standard MCP tool annotations, expressed as a runtime-neutral,
+ * JSON-compatible structure. This mirrors the official MCP `ToolAnnotations`
+ * shape without importing any `@modelcontextprotocol/*` package, so external
+ * channel packages compile against `@excitedjs/dreamux-types` only. Dreamux
+ * core forwards these hints verbatim to the shared MCP server.
+ */
+export interface ChannelToolAnnotations {
+  title?: string;
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+}
+
+/** Standard MCP icon metadata without an SDK dependency at the provider seam. */
+export interface ChannelToolIcon {
+  src: string;
+  mimeType?: string;
+  sizes?: string[];
+  theme?: 'light' | 'dark';
+}
+
 export interface ChannelToolDescriptor {
   name: string;
+  /** Human-facing tool title surfaced to MCP clients. */
+  title?: string;
+  /** Optional standard presentation metadata surfaced to MCP clients. */
+  icons?: ChannelToolIcon[];
   description?: string;
   /**
-   * Intentionally unrestricted: Dreamux types must not constrain the tool
-   * schemas a provider package exposes.
+   * Closed JSON Schema object describing the tool's model-facing input. The
+   * shared channel MCP server advertises it and uses it as the single runtime
+   * validator for field shape.
+   *
+   * Intentionally typed as `unknown`: Dreamux types must not constrain the tool
+   * schemas a provider package exposes beyond "it is a JSON Schema object".
    */
-  inputSchema?: unknown;
+  inputSchema: unknown;
+  /**
+   * JSON Schema object describing the tool's canonical successful public
+   * result. Optional at this neutral seam because MCP itself permits its
+   * omission and existing external providers must remain loadable; when present
+   * the shared server advertises it and validates the returned value. Built-in
+   * Channel providers supply one for every tool.
+   */
+  outputSchema?: unknown;
+  /** Standard, conservative read-only/destructive behavior hints. */
+  annotations?: ChannelToolAnnotations;
 }
 
 export interface ChannelSender {

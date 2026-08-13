@@ -7,12 +7,12 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PassThrough } from 'node:stream';
 
 import { Server } from '../src/server.js';
 import {
   IN_PROGRESS_REACTION_EMOJI,
   RECEIVED_REACTION_EMOJI,
+  buildToolCatalog,
 } from '@excitedjs/feishu-channel';
 import { sendAdminRequest } from '../src/admin/client.js';
 import {
@@ -39,6 +39,7 @@ import { defaultDispatcherCwd, dispatcherDir } from '../src/platform/paths.js';
 import { dispatcherCodexHome } from '@excitedjs/agent-runtime-codex';
 import { startFakeCodex, type FakeCodex } from './fake-codex.js';
 import { testDispatcherConfig } from './helpers/config.js';
+import { callTool, connectMcpClient } from './helpers/mcp-client.js';
 
 class NoopCodexProcess extends CodexProcess {
   constructor(opts: CodexProcessOptions) {
@@ -51,43 +52,6 @@ class NoopCodexProcess extends CodexProcess {
 
   override async reap(): Promise<void> {
     // Nothing to reap.
-  }
-}
-
-class JsonLineReader {
-  private buffer = '';
-  private readonly waiters: Array<(value: unknown) => void> = [];
-
-  constructor(stream: PassThrough) {
-    stream.setEncoding('utf8');
-    stream.on('data', (chunk: string) => {
-      this.buffer += chunk;
-      this.drain();
-    });
-  }
-
-  next(): Promise<unknown> {
-    const line = this.shiftLine();
-    if (line !== null) return Promise.resolve(JSON.parse(line));
-    return new Promise((resolve) => {
-      this.waiters.push(resolve);
-    });
-  }
-
-  private drain(): void {
-    while (this.waiters.length > 0) {
-      const line = this.shiftLine();
-      if (line === null) return;
-      this.waiters.shift()!(JSON.parse(line));
-    }
-  }
-
-  private shiftLine(): string | null {
-    const idx = this.buffer.indexOf('\n');
-    if (idx === -1) return null;
-    const line = this.buffer.slice(0, idx);
-    this.buffer = this.buffer.slice(idx + 1);
-    return line;
   }
 }
 
@@ -180,44 +144,28 @@ function captureCodexInputs(inputs: string[]): (input: string) => string {
 
 async function callFeishuMcpTool(
   runtimeDir: string,
-  params: Record<string, unknown>,
+  params: { name: string; arguments: Record<string, unknown> },
 ): Promise<Record<string, unknown>> {
-  const input = new PassThrough();
-  const output = new PassThrough();
-  const reader = new JsonLineReader(output);
-  const run = runChannelMcp({
-    dispatcherId: 'flow',
-    adminSocketPath: join(runtimeDir, 'admin.sock'),
-    input,
-    output,
-    log: () => {},
-  });
-
-  writeJson(input, {
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'initialize',
-    params: { protocolVersion: '2025-06-18' },
-  });
-  expect(await reader.next()).toMatchObject({
-    id: 1,
-    result: { protocolVersion: '2025-06-18' },
-  });
-
-  writeJson(input, {
-    jsonrpc: '2.0',
-    id: 2,
-    method: 'tools/call',
-    params,
-  });
-  const response = await reader.next() as Record<string, unknown>;
-  input.end();
-  await run;
-  return response;
-}
-
-function writeJson(input: PassThrough, value: unknown): void {
-  input.write(`${JSON.stringify(value)}\n`);
+  const mcp = await connectMcpClient(
+    (transport) =>
+      runChannelMcp({
+        dispatcherId: 'flow',
+        adminSocketPath: join(runtimeDir, 'admin.sock'),
+        tools: buildToolCatalog(),
+        transport,
+        log: () => {},
+      }),
+    '2025-06-18',
+  );
+  try {
+    return await callTool(
+      mcp.client,
+      params.name,
+      params.arguments,
+    ) as Record<string, unknown>;
+  } finally {
+    await mcp.close();
+  }
 }
 
 async function waitFor(
@@ -328,11 +276,7 @@ describe('dreamux cross-module e2e', () => {
     });
 
     expect(response).toMatchObject({
-      jsonrpc: '2.0',
-      id: 2,
-      result: {
-        structuredContent: { message_ids: ['message-fake-1'] },
-      },
+      structuredContent: { message_ids: ['message-fake-1'] },
     });
     expect(bot.sentMessages).toEqual([
       {
@@ -385,9 +329,7 @@ describe('dreamux cross-module e2e', () => {
     });
 
     expect(response).toMatchObject({
-      result: {
-        structuredContent: { message_ids: ['message-fake-1'] },
-      },
+      structuredContent: { message_ids: ['message-fake-1'] },
     });
     expect(bot.sentMessages).toHaveLength(1);
     expect(bot.removedReactions).toEqual([

@@ -143,8 +143,6 @@ describe('built-in Feishu channel', () => {
     );
 
     expect(result).toEqual({
-      status: 'ok',
-      message: 'reply sent',
       message_ids: ['message-fake-1'],
     });
     expect(bot.sentMessages).toHaveLength(1);
@@ -164,8 +162,6 @@ describe('built-in Feishu channel', () => {
     );
 
     expect(result).toEqual({
-      status: 'ok',
-      message: 'reaction added',
       reaction_id: 'reaction-fake-1',
     });
     expect(bot.reactions).toEqual([

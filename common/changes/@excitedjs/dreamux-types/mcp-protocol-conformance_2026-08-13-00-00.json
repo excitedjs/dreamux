@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux-types",
+      "comment": "BREAKING: Expand ChannelToolDescriptor with standard MCP title, icon, annotation, and output-schema metadata, and require every provider tool to declare an inputSchema. Existing external Channel providers must add an input schema to each published tool descriptor.",
+      "type": "major"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types"
+}

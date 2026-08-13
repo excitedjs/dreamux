@@ -146,7 +146,7 @@ describe('ChannelService Feishu topic authorization', () => {
           teamId: owner.teamName,
           leaderName: owner.leaderName,
         },
-      })).resolves.toMatchObject({ status: 'ok' });
+      })).resolves.toEqual({ message_ids: ['message-fake-1'] });
       expect(bot.sentMessages).toMatchObject([
         {
           chatId: 'chat-topic',
@@ -251,7 +251,7 @@ describe('ChannelService Feishu topic authorization', () => {
         target: groupTarget,
       });
 
-      for (const messageId of ['msg-topic-a', 'msg-topic-b']) {
+      for (const [index, messageId] of ['msg-topic-a', 'msg-topic-b'].entries()) {
         await expect(invokeDispatcherChannelTool({
           channels: service,
           name: 'reply',
@@ -265,7 +265,7 @@ describe('ChannelService Feishu topic authorization', () => {
             teamId: owner.teamName,
             leaderName: owner.leaderName,
           },
-        })).resolves.toMatchObject({ status: 'ok' });
+        })).resolves.toEqual({ message_ids: [`message-fake-${index + 1}`] });
       }
       expect(bot.sentMessages.map((message) => message.target)).toMatchObject([
         { chatId: 'chat-topic', replyToMessageId: 'msg-topic-a' },

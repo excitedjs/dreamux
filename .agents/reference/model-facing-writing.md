@@ -149,6 +149,23 @@ dispatcher routing or imply message delivery.
 Structured result names are also model-facing. If a field names a provider shape
 or an old concept, fix the projection rather than documenting around it.
 
+Every Dreamux-owned tool keeps its canonical successful-result projector beside
+its output schema. Successful objects appear unchanged in `structuredContent`
+and as `JSON.stringify` in the first text block. Keep top-level output objects
+closed unless a named JSON-valued extension field is intentionally open. Do not
+return generic forwarding acknowledgements, nest JSON strings inside structured
+content, or copy prompt guidance into result fields.
+
+Known-tool input-schema failures are normal MCP tool results with `isError`.
+Unknown tools and malformed protocol requests are SDK-owned protocol errors.
+Domain adapters may surface only their explicit safe admin-method/error-code
+allowlists; other admin and provider failures use the fixed sanitized tool
+error while full detail stays in out-of-band logs.
+
+The general no-polling and completion-delivery rule belongs in Dispatcher and
+TeamLeader role prompts. Tool descriptions state the actual acceptance or
+completion point, and tool results contain business data only.
+
 ## Tests
 
 Tests should protect contracts, not prose preferences. Prefer:

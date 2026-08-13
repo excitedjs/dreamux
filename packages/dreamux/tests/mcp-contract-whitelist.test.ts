@@ -1,11 +1,11 @@
-import { PassThrough } from 'node:stream';
-
 import { describe, expect, it } from 'vitest';
+import type { Transport } from '@modelcontextprotocol/server';
 
 import { collaborationSpaceTools } from '../src/mcp/collaboration-space-mcp.js';
 import { cronTools } from '../src/mcp/cron-mcp.js';
 import { runTeamMateMcp } from '../src/mcp/teammate-mcp.js';
 import { runTeamMcp } from '../src/mcp/team-mcp.js';
+import { connectMcpClient, listedTools } from './helpers/mcp-client.js';
 
 // Issue #199 Slice 1 — public MCP contract/schema closeout. These are the
 // authoritative whitelists for the trimmed teammate.* / team.* tool input
@@ -17,108 +17,55 @@ interface ToolSchema {
   properties: Record<string, unknown>;
 }
 
-class JsonLineReader {
-  private buffer = '';
-  private waiters: Array<(value: unknown) => void> = [];
-
-  constructor(stream: PassThrough) {
-    stream.setEncoding('utf8');
-    stream.on('data', (chunk: string) => {
-      this.buffer += chunk;
-      this.drain();
-    });
-  }
-
-  next(): Promise<unknown> {
-    const line = this.shiftLine();
-    if (line !== null) return Promise.resolve(JSON.parse(line));
-    return new Promise((resolve) => this.waiters.push(resolve));
-  }
-
-  private drain(): void {
-    while (this.waiters.length > 0) {
-      const line = this.shiftLine();
-      if (line === null) return;
-      this.waiters.shift()!(JSON.parse(line));
-    }
-  }
-
-  private shiftLine(): string | null {
-    const idx = this.buffer.indexOf('\n');
-    if (idx === -1) return null;
-    const line = this.buffer.slice(0, idx);
-    this.buffer = this.buffer.slice(idx + 1);
-    return line;
+async function listToolsFrom(
+  runServer: (transport: Transport) => Promise<void>,
+): Promise<Array<Record<string, unknown>>> {
+  const mcp = await connectMcpClient(runServer);
+  try {
+    return (await listedTools(mcp.client)) as unknown as Array<Record<string, unknown>>;
+  } finally {
+    await mcp.close();
   }
 }
 
 async function teammateTools(
   callerKind: 'dispatcher' | 'team_leader',
 ): Promise<Array<Record<string, unknown>>> {
-  const input = new PassThrough();
-  const output = new PassThrough();
-  const reader = new JsonLineReader(output);
-  const run = runTeamMateMcp({
-    dispatcherId: 'dispatcher-a',
-    callerKind,
-    ...(callerKind === 'team_leader'
-      ? { teamId: 'alpha', leaderName: 'alpha-leader' }
-      : {}),
-    adminSocketPath: '/tmp/not-used.sock',
-    input,
-    output,
-    log: () => {},
-  });
-  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })}\n`);
-  const response = (await reader.next()) as {
-    result: { tools: Array<Record<string, unknown>> };
-  };
-  input.end();
-  await run;
-  return response.result.tools;
+  return listToolsFrom((transport) =>
+    runTeamMateMcp({
+      dispatcherId: 'dispatcher-a',
+      callerKind,
+      ...(callerKind === 'team_leader' ? { teamId: 'alpha' } : {}),
+      adminSocketPath: '/tmp/not-used.sock',
+      transport,
+      log: () => {},
+    }),
+  );
 }
 
 async function teamTools(): Promise<Array<Record<string, unknown>>> {
-  const input = new PassThrough();
-  const output = new PassThrough();
-  const reader = new JsonLineReader(output);
-  const run = runTeamMcp({
-    dispatcherId: 'dispatcher-a',
-    adminSocketPath: '/tmp/not-used.sock',
-    input,
-    output,
-    log: () => {},
-  });
-  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })}\n`);
-  const response = (await reader.next()) as {
-    result: { tools: Array<Record<string, unknown>> };
-  };
-  input.end();
-  await run;
-  return response.result.tools;
+  return listToolsFrom((transport) =>
+    runTeamMcp({
+      dispatcherId: 'dispatcher-a',
+      adminSocketPath: '/tmp/not-used.sock',
+      transport,
+      log: () => {},
+    }),
+  );
 }
 
 async function teamLeaderTeamTools(): Promise<Array<Record<string, unknown>>> {
-  const input = new PassThrough();
-  const output = new PassThrough();
-  const reader = new JsonLineReader(output);
-  const run = runTeamMcp({
-    dispatcherId: 'dispatcher-a',
-    callerKind: 'team_leader',
-    teamId: 'alpha',
-    leaderName: 'alpha-leader',
-    adminSocketPath: '/tmp/not-used.sock',
-    input,
-    output,
-    log: () => {},
-  });
-  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })}\n`);
-  const response = (await reader.next()) as {
-    result: { tools: Array<Record<string, unknown>> };
-  };
-  input.end();
-  await run;
-  return response.result.tools;
+  return listToolsFrom((transport) =>
+    runTeamMcp({
+      dispatcherId: 'dispatcher-a',
+      callerKind: 'team_leader',
+      teamId: 'alpha',
+      leaderName: 'alpha-leader',
+      adminSocketPath: '/tmp/not-used.sock',
+      transport,
+      log: () => {},
+    }),
+  );
 }
 
 function schemaOf(tools: Array<Record<string, unknown>>, name: string): ToolSchema {

@@ -259,9 +259,11 @@ Key source:
 
 `~/.dreamux/logs/` is server-owned log output, split by component. Codex
 app-server logs use `~/.dreamux/logs/codex-app-server/<dispatcher>.log`; Dynamic
-Workflow lifecycle logs use `~/.dreamux/logs/workflow/<dispatcher>.log`; MCP
-shim diagnostics use component directories such as `channel-mcp/`, `team-mcp/`,
-and `teammate-mcp/`.
+Workflow lifecycle logs use `~/.dreamux/logs/workflow/<dispatcher>.log`; scoped
+MCP process diagnostics use component directories such as `channel-mcp/`,
+`team-mcp/`, and `teammate-mcp/`. MCP stdout is reserved for official stdio
+protocol frames. Transport, schema, handler, and shutdown diagnostics go only
+to those component loggers or stderr and are not persisted as MCP state.
 
 Key source:
 

@@ -17,6 +17,7 @@ import { execFile } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import {
@@ -62,6 +63,55 @@ async function claudeOnPath(): Promise<boolean> {
     return false;
   }
 }
+
+describe('claude-code live MCP handshake', () => {
+  it('health-checks the built Dreamux server when Claude Code is installed', async () => {
+    if (!(await claudeOnPath())) {
+      console.warn(
+        '[claude-code-live] MCP handshake gate skipped because claude is not on PATH.',
+      );
+      return;
+    }
+
+    const root = mkdtempSync(join(tmpdir(), 'dreamux-cc-mcp-live-'));
+    const bin = fileURLToPath(new URL('../bin/dreamux', import.meta.url));
+    const env = {
+      ...process.env,
+      HOME: root,
+      DREAMUX_NODE_BIN: process.execPath,
+    };
+    try {
+      await execFileAsync(
+        'claude',
+        [
+          'mcp',
+          'add',
+          '--scope',
+          'local',
+          'dreamux_probe',
+          '--',
+          bin,
+          'collaboration-space-mcp',
+          '--dispatcher',
+          'live',
+          '--admin-socket',
+          join(root, 'unused-admin.sock'),
+        ],
+        { cwd: root, env, timeout: 30_000 },
+      );
+      const { stdout, stderr } = await execFileAsync('claude', ['mcp', 'list'], {
+        cwd: root,
+        env,
+        timeout: 30_000,
+      });
+      const output = `${stdout}${stderr}`;
+      expect(output).toContain('dreamux_probe');
+      expect(output).toMatch(/Connected/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
 
 describe('claude-code live integration (opt-in)', () => {
   const runRequested = process.env[RUN_ENV] === '1';

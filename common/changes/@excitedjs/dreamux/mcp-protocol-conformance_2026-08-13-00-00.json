@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "BREAKING: Serve the channel, Team, TeamMate, cron, and collaboration-space MCP entries through the official SDK at protocol revisions 2026-07-28, 2025-11-25, and 2025-06-18. Tool discovery now includes canonical metadata and schemas, successful calls return matching structured JSON and JSON text, older legacy offers are counter-offered with a supported revision, and unsupported modern revisions are rejected.",
+      "type": "major"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

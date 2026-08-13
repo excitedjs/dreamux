@@ -46,12 +46,19 @@ verbatim through the move):
 | `src/agent-runtime/` | Generic AgentRuntime provider catalog/loader, host create-context seams, and bundled skill source selection |
 | `src/config/` | Operator config loading, provider ref validation, and provider-owned raw config parsing |
 | `src/service/` | Dispatcher lifecycle, Team/TeamMate and Dynamic Workflow collections + services, Team binding/routing, and runtime/channel session orchestration |
-| `src/mcp/` | Dreamux-owned MCP shims: Team, TeamMate, and provider-tool channel shim |
+| `src/mcp/` | Official-SDK-backed shared stdio server and tool-catalog helpers plus scoped Team, TeamMate, cron, collaboration-space, and provider-tool Channel adapters |
 | `src/platform/` | Centralized paths, logging, runtime sockets, and process helpers |
 | `src/server.ts` | Top-level `Server` class wiring everything together |
 | `bin/dreamux` | Public CLI launcher (`dreamux serve`, `dreamux dispatcher ...`) |
 | `skills/` | Bundled Dreamux role and shared skills injected into Dispatcher/TeamLeader runtimes as `skillSources` (Codex `skills/extraRoots/set`, Claude Code `--add-dir`) — never symlinked into the workspace |
 | `tests/` | vitest: smoke, bin-launcher, dispatcher Codex home doctor, codex live integration |
+
+`/packages/dreamux/src/mcp/server.ts` is the sole MCP transport, negotiation,
+registration, protocol-error, and result-framing owner. Domain adapters build
+caller-bound definitions with `/packages/dreamux/src/mcp/tool-catalog.ts`; they
+do not parse JSON-RPC or construct wire envelopes. The source tree contains no
+MCP task-dispatch reminder module because role guidance is prompt-owned rather
+than result data.
 
 ## Installation — the rush path only
 
