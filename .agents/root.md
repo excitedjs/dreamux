@@ -176,6 +176,12 @@ history and rationale; when you need current behavior, pair them with
   no executable backstop; the ownership map lives outside the queryable KB; review
   bypassed at land-first merges) plus a prioritized, mostly-executable improvement
   backlog (topology map + ownership/boundary fitness functions + process gates).
+- [Workflow stop blocks until durable terminal state and full owned release](proposals/workflow-stop-semantics.md)
+  — design for making `workflow_stop` await one convergence sequence (release
+  owned runtimes, backstop unfinished calls, drain agent tasks) so every finalize
+  path — interactive stop, natural completion, runner crash, shutdown — reaches a
+  durable terminal state with owned processes killed, plus a pre-registration
+  release fence and release single-flight in the teammate collection.
 
 Move an active proposal out of `proposals/` once it is implemented,
 superseded, or abandoned; preserve the old text under `archive/` when the
