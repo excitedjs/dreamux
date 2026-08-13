@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-08-13
 - **Affects:** `.agents/tasks/dreamux`, `.agents/skills/dev-workflow`
-- **PR / Issue:** Pending
+- **PR / Issue:** [PR #332](https://github.com/excitedjs/dreamux/pull/332)
 
 ## Context
 
