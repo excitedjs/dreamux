@@ -1,8 +1,7 @@
 # Final Team Dissolution
 
-Enter this stage only when the linked PR confirms the code is merged into `next`, the
-task record is durable, and no review finding, blocker, or operator decision remains
-open. Do not require a post-merge task write.
+Enter this stage only when code is confirmed merged into `next`, the task record is
+durable, and no review finding, blocker, or operator decision remains open.
 
 Ask the operator through the current visible user channel whether to dissolve the
 Team. This is a required explicit choice at the end of every completed workflow;

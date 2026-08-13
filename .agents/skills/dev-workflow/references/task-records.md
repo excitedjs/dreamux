@@ -35,16 +35,6 @@ Historical tasks may retain their old shape. Do not migrate them merely to match
 this layout. On reuse, identify and link the artifacts that are authoritative for
 the new slice, and make the README the sole current state.
 
-For an active security embargo, never pass a confidential report, private URL, or
-restricted vulnerability detail to the initializer or a repository task file. When
-a neutral public record is safe, keep provider-neutral requirement and solution
-summaries, workflow state, approval boundary, blockers, next action, and `Solution
-review Issue: Deferred; security embargo; private reference withheld.` Keep
-restricted evidence, reproduction, affected-scope, and remediation details on the
-approved private surface. If truthful non-disclosing current fields cannot be
-maintained, stop before development. After disclosure is explicitly cleared,
-reconcile only sanitized facts and never copy restricted details wholesale.
-
 ## Maintain the README
 
 Keep these fields current and concise:
@@ -52,7 +42,7 @@ Keep these fields current and concise:
 - goal;
 - finite workflow state;
 - requirement and final-solution links;
-- public GitHub solution-review Issue link or embargo-deferred status;
+- public GitHub solution-review Issue link;
 - development approval source, time, and approved boundary;
 - blockers and next action;
 - lineage and related-task links;

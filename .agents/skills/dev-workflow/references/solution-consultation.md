@@ -118,30 +118,18 @@ compatibility, or risk trade-off remains, present the operator with the options,
 consequences, and TeamLeader recommendation. Record the operator's decision in the
 task, then reconcile the final solution.
 
-Under a security embargo, keep restricted evidence, reproduction, affected-scope,
-and remediation details only on the operator-confirmed private review surface. The
-task README, requirement, proposals, reviews, final solution, and approval remain
-their normal authorities but must be truthful and non-disclosing; if they cannot be,
-stop before development. Preserve the selected consultation path and
-independent-review bar only when every participant can access the private details
-safely; otherwise stop and ask. Do not create or update a public Issue while the
-embargo is active, and record no private URL, identifier, provider, reporter, or
-transport metadata in public artifacts. After the operator explicitly lifts the
-embargo, reconcile only public-safe durable facts; never backfill restricted details.
+Write or update the single authoritative local solution at
+`technical-design/final.md` and link it from the task README. Then have the
+TeamLeader create or update one public GitHub Issue whose body presents that final
+solution for operator review, and record its URL in the task README. The local
+final file is the durable solution; the GitHub Issue is the operator review surface
+and never a second task-state authority.
 
-Write or update the single authoritative, public-safe local solution at
-`technical-design/final.md` and link it from the task README. For an ordinary task,
-then have the TeamLeader create or update one public GitHub Issue whose body presents
-that final solution for operator review, and record its URL in the task README. The
-local final file is the durable solution; the GitHub Issue is the operator review
-surface and never a second task-state authority.
+Keep the Issue title and body public-safe and self-contained. Do not expose private
+transport metadata, internal URLs, internal repository names, or private source
+artifacts. Solution TeamMates never mutate GitHub.
 
-Keep every public Issue title and body public-safe and self-contained. Do not expose
-private transport metadata, internal URLs, internal repository names, or private
-source artifacts. Solution TeamMates never mutate GitHub.
-
-Apply operator feedback to the current authoritative final first, then update the
-same approved review surface.
+Apply operator feedback to the local final first, then update the same GitHub Issue.
 If the operator rejects or materially changes the architecture, ownership, public
 contract, or core data flow, use the complex three-proposal path again. Reattach the
 same three TeamMates: reviewers from a simple path now each produce an independent
