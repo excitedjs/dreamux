@@ -34,10 +34,11 @@ shape first; the script structure follows from it.
   user-first), score them with parallel judges against explicit criteria,
   synthesize from the winner while grafting the runners-up's best ideas. Use
   when the solution space is wide and one-attempt-iterated would anchor early.
-- **Review** — dimensions → find → adversarially verify. The complete recipe
-  lives in [code-review.md](code-review.md); the shape generalizes to any
-  audit: independent finder lenses, confidence-gated verification, one
-  severity-ordered report.
+- **Review** — scope → angle-partitioned find → verify per location. The
+  complete recipe lives in [code-review.md](code-review.md); the shape
+  generalizes to any audit: one finder per correctness angle plus a single
+  merged cleanup finder, recall-biased finding, a three-state verdict per
+  source location, a bounded gap sweep, and synthesis that decides by index.
 - **Research** — multi-modal sweep → deep-read → verify → synthesize: search
   agents per angle, URL dedup at a justified barrier, per-source claim
   extraction, adversarial claim verification, one cited report with honest
@@ -59,8 +60,8 @@ before the task. When the work-list is unknown ("migrate every call site",
   as `args`;
 - scouting that itself needs an agent (resolving a fuzzy range, inventorying
   a subsystem) belongs as the script's first stage, awaited bare so an
-  unresolvable work-list fails the run before any fan-out — the resolve stage
-  in [code-review.md](code-review.md)'s range mode is this technique.
+  unresolvable work-list fails the run before any fan-out — the scope stage
+  in [code-review.md](code-review.md) is this technique.
 
 Never fan out against a guess: every downstream prompt should receive the
 resolved work-list, not the fuzzy description.
@@ -160,8 +161,9 @@ shapes when the task calls for it:
 - **self-repair loop** — generate → check → feed the checker's findings back
   to a fixer → re-check, bounded by attempts, with every iteration logged;
 - **staged escalation** — a cheap pass filters the easy majority, and only
-  survivors reach the expensive treatment (the confidence-gated verify stage
-  in [code-review.md](code-review.md) is this shape);
+  survivors reach the expensive treatment (recall-biased finders feeding the
+  three-state verify stage in [code-review.md](code-review.md) are this
+  shape);
 - **completeness critic** — after synthesis, one agent asks "what is missing —
   an angle never searched, a claim left unverified, a source unread?" What it
   surfaces becomes the next round's work or is reported as a known gap. Pair it

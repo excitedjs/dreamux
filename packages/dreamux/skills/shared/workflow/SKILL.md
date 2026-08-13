@@ -159,6 +159,6 @@ unavailable so orchestration stays deterministic.
 
 | Task | Load when | Reference |
 | --- | --- | --- |
-| Code review run | Carrying a change review (pull/merge request, git range, or working-tree diff) as one workflow run: eligibility gate, multi-lens finders, confidence-scored verification, one synthesized report. | [Code review](references/code-review.md) |
+| Code review run | Carrying a change review (pull/merge request, git range, or working-tree diff) as one workflow run: a schema'd scope stage, angle-partitioned finders with one merged cleanup finder, three-state verification per source location, one synthesized report. | [Code review](references/code-review.md) |
 | Orchestration and prompt patterns | Writing TeamMate prompts inside scripts, choosing `pipeline` versus `parallel`, and applying quality patterns: adversarial verify, judge panel, loop-until-dry, multi-modal sweep, completeness critic. | [Orchestration patterns](references/orchestration-patterns.md) |
 | Ultracode orchestration techniques | Shaping a whole task as workflows: the five archetypes (understand/design/review/research/migrate), scouting before fan-out, chaining runs with the TeamLeader in the loop, worked compositions, novel harness shapes. | [Ultracode techniques](references/ultracode.md) |
