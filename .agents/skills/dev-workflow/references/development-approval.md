@@ -37,10 +37,18 @@ with at least:
 - a public-safe, provider-neutral approval source description and time;
 - `Next action: Enter development`.
 
-Treat the task README as the visible current-state authority. A deeper progress log
-may retain chronology but must not become a conflicting state source. Never record
-a private message URL, channel name, channel identifier, or other transport
-metadata in the repository.
+Treat the task README as the visible current-state authority. During a security
+embargo, it still owns the non-disclosing state, approval time, provider-neutral
+boundary summary, blockers, and next action; keep restricted approval evidence and
+details only on the approved private surface. If truthful sanitized requirement,
+solution, scope, and approval fields cannot be maintained, block development. A
+deeper progress log may retain chronology but must not become a conflicting state
+source. Never record a private message URL, channel name, channel identifier, or
+other transport metadata in the repository.
+
+Confirmation of that private surface, development approval, lifting the embargo,
+and authorization to publish or merge are separate decisions. Development approval
+does not authorize disclosure or publication.
 
 Bind approval to the recorded requirement, solution, and implementation scope, not
 to the task forever. Preserve it across context compression or handoff when those
@@ -56,7 +64,9 @@ merge requires a new clarification and approval cycle.
 ## Enforce the pre-approval write boundary
 
 Before valid recorded approval, allow writes only to the confirmed task directory
-and its public GitHub solution-review Issue. Prohibit changes to product code,
-tests, configuration, scripts, migrations, generated files, and other
-implementation artifacts. Prohibit implementation TeamMates and temporary
-diagnostic code.
+and approved solution-review surface. Under embargo, repository writes must remain
+sanitized and restricted details stay on the private surface; otherwise the review
+surface is the task's public GitHub solution-review Issue.
+Prohibit changes to product code, tests, configuration, scripts, migrations,
+generated files, and other implementation artifacts. Prohibit implementation
+TeamMates and temporary diagnostic code.

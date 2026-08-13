@@ -6,14 +6,21 @@ in this stage.
 
 ## Reconcile the task with reality
 
-Read the final requirement, approved solution, complete workspace change, current
-owning code, tests, and TeamLeader verification results. Then:
+Read the public-safe final requirement, approved solution, complete workspace change,
+current owning code, tests, and TeamLeader verification results. Then:
 
 - set the task README state to `knowledge-closeout`;
 - correct stale requirement or solution facts without rewriting historical intent;
 - update `verification.md` with TeamLeader pre-review, independent-review findings
   and adjudication, commands and results, skipped coverage, and residual risk;
 - verify the approval boundary still covers the actual implementation.
+
+For an active security embargo, reconcile restricted evidence and details on the
+approved private surface while the task README remains the sole workflow-state
+authority. Repository task and knowledge writes may contain only sanitized,
+non-disclosing facts; stop before development if their required current facts cannot
+be stated safely. Do not prepare a public branch or PR until the operator explicitly
+approves a sanitized disclosure boundary.
 
 If the implementation materially changes the requirement, architecture, public
 contract, or approved scope, stop closeout and return to the earliest affected
@@ -70,5 +77,8 @@ knowledge or task script. Check that links and cited paths resolve against the
 current repository; the general knowledge checker does not replace the task check.
 
 When closeout passes, record the knowledge links or justified `N/A` results in the
-task README, set `State: pr`, and include all task and knowledge changes in the
-intended PR head.
+task README, keep `State: knowledge-closeout`, and include all task and knowledge
+changes in the preliminary PR head. The PR gate adds the public PR handoff and sets
+`State: pr` before selecting the exact candidate head. Do not make a later task write
+solely to mirror delivery facts. A substantive correction or reopened requirement
+returns to the affected workflow stage and produces a newly gated head.

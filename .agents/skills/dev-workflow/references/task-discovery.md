@@ -18,6 +18,14 @@ If one candidate matches, ask whether it is the task to continue. If several mat
 summarize the meaningful differences and ask the operator to choose. If none match,
 ask whether to create a new task. Do not create or select a task implicitly.
 
+Before creating or updating any public task, check whether the request may describe
+an undisclosed vulnerability, exploit detail, or other operator-marked embargoed
+information. If so, apply the security-embargo override in the parent skill: do not
+pass restricted details to the public initializer. Create a neutral repository task
+only when its title, goal, and index entry are non-disclosing; otherwise defer it and
+use only the operator-approved private surface until a sanitized disclosure boundary
+is explicitly approved.
+
 After the operator confirms a new task, have the TeamLeader run:
 
 ```bash
@@ -78,8 +86,9 @@ prior task's entire history.
 
 Make the task README the stable entry point and sole current-state authority. Keep
 its goal, current state, current requirement link, current solution link, next
-action, related-task links, and public solution-review Issue link current.
+action, related-task links, and approved solution-review surface current.
 
-When creating, renaming, reopening, relating, or completing a task, update its task
-README and every parent README index needed to discover it. README-first discovery
-is reliable only when index maintenance is part of the same change.
+When creating, renaming, reopening, relating, or recording the PR handoff for a task,
+update its task README and every parent README index needed to discover it. Do not
+create a post-gate or post-merge task or index write solely to mirror GitHub delivery
+facts.
