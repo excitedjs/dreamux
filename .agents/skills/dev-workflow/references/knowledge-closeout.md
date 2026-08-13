@@ -65,9 +65,9 @@ python3 .agents/skills/dev-workflow/scripts/init_task.py check \
 git diff --check
 ```
 
-Also run the validator for any changed skill and the focused test for any changed
-knowledge or task script. Check that links and cited paths resolve against the
-current repository; the general knowledge checker does not replace the task check.
+Also run the focused test for any changed knowledge or task script. Check that
+links and cited paths resolve against the current repository; the general
+knowledge checker does not replace the task check.
 
 When closeout passes, record the knowledge links or justified `N/A` results in the
 task README, set `State: done`, and include all task and knowledge changes in the

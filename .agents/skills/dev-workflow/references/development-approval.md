@@ -55,8 +55,9 @@ merge requires a new clarification and approval cycle.
 
 ## Enforce the pre-approval write boundary
 
-Before valid recorded approval, allow writes only to the confirmed task directory
-and its public GitHub solution-review Issue. Prohibit changes to product code,
+Before valid recorded approval, allow writes only to the confirmed task directory,
+the parent task README indexes required to discover it, and its public GitHub
+solution-review Issue. Prohibit changes to product code,
 tests, configuration, scripts, migrations, generated files, and other
 implementation artifacts. Prohibit implementation TeamMates and temporary
 diagnostic code.

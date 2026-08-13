@@ -24,7 +24,8 @@ files, or other implementation artifacts before the operator explicitly approves
 development against the final recorded requirement and technical solution.
 
 Before approval, allow only read-only investigation plus writes to the confirmed
-task directory and its public GitHub solution-review Issue. Do not create a code
+task directory, the parent task README indexes required to discover it, and its
+public GitHub solution-review Issue. Do not create a code
 prototype or add temporary diagnostic code. An initial request such as "fix X" or
 "implement Y" never grants development approval.
 
