@@ -150,11 +150,13 @@ class ObservableTransport implements Transport {
 
   private closed = false;
   private resolveClosed!: () => void;
+  private rejectClosed!: (error: Error) => void;
   readonly whenClosed: Promise<void>;
 
   constructor(private readonly inner: Transport) {
-    this.whenClosed = new Promise((resolve) => {
+    this.whenClosed = new Promise((resolve, reject) => {
       this.resolveClosed = resolve;
+      this.rejectClosed = reject;
     });
     this.inner.onmessage = (message, extra) => this.onmessage?.(message, extra);
     this.inner.onerror = (error) => this.onerror?.(error);
@@ -173,7 +175,12 @@ class ObservableTransport implements Transport {
   }
 
   async start(): Promise<void> {
-    await this.inner.start();
+    try {
+      await this.inner.start();
+    } catch (error) {
+      this.fail(error);
+      throw error;
+    }
   }
 
   async send(
@@ -203,6 +210,12 @@ class ObservableTransport implements Transport {
     if (this.closed) return;
     this.closed = true;
     this.resolveClosed();
+  }
+
+  private fail(error: unknown): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.rejectClosed(error instanceof Error ? error : new Error(String(error)));
   }
 }
 

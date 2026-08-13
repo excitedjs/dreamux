@@ -7,6 +7,7 @@ import {
   UnsupportedProtocolVersionError,
   type JSONRPCMessage,
 } from '@modelcontextprotocol/client';
+import type { Transport } from '@modelcontextprotocol/server';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -289,5 +290,27 @@ describe('shared MCP protocol conformance', () => {
     await run;
 
     expect(Buffer.concat(stdout).toString('utf8')).toBe('');
+  });
+
+  it('rejects deterministically when an injected transport fails to start', async () => {
+    const startupError = new Error('injected transport start failed');
+    const transport: Transport = {
+      async start(): Promise<void> {
+        throw startupError;
+      },
+      async send(): Promise<void> {},
+      async close(): Promise<void> {},
+    };
+    const logs: string[] = [];
+
+    await expect(
+      runMcpServer({
+        identity: { name: 'dreamux-start-failure-test', version: '1.0.0' },
+        tools: [ECHO_TOOL],
+        transport,
+        log: (message) => logs.push(message),
+      }),
+    ).rejects.toBe(startupError);
+    expect(logs.join('\n')).toContain('injected transport start failed');
   });
 });
