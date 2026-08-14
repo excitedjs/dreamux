@@ -76,10 +76,10 @@ prototype or add temporary diagnostic code. An initial request such as "fix X" o
 
 6. **Run independent implementation review.** For the approved one-file fast path,
    start one separate read-only TeamMate for one review turn and skip the workflow.
-   For every other path, run three independent perspectives over the current
-   workspace using the [default reviewer identities](references/reviewer-identities.md),
-   then verify each finding through category-weighted votes. Preserve missing
-   coverage and have the TeamLeader adjudicate either result. Follow
+   For every other path, run the shared `workflow` skill's code-review method as one
+   `workflow_run`, tuned by exactly two Dreamux deltas: the approved requirement and
+   technical solution travel with the review scope, and one added finder checks the
+   implementation against them. Have the TeamLeader adjudicate either result. Follow
    [implementation-review.md](references/implementation-review.md).
 
 7. **Close task and repository knowledge.** After accepted review findings and
