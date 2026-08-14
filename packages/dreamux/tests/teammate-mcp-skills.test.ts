@@ -40,7 +40,6 @@ const CRON_MCP_TOOLS = [
   'cron_list',
   'cron_update',
   'cron_delete',
-  'cron_run_now',
 ];
 
 const SKILL_ROOT_BY_NAME = {
@@ -139,6 +138,7 @@ describe('role-specific bundled Dreamux skills', () => {
     for (const tool of TEAMMATE_MCP_TOOLS) expect(skill).toContain(tool);
     for (const tool of DISPATCHER_TEAM_MCP_TOOLS) expect(skill).toContain(tool);
     for (const tool of CRON_MCP_TOOLS) expect(skill).toContain(tool);
+    expect(skill).not.toContain('cron_run_now');
 
     expect(skill).not.toContain('Use this skill only from');
     expect(skill).not.toContain('legacy TeamMate CLI fallback');
@@ -175,6 +175,7 @@ describe('role-specific bundled Dreamux skills', () => {
     expect(skill).toMatch(/not channel delivery/i);
     for (const tool of TEAMMATE_MCP_TOOLS) expect(skill).toContain(tool);
     for (const tool of CRON_MCP_TOOLS) expect(skill).toContain(tool);
+    expect(skill).not.toContain('cron_run_now');
     expect(skill).toContain('bind_channel');
     expect(skill).toContain('transfer_back');
     expect(skill).toMatch(/unowned channel target/);

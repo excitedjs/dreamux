@@ -72,11 +72,11 @@ description: MCP operation notes for Team work. Load before using this Team's Te
 
 ## Cron Notes
 
-- `cron_create`, `cron_list`, `cron_update`, `cron_delete`, and `cron_run_now`
-  operate on durable jobs for this TeamLeader.
+- `cron_create`, `cron_list`, `cron_update`, and `cron_delete` operate on durable
+  jobs for this TeamLeader.
 - Cron prompts wake this TeamLeader. They do not create TeamMates and do not
   deliver visible channel messages by themselves.
 - Prefer explicit titles and time zones. Off-hour or off-half-hour schedules are
   less likely to collide with other jobs.
-- `cron_run_now` fires one stored job once now, still respecting defer-until-idle;
-  treat it as an explicit execution of that job prompt.
+- Jobs fire on their configured schedules. Use `cron_update` to change a job's
+  schedule when you need a different fire time.

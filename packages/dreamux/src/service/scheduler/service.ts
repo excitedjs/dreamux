@@ -52,7 +52,6 @@ export class SchedulerService {
       create: (input) => this.create(input),
       update: (input) => this.update(input),
       delete: (id) => this.delete(id),
-      runNow: (id) => this.runNow(id),
     };
   }
 
@@ -158,10 +157,6 @@ export class SchedulerService {
     await this.store.deleteStoreFile();
   }
 
-  async runNow(id: string): Promise<{ id: string; status: string }> {
-    return this.dispatchAdmitted(id, { manual: true });
-  }
-
   private async reconcile(job: CronJob): Promise<CronJob | null> {
     if (!job.enabled) return null;
     const now = this.now();
@@ -205,7 +200,7 @@ export class SchedulerService {
         return;
       }
       this.timers.delete(jobId);
-      void this.dispatchAdmitted(jobId, { manual: false }).catch((err) => {
+      void this.dispatchAdmitted(jobId).catch((err) => {
         this.log.debug(
           { owner_id: this.ownerId, job_id: jobId, err: errorInfo(err) },
           'cron job dispatch rejected by owner admission',
@@ -225,7 +220,6 @@ export class SchedulerService {
 
   private async dispatch(
     jobId: string,
-    opts: { manual: boolean },
   ): Promise<{ id: string; status: string }> {
     try {
       const job = await this.store.get(jobId);
@@ -237,7 +231,7 @@ export class SchedulerService {
         );
         return { id: jobId, status: 'skipped' };
       }
-      if (!opts.manual && this.heldFires.has(jobId)) {
+      if (this.heldFires.has(jobId)) {
         return { id: jobId, status: 'held' };
       }
       const status = await this.deferUntilIdleAndSubmit(job);
@@ -247,23 +241,22 @@ export class SchedulerService {
         { owner_id: this.ownerId, job_id: jobId, err: errorInfo(err) },
         'cron job dispatch failed',
       );
-      if (!opts.manual) await this.rearmAfterDispatchError(jobId);
+      await this.rearmAfterDispatchError(jobId);
       return { id: jobId, status: 'failed' };
     }
   }
 
   private async dispatchAdmitted(
     jobId: string,
-    opts: { manual: boolean },
   ): Promise<{ id: string; status: string }> {
-    // Capture synchronously. An owner can stop the scheduler after a caller has
-    // crossed its short outer gate but before Dispatcher admission starts this
-    // async task. That stopped generation must never install a new long idle
-    // wait after stop() has already released the existing waiters.
+    // Capture synchronously. An owner can stop the scheduler after a timer has
+    // fired but before Dispatcher admission starts this async task. That stopped
+    // generation must never install a new long idle wait after stop() has
+    // already released the existing waiters.
     const generation = this.lifecycleGeneration;
     return this.admit(() =>
       generation === this.lifecycleGeneration
-        ? this.dispatch(jobId, opts)
+        ? this.dispatch(jobId)
         : Promise.resolve({ id: jobId, status: 'skipped' }),
     );
   }

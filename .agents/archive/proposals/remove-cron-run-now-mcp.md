@@ -1,6 +1,9 @@
 # Remove Cron Run-Now
 
-- **Status:** Draft
+- **Status:** Implemented historical proposal; current behavior is documented in
+  [Scheduled work](../../domains/scheduled-work.md),
+  [Service topology](../../reference/service-topology.md#schedulerservice--schedulercommands),
+  and [Dispatcher skill](../../reference/dispatcher-skill.md)
 - **Date:** 2026-08-14
 - **Affects:** `/packages/dreamux/src/service/scheduler/`,
   `/packages/dreamux/src/admin/methods.ts`,

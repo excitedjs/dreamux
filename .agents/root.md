@@ -119,8 +119,6 @@ history and rationale; when you need current behavior, pair them with
   official-SDK-backed, dual-era MCP server capability, validated structured
   tool results, strict protocol/tool error separation, and provider-neutral
   Channel tool metadata.
-- [Remove cron run-now](proposals/remove-cron-run-now-mcp.md)
-  — delete the self-waiting manual cron fire capability and its full call chain.
 - [AgentRuntime input surface cleanup](proposals/agent-runtime-input-surface-cleanup.md)
   — draft technical design for narrowing the provider-facing runtime input
   surface: plain text `completionInput` for non-channel turns, `channelInput`
@@ -193,6 +191,12 @@ history still matters.
 
 ## Archive
 
+- [Remove cron run-now](archive/proposals/remove-cron-run-now-mcp.md)
+  — implemented removal of the self-waiting manual cron fire capability
+  (`cron_run_now` MCP tool and `scheduler.cron.run_now` admin method) and its
+  full call chain; current behavior is documented in
+  [Scheduled work](domains/scheduled-work.md) and
+  [Service topology](reference/service-topology.md#schedulerservice--schedulercommands).
 - [Workflow top-level scripts and JSON args](archive/proposals/workflow-top-level-json-args.md)
   — implemented issue #323; current behavior is documented in
   [Dynamic Workflow usage](reference/dynamic-workflow-usage.md) and

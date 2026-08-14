@@ -43,6 +43,7 @@ const RETIRED_METHODS = [
   ...PRODUCT_METHODS.map((method) => `mcp.${method}`),
   'dispatcher.add',
   'dispatcher.remove',
+  'scheduler.cron.run_now',
 ] as const;
 
 describe('admin control-plane method namespace', () => {
@@ -71,6 +72,7 @@ describe('admin control-plane method namespace', () => {
     expect(adminMethods['dispatcher.add']).toBeUndefined();
     expect(adminMethods['dispatcher.remove']).toBeUndefined();
     expect(typeof adminMethods['scheduler.cron.list']).toBe('function');
+    expect(adminMethods['scheduler.cron.run_now']).toBeUndefined();
     expect(typeof adminMethods['channel.invoke_tool']).toBe('function');
   });
 

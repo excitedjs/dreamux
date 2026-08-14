@@ -46,7 +46,6 @@ const PUBLIC_ERRORS: readonly PublicErrorRule[] = [
       'scheduler.cron.list',
       'scheduler.cron.delete',
       'scheduler.cron.update',
-      'scheduler.cron.run_now',
     ],
     ['BAD_REQUEST', 'DISPATCHER_NOT_FOUND', 'TEAM_NOT_FOUND'],
   ),
@@ -109,16 +108,6 @@ function cronToolMetadata(): McpToolMetadata[] {
     }, ['id'], {
       title: 'Update a cron job',
       output: cronJobSchema(),
-      annotations: MUTATING_ANNOTATIONS,
-    }),
-    tool('cron_run_now', 'Fire one cron job once now, still respecting defer-until-idle.', {
-      id: { type: 'string', minLength: 1, maxLength: 128 },
-    }, ['id'], {
-      title: 'Run a cron job now',
-      output: closedObjectSchema(
-        { id: { type: 'string' }, status: { type: 'string' } },
-        ['id', 'status'],
-      ),
       annotations: MUTATING_ANNOTATIONS,
     }),
   ];
@@ -214,8 +203,6 @@ function mapToolCall(
         params: args,
         project: projectCronJob,
       };
-    case 'cron_run_now':
-      return { method: 'scheduler.cron.run_now', params: args, project: projectRunNow };
     default:
       throw new Error(`unknown cron tool '${String(name)}'`);
   }
@@ -248,11 +235,6 @@ function projectCronJob(value: unknown): Record<string, unknown> {
 function projectDelete(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'cron delete result');
   return { id: obj['id'], deleted: obj['deleted'] };
-}
-
-function projectRunNow(value: unknown): Record<string, unknown> {
-  const obj = asRecord(value, 'cron run_now result');
-  return { id: obj['id'], status: obj['status'] };
 }
 
 function tool(

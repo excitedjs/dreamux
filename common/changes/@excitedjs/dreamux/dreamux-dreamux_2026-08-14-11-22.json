@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: Remove the manual cron run-now capability and its full call chain with no compatibility alias. The model-facing `cron_run_now` MCP tool is removed from the cron MCP tool surface (cron exposes exactly `cron_create`, `cron_list`, `cron_update`, `cron_delete`), and the direct admin control-plane method `scheduler.cron.run_now` is removed and now returns UNKNOWN_METHOD. Timer-driven cron dispatch collapses to a single path: held-fire collapse and dispatch-error re-arm are unconditional, and the load-bearing lifecycle-generation stop-race fence is preserved. No rebuild is required: cron job format, scheduler timing, defer-until-idle, persistence, and state shape are unchanged. Callers, scripts, or prompts that invoked `cron_run_now` or `scheduler.cron.run_now` must stop using them; adjust a job's schedule with `cron_update` instead.",
+      "type": "major",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

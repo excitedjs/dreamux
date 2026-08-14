@@ -3,11 +3,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { ProtocolErrorCode } from '@modelcontextprotocol/client';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { AdminRequest } from '../src/admin/protocol.js';
 import { runCronMcp } from '../src/mcp/cron-mcp.js';
-import { callTool, connectMcpClient } from './helpers/mcp-client.js';
+import { callTool, connectMcpClient, listedTools } from './helpers/mcp-client.js';
 
 describe('cron MCP descriptor-bound target', () => {
   let cleanup: (() => Promise<void>) | null = null;
@@ -17,9 +18,13 @@ describe('cron MCP descriptor-bound target', () => {
     cleanup = null;
   });
 
+  // Stand up a fake `dreamux serve` admin socket that records every forwarded
+  // request and replies with an ok cron-job result, then connect an official-SDK
+  // MCP client to the cron server over an in-memory transport.
   async function openCronMcp(opts: { teamId?: string }): Promise<{
     requests: AdminRequest[];
-    call(args: Record<string, unknown>): ReturnType<typeof callTool>;
+    listTools(): ReturnType<typeof listedTools>;
+    call(name: string, args: Record<string, unknown>): ReturnType<typeof callTool>;
     close(): Promise<void>;
   }> {
     const dir = mkdtempSync(join(tmpdir(), 'dreamux-cron-mcp-'));
@@ -77,7 +82,8 @@ describe('cron MCP descriptor-bound target', () => {
     };
     return {
       requests,
-      call: (args) => callTool(mcp.client, 'cron_create', args),
+      listTools: () => listedTools(mcp.client),
+      call: (name, args) => callTool(mcp.client, name, args),
       close: async () => {
         await cleanup?.();
         cleanup = null;
@@ -88,7 +94,7 @@ describe('cron MCP descriptor-bound target', () => {
   it('applies the TeamLeader team binding after validated model input', async () => {
     const mcp = await openCronMcp({ teamId: 'alpha' });
     await expect(
-      mcp.call({ cron: '* * * * *', prompt: 'remind' }),
+      mcp.call('cron_create', { cron: '* * * * *', prompt: 'remind' }),
     ).resolves.toEqual({
       content: [],
       structuredContent: {
@@ -118,7 +124,7 @@ describe('cron MCP descriptor-bound target', () => {
 
   it('keeps dispatcher-scoped cron calls free of a team binding', async () => {
     const mcp = await openCronMcp({});
-    await mcp.call({ cron: '* * * * *', prompt: 'remind' });
+    await mcp.call('cron_create', { cron: '* * * * *', prompt: 'remind' });
     expect(mcp.requests[0]?.params).toMatchObject({ dispatcher_id: 'dispatcher-a' });
     expect(mcp.requests[0]?.params).not.toHaveProperty('team_id');
     await mcp.close();
@@ -127,13 +133,37 @@ describe('cron MCP descriptor-bound target', () => {
   it('rejects model-supplied dispatcher and team scope before admin dispatch', async () => {
     const mcp = await openCronMcp({ teamId: 'alpha' });
     await expect(
-      mcp.call({
+      mcp.call('cron_create', {
         cron: '* * * * *',
         prompt: 'remind',
         dispatcher_id: 'evil',
         team_id: 'other-team',
       }),
     ).resolves.toMatchObject({ isError: true });
+    expect(mcp.requests).toEqual([]);
+    await mcp.close();
+  });
+
+  it('lists exactly the four durable cron tools without a run-now surface', async () => {
+    const mcp = await openCronMcp({});
+    const names = (await mcp.listTools()).map((tool) => tool.name);
+    expect(names).toEqual([
+      'cron_create',
+      'cron_list',
+      'cron_delete',
+      'cron_update',
+    ]);
+    expect(names).not.toContain('cron_run_now');
+    await mcp.close();
+  });
+
+  it('rejects cron_run_now as an unregistered tool without forwarding an admin request', async () => {
+    const mcp = await openCronMcp({});
+    // The run-now tool is no longer advertised, so the official protocol rejects
+    // the call before any handler runs; nothing reaches the admin socket.
+    await expect(
+      mcp.call('cron_run_now', { id: 'job-1' }),
+    ).rejects.toMatchObject({ code: ProtocolErrorCode.InvalidParams });
     expect(mcp.requests).toEqual([]);
     await mcp.close();
   });

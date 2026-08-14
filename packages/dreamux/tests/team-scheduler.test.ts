@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -56,6 +56,10 @@ class FakeRuntime implements AgentRuntime {
   readonly providerRef = FAKE_RUNTIME_REF;
   readonly submitted: InboundTurnInput[] = [];
   readonly textSubmitted: AgentRuntimeTextInput[] = [];
+  /** Fires after a scheduled completion turn is recorded. Cron fire tests attach
+   *  this to a deferred so they can await the fire deterministically instead of
+   *  polling a real timer. */
+  onCompletion: (() => void) | null = null;
   private status: AgentRuntimeStatus = 'declared';
 
   async start(): Promise<void> {
@@ -77,6 +81,7 @@ class FakeRuntime implements AgentRuntime {
 
   async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
     this.textSubmitted.push(input);
+    this.onCompletion?.();
     return { status: 'submitted', turnId: `text-${this.textSubmitted.length}` };
   }
 
@@ -120,11 +125,28 @@ class ResumedRuntime extends FakeRuntime {
 }
 
 class DeferredStartRuntime extends FakeRuntime {
-  releaseStart: (() => void) | null = null;
+  /** Resolves when `start()` is entered, so a test can observe the lazy start in
+   *  flight without polling. */
+  readonly startReached: Promise<void>;
+  private signalStartReached!: () => void;
+  /** The test resolves this to let `start()` finish. */
+  private releaseStartGate: (() => void) | null = null;
+
+  constructor() {
+    super();
+    this.startReached = new Promise<void>((resolve) => {
+      this.signalStartReached = resolve;
+    });
+  }
+
+  releaseStart(): void {
+    this.releaseStartGate?.();
+  }
 
   override async start(): Promise<void> {
+    this.signalStartReached();
     await new Promise<void>((resolve) => {
-      this.releaseStart = resolve;
+      this.releaseStartGate = resolve;
     });
     await super.start();
   }
@@ -342,6 +364,9 @@ describe('TeamLeader cron scheduler lifecycle', () => {
   });
 
   afterEach(() => {
+    // Some cron-fire tests enable fake timers mid-test; make sure real timers are
+    // always restored so a later real-timer `waitFor` cannot hang.
+    vi.useRealTimers();
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
     delete process.env['DREAMUX_ROOT'];
@@ -555,15 +580,17 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     await dissolveTeamForTest(teams, 'alpha', 'done');
 
     expect(existsSync(cronPath)).toBe(false);
-    await expect(team.scheduler.runNow(job.id)).rejects.toBeInstanceOf(
+    await expect(team.scheduler.delete(job.id)).rejects.toBeInstanceOf(
       TeamUnavailableError,
     );
   });
 
   it('projects runtime status from checkpoints', async () => {
+    vi.useFakeTimers();
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
     const runtimes: FakeRuntime[] = [];
+    const fired = deferred<void>();
     const config = testDreamuxConfig([
       testDispatcherConfig({
         id: 'dispatcher-a',
@@ -583,6 +610,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
         runtimes,
         createRuntime: () => {
           const runtime = new NewContractOnlyRuntime();
+          runtime.onCompletion = () => fired.resolve();
           return runtime;
         },
       }),
@@ -593,14 +621,15 @@ describe('TeamLeader cron scheduler lifecycle', () => {
     });
 
     await dispatcher.start();
-    const wake = await dispatcher.scheduler.create({
+    await dispatcher.scheduler.create({
       cron: '* * * * *',
       prompt: 'wake dispatcher',
       tz: 'UTC',
     });
-    await expect(dispatcher.scheduler.runNow(wake.id)).resolves.toMatchObject({
-      status: 'submitted',
-    });
+    // A timer-driven fire wakes the dormant dispatcher runtime. The minute wait
+    // is faked; the runtime `onCompletion` deferred settles the sub-second lazy
+    // start + submit chain without polling a real timer.
+    await fireCronOnce(fired.promise);
 
     expect(dispatcher.runtimeStatus()).toEqual({
       status: 'ready',
@@ -616,10 +645,12 @@ describe('TeamLeader cron scheduler lifecycle', () => {
   });
 
   it('injects cron MCP for TeamLeaders but not regular Team members', async () => {
+    vi.useFakeTimers();
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
     const contexts: AgentRuntimeCreateContext[] = [];
     const runtimes: FakeRuntime[] = [];
+    const dispatcherFired = deferred<void>();
     const config = testDreamuxConfig([
       testDispatcherConfig({
         id: 'dispatcher-a',
@@ -637,6 +668,13 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       agentRuntimeProviders: fakeRuntimeCatalog({
         runtimes,
         contexts,
+        createRuntime: (context) => {
+          const runtime = new FakeRuntime();
+          if (context.identity.runtime_id === 'dispatcher-a') {
+            runtime.onCompletion = () => dispatcherFired.resolve();
+          }
+          return runtime;
+        },
       }),
       channelProviders: fakeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
@@ -644,14 +682,14 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       log,
     });
     await dispatcher.start();
-    const wake = await dispatcher.scheduler.create({
+    await dispatcher.scheduler.create({
       cron: '* * * * *',
       prompt: 'wake dispatcher',
       tz: 'UTC',
     });
-    await expect(dispatcher.scheduler.runNow(wake.id)).resolves.toMatchObject({
-      status: 'submitted',
-    });
+    // A timer-driven fire wakes the dormant dispatcher runtime so its create
+    // context is materialized; the minute wait is faked.
+    await fireCronOnce(dispatcherFired.promise);
     const created = await dispatcher.createTeam({
       namePrefix: 'alpha',
       leaderAgentRuntime: 'agent-a',
@@ -1070,7 +1108,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
         tz: 'UTC',
       }),
     ).rejects.toThrow(/shutting down/);
-    await expect(dispatcherScheduler.runNow(dispatcherJob.id)).rejects.toThrow(
+    await expect(dispatcherScheduler.delete(dispatcherJob.id)).rejects.toThrow(
       /shutting down/,
     );
     await expect(
@@ -1080,7 +1118,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
         tz: 'UTC',
       }),
     ).rejects.toThrow(/shutting down/);
-    await expect(teamScheduler.runNow(teamJob.id)).rejects.toThrow(
+    await expect(teamScheduler.delete(teamJob.id)).rejects.toThrow(
       /shutting down/,
     );
     await expect(
@@ -1624,9 +1662,11 @@ describe('TeamLeader cron scheduler lifecycle', () => {
   });
 
   it('dispatcher cron starts a dormant dispatcher runtime', async () => {
+    vi.useFakeTimers();
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
     const runtimes: FakeRuntime[] = [];
+    const fired = deferred<void>();
     const config = testDreamuxConfig([
       testDispatcherConfig({
         id: 'dispatcher-a',
@@ -1641,23 +1681,29 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       id: 'dispatcher-a',
       config,
       dispatchers: new DispatcherStore(config),
-      agentRuntimeProviders: fakeRuntimeCatalog({ runtimes }),
+      agentRuntimeProviders: fakeRuntimeCatalog({
+        runtimes,
+        createRuntime: () => {
+          const runtime = new FakeRuntime();
+          runtime.onCompletion = () => fired.resolve();
+          return runtime;
+        },
+      }),
       channelProviders: fakeChannelCatalog(),
       adminSocketPath: '/tmp/dreamux-admin.sock',
       channelLoggerFactory: () => log,
       log,
     });
     await dispatcher.start();
-    const job = await dispatcher.scheduler.create({
+    await dispatcher.scheduler.create({
       cron: '* * * * *',
       prompt: 'scheduled dispatcher',
       tz: 'UTC',
     });
 
-    await expect(dispatcher.scheduler.runNow(job.id)).resolves.toEqual({
-      id: job.id,
-      status: 'submitted',
-    });
+    // The timer-driven fire lazily starts the dormant dispatcher runtime and
+    // submits the scheduled prompt; the minute wait is faked.
+    await fireCronOnce(fired.promise);
 
     expect(runtimes).toHaveLength(1);
     expect(runtimes[0]!.textSubmitted[0]).toMatchObject({
@@ -1668,9 +1714,11 @@ describe('TeamLeader cron scheduler lifecycle', () => {
   });
 
   it('dispatcher cron skips submission when stop races a lazy runtime start', async () => {
+    vi.useFakeTimers();
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
     let runtime: DeferredStartRuntime | null = null;
+    const startReached = deferred<void>();
     const config = testDreamuxConfig([
       testDispatcherConfig({
         id: 'dispatcher-a',
@@ -1689,6 +1737,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
         runtimes: [],
         createRuntime: () => {
           runtime = new DeferredStartRuntime();
+          void runtime.startReached.then(() => startReached.resolve());
           return runtime;
         },
       }),
@@ -1698,19 +1747,22 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       log,
     });
     await dispatcher.start();
-    const job = await dispatcher.scheduler.create({
+    await dispatcher.scheduler.create({
       cron: '* * * * *',
       prompt: 'scheduled dispatcher',
       tz: 'UTC',
     });
 
-    const run = dispatcher.scheduler.runNow(job.id);
-    await waitFor(() => runtime !== null && runtime.releaseStart !== null);
+    // Fire the timer (faked minute), then stop the dispatcher while the lazy
+    // runtime start is parked, so the scheduler's lifecycle-generation fence
+    // aborts the fire before it can submit.
+    await vi.advanceTimersByTimeAsync(60_000);
+    vi.useRealTimers();
+    await startReached.promise;
     const stopped = dispatcher.stop();
-    runtime!.releaseStart!();
+    runtime!.releaseStart();
 
     await stopped;
-    await expect(run).resolves.toEqual({ id: job.id, status: 'skipped' });
     expect(runtime!.textSubmitted).toEqual([]);
     expect(dispatcher.runtimeStatus()).toEqual({
       status: null,
@@ -1885,6 +1937,22 @@ async function waitFor(
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error('waitFor timed out');
+}
+
+/**
+ * Drive a single armed cron timer to fire without a real minute wait, then let
+ * its real-async lazy-start + submit + persistence chain settle deterministically
+ * against a signal the runtime resolves. Requires fake timers to already be
+ * enabled BEFORE the job was armed (so the arm used the fake `setTimeout`); the
+ * fake clock advances past the minute boundary, then real timers are restored so
+ * the sub-second async chain runs without polling a fake timer. The caller waits
+ * on `signal` (e.g. runtime `onCompletion`/start-reached) rather than a real
+ * `setTimeout` poll.
+ */
+async function fireCronOnce(signal: Promise<unknown>): Promise<void> {
+  await vi.advanceTimersByTimeAsync(60_000);
+  vi.useRealTimers();
+  await signal;
 }
 
 function deferred<T>() {
