@@ -2,6 +2,7 @@ import type { AgentRuntimeMcpServer } from '@excitedjs/dreamux-types';
 
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type { DispatcherChannelConfig } from '../../config/config.js';
+import { validateChannelToolCatalog } from '../../mcp/channel-mcp.js';
 import { dreamuxBinPath } from '../../platform/package-bin.js';
 import { adminSocketPath as defaultAdminSocketPath } from '../../platform/paths.js';
 
@@ -55,6 +56,12 @@ function channelMcpServerDescriptors(input: {
     const provider = input.channelProviders.resolve(channel.provider);
     const tools = provider.tools?.(channel.config);
     if (tools === undefined || tools.length === 0) continue;
+    // Fail loud on a malformed provider catalog before encoding: descriptor
+    // shape, unique names, JSON Schema object shape, and JSON serialization must
+    // all hold, so a broken catalog never reaches the child process as an empty
+    // or invalid tool set. The validated catalog is re-serialized as-is.
+    const validated = validateChannelToolCatalog(tools);
+    const encoded = Buffer.from(JSON.stringify(validated), 'utf8').toString('base64');
     out.push({
       name:
         provider.descriptor.ref.source === 'builtin'
@@ -75,7 +82,7 @@ function channelMcpServerDescriptors(input: {
           ? ['--leader-name', input.leader_name]
           : []),
         '--channel-tools-b64',
-        Buffer.from(JSON.stringify(tools), 'utf8').toString('base64'),
+        encoded,
         '--admin-socket',
         input.adminSocketPath ?? defaultAdminSocketPath(),
       ],

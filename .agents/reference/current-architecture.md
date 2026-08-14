@@ -83,7 +83,7 @@ Each live dispatcher owns:
 - one selected Agent Runtime instance
 - a map of live Channel sessions keyed by dispatcher-local `channel_id`
 - provider-owned channel MCP shims for channel tools
-- Team, TeamMate, and collaboration-space MCP shims owned by Dreamux core
+- Team, TeamMate, cron, and collaboration-space MCP shims owned by Dreamux core
 
 The first declared channel is the primary/default egress channel. A dispatcher
 with multiple channel providers can route and egress by `channel_id`; with only
@@ -98,6 +98,49 @@ Key source:
 - `/packages/dreamux/src/mcp/collaboration-space-mcp.ts`
 - `/packages/dreamux/src/mcp/team-mcp.ts`
 - `/packages/dreamux/src/mcp/teammate-mcp.ts`
+
+## MCP Protocol Boundary
+
+The five scoped stdio entries (`channel-mcp`, `team-mcp`, `teammate-mcp`,
+`cron-mcp`, and `collaboration-space-mcp`) use the shared official-SDK runner in
+`/packages/dreamux/src/mcp/server.ts`. The runner owns transport, protocol
+negotiation, registration, schema validation, protocol errors, cancellation,
+and stdout framing. It serves exactly `2026-07-28`, `2025-11-25`, and
+`2025-06-18`; the modern revision uses discovery and the two legacy revisions
+use initialization. Operational diagnostics stay on the supplied logger rather
+than the MCP wire.
+
+Each domain module supplies a deterministic, caller-bound tool catalog. It owns
+tool visibility, metadata, schemas, canonical admin-method mapping, scope that
+model input cannot override, public-error allowlists, and successful-result
+projection. The shared executor emits each ordinary successful object unchanged
+as `structuredContent` with exact `content: []`, validates it against the
+advertised output schema, and sanitizes unapproved handler failures. An
+execution-only selector on a bound tool definition may add exactly one text
+block without changing `structuredContent`; that selector is not advertised as
+tool metadata or carried through provider descriptors. The admin socket remains
+an independently validated product control plane and contains no MCP protocol
+types or envelopes.
+
+General completion-delivery and no-polling guidance lives in role prompts. The
+narrow result-level signal is operation-local: submitted `team.create` /
+`team.send` and `teammate.spawn` / `teammate.send` receipts, plus
+`workflow_run` receipts with a non-empty `run_id`, carry one matching no-poll
+reminder text block. Idle, failed, read, unrelated, and ordinary mutation
+results carry no text. `/packages/dreamux/src/mcp/task-dispatch-reminder.ts`
+owns the three texts and their reusable selectors; it never mutates structured
+results.
+
+Key source:
+
+- `/packages/dreamux/src/mcp/server.ts`
+- `/packages/dreamux/src/mcp/tool-catalog.ts`
+- `/packages/dreamux/src/mcp/channel-mcp.ts`
+- `/packages/dreamux/src/mcp/collaboration-space-mcp.ts`
+- `/packages/dreamux/src/mcp/cron-mcp.ts`
+- `/packages/dreamux/src/mcp/team-mcp.ts`
+- `/packages/dreamux/src/mcp/teammate-mcp.ts`
+- `/packages/dreamux/src/mcp/task-dispatch-reminder.ts`
 
 ## Admin Control Plane
 
@@ -154,7 +197,15 @@ path. `/introduce` remains sender-scoped and does not inherit that ordinary
 delivery authority.
 
 Dreamux core injects the generic `channel-mcp` shim and routes tool calls back
-to the live Channel session or provider sessionless handler.
+to the live Channel session or provider sessionless handler. The provider's
+neutral descriptor carries standard MCP title, description, input schema,
+optional output schema, annotations, and optional icon metadata without
+importing the MCP SDK. Core validates catalogs and schemas before descriptor
+encoding, then forwards provider arguments and canonical results without
+interpreting their fields. The built-in Feishu catalog supplies an output
+schema for every tool: `reply` returns `{ message_ids }`, `react` returns
+`{ reaction_id }`, and both live and sessionless `list_chat_bots` return the
+same `{ chat_id, known, trusted }` value.
 
 Core also supplies optional session-scoped collaboration capabilities through
 `ChannelRoutes`: synchronous ensure of an existing collaboration target,

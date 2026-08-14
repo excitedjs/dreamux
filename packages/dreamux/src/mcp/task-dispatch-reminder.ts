@@ -7,57 +7,30 @@ export const TEAMMATE_DISPATCH_SUCCESS_REMINDER =
 export const WORKFLOW_RUN_SUCCESS_REMINDER =
   'Reminder: The workflow runs in the background. When it finishes, Dreamux automatically pushes the terminal completion into the caller\'s current context. Unless the user explicitly asks for a status check, do not call or poll workflow_status or other status/read tools; wait for the system push. If there is no other work, the turn may end naturally.';
 
-export function appendTaskDispatchSuccessReminder(
-  text: string,
-  result: unknown,
-  method: string,
-  taskDispatchReminder: string,
-): string {
-  const reminder = taskDispatchSuccessReminder(
-    method,
-    result,
-    taskDispatchReminder,
-  );
-  return reminder === null ? text : `${text}\n\n${reminder}`;
+export function teamDispatchSuccessText(
+  result: Record<string, unknown>,
+): string | undefined {
+  return hasSubmittedTurn(result) ? TEAM_DISPATCH_SUCCESS_REMINDER : undefined;
 }
 
-export function appendStructuredTaskDispatchSuccessReminder(
-  result: unknown,
-  method: string,
-  taskDispatchReminder: string,
-): unknown {
-  const reminder = taskDispatchSuccessReminder(
-    method,
-    result,
-    taskDispatchReminder,
-  );
-  return reminder === null
-    ? result
-    : {
-        ...(result as Record<string, unknown>),
-        reminder,
-      };
+export function teammateDispatchSuccessText(
+  result: Record<string, unknown>,
+): string | undefined {
+  return hasSubmittedTurn(result)
+    ? TEAMMATE_DISPATCH_SUCCESS_REMINDER
+    : undefined;
 }
 
-function taskDispatchSuccessReminder(
-  method: string,
-  result: unknown,
-  taskDispatchReminder: string,
-): string | null {
-  if (method === 'workflow.run' && hasNonEmptyRunId(result)) {
-    return WORKFLOW_RUN_SUCCESS_REMINDER;
-  }
-  return hasSubmittedTurn(result) ? taskDispatchReminder : null;
-}
-
-function hasNonEmptyRunId(result: unknown): boolean {
-  if (!isRecord(result)) return false;
+export function workflowRunSuccessText(
+  result: Record<string, unknown>,
+): string | undefined {
   const runId = result['run_id'];
-  return typeof runId === 'string' && runId.trim() !== '';
+  return typeof runId === 'string' && runId.length > 0
+    ? WORKFLOW_RUN_SUCCESS_REMINDER
+    : undefined;
 }
 
-function hasSubmittedTurn(result: unknown): boolean {
-  if (!isRecord(result)) return false;
+function hasSubmittedTurn(result: Record<string, unknown>): boolean {
   const turn = result['turn'];
   return isRecord(turn) && turn['status'] === 'submitted';
 }

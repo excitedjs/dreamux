@@ -114,6 +114,11 @@ history and rationale; when you need current behavior, pair them with
 - [Non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md)
 
 ## Active Proposals
+- [MCP protocol conformance](proposals/mcp-protocol-conformance.md)
+  — proposed replacement of five hand-written stdio JSON-RPC shims with one
+  official-SDK-backed, dual-era MCP server capability, validated structured
+  tool results, strict protocol/tool error separation, and provider-neutral
+  Channel tool metadata.
 - [AgentRuntime input surface cleanup](proposals/agent-runtime-input-surface-cleanup.md)
   — draft technical design for narrowing the provider-facing runtime input
   surface: plain text `completionInput` for non-channel turns, `channelInput`

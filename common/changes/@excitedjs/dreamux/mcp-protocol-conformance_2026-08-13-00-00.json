@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "BREAKING: Review: Verify supported MCP hosts consume object structuredContent; no rebuild is needed. Serve the channel, Team, TeamMate, cron, and collaboration-space MCP entries through the official SDK at protocol revisions 2026-07-28, 2025-11-25, and 2025-06-18. Tool discovery includes canonical metadata and schemas, ordinary successful calls return exact empty content plus canonical structured objects without duplicate JSON text, accepted asynchronous Team, TeamMate, and workflow submissions add one operation-local no-poll reminder, older legacy offers are counter-offered with a supported revision, and unsupported modern revisions are rejected.",
+      "type": "major"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

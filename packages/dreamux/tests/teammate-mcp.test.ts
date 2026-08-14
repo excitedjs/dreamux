@@ -2,54 +2,26 @@ import { createServer, type Server as NetServer } from 'node:net';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PassThrough } from 'node:stream';
 
+import type { CallToolResult, Tool } from '@modelcontextprotocol/client';
 import { describe, expect, it } from 'vitest';
 
 import type { AdminRequest, AdminResponse } from '../src/admin/protocol.js';
+import { SANITIZED_TOOL_ERROR } from '../src/mcp/server.js';
 import {
-  TEAM_DISPATCH_SUCCESS_REMINDER,
   TEAMMATE_DISPATCH_SUCCESS_REMINDER,
   WORKFLOW_RUN_SUCCESS_REMINDER,
 } from '../src/mcp/task-dispatch-reminder.js';
-import { runTeamMateMcp } from '../src/mcp/teammate-mcp.js';
-
-class JsonLineReader {
-  private buffer = '';
-  private waiters: Array<(value: unknown) => void> = [];
-
-  constructor(stream: PassThrough) {
-    stream.setEncoding('utf8');
-    stream.on('data', (chunk: string) => {
-      this.buffer += chunk;
-      this.drain();
-    });
-  }
-
-  next(): Promise<unknown> {
-    const line = this.shiftLine();
-    if (line !== null) return Promise.resolve(JSON.parse(line));
-    return new Promise((resolve) => {
-      this.waiters.push(resolve);
-    });
-  }
-
-  private drain(): void {
-    while (this.waiters.length > 0) {
-      const line = this.shiftLine();
-      if (line === null) return;
-      this.waiters.shift()!(JSON.parse(line));
-    }
-  }
-
-  private shiftLine(): string | null {
-    const idx = this.buffer.indexOf('\n');
-    if (idx === -1) return null;
-    const line = this.buffer.slice(0, idx);
-    this.buffer = this.buffer.slice(idx + 1);
-    return line;
-  }
-}
+import {
+  runTeamMateMcp,
+  type TeamMateMcpCallerKind,
+} from '../src/mcp/teammate-mcp.js';
+import {
+  callTool,
+  connectMcpClient,
+  listedTools,
+  type ConnectedMcpClient,
+} from './helpers/mcp-client.js';
 
 interface FakeAdminServer {
   socketPath: string;
@@ -93,73 +65,64 @@ async function startFakeAdminServer(
   };
 }
 
-function writeJson(input: PassThrough, value: unknown): void {
-  input.write(`${JSON.stringify(value)}\n`);
+async function openTeammateMcp(
+  callerKind: TeamMateMcpCallerKind,
+  adminSocketPath = '/tmp/not-used.sock',
+): Promise<ConnectedMcpClient> {
+  return connectMcpClient((transport) =>
+    runTeamMateMcp({
+      dispatcherId: 'dispatcher-a',
+      callerKind,
+      ...(callerKind === 'team_leader' ? { teamId: 'alpha' } : {}),
+      adminSocketPath,
+      transport,
+      log: () => {},
+    }),
+  );
 }
 
-type TestCallerKind = 'dispatcher' | 'team_leader';
+async function toolSchemas(callerKind: TeamMateMcpCallerKind): Promise<Tool[]> {
+  const mcp = await openTeammateMcp(callerKind);
+  try {
+    return await listedTools(mcp.client);
+  } finally {
+    await mcp.close();
+  }
+}
 
-async function listTools(callerKind: TestCallerKind): Promise<string[]> {
-  const input = new PassThrough();
-  const output = new PassThrough();
-  const reader = new JsonLineReader(output);
-  const run = runTeamMateMcp({
-    dispatcherId: 'dispatcher-a',
-    callerKind,
-    ...(callerKind === 'team_leader' ? { teamId: 'alpha' } : {}),
-    adminSocketPath: '/tmp/not-used.sock',
-    input,
-    output,
-    log: () => {},
-  });
-
-  writeJson(input, { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
-  expect(await reader.next()).toMatchObject({
-    jsonrpc: '2.0',
-    id: 1,
-    result: {
-      protocolVersion: '2024-11-05',
-      capabilities: { tools: {} },
-      serverInfo: { name: 'dreamux-teammate' },
-    },
-  });
-
-  writeJson(input, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
-  const response = (await reader.next()) as {
-    result: { tools: Array<{ name: string }> };
+function schemaOf(tools: Tool[], name: string): {
+  required: string[];
+  properties: Record<string, Record<string, unknown>>;
+} {
+  const tool = tools.find((entry) => entry.name === name);
+  if (tool === undefined) throw new Error(`tool '${name}' not found`);
+  return tool.inputSchema as {
+    required: string[];
+    properties: Record<string, Record<string, unknown>>;
   };
-  input.end();
-  await run;
-  return response.result.tools.map((tool) => tool.name);
 }
 
-async function toolSchemas(
-  callerKind: TestCallerKind,
-): Promise<Array<Record<string, unknown>>> {
-  const input = new PassThrough();
-  const output = new PassThrough();
-  const reader = new JsonLineReader(output);
-  const run = runTeamMateMcp({
-    dispatcherId: 'dispatcher-a',
-    callerKind,
-    ...(callerKind === 'team_leader' ? { teamId: 'alpha' } : {}),
-    adminSocketPath: '/tmp/not-used.sock',
-    input,
-    output,
-    log: () => {},
+function expectOrdinarySuccess(
+  result: CallToolResult,
+  value: Record<string, unknown>,
+): void {
+  expect(result).toEqual({ content: [], structuredContent: value });
+}
+
+function expectReminderSuccess(
+  result: CallToolResult,
+  value: Record<string, unknown>,
+  reminder: string,
+): void {
+  expect(result).toEqual({
+    content: [{ type: 'text', text: reminder }],
+    structuredContent: value,
   });
-  writeJson(input, { jsonrpc: '2.0', id: 1, method: 'tools/list' });
-  const response = (await reader.next()) as {
-    result: { tools: Array<Record<string, unknown>> };
-  };
-  input.end();
-  await run;
-  return response.result.tools;
 }
 
-describe('teammate-mcp stdio shim', () => {
+describe('teammate MCP', () => {
   it('exposes agent-centric lifecycle tools to dispatcher and TeamLeader callers', async () => {
-    await expect(listTools('dispatcher')).resolves.toEqual([
+    const expected = [
       'spawn',
       'send',
       'close',
@@ -172,37 +135,16 @@ describe('teammate-mcp stdio shim', () => {
       'workflow_status',
       'workflow_stop',
       'workflow_list',
-    ]);
-
-    await expect(listTools('team_leader')).resolves.toEqual([
-      'spawn',
-      'send',
-      'close',
-      'history',
-      'list',
-      'status',
-      'last',
-      'get_capabilities',
-      'workflow_run',
-      'workflow_status',
-      'workflow_stop',
-      'workflow_list',
-    ]);
+    ];
+    for (const callerKind of ['dispatcher', 'team_leader'] as const) {
+      expect((await toolSchemas(callerKind)).map((tool) => tool.name)).toEqual(expected);
+    }
   });
 
   it('advertises the workflow contract through the bundled workflow skill', async () => {
     for (const callerKind of ['dispatcher', 'team_leader'] as const) {
       const tools = await toolSchemas(callerKind);
-      const workflowTools = tools.filter((entry) =>
-        String(entry['name']).startsWith('workflow_')
-      ) as Array<{
-        name: string;
-        description: string;
-        inputSchema: {
-          required: string[];
-          properties: Record<string, Record<string, unknown>>;
-        };
-      }>;
+      const workflowTools = tools.filter((entry) => entry.name.startsWith('workflow_'));
       expect(workflowTools.map((tool) => tool.name)).toEqual([
         'workflow_run',
         'workflow_status',
@@ -210,278 +152,136 @@ describe('teammate-mcp stdio shim', () => {
         'workflow_list',
       ]);
       expect(workflowTools.every((tool) =>
-        tool.description.includes('bundled `workflow` skill')
+        tool.description?.includes('bundled `workflow` skill') === true
       )).toBe(true);
-      expect(JSON.stringify(workflowTools)).not.toMatch(/auto-close/i);
-
-      const run = workflowTools[0]!;
-      expect(run.inputSchema.required).toEqual([]);
-      expect(run.inputSchema.properties['script']).toMatchObject({
-        type: 'string',
-        minLength: 1,
-      });
-      expect(run.inputSchema.properties['scriptPath']).toMatchObject({
-        type: 'string',
-        minLength: 1,
-      });
-      expect(run.inputSchema.properties['args']).toEqual({
+      const run = schemaOf(tools, 'workflow_run');
+      expect(run.required).toEqual([]);
+      expect(run.properties['script']).toMatchObject({ type: 'string', minLength: 1 });
+      expect(run.properties['scriptPath']).toMatchObject({ type: 'string', minLength: 1 });
+      expect(run.properties['args']).toEqual({
         type: ['object', 'array', 'string', 'number', 'boolean', 'null'],
         description:
           'Optional direct JSON value available as the script-global args. ' +
           'Pass objects and arrays directly; do not JSON.stringify them.',
       });
-      expect(run.inputSchema.properties['max_concurrency']).toMatchObject({
+      expect(run.properties['max_concurrency']).toMatchObject({
         type: 'integer',
         minimum: 1,
         maximum: 16,
       });
-
-      for (const tool of workflowTools.slice(1, 3)) {
-        expect(tool.inputSchema.required).toEqual(['run_id']);
-        expect(tool.inputSchema.properties['run_id']).toMatchObject({
-          type: 'string',
-          pattern: '^[a-z0-9-]+$',
+      for (const name of ['workflow_status', 'workflow_stop']) {
+        expect(schemaOf(tools, name)).toMatchObject({
+          required: ['run_id'],
+          properties: { run_id: { type: 'string', pattern: '^[a-z0-9-]+$' } },
         });
       }
-      expect(workflowTools[3]!.inputSchema.required).toEqual([]);
-      expect(workflowTools[3]!.inputSchema.properties).toEqual({});
+      expect(schemaOf(tools, 'workflow_list')).toEqual({
+        type: 'object',
+        additionalProperties: false,
+        properties: {},
+        required: [],
+      });
     }
   });
 
   it('maps workflow tools onto TeamLeader-scoped admin methods', async () => {
-    const workflowResults: Record<string, unknown> = {
+    const workflowRecord = {
+      version: 1,
+      run_id: 'run-1',
+      dispatcher_id: 'dispatcher-a',
+      team_id: 'alpha',
+      caller_kind: 'team_leader',
+      script_hash: 'abc123',
+      status: 'running',
+      max_concurrency: 4,
+      phase: null,
+      last_log: null,
+      agents: [],
+      result: null,
+      error: null,
+      created_at: 1,
+      updated_at: 1,
+      ended_at: null,
+    };
+    const results: Record<string, unknown> = {
       'workflow.run': { run_id: 'run-1' },
-      'workflow.status': { run_id: 'run-1', status: 'running' },
+      'workflow.status': workflowRecord,
       'workflow.stop': { run_id: 'run-1', status: 'stopped' },
-      'workflow.list': {
-        runs: [{ run_id: 'run-1', status: 'running' }],
-      },
+      'workflow.list': { runs: [workflowRecord] },
     };
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: true,
-      result: workflowResults[request.method] ?? {},
+      result: results[request.method] ?? {},
     }));
+    const mcp = await openTeammateMcp('team_leader', admin.socketPath);
     try {
-      const input = new PassThrough();
-      const output = new PassThrough();
-      const reader = new JsonLineReader(output);
-      const run = runTeamMateMcp({
-        dispatcherId: 'dispatcher-a',
-        callerKind: 'team_leader',
-        teamId: 'alpha',
-        adminSocketPath: admin.socketPath,
-        input,
-        output,
-        log: () => {},
+      const script = 'export const meta = { name: "x", description: "x" }; return args;';
+      const run = await callTool(mcp.client, 'workflow_run', {
+        script,
+        args: { targets: ['api', { area: 'lifecycle' }] },
+        max_concurrency: 4,
       });
-      const calls = [
-        {
-          name: 'workflow_run',
-          arguments: {
-            script:
-              'export const meta = { name: "x", description: "x" }; return args;',
-            args: { targets: ['api', { area: 'lifecycle' }] },
-            max_concurrency: 4,
-          },
-        },
-        { name: 'workflow_status', arguments: { run_id: 'run-1' } },
-        { name: 'workflow_stop', arguments: { run_id: 'run-1' } },
-        { name: 'workflow_list', arguments: {} },
-      ];
-      const responses: unknown[] = [];
-
-      for (const [index, call] of calls.entries()) {
-        writeJson(input, {
-          jsonrpc: '2.0',
-          id: index + 1,
-          method: 'tools/call',
-          params: call,
-        });
-        const response = await reader.next();
-        expect(response).toMatchObject({
-          jsonrpc: '2.0',
-          id: index + 1,
-          result: { structuredContent: expect.any(Object) as object },
-        });
-        responses.push(response);
-      }
-
-      const [runResponse, statusResponse, stopResponse, listResponse] = responses;
-      expect(runResponse).toMatchObject({
-        result: {
-          content: [{
-            text: expect.stringContaining(WORKFLOW_RUN_SUCCESS_REMINDER) as string,
-          }],
-          structuredContent: {
-            run_id: 'run-1',
-            reminder: WORKFLOW_RUN_SUCCESS_REMINDER,
-          },
-        },
-      });
-      const successfulRunResult = runResponse as {
-        result: {
-          content: Array<{ text: string }>;
-          structuredContent: { reminder: string };
-        };
-      };
-      const structuredReminder =
-        successfulRunResult.result.structuredContent.reminder;
-      expect(structuredReminder).toBe(WORKFLOW_RUN_SUCCESS_REMINDER);
-      expect(structuredReminder).toMatch(/background/i);
-      expect(structuredReminder).toMatch(/automatically pushes/i);
-      expect(structuredReminder).toMatch(/terminal completion/i);
-      expect(structuredReminder).toMatch(/caller'?s current context/i);
-      expect(structuredReminder).toMatch(
-        /unless the user explicitly asks[\s\S]*do not call or poll workflow_status/i,
-      );
-      expect(structuredReminder).toMatch(/wait for the system push/i);
-      expect(successfulRunResult.result.content[0]?.text).toContain(
-        structuredReminder,
-      );
-      expect(JSON.stringify(runResponse)).not.toContain(
-        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
-      );
-      expect(statusResponse).toMatchObject({
-        result: {
-          content: [{ text: 'workflow_status forwarded to dreamux serve' }],
-          structuredContent: { run_id: 'run-1', status: 'running' },
-        },
-      });
-      expect(stopResponse).toMatchObject({
-        result: {
-          content: [{ text: 'workflow_stop forwarded to dreamux serve' }],
-          structuredContent: { run_id: 'run-1', status: 'stopped' },
-        },
-      });
-      expect(listResponse).toMatchObject({
-        result: {
-          content: [{ text: 'workflow_list forwarded to dreamux serve' }],
-          structuredContent: {
-            runs: [{ run_id: 'run-1', status: 'running' }],
-          },
-        },
-      });
-      for (const response of [statusResponse, stopResponse, listResponse]) {
-        expect(JSON.stringify(response)).not.toContain(
-          WORKFLOW_RUN_SUCCESS_REMINDER,
-        );
-        expect(JSON.stringify(response)).not.toContain(
-          TEAMMATE_DISPATCH_SUCCESS_REMINDER,
-        );
-      }
-
-      expect(admin.requests).toEqual([
-        {
-          id: expect.any(String) as string,
-          method: 'workflow.run',
-          params: {
-            dispatcher_id: 'dispatcher-a',
-            caller_kind: 'team_leader',
-            team_id: 'alpha',
-            script:
-              'export const meta = { name: "x", description: "x" }; return args;',
-            args: { targets: ['api', { area: 'lifecycle' }] },
-            max_concurrency: 4,
-          },
-        },
-        {
-          id: expect.any(String) as string,
-          method: 'workflow.status',
-          params: {
-            dispatcher_id: 'dispatcher-a',
-            caller_kind: 'team_leader',
-            team_id: 'alpha',
-            run_id: 'run-1',
-          },
-        },
-        {
-          id: expect.any(String) as string,
-          method: 'workflow.stop',
-          params: {
-            dispatcher_id: 'dispatcher-a',
-            caller_kind: 'team_leader',
-            team_id: 'alpha',
-            run_id: 'run-1',
-          },
-        },
-        {
-          id: expect.any(String) as string,
-          method: 'workflow.list',
-          params: {
-            dispatcher_id: 'dispatcher-a',
-            caller_kind: 'team_leader',
-            team_id: 'alpha',
-          },
-        },
+      const status = await callTool(mcp.client, 'workflow_status', { run_id: 'run-1' });
+      const stop = await callTool(mcp.client, 'workflow_stop', { run_id: 'run-1' });
+      const list = await callTool(mcp.client, 'workflow_list', {});
+      expectReminderSuccess(run, { run_id: 'run-1' }, WORKFLOW_RUN_SUCCESS_REMINDER);
+      expectOrdinarySuccess(status, workflowRecord);
+      expectOrdinarySuccess(stop, { run_id: 'run-1', status: 'stopped' });
+      expectOrdinarySuccess(list, { runs: [workflowRecord] });
+      expect(admin.requests.map((request) => request.method)).toEqual([
+        'workflow.run',
+        'workflow.status',
+        'workflow.stop',
+        'workflow.list',
       ]);
-
-      input.end();
-      await run;
+      for (const request of admin.requests) {
+        expect(request.params).toMatchObject({
+          dispatcher_id: 'dispatcher-a',
+          caller_kind: 'team_leader',
+          team_id: 'alpha',
+        });
+      }
+      expect(admin.requests[0]?.params).toMatchObject({
+        script,
+        args: { targets: ['api', { area: 'lifecycle' }] },
+        max_concurrency: 4,
+      });
     } finally {
+      await mcp.close();
       await admin.close();
     }
   });
 
-  it('returns a workflow_run admin error without any reminder', async () => {
+  it('sanitizes an unmapped workflow_run admin error without structured content', async () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: false,
-      error: {
-        code: 'WORKFLOW_START_FAILED',
-        message: 'workflow could not start',
-      },
+      error: { code: 'WORKFLOW_START_FAILED', message: 'private workflow detail' },
     }));
-    try {
-      const input = new PassThrough();
-      const output = new PassThrough();
-      const reader = new JsonLineReader(output);
-      const run = runTeamMateMcp({
+    const logs: string[] = [];
+    const mcp = await connectMcpClient((transport) =>
+      runTeamMateMcp({
         dispatcherId: 'dispatcher-a',
         callerKind: 'dispatcher',
         adminSocketPath: admin.socketPath,
-        input,
-        output,
-        log: () => {},
+        transport,
+        log: (message) => logs.push(message),
+      }),
+    );
+    try {
+      const result = await callTool(mcp.client, 'workflow_run', {
+        script: 'export const meta = { name: "x", description: "x" }; return null;',
       });
-
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
-        params: {
-          name: 'workflow_run',
-          arguments: {
-            script:
-              'export const meta = { name: "x", description: "x" }; return null;',
-          },
-        },
+      expect(result).toMatchObject({
+        isError: true,
+        content: [{ type: 'text', text: SANITIZED_TOOL_ERROR }],
       });
-
-      const response = (await reader.next()) as {
-        result: Record<string, unknown>;
-      };
-      expect(response).toMatchObject({
-        jsonrpc: '2.0',
-        id: 1,
-        result: {
-          isError: true,
-          content: [{
-            text: '[WORKFLOW_START_FAILED] workflow could not start',
-          }],
-        },
-      });
-      expect(response.result).not.toHaveProperty('structuredContent');
-      expect(JSON.stringify(response)).not.toContain(
-        WORKFLOW_RUN_SUCCESS_REMINDER,
-      );
-      expect(JSON.stringify(response)).not.toContain(
-        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
-      );
-
-      input.end();
-      await run;
+      expect(result).not.toHaveProperty('structuredContent');
+      expect(JSON.stringify(result)).not.toContain('private workflow detail');
+      expect(logs.join('\n')).toContain('private workflow detail');
     } finally {
+      await mcp.close();
       await admin.close();
     }
   });
@@ -492,92 +292,60 @@ describe('teammate-mcp stdio shim', () => {
       ok: true,
       result: { run_id: 'run-16' },
     }));
+    const mcp = await openTeammateMcp('dispatcher', admin.socketPath);
     try {
-      const input = new PassThrough();
-      const output = new PassThrough();
-      const reader = new JsonLineReader(output);
-      const run = runTeamMateMcp({
-        dispatcherId: 'dispatcher-a',
-        callerKind: 'dispatcher',
-        adminSocketPath: admin.socketPath,
-        input,
-        output,
-        log: () => {},
-      });
-
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
-        params: {
-          name: 'workflow_run',
-          arguments: {
-            script: 'export const meta = { name: "x", description: "x" }; return null;',
-            max_concurrency: 16,
-          },
-        },
-      });
-      await expect(reader.next()).resolves.toMatchObject({
-        id: 1,
-        result: { structuredContent: { run_id: 'run-16' } },
-      });
-      expect(admin.requests).toHaveLength(1);
-      expect(admin.requests[0]?.params).toMatchObject({ max_concurrency: 16 });
-
-      for (const [index, maxConcurrency] of [0, 17, 1.5, null].entries()) {
-        writeJson(input, {
-          jsonrpc: '2.0',
-          id: index + 2,
-          method: 'tools/call',
-          params: {
-            name: 'workflow_run',
-            arguments: {
-              script: 'export const meta = { name: "x", description: "x" }; return null;',
-              max_concurrency: maxConcurrency,
-            },
-          },
-        });
-        await expect(reader.next()).resolves.toMatchObject({
-          id: index + 2,
-          result: {
-            isError: true,
-            content: [{
-              type: 'text',
-              text:
-                'workflow max_concurrency must be an integer between 1 and 16',
-            }],
-          },
-        });
+      const script = 'export const meta = { name: "x", description: "x" }; return null;';
+      expectReminderSuccess(
+        await callTool(mcp.client, 'workflow_run', { script, max_concurrency: 16 }),
+        { run_id: 'run-16' },
+        WORKFLOW_RUN_SUCCESS_REMINDER,
+      );
+      for (const maxConcurrency of [0, 17, 1.5, null]) {
+        await expect(
+          callTool(mcp.client, 'workflow_run', {
+            script,
+            max_concurrency: maxConcurrency,
+          }),
+        ).resolves.toMatchObject({ isError: true });
       }
       expect(admin.requests).toHaveLength(1);
-
-      input.end();
-      await run;
+      expect(admin.requests[0]?.params).toMatchObject({ max_concurrency: 16 });
     } finally {
+      await mcp.close();
+      await admin.close();
+    }
+  });
+
+  it('does not add workflow success text for an empty projected run id', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: { run_id: '' },
+    }));
+    const mcp = await openTeammateMcp('dispatcher', admin.socketPath);
+    try {
+      expectOrdinarySuccess(
+        await callTool(mcp.client, 'workflow_run', {
+          script: 'export const meta = { name: "x", description: "x" }; return null;',
+        }),
+        { run_id: '' },
+      );
+    } finally {
+      await mcp.close();
       await admin.close();
     }
   });
 
   it('takes an optional repo input and no longer requires cwd/worktree (#199 Slice 2)', async () => {
     const tools = await toolSchemas('dispatcher');
-    const spawn = tools.find((entry) => entry['name'] === 'spawn') as {
-      inputSchema: {
-        required: string[];
-        properties: Record<string, unknown>;
-      };
-    };
-    // #182 PR-3: intent required. #199 Slice 1: requested-name is name_prefix.
-    // #199 Slice 2: cwd is no longer required and the public work-directory input
-    // is the single optional `repo` object (the legacy `cwd`/`worktree` are gone).
-    expect(spawn.inputSchema.required).toEqual(['name_prefix', 'prompt', 'intent']);
-    expect(spawn.inputSchema.properties).toHaveProperty('name_prefix');
-    expect(spawn.inputSchema.properties).toHaveProperty('repo');
-    expect(spawn.inputSchema.properties).not.toHaveProperty('cwd');
-    expect(spawn.inputSchema.properties).not.toHaveProperty('worktree');
-    expect(spawn.inputSchema.properties).not.toHaveProperty('skill_sources');
-    expect(JSON.stringify(tools)).not.toContain('skill_sources');
-    // The repo object exposes the reuse-cwd / managed work modes + cleanup.
-    const repo = JSON.stringify(spawn.inputSchema.properties['repo']);
+    const spawn = schemaOf(tools, 'spawn');
+    expect(spawn.required).toEqual(['name_prefix', 'prompt', 'intent']);
+    expect(spawn.properties).toHaveProperty('name_prefix');
+    expect(spawn.properties).toHaveProperty('repo');
+    expect(spawn.properties).not.toHaveProperty('cwd');
+    expect(spawn.properties).not.toHaveProperty('worktree');
+    expect(spawn.properties).not.toHaveProperty('skill_sources');
+    const repo = JSON.stringify(spawn.properties['repo']);
     expect(repo).toContain('reuse-cwd');
     expect(repo).toContain('managed');
     expect(repo).toContain('delete-on-close');
@@ -586,481 +354,229 @@ describe('teammate-mcp stdio shim', () => {
   it('marks spawn.intent and close.note required, and send.intent optional (#182 PR-3)', async () => {
     for (const callerKind of ['dispatcher', 'team_leader'] as const) {
       const tools = await toolSchemas(callerKind);
-      const spawn = tools.find((e) => e['name'] === 'spawn') as {
-        inputSchema: { required: string[]; properties: Record<string, unknown> };
-      };
-      const send = tools.find((e) => e['name'] === 'send') as {
-        inputSchema: { required: string[]; properties: Record<string, unknown> };
-      };
-      const close = tools.find((e) => e['name'] === 'close') as {
-        inputSchema: { required: string[]; properties: Record<string, unknown> };
-      };
-      // spawn.intent required for both caller kinds.
-      expect(spawn.inputSchema.required).toContain('intent');
-      // send.intent is an advertised optional property, not required.
-      expect(send.inputSchema.properties).toHaveProperty('intent');
-      expect(send.inputSchema.required).toEqual(['name', 'prompt']);
-      // close.note required.
-      expect(close.inputSchema.required).toEqual(['name', 'note']);
+      expect(schemaOf(tools, 'spawn').required).toContain('intent');
+      expect(schemaOf(tools, 'send')).toMatchObject({
+        required: ['name', 'prompt'],
+        properties: { intent: expect.any(Object) },
+      });
+      expect(schemaOf(tools, 'close').required).toEqual(['name', 'note']);
     }
   });
 
   it('advertises history as the session-ledger search surface and last with turns (#188)', async () => {
     const tools = await toolSchemas('dispatcher');
-    const history = tools.find((entry) => entry['name'] === 'history') as {
-      inputSchema: { required: string[]; properties: Record<string, unknown> };
-    };
-    const last = tools.find((entry) => entry['name'] === 'last') as {
-      inputSchema: { required: string[]; properties: Record<string, unknown> };
-    };
-    expect(history.inputSchema.required).toEqual([]);
-    expect(history.inputSchema.properties).toHaveProperty('limit');
-    expect(history.inputSchema.properties).toHaveProperty('cursor');
-    expect(history.inputSchema.properties).toHaveProperty('name');
-    expect(history.inputSchema.properties).toHaveProperty('agent_runtime');
-    expect(history.inputSchema.properties).toHaveProperty('grep');
-    // #199 Slice 1: legacy history filters are removed from the public schema.
-    for (const removed of [
-      'id',
-      'state',
-      'close_status',
-      'source_cwd',
-      'runtime_cwd',
-    ]) {
-      expect(history.inputSchema.properties).not.toHaveProperty(removed);
+    const history = schemaOf(tools, 'history');
+    expect(history.required).toEqual([]);
+    for (const key of ['limit', 'cursor', 'name', 'agent_runtime', 'grep']) {
+      expect(history.properties).toHaveProperty(key);
     }
-    // #188: last takes name + an optional 1..5 turns count; ctx/history_events gone.
-    expect(last.inputSchema.required).toEqual(['name']);
-    expect(last.inputSchema.properties).toHaveProperty('turns');
-    expect(last.inputSchema.properties['turns']).toMatchObject({
-      type: 'integer',
-      minimum: 1,
-      maximum: 5,
+    for (const key of ['id', 'state', 'close_status', 'source_cwd', 'runtime_cwd']) {
+      expect(history.properties).not.toHaveProperty(key);
+    }
+    expect(schemaOf(tools, 'last')).toMatchObject({
+      required: ['name'],
+      properties: { turns: { type: 'integer', minimum: 1, maximum: 5 } },
     });
-    expect(tools.find((entry) => entry['name'] === 'ctx')).toBeUndefined();
-    expect(
-      tools.find((entry) => entry['name'] === 'history_events'),
-    ).toBeUndefined();
+    expect(tools.map((tool) => tool.name)).not.toEqual(
+      expect.arrayContaining(['ctx', 'history_events']),
+    );
   });
 
-  it('forwards spawn to the dispatcher-scoped admin method', async () => {
+  it('forwards spawn to the dispatcher-scoped admin method with a pure receipt', async () => {
+    const receipt = {
+      teammate: { name: 'reviewer', status: 'running' },
+      turn: { status: 'submitted', turn_id: 'turn-1' },
+    };
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: true,
-      result: {
-        teammate: { name: 'reviewer', status: 'running' },
-        turn: { status: 'submitted', turn_id: 'turn-1' },
-      },
+      result: receipt,
     }));
+    const mcp = await openTeammateMcp('dispatcher', admin.socketPath);
     try {
-      const input = new PassThrough();
-      const output = new PassThrough();
-      const reader = new JsonLineReader(output);
-      const run = runTeamMateMcp({
-        dispatcherId: 'dispatcher-a',
-        callerKind: 'dispatcher',
-        adminSocketPath: admin.socketPath,
-        input,
-        output,
-        log: () => {},
-      });
-
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
+      const repo = {
+        mode: 'managed',
+        path: '/workspace',
+        slug: 'reviewer',
+        base_ref: 'origin/main',
+        branch: 'dreamux/reviewer',
+        cleanup: 'delete-on-close',
+      };
+      expectReminderSuccess(
+        await callTool(mcp.client, 'spawn', {
+          name_prefix: 'reviewer',
+          prompt: 'Review the change.',
+          agent_runtime: 'codex',
+          repo,
+          intent: 'review',
+          identity: 'architecture reviewer',
+        }),
+        receipt,
+        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+      );
+      expect(admin.requests[0]).toMatchObject({
+        method: 'teammate.spawn',
         params: {
-          name: 'spawn',
-          arguments: {
-            name_prefix: 'reviewer',
-            prompt: 'Review the change.',
-            agent_runtime: 'codex',
-            repo: {
-              mode: 'managed',
-              path: '/workspace',
-              slug: 'reviewer',
-              base_ref: 'origin/main',
-              branch: 'dreamux/reviewer',
-              cleanup: 'delete-on-close',
-            },
-            intent: 'review',
-            identity: 'architecture reviewer',
-            skill_sources: [{
-              name: 'must-not-forward',
-              path: '/skills/untrusted-teammate',
-              source: 'mcp',
-            }],
-          },
+          dispatcher_id: 'dispatcher-a',
+          caller_kind: 'dispatcher',
+          name_prefix: 'reviewer',
+          prompt: 'Review the change.',
+          agent_runtime: 'codex',
+          repo,
+          intent: 'review',
+          identity: 'architecture reviewer',
         },
       });
+      await expect(
+        callTool(mcp.client, 'spawn', {
+          name_prefix: 'bad',
+          prompt: 'bad',
+          intent: 'bad',
+          skill_sources: [{ path: '/untrusted' }],
+        }),
+      ).resolves.toMatchObject({ isError: true });
+      expect(admin.requests).toHaveLength(1);
+    } finally {
+      await mcp.close();
+      await admin.close();
+    }
+  });
 
-      const response = await reader.next();
-      expect(response).toMatchObject({
-        jsonrpc: '2.0',
-        id: 1,
-        result: {
-          content: [{
-            text: expect.stringContaining(TEAMMATE_DISPATCH_SUCCESS_REMINDER) as string,
-          }],
-          structuredContent: {
-            teammate: { name: 'reviewer', status: 'running' },
-            turn: { status: 'submitted', turn_id: 'turn-1' },
-            reminder: TEAMMATE_DISPATCH_SUCCESS_REMINDER,
-          },
-        },
-      });
-      expect(JSON.stringify(response)).not.toContain(TEAM_DISPATCH_SUCCESS_REMINDER);
-      // #199 Slice 2: the shim forwards the validated `repo` object verbatim; the
-      // admin layer maps it onto the internal cwd + worktree request.
-      expect(admin.requests).toEqual([
+  it('adds TeamMate success text only to a submitted send receipt', async () => {
+    const receipt = {
+      teammate: { name: 'reviewer', status: 'running' },
+      turn: { status: 'submitted', turn_id: 'turn-2' },
+    };
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result: receipt,
+    }));
+    const mcp = await openTeammateMcp('dispatcher', admin.socketPath);
+    try {
+      expectReminderSuccess(
+        await callTool(mcp.client, 'send', {
+          name: 'reviewer',
+          prompt: 'Continue.',
+        }),
+        receipt,
+        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+      );
+    } finally {
+      await mcp.close();
+      await admin.close();
+    }
+  });
+
+  it('returns failed send and close domain results without model guidance', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: true,
+      result:
+        request.method === 'teammate.send'
+          ? {
+              teammate: { name: 'reviewer', status: 'degraded' },
+              turn: { status: 'failed', error: 'runtime unavailable' },
+            }
+          : { teammate: { name: 'reviewer', status: 'closed' } },
+    }));
+    const mcp = await openTeammateMcp('dispatcher', admin.socketPath);
+    try {
+      expectOrdinarySuccess(
+        await callTool(mcp.client, 'send', {
+          name: 'reviewer',
+          prompt: 'Continue.',
+        }),
         {
-          id: expect.any(String) as string,
-          method: 'teammate.spawn',
-          params: {
-            dispatcher_id: 'dispatcher-a',
-            caller_kind: 'dispatcher',
-            name_prefix: 'reviewer',
-            prompt: 'Review the change.',
-            agent_runtime: 'codex',
-            repo: {
-              mode: 'managed',
-              path: '/workspace',
-              slug: 'reviewer',
-              base_ref: 'origin/main',
-              branch: 'dreamux/reviewer',
-              cleanup: 'delete-on-close',
-            },
-            intent: 'review',
-            identity: 'architecture reviewer',
-          },
+          teammate: { name: 'reviewer', status: 'degraded' },
+          turn: { status: 'failed', error: 'runtime unavailable' },
         },
-      ]);
-
-      input.end();
-      await run;
-    } finally {
-      await admin.close();
-    }
-  });
-
-  it('omits the reminder when a TeamMate prompt turn is not submitted', async () => {
-    const admin = await startFakeAdminServer((request) => ({
-      id: request.id,
-      ok: true,
-      result: {
-        teammate: { name: 'reviewer', status: 'degraded' },
-        turn: { status: 'failed', error: 'runtime unavailable' },
-      },
-    }));
-    try {
-      const input = new PassThrough();
-      const output = new PassThrough();
-      const reader = new JsonLineReader(output);
-      const run = runTeamMateMcp({
-        dispatcherId: 'dispatcher-a',
-        callerKind: 'dispatcher',
-        adminSocketPath: admin.socketPath,
-        input,
-        output,
-        log: () => {},
-      });
-
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
-        params: {
-          name: 'send',
-          arguments: { name: 'reviewer', prompt: 'Continue.' },
-        },
-      });
-
-      const response = await reader.next();
-      expect(response).toMatchObject({
-        jsonrpc: '2.0',
-        id: 1,
-        result: {
-          content: [{ text: 'send forwarded to dreamux serve' }],
-          structuredContent: {
-            turn: { status: 'failed', error: 'runtime unavailable' },
-          },
-        },
-      });
-      expect(JSON.stringify(response)).not.toContain(
-        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
       );
-
-      input.end();
-      await run;
-    } finally {
-      await admin.close();
-    }
-  });
-
-  it('omits the reminder when closing a TeamMate without submitting a turn', async () => {
-    const admin = await startFakeAdminServer((request) => ({
-      id: request.id,
-      ok: true,
-      result: {
-        teammate: { name: 'reviewer', status: 'closed' },
-      },
-    }));
-    try {
-      const input = new PassThrough();
-      const output = new PassThrough();
-      const reader = new JsonLineReader(output);
-      const run = runTeamMateMcp({
-        dispatcherId: 'dispatcher-a',
-        callerKind: 'dispatcher',
-        adminSocketPath: admin.socketPath,
-        input,
-        output,
-        log: () => {},
-      });
-
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
-        params: {
-          name: 'close',
-          arguments: { name: 'reviewer', note: 'done' },
-        },
-      });
-
-      const response = await reader.next();
-      expect(response).toMatchObject({
-        jsonrpc: '2.0',
-        id: 1,
-        result: {
-          content: [{ text: 'close forwarded to dreamux serve' }],
-          structuredContent: {
-            teammate: { name: 'reviewer', status: 'closed' },
-          },
-        },
-      });
-      expect(JSON.stringify(response)).not.toContain(
-        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+      expectOrdinarySuccess(
+        await callTool(mcp.client, 'close', { name: 'reviewer', note: 'done' }),
+        { teammate: { name: 'reviewer', status: 'closed' } },
       );
-      expect(admin.requests[0]?.method).toBe('teammate.close');
-
-      input.end();
-      await run;
     } finally {
+      await mcp.close();
       await admin.close();
     }
   });
 
-  it('rejects a repo input with an invalid mode before admin IPC (#199 Slice 2)', async () => {
+  it('rejects invalid repo and missing required fields before admin IPC', async () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: true,
       result: {},
     }));
+    const mcp = await openTeammateMcp('dispatcher', admin.socketPath);
     try {
-      const input = new PassThrough();
-      const output = new PassThrough();
-      const reader = new JsonLineReader(output);
-      const run = runTeamMateMcp({
-        dispatcherId: 'dispatcher-a',
-        callerKind: 'dispatcher',
-        adminSocketPath: admin.socketPath,
-        input,
-        output,
-        log: () => {},
-      });
-
-      // cwd is no longer required (omitting repo uses the default directory); an
-      // explicit repo with a bad mode is rejected before any admin IPC.
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
-        params: {
-          name: 'spawn',
-          arguments: {
-            name_prefix: 'reviewer',
-            prompt: 'Review the change.',
-            intent: 'review',
-            repo: { mode: 'bogus' },
-          },
-        },
-      });
-
-      const repoResponse = (await reader.next()) as { result: Record<string, unknown> };
-      expect(repoResponse).toMatchObject({
-        jsonrpc: '2.0',
-        id: 1,
-        result: {
-          isError: true,
-          content: [{ text: "repo.mode must be 'reuse-cwd' or 'managed'" }],
-        },
-      });
-      expect(repoResponse.result).not.toHaveProperty('structuredContent');
+      for (const [name, args] of [
+        ['spawn', { name_prefix: 'reviewer', prompt: 'Review.', intent: 'review', repo: { mode: 'invalid' } }],
+        ['spawn', { name_prefix: 'reviewer', prompt: 'Review.' }],
+        ['close', { name: 'reviewer' }],
+      ] as const) {
+        const result = await callTool(mcp.client, name, args);
+        expect(result).toMatchObject({ isError: true });
+        expect(result).not.toHaveProperty('structuredContent');
+      }
       expect(admin.requests).toEqual([]);
-
-      input.end();
-      await run;
     } finally {
-      await admin.close();
-    }
-  });
-
-  it('rejects spawn without intent and close without note before admin IPC (#182 PR-3)', async () => {
-    const admin = await startFakeAdminServer((request) => ({
-      id: request.id,
-      ok: true,
-      result: {},
-    }));
-    try {
-      const input = new PassThrough();
-      const output = new PassThrough();
-      const reader = new JsonLineReader(output);
-      const run = runTeamMateMcp({
-        dispatcherId: 'dispatcher-a',
-        callerKind: 'dispatcher',
-        adminSocketPath: admin.socketPath,
-        input,
-        output,
-        log: () => {},
-      });
-
-      // spawn without intent → rejected before admin IPC.
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
-        params: {
-          name: 'spawn',
-          arguments: { name_prefix: 'reviewer', prompt: 'go', cwd: '/workspace' },
-        },
-      });
-      const spawnResponse = (await reader.next()) as { result: Record<string, unknown> };
-      expect(spawnResponse).toMatchObject({
-        jsonrpc: '2.0',
-        id: 1,
-        result: {
-          isError: true,
-          content: [{ text: 'intent must be a non-empty string' }],
-        },
-      });
-      expect(spawnResponse.result).not.toHaveProperty('structuredContent');
-
-      // close without note → rejected before admin IPC.
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/call',
-        params: { name: 'close', arguments: { name: 'reviewer' } },
-      });
-      const closeResponse = (await reader.next()) as { result: Record<string, unknown> };
-      expect(closeResponse).toMatchObject({
-        jsonrpc: '2.0',
-        id: 2,
-        result: {
-          isError: true,
-          content: [{ text: 'note must be a non-empty string' }],
-        },
-      });
-      expect(closeResponse.result).not.toHaveProperty('structuredContent');
-
-      expect(admin.requests).toEqual([]);
-      input.end();
-      await run;
-    } finally {
+      await mcp.close();
       await admin.close();
     }
   });
 
   it('rejects teammate caller kind at startup', async () => {
-    const input = new PassThrough();
-    const output = new PassThrough();
     await expect(
       runTeamMateMcp({
         dispatcherId: 'dispatcher-a',
-        callerKind: 'teammate' as never,
+        callerKind: 'invalid' as TeamMateMcpCallerKind,
         adminSocketPath: '/tmp/not-used.sock',
-        input,
-        output,
         log: () => {},
       }),
     ).rejects.toThrow("caller kind must be 'dispatcher' or 'team_leader'");
   });
 
-  it('forwards TeamLeader spawn without caller cwd or worktree', async () => {
+  it('forwards TeamLeader spawn without caller cwd, worktree, repo, or overridable scope', async () => {
+    const receipt = {
+      teammate: { name: 'worker', status: 'running' },
+      turn: { status: 'submitted', turn_id: 'turn-2' },
+    };
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: true,
-      result: {
-        teammate: { name: 'builder', status: 'running' },
-        turn: { status: 'submitted', turn_id: 'turn-1' },
-      },
+      result: receipt,
     }));
+    const mcp = await openTeammateMcp('team_leader', admin.socketPath);
     try {
-      const input = new PassThrough();
-      const output = new PassThrough();
-      const reader = new JsonLineReader(output);
-      const run = runTeamMateMcp({
-        dispatcherId: 'dispatcher-a',
-        callerKind: 'team_leader',
-        teamId: 'alpha',
-        adminSocketPath: admin.socketPath,
-        input,
-        output,
-        log: () => {},
-      });
-
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
+      const args = {
+        name_prefix: 'worker',
+        prompt: 'Implement.',
+        intent: 'implementation',
+        identity: 'developer',
+      };
+      expectReminderSuccess(
+        await callTool(mcp.client, 'spawn', args),
+        receipt,
+        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+      );
+      expect(admin.requests[0]).toMatchObject({
+        method: 'teammate.spawn',
         params: {
-          name: 'spawn',
-          arguments: {
-            name_prefix: 'builder',
-            prompt: 'Build the change.',
-            cwd: '/ignored',
-            worktree: { mode: 'managed', cleanup: 'delete-on-close' },
-            intent: 'build',
-            identity: 'implementation specialist',
-            skill_sources: [{
-              name: 'must-not-forward',
-              path: '/skills/untrusted-member',
-              source: 'mcp',
-            }],
-          },
+          ...args,
+          dispatcher_id: 'dispatcher-a',
+          caller_kind: 'team_leader',
+          team_id: 'alpha',
         },
       });
-
-      expect(await reader.next()).toMatchObject({
-        jsonrpc: '2.0',
-        id: 1,
-        result: {
-          structuredContent: {
-            teammate: { name: 'builder', status: 'running' },
-            reminder: TEAMMATE_DISPATCH_SUCCESS_REMINDER,
-          },
-        },
-      });
-      expect(admin.requests).toEqual([
-        {
-          id: expect.any(String) as string,
-          method: 'teammate.spawn',
-          params: {
-            dispatcher_id: 'dispatcher-a',
-            name_prefix: 'builder',
-            prompt: 'Build the change.',
-            intent: 'build',
-            identity: 'implementation specialist',
-            caller_kind: 'team_leader',
-            team_id: 'alpha',
-          },
-        },
-      ]);
-
-      input.end();
-      await run;
+      for (const key of ['cwd', 'worktree', 'repo', 'dispatcher_id', 'team_id']) {
+        await expect(
+          callTool(mcp.client, 'spawn', { ...args, [key]: 'evil' }),
+        ).resolves.toMatchObject({ isError: true });
+      }
+      expect(admin.requests).toHaveLength(1);
     } finally {
+      await mcp.close();
       await admin.close();
     }
   });
@@ -1070,59 +586,31 @@ describe('teammate-mcp stdio shim', () => {
       id: request.id,
       ok: true,
       result: {
-        verbs: ['spawn', 'send', 'get_capabilities'],
-        agent_runtimes: [
-          {
-            id: 'codex',
-            spawn: { agent_runtime: 'codex' },
-            runtime_available: true,
-            resume: { supported: true },
-            unsupported_reason: null,
-          },
-        ],
+        verbs: ['spawn', 'send'],
+        agent_runtimes: [{ id: 'codex' }, { id: 'claude-code' }],
+        private_runtime_config: { token: 'secret' },
       },
     }));
+    const mcp = await openTeammateMcp('dispatcher', admin.socketPath);
     try {
-      const input = new PassThrough();
-      const output = new PassThrough();
-      const reader = new JsonLineReader(output);
-      const run = runTeamMateMcp({
-        dispatcherId: 'dispatcher-a',
-        callerKind: 'dispatcher',
-        adminSocketPath: admin.socketPath,
-        input,
-        output,
-        log: () => {},
-      });
-
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
-        params: { name: 'get_capabilities', arguments: {} },
-      });
-
-      const response = (await reader.next()) as {
-        result: { structuredContent: unknown };
+      const expected = {
+        verbs: ['spawn', 'send'],
+        agent_runtimes: [{ id: 'codex' }, { id: 'claude-code' }],
       };
-      expect(response.result.structuredContent).toMatchObject({
-        agent_runtimes: [
-          { id: 'codex', spawn: { agent_runtime: 'codex' } },
-        ],
+      expectOrdinarySuccess(
+        await callTool(mcp.client, 'get_capabilities', {}),
+        expected,
+      );
+      expect(admin.requests[0]).toMatchObject({
+        method: 'teammate.capabilities',
+        params: {
+          dispatcher_id: 'dispatcher-a',
+          caller_kind: 'dispatcher',
+        },
       });
-      expect(JSON.stringify(response)).not.toContain(
-        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
-      );
-      expect(JSON.stringify(response.result.structuredContent)).not.toContain(
-        'provider_ref',
-      );
-      expect(JSON.stringify(response.result.structuredContent)).not.toContain(
-        'builtin:codex',
-      );
-
-      input.end();
-      await run;
+      expect(JSON.stringify(expected)).not.toContain('private_runtime_config');
     } finally {
+      await mcp.close();
       await admin.close();
     }
   });
@@ -1131,110 +619,72 @@ describe('teammate-mcp stdio shim', () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: true,
-      result: { ok: true },
+      result:
+        request.method === 'teammate.history'
+          ? { items: [], next_cursor: null, private: 'omit' }
+          : {
+              teammate: { name: 'reviewer' },
+              requested_turns: request.params?.['turns'] ?? 1,
+              returned_turns: 0,
+              turns: [],
+              private: 'omit',
+            },
     }));
+    const mcp = await openTeammateMcp('dispatcher', admin.socketPath);
     try {
-      const input = new PassThrough();
-      const output = new PassThrough();
-      const reader = new JsonLineReader(output);
-      const run = runTeamMateMcp({
-        dispatcherId: 'dispatcher-a',
-        callerKind: 'team_leader',
-        teamId: 'alpha',
-        adminSocketPath: admin.socketPath,
-        input,
-        output,
-        log: () => {},
-      });
-
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
-        params: {
-          name: 'history',
-          arguments: {
-            grep: 'review',
-            limit: 5,
-            agent_runtime: 'codex',
-          },
+      expectOrdinarySuccess(
+        await callTool(mcp.client, 'history', {
+          name: 'reviewer',
+          status: 'closed',
+          agent_runtime: 'codex',
+          repo: '/repo',
+          grep: 'auth',
+          since: 1,
+          until: 2,
+          limit: 5,
+          cursor: 'next',
+        }),
+        { items: [], next_cursor: null },
+      );
+      expectOrdinarySuccess(
+        await callTool(mcp.client, 'last', { name: 'reviewer' }),
+        {
+          teammate: { name: 'reviewer' },
+          requested_turns: 1,
+          returned_turns: 0,
+          turns: [],
         },
-      });
-      const historyResponse = await reader.next();
-      expect(historyResponse).toMatchObject({
-        jsonrpc: '2.0',
-        id: 1,
-        result: { structuredContent: { ok: true } },
-      });
-      expect(JSON.stringify(historyResponse)).not.toContain(
-        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
       );
-
-      // last without turns forwards just the name; last with turns forwards both.
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/call',
-        params: { name: 'last', arguments: { name: 'reviewer' } },
-      });
-      const lastResponse = await reader.next();
-      expect(lastResponse).toMatchObject({
-        jsonrpc: '2.0',
-        id: 2,
-        result: { structuredContent: { ok: true } },
-      });
-      expect(JSON.stringify(lastResponse)).not.toContain(
-        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+      expectOrdinarySuccess(
+        await callTool(mcp.client, 'last', { name: 'reviewer', turns: 5 }),
+        {
+          teammate: { name: 'reviewer' },
+          requested_turns: 5,
+          returned_turns: 0,
+          turns: [],
+        },
       );
-
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 3,
-        method: 'tools/call',
-        params: { name: 'last', arguments: { name: 'reviewer', turns: 3 } },
-      });
-      const lastWithTurnsResponse = await reader.next();
-      expect(lastWithTurnsResponse).toMatchObject({
-        jsonrpc: '2.0',
-        id: 3,
-        result: { structuredContent: { ok: true } },
-      });
-      expect(JSON.stringify(lastWithTurnsResponse)).not.toContain(
-        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
-      );
-
       expect(admin.requests.map((request) => request.method)).toEqual([
         'teammate.history',
         'teammate.last',
         'teammate.last',
       ]);
-      expect(admin.requests.map((request) => request.params)).toEqual([
-        {
-          dispatcher_id: 'dispatcher-a',
-          caller_kind: 'team_leader',
-          team_id: 'alpha',
-          grep: 'review',
-          limit: 5,
-          agent_runtime: 'codex',
-        },
-        {
-          dispatcher_id: 'dispatcher-a',
-          caller_kind: 'team_leader',
-          team_id: 'alpha',
-          name: 'reviewer',
-        },
-        {
-          dispatcher_id: 'dispatcher-a',
-          caller_kind: 'team_leader',
-          team_id: 'alpha',
-          name: 'reviewer',
-          turns: 3,
-        },
-      ]);
-
-      input.end();
-      await run;
+      expect(admin.requests[0]?.params).toMatchObject({
+        dispatcher_id: 'dispatcher-a',
+        caller_kind: 'dispatcher',
+        name: 'reviewer',
+        status: 'closed',
+        agent_runtime: 'codex',
+        repo: '/repo',
+        grep: 'auth',
+        since: 1,
+        until: 2,
+        limit: 5,
+        cursor: 'next',
+      });
+      expect(admin.requests[2]?.params).toMatchObject({ name: 'reviewer', turns: 5 });
     } finally {
+      await mcp.close();
       await admin.close();
     }
   });

@@ -430,7 +430,7 @@ describe('codex live integration', () => {
   );
 
   it(
-    `spawns codex ${detection.version} with the Feishu stdio MCP shim`,
+    `spawns codex ${detection.version} with the official Feishu MCP server`,
     async () => {
       if (!versionAtLeast(detection.version, '0.136.0')) {
         throw new Error(
@@ -487,6 +487,7 @@ describe('codex live integration', () => {
           expect(feishu).toBeDefined();
           expect(feishu?.tools?.['reply']?.name).toBe('reply');
           expect(feishu?.tools?.['react']?.name).toBe('react');
+          expect(feishu?.tools?.['list_chat_bots']?.name).toBe('list_chat_bots');
         } finally {
           client.close();
         }

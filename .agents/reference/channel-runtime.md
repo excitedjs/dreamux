@@ -165,16 +165,38 @@ The Feishu package owns its tool names and JSON schemas:
 - `react`
 - `list_chat_bots`
 
-Dreamux core injects a generic `channel-mcp` stdio shim. The shim is a conduit:
-it serves provider-supplied `tools/list` metadata and forwards `tools/call` to
+Each provider descriptor carries a name, optional presentation metadata,
+mandatory input schema, optional output schema, and standard annotations. The
+neutral contract in `@excitedjs/dreamux-types` has no MCP SDK dependency.
+Descriptor assembly validates the complete catalog, unique names, JSON-safe
+shape, and SDK-compilable schemas before it encodes the child-process command.
+The `channel-mcp` CLI repeats the fail-loud validation and refuses a missing,
+malformed, empty, or invalid catalog.
+
+Dreamux core injects a generic `channel-mcp` stdio shim through the shared
+official-SDK server. The shim is a conduit: it serves provider-supplied
+`tools/list` metadata and forwards SDK-validated `tools/call` arguments to
 neutral admin methods, which route the call back to the live Channel session or
-sessionless provider handler.
+sessionless provider handler. Core does not name a Feishu tool or inspect its
+result fields.
+
+The built-in Feishu provider supplies closed input and output schemas for every
+tool. Successful results are canonical values: `reply` returns
+`{ message_ids: string[] }`, `react` returns `{ reaction_id: string }`, and
+`list_chat_bots` returns `{ chat_id, known, trusted }`. The live and sessionless
+paths produce the same `list_chat_bots` result shape. The shared server exposes
+the value unchanged as `structuredContent` with exact `content: []` and
+validates it against the provider output schema.
 
 Key source:
 
 - `/packages/channel/feishu-channel/src/feishu-mcp-tools.ts`
+- `/packages/channel/feishu-channel/src/tools/registry.ts`
 - `/packages/channel/feishu-channel/src/provider.ts`
+- `/packages/dreamux-types/src/channel.ts`
+- `/packages/dreamux/src/mcp/server.ts`
 - `/packages/dreamux/src/mcp/channel-mcp.ts`
+- `/packages/dreamux/src/service/channel-service/mcp-descriptors.ts`
 - `/packages/dreamux/src/admin/methods.ts`
 
 ## Channel Targets And Binding

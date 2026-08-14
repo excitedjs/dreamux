@@ -13,6 +13,7 @@ import {
 } from './tools/registry.js';
 export type {
   FeishuToolDef,
+  FeishuToolResult,
   FeishuToolResultEnvelope,
   FeishuToolContext,
   ChannelLogger,

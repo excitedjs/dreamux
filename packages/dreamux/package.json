@@ -42,6 +42,7 @@
     "@excitedjs/dreamux-types": "workspace:*",
     "@excitedjs/dreamux-utils": "workspace:*",
     "@excitedjs/feishu-channel": "workspace:*",
+    "@modelcontextprotocol/server": "2.0.0",
     "acorn": "^8.16.0",
     "croner": "^10.0.1",
     "smol-toml": "^1.6.1",
@@ -53,6 +54,7 @@
   },
   "devDependencies": {
     "@excitedjs/eslint-config": "workspace:*",
+    "@modelcontextprotocol/client": "2.0.0",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
     "@types/yargs": "^17.0.35",

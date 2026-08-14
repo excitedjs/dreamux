@@ -2,7 +2,6 @@ import { createServer, type Server as NetServer } from 'node:net';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PassThrough } from 'node:stream';
 
 import { describe, expect, it } from 'vitest';
 
@@ -11,41 +10,7 @@ import {
   collaborationSpaceTools,
   runCollaborationSpaceMcp,
 } from '../src/mcp/collaboration-space-mcp.js';
-
-class JsonLineReader {
-  private buffer = '';
-  private waiters: Array<(value: unknown) => void> = [];
-
-  constructor(stream: PassThrough) {
-    stream.setEncoding('utf8');
-    stream.on('data', (chunk: string) => {
-      this.buffer += chunk;
-      this.drain();
-    });
-  }
-
-  next(): Promise<unknown> {
-    const line = this.shiftLine();
-    if (line !== null) return Promise.resolve(JSON.parse(line));
-    return new Promise((resolve) => this.waiters.push(resolve));
-  }
-
-  private drain(): void {
-    while (this.waiters.length > 0) {
-      const line = this.shiftLine();
-      if (line === null) return;
-      this.waiters.shift()!(JSON.parse(line));
-    }
-  }
-
-  private shiftLine(): string | null {
-    const idx = this.buffer.indexOf('\n');
-    if (idx === -1) return null;
-    const line = this.buffer.slice(0, idx);
-    this.buffer = this.buffer.slice(idx + 1);
-    return line;
-  }
-}
+import { callTool, connectMcpClient } from './helpers/mcp-client.js';
 
 interface FakeAdminServer {
   socketPath: string;
@@ -89,11 +54,7 @@ async function startFakeAdminServer(
   };
 }
 
-function writeJson(input: PassThrough, value: unknown): void {
-  input.write(`${JSON.stringify(value)}\n`);
-}
-
-describe('collaboration-space-mcp stdio shim', () => {
+describe('collaboration-space MCP', () => {
   it('lists only bind/dissolve/status/list', () => {
     expect(collaborationSpaceTools().map((tool) => tool['name'])).toEqual([
       'bind',
@@ -104,100 +65,65 @@ describe('collaboration-space-mcp stdio shim', () => {
   });
 
   it('forwards every tool through the canonical admin namespace', async () => {
+    const space = { space_name: 'space-alpha', status: 'bound' };
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: true,
-      result: { ok: true, method: request.method },
+      result: {
+        'collaboration_space.bind': { space },
+        'collaboration_space.dissolve': {
+          space: { ...space, status: 'unbound' },
+          detached_targets: 1,
+          released_bindings: 1,
+        },
+        'collaboration_space.status': { space, targets: [] },
+        'collaboration_space.list': { spaces: [] },
+      }[request.method] ?? {},
     }));
-    try {
-      const input = new PassThrough();
-      const output = new PassThrough();
-      const reader = new JsonLineReader(output);
-      const run = runCollaborationSpaceMcp({
+    const mcp = await connectMcpClient((transport) =>
+      runCollaborationSpaceMcp({
         dispatcherId: 'dispatcher-a',
         adminSocketPath: admin.socketPath,
-        input,
-        output,
+        transport,
         log: () => {},
+      }),
+    );
+    try {
+      const bind = await callTool(mcp.client, 'bind', {
+        space_name: 'space-alpha',
+        container: {
+          container_type: 'topic_group',
+          container_key: 'chat-1',
+          display: 'Alpha',
+          meta: { opaque: true },
+        },
+        leader_agent_runtime: 'agent-a',
+        identity: 'default leader identity',
       });
-
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
-        params: {
-          name: 'bind',
-          arguments: {
-            space_name: 'space-alpha',
-            container: {
-              container_type: 'topic_group',
-              container_key: 'chat-1',
-              display: 'Alpha',
-              meta: { opaque: true },
-            },
-            leader_agent_runtime: 'agent-a',
-            identity: 'default leader identity',
-          },
+      expect(bind).toEqual({
+        content: [],
+        structuredContent: { space },
+      });
+      await expect(callTool(mcp.client, 'dissolve', {
+        space_name: 'space-alpha',
+        note: 'switch repo',
+      })).resolves.toEqual({
+        content: [],
+        structuredContent: {
+          space: { ...space, status: 'unbound' },
+          detached_targets: 1,
+          released_bindings: 1,
         },
       });
-      expect(await reader.next()).toMatchObject({
-        jsonrpc: '2.0',
-        id: 1,
-        result: {
-          content: [{ text: 'bind forwarded to dreamux serve' }],
-          structuredContent: {
-            ok: true,
-            method: 'collaboration_space.bind',
-          },
-        },
+      await expect(
+        callTool(mcp.client, 'status', { space_name: 'space-alpha' }),
+      ).resolves.toEqual({
+        content: [],
+        structuredContent: { space, targets: [] },
       });
-
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/call',
-        params: {
-          name: 'dissolve',
-          arguments: { space_name: 'space-alpha', note: 'switch repo' },
-        },
-      });
-      expect(await reader.next()).toMatchObject({
-        result: {
-          structuredContent: {
-            method: 'collaboration_space.dissolve',
-          },
-        },
-      });
-
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 3,
-        method: 'tools/call',
-        params: {
-          name: 'status',
-          arguments: { space_name: 'space-alpha' },
-        },
-      });
-      expect(await reader.next()).toMatchObject({
-        result: {
-          structuredContent: {
-            method: 'collaboration_space.status',
-          },
-        },
-      });
-
-      writeJson(input, {
-        jsonrpc: '2.0',
-        id: 4,
-        method: 'tools/call',
-        params: { name: 'list', arguments: {} },
-      });
-      expect(await reader.next()).toMatchObject({
-        result: {
-          structuredContent: {
-            method: 'collaboration_space.list',
-          },
-        },
+      await expect(callTool(mcp.client, 'list', {})).resolves.toEqual({
+        content: [],
+        structuredContent: { spaces: [] },
       });
 
       expect(admin.requests.map((request) => request.method)).toEqual([
@@ -218,10 +144,8 @@ describe('collaboration-space-mcp stdio shim', () => {
         identity: 'default leader identity',
       });
       expect(admin.requests[0]?.params).not.toHaveProperty('repo');
-
-      input.end();
-      await run;
     } finally {
+      await mcp.close();
       await admin.close();
     }
   });

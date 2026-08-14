@@ -78,7 +78,16 @@ function channelProviderCatalog(
     readConfig: (raw) => raw,
     tools(config) {
       toolConfigReads.push(config);
-      return [{ name: 'reply' }];
+      return [
+        {
+          name: 'reply',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+            additionalProperties: false,
+          },
+        },
+      ];
     },
     createSession(context) {
       return {
@@ -509,7 +518,16 @@ describe('ChannelService binding ownership', () => {
     registry.registerImplementation(descriptor.id, {
       ref: providerRef,
       descriptor,
-      tools: () => [{ name: 'repository_report' }],
+      tools: () => [
+        {
+          name: 'repository_report',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+            additionalProperties: false,
+          },
+        },
+      ],
       createSession: () => {
         throw new Error('not used');
       },

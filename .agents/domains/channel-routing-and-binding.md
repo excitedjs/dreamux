@@ -46,11 +46,28 @@ For Feishu, the provider tool surface is:
 Those names and schemas are Feishu package-owned. Core must not implement
 Feishu-specific tool handlers.
 
+The neutral provider descriptor carries standard title, description, input
+schema, optional output schema, annotations, and optional icon metadata without
+depending on the MCP SDK. Core validates catalogs as JSON-safe, uniquely named,
+SDK-compilable tool definitions before encoding them into a descriptor. The
+child CLI fails loud on missing, malformed, empty, or invalid catalog data.
+
+The built-in Feishu tools publish closed input/output schemas and canonical
+results: `reply` returns `{ message_ids }`, `react` returns `{ reaction_id }`,
+and both live and sessionless `list_chat_bots` return
+`{ chat_id, known, trusted }`. Core forwards those values without interpreting
+provider fields; the shared MCP server validates them and renders each ordinary
+success as exact `content: []` plus unchanged object `structuredContent`.
+
 Source:
 
 - `/packages/dreamux/src/service/channel-service/`
+- `/packages/dreamux/src/service/channel-service/mcp-descriptors.ts`
+- `/packages/dreamux/src/mcp/server.ts`
 - `/packages/dreamux/src/mcp/channel-mcp.ts`
+- `/packages/dreamux-types/src/channel.ts`
 - `/packages/channel/feishu-channel/src/feishu-mcp-tools.ts`
+- `/packages/channel/feishu-channel/src/tools/registry.ts`
 - `/packages/channel/feishu-channel/src/provider.ts`
 
 ## Delivery And Ownership

@@ -38,7 +38,7 @@ Two settled shape rules govern where code lives:
 | `service/agent-entity/` + `service/teammate-collection/` (+ `service/teammate-service/`, `service/completion-router/`) | Neutral agent entity identity/turn/runtime-state stores and shared types live in `agent-entity`; `TeammateCollection` owns only teammate/member collection behavior, factory paths, and router registration; `TeammateService` owns one agent entity runtime. `service/team-collection/` + `service/team-service/` hold `TeamCollection` / `TeamService`; `service/worktree/`, `service/channel-binding/`, `service/legacy-state.ts` are shared helpers at the module root | agent-centric teammates (no `task`): spawn/send/close + forward-only history (send reopens a closed teammate; no separate `resume` verb, #155) |
 | `channel/` | the bidirectional conversational ChannelProvider seam, all neutral: `catalog.ts` (`ChannelProviderCatalog`) and `external-channel-provider.ts` loader | the channel engine (session/bot/gate/message/tool-parsing/identity) lives in the provider package and never imports core; core is a blind channel-MCP conduit — the generic `channel.invoke_tool` admin method routed to the neutral `ChannelSession` / `ChannelProvider` seam — plus neutral routing/binding/auth |
 | `registry/` | provider registry/loader + provider-ref grammar | resolves `builtin:` / `npm:` refs; runnable catalogs currently cover `channel` and `agentRuntime` |
-| `mcp/` | stdio MCP shim processes (`channel-mcp`, `teammate-mcp`, `team-mcp`) — the generic `channel-mcp` shim serves provider-supplied `tools/list` metadata locally and forwards `tools/call` to `channel.invoke_tool`; channel binding (`bind_channel` / `transfer_back`) is a core Team capability on the Team MCP, #209 | thin JSON-RPC bridges that forward to the admin socket |
+| `mcp/` | the official-SDK stdio protocol owner (`/packages/dreamux/src/mcp/server.ts`), shared domain-adapter helpers (`/packages/dreamux/src/mcp/tool-catalog.ts`), and five scoped adapters under `/packages/dreamux/src/mcp/` (`channel-mcp`, `teammate-mcp`, `team-mcp`, `cron-mcp`, `collaboration-space-mcp`) — the generic `channel-mcp` adapter advertises provider-supplied metadata and forwards validated calls to `channel.invoke_tool`; channel binding (`bind_channel` / `transfer_back`) is a core Team capability on the Team MCP, #209 | one protocol implementation with domain-owned visibility, scope, admin mapping, result projection, and public-error policy |
 | `admin/` | admin Unix-socket server + protocol + methods | cross-process control; methods are thin and delegate to the Dispatcher Service |
 | `config/` | operator config schema / parse / validate (`config.ts`) | the only operator-editable config source |
 | `platform/` | runtime-neutral infrastructure: `paths.ts` (sole neutral path builder), `runtime-sockets` (volatile socket allocation), `logger`, `package-bin`, `atomic-write`, `fs-errors` | shared and runtime-agnostic; per-runtime path derivation lives in each provider package |
@@ -81,10 +81,10 @@ Two settled shape rules govern where code lives:
   the built-in Feishu channel package (`@excitedjs/feishu-channel`) owns its
   session, tool backing, static tool catalog, and reply/react wire mapping
   end-to-end (the server does not carry `*FromMcp` handlers). Core keeps only the
-  generic, channel-agnostic MCP conduit: the `channel-mcp` stdio shim serves
-  provider-supplied `tools/list` metadata locally and forwards `tools/call` to
-  the neutral `channel.invoke_tool` admin method, which routes to the provider's
-  `ChannelSession` / `ChannelProvider` seam.
+  generic, channel-agnostic MCP conduit: the `channel-mcp` stdio adapter uses
+  the shared official-SDK server to advertise provider-supplied metadata and
+  forward validated calls to the neutral `channel.invoke_tool` admin method,
+  which routes to the provider's `ChannelSession` / `ChannelProvider` seam.
 - Do not reintroduce a `task` abstraction in the teammate layer; teammates are
   named, resumable agents.
 - Do not create dispatcher-private `CODEX_HOME` directories for the MVP.

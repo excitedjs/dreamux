@@ -9,12 +9,12 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { PassThrough } from 'node:stream';
 import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAdminSocketServer } from '../src/admin/socket.js';
+import { SANITIZED_TOOL_ERROR } from '../src/mcp/server.js';
 import { runTeamMcp } from '../src/mcp/team-mcp.js';
 import type { Server } from '../src/server.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
@@ -34,6 +34,7 @@ import {
   FakeRuntime,
   FAKE_RUNTIME_REF,
 } from './helpers/fake-team-runtime.js';
+import { callTool, connectMcpClient } from './helpers/mcp-client.js';
 
 const execFileAsync = promisify(execFile);
 const cleanups: Array<() => void | Promise<void>> = [];
@@ -66,7 +67,7 @@ describe('Team MCP dissolve pre-acceptance boundary', () => {
         return accepted.receipt;
       },
     });
-    const call = beginDissolveMcpCall(socket.socketPath);
+    const call = await beginDissolveMcpCall(socket.socketPath);
     const durable = await acceptedRecord.promise;
     try {
       expect(durable).toMatchObject({
@@ -77,24 +78,21 @@ describe('Team MCP dissolve pre-acceptance boundary', () => {
           note: 'finish alpha safely',
         },
       });
-      expect(call.output()).toBe('');
+      expect(call.settled()).toBe(false);
     } finally {
       responseGate.resolve();
     }
 
     const response = await call.response;
     idle.resolve();
-    expect(response).toMatchObject({
-      jsonrpc: '2.0',
-      id: 1,
-      result: {
-        structuredContent: {
-          accepted: true,
-          team_name: 'alpha',
-          status: 'closing',
-          bound_target: null,
-          bound_targets: [],
-        },
+    expect(response).toEqual({
+      content: [],
+      structuredContent: {
+        accepted: true,
+        team_name: 'alpha',
+        status: 'closing',
+        bound_target: null,
+        bound_targets: [],
       },
     });
     await vi.waitFor(async () => {
@@ -122,20 +120,14 @@ describe('Team MCP dissolve pre-acceptance boundary', () => {
         return (await acceptAndStart(harness, input)).receipt;
       },
     });
-    const response = await beginDissolveMcpCall(socket.socketPath).response;
+    const call = await beginDissolveMcpCall(socket.socketPath);
+    const response = await call.response;
 
     expect(response).toMatchObject({
-      jsonrpc: '2.0',
-      id: 1,
-      result: {
-        isError: true,
-        content: [{
-          type: 'text',
-          text: expect.stringContaining('[TEAM_DISSOLVE_FAILED]'),
-        }],
-      },
+      isError: true,
+      content: [{ type: 'text', text: SANITIZED_TOOL_ERROR }],
     });
-    expect(response.result).not.toHaveProperty('structuredContent');
+    expect(response).not.toHaveProperty('structuredContent');
     expect(await new TeamStore().get('dispatcher-a', 'alpha')).toMatchObject({
       status: 'running',
       dissolve: null,
@@ -252,46 +244,28 @@ async function startRealAdminSocket(
   return socket;
 }
 
-function beginDissolveMcpCall(socketPath: string): {
-  output(): string;
-  response: Promise<{
-    jsonrpc: string;
-    id: number;
-    result: Record<string, unknown>;
-  }>;
-} {
-  const input = new PassThrough();
-  const output = new PassThrough();
-  let responseText = '';
-  output.setEncoding('utf8');
-  output.on('data', (chunk: string) => {
-    responseText += chunk;
-  });
-  const run = runTeamMcp({
-    dispatcherId: 'dispatcher-a',
-    adminSocketPath: socketPath,
-    input,
-    output,
-    log: () => undefined,
-  });
-  input.end(`${JSON.stringify({
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'tools/call',
-    params: {
-      name: 'dissolve',
-      arguments: {
-        team_name: 'alpha',
-        note: 'finish alpha safely',
-      },
-    },
-  })}\n`);
-  return {
-    output: () => responseText,
-    response: run.then(() => JSON.parse(responseText) as {
-      jsonrpc: string;
-      id: number;
-      result: Record<string, unknown>;
+async function beginDissolveMcpCall(socketPath: string): Promise<{
+  settled(): boolean;
+  response: ReturnType<typeof callTool>;
+}> {
+  const mcp = await connectMcpClient((transport) =>
+    runTeamMcp({
+      dispatcherId: 'dispatcher-a',
+      adminSocketPath: socketPath,
+      transport,
+      log: () => undefined,
     }),
+  );
+  cleanups.push(() => mcp.close());
+  let settled = false;
+  const response = callTool(mcp.client, 'dissolve', {
+    team_name: 'alpha',
+    note: 'finish alpha safely',
+  }).finally(() => {
+    settled = true;
+  });
+  return {
+    settled: () => settled,
+    response,
   };
 }

@@ -34,7 +34,7 @@ import {
   type FeishuMcpReactInput,
   type FeishuMcpReplyInput,
   type FeishuToolName,
-  type FeishuToolResultEnvelope,
+  type FeishuToolResult,
 } from './feishu-mcp-tools.js';
 import {
   handleCardAction as sessionHandleCardAction,
@@ -282,7 +282,7 @@ export class FeishuChannelSession {
   async handleMcpTool(
     toolName: FeishuToolName,
     rawArguments: unknown,
-  ): Promise<Record<string, unknown> | FeishuMcpListChatBotsResult> {
+  ): Promise<FeishuToolResult> {
     const def = FEISHU_TOOLS.find((t) => t.name === toolName);
     if (def === undefined) {
       throw new FeishuChannelCapabilityError(toolName);
@@ -329,7 +329,7 @@ export class FeishuChannelSession {
       );
       throw err;
     }
-    let result: FeishuToolResultEnvelope;
+    let result: FeishuToolResult;
     try {
       result = await def.handle(ctx, parsed);
     } catch (err) {
@@ -343,15 +343,7 @@ export class FeishuChannelSession {
       );
       throw err;
     }
-    // Flatten to the legacy wire shape: return `{ status, message, ...details }`
-    // so the existing 3 callers (reply / react / list_chat_bots) can keep
-    // reading `message_ids`, `reaction_id`, `{known,trusted}` off the top-level
-    // result without a refactor in P1.
-    return {
-      status: result.status,
-      message: result.message,
-      ...(result.details ?? {}),
-    };
+    return result;
   }
 
   messageBelongsToTarget(messageId: string, target: ChannelTarget): boolean {

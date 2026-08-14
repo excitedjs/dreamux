@@ -40,6 +40,7 @@ export {
   type FeishuMcpListChatBotsInput,
   type FeishuToolName,
   type FeishuToolDef,
+  type FeishuToolResult,
   type FeishuToolResultEnvelope,
   type FeishuToolContext,
 } from './feishu-mcp-tools.js';

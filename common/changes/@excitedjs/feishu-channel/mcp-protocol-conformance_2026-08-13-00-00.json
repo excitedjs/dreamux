@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/feishu-channel",
+      "comment": "BREAKING: Publish complete Feishu MCP tool metadata and closed input/output schemas. Successful reply and react calls now return direct canonical message_ids and reaction_id objects, while live and sessionless list_chat_bots calls return the same direct chat_id, known, and trusted result.",
+      "type": "major"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel"
+}

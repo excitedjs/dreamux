@@ -271,9 +271,22 @@ roles:
 - core-owned `channel-mcp` shims for provider-owned channel actions such as Feishu
   `reply`, `react`, and `list_chat_bots`.
 
+All five scoped processes register their caller-bound catalogs through
+`/packages/dreamux/src/mcp/server.ts`, the sole official stdio MCP transport
+and protocol owner. It
+serves exactly `2026-07-28`, `2025-11-25`, and `2025-06-18`, validates the same
+JSON Schemas it advertises, and emits canonical `structuredContent` with exact
+`content: []` for ordinary successes. Bound Team, TeamMate, and workflow tool
+definitions may select one operation-local reminder text from a successfully
+submitted projected result without changing that structured value. Domain
+adapters retain tool visibility, descriptor-bound scope, admin-method mapping,
+result projection, success-text selection, and public-error allowlists; the
+admin control plane independently revalidates and authorizes every call.
+
 Channel MCP descriptor rendering is a core-owned capability built in
-`service/channel-service/mcp-descriptors.ts`; `dispatcher-service/mcp-descriptors.ts`
-only composes the dispatcher-root aggregate (channel + team + teammate + cron).
+`/packages/dreamux/src/service/channel-service/mcp-descriptors.ts`;
+`/packages/dreamux/src/service/dispatcher-service/mcp-descriptors.ts` only
+composes the dispatcher-root aggregate (channel + team + teammate + cron).
 Built-in channels keep their provider id as the MCP server name. External
 channels use the dispatcher-local channel id because an `npm:` provider ref is
 not a valid MCP server name; the full provider ref remains in the shim's
@@ -286,6 +299,8 @@ implementation check.
 
 Source:
 
+- `/packages/dreamux/src/mcp/server.ts`
+- `/packages/dreamux/src/mcp/tool-catalog.ts`
 - `/packages/dreamux/src/service/dispatcher-service/mcp-descriptors.ts`
 - `/packages/dreamux/src/service/channel-service/mcp-descriptors.ts`
 - `/packages/dreamux/src/mcp/teammate-mcp.ts`

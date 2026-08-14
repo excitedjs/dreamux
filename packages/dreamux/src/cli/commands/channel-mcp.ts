@@ -73,6 +73,14 @@ async function handleChannelMcp(argv: ChannelMcpArgv): Promise<void> {
     name: `channel-mcp/${dispatcherId}`,
     filePath: channelMcpLogPath(dispatcherId),
   });
+  // Fail loud when the catalog is missing or malformed: the channel MCP never
+  // serves a silently substituted empty tool set. runChannelMcp validates the
+  // decoded catalog's shape; here we only guarantee a non-empty decode input.
+  if (argv.channelToolsB64 === undefined || argv.channelToolsB64 === '') {
+    throw new Error(
+      'channel-mcp requires --channel-tools-b64 (the provider-supplied tool catalog)',
+    );
+  }
   await runChannelMcp({
     dispatcherId,
     providerRef: argv.provider,
@@ -81,18 +89,34 @@ async function handleChannelMcp(argv: ChannelMcpArgv): Promise<void> {
     teamId: argv.teamId,
     leaderName: argv.leaderName,
     adminSocketPath: argv.adminSocket,
-    ...(argv.channelToolsB64 !== undefined
-      ? { tools: decodeChannelTools(argv.channelToolsB64) }
-      : {}),
+    tools: decodeChannelTools(argv.channelToolsB64),
     log: (message) => log.info(message),
   });
 }
 
 function decodeChannelTools(b64: string): readonly unknown[] {
-  try {
-    const parsed: unknown = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
+  if (!isCanonicalBase64(b64)) {
+    throw new Error('--channel-tools-b64 must be valid canonical base64');
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
+  } catch (err) {
+    throw new Error(
+      `--channel-tools-b64 did not decode to valid JSON: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error('--channel-tools-b64 must decode to a JSON array of tool descriptors');
+  }
+  return parsed;
+}
+
+function isCanonicalBase64(value: string): boolean {
+  if (value.length === 0 || value.length % 4 !== 0) return false;
+  return /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+    value,
+  );
 }
