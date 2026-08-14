@@ -4,7 +4,7 @@
 
 Use README files as the routing surface for task discovery:
 
-1. Read `.agents/tasks/dreamux/README.md` only.
+1. Read `.agents/tasks/README.md` only.
 2. Read only the relevant domain README files selected by the root index.
 3. Read only the README files of plausible task candidates.
 4. Present the candidates to the operator before opening deeper task artifacts by
@@ -22,15 +22,19 @@ After the operator confirms a new task, have the TeamLeader run:
 
 ```bash
 python3 .agents/skills/dev-workflow/scripts/init_task.py create \
-  --domain <domain> \
+  --domain <domain-path> \
   --slug <action-task-slug> \
   --title "<task title>" \
   --goal "<initial outcome>"
 ```
 
 The script creates only the task README and `requirement.md`, then adds the task to
-the existing domain README. Read [task-records.md](task-records.md) for the lean
-record contract, new-domain options, validation command, and ownership boundary.
+the existing leaf-domain README. Domain paths may contain multiple capability
+segments such as `mcp/scheduler`; every parent domain must already have an indexed
+README. The `create-domain` subcommand creates an empty parent index when the first
+real task belongs only in a deeper child. Read
+[task-records.md](task-records.md) for the lean record contract, new-domain
+options, validation command, and ownership boundary.
 
 ## Explain a candidate before confirmation
 

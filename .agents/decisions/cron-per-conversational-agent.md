@@ -80,7 +80,7 @@ still enforced.
 ## References
 
 - Originating proposal:
-  [cron for team leaders](../proposals/scheduled-tasks-team-leader.md).
+  [archived cron-for-TeamLeaders proposal](../archive/proposals/scheduled-tasks-team-leader.md).
 - Baseline it extends:
-  [scheduled tasks](../proposals/scheduled-tasks.md),
+  [archived scheduled-tasks proposal](../archive/proposals/scheduled-tasks.md),
   [agent activity capability](agent-activity-capability.md).

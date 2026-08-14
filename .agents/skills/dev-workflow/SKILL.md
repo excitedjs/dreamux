@@ -32,7 +32,7 @@ prototype or add temporary diagnostic code. An initial request such as "fix X" o
 ## Workflow
 
 1. **Resolve the task lineage.** Discover prior work only through the hierarchical
-   README indexes under `.agents/tasks/dreamux/`. If the operator asks what a
+   README indexes under `.agents/tasks/`. If the operator asks what a
    candidate did before choosing it, read only that candidate's final requirement
    and final technical solution to explain it. Confirm reuse before wider recovery.
    Ask before creating a new task. After the operator confirms creation, have the

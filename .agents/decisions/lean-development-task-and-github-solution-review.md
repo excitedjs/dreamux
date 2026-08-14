@@ -1,6 +1,7 @@
 # Lean Development Task and GitHub Solution Review
 
-- **Status:** Accepted
+- **Status:** Accepted; task-routing path superseded by
+  [Capability-domain task routing](capability-domain-task-routing.md)
 - **Date:** 2026-08-13
 - **Affects:** `.agents/tasks/dreamux`, `.agents/skills/dev-workflow`
 - **PR / Issue:** [PR #332](https://github.com/excitedjs/dreamux/pull/332)

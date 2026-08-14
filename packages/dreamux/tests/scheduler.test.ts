@@ -169,7 +169,7 @@ describe('SchedulerService timer dispatch', () => {
     expect(submitted).toEqual([]);
 
     idle.resolve();
-    await expect(fire).resolves.toEqual({ id: expect.any(String), status: 'submitted' });
+    await fire;
     expect(submitted).toEqual(['run report']);
     const jobs = (await scheduler.list()).jobs;
     expect(jobs[0]?.last_fired_at).toEqual(expect.any(Number));
@@ -195,13 +195,13 @@ describe('SchedulerService timer dispatch', () => {
     const first = captured.lastDispatch();
     await idle.whenReached();
     idle.resolve();
-    await expect(first).resolves.toEqual({ id: job.id, status: 'submitted' });
+    await first;
 
     await captured.advanceMinute();
     const second = captured.lastDispatch();
     await idle.whenReached();
     idle.resolve();
-    await expect(second).resolves.toEqual({ id: job.id, status: 'submitted' });
+    await second;
 
     expect(submitted.map((input) => input.sourceId)).toEqual([
       `scheduled:${job.id}:1`,
@@ -217,7 +217,7 @@ describe('SchedulerService timer dispatch', () => {
       captured,
     });
     await scheduler.start();
-    const job = await scheduler.create({
+    await scheduler.create({
       cron: '* * * * *',
       prompt: 'run report',
       tz: 'UTC',
@@ -227,9 +227,12 @@ describe('SchedulerService timer dispatch', () => {
     const fire = captured.lastDispatch();
     await idle.whenReached();
     idle.resolve();
-    await expect(fire).resolves.toEqual({ id: job.id, status: 'stopped' });
-    const jobs = (await scheduler.list()).jobs;
-    expect(jobs[0]?.last_fired_at).toBeNull();
+    await fire;
+    const persisted = (await scheduler.list()).jobs[0];
+    expect(persisted?.last_fired_at).toBeNull();
+    expect(persisted?.enabled).toBe(true);
+    expect(persisted?.next_run_at).toEqual(expect.any(Number));
+    expect(persisted!.next_run_at).toBeGreaterThan(Date.now());
     scheduler.stop();
   });
 
@@ -254,7 +257,7 @@ describe('SchedulerService timer dispatch', () => {
     await scheduler.delete(job.id);
     idle.resolve();
 
-    await expect(fire).resolves.toEqual({ id: job.id, status: 'skipped' });
+    await fire;
     expect(submitted).toEqual([]);
     expect((await scheduler.list()).jobs).toEqual([]);
     scheduler.stop();
@@ -278,7 +281,7 @@ describe('SchedulerService timer dispatch', () => {
       { captured, absentRuntimeStrategy: 'submit' },
     );
     await scheduler.start();
-    const job = await scheduler.create({
+    await scheduler.create({
       cron: '* * * * *',
       prompt: 'run report',
       tz: 'UTC',
@@ -286,14 +289,14 @@ describe('SchedulerService timer dispatch', () => {
 
     await captured.advanceMinute();
     const failed = captured.lastDispatch();
-    await expect(failed).resolves.toEqual({ id: job.id, status: 'failed' });
+    await failed;
     expect(submitted).toEqual([]);
     expect((await scheduler.list()).jobs[0]?.last_fired_at).toBeNull();
     expect((await scheduler.list()).jobs[0]?.enabled).toBe(true);
 
     await captured.advanceMinute();
     const recovered = captured.lastDispatch();
-    await expect(recovered).resolves.toEqual({ id: job.id, status: 'submitted' });
+    await recovered;
     expect(submitted).toEqual(['run report']);
     expect((await scheduler.list()).jobs[0]?.last_fired_at).toEqual(
       expect.any(Number),
@@ -352,7 +355,7 @@ describe('SchedulerService timer dispatch', () => {
       return { status: 'submitted', turnId: 'turn-1' };
     }, { captured });
     await scheduler.start();
-    const job = await scheduler.create({
+    await scheduler.create({
       cron: '* * * * *',
       prompt: 'run report',
       tz: 'UTC',
@@ -363,7 +366,7 @@ describe('SchedulerService timer dispatch', () => {
     await idle.whenReached();
     scheduler.stop();
 
-    await expect(fire).resolves.toEqual({ id: job.id, status: 'skipped' });
+    await fire;
     expect(submitted).toEqual([]);
     idle.resolve();
     expect(submitted).toEqual([]);
@@ -383,7 +386,7 @@ describe('SchedulerService timer dispatch', () => {
       { store, captured },
     );
     await scheduler.start();
-    const job = await scheduler.create({
+    await scheduler.create({
       cron: '* * * * *',
       prompt: 'run report',
       tz: 'UTC',
@@ -397,7 +400,7 @@ describe('SchedulerService timer dispatch', () => {
     store.stopHook = () => scheduler.stop();
     idle.resolve();
 
-    await expect(fire).resolves.toEqual({ id: job.id, status: 'skipped' });
+    await fire;
     expect(submitted).toEqual([]);
   });
 
@@ -420,7 +423,7 @@ describe('SchedulerService timer dispatch', () => {
       { captured, absentRuntimeStrategy: 'submit' },
     );
     await scheduler.start();
-    const job = await scheduler.create({
+    await scheduler.create({
       cron: '* * * * *',
       prompt: 'run report',
       tz: 'UTC',
@@ -431,10 +434,94 @@ describe('SchedulerService timer dispatch', () => {
     await submitStarted.promise;
     finishSubmit!();
 
-    await expect(fire).resolves.toEqual({ id: job.id, status: 'skipped' });
+    await fire;
     expect(submitted).toEqual(['run report']);
     const jobs = (await scheduler.list()).jobs;
     expect(jobs[0]?.last_fired_at).toBeNull();
+  });
+
+  it('drops a queued timer admission after stop changes the lifecycle generation', async () => {
+    const store = new CountingGetStore();
+    const admission = new CapturedAdmissions();
+    let runtimeLookups = 0;
+    const idle = controllableIdle();
+    const submitted: string[] = [];
+    const scheduler = service(
+      () => {
+        runtimeLookups += 1;
+        return idle.runtime;
+      },
+      async (input) => {
+        submitted.push(input.prompt);
+        return { status: 'submitted', turnId: 'turn-unexpected' };
+      },
+      { store, captured: admission },
+    );
+    await scheduler.start();
+    await scheduler.create({
+      cron: '* * * * *',
+      prompt: 'run report',
+      tz: 'UTC',
+    });
+    const queued = admission.queueNext();
+
+    await admission.advanceMinute();
+    const fire = admission.lastDispatch();
+    await queued.whenAdmitted;
+    expect(store.getCalls).toBe(0);
+
+    scheduler.stop();
+    queued.release();
+    await fire;
+
+    expect(store.getCalls).toBe(0);
+    expect(runtimeLookups).toBe(0);
+    expect(idle.waitCalls()).toBe(0);
+    expect(submitted).toEqual([]);
+    expect((await scheduler.list()).jobs[0]).toMatchObject({
+      enabled: true,
+      last_fired_at: null,
+    });
+  });
+
+  it('collapses a re-armed fire for the same job while its first fire is held', async () => {
+    const idle = controllableIdle();
+    const submitted: Array<{ prompt: string; sourceId: string }> = [];
+    const captured = new CapturedAdmissions();
+    const scheduler = service(idle.runtime, async (input) => {
+      submitted.push({ prompt: input.prompt, sourceId: input.sourceId });
+      return { status: 'submitted', turnId: 'turn-1' };
+    }, { captured });
+    await scheduler.start();
+    const job = await scheduler.create({
+      cron: '* * * * *',
+      prompt: 'first prompt',
+      tz: 'UTC',
+    });
+
+    await captured.advanceMinute();
+    const firstFire = captured.lastDispatch();
+    await idle.whenReached();
+    await scheduler.update({ id: job.id, prompt: 'updated prompt' });
+
+    await captured.advanceMinute();
+    const collapsedFire = captured.lastDispatch();
+    await collapsedFire;
+    expect(idle.waitCalls()).toBe(1);
+    expect(submitted).toEqual([]);
+
+    idle.resolve();
+    await firstFire;
+    expect(submitted).toEqual([
+      {
+        prompt: 'updated prompt',
+        sourceId: `scheduled:${job.id}:1`,
+      },
+    ]);
+    expect((await scheduler.list()).jobs[0]?.last_fired_at).toEqual(
+      expect.any(Number),
+    );
+    scheduler.stop();
   });
 
   it('rejects an empty title on create and update so a job stays reloadable', async () => {
@@ -495,11 +582,13 @@ describe('SchedulerService timer dispatch', () => {
     });
     await dispatcherCaptured.advanceMinute();
     const dispatcherFire = dispatcherCaptured.lastDispatch();
-    await expect(dispatcherFire).resolves.toEqual({
+    await dispatcherFire;
+    expect((await dispatcher.list()).jobs[0]).toMatchObject({
       id: dispatcherJob.id,
-      status: 'missed',
+      enabled: false,
+      next_run_at: null,
+      last_fired_at: null,
     });
-    expect((await dispatcher.list()).jobs[0]?.last_fired_at).toBeNull();
     dispatcher.stop();
 
     const submitted: string[] = [];
@@ -517,17 +606,14 @@ describe('SchedulerService timer dispatch', () => {
       },
     );
     await leader.start();
-    const leaderJob = await leader.create({
+    await leader.create({
       cron: '* * * * *',
       prompt: 'leader report',
       tz: 'UTC',
     });
     await leaderCaptured.advanceMinute();
     const leaderFire = leaderCaptured.lastDispatch();
-    await expect(leaderFire).resolves.toEqual({
-      id: leaderJob.id,
-      status: 'submitted',
-    });
+    await leaderFire;
     expect(submitted).toEqual(['leader report']);
     expect((await leader.list()).jobs[0]?.last_fired_at).toEqual(expect.any(Number));
     leader.stop();
@@ -577,10 +663,18 @@ describe('SchedulerService timer dispatch', () => {
     first.stop();
     secondIdle.resolve();
 
-    await expect(firstFire).resolves.toEqual({ id: firstJob.id, status: 'skipped' });
-    await expect(secondFire).resolves.toEqual({ id: secondJob.id, status: 'submitted' });
+    await firstFire;
+    await secondFire;
     expect(firstSubmitted).toEqual([]);
     expect(secondSubmitted).toEqual(['beta']);
+    expect((await first.list()).jobs[0]).toMatchObject({
+      id: firstJob.id,
+      last_fired_at: null,
+    });
+    expect((await second.list()).jobs[0]).toMatchObject({
+      id: secondJob.id,
+      last_fired_at: expect.any(Number),
+    });
     second.stop();
   });
 });
@@ -627,11 +721,39 @@ function service(
  *  right after the fake clock crosses a minute boundary. */
 class CapturedAdmissions {
   private readonly pending: Array<Promise<unknown>> = [];
+  private queued:
+    | {
+        admitted: ReturnType<typeof deferred<void>>;
+        release: ReturnType<typeof deferred<void>>;
+      }
+    | undefined;
 
   admit<T>(task: () => Promise<T>): Promise<T> {
-    const run = task();
+    const queued = this.queued;
+    this.queued = undefined;
+    const run =
+      queued === undefined
+        ? task()
+        : (async () => {
+            queued.admitted.resolve();
+            await queued.release.promise;
+            return task();
+          })();
     this.pending.push(run as Promise<unknown>);
     return run;
+  }
+
+  queueNext(): { whenAdmitted: Promise<void>; release(): void } {
+    if (this.queued !== undefined) {
+      throw new Error('an admission is already queued');
+    }
+    const admitted = deferred<void>();
+    const release = deferred<void>();
+    this.queued = { admitted, release };
+    return {
+      whenAdmitted: admitted.promise,
+      release: () => release.resolve(),
+    };
   }
 
   /** Advance the fake clock past the next minute boundary. The fired timer
@@ -645,10 +767,10 @@ class CapturedAdmissions {
    *  before any subsequent mutation so it is the cron dispatch. Return it
    *  un-awaited so a test can observe the parked (held) state before releasing
    *  idle, then await the same handle once. */
-  lastDispatch(): Promise<{ id: string; status: string }> {
+  lastDispatch(): Promise<void> {
     const dispatch = this.pending.at(-1);
     if (dispatch === undefined) throw new Error('no admitted dispatch');
-    return dispatch as Promise<{ id: string; status: string }>;
+    return dispatch as Promise<void>;
   }
 }
 
@@ -665,6 +787,19 @@ class HookOnGetStore extends CronJobStore {
     this.stopHook = null;
     hook?.();
     return result;
+  }
+}
+
+class CountingGetStore extends CronJobStore {
+  getCalls = 0;
+
+  constructor() {
+    super({ dispatcherId: 'flow', cronJobsPath: dispatcherCronJobsPath('flow') });
+  }
+
+  override async get(id: string): Promise<CronJob | null> {
+    this.getCalls += 1;
+    return super.get(id);
   }
 }
 
@@ -694,10 +829,12 @@ function controllableIdle(): {
   runtime: AgentRuntime;
   whenReached(): Promise<void>;
   resolve(): void;
+  waitCalls(): number;
 } {
   let resolveIdle: (() => void) | null = null;
   let reachedResolve: (() => void) | null = null;
   let reachedFlag = false;
+  let waitCalls = 0;
   const runtime: AgentRuntime = {
     providerRef: 'test',
     async start() {},
@@ -710,6 +847,7 @@ function controllableIdle(): {
       return { status: 'stopped' };
     },
     waitIdle() {
+      waitCalls += 1;
       return new Promise<void>((resolve) => {
         resolveIdle = resolve;
         reachedFlag = true;
@@ -752,6 +890,9 @@ function controllableIdle(): {
       resolveIdle?.();
       resolveIdle = null;
       reachedFlag = false;
+    },
+    waitCalls() {
+      return waitCalls;
     },
   };
 }

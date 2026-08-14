@@ -28,7 +28,7 @@ For current behavior, read the linked source code too.
 - [Dynamic Workflow usage](reference/dynamic-workflow-usage.md) — user guide
   for the beta Dynamic Workflow multi-agent orchestration capability, with
   real review/audit/fix workflow examples.
-- [Development tasks](tasks/dreamux/README.md) — README-indexed requirement
+- [Development tasks](tasks/README.md) — README-indexed requirement
   lineage and current development-task state.
 - [Glossary](glossary.md) — short definitions for overloaded Dreamux terms.
 - [Decision index](decisions/README.md) — ADRs, with current-trail and
@@ -59,7 +59,7 @@ For current behavior, read the linked source code too.
 | modify Feishu inbound, `/introduce`, trusted bot context, or reaction timing | [Channel runtime](reference/channel-runtime.md), [Feishu introduce](domains/feishu-introduce.md), [Feishu pairing access](domains/feishu-pairing-access.md), [non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md), source |
 | modify Feishu attachment download/cache behavior | [Feishu inbound attachments](decisions/feishu-inbound-attachments.md), [Channel runtime](reference/channel-runtime.md) |
 | modify onboard, daemon, uninstall, or public CLI names | [Repository operations and release](domains/repository-operations-and-release.md), [Global bin/onboard/serve](decisions/global-bin-onboard-serve.md), [CLI and package naming](decisions/cli-and-package-naming.md) |
-| change the Dreamux repository through a feature, refactor, or bug fix | [Development workflow skill](skills/dev-workflow/SKILL.md), [Development tasks](tasks/dreamux/README.md), [Repository operations and release](domains/repository-operations-and-release.md) |
+| change the Dreamux repository through a feature, refactor, or bug fix | [Development workflow skill](skills/dev-workflow/SKILL.md), [Development tasks](tasks/README.md), [Repository operations and release](domains/repository-operations-and-release.md) |
 | modify the anti-leak guardrail, `.gitleaks.toml`, `.npmrc`, CI, or hooks | [Repository operations and release](domains/repository-operations-and-release.md), [Anti-leak guardrail](decisions/anti-leak-guardrail.md) |
 | modify npm publishing or release workflows | [Repository operations and release](domains/repository-operations-and-release.md), [NPM release OIDC](decisions/npm-release-oidc.md) |
 | inspect historical hardening backlog | [Archived Post-MVP hardening](archive/proposals/post-mvp-hardening.md) |

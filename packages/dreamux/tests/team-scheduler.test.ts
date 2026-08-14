@@ -627,8 +627,8 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       tz: 'UTC',
     });
     // A timer-driven fire wakes the dormant dispatcher runtime. The minute wait
-    // is faked; the runtime `onCompletion` deferred settles the sub-second lazy
-    // start + submit chain without polling a real timer.
+    // is faked; the runtime `onCompletion` deferred signals when the scheduled
+    // completion input reaches the runtime.
     await fireCronOnce(fired.promise);
 
     expect(dispatcher.runtimeStatus()).toEqual({
@@ -1940,14 +1940,10 @@ async function waitFor(
 }
 
 /**
- * Drive a single armed cron timer to fire without a real minute wait, then let
- * its real-async lazy-start + submit + persistence chain settle deterministically
- * against a signal the runtime resolves. Requires fake timers to already be
- * enabled BEFORE the job was armed (so the arm used the fake `setTimeout`); the
- * fake clock advances past the minute boundary, then real timers are restored so
- * the sub-second async chain runs without polling a fake timer. The caller waits
- * on `signal` (e.g. runtime `onCompletion`/start-reached) rather than a real
- * `setTimeout` poll.
+ * Drive one armed cron timer without a real minute wait, then await the supplied
+ * runtime observation signal (for example completion input or start reached).
+ * Fake timers must be enabled before the job is armed; real timers are restored
+ * after the minute boundary so runtime work can continue normally.
  */
 async function fireCronOnce(signal: Promise<unknown>): Promise<void> {
   await vi.advanceTimersByTimeAsync(60_000);

@@ -59,7 +59,7 @@ Run at least:
 
 ```bash
 python3 .agents/skills/dev-workflow/scripts/init_task.py check \
-  --domain <domain> \
+  --domain <domain-path> \
   --slug <task-slug>
 .agents/scripts/check.sh
 git diff --check

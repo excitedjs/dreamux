@@ -8,7 +8,7 @@
   `/packages/dreamux/src/service/teammate-collection/`,
   `/packages/dreamux/src/platform/`; any new durable single-document store
 - **PR / Issue:** surfaced by the scheduled-tasks design
-  ([`.agents/proposals/scheduled-tasks.md`](../proposals/scheduled-tasks.md))
+  ([archived scheduled-tasks proposal](../archive/proposals/scheduled-tasks.md))
 
 ## Context
 

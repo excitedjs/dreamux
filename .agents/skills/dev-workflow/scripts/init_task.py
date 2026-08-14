@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create or check a lean Dreamux task record."""
+"""Create or check a lean development task record."""
 
 from __future__ import annotations
 
@@ -37,6 +37,15 @@ def validate_segment(value: str, label: str, action_slug: bool = False) -> str:
     return value
 
 
+def validate_domain_path(value: str) -> tuple[str, ...]:
+    if not value:
+        raise TaskError("domain path must not be empty")
+    parts = tuple(value.split("/"))
+    for part in parts:
+        validate_segment(part, "domain path segment")
+    return parts
+
+
 def validate_line(value: str, label: str) -> str:
     value = value.strip()
     if not value or "\n" in value or "\r" in value:
@@ -57,8 +66,8 @@ def repo_root(override: str | None) -> Path:
         if result.returncode:
             raise TaskError("run inside the Dreamux repository")
         root = Path(result.stdout.strip()).resolve()
-    if not (root / ".agents/tasks/dreamux/README.md").is_file():
-        raise TaskError(f"missing Dreamux task index under {root}")
+    if not (root / ".agents/tasks/README.md").is_file():
+        raise TaskError(f"missing task index under {root}")
     return root
 
 
@@ -92,11 +101,19 @@ def replace(path: Path, content: str) -> None:
     os.replace(temporary, path)
 
 
-def task_link(domain: str, slug: str, child: str = "README.md") -> str:
-    return f"/.agents/tasks/dreamux/{domain}/{slug}/{child}"
+def domain_name(parts: tuple[str, ...]) -> str:
+    return "/".join(parts)
 
 
-def task_readme(domain: str, slug: str, title: str, goal: str) -> str:
+def domain_link(parts: tuple[str, ...]) -> str:
+    return f"/.agents/tasks/{domain_name(parts)}/README.md"
+
+
+def task_link(domain: tuple[str, ...], slug: str, child: str = "README.md") -> str:
+    return f"/.agents/tasks/{domain_name(domain)}/{slug}/{child}"
+
+
+def task_readme(domain: tuple[str, ...], slug: str, title: str, goal: str) -> str:
     return f"""# {title}
 
 ## Current state
@@ -175,6 +192,8 @@ def domain_readme(domain: str, summary: str, signals: list[str]) -> str:
 | --- | --- |
 {chr(10).join(rows)}
 
+## Child Scopes
+
 ## Tasks
 """
 
@@ -186,36 +205,71 @@ def existing_title(path: Path) -> str:
     return first[2:].strip()
 
 
+def assert_domain_chain(tasks: Path, domain: tuple[str, ...]) -> None:
+    for depth in range(1, len(domain) + 1):
+        current = domain[:depth]
+        domain_index = tasks.joinpath(*current, "README.md")
+        parent_index = tasks.joinpath(*current[:-1], "README.md")
+        read(domain_index)
+        parent_text = read(parent_index)
+        target = domain_link(current)
+        if f"]({target})" not in parent_text:
+            raise TaskError(f"domain is missing from its parent task index: {target}")
+
+
+def create_domain(
+    tasks: Path,
+    domain: tuple[str, ...],
+    summary: str,
+    signals: list[str],
+) -> None:
+    assert_domain_chain(tasks, domain[:-1])
+    domain_dir = tasks.joinpath(*domain)
+    if domain_dir.exists():
+        raise TaskError(f"domain already exists: {domain_name(domain)}")
+    domain_text = domain_readme(domain[-1], summary, signals)
+    parent_index = tasks.joinpath(*domain[:-1], "README.md")
+    parent_text = add_bullet(
+        read(parent_index),
+        ("## Child Scopes",),
+        domain_link(domain),
+        f"- [{domain[-1].replace('-', ' ').title()}]({domain_link(domain)}): {summary}",
+    )
+    domain_dir.mkdir()
+    (domain_dir / "README.md").write_text(domain_text, encoding="utf-8")
+    replace(parent_index, parent_text)
+
+
+def create_domain_only(args: argparse.Namespace) -> int:
+    domain = validate_domain_path(args.domain)
+    summary = validate_line(args.domain_summary, "domain summary")
+    root = repo_root(args.repo_root)
+    tasks = root / ".agents/tasks"
+    create_domain(tasks, domain, summary, args.code_signal)
+    print(f"Created task domain: .agents/tasks/{domain_name(domain)}")
+    return 0
+
+
 def create(args: argparse.Namespace) -> int:
-    domain = validate_segment(args.domain, "domain")
+    domain = validate_domain_path(args.domain)
     slug = validate_segment(args.slug, "task slug", action_slug=True)
     title = validate_line(args.title, "title")
     goal = validate_line(args.goal, "goal")
     root = repo_root(args.repo_root)
-    tasks = root / ".agents/tasks/dreamux"
-    root_index = tasks / "README.md"
-    domain_dir = tasks / domain
+    tasks = root / ".agents/tasks"
+    domain_dir = tasks.joinpath(*domain)
     domain_index = domain_dir / "README.md"
     task_dir = domain_dir / slug
-    root_text = read(root_index)
-    domain_target = f"/.agents/tasks/dreamux/{domain}/README.md"
 
     if domain_dir.exists():
+        assert_domain_chain(tasks, domain)
         domain_text = read(domain_index)
-        if f"]({domain_target})" not in root_text:
-            raise TaskError(f"domain is missing from the root task index: {domain_target}")
     else:
         if not args.create_domain:
             raise TaskError("domain does not exist; confirm it and pass --create-domain")
         summary = validate_line(args.domain_summary or "", "domain summary")
-        domain_text = domain_readme(domain, summary, args.code_signal)
-        domain_dir.mkdir()
-        root_text = add_bullet(
-            root_text,
-            ("## Child Scopes",),
-            domain_target,
-            f"- [{domain.replace('-', ' ').title()}]({domain_target}): {summary}",
-        )
+        create_domain(tasks, domain, summary, args.code_signal)
+        domain_text = read(domain_index)
 
     if task_dir.exists():
         if existing_title(task_dir / "README.md") != title:
@@ -235,37 +289,31 @@ def create(args: argparse.Namespace) -> int:
         task_link(domain, slug),
         f"- [{title}]({task_link(domain, slug)}) — `intake`: {goal}",
     )
-    if domain_index.exists():
-        replace(domain_index, domain_text)
-    else:
-        domain_index.write_text(domain_text, encoding="utf-8")
-    replace(root_index, root_text)
+    replace(domain_index, domain_text)
     print(f"Created lean task record: {task_dir}")
     return 0
 
 
 def check(args: argparse.Namespace) -> int:
-    domain = validate_segment(args.domain, "domain")
+    domain = validate_domain_path(args.domain)
     slug = validate_segment(args.slug, "task slug", action_slug=True)
     root = repo_root(args.repo_root)
-    tasks = root / ".agents/tasks/dreamux"
-    task_dir = tasks / domain / slug
-    root_text = read(tasks / "README.md")
-    domain_text = read(tasks / domain / "README.md")
+    tasks = root / ".agents/tasks"
+    task_dir = tasks.joinpath(*domain, slug)
+    domain_text = read(tasks.joinpath(*domain, "README.md"))
     task_text = read(task_dir / "README.md")
     read(task_dir / "requirement.md")
-    expected = {
-        f"/.agents/tasks/dreamux/{domain}/README.md": root_text,
-        task_link(domain, slug): domain_text,
-        task_link(domain, slug, "requirement.md"): task_text,
-    }
+    assert_domain_chain(tasks, domain)
+    expected = {}
+    expected[task_link(domain, slug)] = domain_text
+    expected[task_link(domain, slug, "requirement.md")] = task_text
     for target, text in expected.items():
         if f"]({target})" not in text:
             raise TaskError(f"missing index link: {target}")
     states = re.findall(r"^- State: `([^`]+)`$", task_text, re.MULTILINE)
     if len(states) != 1 or states[0] not in STATES:
         raise TaskError("task README has no supported workflow state")
-    print(f"Task record OK: .agents/tasks/dreamux/{domain}/{slug}")
+    print(f"Task record OK: .agents/tasks/{domain_name(domain)}/{slug}")
     return 0
 
 
@@ -282,6 +330,12 @@ def parser() -> argparse.ArgumentParser:
     create_parser.add_argument("--code-signal", action="append", default=[])
     create_parser.add_argument("--repo-root", help=argparse.SUPPRESS)
     create_parser.set_defaults(handler=create)
+    domain_parser = commands.add_parser("create-domain")
+    domain_parser.add_argument("--domain", required=True)
+    domain_parser.add_argument("--domain-summary", required=True)
+    domain_parser.add_argument("--code-signal", action="append", default=[])
+    domain_parser.add_argument("--repo-root", help=argparse.SUPPRESS)
+    domain_parser.set_defaults(handler=create_domain_only)
     check_parser = commands.add_parser("check")
     check_parser.add_argument("--domain", required=True)
     check_parser.add_argument("--slug", required=True)
