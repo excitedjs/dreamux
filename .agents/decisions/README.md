@@ -27,7 +27,7 @@ Read these first for today's system shape:
 
 | Theme | Records |
 |---|---|
-| Repository shape | [rush-pnpm-monorepo](rush-pnpm-monorepo.md), [install-model](install-model.md) |
+| Repository shape | [rush-pnpm-monorepo](rush-pnpm-monorepo.md), [install-model](install-model.md), [lean-development-task-and-github-solution-review](lean-development-task-and-github-solution-review.md) |
 | Runtime architecture | [provider-architecture-realignment](provider-architecture-realignment.md), [npm-package-split-and-channel-targets](npm-package-split-and-channel-targets.md), [channel-scoped-collaboration-and-core-events](channel-scoped-collaboration-and-core-events.md), [feishu-binding-notification-events](feishu-binding-notification-events.md), [feishu-allow-chats-trust-semantics](feishu-allow-chats-trust-semantics.md), [agents-config-normalization](agents-config-normalization.md), [dispatcher-local-aggregate](dispatcher-local-aggregate.md), [runtime-run-root](runtime-run-root.md), [issue-110-epic-closure](issue-110-epic-closure.md), [provider-references-and-capability-registry](provider-references-and-capability-registry.md), [agent-runtime-provider](agent-runtime-provider.md), [agent-activity-capability](agent-activity-capability.md), [channel-provider](channel-provider.md), [server-hosted-teammate](server-hosted-teammate.md), [providerized-config-state-compatibility](providerized-config-state-compatibility.md), [global-config-dir](global-config-dir.md), [logging](logging.md), [feishu-inbound-attachments](feishu-inbound-attachments.md), [feishu-pairing-access-v3](feishu-pairing-access-v3.md), [channel-input-runtime-assembly](channel-input-runtime-assembly.md), [service-architecture-refactor](service-architecture-refactor.md), [cron-per-conversational-agent](cron-per-conversational-agent.md), [dispatcher-lazy-start-isomorphic](dispatcher-lazy-start-isomorphic.md) |
 | Persistence | [json-document-store](json-document-store.md), [runtime-run-root](runtime-run-root.md), [providerized-config-state-compatibility](providerized-config-state-compatibility.md) |
 | Public surface | [cli-and-package-naming](cli-and-package-naming.md), [dispatcher-tm-boundary](dispatcher-tm-boundary.md), [dispatcher-tm-packaging](dispatcher-tm-packaging.md), [global-bin-onboard-serve](global-bin-onboard-serve.md), [global-config-dir](global-config-dir.md) |
@@ -74,6 +74,7 @@ instead of this decision index.
 - [install-model](install-model.md)
 - [issue-110-epic-closure](issue-110-epic-closure.md)
 - [json-document-store](json-document-store.md)
+- [lean-development-task-and-github-solution-review](lean-development-task-and-github-solution-review.md)
 - [logging](logging.md)
 - [no-sync-io-lint-gate](no-sync-io-lint-gate.md)
 - [npm-package-split-and-channel-targets](npm-package-split-and-channel-targets.md)

@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Rework the bundled workflow code-review reference onto the angle-partitioned method: a schema'd scope stage that resolves the exact diff command and carries it into every later prompt, one finder per correctness angle plus a single merged finder covering all five cleanup angles, recall-biased finding with all suppression moved to verify, one verifier per source location returning a three-state CONFIRMED/PLAUSIBLE/REFUTED verdict per candidate under an unconditional recall override, a bounded gap sweep at the higher gear, index-based synthesis under a per-gear reported-findings cap, and the user's verbatim review target riding along to every subagent under a scope-only framing; realign the ultracode review archetype, scout-stage citation, and staged-escalation example to the same shape, and retitle the SKILL.md references row. Documentation-only bundled skill content; no runtime behavior change.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

@@ -7,6 +7,14 @@ responsibility, and npm release.
 Read this before changing Rush config, package manifests, public CLI bins,
 release workflows, anti-leak guardrails, lint gates, or changelog behavior.
 
+## Development Workflow
+
+Use the TeamLeader-only
+[development workflow](../skills/dev-workflow/SKILL.md) for every non-trivial
+feature, refactor, or bug fix. Its design rationale and rejected alternatives are
+recorded in
+[lean development task and GitHub solution review](../decisions/lean-development-task-and-github-solution-review.md).
+
 ## Install And Build
 
 The repo has one supported source install path: Rush + pnpm.
