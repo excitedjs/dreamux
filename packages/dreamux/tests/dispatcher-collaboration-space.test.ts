@@ -1,6 +1,14 @@
+import { execFile } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 
 import type {
   AgentRuntime,
@@ -49,6 +57,7 @@ import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
 
 const RUNTIME_REF = 'test:runtime';
 const CHANNEL_REF = 'test:channel';
+const execFileAsync = promisify(execFile);
 
 const CAPABILITIES: AgentRuntimeCapabilities = {
   resume: { supported: false },
@@ -955,9 +964,18 @@ describe('DispatcherService collaboration-space routing', () => {
   });
 
   it('provisions from neutral inbound container before delivery', async () => {
+    const sourceRepoPath = join(root, 'source');
+    mkdirSync(sourceRepoPath, { recursive: true });
+    const repo = realpathSync(sourceRepoPath);
+    const git = async (args: string[]) => execFileAsync('git', args, { cwd: repo });
+    await git(['init', '--initial-branch=main', '-q']);
+    await git(['config', 'user.email', 'test@example.com']);
+    await git(['config', 'user.name', 'Test']);
+    writeFileSync(join(repo, 'README.md'), '# source\n');
+    await git(['add', '.']);
+    await git(['commit', '-qm', 'init']);
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
-    const repo = process.cwd();
     const config = testDreamuxConfig([
       testDispatcherConfig({
         id: 'flow',
