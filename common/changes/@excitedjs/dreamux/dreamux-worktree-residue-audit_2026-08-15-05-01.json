@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Isolate the collaboration provisioning test Git fixture so repeated runs cannot leave stale worktree registrations in the host checkout.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}
