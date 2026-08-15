@@ -8,7 +8,7 @@
   `/packages/dreamux/src/service/team-collection/`, any core consumer that must
   act only when an agent is idle
 - **PR / Issue:** surfaced by the scheduled-tasks design
-  ([`.agents/proposals/scheduled-tasks.md`](../proposals/scheduled-tasks.md))
+  ([archived scheduled-tasks proposal](../archive/proposals/scheduled-tasks.md))
 
 ## Context
 

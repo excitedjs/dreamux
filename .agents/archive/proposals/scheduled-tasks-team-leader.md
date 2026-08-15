@@ -1,7 +1,8 @@
 # Proposal: cron for team leaders (per-conversational-agent scheduler)
 
-Status: draft for review. Extends the shipped per-dispatcher scheduler
-(`.agents/proposals/scheduled-tasks.md`, PR #239).
+Status: archived historical proposal. It extended the shipped per-dispatcher
+scheduler (`.agents/archive/proposals/scheduled-tasks.md`, PR #239); current
+behavior is documented in `.agents/reference/scheduled-tasks.md`.
 
 ## Problem
 

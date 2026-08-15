@@ -366,7 +366,7 @@ MCP servers. Dispatcher-facing TeamMate tools are:
 Dispatcher-facing Team tools are `create`, `send`, `list`, `status`, `history`,
 `dissolve`, `bind_channel`, and `transfer_back`. TeamLeader callers receive only
 `transfer_back`. Cron tools are `cron_create`, `cron_list`,
-`cron_update`, `cron_delete`, and `cron_run_now`.
+`cron_update`, and `cron_delete`.
 
 There is no dispatcher-facing `complete` tool. Completion ingest is a
 server/admin seam, so a dispatcher model cannot fake a TeamMate completion.

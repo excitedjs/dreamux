@@ -1,6 +1,7 @@
 # Proposal: Durable scheduled tasks (cron) for Dreamux
 
-- **Status:** Active proposal (draft for review)
+- **Status:** Archived historical proposal; current behavior is documented in
+  [Scheduled tasks](../../reference/scheduled-tasks.md)
 - **Date:** 2026-06-23
 - **Affects:** `@excitedjs/dreamux` server lifecycle, `service/` layer, state
   format, admin IPC, MCP surface, bundled skills; new runtime dependency
@@ -9,7 +10,7 @@
 
 > Input-surface note: scheduled prompt injection references to `systemInput` are
 > superseded by
-> [AgentRuntime input surface cleanup](agent-runtime-input-surface-cleanup.md).
+> [AgentRuntime input surface cleanup](../../proposals/agent-runtime-input-surface-cleanup.md).
 > The scheduler still waits for idle before injecting, but the target injection
 > seam is plain text `completionInput`, not channel input or
 > `systemInput(reason: "scheduled")`.
@@ -32,8 +33,8 @@ survives restarts — the capability Claude Code cannot offer.
 
 This proposal is the design to be reviewed before implementation. It is written
 against the current architecture (see
-[current-architecture](../reference/current-architecture.md),
-[repo-structure](../reference/repo-structure.md), and the `service/`
+[current-architecture](../../reference/current-architecture.md),
+[repo-structure](../../reference/repo-structure.md), and the `service/`
 package docs).
 
 ## Goals
@@ -540,7 +541,7 @@ capability/abstraction.** Found five; G1–G3 are real design glue, G4 is
   generic control reason. The first misuses the channel-input path for a
   non-channel event; the second has since been superseded by the plain text
   runtime input in
-  [AgentRuntime input surface cleanup](agent-runtime-input-surface-cleanup.md).
+  [AgentRuntime input surface cleanup](../../proposals/agent-runtime-input-surface-cleanup.md).
   Proper shape: a scheduled trigger is a non-channel plain text turn with
   structured turn-origin metadata in Dreamux records, not channel XML and not a
   provider-facing reason discriminator.
@@ -594,7 +595,7 @@ described. `croner` is **not** yet a dependency (must be added via rush).
   fire-and-forget (see "Scope decisions") and records only `last_fired_at`, so
   it never needs terminal status. The old `send`-vs-`systemInput` injection
   choice is superseded by the plain text runtime input in
-  [AgentRuntime input surface cleanup](agent-runtime-input-surface-cleanup.md);
+  [AgentRuntime input surface cleanup](../../proposals/agent-runtime-input-surface-cleanup.md);
   it no longer carries a status-tracking requirement.
 - **R2 — `prompt-agent` injection can hijack an active user turn.** Codex
   `steer.supported = true` means a `send` mid-turn is absorbed into the user's

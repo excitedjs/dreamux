@@ -86,8 +86,8 @@ timeout. Successful Dispatcher and TeamLeader dissolve calls return the durable
 cleanup remain server-owned background work and are observed through Team read
 surfaces rather than the dissolve response.
 
-Dispatcher `cron` MCP tools are `cron_create`, `cron_list`, `cron_update`,
-`cron_delete`, and `cron_run_now`. Cron prompts are injected back into the
+Dispatcher `cron` MCP tools are `cron_create`, `cron_list`, `cron_update`, and
+`cron_delete`. Cron prompts are injected back into the
 Dispatcher; they are not a TeamMate spawn target or channel delivery mechanism by
 themselves.
 
@@ -116,6 +116,6 @@ route is refused. TeamLeaders cannot create, send to, list, inspect, or select
 Teams through this projection. `transfer_back` remains a routing-only state
 change with no channel-message side effect.
 
-TeamLeader `cron` MCP tools are `cron_create`, `cron_list`, `cron_update`,
-`cron_delete`, and `cron_run_now`. Cron prompts are injected back into that
+TeamLeader `cron` MCP tools are `cron_create`, `cron_list`, `cron_update`, and
+`cron_delete`. Cron prompts are injected back into that
 TeamLeader.

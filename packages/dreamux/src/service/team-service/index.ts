@@ -187,14 +187,6 @@ export class TeamService {
         deps.availability.admit(() => this.scheduler_.commands.update(input)),
       delete: (id) =>
         deps.availability.admit(() => this.scheduler_.commands.delete(id)),
-      runNow: async (id) => {
-        // Start the scheduler operation under the Team gate, but carry its
-        // potentially hour-long idle wait outside the route-lifecycle lock.
-        const pending = await deps.availability.admit(async () => ({
-          completion: this.scheduler_.commands.runNow(id),
-        }));
-        return pending.completion;
-      },
     };
   }
 

@@ -125,10 +125,6 @@ export const adminMethods: Record<string, AdminHandler> = {
     return (await cronTargetFor(server, params)).delete(mustString(params, 'id'));
   },
 
-  'scheduler.cron.run_now': async (server, params) => {
-    return (await cronTargetFor(server, params)).runNow(mustString(params, 'id'));
-  },
-
   'channel.invoke_tool': async (server, params) => {
     const id = mustDispatcherId(params);
     mustExistingDispatcher(server, id);

@@ -11,7 +11,7 @@ solution, not a second task-state authority.
 For a newly created task, initialize only:
 
 ```text
-.agents/tasks/dreamux/<domain>/<task-slug>/
+.agents/tasks/<domain-path>/<task-slug>/
   README.md
   requirement.md
 ```
@@ -82,7 +82,7 @@ new task:
 
 ```bash
 python3 .agents/skills/dev-workflow/scripts/init_task.py create \
-  --domain repository-workflow \
+  --domain repository/workflow \
   --slug refine-example-behavior \
   --title "Refine example behavior" \
   --goal "Provide the confirmed example behavior"
@@ -91,12 +91,22 @@ python3 .agents/skills/dev-workflow/scripts/init_task.py create \
 The command keeps path names predictable, updates the discovery index, and does not
 overwrite an existing task.
 
-For a genuinely new domain, require real routing information rather than generating
-TODO placeholders:
+For a genuinely new domain, require real routing information rather than
+generating TODO placeholders. Create empty parent domain indexes explicitly from
+the top down when the first real task belongs only in a deeper child:
+
+```bash
+python3 .agents/skills/dev-workflow/scripts/init_task.py create-domain \
+  --domain runtime \
+  --domain-summary "Tasks owned by runtime capabilities" \
+  --code-signal "Runtime packages=packages/agent-runtime"
+```
+
+Then create a task and its missing leaf domain together:
 
 ```bash
 python3 .agents/skills/dev-workflow/scripts/init_task.py create \
-  --domain new-domain \
+  --domain runtime/new-domain \
   --slug develop-example-capability \
   --title "Develop example capability" \
   --goal "Provide the confirmed capability" \
@@ -109,7 +119,7 @@ Validate a task and its parent indexes with:
 
 ```bash
 python3 .agents/skills/dev-workflow/scripts/init_task.py check \
-  --domain <domain> \
+  --domain <domain-path> \
   --slug <task-slug>
 ```
 

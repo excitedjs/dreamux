@@ -54,5 +54,4 @@ export interface SchedulerCommands {
   create(input: CronCreateRequest): Promise<CronJob>;
   update(input: CronUpdateRequest): Promise<CronJob>;
   delete(id: string): Promise<{ id: string; deleted: boolean }>;
-  runNow(id: string): Promise<{ id: string; status: string }>;
 }

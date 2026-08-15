@@ -52,7 +52,7 @@ The non-MCP-prefixed methods were:
 |---|---|---|
 | Server | `server.status` | Returns process status plus dispatcher summaries. |
 | Dispatcher | `dispatcher.list`, `dispatcher.status`, `dispatcher.start`, `dispatcher.stop` | Dispatcher declarations are config-owned. The unsupported `dispatcher.add` and `dispatcher.remove` placeholders were deletion targets rather than product capabilities. |
-| Scheduler | `scheduler.cron.list`, `scheduler.cron.create`, `scheduler.cron.update`, `scheduler.cron.delete`, `scheduler.cron.run_now` | Already scoped as a scheduler/admin capability rather than an MCP capability. |
+| Scheduler | `scheduler.cron.list`, `scheduler.cron.create`, `scheduler.cron.update`, `scheduler.cron.delete` | Already scoped as a scheduler/admin capability rather than an MCP capability. |
 | Channel tools | `channel.invoke_tool` | Generic provider-owned tool conduit. Provider tool metadata remains descriptor-owned; calls route through the live channel session and caller authorization. |
 
 The pre-cleanup MCP-prefixed admin methods were:

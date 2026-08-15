@@ -3,7 +3,7 @@ import { mkdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   dispatcherCronJobsPath,
@@ -122,11 +122,16 @@ describe('CronJobStore', () => {
   });
 });
 
-describe('SchedulerService dispatch', () => {
+describe('SchedulerService timer dispatch', () => {
   let root: string;
   let previousHome: string | undefined;
 
   beforeEach(() => {
+    // Fake timers make the minute-boundary cron fire deterministic without any
+    // real minute wait. Real fs I/O in the store still settles when a captured
+    // dispatch promise (or the idle "reached" signal) is awaited, so no helper
+    // polls a real `setTimeout`.
+    vi.useFakeTimers();
     root = mkdtempSync(join(tmpdir(), 'dreamux-scheduler-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
@@ -139,100 +144,164 @@ describe('SchedulerService dispatch', () => {
     else process.env['HOME'] = previousHome;
     delete process.env['DREAMUX_ROOT'];
     resetRuntimeConfig();
+    vi.useRealTimers();
     rmSync(root, { recursive: true, force: true });
   });
 
   it('waits for idle and advances last_fired_at only after submitted', async () => {
     const idle = controllableIdle();
     const submitted: string[] = [];
+    const captured = new CapturedAdmissions();
     const scheduler = service(idle.runtime, async (input) => {
       submitted.push(input.prompt);
       return { status: 'submitted', turnId: 'turn-1' };
-    });
-    const job = await scheduler.create({
+    }, { captured });
+    await scheduler.start();
+    await scheduler.create({
       cron: '* * * * *',
       prompt: 'run report',
       tz: 'UTC',
     });
 
-    const run = scheduler.runNow(job.id);
-    await waitFor(() => idle.pending());
+    await captured.advanceMinute();
+    const fire = captured.lastDispatch();
+    await idle.whenReached();
     expect(submitted).toEqual([]);
 
     idle.resolve();
-    await expect(run).resolves.toEqual({ id: job.id, status: 'submitted' });
+    await fire;
     expect(submitted).toEqual(['run report']);
     const jobs = (await scheduler.list()).jobs;
     expect(jobs[0]?.last_fired_at).toEqual(expect.any(Number));
+    scheduler.stop();
   });
 
   it('uses a fresh sourceId for each fire of the same recurring job', async () => {
     const idle = controllableIdle();
     const submitted: Array<{ jobId: string; prompt: string; sourceId: string }> = [];
+    const captured = new CapturedAdmissions();
     const scheduler = service(idle.runtime, async (input) => {
       submitted.push(input);
       return { status: 'submitted', turnId: `turn-${submitted.length}` };
-    });
+    }, { captured });
+    await scheduler.start();
     const job = await scheduler.create({
       cron: '* * * * *',
       prompt: 'run report',
       tz: 'UTC',
     });
 
-    const first = scheduler.runNow(job.id);
-    await waitFor(() => idle.pending());
+    await captured.advanceMinute();
+    const first = captured.lastDispatch();
+    await idle.whenReached();
     idle.resolve();
-    await expect(first).resolves.toEqual({ id: job.id, status: 'submitted' });
+    await first;
 
-    const second = scheduler.runNow(job.id);
-    await waitFor(() => idle.pending());
+    await captured.advanceMinute();
+    const second = captured.lastDispatch();
+    await idle.whenReached();
     idle.resolve();
-    await expect(second).resolves.toEqual({ id: job.id, status: 'submitted' });
+    await second;
 
     expect(submitted.map((input) => input.sourceId)).toEqual([
       `scheduled:${job.id}:1`,
       `scheduled:${job.id}:2`,
     ]);
+    scheduler.stop();
   });
 
   it('does not advance last_fired_at when submission is not submitted', async () => {
     const idle = controllableIdle();
-    const scheduler = service(idle.runtime, async () => ({ status: 'stopped' }));
-    const job = await scheduler.create({
+    const captured = new CapturedAdmissions();
+    const scheduler = service(idle.runtime, async () => ({ status: 'stopped' }), {
+      captured,
+    });
+    await scheduler.start();
+    await scheduler.create({
       cron: '* * * * *',
       prompt: 'run report',
       tz: 'UTC',
     });
 
-    const run = scheduler.runNow(job.id);
-    await waitFor(() => idle.pending());
+    await captured.advanceMinute();
+    const fire = captured.lastDispatch();
+    await idle.whenReached();
     idle.resolve();
-    await expect(run).resolves.toEqual({ id: job.id, status: 'stopped' });
-    const jobs = (await scheduler.list()).jobs;
-    expect(jobs[0]?.last_fired_at).toBeNull();
+    await fire;
+    const persisted = (await scheduler.list()).jobs[0];
+    expect(persisted?.last_fired_at).toBeNull();
+    expect(persisted?.enabled).toBe(true);
+    expect(persisted?.next_run_at).toEqual(expect.any(Number));
+    expect(persisted!.next_run_at).toBeGreaterThan(Date.now());
+    scheduler.stop();
   });
 
   it('does not resurrect a job deleted while held for idle', async () => {
     const idle = controllableIdle();
     const submitted: string[] = [];
+    const captured = new CapturedAdmissions();
     const scheduler = service(idle.runtime, async (input) => {
       submitted.push(input.prompt);
       return { status: 'submitted', turnId: 'turn-1' };
-    });
+    }, { captured });
+    await scheduler.start();
     const job = await scheduler.create({
       cron: '* * * * *',
       prompt: 'run report',
       tz: 'UTC',
     });
 
-    const run = scheduler.runNow(job.id);
-    await waitFor(() => idle.pending());
+    await captured.advanceMinute();
+    const fire = captured.lastDispatch();
+    await idle.whenReached();
     await scheduler.delete(job.id);
     idle.resolve();
 
-    await expect(run).resolves.toEqual({ id: job.id, status: 'skipped' });
+    await fire;
     expect(submitted).toEqual([]);
     expect((await scheduler.list()).jobs).toEqual([]);
+    scheduler.stop();
+  });
+
+  it('re-arms a recurring job after a transient dispatch error and fires it next', async () => {
+    // The dispatch-error re-arm is now unconditional timer behavior: a transient
+    // submit failure must not silently kill a recurring schedule until the next
+    // daemon restart.
+    let calls = 0;
+    const submitted: string[] = [];
+    const captured = new CapturedAdmissions();
+    const scheduler = service(
+      () => null,
+      async (input) => {
+        calls += 1;
+        if (calls === 1) throw new Error('transient submit failure');
+        submitted.push(input.prompt);
+        return { status: 'submitted', turnId: `turn-${calls}` };
+      },
+      { captured, absentRuntimeStrategy: 'submit' },
+    );
+    await scheduler.start();
+    await scheduler.create({
+      cron: '* * * * *',
+      prompt: 'run report',
+      tz: 'UTC',
+    });
+
+    await captured.advanceMinute();
+    const failed = captured.lastDispatch();
+    await failed;
+    expect(submitted).toEqual([]);
+    expect((await scheduler.list()).jobs[0]?.last_fired_at).toBeNull();
+    expect((await scheduler.list()).jobs[0]?.enabled).toBe(true);
+
+    await captured.advanceMinute();
+    const recovered = captured.lastDispatch();
+    await recovered;
+    expect(submitted).toEqual(['run report']);
+    expect((await scheduler.list()).jobs[0]?.last_fired_at).toEqual(
+      expect.any(Number),
+    );
+    scheduler.stop();
   });
 
   it('preserves action metadata when update only changes prompt', async () => {
@@ -280,21 +349,24 @@ describe('SchedulerService dispatch', () => {
   it('stop cancels a held fire before idle and does not submit', async () => {
     const idle = controllableIdle();
     const submitted: string[] = [];
+    const captured = new CapturedAdmissions();
     const scheduler = service(idle.runtime, async (input) => {
       submitted.push(input.prompt);
       return { status: 'submitted', turnId: 'turn-1' };
-    });
-    const job = await scheduler.create({
+    }, { captured });
+    await scheduler.start();
+    await scheduler.create({
       cron: '* * * * *',
       prompt: 'run report',
       tz: 'UTC',
     });
 
-    const run = scheduler.runNow(job.id);
-    await waitFor(() => idle.pending());
+    await captured.advanceMinute();
+    const fire = captured.lastDispatch();
+    await idle.whenReached();
     scheduler.stop();
 
-    await expect(run).resolves.toEqual({ id: job.id, status: 'skipped' });
+    await fire;
     expect(submitted).toEqual([]);
     idle.resolve();
     expect(submitted).toEqual([]);
@@ -304,61 +376,152 @@ describe('SchedulerService dispatch', () => {
     const idle = controllableIdle();
     const submitted: string[] = [];
     const store = new HookOnGetStore();
+    const captured = new CapturedAdmissions();
     const scheduler = service(
       idle.runtime,
       async (input) => {
         submitted.push(input.prompt);
         return { status: 'submitted', turnId: 'turn-1' };
       },
-      store,
+      { store, captured },
     );
-    const job = await scheduler.create({
+    await scheduler.start();
+    await scheduler.create({
       cron: '* * * * *',
       prompt: 'run report',
       tz: 'UTC',
     });
 
-    const run = scheduler.runNow(job.id);
-    await waitFor(() => idle.pending());
+    await captured.advanceMinute();
+    const fire = captured.lastDispatch();
+    await idle.whenReached();
     // The dispatch-entry read already happened; arm the hook so the NEXT read
     // (the pre-submit one) stops the scheduler inside its async gap.
     store.stopHook = () => scheduler.stop();
     idle.resolve();
 
-    await expect(run).resolves.toEqual({ id: job.id, status: 'skipped' });
+    await fire;
     expect(submitted).toEqual([]);
   });
 
   it('does not complete a fire when stop() races after lazy submit starts', async () => {
     let finishSubmit: (() => void) | null = null;
+    const submitStarted = deferred<void>();
     const submitted: string[] = [];
+    const captured = new CapturedAdmissions();
     const scheduler = service(
       () => null,
       async (input) => {
         submitted.push(input.prompt);
         scheduler.stop();
+        submitStarted.resolve();
         await new Promise<void>((resolve) => {
           finishSubmit = resolve;
         });
         return { status: 'submitted', turnId: 'turn-1' };
       },
-      undefined,
-      'submit',
+      { captured, absentRuntimeStrategy: 'submit' },
     );
-    const job = await scheduler.create({
+    await scheduler.start();
+    await scheduler.create({
       cron: '* * * * *',
       prompt: 'run report',
       tz: 'UTC',
     });
 
-    const run = scheduler.runNow(job.id);
-    await waitFor(() => finishSubmit !== null);
+    await captured.advanceMinute();
+    const fire = captured.lastDispatch();
+    await submitStarted.promise;
     finishSubmit!();
 
-    await expect(run).resolves.toEqual({ id: job.id, status: 'skipped' });
+    await fire;
     expect(submitted).toEqual(['run report']);
     const jobs = (await scheduler.list()).jobs;
     expect(jobs[0]?.last_fired_at).toBeNull();
+  });
+
+  it('drops a queued timer admission after stop changes the lifecycle generation', async () => {
+    const store = new CountingGetStore();
+    const admission = new CapturedAdmissions();
+    let runtimeLookups = 0;
+    const idle = controllableIdle();
+    const submitted: string[] = [];
+    const scheduler = service(
+      () => {
+        runtimeLookups += 1;
+        return idle.runtime;
+      },
+      async (input) => {
+        submitted.push(input.prompt);
+        return { status: 'submitted', turnId: 'turn-unexpected' };
+      },
+      { store, captured: admission },
+    );
+    await scheduler.start();
+    await scheduler.create({
+      cron: '* * * * *',
+      prompt: 'run report',
+      tz: 'UTC',
+    });
+    const queued = admission.queueNext();
+
+    await admission.advanceMinute();
+    const fire = admission.lastDispatch();
+    await queued.whenAdmitted;
+    expect(store.getCalls).toBe(0);
+
+    scheduler.stop();
+    queued.release();
+    await fire;
+
+    expect(store.getCalls).toBe(0);
+    expect(runtimeLookups).toBe(0);
+    expect(idle.waitCalls()).toBe(0);
+    expect(submitted).toEqual([]);
+    expect((await scheduler.list()).jobs[0]).toMatchObject({
+      enabled: true,
+      last_fired_at: null,
+    });
+  });
+
+  it('collapses a re-armed fire for the same job while its first fire is held', async () => {
+    const idle = controllableIdle();
+    const submitted: Array<{ prompt: string; sourceId: string }> = [];
+    const captured = new CapturedAdmissions();
+    const scheduler = service(idle.runtime, async (input) => {
+      submitted.push({ prompt: input.prompt, sourceId: input.sourceId });
+      return { status: 'submitted', turnId: 'turn-1' };
+    }, { captured });
+    await scheduler.start();
+    const job = await scheduler.create({
+      cron: '* * * * *',
+      prompt: 'first prompt',
+      tz: 'UTC',
+    });
+
+    await captured.advanceMinute();
+    const firstFire = captured.lastDispatch();
+    await idle.whenReached();
+    await scheduler.update({ id: job.id, prompt: 'updated prompt' });
+
+    await captured.advanceMinute();
+    const collapsedFire = captured.lastDispatch();
+    await collapsedFire;
+    expect(idle.waitCalls()).toBe(1);
+    expect(submitted).toEqual([]);
+
+    idle.resolve();
+    await firstFire;
+    expect(submitted).toEqual([
+      {
+        prompt: 'updated prompt',
+        sourceId: `scheduled:${job.id}:1`,
+      },
+    ]);
+    expect((await scheduler.list()).jobs[0]?.last_fired_at).toEqual(
+      expect.any(Number),
+    );
+    scheduler.stop();
   });
 
   it('rejects an empty title on create and update so a job stays reloadable', async () => {
@@ -400,47 +563,60 @@ describe('SchedulerService dispatch', () => {
   });
 
   it('marks null-runtime dispatcher fires missed but submits leader fires', async () => {
+    const dispatcherCaptured = new CapturedAdmissions();
     const dispatcher = service(
       () => null,
       async () => ({ status: 'submitted', turnId: 'turn-unexpected' }),
-      undefined,
-      'miss',
-      dispatcherCronJobsPath('flow'),
+      {
+        captured: dispatcherCaptured,
+        absentRuntimeStrategy: 'miss',
+        cronJobsPath: dispatcherCronJobsPath('flow'),
+      },
     );
+    await dispatcher.start();
     const dispatcherJob = await dispatcher.create({
       cron: '* * * * *',
       prompt: 'dispatcher report',
       tz: 'UTC',
       recurring: false,
     });
-    await expect(dispatcher.runNow(dispatcherJob.id)).resolves.toEqual({
+    await dispatcherCaptured.advanceMinute();
+    const dispatcherFire = dispatcherCaptured.lastDispatch();
+    await dispatcherFire;
+    expect((await dispatcher.list()).jobs[0]).toMatchObject({
       id: dispatcherJob.id,
-      status: 'missed',
+      enabled: false,
+      next_run_at: null,
+      last_fired_at: null,
     });
-    expect((await dispatcher.list()).jobs[0]?.last_fired_at).toBeNull();
+    dispatcher.stop();
 
     const submitted: string[] = [];
+    const leaderCaptured = new CapturedAdmissions();
     const leader = service(
       () => null,
       async (input) => {
         submitted.push(input.prompt);
         return { status: 'submitted', turnId: 'turn-1' };
       },
-      undefined,
-      'submit',
-      dispatcherTeamCronJobsPath('flow', 'alpha'),
+      {
+        captured: leaderCaptured,
+        absentRuntimeStrategy: 'submit',
+        cronJobsPath: dispatcherTeamCronJobsPath('flow', 'alpha'),
+      },
     );
-    const leaderJob = await leader.create({
+    await leader.start();
+    await leader.create({
       cron: '* * * * *',
       prompt: 'leader report',
       tz: 'UTC',
     });
-    await expect(leader.runNow(leaderJob.id)).resolves.toEqual({
-      id: leaderJob.id,
-      status: 'submitted',
-    });
+    await leaderCaptured.advanceMinute();
+    const leaderFire = leaderCaptured.lastDispatch();
+    await leaderFire;
     expect(submitted).toEqual(['leader report']);
     expect((await leader.list()).jobs[0]?.last_fired_at).toEqual(expect.any(Number));
+    leader.stop();
   });
 
   it('stopping one live owner scheduler leaves another held fire intact', async () => {
@@ -448,15 +624,19 @@ describe('SchedulerService dispatch', () => {
     const secondIdle = controllableIdle();
     const firstSubmitted: string[] = [];
     const secondSubmitted: string[] = [];
+    const firstCaptured = new CapturedAdmissions();
+    const secondCaptured = new CapturedAdmissions();
     const first = service(
       () => firstIdle.runtime,
       async (input) => {
         firstSubmitted.push(input.prompt);
         return { status: 'submitted', turnId: 'turn-1' };
       },
-      undefined,
-      'miss',
-      dispatcherTeamCronJobsPath('flow', 'alpha'),
+      {
+        captured: firstCaptured,
+        absentRuntimeStrategy: 'miss',
+        cronJobsPath: dispatcherTeamCronJobsPath('flow', 'alpha'),
+      },
     );
     const second = service(
       () => secondIdle.runtime,
@@ -464,25 +644,47 @@ describe('SchedulerService dispatch', () => {
         secondSubmitted.push(input.prompt);
         return { status: 'submitted', turnId: 'turn-2' };
       },
-      undefined,
-      'miss',
-      dispatcherTeamCronJobsPath('flow', 'beta'),
+      {
+        captured: secondCaptured,
+        absentRuntimeStrategy: 'miss',
+        cronJobsPath: dispatcherTeamCronJobsPath('flow', 'beta'),
+      },
     );
+    await first.start();
+    await second.start();
     const firstJob = await first.create({ cron: '* * * * *', prompt: 'alpha', tz: 'UTC' });
     const secondJob = await second.create({ cron: '* * * * *', prompt: 'beta', tz: 'UTC' });
 
-    const firstRun = first.runNow(firstJob.id);
-    const secondRun = second.runNow(secondJob.id);
-    await waitFor(() => firstIdle.pending() && secondIdle.pending());
+    // Both schedulers share the fake clock, so a single advance fires both timers.
+    await vi.advanceTimersByTimeAsync(60_000);
+    const firstFire = firstCaptured.lastDispatch();
+    const secondFire = secondCaptured.lastDispatch();
+    await Promise.all([firstIdle.whenReached(), secondIdle.whenReached()]);
     first.stop();
     secondIdle.resolve();
 
-    await expect(firstRun).resolves.toEqual({ id: firstJob.id, status: 'skipped' });
-    await expect(secondRun).resolves.toEqual({ id: secondJob.id, status: 'submitted' });
+    await firstFire;
+    await secondFire;
     expect(firstSubmitted).toEqual([]);
     expect(secondSubmitted).toEqual(['beta']);
+    expect((await first.list()).jobs[0]).toMatchObject({
+      id: firstJob.id,
+      last_fired_at: null,
+    });
+    expect((await second.list()).jobs[0]).toMatchObject({
+      id: secondJob.id,
+      last_fired_at: expect.any(Number),
+    });
+    second.stop();
   });
 });
+
+interface ServiceOptions {
+  store?: CronJobStore;
+  captured?: CapturedAdmissions;
+  absentRuntimeStrategy?: 'miss' | 'submit';
+  cronJobsPath?: string;
+}
 
 function service(
   runtime: AgentRuntime | (() => AgentRuntime | null),
@@ -491,15 +693,15 @@ function service(
     prompt: string;
     sourceId: string;
   }) => Promise<AgentRuntimeTurnResult>,
-  store?: CronJobStore,
-  absentRuntimeStrategy: 'miss' | 'submit' = 'miss',
-  cronJobsPath = dispatcherCronJobsPath('flow'),
+  options: ServiceOptions = {},
 ): SchedulerService {
+  const captured = options.captured;
+  const cronJobsPath = options.cronJobsPath ?? dispatcherCronJobsPath('flow');
   return new SchedulerService({
     ownerId: 'flow',
-    store: store ?? cronStore('flow', cronJobsPath),
-    absentRuntimeStrategy,
-    admit: (task) => task(),
+    store: options.store ?? cronStore('flow', cronJobsPath),
+    absentRuntimeStrategy: options.absentRuntimeStrategy ?? 'miss',
+    admit: (task) => (captured === undefined ? task() : captured.admit(task)),
     getRuntime: typeof runtime === 'function' ? runtime : () => runtime,
     submitScheduled,
     log: {
@@ -510,6 +712,66 @@ function service(
       trace() {},
     },
   });
+}
+
+/** Records the promises the scheduler admits so a test can await a timer-driven
+ *  dispatch to completion (including the store's `setFired` write) without
+ *  polling a real timer. Public mutations (`create` / `update` / `delete`) also
+ *  enter the same gate, so a cron fire is the most-recently-admitted promise
+ *  right after the fake clock crosses a minute boundary. */
+class CapturedAdmissions {
+  private readonly pending: Array<Promise<unknown>> = [];
+  private queued:
+    | {
+        admitted: ReturnType<typeof deferred<void>>;
+        release: ReturnType<typeof deferred<void>>;
+      }
+    | undefined;
+
+  admit<T>(task: () => Promise<T>): Promise<T> {
+    const queued = this.queued;
+    this.queued = undefined;
+    const run =
+      queued === undefined
+        ? task()
+        : (async () => {
+            queued.admitted.resolve();
+            await queued.release.promise;
+            return task();
+          })();
+    this.pending.push(run as Promise<unknown>);
+    return run;
+  }
+
+  queueNext(): { whenAdmitted: Promise<void>; release(): void } {
+    if (this.queued !== undefined) {
+      throw new Error('an admission is already queued');
+    }
+    const admitted = deferred<void>();
+    const release = deferred<void>();
+    this.queued = { admitted, release };
+    return {
+      whenAdmitted: admitted.promise,
+      release: () => release.resolve(),
+    };
+  }
+
+  /** Advance the fake clock past the next minute boundary. The fired timer
+   *  callback synchronously admits the cron dispatch, so `lastDispatch()`
+   *  called immediately after (before any further mutation) returns it. */
+  async advanceMinute(): Promise<void> {
+    await vi.advanceTimersByTimeAsync(60_000);
+  }
+
+  /** The most-recently-admitted promise. Call right after `advanceMinute()` and
+   *  before any subsequent mutation so it is the cron dispatch. Return it
+   *  un-awaited so a test can observe the parked (held) state before releasing
+   *  idle, then await the same handle once. */
+  lastDispatch(): Promise<void> {
+    const dispatch = this.pending.at(-1);
+    if (dispatch === undefined) throw new Error('no admitted dispatch');
+    return dispatch as Promise<void>;
+  }
 }
 
 /** A store that runs a one-shot hook right after a `get()` resolves — used to
@@ -528,6 +790,19 @@ class HookOnGetStore extends CronJobStore {
   }
 }
 
+class CountingGetStore extends CronJobStore {
+  getCalls = 0;
+
+  constructor() {
+    super({ dispatcherId: 'flow', cronJobsPath: dispatcherCronJobsPath('flow') });
+  }
+
+  override async get(id: string): Promise<CronJob | null> {
+    this.getCalls += 1;
+    return super.get(id);
+  }
+}
+
 function cronStore(dispatcherId: string, cronJobsPath: string): CronJobStore {
   return new CronJobStore({ dispatcherId, cronJobsPath });
 }
@@ -542,12 +817,24 @@ function cronCreateInput(prompt: string) {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function controllableIdle(): {
   runtime: AgentRuntime;
-  pending(): boolean;
+  whenReached(): Promise<void>;
   resolve(): void;
+  waitCalls(): number;
 } {
   let resolveIdle: (() => void) | null = null;
+  let reachedResolve: (() => void) | null = null;
+  let reachedFlag = false;
+  let waitCalls = 0;
   const runtime: AgentRuntime = {
     providerRef: 'test',
     async start() {},
@@ -560,8 +847,12 @@ function controllableIdle(): {
       return { status: 'stopped' };
     },
     waitIdle() {
+      waitCalls += 1;
       return new Promise<void>((resolve) => {
         resolveIdle = resolve;
+        reachedFlag = true;
+        reachedResolve?.();
+        reachedResolve = null;
       });
     },
     getStatus(): AgentRuntimeStatus {
@@ -587,12 +878,21 @@ function controllableIdle(): {
   };
   return {
     runtime,
-    pending() {
-      return resolveIdle !== null;
+    // Resolves once the dispatch has installed its idle wait. Awaiting a real
+    // promise lets the preceding real fs reads settle deterministically.
+    async whenReached() {
+      if (reachedFlag) return;
+      await new Promise<void>((resolve) => {
+        reachedResolve = resolve;
+      });
     },
     resolve() {
       resolveIdle?.();
       resolveIdle = null;
+      reachedFlag = false;
+    },
+    waitCalls() {
+      return waitCalls;
     },
   };
 }
@@ -618,13 +918,4 @@ function cronStoreJson(overrides: Record<string, unknown>): string {
       },
     ],
   })}\n`;
-}
-
-async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error('waitFor timed out');
 }
