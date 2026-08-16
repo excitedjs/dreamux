@@ -39,7 +39,10 @@
 
 ## Delivery
 
-- Pull request / CI / merge: Not started.
+- Pull request: [#338](https://github.com/excitedjs/dreamux/pull/338),
+  targeting `next`.
+- CI: Pending.
+- Merge: Not authorized or attempted.
 - Independent implementation review: Complete; all 15 findings were accepted,
   repaired as 12 root-cause groups, and revalidated.
 - Knowledge closeout: Complete. Current owners and the
