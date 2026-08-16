@@ -14,3 +14,4 @@
 
 ## Tasks
 - [Unify Workflow agents with TeamMate lifecycle ownership](/.agents/tasks/workflow/unified-teammate-lifecycle/README.md) — `done`: Define and implement owner-correct lifecycle boundaries so Workflow-created agents remain ordinary TeamMates in the shared collection and close through the TeamMate-owned lifecycle rather than Workflow-specific teardown logic
+- [Harden native transcript contracts](/.agents/tasks/workflow/harden-native-transcript-contracts/README.md) — `done`: Turn the merged native-transcript non-leakage and receipt semantics into enforceable tests, repair stale knowledge/change notes, and fix bounded reader edge cases

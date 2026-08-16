@@ -6,6 +6,7 @@ import type {
   AgentRuntimeTranscriptPage,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
+import { TRANSCRIPT_TOOL_NAME_MAX_CHARS } from '@excitedjs/dreamux-utils';
 
 import {
   TRANSCRIPT_INTERNAL_ERROR_MESSAGE,
@@ -125,6 +126,46 @@ describe('core Agent Runtime transcript delegation', () => {
         message: TRANSCRIPT_INTERNAL_ERROR_MESSAGE,
       }),
     );
+  });
+
+  it('rejects a provider tool name over the shared code-point limit', async () => {
+    const provider = fakeProvider({
+      createRuntime: vi.fn(),
+      readTranscript: vi.fn(async () => ({
+        turns: [
+          {
+            startedAt: null,
+            endedAt: null,
+            blocks: [
+              {
+                kind: 'tool' as const,
+                name: '🧰'.repeat(TRANSCRIPT_TOOL_NAME_MAX_CHARS + 1),
+                input: null,
+                output: null,
+                status: 'ok' as const,
+                inputTruncated: false,
+                outputTruncated: false,
+              },
+            ],
+          },
+        ],
+        nextCursor: null,
+        truncated: false,
+      })),
+    });
+
+    await expect(
+      readAgentTranscript({
+        config: config(),
+        providers: catalog(provider),
+        identity: identity(),
+        query: { turns: 1 },
+        log: log(),
+      }),
+    ).rejects.toMatchObject({
+      name: 'AgentTranscriptReadError',
+      reason: null,
+    });
   });
 
   it('rejects malformed opaque cursor text before provider dispatch', async () => {

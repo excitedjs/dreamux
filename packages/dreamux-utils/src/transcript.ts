@@ -8,6 +8,7 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 export const TRANSCRIPT_MESSAGE_MAX_CHARS = 16_384;
+export const TRANSCRIPT_TOOL_NAME_MAX_CHARS = 256;
 export const TRANSCRIPT_TOOL_VALUE_MAX_CHARS = 4_096;
 export const TRANSCRIPT_BLOCKS_PER_TURN_MAX = 64;
 export const TRANSCRIPT_TURNS_MAX = 50;
@@ -158,14 +159,16 @@ export function boundTranscriptTurn(
         block.output === null
           ? null
           : clipCharacters(block.output, TRANSCRIPT_TOOL_VALUE_MAX_CHARS);
+      const name = clipCharacters(block.name, TRANSCRIPT_TOOL_NAME_MAX_CHARS);
       truncated ||=
+        name.truncated ||
         block.inputTruncated ||
         block.outputTruncated ||
         input?.truncated === true ||
         output?.truncated === true;
       return {
         kind: 'tool',
-        name: block.name,
+        name: name.value,
         input: input?.value ?? null,
         output: output?.value ?? null,
         status: block.status,
@@ -201,11 +204,11 @@ export function budgetTranscriptTurns(
 
   for (const candidate of candidatesNewestFirst) {
     const bounded = boundTranscriptTurn(candidate);
-    truncated ||= bounded.truncated;
     const next = [...turnsNewestFirst, bounded.turn];
     if (serializedTurnsBytes(next) <= budgetBytes) {
       turnsNewestFirst.push(bounded.turn);
       consumed += 1;
+      truncated ||= bounded.truncated;
       continue;
     }
     if (turnsNewestFirst.length > 0) break;

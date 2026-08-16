@@ -175,7 +175,7 @@ export function fakeRuntimeCatalog(
     stopError?: Error;
     completionResult?: RuntimeAdmission;
     waitIdle?: () => Promise<void>;
-    createRuntime?: () => FakeRuntime;
+    createRuntime?: (context: AgentRuntimeCreateContext) => FakeRuntime;
   } = {},
   contexts: AgentRuntimeCreateContext[] = [],
 ): AgentRuntimeProviderCatalog {
@@ -195,7 +195,7 @@ export function fakeRuntimeCatalog(
     },
     createRuntime(context: AgentRuntimeCreateContext) {
       contexts.push(context);
-      const runtime = opts.createRuntime?.() ?? new FakeRuntime(opts);
+      const runtime = opts.createRuntime?.(context) ?? new FakeRuntime(opts);
       runtimes.push(runtime);
       return runtime;
     },
