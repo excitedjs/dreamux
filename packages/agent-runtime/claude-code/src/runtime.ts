@@ -1,84 +1,20 @@
 /**
- * `builtin:claude-code` AgentRuntime (issue #110 PR6, resident stream-json
- * transport since issue #120; extracted into `@excitedjs/agent-runtime-claude-code`
- * in issue #209).
- *
- * A real second agent runtime that proves the AgentRuntimeProvider abstraction
- * is not "Codex renamed". Like Codex it runs a **resident child process**
- * supervised for the runtime's lifetime — but it differs in every
- * runtime-specific dimension:
- *
- * - **Stream-json over stdio, not an app-server WebSocket.** The resident child
- *   is `claude --print --input-format stream-json --output-format stream-json`
- *   (see `./args.ts`); turns are NDJSON `user` lines on stdin and
- *   `init`/`assistant`/`result` envelopes on stdout (see `./stream.ts`). There
- *   is no `initialize` handshake — the child emits `init` lazily with the first
- *   turn — so readiness is "child spawned", not "handshake completed".
- * - **MCP injection is an inline JSON config document** (`--mcp-config <json>`),
- *   not Codex's `-c mcp_servers.*` TOML CLI flags.
- * - **Runtime-owned config** is `DispatcherClaudeCodeConfig` (bin / model /
- *   permission_mode / remote_control / extra_args / extra_env), distinct from
- *   the Codex config.
- * - **Completion delivery** is a plain user turn (no fake task-notification),
- *   not the Codex inbox-then-trigger path.
- *
- * Process spawning goes through an injectable {@link ClaudeCodeSessionFactory}
- * seam (mirroring Codex's process-factory seam), so the lifecycle contract is
- * fully unit-testable with a fake session. A live `claude` binary is exercised
- * only by the opt-in live test.
- *
- * Failure contract (unchanged by #120): a turn failure (spawn error, child
- * exit, error `result`) is never swallowed. For inbound/restart turns it drives
- * the runtime to `degraded` with a persisted `last_error` (observable via
- * status/doctor). For `completionInput` it surfaces as a `failed`
- * result the caller can act on (PR8 delivery retry). `channelInput` still
- * returns after accept (submit != completion) so the channel can ack promptly.
- *
- * Restart: an unexpected child exit marks the runtime `degraded`; the next turn
- * re-spawns the resident child with `--resume <session_id>`, restoring the
- * conversation. There is no background backoff timer — re-spawn is lazy and
- * bound to the (serialized) turn queue, so it stays deterministic.
- *
- * Per-turn idle deadline: a turn whose still-alive child goes silent — never
- * emitting another stream line (a stall, or a wait on input the runtime cannot
- * satisfy) — would otherwise pend forever and wedge the serial queue, and behind
- * it TeamMate completion delivery, which awaits this runtime. `turn_timeout_ms`
- * is a *max-idle* window (issue #156): it is reset on every inbound stream line,
- * so a long but continuously-streaming turn (e.g. a deep audit running many
- * tool calls for far longer than the window) is never reaped, while a child that
- * emits nothing for the whole window still is — turning an infinite hang into a
- * normal degraded + `last_error` (inbound) or `failed` delivery result.
- *
- * Reference: the resident stream-json protocol model and process-supervision
- * shape are adapted from the Claudemux `next` implementation; the AgentRuntime /
- * Channel / DispatcherService boundaries (provider seam, runtime-owned MCP
- * injection, degraded/last_error status, TeamMate delivery result contract) are
- * Dreamux's own, per `.agents/decisions/agent-runtime-provider.md`.
+ * Resident Claude Code AgentRuntime using stream-json stdio. It owns one
+ * supervised child, serial logical Turns, lazy checkpoint resume, runtime MCP
+ * injection, and max-idle turn deadlines. Provider failures remain observable
+ * through failed Turn outcomes and durable degraded status.
  */
 
-import {
-  mkdir,
-  rename,
-  rm,
-  symlink,
-  writeFile,
-} from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
-import { dirname, join, resolve } from 'node:path';
+import { join } from 'node:path';
 
 import { BUILTIN_CLAUDE_CODE_PROVIDER_REF } from './provider-ref.js';
 import type { DispatcherClaudeCodeConfig } from './config.js';
 import { claudeCodeResidentArgs } from './args.js';
 import { stringifyClaudeCodeMcpConfig } from './mcp-config.js';
-import {
-  adapterExists,
-  skillAdapterKey,
-  skillDirsInRoot,
-  uniqueSkillSources,
-} from './skill-adapter.js';
+import { skillAdapterKey } from './skill-adapter.js';
+import { materializeClaudeSkillAddDir } from './skill-materializer.js';
 import {
   type ClaudeCodeSession,
-  type ClaudeCodeSessionFactory,
   type TurnOutcome,
   type TurnSubmitOptions,
 } from './supervisor.js';
@@ -88,90 +24,38 @@ import {
 } from '@excitedjs/dreamux-utils';
 import { CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
 import { consoleFallbackLogger } from './logger.js';
+import { createRuntimeTurn } from './runtime-turn.js';
+import { ClaudeSteerAdmissionError } from './rpc.js';
+import type { ClaudeCodeRuntimeDeps } from './runtime-deps.js';
+import {
+  asError,
+  classifySteerFailure,
+  reserveSource,
+} from './source-reservation.js';
 import type {
   AgentRuntimeCapabilities,
   AgentRuntime,
   AgentRuntimeIdentity,
   AgentRuntimeLastResult,
-  AgentRuntimeMcpServer,
-  AgentRuntimePathContext,
-  AgentRuntimeSkillSource,
-  AgentRuntimeStateCallbacks,
   AgentRuntimeStatus,
   AgentRuntimeTextInput,
-  AgentRuntimeTurnResult,
   DreamuxLogger,
   InboundTurnInput,
-  TurnSettledSignal,
+  RuntimeAdmission,
+  RuntimeTurn,
+  RuntimeTurnOutcome,
 } from '@excitedjs/dreamux-types';
 
-/**
- * Everything the Claude Code runtime needs, assembled by the provider from the
- * neutral create context plus host-supplied hooks. The host contracts the
- * package must not reconstruct — the per-dispatcher path context, the durable
- * state sink, and the base process env (`PATH` seeded with the host package
- * bins) — arrive here; nothing references a Dreamux host module.
- */
-export interface ClaudeCodeRuntimeDeps {
-  /** Provider-parsed Claude Code runtime config. */
-  config: DispatcherClaudeCodeConfig;
-  /** Working directory the resident `claude` child runs in. */
-  cwd: string;
-  /** Neutral state sink for status/thread transitions. */
-  state: AgentRuntimeStateCallbacks;
-  /** Neutral path context: the runtime derives its cache/log subpaths here. */
-  paths: AgentRuntimePathContext;
-  /** MCP server descriptors translated into the `--mcp-config` JSON document. */
-  mcpServers: readonly AgentRuntimeMcpServer[];
-  /** Resident-session factory (tests inject a fake). */
-  sessionFactory: ClaudeCodeSessionFactory;
-  /** Host-level bin resolver (default: identity on the config bin). */
-  resolveBinPath: (bin: string) => string;
-  /**
-   * The host's neutral env-injection entries from the create context, merged
-   * into the resident child env before this provider's own `extra_env`.
-   * Empty/omitted means inject nothing (the common case).
-   */
-  injectEnv?: Record<string, string>;
-  /**
-   * Launcher-supplied ordered role/system-prompt content, applied as an APPEND
-   * via `--append-system-prompt`. Omitted for launches that supply none.
-   */
-  systemPromptAppend?: readonly string[];
-  /**
-   * Role-gated skill sources core selected (issue #209 slice 6). The
-   * add-dir-compatible ones become `--add-dir` flags on every (re)spawn.
-   */
-  skillSources?: readonly AgentRuntimeSkillSource[];
-  /**
-   * Neutral feature names the host asked this runtime to disable. Args mapping
-   * is applied on every resident (re)spawn.
-   */
-  disableFeatures?: readonly string[];
-  /**
-   * Optional JSON Schema constraining every turn's final assistant message for
-   * the resident session's lifetime. Passed straight through to
-   * `claudeCodeResidentArgs` as the native `--json-schema` flag on every
-   * (re)spawn. In-memory only — never persisted to identity, so a resumed
-   * session that did not start with a schema does not silently gain one.
-   */
-  outputSchema?: Record<string, unknown>;
-  /** Fired each time a delivered turn reaches a terminal state. */
-  onTurnSettled?: (settled: TurnSettledSignal) => void;
-  /** Structured logger; falls back to a minimal `console.error` sink. */
-  logger?: DreamuxLogger;
-}
-
 interface ActiveTurn {
-  turnId: string;
+  runtimeTurn: RuntimeTurn;
+  settle: (outcome: RuntimeTurnOutcome) => boolean;
   pendingSteers: string[];
   session: ClaudeCodeSession | null;
   steerQueue: Promise<void>;
+  generation: number;
   /** Options passed to the initial `submitTurn` for this logical turn. */
   submitOptions?: TurnSubmitOptions;
 }
-
-let nextRuntimeInstanceId = 0;
 
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -200,10 +84,21 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private stopped = false;
   private readonly seen = new Set<string>();
   private readonly seenTextInputIds = new Set<string>();
+  private readonly pendingChannelSources = new Map<
+    string,
+    Promise<RuntimeAdmission>
+  >();
+  private readonly pendingTextSources = new Map<
+    string,
+    Promise<RuntimeAdmission>
+  >();
+  private readonly pendingAdmissions = new Set<Promise<RuntimeAdmission>>();
   private queue: Promise<void> = Promise.resolve();
-  private readonly runtimeInstanceId = ++nextRuntimeInstanceId;
-  private turnCounter = 0;
   private session: ClaudeCodeSession | null = null;
+  private sessionStarting: Promise<ClaudeCodeSession> | null = null;
+  private startTask: Promise<void> | null = null;
+  private stopTask: Promise<void> | null = null;
+  private generation = 0;
   private lastResult: AgentRuntimeLastResult | null = null;
   private activeTurn: ActiveTurn | null = null;
   private queuedTurnCount = 0;
@@ -266,40 +161,86 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     await this.start();
   }
 
-  async start(): Promise<void> {
+  start(): Promise<void> {
+    if (this.stopped) {
+      return Promise.reject(new Error('claude-code runtime is stopped'));
+    }
+    if (this.startTask !== null) return this.startTask;
+    if (this.status === 'ready') return Promise.resolve();
+    const generation = this.generation;
+    const task = this.startRuntime(generation);
+    this.startTask = task;
+    void task.finally(() => {
+      if (this.startTask === task) this.startTask = null;
+    }).catch(() => undefined);
+    return task;
+  }
+
+  private async startRuntime(generation: number): Promise<void> {
+    this.assertGeneration(generation);
     await this.setStatus('starting');
     try {
-      await this.materializeSkillAddDir();
+      await materializeClaudeSkillAddDir(
+        this.skillAddDirRoot,
+        this.deps.skillSources ?? [],
+      );
+      this.assertGeneration(generation);
       // Spawn the resident child up front so the runtime is truly resident
       // (Codex-aligned). A missing/broken `claude` binary fails here and drives
       // the runtime to degraded + throws, rather than a silent no-op.
       await this.ensureSession();
+      this.assertGeneration(generation);
     } catch (err) {
-      await this.setStatus('degraded', err);
+      if (!this.stopped && generation === this.generation) {
+        await this.setStatus('degraded', err);
+      }
       throw err;
     }
     await this.setStatus('ready');
+    this.assertGeneration(generation);
   }
 
   async stop(): Promise<void> {
-    if (this.stopped) return;
+    if (this.status === 'stopped') return;
+    if (this.stopTask !== null) return this.stopTask;
     this.stopped = true;
+    this.generation += 1;
+    this.activeTurn?.settle({ status: 'stopped' });
+    const task = this.stopRuntime();
+    this.stopTask = task;
+    try {
+      await task;
+    } catch (error) {
+      if (this.stopTask === task) this.stopTask = null;
+      throw error;
+    }
+  }
+
+  private async stopRuntime(): Promise<void> {
+    const sessionAtStop = this.session;
+    const sessionStop = sessionAtStop?.stop() ?? null;
+    void sessionStop?.catch(() => undefined);
     await this.setStatus('stopping');
     const session = this.session;
-    this.session = null;
     if (session !== null) {
-      try {
-        await session.stop();
-      } catch (err) {
-        this.log('warn', 'claude-code session stop errored', err);
-      }
+      await (session === sessionAtStop && sessionStop !== null
+        ? sessionStop
+        : session.stop());
+      if (this.session === session) this.session = null;
     }
-    this.queuedTurnCount = 0;
+    await this.drainAdmissions();
+    await this.queue;
     this.resolveIdleWaitersIfIdle();
     await this.setStatus('stopped');
   }
 
-  async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
+  completionInput(input: AgentRuntimeTextInput): Promise<RuntimeAdmission> {
+    return this.trackAdmission(this.completionInputImpl(input));
+  }
+
+  private async completionInputImpl(
+    input: AgentRuntimeTextInput,
+  ): Promise<RuntimeAdmission> {
     if (this.stopped) return { status: 'stopped' };
     if (input.outputSchema !== undefined) {
       // `--json-schema` is fixed at spawn time. A per-turn schema matching the
@@ -318,77 +259,100 @@ export class ClaudeCodeRuntime implements AgentRuntime {
         return { status: 'failed', error };
       }
     }
-    const key = input.sourceId;
-    if (key !== undefined && key !== '' && this.seenTextInputIds.has(key)) {
-      return { status: 'duplicate' };
-    }
-    if (key !== undefined && key !== '') this.seenTextInputIds.add(key);
+    return reserveSource(
+      input.sourceId,
+      this.seenTextInputIds,
+      this.pendingTextSources,
+      () => this.acceptTextInput(input),
+    );
+  }
+
+  private async acceptTextInput(
+    input: AgentRuntimeTextInput,
+  ): Promise<RuntimeAdmission> {
+    if (this.stopped) return { status: 'stopped' };
     // Plain-text teammate/completion turns share the same active steerable
     // logical-turn slot as channel inbound (PR #282 E2E regression): a send
     // that arrives while an earlier turn is still in-flight folds into that
     // active turn via `steerTurn({ priority: 'next' })` and returns the same
-    // `turnId`, aligned with the Codex runtime's `claimActiveTurnSlot`
-    // semantics. This is the runtime-owned plain-text path — no channel/XML
+    // exact RuntimeTurn, aligned with the Codex active-slot semantics. This is
+    // the runtime-owned plain-text path — no channel/XML
     // rendering is applied.
     const active = this.activeTurn;
     if (active !== null) {
       try {
         await this.steerActiveTurn(active, input.text);
-        return { status: 'submitted', turnId: active.turnId };
+        return { status: 'submitted', turn: active.runtimeTurn };
       } catch (err) {
-        return {
-          status: 'failed',
-          error: err instanceof Error ? err : new Error(String(err)),
-        };
+        return classifySteerFailure(err, this.stopped);
       }
     }
-    const turnId = this.nextTurnId('turn');
+    const runtimeTurn = createRuntimeTurn();
     this.recordQueuedTurnStart();
     const turn: ActiveTurn = {
-      turnId,
+      runtimeTurn: runtimeTurn.turn,
+      settle: runtimeTurn.settle,
       pendingSteers: [],
       session: null,
       steerQueue: Promise.resolve(),
+      generation: this.generation,
       // Dreamux-owned plain text turns are real user turns, not synthetic
       // system injections.
       submitOptions: { isSynthetic: false },
     };
     this.activeTurn = turn;
     void this.runActiveTurnOnQueue(input.text, turn).then(
-      (resultText) => this.markTurnSucceeded(turnId, resultText),
-      (err) => this.markTurnFailed(turnId, err),
+      (resultText) => this.markTurnSucceeded(turn, resultText),
+      (err) => this.markTurnFailed(turn, err),
     );
-    return { status: 'submitted', turnId };
+    return { status: 'submitted', turn: turn.runtimeTurn };
   }
 
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+  channelInput(input: InboundTurnInput): Promise<RuntimeAdmission> {
+    return this.trackAdmission(this.channelInputImpl(input));
+  }
+
+  private async channelInputImpl(
+    input: InboundTurnInput,
+  ): Promise<RuntimeAdmission> {
     if (this.stopped) return { status: 'stopped' };
-    const key = input.sourceId;
-    if (key !== '' && this.seen.has(key)) return { status: 'duplicate' };
-    if (key !== '') this.seen.add(key);
     // This runtime owns wrapping the channel input into its delivery shape: a
     // structured channel turn becomes the native `<channel source="…">` block;
     // a plain turn passes through unchanged.
-    const text = renderChannelInput(input);
+    let text: string;
+    try {
+      text = renderChannelInput(input);
+    } catch (error) {
+      return { status: 'failed', error: asError(error) };
+    }
+    return reserveSource(
+      input.sourceId,
+      this.seen,
+      this.pendingChannelSources,
+      () => this.acceptChannelInput(text),
+    );
+  }
+
+  private async acceptChannelInput(text: string): Promise<RuntimeAdmission> {
+    if (this.stopped) return { status: 'stopped' };
     const active = this.activeTurn;
     if (active !== null) {
       try {
         await this.steerActiveTurn(active, text);
-        return { status: 'submitted', turnId: active.turnId };
+        return { status: 'submitted', turn: active.runtimeTurn };
       } catch (err) {
-        return {
-          status: 'failed',
-          error: err instanceof Error ? err : new Error(String(err)),
-        };
+        return classifySteerFailure(err, this.stopped);
       }
     }
-    const turnId = this.nextTurnId('turn');
+    const runtimeTurn = createRuntimeTurn();
     this.recordQueuedTurnStart();
     const turn: ActiveTurn = {
-      turnId,
+      runtimeTurn: runtimeTurn.turn,
+      settle: runtimeTurn.settle,
       pendingSteers: [],
       session: null,
       steerQueue: Promise.resolve(),
+      generation: this.generation,
       // Channel-initial turns carry no explicit submit options; the native
       // `submitTurn(prompt)` call is unchanged from before the shared active-slot
       // refactor (the existing test asserts `submitOptions[0]` is undefined).
@@ -400,10 +364,26 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // completion. Instead, a failed turn drives the runtime to `degraded` with a
     // persisted `last_error` (visible via status/doctor) — never swallowed.
     void this.runActiveTurnOnQueue(text, turn).then(
-      (resultText) => this.markTurnSucceeded(turnId, resultText),
-      (err) => this.markTurnFailed(turnId, err),
+      (resultText) => this.markTurnSucceeded(turn, resultText),
+      (err) => this.markTurnFailed(turn, err),
     );
-    return { status: 'submitted', turnId };
+    return { status: 'submitted', turn: turn.runtimeTurn };
+  }
+
+  private trackAdmission(
+    admission: Promise<RuntimeAdmission>,
+  ): Promise<RuntimeAdmission> {
+    this.pendingAdmissions.add(admission);
+    void admission.finally(() => {
+      this.pendingAdmissions.delete(admission);
+    }).catch(() => undefined);
+    return admission;
+  }
+
+  private async drainAdmissions(): Promise<void> {
+    while (this.pendingAdmissions.size > 0) {
+      await Promise.allSettled([...this.pendingAdmissions]);
+    }
   }
 
   waitIdle(): Promise<void> {
@@ -434,14 +414,18 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     prompt: string,
     active: ActiveTurn,
   ): Promise<string | null> {
-    const session = await this.ensureSession();
-    const steers = active.pendingSteers.splice(0);
-    const fullPrompt =
-      steers.length === 0 ? prompt : [prompt, ...steers].join('\n\n');
-    const outcome = session.submitTurn(fullPrompt, active.submitOptions);
-    active.session = session;
     try {
-      return await this.applyTurnOutcome(await outcome, active.turnId);
+      this.assertGeneration(active.generation);
+      const session = await this.ensureSession();
+      this.assertGeneration(active.generation);
+      const steers = active.pendingSteers.splice(0);
+      const fullPrompt =
+        steers.length === 0 ? prompt : [prompt, ...steers].join('\n\n');
+      const outcome = session.submitTurn(fullPrompt, active.submitOptions);
+      active.session = session;
+      const settled = await outcome;
+      this.assertGeneration(active.generation);
+      return await this.applyTurnOutcome(settled);
     } finally {
       active.session = null;
       if (this.activeTurn === active) this.activeTurn = null;
@@ -453,48 +437,59 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     active: ActiveTurn,
     prompt: string,
   ): Promise<void> {
+    this.assertGeneration(active.generation);
     const session = active.session;
     if (session === null) {
       active.pendingSteers.push(prompt);
       return;
     }
-    const steer = active.steerQueue.then(() =>
-      session.steerTurn(prompt, { priority: 'next' }),
-    );
+    const steer = active.steerQueue.then(() => {
+      this.assertGeneration(active.generation);
+      if (active.session !== session || this.session !== session) {
+        throw new ClaudeSteerAdmissionError(
+          'failed',
+          'claude-code session changed before live steer',
+        );
+      }
+      return session.steerTurn(prompt, { priority: 'next' });
+    });
     active.steerQueue = steer.then(
       () => undefined,
       () => undefined,
     );
     await steer;
+    this.assertGeneration(active.generation);
   }
 
   private async markTurnSucceeded(
-    turnId: string,
+    turn: ActiveTurn,
     resultText: string | null,
   ): Promise<void> {
     this.recordQueuedTurnEnd();
-    this.deps.onTurnSettled?.({
-      turnId,
+    turn.settle({
       status: 'completed',
-      result: { text: resultText },
+      resultText,
+      truncated: false,
     });
     if (this.stopped) return;
     if (this.status !== 'ready') await this.setStatus('ready');
   }
 
-  private async markTurnFailed(turnId: string, err: unknown): Promise<void> {
+  private async markTurnFailed(turn: ActiveTurn, err: unknown): Promise<void> {
     this.recordQueuedTurnEnd();
-    this.log('error', `claude-code turn ${turnId} failed`, err);
+    this.log('error', 'claude-code turn failed', err);
     // A turn that fails after stop() was requested (the resident child is being
     // torn down) is a `stopped` settlement; otherwise it is a genuine `failed`.
     // Fire before the stopped early-return so an interrupted teammate turn is
     // never lost.
-    this.deps.onTurnSettled?.({
-      turnId,
-      status: this.stopped ? 'stopped' : 'failed',
-      result: { text: null },
-      error: err instanceof Error ? err : new Error(String(err)),
-    });
+    turn.settle(
+      this.stopped
+        ? { status: 'stopped' }
+        : {
+            status: 'failed',
+            error: err instanceof Error ? err : new Error(String(err)),
+          },
+    );
     if (this.stopped) return;
     // Surface the failure as durable runtime state rather than swallowing it.
     await this.setStatus('degraded', err);
@@ -523,7 +518,26 @@ export class ClaudeCodeRuntime implements AgentRuntime {
    * conversation survives a crash.
    */
   private async ensureSession(): Promise<ClaudeCodeSession> {
+    if (this.stopped) throw new Error('claude-code runtime is stopped');
     if (this.session !== null && this.session.isAlive()) return this.session;
+    if (this.sessionStarting !== null) return this.sessionStarting;
+    const generation = this.generation;
+    const starting = this.createSession(generation);
+    this.sessionStarting = starting;
+    void starting.finally(() => {
+      if (this.sessionStarting === starting) this.sessionStarting = null;
+    }).catch(() => undefined);
+    return starting;
+  }
+
+  private async createSession(generation: number): Promise<ClaudeCodeSession> {
+    this.assertGeneration(generation);
+    const previous = this.session;
+    if (previous !== null) {
+      await previous.stop();
+      if (this.session === previous) this.session = null;
+      this.assertGeneration(generation);
+    }
     const args = claudeCodeResidentArgs({
       config: this.config,
       mcpConfigJson: this.mcpConfigJson,
@@ -554,72 +568,50 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     session.setOnExit(() => {
       void this.onSessionExit(session);
     });
-    await session.start();
+    // Retain authority before spawn: a stop or early exit must never lose the
+    // session object that can prove process-group termination.
     this.session = session;
-    return session;
-  }
-
-  private async materializeSkillAddDir(): Promise<void> {
-    const sources = this.deps.skillSources ?? [];
-    if (sources.length === 0) return;
-    const manifest = join(this.skillAddDirRoot, '.dreamux-skill-adapter.json');
-    if (await adapterExists(manifest)) return;
-    const tmpRoot = `${this.skillAddDirRoot}.${randomUUID()}.tmp`;
-    const tmpSkillsRoot = join(tmpRoot, '.claude', 'skills');
     try {
-      await mkdir(tmpSkillsRoot, { recursive: true });
-      const linkedNames = new Map<string, string>();
-      for (const source of uniqueSkillSources(sources)) {
-        for (const skill of await skillDirsInRoot(source.path)) {
-          const previous = linkedNames.get(skill.name);
-          if (previous !== undefined && previous !== skill.path) {
-            throw new Error(
-              `duplicate Claude skill name ${JSON.stringify(skill.name)} from ` +
-                `${previous} and ${skill.path}`,
-            );
-          }
-          if (previous !== undefined) continue;
-          linkedNames.set(skill.name, skill.path);
-          await symlink(skill.path, join(tmpSkillsRoot, skill.name), 'dir');
-        }
+      this.assertGeneration(generation);
+      await session.start();
+      this.assertGeneration(generation);
+    } catch (error) {
+      if (this.stopped) throw error;
+      try {
+        await session.stop();
+        if (this.session === session) this.session = null;
+      } catch (stopError) {
+        throw new AggregateError(
+          [error, stopError],
+          'claude session start failed and termination could not be proved',
+        );
       }
-      await writeFile(
-        join(tmpRoot, '.dreamux-skill-adapter.json'),
-        `${JSON.stringify({
-          version: 1,
-          key: skillAdapterKey(sources),
-          sources: uniqueSkillSources(sources).map((source) => ({
-            name: source.name,
-            path: resolve(source.path),
-          })),
-        }, null, 2)}\n`,
-        { mode: 0o600 },
-      );
-      await mkdir(dirname(this.skillAddDirRoot), { recursive: true });
-      await rename(tmpRoot, this.skillAddDirRoot);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
-        await rm(tmpRoot, { recursive: true, force: true }).catch(() => undefined);
-        return;
-      }
-      await rm(tmpRoot, { recursive: true, force: true }).catch(() => undefined);
-      throw err;
+      throw error;
     }
+    return session;
   }
 
   /** React to an unexpected resident-child exit: degrade and drop the session. */
   private async onSessionExit(session: ClaudeCodeSession): Promise<void> {
     if (this.session !== session) return; // already replaced/stopped
-    this.session = null;
     if (this.stopped) return;
     this.log('error', 'claude-code resident child exited unexpectedly');
-    await this.setStatus('degraded', new Error('claude resident child exited'));
+    try {
+      await session.stop();
+      if (this.session === session) this.session = null;
+    } catch (error) {
+      await this.setStatus('degraded', error);
+      return;
+    }
+    if (!this.stopped) {
+      await this.setStatus(
+        'degraded',
+        new Error('claude resident child exited'),
+      );
+    }
   }
 
-  private async applyTurnOutcome(
-    outcome: TurnOutcome,
-    turnId: string,
-  ): Promise<string | null> {
+  private async applyTurnOutcome(outcome: TurnOutcome): Promise<string | null> {
     if (
       outcome.sessionId !== null &&
       outcome.sessionId !== '' &&
@@ -635,25 +627,27 @@ export class ClaudeCodeRuntime implements AgentRuntime {
         outcome.errors.length > 0
           ? outcome.errors.join('; ')
           : (outcome.subtype ?? 'unknown error');
-      throw new Error(`claude turn ${turnId} returned an error result: ${detail}`);
+      throw new Error(`claude turn returned an error result: ${detail}`);
     }
     // When --json-schema was requested, Claude must return a validated
     // `structured_output`; fail loud rather than surfacing free-form text.
     if (this.deps.outputSchema !== undefined && !outcome.hasStructuredOutput) {
       throw new Error(
-        `claude turn ${turnId} did not return structured_output for a ` +
+        'claude turn did not return structured_output for a ' +
           `--json-schema session`,
       );
     }
     // Only cache the result once all validation passes, so a failed schema turn
     // never leaks its unvalidated free-form text through getLast().
     if (resultText !== null) this.lastResult = { text: resultText };
-    this.log('info', `claude-code turn ${turnId} completed`);
+    this.log('info', 'claude-code turn completed');
     return resultText;
   }
 
-  private nextTurnId(kind: 'system' | 'turn'): string {
-    return `claude-${kind}-${this.runtimeInstanceId}-${++this.turnCounter}`;
+  private assertGeneration(generation: number): void {
+    if (this.stopped || generation !== this.generation) {
+      throw new Error('claude-code runtime is stopped');
+    }
   }
 
   private buildProcessEnv(

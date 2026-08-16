@@ -160,6 +160,39 @@ describe('dispatcher root identity authority', () => {
     );
   });
 
+  it('preserves compatible closed lifecycle metadata until entity-owned reopen', async () => {
+    const identities = new AgentIdentityStore(noopLogger);
+    const workspace = join(root, 'workspace-closed');
+    const first = await ensureDispatcherIdentity(identities, {
+      dispatcherId: 'flow',
+      agentRuntime: 'agent-a',
+      sourceCwd: workspace,
+      cwd: workspace,
+      runtimeCwd: workspace,
+      worktree: reuseCwd(workspace),
+    });
+    await identities.update(first, {
+      status: 'closed',
+      closedAt: 123,
+      closeNote: 'prior graceful stop',
+    });
+
+    const ensured = await ensureDispatcherIdentity(identities, {
+      dispatcherId: 'flow',
+      agentRuntime: 'agent-a',
+      sourceCwd: workspace,
+      cwd: workspace,
+      runtimeCwd: workspace,
+      worktree: reuseCwd(workspace),
+    });
+
+    expect(ensured).toMatchObject({
+      status: 'closed',
+      closed_at: 123,
+      close_note: 'prior graceful stop',
+    });
+  });
+
   it.each<[string, DispatcherIdentityChange]>([
     ['agent_runtime', { agentRuntime: 'agent-b' }],
     ['cwd', { cwd: 'workspace-b' }],

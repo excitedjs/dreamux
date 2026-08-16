@@ -75,6 +75,15 @@ export class TeamDissolveRunner {
       return;
     }
 
+    try {
+      const service = await this.opts.getService(operation.teamId);
+      service.closeWorkflowAdmission();
+      await service.stopWorkflowsForClosing();
+    } catch (error) {
+      await this.opts.deferRetry(operation, 'resource-close-failed', error);
+      return;
+    }
+
     const closeAlreadyBegan = operation.record.phase !== 'waiting_for_team_idle';
     if (
       operation.record.phase === 'waiting_for_team_idle' ||

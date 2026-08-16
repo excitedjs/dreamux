@@ -22,6 +22,7 @@ import {
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import {
   dreamuxRoot,
+  dispatcherAgentTurnsPath,
   dispatcherChannelBindingsPath,
   dispatcherCollaborationSpacesPath,
   isRealPathUnderDreamuxRoot,
@@ -269,6 +270,40 @@ describe('dispatcher workspace cwd contract (issue #182 PR-4)', () => {
 
       await expect(server.start()).rejects.toThrow(
         /incompatible local state[\s\S]*version 2[\s\S]*open collaboration target route/,
+      );
+      await server.shutdown();
+    });
+
+    it('rejects a legacy Turn archive before starting a disabled dispatcher runtime', async () => {
+      const config = testDreamuxConfig([
+        testDispatcherConfig({
+          id: 'flow',
+          cwd: join(root, 'disabled-workspace'),
+          enabled: false,
+        }),
+      ]);
+      const archive = dispatcherAgentTurnsPath({
+        dispatcherId: 'flow',
+        name: 'reviewer',
+        teamId: null,
+        role: 'teammate',
+      });
+      await mkdir(dirname(archive), { recursive: true });
+      writeFileSync(
+        archive,
+        `${JSON.stringify({ version: 1, type: 'settled', turn_id: 'old' })}\n`,
+        { mode: 0o600 },
+      );
+      const server = new Server({
+        config,
+        adminSocketPath: join(root, 'admin.sock'),
+        logger: noopLog(),
+        channelLoggerFactory: () => noopLog(),
+        agentRuntimeProviderCatalog: codexAgentRuntimeCatalog(),
+      });
+
+      await expect(server.start()).rejects.toThrow(
+        /incompatible local state[\s\S]*legacy v1 Turn archive[\s\S]*Rebuild:/,
       );
       await server.shutdown();
     });

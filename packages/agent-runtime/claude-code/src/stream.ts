@@ -156,6 +156,27 @@ export function parseLine(line: string): ParsedLine {
           kind: 'init',
           sessionId: str(parsed['session_id']),
           model: str(parsed['model']),
+          capabilities: Array.isArray(parsed['capabilities'])
+            ? parsed['capabilities'].filter(
+                (value): value is string => typeof value === 'string',
+              )
+            : [],
+          raw: parsed,
+        };
+      }
+      if (subtype === 'command_lifecycle') {
+        const state = str(parsed['state']);
+        return {
+          kind: 'command_lifecycle',
+          commandUuid: str(parsed['command_uuid']),
+          state:
+            state === 'queued' ||
+            state === 'started' ||
+            state === 'completed' ||
+            state === 'cancelled' ||
+            state === 'discarded'
+              ? state
+              : null,
           raw: parsed,
         };
       }
@@ -219,11 +240,13 @@ export function parseLine(line: string): ParsedLine {
 export function buildUserMessage(
   text: string,
   options: TurnSubmitOptions = {},
+  commandUuid?: string,
 ): string {
   const envelope: Record<string, unknown> = {
     type: 'user',
     message: { role: 'user', content: [{ type: 'text', text }] },
   };
+  if (commandUuid !== undefined) envelope['uuid'] = commandUuid;
   if (options.isSynthetic === true) envelope['isSynthetic'] = true;
   if (options.priority !== undefined) envelope['priority'] = options.priority;
   return JSON.stringify(envelope);

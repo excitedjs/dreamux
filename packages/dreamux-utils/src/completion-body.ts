@@ -12,7 +12,8 @@
  * directory.
  */
 
-import { chmod, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { open } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { ensureOwnerOnlyDir } from './os.js';
@@ -31,34 +32,8 @@ export type ResolvedCompletionBody =
   | { kind: 'spilled'; path: string };
 
 export interface CompletionBodyInput {
-  source: string;
-  id: string;
   result: string | null;
 }
-
-/** Sanitize a name into a safe single path segment. */
-function safeSegment(name: string): string {
-  return name.replace(/[^A-Za-z0-9._-]/g, '_');
-}
-
-/**
- * Spill file for a teammate completion result that overflows the inline budget.
- * The host writes the full result here and inlines only this path into the
- * dispatcher or TeamLeader turn, so a large result never floods the target
- * agent's context.
- * `spillDir` is the owning dispatcher's completion spill dir, supplied by the
- * caller so a TeamLeader delivery target still spills under its operator
- * dispatcher, not its composite runtime id. `source` and `id` are sanitized for
- * filename safety; the id is unique per completion (teammate name + turn id).
- */
-export function teamMateCompletionOutputPath(
-  spillDir: string,
-  source: string,
-  id: string,
-): string {
-  return join(spillDir, `teammate-${safeSegment(source)}-${safeSegment(id)}.output`);
-}
-
 /**
  * Resolve the effective inline budget from the environment, in the spirit of
  * native `validateBoundedIntEnvVar`: unset/blank or non-positive falls back to
@@ -97,17 +72,27 @@ export async function resolveCompletionBody(
   if (result.length <= budget) {
     return { kind: 'inline', text: result };
   }
-  const path = teamMateCompletionOutputPath(
-    spillDir,
-    completion.source,
-    completion.id,
-  );
   // Owner-only spill dir: the cache may hold full teammate output. Use the
   // shared helper so a pre-existing permissive dir is tightened and a symlink /
   // foreign-uid dir is rejected (issue #182 — same invariant as the run tree),
   // then a 0600 file + explicit chmod (writeFile's `mode` honors the umask).
   await ensureOwnerOnlyDir(spillDir);
-  await writeFile(path, result, { mode: 0o600 });
-  await chmod(path, 0o600);
-  return { kind: 'spilled', path };
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    // The storage key is deliberately opaque. Business labels and provider
+    // identifiers never become filenames or surrogate Turn identifiers.
+    const path = join(spillDir, `completion-${randomUUID()}.output`);
+    try {
+      const handle = await open(path, 'wx', 0o600);
+      try {
+        await handle.writeFile(result, 'utf8');
+        await handle.chmod(0o600);
+      } finally {
+        await handle.close();
+      }
+      return { kind: 'spilled', path };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+  }
+  throw new Error('failed to allocate an exclusive completion spill file');
 }

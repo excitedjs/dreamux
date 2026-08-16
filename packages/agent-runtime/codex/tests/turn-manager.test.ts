@@ -4,7 +4,7 @@ import { TurnManager } from '../src/turn-manager.js';
 import type { NotificationHandler } from '../src/rpc.js';
 import type { ServerNotification, TurnStartResponse } from '../src/types.js';
 import type { CollectedTurn } from '../src/events.js';
-import type { TurnSettledSignal } from '@excitedjs/dreamux-types';
+import type { RuntimeAdmission, RuntimeTurn } from '@excitedjs/dreamux-types';
 
 describe('TurnManager inbound submission', () => {
   it('submits every accepted message through turn/start without coalescing', async () => {
@@ -15,12 +15,10 @@ describe('TurnManager inbound submission', () => {
       client: client as never,
     });
 
-    await expect(
-      manager.enqueue(input('msg-1', 'first')),
-    ).resolves.toEqual({ status: 'submitted', turnId: 'turn-1' });
-    await expect(
-      manager.enqueue(input('msg-2', 'second')),
-    ).resolves.toEqual({ status: 'submitted', turnId: 'turn-2' });
+    await expect(manager.enqueue(input('msg-1', 'first'))).resolves
+      .toMatchObject({ status: 'submitted' });
+    await expect(manager.enqueue(input('msg-2', 'second'))).resolves
+      .toMatchObject({ status: 'submitted' });
 
     expect(client.methods).toEqual(['turn/start', 'turn/start']);
     expect(client.inputs).toEqual(['first', 'second']);
@@ -72,7 +70,7 @@ describe('TurnManager text input submission', () => {
       manager.submitTextInput({ text: 'Restart completed.', sourceId: 'restart' }),
     ).resolves.toEqual({
       status: 'submitted',
-      turnId: 'turn-1',
+      turn: expect.objectContaining({ settled: expect.any(Promise) }),
     });
     expect(client.inputs).toEqual(['Restart completed.']);
   });
@@ -122,6 +120,77 @@ describe('TurnManager text input submission', () => {
     expect(client.inputs).toEqual(['Restart completed.']);
   });
 
+  it('releases a source reservation after proven pre-admission failure', async () => {
+    const client = new FakeCodexClient();
+    let threadId: string | null = null;
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => threadId,
+      client: client as never,
+    });
+
+    await expect(manager.submitTextInput({
+      text: 'first attempt',
+      sourceId: 'retryable-source',
+    })).resolves.toMatchObject({ status: 'failed' });
+    threadId = 'thread-1';
+    await expect(manager.submitTextInput({
+      text: 'safe retry',
+      sourceId: 'retryable-source',
+    })).resolves.toMatchObject({ status: 'submitted' });
+    expect(client.inputs).toEqual(['safe retry']);
+  });
+
+  it('shares a concurrent source reservation and commits one accepted native write', async () => {
+    const client = new DelayedFakeCodexClient();
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+    });
+
+    const first = manager.submitTextInput({
+      text: 'first payload',
+      sourceId: 'concurrent-source',
+    });
+    const second = manager.submitTextInput({
+      text: 'ignored duplicate payload',
+      sourceId: 'concurrent-source',
+    });
+    await waitFor(() => client.inputs.length === 1);
+    client.resolveNext('turn-1');
+    const [firstAdmission, secondAdmission] = await Promise.all([first, second]);
+    expect(firstAdmission.status).toBe('submitted');
+    expect(secondAdmission).toBe(firstAdmission);
+    if (firstAdmission.status !== 'submitted') throw new Error('expected submitted');
+    if (secondAdmission.status !== 'submitted') throw new Error('expected submitted');
+    expect(secondAdmission.turn).toBe(firstAdmission.turn);
+    expect(client.inputs).toEqual(['first payload']);
+    await expect(manager.submitTextInput({
+      text: 'accepted retry',
+      sourceId: 'concurrent-source',
+    })).resolves.toEqual({ status: 'duplicate' });
+  });
+
+  it('commits an ambiguous source and never repeats its native write', async () => {
+    const client = new FailOnceFakeCodexClient();
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+    });
+
+    await expect(manager.submitTextInput({
+      text: 'possibly accepted',
+      sourceId: 'ambiguous-source',
+    })).resolves.toMatchObject({ status: 'ambiguous' });
+    await expect(manager.submitTextInput({
+      text: 'must not be written again',
+      sourceId: 'ambiguous-source',
+    })).resolves.toEqual({ status: 'duplicate' });
+    expect(client.requestCount).toBe(1);
+  });
+
   it('passes outputSchema to turn/start and settles the validated JSON text', async () => {
     const client = new FakeCodexClient();
     const completed: CollectedTurn[] = [];
@@ -144,7 +213,7 @@ describe('TurnManager text input submission', () => {
       outputSchema,
     })).resolves.toEqual({
       status: 'submitted',
-      turnId: 'turn-1',
+      turn: expect.objectContaining({ settled: expect.any(Promise) }),
     });
     await waitFor(() => completed.length === 1);
 
@@ -177,7 +246,7 @@ describe('TurnManager text input submission', () => {
     await expect(manager.submitTextInput({
       text: 'return optional JSON',
       outputSchema,
-    })).resolves.toEqual({ status: 'submitted', turnId: 'turn-1' });
+    })).resolves.toMatchObject({ status: 'submitted' });
 
     expect(client.outputSchemas).toEqual([{
       type: 'object',
@@ -223,7 +292,7 @@ describe('TurnManager text input submission', () => {
     expect(manager.isBusy()).toBe(false);
   });
 
-  it('discards a failed submission codec before the next turn', async () => {
+  it('discards an ambiguous submission codec before the next turn', async () => {
     const client = new FailOnceFakeCodexClient();
     const manager = new TurnManager({
       dispatcherId: 'flow',
@@ -234,12 +303,12 @@ describe('TurnManager text input submission', () => {
     await expect(manager.submitTextInput({
       text: 'structured failure',
       outputSchema: optionalValueSchema(),
-    })).resolves.toMatchObject({ status: 'failed' });
+    })).resolves.toMatchObject({ status: 'ambiguous' });
     expect(manager.isBusy()).toBe(false);
 
     await expect(manager.submitTextInput({
       text: 'plain successor',
-    })).resolves.toEqual({ status: 'submitted', turnId: 'turn-2' });
+    })).resolves.toMatchObject({ status: 'submitted' });
     expect(client.outputSchemas).toEqual([
       expect.any(Object),
       undefined,
@@ -263,14 +332,14 @@ describe('TurnManager text input submission', () => {
       failedStructured
         ? { text: 'failed structured', outputSchema: optionalValueSchema() }
         : { text: 'failed plain' },
-    )).resolves.toMatchObject({ status: 'failed' });
+    )).resolves.toMatchObject({ status: 'ambiguous' });
     expect(client.handlerCount).toBe(0);
 
     await expect(manager.submitTextInput(
       failedStructured
         ? { text: 'plain recovery' }
         : { text: 'structured recovery', outputSchema: optionalValueSchema() },
-    )).resolves.toEqual({ status: 'submitted', turnId: 'turn-2' });
+    )).resolves.toMatchObject({ status: 'submitted' });
     expect(client.handlerCount).toBe(1);
 
     client.emitCompleted(
@@ -291,6 +360,130 @@ describe('TurnManager text input submission', () => {
 });
 
 describe('TurnManager turn settlement', () => {
+  it('retains completion that arrives before turn/start returns the admission', async () => {
+    const client = new DelayedFakeCodexClient();
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+    });
+
+    const submitted = manager.enqueue(input('msg-1', 'work'));
+    await waitFor(() => client.inputs.length === 1);
+    client.emitCompleted('thread-1', 'turn-1', 'early result');
+    client.resolveNext('turn-1');
+
+    const turn = await submittedTurn(submitted);
+    await expect(turn.settled).resolves.toEqual({
+      status: 'completed',
+      resultText: 'early result',
+      truncated: false,
+    });
+  });
+
+  it('returns the same stopped object when stop wins before turn/start responds', async () => {
+    const client = new DelayedFakeCodexClient();
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+    });
+
+    const submitted = manager.enqueue(input('msg-1', 'work'));
+    await waitFor(() => client.inputs.length === 1);
+    const stopping = manager.stop();
+    let stopSettled = false;
+    void stopping.finally(() => {
+      stopSettled = true;
+    });
+    await flush();
+    expect(stopSettled).toBe(false);
+    client.resolveNext('turn-1');
+    await stopping;
+
+    const turn = await submittedTurn(submitted);
+    await expect(turn.settled).resolves.toEqual({ status: 'stopped' });
+    expect(manager.isBusy()).toBe(false);
+  });
+
+  it('retains the active slot until folded submissions resolve after native completion', async () => {
+    const client = new DelayedFakeCodexClient();
+    const completed: CollectedTurn[] = [];
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+      onTurnCompleted: (turn) => completed.push(turn),
+    });
+
+    const firstAdmission = manager.enqueue(input('msg-1', 'first'));
+    const secondAdmission = manager.enqueue(input('msg-2', 'second'));
+    await waitFor(() => client.inputs.length === 2);
+    client.resolveNext('turn-1');
+    const firstTurn = await submittedTurn(firstAdmission);
+
+    client.emitCompleted('thread-1', 'turn-1', 'early completion');
+    let settled = false;
+    void firstTurn.settled.finally(() => {
+      settled = true;
+    });
+    await flush();
+    expect(settled).toBe(false);
+
+    const thirdAdmission = manager.enqueue(input('msg-3', 'third'));
+    await waitFor(() => client.inputs.length === 3);
+    client.resolveNext('turn-2');
+    client.resolveNext('turn-3');
+    client.emitCompleted('thread-1', 'turn-2', 'second completion');
+    client.emitCompleted('thread-1', 'turn-3', 'final completion');
+
+    const secondTurn = await submittedTurn(secondAdmission);
+    const thirdTurn = await submittedTurn(thirdAdmission);
+    expect(secondTurn).toBe(firstTurn);
+    expect(thirdTurn).toBe(firstTurn);
+    await expect(firstTurn.settled).resolves.toEqual({
+      status: 'completed',
+      resultText: 'final completion',
+      truncated: false,
+    });
+    expect(completed).toHaveLength(1);
+  });
+
+  it('retains a completed slot when a folded submission fails ambiguously and a third send joins', async () => {
+    const client = new DelayedFakeCodexClient();
+    const completed: CollectedTurn[] = [];
+    const manager = new TurnManager({
+      dispatcherId: 'flow',
+      getThreadId: () => 'thread-1',
+      client: client as never,
+      onTurnCompleted: (turn) => completed.push(turn),
+    });
+
+    const firstAdmission = manager.enqueue(input('msg-1', 'first'));
+    const secondAdmission = manager.enqueue(input('msg-2', 'second'));
+    await waitFor(() => client.inputs.length === 2);
+    client.resolveNext('turn-1');
+    const firstTurn = await submittedTurn(firstAdmission);
+    client.emitCompleted('thread-1', 'turn-1', 'early completion');
+
+    const thirdAdmission = manager.enqueue(input('msg-3', 'third'));
+    await waitFor(() => client.inputs.length === 3);
+    client.rejectNext(new Error('turn/start response lost'));
+    client.resolveNext('turn-3');
+    client.emitCompleted('thread-1', 'turn-3', 'final completion');
+
+    await expect(secondAdmission).resolves.toMatchObject({
+      status: 'ambiguous',
+      error: { message: 'turn/start response lost' },
+    });
+    expect(await submittedTurn(thirdAdmission)).toBe(firstTurn);
+    await expect(firstTurn.settled).resolves.toMatchObject({
+      status: 'completed',
+      resultText: 'final completion',
+    });
+    expect(completed).toHaveLength(1);
+  });
+
   it('waitIdle treats the slot-claimed submission window as busy', async () => {
     const client = new DelayedFakeCodexClient();
     const manager = new TurnManager({
@@ -313,7 +506,7 @@ describe('TurnManager turn settlement', () => {
     client.resolveNext('turn-1');
     await expect(submitted).resolves.toEqual({
       status: 'submitted',
-      turnId: 'turn-1',
+      turn: expect.objectContaining({ settled: expect.any(Promise) }),
     });
     expect(idle).toBe(false);
 
@@ -333,7 +526,7 @@ describe('TurnManager turn settlement', () => {
     });
 
     const res = await manager.enqueue(input('msg-1', 'work'));
-    expect(res).toEqual({ status: 'submitted', turnId: 'turn-1' });
+    expect(res).toMatchObject({ status: 'submitted' });
 
     await waitFor(() => completed.length === 1);
     expect(completed[0]?.turnId).toBe('turn-1');
@@ -349,25 +542,24 @@ describe('TurnManager turn settlement', () => {
       onTurnCompleted: (turn) => completed.push(turn),
     });
 
-    await expect(manager.enqueue(input('msg-1', 'first'))).resolves.toEqual({
-      status: 'submitted',
-      turnId: 'turn-1',
-    });
-    await expect(manager.enqueue(input('msg-2', 'second steered'))).resolves.toEqual({
-      status: 'submitted',
-      turnId: 'turn-1',
-    });
-    await expect(manager.enqueue(input('msg-3', 'third steered'))).resolves.toEqual({
-      status: 'submitted',
-      turnId: 'turn-1',
-    });
+    const first = await submittedTurn(manager.enqueue(input('msg-1', 'first')));
+    const second = await submittedTurn(
+      manager.enqueue(input('msg-2', 'second steered')),
+    );
+    const third = await submittedTurn(
+      manager.enqueue(input('msg-3', 'third steered')),
+    );
+    expect(second).toBe(first);
+    expect(third).toBe(first);
     expect(client.inputs).toEqual(['first', 'second steered', 'third steered']);
 
-    client.emitCompleted('thread-1', 'turn-1', 'folded result');
+    client.emitCompleted('thread-1', 'turn-1', 'first result');
+    client.emitCompleted('thread-1', 'turn-2', 'second result');
+    client.emitCompleted('thread-1', 'turn-3', 'folded result');
     await waitFor(() => completed.length === 1);
     await flush();
 
-    expect(completed.map((turn) => turn.turnId)).toEqual(['turn-1']);
+    expect(completed.map((turn) => turn.turnId)).toEqual(['turn-3']);
   });
 
   it('coalesces concurrent cold-start submissions into one completion-producing turn', async () => {
@@ -387,36 +579,33 @@ describe('TurnManager turn settlement', () => {
     expect(client.handlerCount).toBe(1);
     client.resolveNext('turn-1');
     client.resolveNext('turn-2');
-    await expect(Promise.all([first, second])).resolves.toEqual([
-      { status: 'submitted', turnId: 'turn-1' },
-      { status: 'submitted', turnId: 'turn-1' },
-    ]);
+    const admissions = await Promise.all([first, second]);
+    const firstTurn = requireSubmittedTurn(admissions[0]);
+    expect(requireSubmittedTurn(admissions[1])).toBe(firstTurn);
 
     client.emitCompleted('thread-1', 'turn-1', 'folded result');
     client.emitCompleted('thread-1', 'turn-2', 'extra physical result');
     await waitFor(() => completed.length === 1);
     await flush();
 
-    expect(completed.map((turn) => turn.turnId)).toEqual(['turn-1']);
+    expect(completed.map((turn) => turn.turnId)).toEqual(['turn-2']);
   });
 
   it('folds compatible structured submissions and restores exactly once', async () => {
     const client = new FoldingFakeCodexClient(['turn-1', 'turn-2']);
     const completed: CollectedTurn[] = [];
-    const settled: TurnSettledSignal[] = [];
     const manager = new TurnManager({
       dispatcherId: 'flow',
       getThreadId: () => 'thread-1',
       client: client as never,
       onTurnCompleted: (turn) => completed.push(turn),
-      onTurnSettled: (turn) => settled.push(turn),
     });
 
-    await expect(manager.submitTextInput({
+    const first = await submittedTurn(manager.submitTextInput({
       text: 'first',
       outputSchema: optionalValueSchema(),
-    })).resolves.toEqual({ status: 'submitted', turnId: 'turn-1' });
-    await expect(manager.submitTextInput({
+    }));
+    const folded = await submittedTurn(manager.submitTextInput({
       text: 'folded',
       outputSchema: {
         additionalProperties: false,
@@ -424,7 +613,8 @@ describe('TurnManager turn settlement', () => {
         properties: { value: { type: 'string' } },
         type: 'object',
       },
-    })).resolves.toEqual({ status: 'submitted', turnId: 'turn-1' });
+    }));
+    expect(folded).toBe(first);
     expect(client.inputs).toEqual(['first', 'folded']);
 
     client.emitCompleted('thread-1', 'turn-1', '{"value":null}');
@@ -433,9 +623,13 @@ describe('TurnManager turn settlement', () => {
     await flush();
 
     expect(completed[0]?.items).toContainEqual(
-      expect.objectContaining({ text: '{}' }),
+      expect.objectContaining({ text: '{"value":"ignored"}' }),
     );
-    expect(settled).toEqual([]);
+    await expect(first.settled).resolves.toEqual({
+      status: 'completed',
+      resultText: '{"value":"ignored"}',
+      truncated: false,
+    });
   });
 
   it('rejects incompatible structured folding without another turn/start', async () => {
@@ -495,16 +689,14 @@ describe('TurnManager turn settlement', () => {
   it('settles restoration failure without forwarding completion', async () => {
     const client = new FoldingFakeCodexClient(['turn-1']);
     const completed: CollectedTurn[] = [];
-    const settled: TurnSettledSignal[] = [];
     const manager = new TurnManager({
       dispatcherId: 'flow',
       getThreadId: () => 'thread-1',
       client: client as never,
       onTurnCompleted: (turn) => completed.push(turn),
-      onTurnSettled: (turn) => settled.push(turn),
     });
 
-    await manager.submitTextInput({
+    const turn = await submittedTurn(manager.submitTextInput({
       text: 'invalid restored shape',
       outputSchema: {
         type: 'object',
@@ -514,15 +706,13 @@ describe('TurnManager turn settlement', () => {
         required: ['values'],
         additionalProperties: false,
       },
-    });
+    }));
     client.emitCompleted('thread-1', 'turn-1', '{"values":{}}');
-    await waitFor(() => settled.length === 1);
+    const outcome = await turn.settled;
 
     expect(completed).toEqual([]);
-    expect(settled[0]).toMatchObject({
-      turnId: 'turn-1',
+    expect(outcome).toMatchObject({
       status: 'failed',
-      result: { text: null },
       error: {
         message: expect.stringContaining('$.values: expected array'),
       },
@@ -532,27 +722,23 @@ describe('TurnManager turn settlement', () => {
   it('drops structured late completion after stop without restoring twice', async () => {
     const client = new FoldingFakeCodexClient(['turn-1']);
     const completed: CollectedTurn[] = [];
-    const settled: TurnSettledSignal[] = [];
     const manager = new TurnManager({
       dispatcherId: 'flow',
       getThreadId: () => 'thread-1',
       client: client as never,
       onTurnCompleted: (turn) => completed.push(turn),
-      onTurnSettled: (turn) => settled.push(turn),
     });
 
-    await manager.submitTextInput({
+    const turn = await submittedTurn(manager.submitTextInput({
       text: 'wait',
       outputSchema: optionalValueSchema(),
-    });
+    }));
     await manager.stop();
     client.emitCompleted('thread-1', 'turn-1', '{');
     await flush();
 
     expect(completed).toEqual([]);
-    expect(settled).toEqual([
-      { turnId: 'turn-1', status: 'stopped', result: { text: null } },
-    ]);
+    await expect(turn.settled).resolves.toEqual({ status: 'stopped' });
   });
 
   it('starts a fresh subscription for a sequential send after the previous turn completed', async () => {
@@ -565,19 +751,15 @@ describe('TurnManager turn settlement', () => {
       onTurnCompleted: (turn) => completed.push(turn),
     });
 
-    await expect(manager.enqueue(input('msg-1', 'first'))).resolves.toEqual({
-      status: 'submitted',
-      turnId: 'turn-1',
-    });
+    await expect(manager.enqueue(input('msg-1', 'first'))).resolves
+      .toMatchObject({ status: 'submitted' });
 
     client.emitCompleted('thread-1', 'turn-1', 'first result');
     await waitFor(() => completed.length === 1);
     expect(completed.map((turn) => turn.turnId)).toEqual(['turn-1']);
 
-    await expect(manager.enqueue(input('msg-2', 'second'))).resolves.toEqual({
-      status: 'submitted',
-      turnId: 'turn-2',
-    });
+    await expect(manager.enqueue(input('msg-2', 'second'))).resolves
+      .toMatchObject({ status: 'submitted' });
     client.emitCompleted('thread-1', 'turn-2', 'second result');
     await waitFor(() => completed.length === 2);
     expect(completed.map((turn) => turn.turnId)).toEqual(['turn-1', 'turn-2']);
@@ -587,83 +769,73 @@ describe('TurnManager turn settlement', () => {
     // A manual client never emits turn/completed, so the submitted turn stays
     // in flight until stop() tears it down.
     const client = new ManualFakeCodexClient();
-    const settled: TurnSettledSignal[] = [];
     const manager = new TurnManager({
       dispatcherId: 'flow',
       getThreadId: () => 'thread-1',
       client: client as never,
-      onTurnSettled: (s) => settled.push(s),
     });
 
     const res = await manager.enqueue(input('msg-1', 'work'));
-    expect(res).toEqual({ status: 'submitted', turnId: 'turn-1' });
-    expect(settled).toEqual([]);
+    const turn = requireSubmittedTurn(res);
 
     await manager.stop();
-    expect(settled).toEqual([
-      { turnId: 'turn-1', status: 'stopped', result: { text: null } },
-    ]);
+    await expect(turn.settled).resolves.toEqual({ status: 'stopped' });
     expect(client.handlerCount).toBe(0);
   });
 
   it('does not re-settle a completed turn as stopped', async () => {
     const client = new FakeCodexClient();
-    const settled: TurnSettledSignal[] = [];
     const manager = new TurnManager({
       dispatcherId: 'flow',
       getThreadId: () => 'thread-1',
       client: client as never,
       // The auto-completing client clears the pending turn before stop().
       onTurnCompleted: () => undefined,
-      onTurnSettled: (s) => settled.push(s),
     });
 
-    await manager.enqueue(input('msg-1', 'work'));
+    const turn = await submittedTurn(manager.enqueue(input('msg-1', 'work')));
     await waitFor(() => client.inputs.length === 1);
     // Let the queued turn/completed microtask clear the pending set.
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
+    const completedOutcome = await turn.settled;
     await manager.stop();
-    expect(settled).toEqual([]);
+    await expect(turn.settled).resolves.toBe(completedOutcome);
+    expect(completedOutcome.status).toBe('completed');
   });
 
   it('settles a turn as failed on a fatal codex error notification (willRetry:false)', async () => {
     const client = new ErroringFakeCodexClient(false);
-    const settled: TurnSettledSignal[] = [];
     const manager = new TurnManager({
       dispatcherId: 'flow',
       getThreadId: () => 'thread-1',
       client: client as never,
       onTurnCompleted: () => undefined,
-      onTurnSettled: (s) => settled.push(s),
     });
 
     const res = await manager.enqueue(input('msg-1', 'work'));
-    expect(res).toEqual({ status: 'submitted', turnId: 'turn-1' });
+    const turn = requireSubmittedTurn(res);
 
-    await waitFor(() => settled.length === 1);
-    expect(settled[0]?.turnId).toBe('turn-1');
-    expect(settled[0]?.status).toBe('failed');
-    expect(settled[0]?.error?.message).toContain('boom');
+    const outcome = await turn.settled;
+    expect(outcome.status).toBe('failed');
+    if (outcome.status !== 'failed') throw new Error('expected failed outcome');
+    expect(outcome.error.message).toContain('boom');
   });
 
   it('ignores a transient codex error (willRetry:true) and completes normally', async () => {
     const client = new ErroringFakeCodexClient(true);
     const completed: CollectedTurn[] = [];
-    const settled: TurnSettledSignal[] = [];
     const manager = new TurnManager({
       dispatcherId: 'flow',
       getThreadId: () => 'thread-1',
       client: client as never,
       onTurnCompleted: (turn) => completed.push(turn),
-      onTurnSettled: (s) => settled.push(s),
     });
 
-    await manager.enqueue(input('msg-1', 'work'));
+    const turn = await submittedTurn(manager.enqueue(input('msg-1', 'work')));
     await waitFor(() => completed.length === 1);
     expect(completed[0]?.turnId).toBe('turn-1');
-    // A transient error must not produce a `failed` settlement.
-    expect(settled.filter((s) => s.status === 'failed')).toEqual([]);
+    await expect(turn.settled).resolves.toMatchObject({ status: 'completed' });
   });
 });
 
@@ -678,6 +850,19 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void
 
 async function flush(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve));
+}
+
+async function submittedTurn(
+  admission: Promise<RuntimeAdmission>,
+): Promise<RuntimeTurn> {
+  return requireSubmittedTurn(await admission);
+}
+
+function requireSubmittedTurn(admission: RuntimeAdmission | undefined): RuntimeTurn {
+  if (admission?.status !== 'submitted') {
+    throw new Error(`expected submitted admission, got ${admission?.status ?? 'missing'}`);
+  }
+  return admission.turn;
 }
 
 function input(messageId: string, text: string) {
@@ -838,6 +1023,10 @@ class FailOnceFakeCodexClient {
   private readonly handlers = new Set<NotificationHandler>();
   private requests = 0;
 
+  get requestCount(): number {
+    return this.requests;
+  }
+
   onNotification(handler: NotificationHandler): () => void {
     this.handlers.add(handler);
     return () => {
@@ -904,7 +1093,10 @@ class RecoveringFakeCodexClient {
 class DelayedFakeCodexClient {
   readonly inputs: string[] = [];
   private readonly handlers = new Set<NotificationHandler>();
-  private readonly pending: Array<(turnId: string) => void> = [];
+  private readonly pending: Array<{
+    resolve: (turnId: string) => void;
+    reject: (error: Error) => void;
+  }> = [];
 
   get handlerCount(): number {
     return this.handlers.size;
@@ -923,17 +1115,26 @@ class DelayedFakeCodexClient {
       input: Array<{ text: string }>;
     };
     this.inputs.push(p.input[0]?.text ?? '');
-    return new Promise<R>((resolve) => {
-      this.pending.push((turnId) => {
-        resolve({ turn: { id: turnId } } as TurnStartResponse as R);
+    return new Promise<R>((resolve, reject) => {
+      this.pending.push({
+        resolve: (turnId) => {
+          resolve({ turn: { id: turnId } } as TurnStartResponse as R);
+        },
+        reject,
       });
     });
   }
 
   resolveNext(turnId: string): void {
-    const resolve = this.pending.shift();
-    if (resolve === undefined) throw new Error('no pending turn/start');
-    resolve(turnId);
+    const pending = this.pending.shift();
+    if (pending === undefined) throw new Error('no pending turn/start');
+    pending.resolve(turnId);
+  }
+
+  rejectNext(error: Error): void {
+    const pending = this.pending.shift();
+    if (pending === undefined) throw new Error('no pending turn/start');
+    pending.reject(error);
   }
 
   emitCompleted(threadId: string, turnId: string, text: string): void {

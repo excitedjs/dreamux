@@ -3,7 +3,7 @@ import {
   type AgentEntityIdentity,
   type AgentEntityIdentityStatus,
   type AgentEntityRuntimeStatus,
-  type AgentEntityTurnResult,
+  type AgentEntitySubmissionResult,
   type AgentEntityWorktreeIdentity,
 } from '../agent-entity/types.js';
 import type {
@@ -18,8 +18,8 @@ import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import type {
+  CompletionDeliveryPolicy,
   CompletionInitiator,
-  CompletionRouter,
 } from '../completion-router/index.js';
 import type { SuffixGenerator } from '../name-allocator.js';
 import type { TeamMateWorktreeRequest } from '../teammate-collection/types.js';
@@ -43,7 +43,7 @@ export interface TeamCollectionOptions {
   turnsStore: AgentTurnsStore;
   // Shared per-dispatcher deps `DispatcherService` always supplies; forwarded
   // unchanged into each team's own collection so it stays topology-free (#233).
-  router: CompletionRouter;
+  completionDelivery: CompletionDeliveryPolicy;
   initiatorFor: (
     producer: AgentEntityIdentity,
   ) => Promise<CompletionInitiator | null>;
@@ -343,13 +343,13 @@ export interface TeamCreateResult extends TeamSummary {
    * The leader's first-turn result, or `null` when the team was created without
    * an explicit `prompt` (the leader starts idle and fires no turn at creation).
    */
-  turn: AgentEntityTurnResult | null;
+  status: AgentEntitySubmissionResult['status'] | null;
+  error?: string;
 }
 
-export interface TeamLeaderSendResult {
+export interface TeamLeaderSendResult extends AgentEntitySubmissionResult {
   team: TeamView;
   leader: AgentEntityRuntimeStatus;
-  turn: AgentEntityTurnResult;
 }
 
 export interface TeamLeaderLease {

@@ -78,6 +78,23 @@ normal completion, terminal failure, explicit disposal, or runtime stop. A
 rejected `turn/start` therefore cannot leave a stale collector observing or
 buffering notifications from a later turn.
 
+The public runtime boundary returns one stable `RuntimeTurn` object for each
+Codex logical turn, including inputs folded into the active native turn. Codex
+`turnId` values remain private correlation keys in this package; Dreamux core
+observes only the object's terminal outcome. Runtime stop resolves every
+unsettled public object as stopped after the supervised process group is proven
+absent.
+
+All accepted native `turn/start` aliases folded into that object remain in its
+canonical active slot until their responses and native terminal output have
+converged. A source is reserved while admission is in flight, committed after
+acceptance or an ambiguous request failure, and released only after a proven
+pre-request failure. Concurrent uses of one reserved source share one admission
+outcome. `failed` is therefore safe to retry; `ambiguous` may have crossed the
+app-server boundary and must not be retried automatically. Runtime stop publishes
+its fence and starts client/process teardown before joining startup or restart,
+then drains all input admissions before resolving.
+
 See
 [Provider Runtime](../../../.agents/domains/provider-runtime.md#codex-portable-output-schema)
 for the complete current lifecycle and failure contract.

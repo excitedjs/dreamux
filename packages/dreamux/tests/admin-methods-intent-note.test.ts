@@ -448,7 +448,7 @@ describe('Collaboration Space admin methods', () => {
 });
 
 describe('Team admin read methods compose channel binding summaries', () => {
-  it('team.send forwards to the dispatcher and returns only team, leader, and turn', async () => {
+  it('team.send forwards a flat status receipt with no Turn surrogate', async () => {
     const sent = {
       team: {
         team_name: 'alpha',
@@ -482,7 +482,7 @@ describe('Team admin read methods compose channel binding summaries', () => {
         closed_at: null,
         close_note: null,
       },
-      turn: { status: 'submitted', turn_id: 'turn-1' },
+      status: 'submitted',
     };
     const seen: Array<Record<string, unknown>> = [];
     const server = {
@@ -508,8 +508,8 @@ describe('Team admin read methods compose channel binding summaries', () => {
     ]);
     expect(Object.keys(result as Record<string, unknown>).sort()).toEqual([
       'leader',
+      'status',
       'team',
-      'turn',
     ]);
     expect(result).toEqual(sent);
     expect(result as Record<string, unknown>).not.toHaveProperty('binding');
@@ -656,7 +656,7 @@ describe('Team admin read methods compose channel binding summaries', () => {
   });
 
   it('returns empty binding fields for Team create and dissolve', async () => {
-    const created = { team: { team_name: 'alpha' }, turn: null };
+    const created = { team: { team_name: 'alpha' }, status: null };
     const dissolved = {
       accepted: true,
       team_name: 'alpha',

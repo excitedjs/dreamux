@@ -478,7 +478,7 @@ describe('Team dissolve recovery and cleanup', () => {
     await expect(teams.sendToLeader('alpha', {
       prompt: 'restored only after unwind',
       initiator: new FakeInitiator(),
-    })).resolves.toMatchObject({ turn: { status: 'submitted' } });
+    })).resolves.toMatchObject({ status: 'submitted' });
     await teams.stopAll();
   }, 5_000);
 

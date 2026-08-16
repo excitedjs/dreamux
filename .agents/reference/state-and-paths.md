@@ -78,6 +78,8 @@ Important children:
 - `~/.dreamux/state/<dispatcher-id>/identity.json` + `turn.jsonl`: the dispatcher
   agent's authoritative runtime recovery record at the dispatcher *root* (not
   under `teammate/`), so the `teammate.*` read chokepoints never enumerate it.
+  Every entity `turn.jsonl` is a fully server-owned strict version-2 archive
+  with one complete terminal row per logical Turn and no persisted Turn id.
 - `~/.dreamux/state/<dispatcher-id>/access.json`: dispatcher-local Feishu V3
   access state with mixed field ownership. `version` is Channel/schema-owned;
   `dm_policy` and `group.*` are operator policy; `allow_users` is shared between
@@ -111,7 +113,8 @@ Important children:
   TeamLeader-scope Dynamic Workflow records and journals.
 
 Workflow records are version 1. A normal terminal transition writes
-`completed`, `failed`, or `stopped`; startup converts a leftover `running`
+`completed`, `failed`, or `stopped`; startup first adopts an already-committed
+terminal journal fact when present and otherwise converts a leftover `running`
 record to `stopped`. Journals are server-written JSONL and are not replayed by
 the current runtime.
 

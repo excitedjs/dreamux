@@ -1,6 +1,10 @@
 import type { AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
 
 import type { CompletionInitiator } from '../completion-router/index.js';
+import type {
+  AgentEntityRuntimeStatus,
+  AgentEntitySubmissionResult,
+} from '../agent-entity/types.js';
 import type { TeamMateSharedWorkspace } from '../teammate-collection/types.js';
 
 export interface TeamAvailability {
@@ -28,4 +32,13 @@ export interface TeamServiceCreateInput {
 export interface TeamSchedulerLifecycle {
   start(): Promise<void>;
   stop(): void;
+}
+
+export interface TeamServiceCreateOutput<Service> {
+  service: Service;
+  schedulerLifecycle: TeamSchedulerLifecycle;
+  leaderResult: {
+    teammate: AgentEntityRuntimeStatus;
+    submission: AgentEntitySubmissionResult | null;
+  };
 }

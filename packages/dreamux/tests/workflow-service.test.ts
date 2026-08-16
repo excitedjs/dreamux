@@ -1,30 +1,36 @@
-import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
-  AgentRuntimeTurnResult,
   DreamuxLogger,
+  RuntimeTurnOutcome,
 } from '@excitedjs/dreamux-types';
 
 import {
   workflowRunJournalPath,
+  workflowRunRecordPath,
   type WorkflowScopePathInput,
 } from '../src/platform/paths.js';
 import {
-  CompletionRouter,
-  type CompletionDeliveryResult,
-  type CompletionEnvelope,
+  CompletionDeliveryPolicy,
   type CompletionInitiator,
+  type PreparedCompletionDelivery,
+  type PreparedCompletionFact,
 } from '../src/service/completion-router/index.js';
 import type {
-  OwnedTeammateOwner,
-  OwnedTeammateOps,
-  OwnedTeamMateSpawnResult,
-  SpawnOwnedTeamMateOptions,
-} from '../src/service/teammate-collection/owned-teammates.js';
+  WorkflowTeammateFactory,
+} from '../src/service/workflow-service/index.js';
+import type {
+  CreateLockedTeammateOptions,
+} from '../src/service/teammate-collection/index.js';
+import type { LockedTeammate } from '../src/service/teammate-service/types.js';
+import type {
+  Turn,
+  TurnAdmission,
+} from '../src/service/teammate-service/turn-recording.js';
 import { WorkflowJournal } from '../src/service/workflow-service/journal.js';
 import type {
   WorkflowRunnerChildMessage,
@@ -43,160 +49,135 @@ import type { WorkflowRunRecord } from '../src/service/workflow-service/types.js
 import type {
   AgentEntityRuntimeStatus,
 } from '../src/service/agent-entity/types.js';
+import {
+  controllableRuntimeTurn,
+  type ControllableRuntimeTurn,
+} from './helpers/runtime-turn.js';
 
 const SCOPE: WorkflowScopePathInput = {
   dispatcherId: 'dispatcher-workflow-test',
   teamId: null,
 };
 
-type OwnedSpawnInput = Parameters<OwnedTeammateOps['spawnOwned']>[0];
+type MaterializationInput = Parameters<WorkflowTeammateFactory['createLocked']>[0];
 
-interface FakeSpawn {
-  input: OwnedSpawnInput;
-  options: SpawnOwnedTeamMateOptions;
+interface FakeMaterialization {
+  input: MaterializationInput;
+  options: CreateLockedTeammateOptions;
   name: string;
-  turnId: string;
-  settled: boolean;
+  submitCalls: number;
+  closeCalls: number;
+  unlockCalls: number;
+  closed: boolean;
+  unlocked: boolean;
+  runtimeTurn: ControllableRuntimeTurn | null;
 }
 
-class FakeOwnedTeammates implements OwnedTeammateOps {
-  readonly spawns: FakeSpawn[] = [];
-  readonly releases: string[] = [];
-  readonly routeTasks = new Set<Promise<void>>();
-  private readonly owners = new Map<string, OwnedTeammateOwner>();
-  spawnAttempts = 0;
-  spawnError: Error | null = null;
-  spawnErrorAfterOwnership: Error | null = null;
-  releaseGate: Promise<void> | null = null;
-  releaseAttempts = 0;
-  releaseAllGate: Promise<void> | null = null;
-  releaseAllError: Error | null = null;
-  releaseAllAttempts = 0;
-  autoSettle: {
-    status: CompletionEnvelope['status'];
-    result: string | null;
-  } | null = null;
-  nextTurnStatus: AgentRuntimeTurnResult['status'] = 'submitted';
-  nextTurnError: Error | undefined;
+class FakeLockedTeammates implements WorkflowTeammateFactory {
+  readonly materializations: FakeMaterialization[] = [];
+  readonly closes: string[] = [];
+  createAttempts = 0;
+  createError: Error | null = null;
+  submitError: Error | null = null;
+  nextAdmission: Exclude<TurnAdmission, { status: 'submitted' }> | null = null;
+  turnPersistenceError: Error | null = null;
+  autoOutcome: RuntimeTurnOutcome | null = null;
+  createGate: Promise<void> | null = null;
+  closeGate: Promise<void> | null = null;
+  closeError: Error | null = null;
+  closeAttempts = 0;
 
-  async spawnOwned(
-    input: OwnedSpawnInput,
-    options: SpawnOwnedTeamMateOptions,
-  ): Promise<OwnedTeamMateSpawnResult> {
-    this.spawnAttempts += 1;
-    if (this.spawnError !== null) throw this.spawnError;
-    const ordinal = this.spawns.length + 1;
-    if (this.spawnErrorAfterOwnership !== null) {
-      this.owners.set(input.name, options.owner);
-      throw this.spawnErrorAfterOwnership;
-    }
-    const spawn: FakeSpawn = {
+  async createLocked(
+    input: MaterializationInput,
+    options: CreateLockedTeammateOptions = {},
+  ): Promise<LockedTeammate> {
+    this.createAttempts += 1;
+    await this.createGate;
+    if (this.createError !== null) throw this.createError;
+    const materialization: FakeMaterialization = {
       input,
       options,
       name: input.name,
-      turnId: `turn-${ordinal}`,
-      settled: false,
+      submitCalls: 0,
+      closeCalls: 0,
+      unlockCalls: 0,
+      closed: false,
+      unlocked: false,
+      runtimeTurn: null,
     };
-    this.spawns.push(spawn);
-    this.owners.set(spawn.name, options.owner);
-    if (this.autoSettle !== null) {
-      const completion = this.autoSettle;
-      const task = this.settleSpawn(spawn, completion.status, completion.result);
-      this.routeTasks.add(task);
-      void task.finally(() => this.routeTasks.delete(task));
-    }
-    return {
-      teammate: teammateStatus(spawn.name, 'running'),
-      turn: runtimeTurnResult(
-        this.nextTurnStatus,
-        spawn.turnId,
-        this.nextTurnError,
-      ),
-    };
-  }
-
-  private async releaseOwned(
-    name: string,
-    owner: OwnedTeammateOwner,
-  ): Promise<void> {
-    if (this.owners.get(name) !== owner) {
-      throw new Error(`fake TeamMate ${name} has a different owner`);
-    }
-    this.releaseAttempts += 1;
-    await this.releaseGate;
-    this.owners.delete(name);
-    this.releases.push(name);
-  }
-
-  async releaseAllOwned(owner: OwnedTeammateOwner): Promise<void> {
-    this.releaseAllAttempts += 1;
-    await this.releaseAllGate;
-    if (this.releaseAllError !== null) throw this.releaseAllError;
-    const names = [...this.owners.entries()]
-      .filter(([, currentOwner]) => currentOwner === owner)
-      .map(([name]) => name);
-    await Promise.all(names.map((name) => this.releaseOwned(name, owner)));
-  }
-
-  async sweepAllOwned(): Promise<void> {
-    await Promise.all(
-      [...this.owners.entries()].map(([name, owner]) =>
-        this.releaseOwned(name, owner)),
-    );
-  }
-
-  async settle(
-    position: number,
-    status: CompletionEnvelope['status'],
-    result: string | null,
-  ): Promise<void> {
-    const spawn = this.spawns[position];
-    if (spawn === undefined) throw new Error(`missing fake spawn ${position}`);
-    await this.settleSpawn(spawn, status, result);
-  }
-
-  async settleAll(): Promise<void> {
-    for (const spawn of this.spawns) {
-      if (!spawn.settled) await this.settleSpawn(spawn, 'stopped', null);
-    }
-    await Promise.allSettled([...this.routeTasks]);
-  }
-
-  private async settleSpawn(
-    spawn: FakeSpawn,
-    status: CompletionEnvelope['status'],
-    result: string | null,
-  ): Promise<void> {
-    if (spawn.settled) return;
-    spawn.settled = true;
-    await spawn.options.routeSettledCompletion(
-      spawn.name,
-      spawn.turnId,
-      {
-        kind: 'teammate',
-        source: spawn.name,
-        id: `${spawn.name}:${spawn.turnId}`,
-        status,
-        result,
+    this.materializations.push(materialization);
+    const handle: LockedTeammate = {
+      name: materialization.name,
+      submit: async (submitInput): Promise<TurnAdmission> => {
+        materialization.submitCalls += 1;
+        expect(submitInput.prompt).toBe(input.prompt);
+        if (this.submitError !== null) throw this.submitError;
+        if (this.nextAdmission !== null) return this.nextAdmission;
+        const runtimeTurn = controllableRuntimeTurn();
+        materialization.runtimeTurn = runtimeTurn;
+        const turnPersistenceError = this.turnPersistenceError;
+        const settled = turnPersistenceError === null
+          ? runtimeTurn.turn.settled
+          : runtimeTurn.turn.settled.then(() => {
+              throw turnPersistenceError;
+            });
+        void settled.catch(() => undefined);
+        const persisted = settled.then(() => undefined);
+        void persisted.catch(() => undefined);
+        const turn: Turn = Object.freeze({
+          runtime: runtimeTurn.turn,
+          origin: submitInput.turnOrigin,
+          promptPreview: input.prompt,
+          intent: input.intent ?? null,
+          submittedAt: Date.now(),
+          settled,
+          persistence: persisted,
+          delivery: persisted,
+        });
+        if (this.autoOutcome !== null) runtimeTurn.settle(this.autoOutcome);
+        return { status: 'submitted', turn };
       },
-    );
+      close: async (): Promise<{ teammate: AgentEntityRuntimeStatus }> => {
+        materialization.closeCalls += 1;
+        this.closeAttempts += 1;
+        materialization.runtimeTurn?.settle({ status: 'stopped' });
+        await this.closeGate;
+        if (this.closeError !== null) throw this.closeError;
+        materialization.closed = true;
+        if (!this.closes.includes(materialization.name)) {
+          this.closes.push(materialization.name);
+        }
+        return { teammate: teammateStatus(materialization.name, 'closed') };
+      },
+      unlock: () => {
+        if (!materialization.closed) {
+          throw new Error(`fake TeamMate ${materialization.name} is not closed`);
+        }
+        if (materialization.unlocked) {
+          throw new Error(`fake TeamMate ${materialization.name} already unlocked`);
+        }
+        materialization.unlocked = true;
+        materialization.unlockCalls += 1;
+      },
+    };
+    return Object.freeze(handle);
   }
-}
 
-function runtimeTurnResult(
-  status: AgentRuntimeTurnResult['status'],
-  turnId: string,
-  error?: Error,
-): AgentRuntimeTurnResult {
-  switch (status) {
-    case 'submitted':
-      return { status, turnId };
-    case 'failed':
-      return { status, error: error ?? new Error('runtime turn failed') };
-    case 'duplicate':
-    case 'stopped':
-    case 'skipped':
-      return { status };
+  settle(
+    position: number,
+    status: RuntimeTurnOutcome['status'],
+    result: string | null,
+  ): boolean {
+    const materialization = this.materializations[position];
+    if (materialization?.runtimeTurn === null || materialization === undefined) {
+      throw new Error(`missing submitted fake TeamMate ${position}`);
+    }
+    const outcome: RuntimeTurnOutcome = status === 'completed'
+      ? { status, resultText: result, truncated: false }
+      : status === 'failed'
+        ? { status, error: new Error(result ?? 'runtime Turn failed') }
+        : { status: 'stopped' };
+    return materialization.runtimeTurn.settle(outcome);
   }
 }
 
@@ -204,6 +185,7 @@ class FakeWorkflowRunner implements WorkflowRunnerHandle {
   readonly sent: WorkflowRunnerParentMessage[] = [];
   startCount = 0;
   stopCount = 0;
+  stopError: Error | null = null;
 
   constructor(
     private readonly handlers: WorkflowRunnerHandlers,
@@ -225,9 +207,9 @@ class FakeWorkflowRunner implements WorkflowRunnerHandle {
     this.onSend?.(message, this);
   }
 
-  stop(): Promise<void> {
+  async stop(): Promise<void> {
     this.stopCount += 1;
-    return Promise.resolve();
+    if (this.stopError !== null) throw this.stopError;
   }
 
   emit(message: WorkflowRunnerChildMessage): void {
@@ -265,22 +247,26 @@ class RunnerHarness {
 }
 
 class CapturingInitiator implements CompletionInitiator {
-  readonly received: CompletionEnvelope[] = [];
+  readonly received: PreparedCompletionFact[] = [];
   deliveryGate: Promise<void> | null = null;
 
-  async completionInput(
-    completion: CompletionEnvelope,
-  ): Promise<CompletionDeliveryResult> {
-    this.received.push(completion);
-    if (this.deliveryGate !== null) await this.deliveryGate;
-    return { status: 'accepted' };
+  async prepareCompletion(
+    completion: PreparedCompletionFact,
+  ): Promise<PreparedCompletionDelivery> {
+    return Object.freeze({
+      submit: async () => {
+        this.received.push(completion);
+        if (this.deliveryGate !== null) await this.deliveryGate;
+        return { status: 'accepted' as const };
+      },
+    });
   }
 }
 
 interface TestContext {
   service: WorkflowService;
   runner: RunnerHarness;
-  teammates: FakeOwnedTeammates;
+  teammates: FakeLockedTeammates;
   initiator: CapturingInitiator;
   log: CaptureLog;
 }
@@ -298,7 +284,7 @@ describe('WorkflowService', () => {
   let home: string;
   let previousHome: string | undefined;
   const services: WorkflowService[] = [];
-  const teammateFakes: FakeOwnedTeammates[] = [];
+  const teammateFakes: FakeLockedTeammates[] = [];
 
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), 'dreamux-workflow-service-'));
@@ -308,7 +294,6 @@ describe('WorkflowService', () => {
   });
 
   afterEach(async () => {
-    for (const teammates of teammateFakes) await teammates.settleAll();
     await Promise.allSettled(services.map((service) => service.stopAll()));
     services.length = 0;
     teammateFakes.length = 0;
@@ -316,6 +301,7 @@ describe('WorkflowService', () => {
     else process.env['HOME'] = previousHome;
     delete process.env['DREAMUX_ROOT'];
     await rm(home, { recursive: true, force: true });
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -323,21 +309,23 @@ describe('WorkflowService', () => {
     runIds: string[],
     configure?: (harness: RunnerHarness) => void,
     start = true,
+    attemptTimeoutMs?: number,
   ): Promise<TestContext> {
     const runner = new RunnerHarness();
     configure?.(runner);
-    const teammates = new FakeOwnedTeammates();
+    const teammates = new FakeLockedTeammates();
     const initiator = new CapturingInitiator();
     const log = captureLog();
-    const router = new CompletionRouter({
+    const completionDelivery = new CompletionDeliveryPolicy({
       dispatcherId: SCOPE.dispatcherId,
       log: log.logger,
+      ...(attemptTimeoutMs === undefined ? {} : { attemptTimeoutMs }),
     });
     const service = new WorkflowService({
       ...SCOPE,
       callerKind: 'dispatcher',
-      ownedTeammates: teammates,
-      router,
+      teammates,
+      completionDelivery,
       completionInitiator: () => initiator,
       createRunner: runner.factory,
       generateRunId: () => {
@@ -353,7 +341,7 @@ describe('WorkflowService', () => {
     return { service, runner, teammates, initiator, log };
   }
 
-  it('registers terminal delivery before runner start and evicts the terminal entity', async () => {
+  it('captures terminal delivery before runner start and evicts the terminal entity', async () => {
     const ctx = await context(['run-register-first'], (harness) => {
       harness.onStart = (runner) => {
         runner.emit({
@@ -370,7 +358,7 @@ describe('WorkflowService', () => {
 
     expect(ctx.initiator.received[0]).toMatchObject({
       source: 'workflow',
-      id: 'run-register-first',
+      runId: 'run-register-first',
       status: 'completed',
     });
     expect(JSON.parse(ctx.initiator.received[0]?.result ?? '')).toMatchObject({
@@ -393,6 +381,31 @@ describe('WorkflowService', () => {
         message: 'workflow run terminal',
       }),
     ])));
+  });
+
+  it('fences runner messages received after the terminal result', async () => {
+    const runId = 'run-terminal-message-fence';
+    const ctx = await context([runId]);
+    await ctx.service.run({ script: validScript() });
+    const runner = ctx.runner.latest();
+
+    runner.emit({ type: 'run_result', status: 'completed', result: 'done' });
+    runner.emit({
+      type: 'emit',
+      kind: 'log',
+      message: 'must not queue behind terminal finalization',
+    });
+
+    await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
+    expect(await ctx.service.status({ run_id: runId })).toMatchObject({
+      status: 'completed',
+      result: 'done',
+      last_log: null,
+    });
+    expect((await journalEvents(runId)).map((event) => event.kind)).toEqual([
+      'run',
+      'end',
+    ]);
   });
 
   it.each([
@@ -532,6 +545,36 @@ describe('WorkflowService', () => {
     expect(activeRunCount(ctx.service)).toBe(0);
   });
 
+  it('bounds terminal delivery so Workflow stop cannot wait forever', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const ctx = await context(
+      ['run-terminal-delivery-timeout'],
+      undefined,
+      true,
+      100,
+    );
+    ctx.initiator.deliveryGate = new Promise<void>(() => undefined);
+    await ctx.service.run({ script: validScript() });
+    ctx.runner.latest().emit({
+      type: 'run_result',
+      status: 'completed',
+      result: 'done',
+    });
+    await waitForEventLoop(() => ctx.initiator.received.length === 1);
+
+    const stopping = ctx.service.stopAll();
+    let stopped = false;
+    void stopping.then(() => {
+      stopped = true;
+    });
+    await vi.advanceTimersByTimeAsync(99);
+    expect(stopped).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(stopping).resolves.toBeUndefined();
+    expect(activeRunCount(ctx.service)).toBe(0);
+    expect(ctx.initiator.received).toHaveLength(1);
+  });
+
   it('reserves stopped before an admission fence rejects queued agents', async () => {
     const ctx = await context(['run-fenced-queue'], (harness) => {
       harness.onSend = (message, runner) => {
@@ -554,21 +597,28 @@ describe('WorkflowService', () => {
         options: {},
       });
     }
-    await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(1));
+    await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
 
+    const closeGate = deferred<void>();
+    ctx.teammates.closeGate = closeGate.promise;
     const stopTask = ctx.service.stopAll();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(ctx.teammates.closeAttempts).toBe(1));
     expect(agentResults(runner)).toEqual([]);
-    await ctx.teammates.settle(0, 'completed', 'late result');
+    expect(ctx.teammates.settle(0, 'completed', 'late result')).toBe(false);
+    closeGate.resolve();
     await stopTask;
     expect(await ctx.service.status({ run_id: 'run-fenced-queue' }))
       .toMatchObject({ status: 'stopped' });
     expect(agentResults(runner)).toEqual([]);
   });
 
-  it('captures a fast owned settle without routing an intermediate completion to the caller', async () => {
+  it('captures an immediate Turn settlement without routing an intermediate completion', async () => {
     const ctx = await context(['run-fast-settle']);
-    ctx.teammates.autoSettle = { status: 'completed', result: 'fast result' };
+    ctx.teammates.autoOutcome = {
+      status: 'completed',
+      resultText: 'fast result',
+      truncated: false,
+    };
 
     await ctx.service.run({ script: validScript() });
     const runner = ctx.runner.latest();
@@ -596,6 +646,8 @@ describe('WorkflowService', () => {
       kind: 'result',
       index: 0,
       status: 'completed',
+      result: 'fast result',
+      error: null,
       settled_at: expect.any(Number),
     });
     runner.emit({ type: 'run_result', status: 'completed', result: 'done' });
@@ -635,10 +687,10 @@ describe('WorkflowService', () => {
       options: {},
     });
     await Promise.resolve();
-    expect(ctx.teammates.spawns).toHaveLength(0);
+    expect(ctx.teammates.materializations).toHaveLength(0);
 
     allowPhaseWrite.resolve();
-    await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(1));
+    await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
     expect(await ctx.service.status({ run_id: 'run-message-order' }))
       .toMatchObject({ agents: [{ phase: 'collect' }] });
     await ctx.teammates.settle(0, 'completed', 'done');
@@ -661,10 +713,10 @@ describe('WorkflowService', () => {
       prompt: 'structured prompt',
       options: { schema },
     });
-    await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(1));
+    await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
 
-    expect(ctx.teammates.spawns[0]?.options.outputSchema).toEqual(schema);
-    expect(ctx.teammates.spawns[0]?.options.systemPromptAppend).toEqual([
+    expect(ctx.teammates.materializations[0]?.options.outputSchema).toEqual(schema);
+    expect(ctx.teammates.materializations[0]?.options.systemPromptAppend).toEqual([
       'You are executing one agent call inside a Dreamux workflow. Your final ' +
         'response is the return value consumed by the workflow, not a human-facing ' +
         'progress message. Return only the requested value. When an output schema is ' +
@@ -682,15 +734,10 @@ describe('WorkflowService', () => {
         },
       ]),
     );
-    expect(ctx.teammates.spawns).toHaveLength(1);
+    expect(ctx.teammates.materializations).toHaveLength(1);
     expect(await ctx.service.status({ run_id: 'run-schema' })).toMatchObject({
       agents: [{ status: 'failed' }],
     });
-    expect(ctx.log.events).toContainEqual(expect.objectContaining({
-      level: 'warn',
-      message: 'workflow structured output was not valid JSON',
-    }));
-
     runner.emit({
       type: 'run_result',
       status: 'failed',
@@ -712,7 +759,7 @@ describe('WorkflowService', () => {
       prompt: 'structured prompt',
       options: { schema: { type: 'object' } },
     });
-    await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(1));
+    await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
     await ctx.teammates.settle(0, 'completed', null);
 
     await vi.waitFor(() =>
@@ -726,11 +773,6 @@ describe('WorkflowService', () => {
     );
     expect(await ctx.service.status({ run_id: 'run-schema-empty' }))
       .toMatchObject({ agents: [{ status: 'failed' }] });
-    expect(ctx.log.events).toContainEqual(expect.objectContaining({
-      level: 'warn',
-      message: 'workflow structured output was empty',
-    }));
-
     runner.emit({
       type: 'run_result',
       status: 'failed',
@@ -742,7 +784,10 @@ describe('WorkflowService', () => {
 
   it('returns a non-submitted agent as null and auto-closes it at terminal', async () => {
     const ctx = await context(['run-agent-failed']);
-    ctx.teammates.nextTurnStatus = 'failed';
+    ctx.teammates.nextAdmission = {
+      status: 'failed',
+      error: new Error('runtime turn failed'),
+    };
     await ctx.service.run({ script: validScript() });
     const runner = ctx.runner.latest();
 
@@ -757,135 +802,307 @@ describe('WorkflowService', () => {
         { type: 'agent_result', index: 0, result: null },
       ]),
     );
-    expect(ctx.teammates.releases).toEqual([]);
+    expect(ctx.teammates.closes).toEqual([]);
 
     runner.emit({ type: 'run_result', status: 'completed', result: null });
     await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
-    expect(ctx.teammates.releases).toEqual([
-      ctx.teammates.spawns[0]?.name,
+    expect(ctx.teammates.closes).toEqual([
+      ctx.teammates.materializations[0]?.name,
     ]);
+    expect(ctx.teammates.materializations[0]).toMatchObject({
+      closeCalls: 1,
+      unlockCalls: 1,
+      closed: true,
+      unlocked: true,
+    });
   });
 
-  it('leaves a non-submitted agent for the shutdown collection sweep', async () => {
-    const ctx = await context(['run-agent-failed-shutdown']);
-    ctx.teammates.nextTurnStatus = 'failed';
+  it('host-fails and closes when a concrete Turn reports persistence failure', async () => {
+    const runId = 'run-agent-turn-persistence-failed';
+    const persistenceError = 'TeamMate terminal Turn persistence failed';
+    const ctx = await context([runId], (harness) => {
+      harness.onSend = (message, runner) => {
+        if (message.type !== 'agent_result' || message.error === undefined) return;
+        runner.emit({ type: 'run_result', status: 'completed', result: 'ignored' });
+      };
+    });
+    ctx.teammates.turnPersistenceError = new Error(persistenceError);
+    await ctx.service.run({ script: validScript() });
+    const runner = ctx.runner.latest();
+
+    runner.emit({
+      type: 'agent_start',
+      index: 0,
+      prompt: 'fail after runtime settlement',
+      options: {},
+    });
+    await vi.waitFor(() => {
+      expect(ctx.teammates.materializations).toHaveLength(1);
+      expect(ctx.teammates.materializations[0]?.submitCalls).toBe(1);
+    });
+    expect(ctx.teammates.settle(0, 'completed', 'provider result')).toBe(true);
+
+    await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
+    expect(agentResults(runner)).toEqual([
+      { type: 'agent_result', index: 0, error: persistenceError },
+    ]);
+    expect(await ctx.service.status({ run_id: runId })).toMatchObject({
+      status: 'failed',
+      error: persistenceError,
+      agents: [{ status: 'failed', error: persistenceError }],
+    });
+    expect(ctx.teammates.materializations).toHaveLength(1);
+    expect(ctx.teammates.materializations[0]).toMatchObject({
+      submitCalls: 1,
+      closeCalls: 1,
+      unlockCalls: 1,
+      closed: true,
+      unlocked: true,
+    });
+    expect((await journalEvents(runId)).map((event) => event.kind)).toEqual([
+      'run',
+      'submit',
+      'result',
+      'end',
+    ]);
+    expect(ctx.initiator.received[0]?.status).toBe('failed');
+  });
+
+  it('waits for in-flight materialization and closes the returned locked handle', async () => {
+    const ctx = await context(['run-agent-materializing-stop']);
+    const createGate = deferred<void>();
+    ctx.teammates.createGate = createGate.promise;
+    await ctx.service.run({ script: validScript() });
+    ctx.runner.latest().emit({
+      type: 'agent_start',
+      index: 0,
+      prompt: 'materializing during stop',
+      options: {},
+    });
+    await vi.waitFor(() => expect(ctx.teammates.createAttempts).toBe(1));
+
+    let stopped = false;
+    const stop = ctx.service.stopAll().then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    expect(ctx.teammates.materializations).toHaveLength(0);
+
+    createGate.resolve();
+    await stop;
+    expect(ctx.teammates.materializations).toHaveLength(1);
+    expect(ctx.teammates.materializations[0]).toMatchObject({
+      submitCalls: 0,
+      closeCalls: 1,
+      unlockCalls: 1,
+      closed: true,
+      unlocked: true,
+    });
+  });
+
+  it('returns a plain locked TeamMate creation failure as null', async () => {
+    const ctx = await context(['run-agent-create-failed']);
+    ctx.teammates.createError = new Error('runtime could not start');
+    await ctx.service.run({ script: validScript() });
+    const runner = ctx.runner.latest();
+
+    runner.emit({
+      type: 'agent_start',
+      index: 0,
+      prompt: 'plain prompt',
+      options: {},
+    });
+    await vi.waitFor(() =>
+      expect(agentResults(runner)).toEqual([
+        { type: 'agent_result', index: 0, result: null },
+      ]),
+    );
+    expect(ctx.teammates.createAttempts).toBe(1);
+
+    runner.emit({ type: 'run_result', status: 'completed', result: [null] });
+    await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
+    expect(ctx.initiator.received[0]?.status).toBe('completed');
+  });
+
+  it('retains and closes a locked handle after its submit call throws', async () => {
+    const ctx = await context(['run-agent-submit-threw']);
+    ctx.teammates.submitError = new Error('runtime admission response was lost');
+    await ctx.service.run({ script: validScript() });
+    const runner = ctx.runner.latest();
+
+    runner.emit({
+      type: 'agent_start',
+      index: 0,
+      prompt: 'plain prompt',
+      options: { label: 'retained-handle' },
+    });
+    await vi.waitFor(() =>
+      expect(agentResults(runner)).toEqual([
+        { type: 'agent_result', index: 0, result: null },
+      ]),
+    );
+    expect(ctx.teammates.closes).toEqual([]);
+
+    runner.emit({ type: 'run_result', status: 'completed', result: [null] });
+    await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
+
+    expect(ctx.teammates.closes).toEqual(['retained-handle']);
+    expect(ctx.teammates.materializations[0]).toMatchObject({
+      submitCalls: 1,
+      closeCalls: 1,
+      unlockCalls: 1,
+    });
+    expect(ctx.initiator.received[0]?.status).toBe('completed');
+  });
+
+  it('does not terminalize or unlock when TeamMate close fails, and retries truthfully', async () => {
+    const ctx = await context(['run-cleanup-failed']);
+    ctx.teammates.closeError = new Error('TeamMate termination proof failed');
+    await ctx.service.run({ script: validScript() });
+    const runner = ctx.runner.latest();
+    runner.emit({
+      type: 'agent_start',
+      index: 0,
+      prompt: 'complete before close fails',
+      options: {},
+    });
+    await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
+    expect(ctx.teammates.settle(0, 'completed', 'agent result')).toBe(true);
+    await vi.waitFor(() => expect(agentResults(runner)).toHaveLength(1));
+
+    runner.emit({
+      type: 'run_result',
+      status: 'completed',
+      result: { answer: 42 },
+    });
+    await vi.waitFor(() => expect(ctx.teammates.closeAttempts).toBe(2));
+    expect(ctx.initiator.received).toEqual([]);
+    expect(await ctx.service.status({ run_id: 'run-cleanup-failed' }))
+      .toMatchObject({
+        status: 'running',
+        agents: [{ status: 'completed' }],
+      });
+    expect(ctx.teammates.materializations[0]).toMatchObject({
+      closed: false,
+      unlocked: false,
+      unlockCalls: 0,
+    });
+    expect((await journalEvents('run-cleanup-failed')).some(
+      (event) => event.kind === 'end',
+    )).toBe(false);
+
+    ctx.teammates.closeError = null;
+    await expect(
+      ctx.service.stop({ run_id: 'run-cleanup-failed' }),
+    ).resolves.toEqual({ run_id: 'run-cleanup-failed', status: 'completed' });
+    expect(await ctx.service.status({ run_id: 'run-cleanup-failed' }))
+      .toMatchObject({ status: 'completed', result: { answer: 42 } });
+    expect(ctx.teammates.materializations[0]).toMatchObject({
+      closeCalls: 3,
+      unlockCalls: 1,
+      closed: true,
+      unlocked: true,
+    });
+    expect(ctx.initiator.received).toHaveLength(1);
+  });
+
+  it('closes members before stalled runner bookkeeping and retries an unproved runner stop', async () => {
+    const runId = 'run-runner-stop-retry';
+    const ctx = await context([runId]);
+    await ctx.service.run({ script: validScript() });
+    const runner = ctx.runner.latest();
+    runner.emit({
+      type: 'agent_start',
+      index: 0,
+      prompt: 'cancel even when runner termination is unproved',
+      options: {},
+    });
+    await vi.waitFor(() => {
+      expect(ctx.teammates.materializations).toHaveLength(1);
+      expect(ctx.teammates.materializations[0]?.submitCalls).toBe(1);
+    });
+
     const writeStarted = deferred<void>();
     const allowWrite = deferred<void>();
-    const releaseGate = deferred<void>();
-    ctx.teammates.releaseGate = releaseGate.promise;
     const originalWrite = WorkflowRunStore.prototype.write;
+    let gateRunnerLogWrite = true;
     vi.spyOn(WorkflowRunStore.prototype, 'write').mockImplementation(
       async function (this: WorkflowRunStore, record) {
-        if (record.agents[0]?.status === 'failed') {
+        if (
+          gateRunnerLogWrite &&
+          record.run_id === runId &&
+          record.last_log === 'blocked runner bookkeeping'
+        ) {
+          gateRunnerLogWrite = false;
           writeStarted.resolve();
           await allowWrite.promise;
         }
         await originalWrite.call(this, record);
       },
     );
-    await ctx.service.run({ script: validScript() });
-    ctx.runner.latest().emit({
-      type: 'agent_start',
-      index: 0,
-      prompt: 'runtime rejects before shutdown',
-      options: {},
+    runner.emit({
+      type: 'emit',
+      kind: 'log',
+      message: 'blocked runner bookkeeping',
     });
     await writeStarted.promise;
 
-    const shutdown = ctx.service.stopAllForShutdown();
+    runner.stopError = new Error('runner termination proof failed');
+    let firstStopSettled = false;
+    const firstStop = ctx.service.stop({ run_id: runId });
+    void firstStop.then(
+      () => {
+        firstStopSettled = true;
+      },
+      () => {
+        firstStopSettled = true;
+      },
+    );
+    await vi.waitFor(() =>
+      expect(ctx.teammates.materializations[0]?.closeCalls).toBe(1));
+
+    expect(firstStopSettled).toBe(false);
+    expect(ctx.teammates.materializations[0]).toMatchObject({
+      closed: true,
+      unlocked: false,
+      unlockCalls: 0,
+    });
+    expect(ctx.initiator.received).toEqual([]);
+    expect((await journalEvents(runId)).some(
+      (event) => event.kind === 'end',
+    )).toBe(false);
+    expect(activeRunCount(ctx.service)).toBe(1);
+
     allowWrite.resolve();
-    await shutdown;
-    const sweep = ctx.teammates.sweepAllOwned();
-    await Promise.resolve();
-    expect(ctx.teammates.releaseAttempts).toBe(1);
-
-    releaseGate.resolve();
-    await sweep;
-    expect(ctx.teammates.releases).toEqual([
-      ctx.teammates.spawns[0]?.name,
-    ]);
-  });
-
-  it('returns a plain agent spawn failure as null', async () => {
-    const ctx = await context(['run-agent-spawn-failed']);
-    ctx.teammates.spawnError = new Error('runtime could not start');
-    await ctx.service.run({ script: validScript() });
-    const runner = ctx.runner.latest();
-
-    runner.emit({
-      type: 'agent_start',
-      index: 0,
-      prompt: 'plain prompt',
-      options: {},
+    await expect(firstStop).rejects.toThrow('runner termination proof failed');
+    expect(await ctx.service.status({ run_id: runId })).toMatchObject({
+      status: 'running',
+      agents: [{ status: 'stopped' }],
     });
-    await vi.waitFor(() =>
-      expect(agentResults(runner)).toEqual([
-        { type: 'agent_result', index: 0, result: null },
-      ]),
-    );
-    expect(ctx.teammates.spawnAttempts).toBe(1);
-
-    runner.emit({ type: 'run_result', status: 'completed', result: [null] });
-    await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
-    expect(ctx.initiator.received[0]?.status).toBe('completed');
-  });
-
-  it('sweeps ownership retained after failed spawn cleanup at run terminal', async () => {
-    const ctx = await context(['run-owned-spawn-cleanup-failed']);
-    ctx.teammates.spawnErrorAfterOwnership = new Error(
-      'submission and immediate cleanup failed',
-    );
-    await ctx.service.run({ script: validScript() });
-    const runner = ctx.runner.latest();
-
-    runner.emit({
-      type: 'agent_start',
-      index: 0,
-      prompt: 'plain prompt',
-      options: { label: 'residual-owner' },
+    expect(ctx.teammates.materializations[0]).toMatchObject({
+      closed: true,
+      unlocked: false,
+      unlockCalls: 0,
     });
-    await vi.waitFor(() =>
-      expect(agentResults(runner)).toEqual([
-        { type: 'agent_result', index: 0, result: null },
-      ]),
-    );
-    expect(ctx.teammates.releases).toEqual([]);
 
-    runner.emit({ type: 'run_result', status: 'completed', result: [null] });
-    await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
-
-    expect(ctx.teammates.releases).toEqual(['residual-owner']);
-    expect(ctx.initiator.received[0]?.status).toBe('completed');
-  });
-
-  it('preserves a completed result when terminal cleanup fails', async () => {
-    const ctx = await context(['run-cleanup-failed']);
-    ctx.teammates.releaseAllError = new Error('owned cleanup failed');
-    await ctx.service.run({ script: validScript() });
-
-    ctx.runner.latest().emit({
-      type: 'run_result',
-      status: 'completed',
-      result: { answer: 42 },
+    runner.stopError = null;
+    await expect(ctx.service.stop({ run_id: runId })).resolves.toEqual({
+      run_id: runId,
+      status: 'stopped',
     });
-    await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
-
-    expect(ctx.initiator.received[0]?.status).toBe('completed');
-    expect(JSON.parse(ctx.initiator.received[0]?.result ?? '')).toMatchObject({
-      status: 'completed',
-      result: { answer: 42 },
-      error: 'owned cleanup failed',
+    expect(runner.stopCount).toBe(2);
+    expect(ctx.teammates.materializations[0]).toMatchObject({
+      closeCalls: 2,
+      unlockCalls: 1,
+      closed: true,
+      unlocked: true,
     });
-    expect(await ctx.service.status({ run_id: 'run-cleanup-failed' }))
-      .toMatchObject({
-        status: 'completed',
-        result: { answer: 42 },
-        error: 'owned cleanup failed',
-      });
-    expect(ctx.log.events).toContainEqual(expect.objectContaining({
-      level: 'warn',
-      message: 'workflow terminal cleanup had failures',
-    }));
+    expect((await journalEvents(runId)).filter(
+      (event) => event.kind === 'end',
+    )).toHaveLength(1);
+    expect(ctx.initiator.received).toHaveLength(1);
+    expect(activeRunCount(ctx.service)).toBe(0);
   });
 
   it('locks the run failed before a persistence error can produce agent_result', async () => {
@@ -924,42 +1141,300 @@ describe('WorkflowService', () => {
       .toMatchObject({ status: 'failed' });
   });
 
-  it('unwinds the settle route before journal-failure auto-close', async () => {
-    const ctx = await context(['run-result-journal-failed']);
-    const releaseGate = deferred<void>();
-    ctx.teammates.releaseAllGate = releaseGate.promise;
-    const originalAppend = WorkflowJournal.prototype.append;
-    let failResultAppend = true;
-    vi.spyOn(WorkflowJournal.prototype, 'append').mockImplementation(
-      async function (this: WorkflowJournal, event) {
-        if (failResultAppend && event.kind === 'result') {
-          failResultAppend = false;
-          throw new Error('result journal append failed');
+  it('retains the first Agent result when its record projection retries', async () => {
+    const runId = 'run-agent-result-write-retry';
+    const ctx = await context([runId]);
+    const originalWrite = WorkflowRunStore.prototype.write;
+    let failAgentResultWrite = true;
+    vi.spyOn(WorkflowRunStore.prototype, 'write').mockImplementation(
+      async function (this: WorkflowRunStore, record) {
+        if (
+          failAgentResultWrite &&
+          record.status === 'running' &&
+          record.agents[0]?.status === 'completed'
+        ) {
+          failAgentResultWrite = false;
+          throw new Error('Agent result record write failed');
         }
-        await originalAppend.call(this, event);
+        await originalWrite.call(this, record);
       },
     );
     await ctx.service.run({ script: validScript() });
-    ctx.runner.latest().emit({
+    const runner = ctx.runner.latest();
+    runner.emit({
       type: 'agent_start',
       index: 0,
-      prompt: 'settle before cleanup',
+      prompt: 'commit one Agent result',
       options: {},
     });
-    await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(1));
-
-    await ctx.teammates.settle(0, 'completed', 'done');
-    releaseGate.resolve();
+    await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
+    expect(ctx.teammates.settle(0, 'completed', 'first result')).toBe(true);
 
     await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
-    expect(ctx.initiator.received[0]?.status).toBe('failed');
-    expect(await ctx.service.status({ run_id: 'run-result-journal-failed' }))
-      .toMatchObject({ status: 'failed' });
+    expect(await ctx.service.status({ run_id: runId })).toMatchObject({
+      status: 'failed',
+      agents: [{ status: 'completed', result: 'first result', error: null }],
+    });
+    expect((await journalEvents(runId)).filter(
+      (event) => event.kind === 'result',
+    )).toEqual([
+      expect.objectContaining({
+        index: 0,
+        status: 'completed',
+        result: 'first result',
+        error: null,
+      }),
+    ]);
+    expect(agentResults(runner)).toEqual([]);
+  });
+
+  it('reconciles a committed Agent result before stopping an interrupted run', async () => {
+    const runId = 'run-agent-result-restart';
+    const ctx = await context([runId]);
+    const originalWrite = WorkflowRunStore.prototype.write;
+    let failAgentResultWrite = true;
+    vi.spyOn(WorkflowRunStore.prototype, 'write').mockImplementation(
+      async function (this: WorkflowRunStore, record) {
+        if (
+          failAgentResultWrite &&
+          record.status === 'running' &&
+          record.agents[0]?.status === 'completed'
+        ) {
+          failAgentResultWrite = false;
+          throw new Error('Agent result record write failed before restart');
+        }
+        await originalWrite.call(this, record);
+      },
+    );
+    const closeGate = deferred<void>();
+    ctx.teammates.closeGate = closeGate.promise;
+    await ctx.service.run({ script: validScript() });
+    const runner = ctx.runner.latest();
+    runner.emit({
+      type: 'agent_start',
+      index: 0,
+      prompt: 'commit result before simulated restart',
+      options: {},
+    });
+    await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
+    expect(ctx.teammates.settle(0, 'completed', 'durable Agent result')).toBe(true);
+    await vi.waitFor(() => expect(ctx.teammates.closeAttempts).toBe(1));
+    expect((await journalEvents(runId)).filter(
+      (event) => event.kind === 'result',
+    )).toEqual([
+      expect.objectContaining({
+        index: 0,
+        status: 'completed',
+        result: 'durable Agent result',
+      }),
+    ]);
+    expect((await journalEvents(runId)).some(
+      (event) => event.kind === 'end',
+    )).toBe(false);
+
+    const restarted = await context(['unused-after-agent-restart'], undefined, false);
+    await restarted.service.recover();
+    expect(await restarted.service.status({ run_id: runId })).toMatchObject({
+      status: 'stopped',
+      agents: [{
+        status: 'completed',
+        result: 'durable Agent result',
+        error: null,
+      }],
+    });
+    expect((await journalEvents(runId)).filter(
+      (event) => event.kind === 'result',
+    )).toHaveLength(1);
+    expect((await journalEvents(runId)).filter(
+      (event) => event.kind === 'end',
+    )).toEqual([
+      expect.objectContaining({ status: 'stopped' }),
+    ]);
+    expect(restarted.runner.runners).toHaveLength(0);
+    expect(restarted.initiator.received).toEqual([]);
+
+    closeGate.resolve();
+  });
+
+  it('retries terminal record persistence without duplicating the end journal', async () => {
+    const ctx = await context(['run-terminal-write-retry']);
+    const originalWrite = WorkflowRunStore.prototype.write;
+    let failTerminalWrite = true;
+    vi.spyOn(WorkflowRunStore.prototype, 'write').mockImplementation(
+      async function (this: WorkflowRunStore, record) {
+        if (failTerminalWrite && record.status === 'completed') {
+          throw new Error('terminal record write failed');
+        }
+        await originalWrite.call(this, record);
+      },
+    );
+    await ctx.service.run({ script: validScript() });
+    const runner = ctx.runner.latest();
+    runner.emit({
+      type: 'agent_start',
+      index: 0,
+      prompt: 'settle before terminal write',
+      options: {},
+    });
+    await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
+    expect(ctx.teammates.settle(0, 'completed', 'done')).toBe(true);
+    await vi.waitFor(() => expect(agentResults(runner)).toHaveLength(1));
+    runner.emit({ type: 'run_result', status: 'completed', result: 'done' });
+
+    await vi.waitFor(() => expect(ctx.log.events).toContainEqual(
+      expect.objectContaining({
+        level: 'error',
+        message: 'workflow terminal transition failed',
+      }),
+    ));
+    expect((await journalEvents('run-terminal-write-retry')).filter(
+      (event) => event.kind === 'end',
+    )).toHaveLength(1);
+    expect(ctx.initiator.received).toEqual([]);
+    expect(ctx.teammates.materializations[0]).toMatchObject({
+      closed: true,
+      unlocked: false,
+      unlockCalls: 0,
+    });
+    expect(await ctx.service.status({ run_id: 'run-terminal-write-retry' }))
+      .toMatchObject({ status: 'running' });
+
+    failTerminalWrite = false;
+    await expect(
+      ctx.service.stop({ run_id: 'run-terminal-write-retry' }),
+    ).resolves.toEqual({
+      run_id: 'run-terminal-write-retry',
+      status: 'completed',
+    });
+    expect((await journalEvents('run-terminal-write-retry')).filter(
+      (event) => event.kind === 'end',
+    )).toHaveLength(1);
+    expect(ctx.teammates.materializations[0]).toMatchObject({
+      unlockCalls: 1,
+      unlocked: true,
+    });
+    expect(ctx.initiator.received).toHaveLength(1);
+  });
+
+  it('completes a running record from its terminal journal after restart', async () => {
+    const runId = 'run-terminal-restart-recovery';
+    const ctx = await context([runId]);
+    const originalWrite = WorkflowRunStore.prototype.write;
+    let failTerminalWrite = true;
+    vi.spyOn(WorkflowRunStore.prototype, 'write').mockImplementation(
+      async function (this: WorkflowRunStore, record) {
+        if (failTerminalWrite && record.status === 'completed') {
+          throw new Error('terminal record write failed before restart');
+        }
+        await originalWrite.call(this, record);
+      },
+    );
+    await ctx.service.run({ script: validScript() });
+    const runner = ctx.runner.latest();
+    runner.emit({
+      type: 'agent_start',
+      index: 0,
+      prompt: 'persist Agent before Workflow terminal',
+      options: {},
+    });
+    await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
+    expect(ctx.teammates.settle(0, 'completed', 'agent done')).toBe(true);
+    await vi.waitFor(() => expect(agentResults(runner)).toHaveLength(1));
+    runner.emit({
+      type: 'run_result',
+      status: 'completed',
+      result: { answer: 42 },
+    });
+
+    await vi.waitFor(() => expect(ctx.log.events).toContainEqual(
+      expect.objectContaining({
+        level: 'error',
+        message: 'workflow terminal transition failed',
+      }),
+    ));
+    expect((await journalEvents(runId)).filter(
+      (event) => event.kind === 'end',
+    )).toEqual([
+      expect.objectContaining({
+        status: 'completed',
+        result: { answer: 42 },
+        error: null,
+      }),
+    ]);
+    expect(await ctx.service.status({ run_id: runId }))
+      .toMatchObject({ status: 'running' });
+
+    failTerminalWrite = false;
+    const restarted = await context(['unused-after-restart'], undefined, false);
+    await restarted.service.recover();
+
+    expect(restarted.runner.runners).toHaveLength(0);
+    expect(restarted.initiator.received).toEqual([]);
+    expect(await restarted.service.status({ run_id: runId })).toMatchObject({
+      status: 'completed',
+      result: { answer: 42 },
+      error: null,
+      agents: [{ status: 'completed', result: 'agent done' }],
+    });
+    expect((await journalEvents(runId)).filter(
+      (event) => event.kind === 'end',
+    )).toHaveLength(1);
+  });
+
+  it('retries a failed terminal journal append without releasing agent locks', async () => {
+    const runId = 'run-terminal-journal-retry';
+    const ctx = await context([runId]);
+    await ctx.service.run({ script: validScript() });
+    const runner = ctx.runner.latest();
+    runner.emit({
+      type: 'agent_start',
+      index: 0,
+      prompt: 'settle before terminal journal append',
+      options: {},
+    });
+    await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
+    expect(ctx.teammates.settle(0, 'completed', 'done')).toBe(true);
+    await vi.waitFor(() => expect(agentResults(runner)).toHaveLength(1));
+
+    const journalPath = workflowRunJournalPath({ ...SCOPE, runId });
+    const journalBeforeTerminal = await readFile(journalPath, 'utf8');
+    await rm(journalPath);
+    await mkdir(journalPath);
+    runner.emit({ type: 'run_result', status: 'completed', result: 'done' });
+
+    await vi.waitFor(() => expect(ctx.log.events).toContainEqual(
+      expect.objectContaining({
+        level: 'error',
+        message: 'workflow terminal transition failed',
+      }),
+    ));
+    expect(ctx.initiator.received).toEqual([]);
+    expect(ctx.teammates.materializations[0]).toMatchObject({
+      closed: true,
+      unlocked: false,
+      unlockCalls: 0,
+    });
+    expect(await ctx.service.status({ run_id: runId }))
+      .toMatchObject({ status: 'running' });
+
+    await rm(journalPath, { recursive: true });
+    await writeFile(journalPath, journalBeforeTerminal, { mode: 0o600 });
+    await expect(ctx.service.stop({ run_id: runId })).resolves.toEqual({
+      run_id: runId,
+      status: 'completed',
+    });
+    expect((await journalEvents(runId)).filter(
+      (event) => event.kind === 'end',
+    )).toHaveLength(1);
+    expect(ctx.teammates.materializations[0]).toMatchObject({
+      unlockCalls: 1,
+      unlocked: true,
+    });
+    expect(ctx.initiator.received).toHaveLength(1);
   });
 
   it('propagates an unsupported outputSchema runtime as an agent error', async () => {
     const ctx = await context(['run-schema-unsupported']);
-    ctx.teammates.nextTurnStatus = 'failed';
     const unsupported = Object.assign(
       new Error('claude-code runtime does not support per-turn outputSchema'),
       {
@@ -967,7 +1442,7 @@ describe('WorkflowService', () => {
         feature: 'outputSchema',
       },
     );
-    ctx.teammates.nextTurnError = unsupported;
+    ctx.teammates.nextAdmission = { status: 'failed', error: unsupported };
     await ctx.service.run({ script: validScript() });
     const runner = ctx.runner.latest();
 
@@ -986,9 +1461,9 @@ describe('WorkflowService', () => {
         },
       ]),
     );
-    expect(ctx.teammates.spawnAttempts).toBe(1);
-    expect(ctx.teammates.spawns).toHaveLength(1);
-    expect(ctx.teammates.releases).toEqual([]);
+    expect(ctx.teammates.createAttempts).toBe(1);
+    expect(ctx.teammates.materializations).toHaveLength(1);
+    expect(ctx.teammates.closes).toEqual([]);
 
     runner.emit({
       type: 'run_result',
@@ -997,12 +1472,12 @@ describe('WorkflowService', () => {
     });
     await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
     expect(ctx.initiator.received[0]?.status).toBe('failed');
-    expect(ctx.teammates.releases).toEqual([
-      ctx.teammates.spawns[0]?.name,
+    expect(ctx.teammates.closes).toEqual([
+      ctx.teammates.materializations[0]?.name,
     ]);
   });
 
-  it('propagates an unsupported outputSchema error thrown by spawnOwned', async () => {
+  it('propagates an unsupported outputSchema error thrown by createLocked', async () => {
     const ctx = await context(['run-schema-throw']);
     const unsupported = Object.assign(
       new Error('claude-code runtime does not support per-turn outputSchema'),
@@ -1011,7 +1486,7 @@ describe('WorkflowService', () => {
         feature: 'outputSchema',
       },
     );
-    ctx.teammates.spawnError = unsupported;
+    ctx.teammates.createError = unsupported;
     await ctx.service.run({ script: validScript() });
     const runner = ctx.runner.latest();
 
@@ -1030,8 +1505,8 @@ describe('WorkflowService', () => {
         },
       ]),
     );
-    expect(ctx.teammates.spawnAttempts).toBe(1);
-    expect(ctx.teammates.spawns).toHaveLength(0);
+    expect(ctx.teammates.createAttempts).toBe(1);
+    expect(ctx.teammates.materializations).toHaveLength(0);
 
     runner.emit({
       type: 'run_result',
@@ -1044,8 +1519,10 @@ describe('WorkflowService', () => {
 
   it('maps an ordinary outputSchema turn failure to null', async () => {
     const ctx = await context(['run-schema-failed']);
-    ctx.teammates.nextTurnStatus = 'failed';
-    ctx.teammates.nextTurnError = new Error('structured turn failed');
+    ctx.teammates.nextAdmission = {
+      status: 'failed',
+      error: new Error('structured turn failed'),
+    };
     await ctx.service.run({ script: validScript() });
     const runner = ctx.runner.latest();
 
@@ -1084,7 +1561,8 @@ describe('WorkflowService', () => {
     });
     await vi.waitFor(() =>
       expect(ctx.initiator.received.some(
-        (item) => item.id === 'run-default-concurrency',
+        (item) => item.kind === 'workflow' &&
+          item.runId === 'run-default-concurrency',
       )).toBe(true),
     );
 
@@ -1117,25 +1595,29 @@ describe('WorkflowService', () => {
       prompt: 'second',
       options: {},
     });
-    await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(1));
-    expect(ctx.teammates.spawns[0]?.input.prompt).toBe('first');
+    await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
+    expect(ctx.teammates.materializations[0]?.input.prompt).toBe('first');
 
     await ctx.teammates.settle(0, 'completed', 'one');
-    await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(2));
-    expect(ctx.teammates.spawns[1]?.input.prompt).toBe('second');
+    await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(2));
+    expect(ctx.teammates.materializations[1]?.input.prompt).toBe('second');
     await ctx.teammates.settle(1, 'completed', 'two');
     firstRunner.emit({ type: 'run_result', status: 'completed', result: null });
     await vi.waitFor(() =>
       expect(ctx.initiator.received.some(
-        (item) => item.id === 'run-queued-concurrency',
+        (item) => item.kind === 'workflow' &&
+          item.runId === 'run-queued-concurrency',
       ))
         .toBe(true),
     );
   });
 
-  it('accepts 1000 lifetime agent calls and rejects call 1001 before spawn', async () => {
+  it('accepts 1000 lifetime agent calls and rejects call 1001 before materialization', async () => {
     const ctx = await context(['run-agent-limit']);
-    ctx.teammates.nextTurnStatus = 'failed';
+    ctx.teammates.nextAdmission = {
+      status: 'failed',
+      error: new Error('runtime turn failed'),
+    };
     await ctx.service.run({ script: validScript(), max_concurrency: 16 });
     const runner = ctx.runner.latest();
 
@@ -1148,7 +1630,7 @@ describe('WorkflowService', () => {
       });
     }
 
-    await vi.waitFor(() => expect(ctx.teammates.spawnAttempts).toBe(1000), {
+    await vi.waitFor(() => expect(ctx.teammates.createAttempts).toBe(1000), {
       timeout: 10_000,
     });
     await vi.waitFor(() =>
@@ -1157,7 +1639,7 @@ describe('WorkflowService', () => {
         index: 1000,
         error: 'workflow agent lifecycle limit of 1000 exceeded',
       }), { timeout: 10_000 });
-    expect(ctx.teammates.spawnAttempts).toBe(1000);
+    expect(ctx.teammates.createAttempts).toBe(1000);
 
     runner.emit({
       type: 'run_result',
@@ -1167,7 +1649,7 @@ describe('WorkflowService', () => {
     await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
   }, 20_000);
 
-  it('returns stop after reserving the outcome and finalizes after natural settle', async () => {
+  it('returns stop only after close selects stopped and terminal persistence completes', async () => {
     const ctx = await context(['run-stop'], (harness) => {
       harness.onSend = (message, runner) => {
         if (message.type === 'abort') {
@@ -1187,23 +1669,38 @@ describe('WorkflowService', () => {
       prompt: 'keep running naturally',
       options: {},
     });
-    await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(1));
+    await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
 
-    await expect(ctx.service.stop({ run_id: 'run-stop' })).resolves.toEqual({
+    const closeGate = deferred<void>();
+    ctx.teammates.closeGate = closeGate.promise;
+    let stopSettled = false;
+    const stop = ctx.service.stop({ run_id: 'run-stop' }).then((result) => {
+      stopSettled = true;
+      return result;
+    });
+    await vi.waitFor(() => expect(ctx.teammates.closeAttempts).toBe(1));
+    expect(stopSettled).toBe(false);
+    expect(ctx.initiator.received).toEqual([]);
+    expect(ctx.teammates.materializations[0]).toMatchObject({
+      closed: false,
+      unlocked: false,
+    });
+    expect((await journalEvents('run-stop')).some(
+      (event) => event.kind === 'end',
+    )).toBe(false);
+    expect(ctx.teammates.settle(0, 'completed', 'late result')).toBe(false);
+
+    closeGate.resolve();
+    await expect(stop).resolves.toEqual({
       run_id: 'run-stop',
       status: 'stopped',
     });
     await vi.waitFor(() =>
       expect(runner.sent.some((message) => message.type === 'abort')).toBe(true),
     );
-    expect(ctx.teammates.releases).toEqual([]);
-    expect(ctx.initiator.received).toHaveLength(0);
-
-    await ctx.teammates.settle(0, 'completed', 'late result');
-    await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
     expect(agentResults(runner)).toEqual([]);
-    expect(ctx.teammates.releases).toEqual([
-      ctx.teammates.spawns[0]?.name,
+    expect(ctx.teammates.closes).toEqual([
+      ctx.teammates.materializations[0]?.name,
     ]);
     expect(ctx.initiator.received).toHaveLength(1);
     expect(ctx.initiator.received[0]?.status).toBe('stopped');
@@ -1215,27 +1712,35 @@ describe('WorkflowService', () => {
     ]);
     expect(await ctx.service.status({ run_id: 'run-stop' })).toMatchObject({
       status: 'stopped',
-      agents: [{ status: 'completed' }],
+      agents: [{ status: 'stopped' }],
+    });
+    expect(ctx.teammates.materializations[0]).toMatchObject({
+      closeCalls: 1,
+      unlockCalls: 1,
+      closed: true,
+      unlocked: true,
     });
     expect(activeRunCount(ctx.service)).toBe(0);
   });
 
-  it('stops for shutdown without waiting for an in-flight turn or auto-close', async () => {
+  it('uses the same close-first terminal pipeline for stopAll', async () => {
     const ctx = await context(['run-shutdown-stop']);
     await ctx.service.run({ script: validScript() });
     const runner = ctx.runner.latest();
     runner.emit({
       type: 'agent_start',
       index: 0,
-      prompt: 'leave runtime cleanup to the shutdown sweep',
+      prompt: 'close through the workflow entity',
       options: {},
     });
-    await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(1));
+    await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
 
-    await expect(ctx.service.stopAllForShutdown()).resolves.toBeUndefined();
+    await expect(ctx.service.stopAll()).resolves.toBeUndefined();
 
     expect(runner.stopCount).toBeGreaterThan(0);
-    expect(ctx.teammates.releases).toEqual([]);
+    expect(ctx.teammates.closes).toEqual([
+      ctx.teammates.materializations[0]?.name,
+    ]);
     const terminal = await ctx.service.status({ run_id: 'run-shutdown-stop' });
     expect(terminal).toMatchObject({
       status: 'stopped',
@@ -1243,20 +1748,19 @@ describe('WorkflowService', () => {
     });
     expect(terminal.updated_at).toBe(terminal.ended_at);
     expect(activeRunCount(ctx.service)).toBe(0);
-    expect(ctx.initiator.received).toEqual([]);
+    expect(ctx.initiator.received).toMatchObject([{ status: 'stopped' }]);
     expect((await journalEvents('run-shutdown-stop')).map((event) => event.kind))
-      .toEqual(['run', 'submit', 'end']);
-
-    await ctx.teammates.settle(0, 'stopped', null);
+      .toEqual(['run', 'submit', 'result', 'end']);
     expect(agentResults(runner)).toEqual([]);
-    expect(ctx.teammates.releases).toEqual([]);
-    expect((await journalEvents('run-shutdown-stop')).map((event) => event.kind))
-      .toEqual(['run', 'submit', 'end']);
-    expect(await ctx.service.status({ run_id: 'run-shutdown-stop' }))
-      .toEqual(terminal);
+    expect(ctx.teammates.materializations[0]).toMatchObject({
+      closeCalls: 1,
+      unlockCalls: 1,
+      closed: true,
+      unlocked: true,
+    });
   });
 
-  it('freezes completions before draining the latest shutdown mutation', async () => {
+  it('drains accepted pre-stop Turn outcomes before terminal commit', async () => {
     const ctx = await context(['run-shutdown-mutation']);
     const writeStarted = deferred<void>();
     const allowWrite = deferred<void>();
@@ -1286,7 +1790,7 @@ describe('WorkflowService', () => {
         options: {},
       });
     }
-    await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(2));
+    await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(2));
 
     const firstSettle = ctx.teammates.settle(0, 'completed', 'first');
     await writeStarted.promise;
@@ -1294,7 +1798,7 @@ describe('WorkflowService', () => {
     await vi.waitFor(async () =>
       expect((await ctx.service.status({ run_id: 'run-shutdown-mutation' }))
         .agents[1]?.status).toBe('completed'));
-    const shutdown = ctx.service.stopAllForShutdown();
+    const shutdown = ctx.service.stopAll();
     let shutdownSettled = false;
     void shutdown.then(() => {
       shutdownSettled = true;
@@ -1303,7 +1807,9 @@ describe('WorkflowService', () => {
     expect(shutdownSettled).toBe(false);
 
     allowWrite.resolve();
-    await Promise.all([firstSettle, secondSettle, shutdown]);
+    expect(firstSettle).toBe(true);
+    expect(secondSettle).toBe(true);
+    await shutdown;
     expect((await journalEvents('run-shutdown-mutation')).map((event) =>
       event.kind)).toEqual([
       'run',
@@ -1315,7 +1821,7 @@ describe('WorkflowService', () => {
     ]);
   });
 
-  it('rejects a completion arriving after shutdown starts draining mutations', async () => {
+  it('keeps the close-selected stopped outcome when a RuntimeTurn completes late', async () => {
     const ctx = await context(['run-shutdown-late-mutation']);
     const writeStarted = deferred<void>();
     const allowWrite = deferred<void>();
@@ -1345,19 +1851,27 @@ describe('WorkflowService', () => {
         options: {},
       });
     }
-    await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(2));
+    await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(2));
 
     const firstSettle = ctx.teammates.settle(0, 'completed', 'first');
     await writeStarted.promise;
-    const shutdown = ctx.service.stopAllForShutdown();
-    await vi.waitFor(() => expect(runner.stopCount).toBeGreaterThan(0));
-    for (let step = 0; step < 4; step += 1) await Promise.resolve();
+    const shutdown = ctx.service.stopAll();
+    await vi.waitFor(() => expect(ctx.teammates.closeAttempts).toBe(2));
     const secondSettle = ctx.teammates.settle(1, 'completed', 'late');
+    expect(secondSettle).toBe(false);
     allowWrite.resolve();
-    await Promise.all([firstSettle, secondSettle, shutdown]);
+    expect(firstSettle).toBe(true);
+    await shutdown;
 
     expect((await journalEvents('run-shutdown-late-mutation')).map((event) =>
-      event.kind)).toEqual(['run', 'submit', 'submit', 'result', 'end']);
+      event.kind)).toEqual([
+      'run',
+      'submit',
+      'submit',
+      'result',
+      'result',
+      'end',
+    ]);
     expect(await ctx.service.status({ run_id: 'run-shutdown-late-mutation' }))
       .toMatchObject({
         status: 'stopped',
@@ -1365,10 +1879,10 @@ describe('WorkflowService', () => {
       });
   });
 
-  it('joins auto-close already running when shutdown begins', async () => {
+  it('joins the same terminal close already running when stopAll begins', async () => {
     const ctx = await context(['run-shutdown-auto-close']);
-    const releaseGate = deferred<void>();
-    ctx.teammates.releaseAllGate = releaseGate.promise;
+    const closeGate = deferred<void>();
+    ctx.teammates.closeGate = closeGate.promise;
     await ctx.service.run({ script: validScript() });
     const runner = ctx.runner.latest();
     runner.emit({
@@ -1377,29 +1891,29 @@ describe('WorkflowService', () => {
       prompt: 'complete before shutdown',
       options: {},
     });
-    await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(1));
-    await ctx.teammates.settle(0, 'completed', 'done');
+    await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
+    expect(ctx.teammates.settle(0, 'completed', 'done')).toBe(true);
     runner.emit({ type: 'run_result', status: 'completed', result: 'done' });
-    await vi.waitFor(() => expect(ctx.teammates.releaseAllAttempts).toBe(1));
+    await vi.waitFor(() => expect(ctx.teammates.closeAttempts).toBe(1));
 
-    const shutdown = ctx.service.stopAllForShutdown();
+    const shutdown = ctx.service.stopAll();
     let shutdownSettled = false;
     void shutdown.then(() => {
       shutdownSettled = true;
     });
     await Promise.resolve();
     expect(shutdownSettled).toBe(false);
-    expect(ctx.teammates.releaseAllAttempts).toBe(1);
+    expect(ctx.teammates.closeAttempts).toBe(1);
 
-    releaseGate.resolve();
+    closeGate.resolve();
     await shutdown;
-    expect(ctx.teammates.releaseAllAttempts).toBe(1);
-    expect(ctx.teammates.releases).toHaveLength(1);
+    expect(ctx.teammates.closeAttempts).toBe(1);
+    expect(ctx.teammates.closes).toHaveLength(1);
     expect(await ctx.service.status({ run_id: 'run-shutdown-auto-close' }))
       .toMatchObject({ status: 'completed', result: 'done' });
   });
 
-  it('fails on runner exit but still drains the owned turn before release', async () => {
+  it('fails on runner exit through the same close-first terminal pipeline', async () => {
     const ctx = await context(['run-crash']);
     await ctx.service.run({ script: validScript() });
     const runner = ctx.runner.latest();
@@ -1409,24 +1923,30 @@ describe('WorkflowService', () => {
       prompt: 'survive runner crash',
       options: {},
     });
-    await vi.waitFor(() => expect(ctx.teammates.spawns).toHaveLength(1));
+    await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
 
+    const closeGate = deferred<void>();
+    ctx.teammates.closeGate = closeGate.promise;
     runner.exit(7, null);
-    await Promise.resolve();
+    await vi.waitFor(() => expect(ctx.teammates.closeAttempts).toBe(1));
     expect(ctx.initiator.received).toHaveLength(0);
-    expect(ctx.teammates.releases).toEqual([]);
+    expect(ctx.teammates.closes).toEqual([]);
 
-    await ctx.teammates.settle(0, 'completed', 'late result');
+    expect(ctx.teammates.settle(0, 'completed', 'late result')).toBe(false);
+    closeGate.resolve();
     await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
     expect(ctx.initiator.received[0]?.status).toBe('failed');
-    expect(ctx.teammates.releases).toEqual([
-      ctx.teammates.spawns[0]?.name,
+    expect(ctx.teammates.closes).toEqual([
+      ctx.teammates.materializations[0]?.name,
     ]);
     expect(await ctx.service.status({ run_id: 'run-crash' })).toMatchObject({
       status: 'failed',
       error: expect.stringContaining(
         'workflow runner exited before reporting a result (code=7',
       ),
+    });
+    expect(await ctx.service.status({ run_id: 'run-crash' })).toMatchObject({
+      agents: [{ status: 'stopped' }],
     });
     expect(ctx.log.events).toContainEqual(expect.objectContaining({
       level: 'info',
@@ -1496,6 +2016,25 @@ describe('WorkflowService', () => {
     expect(activeRunCount(ctx.service)).toBe(0);
   });
 
+  it('loads and discards a legacy Workflow Agent turn_id', async () => {
+    const runId = 'run-legacy-agent-id';
+    const path = workflowRunRecordPath({ ...SCOPE, runId });
+    const raw = {
+      ...workflowRecord(runId),
+      agents: [{ ...agentRecord(0, 'completed'), turn_id: 'legacy-turn-id' }],
+    };
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, `${JSON.stringify(raw, null, 2)}\n`, { mode: 0o600 });
+
+    const store = new WorkflowRunStore(SCOPE);
+    const loaded = await store.get(runId);
+    expect(loaded?.agents[0]).toEqual(agentRecord(0, 'completed'));
+    expect(loaded?.agents[0]).not.toHaveProperty('turn_id');
+
+    await store.write(loaded!);
+    expect(await readFile(path, 'utf8')).not.toContain('turn_id');
+  });
+
   it('rejects run ids outside the lowercase alphanumeric-hyphen grammar', async () => {
     const ctx = await context(['Bad/../run']);
 
@@ -1530,6 +2069,14 @@ function deferred<T>(): {
     resolve = settle;
   });
   return { promise, resolve };
+}
+
+async function waitForEventLoop(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  throw new Error('event-loop condition was not reached');
 }
 
 function agentResults(
@@ -1584,8 +2131,9 @@ function agentRecord(
     name: `agent-${index}`,
     label: null,
     phase: null,
-    turn_id: `turn-${index}`,
     status,
+    result: null,
+    error: null,
     created_at: 100,
     settled_at: status === 'completed' ? 110 : null,
   };

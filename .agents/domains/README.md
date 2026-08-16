@@ -17,7 +17,7 @@ and invariants, not a substitute for reading the implementation.
   and TeamLeader egress authorization.
 - [Dispatcher orchestration](dispatcher-orchestration.md) — Dispatchers,
   DispatcherService, Team/TeamMate collections, `TeammateService`,
-  `CompletionRouter`, MCP projections, and workspaces.
+  object-owned completion delivery, MCP projections, and workspaces.
 - [State, config, and files](state-config-and-files.md) — local config,
   state/run/cache/log layout, upgrade policy, JSON stores, workspaces, and logs.
 - [Scheduled work](scheduled-work.md) — per-conversational-agent cron,

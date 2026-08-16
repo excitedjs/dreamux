@@ -18,7 +18,8 @@ import {
   MUTATING_ANNOTATIONS,
   OPEN_OBJECT,
   READ_ONLY_ANNOTATIONS,
-  SUBMISSION_TURN_SCHEMA,
+  SUBMISSION_ERROR_SCHEMA,
+  SUBMISSION_STATUS_SCHEMA,
   arrayOf,
   closedObjectSchema,
   forwardAdmin,
@@ -185,8 +186,12 @@ function teammateToolMetadata(callerKind: TeamMateMcpCallerKind): McpToolMetadat
     ? 'Start a resumable TeamMate agent managed by this dispatcher and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. repo is optional: omit it to let Dreamux allocate a fresh per-TeamMate work directory, or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } to choose an existing path or create a managed git worktree.'
     : 'Start a resumable TeamMate agent in this Team\'s shared workspace and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. Coordinate edits so only one TeamMate writes the shared workspace unless the work is read-only or edits are independent. This tool does not accept a repo parameter.';
   const teammateReceiptSchema = closedObjectSchema(
-    { teammate: OPEN_OBJECT, turn: SUBMISSION_TURN_SCHEMA },
-    ['teammate', 'turn'],
+    {
+      teammate: OPEN_OBJECT,
+      status: SUBMISSION_STATUS_SCHEMA,
+      error: SUBMISSION_ERROR_SCHEMA,
+    },
+    ['teammate', 'status'],
   );
   const workflowTools: McpToolMetadata[] = [
     tool(
@@ -342,10 +347,14 @@ function mapToolCall(
       return {
         method: 'teammate.spawn',
         params: args,
-        project: projectTeammateTurn,
+        project: projectTeammateSubmission,
       };
     case 'send':
-      return { method: 'teammate.send', params: args, project: projectTeammateTurn };
+      return {
+        method: 'teammate.send',
+        params: args,
+        project: projectTeammateSubmission,
+      };
     case 'close':
       return { method: 'teammate.close', params: args, project: projectTeammate };
     case 'history':
@@ -371,9 +380,13 @@ function mapToolCall(
   }
 }
 
-function projectTeammateTurn(value: unknown): Record<string, unknown> {
+function projectTeammateSubmission(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'teammate result');
-  return { teammate: obj['teammate'], turn: obj['turn'] };
+  return {
+    teammate: obj['teammate'],
+    status: obj['status'],
+    ...(obj['error'] !== undefined ? { error: obj['error'] } : {}),
+  };
 }
 
 function projectTeammate(value: unknown): Record<string, unknown> {
@@ -521,11 +534,12 @@ function workflowAgentSchema(): Record<string, unknown> {
       name: { type: ['string', 'null'] },
       label: { type: ['string', 'null'] },
       phase: { type: ['string', 'null'] },
-      turn_id: { type: ['string', 'null'] },
       status: {
         type: 'string',
         enum: ['queued', 'running', 'completed', 'failed', 'stopped'],
       },
+      result: {},
+      error: { type: ['string', 'null'] },
       created_at: { type: 'integer' },
       settled_at: { type: ['integer', 'null'] },
     },
@@ -534,8 +548,9 @@ function workflowAgentSchema(): Record<string, unknown> {
       'name',
       'label',
       'phase',
-      'turn_id',
       'status',
+      'result',
+      'error',
       'created_at',
       'settled_at',
     ],
@@ -554,13 +569,31 @@ function projectWorkflowRecord(obj: Record<string, unknown>): Record<string, unk
     max_concurrency: obj['max_concurrency'],
     phase: obj['phase'],
     last_log: obj['last_log'],
-    agents: obj['agents'],
+    agents: projectWorkflowAgents(obj['agents']),
     result: obj['result'],
     error: obj['error'],
     created_at: obj['created_at'],
     updated_at: obj['updated_at'],
     ended_at: obj['ended_at'],
   };
+}
+
+function projectWorkflowAgents(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((row) => {
+    const agent = asRecord(row, 'workflow agent row');
+    return {
+      index: agent['index'],
+      name: agent['name'],
+      label: agent['label'],
+      phase: agent['phase'],
+      status: agent['status'],
+      result: agent['result'],
+      error: agent['error'],
+      created_at: agent['created_at'],
+      settled_at: agent['settled_at'],
+    };
+  });
 }
 
 export function repoInputSchema(): Record<string, unknown> {

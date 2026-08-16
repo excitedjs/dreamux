@@ -26,21 +26,26 @@ import {
 } from '@excitedjs/dreamux-utils';
 import type {
   InboundTurnInput,
-  InboundDeliveryResult,
   AgentRuntimeTextInput,
-  TurnSettledSignal,
+  RuntimeAdmission,
+  RuntimeTurn,
+  RuntimeTurnOutcome,
 } from '@excitedjs/dreamux-types';
 
 interface ActiveTurnSlot {
   collector: TurnCollector;
   codec: CodexOutputSchemaCodec | null;
+  runtimeTurn: RuntimeTurn;
+  settle: (outcome: RuntimeTurnOutcome) => boolean;
   turnId: string | null;
-  candidateTurnId: string | null;
-  primaryFailed: boolean;
   pendingSubmissions: number;
-  turnIdPromise: Promise<string>;
-  resolveTurnId: (turnId: string) => void;
-  rejectTurnId: (err: Error) => void;
+  nextSubmissionIndex: number;
+  acceptedTurnIds: Map<number, string>;
+  pendingNativeTurnIds: Set<string>;
+  completedNativeTurns: Map<string, CollectedTurn>;
+  nativeFailures: Map<string, Error>;
+  lastSubmissionError: Error | null;
+  stopped: boolean;
 }
 
 export interface TurnManagerOptions {
@@ -59,14 +64,6 @@ export interface TurnManagerOptions {
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
   /** Best-effort runtime-local snapshot hook for `AgentRuntime.getLast()`. */
   onTurnCompleted?: (turn: CollectedTurn) => void;
-  /**
-   * Fired when a submitted turn is cut short by `stop()` before it reached
-   * `turn/completed` (a crashed or torn-down runtime). The successful
-   * `completed` settlement is fired by the runtime from its `onTurnCompleted`
-   * handler; this hook only covers the `stopped` case so an in-flight teammate
-   * turn never vanishes silently.
-   */
-  onTurnSettled?: (settled: TurnSettledSignal) => void;
 }
 
 export class TurnManager {
@@ -74,18 +71,23 @@ export class TurnManager {
   private readonly seenMessageIdOrder: string[] = [];
   private readonly seenTextInputIds = new Set<string>();
   private readonly seenTextInputIdOrder: string[] = [];
+  private readonly pendingMessageIds = new Map<
+    string,
+    Promise<RuntimeAdmission>
+  >();
+  private readonly pendingTextInputIds = new Map<
+    string,
+    Promise<RuntimeAdmission>
+  >();
+  private readonly pendingAdmissions = new Set<Promise<RuntimeAdmission>>();
   private stopped = false;
   private activeTurnSlot: ActiveTurnSlot | null = null;
-  private activeTurnId: string | null = null;
   /**
    * Turn ids submitted to Codex that have not yet reached `turn/completed`. On
    * `stop()` each still-pending turn is settled as `stopped` so a teammate turn
    * interrupted by teardown is not lost.
    */
-  private readonly pendingTurns = new Map<
-    string,
-    { codec: CodexOutputSchemaCodec | null }
-  >();
+  private readonly pendingTurns = new Map<string, ActiveTurnSlot>();
   private idlePromise: Promise<void> | null = null;
   private idleResolve: (() => void) | null = null;
   private readonly log: NonNullable<TurnManagerOptions['log']>;
@@ -123,11 +125,20 @@ export class TurnManager {
    * Submit one accepted inbound message to Codex. Returns duplicate when this
    * process already saw the message_id.
    */
-  async enqueue(input: InboundTurnInput): Promise<InboundDeliveryResult> {
+  enqueue(input: InboundTurnInput): Promise<RuntimeAdmission> {
+    return this.trackAdmission(this.reserveSource(
+      input.sourceId,
+      this.seenMessageIds,
+      this.seenMessageIdOrder,
+      this.pendingMessageIds,
+      () => this.enqueueUnreserved(input),
+    ));
+  }
+
+  private async enqueueUnreserved(
+    input: InboundTurnInput,
+  ): Promise<RuntimeAdmission> {
     if (this.stopped) return { status: 'stopped' };
-    if (!this.rememberMessageId(input.sourceId)) {
-      return { status: 'duplicate' };
-    }
     const threadId = this.opts.getThreadId();
     if (threadId === null) {
       const error = new Error('inbound submitted without thread_id');
@@ -143,6 +154,7 @@ export class TurnManager {
       this.log('error', error.message, error);
       return { status: 'failed', error };
     }
+    const submissionIndex = activeTurn.slot.nextSubmissionIndex++;
     activeTurn.slot.pendingSubmissions += 1;
 
     let res: Awaited<ReturnType<typeof submitTurnStart>>;
@@ -155,39 +167,36 @@ export class TurnManager {
       );
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
-      this.recordTurnStartFailure(activeTurn.slot, error, activeTurn.primary);
+      this.recordTurnStartFailure(activeTurn.slot, error);
       this.log(
         'error',
         `turn/start submission failed for message ${input.sourceId === '' ? '<none>' : input.sourceId}: ${error.message}`,
         error,
       );
-      return { status: 'failed', error };
+      return { status: 'ambiguous', error };
     }
-    const turnId = this.recordTurnStartSuccess(
+    this.recordTurnStartSuccess(
       activeTurn.slot,
       res.turn.id,
-      activeTurn.primary,
+      submissionIndex,
     );
-    try {
-      return {
-        status: 'submitted',
-        turnId: turnId ?? await activeTurn.slot.turnIdPromise,
-      };
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      return { status: 'failed', error };
-    }
+    return { status: 'submitted', turn: activeTurn.slot.runtimeTurn };
   }
 
-  async submitTextInput(input: AgentRuntimeTextInput): Promise<InboundDeliveryResult> {
+  submitTextInput(input: AgentRuntimeTextInput): Promise<RuntimeAdmission> {
+    return this.trackAdmission(this.reserveSource(
+      input.sourceId,
+      this.seenTextInputIds,
+      this.seenTextInputIdOrder,
+      this.pendingTextInputIds,
+      () => this.submitTextInputUnreserved(input),
+    ));
+  }
+
+  private async submitTextInputUnreserved(
+    input: AgentRuntimeTextInput,
+  ): Promise<RuntimeAdmission> {
     if (this.stopped) return { status: 'stopped' };
-    if (
-      input.sourceId !== undefined &&
-      input.sourceId !== '' &&
-      !this.rememberTextInputId(input.sourceId)
-    ) {
-      return { status: 'duplicate' };
-    }
     const threadId = this.opts.getThreadId();
     if (threadId === null) {
       const error = new Error('text input submitted without thread_id');
@@ -213,6 +222,7 @@ export class TurnManager {
       this.log('error', error.message, error);
       return { status: 'failed', error };
     }
+    const submissionIndex = activeTurn.slot.nextSubmissionIndex++;
     activeTurn.slot.pendingSubmissions += 1;
 
     let res: Awaited<ReturnType<typeof submitTurnStart>>;
@@ -226,24 +236,16 @@ export class TurnManager {
       );
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
-      this.recordTurnStartFailure(activeTurn.slot, error, activeTurn.primary);
+      this.recordTurnStartFailure(activeTurn.slot, error);
       this.log('error', `text turn/start submission failed: ${error.message}`, error);
-      return { status: 'failed', error };
+      return { status: 'ambiguous', error };
     }
-    const turnId = this.recordTurnStartSuccess(
+    this.recordTurnStartSuccess(
       activeTurn.slot,
       res.turn.id,
-      activeTurn.primary,
+      submissionIndex,
     );
-    try {
-      return {
-        status: 'submitted',
-        turnId: turnId ?? await activeTurn.slot.turnIdPromise,
-      };
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      return { status: 'failed', error };
-    }
+    return { status: 'submitted', turn: activeTurn.slot.runtimeTurn };
   }
 
   async stop(): Promise<void> {
@@ -251,25 +253,22 @@ export class TurnManager {
     const activeSlot = this.activeTurnSlot;
     this.activeTurnSlot = null;
     if (activeSlot !== null) {
+      activeSlot.stopped = true;
       activeSlot.collector.dispose();
       activeSlot.codec = null;
-    }
-    if (activeSlot !== null && activeSlot.turnId === null) {
-      activeSlot.rejectTurnId(new Error('codex turn stopped before acceptance'));
+      activeSlot.settle({ status: 'stopped' });
     }
     // Any turn still in flight at teardown will never reach `turn/completed`
     // (the WS is closing). Settle each as `stopped` so an interrupted teammate
     // turn is delivered with a status rather than vanishing.
-    for (const turnId of this.pendingTurns.keys()) {
-      this.opts.onTurnSettled?.({
-        turnId,
-        status: 'stopped',
-        result: { text: null },
-      });
+    for (const slot of this.pendingTurns.values()) {
+      slot.settle({ status: 'stopped' });
     }
     this.pendingTurns.clear();
-    this.activeTurnId = null;
     this.resolveIdleWaitersIfIdle();
+    while (this.pendingAdmissions.size > 0) {
+      await Promise.allSettled([...this.pendingAdmissions]);
+    }
   }
 
   private claimActiveTurnSlot(
@@ -285,26 +284,23 @@ export class TurnManager {
       return { slot: active, primary: false };
     }
 
-    let resolveTurnId!: (turnId: string) => void;
-    let rejectTurnId!: (err: Error) => void;
-    const turnIdPromise = new Promise<string>((resolve, reject) => {
-      resolveTurnId = resolve;
-      rejectTurnId = reject;
-    });
-    // The primary submitter returns its own failure directly. The shared promise
-    // only exists for concurrent followers waiting for that primary turn id, so
-    // reject it without producing an unhandled rejection when there are none.
-    turnIdPromise.catch(() => undefined);
+    const runtimeTurn = createRuntimeTurn();
     const slot: ActiveTurnSlot = {
-      collector: subscribeTurnCollection(this.opts.client, threadId),
+      collector: subscribeTurnCollection(this.opts.client, threadId, {
+        retainAfterTerminal: true,
+      }),
       codec,
+      runtimeTurn: runtimeTurn.turn,
+      settle: runtimeTurn.settle,
       turnId: null,
-      candidateTurnId: null,
-      primaryFailed: false,
       pendingSubmissions: 0,
-      turnIdPromise,
-      resolveTurnId,
-      rejectTurnId,
+      nextSubmissionIndex: 0,
+      acceptedTurnIds: new Map(),
+      pendingNativeTurnIds: new Set(),
+      completedNativeTurns: new Map(),
+      nativeFailures: new Map(),
+      lastSubmissionError: null,
+      stopped: false,
     };
     this.activeTurnSlot = slot;
     return { slot, primary: true };
@@ -313,48 +309,26 @@ export class TurnManager {
   private recordTurnStartSuccess(
     slot: ActiveTurnSlot,
     turnId: string,
-    primary: boolean,
-  ): string | null {
+    submissionIndex: number,
+  ): void {
     slot.pendingSubmissions = Math.max(0, slot.pendingSubmissions - 1);
-    if (slot.turnId !== null) return slot.turnId;
     if (this.stopped) {
-      slot.rejectTurnId(new Error('codex turn stopped before acceptance'));
-      return null;
+      slot.settle({ status: 'stopped' });
+      return;
     }
-    if (primary || slot.primaryFailed) {
-      this.activateTurnSlot(slot, turnId);
-      return turnId;
-    }
-    slot.candidateTurnId ??= turnId;
-    return null;
+    slot.acceptedTurnIds.set(submissionIndex, turnId);
+    slot.turnId ??= turnId;
+    this.trackTurn(turnId, slot.collector, slot);
+    this.finalizeSlotIfReady(slot);
   }
 
   private recordTurnStartFailure(
     slot: ActiveTurnSlot,
     error: Error,
-    primary: boolean,
   ): void {
     slot.pendingSubmissions = Math.max(0, slot.pendingSubmissions - 1);
-    if (slot.turnId !== null) return;
-    if (primary) slot.primaryFailed = true;
-    if (slot.primaryFailed && slot.candidateTurnId !== null) {
-      this.activateTurnSlot(slot, slot.candidateTurnId);
-      return;
-    }
-    if (slot.primaryFailed && slot.pendingSubmissions === 0) {
-      if (this.activeTurnSlot === slot) this.activeTurnSlot = null;
-      slot.collector.dispose();
-      slot.codec = null;
-      slot.rejectTurnId(error);
-      this.resolveIdleWaitersIfIdle();
-    }
-  }
-
-  private activateTurnSlot(slot: ActiveTurnSlot, turnId: string): void {
-    if (slot.turnId !== null) return;
-    slot.turnId = turnId;
-    this.trackTurn(turnId, slot.collector, slot);
-    slot.resolveTurnId(turnId);
+    slot.lastSubmissionError = error;
+    this.finalizeSlotIfReady(slot);
   }
 
   /**
@@ -371,9 +345,9 @@ export class TurnManager {
     collector: TurnCollector,
     slot: ActiveTurnSlot,
   ): void {
-    if (this.pendingTurns.has(turnId)) return;
-    this.pendingTurns.set(turnId, { codec: slot.codec });
-    this.activeTurnId = turnId;
+    if (slot.pendingNativeTurnIds.has(turnId)) return;
+    slot.pendingNativeTurnIds.add(turnId);
+    this.pendingTurns.set(turnId, slot);
     void collector.awaitTurn(turnId).then(
       (turn) => {
         // Only forward completion if this turn was still pending. If `stop()`
@@ -381,66 +355,120 @@ export class TurnManager {
         // the late completion so a turn is never settled twice.
         const pending = this.pendingTurns.get(turnId);
         if (pending !== undefined && this.pendingTurns.delete(turnId)) {
-          if (this.activeTurnSlot === slot) this.activeTurnSlot = null;
-          if (this.activeTurnId === turnId) this.activeTurnId = null;
+          pending.pendingNativeTurnIds.delete(turnId);
           let completedTurn: CollectedTurn;
           try {
             completedTurn = pending.codec === null
               ? turn
               : restoreCollectedTurn(turn, pending.codec);
           } catch (err) {
-            this.opts.onTurnSettled?.({
-              turnId,
-              status: 'failed',
-              result: { text: null },
-              error: asError(err),
-            });
-            this.resolveIdleWaitersIfIdle();
+            pending.nativeFailures.set(turnId, asError(err));
+            this.finalizeSlotIfReady(pending);
             return;
           }
-          this.opts.onTurnCompleted?.(completedTurn);
-          this.resolveIdleWaitersIfIdle();
+          pending.completedNativeTurns.set(turnId, completedTurn);
+          this.finalizeSlotIfReady(pending);
         }
       },
       (err) => {
         // Same mutual-exclusion guard as the completed path: only settle as
         // `failed` if `stop()` did not already settle it as `stopped`.
         if (this.pendingTurns.delete(turnId)) {
-          if (this.activeTurnSlot === slot) this.activeTurnSlot = null;
-          if (this.activeTurnId === turnId) this.activeTurnId = null;
-          this.opts.onTurnSettled?.({
+          slot.pendingNativeTurnIds.delete(turnId);
+          slot.nativeFailures.set(
             turnId,
-            status: 'failed',
-            result: { text: null },
-            error: err instanceof Error ? err : new Error(String(err)),
-          });
-          this.resolveIdleWaitersIfIdle();
+            err instanceof Error ? err : new Error(String(err)),
+          );
+          this.finalizeSlotIfReady(slot);
         }
       },
     );
   }
 
-  private rememberMessageId(messageId: string): boolean {
-    if (messageId === '') return true;
-    if (this.seenMessageIds.has(messageId)) return false;
-    this.seenMessageIds.add(messageId);
-    this.seenMessageIdOrder.push(messageId);
-    while (this.seenMessageIdOrder.length > this.messageIdDedupeWindow) {
-      const evicted = this.seenMessageIdOrder.shift();
-      if (evicted !== undefined) this.seenMessageIds.delete(evicted);
+  private finalizeSlotIfReady(slot: ActiveTurnSlot): void {
+    if (
+      slot.stopped ||
+      slot.pendingSubmissions !== 0 ||
+      slot.pendingNativeTurnIds.size !== 0
+    ) {
+      return;
     }
-    return true;
+    const accepted = [...slot.acceptedTurnIds.entries()]
+      .sort(([left], [right]) => left - right);
+    if (accepted.length === 0 && slot.lastSubmissionError === null) return;
+    if (this.activeTurnSlot === slot) this.activeTurnSlot = null;
+    slot.collector.dispose();
+    slot.codec = null;
+    const nativeFailure = accepted
+      .map(([, turnId]) => slot.nativeFailures.get(turnId))
+      .find((error): error is Error => error !== undefined);
+    if (nativeFailure !== undefined) {
+      slot.settle({ status: 'failed', error: nativeFailure });
+    } else if (accepted.length === 0) {
+      slot.settle({ status: 'failed', error: slot.lastSubmissionError! });
+    } else {
+      const finalTurnId = accepted.at(-1)![1];
+      const finalTurn = slot.completedNativeTurns.get(finalTurnId);
+      if (finalTurn === undefined) {
+        throw new Error(
+          `codex logical Turn lost terminal output for native turn ${finalTurnId}`,
+        );
+      }
+      this.opts.onTurnCompleted?.(finalTurn);
+      slot.settle({
+        status: 'completed',
+        resultText: extractAssistantText(finalTurn),
+        truncated: false,
+      });
+    }
+    this.resolveIdleWaitersIfIdle();
   }
 
-  private rememberTextInputId(id: string): boolean {
-    if (this.seenTextInputIds.has(id)) return false;
-    this.seenTextInputIds.add(id);
-    this.seenTextInputIdOrder.push(id);
-    while (this.seenTextInputIdOrder.length > this.messageIdDedupeWindow) {
-      const evicted = this.seenTextInputIdOrder.shift();
-      if (evicted !== undefined) this.seenTextInputIds.delete(evicted);
+  private reserveSource(
+    sourceId: string | undefined,
+    committed: Set<string>,
+    order: string[],
+    pending: Map<string, Promise<RuntimeAdmission>>,
+    operation: () => Promise<RuntimeAdmission>,
+  ): Promise<RuntimeAdmission> {
+    if (sourceId === undefined || sourceId === '') return operation();
+    if (committed.has(sourceId)) {
+      return Promise.resolve({ status: 'duplicate' });
     }
-    return true;
+    const existing = pending.get(sourceId);
+    if (existing !== undefined) return existing;
+    const task = Promise.resolve()
+      .then(operation)
+      .catch((error: unknown): RuntimeAdmission => ({
+        status: 'ambiguous',
+        error: asError(error),
+      }));
+    pending.set(sourceId, task);
+    void task.then((admission) => {
+      if (
+        admission.status === 'submitted' ||
+        admission.status === 'ambiguous'
+      ) {
+        committed.add(sourceId);
+        order.push(sourceId);
+        while (order.length > this.messageIdDedupeWindow) {
+          const evicted = order.shift();
+          if (evicted !== undefined) committed.delete(evicted);
+        }
+      }
+      if (pending.get(sourceId) === task) pending.delete(sourceId);
+    });
+    return task;
+  }
+
+  private trackAdmission(
+    admission: Promise<RuntimeAdmission>,
+  ): Promise<RuntimeAdmission> {
+    this.pendingAdmissions.add(admission);
+    void admission.finally(() => {
+      this.pendingAdmissions.delete(admission);
+    }).catch(() => undefined);
+    return admission;
   }
 
   private resolveIdleWaitersIfIdle(): void {
@@ -479,8 +507,8 @@ function restoreCollectedTurn(
   const text = extractAssistantText(turn);
   if (text === null) {
     throw new Error(
-      `codex outputSchema restoration for turn ${turn.turnId}: ` +
-        'completed turn has no assistant JSON text',
+      'codex outputSchema restoration failed: completed turn has no ' +
+        'assistant JSON text',
     );
   }
   const restoredText = codec.restore(text);
@@ -494,8 +522,7 @@ function restoreCollectedTurn(
   }).reverse();
   if (!replaced) {
     throw new Error(
-      `codex outputSchema restoration for turn ${turn.turnId}: ` +
-        'assistant JSON text was not found',
+      'codex outputSchema restoration failed: assistant JSON text was not found',
     );
   }
   return { ...turn, items };
@@ -503,4 +530,26 @@ function restoreCollectedTurn(
 
 function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+function createRuntimeTurn(): {
+  turn: RuntimeTurn;
+  settle: (outcome: RuntimeTurnOutcome) => boolean;
+} {
+  let resolve!: (outcome: RuntimeTurnOutcome) => void;
+  let settled = false;
+  const turn = Object.freeze({
+    settled: new Promise<RuntimeTurnOutcome>((value) => {
+      resolve = value;
+    }),
+  });
+  return {
+    turn,
+    settle(outcome): boolean {
+      if (settled) return false;
+      settled = true;
+      resolve(outcome);
+      return true;
+    },
+  };
 }

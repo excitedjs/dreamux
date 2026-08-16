@@ -1,5 +1,5 @@
 import type { DreamuxConfig } from '../../config/config.js';
-import { resolveAgent } from '../teammate-collection/agent-config.js';
+import { resolveAgent } from '../agent-entity/agent-config.js';
 import { validateTeamId } from '../team-collection/types.js';
 import type {
   CollaborationSpaceBindTransition,

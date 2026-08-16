@@ -32,7 +32,6 @@ import type {
   AgentRuntimeStatus,
   AgentRuntimeSystemPrompt,
   AgentRuntimeTextInput,
-  AgentRuntimeTurnResult,
   ChannelBindingRouteEvent,
   ChannelCoreEventSubscription,
   ChannelInboundEnvelope,
@@ -47,9 +46,10 @@ import type {
   ChannelTarget,
   ChannelToolCall,
   ChannelToolDescriptor,
-  ChannelTurnSettledEvent,
   DreamuxLogger,
   InboundTurnInput,
+  RuntimeAdmission,
+  RuntimeTurn,
 } from '@excitedjs/dreamux-types';
 
 export const EXTERNAL_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
@@ -96,8 +96,8 @@ class FixtureRuntime implements AgentRuntime {
     this.status = 'stopped';
   }
 
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
-    return { status: 'submitted', turnId: input.sourceId };
+  async channelInput(_input: InboundTurnInput): Promise<RuntimeAdmission> {
+    return { status: 'submitted', turn: completedRuntimeTurn() };
   }
 
   getStatus(): AgentRuntimeStatus {
@@ -124,9 +124,108 @@ class FixtureRuntime implements AgentRuntime {
     return EXTERNAL_RUNTIME_CAPABILITIES;
   }
 
-  async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
-    return { status: 'submitted', turnId: input.sourceId ?? 'plain-turn' };
+  async completionInput(_input: AgentRuntimeTextInput): Promise<RuntimeAdmission> {
+    return { status: 'submitted', turn: completedRuntimeTurn() };
   }
+}
+
+/**
+ * Runtime fixture for the public stop-convergence contract. The transport gate
+ * models an already-started native admission that teardown must settle before
+ * `stop()` is allowed to resolve.
+ */
+class PendingAdmissionFixtureRuntime implements AgentRuntime {
+  readonly providerRef = 'npm:@example/pending-admission-runtime';
+  private status: AgentRuntimeStatus = 'ready';
+  private stopping = false;
+  private readonly pending = new Set<Promise<RuntimeAdmission>>();
+
+  constructor(
+    private readonly transportGate: Promise<void>,
+    private readonly onAdmissionStarted: () => void,
+  ) {}
+
+  async start(): Promise<void> {}
+
+  async resume(): Promise<void> {}
+
+  async stop(): Promise<void> {
+    this.stopping = true;
+    this.status = 'stopping';
+    await this.transportGate;
+    while (this.pending.size > 0) {
+      await Promise.allSettled([...this.pending]);
+    }
+    this.status = 'stopped';
+  }
+
+  channelInput(_input: InboundTurnInput): Promise<RuntimeAdmission> {
+    return this.admit();
+  }
+
+  completionInput(_input: AgentRuntimeTextInput): Promise<RuntimeAdmission> {
+    return this.admit();
+  }
+
+  getStatus(): AgentRuntimeStatus {
+    return this.status;
+  }
+
+  getCheckpoint(): null {
+    return null;
+  }
+
+  wasCheckpointResumed(): boolean {
+    return false;
+  }
+
+  async getLast(): Promise<AgentRuntimeLastResult | null> {
+    return null;
+  }
+
+  async getContext(): Promise<AgentRuntimeContextSnapshot | null> {
+    return null;
+  }
+
+  getCapabilities(): AgentRuntimeCapabilities {
+    return EXTERNAL_RUNTIME_CAPABILITIES;
+  }
+
+  private admit(): Promise<RuntimeAdmission> {
+    if (this.stopping) return Promise.resolve({ status: 'stopped' });
+    this.onAdmissionStarted();
+    const admission = this.transportGate.then<RuntimeAdmission>(() =>
+      this.stopping
+        ? { status: 'stopped' }
+        : { status: 'submitted', turn: completedRuntimeTurn() },
+    );
+    this.pending.add(admission);
+    void admission.finally(() => this.pending.delete(admission));
+    return admission;
+  }
+}
+
+export function createPendingAdmissionRuntimeFixture(): {
+  runtime: AgentRuntime;
+  admissionStarted: Promise<void>;
+  releaseTransport(): void;
+} {
+  let releaseTransport!: () => void;
+  let markAdmissionStarted!: () => void;
+  const transportGate = new Promise<void>((resolve) => {
+    releaseTransport = resolve;
+  });
+  const admissionStarted = new Promise<void>((resolve) => {
+    markAdmissionStarted = resolve;
+  });
+  return {
+    runtime: new PendingAdmissionFixtureRuntime(
+      transportGate,
+      markAdmissionStarted,
+    ),
+    admissionStarted,
+    releaseTransport,
+  };
 }
 
 const runtimeDescriptor: AgentRuntimeProviderDescriptor = {
@@ -197,23 +296,6 @@ class FixtureChannelSession implements ChannelSession {
       'fixture channel started',
     );
     if (routes.coreEvents !== undefined) {
-      this.coreEventSubscriptions.push(
-        routes.coreEvents.on(
-          'turn.settled',
-          (event: ChannelTurnSettledEvent) => {
-            this.logger?.info(
-              {
-                team_name: event.team_name,
-                agent_name: event.agent_name,
-                turn_id: event.turn_id,
-                status: event.status,
-                assistant_truncated: event.assistant_truncated,
-              },
-              'fixture core event',
-            );
-          },
-        ),
-      );
       this.coreEventSubscriptions.push(
         routes.coreEvents.on(
           'binding.route',
@@ -291,6 +373,16 @@ class FixtureChannelSession implements ChannelSession {
   messageBelongsToTarget(input: ChannelMessageTargetCheck): boolean {
     return input.target.target_key === input.message_id;
   }
+}
+
+function completedRuntimeTurn(): RuntimeTurn {
+  return Object.freeze({
+    settled: Promise.resolve({
+      status: 'completed' as const,
+      resultText: null,
+      truncated: false,
+    }),
+  });
 }
 
 const channelDescriptor: ChannelProviderDescriptor = {

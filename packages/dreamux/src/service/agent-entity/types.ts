@@ -84,17 +84,15 @@ export interface AgentEntityIdentity {
   last_assistant_preview: string | null;
 }
 
-export type AgentEntityTurnRecordType = "submit" | "settled";
-
 export interface AgentEntityTurnRecord {
-  version: 1;
-  type: AgentEntityTurnRecordType;
-  turn_id: string | null;
-  timestamp: number;
+  version: 2;
+  type: 'terminal';
+  submitted_at: number;
+  settled_at: number;
   turn_origin: AgentEntityTurnOrigin | null;
   prompt_preview: string | null;
   intent: string | null;
-  settle_status: "completed" | "failed" | "stopped" | null;
+  settle_status: 'completed' | 'failed' | 'stopped';
   assistant: string | null;
   assistant_preview: string | null;
   assistant_truncated: boolean;
@@ -170,20 +168,17 @@ export interface AgentEntityWorktreeIdentity {
   cleanup_error: string | null;
 }
 
-export interface AgentEntityTurnResult {
-  status: "submitted" | "duplicate" | "stopped" | "failed";
-  turn_id?: string;
+export interface AgentEntitySubmissionResult {
+  status: "submitted" | "duplicate" | "stopped" | "failed" | "ambiguous";
   error?: string;
 }
 
-export interface AgentEntitySpawnResult {
+export interface AgentEntitySpawnResult extends AgentEntitySubmissionResult {
   teammate: AgentEntityRuntimeStatus;
-  turn: AgentEntityTurnResult;
 }
 
-export interface AgentEntitySendResult {
+export interface AgentEntitySendResult extends AgentEntitySubmissionResult {
   teammate: AgentEntityRuntimeStatus;
-  turn: AgentEntityTurnResult;
 }
 
 export interface AgentEntityCloseResult {
@@ -234,13 +229,12 @@ export interface AgentEntityHistoryResult {
 }
 
 export interface AgentEntityLastTurn {
-  turn_id: string;
   turn_origin: AgentEntityTurnOrigin | null;
   prompt_preview: string | null;
   intent: string | null;
-  submitted_at: number | null;
+  submitted_at: number;
   settled_at: number;
-  settle_status: "completed" | "failed" | "stopped" | null;
+  settle_status: 'completed' | 'failed' | 'stopped';
   assistant: string | null;
   assistant_preview: string | null;
   assistant_truncated: boolean;

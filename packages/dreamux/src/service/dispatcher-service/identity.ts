@@ -107,15 +107,18 @@ export async function ensureDispatcherIdentity(
     cwd: input.cwd,
     runtime_cwd: input.runtimeCwd,
     worktree: input.worktree,
+    // Compatible preparation only refreshes configuration-owned fields. The
+    // entity owns lifecycle projection and reopens `closed` through its own
+    // mutation gate; construction must preserve status and closed metadata.
     ...(compatible
       ? {}
       : {
           session_id: null,
           status: 'stopped' as const,
           last_error: null,
+          closed_at: null,
+          close_note: null,
         }),
-    closed_at: null,
-    close_note: null,
     updated_at: now,
   };
   return identities.upsert(updated);

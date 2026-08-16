@@ -26,6 +26,33 @@ readiness, and same-version restart cautions.
   restart. A restart does not prove that a turn completed or a reply was sent.
 - Treat a successful submit as acceptance only. Confirm completion and then the
   provider-visible reply separately.
+- Runtime admission `failed` means the provider proved that native admission
+  did not occur and the same immutable prepared completion may be retried.
+  `ambiguous` means the native boundary may have been crossed; do not retry it.
+  An untyped provider rejection is ambiguous. Runtime stop fences new admission
+  synchronously and waits for already-started admission calls to settle before
+  it reports completion.
+- Completion preparation and each prepared submission attempt have an internal
+  deadline. Deadline expiry is admission-ambiguous and terminal: Dreamux logs
+  and drops that delivery instead of retrying or blocking entity, Workflow,
+  Team, or server teardown indefinitely.
+
+## Agent Entity Turn Archives
+
+- Every dispatcher root agent, TeamMate, TeamLeader, and Team member has a
+  server-owned `identity.json` plus `turn.jsonl` in its role-scoped entity
+  directory. The dispatcher root pair is directly under the dispatcher state
+  directory; dispatcher TeamMates are under `teammate/<name>/`; TeamLeaders use
+  the Team root; Team members use `team/<team-id>/teammate/<name>/`.
+- `turn.jsonl` is strict schema version 2. Each non-empty line is one complete
+  terminal Turn row with submission metadata, terminal status, and the bounded
+  assistant result. It has no public or persisted Turn identifier and no split
+  submitted/settled records. `identity.json` owns the rolling count and latest
+  previews projected from committed terminal rows.
+- Both files are fully server-owned. Do not edit, truncate, append, reorder,
+  copy over, synthesize, or delete either file as an operational repair. Use
+  `last`, `history`, Team status, and sanitized logs for
+  supported inspection; raw state is a narrow diagnostic only.
 
 ## Workflow Run State
 
@@ -48,9 +75,11 @@ readiness, and same-version restart cautions.
   compilation, metadata validation, runtime execution, completion delivery,
   or visible Channel delivery succeeded. Inspect the run's terminal state and
   then the delivery boundary separately.
-- Startup marks a durable `running` Workflow record as `stopped`; Workflow
-  journal replay and run resume are not supported. A restart is therefore not a
-  way to continue a Workflow and must not be presented as one.
+- Startup completes a `running` Workflow record from its already-committed
+  terminal journal fact when present; otherwise it marks the interrupted run
+  `stopped`. Workflow execution and completion delivery do not resume; journal
+  replay and run resume are not supported. A restart is therefore not a way to
+  continue a Workflow and must not be presented as one.
 
 ## Team Dissolve And Cleanup State
 

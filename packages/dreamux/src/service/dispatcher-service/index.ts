@@ -1,8 +1,8 @@
 import type {
   AgentRuntimeMcpServer,
-  AgentRuntimeTurnResult,
   ChannelInboundEnvelope,
   DreamuxLogger,
+  InboundDeliveryResult,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
@@ -23,7 +23,10 @@ import {
   collectShutdownFailure,
   throwShutdownFailures,
 } from '../shutdown-errors.js';
-import { CompletionRouter, type CompletionInitiator } from '../completion-router/index.js';
+import {
+  CompletionDeliveryPolicy,
+  type CompletionInitiator,
+} from '../completion-router/index.js';
 import { TeammateCollection } from '../teammate-collection/index.js';
 import type { TeammateOps } from '../teammate-collection/types.js';
 import { AgentIdentityStore } from '../agent-entity/identity-store.js';
@@ -57,6 +60,7 @@ import type {
   LiveDispatcherRuntimeStatus,
 } from './types.js';
 import { DispatcherWorkflows } from './dispatcher-workflows.js';
+import { asInboundDeliveryResult } from './runtime-helpers.js';
 import {
   dispatcherRuntimeStatus,
   dispatcherSummary,
@@ -92,7 +96,10 @@ export class DispatcherService {
     );
     this.log = opts.log;
     const adminSocket = opts.adminSocketPath ?? defaultAdminSocketPath();
-    const router = new CompletionRouter({ dispatcherId: opts.id, log: opts.log });
+    const completionDelivery = new CompletionDeliveryPolicy({
+      dispatcherId: opts.id,
+      log: opts.log,
+    });
     const workflowLog = opts.workflowLoggerFactory?.(opts.id) ?? opts.log;
     const configuredChannelCount =
       opts.config.dispatchers.find((dispatcher) => dispatcher.id === opts.id)
@@ -105,7 +112,7 @@ export class DispatcherService {
 
     const worktrees = new WorktreeManager();
     const identities = new AgentIdentityStore(opts.log, this.coreEvents.publisher);
-    const turnsStore = new AgentTurnsStore(opts.log, this.coreEvents.publisher);
+    const turnsStore = new AgentTurnsStore();
 
     this.channels = new ChannelService({
       dispatcherId: opts.id,
@@ -126,8 +133,9 @@ export class DispatcherService {
       }),
       absentRuntimeStrategy: 'submit',
       admit: (task) => this.admitOperation(task),
-      getRuntime: () => this.inputSources.agent?.getRuntime() ?? null,
-      submitScheduled: (input) => this.mustAgent().scheduledInput(input),
+      getWriter: () => this.inputSources.agent,
+      submitScheduled: async (input) =>
+        asInboundDeliveryResult(await this.mustAgent().scheduledInput(input)),
       log: opts.log,
     });
 
@@ -139,7 +147,7 @@ export class DispatcherService {
       worktrees,
       identities,
       turnsStore,
-      router,
+      completionDelivery,
       initiatorFor: (producer) => this.initiatorFor(producer),
       isShuttingDown: () => this.shuttingDown || this.stopping,
       log: opts.log,
@@ -155,7 +163,7 @@ export class DispatcherService {
       worktrees,
       identities,
       turnsStore,
-      router,
+      completionDelivery,
       initiatorFor: (producer) => this.initiatorFor(producer),
       isShuttingDown: () => this.shuttingDown || this.stopping,
       admitOperation: (task) => this.admitOperation(task),
@@ -177,7 +185,7 @@ export class DispatcherService {
       dispatcherId: opts.id,
       teammates: this._teammates,
       teams: this.teams,
-      router,
+      completionDelivery,
       completionInitiator: () => this.mustAgent(),
       admit: (task) => this.admitOperation(task),
       log: workflowLog,
@@ -205,7 +213,8 @@ export class DispatcherService {
       collaborationSpaces: this.collaborationSpaces,
       log: this.log,
       admit: (task) => this.admitOperation(task),
-      fallback: (turn) => this.mustAgent().channelInput(turn),
+      fallback: async (turn) =>
+        asInboundDeliveryResult(await this.mustAgent().channelInput(turn)),
       isUnavailable: () => this.shuttingDown || this.stopping,
     });
     this.inputSources = new DispatcherInputSourceLifecycle({
@@ -216,7 +225,6 @@ export class DispatcherService {
       agentRuntimeProviders: opts.agentRuntimeProviders,
       identities,
       turnsStore,
-      router,
       log: opts.log,
       channels: this.channels,
       adminSocketPath: adminSocket,
@@ -225,6 +233,7 @@ export class DispatcherService {
       coreEvents: this.coreEvents,
       scheduler: this.scheduler_,
       teams: this.teams,
+      teammates: this._teammates,
       admittedTasks: this.admittedTasks,
       workflows: this.workflowOwner,
       isUnavailable: () => this.shuttingDown || this.stopping,
@@ -255,41 +264,93 @@ export class DispatcherService {
     this.admittedTasks.closeAdmission();
     this.workflowOwner.closeAdmission();
     this.teams.interruptDissolvesForShutdown();
-    const task = this.doStop().finally(() => {
-      this.stopping = false;
-      this.stoppingTask = null;
-      if (!this.shuttingDown) this.admittedTasks.openAdmission();
-    });
+    this.scheduler_.stop();
+    this.teams.stopSchedulers();
+    let cleanupComplete = false;
+    const task = this.doStop()
+      .then(
+        () => {
+          cleanupComplete = true;
+          this.inputSources.markCleanupComplete();
+        },
+        (error: unknown) => {
+          this.inputSources.markCleanupPending();
+          throw error;
+        },
+      )
+      .finally(() => {
+        this.stopping = false;
+        this.stoppingTask = null;
+        if (!this.shuttingDown && cleanupComplete) {
+          this.admittedTasks.openAdmission();
+        }
+      });
     this.stoppingTask = task;
     return task;
+  }
+
+  /** Publish every aggregate fence synchronously before process-level drain. */
+  beginShutdown(): void {
+    this.shuttingDown = true;
+    this.channelRoutes.revokeSessionLeases();
+    this.admittedTasks.closeAdmission();
+    this.workflowOwner.closeAdmission();
+    this.teams.interruptDissolvesForShutdown();
+    this.scheduler_.stop();
+    this.teams.stopSchedulers();
   }
   private async doStop(): Promise<void> {
     const failures: unknown[] = [];
     try {
-      await this.inputSources.waitForSettledStart();
       this.coreEvents.revokeSources();
-      await collectShutdownFailure(failures, () => this.workflowOwner.stopAllForShutdown());
-      await this.channels.closeAll(this.log);
-      await this.inputSources.closePreparedChannels();
-      this.channels.clear();
       this.scheduler_.stop();
       this.teams.stopSchedulers();
       this.teams.interruptDissolvesForShutdown();
-      await this.admittedTasks.drain();
-      await collectShutdownFailure(failures, () => this._teammates.releaseAllOwned());
-      await this.collaborationSpaces.drainLifecycleTasks();
-      this.scheduler_.stop();
-      this.teams.stopSchedulers();
+      await collectShutdownFailure(failures, () => this.workflowOwner.stopAll());
       const teamStopError = await stopTeamRuntimes({
         dispatcherId: this.id,
         teams: this.teams,
         log: this.log,
       });
       if (teamStopError !== null) failures.push(teamStopError);
-      this.inputSources.markStopped();
+      await closeDurableTeammates(
+        this._teammates,
+        'Dispatcher stopped',
+        failures,
+      );
       await collectShutdownFailure(failures, async () => {
-        await this.inputSources.agent?.stop();
+        await this.inputSources.agent?.close({ note: 'Dispatcher stopped' });
       });
+      // Channel/session close and accepted start/work drains may themselves
+      // wait on an entity Turn. Close canonical entities first so those waits
+      // can converge, then drain and repeat the idempotent canonical sweep for
+      // any publication that was already admitted before the fences.
+      await collectShutdownFailure(failures, () =>
+        this.channels.closeAll(this.log));
+      await collectShutdownFailure(failures, () =>
+        this.inputSources.closePreparedChannels());
+      this.channels.clear();
+      await collectShutdownFailure(failures, () =>
+        this.inputSources.waitForSettledStart());
+      await collectShutdownFailure(failures, () =>
+        this.collaborationSpaces.drainLifecycleTasks());
+      await collectShutdownFailure(failures, () => this.admittedTasks.drain());
+      await collectShutdownFailure(failures, () => this.workflowOwner.stopAll());
+      const lateTeamStopError = await stopTeamRuntimes({
+        dispatcherId: this.id,
+        teams: this.teams,
+        log: this.log,
+      });
+      if (lateTeamStopError !== null) failures.push(lateTeamStopError);
+      await closeDurableTeammates(
+        this._teammates,
+        'Dispatcher stopped',
+        failures,
+      );
+      await collectShutdownFailure(failures, async () => {
+        await this.inputSources.agent?.close({ note: 'Dispatcher stopped' });
+      });
+      this.inputSources.markStopped();
       if (failures.length > 0) {
         for (const failure of failures) {
           this.log.error(
@@ -324,17 +385,8 @@ export class DispatcherService {
   }
 
   async shutdown(): Promise<void> {
-    this.shuttingDown = true;
-    this.admittedTasks.closeAdmission();
-    const failures: unknown[] = [];
-    await collectShutdownFailure(failures, () => this.stop());
-    await collectShutdownFailure(failures, () => this.workflowOwner.stopAllForShutdown());
-    await collectShutdownFailure(failures, () => this._teammates.stopAll());
-    await collectShutdownFailure(failures, () => this.teams.stopAll());
-    throwShutdownFailures(
-      failures,
-      `multiple resources in dispatcher ${JSON.stringify(this.id)} failed to shut down`,
-    );
+    this.beginShutdown();
+    await this.stop();
   }
 
   private assertNotShuttingDown(): void {
@@ -480,7 +532,7 @@ export class DispatcherService {
     channelId: string,
     input: InboundTurnInput,
     envelope: ChannelInboundEnvelope,
-  ): Promise<AgentRuntimeTurnResult> {
+  ): Promise<InboundDeliveryResult> {
     return this.channelRoutes.route(channelId, input, envelope);
   }
 
@@ -507,5 +559,20 @@ export class DispatcherService {
       throw new Error(`dispatcher '${this.id}' agent is not prepared`);
     }
     return agent;
+  }
+}
+
+async function closeDurableTeammates(
+  teammates: TeammateCollection,
+  note: string,
+  failures: unknown[],
+): Promise<void> {
+  await collectShutdownFailure(failures, async () => {
+    await teammates.materializeNonClosedEntities();
+  });
+  for (const teammate of teammates.materializedEntities()) {
+    await collectShutdownFailure(failures, async () => {
+      await teammate.close({ note });
+    });
   }
 }

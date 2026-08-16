@@ -389,7 +389,9 @@ describe('dreamux-maintenance progressive disclosure', () => {
       /`workflow_run\.max_concurrency` defaults to 16 and accepts only 1 through 16/,
     );
     expect(reference).toMatch(/returned `\{ run_id \}` is a durable acceptance receipt/);
-    expect(reference).toMatch(/journal replay and run resume are not supported/);
+    expect(reference).toMatch(
+      /journal\s+replay and run resume are not supported/,
+    );
     expect(reference).toMatch(/Bundled skills are injected by role/);
     expect(reference).toMatch(/instead of copying bundled skills into a workspace/);
     expect(reference).toContain('~/.dreamux/state/');

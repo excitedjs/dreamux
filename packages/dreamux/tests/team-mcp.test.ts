@@ -187,7 +187,7 @@ describe('team MCP', () => {
       team: { team_name: 'alpha' },
       leader: { name: 'alpha-leader', status: 'running' },
       member_count: 0,
-      turn: { status: 'submitted', turn_id: 'turn-1' },
+      status: 'submitted',
       bound_target: null,
       bound_targets: [],
     };
@@ -227,7 +227,7 @@ describe('team MCP', () => {
     }
   });
 
-  it('returns an idle create result with turn null and no model guidance', async () => {
+  it('returns an idle create result with null admission status and no model guidance', async () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: true,
@@ -235,7 +235,7 @@ describe('team MCP', () => {
         team: { team_name: 'alpha' },
         leader: { name: 'alpha-leader', status: 'running' },
         member_count: 0,
-        turn: null,
+        status: null,
       },
     }));
     const mcp = await openTeamMcp('dispatcher', admin.socketPath);
@@ -250,7 +250,7 @@ describe('team MCP', () => {
           team: { team_name: 'alpha' },
           leader: { name: 'alpha-leader', status: 'running' },
           member_count: 0,
-          turn: null,
+          status: null,
           bound_target: null,
           bound_targets: [],
         },
@@ -300,7 +300,7 @@ describe('team MCP', () => {
       'team.send': {
         team: { team_name: 'alpha' },
         leader: { name: 'alpha-leader', status: 'running' },
-        turn: { status: 'submitted', turn_id: 'turn-2' },
+        status: 'submitted',
       },
     };
     const admin = await startFakeAdminServer((request) => ({
@@ -351,11 +351,12 @@ describe('team MCP', () => {
     }
   });
 
-  it('returns a failed Team turn without model guidance', async () => {
+  it('returns a failed Team admission without model guidance', async () => {
     const value = {
       team: { team_name: 'alpha' },
       leader: { name: 'alpha-leader', status: 'degraded' },
-      turn: { status: 'failed', error: 'runtime unavailable' },
+      status: 'failed',
+      error: 'runtime unavailable',
     };
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,

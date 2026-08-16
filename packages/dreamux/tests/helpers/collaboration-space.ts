@@ -66,7 +66,7 @@ export function fakeTeams(created: CreatedTeam[], dissolved: string[]) {
         team: { team_name: input.name, leader_name: `${input.name}-leader` },
         leader: null,
         member_count: 0,
-        turn: null,
+        status: null,
       };
     },
     async isOpenTeam(name: string) {

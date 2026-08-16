@@ -18,7 +18,7 @@ import { TeamCollection } from '../src/service/team-collection/index.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
 import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
-import { CompletionRouter } from '../src/service/completion-router/index.js';
+import { CompletionDeliveryPolicy } from '../src/service/completion-router/index.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import { fakeChannels, log } from './helpers/collaboration-space.js';
@@ -106,8 +106,11 @@ describe('collaboration target per-target repo close cleanup', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log as never),
-      turnsStore: new AgentTurnsStore(log as never),
-      router: new CompletionRouter({ dispatcherId: 'flow', log: log as never }),
+      turnsStore: new AgentTurnsStore(),
+      completionDelivery: new CompletionDeliveryPolicy({
+        dispatcherId: 'flow',
+        log: log as never,
+      }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       adminSocketPath: join(root, 'admin.sock'),

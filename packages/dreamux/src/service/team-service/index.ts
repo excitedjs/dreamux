@@ -1,7 +1,7 @@
 import type {
   AgentRuntimeMcpServer,
-  AgentRuntimeTurnResult,
   DreamuxLogger,
+  InboundDeliveryResult,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
@@ -9,11 +9,9 @@ import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import { dispatcherTeamCronJobsPath } from '../../platform/paths.js';
 import type {
-  CompletionEnvelope,
+  CompletionDeliveryPolicy,
   CompletionInitiator,
-  CompletionRouter,
 } from '../completion-router/index.js';
-import { completionKey } from '../completion-router/index.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
@@ -23,8 +21,8 @@ import type { SchedulerCommands } from '../scheduler/types.js';
 import { CronJobStore } from '../scheduler/store.js';
 import {
   TeammateCollection,
+  type CreateLockedTeammateOptions,
 } from '../teammate-collection/index.js';
-import type { SpawnOwnedTeamMateOptions } from '../teammate-collection/owned-teammates.js';
 import type {
   SpawnTeamMateRequest,
   TeamMateSharedWorkspace,
@@ -37,7 +35,7 @@ import {
   requireLifecycleText,
   type AgentEntityIdentity,
   type AgentEntityRuntimeStatus,
-  type AgentEntityTurnResult,
+  type AgentEntitySubmissionResult,
 } from '../agent-entity/types.js';
 import type { SuffixGenerator } from '../name-allocator.js';
 import type { TeammateService } from '../teammate-service/index.js';
@@ -53,11 +51,13 @@ import type {
 } from '../team-collection/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import { createTeamLeaderAgentForTeam } from './leader-agent.js';
+import { asInboundDeliveryResult } from './delivery-result.js';
 import { teamView } from './team-view.js';
 import type {
   TeamAvailability,
   TeamLiveWriter,
   TeamSchedulerLifecycle,
+  TeamServiceCreateOutput,
   TeamServiceCreateInput,
 } from './types.js';
 import { WorkflowService, type WorkflowOps } from '../workflow-service/index.js';
@@ -69,7 +69,7 @@ export interface TeamServiceDeps {
   worktrees: WorktreeManager;
   identities: AgentIdentityStore;
   turnsStore: AgentTurnsStore;
-  router: CompletionRouter;
+  completionDelivery: CompletionDeliveryPolicy;
   initiatorFor: (
     producer: AgentEntityIdentity,
   ) => Promise<CompletionInitiator | null>;
@@ -93,15 +93,6 @@ export interface TeamServiceDeps {
   workflowLog: DreamuxLogger;
 }
 
-export interface TeamServiceCreateOutput {
-  service: TeamService;
-  schedulerLifecycle: TeamSchedulerLifecycle;
-  leaderResult: {
-    teammate: AgentEntityRuntimeStatus;
-    turn: AgentEntityTurnResult | null;
-  };
-}
-
 /**
  * A single team entity (issue #233): holds its own {@link TeamRecord}, *has a*
  * leader {@link TeammateService} (Phase 4, at the team root), and OWNS its
@@ -113,8 +104,6 @@ export interface TeamServiceCreateOutput {
 export class TeamService {
   private record: TeamRecord | null = null;
   private leader_: TeammateService | null = null;
-  private leaderSubmissionSeq = 0;
-  private readonly leaderSettleCaptures = new Set<Promise<void>>();
   readonly id: string;
   /** The team's OWN members collection (`teamScope: team_id`, issue #233). Held
    * as the concrete class internally because the lifecycle methods the team
@@ -136,7 +125,7 @@ export class TeamService {
       worktrees: deps.worktrees,
       identities: deps.identities,
       turnsStore: deps.turnsStore,
-      router: deps.router,
+      completionDelivery: deps.completionDelivery,
       initiatorFor: deps.initiatorFor,
       isShuttingDown: deps.isShuttingDown,
       ...(deps.agentNameSuffixGenerator !== undefined
@@ -148,17 +137,13 @@ export class TeamService {
       dispatcherId: deps.dispatcherId,
       teamId,
       callerKind: 'team_leader',
-      ownedTeammates: {
-        spawnOwned: (input, options) =>
+      teammates: {
+        createLocked: (input, options) =>
           deps.withTeamLeaderLease(this.workflowLease(), (service) =>
-            service.spawnOwnedTeamMate(input, options),
-        ),
-        // Cleanup is owned by this TeamService and must remain available after
-        // the outer route-closing fence rejects new generation leases.
-        releaseAllOwned: (owner) =>
-          this.teammateCollection.releaseAllOwned(owner),
+            service.createLockedWorkflowTeammate(input, options ?? {}),
+          ),
       },
-      router: deps.router,
+      completionDelivery: deps.completionDelivery,
       completionInitiator: () =>
         deps.availability.completionInitiator(this.mustLeader()),
       log: deps.workflowLog,
@@ -174,9 +159,10 @@ export class TeamService {
       // only Dispatcher admission around it; Team admission guards each short
       // public mutation and the final prompt submission separately below.
       admit: (task) => deps.admitOperation(task),
-      getRuntime: () => this.leader_?.getRuntime() ?? null,
+      getWriter: () => this.leader_,
       submitScheduled: (input) =>
-        deps.availability.admit(() => this.mustLeader().scheduledInput(input)),
+        deps.availability.admit(async () =>
+          asInboundDeliveryResult(await this.mustLeader().scheduledInput(input))),
       log: deps.log,
     });
     this.schedulerCommands = {
@@ -193,7 +179,7 @@ export class TeamService {
   static async createNew(
     deps: TeamServiceDeps,
     input: TeamServiceCreateInput,
-  ): Promise<TeamServiceCreateOutput> {
+  ): Promise<TeamServiceCreateOutput<TeamService>> {
     const service = new TeamService(deps, input.teamId);
     const identityPrompt = optionalLifecycleText(
       input.identity,
@@ -223,38 +209,52 @@ export class TeamService {
       closed_at: null,
       close_note: null,
     }, input.nameClaimToken);
-    const identity = await deps.identities.create({
-      dispatcherId: deps.dispatcherId,
-      name: leaderName,
-      role: 'team_leader',
-      teamId: input.teamId,
-      agentRuntime: input.leaderAgentRuntime,
-      sourceCwd: input.workspace.sourceCwd,
-      sourceRepo: input.workspace.sourceRepo,
-      cwd: input.workspace.runtimeCwd,
-      runtimeCwd: input.workspace.runtimeCwd,
-      worktree: input.workspace.worktree,
-      intent: input.intent,
-      identityPrompt,
-      ...(input.skillSources !== undefined
-        ? { skillSources: input.skillSources }
-        : {}),
-      status: 'starting',
-    });
-    const leader = service.buildLeader(identity);
-    // Publish ownership before starting: if any later create step and its first
-    // cleanup attempt both fail, the collection's shutdown sweep can retry this
-    // same runtime even though the service never reaches the live cache.
-    service.leader_ = leader;
-    deps.trackMaterialized(service);
+    service.record = team;
+    let leader: TeammateService | null = null;
     try {
-      await leader.ensureStarted();
-      let turn: AgentEntityTurnResult | null = null;
+      const identity = await deps.identities.create({
+        dispatcherId: deps.dispatcherId,
+        name: leaderName,
+        role: 'team_leader',
+        teamId: input.teamId,
+        agentRuntime: input.leaderAgentRuntime,
+        sourceCwd: input.workspace.sourceCwd,
+        sourceRepo: input.workspace.sourceRepo,
+        cwd: input.workspace.runtimeCwd,
+        runtimeCwd: input.workspace.runtimeCwd,
+        worktree: input.workspace.worktree,
+        intent: input.intent,
+        identityPrompt,
+        ...(input.skillSources !== undefined
+          ? { skillSources: input.skillSources }
+          : {}),
+        status: 'starting',
+      });
+      leader = service.buildLeader(identity);
+      // Publish ownership before starting: cleanup retries retain the exact
+      // entity/process authority even though the service is not routable yet.
+      service.leader_ = leader;
+      deps.trackMaterialized(service);
+      await leader.activate();
+      let submission: AgentEntitySubmissionResult | null = null;
       if (input.prompt !== undefined) {
-        turn = await leader.submitInitialPrompt(input.prompt, {
+        const delivery = await service.resolveLeaderCompletion(leader);
+        submission = await leader.submitInitialPrompt(input.prompt, {
           turnOrigin: 'dispatcher',
+          ...(delivery !== null ? { deliverCompletion: delivery } : {}),
         });
-        await service.registerLeaderCompletion(leader, turn.turn_id ?? null);
+        if (submission.status !== 'submitted') {
+          if (
+            (submission.status === 'failed' ||
+              submission.status === 'ambiguous') &&
+            submission.error !== undefined
+          ) {
+            throw new Error(submission.error);
+          }
+          throw new Error(
+            `initial TeamLeader prompt was not admitted (${submission.status})`,
+          );
+        }
       }
       team = await deps.store.update(team, { status: 'running' });
       service.record = team;
@@ -263,19 +263,51 @@ export class TeamService {
       return {
         service,
         schedulerLifecycle: TeamService.schedulerLifecycleFor(service),
-        leaderResult: { teammate: leader.status(), turn },
+        leaderResult: { teammate: leader.status(), submission },
       };
     } catch (error) {
+      const failures: unknown[] = [error];
       service.scheduler_.stop();
-      try {
-        await leader.stop();
-      } catch (stopError) {
-        throw new AggregateError(
-          [error, stopError],
-          `Team ${JSON.stringify(input.teamId)} creation and leader cleanup failed`,
-        );
+      await collectShutdownFailure(failures, () =>
+        service.workflowService.stopAll());
+      if (leader === null) {
+        await collectShutdownFailure(failures, async () => {
+          const durableLeader = await deps.identities.get(
+            deps.dispatcherId,
+            leaderName,
+            input.teamId,
+          );
+          if (durableLeader === null) return;
+          if (durableLeader.role !== 'team_leader') {
+            throw new Error(
+              `TeamLeader ${JSON.stringify(leaderName)} has role ${JSON.stringify(durableLeader.role)}`,
+            );
+          }
+          leader = service.buildLeader(durableLeader);
+          service.leader_ = leader;
+          deps.trackMaterialized(service);
+        });
       }
-      throw error;
+      if (leader !== null) {
+        await collectShutdownFailure(failures, async () => {
+          await leader!.close({ note: 'Team creation failed' });
+        });
+      }
+      const closedAt = Date.now();
+      await collectShutdownFailure(failures, async () => {
+        team = await deps.store.update(team, {
+          status: 'closed',
+          closedAt,
+          closeNote: 'Team creation failed',
+          worktree: input.workspace.worktree,
+        });
+        service.record = team;
+      });
+      if (failures.length === 1) throw error;
+      throw new AggregateError(
+        failures,
+        `Team ${JSON.stringify(input.teamId)} creation failed and cleanup did not converge`,
+      );
     }
   }
 
@@ -366,7 +398,7 @@ export class TeamService {
     if (record.status === 'closed') {
       throw new Error(`Team ${JSON.stringify(this.id)} is closed`);
     }
-    await this.leader.ensureStarted();
+    await this.leader.activate();
     await this.workflowService.start();
     if (record.status === 'starting') {
       this.record = await this.deps.store.update(record, { status: 'running' });
@@ -375,15 +407,12 @@ export class TeamService {
 
   /** Every process-live runtime that may write this Team's shared workspace. */
   liveWriters(): TeamLiveWriter[] {
-    const writers = this.teammateCollection.liveRuntimes().map(
-      ({ name, runtime }) => ({
-        name, waitIdle: runtime.waitIdle?.bind(runtime),
-      }),
-    );
-    const leaderRuntime = this.leader_?.getRuntime() ?? null;
-    if (leaderRuntime !== null) {
+    const writers = this.teammateCollection.liveWriters();
+    const leader = this.leader_;
+    if (leader !== null && leader.runtimeStatus() !== null) {
       writers.unshift({
-        name: this.leaderName, waitIdle: leaderRuntime.waitIdle?.bind(leaderRuntime),
+        name: this.leaderName,
+        waitIdle: leader.waitIdleCapability(),
       });
     }
     return writers;
@@ -392,9 +421,11 @@ export class TeamService {
   /** Reattach every non-closed durable writer before restart recovery waits. */
   async recoverLiveWritersForDissolve(): Promise<TeamLiveWriter[]> {
     if (this.leader.status().status !== 'closed') {
-      await this.leader.ensureStarted();
+      await this.leader.activate();
     }
-    await this.teammateCollection.recoverLiveRuntimesForOwnerClose();
+    for (const member of await this.teammateCollection.materializeNonClosedEntities()) {
+      await member.activate();
+    }
     return this.liveWriters();
   }
 
@@ -418,17 +449,27 @@ export class TeamService {
     worktree: TeamRecord['worktree'];
   }): Promise<TeamSummary> {
     requireLifecycleText(input.note, 'Team dissolve note');
+    const failures: unknown[] = [];
     this.workflowService.closeAdmission();
-    await this.workflowService.stopAll();
-    await this.teammateCollection.releaseAllOwned();
+    await collectShutdownFailure(failures, () => this.workflowService.stopAll());
     this.scheduler_.stop();
     const record = this.mustRecord();
-    const members = await this.members();
-    for (const member of members) {
-      await this.teammateCollection.close({ name: member.name, note: input.note });
+    await collectShutdownFailure(failures, async () => {
+      await this.teammateCollection.materializeNonClosedEntities();
+    });
+    for (const member of this.teammateCollection.materializedEntities()) {
+      await collectShutdownFailure(failures, async () => {
+        await member.close({ note: input.note });
+      });
     }
-    await this.stopLeader({ note: input.note });
-    await this.scheduler_.deleteStoreFile();
+    await collectShutdownFailure(failures, async () => {
+      await this.stopLeader({ note: input.note });
+    });
+    await collectShutdownFailure(failures, () => this.scheduler_.deleteStoreFile());
+    throwShutdownFailures(
+      failures,
+      `Team ${JSON.stringify(this.id)} resources did not close for dissolve`,
+    );
     const closingDissolve =
       input.dissolve.phase === 'complete' || input.dissolve.phase === 'failed'
       ? { ...input.dissolve, phase: 'closing_resources' as const }
@@ -478,23 +519,32 @@ export class TeamService {
     return summary;
   }
 
-  /** Stop every live runtime owned by this Team, without one failure preventing
-   * the remaining members or leader from receiving their stop attempt. */
+  /** Close every materialized entity and Workflow owned by this Team without
+   * one failure preventing the remaining resources from receiving closure. */
   async stopAll(): Promise<void> {
     const failures: unknown[] = [];
     await collectShutdownFailure(failures, () =>
-      this.workflowService.stopAllForShutdown());
-    await collectShutdownFailure(failures, () => this.teammateCollection.stopAll());
-    await collectShutdownFailure(failures, () => this.stopLeader());
+      this.workflowService.stopAll());
+    await collectShutdownFailure(failures, async () => {
+      await this.teammateCollection.materializeNonClosedEntities();
+    });
+    for (const member of this.teammateCollection.materializedEntities()) {
+      await collectShutdownFailure(failures, async () => {
+        await member.close({ note: 'Dreamux server shutdown' });
+      });
+    }
+    await collectShutdownFailure(failures, async () => {
+      await this.stopLeader({ note: 'Dreamux server shutdown' });
+    });
     throwShutdownFailures(
       failures,
       `multiple runtimes in Team ${JSON.stringify(this.id)} failed to stop`,
     );
   }
 
-  async deliverToLeader(turn: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+  async deliverToLeader(turn: InboundTurnInput): Promise<InboundDeliveryResult> {
     if (this.mustRecord().status === 'closed') return { status: 'stopped' };
-    return this.leader.channelInput(turn);
+    return asInboundDeliveryResult(await this.leader.channelInput(turn));
   }
 
   async sendToLeader(input: {
@@ -511,14 +561,14 @@ export class TeamService {
       prompt: input.prompt,
       ...(input.intent !== undefined ? { intent: input.intent } : {}),
       turnOrigin: 'dispatcher',
+      deliverCompletion: (fact) =>
+        this.deps.completionDelivery.deliver(input.initiator, fact),
     });
-    if (sent.turn.turn_id !== undefined) {
-      this.registerLeaderCompletionFor(leader, sent.turn.turn_id, input.initiator);
-    }
     return {
       team: this.view(),
       leader: sent.teammate,
-      turn: sent.turn,
+      status: sent.status,
+      ...(sent.error !== undefined ? { error: sent.error } : {}),
     };
   }
 
@@ -543,11 +593,11 @@ export class TeamService {
     });
   }
 
-  async spawnOwnedTeamMate(
+  async createLockedWorkflowTeammate(
     input: Omit<SpawnTeamMateRequest, 'sharedWorkspace'>,
-    options: SpawnOwnedTeamMateOptions,
+    options: CreateLockedTeammateOptions,
   ) {
-    return this.teammateCollection.spawnOwned(
+    return this.teammateCollection.createLocked(
       {
         ...input,
         sharedWorkspace: this.sharedWorkspace(),
@@ -593,59 +643,23 @@ export class TeamService {
       turnsStore: this.deps.turnsStore,
       worktrees: this.deps.worktrees,
       log: this.deps.log,
-      nextSubmissionSeq: () => ++this.leaderSubmissionSeq,
-      trackSettleCapture: (capture) => this.trackLeaderSettleCapture(capture),
-      routeSettledCompletion: (producerName, turnId, completion) =>
-        this.routeLeaderSettledCompletion(producerName, turnId, completion),
     });
   }
 
-  private trackLeaderSettleCapture(capture: Promise<void>): void {
-    this.leaderSettleCaptures.add(capture);
-    void capture.finally(() => {
-      this.leaderSettleCaptures.delete(capture);
-    });
+  private stopLeader(
+    input: { note: string } = { note: 'Team stopped' },
+  ): Promise<unknown> {
+    return this.leader.close({ note: input.note });
   }
 
-  private async drainLeaderSettleCaptures(): Promise<void> {
-    while (this.leaderSettleCaptures.size > 0) {
-      await Promise.allSettled([...this.leaderSettleCaptures]);
-    }
-  }
-
-  private async stopLeader(input: { note?: string } = {}): Promise<void> {
-    try {
-      if (input.note !== undefined) await this.leader.close({ note: input.note });
-      else await this.leader.stop();
-    } finally {
-      await this.drainLeaderSettleCaptures();
-    }
-  }
-
-  private async registerLeaderCompletion(
+  private async resolveLeaderCompletion(
     leader: TeammateService,
-    turnId: string | null,
-  ): Promise<void> {
-    if (turnId === null) return;
+  ) {
     const initiator = await this.deps.initiatorFor(leader.current());
-    if (initiator === null) return;
-    this.registerLeaderCompletionFor(leader, turnId, initiator);
-  }
-
-  private registerLeaderCompletionFor(
-    leader: TeammateService,
-    turnId: string,
-    initiator: CompletionInitiator,
-  ): void {
-    this.deps.router.register(completionKey(leader.name, turnId), initiator);
-  }
-
-  private async routeLeaderSettledCompletion(
-    producerName: string,
-    turnId: string,
-    completion: CompletionEnvelope,
-  ): Promise<void> {
-    await this.deps.router.settle(completionKey(producerName, turnId), completion);
+    return initiator === null
+      ? null
+      : (fact: Parameters<CompletionDeliveryPolicy['deliver']>[1]) =>
+          this.deps.completionDelivery.deliver(initiator, fact);
   }
 
   private mustRecord(): TeamRecord {

@@ -47,6 +47,7 @@ import { detectAmbiguousV2ChannelBindingRoutes } from './service/channel-binding
 import { detectLegacyChannelBindingStore } from './service/channel-binding/store.js';
 import { detectLegacyCronJobStore } from './service/scheduler/store.js';
 import { TeamStore } from './service/team-collection/store.js';
+import { assertNoLegacyTurnArchives } from './service/agent-entity/turns-store.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
@@ -293,6 +294,11 @@ export class Server {
         if (ambiguousBinding !== null) messages.push(ambiguousBinding);
       }
       messages.push(...(await detectLegacyCronStores(row.dispatcher_id)));
+      try {
+        await assertNoLegacyTurnArchives(row.dispatcher_id);
+      } catch (error) {
+        messages.push(error instanceof Error ? error.message : String(error));
+      }
     }
     if (messages.length > 0) {
       throw new Error(
@@ -316,7 +322,12 @@ export class Server {
         'dreamux server is shutting down',
       );
     }
-    const promise = Promise.resolve().then(task);
+    let promise: Promise<T>;
+    try {
+      promise = Promise.resolve(task());
+    } catch (error) {
+      promise = Promise.reject(error);
+    }
     this.adminRequests.add(promise);
     void promise.finally(() => {
       this.adminRequests.delete(promise);
@@ -337,8 +348,9 @@ export class Server {
     this.log.info('shutting down');
     const failures: unknown[] = [];
     this.acceptingAdminRequests = false;
-    await collectShutdownFailure(failures, () => this.drainAdminRequests());
+    this.dispatchers.beginShutdown();
     await collectShutdownFailure(failures, () => this.dispatchers.shutdown());
+    await collectShutdownFailure(failures, () => this.drainAdminRequests());
     await collectShutdownFailure(failures, async () => {
       if (this.admin === null) return;
       await this.admin.close();

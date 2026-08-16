@@ -5,7 +5,7 @@ import { Readable } from 'node:stream';
 
 import * as lark from '@larksuiteoapi/node-sdk';
 import type {
-  AgentRuntimeTurnResult,
+  InboundDeliveryResult,
   DreamuxLogger,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
@@ -40,7 +40,7 @@ interface HarnessOptions {
   contactLookup?: (input: unknown) => Promise<ContactResponse>;
   submitTurn?: (
     input: InboundTurnInput,
-  ) => Promise<AgentRuntimeTurnResult>;
+  ) => Promise<InboundDeliveryResult>;
 }
 
 export interface RealFeishuHarness {
@@ -178,7 +178,7 @@ export async function createRealFeishuHarness(
     submitTurn: async (input) => {
       submitted.push(input);
       return options.submitTurn?.(input) ??
-        { status: 'submitted', turnId: `turn-${input.sourceId}` };
+        { status: 'submitted' };
     },
   };
   const session = new FeishuChannelSession({

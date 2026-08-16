@@ -18,6 +18,8 @@ import {
   COMPLETION_INLINE_BUDGET_MAX,
   completionInlineBudget,
   ensureOwnerOnlyDir,
+  isProcessGroupAlive,
+  killProcessGroup,
   isProcessAlive,
   isPlainObject,
   pathExists,
@@ -28,7 +30,6 @@ import {
   requireNonEmptyString,
   resolveCompletionBody,
   SupervisedChild,
-  teamMateCompletionOutputPath,
   type CompletionBodyInput,
 } from '../src/index.js';
 
@@ -64,6 +65,19 @@ describe('config-validate', () => {
 });
 
 describe('os', () => {
+  it('treats EPERM process-group probes as alive and signal attempts as failures', () => {
+    const error = Object.assign(new Error('not permitted'), { code: 'EPERM' });
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw error;
+    });
+    try {
+      expect(isProcessGroupAlive(424242)).toBe(true);
+      expect(() => killProcessGroup(424242, 'SIGTERM')).toThrow(error);
+    } finally {
+      kill.mockRestore();
+    }
+  });
+
   it('ensureOwnerOnlyDir creates a 0700 directory', async () => {
     const dir = join(root, 'owned');
     await ensureOwnerOnlyDir(dir);
@@ -145,6 +159,35 @@ describe('SupervisedChild', () => {
     expect(pid).not.toBeNull();
     await vi.waitFor(() => expect(isProcessAlive(pid!)).toBe(false));
   });
+
+  it('retains process-group authority when SIGKILL absence cannot be proved', async () => {
+    const supervised = new SupervisedChild(
+      {
+        kind: 'spawn',
+        command: process.execPath,
+        args: ['-e', 'setInterval(() => {}, 1000)'],
+        options: { stdio: 'ignore' },
+      },
+      { stopTimeoutMs: 250, pollIntervalMs: 5 },
+    );
+    await supervised.start();
+    const pid = supervised.pid!;
+    const realKill = process.kill.bind(process);
+    const kill = vi.spyOn(process, 'kill').mockImplementation((target, signal) => {
+      if (target === -pid) return true;
+      return realKill(target, signal);
+    });
+    try {
+      await expect(supervised.stop()).rejects.toThrow(/still exists after SIGKILL/);
+      expect(supervised.pid).toBe(pid);
+      expect(kill).toHaveBeenCalledWith(-pid, 'SIGKILL');
+    } finally {
+      kill.mockRestore();
+      await supervised.stop();
+      await vi.waitFor(() => expect(isProcessAlive(pid)).toBe(false));
+    }
+    expect(supervised.pid).toBeNull();
+  });
 });
 
 describe('completion-body', () => {
@@ -158,12 +201,6 @@ describe('completion-body', () => {
     );
   });
 
-  it('teamMateCompletionOutputPath sanitizes both segments', () => {
-    expect(teamMateCompletionOutputPath('/spill', 'rev/iewer', 'a:b')).toBe(
-      join('/spill', 'teammate-rev_iewer-a_b.output'),
-    );
-  });
-
   it('resolveCompletionBody inlines a short result and spills an over-budget one', async () => {
     const inline = await resolveCompletionBody(completion('hi'), root);
     expect(inline).toEqual({ kind: 'inline', text: 'hi' });
@@ -174,8 +211,17 @@ describe('completion-body', () => {
       const big = await resolveCompletionBody(completion('overflowing'), root);
       expect(big.kind).toBe('spilled');
       if (big.kind === 'spilled') {
+        expect(big.path).toMatch(/\/completion-[0-9a-f-]+\.output$/u);
+        expect(big.path).not.toContain('reviewer');
         expect(await readFile(big.path, 'utf8')).toBe('overflowing');
         expect((await stat(big.path)).mode & 0o077).toBe(0);
+
+        const second = await resolveCompletionBody(
+          completion('another overflow'),
+          root,
+        );
+        expect(second.kind).toBe('spilled');
+        if (second.kind === 'spilled') expect(second.path).not.toBe(big.path);
       }
     } finally {
       if (previous === undefined) delete process.env.TASK_MAX_OUTPUT_LENGTH;
@@ -210,7 +256,7 @@ describe('turn-render', () => {
 });
 
 function completion(result: string): CompletionBodyInput {
-  return { source: 'reviewer', id: 'reviewer:turn-1', result };
+  return { result };
 }
 
 function plain(text: string): InboundTurnInput {

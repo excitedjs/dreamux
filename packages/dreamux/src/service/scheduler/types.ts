@@ -1,8 +1,4 @@
-import type {
-  AgentRuntime,
-  AgentRuntimeTurnResult,
-  DreamuxLogger,
-} from '@excitedjs/dreamux-types';
+import type { DreamuxLogger, InboundDeliveryResult } from '@excitedjs/dreamux-types';
 
 import type {
   CronDeliverTarget,
@@ -37,14 +33,14 @@ export interface SchedulerServiceOptions {
   store: CronJobStore;
   absentRuntimeStrategy: 'miss' | 'submit';
   admit<T>(task: () => Promise<T>): Promise<T>;
-  getRuntime(): AgentRuntime | null;
+  getWriter(): { waitIdle(): Promise<void> } | null;
   submitScheduled(input: {
     jobId: string;
     prompt: string;
     sourceId: string;
     /** Aborted once this held fire has been stopped, deleted, or superseded. */
     signal: AbortSignal;
-  }): Promise<AgentRuntimeTurnResult>;
+  }): Promise<InboundDeliveryResult>;
   log: DreamuxLogger;
   now?: () => number;
 }

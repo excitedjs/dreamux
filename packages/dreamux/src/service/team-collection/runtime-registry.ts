@@ -9,7 +9,9 @@ import {
   TeamService,
   type TeamServiceDeps,
 } from '../team-service/index.js';
-import type { TeamSchedulerLifecycle } from '../team-service/types.js';
+import type {
+  TeamSchedulerLifecycle,
+} from '../team-service/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import { teamErrorInfo } from './errors.js';
 import { isActiveDissolve } from './dissolve-lifecycle.js';
@@ -113,13 +115,23 @@ export class TeamRuntimeRegistry {
       team: service.view(),
       leader: leaderResult.teammate,
       member_count: await service.memberCount(),
-      turn: leaderResult.turn,
+      status: leaderResult.submission?.status ?? null,
+      ...(leaderResult.submission?.error !== undefined
+        ? { error: leaderResult.submission.error }
+        : {}),
     };
   }
 
   async get(teamId: string): Promise<TeamService> {
     const cached = this.cache.get(teamId);
     if (cached !== undefined) return cached;
+    const retained = [...this.materialized].find(
+      (service) => service.id === teamId,
+    );
+    if (retained !== undefined) {
+      if (!retained.leader.isRetired()) return retained;
+      this.materialized.delete(retained);
+    }
     return dedupe(this.rebuilding, teamId, async () =>
       this.rebuild(await this.opts.mustTeam(teamId)),
     );
@@ -201,11 +213,34 @@ export class TeamRuntimeRegistry {
   }
 
   async stopAll(): Promise<void> {
+    const discoveryResults = await Promise.allSettled([
+      this.opts.store.list(this.opts.dispatcherId),
+    ]);
+    const materializationResults: PromiseSettledResult<unknown>[] =
+      discoveryResults[0]!.status === 'fulfilled'
+        ? await Promise.allSettled(
+          discoveryResults[0].value
+            .filter((team) => team.status !== 'closed')
+            .map((team) => this.get(team.team_id)),
+        )
+        : discoveryResults;
+    const services = [...this.materialized];
     const results = await Promise.allSettled(
-      [...this.materialized].map((service) =>
-        this.opts.routeLifecycle.run(service.id, () => service.stopAll())),
+      // The containment root publishes its aggregate admission fence before
+      // this close-first sweep. Do not hold a Team route lock while closing
+      // members: their captured completion delivery may resolve the same
+      // TeamLeader through that route before the leader itself closes.
+      services.map((service) => service.stopAll()),
     );
-    throwSettledFailures(results, 'multiple Team runtimes failed to stop');
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') {
+        this.evict(services[index]!.id, services[index]!);
+      }
+    });
+    throwSettledFailures(
+      [...materializationResults, ...results],
+      'multiple durable Team resources failed to stop',
+    );
   }
 
   private async rebuild(record: TeamRecord): Promise<TeamService> {
@@ -229,6 +264,7 @@ export class TeamRuntimeRegistry {
   }
 
   private evict(teamId: string, expectedService: TeamService): void {
+    this.materialized.delete(expectedService);
     if (this.cache.get(teamId) !== expectedService) return;
     this.cache.delete(teamId);
     const scheduler = this.schedulers.get(teamId);
@@ -244,7 +280,7 @@ export class TeamRuntimeRegistry {
       worktrees: this.opts.worktrees,
       identities: collection.identities,
       turnsStore: collection.turnsStore,
-      router: collection.router,
+      completionDelivery: collection.completionDelivery,
       initiatorFor: collection.initiatorFor,
       isShuttingDown: collection.isShuttingDown,
       admitOperation: collection.admitOperation ?? ((task) => task()),

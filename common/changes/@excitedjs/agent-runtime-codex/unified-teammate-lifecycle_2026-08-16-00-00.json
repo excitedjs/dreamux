@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-codex",
+      "comment": "BREAKING: Codex runtime submissions now return RuntimeAdmission with stable RuntimeTurn objects; native app-server Turn IDs remain provider-private. Request uncertainty is reported as ambiguous, folded native aliases converge before the canonical Turn settles, and runtime stop tears down transport before draining every started admission.",
+      "type": "major"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex"
+}

@@ -5,7 +5,7 @@ import { Readable } from 'node:stream';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentRuntimeTurnResult, DreamuxLogger } from '@excitedjs/dreamux-types';
+import type { InboundDeliveryResult, DreamuxLogger } from '@excitedjs/dreamux-types';
 import type {
   FeishuMessageReadResponse,
   FeishuMessageResourceResponse,
@@ -123,9 +123,9 @@ describe('Feishu session lifecycle fencing', () => {
       botFactory: () => bot,
     });
     await session.start({
-      submitTurn: async (input): Promise<AgentRuntimeTurnResult> => {
+      submitTurn: async (input): Promise<InboundDeliveryResult> => {
         submitted.push(input.sourceId);
-        return { status: 'submitted', turnId: `turn-${input.sourceId}` };
+        return { status: 'submitted' };
       },
     });
 
@@ -168,9 +168,9 @@ describe('Feishu session lifecycle fencing', () => {
       botFactory: () => bot,
     });
     await session.start({
-      submitTurn: async (input): Promise<AgentRuntimeTurnResult> => {
+      submitTurn: async (input): Promise<InboundDeliveryResult> => {
         submitted.push(input.sourceId);
-        return { status: 'submitted', turnId: `turn-${input.sourceId}` };
+        return { status: 'submitted' };
       },
     });
 
@@ -208,9 +208,8 @@ describe('Feishu session lifecycle fencing', () => {
       botFactory: () => bot,
     });
     await session.start({
-      submitTurn: async (): Promise<AgentRuntimeTurnResult> => ({
+      submitTurn: async (): Promise<InboundDeliveryResult> => ({
         status: 'submitted',
-        turnId: 'turn-progress-hung',
       }),
     });
 
@@ -266,9 +265,9 @@ describe('Feishu session lifecycle fencing', () => {
       botFactory: () => bot,
     });
     await session.start({
-      submitTurn: async (input): Promise<AgentRuntimeTurnResult> => {
+      submitTurn: async (input): Promise<InboundDeliveryResult> => {
         submitted.push(input.sourceId);
-        return { status: 'submitted', turnId: `turn-${input.sourceId}` };
+        return { status: 'submitted' };
       },
     });
 
@@ -304,9 +303,9 @@ describe('Feishu session lifecycle fencing', () => {
     bot.setMessageRead('om_old', 'default', simplified.promise);
     const submitted: string[] = [];
     const submitter: FeishuInboundSubmitter = {
-      submitTurn: vi.fn(async (input): Promise<AgentRuntimeTurnResult> => {
+      submitTurn: vi.fn(async (input): Promise<InboundDeliveryResult> => {
         submitted.push(input.sourceId);
-        return { status: 'submitted', turnId: `turn-${input.sourceId}` };
+        return { status: 'submitted' };
       }),
     };
     const session = new FeishuChannelSession({
@@ -356,9 +355,8 @@ describe('Feishu session lifecycle fencing', () => {
       botFactory: () => bot,
     });
     await session.start({
-      submitTurn: async (): Promise<AgentRuntimeTurnResult> => ({
+      submitTurn: async (): Promise<InboundDeliveryResult> => ({
         status: 'submitted',
-        turnId: 'unexpected',
       }),
     });
 
@@ -387,9 +385,9 @@ describe('Feishu session lifecycle fencing', () => {
       botFactory: () => bot,
     });
     await session.start({
-      submitTurn: async (input): Promise<AgentRuntimeTurnResult> => {
+      submitTurn: async (input): Promise<InboundDeliveryResult> => {
         submitted.push(input.sourceId);
-        return { status: 'submitted', turnId: `turn-${input.sourceId}` };
+        return { status: 'submitted' };
       },
     });
 
@@ -435,9 +433,8 @@ describe('Feishu session lifecycle fencing', () => {
       botFactory: () => bot,
     });
     await session.start({
-      submitTurn: async (): Promise<AgentRuntimeTurnResult> => ({
+      submitTurn: async (): Promise<InboundDeliveryResult> => ({
         status: 'submitted',
-        turnId: 'turn-reaction-close',
       }),
     });
 

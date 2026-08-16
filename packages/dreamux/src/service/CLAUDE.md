@@ -17,19 +17,21 @@ directly unless the symbol belongs on the explicit `service/index.ts` facade.
   per-dispatcher `DispatcherService` aggregates plus process-wide
   shutdown/restart hooks only. It owns **no** teammate/team/channel/router state —
   each `DispatcherService` builds and owns its own object graph (collections,
-  stores, worktree manager, `CompletionRouter`, `ChannelService`, and the
+  stores, worktree manager, stateless `CompletionDeliveryPolicy`,
+  `ChannelService`, and the
   dispatcher agent). This collection only keys them by dispatcher id (Phase 3,
   #233), and shutdown closes its factory admission before sweeping existing
   aggregates so no new dispatcher can materialize after the sweep snapshot.
 - **`server.ts` + `admin/socket.ts`** — the process admission boundary. Admin
   socket requests execute through `Server.admitAdminRequest()`; shutdown closes
-  this admission, drains accepted admin requests, then shuts down dispatchers and
+  this admission and synchronously publishes every materialized dispatcher
+  fence before draining accepted admin requests, then shuts down dispatchers and
   the socket. Do not let admin handlers call mutating services outside this
   process-level gate.
 - **`dispatcher-service/index.ts`** — one dispatcher-local aggregate
   (`DispatcherService`). It *has an* agent — a contained `TeammateService` built
   by `dispatcher-service/agent.ts` (Phase 5, #233) — that owns the agent runtime
-  lifecycle (start/resume/stop). `DispatcherService` keeps the dispatcher-only
+  and logical-close lifecycle. `DispatcherService` keeps the dispatcher-only
   concerns the removed `DispatcherRuntimeService` held: the live `ChannelService`,
   restart-notice injection for explicit resume notices, provider/config-based
   role MCP descriptor assembly, channel-tool dispatch, channel binding ownership,
@@ -39,10 +41,11 @@ directly unless the symbol belongs on the explicit `service/index.ts` facade.
   while leaving the dispatcher runtime dormant; unbound channel inbound,
   dispatcher cron, or an explicit resume notice lazy-starts the contained agent.
   A channel session is published as live only after provider start succeeds. It
-  resolves a settled turn's delivery target via `initiatorFor` (a team member →
+  resolves a Turn's completion target before provider admission via
+  `initiatorFor` and captures the resulting delivery closure (a team member →
   `TeamCollection`'s generation-bound, availability-gated completion adapter; a
   dispatcher-owned teammate / leader → the dispatcher's own `agent`
-  `TeammateService`, the unified router path) and
+  `TeammateService`) and
   orchestrates Team route-owner facts with ChannelService binding operations via
   `TeamChannelCoordinator` and collaboration route reconciliation.
 - **`team-collection/index.ts`** — `TeamCollection` (split out of the old
@@ -118,9 +121,10 @@ directly unless the symbol belongs on the explicit `service/index.ts` facade.
   target resolution, TeamLeader egress checks, and all `ChannelBindingStore`
   reads/writes/summaries/transfer-back operations. It treats Team route owners as
   flat routing data and does not import Team service types. The dispatcher base prompt and runnable-channel guard stay under `dispatcher-service/`. There
-  is **no** `DispatcherRuntimeService`; the at-most-once policy lives in the
-  `CompletionRouter`, while `TeammateService.completionInput` is the core-side
-  delivery target that renders a completion envelope into a plain runtime turn.
+  is **no** `DispatcherRuntimeService`; a stateless completion-delivery policy
+  prepares the target once and retries only explicit pre-admission failures,
+  while `TeammateService.prepareCompletion` captures the target-side submission
+  closure before the source Turn can settle.
 - **`collaboration-space/route-reconciliation.ts`** — the route reconciler owned
   by `CollaborationSpaceService`: it is the single place that reconciles
   collaboration target intent with authoritative channel bindings, coordinates
@@ -137,13 +141,14 @@ directly unless the symbol belongs on the explicit `service/index.ts` facade.
   `target-close-lifecycle.ts` contains only that target-side two-phase handoff;
   it awaits the TeamCollection milestone and never owns a Team state machine.
 - **`teammate-collection/` + `teammate-service/` + `completion-router/`** —
-  `TeammateCollection` (the collection: stores, worktrees, `spawn` / `list` /
-  `history` / `close`, factory paths, per-turn router registration) +
-  `TeammateService` (the single-entity: holds its identity, lazily started
-  runtime, `send` / `status` / `last` / `channelInput`, and `completionInput` as a
-  delivery target) + `CompletionRouter` (per-dispatcher delivery service, keyed by
-  `producerName:turnId`, terminal-cache at-most-once) + identity-store +
-  runtime-state + types + the teammate MCP descriptor. The cross-cutting helpers
+  `TeammateCollection` constructs, subscribes to, caches, resolves, and reads
+  entities; it does not own their close state machine. `TeammateService` owns
+  one identity, its process-local Workflow lock, runtime, canonical Turn
+  objects, terminal persistence, delivery closures, and idempotent logical
+  close. `completion-router/` contains the stateless per-dispatcher delivery
+  policy; it keeps no Turn registry or terminal cache. Neutral agent config and
+  read helpers live under `agent-entity/`, never under the Collection. The
+  cross-cutting helpers
   `worktree/`, `channel-binding/`, `legacy-state.ts`, `shutdown-errors.ts`, and
   `dispatcher-workspace.ts`
   (the issue #182 dispatcher-cwd policy used by `server.ts` startup, the dispatcher
@@ -205,8 +210,10 @@ directly unless the symbol belongs on the explicit `service/index.ts` facade.
   append-only role guidance + rolling recovery summary: turn_count /
   last_seen_at / last prompt+assistant previews — the single source
   for `history` / `list` / `status`, no event fold) and `turn.jsonl` (the ONLY
-  JSONL store: one compact `submit`/`settled` row per turn, turn-only facts, no
-  record fields repeated, folded by `last`). Placement is by role:
+  JSONL store: strict version 2 with one complete terminal row per Turn, no
+  service Turn identifier and no submit/settled join, folded by `last`).
+  Terminal append precedes the rolling `identity.json` projection; retrying a
+  failed projection never appends a second row. Placement is by role:
   `teammate/<name>/` for dispatcher-owned teammates, `team/<team>/` for the team
   *leader* (its pair sits at the team root, beside `record.json`), and
   `team/<team>/teammate/<name>/` for team members. The `teammate/` and `team/`

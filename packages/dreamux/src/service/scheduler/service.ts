@@ -218,9 +218,10 @@ export class SchedulerService {
     this.timers.delete(jobId);
   }
 
-  private async dispatch(jobId: string): Promise<void> {
+  private async dispatch(jobId: string, generation: number): Promise<void> {
     try {
       const job = await this.store.get(jobId);
+      if (generation !== this.lifecycleGeneration) return;
       if (job === null || !job.enabled) return;
       if (job.action.kind !== 'prompt-agent') {
         this.log.warn(
@@ -230,7 +231,7 @@ export class SchedulerService {
         return;
       }
       if (this.heldFires.has(jobId)) return;
-      await this.deferUntilIdleAndSubmit(job);
+      await this.deferUntilIdleAndSubmit(job, generation);
     } catch (err) {
       this.log.error(
         { owner_id: this.ownerId, job_id: jobId, err: errorInfo(err) },
@@ -248,7 +249,7 @@ export class SchedulerService {
     const generation = this.lifecycleGeneration;
     await this.admit(() =>
       generation === this.lifecycleGeneration
-        ? this.dispatch(jobId)
+        ? this.dispatch(jobId, generation)
         : Promise.resolve(),
     );
   }
@@ -275,12 +276,16 @@ export class SchedulerService {
     }
   }
 
-  private async deferUntilIdleAndSubmit(job: CronJob): Promise<void> {
+  private async deferUntilIdleAndSubmit(
+    job: CronJob,
+    generation: number,
+  ): Promise<void> {
+    if (generation !== this.lifecycleGeneration) return;
     const token = Symbol(job.id);
     this.heldFires.set(job.id, token);
     const signal = this.signalForHeldFire(job.id, token);
-    const runtime = this.opts.getRuntime();
-    if (runtime === null) {
+    const writer = this.opts.getWriter();
+    if (writer === null) {
       if (this.opts.absentRuntimeStrategy === 'miss') {
         // Dispatcher-owned scheduler: a missing runtime means the start
         // transaction failed or was torn down; do not resurrect it outside
@@ -289,10 +294,10 @@ export class SchedulerService {
         await this.armMissed(job, 'runtime unavailable');
         return;
       }
-      await this.submitHeld(job, token, signal);
+      await this.submitHeld(job, token, signal, generation);
       return;
     }
-    const idle = runtime.waitIdle?.() ?? Promise.resolve();
+    const idle = writer.waitIdle();
     let maxDeferTimer: NodeJS.Timeout | null = null;
     const maxDefer = new Promise<'timeout'>((resolve) => {
       maxDeferTimer = setTimeout(() => resolve('timeout'), MAX_DEFER_MS);
@@ -326,19 +331,21 @@ export class SchedulerService {
       return;
     }
 
-    await this.submitHeld(job, token, signal);
+    await this.submitHeld(job, token, signal, generation);
   }
 
   private async submitHeld(
     job: CronJob,
     token: symbol,
     signal: AbortSignal,
+    generation: number,
   ): Promise<void> {
     // Keep the held token across the submit so a stop() (which clears heldFires)
     // aborts this in-flight fire instead of submitting into a stopping owner;
     // release the hold in `finally` only if it is still ours.
     try {
       const current = await this.store.get(job.id);
+      if (generation !== this.lifecycleGeneration) return;
       if (current === null || !current.enabled) return;
       if (signal.aborted) return;
       const result = await this.opts.submitScheduled({
@@ -348,9 +355,15 @@ export class SchedulerService {
         signal,
       });
       if (signal.aborted) return;
-      if (result.status !== 'submitted') {
+      if (result.status !== 'submitted' && result.status !== 'ambiguous') {
         await this.armMissed(current, `completionInput returned ${result.status}`);
         return;
+      }
+      if (result.status === 'ambiguous') {
+        this.log.warn(
+          { owner_id: this.ownerId, job_id: current.id },
+          'cron submission was admission-ambiguous; recording the fire without retry',
+        );
       }
       const firedAt = this.now();
       const nextRunAt = current.recurring

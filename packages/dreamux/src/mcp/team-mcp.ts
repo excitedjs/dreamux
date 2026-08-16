@@ -14,7 +14,8 @@ import {
   MUTATING_ANNOTATIONS,
   OPEN_OBJECT,
   READ_ONLY_ANNOTATIONS,
-  SUBMISSION_TURN_SCHEMA,
+  SUBMISSION_ERROR_SCHEMA,
+  SUBMISSION_STATUS_SCHEMA,
   arrayOf,
   closedObjectSchema,
   forwardAdmin,
@@ -199,8 +200,13 @@ function teamToolMetadata(callerKind: TeamMcpCallerKind): McpToolMetadata[] {
     }, ['team_name', 'prompt'], {
       title: 'Send a TeamLeader turn',
       output: closedObjectSchema(
-        { team: OPEN_OBJECT, leader: OPEN_OBJECT, turn: SUBMISSION_TURN_SCHEMA },
-        ['team', 'leader', 'turn'],
+        {
+          team: OPEN_OBJECT,
+          leader: OPEN_OBJECT,
+          status: SUBMISSION_STATUS_SCHEMA,
+          error: SUBMISSION_ERROR_SCHEMA,
+        },
+        ['team', 'leader', 'status'],
       ),
       annotations: MUTATING_ANNOTATIONS,
     }),
@@ -274,11 +280,12 @@ function teamCreateSchema(): Record<string, unknown> {
       team: OPEN_OBJECT,
       leader: { type: ['object', 'null'] },
       member_count: { type: 'integer' },
-      turn: { anyOf: [{ type: 'null' }, SUBMISSION_TURN_SCHEMA] },
+      status: { anyOf: [{ type: 'null' }, SUBMISSION_STATUS_SCHEMA] },
+      error: SUBMISSION_ERROR_SCHEMA,
       bound_target: { type: ['object', 'null'] },
       bound_targets: arrayOf(OPEN_OBJECT),
     },
-    ['team', 'member_count', 'turn', 'bound_target', 'bound_targets'],
+    ['team', 'leader', 'member_count', 'status', 'bound_target', 'bound_targets'],
   );
 }
 
@@ -373,7 +380,8 @@ function projectTeamCreate(value: unknown): Record<string, unknown> {
     team: obj['team'],
     leader: obj['leader'] ?? null,
     member_count: obj['member_count'],
-    turn: obj['turn'] ?? null,
+    status: obj['status'] ?? null,
+    ...(obj['error'] !== undefined ? { error: obj['error'] } : {}),
     bound_target: obj['bound_target'] ?? null,
     bound_targets: obj['bound_targets'] ?? [],
   };
@@ -381,7 +389,12 @@ function projectTeamCreate(value: unknown): Record<string, unknown> {
 
 function projectTeamSend(value: unknown): Record<string, unknown> {
   const obj = asRecord(value, 'team send result');
-  return { team: obj['team'], leader: obj['leader'], turn: obj['turn'] };
+  return {
+    team: obj['team'],
+    leader: obj['leader'],
+    status: obj['status'],
+    ...(obj['error'] !== undefined ? { error: obj['error'] } : {}),
+  };
 }
 
 function projectTeamList(value: unknown): Record<string, unknown> {

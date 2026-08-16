@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-claude-code",
+      "comment": "BREAKING: Claude Code runtime submissions now return RuntimeAdmission with stable RuntimeTurn objects and provider-private command UUID aliases. Live steer waits for the msg_lifecycle_v1 capability decision, fails loudly when unsupported, reports post-write uncertainty as ambiguous, and runtime stop drains every started admission.",
+      "type": "major"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code"
+}

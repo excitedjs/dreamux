@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux-types",
+      "comment": "BREAKING: Agent Runtime submissions now return RuntimeAdmission with stable RuntimeTurn objects. failed proves pre-admission rejection, ambiguous forbids automatic retry, and stop must drain all already-started admissions. Channel delivery results no longer expose Turn IDs or Turn lifecycle events, and exact collaboration delivery reports status only. Update external providers and Channel consumers.",
+      "type": "major"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types"
+}

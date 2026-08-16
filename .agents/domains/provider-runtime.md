@@ -53,6 +53,17 @@ Dispatcher orchestration verbs such as `spawn`, `send`, `close`, `list`, and
 Team operations belong to Dreamux core services and MCP surfaces, never to the
 runtime instance.
 
+An accepted input returns one stable `RuntimeTurn` object with one terminal
+outcome promise. A provider fold or steer into the active logical turn returns
+the exact same object. Provider-native ids may exist inside the provider package,
+but they do not cross the neutral boundary for host correlation.
+
+`RuntimeAdmission.failed` is reserved for provider-proven pre-admission failure.
+`ambiguous` means the native boundary may have been crossed and therefore cannot
+be retried automatically. `AgentRuntime.stop()` fences new input synchronously
+and does not resolve until every already-started input admission has settled and
+can no longer return a newly accepted Turn.
+
 Source:
 
 - `/packages/dreamux-types/src/agent-runtime.ts`
@@ -109,8 +120,7 @@ The context is neutral:
   directories and guarantees each path is a skill root whose direct children are
   skill directories;
 - optional feature-disable names such as `cron`;
-- neutral logger, path, state, and environment injection seams;
-- optional `onTurnSettled` callback.
+- neutral logger, path, state, and environment injection seams.
 
 Core should not call provider-specific factories, classes, or package imports
 directly. The package-boundary guard rejects provider implementation imports and
@@ -122,6 +132,35 @@ Source:
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
 - `/packages/dreamux/src/service/teammate-service/factory.ts`
 - `/packages/dreamux/tests/package-boundary-guards.test.ts`
+
+## Logical Turn And Admission Contract
+
+The runtime object is the provider-owned authority for native submission and
+termination; Dreamux core never reconstructs runtime activity from callbacks or
+native identifiers.
+
+- One accepted logical input returns one `RuntimeTurn`.
+- Native aliases folded into the logical input must converge before that object
+  settles.
+- The provider owns its private source-deduplication reservation. Concurrent use
+  of one reserved source shares the same admission result.
+- A source commits after acceptance or ambiguous post-admission failure. It is
+  released only after a provider-proven pre-admission failure.
+- `stop()` initiates provider teardown before waiting on startup, restart, or
+  submission work that teardown is expected to reject.
+
+Codex keeps app-server `turn.id` values inside its package. Claude Code keeps its
+command UUIDs inside its stream-json adapter. Neither identifier is Dreamux
+service state.
+
+Source:
+
+- `/packages/dreamux-types/src/agent-runtime.ts`
+- `/packages/agent-runtime/codex/src/turn-manager.ts`
+- `/packages/agent-runtime/codex/src/runtime.ts`
+- `/packages/agent-runtime/claude-code/src/source-reservation.ts`
+- `/packages/agent-runtime/claude-code/src/rpc.ts`
+- `/packages/agent-runtime/claude-code/src/runtime.ts`
 
 ## Codex Portable Output Schema
 
@@ -155,15 +194,15 @@ Each active Codex turn slot owns either no codec or one authoritative private
 codec. Its fingerprint canonically covers both the wire schema and restoration
 plan. Compatible structured followers may fold into the active turn; a different
 fingerprint or structured/unstructured mixing fails before another
-`turn/start`. After Codex accepts the primary turn, the codec is bound to that
-exact native turn id.
+`turn/start`. The codec remains private to the canonical active slot, and every
+accepted native alias converges before the public `RuntimeTurn` settles.
 
 Restoration runs once, behind the existing pending-turn mutual-exclusion guard,
 before `onTurnCompleted`. A successful restoration is the only structured text
 seen by `CodexRuntime.recordCollectedTurn()`, so `lastResult` and completed
 settlement use the neutral restored JSON. Parse or shape restoration failure does
-not call `onTurnCompleted` or mutate `lastResult`; it emits one ordinary failed
-`TurnSettledSignal` with `text: null`. Submission failure, stop, app-server
+not call `onTurnCompleted` or mutate `lastResult`; it selects one ordinary failed
+runtime outcome with no assistant text. Submission failure, stop, app-server
 teardown/restart, and late completion clear or discard in-memory codecs through
 the same turn lifecycle and never restore or settle twice.
 
@@ -289,6 +328,7 @@ Source:
 - [NPM package split and channel targets](../decisions/npm-package-split-and-channel-targets.md)
 - [Named agents config normalization](../decisions/agents-config-normalization.md)
 - [Agent Runtime providers](../decisions/agent-runtime-provider.md)
+- [Entity-owned TeamMate lifecycle and object Turns](../decisions/entity-owned-teammate-lifecycle-and-object-turns.md)
 - [Provider references and Capability Registry](../decisions/provider-references-and-capability-registry.md)
 - [Agent activity capability](../decisions/agent-activity-capability.md)
 - [Channel provider](../decisions/channel-provider.md)

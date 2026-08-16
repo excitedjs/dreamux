@@ -20,7 +20,6 @@ import type {
   AgentRuntimeSystemPrompt,
   AgentRuntimeStateCallbacks,
   DreamuxLogger,
-  TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
 
 function skillSource(path: string): AgentRuntimeSkillSource {
@@ -175,7 +174,7 @@ function buildRuntime(
   client: FakeClient,
   skillSources: AgentRuntimeSkillSource[],
   logger?: DreamuxLogger,
-  onTurnSettled?: (settled: TurnSettledSignal) => void,
+  _unusedSettlementHook?: undefined,
   systemPrompt?: AgentRuntimeSystemPrompt,
   checkpointId: string | null = null,
 ): CodexRuntime {
@@ -197,7 +196,6 @@ function buildRuntime(
     ...(systemPrompt?.replace === undefined && systemPrompt?.append !== undefined
       ? { systemPromptAppend: systemPrompt.append }
       : {}),
-    ...(onTurnSettled !== undefined ? { onTurnSettled } : {}),
     ...(logger !== undefined ? { logger } : {}),
   });
 }
@@ -500,19 +498,19 @@ describe('codex skills/extraRoots/set injection', () => {
 
   it('does not reuse the prior successful result for a later empty successful turn', async () => {
     const client = new FakeClient();
-    const settled: TurnSettledSignal[] = [];
-    const runtime = buildRuntime(client, [], undefined, (s) => settled.push(s));
+    const runtime = buildRuntime(client, []);
 
     await runtime.start();
-    await expect(runtime.channelInput({ sourceId: 'm1', text: 'first' })).resolves
-      .toMatchObject({ status: 'submitted' });
-    await waitFor(() => settled.length === 1);
-    await expect(runtime.channelInput({ sourceId: 'm2', text: 'empty' })).resolves
-      .toMatchObject({ status: 'submitted' });
-    await waitFor(() => settled.length === 2);
+    const first = await runtime.channelInput({ sourceId: 'm1', text: 'first' });
+    if (first.status !== 'submitted') throw new Error('first Turn was not submitted');
+    const firstOutcome = await first.turn.settled;
+    const second = await runtime.channelInput({ sourceId: 'm2', text: 'empty' });
+    if (second.status !== 'submitted') throw new Error('second Turn was not submitted');
+    const secondOutcome = await second.turn.settled;
     await runtime.stop();
 
-    expect(settled.map((s) => s.result?.text ?? null)).toEqual(['first', null]);
+    expect(firstOutcome).toMatchObject({ status: 'completed', resultText: 'first' });
+    expect(secondOutcome).toMatchObject({ status: 'completed', resultText: null });
     await expect(runtime.getLast()).resolves.toEqual({ text: 'first' });
   });
 });

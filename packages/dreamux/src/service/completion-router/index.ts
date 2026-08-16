@@ -1,199 +1,202 @@
-import type {
-  DreamuxLogger,
-} from '@excitedjs/dreamux-types';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import { errorInfo } from '../../platform/error-info.js';
 
-interface CompletionEnvelopeBase {
-  source: string;
-  id: string;
+interface CompletionFactBase {
   status: 'completed' | 'failed' | 'stopped';
   result: string | null;
 }
 
-export interface TeammateCompletionEnvelope extends CompletionEnvelopeBase {
+export interface TeammateCompletionFact extends CompletionFactBase {
   kind: 'teammate';
+  source: string;
 }
 
-export interface WorkflowCompletionEnvelope extends CompletionEnvelopeBase {
+export interface WorkflowCompletionFact extends CompletionFactBase {
   kind: 'workflow';
   source: 'workflow';
+  runId: string;
 }
 
-/** A settled producer result delivered through the shared completion router. */
-export type CompletionEnvelope =
-  | TeammateCompletionEnvelope
-  | WorkflowCompletionEnvelope;
+export type PreparedCompletionFact =
+  | TeammateCompletionFact
+  | WorkflowCompletionFact;
 
 export type CompletionDeliveryResult =
   | { status: 'accepted' }
   | { status: 'unsupported'; reason: string }
-  | { status: 'failed'; error: Error };
+  | { status: 'failed'; error: Error }
+  | { status: 'ambiguous'; error: Error };
 
-/**
- * The delivery target of a settled producer: a dispatcher agent or a team
- * leader. The router never names which — it only forwards the completion
- * envelope into the target's inbox. Do not conflate the initiator with
- * `CompletionEnvelope.source`, which names the producer.
- */
-export interface CompletionInitiator {
-  completionInput(
-    completion: CompletionEnvelope,
-  ): Promise<CompletionDeliveryResult>;
+export interface PreparedCompletionDelivery {
+  submit(): Promise<CompletionDeliveryResult>;
 }
 
-const TERMINAL_CACHE_LIMIT = 512;
-const MAX_DELIVERY_ATTEMPTS = 3;
+export interface CompletionInitiator {
+  prepareCompletion(
+    completion: PreparedCompletionFact,
+  ): Promise<PreparedCompletionDelivery>;
+}
 
-/**
- * Per-dispatcher completion delivery service. A delivery-initiating
- * action (`send` / `spawn` / team-create-with-prompt / workflow run) registers
- * `completionKey -> initiator`. When that producer settles, the router takes
- * the result, calls
- * `initiator.completionInput(envelope)`, then clears the registration.
- *
- * Gating is intrinsic: only send-initiated turns register, so channel-inbound
- * and remote-control turns are recorded but never pushed. The router is the
- * single delivery chokepoint and applies one at-most-once policy to every target
- * (dispatcher and leader alike).
- */
-export class CompletionRouter {
-  private readonly pending = new Map<string, CompletionInitiator>();
-  private readonly inFlight = new Map<string, Promise<void>>();
-  /**
-   * Completion keys that reached ANY terminal outcome — not only delivered ones.
-   * Recording every terminal branch (accepted / unsupported / dropped / thrown /
-   * failed-exhausted) is what makes a duplicate settle never re-attempt.
-   */
-  private readonly terminal = new Set<string>();
-  private readonly terminalOrder: string[] = [];
+const MAX_DELIVERY_ATTEMPTS = 3;
+const DEFAULT_COMPLETION_ATTEMPT_TIMEOUT_MS = 30_000;
+
+type DeadlineResult<T> =
+  | { status: 'fulfilled'; value: T }
+  | { status: 'rejected'; error: Error }
+  | { status: 'timed_out' };
+
+/** Stateless, at-most-once completion delivery policy. */
+export class CompletionDeliveryPolicy {
+  private readonly attemptTimeoutMs: number;
 
   constructor(
-    private readonly deps: { dispatcherId: string; log: DreamuxLogger },
-  ) {}
-
-  /**
-   * Associate a settle of `completionKey` with the action's initiator. A bare
-   * `turnId` would cross-wire two teammates' in-flight turns, so the key carries
-   * the producer name. A null `turnId` means there is nothing to deliver — no
-   * registration is made.
-   */
-  register(completionKey: string | null, initiator: CompletionInitiator): void {
-    if (completionKey === null) return;
-    this.pending.set(completionKey, initiator);
+    private readonly deps: {
+      dispatcherId: string;
+      log: DreamuxLogger;
+      /** Deterministic test seam for the internal delivery-operation bound. */
+      attemptTimeoutMs?: number;
+    },
+  ) {
+    this.attemptTimeoutMs =
+      deps.attemptTimeoutMs ?? DEFAULT_COMPLETION_ATTEMPT_TIMEOUT_MS;
+    if (!Number.isFinite(this.attemptTimeoutMs) || this.attemptTimeoutMs <= 0) {
+      throw new Error('completion attempt timeout must be positive');
+    }
   }
 
-  /** Mark a registered completion terminal without invoking its initiator. */
-  discard(completionKey: string): void {
-    this.pending.delete(completionKey);
-    this.rememberTerminal(completionKey);
-  }
-
-  /**
-   * Deliver a settled turn's completion to its registered initiator, then clear
-   * the registration. No-op when the key was never registered (a turn nobody is
-   * waiting on) or has already reached a terminal outcome.
-   */
-  async settle(
-    completionKey: string,
-    completion: CompletionEnvelope,
+  async deliver(
+    initiator: CompletionInitiator,
+    completion: PreparedCompletionFact,
   ): Promise<void> {
-    if (this.terminal.has(completionKey)) {
-      this.pending.delete(completionKey);
+    const preparation = await settleWithinDeadline(
+      () => initiator.prepareCompletion(completion),
+      this.attemptTimeoutMs,
+    );
+    if (preparation.status === 'timed_out') {
+      this.deps.log.warn(
+        {
+          dispatcher_id: this.deps.dispatcherId,
+          source: completion.source,
+          timeout_ms: this.attemptTimeoutMs,
+        },
+        'completion preparation timed out; dropping as ambiguous',
+      );
       return;
     }
-    const inFlight = this.inFlight.get(completionKey);
-    if (inFlight !== undefined) return inFlight;
-    const initiator = this.pending.get(completionKey);
-    if (initiator === undefined) return;
-
-    const delivery = this.doDeliver(completionKey, initiator, completion);
-    this.inFlight.set(completionKey, delivery);
-    try {
-      await delivery;
-    } finally {
-      this.inFlight.delete(completionKey);
-      this.pending.delete(completionKey);
+    if (preparation.status === 'rejected') {
+      this.deps.log.warn(
+        {
+          dispatcher_id: this.deps.dispatcherId,
+          source: completion.source,
+          err: errorInfo(preparation.error),
+        },
+        'completion preparation failed; dropping',
+      );
+      return;
     }
-  }
-
-  private async doDeliver(
-    completionKey: string,
-    initiator: CompletionInitiator,
-    completion: CompletionEnvelope,
-  ): Promise<void> {
-    const dispatcherId = this.deps.dispatcherId;
+    const prepared = preparation.value;
     for (let attempt = 1; attempt <= MAX_DELIVERY_ATTEMPTS; attempt += 1) {
-      let outcome: CompletionDeliveryResult;
-      try {
-        outcome = await initiator.completionInput(completion);
-      } catch (err) {
-        // Ambiguous: the call may already have delivered. Drop and record
-        // terminal — never retry.
+      const submission = await settleWithinDeadline(
+        () => prepared.submit(),
+        this.attemptTimeoutMs,
+      );
+      if (submission.status === 'timed_out') {
         this.deps.log.warn(
           {
-            dispatcher_id: dispatcherId,
+            dispatcher_id: this.deps.dispatcherId,
             source: completion.source,
-            err: errorInfo(err),
+            attempt,
+            timeout_ms: this.attemptTimeoutMs,
           },
-          'completion delivery threw; dropping',
+          'completion delivery timed out; dropping as ambiguous',
         );
-        this.rememberTerminal(completionKey);
         return;
       }
-      if (outcome.status === 'accepted') {
-        this.rememberTerminal(completionKey);
-        return;
-      }
-      if (outcome.status === 'unsupported') {
-        // Target not running / no completion surface. Drop and record terminal
-        // (no replay queue — a queued replay would surface later as a
-        // duplicate); the consumer falls back to `last` / pull.
+      if (submission.status === 'rejected') {
         this.deps.log.warn(
           {
-            dispatcher_id: dispatcherId,
+            dispatcher_id: this.deps.dispatcherId,
+            source: completion.source,
+            err: errorInfo(submission.error),
+          },
+          'completion delivery threw; dropping without ambiguous retry',
+        );
+        return;
+      }
+      const outcome = submission.value;
+      if (outcome.status === 'accepted') return;
+      if (outcome.status === 'unsupported') {
+        this.deps.log.warn(
+          {
+            dispatcher_id: this.deps.dispatcherId,
             source: completion.source,
             reason: outcome.reason,
           },
           'dropping completion: delivery unsupported',
         );
-        this.rememberTerminal(completionKey);
         return;
       }
-      // Explicit failure (definitely not delivered): bounded retry.
+      if (outcome.status === 'ambiguous') {
+        this.deps.log.warn(
+          {
+            dispatcher_id: this.deps.dispatcherId,
+            source: completion.source,
+            err: errorInfo(outcome.error),
+          },
+          'completion admission was ambiguous; dropping without retry',
+        );
+        return;
+      }
       this.deps.log.warn(
         {
-          dispatcher_id: dispatcherId,
+          dispatcher_id: this.deps.dispatcherId,
           source: completion.source,
           attempt,
           max_attempts: MAX_DELIVERY_ATTEMPTS,
           err: errorInfo(outcome.error),
         },
-        'completion delivery failed',
+        'completion delivery failed before admission',
       );
     }
     this.deps.log.warn(
       {
-        dispatcher_id: dispatcherId,
+        dispatcher_id: this.deps.dispatcherId,
         source: completion.source,
         max_attempts: MAX_DELIVERY_ATTEMPTS,
       },
       'completion delivery exhausted retries; dropping',
     );
-    this.rememberTerminal(completionKey);
-  }
-
-  private rememberTerminal(key: string): void {
-    if (this.terminal.has(key)) return;
-    this.terminal.add(key);
-    this.terminalOrder.push(key);
-    while (this.terminalOrder.length > TERMINAL_CACHE_LIMIT) {
-      const evicted = this.terminalOrder.shift();
-      if (evicted !== undefined) this.terminal.delete(evicted);
-    }
   }
 }
 
-export function completionKey(producerName: string, turnId: string): string {
-  return `${producerName}:${turnId}`;
+async function settleWithinDeadline<T>(
+  operation: () => Promise<T>,
+  timeoutMs: number,
+): Promise<DeadlineResult<T>> {
+  let operationPromise: Promise<T>;
+  try {
+    operationPromise = operation();
+  } catch (error) {
+    return { status: 'rejected', error: asError(error) };
+  }
+  // Attach both handlers before racing. A timed-out operation may reject much
+  // later, but it can never surface as an unhandled rejection or trigger retry.
+  const observed: Promise<DeadlineResult<T>> = operationPromise.then(
+    (value) => ({ status: 'fulfilled', value }),
+    (error: unknown) => ({ status: 'rejected', error: asError(error) }),
+  );
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<DeadlineResult<T>>((resolve) => {
+    timer = setTimeout(() => resolve({ status: 'timed_out' }), timeoutMs);
+  });
+  try {
+    return await Promise.race([observed, timeout]);
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }

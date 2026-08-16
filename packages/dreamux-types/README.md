@@ -23,16 +23,35 @@ shared structural types.
 - provider descriptor / ref shapes;
 - the complete Agent Runtime provider contract: `AgentRuntimeProvider`,
   `AgentRuntime`, the neutral `AgentRuntimeCreateContext`, capabilities, role,
-  skill sources, completion delivery, resume/last/context, MCP server
-  descriptor, neutral state callbacks, and diagnostic helper shapes;
+  skill sources, completion delivery, `RuntimeAdmission`, canonical
+  `RuntimeTurn`/`RuntimeTurnOutcome`, resume/last/context, MCP server descriptor,
+  neutral state callbacks, and diagnostic helper shapes. Provider-native Turn
+  identifiers remain private inside provider packages;
 - Channel provider/session contracts, target shapes, inbound envelope shapes,
   tool descriptor/call shapes, config/session contexts, optional strict
-  collaboration operations, and dispatcher-scoped read-only core event DTOs;
+  collaboration operations, and dispatcher-scoped read-only core event DTOs.
+  Channel delivery receipts are status-only and the core event surface carries
+  no service Turn submitted/settled events;
 - a minimal public logger type (`DreamuxLogger`).
 
 It does **not** export runtime implementations, default loggers, loader logic,
 provider registry implementations, path helpers, config parsers, or Dreamux host
 state models.
+
+## Runtime admission contract
+
+`RuntimeAdmission.failed` is reserved for a provider-proven pre-admission
+failure, so a host may safely retry the same immutable input. `ambiguous` means
+the input may have crossed the provider's native admission boundary; hosts must
+not retry it automatically. An untyped throw or rejected input promise is
+therefore ambiguous unless the provider can prove that no native command was
+accepted.
+
+`AgentRuntime.stop()` publishes its admission fence synchronously. It resolves
+only after every `channelInput()` and `completionInput()` call that had already
+started has settled and no such call can later return `submitted`. Providers
+must terminate or release their own pending native requests before satisfying
+that convergence contract.
 
 A provider implements the full contract against this package only — see
 `tests/fixtures/external-provider.ts` for a complete `AgentRuntimeProvider`

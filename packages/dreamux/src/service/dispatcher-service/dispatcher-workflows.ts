@@ -1,7 +1,10 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import { errorInfo } from '../../platform/error-info.js';
-import type { CompletionInitiator, CompletionRouter } from '../completion-router/index.js';
+import type {
+  CompletionDeliveryPolicy,
+  CompletionInitiator,
+} from '../completion-router/index.js';
 import type { TeamCollection } from '../team-collection/index.js';
 import type { TeammateCollection } from '../teammate-collection/index.js';
 import { WorkflowService, type WorkflowOps } from '../workflow-service/index.js';
@@ -10,13 +13,13 @@ interface DispatcherWorkflowDeps {
   dispatcherId: string;
   teammates: Pick<
     TeammateCollection,
-    'spawnOwned' | 'releaseAllOwned'
+    'createLocked'
   >;
   teams: Pick<
     TeamCollection,
     'startWorkflows' | 'recoverWorkflows' | 'closeWorkflowAdmissions'
   >;
-  router: CompletionRouter;
+  completionDelivery: CompletionDeliveryPolicy;
   completionInitiator: () => CompletionInitiator;
   admit: <T>(task: () => Promise<T>) => Promise<T>;
   log: DreamuxLogger;
@@ -32,13 +35,11 @@ export class DispatcherWorkflows {
       dispatcherId: input.dispatcherId,
       teamId: null,
       callerKind: 'dispatcher',
-      ownedTeammates: {
-        spawnOwned: (spawnInput, options) =>
-          input.admit(() => input.teammates.spawnOwned(spawnInput, options)),
-        // Owner cleanup remains available after dispatcher admission closes.
-        releaseAllOwned: (owner) => input.teammates.releaseAllOwned(owner),
+      teammates: {
+        createLocked: (spawnInput, options) =>
+          input.admit(() => input.teammates.createLocked(spawnInput, options)),
       },
-      router: input.router,
+      completionDelivery: input.completionDelivery,
       completionInitiator: input.completionInitiator,
       log: input.log,
     });
@@ -65,8 +66,8 @@ export class DispatcherWorkflows {
     this.input.teams.closeWorkflowAdmissions();
   }
 
-  stopAllForShutdown(): Promise<void> {
-    return this.service.stopAllForShutdown();
+  stopAll(): Promise<void> {
+    return this.service.stopAll();
   }
 
   async rollbackStart(): Promise<void> {
@@ -75,12 +76,7 @@ export class DispatcherWorkflows {
         { dispatcher_id: this.input.dispatcherId, err: errorInfo(error) },
         'error stopping workflows after dispatcher start failure',
       );
-    });
-    await this.input.teammates.releaseAllOwned().catch((error: unknown) => {
-      this.input.log.error(
-        { dispatcher_id: this.input.dispatcherId, err: errorInfo(error) },
-        'error releasing workflow TeamMates after dispatcher start failure',
-      );
+      throw error;
     });
   }
 }

@@ -3,7 +3,7 @@ import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { errorInfo } from '../../platform/error-info.js';
 import type { TeamCollection } from '../team-collection/index.js';
 
-/** Sweep all materialized Team runtimes while allowing dispatcher stop to continue. */
+/** Canonically materialize and close every durable non-closed Team. */
 export async function stopTeamRuntimes(input: {
   dispatcherId: string;
   teams: TeamCollection;

@@ -1,161 +1,221 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import {
-  CompletionRouter,
-  completionKey,
+  CompletionDeliveryPolicy,
   type CompletionDeliveryResult,
-  type CompletionEnvelope,
   type CompletionInitiator,
+  type PreparedCompletionFact,
+  type PreparedCompletionDelivery,
 } from '../src/service/completion-router/index.js';
 
-function envelope(name: string, turnId: string): CompletionEnvelope {
-  return {
-    kind: 'teammate',
-    source: name,
-    id: `${name}:${turnId}`,
-    status: 'completed',
-    result: 'done',
-  };
-}
+const completion: PreparedCompletionFact = {
+  kind: 'teammate',
+  source: 'worker',
+  status: 'completed',
+  result: 'done',
+};
 
-/** An initiator that returns scripted outcomes and counts the calls it received. */
-class FakeInitiator implements CompletionInitiator {
-  readonly received: CompletionEnvelope[] = [];
+class ScriptedInitiator implements CompletionInitiator {
+  prepareCalls = 0;
+  submitCalls = 0;
 
   constructor(
-    private readonly outcomes:
-      | CompletionDeliveryResult[]
-      | (() => CompletionDeliveryResult),
+    private readonly outcomes: Array<CompletionDeliveryResult | Error>,
   ) {}
 
-  completionInput(
-    completion: CompletionEnvelope,
-  ): Promise<CompletionDeliveryResult> {
-    this.received.push(completion);
-    const next =
-      typeof this.outcomes === 'function'
-        ? this.outcomes()
-        : this.outcomes.shift() ?? { status: 'accepted' };
-    return Promise.resolve(next);
+  async prepareCompletion(
+    received: PreparedCompletionFact,
+  ): Promise<PreparedCompletionDelivery> {
+    this.prepareCalls += 1;
+    expect(received).toBe(completion);
+    return Object.freeze({
+      submit: async () => {
+        this.submitCalls += 1;
+        const outcome = this.outcomes.shift() ?? { status: 'accepted' as const };
+        if (outcome instanceof Error) throw outcome;
+        return outcome;
+      },
+    });
   }
 }
 
-/** An initiator whose `completionInput` throws, to drive the ambiguous branch. */
-class ThrowingInitiator implements CompletionInitiator {
-  calls = 0;
-  completionInput(): Promise<CompletionDeliveryResult> {
-    this.calls += 1;
-    throw new Error('boom');
-  }
+function policy(attemptTimeoutMs?: number): CompletionDeliveryPolicy {
+  return new CompletionDeliveryPolicy({
+    dispatcherId: 'flow',
+    log: noopLog(),
+    attemptTimeoutMs,
+  });
 }
 
-function router(): CompletionRouter {
-  return new CompletionRouter({ dispatcherId: 'flow', log: noopLog() });
-}
-
-describe('CompletionRouter', () => {
-  it('delivers a registered settle exactly once to its initiator', async () => {
-    const r = router();
-    const initiator = new FakeInitiator([{ status: 'accepted' }]);
-    r.register(completionKey('mate', 'turn-1'), initiator);
-    await r.settle(completionKey('mate', 'turn-1'), envelope('mate', 'turn-1'));
-    expect(initiator.received).toHaveLength(1);
-    expect(initiator.received[0]?.id).toBe('mate:turn-1');
+describe('CompletionDeliveryPolicy', () => {
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
-  it('is a no-op when the key was never registered', async () => {
-    const r = router();
-    await r.settle(completionKey('ghost', 'turn-1'), envelope('ghost', 'turn-1'));
-    // Nothing to assert beyond not throwing; an unregistered key simply drops.
-    expect(true).toBe(true);
+  it('prepares once and submits an accepted immutable payload once', async () => {
+    const initiator = new ScriptedInitiator([{ status: 'accepted' }]);
+
+    await policy().deliver(initiator, completion);
+
+    expect(initiator.prepareCalls).toBe(1);
+    expect(initiator.submitCalls).toBe(1);
   });
 
-  it('discards a registered completion without invoking its initiator', async () => {
-    const r = router();
-    const initiator = new FakeInitiator([{ status: 'accepted' }]);
-    const key = completionKey('mate', 'turn-1');
-    r.register(key, initiator);
-    r.discard(key);
+  it('retries only explicit pre-admission failures with a bound', async () => {
+    const initiator = new ScriptedInitiator([
+      { status: 'failed', error: new Error('one') },
+      { status: 'failed', error: new Error('two') },
+      { status: 'accepted' },
+    ]);
 
-    await r.settle(key, envelope('mate', 'turn-1'));
+    await policy().deliver(initiator, completion);
 
-    expect(initiator.received).toEqual([]);
+    expect(initiator.prepareCalls).toBe(1);
+    expect(initiator.submitCalls).toBe(3);
   });
 
-  it('coalesces a duplicate settle via the terminal cache (at-most-once)', async () => {
-    const r = router();
-    const initiator = new FakeInitiator([{ status: 'accepted' }]);
-    const key = completionKey('mate', 'turn-1');
-    r.register(key, initiator);
-    await r.settle(key, envelope('mate', 'turn-1'));
-    // A second settle of the same key must not re-deliver even after re-register.
-    r.register(key, initiator);
-    await r.settle(key, envelope('mate', 'turn-1'));
-    expect(initiator.received).toHaveLength(1);
+  it('drops an ambiguous admission without retry', async () => {
+    const initiator = new ScriptedInitiator([
+      { status: 'ambiguous', error: new Error('response lost') },
+      { status: 'accepted' },
+    ]);
+
+    await policy().deliver(initiator, completion);
+
+    expect(initiator.submitCalls).toBe(1);
   });
 
-  it('keys by producer name so two teammates sharing a turn id never cross-wire', async () => {
-    const r = router();
-    const one = new FakeInitiator([{ status: 'accepted' }]);
-    const two = new FakeInitiator([{ status: 'accepted' }]);
-    r.register(completionKey('one', 'turn-1'), one);
-    r.register(completionKey('two', 'turn-1'), two);
-    await r.settle(completionKey('one', 'turn-1'), envelope('one', 'turn-1'));
-    await r.settle(completionKey('two', 'turn-1'), envelope('two', 'turn-1'));
-    expect(one.received).toHaveLength(1);
-    expect(two.received).toHaveLength(1);
-    expect(one.received[0]?.source).toBe('one');
-    expect(two.received[0]?.source).toBe('two');
+  it('drops a thrown submit without an ambiguous retry', async () => {
+    const initiator = new ScriptedInitiator([
+      new Error('native submission threw'),
+      { status: 'accepted' },
+    ]);
+
+    await policy().deliver(initiator, completion);
+
+    expect(initiator.submitCalls).toBe(1);
   });
 
-  it('retries an explicit failure with a bound, then drops and records terminal', async () => {
-    const r = router();
-    const initiator = new FakeInitiator(() => ({
-      status: 'failed',
-      error: new Error('nope'),
-    }));
-    const key = completionKey('mate', 'turn-1');
-    r.register(key, initiator);
-    await r.settle(key, envelope('mate', 'turn-1'));
-    // Bounded retry: three attempts, then drop.
-    expect(initiator.received).toHaveLength(3);
-    // The exhausted key is terminal — a duplicate settle does not retry again.
-    r.register(key, initiator);
-    await r.settle(key, envelope('mate', 'turn-1'));
-    expect(initiator.received).toHaveLength(3);
+  it('drops unsupported delivery without retry', async () => {
+    const initiator = new ScriptedInitiator([
+      { status: 'unsupported', reason: 'target closed' },
+      { status: 'accepted' },
+    ]);
+
+    await policy().deliver(initiator, completion);
+
+    expect(initiator.submitCalls).toBe(1);
   });
 
-  it('drops an unsupported delivery without retry and records terminal', async () => {
-    const r = router();
-    const initiator = new FakeInitiator(() => ({
-      status: 'unsupported',
-      reason: 'not running',
-    }));
-    const key = completionKey('mate', 'turn-1');
-    r.register(key, initiator);
-    await r.settle(key, envelope('mate', 'turn-1'));
-    expect(initiator.received).toHaveLength(1);
-    // Terminal: a duplicate settle is a no-op.
-    r.register(key, initiator);
-    await r.settle(key, envelope('mate', 'turn-1'));
-    expect(initiator.received).toHaveLength(1);
+  it('drops preparation failure before any native submit', async () => {
+    const initiator: CompletionInitiator = {
+      prepareCompletion: async () => {
+        throw new Error('spill write failed');
+      },
+    };
+
+    await expect(policy().deliver(initiator, completion)).resolves.toBeUndefined();
   });
 
-  it('drops a thrown delivery without retry (ambiguous) and records terminal', async () => {
-    const r = router();
-    const initiator = new ThrowingInitiator();
-    const key = completionKey('mate', 'turn-1');
-    r.register(key, initiator);
-    await r.settle(key, envelope('mate', 'turn-1'));
-    expect(initiator.calls).toBe(1);
-    // Terminal: a duplicate settle does not re-attempt the ambiguous delivery.
-    r.register(key, initiator);
-    await r.settle(key, envelope('mate', 'turn-1'));
-    expect(initiator.calls).toBe(1);
+  it('bounds preparation and observes a rejection that arrives after timeout', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const preparation = deferred<PreparedCompletionDelivery>();
+    const initiator: CompletionInitiator = {
+      prepareCompletion: vi.fn(() => preparation.promise),
+    };
+
+    const delivery = policy(100).deliver(initiator, completion);
+    await vi.advanceTimersByTimeAsync(99);
+    expect(await isSettled(delivery)).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(delivery).resolves.toBeUndefined();
+
+    preparation.reject(new Error('late preparation rejection'));
+    await Promise.resolve();
+    expect(initiator.prepareCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a timed-out submit as ambiguous and never retries its late result', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const submission = deferred<CompletionDeliveryResult>();
+    const prepared = Object.freeze({
+      submit: vi.fn(() => submission.promise),
+    });
+    const initiator: CompletionInitiator = {
+      prepareCompletion: vi.fn(async () => prepared),
+    };
+
+    const delivery = policy(100).deliver(initiator, completion);
+    await waitForMicrotasks(() => prepared.submit.mock.calls.length === 1);
+    expect(prepared.submit).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(delivery).resolves.toBeUndefined();
+
+    submission.resolve({ status: 'failed', error: new Error('late failure') });
+    await Promise.resolve();
+    expect(prepared.submit).toHaveBeenCalledTimes(1);
+    expect(initiator.prepareCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses one prepared payload while bounding every proven-safe retry', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const second = deferred<CompletionDeliveryResult>();
+    const outcomes: Array<CompletionDeliveryResult | Promise<CompletionDeliveryResult>> = [
+      { status: 'failed', error: new Error('safe first failure') },
+      second.promise,
+    ];
+    const prepared = Object.freeze({
+      submit: vi.fn(async (): Promise<CompletionDeliveryResult> =>
+        outcomes.shift() ?? { status: 'accepted' }),
+    });
+    const initiator: CompletionInitiator = {
+      prepareCompletion: vi.fn(async () => prepared),
+    };
+
+    const delivery = policy(100).deliver(initiator, completion);
+    await waitForMicrotasks(() => prepared.submit.mock.calls.length === 2);
+    await vi.advanceTimersByTimeAsync(100);
+    await delivery;
+
+    second.resolve({ status: 'failed', error: new Error('late second failure') });
+    await Promise.resolve();
+    expect(initiator.prepareCompletion).toHaveBeenCalledTimes(1);
+    expect(prepared.submit).toHaveBeenCalledTimes(2);
   });
 });
+
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (error: Error) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((resolveValue, rejectValue) => {
+    resolve = resolveValue;
+    reject = rejectValue;
+  });
+  return { promise, resolve, reject };
+}
+
+async function isSettled(promise: Promise<unknown>): Promise<boolean> {
+  let settled = false;
+  void promise.finally(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  return settled;
+}
+
+async function waitForMicrotasks(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (predicate()) return;
+    await Promise.resolve();
+  }
+  throw new Error('microtask condition was not reached');
+}
 
 function noopLog(): DreamuxLogger {
   const log = {
@@ -166,5 +226,5 @@ function noopLog(): DreamuxLogger {
     trace: () => undefined,
     child: () => log,
   };
-  return log as unknown as DreamuxLogger;
+  return log as DreamuxLogger;
 }

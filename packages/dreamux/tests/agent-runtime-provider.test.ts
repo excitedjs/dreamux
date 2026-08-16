@@ -27,8 +27,8 @@ import type {
   AgentRuntimeProviderConfigReadContext,
   AgentRuntimeStateCallbacks,
   AgentRuntimeTextInput,
-  AgentRuntimeTurnResult,
   InboundTurnInput,
+  RuntimeAdmission,
 } from '@excitedjs/dreamux-types';
 import {
   UnknownBuiltinProviderError,
@@ -66,14 +66,14 @@ class FakeExternalRuntime implements AgentRuntime {
     this.status = 'stopped';
   }
 
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+  async channelInput(input: InboundTurnInput): Promise<RuntimeAdmission> {
     this.submitted.push(input);
-    return { status: 'submitted', turnId: 'turn-external' };
+    return { status: 'submitted', turn: completedRuntimeTurn() };
   }
 
-  async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
+  async completionInput(input: AgentRuntimeTextInput): Promise<RuntimeAdmission> {
     this.textSubmitted.push(input);
-    return { status: 'submitted', turnId: input.sourceId ?? 'turn-external-text' };
+    return { status: 'submitted', turn: completedRuntimeTurn() };
   }
 
   getStatus(): ReturnType<AgentRuntime['getStatus']> {
@@ -99,6 +99,16 @@ class FakeExternalRuntime implements AgentRuntime {
   getCapabilities(): AgentRuntimeCapabilities {
     return EXTERNAL_CAPABILITIES;
   }
+}
+
+function completedRuntimeTurn() {
+  return Object.freeze({
+    settled: Promise.resolve({
+      status: 'completed' as const,
+      resultText: null,
+      truncated: false,
+    }),
+  });
 }
 
 function externalFactory(options: {

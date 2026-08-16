@@ -239,14 +239,12 @@ export interface ChannelExactDeliveryInput {
 }
 
 export type ChannelExactDeliveryResult =
-  | { readonly status: 'submitted'; readonly turn_id: string }
+  | { readonly status: 'submitted' }
   /** Runtime-local facts only; neither status confirms cross-restart acceptance. */
   | { readonly status: 'duplicate' }
   | { readonly status: 'stopped' }
-  | {
-      readonly status: 'rejected';
-      readonly rejection: ChannelScopedOperationRejection;
-    };
+  | { readonly status: 'ambiguous' }
+  | { readonly status: 'failed' };
 
 export type ChannelTeamAgentRole = 'team_leader' | 'team_member';
 
@@ -272,29 +270,6 @@ export interface ChannelAgentStateEvent {
     | 'degraded'
     | 'stopped'
     | 'closed';
-}
-
-export interface ChannelTurnSubmittedEvent {
-  readonly schema_version: 1;
-  readonly kind: 'turn.submitted';
-  readonly occurred_at: number;
-  readonly team_name: string;
-  readonly agent_name: string;
-  readonly role: ChannelTeamAgentRole;
-  readonly turn_id: string;
-}
-
-export interface ChannelTurnSettledEvent {
-  readonly schema_version: 1;
-  readonly kind: 'turn.settled';
-  readonly occurred_at: number;
-  readonly team_name: string;
-  readonly agent_name: string;
-  readonly role: ChannelTeamAgentRole;
-  readonly turn_id: string;
-  readonly status: 'completed' | 'failed' | 'stopped';
-  readonly assistant: string | null;
-  readonly assistant_truncated: boolean;
 }
 
 export interface ChannelBindingEndpointSnapshot {
@@ -385,8 +360,6 @@ export type ChannelBindingCollaborationSpaceEvent =
 export type ChannelCoreEvent =
   | ChannelTeamStateEvent
   | ChannelAgentStateEvent
-  | ChannelTurnSubmittedEvent
-  | ChannelTurnSettledEvent
   | ChannelBindingRouteEvent
   | ChannelBindingCollaborationSpaceEvent;
 

@@ -1,5 +1,4 @@
 import type {
-  AgentRuntimeTurnResult,
   ChannelCollaborationTargetEnsureInput,
   ChannelCollaborationTargetEnsureResult,
   ChannelContainer,
@@ -11,6 +10,7 @@ import type {
   DreamuxLogger,
   DreamuxManagedRepoRequest,
   InboundTurnInput,
+  InboundDeliveryResult,
 } from '@excitedjs/dreamux-types';
 
 import { errorInfo } from '../../platform/error-info.js';
@@ -168,7 +168,7 @@ export async function deliverExactCollaborationTarget(input: {
   try {
     request = normalizeExactDeliveryInput(input.request);
   } catch {
-    return rejectedChannelOperation('invalid_input');
+    return { status: 'failed' };
   }
   try {
     const result = await input.collaborationSpaces.deliverExact({
@@ -179,12 +179,22 @@ export async function deliverExactCollaborationTarget(input: {
     });
     switch (result.status) {
       case 'submitted':
-        return { status: 'submitted', turn_id: result.turnId };
+        return { status: 'submitted' };
       case 'duplicate':
+        return { status: 'duplicate' };
       case 'stopped':
-        return { status: result.status };
-      case 'skipped':
         return { status: 'stopped' };
+      case 'ambiguous': {
+        const rejected = rejectedChannelOperation('operation_failed');
+        logStrictOperationFailure(
+          input.log,
+          input.channelId,
+          'deliver',
+          rejected,
+          result.error,
+        );
+        return { status: 'ambiguous' };
+      }
       case 'failed': {
         const rejected = rejectedChannelOperation('operation_failed');
         logStrictOperationFailure(
@@ -194,13 +204,19 @@ export async function deliverExactCollaborationTarget(input: {
           rejected,
           result.error,
         );
-        return rejected;
+        return { status: 'failed' };
       }
     }
   } catch (error) {
     const result = rejectedForCollaborationError(error);
     logStrictOperationFailure(input.log, input.channelId, 'deliver', result, error);
-    return result;
+    if (error instanceof CollaborationTargetOperationError) {
+      return { status: 'failed' };
+    }
+    // The delivery command may already have crossed the entity admission
+    // boundary before an untyped rejection reaches this adapter. Preserve the
+    // uncertainty so callers never retry it as a proven pre-admission failure.
+    return { status: 'ambiguous' };
   }
 }
 
@@ -232,8 +248,8 @@ export async function routeTeamOrCollaborationChannelInput(input: {
   channels: ChannelService;
   teams: TeamCollection;
   collaborationSpaces: CollaborationSpaceService;
-  fallback: (turn: InboundTurnInput) => Promise<AgentRuntimeTurnResult>;
-}): Promise<AgentRuntimeTurnResult> {
+  fallback: (turn: InboundTurnInput) => Promise<InboundDeliveryResult>;
+}): Promise<InboundDeliveryResult> {
   const {
     channelId,
     dispatcherAgentRuntime,
@@ -386,7 +402,7 @@ async function deliverToFirstBoundTarget(input: {
 }): Promise<
   | { status: 'missing' }
   | { status: 'unavailable' }
-  | { status: 'delivered'; result: AgentRuntimeTurnResult }
+  | { status: 'delivered'; result: InboundDeliveryResult }
 > {
   for (const target of input.targets) {
     const routed = await input.channels.resolveInboundBinding({

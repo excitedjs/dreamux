@@ -13,7 +13,7 @@ import {
   isBotSenderType,
 } from '@excitedjs/feishu-transport';
 import type {
-  AgentRuntimeTurnResult,
+  InboundDeliveryResult,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 import type { FeishuInboundEvent } from './bot.js';
@@ -432,13 +432,13 @@ async function deliverAcceptedMessage(
       messageId: event.messageId,
     };
     work.assertSessionActive();
-    let delivery: AgentRuntimeTurnResult;
+    let delivery: InboundDeliveryResult;
     try {
       delivery = await submitter.submitTurn(input, envelope);
     } catch (err) {
-      // Pre-delivery `received` reaction was set; if submit threw we must not
-      // leave it hanging (PR #282 review). Clear the reaction and record the
-      // failure so the operator sees the error, not a stuck "received" mark.
+      // A rejected provider call cannot prove whether the native admission
+      // boundary was crossed. Clear the reaction and record terminal ambiguity;
+      // webhook replay must never duplicate a possibly accepted input.
       await clearInboundReaction(h, event.messageId);
       reactionCreated = false;
       const message = err instanceof Error ? err.message : String(err);
@@ -450,7 +450,7 @@ async function deliverAcceptedMessage(
           message_id: event.messageId,
           err: { message, stack },
         },
-        'feishu inbound submit threw before delivery',
+        'feishu inbound admission was ambiguous; not replaying',
       );
       return;
     }
@@ -495,7 +495,7 @@ async function deliverAcceptedMessage(
     }
     await clearInboundReaction(h, event.messageId);
     reactionCreated = false;
-    if (delivery.status === 'failed') {
+    if (delivery.status === 'failed' || delivery.status === 'ambiguous') {
       const message =
         delivery.error instanceof Error
           ? delivery.error.message
@@ -508,7 +508,9 @@ async function deliverAcceptedMessage(
           message_id: event.messageId,
           err: { message, stack },
         },
-        'failed to submit feishu inbound',
+        delivery.status === 'ambiguous'
+          ? 'feishu inbound admission was ambiguous; not replaying'
+          : 'failed to submit feishu inbound',
       );
     }
   } catch (error) {

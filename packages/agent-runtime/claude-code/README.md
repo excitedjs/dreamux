@@ -30,3 +30,23 @@ context onto the neutral one and supplies the host contracts. The package also
 default-exports a generic provider-loader factory, so
 `loadExternalAgentRuntimeProviders({ refs: ['builtin:claude-code'] })` can load it
 through the same package-loader path as external `npm:` providers.
+
+## Turn lifecycle
+
+The public runtime boundary returns one stable `RuntimeTurn` object for a
+logical Claude command set. Inputs merged before session creation and supported
+live steering reuse that exact object. Command UUIDs are private wire aliases;
+when `msg_lifecycle_v1` is available, all aliases must reach a terminal command
+state and a final result must be captured before the object settles. Live steer
+fails loudly without that capability. Runtime stop fences queued session work,
+terminates the supervised process group with absence proof, and resolves every
+unsettled public object as stopped.
+
+Source deduplication is provider-private. A source is reserved while its native
+admission is in flight, committed only after acceptance or an ambiguous
+post-write failure, and released after a proven pre-write failure. Concurrent
+uses of the same reserved source share the same admission outcome. Accordingly,
+`failed` means the command was proven not written, while `ambiguous` means a
+native write may have been accepted and must not be retried automatically.
+Runtime stop synchronously fences new input, releases pending capability/write
+waiters, and drains all already-started admission calls before it resolves.

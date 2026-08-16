@@ -196,7 +196,19 @@ describe('teammate MCP', () => {
       max_concurrency: 4,
       phase: null,
       last_log: null,
-      agents: [],
+      agents: [
+        {
+          index: 0,
+          name: 'reviewer',
+          label: 'review',
+          phase: 'review',
+          status: 'completed',
+          result: { answer: 42 },
+          error: null,
+          created_at: 1,
+          settled_at: 2,
+        },
+      ],
       result: null,
       error: null,
       created_at: 1,
@@ -385,7 +397,7 @@ describe('teammate MCP', () => {
   it('forwards spawn to the dispatcher-scoped admin method with a pure receipt', async () => {
     const receipt = {
       teammate: { name: 'reviewer', status: 'running' },
-      turn: { status: 'submitted', turn_id: 'turn-1' },
+      status: 'submitted',
     };
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
@@ -445,7 +457,7 @@ describe('teammate MCP', () => {
   it('adds TeamMate success text only to a submitted send receipt', async () => {
     const receipt = {
       teammate: { name: 'reviewer', status: 'running' },
-      turn: { status: 'submitted', turn_id: 'turn-2' },
+      status: 'submitted',
     };
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
@@ -476,7 +488,8 @@ describe('teammate MCP', () => {
         request.method === 'teammate.send'
           ? {
               teammate: { name: 'reviewer', status: 'degraded' },
-              turn: { status: 'failed', error: 'runtime unavailable' },
+              status: 'failed',
+              error: 'runtime unavailable',
             }
           : { teammate: { name: 'reviewer', status: 'closed' } },
     }));
@@ -489,7 +502,8 @@ describe('teammate MCP', () => {
         }),
         {
           teammate: { name: 'reviewer', status: 'degraded' },
-          turn: { status: 'failed', error: 'runtime unavailable' },
+          status: 'failed',
+          error: 'runtime unavailable',
         },
       );
       expectOrdinarySuccess(
@@ -540,7 +554,7 @@ describe('teammate MCP', () => {
   it('forwards TeamLeader spawn without caller cwd, worktree, repo, or overridable scope', async () => {
     const receipt = {
       teammate: { name: 'worker', status: 'running' },
-      turn: { status: 'submitted', turn_id: 'turn-2' },
+      status: 'submitted',
     };
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,

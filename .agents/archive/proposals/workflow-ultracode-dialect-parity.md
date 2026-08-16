@@ -51,8 +51,7 @@ Workflow-owned TeamMates already pass `schema` through the neutral
 it when the fresh owned runtime is created. Providers already own native
 schema enforcement. Dreamux currently parses a completed schema result once and
 maps invalid JSON to `null`
-([`owned-teammates.ts`](/packages/dreamux/src/service/teammate-collection/owned-teammates.ts),
-[`agent-runtime.ts`](/packages/dreamux-types/src/agent-runtime.ts),
+([`agent-runtime.ts`](/packages/dreamux-types/src/agent-runtime.ts),
 [`run.ts`](/packages/dreamux/src/service/workflow-service/run.ts)).
 
 ## Script compilation and entry contract

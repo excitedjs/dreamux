@@ -2,13 +2,19 @@ import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { isUnsupportedFeatureError } from '@excitedjs/dreamux-utils';
 
 import { errorInfo, errorMessage } from '../../platform/error-info.js';
-import type { CompletionEnvelope } from '../completion-router/index.js';
-import {
-  createOwnedTeammateOwner,
-  type OwnedTeammateOps,
-} from '../teammate-collection/owned-teammates.js';
+import type { WorkflowCompletionFact } from '../completion-router/index.js';
+import { throwSettledFailures } from '../shutdown-errors.js';
+import type { SpawnTeamMateRequest } from '../teammate-collection/types.js';
+import type {
+  CreateLockedTeammateOptions,
+} from '../teammate-collection/index.js';
+import type { Turn, TurnAdmission } from '../teammate-service/turn-recording.js';
+import type { LockedTeammate } from '../teammate-service/types.js';
 import { WORKFLOW_AGENT_SYSTEM_PROMPT } from './agent-policy.js';
-import { WorkflowJournal } from './journal.js';
+import {
+  WorkflowJournal,
+  type WorkflowAgentResultJournalEvent,
+} from './journal.js';
 import type {
   WorkflowAgentOptions,
   WorkflowAgentStartMessage,
@@ -27,23 +33,24 @@ import type {
   WorkflowTerminalStatus,
 } from './types.js';
 import {
-  deferred,
   nonEmpty,
   normalizeAgentOptions,
   WorkflowPersistenceError,
   WorkflowSemaphore,
-  type Deferred,
 } from './run-support.js';
 import { WorkflowRunTerminal } from './run-terminal.js';
+
 const MAX_AGENTS = 1000;
 export interface WorkflowRunDeps {
   record: WorkflowRunRecord;
   store: WorkflowRunStore;
   journal: WorkflowJournal;
-  ownedTeammates: Pick<OwnedTeammateOps, 'spawnOwned' | 'releaseAllOwned'>;
+  createLocked(
+    input: SpawnTeamMateRequest,
+    options: CreateLockedTeammateOptions,
+  ): Promise<LockedTeammate>;
   createRunner: WorkflowRunnerFactory;
-  settleTerminal: (completion: CompletionEnvelope) => Promise<void>;
-  discardTerminal: () => void;
+  deliverTerminal: (completion: WorkflowCompletionFact) => Promise<void>;
   evict: (run: WorkflowRun) => void;
   log: DreamuxLogger;
   now?: () => number;
@@ -52,24 +59,31 @@ export interface WorkflowRunDeps {
 interface AgentCall {
   record: WorkflowAgentRecord;
   options: WorkflowAgentOptions;
-  submissionReady: Deferred<void>;
-  settled: Deferred<void>;
+  materialization: Promise<LockedTeammate> | null;
+  handle: LockedTeammate | null;
+  turn: Turn | null;
+  resultCandidate: WorkflowAgentResultJournalEvent | null;
+  resultJournalCommitted: boolean;
   completed: boolean;
 }
-
-/** One live workflow entity: durable state, journal, child and owned agents. */
+/** One live Workflow entity with direct locked TeamMate and Turn ownership. */
 export class WorkflowRun {
   private readonly record: WorkflowRunRecord;
   private readonly runner: WorkflowRunnerHandle;
   private readonly semaphore: WorkflowSemaphore;
   private readonly terminal: WorkflowRunTerminal;
   private readonly calls = new Map<number, AgentCall>();
+  private readonly materializations = new Set<Promise<LockedTeammate>>();
   private readonly runnerMessageTasks = new Set<Promise<void>>();
   private readonly agentTasks = new Set<Promise<void>>();
-  private readonly teammateOwner = createOwnedTeammateOwner();
+  private readonly unlockedHandles = new Set<LockedTeammate>();
   private mutationTail: Promise<void> = Promise.resolve();
   private runnerMessageTail: Promise<void> = Promise.resolve();
   private runnerTerminalMessageSeen = false;
+  private terminalCandidate: WorkflowRunRecord | null = null;
+  private terminalJournalCommitted = false;
+  private terminalDeliveryCommitted = false;
+  private terminalLogged = false;
 
   constructor(private readonly deps: WorkflowRunDeps) {
     this.record = deps.record;
@@ -138,7 +152,15 @@ export class WorkflowRun {
 
   async start(script: string, args: unknown): Promise<void> {
     try {
+      if (this.terminal.requested !== null) {
+        await this.terminal.stop();
+        return;
+      }
       await this.runner.start();
+      if (this.terminal.requested !== null) {
+        await this.terminal.stop();
+        return;
+      }
       await this.runner.send({ type: 'run_start', script, args });
     } catch (error) {
       await this.terminal.request('failed', null, errorMessage(error));
@@ -147,20 +169,6 @@ export class WorkflowRun {
 
   async stop(): Promise<WorkflowTerminalStatus> {
     return this.terminal.stop();
-  }
-
-  /** Stop through the public contract, then wait for natural settle/auto-close. */
-  async stopAndWait(): Promise<WorkflowRunRecord> {
-    await this.terminal.stopAndWait();
-    return this.snapshot();
-  }
-
-  /**
-   * Bound process shutdown: persist a terminal run after killing the runner,
-   * but hand owned runtime cleanup to the collection-wide force-stop sweep.
-   */
-  async stopForShutdown(): Promise<void> {
-    await this.terminal.stopForShutdown();
   }
 
   closeAdmission(): void {
@@ -175,6 +183,10 @@ export class WorkflowRun {
       );
       return;
     }
+    if (
+      this.runnerTerminalMessageSeen ||
+      this.terminal.requested !== null
+    ) return;
     if (message.type === 'run_result') this.runnerTerminalMessageSeen = true;
     const task = this.runnerMessageTail
       .then(() => this.handleRunnerMessage(message))
@@ -214,11 +226,11 @@ export class WorkflowRun {
         return;
       case 'run_result':
         if (this.terminal.requested !== null) return;
-        if (message.status === 'completed') {
-          await this.terminal.request('completed', message.result ?? null, null);
-        } else {
-          await this.terminal.request('failed', null, message.error);
-        }
+        await this.terminal.request(
+          message.status === 'completed' ? 'completed' : 'failed',
+          message.status === 'completed' ? message.result ?? null : null,
+          message.status === 'completed' ? null : message.error,
+        );
         return;
     }
   }
@@ -257,16 +269,20 @@ export class WorkflowRun {
       name: null,
       label: options.label ?? null,
       phase: options.phase ?? this.record.phase,
-      turn_id: null,
       status: 'queued',
+      result: null,
+      error: null,
       created_at: createdAt,
       settled_at: null,
     };
     const call: AgentCall = {
       record,
       options,
-      submissionReady: deferred(),
-      settled: deferred(),
+      materialization: null,
+      handle: null,
+      turn: null,
+      resultCandidate: null,
+      resultJournalCommitted: false,
       completed: false,
     };
     this.calls.set(message.index, call);
@@ -298,7 +314,7 @@ export class WorkflowRun {
     try {
       releaseSlot = await this.semaphore.acquire();
       if (this.terminal.requested !== null) {
-        await this.completeAgent(call, 'stopped', null);
+        await this.completeAgent(call, 'stopped', null, null);
         return;
       }
       call.record.status = 'running';
@@ -306,11 +322,11 @@ export class WorkflowRun {
       this.record.updated_at = this.now();
       await this.mutate(() => this.deps.store.write(this.record));
       if (this.terminal.requested !== null) {
-        await this.completeAgent(call, 'stopped', null);
+        await this.completeAgent(call, 'stopped', null, null);
         return;
       }
 
-      const spawned = await this.deps.ownedTeammates.spawnOwned(
+      const materialization = this.deps.createLocked(
         {
           name: nonEmpty(call.options.label) ??
             `workflow-${this.record.run_id}-${call.record.index + 1}`,
@@ -326,94 +342,71 @@ export class WorkflowRun {
             : {}),
         },
         {
-          owner: this.teammateOwner,
-          routeSettledCompletion: (producerName, turnId, completion) =>
-            this.handleAgentCompletion(
-              call,
-              producerName,
-              turnId,
-              completion,
-            ),
           systemPromptAppend: [WORKFLOW_AGENT_SYSTEM_PROMPT],
           outputSchema: call.options.schema,
         },
       );
-      if (call.completed) {
-        call.submissionReady.resolve();
-        return;
-      }
-      call.record.name = spawned.teammate.name;
-      call.record.turn_id = spawned.turn.status === 'submitted'
-        ? spawned.turn.turnId
-        : null;
+      call.materialization = materialization;
+      this.materializations.add(materialization);
+      void materialization
+        .finally(() => this.materializations.delete(materialization))
+        .catch(() => {});
+      const handle = await materialization;
+      call.handle = handle;
+
+      call.record.name = handle.name;
       const submittedAt = this.now();
       this.record.updated_at = submittedAt;
       await this.mutate(async () => {
         await this.deps.journal.append({
           kind: 'submit',
           index: call.record.index,
-          name: spawned.teammate.name,
-          turn_id: call.record.turn_id,
+          name: handle.name,
           created_at: submittedAt,
         });
         await this.deps.store.write(this.record);
       });
-      call.submissionReady.resolve();
+      if (this.terminal.requested !== null) {
+        await this.completeAgent(call, 'stopped', null, null);
+        return;
+      }
 
+      const admission = await handle.submit({
+        prompt,
+        turnOrigin:
+          this.record.caller_kind === 'dispatcher'
+            ? 'dispatcher'
+            : 'team_leader',
+        ...(call.options.schema !== undefined
+          ? { outputSchema: call.options.schema }
+          : {}),
+      });
       this.deps.log.info(
         {
           run_id: this.record.run_id,
           index: call.record.index,
-          producer: spawned.teammate.name,
-          turn_id: call.record.turn_id,
+          producer: handle.name,
+          status: admission.status,
         },
         'workflow agent submitted',
       );
-
-      if (spawned.turn.status !== 'submitted') {
-        const status =
-          spawned.turn.status === 'stopped' || spawned.turn.status === 'skipped' ? 'stopped' : 'failed';
-        if (spawned.turn.status === 'failed') {
-          this.deps.log.warn(
-            {
-              run_id: this.record.run_id,
-              index: call.record.index,
-              name: call.options.label,
-              err: spawned.turn.error
-                ? { name: spawned.turn.error.name, message: spawned.turn.error.message, stack: spawned.turn.error.stack }
-                : undefined,
-            },
-            'workflow agent turn failed at submission',
-          );
-        }
-        const runnerError =
-          spawned.turn.status === 'failed' &&
-          isUnsupportedFeatureError(spawned.turn.error, 'outputSchema')
-            ? spawned.turn.error.message
-            : undefined;
-        await this.completeAgent(call, status, null, runnerError);
-        return;
-      }
-      await call.settled.promise;
+      await this.observeAdmission(call, admission);
     } catch (error) {
-      call.submissionReady.resolve();
       if (error instanceof WorkflowPersistenceError) {
-        // Fail-loud persistence deliberately enters terminal cleanup, which may
-        // stop this owned runtime mid-turn because its settle cannot be recorded.
         this.terminal.observe('failed', null, error.message);
         return;
       }
       if (!call.completed) {
-        const stopped = this.terminal.requested === 'stopped';
-        const runnerError =
-          !stopped && isUnsupportedFeatureError(error, 'outputSchema')
-            ? errorMessage(error)
-            : undefined;
+        const stopped = this.terminal.requested !== null;
+        const publicError = errorMessage(error);
         await this.completeAgent(
           call,
           stopped ? 'stopped' : 'failed',
           null,
-          runnerError,
+          stopped ? null : publicError,
+          !stopped && isUnsupportedFeatureError(error, 'outputSchema')
+            ? publicError
+            : undefined,
         ).catch((persistenceError: unknown) => {
           this.terminal.observe(
             'failed',
@@ -427,128 +420,132 @@ export class WorkflowRun {
     }
   }
 
-  private async handleAgentCompletion(
+  private async observeAdmission(
     call: AgentCall,
-    producerName: string,
-    turnId: string,
-    completion: CompletionEnvelope,
+    admission: TurnAdmission,
   ): Promise<void> {
-    await call.submissionReady.promise;
-    if (call.completed) return;
-    if (
-      call.record.name !== producerName ||
-      call.record.turn_id !== turnId
-    ) {
-      this.deps.log.warn(
-        {
-          run_id: this.record.run_id,
-          index: call.record.index,
-          producer: producerName,
-          turn_id: turnId,
-        },
-        'ignoring unexpected turn from workflow-owned agent',
+    if (admission.status !== 'submitted') {
+      const stopped =
+        admission.status === 'stopped' || admission.status === 'skipped';
+      const error = admission.status === 'failed' || admission.status === 'ambiguous'
+        ? admission.error.message
+        : stopped
+          ? null
+          : `workflow agent submission ${admission.status}`;
+      const runnerError =
+        (admission.status === 'failed' || admission.status === 'ambiguous') &&
+        isUnsupportedFeatureError(admission.error, 'outputSchema')
+          ? admission.error.message
+          : undefined;
+      await this.completeAgent(
+        call,
+        stopped ? 'stopped' : 'failed',
+        null,
+        error,
+        runnerError,
+      );
+      return;
+    }
+    call.turn = admission.turn;
+    let outcome: Awaited<typeof admission.turn.settled>;
+    try {
+      outcome = await admission.turn.settled;
+    } catch (error) {
+      const persistenceError = errorMessage(error);
+      await this.terminal.failAfterNotification(persistenceError, () =>
+        this.completeAgent(call, 'failed', null, persistenceError, persistenceError, true));
+      return;
+    }
+    if (outcome.status !== 'completed') {
+      await this.completeAgent(
+        call,
+        outcome.status,
+        null,
+        outcome.status === 'failed' ? outcome.error.message : null,
       );
       return;
     }
 
-    let status = completion.status;
-    let result: unknown = completion.status === 'completed'
-      ? completion.result
-      : null;
+    let result: unknown = outcome.resultText;
+    let error: string | null = null;
     let runnerError: string | undefined;
-    if (completion.status === 'completed' && call.options.schema !== undefined) {
-      status = 'failed';
-      result = null;
-      if (completion.result === null) {
-        runnerError =
-          'runtime reported successful structured output that was empty';
-        this.deps.log.warn(
-          { run_id: this.record.run_id, index: call.record.index, producer: producerName, turn_id: turnId },
-          'workflow structured output was empty',
-        );
+    if (call.options.schema !== undefined) {
+      if (outcome.resultText === null) {
+        result = null;
+        error = 'runtime reported successful structured output that was empty';
+        runnerError = error;
       } else {
         try {
-          result = JSON.parse(completion.result) as unknown;
-          status = 'completed';
+          result = JSON.parse(outcome.resultText) as unknown;
         } catch {
-          runnerError =
+          result = null;
+          error =
             'runtime reported successful structured output that was not valid JSON';
-          this.deps.log.warn(
-            { run_id: this.record.run_id, index: call.record.index, producer: producerName, turn_id: turnId },
-            'workflow structured output was not valid JSON',
-          );
+          runnerError = error;
         }
       }
     }
-    if (completion.status !== 'completed') {
-      this.deps.log.warn(
-        { run_id: this.record.run_id, index: call.record.index, producer: producerName, turn_id: turnId, status: completion.status },
-        'workflow agent did not complete successfully',
-      );
-    }
-    try {
-      await this.completeAgent(call, status, result, runnerError);
-    } catch (error) {
-      // Let the producer's settle route unwind before terminal auto-close.
-      // Entity release drains that same route, so awaiting finalization here
-      // would create a persistence-failure cleanup cycle.
-      this.terminal.observe('failed', null, errorMessage(error));
-    }
+    await this.completeAgent(
+      call,
+      error === null ? 'completed' : 'failed',
+      result,
+      error,
+      runnerError,
+    );
   }
 
   private async completeAgent(
     call: AgentCall,
     status: Extract<WorkflowAgentStatus, 'completed' | 'failed' | 'stopped'>,
     result: unknown,
-    runnerError?: string,
+    error: string | null,
+    runnerError?: string, deliverWhileTerminal = false,
   ): Promise<void> {
     if (call.completed) return;
+    call.resultCandidate ??= {
+      kind: 'result',
+      index: call.record.index,
+      status,
+      result: status === 'completed' ? result : null,
+      error,
+      settled_at: call.record.settled_at ?? this.now(),
+    };
+    const candidate = call.resultCandidate;
+    call.record.status = candidate.status;
+    call.record.result = candidate.result;
+    call.record.error = candidate.error;
+    call.record.settled_at = candidate.settled_at;
+    this.record.updated_at = candidate.settled_at;
+    await this.mutate(async () => {
+      if (!call.resultJournalCommitted) {
+        await this.deps.journal.ensureAgentResult(candidate);
+        call.resultJournalCommitted = true;
+      }
+      await this.deps.store.write(this.record);
+    });
     call.completed = true;
-    call.record.status = status;
-    call.record.settled_at = this.now();
-    this.record.updated_at = call.record.settled_at;
-    try {
-      await this.mutate(async () => {
-        await this.deps.journal.append({
-          kind: 'result',
-          index: call.record.index,
-          status,
-          settled_at: call.record.settled_at ?? this.now(),
-        });
-        await this.deps.store.write(this.record);
+    this.deps.log.info(
+      {
+        run_id: this.record.run_id,
+        index: call.record.index,
+        producer: call.record.name,
+        status: candidate.status,
+      },
+      'workflow agent settled',
+    );
+    if (this.terminal.suppressDelivery && !deliverWhileTerminal) return;
+    if (runnerError !== undefined) {
+      await this.runner.send({
+        type: 'agent_result',
+        index: call.record.index,
+        error: runnerError,
       });
-      this.deps.log.info(
-        {
-          run_id: this.record.run_id,
-          index: call.record.index,
-          producer: call.record.name,
-          turn_id: call.record.turn_id,
-          status,
-        },
-        'workflow agent settled',
-      );
-      if (!this.terminal.suppressDelivery) {
-        if (runnerError !== undefined) {
-          await this.runner.send({
-            type: 'agent_result',
-            index: call.record.index,
-            error: runnerError,
-          });
-        } else {
-          await this.runner.send({
-            type: 'agent_result',
-            index: call.record.index,
-            result,
-          });
-        }
-      }
-    } catch (error) {
-      if (error instanceof WorkflowPersistenceError) throw error;
-      if (this.terminal.requested === null) {
-        this.terminal.observe('failed', null, errorMessage(error));
-      }
-    } finally {
-      call.settled.resolve();
+    } else {
+      await this.runner.send({
+        type: 'agent_result',
+        index: call.record.index,
+        result: call.record.result,
+      });
     }
   }
 
@@ -562,121 +559,127 @@ export class WorkflowRun {
     result: unknown,
     requestedError: string | null,
   ): Promise<void> {
-    let status = requestedStatus;
-    let error = requestedError;
-    const cleanupErrors: unknown[] = [];
-    await this.runner.stop().catch((runnerError: unknown) => {
-      cleanupErrors.push(runnerError);
-    });
-    while (this.runnerMessageTasks.size > 0) {
-      await Promise.allSettled([...this.runnerMessageTasks]);
-    }
-    const agentTasksDrained = await this.terminal.waitUnlessShutdown(
-      this.drainAgentTasks(),
-    );
-    if (this.terminal.shutdownRequested) this.freezeAgentCalls(this.now());
-    await this.mutationTail;
+    const runnerStopResults = await Promise.allSettled([this.runner.stop()]);
+    await this.joinMaterializations();
 
-    if (agentTasksDrained && !this.terminal.shutdownRequested) {
-      await this.deps.ownedTeammates
-        .releaseAllOwned(this.teammateOwner)
-        .catch((releaseError: unknown) => {
-          cleanupErrors.push(releaseError);
-        });
-    }
-    if (cleanupErrors.length > 0) {
-      this.deps.log.warn(
-        {
-          run_id: this.record.run_id,
-          errors: cleanupErrors.map(errorInfo),
-        },
-        'workflow terminal cleanup had failures',
+    const handles = [...new Set(
+      [...this.calls.values()]
+        .map((call) => call.handle)
+        .filter((handle): handle is LockedTeammate => handle !== null),
+    )].filter((handle) => !this.unlockedHandles.has(handle));
+    const closeResults = await Promise.allSettled(
+      handles.map(async (handle) =>
+        handle.close({
+          note: `Workflow ${this.record.run_id} ${requestedStatus}`,
+        })),
+    );
+    if (closeResults.some((close) => close.status === 'rejected')) {
+      throwSettledFailures(
+        [...runnerStopResults, ...closeResults],
+        `workflow ${JSON.stringify(this.record.run_id)} runner or TeamMates failed to stop`,
       );
-      error ??= cleanupErrors.map(errorMessage).join('; ');
     }
 
-    const endedAt = this.now();
-    this.record.status = status;
-    this.record.result = status === 'completed' ? result : null;
-    this.record.error = error;
-    this.record.ended_at = endedAt;
-    this.record.updated_at = endedAt;
-    try {
-      await this.deps.journal.append({
-        kind: 'end',
-        status,
-        ended_at: endedAt,
-      });
-    } catch (journalError) {
-      status = 'failed';
-      error = `workflow journal append failed: ${errorMessage(journalError)}`;
-      this.record.status = status;
-      this.record.result = null;
-      this.record.error = error;
-    }
-    await this.deps.store.write(this.record);
-
-    const completionResult = JSON.stringify(
-      {
-        run_id: this.record.run_id,
-        status,
-        result: this.record.result,
-        error: this.record.error,
-        agents: this.record.agents
-          .filter((agent) => agent.name !== null)
-          .map((agent) => ({ index: agent.index, name: agent.name })),
-      },
-      null,
-      2,
-    );
-    try {
-      if (this.terminal.shutdownRequested) {
-        this.deps.discardTerminal();
-      } else {
-        const settleTask = this.deps.settleTerminal({
-          kind: 'workflow',
-          source: 'workflow',
-          id: this.record.run_id,
-          status,
-          result: completionResult,
-        });
-        if (!(await this.terminal.waitUnlessShutdown(settleTask))) {
-          void settleTask.catch((settleError: unknown) => {
-            this.deps.log.error(
-              { run_id: this.record.run_id, err: errorInfo(settleError) },
-              'workflow terminal delivery failed during shutdown',
-            );
-          });
-        }
+    await this.drainRunnerMessageTasks();
+    await this.drainAgentTasks();
+    await this.mutationTail;
+    for (const call of this.calls.values()) {
+      if (!call.completed) {
+        await this.completeAgent(call, 'stopped', null, requestedError);
       }
-    } finally {
+    }
+    await this.mutationTail;
+    throwSettledFailures(
+      runnerStopResults,
+      `workflow ${JSON.stringify(this.record.run_id)} runner failed to stop`,
+    );
+
+    if (this.terminalCandidate === null) {
+      const endedAt = this.now();
+      this.terminalCandidate = {
+        ...structuredClone(this.record),
+        status: requestedStatus,
+        result: requestedStatus === 'completed' ? result : null,
+        error: requestedError,
+        ended_at: endedAt,
+        updated_at: endedAt,
+      };
+    }
+    const candidate = this.terminalCandidate;
+    if (!this.terminalJournalCommitted) {
+      await this.deps.journal.ensureTerminal({
+        kind: 'end',
+        status: candidate.status as WorkflowTerminalStatus,
+        result: candidate.result,
+        error: candidate.error,
+        ended_at: candidate.ended_at!,
+      });
+      this.terminalJournalCommitted = true;
+    }
+    await this.deps.store.write(candidate);
+    Object.assign(this.record, structuredClone(candidate));
+
+    for (const handle of handles) {
+      if (this.unlockedHandles.has(handle)) continue;
+      handle.unlock();
+      this.unlockedHandles.add(handle);
+    }
+
+    if (!this.terminalDeliveryCommitted) {
+      await this.deps.deliverTerminal({
+        kind: 'workflow',
+        source: 'workflow',
+        runId: this.record.run_id,
+        status: candidate.status as WorkflowTerminalStatus,
+        result: JSON.stringify(
+          {
+            run_id: candidate.run_id,
+            status: candidate.status,
+            result: candidate.result,
+            error: candidate.error,
+            agents: candidate.agents
+              .filter((agent) => agent.name !== null)
+              .map((agent) => ({ index: agent.index, name: agent.name })),
+          },
+          null,
+          2,
+        ),
+      });
+      this.terminalDeliveryCommitted = true;
+    }
+    if (!this.terminalLogged) {
+      this.terminalLogged = true;
       this.deps.log.info(
         {
           run_id: this.record.run_id,
-          status,
-          agent_count: this.record.agents.length,
-          err: error === null ? undefined : { message: error },
+          status: candidate.status,
+          agent_count: candidate.agents.length,
+          err: candidate.error === null
+            ? undefined
+            : { message: candidate.error },
         },
         'workflow run terminal',
       );
-      this.deps.evict(this);
+    }
+    this.deps.evict(this);
+  }
+
+  private async joinMaterializations(): Promise<void> {
+    while (this.materializations.size > 0) {
+      await Promise.allSettled([...this.materializations]);
+    }
+    await Promise.resolve();
+  }
+
+  private async drainRunnerMessageTasks(): Promise<void> {
+    while (this.runnerMessageTasks.size > 0) {
+      await Promise.allSettled([...this.runnerMessageTasks]);
     }
   }
 
   private async drainAgentTasks(): Promise<void> {
     while (this.agentTasks.size > 0) {
       await Promise.allSettled([...this.agentTasks]);
-    }
-  }
-
-  private freezeAgentCalls(settledAt: number): void {
-    for (const call of this.calls.values()) {
-      if (call.completed) continue;
-      call.completed = true;
-      call.record.status = 'stopped';
-      call.record.settled_at = settledAt;
-      call.submissionReady.resolve();
-      call.settled.resolve();
     }
   }
 

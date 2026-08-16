@@ -16,6 +16,7 @@ export type ParsedLine =
       kind: 'init';
       sessionId: string | null;
       model: string | null;
+      capabilities: readonly string[];
       raw: JsonObject;
     }
   | {
@@ -25,6 +26,12 @@ export type ParsedLine =
       raw: JsonObject;
     }
   | { kind: 'result'; outcome: ResultEnvelope; raw: JsonObject }
+  | {
+      kind: 'command_lifecycle';
+      commandUuid: string | null;
+      state: CommandLifecycleState | null;
+      raw: JsonObject;
+    }
   | {
       kind: 'control_request';
       requestId: string | null;
@@ -42,6 +49,13 @@ export type ParsedLine =
     }
   | { kind: 'other'; type: string | null; subtype: string | null; raw: JsonObject }
   | { kind: 'parse_error'; raw: string };
+
+export type CommandLifecycleState =
+  | 'queued'
+  | 'started'
+  | 'completed'
+  | 'cancelled'
+  | 'discarded';
 
 /** The terminal `result` envelope, reduced to what the runtime records per turn. */
 export interface ResultEnvelope {

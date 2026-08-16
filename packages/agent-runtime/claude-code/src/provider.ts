@@ -1,7 +1,5 @@
-import {
-  ClaudeCodeRuntime,
-  type ClaudeCodeRuntimeDeps,
-} from './runtime.js';
+import { ClaudeCodeRuntime } from './runtime.js';
+import type { ClaudeCodeRuntimeDeps } from './runtime-deps.js';
 import {
   DEFAULT_CLAUDE_CODE_BIN,
   dispatcherClaudeCodeConfig,
@@ -155,9 +153,6 @@ export function createClaudeCodeAgentRuntimeProvider(
         outputSchema: context.outputSchema,
         ...(systemPromptAppend !== undefined
           ? { systemPromptAppend }
-          : {}),
-        ...(context.onTurnSettled !== undefined
-          ? { onTurnSettled: context.onTurnSettled }
           : {}),
         ...(context.logger !== undefined ? { logger: context.logger } : {}),
       };

@@ -22,7 +22,21 @@ export function isProcessAlive(pid: number): boolean {
   }
 }
 
-/** Signal an entire process group; ESRCH/EPERM are swallowed. */
+/** True when a detached process group still exists (EPERM counts as alive). */
+export function isProcessGroupAlive(pgid: number): boolean {
+  if (!Number.isFinite(pgid) || pgid <= 0) return false;
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (error) {
+    const errno = (error as NodeJS.ErrnoException).code;
+    if (errno === 'ESRCH') return false;
+    if (errno === 'EPERM') return true;
+    throw error;
+  }
+}
+
+/** Signal an entire process group; only an already-absent group is ignored. */
 export function killProcessGroup(
   pgid: number,
   signal: NodeJS.Signals | number,
@@ -32,7 +46,7 @@ export function killProcessGroup(
     process.kill(-pgid, signal);
   } catch (e) {
     const errno = (e as NodeJS.ErrnoException).code;
-    if (errno === 'ESRCH' || errno === 'EPERM') return;
+    if (errno === 'ESRCH') return;
     throw e;
   }
 }

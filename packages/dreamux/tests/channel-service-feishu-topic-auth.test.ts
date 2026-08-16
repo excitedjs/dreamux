@@ -111,7 +111,7 @@ describe('ChannelService Feishu topic authorization', () => {
     service.adopt(sessions);
     for (const session of sessions.values()) {
       await session.start({
-        deliver: async () => ({ status: 'submitted', turnId: 'turn-1' }),
+        deliver: async () => ({ status: 'submitted' }),
       });
     }
 
@@ -230,7 +230,7 @@ describe('ChannelService Feishu topic authorization', () => {
     service.adopt(sessions);
     for (const session of sessions.values()) {
       await session.start({
-        deliver: async () => ({ status: 'submitted', turnId: 'turn-1' }),
+        deliver: async () => ({ status: 'submitted' }),
       });
     }
 

@@ -19,14 +19,48 @@ import {
 } from './stream.js';
 import type { ParsedLine, TurnOutcome, TurnSubmitOptions } from './types.js';
 
+type AcceptedCommandState =
+  | 'accepted'
+  | 'queued'
+  | 'started'
+  | 'completed'
+  | 'cancelled'
+  | 'discarded';
+
 interface PendingTurn {
   resolve: (outcome: TurnOutcome) => void;
   reject: (err: Error) => void;
   aggregator: TurnAggregator;
   timer: NodeJS.Timeout | null;
-  settleImmediate: NodeJS.Immediate | null;
-  steered: boolean;
-  deferredOutcome: TurnOutcome | null;
+  commands: Map<string, AcceptedCommandState>;
+  capabilityWaiters: PendingSteer[];
+  writeWaiters: Map<string, PendingWriteSteer>;
+  finalOutcome: TurnOutcome | null;
+  resultCount: number;
+}
+
+interface PendingSteer {
+  prompt: string;
+  options: TurnSubmitOptions;
+  resolve: () => void;
+  reject: (error: Error) => void;
+}
+
+interface PendingWriteSteer {
+  resolve: () => void;
+  reject: (error: Error) => void;
+}
+
+/** Provider-private admission classification; never crosses the neutral API. */
+export class ClaudeSteerAdmissionError extends Error {
+  constructor(
+    readonly admission: 'failed' | 'ambiguous',
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = 'ClaudeSteerAdmissionError';
+  }
 }
 
 export interface ClaudeCodeStreamRpcOptions {
@@ -39,6 +73,7 @@ export interface ClaudeCodeStreamRpcOptions {
 export class ClaudeCodeStreamRpc {
   private readonly lineBuf = new LineBuffer();
   private pending: PendingTurn | null = null;
+  private lifecycleSupported: boolean | null = null;
   private remoteControlRequestId: string | null = null;
 
   constructor(
@@ -64,20 +99,33 @@ export class ClaudeCodeStreamRpc {
         reject,
         aggregator: new TurnAggregator(),
         timer: null,
-        settleImmediate: null,
-        steered: false,
-        deferredOutcome: null,
+        commands: new Map(),
+        capabilityWaiters: [],
+        writeWaiters: new Map(),
+        finalOutcome: null,
+        resultCount: 0,
       };
+      const commandUuid = randomUUID();
+      pending.commands.set(commandUuid, 'accepted');
       this.pending = pending;
       // Arm the idle deadline (reset on every inbound stream line in `onLine`).
       this.armIdleTimer(pending);
-      this.stdin.write(`${buildUserMessage(prompt, options)}\n`, (err) => {
-        if (err != null && this.pending === pending) {
-          this.settlePending()?.reject(
-            err instanceof Error ? err : new Error(String(err)),
-          );
+      try {
+        this.stdin.write(
+          `${buildUserMessage(prompt, options, commandUuid)}\n`,
+          (err) => {
+            if (err != null && this.pending === pending) {
+              const error = asError(err);
+              this.settlePending(error)?.reject(error);
+            }
+          },
+        );
+      } catch (error) {
+        if (this.pending === pending) {
+          const failure = asError(error);
+          this.settlePending(failure)?.reject(failure);
         }
-      });
+      }
     });
   }
 
@@ -86,24 +134,60 @@ export class ClaudeCodeStreamRpc {
     options: TurnSubmitOptions = {},
   ): Promise<void> {
     if (!this.stdin.writable) {
-      return Promise.reject(new Error('claude resident child is not running'));
+      return Promise.reject(
+        preAdmissionError('claude resident child is not running'),
+      );
     }
     if (this.pending === null) {
-      return Promise.reject(new Error('claude resident session has no active turn'));
+      return Promise.reject(
+        preAdmissionError('claude resident session has no active turn'),
+      );
     }
     const pending = this.pending;
-    pending.steered = true;
-    return new Promise<void>((resolve, reject) => {
-      this.stdin.write(
-        `${buildUserMessage(prompt, { priority: 'now', ...options })}\n`,
-        (err) => {
-          if (err != null) {
-            reject(err instanceof Error ? err : new Error(String(err)));
-            return;
-          }
-          resolve();
-        },
+    if (this.lifecycleSupported === false) {
+      return Promise.reject(lifecycleUnsupportedError());
+    }
+    if (this.lifecycleSupported === null) {
+      return new Promise<void>((resolve, reject) => {
+        pending.capabilityWaiters.push({ prompt, options, resolve, reject });
+      });
+    }
+    return this.writeSteer(pending, prompt, options);
+  }
+
+  private writeSteer(
+    pending: PendingTurn,
+    prompt: string,
+    options: TurnSubmitOptions,
+  ): Promise<void> {
+    if (this.pending !== pending) {
+      return Promise.reject(capabilityUndecidedTurnEndedError());
+    }
+    if (!this.stdin.writable) {
+      return Promise.reject(
+        preAdmissionError('claude resident child is not running'),
       );
+    }
+    const commandUuid = randomUUID();
+    pending.commands.set(commandUuid, 'accepted');
+    return new Promise<void>((resolve, reject) => {
+      pending.writeWaiters.set(commandUuid, { resolve, reject });
+      const fail = (error: unknown): void =>
+        this.rejectWriteWaiter(pending, commandUuid, ambiguousWriteError(error));
+      try {
+        this.stdin.write(
+          `${buildUserMessage(prompt, { priority: 'now', ...options }, commandUuid)}\n`,
+          (err) => {
+            if (err != null) {
+              fail(err);
+              return;
+            }
+            this.resolveWriteWaiter(pending, commandUuid);
+          },
+        );
+      } catch (error) {
+        fail(error);
+      }
     });
   }
 
@@ -112,7 +196,7 @@ export class ClaudeCodeStreamRpc {
   }
 
   failPending(err: Error): void {
-    this.settlePending()?.reject(err);
+    this.settlePending(err)?.reject(err);
   }
 
   enableRemoteControl(): void {
@@ -125,12 +209,15 @@ export class ClaudeCodeStreamRpc {
    * Detach the in-flight turn: clear its deadline timer and null `pending`,
    * returning it so the caller can resolve or reject it exactly once.
    */
-  private settlePending(): PendingTurn | null {
+  private settlePending(
+    capabilityFailure = capabilityUndecidedTurnEndedError(),
+  ): PendingTurn | null {
     const pending = this.pending;
     if (pending === null) return null;
     if (pending.timer !== null) clearTimeout(pending.timer);
-    if (pending.settleImmediate !== null) clearImmediate(pending.settleImmediate);
     this.pending = null;
+    this.rejectCapabilityWaiters(pending, capabilityFailure);
+    this.rejectWriteWaiters(pending, capabilityFailure);
     return pending;
   }
 
@@ -145,16 +232,16 @@ export class ClaudeCodeStreamRpc {
     if (pending.timer !== null) clearTimeout(pending.timer);
     pending.timer = setTimeout(() => {
       if (this.pending !== pending) return;
-      this.pending = null;
+      const error = new Error(
+        `claude resident turn stalled: no stream activity for ${this.options.turnTimeoutMs}ms`,
+      );
+      const stalled = this.settlePending(error);
+      if (stalled === null) return;
       this.options.log?.(
         'error',
         `claude turn stalled: no stream activity for ${this.options.turnTimeoutMs}ms; reaping resident child`,
       );
-      pending.reject(
-        new Error(
-          `claude resident turn stalled: no stream activity for ${this.options.turnTimeoutMs}ms`,
-        ),
-      );
+      stalled.reject(error);
       this.options.reapOnTimeout();
     }, this.options.turnTimeoutMs);
   }
@@ -166,21 +253,41 @@ export class ClaudeCodeStreamRpc {
     if (this.pending !== null) this.armIdleTimer(this.pending);
     switch (line.kind) {
       case 'init':
+        this.decideLifecycleSupport(
+          line.capabilities.includes('msg_lifecycle_v1'),
+        );
+        this.pending?.aggregator.accept(line);
+        break;
       case 'assistant':
         this.pending?.aggregator.accept(line);
         break;
+      case 'command_lifecycle': {
+        const pending = this.pending;
+        if (
+          pending === null ||
+          line.commandUuid === null ||
+          line.state === null ||
+          !pending.commands.has(line.commandUuid)
+        ) {
+          break;
+        }
+        const newlySupported = this.lifecycleSupported === null;
+        if (newlySupported) this.lifecycleSupported = true;
+        this.resolveWriteWaiter(pending, line.commandUuid);
+        pending.commands.set(line.commandUuid, line.state);
+        this.tryComplete(pending);
+        if (newlySupported && this.pending === pending) {
+          this.flushCapabilityWaiters(pending);
+        }
+        break;
+      }
       case 'result': {
         if (this.pending === null) break;
         this.pending.aggregator.accept(line);
         const outcome = this.pending.aggregator.outcome();
-        if (this.pending.steered) {
-          this.deferSteeredResult(this.pending, outcome);
-          break;
-        }
-        const pending = this.settlePending();
-        if (pending === null) break;
-        if (outcome !== null) pending.resolve(outcome);
-        else pending.reject(new Error('claude turn ended without a result'));
+        this.pending.finalOutcome = outcome;
+        this.pending.resultCount += 1;
+        this.tryComplete(this.pending);
         break;
       }
       case 'control_request':
@@ -200,24 +307,95 @@ export class ClaudeCodeStreamRpc {
     }
   }
 
-  private deferSteeredResult(
+  private tryComplete(pending: PendingTurn): void {
+    if (this.pending !== pending) return;
+    if (this.lifecycleSupported !== true) {
+      if (pending.finalOutcome !== null) {
+        this.settlePending()?.resolve(pending.finalOutcome);
+      }
+      return;
+    }
+
+    const states = [...pending.commands.values()];
+    if (states.some((state) => !isTerminalCommandState(state))) return;
+    const unsuccessful = states.find(
+      (state) => state === 'cancelled' || state === 'discarded',
+    );
+    if (unsuccessful !== undefined) {
+      const error = new Error(`claude command was ${unsuccessful}`);
+      this.settlePending(error)?.reject(error);
+      return;
+    }
+
+    const completedCommandCount = states.filter(
+      (state) => state === 'completed',
+    ).length;
+    if (
+      pending.finalOutcome === null ||
+      pending.resultCount < completedCommandCount
+    ) {
+      return;
+    }
+    const outcome = pending.finalOutcome;
+    this.settlePending()?.resolve(outcome);
+  }
+
+  private decideLifecycleSupport(supported: boolean): void {
+    if (this.lifecycleSupported !== null) return;
+    this.lifecycleSupported = supported;
+    const pending = this.pending;
+    if (pending === null) return;
+    if (supported) {
+      this.flushCapabilityWaiters(pending);
+      return;
+    }
+    this.rejectCapabilityWaiters(pending, lifecycleUnsupportedError());
+  }
+
+  private flushCapabilityWaiters(pending: PendingTurn): void {
+    const waiters = pending.capabilityWaiters.splice(0);
+    for (const waiter of waiters) {
+      void this.writeSteer(pending, waiter.prompt, waiter.options).then(
+        waiter.resolve,
+        waiter.reject,
+      );
+    }
+  }
+
+  private rejectCapabilityWaiters(pending: PendingTurn, error: Error): void {
+    const waiters = pending.capabilityWaiters.splice(0);
+    const failure = error instanceof ClaudeSteerAdmissionError
+      ? error
+      : preAdmissionError(error.message, error);
+    for (const waiter of waiters) waiter.reject(failure);
+  }
+
+  private resolveWriteWaiter(pending: PendingTurn, commandUuid: string): void {
+    const waiter = pending.writeWaiters.get(commandUuid);
+    if (waiter === undefined) return;
+    pending.writeWaiters.delete(commandUuid);
+    waiter.resolve();
+  }
+
+  private rejectWriteWaiter(
     pending: PendingTurn,
-    outcome: TurnOutcome | null,
+    commandUuid: string,
+    error: Error,
   ): void {
-    pending.deferredOutcome = outcome;
-    if (pending.settleImmediate !== null) return;
-    // A stream-json `priority` steer can cause Claude Code to close the
-    // interrupted run and immediately drain the queued steer in the same stdout
-    // flush. Resolve on the next tick so those follow-up lines are still folded
-    // into this one Dreamux logical turn instead of becoming a silent late result.
-    pending.settleImmediate = setImmediate(() => {
-      if (this.pending !== pending) return;
-      const finalOutcome = pending.deferredOutcome;
-      const settled = this.settlePending();
-      if (settled === null) return;
-      if (finalOutcome !== null) settled.resolve(finalOutcome);
-      else settled.reject(new Error('claude turn ended without a result'));
-    });
+    const waiter = pending.writeWaiters.get(commandUuid);
+    if (waiter === undefined) return;
+    pending.writeWaiters.delete(commandUuid);
+    waiter.reject(error);
+  }
+
+  private rejectWriteWaiters(pending: PendingTurn, error: Error): void {
+    const failure = error instanceof ClaudeSteerAdmissionError &&
+      error.admission === 'ambiguous'
+      ? error
+      : ambiguousWriteError(error);
+    const waiters = [...pending.writeWaiters.values()];
+    pending.writeWaiters.clear();
+    for (const waiter of waiters) waiter.reject(failure);
   }
 
   private onControlRequest(
@@ -269,4 +447,38 @@ export class ClaudeCodeStreamRpc {
       `claude remote control enable failed${error !== null ? `: ${error}` : ''}`,
     );
   }
+}
+
+function isTerminalCommandState(state: AcceptedCommandState): boolean {
+  return state === 'completed' || state === 'cancelled' || state === 'discarded';
+}
+
+function lifecycleUnsupportedError(): Error {
+  return preAdmissionError(
+    'claude resident session cannot prove live-steer lifecycle: ' +
+      'msg_lifecycle_v1 is unavailable',
+  );
+}
+
+function capabilityUndecidedTurnEndedError(): Error {
+  return preAdmissionError(
+    'claude resident turn ended before live-steer capability was decided',
+  );
+}
+
+function preAdmissionError(message: string, cause?: Error): Error {
+  return new ClaudeSteerAdmissionError(
+    'failed',
+    message,
+    cause === undefined ? undefined : { cause },
+  );
+}
+
+function ambiguousWriteError(error: unknown): Error {
+  const cause = asError(error);
+  return new ClaudeSteerAdmissionError('ambiguous', cause.message, { cause });
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }

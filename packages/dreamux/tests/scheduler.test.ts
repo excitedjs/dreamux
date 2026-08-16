@@ -20,7 +20,7 @@ import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
   AgentRuntimeStatus,
-  AgentRuntimeTurnResult,
+  InboundDeliveryResult,
 } from '@excitedjs/dreamux-types';
 
 describe('CronJobStore', () => {
@@ -154,7 +154,7 @@ describe('SchedulerService timer dispatch', () => {
     const captured = new CapturedAdmissions();
     const scheduler = service(idle.runtime, async (input) => {
       submitted.push(input.prompt);
-      return { status: 'submitted', turnId: 'turn-1' };
+      return { status: 'submitted' };
     }, { captured });
     await scheduler.start();
     await scheduler.create({
@@ -182,7 +182,7 @@ describe('SchedulerService timer dispatch', () => {
     const captured = new CapturedAdmissions();
     const scheduler = service(idle.runtime, async (input) => {
       submitted.push(input);
-      return { status: 'submitted', turnId: `turn-${submitted.length}` };
+      return { status: 'submitted' };
     }, { captured });
     await scheduler.start();
     const job = await scheduler.create({
@@ -242,7 +242,7 @@ describe('SchedulerService timer dispatch', () => {
     const captured = new CapturedAdmissions();
     const scheduler = service(idle.runtime, async (input) => {
       submitted.push(input.prompt);
-      return { status: 'submitted', turnId: 'turn-1' };
+      return { status: 'submitted' };
     }, { captured });
     await scheduler.start();
     const job = await scheduler.create({
@@ -276,7 +276,7 @@ describe('SchedulerService timer dispatch', () => {
         calls += 1;
         if (calls === 1) throw new Error('transient submit failure');
         submitted.push(input.prompt);
-        return { status: 'submitted', turnId: `turn-${calls}` };
+        return { status: 'submitted' };
       },
       { captured, absentRuntimeStrategy: 'submit' },
     );
@@ -352,7 +352,7 @@ describe('SchedulerService timer dispatch', () => {
     const captured = new CapturedAdmissions();
     const scheduler = service(idle.runtime, async (input) => {
       submitted.push(input.prompt);
-      return { status: 'submitted', turnId: 'turn-1' };
+      return { status: 'submitted' };
     }, { captured });
     await scheduler.start();
     await scheduler.create({
@@ -381,7 +381,7 @@ describe('SchedulerService timer dispatch', () => {
       idle.runtime,
       async (input) => {
         submitted.push(input.prompt);
-        return { status: 'submitted', turnId: 'turn-1' };
+        return { status: 'submitted' };
       },
       { store, captured },
     );
@@ -418,7 +418,7 @@ describe('SchedulerService timer dispatch', () => {
         await new Promise<void>((resolve) => {
           finishSubmit = resolve;
         });
-        return { status: 'submitted', turnId: 'turn-1' };
+        return { status: 'submitted' };
       },
       { captured, absentRuntimeStrategy: 'submit' },
     );
@@ -453,7 +453,7 @@ describe('SchedulerService timer dispatch', () => {
       },
       async (input) => {
         submitted.push(input.prompt);
-        return { status: 'submitted', turnId: 'turn-unexpected' };
+        return { status: 'submitted' };
       },
       { store, captured: admission },
     );
@@ -490,7 +490,7 @@ describe('SchedulerService timer dispatch', () => {
     const captured = new CapturedAdmissions();
     const scheduler = service(idle.runtime, async (input) => {
       submitted.push({ prompt: input.prompt, sourceId: input.sourceId });
-      return { status: 'submitted', turnId: 'turn-1' };
+      return { status: 'submitted' };
     }, { captured });
     await scheduler.start();
     const job = await scheduler.create({
@@ -566,7 +566,7 @@ describe('SchedulerService timer dispatch', () => {
     const dispatcherCaptured = new CapturedAdmissions();
     const dispatcher = service(
       () => null,
-      async () => ({ status: 'submitted', turnId: 'turn-unexpected' }),
+      async () => ({ status: 'submitted' }),
       {
         captured: dispatcherCaptured,
         absentRuntimeStrategy: 'miss',
@@ -597,7 +597,7 @@ describe('SchedulerService timer dispatch', () => {
       () => null,
       async (input) => {
         submitted.push(input.prompt);
-        return { status: 'submitted', turnId: 'turn-1' };
+        return { status: 'submitted' };
       },
       {
         captured: leaderCaptured,
@@ -619,6 +619,44 @@ describe('SchedulerService timer dispatch', () => {
     leader.stop();
   });
 
+  it('records an admission-ambiguous timer fire without retrying it', async () => {
+    const captured = new CapturedAdmissions();
+    let submissions = 0;
+    const scheduler = service(
+      () => null,
+      async () => {
+        submissions += 1;
+        return {
+          status: 'ambiguous',
+          error: new Error('native admission response was lost'),
+        };
+      },
+      {
+        captured,
+        absentRuntimeStrategy: 'submit',
+        cronJobsPath: dispatcherTeamCronJobsPath('flow', 'alpha'),
+      },
+    );
+    await scheduler.start();
+    await scheduler.create({
+      cron: '* * * * *',
+      prompt: 'leader report',
+      tz: 'UTC',
+      recurring: false,
+    });
+
+    await captured.advanceMinute();
+    await captured.lastDispatch();
+
+    expect(submissions).toBe(1);
+    expect((await scheduler.list()).jobs[0]).toMatchObject({
+      enabled: false,
+      next_run_at: null,
+      last_fired_at: expect.any(Number),
+    });
+    scheduler.stop();
+  });
+
   it('stopping one live owner scheduler leaves another held fire intact', async () => {
     const firstIdle = controllableIdle();
     const secondIdle = controllableIdle();
@@ -630,7 +668,7 @@ describe('SchedulerService timer dispatch', () => {
       () => firstIdle.runtime,
       async (input) => {
         firstSubmitted.push(input.prompt);
-        return { status: 'submitted', turnId: 'turn-1' };
+        return { status: 'submitted' };
       },
       {
         captured: firstCaptured,
@@ -642,7 +680,7 @@ describe('SchedulerService timer dispatch', () => {
       () => secondIdle.runtime,
       async (input) => {
         secondSubmitted.push(input.prompt);
-        return { status: 'submitted', turnId: 'turn-2' };
+        return { status: 'submitted' };
       },
       {
         captured: secondCaptured,
@@ -692,7 +730,7 @@ function service(
     jobId: string;
     prompt: string;
     sourceId: string;
-  }) => Promise<AgentRuntimeTurnResult>,
+  }) => Promise<InboundDeliveryResult>,
   options: ServiceOptions = {},
 ): SchedulerService {
   const captured = options.captured;
@@ -702,7 +740,12 @@ function service(
     store: options.store ?? cronStore('flow', cronJobsPath),
     absentRuntimeStrategy: options.absentRuntimeStrategy ?? 'miss',
     admit: (task) => (captured === undefined ? task() : captured.admit(task)),
-    getRuntime: typeof runtime === 'function' ? runtime : () => runtime,
+    getWriter: () => {
+      const current = typeof runtime === 'function' ? runtime() : runtime;
+      return current === null
+        ? null
+        : { waitIdle: () => current.waitIdle?.() ?? Promise.resolve() };
+    },
     submitScheduled,
     log: {
       error() {},

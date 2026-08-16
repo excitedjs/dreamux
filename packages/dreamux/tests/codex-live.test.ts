@@ -63,7 +63,7 @@ import type { DreamuxConfig } from '../src/config/config.js';
 import type {
   AgentRuntimePathContext,
   AgentRuntimeStateCallbacks,
-  TurnSettledSignal,
+  RuntimeTurnOutcome,
 } from '@excitedjs/dreamux-types';
 import type {
   ServerNotification,
@@ -508,7 +508,7 @@ describe('codex live integration', () => {
       const isolatedCodexHome = createIsolatedCodexHome(dir);
       const cwd = join(dir, 'cwd');
       const socketPath = join(dir, 'codex.sock');
-      const settled: TurnSettledSignal[] = [];
+      let settledTurn: RuntimeTurnOutcome | undefined;
       let client: RecordingCodexWsClient | null = null;
       const paths: AgentRuntimePathContext = {
         cacheDir: () => join(dir, 'cache'),
@@ -539,7 +539,6 @@ describe('codex live integration', () => {
           codexHomeDoctor: () => {
             /* real Codex auth is supplied through the isolated CODEX_HOME */
           },
-          onTurnSettled: (signal) => settled.push(signal),
         },
       );
 
@@ -568,17 +567,24 @@ describe('codex live integration', () => {
           required: ['kind', 'score', 'nullableFlag'],
           additionalProperties: false,
         };
-        await expect(runtime.completionInput({
+        const admission = await runtime.completionInput({
           sourceId: 'portable-output-schema-live',
           text: [
             'Return the requested structured result.',
             'Use kind "portable", score 7, nullableFlag null, and optionalNote null.',
           ].join(' '),
           outputSchema,
-        })).resolves.toMatchObject({ status: 'submitted' });
+        });
+        expect(admission).toMatchObject({ status: 'submitted' });
+        if (admission.status !== 'submitted') {
+          throw new Error(`portable structured-output turn was ${admission.status}`);
+        }
+        void admission.turn.settled.then((outcome) => {
+          settledTurn = outcome;
+        });
         try {
           await waitFor(
-            () => settled.length === 1,
+            () => settledTurn !== undefined,
             120_000,
             'portable structured-output turn settled',
           );
@@ -593,20 +599,22 @@ describe('codex live integration', () => {
           );
         }
 
-        const settledTurn = settled[0];
         if (settledTurn?.status !== 'completed') {
           const liveClient = client!;
+          const detail = settledTurn?.status === 'failed'
+            ? settledTurn.error.message
+            : 'no settlement error';
           throw new Error(
             `portable structured-output turn ${settledTurn?.status ?? 'missing'}: ` +
-              `${settledTurn?.error?.message ?? 'no settlement error'}; ` +
+              `${detail}; ` +
               `recent notifications: ${notificationDebugSummary(liveClient)}`,
           );
         }
         expect(settledTurn).toMatchObject({
           status: 'completed',
-          result: { text: expect.any(String) as string },
+          resultText: expect.any(String) as string,
         });
-        const resultText = settledTurn.result?.text;
+        const resultText = settledTurn.resultText;
         expect(resultText).not.toBeNull();
         expect(JSON.parse(resultText ?? '')).toEqual({
           kind: 'portable',

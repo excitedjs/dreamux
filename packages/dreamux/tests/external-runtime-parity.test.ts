@@ -123,10 +123,13 @@ async function writeConfigFile(input: {
   await chmod(configFile, 0o600);
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+async function waitFor(
+  predicate: () => boolean | Promise<boolean>,
+  timeoutMs = 2000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error('waitFor timed out');
@@ -187,7 +190,7 @@ describe('external runtime production parity', () => {
 
     const log = noopLog();
     const identities = new AgentIdentityStore(log);
-    const turnsStore = new AgentTurnsStore(log);
+    const turnsStore = new AgentTurnsStore();
     const identity = await identities.create({
       dispatcherId: 'flow',
       name: 'external-peer',
@@ -201,13 +204,6 @@ describe('external runtime production parity', () => {
       intent: 'prove external runtime parity',
       status: 'starting',
     });
-    const settleCaptures: Promise<void>[] = [];
-    const routedCompletions: Array<{
-      producerName: string;
-      turnId: string;
-      result: string | null;
-    }> = [];
-    let submissionSeq = 0;
     const teammate = createTeammateService({
       dispatcherId: 'flow',
       identity,
@@ -221,44 +217,20 @@ describe('external runtime production parity', () => {
       turnsStore,
       worktrees: new WorktreeManager(),
       log,
-      nextSubmissionSeq: () => {
-        submissionSeq += 1;
-        return submissionSeq;
-      },
-      trackSettleCapture: (capture) => settleCaptures.push(capture),
-      routeSettledCompletion: async (producerName, turnId, completion) => {
-        routedCompletions.push({
-          producerName,
-          turnId,
-          result: completion.result,
-        });
-      },
     });
 
     const sent = await teammate.send({
       prompt: 'exercise neutral runtime seam',
       turnOrigin: 'dispatcher',
     });
-    expect(sent.turn).toEqual({
-      status: 'submitted',
-      turn_id: 'teammate:external-peer:1',
-    });
+    expect(sent.status).toBe('submitted');
+    expect(sent).not.toHaveProperty('turn');
 
-    await waitFor(() => settleCaptures.length === 1);
-    await Promise.all(settleCaptures);
-
-    expect(routedCompletions).toEqual([
-      {
-        producerName: 'external-peer',
-        turnId: 'teammate:external-peer:1',
-        result: 'settled-by-generic-loader: exercise neutral runtime seam',
-      },
-    ]);
+    await waitFor(async () => (await teammate.last(1)).returned_turns === 1);
 
     const last = await teammate.last(1);
     expect(last.turns).toMatchObject([
       {
-        turn_id: 'teammate:external-peer:1',
         settle_status: 'completed',
         assistant: 'settled-by-generic-loader: exercise neutral runtime seam',
       },
@@ -273,7 +245,6 @@ describe('external runtime production parity', () => {
           model: 'fixture-model',
         },
         mcpServerNames: [],
-        hasTurnSettledHook: true,
         starts: 1,
         submittedTexts: ['exercise neutral runtime seam'],
       }),
@@ -288,7 +259,7 @@ describe('external runtime production parity', () => {
       externalRuntimeModule.externalRuntimeObservations[0]?.skillSourceNames,
     ).not.toContain('codex');
 
-    await teammate.stop();
+    await teammate.close({ note: 'external parity complete' });
     expect(externalRuntimeModule.externalRuntimeObservations[0]?.stops).toBe(1);
 
     const fixtureSource = await readFile(

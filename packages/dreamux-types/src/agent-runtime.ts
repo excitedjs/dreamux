@@ -28,9 +28,7 @@ import type {
   ProviderOnboard,
 } from './provider.js';
 import type {
-  InboundDeliveryResult,
   InboundTurnInput,
-  TurnSettledSignal,
 } from './turn.js';
 
 export interface AgentRuntimeMcpServer {
@@ -217,9 +215,33 @@ export interface AgentRuntimeStateCallbacks {
   ): Promise<void>;
 }
 
-export type AgentRuntimeTurnResult =
-  | InboundDeliveryResult
-  | { status: 'skipped' };
+export type RuntimeTurnOutcome =
+  | { status: 'completed'; resultText: string | null; truncated: boolean }
+  | { status: 'failed'; error: Error }
+  | { status: 'stopped' };
+
+/** A provider-owned in-flight turn. Folds return this exact object. */
+export interface RuntimeTurn {
+  readonly settled: Promise<RuntimeTurnOutcome>;
+}
+
+/**
+ * Admission is separate from the eventual outcome of an accepted turn.
+ *
+ * `failed` is narrowly reserved for a provider-proven pre-admission failure:
+ * the provider knows that no native command was accepted or may later become
+ * accepted. `ambiguous` means submission may have crossed the provider/native
+ * boundary. Callers MUST NOT retry an ambiguous admission automatically.
+ * A rejected/thrown input promise is likewise admission-ambiguous unless the
+ * provider documents and returns the explicit `failed` result instead.
+ */
+export type RuntimeAdmission =
+  | { status: 'submitted'; turn: RuntimeTurn }
+  | { status: 'duplicate' }
+  | { status: 'stopped' }
+  | { status: 'skipped' }
+  | { status: 'failed'; error: Error }
+  | { status: 'ambiguous'; error: Error };
 
 /**
  * The neutral, launcher-supplied identity of the runtime instance. Replaces the
@@ -300,11 +322,6 @@ export interface AgentRuntimeCreateContext<TConfig = unknown> {
    * case today.
    */
   injectEnv?: Record<string, string>;
-  /**
-   * Fired each time a delivered turn reaches a terminal state. Capability-
-   * neutral; the launcher opts in.
-   */
-  onTurnSettled?: (settled: TurnSettledSignal) => void;
 }
 
 /**
@@ -315,17 +332,23 @@ export interface AgentRuntime {
   readonly providerRef: string;
   start(): Promise<void>;
   resume(): Promise<void>;
+  /**
+   * Fence new input synchronously, terminate the owned runtime, and converge
+   * every `channelInput`/`completionInput` call that started before the fence.
+   * This promise MUST NOT resolve while an already-started admission can still
+   * resolve to a newly accepted {@link RuntimeTurn}.
+   */
   stop(): Promise<void>;
   /**
    * Deliver a channel/user turn. The runtime owns rendering the neutral channel
    * shape into its native input format.
    */
-  channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult>;
+  channelInput(input: InboundTurnInput): Promise<RuntimeAdmission>;
   /**
    * Deliver a Dreamux-owned plain text turn. This is not channel input and must
    * not receive channel/XML rendering.
    */
-  completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult>;
+  completionInput(input: AgentRuntimeTextInput): Promise<RuntimeAdmission>;
   /**
    * Resolve when no turn is in progress. Optional: runtimes that omit it are
    * treated by core as always idle.

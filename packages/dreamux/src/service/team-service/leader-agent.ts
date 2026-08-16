@@ -17,7 +17,6 @@ import {
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
-import type { CompletionEnvelope } from '../completion-router/index.js';
 import { cronMcpServerDescriptor } from '../scheduler/mcp-config.js';
 import {
   createTeammateService,
@@ -44,13 +43,6 @@ export interface TeamLeaderAgentDeps {
   turnsStore: AgentTurnsStore;
   worktrees: WorktreeManager;
   log: DreamuxLogger;
-  nextSubmissionSeq: () => number;
-  trackSettleCapture: (capture: Promise<void>) => void;
-  routeSettledCompletion: (
-    producerName: string,
-    turnId: string,
-    completion: CompletionEnvelope,
-  ) => Promise<void>;
 }
 
 export function createTeamLeaderAgent(
@@ -81,9 +73,6 @@ export function createTeamLeaderAgent(
     turnsStore: deps.turnsStore,
     worktrees: deps.worktrees,
     log: deps.log,
-    nextSubmissionSeq: deps.nextSubmissionSeq,
-    trackSettleCapture: deps.trackSettleCapture,
-    routeSettledCompletion: deps.routeSettledCompletion,
   });
 }
 

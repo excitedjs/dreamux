@@ -126,11 +126,17 @@ export class Dispatchers {
   }
 
   async shutdown(): Promise<void> {
-    this.accepting = false;
+    this.beginShutdown();
     const results = await Promise.allSettled(
       [...this.services.values()].map((service) => service.shutdown()),
     );
     throwSettledFailures(results, 'multiple dispatchers failed to shut down');
+  }
+
+  /** Fence only already-materialized aggregates; never construct during shutdown. */
+  beginShutdown(): void {
+    this.accepting = false;
+    for (const service of this.services.values()) service.beginShutdown();
   }
 
   private dispatcherOptions(id: string): DispatcherServiceOptions {

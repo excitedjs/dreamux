@@ -24,6 +24,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   fixture.cleanup();
 });
 
@@ -150,13 +151,15 @@ describe('Team dissolve acceptance and availability', () => {
       cron: '0 * * * *',
       prompt: 'late cron',
     })).rejects.toBeInstanceOf(TeamUnavailableError);
-    await expect(completion!.completionInput({
+    const preparedCompletion = await completion!.prepareCompletion({
       kind: 'teammate',
       source: 'worker',
-      id: 'turn-1',
       status: 'completed',
       result: 'done',
-    })).resolves.toMatchObject({ status: 'unsupported' });
+    });
+    await expect(preparedCompletion.submit()).resolves.toMatchObject({
+      status: 'unsupported',
+    });
     const readLease = await teams.teamLeaderReadLease('alpha');
     await expect(teams.withTeamLeaderReadLease(
       readLease,
@@ -185,6 +188,141 @@ describe('Team dissolve acceptance and availability', () => {
       team: { status: 'closed', close_note: 'first accepted note' },
     });
     expect(close).toHaveBeenCalledTimes(1);
+    expect(assessments).toHaveBeenCalledTimes(2);
+    await teams.stopAll();
+  });
+
+  it('bounds member completion delivery so dissolve cannot wait forever', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const submit = vi.fn(() => new Promise<never>(() => undefined));
+    const initiator = {
+      prepareCompletion: async () => Object.freeze({ submit }),
+    };
+    const runtimes: FakeRuntime[] = [];
+    const teams = makeTeams({
+      runtimes,
+      worktrees: new WorktreeManager(),
+      createRuntime: () => new FakeRuntime({ settleImmediately: true }),
+      completionAttemptTimeoutMs: 100,
+      initiatorFor: async () => initiator,
+    });
+    const created = await teams.create({
+      name: 'bounded-delivery',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'dissolve despite unavailable completion target',
+    });
+    const service = await teams.get('bounded-delivery');
+    await service.spawnTeamMate({
+      name: 'worker',
+      prompt: 'finish before dissolve',
+      intent: 'terminal completion must be bounded',
+      agentRuntime: 'agent-a',
+    });
+    await waitForEventLoop(() => submit.mock.calls.length === 1);
+
+    const accepted = await teams.acceptDissolve({
+      teamId: 'bounded-delivery',
+      note: 'bounded completion target',
+      requester: {
+        kind: 'team_leader',
+        leaderName: created.team.leader_name,
+      },
+    });
+    teams.startAcceptedDissolve(accepted, (input) =>
+      teams.closeAcceptedResources(input));
+    await vi.advanceTimersByTimeAsync(99);
+    expect((await new TeamStore().get(
+      'dispatcher-a',
+      'bounded-delivery',
+    ))?.status).not.toBe('closed');
+
+    await vi.advanceTimersByTimeAsync(1);
+    await waitForEventLoop(async () =>
+      (await new TeamStore().get(
+        'dispatcher-a',
+        'bounded-delivery',
+      ))?.status === 'closed');
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes and unlocks Workflow members before waiting for ordinary writers', async () => {
+    const workflowStopGate = deferred<void>();
+    const leaderIdle = deferred<void>();
+    let leaderWaits = 0;
+    let runtimeIndex = 0;
+    const runtimes: FakeRuntime[] = [];
+    const worktrees = new WorktreeManager();
+    const assessments = terminalAssessments(worktrees);
+    const teams = makeTeams({
+      runtimes,
+      worktrees,
+      createRuntime: () => {
+        const index = runtimeIndex++;
+        return new FakeRuntime({
+          waitIdle: async () => {
+            if (index !== 0) {
+              throw new Error('locked Workflow member entered ordinary idle wait');
+            }
+            leaderWaits += 1;
+            await leaderIdle.promise;
+          },
+        });
+      },
+    });
+    await teams.create({
+      name: 'alpha',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'finish alpha safely',
+      prompt: 'lead alpha',
+    });
+    const team = await teams.get('alpha');
+    const handle = await team.createLockedWorkflowTeammate(
+      {
+        name: 'workflow-worker',
+        prompt: 'workflow work',
+        intent: 'workflow-owned work',
+        agentRuntime: 'agent-a',
+      },
+      {},
+    );
+    const admission = await handle.submit({
+      prompt: 'workflow work',
+      turnOrigin: 'team_leader',
+    });
+    expect(admission.status).toBe('submitted');
+    expect(runtimes).toHaveLength(2);
+
+    const stopWorkflows = vi
+      .spyOn(team, 'stopWorkflowsForClosing')
+      .mockImplementation(async () => {
+        await workflowStopGate.promise;
+        await handle.close({ note: 'Team dissolve stopped Workflow' });
+        handle.unlock();
+      });
+    const accepted = await teams.acceptDissolve({
+      teamId: 'alpha',
+      note: 'close after Workflow',
+      requester: { kind: 'dispatcher' },
+    });
+    teams.startAcceptedDissolve(accepted, (input) =>
+      teams.closeAcceptedResources(input),
+    );
+
+    await waitFor(() => stopWorkflows.mock.calls.length === 1);
+    expect(leaderWaits).toBe(0);
+    expect(runtimes[1]!.stopAttempts).toBe(0);
+
+    workflowStopGate.resolve();
+    await waitFor(() => leaderWaits === 1);
+    expect(runtimes[1]!.stopAttempts).toBe(1);
+    await expect(team.teammates.status(handle.name)).resolves.toMatchObject({
+      status: 'closed',
+    });
+
+    leaderIdle.resolve();
+    await expect(accepted.logicalClosed).resolves.toMatchObject({
+      team: { status: 'closed' },
+    });
     expect(assessments).toHaveBeenCalledTimes(2);
     await teams.stopAll();
   });
@@ -320,7 +458,7 @@ describe('Team dissolve acceptance and availability', () => {
     await expect(teams.sendToLeader('alpha', {
       prompt: 'still available',
       initiator: new FakeInitiator(),
-    })).resolves.toMatchObject({ turn: { status: 'submitted' } });
+    })).resolves.toMatchObject({ status: 'submitted' });
     await teams.stopAll();
   });
 
@@ -409,7 +547,7 @@ describe('Team dissolve acceptance and availability', () => {
     await expect(teams.sendToLeader('alpha', {
       prompt: 'ordinary close released',
       initiator: new FakeInitiator(),
-    })).resolves.toMatchObject({ turn: { status: 'submitted' } });
+    })).resolves.toMatchObject({ status: 'submitted' });
     await teams.stopAll();
   });
 
@@ -461,7 +599,17 @@ describe('Team dissolve acceptance and availability', () => {
     await expect(teams.sendToLeader('alpha', {
       prompt: 'admission restored',
       initiator: new FakeInitiator(),
-    })).resolves.toMatchObject({ turn: { status: 'submitted' } });
+    })).resolves.toMatchObject({ status: 'submitted' });
     await teams.stopAll();
   });
 });
+
+async function waitForEventLoop(
+  predicate: () => boolean | Promise<boolean>,
+): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  throw new Error('event-loop condition was not reached');
+}

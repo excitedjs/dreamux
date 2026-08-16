@@ -10,8 +10,12 @@ import type { DreamuxConfig } from '../../config/config.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
-import type { CompletionEnvelope } from '../completion-router/index.js';
+import type {
+  AgentEntityCloseResult,
+  AgentEntityTurnOrigin,
+} from '../agent-entity/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
+import type { TurnAdmission } from './turn-recording.js';
 
 export interface TeammateServiceDeps {
   config: DreamuxConfig;
@@ -25,24 +29,35 @@ export interface TeammateServiceDeps {
    */
   worktrees?: WorktreeManager;
   log: DreamuxLogger;
-  /** Increments per submission across the whole collection so sourceIds stay unique. */
-  nextSubmissionSeq: () => number;
-  /** Tracks an in-flight settle capture so the collection can drain on shutdown. */
-  trackSettleCapture?: (capture: Promise<void>) => void;
-  /**
-   * Route a settled, send-initiated turn's completion to whoever initiated it,
-   * via the per-dispatcher `CompletionRouter`. The collection wires this to
-   * `router.settle(completionKey(producerName, turnId), envelope)`.
-   */
-  routeSettledCompletion: SettledCompletionRoute;
 }
 
-/** A per-entity destination for every turn settled by that TeamMate. */
-export type SettledCompletionRoute = (
-  producerName: string,
-  turnId: string,
-  completion: CompletionEnvelope,
-) => Promise<void>;
+export type EntityPhase = 'active' | 'closing' | 'closedHeld' | 'retired';
+
+export interface TeammateClosedFact {
+  readonly schema_version: 1;
+  readonly kind: 'teammate.closed';
+  readonly dispatcher_id: string;
+  readonly team_id: string | null;
+  readonly name: string;
+  readonly closed_at: number;
+}
+
+export interface TeammateClosedSubscription {
+  unsubscribe(): void;
+}
+
+export interface WorkflowTeammateSubmitInput {
+  prompt: string;
+  turnOrigin: AgentEntityTurnOrigin;
+  outputSchema?: Record<string, unknown>;
+}
+
+export interface LockedTeammate {
+  readonly name: string;
+  submit(input: WorkflowTeammateSubmitInput): Promise<TurnAdmission>;
+  close(input: { note: string }): Promise<AgentEntityCloseResult>;
+  unlock(): void;
+}
 
 export interface TeammateServiceOptions {
   mcpServers?: readonly AgentRuntimeMcpServer[];

@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -11,19 +11,32 @@ import type {
   AgentRuntimeProvider,
   AgentRuntimeStatus,
   AgentRuntimeTextInput,
-  AgentRuntimeTurnResult,
+  RuntimeAdmission,
+  RuntimeTurn,
+  RuntimeTurnOutcome,
   DreamuxLogger,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
+import {
+  SupervisedChild,
+  isProcessAlive,
+} from '@excitedjs/dreamux-utils';
 
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
-import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
+import {
+  AgentTurnsStore,
+  type AgentTerminalTurnInput,
+  type AgentTurnsScope,
+} from '../src/service/agent-entity/turns-store.js';
 import type { AgentEntityWorktreeIdentity } from '../src/service/agent-entity/types.js';
+import { dispatcherAgentTurnsPath } from '../src/platform/paths.js';
 import { createTeamLeaderAgent } from '../src/service/team-service/leader-agent.js';
+import { CompletionDeliveryPolicy } from '../src/service/completion-router/index.js';
 import type { TeammateService } from '../src/service/teammate-service/index.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
+import { completedRuntimeTurn } from './helpers/runtime-turn.js';
 
 const FAKE_RUNTIME_REF = 'test:runtime';
 
@@ -35,6 +48,7 @@ class FakeRuntime implements AgentRuntime {
   readonly providerRef = FAKE_RUNTIME_REF;
   readonly submitted: InboundTurnInput[] = [];
   readonly textSubmitted: AgentRuntimeTextInput[] = [];
+  stopCount = 0;
   private status: AgentRuntimeStatus = 'declared';
 
   async start(): Promise<void> {
@@ -46,17 +60,18 @@ class FakeRuntime implements AgentRuntime {
   }
 
   async stop(): Promise<void> {
+    this.stopCount += 1;
     this.status = 'stopped';
   }
 
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+  async channelInput(input: InboundTurnInput): Promise<RuntimeAdmission> {
     this.submitted.push(input);
-    return { status: 'submitted', turnId: `turn-${this.submitted.length}` };
+    return { status: 'submitted', turn: completedRuntimeTurn('fake last') };
   }
 
-  async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
+  async completionInput(input: AgentRuntimeTextInput): Promise<RuntimeAdmission> {
     this.textSubmitted.push(input);
-    return { status: 'submitted', turnId: `text-${this.textSubmitted.length}` };
+    return { status: 'submitted', turn: completedRuntimeTurn('fake last') };
   }
 
   getStatus(): AgentRuntimeStatus {
@@ -84,6 +99,28 @@ class FakeRuntime implements AgentRuntime {
   }
 }
 
+class SupervisedRuntime extends FakeRuntime {
+  readonly child = new SupervisedChild(
+    {
+      kind: 'spawn',
+      command: process.execPath,
+      args: ['-e', 'setInterval(() => {}, 1000)'],
+      options: { stdio: 'ignore' },
+    },
+    { stopTimeoutMs: 30, pollIntervalMs: 2 },
+  );
+
+  override async start(): Promise<void> {
+    await this.child.start();
+    await super.start();
+  }
+
+  override async stop(): Promise<void> {
+    await this.child.stop();
+    await super.stop();
+  }
+}
+
 class DeferredStartRuntime extends FakeRuntime {
   releaseStart: (() => void) | null = null;
   started = false;
@@ -94,6 +131,59 @@ class DeferredStartRuntime extends FakeRuntime {
       this.releaseStart = resolve;
     });
     await super.start();
+  }
+}
+
+class DeferredAdmissionRuntime extends FakeRuntime {
+  readonly admissions: Array<(admission: RuntimeAdmission) => void> = [];
+  readonly runtimeTurn: RuntimeTurn;
+  private settleRuntimeTurn!: (outcome: RuntimeTurnOutcome) => void;
+
+  constructor() {
+    super();
+    this.runtimeTurn = Object.freeze({
+      settled: new Promise<RuntimeTurnOutcome>((resolve) => {
+        this.settleRuntimeTurn = resolve;
+      }),
+    });
+  }
+
+  override async completionInput(
+    input: AgentRuntimeTextInput,
+  ): Promise<RuntimeAdmission> {
+    this.textSubmitted.push(input);
+    return new Promise((resolve) => this.admissions.push(resolve));
+  }
+
+  override async channelInput(
+    input: InboundTurnInput,
+  ): Promise<RuntimeAdmission> {
+    this.submitted.push(input);
+    return new Promise((resolve) => this.admissions.push(resolve));
+  }
+
+  resolveAdmission(index: number, admission?: RuntimeAdmission): void {
+    this.admissions[index]?.(
+      admission ?? { status: 'submitted', turn: this.runtimeTurn },
+    );
+  }
+
+  settle(outcome: RuntimeTurnOutcome): void {
+    this.settleRuntimeTurn(outcome);
+  }
+}
+
+class RetryableTurnsStore extends AgentTurnsStore {
+  allowAppend = false;
+  attempts = 0;
+
+  override async appendTerminal(
+    scope: AgentTurnsScope,
+    input: AgentTerminalTurnInput,
+  ) {
+    this.attempts += 1;
+    if (!this.allowAppend) throw new Error('archive unavailable');
+    return super.appendTerminal(scope, input);
   }
 }
 
@@ -164,10 +254,11 @@ async function createTestTeamLeader(input: {
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   identity?: string;
   start?: boolean;
+  turnsStore?: AgentTurnsStore;
 }): Promise<TeammateService> {
   const log = noopLog();
   const identities = new AgentIdentityStore(log);
-  const turnsStore = new AgentTurnsStore(log);
+  const turnsStore = input.turnsStore ?? new AgentTurnsStore();
   const identity = await identities.create({
     dispatcherId: input.dispatcherId,
     name: input.name,
@@ -201,15 +292,8 @@ async function createTestTeamLeader(input: {
     turnsStore,
     worktrees: new WorktreeManager(),
     log,
-    nextSubmissionSeq: () => 0,
-    trackSettleCapture: () => {
-      /* tests do not emit settle signals */
-    },
-    routeSettledCompletion: async () => {
-      /* no router in this unit helper */
-    },
   });
-  if (input.start !== false) await leader.ensureStarted();
+  if (input.start !== false) await leader.activate();
   if (input.prompt !== undefined) {
     await leader.submitInitialPrompt(input.prompt, {
       turnOrigin: 'dispatcher',
@@ -231,6 +315,7 @@ describe('TeammateService channel input routing', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
     delete process.env['DREAMUX_ROOT'];
@@ -350,13 +435,12 @@ describe('TeammateService channel input routing', () => {
     expect(runtimes[0]!.textSubmitted).toEqual([
       {
         text: 'return structured output',
-        sourceId: 'teammate:tl-alpha-0001:0',
         outputSchema,
       },
     ]);
   });
 
-  it('reapplies stored identity when a closed teammate is reopened', async () => {
+  it('does not reopen a retired entity instance after close', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
     const runtimes: FakeRuntime[] = [];
@@ -381,26 +465,20 @@ describe('TeammateService channel input routing', () => {
     });
 
     await leader.close({ note: 'pause' });
-    await leader.send({
-      prompt: 'resume the review',
-      turnOrigin: 'dispatcher',
-    });
+    await expect(
+      leader.send({
+        prompt: 'resume the review',
+        turnOrigin: 'dispatcher',
+      }),
+    ).rejects.toThrow(/cannot accept send/);
 
-    expect(contexts).toHaveLength(2);
+    expect(contexts).toHaveLength(1);
     expect(contexts[0]?.systemPrompt?.append).toEqual([
       'You are the TeamLeader of Dreamux Team "alpha".',
       'architecture reviewer',
     ]);
-    expect(contexts[1]?.systemPrompt?.append).toEqual([
-      'You are the TeamLeader of Dreamux Team "alpha".',
-      'architecture reviewer',
-    ]);
     expect(contexts[0]?.systemPrompt).not.toHaveProperty('replace');
-    expect(contexts[1]?.systemPrompt).not.toHaveProperty('replace');
-    expect(runtimes[1]!.textSubmitted.map((input) => input.text)).toEqual([
-      'resume the review',
-    ]);
-    expect(runtimes[1]!.submitted).toEqual([]);
+    expect(runtimes).toHaveLength(1);
   });
 
   it('lazy-starts a cold team-scoped TeamLeader for scheduled input', async () => {
@@ -520,6 +598,699 @@ describe('TeammateService channel input routing', () => {
     expect(runtime.textSubmitted).toEqual([]);
   });
 
+  it('does not submit through a runtime published before its start barrier resolves', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const created: DeferredStartRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const leader = await createTestTeamLeader({
+      dispatcherId: 'dispatcher-a',
+      teamId: 'alpha',
+      name: 'tl-alpha-0001',
+      agentRuntime: 'agent-a',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, [], () => {
+        const runtime = new DeferredStartRuntime();
+        created.push(runtime);
+        return runtime;
+      }),
+      start: false,
+    });
+
+    const activation = leader.activate();
+    await waitFor(() => created[0]?.releaseStart !== null);
+    const inbound = leader.channelInput({ sourceId: 'message-1', text: 'wait' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(created[0]!.submitted).toEqual([]);
+
+    created[0]!.releaseStart!();
+    await activation;
+    await expect(inbound).resolves.toMatchObject({ status: 'submitted' });
+    expect(created[0]!.submitted).toHaveLength(1);
+  });
+
+  it('serializes reversed admissions and folds one RuntimeTurn into one entity Turn', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const created: DeferredAdmissionRuntime[] = [];
+    const firstDelivery = vi.fn(async () => undefined);
+    const secondDelivery = vi.fn(async () => undefined);
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const leader = await createTestTeamLeader({
+      dispatcherId: 'dispatcher-a',
+      teamId: 'alpha',
+      name: 'tl-alpha-0001',
+      agentRuntime: 'agent-a',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, [], () => {
+        const runtime = new DeferredAdmissionRuntime();
+        created.push(runtime);
+        return runtime;
+      }),
+    });
+    const runtime = created[0]!;
+    const prepared = await leader.prepareCompletion({
+      kind: 'teammate',
+      source: 'worker',
+      status: 'completed',
+      result: 'unrelated completion',
+    });
+
+    const first = leader.submitInitialPromptRuntime('first prompt', {
+      turnOrigin: 'dispatcher',
+      deliverCompletion: firstDelivery,
+    });
+    const channel = leader.channelInput({
+      sourceId: 'message-between-sends',
+      text: 'unrelated channel input',
+    });
+    const second = leader.submitInitialPromptRuntime('second prompt', {
+      turnOrigin: 'dispatcher',
+      deliverCompletion: secondDelivery,
+    });
+    const completion = prepared.submit();
+    await waitFor(() => runtime.admissions.length === 4);
+    runtime.resolveAdmission(3);
+    runtime.resolveAdmission(2);
+    runtime.resolveAdmission(1);
+    runtime.resolveAdmission(0);
+
+    const [firstAdmission, channelAdmission, secondAdmission, completionResult] =
+      await Promise.all([first, channel, second, completion]);
+    expect(firstAdmission.status).toBe('submitted');
+    expect(channelAdmission.status).toBe('submitted');
+    expect(secondAdmission.status).toBe('submitted');
+    expect(completionResult).toEqual({ status: 'accepted' });
+    if (
+      firstAdmission.status !== 'submitted' ||
+      channelAdmission.status !== 'submitted' ||
+      secondAdmission.status !== 'submitted'
+    ) {
+      throw new Error('expected submitted admissions');
+    }
+    expect(channelAdmission.turn).toBe(firstAdmission.turn);
+    expect(secondAdmission.turn).toBe(firstAdmission.turn);
+
+    runtime.settle({ status: 'completed', resultText: 'done', truncated: false });
+    await firstAdmission.turn.delivery;
+    expect(leader.current().turn_count).toBe(1);
+    const archive = dispatcherAgentTurnsPath({
+      dispatcherId: 'dispatcher-a',
+      name: 'tl-alpha-0001',
+      teamId: 'alpha',
+      role: 'team_leader',
+    });
+    expect(readFileSync(archive, 'utf8').trimEnd().split('\n')).toHaveLength(1);
+    expect(firstDelivery).toHaveBeenCalledTimes(1);
+    expect(secondDelivery).not.toHaveBeenCalled();
+    await expect(leader.last(1)).resolves.toMatchObject({
+      turns: [{ prompt_preview: 'first prompt', settle_status: 'completed' }],
+    });
+  });
+
+  it('bounds completion delivery so source close cannot wait forever', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const leader = await createTestTeamLeader({
+      dispatcherId: 'dispatcher-a',
+      teamId: 'alpha',
+      name: 'tl-alpha-timeout',
+      agentRuntime: 'agent-a',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+    });
+    const submit = vi.fn(() => new Promise<never>(() => undefined));
+    const deliveryPolicy = new CompletionDeliveryPolicy({
+      dispatcherId: 'dispatcher-a',
+      log: noopLog(),
+      attemptTimeoutMs: 100,
+    });
+    const admission = await leader.submitInitialPromptRuntime('finish', {
+      turnOrigin: 'dispatcher',
+      deliverCompletion: (fact) => deliveryPolicy.deliver({
+        prepareCompletion: async () => Object.freeze({ submit }),
+      }, fact),
+    });
+    if (admission.status !== 'submitted') throw new Error('expected submitted');
+    await waitForEventLoop(() => submit.mock.calls.length === 1);
+
+    const closing = leader.close({ note: 'bounded completion delivery' });
+    let closed = false;
+    void closing.then(() => {
+      closed = true;
+    });
+    await vi.advanceTimersByTimeAsync(99);
+    expect(closed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(closing).resolves.toMatchObject({
+      teammate: { status: 'closed' },
+    });
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it('converges a late accepted RuntimeTurn to stopped during close', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const created: DeferredAdmissionRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const leader = await createTestTeamLeader({
+      dispatcherId: 'dispatcher-a',
+      teamId: 'alpha',
+      name: 'tl-alpha-0001',
+      agentRuntime: 'agent-a',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, [], () => {
+        const runtime = new DeferredAdmissionRuntime();
+        created.push(runtime);
+        return runtime;
+      }),
+    });
+    const runtime = created[0]!;
+
+    const admissionPromise = leader.submitInitialPromptRuntime('late', {
+      turnOrigin: 'dispatcher',
+    });
+    await waitFor(() => runtime.admissions.length === 1);
+    const closing = leader.close({ note: 'stop now' });
+    runtime.resolveAdmission(0);
+    const admission = await admissionPromise;
+    expect(admission.status).toBe('submitted');
+    if (admission.status !== 'submitted') throw new Error('expected submitted admission');
+
+    await expect(admission.turn.settled).resolves.toEqual({ status: 'stopped' });
+    const closed = await closing;
+    expect(closed.teammate.status).toBe('closed');
+    expect(leader.current().turn_count).toBe(1);
+  });
+
+  it('records no Turn when close wins before runtime admission', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const created: DeferredAdmissionRuntime[] = [];
+    const delivery = vi.fn(async () => undefined);
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const leader = await createTestTeamLeader({
+      dispatcherId: 'dispatcher-a',
+      teamId: 'alpha',
+      name: 'tl-alpha-0001',
+      agentRuntime: 'agent-a',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, [], () => {
+        const runtime = new DeferredAdmissionRuntime();
+        created.push(runtime);
+        return runtime;
+      }),
+    });
+    const runtime = created[0]!;
+
+    const admissionPromise = leader.submitInitialPromptRuntime(
+      'never admitted',
+      {
+        turnOrigin: 'dispatcher',
+        deliverCompletion: delivery,
+      },
+    );
+    await waitFor(() => runtime.admissions.length === 1);
+    const closing = leader.close({ note: 'stop before admission' });
+    await waitFor(() => runtime.stopCount === 1);
+    runtime.resolveAdmission(0, { status: 'stopped' });
+
+    await expect(admissionPromise).resolves.toEqual({ status: 'stopped' });
+    await expect(closing).resolves.toMatchObject({
+      teammate: { status: 'closed' },
+    });
+    expect(leader.current().turn_count).toBe(0);
+    await expect(leader.last(1)).resolves.toMatchObject({
+      returned_turns: 0,
+      turns: [],
+    });
+    expect(delivery).not.toHaveBeenCalled();
+  });
+
+  it('keeps close retryable when terminal append has not committed', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const contexts: AgentRuntimeCreateContext[] = [];
+    const created: DeferredAdmissionRuntime[] = [];
+    const turnsStore = new RetryableTurnsStore();
+    const delivery = vi.fn(async () => undefined);
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const leader = await createTestTeamLeader({
+      dispatcherId: 'dispatcher-a',
+      teamId: 'alpha',
+      name: 'tl-alpha-0001',
+      agentRuntime: 'agent-a',
+      workspace,
+      config,
+      turnsStore,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, contexts, () => {
+        const runtime = new DeferredAdmissionRuntime();
+        created.push(runtime);
+        return runtime;
+      }),
+    });
+    const runtime = created[0]!;
+    await contexts[0]!.state!.setStatus('ready');
+    const closedFacts: unknown[] = [];
+    const subscription = leader.onClosed((fact) => {
+      closedFacts.push(fact);
+    });
+    const admitted = leader.submitInitialPromptRuntime('persist me', {
+      turnOrigin: 'dispatcher',
+      deliverCompletion: delivery,
+    });
+    await waitFor(() => runtime.admissions.length === 1);
+    runtime.resolveAdmission(0);
+    const admission = await admitted;
+    if (admission.status !== 'submitted') throw new Error('expected submitted admission');
+    runtime.settle({ status: 'completed', resultText: 'done', truncated: false });
+    await waitFor(() => turnsStore.attempts > 0);
+
+    await expect(admission.turn.settled).rejects.toThrow(/archive unavailable/u);
+    expect(leader.current()).toMatchObject({
+      status: 'running',
+      turn_count: 0,
+      closed_at: null,
+      close_note: null,
+    });
+    expect(leader.status()).toMatchObject({
+      status: 'degraded',
+      runtime_status: 'ready',
+      closed_at: null,
+      close_note: null,
+    });
+    await expect(leader.last(1)).resolves.toMatchObject({
+      teammate: {
+        status: 'degraded',
+        runtime_status: 'ready',
+        closed_at: null,
+      },
+      returned_turns: 0,
+      turns: [],
+    });
+    await expect(leader.send({
+      prompt: 'must remain fenced behind failed persistence',
+      turnOrigin: 'dispatcher',
+    })).rejects.toThrow(/cannot accept send/u);
+    expect(runtime.textSubmitted).toHaveLength(1);
+    expect(runtime.stopCount).toBe(0);
+    expect(delivery).not.toHaveBeenCalled();
+    expect(closedFacts).toEqual([]);
+
+    await expect(leader.close({ note: 'first attempt' })).rejects.toMatchObject({
+      runtime_terminated: true,
+    });
+    expect(leader.current()).toMatchObject({
+      status: 'running',
+      closed_at: null,
+      close_note: null,
+    });
+    expect(leader.status()).toMatchObject({
+      status: 'stopped',
+      runtime_status: null,
+      closed_at: null,
+      close_note: null,
+    });
+    await expect(leader.last(1)).resolves.toMatchObject({
+      teammate: {
+        status: 'stopped',
+        runtime_status: null,
+        closed_at: null,
+      },
+    });
+    expect(leader.runtimeStatus()).toBeNull();
+    expect(leader.isRetired()).toBe(false);
+    expect(runtime.stopCount).toBe(1);
+    await Promise.resolve();
+    expect(closedFacts).toEqual([]);
+    expect(delivery).not.toHaveBeenCalled();
+
+    turnsStore.allowAppend = true;
+    await expect(leader.close({ note: 'retry' })).resolves.toMatchObject({
+      teammate: { status: 'closed' },
+    });
+    expect(leader.current().turn_count).toBe(1);
+    expect(leader.current().status).toBe('closed');
+    expect(runtime.stopCount).toBe(1);
+    expect(turnsStore.attempts).toBe(3);
+    await expect(admission.turn.persistence).resolves.toBeUndefined();
+    await expect(admission.turn.settled).rejects.toThrow(/archive unavailable/u);
+    const archive = dispatcherAgentTurnsPath({
+      dispatcherId: 'dispatcher-a',
+      name: 'tl-alpha-0001',
+      teamId: 'alpha',
+      role: 'team_leader',
+    });
+    const rows = readFileSync(archive, 'utf8').trimEnd().split('\n');
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]!)).toMatchObject({
+      settle_status: 'completed',
+      assistant: 'done',
+    });
+    expect(delivery).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(closedFacts).toHaveLength(1));
+    subscription.unsubscribe();
+  });
+
+  it('lets a lock fence every ordinary mutator while reads remain available', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const leader = await createTestTeamLeader({
+      dispatcherId: 'dispatcher-a',
+      teamId: 'alpha',
+      name: 'tl-alpha-0001',
+      agentRuntime: 'agent-a',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+    });
+    const runtime = runtimes[0]!;
+    const completion = {
+      kind: 'teammate' as const,
+      source: 'worker',
+      status: 'completed' as const,
+      result: 'done',
+    };
+    const preparedBeforeLock = await leader.prepareCompletion(completion);
+    const identityBefore = leader.current();
+    const handle = leader.lock();
+
+    await expect(leader.send({
+      prompt: 'public send',
+      turnOrigin: 'dispatcher',
+    })).rejects.toThrow(/cannot accept send/u);
+    await expect(leader.channelInput({
+      sourceId: 'message-locked',
+      text: 'channel input',
+    })).rejects.toThrow(/cannot accept channel input/u);
+    await expect(leader.scheduledInput({
+      jobId: 'job-locked',
+      prompt: 'scheduled input',
+      sourceId: 'scheduled:job-locked:1',
+      signal: new AbortController().signal,
+    })).rejects.toThrow(/cannot accept scheduled input/u);
+    await expect(leader.controlInput({
+      text: 'completion input',
+      sourceId: 'completion-locked',
+    })).rejects.toThrow(/cannot accept control input/u);
+    await expect(leader.activate()).rejects.toThrow(/cannot accept activation/u);
+    await expect(leader.applyWorktreeCleanup({
+      ...reuseCwd(join(root, 'changed')),
+      cleanup_error: 'must not persist',
+    })).rejects.toThrow(/cannot accept worktree cleanup/u);
+    await expect(leader.close({ note: 'public close' })).rejects.toThrow(/locked/u);
+
+    const preparedWhileLocked = await leader.prepareCompletion(completion);
+    await expect(preparedBeforeLock.submit()).resolves.toMatchObject({
+      status: 'unsupported',
+    });
+    await expect(preparedWhileLocked.submit()).resolves.toMatchObject({
+      status: 'unsupported',
+    });
+
+    expect(leader.current()).toEqual(identityBefore);
+    expect(runtime.submitted).toEqual([]);
+    expect(runtime.textSubmitted).toEqual([]);
+    expect(runtimes).toHaveLength(1);
+    expect(leader.status()).toMatchObject({ name: 'tl-alpha-0001' });
+    await expect(leader.last(1)).resolves.toMatchObject({ returned_turns: 0 });
+    await expect(leader.waitIdle()).resolves.toBeUndefined();
+    expect(leader.runtimeStatus()).toBe('ready');
+    expect(leader.checkpointId()).toBe('thread-fake');
+    expect(leader.wasCheckpointResumed()).toBe(false);
+
+    handle.unlock();
+    const laterHandle = leader.lock();
+    expect(() => handle.submit({
+      prompt: 'stale submit',
+      turnOrigin: 'dispatcher',
+    })).toThrow(/stale TeamMate lock/u);
+    expect(() => handle.close({ note: 'stale close' }))
+      .toThrow(/stale TeamMate lock/u);
+    expect(() => handle.unlock()).toThrow(/stale TeamMate lock/u);
+
+    const firstClose = laterHandle.close({ note: 'workflow complete' });
+    const secondClose = laterHandle.close({ note: 'joined close' });
+    expect(secondClose).toBe(firstClose);
+    await expect(leader.close({ note: 'public close while locked' }))
+      .rejects.toThrow(/locked/u);
+    await expect(Promise.all([firstClose, secondClose])).resolves.toHaveLength(2);
+    expect(runtime.stopCount).toBe(1);
+    laterHandle.unlock();
+  });
+
+  it('lets every ordinary mutator fence a later lock before its first await', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const leader = await createTestTeamLeader({
+      dispatcherId: 'dispatcher-a',
+      teamId: 'alpha',
+      name: 'tl-alpha-0001',
+      agentRuntime: 'agent-a',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+    });
+    let expectedTurnCount = 0;
+    const waitForTurn = async (): Promise<void> => {
+      expectedTurnCount += 1;
+      await vi.waitFor(() => {
+        expect(leader.current().turn_count).toBe(expectedTurnCount);
+      });
+    };
+    const assertLockLoses = (): void => {
+      expect(() => leader.lock()).toThrow(/being mutated/u);
+    };
+
+    const sending = leader.send({
+      prompt: 'ordinary send',
+      turnOrigin: 'dispatcher',
+    });
+    assertLockLoses();
+    await expect(sending).resolves.toMatchObject({ status: 'submitted' });
+    await waitForTurn();
+
+    const channel = leader.channelInput({
+      sourceId: 'message-ordinary',
+      text: 'channel input',
+    });
+    assertLockLoses();
+    const channelAdmission = await channel;
+    if (channelAdmission.status !== 'submitted') {
+      throw new Error('expected submitted channel input');
+    }
+    await channelAdmission.turn.persistence;
+    await waitForTurn();
+
+    const scheduled = leader.scheduledInput({
+      jobId: 'job-ordinary',
+      prompt: 'scheduled input',
+      sourceId: 'scheduled:job-ordinary:1',
+      signal: new AbortController().signal,
+    });
+    assertLockLoses();
+    const scheduledAdmission = await scheduled;
+    if (scheduledAdmission.status !== 'submitted') {
+      throw new Error('expected submitted scheduled input');
+    }
+    await scheduledAdmission.turn.persistence;
+    await waitForTurn();
+
+    const control = leader.controlInput({
+      text: 'control input',
+      sourceId: 'completion-ordinary',
+    });
+    assertLockLoses();
+    const controlAdmission = await control;
+    if (controlAdmission.status !== 'submitted') {
+      throw new Error('expected submitted control input');
+    }
+    await controlAdmission.turn.persistence;
+    await waitForTurn();
+
+    const preparing = leader.prepareCompletion({
+      kind: 'teammate',
+      source: 'worker',
+      status: 'completed',
+      result: 'prepared completion',
+    });
+    assertLockLoses();
+    const prepared = await preparing;
+    const submitting = prepared.submit();
+    assertLockLoses();
+    await expect(submitting).resolves.toMatchObject({ status: 'accepted' });
+    await waitForTurn();
+
+    const updatedWorktree = {
+      ...reuseCwd(join(root, 'updated-worktree')),
+      cleanup_error: 'recorded',
+    };
+    const updating = leader.applyWorktreeCleanup(updatedWorktree);
+    assertLockLoses();
+    await updating;
+    expect(leader.current().worktree).toEqual(updatedWorktree);
+
+    const activating = leader.activate();
+    assertLockLoses();
+    await activating;
+
+    const closing = leader.close({ note: 'ordinary close wins' });
+    expect(() => leader.lock()).toThrow(/not active/u);
+    await expect(closing).resolves.toMatchObject({
+      teammate: { status: 'closed' },
+    });
+    expect(runtimes[0]!.stopCount).toBe(1);
+  });
+
+  it('propagates failed process-group absence proof through retryable entity close', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const supervised: SupervisedRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const leader = await createTestTeamLeader({
+      dispatcherId: 'dispatcher-a',
+      teamId: 'alpha',
+      name: 'tl-alpha-0001',
+      agentRuntime: 'agent-a',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, [], () => {
+        const runtime = new SupervisedRuntime();
+        supervised.push(runtime);
+        return runtime;
+      }),
+    });
+    const runtime = supervised[0]!;
+    const pid = runtime.child.pid!;
+    const realKill = process.kill.bind(process);
+    const kill = vi.spyOn(process, 'kill').mockImplementation((target, signal) => {
+      if (target === -pid) return true;
+      return realKill(target, signal);
+    });
+    try {
+      await expect(leader.close({ note: 'first close' }))
+        .rejects.toThrow(/still exists after SIGKILL/u);
+      expect(leader.current().status).not.toBe('closed');
+      expect(runtime.child.pid).toBe(pid);
+    } finally {
+      kill.mockRestore();
+    }
+
+    await expect(leader.close({ note: 'retry close' })).resolves.toMatchObject({
+      teammate: { status: 'closed' },
+    });
+    await vi.waitFor(() => expect(isProcessAlive(pid)).toBe(false));
+    expect(runtime.child.pid).toBeNull();
+  });
+
+  it('returns the durable closed projection for repeated close', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const leader = await createTestTeamLeader({
+      dispatcherId: 'dispatcher-a',
+      teamId: 'alpha',
+      name: 'tl-alpha-0001',
+      agentRuntime: 'agent-a',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+    });
+
+    const first = await leader.close({ note: 'done' });
+    const second = await leader.close({ note: 'ignored retry note' });
+    expect(second).toEqual(first);
+  });
+
   it('submits scheduled input to an already-running team-scoped TeamLeader', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
@@ -570,4 +1341,12 @@ async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error('waitFor timed out');
+}
+
+async function waitForEventLoop(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  throw new Error('event-loop condition was not reached');
 }

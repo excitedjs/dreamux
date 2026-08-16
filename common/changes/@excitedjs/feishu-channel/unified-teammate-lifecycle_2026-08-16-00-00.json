@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/feishu-channel",
+      "comment": "BREAKING: Feishu Channel delivery receipts no longer expose Dreamux Turn IDs, add admission-ambiguous as a terminal non-replayed result, and remove the unused turn.submitted and turn.settled event pair. Update Channel contract consumers to status-only delivery results.",
+      "type": "major"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel"
+}

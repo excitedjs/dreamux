@@ -109,7 +109,7 @@ describe('codex plain completionInput delivery', () => {
     expect(fake.injectItemsParams).toHaveLength(0);
   });
 
-  it('reports failed when the plain turn is refused', async () => {
+  it('reports an ambiguous native refusal and never repeats the source write', async () => {
     const fake = await startFakeCodex({ failTurnStart: true });
     fakes.push(fake);
     const runtime = await makeRuntime(fake);
@@ -118,7 +118,12 @@ describe('codex plain completionInput delivery', () => {
       text: 'delivery that fails',
       sourceId: 'completion:mate-2',
     });
-    expect(result.status).toBe('failed');
+    expect(result.status).toBe('ambiguous');
+    await expect(runtime.completionInput({
+      text: 'must not be written twice',
+      sourceId: 'completion:mate-2',
+    })).resolves.toEqual({ status: 'duplicate' });
+    expect(fake.turnStartParams).toHaveLength(1);
     expect(fake.injectItemsParams).toHaveLength(0);
   });
 

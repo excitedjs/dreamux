@@ -175,9 +175,6 @@ export function createCodexAgentRuntimeProvider(
         ...(systemPromptAppend !== undefined
           ? { systemPromptAppend }
           : {}),
-        ...(context.onTurnSettled !== undefined
-          ? { onTurnSettled: context.onTurnSettled }
-          : {}),
         ...(context.logger !== undefined ? { logger: context.logger } : {}),
         ...(options.codexHomeDoctor !== undefined
           ? { codexHomeDoctor: options.codexHomeDoctor }

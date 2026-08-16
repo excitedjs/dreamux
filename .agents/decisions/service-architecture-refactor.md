@@ -1,6 +1,8 @@
 # Service Architecture Refactor (Collection + Service Model)
 
-- **Status:** Accepted (working design) — Epic #233 discussion (2026-06-17); the intended shape, with exact file/store/name details tracking the implementation rather than frozen here
+- **Status:** Accepted for the Collection + Service topology; completion routing
+  and TeamMate lifecycle ownership are superseded by
+  [entity-owned TeamMate lifecycle and object Turns](entity-owned-teammate-lifecycle-and-object-turns.md)
 - **Date:** 2026-06-16 (delivery + reliability model finalized 2026-06-17)
 - **Affects:** `dispatcher-service/` entire module (renamed to `service/`), `platform/paths.ts`, `admin/methods.ts`, state directory layout
 - **PR / Issue:** #233
@@ -21,6 +23,13 @@ The `dispatcher-service/` object model evolved across multiple iterations and ca
 ## Decision
 
 Restructure the service layer around a **Collection + Service pattern**, and unify agent runtime lifecycle management through a shared `TeammateService` entity. The dispatcher *has* an agent (not *is* an agent); the team *has* a leader agent. Delivery flows through a per-dispatcher, per-turn in-memory `CompletionRouter`, not direct references between entities.
+
+> **Current decision:** The Collection + Service topology remains accepted.
+> The `CompletionRouter` registry, `producerName:turnId` keys, settle callbacks,
+> Collection-owned close/release behavior, and runtime-only shutdown sweeps in
+> this historical record no longer describe current behavior. Completion
+> initiators are captured by closure on entity-owned object Turns, and
+> `TeammateService` owns the lifecycle command path.
 
 ### Symmetric Collection + Service Pattern
 

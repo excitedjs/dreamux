@@ -55,7 +55,6 @@ const ALLOWLIST = [
   'AgentRuntimeStructuredOutputCapability',
   'AgentRuntimeSystemPrompt',
   'AgentRuntimeTextInput',
-  'AgentRuntimeTurnResult',
   'BuiltinProviderRef',
   'ChannelAgentStateEvent',
   'ChannelBinCheck',
@@ -109,8 +108,6 @@ const ALLOWLIST = [
   'ChannelToolContext',
   'ChannelToolDescriptor',
   'ChannelToolIcon',
-  'ChannelTurnSettledEvent',
-  'ChannelTurnSubmittedEvent',
   'DreamuxEnvironment',
   'DreamuxLogger',
   'DreamuxManagedRepoRequest',
@@ -133,8 +130,10 @@ const ALLOWLIST = [
   'ProviderOnboardSecretPrompt',
   'ProviderOnboardTextPrompt',
   'ProviderRef',
+  'RuntimeAdmission',
+  'RuntimeTurn',
+  'RuntimeTurnOutcome',
   'ProviderRefSource',
-  'TurnSettledSignal',
   'UnsupportedAgentRuntimeFeatureError',
 ];
 

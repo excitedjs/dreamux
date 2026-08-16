@@ -4,12 +4,15 @@ import { readFile, stat } from 'node:fs/promises';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import {
-  completionKey,
+  type CompletionDeliveryPolicy,
   type CompletionInitiator,
-  type CompletionRouter,
 } from '../completion-router/index.js';
-import type { OwnedTeammateOps } from '../teammate-collection/owned-teammates.js';
 import { throwSettledFailures } from '../shutdown-errors.js';
+import type {
+  CreateLockedTeammateOptions,
+} from '../teammate-collection/index.js';
+import type { SpawnTeamMateRequest } from '../teammate-collection/types.js';
+import type { LockedTeammate } from '../teammate-service/types.js';
 import {
   validateWorkflowRunId,
   workflowRunJournalPath,
@@ -38,10 +41,17 @@ import type {
 
 const MAX_SCRIPT_BYTES = 1024 * 1024;
 
+export interface WorkflowTeammateFactory {
+  createLocked(
+    input: SpawnTeamMateRequest,
+    options?: CreateLockedTeammateOptions,
+  ): Promise<LockedTeammate>;
+}
+
 export interface WorkflowServiceOptions extends WorkflowScopePathInput {
   callerKind: WorkflowCallerKind;
-  ownedTeammates: Pick<OwnedTeammateOps, 'spawnOwned' | 'releaseAllOwned'>;
-  router: CompletionRouter;
+  teammates: WorkflowTeammateFactory;
+  completionDelivery: CompletionDeliveryPolicy;
   completionInitiator: () => CompletionInitiator;
   log: DreamuxLogger;
   createRunner?: WorkflowRunnerFactory;
@@ -81,13 +91,11 @@ export class WorkflowService implements WorkflowOps {
     this.store = new WorkflowRunStore(this.scope);
   }
 
-  /** Recover durable records once, then admit new runs for this owner lifetime. */
   async start(): Promise<void> {
     await this.recover();
     this.accepting = true;
   }
 
-  /** Recover stale records without opening admission. */
   async recover(): Promise<void> {
     await this.initialize();
   }
@@ -139,7 +147,6 @@ export class WorkflowService implements WorkflowOps {
       updated_at: now,
       ended_at: null,
     };
-    const key = workflowCompletionKey(runId);
     const createRunner = this.opts.createRunner ?? ((handlers) =>
       new ForkedWorkflowRunner(
         this.opts.runnerEntryPath ?? workflowRunnerEntryPath(),
@@ -151,16 +158,16 @@ export class WorkflowService implements WorkflowOps {
       journal: new WorkflowJournal(
         workflowRunJournalPath({ ...this.scope, runId }),
       ),
-      ownedTeammates: this.opts.ownedTeammates,
+      createLocked: (spawnInput, options) =>
+        this.opts.teammates.createLocked(spawnInput, options),
       createRunner,
-      settleTerminal: (completion) => this.opts.router.settle(key, completion),
-      discardTerminal: () => this.opts.router.discard(key),
+      deliverTerminal: (fact) =>
+        this.opts.completionDelivery.deliver(initiator, fact),
       evict: (terminal) => this.evict(runId, terminal),
       log: this.opts.log,
       ...(this.opts.now !== undefined ? { now: this.opts.now } : {}),
     });
     await run.initialize();
-    this.opts.router.register(key, initiator);
     this.runs.set(runId, run);
     if (!this.accepting) run.closeAdmission();
     this.opts.log.info(
@@ -214,25 +221,12 @@ export class WorkflowService implements WorkflowOps {
     };
   }
 
-  stopAll(): Promise<void> {
-    return this.stopRuns(async (run) => {
-      await run.stopAndWait();
-    });
-  }
-
-  /** Stop runners and persist terminal records without waiting on agent turns. */
-  stopAllForShutdown(): Promise<void> {
-    return this.stopRuns((run) => run.stopForShutdown());
-  }
-
-  private async stopRuns(
-    stop: (run: WorkflowRun) => Promise<void>,
-  ): Promise<void> {
+  async stopAll(): Promise<void> {
     this.closeAdmission();
     await this.recover();
     await Promise.allSettled([...this.runCreations]);
     const results = await Promise.allSettled(
-      [...this.runs.values()].map(stop),
+      [...this.runs.values()].map((run) => run.stop()),
     );
     throwSettledFailures(results, 'multiple workflow runs failed to stop');
   }
@@ -250,23 +244,82 @@ export class WorkflowService implements WorkflowOps {
   private async recoverRunningRecords(): Promise<void> {
     for (const record of await this.store.list()) {
       if (record.status !== 'running') continue;
-      const endedAt = this.now();
-      record.status = 'stopped';
-      record.error = 'Dreamux stopped before the workflow reached a terminal result';
-      record.ended_at = endedAt;
-      record.updated_at = endedAt;
-      for (const agent of record.agents) {
-        if (agent.status !== 'queued' && agent.status !== 'running') continue;
-        agent.status = 'stopped';
-        agent.settled_at = endedAt;
-      }
-      await new WorkflowJournal(
+      const journal = new WorkflowJournal(
         workflowRunJournalPath({ ...this.scope, runId: record.run_id }),
-      ).append({ kind: 'end', status: 'stopped', ended_at: endedAt });
+      );
+      for (const result of await journal.resultEvents()) {
+        const agent = record.agents.find((item) => item.index === result.index);
+        if (agent === undefined) {
+          throw new Error(
+            `workflow ${JSON.stringify(record.run_id)} journal has a result for unknown Agent ${result.index}`,
+          );
+        }
+        if (
+          agent.status !== 'queued' &&
+          agent.status !== 'running' &&
+          !agentMatchesJournalResult(agent, result)
+        ) {
+          throw new Error(
+            `workflow ${JSON.stringify(record.run_id)} record conflicts with journal result for Agent ${result.index}`,
+          );
+        }
+        agent.status = result.status;
+        agent.result = result.result;
+        agent.error = result.error;
+        agent.settled_at = result.settled_at;
+      }
+      const committedTerminal = await journal.terminal();
+      if (committedTerminal === null) {
+        const endedAt = this.now();
+        record.status = 'stopped';
+        record.result = null;
+        record.error =
+          'Dreamux stopped before the workflow reached a terminal result';
+        record.ended_at = endedAt;
+        record.updated_at = endedAt;
+        for (const agent of record.agents) {
+          if (agent.status !== 'queued' && agent.status !== 'running') continue;
+          const result = await journal.ensureAgentResult({
+            kind: 'result',
+            index: agent.index,
+            status: 'stopped',
+            result: null,
+            error: record.error,
+            settled_at: endedAt,
+          });
+          agent.status = result.status;
+          agent.result = result.result;
+          agent.error = result.error;
+          agent.settled_at = result.settled_at;
+        }
+        await journal.ensureTerminal({
+          kind: 'end',
+          status: 'stopped',
+          result: null,
+          error: record.error,
+          ended_at: endedAt,
+        });
+      } else {
+        const activeAgent = record.agents.find(
+          (agent) => agent.status === 'queued' || agent.status === 'running',
+        );
+        if (activeAgent !== undefined) {
+          throw new Error(
+            `workflow ${JSON.stringify(record.run_id)} terminal journal conflicts with active Agent ${activeAgent.index}`,
+          );
+        }
+        record.status = committedTerminal.status;
+        record.result = committedTerminal.result;
+        record.error = committedTerminal.error;
+        record.ended_at = committedTerminal.ended_at;
+        record.updated_at = committedTerminal.ended_at;
+      }
       await this.store.write(record);
       this.opts.log.warn(
-        { run_id: record.run_id },
-        'recovered running workflow as stopped',
+        { run_id: record.run_id, status: record.status },
+        committedTerminal === null
+          ? 'recovered running workflow as stopped'
+          : 'completed workflow record from terminal journal',
       );
     }
   }
@@ -280,8 +333,16 @@ export class WorkflowService implements WorkflowOps {
   }
 }
 
-export function workflowCompletionKey(runId: string): string {
-  return completionKey('workflow', validateWorkflowRunId(runId));
+function agentMatchesJournalResult(
+  agent: WorkflowRunRecord['agents'][number],
+  result: Awaited<ReturnType<WorkflowJournal['resultEvents']>>[number],
+): boolean {
+  return (
+    agent.status === result.status &&
+    agent.settled_at === result.settled_at &&
+    agent.error === result.error &&
+    JSON.stringify(agent.result) === JSON.stringify(result.result)
+  );
 }
 
 async function resolveWorkflowScript(input: WorkflowRunInput): Promise<string> {

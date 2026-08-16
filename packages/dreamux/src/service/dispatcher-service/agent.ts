@@ -8,11 +8,6 @@ import {
   type AgentRuntimeProviderCatalog,
 } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
-import {
-  completionKey,
-  type CompletionEnvelope,
-  type CompletionRouter,
-} from '../completion-router/index.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import {
   createTeammateService,
@@ -37,7 +32,6 @@ export interface DispatcherAgentDeps {
   id: string;
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
-  router: CompletionRouter;
   log: DreamuxLogger;
   mcpServers: readonly AgentRuntimeMcpServer[];
   identity: AgentEntityIdentity;
@@ -56,7 +50,7 @@ export interface DispatcherAgentDeps {
  * Build the dispatcher's own agent as a contained {@link TeammateService} (issue
  * #233 Phase 5). The dispatcher *has an* agent rather than *being* one: the
  * shared entity owns the runtime lifecycle (start/resume/stop), the
- * `onTurnSettled` → router capture, and `completionInput` as a delivery target,
+ * Turn persistence and `completionInput` as a delivery target,
  * while `DispatcherService` keeps the dispatcher-only concerns (channel sessions,
  * restart-intent injection, MCP descriptor assembly).
  *
@@ -75,9 +69,6 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
     // The dispatcher agent has no worktree — it neither spawns nor closes, so it
     // never reaches the worktree manager (issue #233 Phase 5).
     log: deps.log,
-    nextSubmissionSeq: createDispatcherSubmissionSeq(),
-    routeSettledCompletion: (producerName, turnId, completion) =>
-      routeSettled(deps.router, producerName, turnId, completion),
     options: {
       mcpServers: deps.mcpServers,
       runtimeId: dispatcherRuntimeId(deps.id),
@@ -104,18 +95,4 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
     },
   });
   return agent;
-}
-
-function createDispatcherSubmissionSeq(): () => number {
-  let seq = 0;
-  return () => ++seq;
-}
-
-async function routeSettled(
-  router: CompletionRouter,
-  producerName: string,
-  turnId: string,
-  completion: CompletionEnvelope,
-): Promise<void> {
-  await router.settle(completionKey(producerName, turnId), completion);
 }

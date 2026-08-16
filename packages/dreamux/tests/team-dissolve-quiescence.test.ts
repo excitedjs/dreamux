@@ -246,7 +246,9 @@ describe('Team dissolve quiescence and shutdown', () => {
       },
       expectedDissolveOperationId: accepted.operationId,
     });
-    await first.stopAll();
+    // Abandon the first process-local registry to model daemon loss after the
+    // durable phase write. These fakes own no child resources; importantly,
+    // the entity identities remain non-closed for restart reattachment.
 
     const leaderIdle = deferred<void>();
     const memberIdle = deferred<void>();

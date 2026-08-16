@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux-utils",
+      "comment": "BREAKING: Completion body preparation no longer accepts a public completion ID; oversized-body spill files use opaque exclusive names. SupervisedChild stop now proves process-group absence and retains retry authority when termination cannot be proved.",
+      "type": "major"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-utils"
+}

@@ -114,8 +114,9 @@ logs:
 | `~/.dreamux/run/restart-intent.json` | One-shot daemon restart marker; volatile run file | the server |
 | `~/.dreamux/run/sockets/` | Fallback root for ephemeral Codex app-server rendezvous sockets (preferred root: `$XDG_RUNTIME_DIR/dreamux/sockets/`); random per start, never persisted | the server |
 | `~/.dreamux/state/<id>/access.json` | Dispatcher-local Feishu access state: schema/runtime ledger are Channel-owned; policy fields and quiesced `allow_users` maintenance are operator-authorized | mixed |
-| `~/.dreamux/state/<id>/identity.json` | Dispatcher root agent identity and runtime recovery state | the server |
-| `~/.dreamux/state/<id>/teammate/` | TeamMate task ledger, results, and delivery retry state | the server |
+| `~/.dreamux/state/<id>/identity.json` + `turn.jsonl` | Dispatcher root identity/rolling recovery state and strict v2 one-terminal-row-per-Turn archive | the server |
+| `~/.dreamux/state/<id>/teammate/<name>/` | Dispatcher TeamMate `identity.json` and strict v2 terminal Turn archive | the server |
+| `~/.dreamux/state/<id>/team/<team-id>/` | Team record, TeamLeader entity state/archive, Team members, and Team-scoped Workflow state | the server |
 | `~/.dreamux/cache/<id>/spill/` | Over-budget teammate completion spill files; rebuildable cache, only the path is inlined into a dispatcher turn | the server |
 | `~/.dreamux/cache/<id>/` | Per-dispatcher provider cache root; providers own subdirectories such as Feishu attachment cache | the server |
 | `~/.dreamux/cache/claude-code/` | Claude Code MCP config and skill adapters; rebuildable provider cache | the server |

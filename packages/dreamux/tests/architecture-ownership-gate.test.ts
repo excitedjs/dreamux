@@ -50,7 +50,6 @@ const MOVED_DECLARATIONS: readonly MovedDeclaration[] = [
   { name: 'SchedulerServiceOptions', owner: 'service/scheduler/types.ts', implementationImport: './service.js' },
   { name: 'SchedulerCommands', owner: 'service/scheduler/types.ts', implementationImport: './service.js' },
   { name: 'TeammateServiceDeps', owner: 'service/teammate-service/types.ts', implementationImport: './index.js' },
-  { name: 'SettledCompletionRoute', owner: 'service/teammate-service/types.ts', implementationImport: './index.js' },
   { name: 'TeammateServiceOptions', owner: 'service/teammate-service/types.ts', implementationImport: './index.js' },
 ];
 
@@ -633,6 +632,60 @@ describe('architecture ownership gate (#233)', () => {
     });
   });
 
+  it('keeps TeamMate lifecycle authority on the entity boundary', async () => {
+    assertNoHits(
+      'TeamMate lifecycle invariant violated: Collection-owned membership or bulk teardown returned.',
+      await findSourceHits(
+        SERVICE_ROOT,
+        /\b(?:OwnedTeammate\w*|OwnedTeamMate\w*|spawnOwned|releaseExclusive|releaseAllOwned|exclusivelyOwned)\b/u,
+      ),
+    );
+    assertNoHits(
+      'TeamMate dependency invariant violated: TeammateService must not import its containing Collection.',
+      await findSourceHits(
+        join(SERVICE_ROOT, 'teammate-service'),
+        /from\s+['"][^'"]*teammate-collection/u,
+      ),
+    );
+  });
+
+  it('keeps one truthful shutdown path and no service Turn identifiers', async () => {
+    assertNoHits(
+      'Shutdown invariant violated: runtime-only shutdown path returned.',
+      await findSourceHits(
+        SERVICE_ROOT,
+        /\b(?:stopAllForShutdown|stopForShutdown)\b/u,
+      ),
+    );
+    const rawRuntimeStops = (await findSourceHits(
+      SERVICE_ROOT,
+      /\bruntime\.stop\s*\(/u,
+    )).filter(
+      (hit) =>
+        sourceRelativePath(hit.file) !==
+        'service/teammate-service/runtime-owner.ts',
+    );
+    assertNoHits(
+      'Shutdown invariant violated: only the entity-owned runtime authority may stop a raw AgentRuntime.',
+      rawRuntimeStops,
+    );
+    const runtimeAuthorityLeaks = (await findSourceHits(
+      SERVICE_ROOT,
+      /\bAgentRuntime\b/u,
+    )).filter(
+      (hit) =>
+        !sourceRelativePath(hit.file).startsWith('service/teammate-service/'),
+    );
+    assertNoHits(
+      'Shutdown invariant violated: raw AgentRuntime authority escaped the TeamMate entity boundary.',
+      runtimeAuthorityLeaks,
+    );
+    assertNoHits(
+      'Turn identity invariant violated: service code must coordinate with Turn objects, not identifiers.',
+      await findSourceHits(SERVICE_ROOT, /\bturn_?id\b/iu),
+    );
+  });
+
   it('keeps core free of a parallel worker/runtime provider tree', async () => {
     assertNoHits(
       'T2 runtime-tree invariant violated: dreamux core has one AgentRuntime seam, backed by AgentRuntimeProviderCatalog and ProviderRegistry; do not reintroduce a parallel worker/runtime/provider tree.',
@@ -692,7 +745,7 @@ describe('architecture ownership gate (#233)', () => {
     await mkdir(workspace, { recursive: true });
     const log = noopLog();
     const identities = new AgentIdentityStore(log);
-    const turnsStore = new AgentTurnsStore(log);
+    const turnsStore = new AgentTurnsStore();
     const worktree = {
       mode: 'reuse-cwd',
       slug: null,

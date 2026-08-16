@@ -150,6 +150,14 @@ There is no separate `status.json` recovery authority and no durable
 `runtime/<name>/` scratch under the dispatcher state root — runtime scratch is
 volatile and lives under `run/`.
 
+Every entity `turn.jsonl` uses strict schema version 2. Each complete non-empty
+line is one terminal logical Turn with submission metadata, terminal status, and
+bounded assistant output. There are no split submit/settle rows and no public or
+persisted Turn identifier. Startup, reads, and append preparation validate every
+complete row. A demonstrably incomplete final JSON fragment may be ignored on
+read and truncated before the next append; complete malformed, mixed-version, or
+schema-invalid rows fail loudly and are never repaired in place.
+
 Each Team `record.json` is fully server-owned. Its nullable `dissolve` object is
 the TeamCollection authority for one accepted operation: operation id,
 requester kind and TeamLeader generation when applicable, collaboration-target
