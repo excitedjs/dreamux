@@ -48,7 +48,6 @@ export type {
   InboundAttachment,
   InboundDeliveryResult,
   InboundTurnInput,
-  TurnSettledSignal,
 } from './turn.js';
 export type {
   AgentRuntime,
@@ -61,7 +60,6 @@ export type {
   AgentRuntimeDiagnosticRunner,
   AgentRuntimeDiagnosticResult,
   AgentRuntimeIdentity,
-  AgentRuntimeLastResult,
   AgentRuntimeMcpServer,
   AgentRuntimePathContext,
   AgentRuntimeProvider,
@@ -75,7 +73,15 @@ export type {
   AgentRuntimeStructuredOutputCapability,
   AgentRuntimeSystemPrompt,
   AgentRuntimeTextInput,
-  AgentRuntimeTurnResult,
+  AgentRuntimeTranscriptBlock,
+  AgentRuntimeTranscriptContext,
+  AgentRuntimeTranscriptError,
+  AgentRuntimeTranscriptPage,
+  AgentRuntimeTranscriptQuery,
+  AgentRuntimeTranscriptTurn,
+  RuntimeAdmission,
+  RuntimeTurn,
+  RuntimeTurnOutcome,
   UnsupportedAgentRuntimeFeatureError,
 } from './agent-runtime.js';
 export type {
@@ -130,7 +136,5 @@ export type {
   ChannelToolContext,
   ChannelToolDescriptor,
   ChannelToolIcon,
-  ChannelTurnSettledEvent,
-  ChannelTurnSubmittedEvent,
   DreamuxManagedRepoRequest,
 } from './channel.js';

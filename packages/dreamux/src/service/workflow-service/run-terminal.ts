@@ -5,7 +5,6 @@ import type {
   WorkflowRunStatus,
   WorkflowTerminalStatus,
 } from './types.js';
-import { deferred } from './run-support.js';
 
 interface WorkflowRunTerminalDeps {
   runId: string;
@@ -20,65 +19,62 @@ interface WorkflowRunTerminalDeps {
   log: DreamuxLogger;
 }
 
-/** Coordinates terminal reservation, prompt stop, and shutdown interruption. */
+interface TerminalIntent {
+  status: WorkflowTerminalStatus;
+  result: unknown;
+  error: string | null;
+}
+
+/** One retryable, truthful terminal task shared by every stop source. */
 export class WorkflowRunTerminal {
-  private readonly shutdownSignal = deferred();
   private task: Promise<void> | null = null;
-  private requestedStatus: WorkflowTerminalStatus | null = null;
-  private shutdownRequested_ = false;
+  private intent: TerminalIntent | null = null;
+  private beforeFinalize: Promise<void> | null = null;
   private stopSignaled = false;
 
   constructor(private readonly deps: WorkflowRunTerminalDeps) {}
 
   get requested(): WorkflowTerminalStatus | null {
-    return this.requestedStatus;
+    return this.intent?.status ?? null;
   }
 
   get accepting(): boolean {
-    return this.requestedStatus === null && this.deps.status() === 'running';
+    return this.intent === null && this.deps.status() === 'running';
   }
 
   get suppressDelivery(): boolean {
-    return this.requestedStatus !== null;
-  }
-
-  get shutdownRequested(): boolean {
-    return this.shutdownRequested_;
+    return this.intent !== null;
   }
 
   reserveStop(): void {
-    if (!this.accepting) return;
-    this.requestedStatus = 'stopped';
+    if (this.intent !== null || this.deps.status() !== 'running') return;
+    this.intent = { status: 'stopped', result: null, error: null };
     this.deps.closeAdmission('stopped');
+    this.signalStop();
+  }
+
+  async failAfterNotification(
+    error: string,
+    notify: () => Promise<void>,
+  ): Promise<void> {
+    const shouldNotify = this.reserveFailure(error);
+    if (!shouldNotify) return;
+    const notification = Promise.resolve().then(notify);
+    this.beforeFinalize = notification;
+    try {
+      await notification;
+    } finally {
+      this.observe('failed', null, error);
+    }
   }
 
   async stop(): Promise<WorkflowTerminalStatus> {
-    const currentStatus = this.deps.status();
-    if (this.requestedStatus === null && currentStatus !== 'running') {
-      return currentStatus;
+    if (this.intent === null && this.deps.status() !== 'running') {
+      return this.deps.status() as WorkflowTerminalStatus;
     }
-    return this.initiateStop();
-  }
-
-  async stopAndWait(): Promise<void> {
-    await this.stop();
-    if (this.task !== null) await this.task;
-  }
-
-  async stopForShutdown(): Promise<void> {
-    this.shutdownRequested_ = true;
-    this.shutdownSignal.resolve();
-    if (this.requestedStatus === null && this.deps.status() !== 'running') return;
-    this.initiateStop();
-    if (this.task !== null) await this.task;
-  }
-
-  private initiateStop(): WorkflowTerminalStatus {
     this.reserveStop();
-    if (this.requestedStatus === 'stopped') this.signalStop();
-    const status = this.requestedStatus ?? 'stopped';
-    this.observe(status, null, null);
-    return status;
+    await this.ensureTask();
+    return this.intent?.status ?? (this.deps.status() as WorkflowTerminalStatus);
   }
 
   request(
@@ -86,17 +82,11 @@ export class WorkflowRunTerminal {
     result: unknown,
     error: string | null,
   ): Promise<void> {
-    if (this.task !== null) return this.task;
-    const terminalStatus = this.requestedStatus ?? status;
-    this.requestedStatus = terminalStatus;
-    this.deps.closeAdmission(terminalStatus);
-    const task = this.deps.finalize(
-      terminalStatus,
-      terminalStatus === status ? result : null,
-      terminalStatus === status ? error : null,
-    );
-    this.task = task;
-    return task;
+    if (this.intent === null) {
+      this.intent = { status, result, error };
+      this.deps.closeAdmission(status);
+    }
+    return this.ensureTask();
   }
 
   observe(
@@ -112,12 +102,31 @@ export class WorkflowRunTerminal {
     });
   }
 
-  waitUnlessShutdown(task: Promise<void>): Promise<boolean> {
-    if (this.shutdownRequested_) return Promise.resolve(false);
-    return Promise.race([
-      task.then(() => true),
-      this.shutdownSignal.promise.then(() => false),
-    ]);
+  private ensureTask(): Promise<void> {
+    if (this.task !== null) return this.task;
+    const intent = this.intent;
+    if (intent === null) return Promise.resolve();
+    const task = (this.beforeFinalize ?? Promise.resolve())
+      .catch((notificationError: unknown) => {
+        this.deps.log.warn(
+          { run_id: this.deps.runId, err: errorInfo(notificationError) },
+          'workflow terminal notification failed; continuing teardown',
+        );
+      })
+      .then(() => this.deps.finalize(intent.status, intent.result, intent.error))
+      .catch((error: unknown) => {
+        if (this.task === task) this.task = null;
+        throw error;
+      });
+    this.task = task;
+    return task;
+  }
+
+  private reserveFailure(error: string): boolean {
+    if (this.intent !== null || this.deps.status() !== 'running') return false;
+    this.intent = { status: 'failed', result: null, error };
+    this.deps.closeAdmission('failed');
+    return true;
   }
 
   private signalStop(): void {

@@ -14,7 +14,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Writable } from 'node:stream';
 
-import { ClaudeCodeStreamRpc } from '../src/rpc.js';
+import {
+  ClaudeCodeStreamRpc,
+  ClaudeSteerAdmissionError,
+} from '../src/rpc.js';
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /** Minimal Writable stub: records writes, reports writable, fires the cb. */
 class FakeStdin {
@@ -24,6 +30,23 @@ class FakeStdin {
     this.writes.push(chunk);
     cb?.(null);
     return true;
+  }
+}
+
+class DeferredSteerStdin extends FakeStdin {
+  private steerCallback: ((err?: Error | null) => void) | null = null;
+
+  override write(chunk: string, cb?: (err?: Error | null) => void): boolean {
+    this.writes.push(chunk);
+    if (this.writes.length === 1) cb?.(null);
+    else this.steerCallback = cb ?? null;
+    return true;
+  }
+
+  finishSteer(error?: Error): void {
+    const callback = this.steerCallback;
+    this.steerCallback = null;
+    callback?.(error ?? null);
   }
 }
 
@@ -44,6 +67,42 @@ function resultLine(text = 'final'): string {
   })}\n`;
 }
 
+function initLine(capabilities: string[] = ['msg_lifecycle_v1']): string {
+  return `${JSON.stringify({
+    type: 'system',
+    subtype: 'init',
+    session_id: 's1',
+    capabilities,
+  })}\n`;
+}
+
+function commandLifecycleLine(
+  commandUuid: string,
+  state: 'queued' | 'started' | 'completed' | 'cancelled' | 'discarded',
+): string {
+  return `${JSON.stringify({
+    type: 'system',
+    subtype: 'command_lifecycle',
+    command_uuid: commandUuid,
+    state,
+  })}\n`;
+}
+
+function writtenCommandUuid(stdin: FakeStdin, index: number): string {
+  const envelope = JSON.parse(stdin.writes[index] ?? '{}') as { uuid?: unknown };
+  if (typeof envelope.uuid !== 'string') throw new Error('missing command uuid');
+  return envelope.uuid;
+}
+
+function writtenPrompt(stdin: FakeStdin, index: number): string {
+  const envelope = JSON.parse(stdin.writes[index] ?? '{}') as {
+    message?: { content?: Array<{ text?: unknown }> };
+  };
+  const text = envelope.message?.content?.[0]?.text;
+  if (typeof text !== 'string') throw new Error('missing command prompt');
+  return text;
+}
+
 describe('ClaudeCodeStreamRpc idle deadline (issue #156)', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -61,6 +120,7 @@ describe('ClaudeCodeStreamRpc idle deadline (issue #156)', () => {
     });
 
     const turn = rpc.submitTurn('go');
+    const commandUuid = writtenCommandUuid(stdin, 0);
 
     // Emit a stream line every 800ms — each under the 1000ms idle window — for
     // a total of 4000ms, far longer than the window. Continuous activity keeps
@@ -72,6 +132,7 @@ describe('ClaudeCodeStreamRpc idle deadline (issue #156)', () => {
     expect(reap).not.toHaveBeenCalled();
 
     // The terminal result settles the turn (and clears the timer).
+    rpc.onStdoutChunk(commandLifecycleLine(commandUuid, 'completed'));
     rpc.onStdoutChunk(resultLine());
     const outcome = await turn;
     expect(outcome.isError).toBe(false);
@@ -93,6 +154,28 @@ describe('ClaudeCodeStreamRpc idle deadline (issue #156)', () => {
     // No stream activity for the full window → the idle deadline fires.
     vi.advanceTimersByTime(1_000);
     await rejection;
+    expect(reap).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases a pre-init live steer when the active turn times out', async () => {
+    const stdin = new FakeStdin();
+    const reap = vi.fn();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 1_000,
+      reapOnTimeout: reap,
+    });
+
+    const turn = rpc.submitTurn('go');
+    const steer = rpc.steerTurn('follow up');
+    const turnRejection = expect(turn).rejects.toThrow(/no stream activity/u);
+    const steerRejection = expect(steer).rejects.toThrow(/no stream activity/u);
+    expect(stdin.writes).toHaveLength(1);
+
+    vi.advanceTimersByTime(1_000);
+
+    await turnRejection;
+    await steerRejection;
+    expect(stdin.writes).toHaveLength(1);
     expect(reap).toHaveBeenCalledTimes(1);
   });
 
@@ -154,6 +237,168 @@ describe('ClaudeCodeStreamRpc idle deadline (issue #156)', () => {
 });
 
 describe('ClaudeCodeStreamRpc active steering', () => {
+  it('queues ordered pre-init steers and flushes them synchronously when support is proven', async () => {
+    const stdin = new FakeStdin();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 5_000,
+      reapOnTimeout: () => undefined,
+    });
+
+    const turn = rpc.submitTurn('first');
+    const initialUuid = writtenCommandUuid(stdin, 0);
+    const second = rpc.steerTurn('second', { priority: 'next' });
+    const third = rpc.steerTurn('third', { priority: 'next' });
+    let secondSettled = false;
+    let thirdSettled = false;
+    void second.then(
+      () => {
+        secondSettled = true;
+      },
+      () => {
+        secondSettled = true;
+      },
+    );
+    void third.then(
+      () => {
+        thirdSettled = true;
+      },
+      () => {
+        thirdSettled = true;
+      },
+    );
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
+    expect(thirdSettled).toBe(false);
+    expect(stdin.writes).toHaveLength(1);
+
+    rpc.onStdoutChunk(
+      `${initLine()}${commandLifecycleLine(initialUuid, 'completed')}${resultLine('initial result')}`,
+    );
+    await Promise.all([second, third]);
+
+    expect(stdin.writes).toHaveLength(3);
+    expect([0, 1, 2].map((index) => writtenPrompt(stdin, index))).toEqual([
+      'first',
+      'second',
+      'third',
+    ]);
+    const firstSteerUuid = writtenCommandUuid(stdin, 1);
+    const secondSteerUuid = writtenCommandUuid(stdin, 2);
+    expect(new Set([initialUuid, firstSteerUuid, secondSteerUuid]).size).toBe(3);
+
+    let turnSettled = false;
+    void turn.finally(() => {
+      turnSettled = true;
+    });
+    await Promise.resolve();
+    expect(turnSettled).toBe(false);
+
+    rpc.onStdoutChunk(commandLifecycleLine(firstSteerUuid, 'completed'));
+    rpc.onStdoutChunk(resultLine('first steer result'));
+    rpc.onStdoutChunk(commandLifecycleLine(secondSteerUuid, 'completed'));
+    await Promise.resolve();
+    expect(turnSettled).toBe(false);
+    rpc.onStdoutChunk(resultLine('final steer result'));
+
+    await expect(turn).resolves.toMatchObject({
+      text: 'final steer result',
+      isError: false,
+    });
+  });
+
+  it('reuses the resident-session capability decision on later turns', async () => {
+    const stdin = new FakeStdin();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 5_000,
+      reapOnTimeout: () => undefined,
+    });
+
+    const firstTurn = rpc.submitTurn('first');
+    const firstUuid = writtenCommandUuid(stdin, 0);
+    rpc.onStdoutChunk(initLine());
+    rpc.onStdoutChunk(commandLifecycleLine(firstUuid, 'completed'));
+    rpc.onStdoutChunk(resultLine('first result'));
+    await expect(firstTurn).resolves.toMatchObject({ text: 'first result' });
+
+    const secondTurn = rpc.submitTurn('second');
+    const secondUuid = writtenCommandUuid(stdin, 1);
+    const steer = rpc.steerTurn('third');
+    await Promise.resolve();
+    expect(stdin.writes).toHaveLength(3);
+    await steer;
+    const steerUuid = writtenCommandUuid(stdin, 2);
+
+    rpc.onStdoutChunk(commandLifecycleLine(secondUuid, 'completed'));
+    rpc.onStdoutChunk(resultLine('second result'));
+    rpc.onStdoutChunk(commandLifecycleLine(steerUuid, 'completed'));
+    rpc.onStdoutChunk(resultLine('third result'));
+    await expect(secondTurn).resolves.toMatchObject({ text: 'third result' });
+  });
+
+  it('rejects a queued pre-init steer when init proves lifecycle unsupported', async () => {
+    const stdin = new FakeStdin();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 5_000,
+      reapOnTimeout: () => undefined,
+    });
+
+    const turn = rpc.submitTurn('first');
+    const steer = rpc.steerTurn('second');
+    const rejection = expect(steer).rejects.toThrow(/msg_lifecycle_v1/u);
+    await Promise.resolve();
+    expect(stdin.writes).toHaveLength(1);
+
+    rpc.onStdoutChunk(initLine([]));
+    await rejection;
+    expect(stdin.writes).toHaveLength(1);
+
+    rpc.onStdoutChunk(resultLine('done'));
+    await expect(turn).resolves.toMatchObject({ text: 'done' });
+  });
+
+  it('releases a queued pre-init steer on stop without a late write', async () => {
+    const stdin = new FakeStdin();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 5_000,
+      reapOnTimeout: () => undefined,
+    });
+
+    const turn = rpc.submitTurn('first');
+    const steer = rpc.steerTurn('second');
+    const turnRejection = expect(turn).rejects.toThrow(/stopped mid-turn/u);
+    const steerRejection = expect(steer).rejects.toThrow(/stopped mid-turn/u);
+    expect(stdin.writes).toHaveLength(1);
+
+    rpc.failPending(new Error('claude resident session stopped mid-turn'));
+    await turnRejection;
+    await steerRejection;
+
+    rpc.onStdoutChunk(initLine());
+    await Promise.resolve();
+    expect(stdin.writes).toHaveLength(1);
+  });
+
+  it('releases a queued pre-init steer when the initial turn terminalizes first', async () => {
+    const stdin = new FakeStdin();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 5_000,
+      reapOnTimeout: () => undefined,
+    });
+
+    const turn = rpc.submitTurn('first');
+    const steer = rpc.steerTurn('second');
+    const steerRejection = expect(steer).rejects.toThrow(
+      /ended before live-steer capability was decided/u,
+    );
+    expect(stdin.writes).toHaveLength(1);
+
+    rpc.onStdoutChunk(resultLine('done'));
+
+    await expect(turn).resolves.toMatchObject({ text: 'done' });
+    await steerRejection;
+    expect(stdin.writes).toHaveLength(1);
+  });
+
   it('writes a stream-json user envelope while a turn is pending', async () => {
     const stdin = new FakeStdin();
     const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
@@ -162,11 +407,15 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     });
 
     const turn = rpc.submitTurn('first');
+    const initialUuid = writtenCommandUuid(stdin, 0);
+    rpc.onStdoutChunk(initLine());
     await rpc.steerTurn('second', { priority: 'next' });
+    const steerUuid = writtenCommandUuid(stdin, 1);
 
     expect(stdin.writes).toHaveLength(2);
     expect(JSON.parse(stdin.writes[1] ?? '{}')).toEqual({
       type: 'user',
+      uuid: steerUuid,
       message: {
         role: 'user',
         content: [{ type: 'text', text: 'second' }],
@@ -174,12 +423,41 @@ describe('ClaudeCodeStreamRpc active steering', () => {
       priority: 'next',
     });
 
+    rpc.onStdoutChunk(commandLifecycleLine(initialUuid, 'completed'));
+    rpc.onStdoutChunk(resultLine('initial'));
+    rpc.onStdoutChunk(commandLifecycleLine(steerUuid, 'completed'));
     rpc.onStdoutChunk(resultLine('done'));
-    await flushImmediate();
     await expect(turn).resolves.toMatchObject({ text: 'done', isError: false });
   });
 
-  it('folds an immediate follow-up result from a steer into the pending turn', async () => {
+  it('classifies a post-write steer interrupted by stop as ambiguous and ignores its late callback', async () => {
+    const stdin = new DeferredSteerStdin();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 5_000,
+      reapOnTimeout: () => undefined,
+    });
+
+    const turn = rpc.submitTurn('first');
+    rpc.onStdoutChunk(initLine());
+    const steer = rpc.steerTurn('second');
+    await Promise.resolve();
+    expect(stdin.writes).toHaveLength(2);
+
+    const stopped = new Error('stopped while native write was unconfirmed');
+    const turnRejection = expect(turn).rejects.toBe(stopped);
+    const steerRejection = expect(steer).rejects.toMatchObject({
+      name: 'ClaudeSteerAdmissionError',
+      admission: 'ambiguous',
+    } satisfies Partial<ClaudeSteerAdmissionError>);
+    rpc.failPending(stopped);
+
+    await Promise.all([turnRejection, steerRejection]);
+    stdin.finishSteer(new Error('late callback'));
+    await Promise.resolve();
+    expect(stdin.writes).toHaveLength(2);
+  });
+
+  it('waits for the result of every accepted live-steer alias', async () => {
     const stdin = new FakeStdin();
     const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
       turnTimeoutMs: 5_000,
@@ -187,25 +465,94 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     });
 
     const turn = rpc.submitTurn('first');
+    const initialUuid = writtenCommandUuid(stdin, 0);
+    rpc.onStdoutChunk(initLine());
     await rpc.steerTurn('second', { priority: 'next' });
+    const firstSteerUuid = writtenCommandUuid(stdin, 1);
+    await rpc.steerTurn('third', { priority: 'next' });
+    const secondSteerUuid = writtenCommandUuid(stdin, 2);
 
-    rpc.onStdoutChunk(
-      [
-        assistantLine('original answer'),
-        resultLine('original result'),
-        assistantLine('steered answer'),
-        resultLine('steered result'),
-      ].join(''),
-    );
-    await flushImmediate();
+    let settled = false;
+    void turn.finally(() => {
+      settled = true;
+    });
+
+    rpc.onStdoutChunk(commandLifecycleLine(initialUuid, 'completed'));
+    rpc.onStdoutChunk(resultLine('initial result'));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+
+    rpc.onStdoutChunk(commandLifecycleLine(firstSteerUuid, 'completed'));
+    rpc.onStdoutChunk(resultLine('first steer result'));
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    rpc.onStdoutChunk(commandLifecycleLine(secondSteerUuid, 'completed'));
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    rpc.onStdoutChunk(resultLine('second steer result'));
 
     await expect(turn).resolves.toMatchObject({
-      text: 'steered result',
+      text: 'second steer result',
       isError: false,
     });
   });
-});
 
-async function flushImmediate(): Promise<void> {
-  await new Promise<void>((resolve) => setImmediate(resolve));
-}
+  it.each([
+    ['initial', 0, 'cancelled'],
+    ['initial', 0, 'discarded'],
+    ['first steer', 1, 'cancelled'],
+    ['first steer', 1, 'discarded'],
+    ['second steer', 2, 'cancelled'],
+    ['second steer', 2, 'discarded'],
+  ] as const)(
+    'rejects the logical turn when the %s alias is %s',
+    async (_alias, rejectedIndex, terminalState) => {
+      const stdin = new FakeStdin();
+      const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+        turnTimeoutMs: 5_000,
+        reapOnTimeout: () => undefined,
+      });
+
+      const turn = rpc.submitTurn('first');
+      rpc.onStdoutChunk(initLine());
+      await rpc.steerTurn('second');
+      await rpc.steerTurn('third');
+      const commandUuids = [0, 1, 2].map((index) =>
+        writtenCommandUuid(stdin, index),
+      );
+      const rejection = expect(turn).rejects.toThrow(terminalState);
+
+      rpc.onStdoutChunk(resultLine('earlier result'));
+      for (const [index, commandUuid] of commandUuids.entries()) {
+        rpc.onStdoutChunk(
+          commandLifecycleLine(
+            commandUuid,
+            index === rejectedIndex ? terminalState : 'completed',
+          ),
+        );
+      }
+      await rejection;
+    },
+  );
+
+  it('fails live steer loudly when command lifecycle is unavailable', async () => {
+    const stdin = new FakeStdin();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 5_000,
+      reapOnTimeout: () => undefined,
+    });
+
+    const turn = rpc.submitTurn('first');
+    const initialUuid = writtenCommandUuid(stdin, 0);
+    rpc.onStdoutChunk(initLine([]));
+    await expect(rpc.steerTurn('second')).rejects.toThrow(/msg_lifecycle_v1/);
+    expect(stdin.writes).toHaveLength(1);
+
+    rpc.onStdoutChunk(resultLine('done'));
+    await expect(turn).resolves.toMatchObject({ text: 'done' });
+    expect(initialUuid).toMatch(UUID_RE);
+  });
+});

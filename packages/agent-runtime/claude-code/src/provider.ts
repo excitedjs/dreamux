@@ -1,7 +1,5 @@
-import {
-  ClaudeCodeRuntime,
-  type ClaudeCodeRuntimeDeps,
-} from './runtime.js';
+import { ClaudeCodeRuntime } from './runtime.js';
+import type { ClaudeCodeRuntimeDeps } from './runtime-deps.js';
 import {
   DEFAULT_CLAUDE_CODE_BIN,
   dispatcherClaudeCodeConfig,
@@ -14,6 +12,7 @@ import {
 } from './supervisor.js';
 import { BUILTIN_CLAUDE_CODE_PROVIDER_REF } from './provider-ref.js';
 import { claudeCodeAgentRuntimeDiagnostic } from './diagnostic.js';
+import { readClaudeTranscript } from './transcript/reader.js';
 import type {
   AgentRuntimeCapabilities,
   AgentRuntime,
@@ -51,6 +50,10 @@ export interface ClaudeCodeAgentRuntimeProviderOptions {
   resolveBinPath?: (bin: string) => string;
   /** Override the resident-session factory (tests inject a fake). */
   sessionFactory?: ClaudeCodeSessionFactory;
+  /** Override native session UUID generation for deterministic tests. */
+  generateSessionId?: ClaudeCodeRuntimeDeps['generateSessionId'];
+  /** Override native transcript path resolution for deterministic tests. */
+  resolveTranscriptPath?: ClaudeCodeRuntimeDeps['resolveTranscriptPath'];
 }
 
 export const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
@@ -119,6 +122,7 @@ export function createClaudeCodeAgentRuntimeProvider(
         context.prefix,
       );
     },
+    readTranscript: readClaudeTranscript,
     createRuntime(
       context: AgentRuntimeCreateContext<DispatcherClaudeCodeConfig>,
     ): AgentRuntime {
@@ -153,11 +157,14 @@ export function createClaudeCodeAgentRuntimeProvider(
           ? { disableFeatures: context.disableFeatures }
           : {}),
         outputSchema: context.outputSchema,
+        ...(options.generateSessionId !== undefined
+          ? { generateSessionId: options.generateSessionId }
+          : {}),
+        ...(options.resolveTranscriptPath !== undefined
+          ? { resolveTranscriptPath: options.resolveTranscriptPath }
+          : {}),
         ...(systemPromptAppend !== undefined
           ? { systemPromptAppend }
-          : {}),
-        ...(context.onTurnSettled !== undefined
-          ? { onTurnSettled: context.onTurnSettled }
           : {}),
         ...(context.logger !== undefined ? { logger: context.logger } : {}),
       };

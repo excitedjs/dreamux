@@ -63,6 +63,7 @@ export interface AgentEntityIdentity {
   team_id: string | null;
   agent_runtime: string;
   session_id: string | null;
+  transcript_locator: string | null;
   source_cwd: string;
   source_repo: string | null;
   cwd: string;
@@ -78,26 +79,6 @@ export interface AgentEntityIdentity {
   last_error: string | null;
   closed_at: number | null;
   close_note: string | null;
-  turn_count: number;
-  last_seen_at: number;
-  last_prompt_preview: string | null;
-  last_assistant_preview: string | null;
-}
-
-export type AgentEntityTurnRecordType = "submit" | "settled";
-
-export interface AgentEntityTurnRecord {
-  version: 1;
-  type: AgentEntityTurnRecordType;
-  turn_id: string | null;
-  timestamp: number;
-  turn_origin: AgentEntityTurnOrigin | null;
-  prompt_preview: string | null;
-  intent: string | null;
-  settle_status: "completed" | "failed" | "stopped" | null;
-  assistant: string | null;
-  assistant_preview: string | null;
-  assistant_truncated: boolean;
 }
 
 export interface AgentEntityRepoView {
@@ -170,20 +151,19 @@ export interface AgentEntityWorktreeIdentity {
   cleanup_error: string | null;
 }
 
-export interface AgentEntityTurnResult {
-  status: "submitted" | "duplicate" | "stopped" | "failed";
-  turn_id?: string;
+export interface AgentEntitySubmissionResult {
+  status: "submitted" | "duplicate" | "stopped" | "failed" | "ambiguous";
   error?: string;
 }
 
-export interface AgentEntitySpawnResult {
+export interface AgentEntitySpawnResult extends AgentEntitySubmissionResult {
   teammate: AgentEntityRuntimeStatus;
-  turn: AgentEntityTurnResult;
+  transcript_path: string | null;
 }
 
-export interface AgentEntitySendResult {
+export interface AgentEntitySendResult extends AgentEntitySubmissionResult {
   teammate: AgentEntityRuntimeStatus;
-  turn: AgentEntityTurnResult;
+  transcript_path: string | null;
 }
 
 export interface AgentEntityCloseResult {
@@ -210,20 +190,16 @@ export interface AgentEntityResumeHint {
 
 export interface AgentEntityRecordRow {
   name: string;
-  turn_count: number;
   agent_runtime: string;
   source_repo: string | null;
   created_at: number;
   updated_at: number;
-  last_seen_at: number;
   status: AgentEntityIdentityStatus;
   runtime_status: AgentRuntimeStatus | null;
   intent: string | null;
   closed_at: number | null;
   close_note: string | null;
   close_note_preview: string | null;
-  last_prompt_preview: string | null;
-  last_assistant_preview: string | null;
   cleanup_state: AgentEntityWorktreeCleanupState;
   resume: AgentEntityResumeHint | null;
 }
@@ -233,24 +209,42 @@ export interface AgentEntityHistoryResult {
   next_cursor: string | null;
 }
 
-export interface AgentEntityLastTurn {
-  turn_id: string;
-  turn_origin: AgentEntityTurnOrigin | null;
-  prompt_preview: string | null;
-  intent: string | null;
-  submitted_at: number | null;
-  settled_at: number;
-  settle_status: "completed" | "failed" | "stopped" | null;
-  assistant: string | null;
-  assistant_preview: string | null;
-  assistant_truncated: boolean;
+export type AgentEntityTranscriptBlock =
+  | {
+      kind: 'message';
+      role: 'user' | 'assistant';
+      text: string;
+      truncated: boolean;
+    }
+  | {
+      kind: 'tool';
+      name: string;
+      input: string | null;
+      output: string | null;
+      status: 'ok' | 'error';
+      input_truncated: boolean;
+      output_truncated: boolean;
+    };
+
+export interface AgentEntityTranscriptTurn {
+  started_at: number | null;
+  ended_at: number | null;
+  blocks: AgentEntityTranscriptBlock[];
+}
+
+export interface AgentEntityLastQuery {
+  turns?: number;
+  cursor?: string;
+  includeTools?: boolean;
 }
 
 export interface AgentEntityLastResult {
   teammate: AgentEntityRuntimeStatus;
   requested_turns: number;
   returned_turns: number;
-  turns: AgentEntityLastTurn[];
+  turns: AgentEntityTranscriptTurn[];
+  next_cursor: string | null;
+  truncated: boolean;
 }
 
 export interface AgentEntityRuntimeCapability {

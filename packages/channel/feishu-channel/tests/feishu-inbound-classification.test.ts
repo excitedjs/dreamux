@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
-  AgentRuntimeTurnResult,
+  InboundDeliveryResult,
   DreamuxLogger,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
@@ -113,9 +113,8 @@ describe('Feishu raw inbound classification boundary', () => {
     const before = await loadDispatcherAccess(stateDir);
     const logs: CapturedLog[] = [];
     const bot = createFakeFeishuBot('app');
-    const submitTurn = vi.fn(async (): Promise<AgentRuntimeTurnResult> => ({
+    const submitTurn = vi.fn(async (): Promise<InboundDeliveryResult> => ({
       status: 'submitted',
-      turnId: 'unexpected',
     }));
     const session = new FeishuChannelSession({
       dispatcherId: 'dispatcher-a',
@@ -157,7 +156,7 @@ describe('Feishu raw inbound classification boundary', () => {
     const submitTurn = vi.fn(async (
       _input: InboundTurnInput,
       _envelope: FeishuInboundEnvelope,
-    ): Promise<AgentRuntimeTurnResult> => ({ status: 'submitted', turnId: 'turn-1' }));
+    ): Promise<InboundDeliveryResult> => ({ status: 'submitted' }));
     const session = new FeishuChannelSession({
       dispatcherId: 'dispatcher-a',
       appId: 'app',
@@ -178,9 +177,8 @@ describe('Feishu raw inbound classification boundary', () => {
 
   it.each(['bot', 'app'])('observes an exact %s sender only in a listed group', async (senderType) => {
     const bot = createFakeFeishuBot('app');
-    const submitTurn = vi.fn(async (): Promise<AgentRuntimeTurnResult> => ({
+    const submitTurn = vi.fn(async (): Promise<InboundDeliveryResult> => ({
       status: 'submitted',
-      turnId: 'unexpected',
     }));
     const session = new FeishuChannelSession({
       dispatcherId: 'dispatcher-a',
@@ -219,9 +217,8 @@ describe('Feishu raw inbound classification boundary', () => {
   it('delivers an unauthorized /introduce as ordinary trusted-chat text without mutating trust', async () => {
     const logs: CapturedLog[] = [];
     const bot = createFakeFeishuBot('app');
-    const submitTurn = vi.fn(async (): Promise<AgentRuntimeTurnResult> => ({
+    const submitTurn = vi.fn(async (): Promise<InboundDeliveryResult> => ({
       status: 'submitted',
-      turnId: 'turn-introduce-text',
     }));
     const session = new FeishuChannelSession({
       dispatcherId: 'dispatcher-a',

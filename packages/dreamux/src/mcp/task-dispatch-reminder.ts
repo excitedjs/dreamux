@@ -10,13 +10,13 @@ export const WORKFLOW_RUN_SUCCESS_REMINDER =
 export function teamDispatchSuccessText(
   result: Record<string, unknown>,
 ): string | undefined {
-  return hasSubmittedTurn(result) ? TEAM_DISPATCH_SUCCESS_REMINDER : undefined;
+  return hasSubmitted(result) ? TEAM_DISPATCH_SUCCESS_REMINDER : undefined;
 }
 
 export function teammateDispatchSuccessText(
   result: Record<string, unknown>,
 ): string | undefined {
-  return hasSubmittedTurn(result)
+  return hasSubmitted(result)
     ? TEAMMATE_DISPATCH_SUCCESS_REMINDER
     : undefined;
 }
@@ -30,11 +30,6 @@ export function workflowRunSuccessText(
     : undefined;
 }
 
-function hasSubmittedTurn(result: Record<string, unknown>): boolean {
-  const turn = result['turn'];
-  return isRecord(turn) && turn['status'] === 'submitted';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
+function hasSubmitted(result: Record<string, unknown>): boolean {
+  return result['status'] === 'submitted';
 }

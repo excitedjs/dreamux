@@ -1,5 +1,4 @@
 import type {
-  AgentRuntimeTurnResult,
   ChannelCollaborationTargetEnsureInput,
   ChannelCollaborationTargetEnsureResult,
   ChannelExactDeliveryInput,
@@ -7,6 +6,7 @@ import type {
   ChannelInboundEnvelope,
   DreamuxLogger,
   InboundTurnInput,
+  InboundDeliveryResult,
 } from '@excitedjs/dreamux-types';
 
 import type { ChannelService } from '../channel-service/index.js';
@@ -28,7 +28,7 @@ interface DispatcherScopedChannelRoutingOptions {
   collaborationSpaces: CollaborationSpaceService;
   log: DreamuxLogger;
   admit: <T>(task: () => Promise<T>) => Promise<T>;
-  fallback: (turn: InboundTurnInput) => Promise<AgentRuntimeTurnResult>;
+  fallback: (turn: InboundTurnInput) => Promise<InboundDeliveryResult>;
   isUnavailable: () => boolean;
 }
 
@@ -58,7 +58,7 @@ export class DispatcherScopedChannelRouting {
       deliverExact: (request) =>
         active
           ? this.deliverExact(channelId, request)
-          : Promise.resolve(rejectedChannelOperation('dispatcher_unavailable')),
+          : Promise.resolve({ status: 'failed' }),
       revoke: () => {
         active = false;
         this.sessionLeases.delete(lease);
@@ -76,7 +76,7 @@ export class DispatcherScopedChannelRouting {
     channelId: string,
     turn: InboundTurnInput,
     envelope: ChannelInboundEnvelope,
-  ): Promise<AgentRuntimeTurnResult> {
+  ): Promise<InboundDeliveryResult> {
     return this.opts.admit(() =>
       routeTeamOrCollaborationChannelInput({
         channelId,
@@ -131,9 +131,19 @@ export class DispatcherScopedChannelRouting {
 
   private rejectUnavailable(
     channelId: string,
+    operation: 'ensure',
+    error: unknown,
+  ): ChannelCollaborationTargetEnsureResult;
+  private rejectUnavailable(
+    channelId: string,
+    operation: 'deliver',
+    error: unknown,
+  ): ChannelExactDeliveryResult;
+  private rejectUnavailable(
+    channelId: string,
     operation: 'ensure' | 'deliver',
     error: unknown,
-  ) {
+  ): ChannelCollaborationTargetEnsureResult | ChannelExactDeliveryResult {
     const code = this.opts.isUnavailable()
       ? 'dispatcher_unavailable' as const
       : 'operation_failed' as const;
@@ -147,6 +157,8 @@ export class DispatcherScopedChannelRouting {
       },
       'scoped channel operation rejected',
     );
-    return rejectedChannelOperation(code);
+    return operation === 'deliver'
+      ? { status: 'failed' }
+      : rejectedChannelOperation(code);
   }
 }

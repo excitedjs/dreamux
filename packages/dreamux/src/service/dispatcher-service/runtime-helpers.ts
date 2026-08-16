@@ -1,13 +1,23 @@
-import type {
-  AgentRuntimeTurnResult,
-  ChannelSession,
-  InboundDeliveryResult,
-} from '@excitedjs/dreamux-types';
+import type { ChannelSession, InboundDeliveryResult } from '@excitedjs/dreamux-types';
+import type { TurnAdmission } from '../teammate-service/turn-recording.js';
 
 export function asInboundDeliveryResult(
-  result: AgentRuntimeTurnResult,
+  result: TurnAdmission,
 ): InboundDeliveryResult {
-  return result.status === 'skipped' ? { status: 'stopped' } : result;
+  switch (result.status) {
+    case 'submitted':
+      return { status: 'submitted' };
+    case 'duplicate':
+      return { status: 'duplicate' };
+    case 'stopped':
+      return { status: 'stopped' };
+    case 'failed':
+      return { status: 'failed', error: result.error };
+    case 'ambiguous':
+      return { status: 'ambiguous', error: result.error };
+    case 'skipped':
+      return { status: 'stopped' };
+  }
 }
 
 export async function closeAllBuilt(

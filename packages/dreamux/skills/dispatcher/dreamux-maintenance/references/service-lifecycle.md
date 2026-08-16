@@ -26,6 +26,53 @@ readiness, and same-version restart cautions.
   restart. A restart does not prove that a turn completed or a reply was sent.
 - Treat a successful submit as acceptance only. Confirm completion and then the
   provider-visible reply separately.
+- Runtime admission `failed` means the provider proved that native admission
+  did not occur and the same immutable prepared completion may be retried.
+  `ambiguous` means the native boundary may have been crossed; do not retry it.
+  An untyped provider rejection is ambiguous. Runtime stop fences new admission
+  synchronously and waits for already-started admission calls to settle before
+  it reports completion.
+- Completion preparation and each prepared submission attempt have an internal
+  deadline. Deadline expiry is admission-ambiguous and terminal: Dreamux logs
+  and drops that delivery instead of retrying or blocking entity, Workflow,
+  Team, or server teardown indefinitely.
+
+## Agent Identity And Native Transcripts
+
+- Every dispatcher root agent, TeamMate, TeamLeader, and Team member has a
+  server-owned `identity.json` in its role-scoped entity directory. It owns
+  identity/lifecycle/worktree facts and the atomic native Runtime association:
+  `session_id` plus nullable `transcript_locator`. It does not own rolling
+  conversation previews or a Dreamux Turn archive.
+- Use `history`, list, and status for identity/lifecycle recovery. Use `last`
+  for completed conversation detail: it cold-reads the selected provider's
+  native transcript without starting or resuming the Runtime. `last` accepts
+  only `turns` (default 1, range 1 through 50), an opaque cursor, and
+  `include_tools`; it returns chronological provider-neutral message/tool
+  blocks under a fixed 262144-byte output budget.
+- Native transcript reads are bounded. Follow `next_cursor` for older pages.
+  `scan_unsupported` means the provider cannot safely inspect that native
+  representation within its fixed scan bound; it is not permission to perform
+  an unbounded Dreamux scan or create a cache/index.
+- Direct TeamMate `spawn` and `send` receipts include
+  `transcript_path: string | null`, independent of submission status. A known
+  validated session keeps its path on duplicate, failed, ambiguous, or stopped
+  submissions; `null` means no native transcript association has ever been
+  established. The path is machine-local and operator-private. It may briefly
+  name a file that the provider has not created or completely flushed yet.
+- `transcript_path` is not present in list, status, history, `last`, Workflow,
+  Team, Channel, completion, logs, metrics, or public errors. Do not publish it
+  to a broad Channel.
+- `identity.json` is fully server-owned. Do not edit, copy over, synthesize, or
+  delete it as an operational repair. Existing files may contain the retired
+  `turn_count`, `last_seen_at`, `last_prompt_preview`, or
+  `last_assistant_preview` keys; Dreamux ignores those legacy extras and a
+  normal later rewrite may drop them.
+- Dreamux never creates, opens, stats, lists, validates, repairs, migrates, or
+  deletes a current-layout entity `turn.jsonl`. Any such file is inert legacy
+  residue. Its contents, version, permissions, parseability, or absence cannot
+  block startup or lifecycle behavior, and no manual cleanup or rebuild is
+  required.
 
 ## Workflow Run State
 
@@ -48,9 +95,11 @@ readiness, and same-version restart cautions.
   compilation, metadata validation, runtime execution, completion delivery,
   or visible Channel delivery succeeded. Inspect the run's terminal state and
   then the delivery boundary separately.
-- Startup marks a durable `running` Workflow record as `stopped`; Workflow
-  journal replay and run resume are not supported. A restart is therefore not a
-  way to continue a Workflow and must not be presented as one.
+- Startup completes a `running` Workflow record from its already-committed
+  terminal journal fact when present; otherwise it marks the interrupted run
+  `stopped`. Workflow execution and completion delivery do not resume; journal
+  replay and run resume are not supported. A restart is therefore not a way to
+  continue a Workflow and must not be presented as one.
 
 ## Team Dissolve And Cleanup State
 

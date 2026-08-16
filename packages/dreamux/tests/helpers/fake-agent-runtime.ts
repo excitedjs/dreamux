@@ -41,6 +41,10 @@ export interface CodexAgentRuntimeCatalogOptions {
   codexHomeDoctor?: (info: { runtimeId: string; cwd: string }) => void | Promise<void>;
   restartBackoffBaseMs?: number;
   restartBackoffMaxMs?: number;
+  validateTranscriptPath?: (
+    path: string,
+    threadId: string,
+  ) => Promise<string>;
   /**
    * Optional Claude Code provider overrides (e.g. a fake session factory). The
    * descriptor is supplied by this helper from the registry.
@@ -63,7 +67,11 @@ export function codexAgentRuntimeCatalog(
   const codexDescriptor = registry.resolve(BUILTIN_CODEX_PROVIDER_REF);
   registry.registerImplementation(
     codexDescriptor.id,
-    createCodexAgentRuntimeProvider({ descriptor: codexDescriptor, ...codexFakes }),
+    createCodexAgentRuntimeProvider({
+      descriptor: codexDescriptor,
+      validateTranscriptPath: async (path) => path,
+      ...codexFakes,
+    }),
   );
 
   const claudeDescriptor = registry.resolve(BUILTIN_CLAUDE_CODE_PROVIDER_REF);

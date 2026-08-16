@@ -10,11 +10,11 @@ import type {
 export function dispatcherRuntimeStatus(
   agent: TeammateService | null,
 ): DispatcherRuntimeStatus {
-  const runtime = agent?.getRuntime() ?? null;
+  const runtimeStatus = agent?.runtimeStatus() ?? null;
   const identity = agent?.current() ?? null;
   return {
-    status: runtime?.getStatus() ?? null,
-    threadId: runtime?.getCheckpoint()?.id ?? identity?.session_id ?? null,
+    status: runtimeStatus,
+    threadId: agent?.checkpointId() ?? identity?.session_id ?? null,
     lastError: identity?.last_error ?? null,
   };
 }
@@ -22,12 +22,12 @@ export function dispatcherRuntimeStatus(
 export function liveDispatcherRuntimeStatus(
   agent: TeammateService | null,
 ): LiveDispatcherRuntimeStatus | null {
-  const runtime = agent?.getRuntime() ?? null;
-  if (runtime === null) return null;
+  const runtimeStatus = agent?.runtimeStatus() ?? null;
+  if (runtimeStatus === null) return null;
   const identity = agent?.current() ?? null;
   return {
-    status: runtime.getStatus(),
-    threadId: runtime.getCheckpoint()?.id ?? identity?.session_id ?? null,
+    status: runtimeStatus,
+    threadId: agent?.checkpointId() ?? identity?.session_id ?? null,
     lastError: identity?.last_error ?? null,
   };
 }
@@ -36,15 +36,15 @@ export function dispatcherSummary(
   row: DispatcherRow,
   agent: TeammateService | null,
 ): DispatcherSummary {
-  const runtime = agent?.getRuntime() ?? null;
+  const runtimeStatus = agent?.runtimeStatus() ?? null;
   const identity = agent?.current() ?? null;
   return {
     dispatcher_id: row.dispatcher_id,
     channel_identity: row.channel_identity,
-    status: runtime !== null
-      ? runtimeStatusToIdentityStatus(runtime.getStatus())
+    status: runtimeStatus !== null
+      ? runtimeStatusToIdentityStatus(runtimeStatus)
       : (identity?.status ?? 'stopped'),
-    thread_id: runtime?.getCheckpoint()?.id ?? identity?.session_id ?? null,
+    thread_id: agent?.checkpointId() ?? identity?.session_id ?? null,
     enabled: row.enabled === 1,
   };
 }

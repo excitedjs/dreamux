@@ -4,13 +4,15 @@ import type {
   AgentRuntimeStateCallbacks,
 } from '@excitedjs/dreamux-types';
 import type { AgentIdentityStore } from './identity-store.js';
+import type { AgentIdentityUpdateInput } from './identity-store.js';
 import {
   runtimeStatusToIdentityStatus,
   type AgentEntityIdentity,
 } from './types.js';
-import { preview } from './turns-store.js';
 
 export class AgentRuntimeStateStore implements AgentRuntimeStateCallbacks {
+  private mutationTail: Promise<void> = Promise.resolve();
+
   constructor(
     private readonly store: AgentIdentityStore,
     private identity: AgentEntityIdentity,
@@ -26,27 +28,19 @@ export class AgentRuntimeStateStore implements AgentRuntimeStateCallbacks {
    * sync with the persisted record.
    */
   async updateIntent(intent: string): Promise<void> {
-    this.identity = await this.store.update(this.identity, { intent });
+    await this.update({ intent });
   }
 
-  /**
-   * Bump the record's rolling recovery summary when a turn is submitted (issue
-   * #199 Slice 3). Routed through this store so the live `current()` snapshot
-   * stays canonical and a later status/thread write never clobbers the bump.
-   */
-  async recordSubmittedTurn(prompt: string): Promise<void> {
-    this.identity = await this.store.update(this.identity, {
-      turnCount: this.identity.turn_count + 1,
-      lastSeenAt: Date.now(),
-      lastPromptPreview: preview(prompt),
-    });
+  update(input: AgentIdentityUpdateInput): Promise<AgentEntityIdentity> {
+    return this.mutate(() => input);
   }
 
-  /** Record the most recent settled assistant output on the rolling summary. */
-  async recordSettledTurn(assistant: string | null): Promise<void> {
-    this.identity = await this.store.update(this.identity, {
-      lastSeenAt: Date.now(),
-      ...(assistant !== null ? { lastAssistantPreview: preview(assistant) } : {}),
+  transact(
+    task: (current: AgentEntityIdentity) => Promise<AgentEntityIdentity>,
+  ): Promise<AgentEntityIdentity> {
+    return this.enqueue(async () => {
+      this.identity = await task(this.identity);
+      return this.identity;
     });
   }
 
@@ -58,7 +52,7 @@ export class AgentRuntimeStateStore implements AgentRuntimeStateCallbacks {
       last_ready_at?: number;
     } = {},
   ): Promise<void> {
-    this.identity = await this.store.update(this.identity, {
+    await this.update({
       status: runtimeStatusToIdentityStatus(status),
       ...(extras.last_error !== undefined
         ? { lastError: extras.last_error }
@@ -67,11 +61,9 @@ export class AgentRuntimeStateStore implements AgentRuntimeStateCallbacks {
   }
 
   async setCheckpoint(checkpoint: AgentRuntimeResumeCheckpoint): Promise<void> {
-    // #199 Slice 3: persist the runtime-native thread id directly as the public
-    // session_id. Runtime packages interpret the id in their own native format
-    // when reopened.
-    this.identity = await this.store.update(this.identity, {
+    await this.update({
       sessionId: checkpoint.id,
+      transcriptLocator: checkpoint.transcript_locator ?? null,
     });
   }
 
@@ -81,9 +73,27 @@ export class AgentRuntimeStateStore implements AgentRuntimeStateCallbacks {
     error: string,
   ): Promise<void> {
     await this.setCheckpoint(replacement);
-    this.identity = await this.store.update(this.identity, {
+    await this.update({
       status: 'degraded',
       lastError: error,
     });
+  }
+
+  private mutate(
+    patch: (current: AgentEntityIdentity) => AgentIdentityUpdateInput,
+  ): Promise<AgentEntityIdentity> {
+    return this.enqueue(async () => {
+      this.identity = await this.store.update(this.identity, patch(this.identity));
+      return this.identity;
+    });
+  }
+
+  private enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const result = this.mutationTail.then(task, task);
+    this.mutationTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }
 }

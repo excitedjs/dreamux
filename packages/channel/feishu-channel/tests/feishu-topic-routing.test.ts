@@ -127,7 +127,7 @@ describe('Feishu topic routing', () => {
       deliver: async (turn, envelope) => {
         turns.push(turn);
         envelopes.push(envelope);
-        return { status: 'submitted', turnId: `turn-${envelopes.length}` };
+        return { status: 'submitted' };
       },
     });
 
@@ -354,7 +354,7 @@ describe('Feishu topic routing', () => {
     await session.start({
       deliver: async (_turn, envelope) => {
         envelopes.push(envelope);
-        return { status: 'submitted', turnId: `turn-${envelopes.length}` };
+        return { status: 'submitted' };
       },
     });
 
@@ -505,7 +505,7 @@ describe('Feishu topic routing', () => {
     await session.start({
       deliver: async (_turn, envelope) => {
         delivered.push(envelope);
-        return { status: 'submitted', turnId: 'unexpected' };
+        return { status: 'submitted' };
       },
     });
 

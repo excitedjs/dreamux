@@ -9,6 +9,11 @@ import type { DispatcherCoreEventBus } from '../dispatcher-core-events/index.js'
 import type { SchedulerService } from '../scheduler/service.js';
 import type { TeamCollection } from '../team-collection/index.js';
 import type { TeammateService } from '../teammate-service/index.js';
+import type { TeammateCollection } from '../teammate-collection/index.js';
+import {
+  collectShutdownFailure,
+  throwShutdownFailures,
+} from '../shutdown-errors.js';
 import type { DispatcherTaskDrain } from './inbound-task-drain.js';
 import { closeAllBuilt } from './runtime-helpers.js';
 import { stopTeamRuntimes } from './team-runtime-stop.js';
@@ -21,29 +26,60 @@ export async function rollbackFailedInputSourceStart(input: {
   coreEvents: DispatcherCoreEventBus;
   scheduler: SchedulerService;
   teams: TeamCollection;
+  teammates: TeammateCollection;
   admittedTasks: DispatcherTaskDrain;
   collaborationSpaces: CollaborationSpaceService;
   agent: TeammateService | null;
   log: DreamuxLogger;
 }): Promise<void> {
+  const failures: unknown[] = [];
   input.scheduler.stop();
   input.teams.stopSchedulers();
   input.coreEvents.revokeSources();
-  input.channels.clear();
-  await closeAllBuilt(input.sessions);
   input.teams.interruptDissolvesForShutdown();
-  await input.admittedTasks.drain();
-  await input.collaborationSpaces.drainLifecycleTasks();
-  input.scheduler.stop();
-  input.teams.stopSchedulers();
-  await stopTeamRuntimes({
+  const teamStopError = await stopTeamRuntimes({
     dispatcherId: input.dispatcherId,
     teams: input.teams,
     log: input.log,
   });
-  try {
-    await input.agent?.stop();
-  } catch {
-    /* best effort; preserve the original Channel start failure */
+  if (teamStopError !== null) failures.push(teamStopError);
+  await collectShutdownFailure(failures, async () => {
+    await input.teammates.materializeNonClosedEntities();
+  });
+  for (const teammate of input.teammates.materializedEntities()) {
+    await collectShutdownFailure(failures, async () => {
+      await teammate.close({ note: 'Dispatcher start failed' });
+    });
   }
+  await collectShutdownFailure(failures, async () => {
+    await input.agent?.close({ note: 'Dispatcher start failed' });
+  });
+  await collectShutdownFailure(failures, () => closeAllBuilt(input.sessions));
+  input.channels.clear();
+  await collectShutdownFailure(failures, () =>
+    input.collaborationSpaces.drainLifecycleTasks());
+  await collectShutdownFailure(failures, () => input.admittedTasks.drain());
+  // An admitted task may publish durable state while the first sweep is
+  // closing it. Repeat the idempotent canonical convergence after the drain.
+  const lateTeamStopError = await stopTeamRuntimes({
+    dispatcherId: input.dispatcherId,
+    teams: input.teams,
+    log: input.log,
+  });
+  if (lateTeamStopError !== null) failures.push(lateTeamStopError);
+  await collectShutdownFailure(failures, async () => {
+    await input.teammates.materializeNonClosedEntities();
+  });
+  for (const teammate of input.teammates.materializedEntities()) {
+    await collectShutdownFailure(failures, async () => {
+      await teammate.close({ note: 'Dispatcher start failed' });
+    });
+  }
+  await collectShutdownFailure(failures, async () => {
+    await input.agent?.close({ note: 'Dispatcher start failed' });
+  });
+  throwShutdownFailures(
+    failures,
+    `dispatcher ${JSON.stringify(input.dispatcherId)} start rollback could not prove resource closure`,
+  );
 }

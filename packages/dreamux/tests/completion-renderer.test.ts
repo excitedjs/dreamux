@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { CompletionEnvelope } from '../src/service/completion-router/index.js';
+import type { PreparedCompletionFact } from '../src/service/completion-router/index.js';
 import { buildCompletionTurnText } from '../src/service/teammate-service/completion-renderer.js';
 
 const roots: string[] = [];
@@ -49,36 +49,43 @@ describe('buildCompletionTurnText', () => {
       spillDir,
     );
 
-    expect(text).toBe(
-      `Workflow report-1 has completed. The output is too long, so the full result was saved to a file:\n\n${join(spillDir, 'teammate-workflow-report-1.output')}`,
+    const prefix =
+      'Workflow report-1 has completed. The output is too long, so the full ' +
+      'result was saved to a file:\n\n';
+    expect(text.startsWith(prefix)).toBe(true);
+    expect(text.slice(prefix.length)).toMatch(
+      new RegExp(`^${escapeRegex(spillDir)}/completion-[0-9a-f-]+\\.output$`, 'u'),
     );
   });
 });
 
 function teammateCompletion(
-  status: CompletionEnvelope['status'],
+  status: PreparedCompletionFact['status'],
   result: string,
-): CompletionEnvelope {
+): PreparedCompletionFact {
   return {
     kind: 'teammate',
     source: 'worker',
-    id: 'worker:turn-1',
     status,
     result,
   };
 }
 
 function workflowCompletion(
-  status: CompletionEnvelope['status'],
+  status: PreparedCompletionFact['status'],
   result: string,
-): CompletionEnvelope {
+): PreparedCompletionFact {
   return {
     kind: 'workflow',
     source: 'workflow',
-    id: 'report-1',
+    runId: 'report-1',
     status,
     result,
   };
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
 
 function temporarySpillDir(): string {

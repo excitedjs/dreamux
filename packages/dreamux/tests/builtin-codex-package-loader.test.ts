@@ -94,7 +94,7 @@ describe('builtin:codex loads the real @excitedjs/agent-runtime-codex package', 
       setCheckpoint: async () => {},
     };
     const context: AgentRuntimeCreateContext<DispatcherCodexConfig> = {
-      identity: { runtime_id: 'flow', checkpoint_id: null },
+      identity: { runtime_id: 'flow', checkpoint: null },
       config,
       cwd: tmp,
       mcpServers: [],

@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
@@ -17,15 +23,15 @@ import {
 } from '../src/platform/paths.js';
 import { CollaborationSpaceService } from '../src/service/collaboration-space/index.js';
 import { CollaborationSpaceStore } from '../src/service/collaboration-space/store.js';
-import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
-import { AgentRuntimeStateStore } from '../src/service/agent-entity/runtime-state.js';
-import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
-import { TeammateCollection } from '../src/service/teammate-collection/index.js';
-import { createOwnedTeammateOwner } from '../src/service/teammate-collection/owned-teammates.js';
 import {
-  CompletionRouter,
-  type CompletionEnvelope,
-} from '../src/service/completion-router/index.js';
+  AgentIdentityStore,
+  type AgentIdentityCreateInput,
+  type AgentIdentityUpdateInput,
+} from '../src/service/agent-entity/identity-store.js';
+import type { AgentEntityIdentity } from '../src/service/agent-entity/types.js';
+import { TeammateCollection } from '../src/service/teammate-collection/index.js';
+import { TeammateService } from '../src/service/teammate-service/index.js';
+import { CompletionDeliveryPolicy } from '../src/service/completion-router/index.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import { fakeChannels } from './helpers/collaboration-space.js';
@@ -37,6 +43,40 @@ import {
   fakeRuntimeCatalog,
   noopLog,
 } from './helpers/fake-team-runtime.js';
+
+class RetryableCloseIdentityStore extends AgentIdentityStore {
+  allowClose = false;
+  closeAttempts = 0;
+
+  override async update(
+    identity: AgentEntityIdentity,
+    input: AgentIdentityUpdateInput,
+  ): Promise<AgentEntityIdentity> {
+    if (input.status === 'closed') {
+      this.closeAttempts += 1;
+      if (!this.allowClose) throw new Error('identity close unavailable');
+    }
+    return super.update(identity, input);
+  }
+}
+
+class GatedCreateIdentityStore extends AgentIdentityStore {
+  readonly published = deferred<AgentEntityIdentity>();
+  readonly release = deferred<void>();
+  failAfterPublication = false;
+
+  override async create(
+    input: AgentIdentityCreateInput,
+  ): Promise<AgentEntityIdentity> {
+    const identity = await super.create(input);
+    this.published.resolve(identity);
+    await this.release.promise;
+    if (this.failAfterPublication) {
+      throw new Error('identity creation failed after durable publication');
+    }
+    return identity;
+  }
+}
 
 async function dissolveTeamForTest(
   teams: TeamCollection,
@@ -102,7 +142,6 @@ describe('TeamCollection read path (issue #233 R4)', () => {
       }),
     ]);
     const log = noopLog();
-    const turnsStore = new AgentTurnsStore(log);
     const agentSuffixes = ['aaaa', 'bbbbbbbb'];
     const teams = new TeamCollection({
       dispatcherId: 'dispatcher-a',
@@ -110,8 +149,7 @@ describe('TeamCollection read path (issue #233 R4)', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore,
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       adminSocketPath: '/tmp/admin.sock',
@@ -137,21 +175,17 @@ describe('TeamCollection read path (issue #233 R4)', () => {
       intent: 'member work',
     });
     expect(spawn.teammate.name).toBe('tm-worker-bbbbbbbb');
-    const memberTurns = [];
-    for await (const row of turnsStore.stream({
-      dispatcherId: 'dispatcher-a',
-      name: spawn.teammate.name,
-      teamId: team.id,
-      role: 'team_member',
-    })) {
-      memberTurns.push(row);
-    }
-    expect(memberTurns).toContainEqual(
+    runtimes[1]!.settle(0);
+    await vi.waitFor(async () => {
+      expect((await team.teammates.last(spawn.teammate.name)).returned_turns)
+        .toBe(1);
+    });
+    const last = await team.teammates.last(spawn.teammate.name);
+    expect(last.turns[0]?.blocks).toContainEqual(
       expect.objectContaining({
-        type: 'submit',
-        turn_id: 'turn-1',
-        turn_origin: 'team_leader',
-        prompt_preview: 'do the work',
+        kind: 'message',
+        role: 'user',
+        text: 'do the work',
       }),
     );
 
@@ -194,8 +228,7 @@ describe('TeamCollection read path (issue #233 R4)', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       suffixGenerator: () => 'a1b2',
@@ -208,16 +241,19 @@ describe('TeamCollection read path (issue #233 R4)', () => {
       agentRuntime: 'agent-a',
     });
     expect(spawned.teammate.name).toBe('reviewer-a1b2');
-    await collection.stopAll();
+    await collection.close({
+      name: spawned.teammate.name,
+      note: 'test complete',
+    });
   });
 });
 
-describe('exclusively owned TeamMate submission', () => {
+describe('entity-owned TeamMate lock lifecycle', () => {
   let root: string;
   let previousHome: string | undefined;
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'dreamux-owned-teammate-'));
+    root = mkdtempSync(join(tmpdir(), 'dreamux-locked-teammate-'));
     previousHome = process.env['HOME'];
     process.env['HOME'] = join(root, 'home');
     process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
@@ -231,16 +267,16 @@ describe('exclusively owned TeamMate submission', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  function createCollection(input: {
-    runtimes: FakeRuntime[];
-    createRuntime: () => FakeRuntime;
-    initiator: FakeInitiator;
-    turnsStore?: AgentTurnsStore;
-    contexts?: AgentRuntimeCreateContext[];
-  }): TeammateCollection {
+  function collection(
+    runtimes: FakeRuntime[],
+    settleImmediately = false,
+    options: {
+      identities?: AgentIdentityStore;
+      contexts?: AgentRuntimeCreateContext[];
+    } = {},
+  ): TeammateCollection {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
-    const log = noopLog();
     const config = testDreamuxConfig([
       testDispatcherConfig({
         id: 'dispatcher-a',
@@ -253,547 +289,495 @@ describe('exclusively owned TeamMate submission', () => {
       dispatcherId: 'dispatcher-a',
       teamScope: null,
       config,
-      agentRuntimeProviders: fakeRuntimeCatalog(input.runtimes, {
-        createRuntime: input.createRuntime,
-      }, input.contexts ?? []),
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, {
+        settleImmediately,
+      }, options.contexts),
       worktrees: new WorktreeManager(),
-      identities: new AgentIdentityStore(log),
-      turnsStore: input.turnsStore ?? new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
-      initiatorFor: async () => input.initiator,
+      identities: options.identities ?? new AgentIdentityStore(noopLog()),
+      initiatorFor: async () => null,
       isShuttingDown: () => false,
-      suffixGenerator: () => 'aaaa',
-      log,
+      suffixGenerator: () => 'a1b2',
+      log: noopLog(),
     });
   }
 
-  it('fixes the owner route before first submission and passes outputSchema', async () => {
+  it('creates and locks before runtime start, then closes and retires on unlock', async () => {
     const runtimes: FakeRuntime[] = [];
-    const contexts: AgentRuntimeCreateContext[] = [];
-    const initiator = new FakeInitiator();
-    const ownedCompletions: CompletionEnvelope[] = [];
-    let runtimeIndex = 0;
-    const collection = createCollection({
-      runtimes,
-      contexts,
-      initiator,
-      createRuntime: () =>
-        runtimeIndex++ === 0
-          ? new FakeRuntime({
-              settleImmediately: true,
-              lastText: '{"answer":"owned"}',
-            })
-          : new FakeRuntime({ lastText: 'after close' }),
+    const teammates = collection(runtimes);
+    const handle = await teammates.createLocked({
+      name: 'reviewer',
+      prompt: 'review',
+      intent: 'workflow member',
+      agentRuntime: 'agent-a',
     });
-    const outputSchema = {
-      type: 'object',
-      properties: { answer: { type: 'string' } },
-      required: ['answer'],
-    };
-    const owner = createOwnedTeammateOwner();
-    const workflowRole = 'workflow-owned role guidance';
 
-    const spawned = await collection.spawnOwned(
-      {
-        name: 'worker',
-        prompt: 'return structured output',
-        intent: 'exclusive task',
-        identity: 'caller identity guidance',
-        agentRuntime: 'agent-a',
-        cwd: join(root, 'workspace'),
-        worktree: { mode: 'reuse-cwd' },
-      },
-      {
-        owner,
-        systemPromptAppend: [workflowRole],
-        outputSchema,
-        routeSettledCompletion: async (_producerName, _turnId, completion) => {
-          ownedCompletions.push(completion);
-        },
-      },
-    );
-
-    await waitFor(() => ownedCompletions.length === 1);
-    expect(spawned.teammate.name).toBe('worker-aaaa');
-    expect(runtimes[0]!.textSubmitted[0]).toEqual({
-      text: 'return structured output',
-      sourceId: 'teammate:worker-aaaa:1',
-      outputSchema,
-    });
-    expect(contexts[0]?.systemPrompt).toEqual({
-      append: [workflowRole, 'caller identity guidance'],
-    });
-    expect(ownedCompletions).toEqual([
-      expect.objectContaining({
-        kind: 'teammate',
-        source: 'worker-aaaa',
-        status: 'completed',
-        result: '{"answer":"owned"}',
-      }),
-    ]);
-    expect(initiator.completions).toEqual([]);
-    await expect(collection.send({
-      name: spawned.teammate.name,
-      prompt: 'must not fold into the owned turn',
-    })).rejects.toThrow(/exclusively owned/);
-    await expect(collection.close({
-      name: spawned.teammate.name,
-      note: 'must not close another owner',
-    })).rejects.toThrow(/exclusively owned/);
-
-    await expect(collection.releaseAllOwned(owner)).resolves.toBeUndefined();
-    await expect(collection.status(spawned.teammate.name)).resolves.toMatchObject({
-      status: 'closed',
-      close_note: null,
-    });
-    const sent = await collection.send({
-      name: spawned.teammate.name,
-      prompt: 'ordinary turn after close',
-    });
-    runtimes[1]!.settle(sent.turn.turn_id!, 'completed');
-    await waitFor(() => initiator.completions.length === 1);
-    expect(ownedCompletions).toHaveLength(1);
+    expect(runtimes).toHaveLength(0);
     await expect(
-      collection.close({ name: spawned.teammate.name, note: 'done again' }),
-    ).resolves.toMatchObject({
-      teammate: { status: 'closed', close_note: 'done again' },
+      teammates.send({ name: handle.name, prompt: 'intrude' }),
+    ).rejects.toThrow(/cannot accept send/u);
+    await expect(
+      teammates.close({ name: handle.name, note: 'intrude' }),
+    ).rejects.toThrow(/locked/u);
+
+    const admission = await handle.submit({
+      prompt: 'review',
+      turnOrigin: 'dispatcher',
     });
+    expect(admission.status).toBe('submitted');
+    expect(runtimes).toHaveLength(1);
+    runtimes[0]!.settle(0);
+    if (admission.status === 'submitted') {
+      await expect(admission.turn.settled).resolves.toMatchObject({
+        status: 'completed',
+      });
+    }
+
+    await handle.close({ note: 'workflow complete' });
+    expect(teammates.materializedEntities()).toHaveLength(1);
+    await expect(handle.submit({
+      prompt: 'closed but still held',
+      turnOrigin: 'dispatcher',
+    })).resolves.toEqual({ status: 'stopped' });
+    await expect(
+      teammates.send({ name: handle.name, prompt: 'must not reopen' }),
+    ).rejects.toThrow(/cannot accept send/u);
+    expect(runtimes).toHaveLength(1);
+    expect(teammates.materializedEntities()).toHaveLength(1);
+    handle.unlock();
+    expect(teammates.materializedEntities()).toHaveLength(0);
+    expect(() => handle.unlock()).toThrow(/stale TeamMate lock/u);
+    expect(() =>
+      handle.submit({ prompt: 'late', turnOrigin: 'dispatcher' }),
+    ).toThrow(/stale TeamMate lock/u);
   });
 
-  it('preserves a structural unsupported-feature error for its owner', async () => {
+  it('cold-reads last after eviction without materializing a Runtime or writing identity', async () => {
     const runtimes: FakeRuntime[] = [];
-    const initiator = new FakeInitiator();
-    const error = Object.assign(
-      new Error('runtime does not support outputSchema'),
-      {
-        name: 'UnsupportedAgentRuntimeFeatureError',
-        feature: 'outputSchema',
-      },
-    );
-    const collection = createCollection({
-      runtimes,
-      initiator,
-      createRuntime: () => new FakeRuntime({
-        completionResult: { status: 'failed', error },
-      }),
+    const teammates = collection(runtimes, true);
+    const spawned = await teammates.spawn({
+      name: 'reviewer',
+      prompt: 'cold history',
+      intent: 'verify cold read',
+      agentRuntime: 'agent-a',
     });
-    const owner = createOwnedTeammateOwner();
-
-    const spawned = await collection.spawnOwned(
-      {
-        name: 'structured-worker',
-        prompt: 'return structured output',
-        intent: 'structured task',
-        agentRuntime: 'agent-a',
-        cwd: join(root, 'workspace'),
-        worktree: { mode: 'reuse-cwd' },
-      },
-      {
-        owner,
-        outputSchema: { type: 'object' },
-        routeSettledCompletion: async () => undefined,
-      },
-    );
-
-    expect(spawned.turn).toEqual({ status: 'failed', error });
-    await collection.releaseAllOwned(owner);
-  });
-
-  it('persists a synchronous settle after its submit before owner release', async () => {
-    const runtimes: FakeRuntime[] = [];
-    const initiator = new FakeInitiator();
-    const turnsStore = new AgentTurnsStore(noopLog());
-    const collection = createCollection({
-      runtimes,
-      initiator,
-      turnsStore,
-      createRuntime: () => new FakeRuntime({
-        settleImmediately: true,
-        lastText: 'fast settled answer',
-      }),
+    await teammates.close({
+      name: spawned.teammate.name,
+      note: 'evict before cold read',
     });
-    let released = false;
-    const owner = createOwnedTeammateOwner();
-
-    const spawned = await collection.spawnOwned(
-      {
-        name: 'fast-worker',
-        prompt: 'handle the fast turn',
-        intent: 'preserve the complete turn',
-        agentRuntime: 'agent-a',
-        cwd: join(root, 'workspace'),
-        worktree: { mode: 'reuse-cwd' },
-      },
-      {
-        owner,
-        routeSettledCompletion: async () => {
-          await collection.releaseAllOwned(owner);
-          released = true;
-        },
-      },
-    );
-
-    await waitFor(() => released);
-    const last = await collection.last(spawned.teammate.name);
-    expect(last.teammate).toMatchObject({
-      status: 'closed',
-      intent: 'preserve the complete turn',
+    await vi.waitFor(() => {
+      expect(teammates.materializedEntities()).toHaveLength(0);
     });
-    expect(last.turns).toEqual([
-      expect.objectContaining({
-        turn_id: 'turn-1',
-        turn_origin: 'dispatcher',
-        prompt_preview: 'handle the fast turn',
-        intent: 'preserve the complete turn',
-        settle_status: 'completed',
-        assistant: 'fast settled answer',
-        assistant_preview: 'fast settled answer',
-        assistant_truncated: false,
-      }),
-    ]);
-
-    const rows = [];
-    for await (const row of turnsStore.stream({
+    const identityPath = dispatcherAgentIdentityPath({
       dispatcherId: 'dispatcher-a',
       name: spawned.teammate.name,
       teamId: null,
       role: 'teammate',
-    })) {
-      rows.push(row);
-    }
-    expect(rows.map((row) => row.type)).toEqual(['submit', 'settled']);
-    expect(rows[0]).toMatchObject({
-      turn_id: 'turn-1',
-      prompt_preview: 'handle the fast turn',
-      intent: 'preserve the complete turn',
     });
-    expect(rows[1]).toMatchObject({
-      turn_id: 'turn-1',
-      assistant: 'fast settled answer',
+    const identityBefore = readFileSync(identityPath, 'utf8');
+    const runtimeCount = runtimes.length;
+
+    await expect(teammates.last(spawned.teammate.name)).resolves.toMatchObject({
+      returned_turns: 1,
     });
+
+    expect(runtimes).toHaveLength(runtimeCount);
+    expect(teammates.materializedEntities()).toHaveLength(0);
+    expect(readFileSync(identityPath, 'utf8')).toBe(identityBefore);
   });
 
-  it('retries a failed owner release during the collection shutdown sweep', async () => {
+  it('filters wrong-role and wrong-team identities from a dispatcher roster', async () => {
     const runtimes: FakeRuntime[] = [];
-    const initiator = new FakeInitiator();
-    const collection = createCollection({
-      runtimes,
-      initiator,
-      createRuntime: () => new FakeRuntime(),
-    });
-    const owner = createOwnedTeammateOwner();
-    const spawned = await collection.spawnOwned(
-      {
-        name: 'worker',
-        prompt: 'owned work',
-        intent: 'exclusive task',
-        agentRuntime: 'agent-a',
-        cwd: join(root, 'workspace'),
-        worktree: { mode: 'reuse-cwd' },
+    const identities = new AgentIdentityStore(noopLog());
+    const teammates = collection(runtimes, false, { identities });
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const valid = await identities.create({
+      dispatcherId: 'dispatcher-a',
+      name: 'valid-worker',
+      role: 'teammate',
+      teamId: null,
+      agentRuntime: 'agent-a',
+      sourceCwd: workspace,
+      sourceRepo: null,
+      cwd: workspace,
+      runtimeCwd: workspace,
+      worktree: {
+        mode: 'reuse-cwd',
+        slug: null,
+        path: workspace,
+        branch: null,
+        base_ref: null,
+        cleanup: 'keep',
+        cleanup_state: 'not-managed',
+        cleanup_error: null,
       },
-      { owner, routeSettledCompletion: async () => undefined },
-    );
-    runtimes[0]!.failNextStop(new Error('temporary stop failure'));
-
-    await expect(collection.releaseAllOwned(owner)).rejects.toThrow(
-      /temporary stop failure/,
-    );
-    await expect(collection.send({
-      name: spawned.teammate.name,
-      prompt: 'must remain fenced',
-    })).rejects.toThrow(/exclusively owned/);
-    await expect(collection.close({
-      name: spawned.teammate.name,
-      note: 'must remain fenced',
-    })).rejects.toThrow(/exclusively owned/);
-    await expect(collection.stopAll()).resolves.toBeUndefined();
-    await expect(collection.close({
-      name: spawned.teammate.name,
-      note: 'owner sweep completed',
-    })).resolves.toMatchObject({
-      teammate: { status: 'closed', close_note: 'owner sweep completed' },
-    });
-  });
-
-  it('sweeps only the TeamMates held by the requested owner token', async () => {
-    const runtimes: FakeRuntime[] = [];
-    const initiator = new FakeInitiator();
-    const collection = createCollection({
-      runtimes,
-      initiator,
-      createRuntime: () => new FakeRuntime(),
-    });
-    const firstOwner = createOwnedTeammateOwner();
-    const secondOwner = createOwnedTeammateOwner();
-    const first = await collection.spawnOwned(
-      {
-        name: 'first',
-        prompt: 'first owned turn',
-        intent: 'first owner',
-        agentRuntime: 'agent-a',
-        cwd: join(root, 'workspace'),
-        worktree: { mode: 'reuse-cwd' },
-      },
-      { owner: firstOwner, routeSettledCompletion: async () => undefined },
-    );
-    const second = await collection.spawnOwned(
-      {
-        name: 'second',
-        prompt: 'second owned turn',
-        intent: 'second owner',
-        agentRuntime: 'agent-a',
-        cwd: join(root, 'workspace'),
-        worktree: { mode: 'reuse-cwd' },
-      },
-      { owner: secondOwner, routeSettledCompletion: async () => undefined },
-    );
-
-    await collection.releaseAllOwned(firstOwner);
-
-    await expect(collection.status(first.teammate.name)).resolves.toMatchObject({
+      intent: 'valid',
       status: 'closed',
     });
-    await expect(collection.status(second.teammate.name)).resolves.toMatchObject({
-      runtime_status: 'ready',
-    });
-    await expect(collection.releaseAllOwned(firstOwner)).resolves.toBeUndefined();
-    await expect(collection.status(second.teammate.name)).resolves.toMatchObject({
-      runtime_status: 'ready',
-    });
-    await expect(collection.send({
-      name: second.teammate.name,
-      prompt: 'must remain fenced for its actual owner',
-    })).rejects.toThrow(/exclusively owned/);
-
-    await collection.releaseAllOwned(secondOwner);
-    await expect(collection.status(second.teammate.name)).resolves.toMatchObject({
-      status: 'closed',
-    });
-  });
-
-  it('sweeps a failed owned spawn whose immediate cleanup failed', async () => {
-    const runtimes: FakeRuntime[] = [];
-    const initiator = new FakeInitiator();
-    const collection = createCollection({
-      runtimes,
-      initiator,
-      createRuntime: () => {
-        const runtime = new FakeRuntime({
-          submitError: new Error('submission failed'),
-        });
-        runtime.failNextStop(new Error('cleanup failed'));
-        return runtime;
-      },
-    });
-    const owner = createOwnedTeammateOwner();
-
-    await expect(collection.spawnOwned(
-      {
-        name: 'worker',
-        prompt: 'owned work',
-        intent: 'exclusive task',
-        agentRuntime: 'agent-a',
-        cwd: join(root, 'workspace'),
-        worktree: { mode: 'reuse-cwd' },
-      },
-      { owner, routeSettledCompletion: async () => undefined },
-    )).rejects.toThrow(/submission failed/);
-    await expect(collection.send({
-      name: 'worker-aaaa',
-      prompt: 'must remain fenced',
-    })).rejects.toThrow(/exclusively owned/);
-    await expect(collection.releaseAllOwned(owner)).resolves.toBeUndefined();
-    await expect(collection.close({
-      name: 'worker-aaaa',
-      note: 'owner sweep completed',
-    })).resolves.toMatchObject({
-      teammate: { status: 'closed', close_note: 'owner sweep completed' },
-    });
-  });
-
-  it('drains a late settle write before sweeping a failed owned spawn', async () => {
-    const runtimes: FakeRuntime[] = [];
-    const initiator = new FakeInitiator();
-    const runtime = new FakeRuntime({
-      settleImmediately: true,
-      lastText: 'late settled result',
-    });
-    runtime.failNextStop(new Error('immediate cleanup failed'));
-    const collection = createCollection({
-      runtimes,
-      initiator,
-      createRuntime: () => runtime,
-    });
-    const owner = createOwnedTeammateOwner();
-    const settleWriteStarted = deferred<void>();
-    const allowSettleWrite = deferred<void>();
-    const originalSettleWrite = AgentRuntimeStateStore.prototype.recordSettledTurn;
-    vi.spyOn(AgentRuntimeStateStore.prototype, 'recordSettledTurn')
-      .mockImplementationOnce(async function (
-        this: AgentRuntimeStateStore,
-        assistant,
-      ) {
-        settleWriteStarted.resolve();
-        await allowSettleWrite.promise;
-        await originalSettleWrite.call(this, assistant);
+    for (const pollution of [
+      { name: 'wrong-role', role: 'team_member', team_id: null },
+      { name: 'wrong-team', role: 'teammate', team_id: 'other-team' },
+    ] as const) {
+      const path = dispatcherAgentIdentityPath({
+        dispatcherId: 'dispatcher-a',
+        name: pollution.name,
+        teamId: null,
+        role: 'teammate',
       });
-    vi.spyOn(AgentTurnsStore.prototype, 'appendSubmit').mockRejectedValueOnce(
-      new Error('submit journal failed'),
-    );
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(
+        path,
+        `${JSON.stringify({
+          ...valid,
+          ...pollution,
+          intent: 'must stay hidden',
+        })}\n`,
+      );
+    }
 
-    const spawning = expect(collection.spawnOwned(
-      {
-        name: 'worker',
-        prompt: 'settle before submit persistence fails',
-        intent: 'exclusive task',
-        agentRuntime: 'agent-a',
-        cwd: join(root, 'workspace'),
-        worktree: { mode: 'reuse-cwd' },
-      },
-      { owner, routeSettledCompletion: async () => undefined },
-    )).rejects.toThrow(/submit journal failed/);
-    await settleWriteStarted.promise;
-    await spawning;
-
-    let swept = false;
-    const sweep = collection.releaseAllOwned(owner).then(() => {
-      swept = true;
+    await expect(teammates.list()).resolves.toMatchObject([
+      { name: 'valid-worker' },
+    ]);
+    await expect(teammates.history({})).resolves.toMatchObject({
+      items: [{ name: 'valid-worker' }],
     });
-    await Promise.resolve();
-    expect(swept).toBe(false);
-    allowSettleWrite.resolve();
-    await sweep;
-
-    await expect(collection.status('worker-aaaa')).resolves.toMatchObject({
-      status: 'closed',
-    });
+    await expect(teammates.status('wrong-role')).rejects.toThrow(/does not exist/u);
+    await expect(teammates.status('wrong-team')).rejects.toThrow(/does not exist/u);
   });
 
-  it('persists settle state before the owner route can release the entity', async () => {
+  it('publishes one locked canonical entity across durable creation and joins cleanup', async () => {
     const runtimes: FakeRuntime[] = [];
-    const initiator = new FakeInitiator();
-    const collection = createCollection({
-      runtimes,
-      initiator,
-      createRuntime: () => new FakeRuntime({
-        settleImmediately: true,
-        lastText: 'durable result',
-      }),
+    const identities = new GatedCreateIdentityStore(noopLog());
+    const teammates = collection(runtimes, false, { identities });
+    const creating = teammates.createLocked({
+      name: 'reviewer',
+      prompt: 'review',
+      intent: 'workflow member',
+      agentRuntime: 'agent-a',
     });
-    const recordStarted = deferred<void>();
-    const allowRecord = deferred<void>();
-    const original = AgentRuntimeStateStore.prototype.recordSettledTurn;
-    vi.spyOn(AgentRuntimeStateStore.prototype, 'recordSettledTurn')
-      .mockImplementationOnce(async function (
-        this: AgentRuntimeStateStore,
-        assistant,
-      ) {
-        recordStarted.resolve();
-        await allowRecord.promise;
-        await original.call(this, assistant);
-    });
-    let routeStarted = false;
-    let routeCompleted = false;
-    const owner = createOwnedTeammateOwner();
+    const identity = await identities.published.promise;
+    expect(identity.name).toBe('reviewer-a1b2');
 
-    const spawn = collection.spawnOwned(
-      {
-        name: 'ordered',
-        prompt: 'settle and release',
-        intent: 'settle ordering',
-        agentRuntime: 'agent-a',
-        cwd: join(root, 'workspace'),
-        worktree: { mode: 'reuse-cwd' },
-      },
-      {
-        owner,
-        routeSettledCompletion: async () => {
-          routeStarted = true;
-          await collection.releaseAllOwned(owner);
-          routeCompleted = true;
-        },
-      },
+    const identityRead = vi.spyOn(identities, 'get');
+    const subscription = vi.spyOn(TeammateService.prototype, 'onClosed');
+    try {
+      const sendOutcome = teammates.send({
+        name: identity.name,
+        prompt: 'must join the locked publication',
+      }).then(
+        (value) => ({ kind: 'fulfilled' as const, value }),
+        (error: unknown) => ({ kind: 'rejected' as const, error }),
+      );
+      await Promise.resolve();
+      const identityReadsWhilePending = identityRead.mock.calls.length;
+      const allowCleanup = deferred<void>();
+      const cleanup = creating.then(async (handle) => {
+        await allowCleanup.promise;
+        await handle.close({ note: 'workflow stopped during materialization' });
+        handle.unlock();
+      });
+
+      identities.release.resolve();
+      const handle = await creating;
+      const outcome = await sendOutcome;
+      const cached = teammates.materializedEntities();
+
+      expect(identityReadsWhilePending).toBe(0);
+      expect(outcome.kind).toBe('rejected');
+      if (outcome.kind !== 'rejected') {
+        throw new Error('send unexpectedly bypassed the locked canonical entity');
+      }
+      expect(outcome.error).toBeInstanceOf(Error);
+      expect((outcome.error as Error).message).toMatch(/cannot accept send/u);
+      expect(subscription).toHaveBeenCalledTimes(1);
+      expect(cached).toEqual([subscription.mock.instances[0]]);
+      expect(cached[0]?.isLocked()).toBe(true);
+      expect(handle.name).toBe(identity.name);
+      expect(runtimes).toHaveLength(0);
+
+      allowCleanup.resolve();
+      await cleanup;
+      await vi.waitFor(() => {
+        expect(teammates.materializedEntities()).toHaveLength(0);
+      });
+      expect(runtimes).toHaveLength(0);
+    } finally {
+      identities.release.resolve();
+      identityRead.mockRestore();
+      subscription.mockRestore();
+    }
+  });
+
+  it('clears a failed fresh canonical slot for later durable materialization', async () => {
+    const runtimes: FakeRuntime[] = [];
+    const identities = new GatedCreateIdentityStore(noopLog());
+    identities.failAfterPublication = true;
+    const teammates = collection(runtimes, false, { identities });
+    const creating = teammates.createLocked({
+      name: 'reviewer',
+      prompt: 'review',
+      intent: 'workflow member',
+      agentRuntime: 'agent-a',
+    });
+    const creationOutcome = creating.then(
+      (value) => ({ kind: 'fulfilled' as const, value }),
+      (error: unknown) => ({ kind: 'rejected' as const, error }),
     );
+    const identity = await identities.published.promise;
+    const identityRead = vi.spyOn(identities, 'get');
+    const subscription = vi.spyOn(TeammateService.prototype, 'onClosed');
+    try {
+      identities.release.resolve();
+      const failed = await creationOutcome;
+      expect(failed.kind).toBe('rejected');
+      if (failed.kind !== 'rejected') {
+        throw new Error('fresh creation unexpectedly succeeded');
+      }
+      expect(failed.error).toBeInstanceOf(Error);
+      expect((failed.error as Error).message).toMatch(
+        /failed after durable publication/u,
+      );
+      expect(teammates.materializedEntities()).toHaveLength(0);
+      expect(subscription).not.toHaveBeenCalled();
+      expect(runtimes).toHaveLength(0);
 
-    await recordStarted.promise;
-    expect(routeStarted).toBe(false);
-    allowRecord.resolve();
-    const spawned = await spawn;
-    await waitFor(() => routeCompleted);
-    await expect(collection.status(spawned.teammate.name)).resolves.toMatchObject({
-      status: 'closed',
+      identityRead.mockClear();
+      const sent = teammates.send({
+        name: identity.name,
+        prompt: 'recover the durable identity',
+      });
+      await Promise.resolve();
+      expect(identityRead).toHaveBeenCalledTimes(1);
+      await expect(sent).resolves.toMatchObject({ status: 'submitted' });
+      expect(subscription).toHaveBeenCalledTimes(1);
+      expect(teammates.materializedEntities()).toHaveLength(1);
+      expect(runtimes).toHaveLength(1);
+
+      runtimes[0]!.settle(0);
+      await vi.waitFor(async () => {
+        expect((await teammates.last(identity.name, 1)).returned_turns).toBe(1);
+      });
+      await teammates.close({
+        name: identity.name,
+        note: 'recovered creation complete',
+      });
+      await vi.waitFor(() => {
+        expect(teammates.materializedEntities()).toHaveLength(0);
+      });
+      expect(runtimes[0]!.stopAttempts).toBe(1);
+    } finally {
+      identities.release.resolve();
+      identityRead.mockRestore();
+      subscription.mockRestore();
+    }
+  });
+
+  it('projects a runtime-free failed close as retryable until durable close commits', async () => {
+    const runtimes: FakeRuntime[] = [];
+    const contexts: AgentRuntimeCreateContext[] = [];
+    const identities = new RetryableCloseIdentityStore(noopLog());
+    const teammates = collection(runtimes, false, { identities, contexts });
+    const handle = await teammates.createLocked({
+      name: 'reviewer',
+      prompt: 'review',
+      intent: 'workflow member',
+      agentRuntime: 'agent-a',
+    });
+    const entity = teammates.materializedEntities()[0]!;
+    const closedFacts = vi.fn();
+    const subscription = entity.onClosed(closedFacts);
+    const admission = await handle.submit({
+      prompt: 'review',
+      turnOrigin: 'dispatcher',
+    });
+    if (admission.status !== 'submitted') throw new Error('expected submitted');
+    await contexts[0]!.state!.setStatus('ready');
+    runtimes[0]!.settle(0);
+    await admission.turn.settled;
+    expect(entity.current().status).toBe('running');
+
+    await expect(handle.close({ note: 'first attempt' })).rejects.toMatchObject({
+      runtime_terminated: true,
+    });
+    expect(entity.current()).toMatchObject({
+      status: 'running',
+      closed_at: null,
       close_note: null,
     });
+    expect(entity.runtimeStatus()).toBeNull();
+    expect(entity.isLocked()).toBe(true);
+    expect(entity.isRetired()).toBe(false);
+    expect(runtimes[0]!.stopAttempts).toBe(1);
+    expect(teammates.materializedEntities()).toEqual([entity]);
+    expect(closedFacts).not.toHaveBeenCalled();
+
+    await expect(teammates.status(handle.name)).resolves.toMatchObject({
+      status: 'stopped',
+      runtime_status: null,
+      closed_at: null,
+    });
+    await expect(teammates.list()).resolves.toEqual([
+      expect.objectContaining({
+        name: handle.name,
+        status: 'stopped',
+        runtime_status: null,
+      }),
+    ]);
+    await expect(teammates.last(handle.name, 1)).resolves.toMatchObject({
+      teammate: {
+        status: 'stopped',
+        runtime_status: null,
+        closed_at: null,
+      },
+    });
+    await expect(teammates.history({ status: 'stopped' })).resolves.toMatchObject({
+      items: [
+        expect.objectContaining({
+          name: handle.name,
+          status: 'stopped',
+          runtime_status: null,
+        }),
+      ],
+    });
+    await expect(teammates.history({ status: 'running' })).resolves.toMatchObject({
+      items: [],
+    });
+    await Promise.resolve();
+    expect(teammates.materializedEntities()).toEqual([entity]);
+    expect(closedFacts).not.toHaveBeenCalled();
+
+    identities.allowClose = true;
+    await expect(handle.close({ note: 'retry' })).resolves.toMatchObject({
+      teammate: { status: 'closed', runtime_status: null },
+    });
+    expect(identities.closeAttempts).toBe(2);
+    expect(runtimes[0]!.stopAttempts).toBe(1);
+    expect(entity.current().status).toBe('closed');
+    expect(entity.isLocked()).toBe(true);
+    expect(teammates.materializedEntities()).toEqual([entity]);
+    expect(closedFacts).not.toHaveBeenCalled();
+
+    handle.unlock();
+    await vi.waitFor(() => {
+      expect(closedFacts).toHaveBeenCalledTimes(1);
+      expect(teammates.materializedEntities()).toHaveLength(0);
+    });
+    subscription.unsubscribe();
   });
 
-  it.each(['start', 'submit'] as const)(
-    'cleans up and evicts an owned entity after %s failure',
-    async (failurePoint) => {
-      const runtimes: FakeRuntime[] = [];
-      const initiator = new FakeInitiator();
-      const ownedCompletions: CompletionEnvelope[] = [];
-      let runtimeIndex = 0;
-      const failure = new Error(`${failurePoint} failed`);
-      const collection = createCollection({
-        runtimes,
-        initiator,
-        createRuntime: () => {
-          if (runtimeIndex++ > 0) return new FakeRuntime({ lastText: 'recovered' });
-          return new FakeRuntime(
-            failurePoint === 'start'
-              ? { startError: failure }
-              : { submitError: failure },
-          );
-        },
-      });
-      const owner = createOwnedTeammateOwner();
+  it('linearizes ordinary mutation and lock admission in both orders', async () => {
+    const runtimes: FakeRuntime[] = [];
+    const teammates = collection(runtimes, true);
+    const spawned = await teammates.spawn({
+      name: 'reviewer',
+      prompt: 'initial',
+      intent: 'ordinary',
+      agentRuntime: 'agent-a',
+    });
+    await vi.waitFor(async () => {
+      expect((await teammates.last(spawned.teammate.name, 2)).returned_turns)
+        .toBe(1);
+    });
+    const entity = teammates.materializedEntities()[0]!;
 
-      await expect(
-        collection.spawnOwned(
-          {
-            name: 'worker',
-            prompt: 'first attempt',
-            intent: 'exclusive task',
-            agentRuntime: 'agent-a',
-            cwd: join(root, 'workspace'),
-            worktree: { mode: 'reuse-cwd' },
-          },
-          {
-            owner,
-            routeSettledCompletion: async (
-              _producerName,
-              _turnId,
-              completion,
-            ) => {
-              ownedCompletions.push(completion);
-            },
-          },
-        ),
-      ).rejects.toThrow(failure.message);
-      await expect(collection.status('worker-aaaa')).resolves.toMatchObject({
-        status: 'closed',
-        close_note: null,
-      });
+    const sending = teammates.send({
+      name: spawned.teammate.name,
+      prompt: 'ordinary wins',
+    });
+    expect(() => entity.lock()).toThrow(/being mutated/u);
+    await sending;
+    await vi.waitFor(async () => {
+      expect((await teammates.last(spawned.teammate.name, 3)).returned_turns)
+        .toBe(2);
+      expect(runtimes[0]!.transcriptTurns).toHaveLength(2);
+    });
 
-      const sent = await collection.send({
-        name: 'worker-aaaa',
-        prompt: 'retry through the ordinary route',
-      });
-      runtimes[1]!.settle(sent.turn.turn_id!, 'completed');
-      await waitFor(() => initiator.completions.length === 1);
-      expect(ownedCompletions).toEqual([]);
-      await collection.close({ name: 'worker-aaaa', note: 'retry done' });
-    },
-  );
+    const handle = entity.lock();
+    await expect(
+      teammates.send({
+        name: spawned.teammate.name,
+        prompt: 'lock wins',
+      }),
+    ).rejects.toThrow(/cannot accept send/u);
+    handle.unlock();
+    await expect(
+      teammates.send({
+        name: spawned.teammate.name,
+        prompt: 'ordinary restored',
+      }),
+    ).resolves.toMatchObject({ status: 'submitted' });
+    await vi.waitFor(() => {
+      expect(runtimes[0]!.transcriptTurns).toHaveLength(3);
+    });
+  });
+
+  it('rejects a stale resolved source after that exact entity retires', async () => {
+    const runtimes: FakeRuntime[] = [];
+    const teammates = collection(runtimes);
+    const handle = await teammates.createLocked({
+      name: 'reviewer',
+      prompt: 'review',
+      intent: 'workflow member',
+      agentRuntime: 'agent-a',
+    });
+    handle.unlock();
+    const source = teammates.materializedEntities()[0]!;
+    const originalSend = source.send.bind(source);
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const sendSpy = vi.spyOn(source, 'send').mockImplementation(async (input) => {
+      entered.resolve();
+      await release.promise;
+      return originalSend(input);
+    });
+
+    const stale = teammates.send({ name: handle.name, prompt: 'stale send' });
+    await entered.promise;
+    const closingHandle = source.lock();
+    await closingHandle.close({ note: 'retire resolved source' });
+    closingHandle.unlock();
+
+    try {
+      release.resolve();
+      await expect(stale).rejects.toThrow(/cannot accept send/u);
+      expect(runtimes).toHaveLength(0);
+    } finally {
+      release.resolve();
+      sendSpy.mockRestore();
+    }
+  });
+
+  it('single-flights replacement materialization and ignores the old retirement fact', async () => {
+    const runtimes: FakeRuntime[] = [];
+    const teammates = collection(runtimes, true);
+    const handle = await teammates.createLocked({
+      name: 'reviewer',
+      prompt: 'review',
+      intent: 'workflow member',
+      agentRuntime: 'agent-a',
+    });
+    const admission = await handle.submit({
+      prompt: 'review',
+      turnOrigin: 'dispatcher',
+    });
+    if (admission.status !== 'submitted') throw new Error('expected submitted');
+    await admission.turn.settled;
+    await handle.close({ note: 'workflow complete' });
+    handle.unlock();
+
+    const [first, second] = await Promise.all([
+      teammates.send({ name: handle.name, prompt: 'resume one' }),
+      teammates.send({ name: handle.name, prompt: 'resume two' }),
+    ]);
+    expect(first.status).toBe('submitted');
+    expect(second.status).toBe('submitted');
+    expect(runtimes).toHaveLength(2);
+
+    await Promise.resolve();
+    await teammates.send({ name: handle.name, prompt: 'after old fact' });
+    expect(runtimes).toHaveLength(2);
+  });
 });
-
-/**
- * Guards the create-time behavior change: a Team created WITHOUT an explicit
- * `prompt` must start its leader idle and fire no turn — we no longer fabricate
- * a synthetic default prompt and auto-run a turn at creation. The leader still
- * exists and is started (resumable), so a later bound channel or dispatcher
- * `send` drives its first real turn.
- */
 describe('TeamCollection route readiness recovery', () => {
   let root: string;
   let previousHome: string | undefined;
@@ -833,8 +817,7 @@ describe('TeamCollection route readiness recovery', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities,
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       adminSocketPath: '/tmp/admin.sock',
@@ -884,8 +867,7 @@ describe('TeamCollection route readiness recovery', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       adminSocketPath: '/tmp/admin.sock',
@@ -969,8 +951,7 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       adminSocketPath: '/tmp/admin.sock',
@@ -986,7 +967,7 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
     });
 
     // No first turn was fabricated or fired at creation.
-    expect(created.turn).toBeNull();
+    expect(created.status).toBeNull();
 
     // The leader runtime was started, but received no submitted turn.
     expect(runtimes).toHaveLength(1);
@@ -1020,8 +1001,7 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       }),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       adminSocketPath: '/tmp/admin.sock',
@@ -1037,9 +1017,166 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
     })).rejects.toThrow(/initial prompt failed/);
     expect(runtimes).toHaveLength(1);
     expect(runtimes[0]?.getStatus()).toBe('stopped');
+    const failedRecord = await new TeamStore().get(
+      'dispatcher-a',
+      'failed-create',
+    );
+    expect(failedRecord).toMatchObject({
+      status: 'closed',
+      close_note: 'Team creation failed',
+      closed_at: expect.any(Number),
+    });
+    const failedLeader = await new AgentIdentityStore(log).leaderIdentity(
+      'dispatcher-a',
+      'failed-create',
+    );
+    expect(failedLeader).toMatchObject({
+      status: 'closed',
+      close_note: 'Team creation failed',
+    });
+
+    const restarted = new TeamCollection({
+      dispatcherId: 'dispatcher-a',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      worktrees: new WorktreeManager(),
+      identities: new AgentIdentityStore(log),
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      adminSocketPath: '/tmp/admin.sock',
+      leaderChannelDescriptors: () => [],
+      log,
+    });
+    await expect(
+      restarted.requireRoutableTeamProjection('failed-create'),
+    ).rejects.toThrow(/closed/u);
+    expect(runtimes).toHaveLength(1);
   });
 
-  it('sweeps a workflow member after its admitted Team lease materializes it', async () => {
+  it('closes a durably published leader when identity creation throws afterward', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const identities = new GatedCreateIdentityStore(log);
+    identities.failAfterPublication = true;
+    const makeTeams = () => new TeamCollection({
+      dispatcherId: 'dispatcher-a',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      worktrees: new WorktreeManager(),
+      identities,
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      adminSocketPath: '/tmp/admin.sock',
+      leaderChannelDescriptors: () => [],
+      agentNameSuffixGenerator: () => 'aaaa',
+      log,
+    });
+    const teams = makeTeams();
+
+    const creation = teams.create({
+      name: 'published-failure',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'must not resurrect',
+    });
+    const published = await identities.published.promise;
+    identities.release.resolve();
+    await expect(creation).rejects.toThrow(
+      /identity creation failed after durable publication/u,
+    );
+
+    await expect(identities.get(
+      'dispatcher-a',
+      published.name,
+      'published-failure',
+    )).resolves.toMatchObject({
+      status: 'closed',
+      close_note: 'Team creation failed',
+    });
+    await expect(new TeamStore().get(
+      'dispatcher-a',
+      'published-failure',
+    )).resolves.toMatchObject({
+      status: 'closed',
+      close_note: 'Team creation failed',
+    });
+    await expect(
+      makeTeams().requireRoutableTeamProjection('published-failure'),
+    ).rejects.toThrow(/closed/u);
+    expect(runtimes).toHaveLength(0);
+  });
+
+  it('materializes and closes every durable cold-cache Team entity on stopAll', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const initialRuntimes: FakeRuntime[] = [];
+    const recoveredRuntimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const identities = new AgentIdentityStore(log);
+    const makeTeams = (runtimes: FakeRuntime[]) => new TeamCollection({
+      dispatcherId: 'dispatcher-a',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      worktrees: new WorktreeManager(),
+      identities,
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      adminSocketPath: '/tmp/admin.sock',
+      leaderChannelDescriptors: () => [],
+      agentNameSuffixGenerator: () => 'aaaa',
+      log,
+    });
+    const first = makeTeams(initialRuntimes);
+    const created = await first.create({
+      name: 'cold-stop',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'close after restart',
+    });
+    const firstTeam = await first.get('cold-stop');
+    const spawned = await firstTeam.spawnTeamMate({
+      name: 'worker',
+      prompt: 'work until shutdown',
+      intent: 'cold member',
+      agentRuntime: 'agent-a',
+    });
+
+    const recovered = makeTeams(recoveredRuntimes);
+    await recovered.stopAll();
+
+    await expect(identities.get(
+      'dispatcher-a',
+      created.team.leader_name,
+      'cold-stop',
+    )).resolves.toMatchObject({ status: 'closed' });
+    await expect(identities.get(
+      'dispatcher-a',
+      spawned.teammate.name,
+      'cold-stop',
+    )).resolves.toMatchObject({ status: 'closed' });
+    expect(recoveredRuntimes).toHaveLength(0);
+  });
+
+  it('still closes materialized Teams when durable Team discovery fails', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
     const runtimes: FakeRuntime[] = [];
@@ -1058,8 +1195,10 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      completionDelivery: new CompletionDeliveryPolicy({
+        dispatcherId: 'dispatcher-a',
+        log,
+      }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       adminSocketPath: '/tmp/admin.sock',
@@ -1067,43 +1206,76 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       log,
     });
     await teams.create({
-      name: 'lease-stop',
+      name: 'materialized-before-list-failure',
       leaderAgentRuntime: 'agent-a',
-      intent: 'exercise workflow spawn handoff',
+      intent: 'close even when Team discovery fails',
     });
-    const lease = await teams.teamLeaderLease('lease-stop');
-    const leaseEntered = deferred<void>();
-    const allowSpawn = deferred<void>();
-    const owner = createOwnedTeammateOwner();
-    const spawning = teams.withTeamLeaderLease(lease, async (service) => {
-      leaseEntered.resolve();
-      await allowSpawn.promise;
-      return service.spawnOwnedTeamMate(
-        {
-          name: 'worker',
-          prompt: 'materialize before the shutdown sweep',
-          intent: 'workflow-owned member',
-          agentRuntime: 'agent-a',
-        },
-        { owner, routeSettledCompletion: async () => undefined },
-      );
-    });
-    await leaseEntered.promise;
+    const discoveryError = new Error('durable Team list unavailable');
+    const store = (teams as unknown as { store: TeamStore }).store;
+    vi.spyOn(store, 'list').mockRejectedValueOnce(discoveryError);
 
-    let stopSettled = false;
-    const stopping = teams.stopAll().then(() => {
-      stopSettled = true;
-    });
-    await Promise.resolve();
-    expect(stopSettled).toBe(false);
+    await expect(teams.stopAll()).rejects.toBe(discoveryError);
+    expect(runtimes).toHaveLength(1);
+    expect(runtimes[0]?.getStatus()).toBe('stopped');
+    await expect(new AgentIdentityStore(log).leaderIdentity(
+      'dispatcher-a',
+      'materialized-before-list-failure',
+    )).resolves.toMatchObject({ status: 'closed' });
+  });
 
-    allowSpawn.resolve();
-    await spawning;
-    await stopping;
-    expect(runtimes).toHaveLength(2);
-    expect(runtimes.map((runtime) => runtime.stopAttempts)).toEqual([1, 1]);
-    expect(runtimes.map((runtime) => runtime.getStatus()))
-      .toEqual(['stopped', 'stopped']);
+  it('materializes and closes every durable cold-cache member during dissolve', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const identities = new AgentIdentityStore(log);
+    const makeTeams = () => new TeamCollection({
+      dispatcherId: 'dispatcher-a',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      worktrees: new WorktreeManager(),
+      identities,
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      adminSocketPath: '/tmp/admin.sock',
+      leaderChannelDescriptors: () => [],
+      agentNameSuffixGenerator: () => 'bbbb',
+      log,
+    });
+    const first = makeTeams();
+    const created = await first.create({
+      name: 'cold-dissolve',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'dissolve after restart',
+    });
+    const spawned = await (await first.get('cold-dissolve')).spawnTeamMate({
+      name: 'worker',
+      prompt: 'work until dissolve',
+      intent: 'cold dissolve member',
+      agentRuntime: 'agent-a',
+    });
+
+    const recovered = makeTeams();
+    await dissolveTeamForTest(recovered, 'cold-dissolve', 'restart dissolve');
+    await expect(identities.get(
+      'dispatcher-a',
+      created.team.leader_name,
+      'cold-dissolve',
+    )).resolves.toMatchObject({ status: 'closed' });
+    await expect(identities.get(
+      'dispatcher-a',
+      spawned.teammate.name,
+      'cold-dissolve',
+    )).resolves.toMatchObject({ status: 'closed' });
   });
 
   it('continues stopping sibling members and the leader after a member stop fails', async () => {
@@ -1125,8 +1297,7 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       adminSocketPath: '/tmp/admin.sock',
@@ -1192,8 +1363,7 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       }),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       adminSocketPath: '/tmp/admin.sock',
@@ -1206,13 +1376,83 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       leaderAgentRuntime: 'agent-a',
       intent: 'exercise retained failed-create ownership',
       prompt: 'fail after leader launch',
-    })).rejects.toThrow(/creation and leader cleanup failed/);
+    })).rejects.toThrow(/creation failed and cleanup did not converge/);
     expect(runtimes).toHaveLength(1);
     expect(runtimes[0]?.stopAttempts).toBe(1);
+
+    const retained = await teams.get('failed-create-stop');
+    await expect(
+      teams.requireRoutableTeamProjection('failed-create-stop'),
+    ).rejects.toThrow(/closed/u);
+    expect(await teams.get('failed-create-stop')).toBe(retained);
+    expect(runtimes).toHaveLength(1);
 
     await expect(teams.stopAll()).rejects.toBe(leaderStopError);
     expect(runtimes[0]?.stopAttempts).toBe(2);
     expect(runtimes[0]?.getStatus()).toBe('ready');
+  });
+
+  it('preserves create, leader-close, and Team terminal-write failures', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const admissionError = new Error('initial prompt failed');
+    const leaderStopError = new Error('leader termination proof failed');
+    const terminalWriteError = new Error('Team terminal write unavailable');
+    const originalUpdate = TeamStore.prototype.update;
+    const update = vi.spyOn(TeamStore.prototype, 'update').mockImplementation(
+      async function (this: TeamStore, team, input) {
+        if (input.status === 'closed') throw terminalWriteError;
+        return originalUpdate.call(this, team, input);
+      },
+    );
+    const teams = new TeamCollection({
+      dispatcherId: 'dispatcher-a',
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, {
+        submitError: admissionError,
+        stopError: leaderStopError,
+      }),
+      worktrees: new WorktreeManager(),
+      identities: new AgentIdentityStore(log),
+      completionDelivery: new CompletionDeliveryPolicy({
+        dispatcherId: 'dispatcher-a',
+        log,
+      }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      adminSocketPath: '/tmp/admin.sock',
+      leaderChannelDescriptors: () => [],
+      log,
+    });
+
+    try {
+      const failure = await teams.create({
+        name: 'aggregate-create-failure',
+        leaderAgentRuntime: 'agent-a',
+        intent: 'preserve every failure',
+        prompt: 'fail after leader launch',
+      }).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(AggregateError);
+      const errors = (failure as AggregateError).errors;
+      expect(errors).toHaveLength(3);
+      expect(errors[0]).toMatchObject({
+        message: expect.stringContaining(admissionError.message),
+      });
+      expect(errors[1]).toBe(leaderStopError);
+      expect(errors[2]).toBe(terminalWriteError);
+    } finally {
+      update.mockRestore();
+    }
   });
 });
 
@@ -1256,8 +1496,7 @@ describe('TeamCollection identity prompt launch behavior', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes, {}, contexts),
       worktrees: new WorktreeManager(),
       identities,
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       adminSocketPath: '/tmp/admin.sock',
@@ -1331,8 +1570,7 @@ describe('TeamCollection identity prompt launch behavior', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       adminSocketPath: '/tmp/admin.sock',
@@ -1371,7 +1609,7 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('submits to the TeamLeader, records dispatcher turn_origin, and returns the public response shape', async () => {
+  it('submits to the TeamLeader and returns the public response shape', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
     const runtimes: FakeRuntime[] = [];
@@ -1384,15 +1622,13 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       }),
     ]);
     const log = noopLog();
-    const turnsStore = new AgentTurnsStore(log);
     const teams = new TeamCollection({
       dispatcherId: 'dispatcher-a',
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore,
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       adminSocketPath: '/tmp/admin.sock',
@@ -1411,7 +1647,7 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       initiator: new FakeInitiator(),
     });
 
-    expect(Object.keys(sent).sort()).toEqual(['leader', 'team', 'turn']);
+    expect(Object.keys(sent).sort()).toEqual(['leader', 'status', 'team']);
     expect(sent.team).toMatchObject({
       team_name: 'alpha',
       status: 'running',
@@ -1422,28 +1658,14 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
     expect(sent.team).not.toHaveProperty('runtime_cwd');
     expect(sent.team).not.toHaveProperty('worktree');
     expect(sent.leader.intent).toBe('lead alpha follow-up');
-    expect(sent.turn).toEqual({ status: 'submitted', turn_id: 'turn-1' });
+    expect(sent.status).toBe('submitted');
+    expect(sent).not.toHaveProperty('turn');
     expect(runtimes).toHaveLength(1);
     expect(runtimes[0]!.submitted.map((input) => input.text)).toEqual(['follow up']);
 
-    const team = await teams.get('alpha');
-    const identity = team.leader.current();
-    const rows = [];
-    for await (const row of turnsStore.stream({
-      dispatcherId: identity.dispatcher_id,
-      name: identity.name,
-      teamId: identity.team_id,
-      role: identity.role,
-    })) {
-      rows.push(row);
-    }
-    expect(rows).toContainEqual(
-      expect.objectContaining({
-        type: 'submit',
-        turn_id: 'turn-1',
-        turn_origin: 'dispatcher',
-        prompt_preview: 'follow up',
-      }),
+    runtimes[0]!.settle(0);
+    await vi.waitFor(() =>
+      expect(runtimes[0]!.transcriptTurns).toHaveLength(1),
     );
 
     await teams.stopAll();
@@ -1462,8 +1684,10 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       }),
     ]);
     const log = noopLog();
-    const router = new CompletionRouter({ dispatcherId: 'dispatcher-a', log });
-    const turnsStore = new AgentTurnsStore(log);
+    const completionDelivery = new CompletionDeliveryPolicy({
+      dispatcherId: 'dispatcher-a',
+      log,
+    });
     const teams = new TeamCollection({
       dispatcherId: 'dispatcher-a',
       config,
@@ -1472,8 +1696,7 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       }),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore,
-      router,
+      completionDelivery,
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       adminSocketPath: '/tmp/admin.sock',
@@ -1491,7 +1714,7 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       prompt: 'settle later',
       initiator,
     });
-    runtimes[0]?.settle('turn-1');
+    runtimes[0]?.settle(0);
     await waitFor(() => initiator.completions.length === 1);
 
     const team = await teams.get('alpha');
@@ -1499,7 +1722,6 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       {
         kind: 'teammate',
         source: team.leader.name,
-        id: `${team.leader.name}:turn-1`,
         status: 'completed',
         result: 'leader finished',
       },
@@ -1526,8 +1748,7 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       adminSocketPath: '/tmp/admin.sock',
@@ -1591,8 +1812,7 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       adminSocketPath: '/tmp/admin.sock',
@@ -1678,8 +1898,7 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
         agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
         worktrees: new WorktreeManager(),
         identities: new AgentIdentityStore(log),
-        turnsStore: new AgentTurnsStore(log),
-        router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
         initiatorFor: async () => null,
         isShuttingDown: () => false,
         adminSocketPath: '/tmp/admin.sock',
@@ -1862,25 +2081,26 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees,
       identities,
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       suffixGenerator: () => suffixes.shift()!,
       log,
     });
-    await expect(
-      collection.spawn({
+    const spawned = await collection.spawn({
         name: 'reviewer',
         prompt: 'skip the corrupt occupied candidate',
         intent: 'verify directory occupancy',
         agentRuntime: 'agent-a',
-      }),
-    ).resolves.toMatchObject({
+      });
+    expect(spawned).toMatchObject({
       teammate: { name: 'reviewer-bbbb' },
     });
     expect(prepareWorkspace).toHaveBeenCalledTimes(1);
-    await collection.stopAll();
+    await collection.close({
+      name: spawned.teammate.name,
+      note: 'test complete',
+    });
   });
 
   it('creates agent identities without silently replacing an existing file', async () => {
@@ -1996,8 +2216,7 @@ describe('closing a team member must not remove the shared team worktree', () =>
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       adminSocketPath: '/tmp/admin.sock',
@@ -2093,8 +2312,7 @@ describe('team dissolve syncs cleanup_state to the leader and members (#237)', (
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(log),
-      router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
+      completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       adminSocketPath: '/tmp/admin.sock',

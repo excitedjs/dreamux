@@ -1,227 +1,242 @@
 import type {
   AgentRuntime,
-  AgentRuntimeCreateContext,
-  AgentRuntimeMcpServer,
-  AgentRuntimeProvider,
-  AgentRuntimeSkillSource,
-  AgentRuntimeSystemPrompt,
-  AgentRuntimeTurnResult,
   InboundTurnInput,
-  TurnSettledSignal,
 } from '@excitedjs/dreamux-types';
+
+import { dispatcherCompletionSpillDir } from '../../platform/paths.js';
 import {
-  DISABLE_FEATURE_USER_INTERRUPT,
-  HOST_INJECT_ENV,
-  hostRuntimePaths,
-} from '../../agent-runtime/index.js';
-import type { ResolvedAgentConfig } from '../../config/config.js';
-import { resolveAgent } from '../teammate-collection/agent-config.js';
-import {
-  foldLastTurns,
+  toRecordRow,
   toStatus,
-  validateLastTurns,
-} from '../teammate-collection/read-helpers.js';
+} from '../agent-entity/read-helpers.js';
 import { AgentRuntimeStateStore } from '../agent-entity/runtime-state.js';
-import { recordSettledTurn, recordSubmittedTurn, toTurnResult } from './turn-recording.js';
-import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
-import {
-  reprepareDeletedManagedWorktree,
-} from '../worktree/workspaces.js';
-import type { WorktreeManager } from '../worktree/manager.js';
 import {
   requireLifecycleText,
   type AgentEntityCloseResult,
   type AgentEntityIdentity,
-  type AgentEntityLastResult,
+  type AgentEntityIdentityStatus,
+  type AgentEntityRecordRow,
   type AgentEntityRuntimeStatus,
   type AgentEntitySendResult,
+  type AgentEntitySubmissionResult,
   type AgentEntityTurnOrigin,
-  type AgentEntityTurnResult,
   type AgentEntityWorktreeIdentity,
 } from '../agent-entity/types.js';
-import { dispatcherCompletionSpillDir } from '../../platform/paths.js';
 import type {
   CompletionDeliveryResult,
-  CompletionEnvelope,
+  PreparedCompletionDelivery,
+  PreparedCompletionFact,
 } from '../completion-router/index.js';
+import type { WorktreeManager } from '../worktree/manager.js';
 import { buildCompletionTurnText } from './completion-renderer.js';
-import { TurnSubmissionReadiness } from './submission-readiness.js';
+import { TeammateRuntimeOwner } from './runtime-owner.js';
+import {
+  toSubmissionResult,
+  type TurnAdmission,
+  type TurnCompletionDelivery,
+} from './turn-recording.js';
+import { EntityTurnCoordinator } from './turn-coordinator.js';
 import type {
+  EntityPhase,
+  LockedTeammate,
+  TeammateClosedFact,
+  TeammateClosedSubscription,
   TeammateServiceDeps,
   TeammateServiceOptions,
+  WorkflowTeammateSubmitInput,
 } from './types.js';
 
-/** The provider-construction inputs a {@link TeammateService} needs to launch. */
-export interface RuntimeLaunchSpec {
-  provider: AgentRuntimeProvider;
-  /** The full create context minus the generic pieces the entity supplies. */
-  context: Omit<AgentRuntimeCreateContext, 'onTurnSettled' | 'injectEnv'>;
-  /** Runtime-native checkpoint id to resume from, or null for a fresh start. */
-  checkpointId: string | null;
-}
+/** Close failed after the live runtime was already proven terminated. */
+export class TeammateClosePhaseError extends Error {
+  readonly runtime_terminated = true;
 
-function assertIdentityBelongsToDispatcher(
-  identity: AgentEntityIdentity,
-  dispatcherId: string,
-): void {
-  if (identity.dispatcher_id !== dispatcherId) {
-    throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
+  constructor(teammateName: string, cause: unknown) {
+    super(
+      `TeamMate ${JSON.stringify(teammateName)} close failed after runtime termination`,
+      { cause },
+    );
+    this.name = 'TeammateClosePhaseError';
   }
 }
 
-/**
- * A single named teammate entity (issue #233): it holds its own identity, its
- * (lazily started) runtime, a per-turn origin cache, and the domain operations
- * `send` / `close` / `status` / `last` / `history` / `channelInput`. It is also a
- * delivery target via `completionInput` — it renders the core completion
- * envelope to a plain runtime turn before the per-dispatcher
- * `CompletionRouter` considers the delivery accepted.
- *
- * Storage stays in the collection's shared stores; the entity holds references
- * to them rather than owning them (collections remain process-wide in Phase 1).
- */
+/** One canonical TeamMate entity and the sole owner of its live lifecycle. */
 export class TeammateService {
-  private runtime: AgentRuntime | null = null;
-  private starting: Promise<void> | null = null;
-  private readonly settleWrites = new Set<Promise<void>>();
-  private readonly turnSubmissions = new TurnSubmissionReadiness((settled) => {
-    this.captureSettledTurn(settled);
-  });
   private state: AgentRuntimeStateStore;
-  private readonly mcpServers: readonly AgentRuntimeMcpServer[];
-  private readonly skillSources: readonly AgentRuntimeSkillSource[];
-  private readonly disableFeatures: readonly string[];
-  private readonly systemPrompt: AgentRuntimeSystemPrompt | undefined;
-  private readonly outputSchema: Record<string, unknown> | undefined;
-  private readonly runtimeId: string;
+  private readonly runtimeOwner: TeammateRuntimeOwner;
+  private readonly turns: EntityTurnCoordinator;
+  private phase: EntityPhase = 'active';
+  private ordinaryMutations = 0;
+  private readonly ordinaryIdleWaiters = new Set<() => void>();
+  private lockToken: object | null = null;
+  private closeTask: Promise<AgentEntityCloseResult> | null = null;
+  private readonly closedListeners = new Set<
+    (fact: TeammateClosedFact) => void | Promise<void>
+  >();
   private readonly ownsWorktreeOnClose: boolean;
-  private readonly loggerFields: Record<string, unknown>;
-  private readonly assertIdentityScope: (
-    identity: AgentEntityIdentity,
-    dispatcherId: string,
-  ) => void;
 
   constructor(
     private readonly deps: TeammateServiceDeps,
-    private readonly dispatcherId: string,
-    private identity: AgentEntityIdentity,
+    dispatcherId: string,
+    identity: AgentEntityIdentity,
     options: TeammateServiceOptions,
   ) {
-    this.mcpServers = options.mcpServers ?? [];
-    this.skillSources = options.skillSources ?? [];
-    this.disableFeatures = options.disableFeatures ?? [];
-    this.systemPrompt = options.systemPrompt;
-    this.outputSchema = options.outputSchema;
-    this.runtimeId = options.runtimeId;
     this.ownsWorktreeOnClose = options.ownsWorktreeOnClose;
-    this.loggerFields = options.loggerFields ?? { teammate: identity.name };
-    this.assertIdentityScope =
-      options.assertIdentityScope ?? assertIdentityBelongsToDispatcher;
     this.state = new AgentRuntimeStateStore(deps.identities, identity);
+    this.runtimeOwner = new TeammateRuntimeOwner(
+      deps,
+      dispatcherId,
+      this.state,
+      options,
+      {
+        current: () => this.current(),
+        isActive: () => this.phase === 'active',
+        markClosing: () => {
+          this.phase = 'closing';
+        },
+      },
+    );
+    this.turns = new EntityTurnCoordinator({
+      name: () => this.name,
+      intent: () => this.current().intent,
+      isActive: () => this.phase === 'active',
+    });
   }
 
   get name(): string {
-    return this.identity.name;
+    return this.current().name;
   }
 
   current(): AgentEntityIdentity {
     return this.state.current();
   }
 
-  getRuntime(): AgentRuntime | null {
-    return this.runtime;
+  isRetired(): boolean {
+    return this.phase === 'retired';
   }
 
-  /**
-   * Render a completion envelope into a plain text turn and submit it to the
-   * runtime, the delivery-target side of the reverse path. The at-most-once
-   * policy lives in the `CompletionRouter`; the stable sourceId gives runtimes a
-   * provider-owned dedupe/correlation hook across router retries.
-   */
-  async completionInput(
-    completion: CompletionEnvelope,
-  ): Promise<CompletionDeliveryResult> {
-    const runtime = this.runtime;
-    if (runtime === null) {
-      return { status: 'unsupported', reason: 'teammate runtime not running' };
+  isLocked(): boolean {
+    return this.lockToken !== null;
+  }
+
+  onClosed(
+    listener: (fact: TeammateClosedFact) => void | Promise<void>,
+  ): TeammateClosedSubscription {
+    this.closedListeners.add(listener);
+    let subscribed = true;
+    return {
+      unsubscribe: () => {
+        if (!subscribed) return;
+        subscribed = false;
+        this.closedListeners.delete(listener);
+      },
+    };
+  }
+
+  lock(): LockedTeammate {
+    if (this.phase !== 'active') {
+      throw new Error(`TeamMate ${JSON.stringify(this.name)} is not active`);
     }
-    let text: string;
+    if (this.lockToken !== null) {
+      throw new Error(`TeamMate ${JSON.stringify(this.name)} is already locked`);
+    }
+    if (this.ordinaryMutations !== 0) {
+      throw new Error(`TeamMate ${JSON.stringify(this.name)} is being mutated`);
+    }
+    if (this.turns.hasUnsettledCurrent()) {
+      throw new Error(`TeamMate ${JSON.stringify(this.name)} has an active Turn`);
+    }
+    const token = Object.freeze({});
+    this.lockToken = token;
+    const handle: LockedTeammate = {
+      name: this.name,
+      submit: (input) => {
+        this.assertLockToken(token);
+        return this.submitLocked(input, token);
+      },
+      close: (input) => {
+        this.assertLockToken(token);
+        requireLifecycleText(input.note, 'TeamMate close note');
+        return this.closeAuthorized(input.note, token);
+      },
+      unlock: () => this.unlock(token),
+    };
+    return Object.freeze(handle);
+  }
+
+  async send(input: {
+    prompt: string;
+    intent?: string;
+    turnOrigin: AgentEntityTurnOrigin;
+    deliverCompletion?: TurnCompletionDelivery;
+    resolveCompletionDelivery?: () => Promise<TurnCompletionDelivery | null>;
+  }): Promise<AgentEntitySendResult> {
+    const leave = this.enterOrdinaryMutation('send');
     try {
-      text = await buildCompletionTurnText(
-        completion,
-        this.resolveCompletionSpillDir(),
-      );
-    } catch (err) {
+      await this.runtimeOwner.ensureStarted({ reopenClosed: true });
+      if (input.intent !== undefined && input.intent !== '') {
+        await this.state.updateIntent(input.intent);
+      }
+      const delivery = input.deliverCompletion ??
+        await input.resolveCompletionDelivery?.() ?? null;
+      const turn = await this.submitPromptAdmission(input.prompt, {
+        turnOrigin: input.turnOrigin,
+        ...(delivery !== null
+          ? { deliverCompletion: delivery }
+          : {}),
+      });
       return {
-        status: 'failed',
-        error: err instanceof Error ? err : new Error(String(err)),
+        teammate: this.status(),
+        ...toSubmissionResult(turn),
+        transcript_path: this.transcriptPath(),
       };
+    } finally {
+      leave();
     }
-    const result = await this.submitRuntimeTurn(
-      () => runtime.completionInput({
-        text,
-        sourceId: `completion:${completion.id}`,
-      }),
-      { turnOrigin: null, prompt: text, recordUnsubmitted: false },
-    );
-    return turnResultToCompletionDelivery(result);
   }
 
-  /**
-   * Submit a prompt, lazily (re)starting the runtime. Returns the turn result and
-   * the live identity snapshot; the caller registers the completion key with the
-   * router so the settled turn routes back to the initiator.
-   */
-  async send(
-    input: {
-      prompt: string;
-      intent?: string;
-      /** The caller-owned source to record in the teammate turn ledger. */
-      turnOrigin: AgentEntityTurnOrigin;
-    },
-  ): Promise<AgentEntitySendResult> {
-    await this.ensureStarted({ reopenClosed: true });
-    if (input.intent !== undefined && input.intent !== '') {
-      await this.state.updateIntent(input.intent);
-    }
-    const turn = await this.submitPrompt(input.prompt, {
-      turnOrigin: input.turnOrigin,
-    });
-    return { teammate: this.status(), turn };
-  }
-
-  /** Submit the first prompt of a freshly created teammate / leader. */
   async submitInitialPrompt(
     prompt: string,
     opts: {
       turnOrigin: AgentEntityTurnOrigin;
       outputSchema?: Record<string, unknown>;
+      deliverCompletion?: TurnCompletionDelivery;
     },
-  ): Promise<AgentEntityTurnResult> {
-    return toTurnResult(await this.submitInitialPromptRuntime(prompt, opts));
+  ): Promise<AgentEntitySubmissionResult> {
+    const leave = this.enterOrdinaryMutation('initial submission');
+    try {
+      return toSubmissionResult(await this.submitPromptAdmission(prompt, opts));
+    } finally {
+      leave();
+    }
   }
 
-  /** Initial submission result before adapting it to the admin-facing DTO. */
   async submitInitialPromptRuntime(
     prompt: string,
     opts: {
       turnOrigin: AgentEntityTurnOrigin;
       outputSchema?: Record<string, unknown>;
+      deliverCompletion?: TurnCompletionDelivery;
     },
-  ): Promise<AgentRuntimeTurnResult> {
-    return this.submitPromptRuntime(prompt, {
-      turnOrigin: opts.turnOrigin,
-      outputSchema: opts.outputSchema,
-    });
+  ): Promise<TurnAdmission> {
+    const leave = this.enterOrdinaryMutation('initial submission');
+    try {
+      return await this.submitPromptAdmission(prompt, opts);
+    } finally {
+      leave();
+    }
   }
 
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
-    await this.ensureStarted({ reopenClosed: true });
-    const runtime = this.mustRuntime();
-    return this.submitRuntimeTurn(
-      () => runtime.channelInput(input),
-      { turnOrigin: 'channel', prompt: input.text, recordUnsubmitted: false },
-    );
+  async channelInput(input: InboundTurnInput): Promise<TurnAdmission> {
+    const leave = this.enterOrdinaryMutation('channel input');
+    try {
+      await this.runtimeOwner.ensureStarted({ reopenClosed: true });
+      const runtime = this.runtimeOwner.mustRuntime();
+      return await this.turns.submitRuntimeTurn(
+        () => runtime.channelInput(input),
+        { turnOrigin: 'channel', prompt: input.text },
+      );
+    } finally {
+      leave();
+    }
   }
 
   async scheduledInput(input: {
@@ -229,379 +244,416 @@ export class TeammateService {
     prompt: string;
     sourceId: string;
     signal: AbortSignal;
-  }): Promise<AgentRuntimeTurnResult> {
-    if (input.signal.aborted) return { status: 'skipped' };
-    await this.ensureStarted();
-    if (input.signal.aborted) return { status: 'skipped' };
-    const runtime = this.mustRuntime();
-    return this.submitRuntimeTurn(
-      () => runtime.completionInput({
-        text: input.prompt,
-        sourceId: input.sourceId,
-      }),
-      {
-        turnOrigin: { kind: 'scheduled', job_id: input.jobId },
-        prompt: input.prompt,
-        recordUnsubmitted: false,
-      },
-    );
-  }
-
-  async close(input: { note: string }): Promise<AgentEntityCloseResult> {
-    requireLifecycleText(input.note, 'TeamMate close note');
-    return this.transitionToClosed(input.note);
-  }
-
-  /** Owner-only close that leaves no user-visible lifecycle note. */
-  async release(): Promise<AgentEntityCloseResult> {
-    return this.transitionToClosed(null);
-  }
-
-  private async transitionToClosed(
-    closeNote: string | null,
-  ): Promise<AgentEntityCloseResult> {
-    await this.stop();
-    await this.turnSubmissions.drain();
-    while (this.settleWrites.size > 0) {
-      await Promise.allSettled([...this.settleWrites]);
+  }): Promise<TurnAdmission> {
+    const leave = this.enterOrdinaryMutation('scheduled input');
+    try {
+      if (input.signal.aborted) return { status: 'skipped' };
+      await this.runtimeOwner.ensureStarted({ reopenClosed: true });
+      if (input.signal.aborted) return { status: 'skipped' };
+      const runtime = this.runtimeOwner.mustRuntime();
+      return await this.turns.submitRuntimeTurn(
+        () =>
+          runtime.completionInput({
+            text: input.prompt,
+            sourceId: input.sourceId,
+          }),
+        {
+          turnOrigin: { kind: 'scheduled', job_id: input.jobId },
+          prompt: input.prompt,
+        },
+      );
+    } finally {
+      leave();
     }
-    const identity = this.current();
-    // Close-time cleanup requires both ownership from the entity profile and
-    // delete-on-close metadata from the identity. Shared worktrees can still
-    // carry delete-on-close, but their lifecycle belongs to their owner.
-    const shouldCleanup =
-      this.ownsWorktreeOnClose &&
-      identity.worktree.mode === 'managed' &&
-      identity.worktree.cleanup === 'delete-on-close';
-    const worktree = shouldCleanup
-      ? await this.mustWorktrees().cleanup(identity)
-      : identity.worktree;
-    const closed = await this.deps.identities.update(identity, {
-      status: 'closed',
-      closedAt: Date.now(),
-      closeNote,
-      lastSeenAt: Date.now(),
-      worktree,
-    });
-    this.identity = closed;
-    this.state = new AgentRuntimeStateStore(this.deps.identities, closed);
-    return { teammate: toStatus(closed, null) };
   }
 
-  /**
-   * Sync this entity's persisted worktree to an owner-performed cleanup result.
-   * Borrowers skip close-time cleanup, so their displayed state must be updated
-   * when the owning service removes the shared worktree.
-   */
-  async applyWorktreeCleanup(worktree: AgentEntityWorktreeIdentity): Promise<void> {
-    const identity = this.current();
-    const updated = await this.deps.identities.update(identity, { worktree });
-    this.identity = updated;
-    this.state = new AgentRuntimeStateStore(this.deps.identities, updated);
+  async controlInput(input: {
+    text: string;
+    sourceId?: string;
+  }): Promise<TurnAdmission> {
+    const leave = this.enterOrdinaryMutation('control input');
+    try {
+      await this.runtimeOwner.ensureStarted();
+      const runtime = this.runtimeOwner.mustRuntime();
+      return await this.turns.submitRuntimeTurn(
+        () =>
+          runtime.completionInput({
+            text: input.text,
+            ...(input.sourceId !== undefined
+              ? { sourceId: input.sourceId }
+              : {}),
+          }),
+        { turnOrigin: null, prompt: input.text },
+      );
+    } finally {
+      leave();
+    }
+  }
+
+  async prepareCompletion(
+    completion: PreparedCompletionFact,
+  ): Promise<PreparedCompletionDelivery> {
+    let leave: (() => void) | null = null;
+    try {
+      leave = this.enterOrdinaryMutation('completion preparation');
+    } catch {
+      return unsupportedPreparedCompletion('teammate is not writable');
+    }
+    try {
+      const runtime = await this.runtimeOwner.existingRuntimeAfterStart().catch(
+        () => null,
+      );
+      if (runtime === null) {
+        return unsupportedPreparedCompletion('teammate runtime not running');
+      }
+      const text = await buildCompletionTurnText(
+        completion,
+        dispatcherCompletionSpillDir(this.current().dispatcher_id),
+      );
+      return Object.freeze({
+        submit: () => this.submitPreparedCompletion(text),
+      });
+    } finally {
+      leave();
+    }
+  }
+
+  close(input: { note: string }): Promise<AgentEntityCloseResult> {
+    requireLifecycleText(input.note, 'TeamMate close note');
+    if (this.lockToken !== null) {
+      return Promise.reject(
+        new Error(`TeamMate ${JSON.stringify(this.name)} is locked`),
+      );
+    }
+    return this.closeAuthorized(input.note, null);
+  }
+
+  async applyWorktreeCleanup(
+    worktree: AgentEntityWorktreeIdentity,
+  ): Promise<void> {
+    if (this.phase === 'retired') {
+      // A Team's physical worktree cleanup follows logical entity close. The
+      // retired leader remains the Team's exact durable-state owner, so accept
+      // this idempotent owner projection without reopening runtime admission.
+      await this.state.update({ worktree });
+      return;
+    }
+    const leave = this.enterOrdinaryMutation('worktree cleanup');
+    try {
+      await this.state.update({
+        worktree,
+      });
+    } finally {
+      leave();
+    }
   }
 
   status(): AgentEntityRuntimeStatus {
-    return toStatus(this.current(), this.runtime);
-  }
-
-  async last(turns?: number): Promise<AgentEntityLastResult> {
-    const requestedTurns = validateLastTurns(turns);
     const identity = this.current();
-    const teammate = toStatus(identity, this.runtime);
-    const lastTurns = await foldLastTurns(
-      this.turnsStore,
+    return toStatus(
       identity,
-      requestedTurns,
+      this.runtimeStatus(),
+      this.effectiveIdentityStatus(identity),
     );
-    return {
-      teammate,
-      requested_turns: requestedTurns,
-      returned_turns: lastTurns.length,
-      turns: lastTurns,
-    };
   }
 
-  /** Stop the live runtime if any; leaves the persisted record intact. */
-  async stop(): Promise<void> {
-    // Await any in-flight start first so we never observe `runtime === null`
-    // for a runtime that is about to be assigned (issue #233 concurrency guard).
-    if (this.starting !== null) await this.starting.catch(() => {});
-    const runtime = this.runtime;
-    if (runtime === null) return;
-    await runtime.stop();
-    this.runtime = null;
-  }
-
-  /**
-   * Ensure a live runtime, starting or resuming it from the persisted record.
-   * Reviving a closed teammate (only when `reopenClosed`) re-prepares a deleted
-   * managed worktree and clears the closed markers first.
-   *
-   * Concurrency guard (issue #233): a single `starting` promise serializes
-   * concurrent callers (two `send`/`channelInput`/`spawn` turns that both see
-   * `runtime === null`) so the runtime is created exactly once. The identity
-   * scope check runs eagerly on every caller — including those that join an
-   * in-flight start — so corrupt identity scope still fails fast.
-   */
-  async ensureStarted(opts: { reopenClosed?: boolean } = {}): Promise<void> {
-    this.assertIdentityScope(this.current(), this.dispatcherId);
-    if (this.runtime !== null) return;
-    if (this.starting !== null) return this.starting;
-    const promise = this.startFromRecord(opts).finally(() => {
-      this.starting = null;
-    });
-    this.starting = promise;
-    return promise;
-  }
-
-  private async startFromRecord(opts: { reopenClosed?: boolean }): Promise<void> {
-    let identity = this.current();
-    if (identity.status === 'closed') {
-      if (opts.reopenClosed !== true) {
-        throw new Error(`TeamMate ${JSON.stringify(identity.name)} is closed`);
-      }
-      identity = await reprepareDeletedManagedWorktree({
-        config: this.deps.config,
-        identities: this.deps.identities,
-        worktrees: this.mustWorktrees(),
-        identity,
-      });
-      identity = await this.deps.identities.update(identity, {
-        status: 'starting',
-        closedAt: null,
-        closeNote: null,
-        lastError: null,
-      });
-      this.identity = identity;
-      this.state = new AgentRuntimeStateStore(this.deps.identities, identity);
-    }
-    await this.startRuntime();
-  }
-
-  private async startRuntime(): Promise<void> {
-    const launch = this.resolveLaunch();
-    await this.createAndStart(launch);
-  }
-
-  /**
-   * Resolve every agent runtime through `identity.agent_runtime -> agents[]`.
-   */
-  private resolveLaunch(): RuntimeLaunchSpec {
+  historyRow(): AgentEntityRecordRow {
     const identity = this.current();
-    const agent: ResolvedAgentConfig = resolveAgent(
-      this.deps.config,
-      this.dispatcherId,
-      identity.agent_runtime,
+    return toRecordRow(
+      identity,
+      this.runtimeStatus(),
+      this.effectiveIdentityStatus(identity),
     );
-    const provider = this.deps.agentRuntimeProviders.resolve(agent.provider);
-    return {
-      provider,
-      checkpointId: identity.session_id,
-      context: {
-        identity: {
-          runtime_id: this.runtimeId,
-          checkpoint_id: identity.session_id,
-        },
-        config: agent.config,
-        cwd: identity.cwd,
-        skillSources: this.skillSources,
-        disableFeatures: this.disableFeatures,
-        outputSchema: this.outputSchema,
-        ...(this.systemPrompt !== undefined
-          ? { systemPrompt: this.systemPrompt }
-          : {}),
-        state: this.state,
-        paths: hostRuntimePaths,
-        mcpServers: [...this.mcpServers],
-        logger:
-          this.deps.log.child?.({
-            dispatcher_id: this.dispatcherId,
-            ...this.loggerFields,
-          }) ?? this.deps.log,
-      },
-    };
   }
 
-  private async createAndStart(launch: RuntimeLaunchSpec): Promise<void> {
-    const resumeCapability = launch.provider.getCapabilities().resume;
-    let liveRuntime: AgentRuntime | null = null;
-    const runtime = launch.provider.createRuntime({
-      ...launch.context,
-      injectEnv: HOST_INJECT_ENV,
-      // Core-wide rule: every Dreamux agent has the model-facing "ask the user"
-      // tool disabled (it would wedge a turn waiting for an out-of-band answer).
-      // Role-specific features (e.g. cron) are already on launch.context.
-      disableFeatures: [
-        DISABLE_FEATURE_USER_INTERRUPT,
-        ...(launch.context.disableFeatures ?? []),
-      ],
-      onTurnSettled: (settled: TurnSettledSignal): void => {
-        if (liveRuntime === null) return;
-        this.turnSubmissions.capture(settled);
-      },
-    });
-    liveRuntime = runtime;
-    if (launch.checkpointId !== null && resumeCapability.supported) {
-      await runtime.resume();
-    } else {
-      await runtime.start();
+  transcriptPath(): string | null {
+    return this.current().transcript_locator;
+  }
+
+  /** Read-only lifecycle projection; durable closure is still store-owned. */
+  private effectiveIdentityStatus(
+    identity: AgentEntityIdentity,
+  ): AgentEntityIdentityStatus {
+    if (
+      this.phase === 'closing' &&
+      this.runtimeOwner.hasNoRuntimeAuthority()
+    ) {
+      return 'stopped';
     }
-    this.runtime = runtime;
+    return identity.status;
   }
 
-  private captureSettledTurn(settled: TurnSettledSignal): void {
-    const capture = this.deliverSettledTurn(settled);
-    this.deps.trackSettleCapture?.(capture);
+  waitIdle(): Promise<void> {
+    return this.runtimeOwner.waitIdle();
   }
 
-  /**
-   * The producer side of the reverse path: when this teammate's turn settles,
-   * record the settled row before routing the completion. A route may release
-   * the producer, so allowing its older runtime-state write to finish later
-   * could overwrite the durable closed identity with stale running state.
-   * Both operations remain best-effort and independent on failure.
-   */
-  private async deliverSettledTurn(
-    settled: TurnSettledSignal,
-  ): Promise<void> {
-    const identity = this.current();
-    const result = settled.result?.text ?? null;
-    if (settled.status === 'failed' && settled.error !== undefined) {
-      this.deps.log.error(
+  waitIdleCapability(): (() => Promise<void>) | undefined {
+    return this.runtimeOwner.waitIdleCapability();
+  }
+
+  runtimeStatus(): ReturnType<AgentRuntime['getStatus']> | null {
+    return this.runtimeOwner.runtimeStatus();
+  }
+
+  checkpointId(): string | null {
+    return this.runtimeOwner.checkpointId();
+  }
+
+  wasCheckpointResumed(): boolean {
+    return this.runtimeOwner.wasCheckpointResumed();
+  }
+
+  /** Composition-only eager activation; lifecycle callers use admitted inputs. */
+  async activate(): Promise<void> {
+    const leave = this.enterOrdinaryMutation('activation');
+    try {
+      await this.runtimeOwner.ensureStarted({ reopenClosed: true });
+    } finally {
+      leave();
+    }
+  }
+
+  private async submitLocked(
+    input: WorkflowTeammateSubmitInput,
+    token: object,
+  ): Promise<TurnAdmission> {
+    this.assertLockToken(token);
+    if (this.phase !== 'active') return { status: 'stopped' };
+    await this.runtimeOwner.ensureStarted({ reopenClosed: true });
+    this.assertLockToken(token);
+    if (this.phase !== 'active') return { status: 'stopped' };
+    return this.submitPromptAdmission(input.prompt, {
+      turnOrigin: input.turnOrigin,
+      ...(input.outputSchema !== undefined
+        ? { outputSchema: input.outputSchema }
+        : {}),
+    });
+  }
+
+  private submitPromptAdmission(
+    prompt: string,
+    opts: {
+      turnOrigin: AgentEntityTurnOrigin;
+      outputSchema?: Record<string, unknown>;
+      deliverCompletion?: TurnCompletionDelivery;
+    },
+  ): Promise<TurnAdmission> {
+    return this.runtimeOwner.ensureStarted({ reopenClosed: true }).then(() => {
+      const runtime = this.runtimeOwner.mustRuntime();
+      return this.turns.submitRuntimeTurn(
+        () =>
+          runtime.completionInput({
+            text: prompt,
+            ...(opts.outputSchema !== undefined
+              ? { outputSchema: opts.outputSchema }
+              : {}),
+          }),
         {
-          teammate: identity.name,
-          turn_id: settled.turnId,
-          err: {
-            name: settled.error.name,
-            message: settled.error.message,
-            stack: settled.error.stack,
-          },
+          turnOrigin: opts.turnOrigin,
+          prompt,
+          ...(opts.deliverCompletion !== undefined
+            ? { deliverCompletion: opts.deliverCompletion }
+            : {}),
         },
-        'teammate turn failed',
+      );
+    });
+  }
+
+  private async submitPreparedCompletion(
+    text: string,
+  ): Promise<CompletionDeliveryResult> {
+    let leave: (() => void) | null = null;
+    try {
+      leave = this.enterOrdinaryMutation('completion input');
+    } catch {
+      return { status: 'unsupported', reason: 'teammate is not writable' };
+    }
+    try {
+      const runtime = await this.runtimeOwner.existingRuntimeAfterStart().catch(
+        () => null,
+      );
+      if (runtime === null) {
+        return { status: 'unsupported', reason: 'teammate runtime not running' };
+      }
+      return await this.turns.submitCompletion(
+        () => runtime.completionInput({ text }),
+        { turnOrigin: null, prompt: text },
+      );
+    } finally {
+      leave();
+    }
+  }
+
+  private closeAuthorized(
+    closeNote: string,
+    token: object | null,
+  ): Promise<AgentEntityCloseResult> {
+    if (token !== null) this.assertLockToken(token);
+    if (this.phase === 'retired') {
+      return Promise.resolve({ teammate: this.status() });
+    }
+    if (this.phase === 'closedHeld') {
+      return Promise.resolve({ teammate: this.status() });
+    }
+    if (this.closeTask !== null) return this.closeTask;
+    const identity = this.current();
+    if (
+      this.phase === 'active' &&
+      identity.status === 'closed' &&
+      this.runtimeOwner.hasNoRuntimeAuthority()
+    ) {
+      const closedAt = identity.closed_at;
+      if (closedAt === null) {
+        return Promise.reject(
+          new Error('durable closed TeamMate has no closed_at'),
+        );
+      }
+      this.phase = token === null ? 'retired' : 'closedHeld';
+      if (token === null) this.queueClosedFact(closedAt);
+      return Promise.resolve({ teammate: this.status() });
+    }
+    if (this.phase === 'active') this.phase = 'closing';
+    const task = this.transitionToClosed(closeNote, token);
+    this.closeTask = task;
+    void task.catch(() => {
+      if (this.closeTask === task) this.closeTask = null;
+    });
+    return task;
+  }
+
+  private async transitionToClosed(
+    closeNote: string,
+    token: object | null,
+  ): Promise<AgentEntityCloseResult> {
+    this.turns.selectStoppedForCurrent();
+    await this.runtimeOwner.stopForClose();
+    try {
+      await this.turns.drainAdmissions();
+      this.turns.selectStoppedForCurrent();
+      await this.waitForOrdinaryMutations();
+      await this.turns.settleAndDeliverRetained();
+
+      const identity = this.current();
+      const shouldCleanup =
+        this.ownsWorktreeOnClose &&
+        identity.worktree.mode === 'managed' &&
+        identity.worktree.cleanup === 'delete-on-close';
+      const worktree = shouldCleanup
+        ? await this.mustWorktrees().cleanup(identity)
+        : identity.worktree;
+      const closedAt = Date.now();
+      const closed = await this.state.update({
+        status: 'closed',
+        closedAt,
+        closeNote,
+        worktree,
+      });
+      if (token === null) {
+        this.phase = 'retired';
+        this.queueClosedFact(closedAt);
+      } else {
+        this.assertLockToken(token);
+        this.phase = 'closedHeld';
+      }
+      return { teammate: toStatus(closed, null) };
+    } catch (error) {
+      throw error instanceof TeammateClosePhaseError
+        ? error
+        : new TeammateClosePhaseError(this.name, error);
+    }
+  }
+
+  private unlock(token: object): void {
+    this.assertLockToken(token);
+    if (this.phase === 'closing') {
+      throw new Error(
+        `TeamMate ${JSON.stringify(this.name)} cannot unlock while closing`,
       );
     }
-    const envelope: CompletionEnvelope = {
-      kind: 'teammate',
-      source: identity.name,
-      id: `${identity.name}:${settled.turnId}`,
-      status: settled.status,
-      result,
-    };
-    const settleWrite = this.turnSubmissions.persist(() =>
-      recordSettledTurn(this.turnsStore, this.state, {
-        turnId: settled.turnId,
-        assistant: result,
-        settleStatus: settled.status,
-        assistantTruncated: settled.result?.truncated === true,
-      }));
-    this.settleWrites.add(settleWrite);
-    await Promise.allSettled([settleWrite]);
-    this.settleWrites.delete(settleWrite);
-    await Promise.allSettled([
-      this.deps.routeSettledCompletion(
-        identity.name,
-        settled.turnId,
-        envelope,
-      ),
-    ]);
+    this.lockToken = null;
+    if (this.phase === 'closedHeld') {
+      this.phase = 'retired';
+      const closedAt = this.current().closed_at;
+      if (closedAt === null) {
+        throw new Error('closed-held TeamMate has no durable closed_at');
+      }
+      this.queueClosedFact(closedAt);
+    }
   }
 
-  private async submitPrompt(
-    prompt: string,
-    opts: {
-      turnOrigin: AgentEntityTurnOrigin;
-      outputSchema?: Record<string, unknown>;
-    },
-  ): Promise<AgentEntityTurnResult> {
-    return toTurnResult(await this.submitPromptRuntime(prompt, opts));
-  }
-
-  /** Submit through the neutral runtime seam before adapting to admin DTOs. */
-  private async submitPromptRuntime(
-    prompt: string,
-    opts: {
-      turnOrigin: AgentEntityTurnOrigin;
-      outputSchema?: Record<string, unknown>;
-    },
-  ): Promise<AgentRuntimeTurnResult> {
-    await this.ensureStarted({ reopenClosed: true });
-    const runtime = this.mustRuntime();
-    const submissionSeq = this.deps.nextSubmissionSeq();
-    const result = await this.submitRuntimeTurn(
-      () => runtime.completionInput({
-        sourceId: `teammate:${this.name}:${submissionSeq}`,
-        text: prompt,
-        outputSchema: opts.outputSchema,
-      }),
-      { turnOrigin: opts.turnOrigin, prompt, recordUnsubmitted: true },
-    );
-    return result;
-  }
-
-  private submitRuntimeTurn(
-    operation: () => Promise<AgentRuntimeTurnResult>,
-    input: {
-      turnOrigin: AgentEntityTurnOrigin | null;
-      prompt: string;
-      recordUnsubmitted: boolean;
-    },
-  ): Promise<AgentRuntimeTurnResult> {
-    return this.turnSubmissions.submit(operation, async (result) => {
-      if (result.status !== 'submitted' && !input.recordUnsubmitted) return;
-      await recordSubmittedTurn(this.turnsStore, this.live(), {
-        turnId: result.status === 'submitted' ? result.turnId : null,
-        turnOrigin: input.turnOrigin,
-        prompt: input.prompt,
-      });
+  private queueClosedFact(closedAt: number): void {
+    const identity = this.current();
+    const fact: TeammateClosedFact = Object.freeze({
+      schema_version: 1,
+      kind: 'teammate.closed',
+      dispatcher_id: identity.dispatcher_id,
+      team_id: identity.team_id,
+      name: identity.name,
+      closed_at: closedAt,
+    });
+    const listeners = [...this.closedListeners];
+    queueMicrotask(() => {
+      for (const listener of listeners) {
+        try {
+          void Promise.resolve(listener(fact)).catch((error) => {
+            this.deps.log.warn(
+              { teammate: identity.name, error },
+              'TeamMate retirement listener failed',
+            );
+          });
+        } catch (error) {
+          this.deps.log.warn(
+            { teammate: identity.name, error },
+            'TeamMate retirement listener failed',
+          );
+        }
+      }
     });
   }
 
-  private get turnsStore(): AgentTurnsStore {
-    return this.deps.turnsStore;
-  }
-
-  private live(): { state: AgentRuntimeStateStore } {
-    return { state: this.state };
-  }
-
-  private mustRuntime(): AgentRuntime {
-    const runtime = this.runtime;
-    if (runtime === null) {
-      throw new Error(`TeamMate ${JSON.stringify(this.name)} is not running`);
+  private enterOrdinaryMutation(label: string): () => void {
+    if (this.phase !== 'active' || this.lockToken !== null) {
+      throw new Error(
+        `TeamMate ${JSON.stringify(this.name)} cannot accept ${label}`,
+      );
     }
-    return runtime;
+    this.ordinaryMutations += 1;
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      this.ordinaryMutations -= 1;
+      if (this.ordinaryMutations === 0) {
+        for (const resolve of this.ordinaryIdleWaiters) resolve();
+        this.ordinaryIdleWaiters.clear();
+      }
+    };
+  }
+
+  private waitForOrdinaryMutations(): Promise<void> {
+    if (this.ordinaryMutations === 0) return Promise.resolve();
+    return new Promise((resolve) => this.ordinaryIdleWaiters.add(resolve));
+  }
+
+  private assertLockToken(token: object): void {
+    if (this.lockToken !== token) {
+      throw new Error(`stale TeamMate lock for ${JSON.stringify(this.name)}`);
+    }
   }
 
   private mustWorktrees(): WorktreeManager {
-    const worktrees = this.deps.worktrees;
-    if (worktrees === undefined) {
-      throw new Error(
-        `agent ${JSON.stringify(this.name)} has no worktree manager`,
-      );
+    if (this.deps.worktrees === undefined) {
+      throw new Error(`agent ${JSON.stringify(this.name)} has no worktree manager`);
     }
-    return worktrees;
+    return this.deps.worktrees;
   }
 
-  private resolveCompletionSpillDir(): string {
-    return dispatcherCompletionSpillDir(this.current().dispatcher_id);
-  }
 }
 
-function turnResultToCompletionDelivery(
-  result: AgentRuntimeTurnResult,
-): CompletionDeliveryResult {
-  switch (result.status) {
-    case 'submitted':
-    case 'duplicate':
-      return { status: 'accepted' };
-    case 'stopped':
-      return { status: 'unsupported', reason: 'runtime stopped' };
-    case 'failed':
-      return { status: 'failed', error: result.error };
-    case 'skipped':
-      return {
-        status: 'failed',
-        error: new Error('completion delivery unexpectedly skipped'),
-      };
-  }
+function unsupportedPreparedCompletion(
+  reason: string,
+): PreparedCompletionDelivery {
+  return Object.freeze({
+    submit: async () => ({ status: 'unsupported' as const, reason }),
+  });
 }

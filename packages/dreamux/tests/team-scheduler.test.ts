@@ -7,11 +7,11 @@ import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
   AgentRuntimeCreateContext,
-  AgentRuntimeLastResult,
   AgentRuntimeProvider,
   AgentRuntimeStatus,
   AgentRuntimeTextInput,
-  AgentRuntimeTurnResult,
+  InboundDeliveryResult,
+  RuntimeAdmission,
   ChannelProvider,
   ChannelProviderDescriptor,
   ChannelRoutes,
@@ -24,7 +24,7 @@ import type {
 
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import { adminMethods } from '../src/admin/methods.js';
-import { CompletionRouter } from '../src/service/completion-router/index.js';
+import { CompletionDeliveryPolicy } from '../src/service/completion-router/index.js';
 import { DispatcherService } from '../src/service/dispatcher-service/index.js';
 import { CronJobStore } from '../src/service/scheduler/store.js';
 import {
@@ -33,7 +33,6 @@ import {
 import { TeamUnavailableError } from '../src/service/team-collection/errors.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
 import { ensureDispatcherIdentity } from '../src/service/dispatcher-service/identity.js';
-import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import {
@@ -45,6 +44,7 @@ import { ChannelProviderCatalog } from '../src/channel/catalog.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { Server } from '../src/server.js';
 import { writeRestartIntent } from '../src/daemon/restart-intent.js';
+import { completedRuntimeTurn } from './helpers/runtime-turn.js';
 
 const FAKE_RUNTIME_REF = 'test:runtime';
 
@@ -74,15 +74,15 @@ class FakeRuntime implements AgentRuntime {
     this.status = 'stopped';
   }
 
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+  async channelInput(input: InboundTurnInput): Promise<RuntimeAdmission> {
     this.submitted.push(input);
-    return { status: 'submitted', turnId: `turn-${this.submitted.length}` };
+    return { status: 'submitted', turn: completedRuntimeTurn('fake last') };
   }
 
-  async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
+  async completionInput(input: AgentRuntimeTextInput): Promise<RuntimeAdmission> {
     this.textSubmitted.push(input);
     this.onCompletion?.();
-    return { status: 'submitted', turnId: `text-${this.textSubmitted.length}` };
+    return { status: 'submitted', turn: completedRuntimeTurn('fake last') };
   }
 
   async waitIdle(): Promise<void> {}
@@ -97,10 +97,6 @@ class FakeRuntime implements AgentRuntime {
 
   wasCheckpointResumed(): boolean {
     return false;
-  }
-
-  async getLast(): Promise<AgentRuntimeLastResult> {
-    return { text: 'fake last' };
   }
 
   async getContext(): Promise<null> {
@@ -165,6 +161,9 @@ function fakeRuntimeCatalog(input: {
       ref: { source: 'builtin', id: 'test-runtime', raw: FAKE_RUNTIME_REF },
     },
     getCapabilities: () => CAPABILITIES,
+    async readTranscript() {
+      return { turns: [], nextCursor: null, truncated: false };
+    },
     createRuntime(context: AgentRuntimeCreateContext) {
       input.contexts?.push(context);
       const runtime = input.createRuntime?.(context) ?? new FakeRuntime();
@@ -285,7 +284,7 @@ class CapturingChannelSession implements ChannelSession {
   async emit(
     targetKey: string,
     text: string,
-  ): Promise<AgentRuntimeTurnResult> {
+  ): Promise<InboundDeliveryResult> {
     if (this.routes === null) throw new Error('channel not started');
     return this.routes.deliver(
       { sourceId: `message:${targetKey}:${text}`, text },
@@ -1027,7 +1026,8 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       teamId: created.team.team_name,
       prompt: 'follow up',
     });
-    expect(sent.turn).toEqual({ status: 'submitted', turn_id: 'text-1' });
+    expect(sent.status).toBe('submitted');
+    expect(sent).not.toHaveProperty('turn');
     expect(runtimes).toHaveLength(1);
     expect(runtimes[0]!.textSubmitted.map((input) => input.text)).toEqual([
       'follow up',
@@ -1226,7 +1226,7 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       }),
     ).resolves.toMatchObject({
       teammate: { name: expect.stringMatching(/^tm-fresh-/) },
-      turn: { status: 'submitted' },
+      status: 'submitted',
     });
     await dispatcher.shutdown();
   });
@@ -1917,8 +1917,10 @@ function makeTeams(input: {
     }),
     worktrees: new WorktreeManager(),
     identities: new AgentIdentityStore(input.log),
-    turnsStore: new AgentTurnsStore(input.log),
-    router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log: input.log }),
+    completionDelivery: new CompletionDeliveryPolicy({
+      dispatcherId: 'dispatcher-a',
+      log: input.log,
+    }),
     initiatorFor: async () => null,
     isShuttingDown: () => false,
     adminSocketPath: '/tmp/admin.sock',

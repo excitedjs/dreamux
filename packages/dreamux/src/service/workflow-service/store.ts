@@ -150,11 +150,21 @@ function parseAgent(raw: unknown, path: string, position: number): WorkflowAgent
     name: nullableStringField(raw, 'name', path),
     label: nullableStringField(raw, 'label', path),
     phase: nullableStringField(raw, 'phase', path),
-    turn_id: nullableStringField(raw, 'turn_id', path),
     status: status as WorkflowAgentStatus,
+    result: raw['result'] ?? null,
+    error: optionalNullableStringField(raw, 'error', path),
     created_at: numberField(raw, 'created_at', path),
     settled_at: nullableNumberField(raw, 'settled_at', path),
   };
+}
+
+function optionalNullableStringField(
+  record: Record<string, unknown>,
+  field: string,
+  path: string,
+): string | null {
+  if (!Object.hasOwn(record, field)) return null;
+  return nullableStringField(record, field, path);
 }
 
 function assertRecordScope(

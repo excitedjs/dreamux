@@ -17,19 +17,21 @@ directly unless the symbol belongs on the explicit `service/index.ts` facade.
   per-dispatcher `DispatcherService` aggregates plus process-wide
   shutdown/restart hooks only. It owns **no** teammate/team/channel/router state —
   each `DispatcherService` builds and owns its own object graph (collections,
-  stores, worktree manager, `CompletionRouter`, `ChannelService`, and the
+  stores, worktree manager, stateless `CompletionDeliveryPolicy`,
+  `ChannelService`, and the
   dispatcher agent). This collection only keys them by dispatcher id (Phase 3,
   #233), and shutdown closes its factory admission before sweeping existing
   aggregates so no new dispatcher can materialize after the sweep snapshot.
 - **`server.ts` + `admin/socket.ts`** — the process admission boundary. Admin
   socket requests execute through `Server.admitAdminRequest()`; shutdown closes
-  this admission, drains accepted admin requests, then shuts down dispatchers and
+  this admission and synchronously publishes every materialized dispatcher
+  fence before draining accepted admin requests, then shuts down dispatchers and
   the socket. Do not let admin handlers call mutating services outside this
   process-level gate.
 - **`dispatcher-service/index.ts`** — one dispatcher-local aggregate
   (`DispatcherService`). It *has an* agent — a contained `TeammateService` built
   by `dispatcher-service/agent.ts` (Phase 5, #233) — that owns the agent runtime
-  lifecycle (start/resume/stop). `DispatcherService` keeps the dispatcher-only
+  and logical-close lifecycle. `DispatcherService` keeps the dispatcher-only
   concerns the removed `DispatcherRuntimeService` held: the live `ChannelService`,
   restart-notice injection for explicit resume notices, provider/config-based
   role MCP descriptor assembly, channel-tool dispatch, channel binding ownership,
@@ -39,10 +41,11 @@ directly unless the symbol belongs on the explicit `service/index.ts` facade.
   while leaving the dispatcher runtime dormant; unbound channel inbound,
   dispatcher cron, or an explicit resume notice lazy-starts the contained agent.
   A channel session is published as live only after provider start succeeds. It
-  resolves a settled turn's delivery target via `initiatorFor` (a team member →
+  resolves a Turn's completion target before provider admission via
+  `initiatorFor` and captures the resulting delivery closure (a team member →
   `TeamCollection`'s generation-bound, availability-gated completion adapter; a
   dispatcher-owned teammate / leader → the dispatcher's own `agent`
-  `TeammateService`, the unified router path) and
+  `TeammateService`) and
   orchestrates Team route-owner facts with ChannelService binding operations via
   `TeamChannelCoordinator` and collaboration route reconciliation.
 - **`team-collection/index.ts`** — `TeamCollection` (split out of the old
@@ -118,9 +121,10 @@ directly unless the symbol belongs on the explicit `service/index.ts` facade.
   target resolution, TeamLeader egress checks, and all `ChannelBindingStore`
   reads/writes/summaries/transfer-back operations. It treats Team route owners as
   flat routing data and does not import Team service types. The dispatcher base prompt and runnable-channel guard stay under `dispatcher-service/`. There
-  is **no** `DispatcherRuntimeService`; the at-most-once policy lives in the
-  `CompletionRouter`, while `TeammateService.completionInput` is the core-side
-  delivery target that renders a completion envelope into a plain runtime turn.
+  is **no** `DispatcherRuntimeService`; a stateless completion-delivery policy
+  prepares the target once and retries only explicit pre-admission failures,
+  while `TeammateService.prepareCompletion` captures the target-side submission
+  closure before the source Turn can settle.
 - **`collaboration-space/route-reconciliation.ts`** — the route reconciler owned
   by `CollaborationSpaceService`: it is the single place that reconciles
   collaboration target intent with authoritative channel bindings, coordinates
@@ -137,13 +141,14 @@ directly unless the symbol belongs on the explicit `service/index.ts` facade.
   `target-close-lifecycle.ts` contains only that target-side two-phase handoff;
   it awaits the TeamCollection milestone and never owns a Team state machine.
 - **`teammate-collection/` + `teammate-service/` + `completion-router/`** —
-  `TeammateCollection` (the collection: stores, worktrees, `spawn` / `list` /
-  `history` / `close`, factory paths, per-turn router registration) +
-  `TeammateService` (the single-entity: holds its identity, lazily started
-  runtime, `send` / `status` / `last` / `channelInput`, and `completionInput` as a
-  delivery target) + `CompletionRouter` (per-dispatcher delivery service, keyed by
-  `producerName:turnId`, terminal-cache at-most-once) + identity-store +
-  runtime-state + types + the teammate MCP descriptor. The cross-cutting helpers
+  `TeammateCollection` constructs, subscribes to, caches, resolves, and reads
+  entities; it does not own their close state machine. `TeammateService` owns
+  one identity, its process-local Workflow lock, runtime, canonical Turn
+  objects, terminal outcome/delivery convergence, and idempotent logical close.
+  `completion-router/` contains the stateless per-dispatcher delivery
+  policy; it keeps no Turn registry or terminal cache. Neutral agent config and
+  read helpers live under `agent-entity/`, never under the Collection. The
+  cross-cutting helpers
   `worktree/`, `channel-binding/`, `legacy-state.ts`, `shutdown-errors.ts`, and
   `dispatcher-workspace.ts`
   (the issue #182 dispatcher-cwd policy used by `server.ts` startup, the dispatcher
@@ -201,14 +206,13 @@ directly unless the symbol belongs on the explicit `service/index.ts` facade.
   drives; a dispatcher inspects Teams via `team.*` compact summaries, never
   `teammate.*`.
 - **State is a symmetric directory per agent entity (issue #233).** Every agent
-  is a directory holding `identity.json` (identity + optional `identity_prompt`
-  append-only role guidance + rolling recovery summary: turn_count /
-  last_seen_at / last prompt+assistant previews — the single source
-  for `history` / `list` / `status`, no event fold) and `turn.jsonl` (the ONLY
-  JSONL store: one compact `submit`/`settled` row per turn, turn-only facts, no
-  record fields repeated, folded by `last`). Placement is by role:
+  is a directory holding `identity.json`: durable identity/lifecycle/worktree
+  facts, optional append-only `identity_prompt` role guidance, and an atomic
+  runtime-native `session_id` plus nullable `transcript_locator` checkpoint.
+  It contains no per-Turn archive or rolling conversation projection.
+  Placement is by role:
   `teammate/<name>/` for dispatcher-owned teammates, `team/<team>/` for the team
-  *leader* (its pair sits at the team root, beside `record.json`), and
+  *leader* (its identity sits at the team root, beside `record.json`), and
   `team/<team>/teammate/<name>/` for team members. The `teammate/` and `team/`
   dirs are blind-scan collections of entity dirs only — `channel-bindings.json`
   sits at the dispatcher root, never inside a collection. Identity create uses
@@ -216,15 +220,24 @@ directly unless the symbol belongs on the explicit `service/index.ts` facade.
   derives every path from the identity's `role` + `team_id` (`paths.ts`
   `dispatcherAgentEntityDir`). Reads/lists scan `<scope>/teammate/<name>/`; a
   team-scoped read-by-name two-probes (member dir, then team root for the
-  leader). `last` reads the identity first (existence/scope), then the turn
-  archive — it never starts a runtime, so a closed teammate stays recoverable.
+  leader). `last` reads the identity first (existence/scope), then delegates a
+  cold bounded read to the selected provider's native transcript capability. It
+  never materializes an entity or starts a runtime, so a closed teammate stays
+  recoverable. Provider-native transcript paths are exposed only on direct
+  TeamMate spawn/send receipts; `last`, history, status, Workflow, Channel, and
+  logs never project them.
   Teammate **names stay dispatcher-global**: the live `AgentIdentityStore`
   checks persisted entity directory names before allocating a TeamLeader,
   dispatcher-TeamMate, or Team-member name. Directory names remain occupied
   even when an identity is unreadable, and identity creation is no-clobber.
   The reserved-name guard (`assertNotReservedAgentName`) blocks names that would
   recreate a legacy leaf (`records` / `turns` / …). `session_id` is the
-  runtime-native thread id, persisted directly.
+  runtime-native thread id, persisted atomically with `transcript_locator`.
+  A current-layout `turn.jsonl` left by an older Dreamux is inert residue:
+  Dreamux never creates, opens, stats, lists, validates, repairs, migrates, or
+  deletes it, and its condition cannot block startup or any lifecycle/read
+  operation. Existing rolling conversation keys in `identity.json` are ignored
+  as unknown legacy extras and may disappear on a later normal rewrite.
 - **Old state fails loud, it is never migrated (issue #199 Slice 5, #233).** 0.x
   has no schema migration (issue #98). `legacy-state.ts` is the one place that
   knows the removed layout: `detectLegacyDispatcherState` probes the removed

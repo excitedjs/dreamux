@@ -8,11 +8,6 @@ import {
   type AgentRuntimeProviderCatalog,
 } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
-import {
-  completionKey,
-  type CompletionEnvelope,
-  type CompletionRouter,
-} from '../completion-router/index.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import {
   createTeammateService,
@@ -22,7 +17,6 @@ import {
   dispatcherRuntimeId,
 } from '../agent-entity/runtime-profile.js';
 import type { TeammateService } from '../teammate-service/index.js';
-import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import {
   DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
@@ -37,26 +31,17 @@ export interface DispatcherAgentDeps {
   id: string;
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
-  router: CompletionRouter;
   log: DreamuxLogger;
   mcpServers: readonly AgentRuntimeMcpServer[];
   identity: AgentEntityIdentity;
-  /**
-   * The identity + turns store pair, constructed once by `DispatcherService` and
-   * shared with the dispatcher-scope `TeammateCollection` (issue #233). The stores
-   * are stateless (paths by role + team_id), so one pair safely serves the
-   * dispatcher agent's root identity (role `dispatcher`) and the collection's
-   * teammate reads and generated-name creation (role `teammate`).
-   */
   identities: AgentIdentityStore;
-  turnsStore: AgentTurnsStore;
 }
 
 /**
  * Build the dispatcher's own agent as a contained {@link TeammateService} (issue
  * #233 Phase 5). The dispatcher *has an* agent rather than *being* one: the
  * shared entity owns the runtime lifecycle (start/resume/stop), the
- * `onTurnSettled` → router capture, and `completionInput` as a delivery target,
+ * in-process Turn lifecycle and `completionInput` as a delivery target,
  * while `DispatcherService` keeps the dispatcher-only concerns (channel sessions,
  * restart-intent injection, MCP descriptor assembly).
  *
@@ -71,13 +56,9 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
     config: deps.config,
     agentRuntimeProviders: deps.agentRuntimeProviders,
     identities: deps.identities,
-    turnsStore: deps.turnsStore,
     // The dispatcher agent has no worktree — it neither spawns nor closes, so it
     // never reaches the worktree manager (issue #233 Phase 5).
     log: deps.log,
-    nextSubmissionSeq: createDispatcherSubmissionSeq(),
-    routeSettledCompletion: (producerName, turnId, completion) =>
-      routeSettled(deps.router, producerName, turnId, completion),
     options: {
       mcpServers: deps.mcpServers,
       runtimeId: dispatcherRuntimeId(deps.id),
@@ -104,18 +85,4 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
     },
   });
   return agent;
-}
-
-function createDispatcherSubmissionSeq(): () => number {
-  let seq = 0;
-  return () => ++seq;
-}
-
-async function routeSettled(
-  router: CompletionRouter,
-  producerName: string,
-  turnId: string,
-  completion: CompletionEnvelope,
-): Promise<void> {
-  await router.settle(completionKey(producerName, turnId), completion);
 }

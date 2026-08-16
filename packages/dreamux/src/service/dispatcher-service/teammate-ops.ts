@@ -12,7 +12,7 @@ export function admittedTeammateOps(input: {
     list: () => teammates.list(),
     status: (name) => teammates.status(name),
     history: (historyInput) => teammates.history(historyInput),
-    last: (name, turns) => teammates.last(name, turns),
+    last: (name, query) => teammates.last(name, query),
     getCapabilities: () => teammates.getCapabilities(),
   };
 }

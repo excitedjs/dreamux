@@ -51,6 +51,14 @@ of the Lark SDK.
   parser, and production bot adapter helpers used by the core adapter that
   drives the host-shaped session path.
 
+Inbound delivery receipts are status-only (`submitted`, `duplicate`, `stopped`,
+`failed`, or `ambiguous`). `failed` proves pre-admission rejection; `ambiguous`
+means delivery may have crossed the runtime boundary and is terminal for the
+inbound event, so Feishu does not replay it. The Channel contract does not
+expose a Dreamux Turn identifier, and the read-only core event stream contains
+binding and collaboration facts rather than Turn submitted/settled lifecycle
+events.
+
 Test doubles are deliberately test-local and are not part of the published
 package API.
 

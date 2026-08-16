@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 
 import type {
-  AgentRuntimeTurnResult,
+  InboundDeliveryResult,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
 import type { WorktreeManager } from '../worktree/manager.js';
 import type {
   CompletionInitiator,
+  PreparedCompletionDelivery,
 } from '../completion-router/index.js';
 import { requireLifecycleText } from '../agent-entity/types.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
@@ -95,7 +96,7 @@ export class TeamCollection {
       completionInitiator: (teamId, delegate) =>
         this.completionInitiatorThroughAvailability(
           teamId,
-          (_service, completion) => delegate.completionInput(completion),
+          (_service, completion) => delegate.prepareCompletion(completion),
         ),
       withTeamLeaderLease: (lease, task) =>
         this.withTeamLeaderLease(lease, task),
@@ -356,7 +357,7 @@ export class TeamCollection {
   async deliverToLeader(
     teamId: string,
     turn: InboundTurnInput,
-  ): Promise<AgentRuntimeTurnResult> {
+  ): Promise<InboundDeliveryResult> {
     const id = validateTeamId(teamId);
     return this.withTeamAvailable(id, (service) =>
       service.deliverToLeader(turn),
@@ -375,12 +376,11 @@ export class TeamCollection {
       id,
       async (service, completion) => {
         if (service.leaderName !== leaderName) {
-          return {
-            status: 'unsupported',
-            reason: 'TeamLeader generation is no longer current',
-          };
+          return unsupportedPreparedCompletion(
+            'TeamLeader generation is no longer current',
+          );
         }
-        return service.leader.completionInput(completion);
+        return service.leader.prepareCompletion(completion);
       },
     );
   }
@@ -458,24 +458,38 @@ export class TeamCollection {
     teamId: string,
     deliver: (
       service: TeamService,
-      completion: Parameters<CompletionInitiator['completionInput']>[0],
-    ) => ReturnType<CompletionInitiator['completionInput']>,
+      completion: Parameters<CompletionInitiator['prepareCompletion']>[0],
+    ) => ReturnType<CompletionInitiator['prepareCompletion']>,
   ): CompletionInitiator {
     return {
-      completionInput: async (completion) => {
+      prepareCompletion: async (completion) => {
+        let prepared;
         try {
-          return await this.withTeamAvailable(teamId, (service) =>
+          prepared = await this.withTeamAvailable(teamId, (service) =>
             deliver(service, completion),
           );
         } catch (error) {
           if (error instanceof TeamUnavailableError) {
-            return {
-              status: 'unsupported',
-              reason: 'Team is closing or unavailable',
-            };
+            return unsupportedPreparedCompletion();
           }
           throw error;
         }
+        return Object.freeze({
+          submit: async () => {
+            try {
+              return await this.withTeamAvailable(teamId, () =>
+                prepared.submit());
+            } catch (error) {
+              if (error instanceof TeamUnavailableError) {
+                return {
+                  status: 'unsupported' as const,
+                  reason: 'Team is closing or unavailable',
+                };
+              }
+              throw error;
+            }
+          },
+        });
       },
     };
   }
@@ -603,4 +617,15 @@ export class TeamCollection {
   async stopAll(): Promise<void> {
     await this.runtimes.stopAll();
   }
+}
+
+function unsupportedPreparedCompletion(
+  reason = 'Team is closing or unavailable',
+): PreparedCompletionDelivery {
+  return Object.freeze({
+    submit: async () => ({
+      status: 'unsupported' as const,
+      reason,
+    }),
+  });
 }

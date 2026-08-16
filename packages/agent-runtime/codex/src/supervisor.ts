@@ -54,6 +54,9 @@ export class CodexProcess {
   readonly cwd: string;
   private supervisor: SupervisedChild | null = null;
   private _pid: number | null = null;
+  private startTask: Promise<void> | null = null;
+  private reapTask: Promise<void> | null = null;
+  private reapRequested = false;
   private reaped = false;
   private readonly exitHandlers: CodexProcessExitHandler[] = [];
 
@@ -72,9 +75,20 @@ export class CodexProcess {
 
   /** Spawn the daemon and resolve once its listen socket is bound. */
   async start(): Promise<void> {
-    if (this.supervisor !== null) {
+    if (this.supervisor !== null || this.startTask !== null) {
       throw new Error('CodexProcess.start: already started');
     }
+    this.assertStartAllowed();
+    const task = this.startProcess();
+    this.startTask = task;
+    try {
+      await task;
+    } finally {
+      if (this.startTask === task) this.startTask = null;
+    }
+  }
+
+  private async startProcess(): Promise<void> {
     const binPath =
       this.opts.binPath ?? (process.env['CODEX_HOST_CODEX_BIN'] || 'codex');
     const args = [
@@ -103,61 +117,95 @@ export class CodexProcess {
     // so they cannot be garbage-collected — and thus closed out from under the
     // child — between open and spawn. They are closed once the child owns the
     // inherited fds, matching the previous openSync/closeSync timing.
-    const stdoutHandle = await open(this.opts.stdoutLogPath, 'a', 0o600);
-    const stderrHandle = await open(this.opts.stderrLogPath, 'a', 0o600);
-    const supervisor = new SupervisedChild({
-      kind: 'spawn',
-      command: binPath,
-      args,
-      options: {
-        cwd: this.opts.cwd,
-        env: this.opts.env ?? process.env,
-        stdio: ['ignore', stdoutHandle.fd, stderrHandle.fd],
-      },
-    });
-    supervisor.onError(() => {
-      /* daemon-side error, can no longer affect this process */
-    });
-    supervisor.onExit((exit) => {
-      if (this.reaped) return;
-      for (const handler of this.exitHandlers) {
-        try {
-          handler(exit);
-        } catch {
-          /* exit observers must not poison process event dispatch */
+    const logHandles: Array<Awaited<ReturnType<typeof open>>> = [];
+    try {
+      const stdoutHandle = await open(this.opts.stdoutLogPath, 'a', 0o600);
+      logHandles.push(stdoutHandle);
+      const stderrHandle = await open(this.opts.stderrLogPath, 'a', 0o600);
+      logHandles.push(stderrHandle);
+      this.assertStartAllowed();
+      const supervisor = new SupervisedChild({
+        kind: 'spawn',
+        command: binPath,
+        args,
+        options: {
+          cwd: this.opts.cwd,
+          env: this.opts.env ?? process.env,
+          stdio: ['ignore', stdoutHandle.fd, stderrHandle.fd],
+        },
+      });
+      supervisor.onError(() => {
+        /* daemon-side error, can no longer affect this process */
+      });
+      supervisor.onExit((exit) => {
+        if (this.reapRequested || this.reaped) return;
+        for (const handler of this.exitHandlers) {
+          try {
+            handler(exit);
+          } catch {
+            /* exit observers must not poison process event dispatch */
+          }
         }
+      });
+      // Publish termination authority before the spawn await. A concurrent
+      // reap waits for this start task and can never miss a late child.
+      this.supervisor = supervisor;
+
+      try {
+        const child = await supervisor.start();
+        this.assertStartAllowed();
+        const pid = child.pid!;
+        this._pid = pid;
+        await waitForSocket(
+          this.opts.socketPath,
+          pid,
+          this.opts.readyTimeoutMs ?? 10000,
+        );
+        this.assertStartAllowed();
+      } catch (error) {
+        try {
+          await this.terminateSpawnedProcess();
+        } catch (stopError) {
+          throw new AggregateError(
+            [error, stopError],
+            'Codex process start failed and termination could not be proved',
+          );
+        }
+        throw error;
       }
-    });
-
-    let child;
-    try {
-      child = await supervisor.start();
     } finally {
-      await stdoutHandle.close();
-      await stderrHandle.close();
-    }
-
-    const pid = child.pid!;
-    this.supervisor = supervisor;
-    this._pid = pid;
-
-    try {
-      await waitForSocket(
-        this.opts.socketPath,
-        pid,
-        this.opts.readyTimeoutMs ?? 10000,
+      // The child already inherited these descriptors. Parent-side close
+      // errors cannot make a successfully supervised child unowned.
+      await Promise.all(
+        logHandles.map((handle) => handle.close().catch(() => undefined)),
       );
-    } catch (e) {
-      await this.reap();
-      throw e;
     }
   }
 
   /** SIGTERM → 1s wait → SIGKILL group. Idempotent. */
-  async reap(): Promise<void> {
-    if (this.reaped) return;
+  reap(): Promise<void> {
+    if (this.reaped) return Promise.resolve();
+    if (this.reapTask !== null) return this.reapTask;
+    this.reapRequested = true;
+    const task = this.reapProcess();
+    this.reapTask = task;
+    void task.catch(() => {
+      if (this.reapTask === task) this.reapTask = null;
+    });
+    return task;
+  }
+
+  private async reapProcess(): Promise<void> {
+    // If no supervisor has been published, `reapRequested` is itself the
+    // fence: every later pre-spawn seam checks it before creating a child. Do
+    // not join an arbitrary filesystem/startup wait that owns no process yet.
+    if (this.supervisor !== null) await this.terminateSpawnedProcess();
     this.reaped = true;
-    await this.supervisor?.stop();
+  }
+
+  private async terminateSpawnedProcess(): Promise<void> {
+    const supervisor = this.supervisor;
+    await supervisor?.stop();
     try {
       await rm(this.opts.socketPath, { force: true });
     } catch {
@@ -168,7 +216,16 @@ export class CodexProcess {
     // flows over the socket, so they are usually empty (issue #182 logs stage).
     await removeEmptyLogFile(this.opts.stdoutLogPath);
     await removeEmptyLogFile(this.opts.stderrLogPath);
-    this.supervisor = null;
+    if (this.supervisor === supervisor) {
+      this.supervisor = null;
+      this._pid = null;
+    }
+  }
+
+  private assertStartAllowed(): void {
+    if (this.reapRequested || this.reaped) {
+      throw new Error('CodexProcess.start: stopped during start');
+    }
   }
 }
 

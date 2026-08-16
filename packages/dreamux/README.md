@@ -38,7 +38,7 @@ Design background:
   `builtin:codex` and `builtin:claude-code` Agent Runtime providers, and
   role-gated MCP shims for channel replies, Teams, TeamMates, and cron.
 - Server-hosted TeamMate and Team ledgers with asynchronous turn delivery,
-  recovery reads, bounded retry, and read-only result retrieval.
+  recovery reads, bounded retry, and cold provider-native transcript retrieval.
 
 ## Current Contract
 
@@ -55,9 +55,10 @@ Design background:
   all accepted messages share one dispatcher runtime context. Do not bind
   unrelated private chats to the same dispatcher.
 - **Dispatcher cwd is explicit.** Codex-backed dispatchers use Codex's global
-  default home (`~/.codex`) for auth, memory, and config. Claude Code-backed
-  dispatchers use Claude Code's own CLI/auth behavior. Bundled skills are
-  injected at runtime by role (not written into the dispatcher cwd).
+  default home (`~/.codex`) for auth, memory, config, and native sessions.
+  Claude Code-backed dispatchers use Claude Code's own CLI/auth/session
+  behavior. Bundled skills are injected at runtime by role (not written into
+  the dispatcher cwd).
 - **Inbound state is in memory.** The server keeps only process-local turn
   queues, message dedupe, coalescing state, and received-reaction ownership.
   Restarting the server drops unprocessed inbound messages and may leave
@@ -71,8 +72,11 @@ Design background:
   it only forwards provider-owned tools for the selected channel.
 - **TeamMate is server-hosted.** `spawn` starts a named, semi-resident TeamMate
   and returns its concrete name; `send` submits follow-up turns and reopens a
-  closed TeamMate when the runtime can resume it; `last` and `history` recover
-  durable results without starting a runtime.
+  closed TeamMate when the runtime can resume it. Direct `spawn` and `send`
+  receipts include the current validated native `transcript_path`, or `null`
+  before a session exists. `last` reads bounded, pageable completed turns from
+  that provider-native transcript without starting a runtime; `history` remains
+  an identity/lifecycle recovery view.
 - **No webhook surface in the current contract.** Feishu inbound uses the SDK long-connection
   WebSocket path. Webhook-only verification/encryption fields are not part of
   the config schema.
@@ -114,8 +118,9 @@ logs:
 | `~/.dreamux/run/restart-intent.json` | One-shot daemon restart marker; volatile run file | the server |
 | `~/.dreamux/run/sockets/` | Fallback root for ephemeral Codex app-server rendezvous sockets (preferred root: `$XDG_RUNTIME_DIR/dreamux/sockets/`); random per start, never persisted | the server |
 | `~/.dreamux/state/<id>/access.json` | Dispatcher-local Feishu access state: schema/runtime ledger are Channel-owned; policy fields and quiesced `allow_users` maintenance are operator-authorized | mixed |
-| `~/.dreamux/state/<id>/identity.json` | Dispatcher root agent identity and runtime recovery state | the server |
-| `~/.dreamux/state/<id>/teammate/` | TeamMate task ledger, results, and delivery retry state | the server |
+| `~/.dreamux/state/<id>/identity.json` | Dispatcher root identity plus native runtime session/transcript checkpoint | the server |
+| `~/.dreamux/state/<id>/teammate/<name>/identity.json` | Dispatcher TeamMate identity plus native runtime session/transcript checkpoint | the server |
+| `~/.dreamux/state/<id>/team/<team-id>/` | Team record, TeamLeader identity, Team members, and Team-scoped Workflow state | the server |
 | `~/.dreamux/cache/<id>/spill/` | Over-budget teammate completion spill files; rebuildable cache, only the path is inlined into a dispatcher turn | the server |
 | `~/.dreamux/cache/<id>/` | Per-dispatcher provider cache root; providers own subdirectories such as Feishu attachment cache | the server |
 | `~/.dreamux/cache/claude-code/` | Claude Code MCP config and skill adapters; rebuildable provider cache | the server |
@@ -127,6 +132,10 @@ logs:
 `~/.dreamux/run/` and `~/.dreamux/cache/` are rebuildable while no server is
 running. Durable `~/.dreamux/state/` is not a generic cleanup target; preserve
 it unless an exact state owner and documented recovery contract say otherwise.
+Dreamux does not create, read, validate, or repair per-entity `turn.jsonl`
+files. Any such file left in a current entity directory is inert residue: its
+presence, contents, permissions, or parseability never block startup or a
+lifecycle operation, and no migration or cleanup is required.
 
 ## Configure dispatchers
 
@@ -362,6 +371,13 @@ MCP servers. Dispatcher-facing TeamMate tools are:
 - `close`: close a named TeamMate and retain its history.
 - `list`, `status`, `history`, `last`, `get_capabilities`: inspect and recover
   TeamMate state by concrete name.
+
+`last` accepts `turns` (default 1, range 1 through 50), an opaque backward
+pagination `cursor`, and `include_tools`. It returns provider-neutral message
+and tool blocks under a fixed 262144-byte output budget. It exposes neither
+native IDs nor filesystem paths. Native `transcript_path` is intentionally
+limited to direct `spawn` and `send` receipts; treat that machine-local path as
+operator-private.
 
 Dispatcher-facing Team tools are `create`, `send`, `list`, `status`, `history`,
 `dissolve`, `bind_channel`, and `transfer_back`. TeamLeader callers receive only

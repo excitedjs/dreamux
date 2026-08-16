@@ -2,10 +2,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 
 import type {
-  AgentRuntimeTurnResult,
+  InboundDeliveryResult,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
@@ -82,8 +82,11 @@ describe('feishu inbound delivery', () => {
     await saveDispatcherAccess(stateDir, state);
   }
 
-  function buildHandle(state: FeishuChannelState, bot: ReturnType<typeof createFakeFeishuBot>) {
-    const log = noopLogger();
+  function buildHandle(
+    state: FeishuChannelState,
+    bot: ReturnType<typeof createFakeFeishuBot>,
+    log: DreamuxLogger = noopLogger(),
+  ) {
     return sessionHandle(
       {
         dispatcherId: 'dispatcher-a',
@@ -109,13 +112,14 @@ describe('feishu inbound delivery', () => {
       inboundReactions: new Map(),
       pendingReceivedReactionClears: new Set(),
     };
-    const handle = buildHandle(state, bot);
+    const messages: string[] = [];
+    const handle = buildHandle(state, bot, captureLogger(messages));
 
     const submitter: FeishuInboundSubmitter = {
       submitTurn: async (
         _input: InboundTurnInput,
         _envelope: FeishuInboundEnvelope,
-      ): Promise<AgentRuntimeTurnResult> => {
+      ): Promise<InboundDeliveryResult> => {
         throw new Error('boom submit failed');
       },
     };
@@ -135,6 +139,36 @@ describe('feishu inbound delivery', () => {
     // The removed reaction id matches the added reaction id (same reaction
     // cleared, not a different one).
     expect(removeOps[0]?.reactionId).toBe(addOps[0]?.reactionId);
+    expect(messages).toContain(
+      'feishu inbound admission was ambiguous; not replaying',
+    );
+  });
+
+  it('clears received and never marks progress for an ambiguous admission', async () => {
+    await allowSender();
+    const bot = createFakeFeishuBot('fake-bot');
+    const state: FeishuChannelState = {
+      inboundReactions: new Map(),
+      pendingReceivedReactionClears: new Set(),
+    };
+    const messages: string[] = [];
+    const handle = buildHandle(state, bot, captureLogger(messages));
+    const submitTurn = vi.fn(async (): Promise<InboundDeliveryResult> => ({
+      status: 'ambiguous',
+      error: new Error('native response was lost'),
+    }));
+
+    await onMessage(handle, makeEvent(), { submitTurn });
+
+    expect(submitTurn).toHaveBeenCalledTimes(1);
+    expect(state.inboundReactions.size).toBe(0);
+    expect(bot.reactionOps).toEqual([
+      expect.objectContaining({ op: 'add', emoji: RECEIVED_REACTION_EMOJI }),
+      expect.objectContaining({ op: 'remove' }),
+    ]);
+    expect(messages).toContain(
+      'feishu inbound admission was ambiguous; not replaying',
+    );
   });
 
   it('upgrades received to in_progress when submitTurn returns submitted', async () => {
@@ -147,9 +181,8 @@ describe('feishu inbound delivery', () => {
     const handle = buildHandle(state, bot);
 
     const submitter: FeishuInboundSubmitter = {
-      submitTurn: async (): Promise<AgentRuntimeTurnResult> => ({
+      submitTurn: async (): Promise<InboundDeliveryResult> => ({
         status: 'submitted',
-        turnId: 'turn-1',
       }),
     };
 
@@ -183,9 +216,8 @@ describe('feishu inbound delivery', () => {
     };
     const handle = buildHandle(state, bot);
     const submitter: FeishuInboundSubmitter = {
-      submitTurn: async (): Promise<AgentRuntimeTurnResult> => ({
+      submitTurn: async (): Promise<InboundDeliveryResult> => ({
         status: 'submitted',
-        turnId: 'turn-1',
       }),
     };
 
@@ -212,9 +244,9 @@ describe('feishu inbound delivery', () => {
     let captured: InboundTurnInput | undefined;
 
     const submitter: FeishuInboundSubmitter = {
-      submitTurn: async (input): Promise<AgentRuntimeTurnResult> => {
+      submitTurn: async (input): Promise<InboundDeliveryResult> => {
         captured = input;
-        return { status: 'submitted', turnId: 'turn-1' };
+        return { status: 'submitted' };
       },
     };
 
@@ -226,3 +258,15 @@ describe('feishu inbound delivery', () => {
     expect(captured?.text).toBe(captured?.body);
   });
 });
+
+function captureLogger(messages: string[]): DreamuxLogger {
+  const log = noopLogger() as DreamuxLogger & {
+    error: (...args: unknown[]) => void;
+  };
+  log.error = (...args: unknown[]) => {
+    const message = args.at(-1);
+    if (typeof message === 'string') messages.push(message);
+  };
+  log.child = () => log;
+  return log;
+}

@@ -1,7 +1,7 @@
 # Dispatcher Orchestration
 
 This page is the stable contract for Dreamux's core orchestration model:
-Dispatchers, Teams, TeamMates, completion routing, MCP projections, and
+Dispatchers, Teams, TeamMates, completion delivery, MCP projections, and
 workspace ownership.
 
 Read this before changing `service/`, TeamMate/Team MCP tools, completion
@@ -17,11 +17,11 @@ aggregate and owns:
 - a dispatcher-local `ChannelService`;
 - the dispatcher-scope `TeammateCollection`;
 - the per-dispatcher `TeamCollection`;
-- one `CompletionRouter`;
+- one stateless `CompletionDeliveryPolicy`;
 - one `WorktreeManager`;
-- one shared `AgentIdentityStore` + `AgentTurnsStore` pair (built at
-  construction in `service/agent-entity/` and injected into the dispatcher
-  agent, dispatcher-scope teammate collection, and each Team's collection /
+- one shared `AgentIdentityStore` (built at construction in
+  `service/agent-entity/` and injected into the dispatcher agent,
+  dispatcher-scope teammate collection, and each Team's collection /
   TeamService / member collection);
 - the dispatcher scheduler.
 
@@ -44,8 +44,9 @@ to that dispatcher agent share the same runtime conversation unless a lower
 layer explicitly routes them to a TeamLeader or TeamMate runtime.
 
 Channel-originated turns are not persisted as an inbound queue. A server restart
-drops queued or in-flight inbound work; durable recovery is through per-agent
-turn records and read surfaces, not replaying channel events.
+drops queued or in-flight inbound work; durable recovery is through identity,
+provider-native transcripts, and aggregate-owned Workflow/Team records, not
+replaying channel events.
 
 Visible channel communication remains provider-owned. Assistant text produced
 by the dispatcher runtime is not automatically delivered back to a chat; the
@@ -67,12 +68,21 @@ The service layer follows a collection + entity pattern:
 |---|---|---|
 | `Dispatchers` | `DispatcherService` | dispatcher aggregate factory/cache |
 | `TeamCollection` | `TeamService` | Team records, TeamLeader, members |
-| `TeammateCollection` | `TeammateService` | named agent records and runtime lifecycle |
+| `TeammateCollection` | `TeammateService` | scoped construction/cache/reads vs. entity-owned lifecycle |
 
 The dispatcher has an agent; it is not itself an Agent Runtime. A Team has a
 TeamLeader agent; the TeamLeader is not stored in the members collection. This
 keeps dispatcher-only concerns and Team-only concerns out of the reusable
 `TeammateService` entity.
+
+`TeammateService` is the sole command owner for one agent entity. It owns its
+mutation admission, Workflow lock, runtime authority, in-process Turn objects,
+terminal outcome/delivery convergence, close single-flight, and retirement
+fact.
+`TeammateCollection` owns scoped construction, canonical per-name
+materialization, the exact-object cache subscription, roster queries, and reads.
+It never enters close for cache bookkeeping and never owns a bulk runtime or
+membership shutdown verb.
 
 One service class belongs in one file or directory. A class with helpers gets a
 directory whose `index.ts` is the class and sibling files are helpers.
@@ -83,6 +93,7 @@ Source:
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
 - `/packages/dreamux/src/service/team-service/index.ts`
 - `/packages/dreamux/src/service/teammate-service/index.ts`
+- `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
 
 ## Teammate Model
 
@@ -102,8 +113,24 @@ dispatcher-facing tools are:
 and `close` must use that concrete name. `send` reopens a closed TeamMate from
 the runtime-native `session_id`; there is no standalone `resume` verb.
 
-Read tools do not start or resume runtimes. `last` first checks the record, then
-folds recent settled turns from that entity's `turn.jsonl`.
+Read tools do not start or resume runtimes. `last` first checks the identity and
+scope, then delegates a bounded cold read to the selected Agent Runtime
+provider's native transcript. It materializes no entity and stores no transcript
+copy, index, or cursor.
+
+Every accepted logical input is retained as one entity-owned `Turn` object over
+one provider-owned `RuntimeTurn`. Folds return the same object. Public receipts,
+Workflow records, Channel contracts, and identity state do not expose an id
+merely to re-find that in-process object. The first immutable outcome wins the
+object latch; optional completion delivery is a bounded captured closure.
+Dreamux persists no Turn archive or rolling conversation projection.
+
+The runtime checkpoint stores the provider-native session id plus an optional
+opaque transcript locator. Direct TeamMate `spawn` and `send` receipts expose
+that validated native path when the association exists. `last`, history,
+status, Workflow, Team, Channel, completion delivery, logs, and metrics do not.
+A per-entity `turn.jsonl` left by an older release is inert no-touch residue and
+cannot block startup or lifecycle behavior.
 
 Source:
 
@@ -132,7 +159,7 @@ TeamLeader entities live at the Team root. Team members live under that Team's
 
 Source:
 
-- `/packages/dreamux/src/service/teammate-collection/read-helpers.ts`
+- `/packages/dreamux/src/service/agent-entity/read-helpers.ts`
 - `/packages/dreamux/src/service/team-service/leader-agent.ts`
 - `/packages/dreamux/src/platform/paths.ts`
 
@@ -194,7 +221,10 @@ retained. Clean `delete-on-close` cleanup performs no ref or history scan and
 uses only non-forced `git worktree remove <path>`, preserving the managed branch
 and commits. Branch/ref deletion is outside Team dissolve.
 Shutdown interrupts cancellable idle waits and retry timers before admitted-task
-drain, preserving the durable phase for startup recovery.
+drain, preserving the durable phase for startup recovery. After Workflow stop,
+Team lifecycle callers canonically materialize every durable non-closed member
+and invoke each entity's normal close; a cold cache is not proof that no member
+needs lifecycle convergence.
 
 `team.create` may include a first `prompt`; if omitted, the TeamLeader starts
 idle and waits for later Team MCP `send` or bound-channel inbound. Team-owned
@@ -208,33 +238,31 @@ Source:
 
 ## Completion Routing
 
-Completion delivery is per-dispatcher and per-turn. A delivery-initiating action
-(`spawn`, `send`, or team-create-with-prompt) registers:
-
-```text
-producerName:turnId -> initiator
-```
-
-The initiator is the dispatcher agent or a TeamLeader. When the producer's turn
-settles, `CompletionRouter` forwards a completion envelope into the initiator's
-`completionInput`, then clears the registration.
+Completion delivery is captured by object and closure, not reconstructed through
+a dispatcher-wide key. A delivery-initiating action (`spawn`, `send`, or
+team-create-with-prompt) resolves its initiator before runtime admission and
+attaches one closure to the entity-owned `Turn`. After the winning terminal
+outcome is selected, that Turn invokes the shared stateless
+`CompletionDeliveryPolicy`.
 
 Key invariants:
 
-- the key includes producer name because `turnId` is runtime-local;
-- names stay dispatcher-global so `producerName:turnId` is collision-free;
-- channel inbound and remote-control turns do not register, so they are recorded
-  but not pushed;
-- delivery is at-most-once;
-- every terminal branch is cached, not only successful delivery;
-- lost in-memory registrations after restart are acceptable because durable
-  recovery is through `last`.
+- the initiating action retains the target directly; there is no Turn id lookup
+  map or terminal registry;
+- channel inbound and remote-control turns do not attach a completion closure,
+  so they are not pushed;
+- one Turn starts at most one delivery task after outcome selection;
+- completion preparation and each submission attempt are deadline-bounded;
+- only an explicit provider-proven pre-admission failure may retry; a throw,
+  timeout, or `ambiguous` admission is terminal and never replayed;
+- completion delivery is process-local and is not replayed after restart;
+  durable recovery is through `last` and Workflow/TeamMate records.
 
 Source:
 
 - `/packages/dreamux/src/service/completion-router/index.ts`
 - `/packages/dreamux/src/service/teammate-service/turn-recording.ts`
-- `/packages/dreamux/src/service/dispatcher-service/agent.ts`
+- `/packages/dreamux/src/service/teammate-service/turn-coordinator.ts`
 
 ## Workspaces
 
@@ -258,7 +286,7 @@ Source:
 
 - `/packages/dreamux/src/service/dispatcher-workspace.ts`
 - `/packages/dreamux/src/service/worktree/`
-- `/packages/dreamux/src/service/teammate-collection/agent-config.ts`
+- `/packages/dreamux/src/service/agent-entity/agent-config.ts`
 
 ## MCP Boundaries
 
@@ -311,6 +339,7 @@ Source:
 ## Decision Trail
 
 - [Dispatcher-local aggregate](../decisions/dispatcher-local-aggregate.md)
+- [Entity-owned TeamMate lifecycle and object Turns](../decisions/entity-owned-teammate-lifecycle-and-object-turns.md)
 - [Service architecture refactor](../decisions/service-architecture-refactor.md)
 - [Provider architecture realignment](../decisions/provider-architecture-realignment.md)
 - [Server-hosted TeamMate](../decisions/server-hosted-teammate.md)

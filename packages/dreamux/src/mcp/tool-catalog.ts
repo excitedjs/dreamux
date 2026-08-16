@@ -108,21 +108,15 @@ export function arrayOf(items: Record<string, unknown>): Record<string, unknown>
   return { type: 'array', items };
 }
 
-/**
- * The canonical submission-turn result shared by the prompt-submitting tools
- * (`teammate.spawn`, `teammate.send`, `team.create`, `team.send`). This is the
- * load-bearing receipt schema: a mismatch must be caught by tests before a
- * side-effecting handler can report failure after Dreamux accepted the work.
- */
-export const SUBMISSION_TURN_SCHEMA: Record<string, unknown> = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    status: { type: 'string', enum: ['submitted', 'duplicate', 'stopped', 'failed'] },
-    turn_id: { type: 'string' },
-    error: { type: 'string' },
-  },
-  required: ['status'],
+/** Canonical top-level admission status for prompt-submission receipts. */
+export const SUBMISSION_STATUS_SCHEMA: Record<string, unknown> = {
+  type: 'string',
+  enum: ['submitted', 'duplicate', 'stopped', 'failed', 'ambiguous'],
+};
+
+/** Optional public error text accompanying failed or ambiguous admission. */
+export const SUBMISSION_ERROR_SCHEMA: Record<string, unknown> = {
+  type: 'string',
 };
 
 /**

@@ -16,8 +16,8 @@ export {
 
 export {
   ClaudeCodeRuntime,
-  type ClaudeCodeRuntimeDeps,
 } from './runtime.js';
+export type { ClaudeCodeRuntimeDeps } from './runtime-deps.js';
 
 export {
   createDefaultClaudeCodeSession,

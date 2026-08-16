@@ -230,14 +230,19 @@ semi-resident agents. `spawn` creates one, `send` submits follow-up turns and
 reopens closed agents, and read tools (`history`, `list`, `status`, `last`) do
 not start a runtime.
 
-Agent entity state — identity, turn archive, runtime state, and the shared
-types/name validation — lives in the neutral
+Agent entity state — identity, runtime state, transcript read coordination, and
+the shared types/name validation — lives in the neutral
 `/packages/dreamux/src/service/agent-entity/` layer. It is path-based and
-role-agnostic: `DispatcherService` builds one shared `AgentIdentityStore` +
-`AgentTurnsStore` pair at construction and injects it into the dispatcher
-agent, the dispatcher-scope `TeammateCollection`, and each Team's
-`TeamCollection` / `TeamService` / member `TeammateCollection`. Stores are
-never self-built inside agent collections (PR #282 owner-boundary fix).
+role-agnostic: `DispatcherService` builds one shared `AgentIdentityStore` at
+construction and injects it into the dispatcher agent, the dispatcher-scope
+`TeammateCollection`, and each Team's `TeamCollection` / `TeamService` / member
+`TeammateCollection`. Collections never self-build the store (PR #282
+owner-boundary fix). Detailed conversation history is not a Dreamux state
+store: `TeammateCollection.last()` reads identity, resolves the selected
+`AgentRuntimeProvider`, and delegates a bounded cold `readTranscript()` without
+materializing an entity or starting a runtime. `list` and `history` apply the
+same dispatcher/team role predicate as targeted reads before projecting any
+physically discovered identity.
 
 Team creation takes `name_prefix` and returns a concrete `team_name` with a
 4–8 character random suffix. Core publishes a fully written
@@ -276,11 +281,45 @@ TeamLeaders still use their scoped TeamMate MCP to send to members.
 
 Each `TeamService` directly builds and holds its TeamLeader `TeammateService`
 through `/packages/dreamux/src/service/team-service/leader-agent.ts`, using the
-same dispatcher-owned identity store, turns store, worktree manager, and
-completion router that its owning `TeamCollection` injects. The per-team
-`TeammateCollection` is members-only: it spawns and caches team members under
-`team/<team>/teammate/<name>/`, while the TeamLeader lives at the team root and
-is never cached in the collection's entity map.
+same dispatcher-owned identity store, worktree manager, and
+completion-delivery policy that its owning `TeamCollection` injects. The
+per-team `TeammateCollection` is members-only: it spawns and caches team members
+under `team/<team>/teammate/<name>/`, while the TeamLeader lives at the team
+root and is never cached in the collection's entity map.
+
+`TeammateService` is the sole lifecycle command owner for every dispatcher
+agent, TeamMate, TeamLeader, and Team member. It owns mutation admission, its
+process-local Workflow lock, raw runtime authority, in-process Turn objects,
+terminal outcome selection, bounded completion delivery, close single-flight,
+and committed retirement fact.
+`TeammateCollection` owns scoped construction, canonical per-name
+materialization, cache subscription, roster queries, and read projection. A
+close fact lets the Collection remove only its own exact cached reference; the
+Collection does not run entity close steps or a runtime-only shutdown sweep.
+
+One accepted logical input is one provider-owned `RuntimeTurn` plus one
+entity-owned `Turn`. Folds return the exact same object. The first terminal
+outcome is snapshotted into the object-owned latch and optionally delivered
+through a closure captured from the initiating action. Dreamux persists no Turn
+archive or rolling conversation projection. Public receipts, Workflow records,
+Channel contracts, and identity state do not carry a Turn id for in-process
+correlation.
+
+The runtime checkpoint persists the provider-owned session id plus an optional
+opaque `transcript_locator`. Direct TeamMate `spawn` and `send` receipts expose
+that validated canonical native path as `transcript_path`; list, status,
+history, `last`, Workflow, Team, Channel, completion delivery, logs, and metrics
+do not. `last` returns provider-neutral bounded message/tool blocks, an opaque
+backward cursor, and truncation state. Existing per-entity `turn.jsonl` files
+are inert residue: Dreamux does not create, stat, list, open, validate, repair,
+migrate, warn about, or automatically delete them.
+
+The two built-in transcript readers keep native schemas, discovery rules,
+locator validation, cursor envelopes, and typed provider errors inside their
+runtime packages. Neutral byte/hash/safety mechanics — fixed source/output
+bounds, transcript digest validation, bounded discovery accounting, exact
+positional reads, deterministic rendering, and lexical path containment — are
+single-sourced in `/packages/dreamux-utils/src/transcript.ts`.
 
 `TeamCollection` owns the single durable Team dissolve lifecycle. An accepted
 operation is stored on the Team record before its receipt, carries the first
@@ -359,13 +398,15 @@ and currently ignored.
 The parent sends `run_start`, `agent_result`, and `abort`; the runner sends
 `agent_start`, progress `emit` events, and one `run_result`. Agent submission
 re-enters the owning dispatcher admission drain or TeamLeader generation lease.
-Each newly spawned TeamMate has its settle route injected before runtime start,
-so intermediate completions return only to the owning run. The run's single
-terminal completion uses the shared `CompletionRouter` with the original caller
-as initiator. `workflow_run` still creates the durable run and registers that
-terminal route before runner startup, so compilation, dialect, syntax, and
-metadata failures become durable asynchronous failed runs after the immediate
-`{ run_id }` receipt. The durable `script_hash` remains over original source.
+Every Agent call records its materialization promise immediately, retains the
+restricted locked TeamMate handle, and then retains the concrete `Turn` returned
+by submission. Intermediate Agent results await that object directly; no settle
+callback or Turn lookup map is involved. The run's terminal completion captures
+the original caller and invokes the shared stateless bounded delivery policy.
+`workflow_run` still creates the durable run and captures terminal delivery
+before runner startup, so compilation, dialect, syntax, and metadata failures
+become durable asynchronous failed runs after the immediate `{ run_id }`
+receipt. The durable `script_hash` remains over original source.
 
 `workflow_run.args` is an optional direct JSON value. MCP and admin pass the
 received object, array, string, finite number, boolean, or `null` through
@@ -391,14 +432,16 @@ lifecycle. Every pipeline stage receives
 [Dynamic Workflow usage](dynamic-workflow-usage.md#53-exact-limits) for the
 single user-facing owner of the exact numeric limits.
 
-Normal terminal runs wait for in-flight turns, silently close and evict their
-owned TeamMates, and then evict the live run entity. `workflow_stop` reserves
-`stopped` and returns immediately while that natural-settle finalization
-continues in the background. Dispatcher/server shutdown instead kills the
-runner, persists the terminal run without waiting for agent turns, and leaves
-owned runtime cleanup to the following collection-wide force-stop sweep.
-Startup marks durable `running` records as `stopped`; journal replay and run
-resume are not implemented.
+Natural terminal and explicit stop use one retryable close-first pipeline.
+`workflow_stop` immediately fences Agent creation and runner messages, then
+waits for bounded runner termination, joins every materialization, closes every
+locked TeamMate handle, converges Agent results, commits the matching terminal
+journal and record, unlocks members, runs bounded terminal delivery, and only
+then returns the terminal status. A close or persistence failure keeps the run
+non-terminal and retryable; it cannot report success while a borrowed runtime
+remains live. Startup completes a running record from an already-committed
+terminal journal fact when present and otherwise marks the interrupted run
+stopped; Workflow execution and completion delivery are not replayed.
 
 Key source:
 
@@ -423,17 +466,19 @@ inbound delivery/provisioning promises. Startup resumes durable `creating`,
 `failed`, and `closing` target records and releases stale managed claims left on
 inactive targets before any Channel session starts, so start-time strict
 operations cannot race pending-target repair. Stop/shutdown closes admission,
-drains both task sets, and then sweeps every materialized Team runtime before
-closing the rest of the
-service graph. Already accepted provisioning rechecks the shutdown fence before
+stops Workflows, canonically materializes and closes every durable non-closed
+Team and ordinary TeamMate entity, and then drains accepted work before closing
+the rest of the service graph. Already accepted provisioning rechecks the
+shutdown fence before
 Team creation, TeamLeader readiness, and route claim side effects. If a Team
 create was already in flight when the fence rose, provisioning closes that new
 Team before its drained promise settles. A create failure after leader launch
-also stops that leader before propagating the failure. `TeamCollection` retains
+also closes that leader and commits the Team itself closed before propagating
+the failure. `TeamCollection` retains
 ownership of partially booted services that never reached its live cache, so
 shutdown can retry failed create-time cleanup. Team/member/leader stop sweeps
-attempt every materialized runtime and aggregate failures instead of failing
-fast after the first provider error.
+attempt every canonically materialized entity and aggregate failures instead of
+failing fast after the first provider error.
 
 The dispatcher-only `collaboration_space` MCP exposes `bind`, `dissolve`,
 `status`, and `list`. Binding registers an existing external container and a
@@ -488,12 +533,12 @@ creates a new target owner, remote close surface, retained submission state, or
 dispatcher-agent turn. The dispatcher gives each session start a fresh strict
 route lease; revocation makes old closures return `dispatcher_unavailable`
 without reaching those owners. Failed-start rollback revokes first, closes and
-drains admission, then uses the existing materialized-Team runtime sweep while
+canonically stops every durable non-closed Team, then drains admission while
 leaving durable Team and target facts intact.
 
 `DispatcherService` also owns one in-process `DispatcherCoreEventBus` and the
-Channel source leases created from it. Team, identity, turn, channel binding,
-and collaboration-space services remain the fact owners and publish only
+Channel source leases created from it. Team, identity, channel binding, and
+collaboration-space services remain the fact owners and publish only
 allowlisted post-write DTOs through a narrow capability. Binding route events
 are emitted after the channel-binding store returns a real atomic transition,
 and collaboration-space events are emitted after the space store returns its
@@ -676,7 +721,7 @@ names; each runtime maps the names it understands and ignores the rest.
 Current names:
 
 - `userInterrupt`: emitted for every agent at the shared
-  `TeammateService.createAndStart` gate (core-wide rule). It disables the
+  `createTeammateService` construction boundary (core-wide rule). It disables the
   model-facing "ask the user a question" tool, which in a channel-only
   environment would wedge a turn waiting for an out-of-band answer. Claude Code
   maps it to the `AskUserQuestion` disallowed tool; Codex needs no code because
@@ -706,6 +751,7 @@ Key source:
 
 - [Provider architecture realignment](../decisions/provider-architecture-realignment.md)
 - [NPM package split and channel targets](../decisions/npm-package-split-and-channel-targets.md)
+- [Entity-owned TeamMate lifecycle and object Turns](../decisions/entity-owned-teammate-lifecycle-and-object-turns.md)
 - [Domain knowledge](../domains/README.md) for stable provider, channel,
   orchestration, state/file, scheduled-work, and repository contracts
 - [Runtime run root](../decisions/runtime-run-root.md)

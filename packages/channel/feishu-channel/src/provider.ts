@@ -7,7 +7,7 @@
  *
  * The neutral seam is now fully load-bearing (issue #209 cleanup): `start(routes)`
  * forwards the normalized turn input + routing envelope to `routes.deliver` and
- * returns core's REAL `InboundDeliveryResult` (status + turnId), which the
+ * returns core's real status-only `InboundDeliveryResult`, which the
  * session's reaction ledger keys off; provider-level static tools,
  * `handleSessionlessTool`, `getIdentity`, `reply`, `react`, `resolveTarget`,
  * `handleTool`, and `messageBelongsToTarget` are all wired to the real session
@@ -127,7 +127,7 @@ class FeishuChannelSessionAdapter implements ChannelSession {
     await this.session.start({
       // The session normalized the turn into `input`; forward it plus the
       // channel routing envelope to core, and return core's
-      // REAL delivery result (status + turnId) so the session's reaction ledger
+      // Real delivery status so the session's reaction ledger
       // keys off the actually-submitted turn — not a fabricated id.
       submitTurn: (input, envelope) =>
         routes.deliver(input, inboundEnvelopeToChannelEnvelope(this.channel_id, envelope)),

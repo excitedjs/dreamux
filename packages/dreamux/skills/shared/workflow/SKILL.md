@@ -23,11 +23,11 @@ overlapping writes.
 - `workflow_status` reads the current phase, agent progress, concrete TeamMate
   names, and terminal result for one `run_id`.
 - `workflow_list` lists runs in the current caller scope.
-- `workflow_stop` stops a running `run_id`. It reserves the terminal state and
-  returns immediately; in-flight agent turns settle before the stopped terminal
-  completion is delivered. Right after `workflow_stop` returns, `workflow_status`
-  may still read `running` until the run settles to `stopped` — do not treat a
-  transient `running` as a failed stop.
+- `workflow_stop` stops a running `run_id` through the same close-first terminal
+  pipeline used by natural completion. It returns only after every Workflow
+  TeamMate is closed, the terminal journal and record agree, member locks are
+  released, and terminal completion delivery has finished. A successful return
+  therefore makes `workflow_status` observably terminal.
 
 `max_concurrency` defaults to 16 and accepts only integers from 1 through 16.
 Invalid values are rejected before a run is created rather than clamped. Each

@@ -1,13 +1,11 @@
-import type {
-  AgentRuntimeCapabilities,
-} from '@excitedjs/dreamux-types';
+import type { AgentRuntimeCapabilities } from '@excitedjs/dreamux-types';
 
+import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type {
   DreamuxConfig,
   ResolvedAgentConfig,
 } from '../../config/config.js';
-import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
-import type { AgentEntityRuntimeCapability } from '../agent-entity/types.js';
+import type { AgentEntityRuntimeCapability } from './types.js';
 
 export function defaultAgentRuntime(
   config: DreamuxConfig,
@@ -56,8 +54,8 @@ export function agentRuntimeCapability(
   let unsupportedReason: string | null = null;
   try {
     capabilities = providers.resolve(agent.provider).getCapabilities();
-  } catch (err) {
-    unsupportedReason = err instanceof Error ? err.message : String(err);
+  } catch (error) {
+    unsupportedReason = error instanceof Error ? error.message : String(error);
   }
   return {
     id: agentRuntimeId,

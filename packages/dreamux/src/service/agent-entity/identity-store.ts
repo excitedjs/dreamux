@@ -43,6 +43,7 @@ export interface AgentIdentityCreateInput {
   teamId?: string | null;
   agentRuntime: string;
   sessionId?: string | null;
+  transcriptLocator?: string | null;
   sourceCwd: string;
   sourceRepo: string | null;
   cwd: string;
@@ -57,6 +58,7 @@ export interface AgentIdentityCreateInput {
 export interface AgentIdentityUpdateInput {
   agentRuntime?: string;
   sessionId?: string | null;
+  transcriptLocator?: string | null;
   sourceCwd?: string;
   sourceRepo?: string | null;
   cwd?: string;
@@ -68,10 +70,6 @@ export interface AgentIdentityUpdateInput {
   lastError?: string | null;
   closedAt?: number | null;
   closeNote?: string | null;
-  turnCount?: number;
-  lastSeenAt?: number;
-  lastPromptPreview?: string | null;
-  lastAssistantPreview?: string | null;
 }
 
 export interface AgentNameAllocationInput {
@@ -294,6 +292,7 @@ export class AgentIdentityStore {
       team_id: input.teamId ?? null,
       agent_runtime: input.agentRuntime,
       session_id: input.sessionId ?? null,
+      transcript_locator: input.transcriptLocator ?? null,
       source_cwd: input.sourceCwd,
       source_repo: input.sourceRepo,
       cwd: input.cwd,
@@ -308,10 +307,6 @@ export class AgentIdentityStore {
       last_error: null,
       closed_at: null,
       close_note: null,
-      turn_count: 0,
-      last_seen_at: now,
-      last_prompt_preview: null,
-      last_assistant_preview: null,
     };
     const path = dispatcherAgentIdentityPath({
       dispatcherId: identity.dispatcher_id,
@@ -340,6 +335,9 @@ export class AgentIdentityStore {
       ...identity,
       ...(input.agentRuntime !== undefined ? { agent_runtime: input.agentRuntime } : {}),
       ...(input.sessionId !== undefined ? { session_id: input.sessionId } : {}),
+      ...(input.transcriptLocator !== undefined
+        ? { transcript_locator: input.transcriptLocator }
+        : {}),
       ...(input.sourceCwd !== undefined ? { source_cwd: input.sourceCwd } : {}),
       ...(input.sourceRepo !== undefined ? { source_repo: input.sourceRepo } : {}),
       ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
@@ -353,14 +351,6 @@ export class AgentIdentityStore {
       ...(input.lastError !== undefined ? { last_error: input.lastError } : {}),
       ...(input.closedAt !== undefined ? { closed_at: input.closedAt } : {}),
       ...(input.closeNote !== undefined ? { close_note: input.closeNote } : {}),
-      ...(input.turnCount !== undefined ? { turn_count: input.turnCount } : {}),
-      ...(input.lastSeenAt !== undefined ? { last_seen_at: input.lastSeenAt } : {}),
-      ...(input.lastPromptPreview !== undefined
-        ? { last_prompt_preview: input.lastPromptPreview }
-        : {}),
-      ...(input.lastAssistantPreview !== undefined
-        ? { last_assistant_preview: input.lastAssistantPreview }
-        : {}),
       updated_at: Date.now(),
     };
     await this.write(updated);
@@ -468,6 +458,10 @@ function readIdentity(
     agent_runtime: record['agent_runtime'] as string,
     session_id:
       typeof record['session_id'] === 'string' ? record['session_id'] : null,
+    transcript_locator:
+      typeof record['transcript_locator'] === 'string'
+        ? record['transcript_locator']
+        : null,
     source_cwd: sourceCwd,
     source_repo: sourceRepo,
     cwd: record['cwd'] as string,
@@ -488,17 +482,6 @@ function readIdentity(
     last_error: typeof record['last_error'] === 'string' ? record['last_error'] : null,
     closed_at: typeof record['closed_at'] === 'number' ? record['closed_at'] : null,
     close_note: typeof record['close_note'] === 'string' ? record['close_note'] : null,
-    turn_count: typeof record['turn_count'] === 'number' ? record['turn_count'] : 0,
-    last_seen_at:
-      typeof record['last_seen_at'] === 'number' ? record['last_seen_at'] : updatedAt,
-    last_prompt_preview:
-      typeof record['last_prompt_preview'] === 'string'
-        ? record['last_prompt_preview']
-        : null,
-    last_assistant_preview:
-      typeof record['last_assistant_preview'] === 'string'
-        ? record['last_assistant_preview']
-        : null,
   };
 }
 

@@ -1,5 +1,10 @@
 # AgentRuntime lifecycle contracts
 
+> **Archived:** The accepted current contract is
+> [Entity-owned TeamMate lifecycle and object Turns](../../decisions/entity-owned-teammate-lifecycle-and-object-turns.md).
+> This draft preserves the earlier ID/callback design exploration and is not
+> current implementation guidance.
+
 - **Status:** Draft for review
 - **Date:** 2026-06-30
 - **Affects:** `@excitedjs/dreamux-types`, Agent Runtime providers, `TeammateService`, `CompletionRouter`, runtime contract tests
@@ -8,7 +13,7 @@
 
 > Input-surface note: the "Inputs" and completion-delivery method shape below
 > are superseded by
-> [AgentRuntime input surface cleanup](agent-runtime-input-surface-cleanup.md).
+> [AgentRuntime input surface cleanup](../../proposals/agent-runtime-input-surface-cleanup.md).
 > The lifecycle principles here still stand; non-channel turns now converge on
 > plain text `completionInput`, and `systemInput` is no longer the intended
 > provider-facing seam.
@@ -258,7 +263,7 @@ Rules:
 ### Inputs
 
 Superseded by
-[AgentRuntime input surface cleanup](agent-runtime-input-surface-cleanup.md).
+[AgentRuntime input surface cleanup](../../proposals/agent-runtime-input-surface-cleanup.md).
 Keep this section as historical context for the earlier draft.
 
 Core should expose only the runtime inboxes Dreamux actually needs: channel/user

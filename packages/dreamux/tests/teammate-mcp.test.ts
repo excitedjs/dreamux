@@ -7,6 +7,10 @@ import type { CallToolResult, Tool } from '@modelcontextprotocol/client';
 import { describe, expect, it } from 'vitest';
 
 import type { AdminRequest, AdminResponse } from '../src/admin/protocol.js';
+import {
+  TRANSCRIPT_INTERNAL_ERROR_MESSAGE,
+  TRANSCRIPT_PUBLIC_ERRORS,
+} from '../src/admin/transcript-errors.js';
 import { SANITIZED_TOOL_ERROR } from '../src/mcp/server.js';
 import {
   TEAMMATE_DISPATCH_SUCCESS_REMINDER,
@@ -196,7 +200,19 @@ describe('teammate MCP', () => {
       max_concurrency: 4,
       phase: null,
       last_log: null,
-      agents: [],
+      agents: [
+        {
+          index: 0,
+          name: 'reviewer',
+          label: 'review',
+          phase: 'review',
+          status: 'completed',
+          result: { answer: 42 },
+          error: null,
+          created_at: 1,
+          settled_at: 2,
+        },
+      ],
       result: null,
       error: null,
       created_at: 1,
@@ -286,6 +302,150 @@ describe('teammate MCP', () => {
     }
   });
 
+  it.each(TRANSCRIPT_PUBLIC_ERRORS)(
+    'maps transcript admin error $code to fixed MCP text',
+    async ({ code, message }) => {
+      const privateDetail = '/private/native/session.jsonl: provider detail';
+      const logs: string[] = [];
+      const admin = await startFakeAdminServer((request) => ({
+        id: request.id,
+        ok: false,
+        error: { code, message: privateDetail },
+      }));
+      const mcp = await connectMcpClient((transport) =>
+        runTeamMateMcp({
+          dispatcherId: 'dispatcher-a',
+          callerKind: 'dispatcher',
+          adminSocketPath: admin.socketPath,
+          transport,
+          log: (logMessage) => logs.push(logMessage),
+        }),
+      );
+      try {
+        const result = await callTool(mcp.client, 'last', {
+          name: 'reviewer',
+        });
+        expect(result).toMatchObject({
+          isError: true,
+          content: [{ type: 'text', text: message }],
+        });
+        expect(result).not.toHaveProperty('structuredContent');
+        expect(JSON.stringify(result)).not.toContain(privateDetail);
+        expect(logs).toEqual([]);
+      } finally {
+        await mcp.close();
+        await admin.close();
+      }
+    },
+  );
+
+  it('sanitizes unknown transcript admin failures at the MCP boundary', async () => {
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: false,
+      error: {
+        code: 'INTERNAL',
+        message: TRANSCRIPT_INTERNAL_ERROR_MESSAGE,
+      },
+    }));
+    const logs: string[] = [];
+    const mcp = await connectMcpClient((transport) =>
+      runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'dispatcher',
+        adminSocketPath: admin.socketPath,
+        transport,
+        log: (message) => logs.push(message),
+      }),
+    );
+    try {
+      const result = await callTool(mcp.client, 'last', {
+        name: 'reviewer',
+      });
+      expect(result).toMatchObject({
+        isError: true,
+        content: [{ type: 'text', text: SANITIZED_TOOL_ERROR }],
+      });
+      expect(logs).toEqual([
+        "tool 'last' failed: runtime transcript read failed",
+      ]);
+      expect(logs.join('\n')).not.toContain('/private/');
+    } finally {
+      await mcp.close();
+      await admin.close();
+    }
+  });
+
+  it('retains ordinary diagnostics for non-transcript teammate.last failures', async () => {
+    const ordinaryDetail = 'TeamMate "missing" does not exist';
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: false,
+      error: { code: 'INTERNAL', message: ordinaryDetail },
+    }));
+    const logs: string[] = [];
+    const mcp = await connectMcpClient((transport) =>
+      runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'dispatcher',
+        adminSocketPath: admin.socketPath,
+        transport,
+        log: (message) => logs.push(message),
+      }),
+    );
+    try {
+      const result = await callTool(mcp.client, 'last', { name: 'missing' });
+      expect(result).toMatchObject({
+        isError: true,
+        content: [{ type: 'text', text: SANITIZED_TOOL_ERROR }],
+      });
+      expect(logs.join('\n')).toContain(ordinaryDetail);
+      expect(logs.join('\n')).not.toContain('runtime transcript read failed');
+    } finally {
+      await mcp.close();
+      await admin.close();
+    }
+  });
+
+  it('surfaces malformed cursor text as the fixed cursor-invalid error', async () => {
+    const privateDetail = '/private/native/session.jsonl: invalid cursor';
+    const logs: string[] = [];
+    const admin = await startFakeAdminServer((request) => ({
+      id: request.id,
+      ok: false,
+      error: {
+        code: 'TRANSCRIPT_CURSOR_INVALID',
+        message: privateDetail,
+      },
+    }));
+    const mcp = await connectMcpClient((transport) =>
+      runTeamMateMcp({
+        dispatcherId: 'dispatcher-a',
+        callerKind: 'dispatcher',
+        adminSocketPath: admin.socketPath,
+        transport,
+        log: (message) => logs.push(message),
+      }),
+    );
+    try {
+      const result = await callTool(mcp.client, 'last', {
+        name: 'reviewer',
+        cursor: 'not-base64url!',
+      });
+      expect(result).toMatchObject({
+        isError: true,
+        content: [
+          { type: 'text', text: 'The transcript cursor is invalid.' },
+        ],
+      });
+      expect(JSON.stringify(result)).not.toContain(privateDetail);
+      expect(logs).toEqual([]);
+    } finally {
+      await mcp.close();
+      await admin.close();
+    }
+  });
+
   it('accepts workflow concurrency 16 and rejects invalid values before admin', async () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
@@ -363,7 +523,7 @@ describe('teammate MCP', () => {
     }
   });
 
-  it('advertises history as the session-ledger search surface and last with turns (#188)', async () => {
+  it('advertises identity history and the bounded native-transcript last query', async () => {
     const tools = await toolSchemas('dispatcher');
     const history = schemaOf(tools, 'history');
     expect(history.required).toEqual([]);
@@ -375,8 +535,15 @@ describe('teammate MCP', () => {
     }
     expect(schemaOf(tools, 'last')).toMatchObject({
       required: ['name'],
-      properties: { turns: { type: 'integer', minimum: 1, maximum: 5 } },
+      properties: {
+        turns: { type: 'integer', minimum: 1, maximum: 50 },
+        cursor: { type: 'string', minLength: 1, maxLength: 4096 },
+        include_tools: { type: 'boolean' },
+      },
     });
+    for (const removed of ['grep', 'since', 'until', 'max_bytes']) {
+      expect(schemaOf(tools, 'last').properties).not.toHaveProperty(removed);
+    }
     expect(tools.map((tool) => tool.name)).not.toEqual(
       expect.arrayContaining(['ctx', 'history_events']),
     );
@@ -385,7 +552,8 @@ describe('teammate MCP', () => {
   it('forwards spawn to the dispatcher-scoped admin method with a pure receipt', async () => {
     const receipt = {
       teammate: { name: 'reviewer', status: 'running' },
-      turn: { status: 'submitted', turn_id: 'turn-1' },
+      status: 'submitted',
+      transcript_path: '/native/reviewer.jsonl',
     };
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
@@ -445,7 +613,8 @@ describe('teammate MCP', () => {
   it('adds TeamMate success text only to a submitted send receipt', async () => {
     const receipt = {
       teammate: { name: 'reviewer', status: 'running' },
-      turn: { status: 'submitted', turn_id: 'turn-2' },
+      status: 'submitted',
+      transcript_path: '/native/reviewer.jsonl',
     };
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
@@ -476,7 +645,9 @@ describe('teammate MCP', () => {
         request.method === 'teammate.send'
           ? {
               teammate: { name: 'reviewer', status: 'degraded' },
-              turn: { status: 'failed', error: 'runtime unavailable' },
+              status: 'failed',
+              error: 'runtime unavailable',
+              transcript_path: '/native/reviewer.jsonl',
             }
           : { teammate: { name: 'reviewer', status: 'closed' } },
     }));
@@ -489,7 +660,9 @@ describe('teammate MCP', () => {
         }),
         {
           teammate: { name: 'reviewer', status: 'degraded' },
-          turn: { status: 'failed', error: 'runtime unavailable' },
+          status: 'failed',
+          error: 'runtime unavailable',
+          transcript_path: '/native/reviewer.jsonl',
         },
       );
       expectOrdinarySuccess(
@@ -540,7 +713,8 @@ describe('teammate MCP', () => {
   it('forwards TeamLeader spawn without caller cwd, worktree, repo, or overridable scope', async () => {
     const receipt = {
       teammate: { name: 'worker', status: 'running' },
-      turn: { status: 'submitted', turn_id: 'turn-2' },
+      status: 'submitted',
+      transcript_path: '/native/worker.jsonl',
     };
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
@@ -615,7 +789,7 @@ describe('teammate MCP', () => {
     }
   });
 
-  it('forwards history ledger queries and last(turns) reads (#188)', async () => {
+  it('forwards identity history and native transcript page queries', async () => {
     const admin = await startFakeAdminServer((request) => ({
       id: request.id,
       ok: true,
@@ -627,6 +801,8 @@ describe('teammate MCP', () => {
               requested_turns: request.params?.['turns'] ?? 1,
               returned_turns: 0,
               turns: [],
+              next_cursor: null,
+              truncated: false,
               private: 'omit',
             },
     }));
@@ -653,15 +829,24 @@ describe('teammate MCP', () => {
           requested_turns: 1,
           returned_turns: 0,
           turns: [],
+          next_cursor: null,
+          truncated: false,
         },
       );
       expectOrdinarySuccess(
-        await callTool(mcp.client, 'last', { name: 'reviewer', turns: 5 }),
+        await callTool(mcp.client, 'last', {
+          name: 'reviewer',
+          turns: 50,
+          cursor: 'opaque',
+          include_tools: false,
+        }),
         {
           teammate: { name: 'reviewer' },
-          requested_turns: 5,
+          requested_turns: 50,
           returned_turns: 0,
           turns: [],
+          next_cursor: null,
+          truncated: false,
         },
       );
       expect(admin.requests.map((request) => request.method)).toEqual([
@@ -682,7 +867,12 @@ describe('teammate MCP', () => {
         limit: 5,
         cursor: 'next',
       });
-      expect(admin.requests[2]?.params).toMatchObject({ name: 'reviewer', turns: 5 });
+      expect(admin.requests[2]?.params).toMatchObject({
+        name: 'reviewer',
+        turns: 50,
+        cursor: 'opaque',
+        include_tools: false,
+      });
     } finally {
       await mcp.close();
       await admin.close();

@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 
 import {
   EXTERNAL_RUNTIME_CAPABILITIES,
+  createPendingAdmissionRuntimeFixture,
   describeConfigContext,
   fixtureChannelFactory,
   fixtureChannelProvider,
@@ -42,7 +43,7 @@ describe('external provider fixture', () => {
 
   it('delivers a plain text turn through required completionInput', async () => {
     const runtime = fixtureRuntimeProvider.createRuntime({
-      identity: { runtime_id: 'd1', checkpoint_id: null },
+      identity: { runtime_id: 'd1', checkpoint: null },
       config: { model: 'm' },
       cwd: '/tmp/fixture',
       mcpServers: [],
@@ -52,7 +53,12 @@ describe('external provider fixture', () => {
       text: 'done',
       sourceId: 't1',
     });
-    expect(result).toEqual({ status: 'submitted', turnId: 't1' });
+    expect(result.status).toBe('submitted');
+    if (result.status === 'submitted') {
+      await expect(result.turn.settled).resolves.toMatchObject({
+        status: 'completed',
+      });
+    }
   });
 
   it('formats a config-read context', () => {
@@ -82,7 +88,7 @@ describe('external provider fixture', () => {
     expect(config).toEqual({ model: 'fixture-model' });
 
     const runtime = fixtureRuntimeProvider.createRuntime({
-      identity: { runtime_id: 'd1', checkpoint_id: null },
+      identity: { runtime_id: 'd1', checkpoint: null },
       config: config ?? { model: 'default' },
       cwd: '/tmp/fixture',
       mcpServers: [],
@@ -91,9 +97,40 @@ describe('external provider fixture', () => {
     await runtime.start();
     expect(runtime.getStatus()).toBe('ready');
     const result = await runtime.channelInput({ text: 'hi', sourceId: 'm1' });
-    expect(result).toEqual({ status: 'submitted', turnId: 'm1' });
+    expect(result.status).toBe('submitted');
+    if (result.status === 'submitted') {
+      await expect(result.turn.settled).resolves.toMatchObject({
+        status: 'completed',
+      });
+    }
     await runtime.stop();
     expect(runtime.getStatus()).toBe('stopped');
+  });
+
+  it('does not resolve stop before an already-started admission converges', async () => {
+    const fixture = createPendingAdmissionRuntimeFixture();
+    const admission = fixture.runtime.completionInput({
+      text: 'in flight',
+      sourceId: 'external-stop-contract',
+    });
+    await fixture.admissionStarted;
+
+    const stopping = fixture.runtime.stop();
+    let stopped = false;
+    void stopping.then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+
+    fixture.releaseTransport();
+    await expect(admission).resolves.toEqual({ status: 'stopped' });
+    await stopping;
+    await expect(fixture.runtime.channelInput({
+      text: 'late',
+      sourceId: 'external-late-contract',
+    })).resolves.toEqual({ status: 'stopped' });
+    expect(fixture.runtime.getStatus()).toBe('stopped');
   });
 
   it('resolves a channel target through the fixture session', async () => {

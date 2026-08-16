@@ -1,17 +1,68 @@
 import { createHash } from 'node:crypto';
-import { access, readdir } from 'node:fs/promises';
+import { lstat, readFile, readdir } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 
 import type { AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
 
-export async function adapterExists(manifest: string): Promise<boolean> {
+interface SkillAdapterManifest {
+  version: 1;
+  key: string;
+  sources: Array<{ name: string; path: string }>;
+}
+
+export async function validateSkillAdapter(
+  root: string,
+  sources: readonly AgentRuntimeSkillSource[],
+): Promise<boolean> {
+  let rootInfo;
   try {
-    await access(manifest);
-    return true;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
-    throw err;
+    rootInfo = await lstat(root);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
   }
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
+    throw new Error(`invalid Claude skill adapter directory at ${root}`);
+  }
+  const skillsRoot = join(root, '.claude', 'skills');
+  const manifest = join(root, '.dreamux-skill-adapter.json');
+  let skillsInfo;
+  try {
+    skillsInfo = await lstat(skillsRoot);
+  } catch (error) {
+    throw new Error(`invalid Claude skill adapter directory at ${root}`, {
+      cause: error,
+    });
+  }
+  if (!skillsInfo.isDirectory() || skillsInfo.isSymbolicLink()) {
+    throw new Error(`invalid Claude skill adapter directory at ${root}`);
+  }
+  let raw: string;
+  try {
+    raw = await readFile(manifest, 'utf8');
+  } catch (error) {
+    throw new Error(`invalid Claude skill adapter manifest at ${manifest}`, {
+      cause: error,
+    });
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`invalid Claude skill adapter manifest at ${manifest}`, {
+      cause: error,
+    });
+  }
+  const expected = skillAdapterManifest(sources);
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    JSON.stringify(value) !== JSON.stringify(expected)
+  ) {
+    throw new Error(`invalid Claude skill adapter manifest at ${manifest}`);
+  }
+  return true;
 }
 
 export function skillAdapterKey(
@@ -43,6 +94,19 @@ export function uniqueSkillSources(
   return [...byRoot.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([, source]) => source);
+}
+
+export function skillAdapterManifest(
+  sources: readonly AgentRuntimeSkillSource[],
+): SkillAdapterManifest {
+  return {
+    version: 1,
+    key: skillAdapterKey(sources),
+    sources: uniqueSkillSources(sources).map((source) => ({
+      name: source.name,
+      path: resolve(source.path),
+    })),
+  };
 }
 
 export async function skillDirsInRoot(

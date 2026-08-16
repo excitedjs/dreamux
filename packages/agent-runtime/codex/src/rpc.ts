@@ -56,6 +56,7 @@ export class CodexWsClient {
   };
   private nextId = 1;
   private readonly opened: Promise<void>;
+  private rejectOpened: ((error: Error) => void) | null = null;
   private closed = false;
   private closeReason: Error | null = null;
 
@@ -74,11 +75,16 @@ export class CodexWsClient {
     }
 
     this.opened = new Promise<void>((res, rej) => {
-      this.ws.once('open', () => res());
+      this.rejectOpened = rej;
+      this.ws.once('open', () => {
+        this.rejectOpened = null;
+        res();
+      });
       this.ws.once('error', (e) =>
         rej(e instanceof Error ? e : new Error(String(e))),
       );
     });
+    void this.opened.catch(() => undefined);
 
     this.ws.on('message', (data) => this.onFrame(data));
     this.ws.on('close', () =>
@@ -231,6 +237,8 @@ export class CodexWsClient {
     if (this.closed) return;
     this.closed = true;
     this.closeReason = reason;
+    this.rejectOpened?.(reason);
+    this.rejectOpened = null;
     for (const { reject } of this.pending.values()) reject(reason);
     this.pending.clear();
     for (const handler of this.closeHandlers) {

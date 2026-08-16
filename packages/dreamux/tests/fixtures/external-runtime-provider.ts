@@ -3,12 +3,11 @@ import type {
   AgentRuntimeCapabilities,
   AgentRuntimeContextSnapshot,
   AgentRuntimeCreateContext,
-  AgentRuntimeLastResult,
   AgentRuntimeProviderFactory,
   AgentRuntimeStatus,
   AgentRuntimeTextInput,
-  AgentRuntimeTurnResult,
   InboundTurnInput,
+  RuntimeAdmission,
 } from '@excitedjs/dreamux-types';
 
 interface ExternalParityRuntimeConfig {
@@ -25,7 +24,6 @@ export interface ExternalRuntimeObservation {
   disableFeatures: readonly string[];
   skillSourceNames: string[];
   injectEnvKeys: string[];
-  hasTurnSettledHook: boolean;
   starts: number;
   stops: number;
   submittedTexts: string[];
@@ -51,7 +49,7 @@ class ExternalParityRuntime implements AgentRuntime {
     private readonly context: AgentRuntimeCreateContext<ExternalParityRuntimeConfig>,
     private readonly observation: ExternalRuntimeObservation,
   ) {
-    this.threadId = context.identity.checkpoint_id ?? null;
+    this.threadId = context.identity.checkpoint?.id ?? null;
   }
 
   async start(): Promise<void> {
@@ -72,38 +70,32 @@ class ExternalParityRuntime implements AgentRuntime {
     await this.context.state?.setStatus('stopped');
   }
 
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+  async channelInput(input: InboundTurnInput): Promise<RuntimeAdmission> {
     if (this.status !== 'ready') {
       return { status: 'failed', error: new Error('external runtime is not ready') };
     }
     this.observation.submittedTexts.push(input.text);
-    const turnId = input.sourceId;
     this.observation.lastText =
       `${this.context.config.finalTextPrefix}: ${input.text}`;
     await Promise.resolve();
-    this.context.onTurnSettled?.({
-      turnId,
-      status: 'completed',
-      result: { text: this.observation.lastText },
-    });
-    return { status: 'submitted', turnId };
+    return {
+      status: 'submitted',
+      turn: completedRuntimeTurn(this.observation.lastText),
+    };
   }
 
-  async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
+  async completionInput(input: AgentRuntimeTextInput): Promise<RuntimeAdmission> {
     if (this.status !== 'ready') {
       return { status: 'failed', error: new Error('external runtime is not ready') };
     }
     this.observation.submittedTexts.push(input.text);
-    const turnId = input.sourceId ?? `plain:${this.observation.submittedTexts.length}`;
     this.observation.lastText =
       `${this.context.config.finalTextPrefix}: ${input.text}`;
     await Promise.resolve();
-    this.context.onTurnSettled?.({
-      turnId,
-      status: 'completed',
-      result: { text: this.observation.lastText },
-    });
-    return { status: 'submitted', turnId };
+    return {
+      status: 'submitted',
+      turn: completedRuntimeTurn(this.observation.lastText),
+    };
   }
 
   getStatus(): AgentRuntimeStatus {
@@ -116,10 +108,6 @@ class ExternalParityRuntime implements AgentRuntime {
 
   wasCheckpointResumed(): boolean {
     return false;
-  }
-
-  async getLast(): Promise<AgentRuntimeLastResult | null> {
-    return { text: this.observation.lastText };
   }
 
   async getContext(): Promise<AgentRuntimeContextSnapshot | null> {
@@ -147,6 +135,30 @@ export const provider: AgentRuntimeProviderFactory<ExternalParityRuntimeConfig> 
         model: typeof rawConfig['model'] === 'string' ? rawConfig['model'] : 'fake',
       };
     },
+    async readTranscript(query) {
+      const text = externalRuntimeObservations.at(-1)?.lastText ?? null;
+      return {
+        turns:
+          text === null || query.turns < 1
+            ? []
+            : [
+                {
+                  startedAt: null,
+                  endedAt: null,
+                  blocks: [
+                    {
+                      kind: 'message' as const,
+                      role: 'assistant' as const,
+                      text,
+                      truncated: false,
+                    },
+                  ],
+                },
+              ],
+        nextCursor: null,
+        truncated: false,
+      };
+    },
     createRuntime(context) {
       const observation: ExternalRuntimeObservation = {
         providerRef: ref,
@@ -157,7 +169,6 @@ export const provider: AgentRuntimeProviderFactory<ExternalParityRuntimeConfig> 
         disableFeatures: context.disableFeatures ?? [],
         skillSourceNames: context.skillSources?.map((source) => source.name) ?? [],
         injectEnvKeys: Object.keys(context.injectEnv ?? {}).sort(),
-        hasTurnSettledHook: context.onTurnSettled !== undefined,
         starts: 0,
         stops: 0,
         submittedTexts: [],
@@ -169,3 +180,13 @@ export const provider: AgentRuntimeProviderFactory<ExternalParityRuntimeConfig> 
   });
 
 export default provider;
+
+function completedRuntimeTurn(resultText: string | null) {
+  return Object.freeze({
+    settled: Promise.resolve({
+      status: 'completed' as const,
+      resultText,
+      truncated: false,
+    }),
+  });
+}

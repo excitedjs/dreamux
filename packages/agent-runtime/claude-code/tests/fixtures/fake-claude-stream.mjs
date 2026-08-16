@@ -47,7 +47,13 @@ rl.on('line', (line) => {
   const text = msg?.message?.content?.[0]?.text ?? '';
 
   if (!sentInit) {
-    emit({ type: 'system', subtype: 'init', session_id: 'fake-sess-1', model: 'fake-model' });
+    emit({
+      type: 'system',
+      subtype: 'init',
+      session_id: 'fake-sess-1',
+      model: 'fake-model',
+      capabilities: ['msg_lifecycle_v1'],
+    });
     sentInit = true;
   }
   emit({
@@ -55,6 +61,14 @@ rl.on('line', (line) => {
     session_id: 'fake-sess-1',
     message: { role: 'assistant', content: [{ type: 'text', text: `echo:${text}` }] },
   });
+  if (typeof msg.uuid === 'string') {
+    emit({
+      type: 'system',
+      subtype: 'command_lifecycle',
+      command_uuid: msg.uuid,
+      state: 'completed',
+    });
+  }
   if (mode === 'echo') {
     emit({ type: 'result', subtype: 'success', result: `echo:${text}`, session_id: 'fake-sess-1' });
   }

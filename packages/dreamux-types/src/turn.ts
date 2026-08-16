@@ -48,19 +48,6 @@ export interface InboundTurnInput {
 export type InboundDeliveryResult =
   | { status: 'duplicate' }
   | { status: 'stopped' }
-  | { status: 'submitted'; turnId: string }
-  | { status: 'failed'; error: Error };
-
-/**
- * A neutral "turn settled" signal: a delivered turn reached a terminal state.
- * Capability-neutral — carries no channel or runtime specifics.
- */
-export interface TurnSettledSignal {
-  turnId: string;
-  status: 'completed' | 'failed' | 'stopped';
-  result?: {
-    text: string | null;
-    truncated?: boolean;
-  };
-  error?: Error;
-}
+  | { status: 'submitted' }
+  | { status: 'failed'; error: Error }
+  | { status: 'ambiguous'; error: Error };

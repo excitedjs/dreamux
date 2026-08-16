@@ -316,7 +316,12 @@ export class Server {
         'dreamux server is shutting down',
       );
     }
-    const promise = Promise.resolve().then(task);
+    let promise: Promise<T>;
+    try {
+      promise = Promise.resolve(task());
+    } catch (error) {
+      promise = Promise.reject(error);
+    }
     this.adminRequests.add(promise);
     void promise.finally(() => {
       this.adminRequests.delete(promise);
@@ -337,8 +342,9 @@ export class Server {
     this.log.info('shutting down');
     const failures: unknown[] = [];
     this.acceptingAdminRequests = false;
-    await collectShutdownFailure(failures, () => this.drainAdminRequests());
+    this.dispatchers.beginShutdown();
     await collectShutdownFailure(failures, () => this.dispatchers.shutdown());
+    await collectShutdownFailure(failures, () => this.drainAdminRequests());
     await collectShutdownFailure(failures, async () => {
       if (this.admin === null) return;
       await this.admin.close();

@@ -60,6 +60,8 @@ export interface TurnSubscriptionOptions {
   acceptAnyThread?: boolean;
   /** Diagnostic hook fired for EVERY notification, before any filtering. */
   onTrace?: (event: TurnTraceEvent) => void;
+  /** Keep listening while one logical Turn awaits several native aliases. */
+  retainAfterTerminal?: boolean;
 }
 
 /**
@@ -77,6 +79,7 @@ export function subscribeTurnCollection(
   options: TurnSubscriptionOptions = {},
 ): TurnCollector {
   const acceptAnyThread = options.acceptAnyThread === true;
+  const retainAfterTerminal = options.retainAfterTerminal === true;
   const itemsByTurn = new Map<string, ThreadItem[]>();
   const completedByTurn = new Map<string, CollectedTurn>();
   const failuresByTurn = new Map<string, Error>();
@@ -85,14 +88,14 @@ export function subscribeTurnCollection(
   let unscopedFailure: Error | null = null;
   let closed = false;
   let unsubscribe = (): void => {};
-  let awaiting:
-    | {
-        turnId: string | null;
-        promise: Promise<CollectedTurn>;
-        resolve: (turn: CollectedTurn) => void;
-        reject: (err: Error) => void;
-      }
-    | null = null;
+  const awaiting = new Map<
+    string | null,
+    {
+      promise: Promise<CollectedTurn>;
+      resolve: (turn: CollectedTurn) => void;
+      reject: (err: Error) => void;
+    }
+  >();
 
   const closeCollector = (): void => {
     if (closed) return;
@@ -104,40 +107,27 @@ export function subscribeTurnCollection(
   };
 
   const resolveAwaiting = (): void => {
-    if (awaiting === null) return;
-    const expectedTurnId = awaiting.turnId;
     if (unscopedFailure !== null) {
-      awaiting.reject(unscopedFailure);
-      awaiting = null;
+      for (const waiter of awaiting.values()) waiter.reject(unscopedFailure);
+      awaiting.clear();
       closeCollector();
       return;
     }
-    if (expectedTurnId !== null) {
-      const failure = failuresByTurn.get(expectedTurnId);
-      if (failure !== undefined) {
-        awaiting.reject(failure);
-        awaiting = null;
+    for (const [expectedTurnId, waiter] of [...awaiting]) {
+      const failure = expectedTurnId === null
+        ? firstFailure
+        : (failuresByTurn.get(expectedTurnId) ?? null);
+      const completed = expectedTurnId === null
+        ? firstCompleted
+        : (completedByTurn.get(expectedTurnId) ?? null);
+      if (failure !== null) waiter.reject(failure);
+      else if (completed !== null) waiter.resolve(completed);
+      else continue;
+      awaiting.delete(expectedTurnId);
+      if (!retainAfterTerminal) {
         closeCollector();
         return;
       }
-      const completed = completedByTurn.get(expectedTurnId);
-      if (completed !== undefined) {
-        awaiting.resolve(completed);
-        awaiting = null;
-        closeCollector();
-      }
-      return;
-    }
-    if (firstFailure !== null) {
-      awaiting.reject(firstFailure);
-      awaiting = null;
-      closeCollector();
-      return;
-    }
-    if (firstCompleted !== null) {
-      awaiting.resolve(firstCompleted);
-      awaiting = null;
-      closeCollector();
     }
   };
 
@@ -192,6 +182,9 @@ export function subscribeTurnCollection(
   return {
     awaitTurn(turnId?: string): Promise<CollectedTurn> {
       const expectedTurnId = turnId ?? null;
+      if (closed) {
+        return Promise.reject(new Error('codex turn collector disposed'));
+      }
       if (unscopedFailure !== null) {
         closeCollector();
         return Promise.reject(unscopedFailure);
@@ -199,44 +192,43 @@ export function subscribeTurnCollection(
       if (expectedTurnId !== null) {
         const failure = failuresByTurn.get(expectedTurnId);
         if (failure !== undefined) {
-          closeCollector();
+          if (!retainAfterTerminal) closeCollector();
           return Promise.reject(failure);
         }
         const completed = completedByTurn.get(expectedTurnId);
         if (completed !== undefined) {
-          closeCollector();
+          if (!retainAfterTerminal) closeCollector();
           return Promise.resolve(completed);
         }
       } else {
         if (firstFailure !== null) {
-          closeCollector();
+          if (!retainAfterTerminal) closeCollector();
           return Promise.reject(firstFailure);
         }
         if (firstCompleted !== null) {
-          closeCollector();
+          if (!retainAfterTerminal) closeCollector();
           return Promise.resolve(firstCompleted);
         }
       }
-      if (awaiting !== null) return awaiting.promise;
+      const existing = awaiting.get(expectedTurnId);
+      if (existing !== undefined) return existing.promise;
       let resolveTurn!: (turn: CollectedTurn) => void;
       let rejectTurn!: (err: Error) => void;
       const promise = new Promise<CollectedTurn>((res, rej) => {
         resolveTurn = res;
         rejectTurn = rej;
       });
-      awaiting = {
-        turnId: expectedTurnId,
+      awaiting.set(expectedTurnId, {
         promise,
         resolve: resolveTurn,
         reject: rejectTurn,
-      };
+      });
       return promise;
     },
     dispose(): void {
-      if (awaiting !== null) {
-        awaiting.reject(new Error('codex turn collector disposed'));
-        awaiting = null;
-      }
+      const error = new Error('codex turn collector disposed');
+      for (const waiter of awaiting.values()) waiter.reject(error);
+      awaiting.clear();
       closeCollector();
     },
   };

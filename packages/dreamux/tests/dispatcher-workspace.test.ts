@@ -272,6 +272,42 @@ describe('dispatcher workspace cwd contract (issue #182 PR-4)', () => {
       );
       await server.shutdown();
     });
+
+    it('ignores inert Turn archive residue for a disabled dispatcher', async () => {
+      const config = testDreamuxConfig([
+        testDispatcherConfig({
+          id: 'flow',
+          cwd: join(root, 'disabled-workspace'),
+          enabled: false,
+        }),
+      ]);
+      const archive = join(
+        process.env['HOME']!,
+        '.dreamux',
+        'state',
+        'flow',
+        'teammate',
+        'reviewer',
+        'turn.jsonl',
+      );
+      await mkdir(dirname(archive), { recursive: true });
+      writeFileSync(
+        archive,
+        `${JSON.stringify({ version: 1, type: 'settled', turn_id: 'old' })}\n`,
+        { mode: 0o600 },
+      );
+      const server = new Server({
+        config,
+        adminSocketPath: join(root, 'admin.sock'),
+        logger: noopLog(),
+        channelLoggerFactory: () => noopLog(),
+        agentRuntimeProviderCatalog: codexAgentRuntimeCatalog(),
+      });
+
+      await expect(server.start()).resolves.toBeUndefined();
+      expect(readFileSync(archive, 'utf8')).toContain('"turn_id":"old"');
+      await server.shutdown();
+    });
   });
 
   describe('isUnderDreamuxRoot', () => {

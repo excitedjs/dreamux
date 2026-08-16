@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/feishu-channel",
+      "comment": "BREAKING: Review: Channel contract consumers must use status-only delivery results, treat admission-ambiguous as terminal and non-replayed, and stop subscribing to the removed turn.submitted and turn.settled events. Feishu delivery no longer exposes Dreamux Turn IDs. No rebuild is required: Feishu config, access state, bindings, and transport state formats are unchanged.",
+      "type": "major"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel"
+}

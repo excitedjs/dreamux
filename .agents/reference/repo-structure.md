@@ -8,7 +8,7 @@ Rush + pnpm monorepo since issue #4. Packages are wired through pnpm
 |---|---|---|
 | `@excitedjs/dreamux` | `/packages/dreamux/` | the host server |
 | `@excitedjs/dreamux-types` | `/packages/dreamux-types/` | declaration-only provider-authoring contracts |
-| `@excitedjs/dreamux-utils` | `/packages/dreamux-utils/` | shared provider/runtime utility helpers |
+| `@excitedjs/dreamux-utils` | `/packages/dreamux-utils/` | shared provider/runtime utility helpers, including provider-neutral transcript bounds, digest validation, exact positional reads, deterministic rendering, and path containment |
 | `@excitedjs/agent-runtime-codex` | `/packages/agent-runtime/codex/` | built-in Codex Agent Runtime provider behind `builtin:codex` |
 | `@excitedjs/agent-runtime-claude-code` | `/packages/agent-runtime/claude-code/` | built-in Claude Code Agent Runtime provider behind `builtin:claude-code` |
 | `@excitedjs/feishu-transport` | `/packages/channel/feishu-transport/` | platform-I/O core; **sole** importer of `@larksuiteoapi/node-sdk` |

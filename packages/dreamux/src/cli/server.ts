@@ -21,6 +21,7 @@ import { Server } from '../server.js';
 import { loadConfig } from '../config/config.js';
 import { createBuiltinProviderRegistry } from '../registry/index.js';
 import { createLogger } from '../platform/logger.js';
+import { errorInfo } from '../platform/error-info.js';
 import {
   adminSocketPath,
   channelLogDir,
@@ -86,8 +87,16 @@ async function main(): Promise<void> {
     await server.shutdown();
     process.exit(0);
   };
-  process.on('SIGTERM', () => void shutdown('SIGTERM'));
-  process.on('SIGINT', () => void shutdown('SIGINT'));
+  const requestShutdown = (signal: string): void => {
+    void shutdown(signal).catch((error: unknown) => {
+      logger.error(
+        { signal, err: errorInfo(error) },
+        'server shutdown failed; process remains fenced for teardown retry',
+      );
+    });
+  };
+  process.on('SIGTERM', () => requestShutdown('SIGTERM'));
+  process.on('SIGINT', () => requestShutdown('SIGINT'));
 }
 
 function printHelp(): void {

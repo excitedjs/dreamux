@@ -14,7 +14,6 @@ import {
 } from '../src/platform/paths.js';
 import { TeammateCollection } from '../src/service/teammate-collection/index.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
-import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
 import type { AgentEntityWorktreeIdentity } from '../src/service/agent-entity/types.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
@@ -50,7 +49,6 @@ const MOVED_DECLARATIONS: readonly MovedDeclaration[] = [
   { name: 'SchedulerServiceOptions', owner: 'service/scheduler/types.ts', implementationImport: './service.js' },
   { name: 'SchedulerCommands', owner: 'service/scheduler/types.ts', implementationImport: './service.js' },
   { name: 'TeammateServiceDeps', owner: 'service/teammate-service/types.ts', implementationImport: './index.js' },
-  { name: 'SettledCompletionRoute', owner: 'service/teammate-service/types.ts', implementationImport: './index.js' },
   { name: 'TeammateServiceOptions', owner: 'service/teammate-service/types.ts', implementationImport: './index.js' },
 ];
 
@@ -633,6 +631,60 @@ describe('architecture ownership gate (#233)', () => {
     });
   });
 
+  it('keeps TeamMate lifecycle authority on the entity boundary', async () => {
+    assertNoHits(
+      'TeamMate lifecycle invariant violated: Collection-owned membership or bulk teardown returned.',
+      await findSourceHits(
+        SERVICE_ROOT,
+        /\b(?:OwnedTeammate\w*|OwnedTeamMate\w*|spawnOwned|releaseExclusive|releaseAllOwned|exclusivelyOwned)\b/u,
+      ),
+    );
+    assertNoHits(
+      'TeamMate dependency invariant violated: TeammateService must not import its containing Collection.',
+      await findSourceHits(
+        join(SERVICE_ROOT, 'teammate-service'),
+        /from\s+['"][^'"]*teammate-collection/u,
+      ),
+    );
+  });
+
+  it('keeps one truthful shutdown path and no service Turn identifiers', async () => {
+    assertNoHits(
+      'Shutdown invariant violated: runtime-only shutdown path returned.',
+      await findSourceHits(
+        SERVICE_ROOT,
+        /\b(?:stopAllForShutdown|stopForShutdown)\b/u,
+      ),
+    );
+    const rawRuntimeStops = (await findSourceHits(
+      SERVICE_ROOT,
+      /\bruntime\.stop\s*\(/u,
+    )).filter(
+      (hit) =>
+        sourceRelativePath(hit.file) !==
+        'service/teammate-service/runtime-owner.ts',
+    );
+    assertNoHits(
+      'Shutdown invariant violated: only the entity-owned runtime authority may stop a raw AgentRuntime.',
+      rawRuntimeStops,
+    );
+    const runtimeAuthorityLeaks = (await findSourceHits(
+      SERVICE_ROOT,
+      /\bAgentRuntime\b/u,
+    )).filter(
+      (hit) =>
+        !sourceRelativePath(hit.file).startsWith('service/teammate-service/'),
+    );
+    assertNoHits(
+      'Shutdown invariant violated: raw AgentRuntime authority escaped the TeamMate entity boundary.',
+      runtimeAuthorityLeaks,
+    );
+    assertNoHits(
+      'Turn identity invariant violated: service code must coordinate with Turn objects, not identifiers.',
+      await findSourceHits(SERVICE_ROOT, /\bturn_?id\b/iu),
+    );
+  });
+
   it('keeps core free of a parallel worker/runtime provider tree', async () => {
     assertNoHits(
       'T2 runtime-tree invariant violated: dreamux core has one AgentRuntime seam, backed by AgentRuntimeProviderCatalog and ProviderRegistry; do not reintroduce a parallel worker/runtime/provider tree.',
@@ -692,7 +744,6 @@ describe('architecture ownership gate (#233)', () => {
     await mkdir(workspace, { recursive: true });
     const log = noopLog();
     const identities = new AgentIdentityStore(log);
-    const turnsStore = new AgentTurnsStore(log);
     const worktree = {
       mode: 'reuse-cwd',
       slug: null,
@@ -732,7 +783,6 @@ describe('architecture ownership gate (#233)', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(),
       worktrees: new WorktreeManager(),
       identities,
-      turnsStore,
       log,
     });
 
@@ -792,9 +842,25 @@ describe('architecture ownership gate (#233)', () => {
       })}\n`,
     );
 
-    await expect(
-      identities.get('dispatcher-a', 'legacy-worker'),
-    ).resolves.toMatchObject({ identity_prompt: null });
+    const loaded = await identities.get('dispatcher-a', 'legacy-worker');
+    expect(loaded).toMatchObject({
+      identity_prompt: null,
+      transcript_locator: null,
+    });
+    if (loaded === null) throw new Error('legacy identity was not loaded');
+    await identities.update(loaded, { intent: 'rewritten work' });
+    const rewritten = JSON.parse(await readFile(path, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    for (const removed of [
+      'turn_count',
+      'last_seen_at',
+      'last_prompt_preview',
+      'last_assistant_preview',
+    ]) {
+      expect(rewritten).not.toHaveProperty(removed);
+    }
   });
 
   it('builds conversational agents through the factory without launch forks', async () => {

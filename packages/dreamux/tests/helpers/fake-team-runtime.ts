@@ -2,21 +2,22 @@ import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
   AgentRuntimeCreateContext,
-  AgentRuntimeLastResult,
   AgentRuntimeProvider,
   AgentRuntimeStatus,
   AgentRuntimeTextInput,
-  AgentRuntimeTurnResult,
   DreamuxLogger,
   InboundTurnInput,
-  TurnSettledSignal,
+  RuntimeAdmission,
+  RuntimeTurnOutcome,
 } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../src/agent-runtime/index.js';
 import type {
   CompletionDeliveryResult,
-  CompletionEnvelope,
+  PreparedCompletionFact,
 } from '../../src/service/completion-router/index.js';
+import type { ControllableRuntimeTurn } from './runtime-turn.js';
+import { controllableRuntimeTurn } from './runtime-turn.js';
 
 export const FAKE_RUNTIME_REF = 'test:runtime';
 
@@ -31,8 +32,18 @@ export class FakeRuntime implements AgentRuntime {
   readonly textSubmitted: AgentRuntimeTextInput[] = [];
   stopAttempts = 0;
   private status: AgentRuntimeStatus = 'declared';
-  private onTurnSettled: ((settled: TurnSettledSignal) => void) | undefined;
   private readonly queuedStopErrors: Error[] = [];
+  private readonly turns: ControllableRuntimeTurn[] = [];
+  readonly transcriptTurns: Array<{
+    startedAt: number | null;
+    endedAt: number | null;
+    blocks: Array<{
+      kind: 'message';
+      role: 'user' | 'assistant';
+      text: string;
+      truncated: false;
+    }>;
+  }> = [];
 
   constructor(
     private readonly opts: {
@@ -41,21 +52,46 @@ export class FakeRuntime implements AgentRuntime {
       startError?: Error;
       submitError?: Error;
       stopError?: Error;
-      completionResult?: AgentRuntimeTurnResult;
+      completionResult?: RuntimeAdmission;
       waitIdle?: () => Promise<void>;
     } = {},
   ) {}
 
-  setOnTurnSettled(onTurnSettled: (settled: TurnSettledSignal) => void): void {
-    this.onTurnSettled = onTurnSettled;
-  }
-
-  settle(turnId: string, status: TurnSettledSignal['status'] = 'completed'): void {
-    this.onTurnSettled?.({
-      turnId,
-      status,
-      result: { text: this.opts.lastText ?? null },
-    });
+  settle(index = 0, status: RuntimeTurnOutcome['status'] = 'completed'): void {
+    const pending = this.turns[index];
+    if (pending === undefined) throw new Error(`missing fake Turn ${index}`);
+    pending.settle(
+      status === 'completed'
+        ? {
+            status,
+            resultText: this.opts.lastText ?? null,
+            truncated: false,
+          }
+        : status === 'failed'
+          ? { status, error: new Error('fake Turn failed') }
+          : { status },
+    );
+    if (status === 'completed') {
+      const input = this.textSubmitted[index]?.text ?? this.submitted[index]?.text ?? '';
+      this.transcriptTurns.push({
+        startedAt: null,
+        endedAt: null,
+        blocks: [
+          {
+            kind: 'message',
+            role: 'user',
+            text: input,
+            truncated: false,
+          },
+          {
+            kind: 'message',
+            role: 'assistant',
+            text: this.opts.lastText ?? '',
+            truncated: false,
+          },
+        ],
+      });
+    }
   }
 
   async start(): Promise<void> {
@@ -78,38 +114,30 @@ export class FakeRuntime implements AgentRuntime {
     this.queuedStopErrors.push(error);
   }
 
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+  async channelInput(input: InboundTurnInput): Promise<RuntimeAdmission> {
     if (this.opts.submitError !== undefined) throw this.opts.submitError;
     this.submitted.push(input);
-    const turnId = `turn-${this.submitted.length}`;
+    const pending = controllableRuntimeTurn();
+    this.turns.push(pending);
     if (this.opts.settleImmediately) {
-      queueMicrotask(() =>
-        this.onTurnSettled?.({
-          turnId,
-          status: 'completed',
-          result: { text: this.opts.lastText ?? null },
-        }),
-      );
+      queueMicrotask(() => this.settle(this.turns.indexOf(pending)));
     }
-    return { status: 'submitted', turnId };
+    return { status: 'submitted', turn: pending.turn };
   }
 
-  async completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult> {
+  async completionInput(input: AgentRuntimeTextInput): Promise<RuntimeAdmission> {
     if (this.opts.submitError !== undefined) throw this.opts.submitError;
     this.textSubmitted.push(input);
     this.submitted.push({ sourceId: input.sourceId ?? '', text: input.text });
     if (this.opts.completionResult !== undefined) {
       return this.opts.completionResult;
     }
-    const turnId = `turn-${this.submitted.length}`;
+    const pending = controllableRuntimeTurn();
+    this.turns.push(pending);
     if (this.opts.settleImmediately) {
-      this.onTurnSettled?.({
-        turnId,
-        status: 'completed',
-        result: { text: this.opts.lastText ?? null },
-      });
+      this.settle(this.turns.indexOf(pending));
     }
-    return { status: 'submitted', turnId };
+    return { status: 'submitted', turn: pending.turn };
   }
 
   async waitIdle(): Promise<void> {
@@ -126,10 +154,6 @@ export class FakeRuntime implements AgentRuntime {
 
   wasCheckpointResumed(): boolean {
     return false;
-  }
-
-  async getLast(): Promise<AgentRuntimeLastResult> {
-    return { text: this.opts.lastText ?? 'fake last' };
   }
 
   async getContext(): Promise<null> {
@@ -149,7 +173,7 @@ export function fakeRuntimeCatalog(
     startError?: Error;
     submitError?: Error;
     stopError?: Error;
-    completionResult?: AgentRuntimeTurnResult;
+    completionResult?: RuntimeAdmission;
     waitIdle?: () => Promise<void>;
     createRuntime?: () => FakeRuntime;
   } = {},
@@ -163,12 +187,15 @@ export function fakeRuntimeCatalog(
       ref: { source: 'builtin', id: 'test-runtime', raw: FAKE_RUNTIME_REF },
     },
     getCapabilities: () => CAPABILITIES,
+    async readTranscript(query) {
+      const turns = runtimes
+        .flatMap((runtime) => runtime.transcriptTurns)
+        .slice(-query.turns);
+      return { turns, nextCursor: null, truncated: false };
+    },
     createRuntime(context: AgentRuntimeCreateContext) {
       contexts.push(context);
       const runtime = opts.createRuntime?.() ?? new FakeRuntime(opts);
-      if (context.onTurnSettled !== undefined) {
-        runtime.setOnTurnSettled(context.onTurnSettled);
-      }
       runtimes.push(runtime);
       return runtime;
     },
@@ -185,13 +212,15 @@ export function fakeRuntimeCatalog(
 }
 
 export class FakeInitiator {
-  readonly completions: CompletionEnvelope[] = [];
+  readonly completions: PreparedCompletionFact[] = [];
 
-  async completionInput(
-    completion: CompletionEnvelope,
-  ): Promise<CompletionDeliveryResult> {
+  async prepareCompletion(completion: PreparedCompletionFact) {
     this.completions.push(completion);
-    return { status: 'accepted' };
+    return Object.freeze({
+      submit: async (): Promise<CompletionDeliveryResult> => ({
+        status: 'accepted',
+      }),
+    });
   }
 }
 

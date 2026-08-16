@@ -103,7 +103,7 @@ export interface FeishuInboundSubmitter {
   submitTurn(
     input: InboundTurnInput,
     envelope: FeishuInboundEnvelope,
-  ): Promise<import('@excitedjs/dreamux-types').AgentRuntimeTurnResult>;
+  ): Promise<import('@excitedjs/dreamux-types').InboundDeliveryResult>;
 }
 
 export interface FeishuInboundEnvelope {

@@ -6,7 +6,7 @@ import {
   type SpawnOptions,
 } from 'node:child_process';
 
-import { isProcessAlive, killProcessGroup } from './os.js';
+import { isProcessGroupAlive, killProcessGroup } from './os.js';
 
 export interface SupervisedChildExit {
   code: number | null;
@@ -107,27 +107,43 @@ export class SupervisedChild {
   }
 
   stop(): Promise<void> {
-    this.stopPromise ??= this.doStop();
-    return this.stopPromise;
+    if (this.stopPromise !== null) return this.stopPromise;
+    const attempt = this.doStop();
+    this.stopPromise = attempt;
+    void attempt.catch(() => {
+      if (this.stopPromise === attempt) this.stopPromise = null;
+    });
+    return attempt;
   }
 
   private async doStop(): Promise<void> {
     this.stopping = true;
     const pid = this.pid_;
     if (pid !== null) {
-      if (isProcessAlive(pid)) {
+      if (isProcessGroupAlive(pid)) {
         killProcessGroup(pid, 'SIGTERM');
-        const deadline = Date.now() + (this.options.stopTimeoutMs ?? 1_000);
-        const pollIntervalMs = this.options.pollIntervalMs ?? 25;
-        while (Date.now() < deadline) {
-          if (!isProcessAlive(pid)) break;
-          await new Promise<void>((resolve) => setTimeout(resolve, pollIntervalMs));
-        }
+        await waitForProcessGroupExit(
+          pid,
+          this.options.stopTimeoutMs ?? 1_000,
+          this.options.pollIntervalMs ?? 25,
+        );
       }
-      // Always signal the group: a grandchild may outlive an exited leader.
-      killProcessGroup(pid, 'SIGKILL');
+      if (isProcessGroupAlive(pid)) {
+        killProcessGroup(pid, 'SIGKILL');
+        await waitForProcessGroupExit(
+          pid,
+          this.options.stopTimeoutMs ?? 1_000,
+          this.options.pollIntervalMs ?? 25,
+        );
+      }
+      if (isProcessGroupAlive(pid)) {
+        throw new Error(
+          `SupervisedChild.stop: process group ${pid} still exists after SIGKILL`,
+        );
+      }
     }
     this.child_ = null;
+    this.pid_ = null;
   }
 
   private notifyExit(exit: SupervisedChildExit): void {
@@ -148,6 +164,19 @@ export class SupervisedChild {
         // Observers must not poison child-process event dispatch.
       }
     }
+  }
+}
+
+async function waitForProcessGroupExit(
+  pgid: number,
+  timeoutMs: number,
+  pollIntervalMs: number,
+): Promise<void> {
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  while (isProcessGroupAlive(pgid) && Date.now() < deadline) {
+    await new Promise<void>((resolve) =>
+      setTimeout(resolve, Math.max(1, pollIntervalMs)),
+    );
   }
 }
 

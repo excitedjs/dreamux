@@ -15,8 +15,9 @@ export interface WorkflowAgentRecord {
   name: string | null;
   label: string | null;
   phase: string | null;
-  turn_id: string | null;
   status: WorkflowAgentStatus;
+  result: unknown | null;
+  error: string | null;
   created_at: number;
   settled_at: number | null;
 }

@@ -11,16 +11,15 @@ import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
   AgentRuntimeCreateContext,
-  AgentRuntimeLastResult,
   AgentRuntimeProvider,
   AgentRuntimeStatus,
   AgentRuntimeTextInput,
-  AgentRuntimeTurnResult,
   InboundTurnInput,
-  TurnSettledSignal,
+  RuntimeAdmission,
 } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../src/agent-runtime/index.js';
+import { completedRuntimeTurn, controllableRuntimeTurn } from './runtime-turn.js';
 
 export const FAKE_RUNTIME_REF = 'test:runtime';
 
@@ -33,11 +32,6 @@ export class FakeRuntime implements AgentRuntime {
   readonly submitted: InboundTurnInput[] = [];
   stopAttempts = 0;
   private status: AgentRuntimeStatus = 'declared';
-  private onTurnSettled: ((settled: TurnSettledSignal) => void) | undefined;
-
-  setOnTurnSettled(onTurnSettled: (settled: TurnSettledSignal) => void): void {
-    this.onTurnSettled = onTurnSettled;
-  }
 
   async start(): Promise<void> {
     this.status = 'ready';
@@ -52,20 +46,16 @@ export class FakeRuntime implements AgentRuntime {
     this.status = 'stopped';
   }
 
-  async channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult> {
+  async channelInput(input: InboundTurnInput): Promise<RuntimeAdmission> {
     this.submitted.push(input);
-    const turnId = `turn-${this.submitted.length}`;
-    queueMicrotask(() =>
-      this.onTurnSettled?.({ turnId, status: 'completed', result: { text: null } }),
-    );
-    return { status: 'submitted', turnId };
+    return { status: 'submitted', turn: completedRuntimeTurn() };
   }
 
   async completionInput(
     input: AgentRuntimeTextInput,
-  ): Promise<AgentRuntimeTurnResult> {
+  ): Promise<RuntimeAdmission> {
     this.submitted.push({ sourceId: input.sourceId ?? '', text: input.text });
-    return { status: 'submitted', turnId: `turn-${this.submitted.length}` };
+    return { status: 'submitted', turn: controllableRuntimeTurn().turn };
   }
 
   async waitIdle(): Promise<void> {}
@@ -80,10 +70,6 @@ export class FakeRuntime implements AgentRuntime {
 
   wasCheckpointResumed(): boolean {
     return false;
-  }
-
-  async getLast(): Promise<AgentRuntimeLastResult> {
-    return { text: 'fake last' };
   }
 
   async getContext(): Promise<null> {
@@ -107,11 +93,11 @@ export function fakeRuntimeCatalog(
       ref: { source: 'builtin', id: 'test-runtime', raw: FAKE_RUNTIME_REF },
     },
     getCapabilities: () => CAPABILITIES,
-    createRuntime(context: AgentRuntimeCreateContext) {
+    async readTranscript() {
+      return { turns: [], nextCursor: null, truncated: false };
+    },
+    createRuntime(_context: AgentRuntimeCreateContext) {
       const runtime = new FakeRuntime();
-      if (context.onTurnSettled !== undefined) {
-        runtime.setOnTurnSettled(context.onTurnSettled);
-      }
       runtimes.push(runtime);
       return runtime;
     },

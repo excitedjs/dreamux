@@ -1,7 +1,4 @@
-import type {
-  AgentRuntimeTurnResult,
-  InboundTurnInput,
-} from '@excitedjs/dreamux-types';
+import type { InboundDeliveryResult, InboundTurnInput } from '@excitedjs/dreamux-types';
 
 import type { ChannelService } from '../channel-service/index.js';
 import type { KeyedAsyncQueue } from '../serial-queue.js';
@@ -115,7 +112,7 @@ export class CollaborationTargetStrictOperations {
     target: CollaborationSpaceProvisionInput['target'];
     expectedTeamName: string;
     turn: InboundTurnInput;
-  }): Promise<AgentRuntimeTurnResult> {
+  }): Promise<InboundDeliveryResult> {
     return this.withVerifiedActiveTarget(input, async (record) => {
       // `withVerifiedActiveTarget` holds the Team availability lease across
       // this callback. Submit through that admitted service; re-entering the

@@ -10,7 +10,7 @@ function spawnStub(capture: (input: unknown) => void): Server {
       teammates: {
         spawn: (input: unknown) => {
           capture(input);
-          return { teammate: { name: 'solo' }, turn: {} };
+          return { teammate: { name: 'solo' }, status: 'submitted' };
         },
       },
       workspace: () => {

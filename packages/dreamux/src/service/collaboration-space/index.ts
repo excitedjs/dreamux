@@ -10,7 +10,7 @@ import type {
 } from '../channel-service/index.js';
 import { KeyedAsyncQueue } from '../serial-queue.js';
 import type { TeamCollection } from '../team-collection/index.js';
-import { resolveAgent } from '../teammate-collection/agent-config.js';
+import { resolveAgent } from '../agent-entity/agent-config.js';
 import {
   type TeamDissolveInput,
   type TeamLeaderLease,

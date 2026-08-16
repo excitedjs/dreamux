@@ -50,7 +50,9 @@ import type {
   AgentRuntimeSkillSource,
   AgentRuntimeSystemPrompt,
   DreamuxLogger,
-  TurnSettledSignal,
+  RuntimeAdmission,
+  RuntimeTurn,
+  RuntimeTurnOutcome,
 } from '@excitedjs/dreamux-types';
 
 const noopLogger: DreamuxLogger = {
@@ -66,6 +68,9 @@ const FEISHU_MCP: AgentRuntimeMcpServer = {
   command: '/pkg/bin/dreamux',
   args: ['channel-mcp', '--provider', 'builtin:feishu', '--channel-id', 'primary', '--dispatcher', 'flow', '--admin-socket', '/tmp/a.sock'],
 };
+
+const TEST_SESSION_ID = '00000000-0000-4000-8000-000000000001';
+const PREVIOUS_SESSION_ID = '00000000-0000-4000-8000-000000000002';
 
 function claudeCodeProvider(
   options: Omit<ClaudeCodeAgentRuntimeProviderOptions, 'descriptor'> = {},
@@ -96,6 +101,14 @@ function claudeDispatcher(
 
 function okOutcome(sessionId: string | null = 'session-abc'): TurnOutcome {
   return { isError: false, text: 'done', sessionId, subtype: 'success', errors: [], hasStructuredOutput: false };
+}
+
+function pinnedSessionId(spec: ClaudeCodeSessionSpec): string | null {
+  for (const flag of ['--session-id', '--resume']) {
+    const index = spec.args.indexOf(flag);
+    if (index >= 0) return spec.args[index + 1] ?? null;
+  }
+  return null;
 }
 
 /** A fake resident session: records turns, plays a scripted outcome sequence. */
@@ -153,7 +166,10 @@ function fakeFleet(
         const outcome = outcomes[Math.min(turnIndex, outcomes.length - 1)];
         turnIndex += 1;
         if (outcome instanceof Error) throw outcome;
-        return outcome as TurnOutcome;
+        return {
+          ...outcome,
+          sessionId: pinnedSessionId(spec),
+        } as TurnOutcome;
       },
       async steerTurn(prompt, options) {
         prompts.push(prompt);
@@ -180,6 +196,7 @@ function controllableFleet(): FakeFleet & {
   const sessions: FakeSession[] = [];
   let pendingResolve: ((outcome: TurnOutcome) => void) | null = null;
   let pendingReject: ((error: Error) => void) | null = null;
+  let pendingSessionId: string | null = null;
   const factory: ClaudeCodeSessionFactory = (spec) => {
     let alive = false;
     let starts = 0;
@@ -205,6 +222,7 @@ function controllableFleet(): FakeFleet & {
         return new Promise<TurnOutcome>((resolve, reject) => {
           pendingResolve = resolve;
           pendingReject = reject;
+          pendingSessionId = pinnedSessionId(spec);
         });
       },
       async steerTurn(prompt, options) {
@@ -226,14 +244,16 @@ function controllableFleet(): FakeFleet & {
     factory,
     sessions,
     resolveNext(outcome = okOutcome()) {
-      pendingResolve?.(outcome);
+      pendingResolve?.({ ...outcome, sessionId: pendingSessionId });
       pendingResolve = null;
       pendingReject = null;
+      pendingSessionId = null;
     },
     rejectNext(error: Error) {
       pendingReject?.(error);
       pendingResolve = null;
       pendingReject = null;
+      pendingSessionId = null;
     },
   };
 }
@@ -381,6 +401,25 @@ describe('builtin:claude-code provider', () => {
   });
 });
 
+function observeRuntimeTurnOutcomes(
+  runtime: AgentRuntime,
+  observe: (outcome: RuntimeTurnOutcome) => void,
+): void {
+  const seen = new WeakSet<RuntimeTurn>();
+  const capture = (admission: RuntimeAdmission): RuntimeAdmission => {
+    if (admission.status === 'submitted' && !seen.has(admission.turn)) {
+      seen.add(admission.turn);
+      void admission.turn.settled.then(observe);
+    }
+    return admission;
+  };
+  const channelInput = runtime.channelInput.bind(runtime);
+  const completionInput = runtime.completionInput.bind(runtime);
+  runtime.channelInput = async (input) => capture(await channelInput(input));
+  runtime.completionInput = async (input) =>
+    capture(await completionInput(input));
+}
+
 describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
   let home: string;
   let previousHome: string | undefined;
@@ -406,7 +445,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     fleet: FakeFleet,
     opts: {
       resumeSession?: string;
-      onTurnSettled?: (settled: TurnSettledSignal) => void;
+      observeOutcome?: (settled: RuntimeTurnOutcome) => void;
       systemPrompt?: AgentRuntimeSystemPrompt;
       skillSources?: AgentRuntimeSkillSource[];
       disableFeatures?: readonly string[];
@@ -448,8 +487,20 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const state = new AgentRuntimeStateStore(identities, identity);
     const runtime = claudeCodeProvider({
       sessionFactory: fleet.factory,
+      generateSessionId: () => TEST_SESSION_ID,
+      resolveTranscriptPath: async ({ sessionId }) =>
+        join(cwd, `${sessionId}.jsonl`),
     }).createRuntime({
-      identity: { runtime_id: 'flow', checkpoint_id: identity.session_id },
+      identity: {
+        runtime_id: 'flow',
+        checkpoint:
+          identity.session_id === null
+            ? null
+            : {
+                id: identity.session_id,
+                transcript_locator: identity.transcript_locator,
+              },
+      },
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd,
       mcpServers: [FEISHU_MCP],
@@ -463,11 +514,11 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
         ? { disableFeatures: opts.disableFeatures }
         : {}),
       outputSchema: opts.outputSchema,
-      ...(opts.onTurnSettled !== undefined
-        ? { onTurnSettled: opts.onTurnSettled }
-        : {}),
       ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
     });
+    if (opts.observeOutcome !== undefined) {
+      observeRuntimeTurnOutcomes(runtime, opts.observeOutcome);
+    }
     runtimes.push(runtime);
     return {
       runtime,
@@ -760,16 +811,18 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
   it('resumes a persisted session and threads --resume into the launch args', async () => {
     const fleet = fakeFleet([okOutcome('session-new')]);
-    const { runtime } = await makeRuntime(fleet, { resumeSession: 'session-prev' });
+    const { runtime } = await makeRuntime(fleet, {
+      resumeSession: PREVIOUS_SESSION_ID,
+    });
     expect(runtime.wasCheckpointResumed()).toBe(true);
-    expect((runtime.getCheckpoint()?.id ?? null)).toBe('session-prev');
+    expect((runtime.getCheckpoint()?.id ?? null)).toBe(PREVIOUS_SESSION_ID);
     await runtime.start();
     expect(
       fleet.sessions[0]?.spec.args.slice(
         fleet.sessions[0].spec.args.indexOf('--resume'),
         fleet.sessions[0].spec.args.indexOf('--resume') + 2,
       ),
-    ).toEqual(['--resume', 'session-prev']);
+    ).toEqual(['--resume', PREVIOUS_SESSION_ID]);
   });
 
   it('submits an inbound turn (accept -> run), dedupes, and captures the session', async () => {
@@ -782,7 +835,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
     await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
     expect(fleet.sessions[0]?.prompts[0]).toBe('do it');
-    await waitFor(() => (runtime.getCheckpoint()?.id ?? null) === 'session-abc');
+    await waitFor(() => (runtime.getCheckpoint()?.id ?? null) === TEST_SESSION_ID);
 
     const dup = await runtime.channelInput({
       sourceId: 'm1',
@@ -793,10 +846,10 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
   });
 
   it('steers follow-up sends into the active channel turn and settles once', async () => {
-    const settled: TurnSettledSignal[] = [];
+    const settled: RuntimeTurnOutcome[] = [];
     const fleet = controllableFleet();
     const { runtime } = await makeRuntime(fleet, {
-      onTurnSettled: (s) => settled.push(s),
+      observeOutcome: (outcome) => settled.push(outcome),
     });
     await runtime.start();
 
@@ -806,8 +859,17 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
     const second = await runtime.channelInput({ sourceId: 'm2', text: 'second' });
     const third = await runtime.channelInput({ sourceId: 'm3', text: 'third' });
-    expect(second).toEqual(first);
-    expect(third).toEqual(first);
+    expect(second.status).toBe('submitted');
+    expect(third.status).toBe('submitted');
+    if (
+      first.status !== 'submitted' ||
+      second.status !== 'submitted' ||
+      third.status !== 'submitted'
+    ) {
+      throw new Error('expected submitted admissions');
+    }
+    expect(second.turn).toBe(first.turn);
+    expect(third.turn).toBe(first.turn);
     expect(fleet.sessions[0]?.prompts).toEqual(['first', 'second', 'third']);
     expect(fleet.sessions[0]?.submitOptions).toEqual([
       undefined,
@@ -819,9 +881,9 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await waitFor(() => settled.length === 1);
     expect(settled).toEqual([
       {
-        turnId: first.status === 'submitted' ? first.turnId : 'unreachable',
         status: 'completed',
-        result: { text: 'done' },
+        resultText: 'done',
+        truncated: false,
       },
     ]);
   });
@@ -833,11 +895,11 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     // own logical turn + its own completion, so B/C produced "收到 S30_B" /
     // "收到 S30_C" instead of folding into the active turn. The runtime must
     // treat `completionInput` the same way it already treated `channelInput`:
-    // same active steerable slot, same turnId, one settled signal.
-    const settled: TurnSettledSignal[] = [];
+    // same active steerable slot, same RuntimeTurn object, one outcome.
+    const settled: RuntimeTurnOutcome[] = [];
     const fleet = controllableFleet();
     const { runtime } = await makeRuntime(fleet, {
-      onTurnSettled: (s) => settled.push(s),
+      observeOutcome: (outcome) => settled.push(outcome),
     });
     await runtime.start();
 
@@ -856,9 +918,18 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       text: 'S30_C',
       sourceId: 'send:mate-1:third',
     });
-    // Both follow-ups fold into the active logical turn and return its id.
-    expect(second).toEqual(first);
-    expect(third).toEqual(first);
+    // Both follow-ups fold into the active logical Turn object.
+    expect(second.status).toBe('submitted');
+    expect(third.status).toBe('submitted');
+    if (
+      first.status !== 'submitted' ||
+      second.status !== 'submitted' ||
+      third.status !== 'submitted'
+    ) {
+      throw new Error('expected submitted admissions');
+    }
+    expect(second.turn).toBe(first.turn);
+    expect(third.turn).toBe(first.turn);
 
     // The first prompt is the original send; S30_B and S30_C are steered in
     // with `priority: 'next'` (the Codex-aligned active-slot semantics).
@@ -881,9 +952,9 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     }
     expect(settled).toEqual([
       {
-        turnId: first.turnId,
         status: 'completed',
-        result: { text: 'done' },
+        resultText: 'done',
+        truncated: false,
       },
     ]);
   });
@@ -891,14 +962,12 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
   it('folds a channel inbound into an active completionInput turn', async () => {
     // The active slot is shared, not channel-only: a Dreamux-owned send that
     // started the turn must also accept channel-XML inbound as a steer. When
-    // the steer arrives before the resident child has picked up the initial
-    // submit, it lands in `pendingSteers` and is prepended to the full prompt
-    // at turn-start (same path the existing channel-folding test uses for the
-    // pre-session window).
-    const settled: TurnSettledSignal[] = [];
-    const fleet = fakeFleet([okOutcome('session-abc')]);
+    // Hold the first native outcome open so the steer deterministically reaches
+    // the same active logical Turn.
+    const settled: RuntimeTurnOutcome[] = [];
+    const fleet = controllableFleet();
     const { runtime } = await makeRuntime(fleet, {
-      onTurnSettled: (s) => settled.push(s),
+      observeOutcome: (outcome) => settled.push(outcome),
     });
     await runtime.start();
 
@@ -907,6 +976,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       sourceId: 'send:mate-1:first',
     });
     expect(first.status).toBe('submitted');
+    await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
 
     const second = await runtime.channelInput({
       sourceId: 'm-inbound',
@@ -918,31 +988,37 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
         ['message_id', 'om:msg-2'],
       ],
     });
-    // Channel inbound folds into the active turn and returns the same id.
-    expect(second).toEqual(first);
+    // Channel inbound folds into the active turn and returns the same object.
+    expect(second.status).toBe('submitted');
+    if (first.status !== 'submitted' || second.status !== 'submitted') {
+      throw new Error('expected submitted admissions');
+    }
+    expect(second.turn).toBe(first.turn);
 
+    fleet.resolveNext();
     await waitFor(() => settled.length === 1);
-    // The single submitted prompt carries both the original plain text and the
-    // channel-rendered inbound (the steer was pending and got joined).
-    const fullPrompt = fleet.sessions[0]?.prompts[0] ?? '';
-    expect(fullPrompt).toContain('first send');
-    expect(fullPrompt).toContain('<channel source="feishu"');
-    expect(fullPrompt).toContain('inbound follow-up');
+    // The same logical turn carries both the original plain text and the
+    // channel-rendered inbound. Depending on the resident-session scheduling
+    // point, the steer is either joined into the initial prompt or submitted
+    // as the next native message; both are one RuntimeTurn.
+    const modelInput = fleet.sessions[0]?.prompts.join('\n\n') ?? '';
+    expect(modelInput).toContain('first send');
+    expect(modelInput).toContain('<channel source="feishu"');
+    expect(modelInput).toContain('inbound follow-up');
     // The initial completionInput turn is a real user turn, not synthetic.
     expect(fleet.sessions[0]?.submitOptions[0]).toEqual({ isSynthetic: false });
     if (first.status !== 'submitted') {
       throw new Error('expected first submitted');
     }
-    expect(settled[0]?.turnId).toBe(first.turnId);
+    expect(settled[0]).toMatchObject({ status: 'completed' });
   });
 
   it('starts a fresh logical turn for completionInput after the prior turn settled', async () => {
-    // Preserves the existing "sequential turns get distinct ids" invariant for
-    // the plain-text path (the channel path already has this test).
-    const settled: TurnSettledSignal[] = [];
+    // Sequential submissions receive distinct logical Turn objects.
+    const settled: RuntimeTurnOutcome[] = [];
     const fleet = fakeFleet([okOutcome('session-abc'), okOutcome('session-abc')]);
     const { runtime } = await makeRuntime(fleet, {
-      onTurnSettled: (s) => settled.push(s),
+      observeOutcome: (outcome) => settled.push(outcome),
     });
     await runtime.start();
 
@@ -962,18 +1038,21 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     if (first.status !== 'submitted' || second.status !== 'submitted') {
       throw new Error('expected submitted turns');
     }
-    expect(first.turnId).not.toBe(second.turnId);
-    expect(settled.map((s) => s.turnId)).toEqual([first.turnId, second.turnId]);
+    expect(first.turn).not.toBe(second.turn);
+    expect(settled.map((outcome) => outcome.status)).toEqual([
+      'completed',
+      'completed',
+    ]);
   });
 
   it('does not reuse the prior successful result for a later empty successful turn', async () => {
-    const settled: TurnSettledSignal[] = [];
+    const settled: RuntimeTurnOutcome[] = [];
     const fleet = fakeFleet([
       okOutcome('session-abc'),
       { ...okOutcome('session-abc'), text: '' },
     ]);
     const { runtime } = await makeRuntime(fleet, {
-      onTurnSettled: (s) => settled.push(s),
+      observeOutcome: (outcome) => settled.push(outcome),
     });
     await runtime.start();
 
@@ -982,15 +1061,16 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await runtime.channelInput({ sourceId: 'm2', text: 'second' });
     await waitFor(() => settled.length === 2);
 
-    expect(settled.map((s) => s.result?.text ?? null)).toEqual(['done', null]);
-    expect(await runtime.getLast()).toEqual({ text: 'done' });
+    expect(settled.map((outcome) =>
+      outcome.status === 'completed' ? outcome.resultText : null,
+    )).toEqual(['done', null]);
   });
 
   it('starts a fresh logical turn for a sequential send after the previous turn completed', async () => {
-    const settled: TurnSettledSignal[] = [];
+    const settled: RuntimeTurnOutcome[] = [];
     const fleet = fakeFleet([okOutcome('session-abc'), okOutcome('session-abc')]);
     const { runtime } = await makeRuntime(fleet, {
-      onTurnSettled: (s) => settled.push(s),
+      observeOutcome: (outcome) => settled.push(outcome),
     });
     await runtime.start();
 
@@ -1004,17 +1084,17 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     if (first.status !== 'submitted' || second.status !== 'submitted') {
       throw new Error('expected submitted turns');
     }
-    expect(first.turnId).not.toBe(second.turnId);
-    expect(settled.map((s) => s.turnId)).toEqual([
-      first.turnId,
-      second.turnId,
+    expect(first.turn).not.toBe(second.turn);
+    expect(settled.map((outcome) => outcome.status)).toEqual([
+      'completed',
+      'completed',
     ]);
   });
 
-  it('does not reuse logical turn ids across resumed runtime instances', async () => {
-    const firstSettled: TurnSettledSignal[] = [];
+  it('does not reuse logical Turn objects across resumed runtime instances', async () => {
+    const firstSettled: RuntimeTurnOutcome[] = [];
     const firstRuntime = await makeRuntime(fakeFleet([okOutcome('session-abc')]), {
-      onTurnSettled: (s) => firstSettled.push(s),
+      observeOutcome: (outcome) => firstSettled.push(outcome),
     });
     await firstRuntime.runtime.start();
     const first = await firstRuntime.runtime.channelInput({
@@ -1023,10 +1103,10 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     });
     await waitFor(() => firstSettled.length === 1);
 
-    const secondSettled: TurnSettledSignal[] = [];
+    const secondSettled: RuntimeTurnOutcome[] = [];
     const secondRuntime = await makeRuntime(fakeFleet([okOutcome('session-abc')]), {
-      resumeSession: 'session-abc',
-      onTurnSettled: (s) => secondSettled.push(s),
+      resumeSession: TEST_SESSION_ID,
+      observeOutcome: (outcome) => secondSettled.push(outcome),
     });
     await secondRuntime.runtime.start();
     const second = await secondRuntime.runtime.channelInput({
@@ -1040,7 +1120,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     if (first.status !== 'submitted' || second.status !== 'submitted') {
       throw new Error('expected submitted turns');
     }
-    expect(first.turnId).not.toBe(second.turnId);
+    expect(first.turn).not.toBe(second.turn);
   });
 
   it('delivers completionInput as a plain user turn', async () => {
@@ -1060,11 +1140,16 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     if (result.status !== 'submitted') {
       throw new Error('expected submitted completionInput result');
     }
-    expect(result.turnId).toMatch(/^claude-turn-\d+-1$/u);
+    expect(result.turn).toEqual(expect.objectContaining({
+      settled: expect.any(Promise),
+    }));
 
-    // The turn is still pending in the fleet. Resolve it so it cleans up.
-    fleet.resolveNext(okOutcome('session-abc'));
+    // Admission returns before the resident session has necessarily installed
+    // its native outcome resolver. Wait for native submission, then resolve it
+    // so teardown never races an unresolved fake Turn.
     await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
+    fleet.resolveNext(okOutcome('session-abc'));
+    await result.turn.settled;
 
     const prompt = fleet.sessions[0]?.prompts[0] ?? '';
     expect(prompt).toBe('TeamMate reviewer has finished its task. Output below:\n\nall done');
@@ -1113,7 +1198,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
   });
 
   it('fails a completed schema turn that lacks native structured_output', async () => {
-    const settled: TurnSettledSignal[] = [];
+    const settled: RuntimeTurnOutcome[] = [];
     const schema = {
       type: 'object',
       properties: { answer: { type: 'string' } },
@@ -1123,7 +1208,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const fleet = fakeFleet([okOutcome('session-abc')]);
     const { runtime } = await makeRuntime(fleet, {
       outputSchema: schema,
-      onTurnSettled: (signal) => settled.push(signal),
+      observeOutcome: (outcome) => settled.push(outcome),
     });
     await runtime.start();
 
@@ -1137,7 +1222,6 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(settled).toEqual([
       expect.objectContaining({
         status: 'failed',
-        result: { text: null },
         error: expect.objectContaining({
           message: expect.stringContaining('did not return structured_output'),
         }),
@@ -1290,11 +1374,15 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await runtime.start();
 
     // First turn establishes the session id.
-    await runtime.channelInput({
+    const first = await runtime.channelInput({
       sourceId: 'm1',
       text: 'first',
     });
-    await waitFor(() => (runtime.getCheckpoint()?.id ?? null) === 'session-abc');
+    if (first.status !== 'submitted') throw new Error(first.status);
+    await expect(first.turn.settled).resolves.toMatchObject({
+      status: 'completed',
+    });
+    await waitFor(() => (runtime.getCheckpoint()?.id ?? null) === TEST_SESSION_ID);
 
     // The resident child dies unexpectedly → degraded.
     fleet.sessions[0]?.triggerExit();
@@ -1314,7 +1402,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(respawn.spec.args.slice(
       respawn.spec.args.indexOf('--resume'),
       respawn.spec.args.indexOf('--resume') + 2,
-    )).toEqual(['--resume', 'session-abc']);
+    )).toEqual(['--resume', TEST_SESSION_ID]);
     await waitFor(() => runtime.getStatus() === 'ready');
   });
 
@@ -1381,11 +1469,11 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(store.get('flow')?.last_error).toContain('delivery boom');
   });
 
-  it('fires onTurnSettled(completed) with the turn id when an inbound turn succeeds', async () => {
-    const settled: TurnSettledSignal[] = [];
+  it('settles the submitted RuntimeTurn as completed', async () => {
+    const settled: RuntimeTurnOutcome[] = [];
     const fleet = fakeFleet([okOutcome('session-abc')]);
     const { runtime } = await makeRuntime(fleet, {
-      onTurnSettled: (s) => settled.push(s),
+      observeOutcome: (outcome) => settled.push(outcome),
     });
     await runtime.start();
 
@@ -1394,16 +1482,15 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
     await waitFor(() => settled.length === 1);
     expect(settled[0]?.status).toBe('completed');
-    expect(settled[0]?.turnId).toBe(
-      submit.status === 'submitted' ? submit.turnId : undefined,
-    );
+    if (submit.status !== 'submitted') throw new Error('expected submitted');
+    await expect(submit.turn.settled).resolves.toBe(settled[0]);
   });
 
-  it('fires onTurnSettled(failed) with the error when an inbound turn fails', async () => {
-    const settled: TurnSettledSignal[] = [];
+  it('settles the submitted RuntimeTurn as failed', async () => {
+    const settled: RuntimeTurnOutcome[] = [];
     const fleet = fakeFleet([new Error('turn boom')]);
     const { runtime } = await makeRuntime(fleet, {
-      onTurnSettled: (s) => settled.push(s),
+      observeOutcome: (outcome) => settled.push(outcome),
     });
     await runtime.start();
 
@@ -1411,11 +1498,13 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
     await waitFor(() => settled.length === 1);
     expect(settled[0]?.status).toBe('failed');
-    expect(settled[0]?.error?.message).toContain('turn boom');
+    const outcome = settled[0];
+    if (outcome?.status !== 'failed') throw new Error('expected failed outcome');
+    expect(outcome.error.message).toContain('turn boom');
   });
 
-  it('fires onTurnSettled(stopped) for a turn cut short by stop()', async () => {
-    const settled: TurnSettledSignal[] = [];
+  it('settles the submitted RuntimeTurn as stopped when stop wins', async () => {
+    const settled: RuntimeTurnOutcome[] = [];
     // A turn whose submitTurn never settles on its own; stop() tears the session
     // down, which rejects the in-flight turn — it must settle as `stopped`.
     let releaseTurn: (() => void) | null = null;
@@ -1447,7 +1536,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       return session;
     };
     const { runtime } = await makeRuntime(fleetFromFactory(blockingFactory), {
-      onTurnSettled: (s) => settled.push(s),
+      observeOutcome: (outcome) => settled.push(outcome),
     });
     await runtime.start();
     await runtime.channelInput({ sourceId: 'm1', text: 'go' });

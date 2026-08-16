@@ -210,7 +210,7 @@ TeamLeader identity fragment.
 - `AgentRuntimeSystemInput.reason` no longer lists `runtime-control` as a known
   reason in `/packages/dreamux-types/src/agent-runtime.ts`, and stale source
   proposal text is updated or marked historical in:
-  `.agents/proposals/agent-runtime-lifecycle-contracts.md`,
+  `.agents/archive/proposals/agent-runtime-lifecycle-contracts.md`,
   `.agents/archive/proposals/scheduled-tasks.md`, and
   `.agents/archive/proposals/scheduled-tasks-technical-design.md`. Historical changelog
   entries remain unchanged, and generated `dist/` declarations are updated only

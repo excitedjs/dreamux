@@ -125,12 +125,6 @@ history and rationale; when you need current behavior, pair them with
   only for channel-originated XML rendering, provider-owned skill layout
   materialization, and removal of Dreamux structural `role` from
   `AgentRuntimeCreateContext`.
-- [AgentRuntime lifecycle contracts](proposals/agent-runtime-lifecycle-contracts.md)
-  — draft technical design for the minimum neutral Agent Runtime contract:
-  Dreamux logical turns, turn-owned settlement results, opaque checkpoints,
-  terminal completion-delivery semantics, instance-scoped runtime state facts,
-  provider-owned role prompt injection, and external runtime handle validation
-  while keeping native CLI/daemon details provider-owned.
 - [Admin control plane surface](proposals/admin-control-plane-surface.md)
   — draft requirement/spec for making admin.sock the target external control
   plane. Its implemented namespace slice uses product method names, keeps
@@ -209,6 +203,10 @@ history still matters.
   — implemented issue #318 requests 1-4; current behavior is documented in
   [Dynamic Workflow usage](reference/dynamic-workflow-usage.md) and
   [Current architecture](reference/current-architecture.md).
+- [AgentRuntime lifecycle contracts](archive/proposals/agent-runtime-lifecycle-contracts.md)
+  — superseded ID/callback design exploration; current behavior is owned by
+  [Entity-owned TeamMate lifecycle and object Turns](decisions/entity-owned-teammate-lifecycle-and-object-turns.md)
+  and [Provider Runtime](domains/provider-runtime.md).
 - [Archive index](archive/README.md)
 - [Archived proposals](archive/proposals/README.md)
 

@@ -66,6 +66,9 @@ const externalRuntimeFactory: ExternalAgentRuntimeProviderFactory = ({
       parsed_by_provider: true,
     };
   },
+  async readTranscript() {
+    return { turns: [], nextCursor: null, truncated: false };
+  },
   createRuntime() {
     throw new Error('external runtime config test does not create a runtime');
   },
@@ -894,6 +897,9 @@ describe('global config (~/.dreamux/config.json)', () => {
         await Promise.resolve();
         return { ...rawConfig, parsed_async: true };
       },
+      async readTranscript() {
+        return { turns: [], nextCursor: null, truncated: false };
+      },
       createRuntime() {
         throw new Error('async runtime config test does not create a runtime');
       },
@@ -930,6 +936,9 @@ describe('global config (~/.dreamux/config.json)', () => {
       async readConfig() {
         await Promise.resolve();
         throw new Error('async config validation failed: bad flow');
+      },
+      async readTranscript() {
+        return { turns: [], nextCursor: null, truncated: false };
       },
       createRuntime() {
         throw new Error('rejecting runtime config test does not create a runtime');

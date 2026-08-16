@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { vi } from 'vitest';
 
 import { AgentIdentityStore } from '../../src/service/agent-entity/identity-store.js';
-import { AgentTurnsStore } from '../../src/service/agent-entity/turns-store.js';
-import { CompletionRouter } from '../../src/service/completion-router/index.js';
+import { CompletionDeliveryPolicy } from '../../src/service/completion-router/index.js';
+import type { CompletionInitiator } from '../../src/service/completion-router/index.js';
 import { TeamCollection } from '../../src/service/team-collection/index.js';
 import { WorktreeManager } from '../../src/service/worktree/manager.js';
 import { testDispatcherConfig, testDreamuxConfig } from './config.js';
@@ -21,6 +21,8 @@ interface MakeTeamsInput {
   worktrees: WorktreeManager;
   createRuntime?: () => FakeRuntime;
   isShuttingDown?: () => boolean;
+  completionAttemptTimeoutMs?: number;
+  initiatorFor?: () => Promise<CompletionInitiator | null>;
 }
 
 export function createTeamDissolveFixture() {
@@ -54,9 +56,14 @@ export function createTeamDissolveFixture() {
         }),
         worktrees: input.worktrees,
         identities: new AgentIdentityStore(log),
-        turnsStore: new AgentTurnsStore(log),
-        router: new CompletionRouter({ dispatcherId: 'dispatcher-a', log }),
-        initiatorFor: async () => null,
+        completionDelivery: new CompletionDeliveryPolicy({
+          dispatcherId: 'dispatcher-a',
+          log,
+          ...(input.completionAttemptTimeoutMs === undefined
+            ? {}
+            : { attemptTimeoutMs: input.completionAttemptTimeoutMs }),
+        }),
+        initiatorFor: input.initiatorFor ?? (async () => null),
         isShuttingDown: input.isShuttingDown ?? (() => false),
         adminSocketPath: '/tmp/admin.sock',
         leaderChannelDescriptors: () => [],

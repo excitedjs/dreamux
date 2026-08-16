@@ -28,9 +28,7 @@ import type {
   ProviderOnboard,
 } from './provider.js';
 import type {
-  InboundDeliveryResult,
   InboundTurnInput,
-  TurnSettledSignal,
 } from './turn.js';
 
 export interface AgentRuntimeMcpServer {
@@ -57,6 +55,11 @@ export interface AgentRuntimeSkillSource {
 export interface AgentRuntimeResumeCheckpoint {
   /** Runtime-owned checkpoint id persisted by Dreamux and interpreted by the runtime. */
   id: string;
+  /**
+   * Provider-produced canonical native transcript locator. Dreamux persists
+   * this value atomically with {@link id} and never interprets it.
+   */
+  transcript_locator?: string | null;
 }
 
 export interface AgentRuntimeResumeCapability {
@@ -128,13 +131,68 @@ export interface UnsupportedAgentRuntimeFeatureError extends Error {
   feature: string;
 }
 
-export interface AgentRuntimeLastResult {
-  text: string | null;
-}
-
 export interface AgentRuntimeContextSnapshot {
   usedTokens: number | null;
   windowTokens: number | null;
+}
+
+export interface AgentRuntimeTranscriptQuery {
+  turns: number;
+  cursor?: string;
+  includeTools?: boolean;
+}
+
+export type AgentRuntimeTranscriptBlock =
+  | {
+      kind: 'message';
+      role: 'user' | 'assistant';
+      text: string;
+      truncated: boolean;
+    }
+  | {
+      kind: 'tool';
+      name: string;
+      input: string | null;
+      output: string | null;
+      status: 'ok' | 'error';
+      inputTruncated: boolean;
+      outputTruncated: boolean;
+    };
+
+export interface AgentRuntimeTranscriptTurn {
+  startedAt: number | null;
+  endedAt: number | null;
+  blocks: readonly AgentRuntimeTranscriptBlock[];
+}
+
+export interface AgentRuntimeTranscriptPage {
+  turns: readonly AgentRuntimeTranscriptTurn[];
+  nextCursor: string | null;
+  truncated: boolean;
+}
+
+export interface AgentRuntimeTranscriptContext<TConfig = unknown> {
+  checkpoint: AgentRuntimeResumeCheckpoint | null;
+  config: TConfig;
+  cwd: string;
+  injectEnv?: Readonly<Record<string, string>>;
+  outputBudgetBytes: 262144;
+  logger?: DreamuxLogger;
+}
+
+export interface AgentRuntimeTranscriptError extends Error {
+  name: 'AgentRuntimeTranscriptError';
+  reason:
+    | 'checkpoint_missing'
+    | 'not_found'
+    | 'unreadable'
+    | 'invalid'
+    | 'locator_outside_root'
+    | 'session_mismatch'
+    | 'cursor_invalid'
+    | 'cursor_query_mismatch'
+    | 'cursor_stale'
+    | 'scan_unsupported';
 }
 
 export interface AgentRuntimePathContext {
@@ -217,9 +275,33 @@ export interface AgentRuntimeStateCallbacks {
   ): Promise<void>;
 }
 
-export type AgentRuntimeTurnResult =
-  | InboundDeliveryResult
-  | { status: 'skipped' };
+export type RuntimeTurnOutcome =
+  | { status: 'completed'; resultText: string | null; truncated: boolean }
+  | { status: 'failed'; error: Error }
+  | { status: 'stopped' };
+
+/** A provider-owned in-flight turn. Folds return this exact object. */
+export interface RuntimeTurn {
+  readonly settled: Promise<RuntimeTurnOutcome>;
+}
+
+/**
+ * Admission is separate from the eventual outcome of an accepted turn.
+ *
+ * `failed` is narrowly reserved for a provider-proven pre-admission failure:
+ * the provider knows that no native command was accepted or may later become
+ * accepted. `ambiguous` means submission may have crossed the provider/native
+ * boundary. Callers MUST NOT retry an ambiguous admission automatically.
+ * A rejected/thrown input promise is likewise admission-ambiguous unless the
+ * provider documents and returns the explicit `failed` result instead.
+ */
+export type RuntimeAdmission =
+  | { status: 'submitted'; turn: RuntimeTurn }
+  | { status: 'duplicate' }
+  | { status: 'stopped' }
+  | { status: 'skipped' }
+  | { status: 'failed'; error: Error }
+  | { status: 'ambiguous'; error: Error };
 
 /**
  * The neutral, launcher-supplied identity of the runtime instance. Replaces the
@@ -231,10 +313,10 @@ export interface AgentRuntimeIdentity {
   /** The runtime instance id (the dispatcher/teammate id the launcher assigns). */
   runtime_id: string;
   /**
-   * A prior resumable checkpoint id the launcher recovered, or null for a fresh
-   * start. The runtime interprets the id in its own native format.
+   * A prior resumable checkpoint the launcher recovered, or null for a fresh
+   * start. The runtime interprets both the id and transcript locator.
    */
-  checkpoint_id?: string | null;
+  checkpoint: AgentRuntimeResumeCheckpoint | null;
 }
 
 /**
@@ -300,11 +382,6 @@ export interface AgentRuntimeCreateContext<TConfig = unknown> {
    * case today.
    */
   injectEnv?: Record<string, string>;
-  /**
-   * Fired each time a delivered turn reaches a terminal state. Capability-
-   * neutral; the launcher opts in.
-   */
-  onTurnSettled?: (settled: TurnSettledSignal) => void;
 }
 
 /**
@@ -315,17 +392,23 @@ export interface AgentRuntime {
   readonly providerRef: string;
   start(): Promise<void>;
   resume(): Promise<void>;
+  /**
+   * Fence new input synchronously, terminate the owned runtime, and converge
+   * every `channelInput`/`completionInput` call that started before the fence.
+   * This promise MUST NOT resolve while an already-started admission can still
+   * resolve to a newly accepted {@link RuntimeTurn}.
+   */
   stop(): Promise<void>;
   /**
    * Deliver a channel/user turn. The runtime owns rendering the neutral channel
    * shape into its native input format.
    */
-  channelInput(input: InboundTurnInput): Promise<AgentRuntimeTurnResult>;
+  channelInput(input: InboundTurnInput): Promise<RuntimeAdmission>;
   /**
    * Deliver a Dreamux-owned plain text turn. This is not channel input and must
    * not receive channel/XML rendering.
    */
-  completionInput(input: AgentRuntimeTextInput): Promise<AgentRuntimeTurnResult>;
+  completionInput(input: AgentRuntimeTextInput): Promise<RuntimeAdmission>;
   /**
    * Resolve when no turn is in progress. Optional: runtimes that omit it are
    * treated by core as always idle.
@@ -334,11 +417,6 @@ export interface AgentRuntime {
   getStatus(): AgentRuntimeStatus;
   getCheckpoint(): AgentRuntimeResumeCheckpoint | null;
   wasCheckpointResumed(): boolean;
-  /**
-   * The last assistant/user-visible result, or `null` when unavailable.
-   * Core treats `null` as "not reported".
-   */
-  getLast(): Promise<AgentRuntimeLastResult | null>;
   /**
    * Context-window usage, or `null` when unavailable.
    */
@@ -412,6 +490,10 @@ export interface AgentRuntimeProvider<TConfig = unknown> {
    * delegates provider-specific raw config collection to this capability.
    */
   onboard?: ProviderOnboard<Record<string, unknown>>;
+  readTranscript(
+    query: AgentRuntimeTranscriptQuery,
+    context: AgentRuntimeTranscriptContext<TConfig>,
+  ): Promise<AgentRuntimeTranscriptPage>;
   createRuntime(context: AgentRuntimeCreateContext<TConfig>): AgentRuntime;
 }
 
