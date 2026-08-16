@@ -11,9 +11,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { InboundTurnInput } from '@excitedjs/dreamux-types';
+import type {
+  AgentRuntimeTranscriptTurn,
+  InboundTurnInput,
+} from '@excitedjs/dreamux-types';
 
 import {
+  TRANSCRIPT_TOOL_NAME_MAX_CHARS,
+  boundTranscriptTurn,
+  budgetTranscriptTurns,
   COMPLETION_INLINE_BUDGET_DEFAULT,
   COMPLETION_INLINE_BUDGET_MAX,
   completionInlineBudget,
@@ -317,6 +323,47 @@ describe('transcript primitives', () => {
     expect(isPathWithin('/native/root', '/native/root-other/session.jsonl'))
       .toBe(false);
   });
+
+  it('caps tool names by Unicode code point and marks returned clipping', () => {
+    const oversizedName = '🧰'.repeat(TRANSCRIPT_TOOL_NAME_MAX_CHARS + 1);
+    const bounded = boundTranscriptTurn(transcriptToolTurn(oversizedName));
+
+    expect(bounded.truncated).toBe(true);
+    expect(bounded.turn.blocks[0]).toMatchObject({
+      kind: 'tool',
+      name: '🧰'.repeat(TRANSCRIPT_TOOL_NAME_MAX_CHARS),
+    });
+    expect([
+      ...(bounded.turn.blocks[0]?.kind === 'tool'
+        ? bounded.turn.blocks[0].name
+        : ''),
+    ]).toHaveLength(TRANSCRIPT_TOOL_NAME_MAX_CHARS);
+
+    const page = budgetTranscriptTurns(
+      [transcriptToolTurn(oversizedName)],
+      262_144,
+    );
+    expect(page).toMatchObject({ consumed: 1, truncated: true });
+  });
+
+  it('does not inherit truncation from a candidate omitted after returned turns', () => {
+    const returned = transcriptMessageTurn('returned');
+    const omitted = transcriptToolTurn(
+      'x'.repeat(TRANSCRIPT_TOOL_NAME_MAX_CHARS + 1),
+    );
+    const exactReturnedBudget = Buffer.byteLength(
+      JSON.stringify([returned]),
+      'utf8',
+    );
+
+    expect(
+      budgetTranscriptTurns([returned, omitted], exactReturnedBudget),
+    ).toEqual({
+      turnsNewestFirst: [returned],
+      consumed: 1,
+      truncated: false,
+    });
+  });
 });
 
 function completion(result: string): CompletionBodyInput {
@@ -325,4 +372,37 @@ function completion(result: string): CompletionBodyInput {
 
 function plain(text: string): InboundTurnInput {
   return { text, sourceId: 's1' };
+}
+
+function transcriptMessageTurn(text: string): AgentRuntimeTranscriptTurn {
+  return {
+    startedAt: null,
+    endedAt: null,
+    blocks: [
+      {
+        kind: 'message',
+        role: 'assistant',
+        text,
+        truncated: false,
+      },
+    ],
+  };
+}
+
+function transcriptToolTurn(name: string): AgentRuntimeTranscriptTurn {
+  return {
+    startedAt: null,
+    endedAt: null,
+    blocks: [
+      {
+        kind: 'tool',
+        name,
+        input: null,
+        output: null,
+        status: 'ok',
+        inputTruncated: false,
+        outputTruncated: false,
+      },
+    ],
+  };
 }

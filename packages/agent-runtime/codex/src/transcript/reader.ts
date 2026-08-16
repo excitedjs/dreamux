@@ -250,6 +250,7 @@ async function scanTurns(input: {
   const candidates: PositionedTurn[] = [];
   let resumePosition: CodexCursorPosition | null = null;
   let resumeBoundaryDigest: string | null = null;
+  let stoppedBeforeOrigin = false;
   const firstSegment = input.startPosition?.segment ?? 0;
 
   for (
@@ -257,7 +258,10 @@ async function scanTurns(input: {
     segmentIndex < input.lineage.length;
     segmentIndex += 1
   ) {
-    if (Date.now() > deadline) break;
+    if (Date.now() > deadline) {
+      stoppedBeforeOrigin = true;
+      break;
+    }
     const segment = input.lineage[segmentIndex]!;
     const endOffset =
       segmentIndex === firstSegment && input.startPosition !== null
@@ -278,18 +282,34 @@ async function scanTurns(input: {
     );
     recordsRemaining -= parsed.records;
     for (const native of parsed.turns) {
-      candidates.push({ segment: segmentIndex, native });
       if (candidates.length >= input.turns) {
         return {
           candidates,
-          hasOlder:
-            native.start > 0 ||
-            window.startOffset > 0 ||
-            segmentIndex + 1 < input.lineage.length,
+          hasOlder: true,
           resumePosition: null,
           resumeBoundaryDigest: null,
         };
       }
+      candidates.push({ segment: segmentIndex, native });
+    }
+    const segmentOriginReached =
+      window.bytesRead > 0 &&
+      parsed.incompleteBoundary === null &&
+      !parsed.boundReached &&
+      window.startOffset === 0;
+    if (
+      candidates.length >= input.turns &&
+      (
+        !segmentOriginReached ||
+        segmentIndex + 1 < input.lineage.length
+      )
+    ) {
+      return {
+        candidates,
+        hasOlder: true,
+        resumePosition: null,
+        resumeBoundaryDigest: null,
+      };
     }
     if (parsed.incompleteBoundary !== null) {
       if (
@@ -306,6 +326,7 @@ async function scanTurns(input: {
           'Codex completed turn exceeds the bounded scan limit',
         );
       }
+      stoppedBeforeOrigin = true;
       break;
     }
     if (parsed.boundReached || window.startOffset > 0) {
@@ -330,6 +351,8 @@ async function scanTurns(input: {
           offset: boundary.start,
         };
         resumeBoundaryDigest = digest(boundary.boundaryBytes);
+      } else {
+        stoppedBeforeOrigin = true;
       }
       break;
     }
@@ -340,16 +363,18 @@ async function scanTurns(input: {
           'Codex transcript pagination cannot make safe progress',
         );
       }
+      if (
+        !segmentOriginReached ||
+        segmentIndex + 1 < input.lineage.length
+      ) {
+        stoppedBeforeOrigin = true;
+      }
       break;
     }
   }
-  const hasOlder =
-    resumePosition !== null ||
-    (candidates.at(-1)?.native.start ?? 0) > 0 ||
-    firstSegment + 1 < input.lineage.length;
   return {
     candidates,
-    hasOlder,
+    hasOlder: resumePosition !== null || stoppedBeforeOrigin,
     resumePosition,
     resumeBoundaryDigest,
   };

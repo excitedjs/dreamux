@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, sep } from 'node:path';
 import { zstdCompressSync } from 'node:zlib';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { defaultDispatcherCodexConfig } from '../src/config.js';
 import { createCodexTranscriptBudget } from '../src/transcript/budget.js';
@@ -79,6 +79,7 @@ describe('Codex native transcript reader', () => {
         text: 'first',
       }),
     );
+    expect(second.nextCursor).toBeNull();
     await expect(
       read(fixture.path, {
         turns: 1,
@@ -468,6 +469,84 @@ describe('Codex native transcript reader', () => {
       cursor: second.nextCursor!,
     });
     expect(publicText(third)).toContain('oldest');
+  });
+
+  it('returns null cursor when the exact native-record budget reaches byte zero', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-16T00:00:00.000Z'));
+    try {
+      const fixture = await transcriptFixture([]);
+      const filler = line('response_item', {
+        type: 'reasoning',
+        encrypted_content: 'x',
+      });
+      const completed = turn('oldest', 'at origin');
+      await writeFile(
+        fixture.path,
+        [
+          rollout([]).trimEnd(),
+          ...completed,
+          ...Array.from({ length: 20_000 - 1 - completed.length }, () => filler),
+          '',
+        ].join('\n'),
+      );
+
+      const page = await read(fixture.path, { turns: 1 });
+      expect(publicText(page)).toContain('at origin');
+      expect(page.nextCursor).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('continues into a parent after an exact tail native-record budget', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-16T00:00:00.000Z'));
+    try {
+      const root = await createRoot();
+      const parentPath = rolloutPath(root, PARENT_SESSION_ID, '15');
+      const parent = rollout([turn('parent', 'older parent')], SESSION_ID);
+      await mkdir(dirname(parentPath), { recursive: true });
+      await writeFile(parentPath, parent);
+
+      const tailPath = rolloutPath(root, SESSION_ID, '16');
+      const completed = turn('tail', 'newer tail');
+      const filler = line('response_item', {
+        type: 'reasoning',
+        encrypted_content: 'x',
+      });
+      await mkdir(dirname(tailPath), { recursive: true });
+      await writeFile(
+        tailPath,
+        [
+          rollout([], SESSION_ID, {
+            rolloutId: PARENT_SESSION_ID,
+            endByteOffset: Buffer.byteLength(parent, 'utf8'),
+          }).trimEnd(),
+          ...completed,
+          ...Array.from(
+            { length: 20_000 - 1 - completed.length },
+            () => filler,
+          ),
+          '',
+        ].join('\n'),
+      );
+
+      const first = await readFromRoot(root, tailPath, { turns: 2 });
+      expect(publicText(first)).toContain('newer tail');
+      expect(publicText(first)).not.toContain('older parent');
+      expect(first.nextCursor).not.toBeNull();
+
+      const second = await readFromRoot(root, tailPath, {
+        turns: 2,
+        cursor: first.nextCursor!,
+      });
+      expect(publicText(second)).toContain('older parent');
+      expect(publicText(second)).not.toContain('newer tail');
+      expect(second.nextCursor).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each([

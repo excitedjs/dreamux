@@ -10,6 +10,7 @@ import type {
 import {
   TRANSCRIPT_BLOCKS_PER_TURN_MAX,
   TRANSCRIPT_MESSAGE_MAX_CHARS,
+  TRANSCRIPT_TOOL_NAME_MAX_CHARS,
   TRANSCRIPT_TOOL_VALUE_MAX_CHARS,
 } from '@excitedjs/dreamux-utils';
 
@@ -242,7 +243,7 @@ function verifyTranscriptBlock(block: AgentRuntimeTranscriptBlock): void {
   }
   if (
     block.kind !== 'tool' ||
-    typeof block.name !== 'string' ||
+    !isBoundedString(block.name, TRANSCRIPT_TOOL_NAME_MAX_CHARS) ||
     !isNullableBoundedString(block.input, TRANSCRIPT_TOOL_VALUE_MAX_CHARS) ||
     !isNullableBoundedString(block.output, TRANSCRIPT_TOOL_VALUE_MAX_CHARS) ||
     (block.status !== 'ok' && block.status !== 'error') ||
@@ -273,5 +274,9 @@ function isNullableBoundedString(
   value: string | null,
   limit: number,
 ): boolean {
-  return value === null || (typeof value === 'string' && [...value].length <= limit);
+  return value === null || isBoundedString(value, limit);
+}
+
+function isBoundedString(value: unknown, limit: number): value is string {
+  return typeof value === 'string' && [...value].length <= limit;
 }

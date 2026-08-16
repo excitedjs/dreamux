@@ -13,7 +13,10 @@ import { dirname, join } from 'node:path';
 
 const execFileAsync = promisify(execFile);
 
-import type { AgentRuntimeCreateContext } from '@excitedjs/dreamux-types';
+import type {
+  AgentRuntimeCreateContext,
+  RuntimeAdmission,
+} from '@excitedjs/dreamux-types';
 
 import { TeamCollection } from '../src/service/team-collection/index.js';
 import { TeamStore } from '../src/service/team-collection/store.js';
@@ -43,6 +46,7 @@ import {
   fakeRuntimeCatalog,
   noopLog,
 } from './helpers/fake-team-runtime.js';
+import { completedRuntimeTurn } from './helpers/runtime-turn.js';
 
 class RetryableCloseIdentityStore extends AgentIdentityStore {
   allowClose = false;
@@ -244,6 +248,144 @@ describe('TeamCollection read path (issue #233 R4)', () => {
     await collection.close({
       name: spawned.teammate.name,
       note: 'test complete',
+    });
+  });
+});
+
+describe('direct TeamMate receipt transcript association', () => {
+  const transcriptPath = '/native/session-canonical.jsonl';
+  let root: string;
+  let previousHome: string | undefined;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'dreamux-teammate-receipt-'));
+    previousHome = process.env['HOME'];
+    process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
+    mkdirSync(process.env['HOME'], { recursive: true });
+  });
+
+  afterEach(() => {
+    if (previousHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it.each([
+    ['submitted', { status: 'submitted', turn: completedRuntimeTurn() }],
+    ['duplicate', { status: 'duplicate' }],
+    ['failed', { status: 'failed', error: new Error('rejected') }],
+    ['ambiguous', { status: 'ambiguous', error: new Error('unknown') }],
+    ['stopped', { status: 'stopped' }],
+  ] satisfies ReadonlyArray<[string, RuntimeAdmission]>)(
+    'keeps the established path on %s spawn and send receipts',
+    async (_status, admission) => {
+      const workspace = join(root, 'workspace');
+      mkdirSync(workspace, { recursive: true });
+      const runtimes: FakeRuntime[] = [];
+      const config = testDreamuxConfig([
+        testDispatcherConfig({
+          id: 'dispatcher-a',
+          cwd: workspace,
+          agentRuntime: 'agent-a',
+          runtimeProvider: FAKE_RUNTIME_REF,
+        }),
+      ]);
+      const collection = new TeammateCollection({
+        dispatcherId: 'dispatcher-a',
+        teamScope: null,
+        config,
+        agentRuntimeProviders: fakeRuntimeCatalog(runtimes, {
+          createRuntime: (context) => {
+            return new (class extends FakeRuntime {
+              override async start(): Promise<void> {
+                await super.start();
+                await context.state?.setCheckpoint({
+                  id: 'session-established',
+                  transcript_locator: transcriptPath,
+                });
+              }
+            })({ completionResult: admission });
+          },
+        }),
+        worktrees: new WorktreeManager(),
+        identities: new AgentIdentityStore(noopLog()),
+        initiatorFor: async () => null,
+        isShuttingDown: () => false,
+        suffixGenerator: () => 'a1b2',
+        log: noopLog(),
+      });
+
+      const spawned = await collection.spawn({
+        name: 'reviewer',
+        prompt: 'initial',
+        intent: 'verify receipt',
+        agentRuntime: 'agent-a',
+      });
+      expect(spawned).toMatchObject({
+        status: admission.status,
+        transcript_path: transcriptPath,
+      });
+
+      await expect(
+        collection.send({
+          name: spawned.teammate.name,
+          prompt: 'follow up',
+        }),
+      ).resolves.toMatchObject({
+        status: admission.status,
+        transcript_path: transcriptPath,
+      });
+    },
+  );
+
+  it('returns null before a runtime establishes a transcript association', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const collection = new TeammateCollection({
+      dispatcherId: 'dispatcher-a',
+      teamScope: null,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, {
+        completionResult: { status: 'duplicate' },
+      }),
+      worktrees: new WorktreeManager(),
+      identities: new AgentIdentityStore(noopLog()),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      suffixGenerator: () => 'a1b2',
+      log: noopLog(),
+    });
+
+    const spawned = await collection.spawn({
+      name: 'reviewer',
+      prompt: 'initial',
+      intent: 'verify absent receipt',
+      agentRuntime: 'agent-a',
+    });
+    expect(spawned).toMatchObject({
+      status: 'duplicate',
+      transcript_path: null,
+    });
+
+    await expect(
+      collection.send({
+        name: spawned.teammate.name,
+        prompt: 'follow up',
+      }),
+    ).resolves.toMatchObject({
+      status: 'duplicate',
+      transcript_path: null,
     });
   });
 });

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
@@ -20,6 +20,8 @@ import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(TEST_DIR);
+const REPO_ROOT = dirname(dirname(PACKAGE_ROOT));
+const PACKAGES_ROOT = join(REPO_ROOT, 'packages');
 const SRC_ROOT = join(PACKAGE_ROOT, 'src');
 const SERVICE_ROOT = join(SRC_ROOT, 'service');
 
@@ -27,6 +29,11 @@ interface SourceHit {
   file: string;
   line: number;
   text: string;
+}
+
+interface ExactSourceOccurrence {
+  file: string;
+  count: number;
 }
 
 interface MovedDeclaration {
@@ -61,7 +68,7 @@ function sourceRelativePath(file: string): string {
 }
 
 function packagePath(file: string): string {
-  return `/packages/dreamux/${toPosixPath(relative(PACKAGE_ROOT, file))}`;
+  return `/${toPosixPath(relative(REPO_ROOT, file))}`;
 }
 
 async function sourceFilesUnder(root: string): Promise<string[]> {
@@ -102,6 +109,85 @@ async function findSourceHits(root: string, pattern: RegExp): Promise<SourceHit[
     hits.push(...hitsInSource(file, await readFile(file, 'utf8'), pattern));
   }
   return hits;
+}
+
+async function productSourceFilesUnder(root: string): Promise<string[]> {
+  const entries = await readdir(root, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const full = join(root, entry.name);
+    if (entry.isDirectory()) {
+      if (
+        entry.name === 'node_modules' ||
+        entry.name === 'dist' ||
+        entry.name === 'tests' ||
+        entry.name === '.rush' ||
+        entry.name === 'rush-logs'
+      ) {
+        continue;
+      }
+      files.push(...(await productSourceFilesUnder(full)));
+    } else if (
+      entry.isFile() &&
+      entry.name.endsWith('.ts') &&
+      full.split(sep).includes('src')
+    ) {
+      files.push(full);
+    }
+  }
+  return files.sort();
+}
+
+async function findProductSourceHits(pattern: RegExp): Promise<SourceHit[]> {
+  const hits: SourceHit[] = [];
+  for (const file of await productSourceFilesUnder(PACKAGES_ROOT)) {
+    hits.push(...hitsInSource(file, await readFile(file, 'utf8'), pattern));
+  }
+  return hits;
+}
+
+async function assertExactSourceOccurrences(input: {
+  invariant: string;
+  pattern: RegExp;
+  expected: readonly ExactSourceOccurrence[];
+}): Promise<void> {
+  const hits = await findProductSourceHits(input.pattern);
+  const mismatches = exactSourceOccurrenceMismatches(hits, input.expected);
+  if (mismatches.length > 0) {
+    failInvariant(
+      input.invariant,
+      `Occurrence mismatch(es):\n${mismatches.join('\n')}\nSource occurrence(s):\n${formatHits(hits) || '(none)'}`,
+    );
+  }
+}
+
+function exactSourceOccurrenceMismatches(
+  hits: readonly SourceHit[],
+  expectedOccurrences: readonly ExactSourceOccurrence[],
+): string[] {
+  const actual = new Map<string, SourceHit[]>();
+  for (const hit of hits) {
+    const relativeFile = toPosixPath(relative(REPO_ROOT, hit.file));
+    actual.set(relativeFile, [...(actual.get(relativeFile) ?? []), hit]);
+  }
+  const expected = new Map(
+    expectedOccurrences.map((entry) => [entry.file, entry.count]),
+  );
+  const mismatches: string[] = [];
+  for (const [file, count] of expected) {
+    const fileHits = actual.get(file) ?? [];
+    if (fileHits.length !== count) {
+      mismatches.push(
+        `${file}: expected ${count}, found ${fileHits.length}`,
+      );
+    }
+  }
+  for (const [file, fileHits] of actual) {
+    if (!expected.has(file)) {
+      mismatches.push(`${file}: expected 0, found ${fileHits.length}`);
+    }
+  }
+  return mismatches;
 }
 
 function formatHits(hits: SourceHit[]): string {
@@ -646,6 +732,52 @@ describe('architecture ownership gate (#233)', () => {
         /from\s+['"][^'"]*teammate-collection/u,
       ),
     );
+  });
+
+  it('restricts transcript_path to direct TeamMate spawn and send receipts', async () => {
+    await assertExactSourceOccurrences({
+      invariant:
+        'Native transcript path invariant violated: transcript_path may appear only in the exact direct TeamMate spawn/send receipt surface.',
+      pattern: /\btranscript_path\b/u,
+      expected: [
+        { file: 'packages/dreamux/src/mcp/teammate-mcp.ts', count: 4 },
+        {
+          file: 'packages/dreamux/src/service/agent-entity/types.ts',
+          count: 2,
+        },
+        {
+          file: 'packages/dreamux/src/service/teammate-collection/index.ts',
+          count: 1,
+        },
+        {
+          file: 'packages/dreamux/src/service/teammate-service/index.ts',
+          count: 1,
+        },
+      ],
+    });
+  });
+
+  it('detects an extra transcript_path occurrence inside an allowed source file', () => {
+    const allowedFile = join(
+      SRC_ROOT,
+      'service/teammate-service/index.ts',
+    );
+    expect(
+      exactSourceOccurrenceMismatches(
+        [
+          { file: allowedFile, line: 1, text: 'transcript_path: first' },
+          { file: allowedFile, line: 2, text: 'transcript_path: leaked' },
+        ],
+        [
+          {
+            file: 'packages/dreamux/src/service/teammate-service/index.ts',
+            count: 1,
+          },
+        ],
+      ),
+    ).toEqual([
+      'packages/dreamux/src/service/teammate-service/index.ts: expected 1, found 2',
+    ]);
   });
 
   it('keeps one truthful shutdown path and no service Turn identifiers', async () => {

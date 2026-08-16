@@ -313,7 +313,6 @@ Source:
 - `/packages/dreamux/src/service/dispatcher-core-events/`
 - `/packages/dreamux/src/service/binding-events.ts`
 - `/packages/dreamux/src/service/agent-entity/identity-store.ts`
-- `/packages/dreamux/src/service/agent-entity/turns-store.ts`
 - `/packages/dreamux/src/service/team-collection/store.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
 - `/packages/dreamux/src/service/collaboration-space/index.ts`

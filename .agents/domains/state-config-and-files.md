@@ -195,8 +195,6 @@ Source:
 - `/packages/dreamux/src/state/dispatcher-store.ts`
 - `/packages/dreamux/src/service/agent-entity/identity-store.ts`
 - `/packages/dreamux/src/service/team-collection/store.ts`
-- `/packages/dreamux/src/service/agent-entity/turns-store.ts`
-- `/packages/dreamux/src/service/team-collection/store.ts`
 - `/packages/channel/feishu-channel/src/chat-bots-store.ts`
 
 ## JSON Document Stores
