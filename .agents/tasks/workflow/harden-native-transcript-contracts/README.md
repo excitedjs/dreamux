@@ -10,8 +10,7 @@
 - Verification: [Current verification evidence](/.agents/tasks/workflow/harden-native-transcript-contracts/verification.md)
 - Blockers: No accepted finding remains unresolved. External Codex model
   service gates remain outside this bounded hardening change.
-- Next action: Commit the reviewed workspace, open the follow-up PR to `next`,
-  and wait for required CI.
+- Next action: Wait for required CI on PR #339. Do not merge automatically.
 - Related tasks: Builds on [Unify Workflow agents with TeamMate lifecycle ownership](/.agents/tasks/workflow/unified-teammate-lifecycle/README.md) and merged PR [#338](https://github.com/excitedjs/dreamux/pull/338).
 
 ## Development approval
@@ -40,7 +39,10 @@
 
 ## Delivery
 
-- Pull request / CI / merge: Not started.
+- Pull request: [#339](https://github.com/excitedjs/dreamux/pull/339),
+  targeting `next`.
+- CI: Pending.
+- Merge: Not authorized or attempted.
 - Independent review:
   - Combined development/review workflow
     `run-08ea99ea-91c9-46c0-bda1-71937f0079e7`: `FIX_REQUIRED`; all accepted
