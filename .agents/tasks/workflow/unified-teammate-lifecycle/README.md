@@ -41,7 +41,9 @@
 
 - Pull request: [#338](https://github.com/excitedjs/dreamux/pull/338),
   targeting `next`.
-- CI: Pending.
+- CI: Passed on the reviewed implementation and delivery-record head:
+  Rush change declaration, author metadata, Linux/macOS shellcheck, KB check,
+  full-history gitleaks, and Linux/macOS Rush build/typecheck/lint/test.
 - Merge: Not authorized or attempted.
 - Independent implementation review: Complete; all 15 findings were accepted,
   repaired as 12 root-cause groups, and revalidated.
