@@ -237,6 +237,21 @@ without changing product code or `.agents/**`; the Codex focused, typecheck,
 lint, full-package, and diff checks passed again. No accepted finding remains
 unresolved.
 
+The correction was committed as
+`e09c64fef47b7afa4c686f403198d18d030b4302` and pushed to PR #338.
+Required CI passed on that exact head:
+
+- Rush change declaration: passed.
+- Commit author metadata: passed.
+- Shellcheck on Linux and macOS: passed.
+- Knowledge-base link/orphan validation: passed.
+- Full-history gitleaks: passed.
+- Rush bootstrap/build/typecheck/lint/test on Ubuntu: passed.
+- Rush bootstrap/build/typecheck/lint/test on macOS: passed.
+
+The PR remains unmerged. GitHub reports the review requirement as the remaining
+merge gate; merge authority remains with the operator.
+
 ### Architecture, Deletion, And Publication Gates
 
 Repo-wide product-source searches found no remaining:

@@ -36,12 +36,11 @@
   checks, deletion scans, and publication-surface scans passed. Evidence is
   recorded in
   [verification.md](/.agents/tasks/workflow/unified-teammate-lifecycle/verification.md#current-native-transcript-iteration).
-- Blockers: No accepted implementation-review finding remains unresolved. The
-  two Codex real-model gates remain limited by external model-service health,
-  and the canonical gitleaks binary remains unavailable locally; both residual
-  gates are recorded in verification and remain required in CI.
-- Next action: Commit and push the reviewed, knowledge-complete workspace,
-  update PR #338, and wait for repository CI.
+- Blockers: No accepted implementation-review finding or required CI gate
+  remains unresolved. Two non-required Codex real-model gates remain limited by
+  external model-service health and are recorded as residual live coverage.
+- Next action: Obtain the required GitHub review and operator merge authority
+  for PR #338. Do not merge automatically.
 - Related tasks: Builds on public issue [#328](https://github.com/excitedjs/dreamux/issues/328). PRs [#329](https://github.com/excitedjs/dreamux/pull/329) and [#330](https://github.com/excitedjs/dreamux/pull/330) are competing historical inputs, not an accepted solution.
 
 ## Execution constraint
@@ -104,8 +103,10 @@
   focused remediation tests, Rush build/typecheck/test-typecheck/lint/test,
   Rush change verification, task/KB checks, diff validation, deletion scans,
   and repository-publication scans.
-- CI: Pending for the replacement PR head. Canonical gitleaks and the normal
-  Linux/macOS repository jobs remain delivery gates.
+- CI: Passed on reviewed head
+  `e09c64fef47b7afa4c686f403198d18d030b4302`: Rush change declaration,
+  author metadata, Linux/macOS shellcheck, KB validation, full-history
+  gitleaks, and Linux/macOS Rush build/typecheck/lint/test.
 - Merge: Not authorized or attempted.
 - Independent implementation review: Complete. The non-Codex `xhigh` workflow
   verified all 32 candidates with no partial coverage, reported 14 primary
