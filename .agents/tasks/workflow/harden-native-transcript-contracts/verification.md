@@ -105,3 +105,21 @@ The final two-file correction received a scoped non-Codex `xhigh` review:
 - Failed finders or verifier locations: none.
 
 No accepted implementation-review finding remains unresolved.
+
+## PR Delivery
+
+- Pull request: [#339](https://github.com/excitedjs/dreamux/pull/339),
+  targeting `next`.
+- Reviewed implementation commit:
+  `d2aa0eda1e37275bf31ba38d5451ed0d91c2ef82`.
+- Delivery-record head:
+  `df52ebb7bf771a225d24734efef87cd8329172a5`.
+- Required CI passed on the exact delivery-record head:
+  - Rush change declaration;
+  - commit author metadata;
+  - shellcheck on Linux and macOS;
+  - knowledge-base link/orphan validation;
+  - full-history gitleaks;
+  - Rush bootstrap/build/typecheck/lint/test on Ubuntu and macOS.
+- PR remains unmerged; GitHub review approval and operator merge authority are
+  separate gates.
