@@ -1,5 +1,10 @@
 import type { Readable, Writable } from 'node:stream';
 
+import { AdminClientError } from '../admin/client.js';
+import {
+  TRANSCRIPT_INTERNAL_ERROR_MESSAGE,
+  TRANSCRIPT_PUBLIC_ERRORS,
+} from '../admin/transcript-errors.js';
 import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 import { validateTeamId } from '../service/team-collection/types.js';
@@ -53,6 +58,16 @@ interface TeamMateMcpScope {
 }
 
 const SERVER_IDENTITY = { name: 'dreamux-teammate', version: '0.3.0' };
+const TRANSCRIPT_FAILURE_LOG_MESSAGE =
+  "tool 'last' failed: runtime transcript read failed";
+
+function transcriptFailureLogMessage(error: unknown): string | undefined {
+  return error instanceof AdminClientError &&
+    error.code === 'INTERNAL' &&
+    error.message === TRANSCRIPT_INTERNAL_ERROR_MESSAGE
+    ? TRANSCRIPT_FAILURE_LOG_MESSAGE
+    : undefined;
+}
 
 /** Admin errors whose message is safe to surface as a public tool error. */
 const PUBLIC_ERRORS: readonly PublicErrorRule[] = [
@@ -73,6 +88,11 @@ const PUBLIC_ERRORS: readonly PublicErrorRule[] = [
     ],
     ['BAD_REQUEST', 'DISPATCHER_NOT_FOUND', 'TEAM_NOT_FOUND'],
   ),
+  ...TRANSCRIPT_PUBLIC_ERRORS.map(({ code, message }) => ({
+    method: 'teammate.last',
+    code,
+    message,
+  })),
 ];
 
 export async function runTeamMateMcp(opts: TeamMateMcpOptions): Promise<void> {
@@ -143,9 +163,11 @@ function teammateToolMetadata(callerKind: TeamMateMcpCallerKind): McpToolMetadat
       output: closedObjectSchema({ teammate: OPEN_OBJECT }, ['teammate']),
       annotations: READ_ONLY_ANNOTATIONS,
     }),
-    tool('last', 'Read a TeamMate\'s most recent settled turn(s) by concrete name. Reads the TeamMate record first, then folds the recent settled turns from its per-name turns archive; it never starts or resumes a runtime, so it works for a closed/stopped TeamMate. This is the fallback when a completion was not delivered. turns defaults to 1 (range 1..5); the newest turn is last.', {
+    tool('last', 'Read completed turns from a TeamMate\'s runtime-native transcript without starting or resuming it. turns defaults to 1 (range 1..50); results are oldest first. Use cursor for older pages and set include_tools=false to omit tool blocks.', {
       name: { type: 'string', minLength: 1, maxLength: 64 },
-      turns: { type: 'integer', minimum: 1, maximum: 5 },
+      turns: { type: 'integer', minimum: 1, maximum: 50 },
+      cursor: { type: 'string', minLength: 1, maxLength: 4096 },
+      include_tools: { type: 'boolean' },
     }, ['name'], {
       title: 'Read recent TeamMate turns',
       output: closedObjectSchema(
@@ -154,8 +176,17 @@ function teammateToolMetadata(callerKind: TeamMateMcpCallerKind): McpToolMetadat
           requested_turns: { type: 'integer' },
           returned_turns: { type: 'integer' },
           turns: arrayOf(OPEN_OBJECT),
+          next_cursor: { type: ['string', 'null'] },
+          truncated: { type: 'boolean' },
         },
-        ['teammate', 'requested_turns', 'returned_turns', 'turns'],
+        [
+          'teammate',
+          'requested_turns',
+          'returned_turns',
+          'turns',
+          'next_cursor',
+          'truncated',
+        ],
       ),
       annotations: READ_ONLY_ANNOTATIONS,
     }),
@@ -190,8 +221,9 @@ function teammateToolMetadata(callerKind: TeamMateMcpCallerKind): McpToolMetadat
       teammate: OPEN_OBJECT,
       status: SUBMISSION_STATUS_SCHEMA,
       error: SUBMISSION_ERROR_SCHEMA,
+      transcript_path: { type: ['string', 'null'] },
     },
-    ['teammate', 'status'],
+    ['teammate', 'status', 'transcript_path'],
   );
   const workflowTools: McpToolMetadata[] = [
     tool(
@@ -309,6 +341,9 @@ function teammateToolDefinitions(scope: TeamMateMcpScope): McpToolDefinition[] {
     return {
       ...metadata,
       ...(successText !== undefined ? { successText } : {}),
+      ...(metadata.name === 'last'
+        ? { failureLogMessage: transcriptFailureLogMessage }
+        : {}),
       handler: (args) => callTool(metadata.name, args, scope),
     };
   });
@@ -385,6 +420,7 @@ function projectTeammateSubmission(value: unknown): Record<string, unknown> {
   return {
     teammate: obj['teammate'],
     status: obj['status'],
+    transcript_path: obj['transcript_path'] ?? null,
     ...(obj['error'] !== undefined ? { error: obj['error'] } : {}),
   };
 }
@@ -416,6 +452,8 @@ function projectLast(value: unknown): Record<string, unknown> {
     requested_turns: obj['requested_turns'],
     returned_turns: obj['returned_turns'],
     turns: obj['turns'] ?? [],
+    next_cursor: obj['next_cursor'] ?? null,
+    truncated: obj['truncated'] ?? false,
   };
 }
 

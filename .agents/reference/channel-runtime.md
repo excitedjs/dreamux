@@ -380,8 +380,6 @@ publish after their normal write point:
 
 - `TeamStore` publishes Team status and concrete leader changes;
 - `AgentIdentityStore` publishes TeamLeader and TeamMate status changes;
-- `AgentTurnsStore` publishes Team-owned submitted and settled turn rows after
-  the append attempt, using the normalized Assistant value and truncation fact.
 - `ChannelService` publishes route bind/unbind events after the binding store
   returns a real transition.
 - `CollaborationSpaceService` publishes collaboration-space bind/unbind events
@@ -390,15 +388,17 @@ publish after their normal write point:
 Channel sessions receive only a public `ChannelCoreEventSource`. It supports
 typed `on(...)` subscriptions and idempotent per-listener `unsubscribe()`;
 providers cannot emit, enumerate, or remove other listeners. The source covers
-allowlisted Team, agent, turn, route binding, and collaboration-space binding
-facts for the current dispatcher only. Binding events are dispatcher-wide live
-broadcasts, not channel-id scoped streams; the endpoint snapshot names the
-provider ref and provider-owned opaque `meta`, so only the matching provider
-should interpret it. Bound route events include the concrete TeamLeader name,
-TeamLeader runtime id, and runtime cwd; ordinary Team/agent/turn events still
-carry no repository/path data. No event contains prompt text, raw errors,
-platform user identity, cursor, acknowledgement, `claim_id`, or binding
-fallbacks.
+allowlisted Team, agent, route-binding, and collaboration-space-binding facts
+for the current dispatcher only. There is no Channel Turn submitted/settled
+event pair; runtime Turn objects and native transcripts remain outside this
+event surface. Binding events are dispatcher-wide live broadcasts, not
+channel-id scoped streams; the endpoint snapshot names the provider ref and
+provider-owned opaque `meta`, so only the matching provider should interpret
+it. Bound route events include the concrete TeamLeader name, TeamLeader runtime
+id, and runtime cwd; ordinary Team/agent events still carry no repository/path
+data. No event contains prompt text, assistant text, native transcript paths,
+raw errors, platform user identity, cursor, acknowledgement, `claim_id`, or
+binding fallbacks.
 
 The two binding kinds are action-discriminated public unions. A route-bound
 event requires its runtime-bearing current Team projection, a route-unbound
@@ -414,9 +414,7 @@ revoke the whole session source and strict-route lease before closing sessions;
 later subscription attempts fail and old subscription handles become no-ops.
 Events are
 live-session-only: the bus retains no history and provides no eventual-delivery
-or historical-query guarantee. A settled Assistant uses the same 160k core cap
-as the turn archive, and `assistant_truncated` is true when either the runtime
-already truncated the result or the core cap did.
+or historical-query guarantee.
 
 Key source:
 
@@ -424,7 +422,6 @@ Key source:
 - `/packages/dreamux/src/service/binding-events.ts`
 - `/packages/dreamux/src/service/dispatcher-core-events/`
 - `/packages/dreamux/src/service/agent-entity/identity-store.ts`
-- `/packages/dreamux/src/service/agent-entity/turns-store.ts`
 - `/packages/dreamux/src/service/team-collection/store.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
 - `/packages/dreamux/src/service/collaboration-space/index.ts`

@@ -15,7 +15,6 @@ import type {
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
-import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import type {
   CompletionDeliveryPolicy,
@@ -31,16 +30,8 @@ export interface TeamCollectionOptions {
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   worktrees: WorktreeManager;
-  /**
-   * The dispatcher's identity + turns store pair (issue #233 R4). Supplied by
-   * `DispatcherService` (the same pair the dispatcher agent + dispatcher-scope
-   * collection share) and forwarded into every per-team collection so no team
-   * news its own. Read-path probes (`leaderState` / `memberCount`) read the
-   * identity store directly, never a throwaway collection. The stores are
-   * stateless (paths by role + team_id), so one pair safely serves all scopes.
-   */
+  /** Shared dispatcher identity store for all Team and TeamMate scopes. */
   identities: AgentIdentityStore;
-  turnsStore: AgentTurnsStore;
   // Shared per-dispatcher deps `DispatcherService` always supplies; forwarded
   // unchanged into each team's own collection so it stays topology-free (#233).
   completionDelivery: CompletionDeliveryPolicy;

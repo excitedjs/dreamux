@@ -73,13 +73,23 @@ class FakeClient {
     }
     if (method === 'thread/start') {
       this.threadStartCalls.push(params);
-      return { thread: { id: 'thread-fake' } } as R;
+      return {
+        thread: {
+          id: 'thread-fake',
+          path: '/fake/sessions/thread-fake.jsonl',
+        },
+      } as R;
     }
     if (method === 'thread/resume') {
       this.threadResumeCalls.push(params);
       if (this.threadResumeError !== null) throw this.threadResumeError;
       const threadId = (params as { threadId: string }).threadId;
-      return { thread: { id: threadId } } as R;
+      return {
+        thread: {
+          id: threadId,
+          path: `/fake/sessions/${threadId}.jsonl`,
+        },
+      } as R;
     }
     if (method === 'turn/start') {
       this.turnStartCalls.push(params);
@@ -180,13 +190,20 @@ function buildRuntime(
 ): CodexRuntime {
   const identity: AgentRuntimeIdentity = {
     runtime_id: 'flow',
-    checkpoint_id: checkpointId,
+    checkpoint:
+      checkpointId === null
+        ? null
+        : {
+            id: checkpointId,
+            transcript_locator: `/fake/sessions/${checkpointId}.jsonl`,
+          },
   };
   return new CodexRuntime(identity, {
     cwd: '/fake/cwd',
     state: noopState(),
     paths: PATHS,
     allocateSocketPath: () => '/fake/run/flow.sock',
+    validateTranscriptPath: async (path) => path,
     skillSources,
     codexProcessFactory: () => new FakeProcess() as never,
     codexClientFactory: () => client as never,
@@ -511,7 +528,6 @@ describe('codex skills/extraRoots/set injection', () => {
 
     expect(firstOutcome).toMatchObject({ status: 'completed', resultText: 'first' });
     expect(secondOutcome).toMatchObject({ status: 'completed', resultText: null });
-    await expect(runtime.getLast()).resolves.toEqual({ text: 'first' });
   });
 });
 

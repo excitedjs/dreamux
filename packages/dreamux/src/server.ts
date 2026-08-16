@@ -47,7 +47,6 @@ import { detectAmbiguousV2ChannelBindingRoutes } from './service/channel-binding
 import { detectLegacyChannelBindingStore } from './service/channel-binding/store.js';
 import { detectLegacyCronJobStore } from './service/scheduler/store.js';
 import { TeamStore } from './service/team-collection/store.js';
-import { assertNoLegacyTurnArchives } from './service/agent-entity/turns-store.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
@@ -294,11 +293,6 @@ export class Server {
         if (ambiguousBinding !== null) messages.push(ambiguousBinding);
       }
       messages.push(...(await detectLegacyCronStores(row.dispatcher_id)));
-      try {
-        await assertNoLegacyTurnArchives(row.dispatcher_id);
-      } catch (error) {
-        messages.push(error instanceof Error ? error.message : String(error));
-      }
     }
     if (messages.length > 0) {
       throw new Error(

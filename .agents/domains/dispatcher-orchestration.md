@@ -19,9 +19,9 @@ aggregate and owns:
 - the per-dispatcher `TeamCollection`;
 - one stateless `CompletionDeliveryPolicy`;
 - one `WorktreeManager`;
-- one shared `AgentIdentityStore` + `AgentTurnsStore` pair (built at
-  construction in `service/agent-entity/` and injected into the dispatcher
-  agent, dispatcher-scope teammate collection, and each Team's collection /
+- one shared `AgentIdentityStore` (built at construction in
+  `service/agent-entity/` and injected into the dispatcher agent,
+  dispatcher-scope teammate collection, and each Team's collection /
   TeamService / member collection);
 - the dispatcher scheduler.
 
@@ -44,8 +44,9 @@ to that dispatcher agent share the same runtime conversation unless a lower
 layer explicitly routes them to a TeamLeader or TeamMate runtime.
 
 Channel-originated turns are not persisted as an inbound queue. A server restart
-drops queued or in-flight inbound work; durable recovery is through per-agent
-turn records and read surfaces, not replaying channel events.
+drops queued or in-flight inbound work; durable recovery is through identity,
+provider-native transcripts, and aggregate-owned Workflow/Team records, not
+replaying channel events.
 
 Visible channel communication remains provider-owned. Assistant text produced
 by the dispatcher runtime is not automatically delivered back to a chat; the
@@ -76,7 +77,8 @@ keeps dispatcher-only concerns and Team-only concerns out of the reusable
 
 `TeammateService` is the sole command owner for one agent entity. It owns its
 mutation admission, Workflow lock, runtime authority, in-process Turn objects,
-terminal persistence, close single-flight, and retirement fact.
+terminal outcome/delivery convergence, close single-flight, and retirement
+fact.
 `TeammateCollection` owns scoped construction, canonical per-name
 materialization, the exact-object cache subscription, roster queries, and reads.
 It never enters close for cache bookkeeping and never owns a bulk runtime or
@@ -111,14 +113,24 @@ dispatcher-facing tools are:
 and `close` must use that concrete name. `send` reopens a closed TeamMate from
 the runtime-native `session_id`; there is no standalone `resume` verb.
 
-Read tools do not start or resume runtimes. `last` first checks the record, then
-folds recent settled turns from that entity's `turn.jsonl`.
+Read tools do not start or resume runtimes. `last` first checks the identity and
+scope, then delegates a bounded cold read to the selected Agent Runtime
+provider's native transcript. It materializes no entity and stores no transcript
+copy, index, or cursor.
 
 Every accepted logical input is retained as one entity-owned `Turn` object over
 one provider-owned `RuntimeTurn`. Folds return the same object. Public receipts,
-Workflow records, Channel contracts, and `turn.jsonl` do not expose an id merely
-to re-find that in-process object. The strict version-2 archive writes one
-terminal row only after the first immutable outcome wins.
+Workflow records, Channel contracts, and identity state do not expose an id
+merely to re-find that in-process object. The first immutable outcome wins the
+object latch; optional completion delivery is a bounded captured closure.
+Dreamux persists no Turn archive or rolling conversation projection.
+
+The runtime checkpoint stores the provider-native session id plus an optional
+opaque transcript locator. Direct TeamMate `spawn` and `send` receipts expose
+that validated native path when the association exists. `last`, history,
+status, Workflow, Team, Channel, completion delivery, logs, and metrics do not.
+A per-entity `turn.jsonl` left by an older release is inert no-touch residue and
+cannot block startup or lifecycle behavior.
 
 Source:
 
@@ -229,17 +241,17 @@ Source:
 Completion delivery is captured by object and closure, not reconstructed through
 a dispatcher-wide key. A delivery-initiating action (`spawn`, `send`, or
 team-create-with-prompt) resolves its initiator before runtime admission and
-attaches one closure to the entity-owned `Turn`. After the winning terminal row
-and rolling projection commit, that Turn invokes the shared stateless
+attaches one closure to the entity-owned `Turn`. After the winning terminal
+outcome is selected, that Turn invokes the shared stateless
 `CompletionDeliveryPolicy`.
 
 Key invariants:
 
 - the initiating action retains the target directly; there is no Turn id lookup
   map or terminal registry;
-- channel inbound and remote-control turns do not register, so they are recorded
-  but not pushed;
-- one Turn starts at most one delivery task after durable persistence;
+- channel inbound and remote-control turns do not attach a completion closure,
+  so they are not pushed;
+- one Turn starts at most one delivery task after outcome selection;
 - completion preparation and each submission attempt are deadline-bounded;
 - only an explicit provider-proven pre-admission failure may retry; a throw,
   timeout, or `ambiguous` admission is terminal and never replayed;

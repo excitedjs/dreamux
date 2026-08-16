@@ -1,10 +1,6 @@
-/**
- * Resident Claude Code AgentRuntime using stream-json stdio. It owns one
- * supervised child, serial logical Turns, lazy checkpoint resume, runtime MCP
- * injection, and max-idle turn deadlines. Provider failures remain observable
- * through failed Turn outcomes and durable degraded status.
- */
+/** Resident Claude Code AgentRuntime using stream-json stdio. */
 
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
 import { BUILTIN_CLAUDE_CODE_PROVIDER_REF } from './provider-ref.js';
@@ -15,10 +11,10 @@ import { skillAdapterKey } from './skill-adapter.js';
 import { materializeClaudeSkillAddDir } from './skill-materializer.js';
 import {
   type ClaudeCodeSession,
-  type TurnOutcome,
   type TurnSubmitOptions,
 } from './supervisor.js';
 import {
+  DEFAULT_MESSAGE_ID_DEDUPE_WINDOW,
   renderChannelInput,
   unsupportedFeatureError,
 } from '@excitedjs/dreamux-utils';
@@ -32,11 +28,15 @@ import {
   classifySteerFailure,
   reserveSource,
 } from './source-reservation.js';
+import {
+  buildClaudeProcessEnv,
+  resolveRuntimeTranscriptPath,
+  resultTextFromTurnOutcome,
+} from './runtime-session.js';
 import type {
   AgentRuntimeCapabilities,
   AgentRuntime,
   AgentRuntimeIdentity,
-  AgentRuntimeLastResult,
   AgentRuntimeStatus,
   AgentRuntimeTextInput,
   DreamuxLogger,
@@ -45,7 +45,6 @@ import type {
   RuntimeTurn,
   RuntimeTurnOutcome,
 } from '@excitedjs/dreamux-types';
-
 interface ActiveTurn {
   runtimeTurn: RuntimeTurn;
   settle: (outcome: RuntimeTurnOutcome) => boolean;
@@ -80,10 +79,15 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private readonly logger: DreamuxLogger;
   private status: AgentRuntimeStatus = 'declared';
   private threadId: string | null;
+  private transcriptLocator: string | null;
+  private resumeOnNextSpawn: boolean;
   private resumed: boolean;
   private stopped = false;
   private readonly seen = new Set<string>();
+  private readonly seenOrder: string[] = [];
   private readonly seenTextInputIds = new Set<string>();
+  private readonly seenTextInputIdOrder: string[] = [];
+  private readonly sourceIdDedupeWindow: number;
   private readonly pendingChannelSources = new Map<
     string,
     Promise<RuntimeAdmission>
@@ -99,7 +103,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private startTask: Promise<void> | null = null;
   private stopTask: Promise<void> | null = null;
   private generation = 0;
-  private lastResult: AgentRuntimeLastResult | null = null;
   private activeTurn: ActiveTurn | null = null;
   private queuedTurnCount = 0;
   private idlePromise: Promise<void> | null = null;
@@ -109,6 +112,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     identity: AgentRuntimeIdentity,
     private readonly deps: ClaudeCodeRuntimeDeps,
   ) {
+    const checkpoint = identity.checkpoint ?? null;
     this.dispatcherId = identity.runtime_id;
     this.config = deps.config;
     this.bin = deps.resolveBinPath(this.config.bin);
@@ -128,8 +132,12 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       'claude-code',
       `${this.dispatcherId}.stderr.log`,
     );
-    this.threadId = identity.checkpoint_id ?? null;
-    this.resumed = (identity.checkpoint_id ?? null) !== null;
+    this.threadId = checkpoint?.id ?? null;
+    this.transcriptLocator = checkpoint?.transcript_locator ?? null;
+    this.resumeOnNextSpawn = checkpoint !== null;
+    this.resumed = identity.checkpoint !== null;
+    this.sourceIdDedupeWindow = Math.max(0,
+      deps.sourceIdDedupeWindow ?? DEFAULT_MESSAGE_ID_DEDUPE_WINDOW);
     this.logger = deps.logger ?? consoleFallbackLogger(this.dispatcherId);
   }
 
@@ -141,16 +149,20 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     return CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES;
   }
 
-  getCheckpoint(): { id: string } | null {
-    return this.threadId === null ? null : { id: this.threadId };
+  getCheckpoint(): {
+    id: string;
+    transcript_locator?: string | null;
+  } | null {
+    return this.threadId === null
+      ? null
+      : {
+          id: this.threadId,
+          transcript_locator: this.transcriptLocator,
+        };
   }
 
   wasCheckpointResumed(): boolean {
     return this.resumed;
-  }
-
-  async getLast(): Promise<AgentRuntimeLastResult | null> {
-    return this.lastResult;
   }
 
   async getContext(): Promise<null> {
@@ -262,7 +274,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     return reserveSource(
       input.sourceId,
       this.seenTextInputIds,
+      this.seenTextInputIdOrder,
       this.pendingTextSources,
+      this.sourceIdDedupeWindow,
       () => this.acceptTextInput(input),
     );
   }
@@ -328,7 +342,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     return reserveSource(
       input.sourceId,
       this.seen,
+      this.seenOrder,
       this.pendingChannelSources,
+      this.sourceIdDedupeWindow,
       () => this.acceptChannelInput(text),
     );
   }
@@ -425,7 +441,13 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       active.session = session;
       const settled = await outcome;
       this.assertGeneration(active.generation);
-      return await this.applyTurnOutcome(settled);
+      const resultText = resultTextFromTurnOutcome(
+        settled,
+        this.threadId,
+        this.deps.outputSchema !== undefined,
+      );
+      this.log('info', 'claude-code turn completed');
+      return resultText;
     } finally {
       active.session = null;
       if (this.activeTurn === active) this.activeTurn = null;
@@ -512,15 +534,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     resolve?.();
   }
 
-  /**
-   * Ensure a live resident session exists, spawning (or re-spawning after an
-   * unexpected exit) as needed. Re-spawn resumes the persisted session id so the
-   * conversation survives a crash.
-   */
+  /** Ensure a live resident session exists, resuming after a child exit. */
   private async ensureSession(): Promise<ClaudeCodeSession> {
     if (this.stopped) throw new Error('claude-code runtime is stopped');
-    if (this.session !== null && this.session.isAlive()) return this.session;
     if (this.sessionStarting !== null) return this.sessionStarting;
+    if (this.session !== null && this.session.isAlive()) return this.session;
     const generation = this.generation;
     const starting = this.createSession(generation);
     this.sessionStarting = starting;
@@ -538,10 +556,22 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       if (this.session === previous) this.session = null;
       this.assertGeneration(generation);
     }
+    const resuming = this.resumeOnNextSpawn;
+    const candidateSessionId =
+      resuming
+        ? this.threadId!
+        : (this.deps.generateSessionId?.() ?? randomUUID());
+    const candidatePath = await this.resolveTranscriptPath({
+      sessionId: candidateSessionId,
+      locator: resuming ? this.transcriptLocator : null,
+      resume: resuming,
+    });
     const args = claudeCodeResidentArgs({
       config: this.config,
       mcpConfigJson: this.mcpConfigJson,
-      resumeSessionId: this.threadId,
+      ...(resuming
+        ? { resumeSessionId: candidateSessionId }
+        : { freshSessionId: candidateSessionId }),
       systemPromptAppend: this.deps.systemPromptAppend,
       skillAddDirs:
         (this.deps.skillSources ?? []).length === 0
@@ -554,7 +584,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       bin: this.bin,
       args,
       cwd: this.cwd,
-      env: this.buildProcessEnv(this.config.extra_env),
+      env: buildClaudeProcessEnv(this.deps.injectEnv, this.config.extra_env),
       stderrLogPath: this.stderrLogPath,
       turnTimeoutMs: this.config.turn_timeout_ms,
       remoteControl: this.config.remote_control,
@@ -568,13 +598,20 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     session.setOnExit(() => {
       void this.onSessionExit(session);
     });
-    // Retain authority before spawn: a stop or early exit must never lose the
-    // session object that can prove process-group termination.
+    // Retain termination authority before spawn.
     this.session = session;
     try {
       this.assertGeneration(generation);
       await session.start();
       this.assertGeneration(generation);
+      await this.deps.state.setCheckpoint({
+        id: candidateSessionId,
+        transcript_locator: candidatePath,
+      });
+      this.assertGeneration(generation);
+      this.threadId = candidateSessionId;
+      this.transcriptLocator = candidatePath;
+      this.resumeOnNextSpawn = true;
     } catch (error) {
       if (this.stopped) throw error;
       try {
@@ -591,6 +628,23 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     return session;
   }
 
+  private resolveTranscriptPath(input: {
+    sessionId: string;
+    locator: string | null;
+    resume: boolean;
+  }): Promise<string> {
+    return resolveRuntimeTranscriptPath({
+      sessionId: input.sessionId,
+      cwd: this.cwd,
+      locator: input.locator,
+      env: buildClaudeProcessEnv(
+        this.deps.injectEnv,
+        this.config.extra_env,
+      ),
+      resume: input.resume,
+      override: this.deps.resolveTranscriptPath,
+    });
+  }
   /** React to an unexpected resident-child exit: degrade and drop the session. */
   private async onSessionExit(session: ClaudeCodeSession): Promise<void> {
     if (this.session !== session) return; // already replaced/stopped
@@ -610,57 +664,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       );
     }
   }
-
-  private async applyTurnOutcome(outcome: TurnOutcome): Promise<string | null> {
-    if (
-      outcome.sessionId !== null &&
-      outcome.sessionId !== '' &&
-      outcome.sessionId !== this.threadId
-    ) {
-      this.threadId = outcome.sessionId;
-      await this.deps.state.setCheckpoint({ id: outcome.sessionId });
-    }
-    const resultText =
-      outcome.isError || outcome.text === '' ? null : outcome.text;
-    if (outcome.isError) {
-      const detail =
-        outcome.errors.length > 0
-          ? outcome.errors.join('; ')
-          : (outcome.subtype ?? 'unknown error');
-      throw new Error(`claude turn returned an error result: ${detail}`);
-    }
-    // When --json-schema was requested, Claude must return a validated
-    // `structured_output`; fail loud rather than surfacing free-form text.
-    if (this.deps.outputSchema !== undefined && !outcome.hasStructuredOutput) {
-      throw new Error(
-        'claude turn did not return structured_output for a ' +
-          `--json-schema session`,
-      );
-    }
-    // Only cache the result once all validation passes, so a failed schema turn
-    // never leaks its unvalidated free-form text through getLast().
-    if (resultText !== null) this.lastResult = { text: resultText };
-    this.log('info', 'claude-code turn completed');
-    return resultText;
-  }
-
   private assertGeneration(generation: number): void {
     if (this.stopped || generation !== this.generation) {
       throw new Error('claude-code runtime is stopped');
     }
-  }
-
-  private buildProcessEnv(
-    extraEnv: Record<string, string>,
-  ): NodeJS.ProcessEnv {
-    // Neutral env boundary: { ...process.env, ...injectEnv, ...extra_env }.
-    // `injectEnv` is the host's optional injection seam (empty today); `extraEnv`
-    // is this provider's own `config.extra_env`, merged last so it can override.
-    return {
-      ...globalThis.process.env,
-      ...(this.deps.injectEnv ?? {}),
-      ...extraEnv,
-    };
   }
 
   private async setStatus(

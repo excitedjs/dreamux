@@ -30,7 +30,6 @@ import {
 import { TeammateCollection } from '../teammate-collection/index.js';
 import type { TeammateOps } from '../teammate-collection/types.js';
 import { AgentIdentityStore } from '../agent-entity/identity-store.js';
-import { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
@@ -112,7 +111,6 @@ export class DispatcherService {
 
     const worktrees = new WorktreeManager();
     const identities = new AgentIdentityStore(opts.log, this.coreEvents.publisher);
-    const turnsStore = new AgentTurnsStore();
 
     this.channels = new ChannelService({
       dispatcherId: opts.id,
@@ -146,7 +144,6 @@ export class DispatcherService {
       agentRuntimeProviders: opts.agentRuntimeProviders,
       worktrees,
       identities,
-      turnsStore,
       completionDelivery,
       initiatorFor: (producer) => this.initiatorFor(producer),
       isShuttingDown: () => this.shuttingDown || this.stopping,
@@ -162,7 +159,6 @@ export class DispatcherService {
       agentRuntimeProviders: opts.agentRuntimeProviders,
       worktrees,
       identities,
-      turnsStore,
       completionDelivery,
       initiatorFor: (producer) => this.initiatorFor(producer),
       isShuttingDown: () => this.shuttingDown || this.stopping,
@@ -224,7 +220,6 @@ export class DispatcherService {
       channelProviders: opts.channelProviders,
       agentRuntimeProviders: opts.agentRuntimeProviders,
       identities,
-      turnsStore,
       log: opts.log,
       channels: this.channels,
       adminSocketPath: adminSocket,

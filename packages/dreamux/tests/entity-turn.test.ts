@@ -1,114 +1,50 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { RuntimeTurn, RuntimeTurnOutcome } from '@excitedjs/dreamux-types';
-import type { AgentRuntimeStateStore } from '../src/service/agent-entity/runtime-state.js';
-import type { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
-import type { AgentEntityTurnRecord } from '../src/service/agent-entity/types.js';
 import { EntityTurn } from '../src/service/teammate-service/turn-recording.js';
 
-describe('entity-owned Turn terminal pipeline', () => {
-  it('retries only the rolling projection after the terminal row commits', async () => {
+describe('entity-owned in-process Turn terminal pipeline', () => {
+  it('settles immediately without a persistence dependency', async () => {
     const runtime = deferredRuntimeTurn();
-    const row = terminalRow('completed');
-    const appendTerminal = vi.fn(async () => row);
-    const recordTerminalTurn = vi
-      .fn<() => Promise<void>>()
-      .mockRejectedValueOnce(new Error('projection unavailable'))
-      .mockResolvedValue(undefined);
     const delivery = vi.fn(async () => undefined);
-    const onPersistenceFailure = vi.fn();
-    const turn = makeTurn(
-      runtime.turn,
-      appendTerminal,
-      recordTerminalTurn,
-      delivery,
-      onPersistenceFailure,
-    );
+    const turn = makeTurn(runtime.turn, delivery);
 
     runtime.settle({ status: 'completed', resultText: 'done', truncated: false });
-    await waitFor(() => recordTerminalTurn.mock.calls.length === 1);
-    expect(delivery).not.toHaveBeenCalled();
-    await expect(turn.settled).rejects.toThrow(/projection unavailable/u);
-    expect(onPersistenceFailure).toHaveBeenCalledTimes(1);
-    expect(onPersistenceFailure).toHaveBeenCalledWith(
-      expect.objectContaining({ message: 'projection unavailable' }),
-    );
 
-    await turn.ensurePersisted();
+    await expect(turn.settled).resolves.toEqual({
+      status: 'completed',
+      resultText: 'done',
+      truncated: false,
+    });
     await turn.delivery;
-    await expect(turn.settled).rejects.toThrow(/projection unavailable/u);
-
-    expect(appendTerminal).toHaveBeenCalledTimes(1);
-    expect(recordTerminalTurn).toHaveBeenCalledTimes(2);
-    expect(delivery).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not settle or deliver until a failed terminal append is retried', async () => {
-    const runtime = deferredRuntimeTurn();
-    const row = terminalRow('failed');
-    const appendTerminal = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('archive unavailable'))
-      .mockResolvedValue(row);
-    const recordTerminalTurn = vi.fn(async () => undefined);
-    const delivery = vi.fn(async () => undefined);
-    const onPersistenceFailure = vi.fn();
-    const turn = makeTurn(
-      runtime.turn,
-      appendTerminal,
-      recordTerminalTurn,
-      delivery,
-      onPersistenceFailure,
-    );
-
-    runtime.settle({ status: 'failed', error: new Error('provider failed') });
-    await waitFor(() => appendTerminal.mock.calls.length === 1);
-    await expect(turn.settled).rejects.toThrow(/archive unavailable/u);
-    expect(onPersistenceFailure).toHaveBeenCalledTimes(1);
-    expect(recordTerminalTurn).not.toHaveBeenCalled();
-    expect(delivery).not.toHaveBeenCalled();
-
-    await turn.ensurePersisted();
-    await turn.delivery;
-    await expect(turn.settled).rejects.toThrow(/archive unavailable/u);
-
-    expect(appendTerminal).toHaveBeenCalledTimes(2);
-    expect(recordTerminalTurn).toHaveBeenCalledTimes(1);
     expect(delivery).toHaveBeenCalledTimes(1);
   });
 
   it('lets close-induced stopped win once over a late runtime result', async () => {
     const runtime = deferredRuntimeTurn();
-    const appendTerminal = vi.fn(async () => terminalRow('stopped'));
-    const recordTerminalTurn = vi.fn(async () => undefined);
     const delivery = vi.fn(async () => undefined);
-    const turn = makeTurn(runtime.turn, appendTerminal, recordTerminalTurn, delivery);
+    const turn = makeTurn(runtime.turn, delivery);
 
     expect(turn.trySettle({ status: 'stopped' })).toBe(true);
     runtime.settle({ status: 'completed', resultText: 'late', truncated: false });
     await turn.delivery;
 
     await expect(turn.settled).resolves.toEqual({ status: 'stopped' });
-    expect(appendTerminal).toHaveBeenCalledTimes(1);
-    expect((appendTerminal.mock.calls as unknown[][])[0]?.[1]).toMatchObject({
-      settleStatus: 'stopped',
-      assistant: null,
-    });
-    expect(recordTerminalTurn).toHaveBeenCalledTimes(1);
     expect(delivery).toHaveBeenCalledTimes(1);
+    expect(delivery).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'stopped', result: null }),
+    );
   });
 
   it('makes an early delivery read await and retain delivery rejection', async () => {
     const runtime = deferredRuntimeTurn();
-    const appendTerminal = vi.fn(async () => terminalRow('completed'));
-    const recordTerminalTurn = vi.fn(async () => undefined);
     let rejectDelivery!: (error: Error) => void;
     const delivery = vi.fn(
       () => new Promise<void>((_resolve, reject) => {
         rejectDelivery = reject;
       }),
     );
-    const turn = makeTurn(runtime.turn, appendTerminal, recordTerminalTurn, delivery);
+    const turn = makeTurn(runtime.turn, delivery);
 
     const observedDelivery = turn.delivery;
     runtime.settle({ status: 'completed', resultText: 'done', truncated: false });
@@ -121,20 +57,10 @@ describe('entity-owned Turn terminal pipeline', () => {
     expect(delivery).toHaveBeenCalledTimes(1);
   });
 
-  it('snapshots a completed provider outcome before prior persistence releases', async () => {
+  it('snapshots a completed provider outcome before later mutation', async () => {
     const runtime = deferredRuntimeTurn();
-    const prior = deferred<void>();
-    const appendTerminal = vi.fn(async () => terminalRow('completed'));
-    const recordTerminalTurn = vi.fn(async () => undefined);
     const delivery = vi.fn(async () => undefined);
-    const turn = makeTurn(
-      runtime.turn,
-      appendTerminal,
-      recordTerminalTurn,
-      delivery,
-      () => undefined,
-      prior.promise,
-    );
+    const turn = makeTurn(runtime.turn, delivery);
     const outcome: RuntimeTurnOutcome & {
       resultText: string | null;
       truncated: boolean;
@@ -144,7 +70,6 @@ describe('entity-owned Turn terminal pipeline', () => {
     await waitFor(() => turn.isOutcomeSelected());
     outcome.resultText = 'mutated';
     outcome.truncated = true;
-    prior.resolve(undefined);
 
     const settled = await turn.settled;
     await turn.delivery;
@@ -155,30 +80,14 @@ describe('entity-owned Turn terminal pipeline', () => {
     });
     expect(settled).not.toBe(outcome);
     expect(Object.isFrozen(settled)).toBe(true);
-    expect((appendTerminal.mock.calls as unknown[][])[0]?.[1]).toMatchObject({
-      settleStatus: 'completed',
-      assistant: 'first',
-      assistantTruncated: false,
-    });
     expect(delivery).toHaveBeenCalledWith(
       expect.objectContaining({ status: 'completed', result: 'first' }),
     );
   });
 
-  it('snapshots failed error semantics without retaining the provider error', async () => {
+  it('snapshots failed error semantics without retaining provider error mutation', async () => {
     const runtime = deferredRuntimeTurn();
-    const prior = deferred<void>();
-    const appendTerminal = vi.fn(async () => terminalRow('failed'));
-    const recordTerminalTurn = vi.fn(async () => undefined);
-    const delivery = vi.fn(async () => undefined);
-    const turn = makeTurn(
-      runtime.turn,
-      appendTerminal,
-      recordTerminalTurn,
-      delivery,
-      () => undefined,
-      prior.promise,
-    );
+    const turn = makeTurn(runtime.turn, vi.fn(async () => undefined));
     const providerError = new Error('first failure');
     providerError.name = 'ProviderFailure';
 
@@ -187,7 +96,6 @@ describe('entity-owned Turn terminal pipeline', () => {
     providerError.name = 'MutatedFailure';
     providerError.message = 'mutated';
     providerError.stack = 'mutated stack';
-    prior.resolve(undefined);
 
     const settled = await turn.settled;
     expect(settled.status).toBe('failed');
@@ -201,26 +109,26 @@ describe('entity-owned Turn terminal pipeline', () => {
     expect(Object.isFrozen(settled.error)).toBe(true);
     expect(Object.isFrozen(settled)).toBe(true);
   });
+
+  it('installs at most one completion delivery closure', async () => {
+    const runtime = deferredRuntimeTurn();
+    const first = vi.fn(async () => undefined);
+    const second = vi.fn(async () => undefined);
+    const turn = makeTurn(runtime.turn, first);
+    turn.attachDelivery(second);
+
+    runtime.settle({ status: 'completed', resultText: 'done', truncated: false });
+    await turn.delivery;
+
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).not.toHaveBeenCalled();
+  });
 });
 
 function makeTurn(
   runtime: RuntimeTurn,
-  appendTerminal: ReturnType<typeof vi.fn>,
-  recordTerminalTurn: ReturnType<typeof vi.fn>,
   delivery: ReturnType<typeof vi.fn>,
-  onPersistenceFailure: (error: Error) => void = () => undefined,
-  priorPersistence: Promise<void> = Promise.resolve(),
 ): EntityTurn {
-  const turnsStore = { appendTerminal } as unknown as AgentTurnsStore;
-  const state = {
-    current: () => ({
-      dispatcher_id: 'flow',
-      name: 'reviewer',
-      team_id: null,
-      role: 'teammate',
-    }),
-    recordTerminalTurn,
-  } as unknown as AgentRuntimeStateStore;
   return new EntityTurn(
     runtime,
     'dispatcher',
@@ -228,30 +136,8 @@ function makeTurn(
     'review',
     1,
     'reviewer',
-    turnsStore,
-    state,
     delivery,
-    onPersistenceFailure,
-    priorPersistence,
   );
-}
-
-function terminalRow(
-  settleStatus: AgentEntityTurnRecord['settle_status'],
-): AgentEntityTurnRecord {
-  return {
-    version: 2,
-    type: 'terminal',
-    submitted_at: 1,
-    settled_at: 2,
-    turn_origin: 'dispatcher',
-    prompt_preview: 'review this',
-    intent: 'review',
-    settle_status: settleStatus,
-    assistant: settleStatus === 'completed' ? 'done' : null,
-    assistant_preview: settleStatus === 'completed' ? 'done' : null,
-    assistant_truncated: false,
-  };
 }
 
 function deferredRuntimeTurn(): {
@@ -263,17 +149,6 @@ function deferredRuntimeTurn(): {
     settle = resolve;
   });
   return { turn: Object.freeze({ settled }), settle };
-}
-
-function deferred<T>(): {
-  promise: Promise<T>;
-  resolve: (value: T) => void;
-} {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((settle) => {
-    resolve = settle;
-  });
-  return { promise, resolve };
 }
 
 async function isSettled(promise: Promise<unknown>): Promise<boolean> {

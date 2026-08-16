@@ -7,7 +7,6 @@ import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
   AgentRuntimeCreateContext,
-  AgentRuntimeLastResult,
   AgentRuntimeProvider,
   AgentRuntimeStatus,
   AgentRuntimeTextInput,
@@ -34,7 +33,6 @@ import {
 import { TeamUnavailableError } from '../src/service/team-collection/errors.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
 import { ensureDispatcherIdentity } from '../src/service/dispatcher-service/identity.js';
-import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { DispatcherStore } from '../src/state/dispatcher-store.js';
 import {
@@ -101,10 +99,6 @@ class FakeRuntime implements AgentRuntime {
     return false;
   }
 
-  async getLast(): Promise<AgentRuntimeLastResult> {
-    return { text: 'fake last' };
-  }
-
   async getContext(): Promise<null> {
     return null;
   }
@@ -167,6 +161,9 @@ function fakeRuntimeCatalog(input: {
       ref: { source: 'builtin', id: 'test-runtime', raw: FAKE_RUNTIME_REF },
     },
     getCapabilities: () => CAPABILITIES,
+    async readTranscript() {
+      return { turns: [], nextCursor: null, truncated: false };
+    },
     createRuntime(context: AgentRuntimeCreateContext) {
       input.contexts?.push(context);
       const runtime = input.createRuntime?.(context) ?? new FakeRuntime();
@@ -1920,7 +1917,6 @@ function makeTeams(input: {
     }),
     worktrees: new WorktreeManager(),
     identities: new AgentIdentityStore(input.log),
-    turnsStore: new AgentTurnsStore(),
     completionDelivery: new CompletionDeliveryPolicy({
       dispatcherId: 'dispatcher-a',
       log: input.log,

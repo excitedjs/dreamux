@@ -22,7 +22,6 @@ import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
   AgentRuntimeCreateContext,
-  AgentRuntimeLastResult,
   AgentRuntimeProvider,
   AgentRuntimeProviderConfigReadContext,
   AgentRuntimeStateCallbacks,
@@ -88,10 +87,6 @@ class FakeExternalRuntime implements AgentRuntime {
     return false;
   }
 
-  async getLast(): Promise<AgentRuntimeLastResult> {
-    return { text: 'external last' };
-  }
-
   async getContext(): Promise<{ usedTokens: number; windowTokens: number }> {
     return { usedTokens: 7, windowTokens: 100 };
   }
@@ -127,6 +122,9 @@ function externalFactory(options: {
           read_by_provider: true,
         };
       },
+      async readTranscript() {
+        return { turns: [], nextCursor: null, truncated: false };
+      },
       createRuntime(context) {
         options.created?.push(context);
         return new FakeExternalRuntime(ref);
@@ -152,7 +150,7 @@ describe('AgentRuntimeProviderCatalog', () => {
     const dispatcher = testDispatcherConfig({ id: 'flow' });
 
     const runtime = builtinCatalog().resolve('builtin:codex').createRuntime({
-      identity: { runtime_id: 'flow', checkpoint_id: null },
+      identity: { runtime_id: 'flow', checkpoint: null },
       config: dispatcherCodexConfig(dispatcher),
       cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
@@ -241,7 +239,7 @@ describe('AgentRuntimeProviderCatalog', () => {
       supported: true,
     });
     const runtime = provider.createRuntime({
-      identity: { runtime_id: 'flow', checkpoint_id: null },
+      identity: { runtime_id: 'flow', checkpoint: null },
       config: {},
       cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
@@ -339,11 +337,36 @@ describe('AgentRuntimeProviderCatalog', () => {
             getCapabilities: () => ({
               resume: { supported: 'no' },
             }) as unknown as AgentRuntimeCapabilities,
+            readTranscript: async () => ({
+              turns: [],
+              nextCursor: null,
+              truncated: false,
+            }),
             createRuntime: () => new FakeExternalRuntime(ref),
           }),
         }),
       }),
     ).rejects.toThrow(/capabilities\.resume\.supported/);
+  });
+
+  it('rejects external providers without the required cold transcript reader', async () => {
+    await expect(
+      loadAgentRuntimeProviders({
+        registry: createBuiltinProviderRegistry(),
+        refs: ['npm:@example/dreamux-runtime'],
+        importModule: async () => ({
+          default: ({
+            ref,
+            descriptor,
+          }: ExternalAgentRuntimeProviderFactoryContext) => ({
+            ref,
+            descriptor,
+            getCapabilities: () => EXTERNAL_CAPABILITIES,
+            createRuntime: () => new FakeExternalRuntime(ref),
+          }),
+        }),
+      }),
+    ).rejects.toThrow(/provider\.readTranscript must be a function/);
   });
 
   it('rejects malformed runtime handles before live use', async () => {
@@ -359,6 +382,11 @@ describe('AgentRuntimeProviderCatalog', () => {
           ref,
           descriptor,
           getCapabilities: () => EXTERNAL_CAPABILITIES,
+          readTranscript: async () => ({
+            turns: [],
+            nextCursor: null,
+            truncated: false,
+          }),
           createRuntime: () =>
             Object.assign(new FakeExternalRuntime(ref), {
               channelInput: undefined,
@@ -371,7 +399,7 @@ describe('AgentRuntimeProviderCatalog', () => {
     );
     expect(() =>
       provider.createRuntime({
-        identity: { runtime_id: 'flow', checkpoint_id: null },
+        identity: { runtime_id: 'flow', checkpoint: null },
         config: {},
         cwd: '/tmp/dreamux-test-cwd',
         mcpServers: [],
@@ -392,6 +420,11 @@ describe('AgentRuntimeProviderCatalog', () => {
           ref,
           descriptor,
           getCapabilities: () => EXTERNAL_CAPABILITIES,
+          readTranscript: async () => ({
+            turns: [],
+            nextCursor: null,
+            truncated: false,
+          }),
           createRuntime: () => {
             const runtime = new FakeExternalRuntime(ref);
             return {
@@ -405,7 +438,6 @@ describe('AgentRuntimeProviderCatalog', () => {
               getStatus: () => runtime.getStatus(),
               getCheckpoint: () => runtime.getCheckpoint(),
               wasCheckpointResumed: () => runtime.wasCheckpointResumed(),
-              getLast: () => runtime.getLast(),
               getContext: () => runtime.getContext(),
               getCapabilities: () => runtime.getCapabilities(),
             };
@@ -419,7 +451,7 @@ describe('AgentRuntimeProviderCatalog', () => {
 
     expect(() =>
       provider.createRuntime({
-        identity: { runtime_id: 'flow', checkpoint_id: null },
+        identity: { runtime_id: 'flow', checkpoint: null },
         config: {},
         cwd: '/tmp/dreamux-test-cwd',
         mcpServers: [],

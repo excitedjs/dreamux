@@ -17,17 +17,12 @@ import type {
 import {
   TurnManager,
 } from './turn-manager.js';
-import {
-  extractAssistantText,
-  type CollectedTurn,
-} from './events.js';
 import { renderChannelInput } from '@excitedjs/dreamux-utils';
 import { createFailFastApprovalHandler } from './approval.js';
 import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
   AgentRuntimeIdentity,
-  AgentRuntimeLastResult,
   AgentRuntimePathContext,
   AgentRuntimeSkillSource,
   AgentRuntimeStateCallbacks,
@@ -44,6 +39,10 @@ import {
   renderCodexSystemPromptAppend,
 } from './runtime-support.js';
 import { applyCodexSkillExtraRoots } from './skill-roots.js';
+import {
+  resolveCodexTranscriptRoots,
+  validateCodexThreadPath,
+} from './transcript/path.js';
 
 const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
 const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
@@ -69,6 +68,10 @@ export interface CodexRuntimeDeps {
   extraEnv?: Record<string, string>;
   restartBackoffBaseMs?: number;
   restartBackoffMaxMs?: number;
+  validateTranscriptPath?: (
+    path: string,
+    threadId: string,
+  ) => Promise<string>;
   logger?: DreamuxLogger;
 }
 
@@ -79,6 +82,7 @@ export class CodexRuntime implements AgentRuntime {
   private client: CodexWsClient | null = null;
   private turnManager: TurnManager | null = null;
   private threadId: string | null = null;
+  private transcriptLocator: string | null = null;
   private threadResumed = false;
   private status: AgentRuntimeStatus = 'declared';
   private readonly log: (
@@ -94,7 +98,6 @@ export class CodexRuntime implements AgentRuntime {
   private stopTask: Promise<void> | null = null;
   private restartAttempts = 0;
   private restartTimer: NodeJS.Timeout | null = null;
-  private lastResult: AgentRuntimeLastResult | null = null;
   private readonly state: AgentRuntimeStateCallbacks;
   private readonly paths: AgentRuntimePathContext;
 
@@ -112,7 +115,9 @@ export class CodexRuntime implements AgentRuntime {
             if (err !== undefined) console.error(prefix, msg, err);
             else console.error(prefix, msg);
           };
-    this.threadId = identity.checkpoint_id ?? null;
+    this.threadId = identity.checkpoint?.id ?? null;
+    this.transcriptLocator =
+      identity.checkpoint?.transcript_locator ?? null;
     this.state = deps.state;
     this.paths = deps.paths;
   }
@@ -129,16 +134,16 @@ export class CodexRuntime implements AgentRuntime {
     return CODEX_AGENT_RUNTIME_CAPABILITIES;
   }
 
-  getCheckpoint(): { id: string } | null {
-    return this.threadId === null ? null : { id: this.threadId };
+  getCheckpoint(): { id: string; transcript_locator?: string | null } | null {
+    if (this.threadId === null) return null;
+    return {
+      id: this.threadId,
+      transcript_locator: this.transcriptLocator,
+    };
   }
 
   wasCheckpointResumed(): boolean {
     return this.threadResumed;
-  }
-
-  async getLast(): Promise<AgentRuntimeLastResult | null> {
-    return this.lastResult;
   }
 
   async getContext(): Promise<null> {
@@ -282,7 +287,6 @@ export class CodexRuntime implements AgentRuntime {
       dispatcherId: this.dispatcherId,
       getThreadId: () => this.threadId,
       client: this.client,
-      onTurnCompleted: (turn) => this.recordCollectedTurn(turn),
       log: this.log,
     });
   }
@@ -300,7 +304,7 @@ export class CodexRuntime implements AgentRuntime {
     if (this.client === null) throw new Error('client not initialized');
     this.threadResumed = false;
     const threadInstructions = this.threadInstructionParams();
-    const existing = this.threadId ?? this.identity.checkpoint_id ?? null;
+    const existing = this.threadId ?? this.identity.checkpoint?.id ?? null;
     if (existing === null) {
       const params: ThreadStartParams = {
         ...threadInstructions,
@@ -310,22 +314,31 @@ export class CodexRuntime implements AgentRuntime {
         params,
       );
       this.assertGeneration(generation);
-      this.threadId = res.thread.id;
-      await this.state.setCheckpoint({ id: this.threadId });
+      const candidateThreadId = res.thread.id;
+      const transcript = await this.validateThreadPath(
+        res.thread.path,
+        candidateThreadId,
+      );
+      await this.state.setCheckpoint({
+        id: candidateThreadId,
+        transcript_locator: transcript.path,
+      });
       this.assertGeneration(generation);
+      this.threadId = candidateThreadId;
+      this.transcriptLocator = transcript.path;
       this.log('info', `started fresh thread ${this.threadId}`);
       return;
     }
+    let resumed: ThreadResumeResponse;
     try {
       const params: ThreadResumeParams = {
         threadId: existing,
         ...threadInstructions,
       };
-      await this.client.request<ThreadResumeResponse>('thread/resume', params);
-      this.assertGeneration(generation);
-      this.threadId = existing;
-      this.threadResumed = true;
-      this.log('info', `resumed thread ${this.threadId}`);
+      resumed = await this.client.request<ThreadResumeResponse>(
+        'thread/resume',
+        params,
+      );
     } catch (err) {
       this.assertGeneration(generation);
       const msg = err instanceof Error ? err.message : String(err);
@@ -338,21 +351,71 @@ export class CodexRuntime implements AgentRuntime {
         { ...threadInstructions },
       );
       this.assertGeneration(generation);
-      this.threadId = res.thread.id;
+      const replacementThreadId = res.thread.id;
+      const transcript = await this.validateThreadPath(
+        res.thread.path,
+        replacementThreadId,
+      );
+      const replacement = {
+        id: replacementThreadId,
+        transcript_locator: transcript.path,
+      };
       if (this.state.recordLostCheckpoint !== undefined) {
         await this.state.recordLostCheckpoint(
-          { id: existing },
-          { id: this.threadId },
+          {
+            id: existing,
+            transcript_locator: this.transcriptLocator,
+          },
+          replacement,
           `thread/resume failed: ${msg}`,
         );
       } else {
-        await this.state.setCheckpoint({ id: this.threadId });
+        await this.state.setCheckpoint(replacement);
         await this.state.setStatus('degraded', {
           last_error: `thread/resume failed: ${msg}`,
         });
       }
       this.assertGeneration(generation);
+      this.threadId = replacementThreadId;
+      this.transcriptLocator = transcript.path;
+      return;
     }
+    this.assertGeneration(generation);
+    const resumedThreadId = resumed.thread.id;
+    const transcript = await this.validateThreadPath(
+      resumed.thread.path,
+      resumedThreadId,
+    );
+    await this.state.setCheckpoint({
+      id: resumedThreadId,
+      transcript_locator: transcript.path,
+    });
+    this.assertGeneration(generation);
+    this.threadId = resumedThreadId;
+    this.transcriptLocator = transcript.path;
+    this.threadResumed = true;
+    this.log('info', `resumed thread ${this.threadId}`);
+  }
+
+  private validateThreadPath(
+    path: string | null | undefined,
+    threadId: string,
+  ) {
+    if (path === null || path === undefined) {
+      throw new Error('Codex thread response omitted the native transcript path');
+    }
+    if (this.deps.validateTranscriptPath !== undefined) {
+      return this.deps.validateTranscriptPath(path, threadId).then(
+        (validatedPath) => ({ path: validatedPath }),
+      );
+    }
+    return resolveCodexTranscriptRoots(
+      codexProcessEnv(this.deps.injectEnv, this.deps.extraEnv),
+    ).then((roots) => validateCodexThreadPath(
+      path,
+      threadId,
+      roots,
+    ));
   }
 
   private threadInstructionParams(): Pick<
@@ -590,13 +653,6 @@ export class CodexRuntime implements AgentRuntime {
       last_error: null,
     });
     this.assertGeneration(generation);
-  }
-
-  private recordCollectedTurn(turn: CollectedTurn): void {
-    const resultText = extractAssistantText(turn);
-    if (resultText !== null) {
-      this.lastResult = { text: resultText };
-    }
   }
 
   private setStatus(s: AgentRuntimeStatus): void {

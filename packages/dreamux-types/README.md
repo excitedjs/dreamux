@@ -24,9 +24,11 @@ shared structural types.
 - the complete Agent Runtime provider contract: `AgentRuntimeProvider`,
   `AgentRuntime`, the neutral `AgentRuntimeCreateContext`, capabilities, role,
   skill sources, completion delivery, `RuntimeAdmission`, canonical
-  `RuntimeTurn`/`RuntimeTurnOutcome`, resume/last/context, MCP server descriptor,
-  neutral state callbacks, and diagnostic helper shapes. Provider-native Turn
-  identifiers remain private inside provider packages;
+  `RuntimeTurn`/`RuntimeTurnOutcome`, resume checkpoints, provider-native
+  transcript queries/pages/errors, MCP server descriptor, neutral state
+  callbacks, and diagnostic helper shapes. Provider-native Turn identifiers,
+  cursor positions, and transcript formats remain private inside provider
+  packages;
 - Channel provider/session contracts, target shapes, inbound envelope shapes,
   tool descriptor/call shapes, config/session contexts, optional strict
   collaboration operations, and dispatcher-scoped read-only core event DTOs.
@@ -53,10 +55,26 @@ started has settled and no such call can later return `submitted`. Providers
 must terminate or release their own pending native requests before satisfying
 that convergence contract.
 
+## Native transcript contract
+
+Every Agent Runtime provider implements `readTranscript(query, context)` as a
+cold read: it must not start or resume a runtime. The query accepts only a turn
+count, an opaque provider cursor, and an optional tool-block toggle. Pages use
+provider-neutral message/tool blocks and the host supplies the fixed
+262144-byte output budget.
+
+`AgentRuntimeResumeCheckpoint` persists the provider-native session id and an
+optional canonical `transcript_locator` atomically. The provider validates that
+locator against its own native roots and session, rediscovers a moved native
+transcript when supported, owns cursor validity/staleness, and returns
+`scan_unsupported` when its bounded reader cannot safely continue. Native IDs,
+filesystem locators, raw reasoning, and provider control records never appear
+in transcript pages.
+
 A provider implements the full contract against this package only — see
 `tests/fixtures/external-provider.ts` for a complete `AgentRuntimeProvider`
-(`readConfig` + `getCapabilities` + `createRuntime`) and a `ChannelProvider`
-authored with `@excitedjs/dreamux-types` imports alone.
+(`readConfig` + `getCapabilities` + `readTranscript` + `createRuntime`) and a
+`ChannelProvider` authored with `@excitedjs/dreamux-types` imports alone.
 
 > **Core convergence is in progress.** Dreamux core's own launcher still threads
 > a host-coupled create context internally; converging it onto the neutral

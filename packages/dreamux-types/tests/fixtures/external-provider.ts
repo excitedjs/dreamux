@@ -24,7 +24,6 @@ import type {
   AgentRuntimeCreateContext,
   AgentRuntimeDiagnostic,
   AgentRuntimeDiagnosticResult,
-  AgentRuntimeLastResult,
   AgentRuntimeProvider,
   AgentRuntimeProviderConfigReadContext,
   AgentRuntimeProviderDescriptor,
@@ -32,6 +31,7 @@ import type {
   AgentRuntimeStatus,
   AgentRuntimeSystemPrompt,
   AgentRuntimeTextInput,
+  AgentRuntimeTranscriptPage,
   ChannelBindingRouteEvent,
   ChannelCoreEventSubscription,
   ChannelInboundEnvelope,
@@ -80,7 +80,7 @@ class FixtureRuntime implements AgentRuntime {
 
   constructor(context: AgentRuntimeCreateContext<FixtureRuntimeConfig>) {
     this.logger = context.logger;
-    this.threadId = context.identity.checkpoint_id ?? null;
+    this.threadId = context.identity.checkpoint?.id ?? null;
   }
 
   async start(): Promise<void> {
@@ -110,10 +110,6 @@ class FixtureRuntime implements AgentRuntime {
 
   wasCheckpointResumed(): boolean {
     return false;
-  }
-
-  async getLast(): Promise<AgentRuntimeLastResult | null> {
-    return { text: null };
   }
 
   async getContext(): Promise<AgentRuntimeContextSnapshot | null> {
@@ -177,10 +173,6 @@ class PendingAdmissionFixtureRuntime implements AgentRuntime {
 
   wasCheckpointResumed(): boolean {
     return false;
-  }
-
-  async getLast(): Promise<AgentRuntimeLastResult | null> {
-    return null;
   }
 
   async getContext(): Promise<AgentRuntimeContextSnapshot | null> {
@@ -267,6 +259,9 @@ export const fixtureRuntimeProvider: AgentRuntimeProvider<FixtureRuntimeConfig> 
       return { model };
     },
     diagnostic: fixtureRuntimeDiagnostic,
+    async readTranscript(): Promise<AgentRuntimeTranscriptPage> {
+      return { turns: [], nextCursor: null, truncated: false };
+    },
     createRuntime(context) {
       return new FixtureRuntime(context);
     },

@@ -33,11 +33,13 @@ The target architecture is:
   prompt**. The `TeamMateWorkerProvider` parallel tree
   (`/packages/dreamux/src/teammate/worker/`) is removed. The runtime interface
   covers single-instance operations only: start/resume/stop, inbound/turn
-  submission, steering capability, last/context reads, and upward result
-  delivery. Dispatcher orchestration verbs such as `spawn`, `close`, and
-  `list` stay on the Dispatcher Service and must not be instance methods on
-  `AgentRuntime`. The "one task = one turn, reap" worker model is
-  replaced by a semi-resident, resumable session that the dispatcher controls.
+  submission, steering capability, context reads, and upward result delivery.
+  Cold history is a provider-level `readTranscript()` query so it also works
+  after the live runtime object is gone. Dispatcher orchestration verbs such as
+  `spawn`, `close`, and `list` stay on the Dispatcher Service and must not be
+  instance methods on `AgentRuntime`. The "one task = one turn, reap" worker
+  model is replaced by a semi-resident, resumable session that the dispatcher
+  controls.
 - **Dispatcher Service is a real module**, not a role smeared across
   `/packages/dreamux/src/server.ts` and `/packages/dreamux/src/teammate/`. It is
   launched by the server, holds the dispatcher agent (lifecycle tied to the
@@ -100,11 +102,12 @@ see its `verbs/` (spawn/resume/history), `persistence/history-index.ts` and
   teammate layer only knows teammate identities.
 - **Dispatcher-facing verbs, no unified suffix:** `spawn`, `send`, `close` for
   lifecycle; `history`, `list`, `status`, `last`, `get_capabilities` for
-  read/recovery. `history` is the recovery search surface, served from the
-  per-name records; `last` reads a teammate's most recent settled turn(s) by
-  concrete name from the per-name turns archive. Issue #188 reworked both and
-  removed the obsolete `ctx` and raw `history_events` verbs; issue #199 Slice 3
-  moved both off the session ledger. See
+  read/recovery. `history` is the identity/lifecycle recovery search surface,
+  served from per-entity `identity.json`; `last` cold-reads completed turns from
+  the selected Agent Runtime provider's native transcript. Issue #188 reworked
+  both and removed the obsolete `ctx` and raw `history_events` verbs; the
+  current native-transcript contract supersedes the later Dreamux per-name Turn
+  archive. See
   [Dispatcher orchestration](../domains/dispatcher-orchestration.md).
   `spawn`/`send` return after submitting
   the runtime turn; the dispatcher recovers through history/last instead of a
@@ -118,23 +121,22 @@ see its `verbs/` (spawn/resume/history), `persistence/history-index.ts` and
   3; the kind is never persisted), then submits, so `close` is a reversible
   soft-stop. Read-only verbs never reopen a closed teammate.
 - **History reads the record, not an event stream (issue #199 Slice 3).**
-  `history` / `list` / `status` project the per-name `records/<name>.json`
-  recovery record — identity plus a rolling summary (turn count, last-seen,
-  last prompt/assistant previews) maintained on each turn. The only JSONL store
-  is the per-name `turns/<name>.jsonl` archive (compact submit/settled rows)
-  that `last` folds; there is no separate forward-only history event index, and
-  neither store write may fail a lifecycle verb. Per-runtime checkpoint
-  mechanics are absorbed by the runtime implementation behind one `resume()`
-  runtime surface.
+  `history` / `list` / `status` project per-entity `identity.json`: identity,
+  lifecycle, worktree, intent, and runtime-session facts only. There is no
+  rolling turn count, last-seen timestamp, prompt preview, or assistant preview.
+  `last` delegates to the runtime provider's native transcript and persists no
+  Dreamux copy, cursor, or index. Per-runtime checkpoint mechanics and native
+  transcript discovery stay behind the provider's neutral contract.
 - **Identity and state location.** A teammate is a flat name plus a base record
   (agent runtime id, dispatcher owner, source/runtime cwd, optional managed
-  worktree metadata, runtime-native `session_id`, status, close metadata). State
-  is server-owned under `~/.dreamux/state/<dispatcher>/teammate/`; paths go
-  through `/packages/dreamux/src/platform/paths.ts`. (Issue #199 Slice 3 settled
-  the layout on the per-name `records/<name>.json` recovery record plus the
-  per-name `turns/<name>.jsonl` archive, retiring the `sessions.jsonl` session
-  ledger and the persisted `checkpoint` object; see
-  [State, config, and files](../domains/state-config-and-files.md).)
+  worktree metadata, runtime-native `session_id`, nullable opaque
+  `transcript_locator`, status, close metadata). State is server-owned under
+  `~/.dreamux/state/<dispatcher>/teammate/`; paths go through
+  `/packages/dreamux/src/platform/paths.ts`. Current entities use one
+  `teammate/<name>/identity.json`; a per-entity `turn.jsonl` left by an older
+  release is inert residue that Dreamux never reads, validates, or requires the
+  operator to remove. See
+  [State, config, and files](../domains/state-config-and-files.md).
 - **Ownership.** The Dispatcher Service owns TeamMate identity and history
   through focused modules under
   `/packages/dreamux/src/service/teammate-collection/`.

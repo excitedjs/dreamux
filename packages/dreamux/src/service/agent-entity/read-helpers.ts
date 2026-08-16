@@ -2,12 +2,10 @@ import { Buffer } from 'node:buffer';
 
 import type { AgentRuntimeStatus } from '@excitedjs/dreamux-types';
 
-import { AgentTurnsStore, turnsScopeOf } from './turns-store.js';
 import {
   validateTeamMateName,
   type AgentEntityHistoryQuery,
   type AgentEntityIdentity,
-  type AgentEntityLastTurn,
   type AgentEntityRecordRow,
   type AgentEntityRuntimeStatus,
 } from './types.js';
@@ -46,12 +44,10 @@ export function toRecordRow(
 ): AgentEntityRecordRow {
   return {
     name: identity.name,
-    turn_count: identity.turn_count,
     agent_runtime: identity.agent_runtime,
     source_repo: identity.source_repo,
     created_at: identity.created_at,
     updated_at: identity.updated_at,
-    last_seen_at: identity.last_seen_at,
     status: effectiveStatus,
     runtime_status: runtimeStatus,
     intent: identity.intent,
@@ -59,37 +55,12 @@ export function toRecordRow(
     close_note: identity.close_note,
     close_note_preview:
       identity.close_note === null ? null : previewText(identity.close_note),
-    last_prompt_preview: identity.last_prompt_preview,
-    last_assistant_preview: identity.last_assistant_preview,
     cleanup_state: identity.worktree.cleanup_state,
     resume:
       identity.closed_at === null || identity.session_id !== null
         ? { tool: 'send', name: identity.name }
         : null,
   };
-}
-
-export async function foldLastTurns(
-  turnsStore: AgentTurnsStore,
-  identity: AgentEntityIdentity,
-  requestedTurns: number,
-): Promise<AgentEntityLastTurn[]> {
-  const recent: AgentEntityLastTurn[] = [];
-  for await (const row of turnsStore.stream(turnsScopeOf(identity))) {
-    recent.push({
-      turn_origin: row.turn_origin,
-      prompt_preview: row.prompt_preview,
-      intent: row.intent,
-      submitted_at: row.submitted_at,
-      settled_at: row.settled_at,
-      settle_status: row.settle_status,
-      assistant: row.assistant,
-      assistant_preview: row.assistant_preview,
-      assistant_truncated: row.assistant_truncated,
-    });
-    if (recent.length > requestedTurns) recent.shift();
-  }
-  return recent;
 }
 
 export function matchesRecordQuery(
@@ -118,8 +89,8 @@ export function matchesRecordQuery(
   if (input.grep !== undefined && !recordRowMatchesText(row, input.grep)) {
     return false;
   }
-  if (input.since !== undefined && row.last_seen_at < input.since) return false;
-  if (input.until !== undefined && row.last_seen_at > input.until) return false;
+  if (input.since !== undefined && row.updated_at < input.since) return false;
+  if (input.until !== undefined && row.updated_at > input.until) return false;
   return true;
 }
 
@@ -132,7 +103,7 @@ export function clampHistoryLimit(input: number | undefined): number {
 }
 
 const LAST_TURNS_DEFAULT = 1;
-const LAST_TURNS_MAX = 5;
+const LAST_TURNS_MAX = 50;
 
 export function validateLastTurns(input: number | undefined): number {
   if (input === undefined) return LAST_TURNS_DEFAULT;
@@ -173,8 +144,6 @@ function recordRowMatchesText(row: AgentEntityRecordRow, grep: string): boolean 
     row.source_repo,
     row.intent,
     row.close_note,
-    row.last_prompt_preview,
-    row.last_assistant_preview,
   ].some((value) => value !== null && value.toLowerCase().includes(needle));
 }
 

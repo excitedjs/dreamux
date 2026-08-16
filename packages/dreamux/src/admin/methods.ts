@@ -1,8 +1,8 @@
-
 import type { Server } from '../server.js';
 import type { ChannelToolCaller } from '../service/dispatcher-service/index.js';
 import { ChannelToolAuthorizationError } from '../service/channel-service/errors.js';
 import type { SchedulerCommands } from '../service/scheduler/types.js';
+import { validateLastTurns } from '../service/agent-entity/read-helpers.js';
 import { parseWorkflowMaxConcurrency } from '../service/workflow-service/limits.js';
 import {
   TeamDissolveBlockedError,
@@ -39,6 +39,7 @@ import {
   parseMessage,
   repoRequest,
 } from './params.js';
+import { mapAgentTranscriptAdminError } from './transcript-errors.js';
 
 export type AdminHandler = (
   server: Server,
@@ -252,7 +253,27 @@ export const adminMethods: Record<string, AdminHandler> = {
     const target = await teammateTargetFor(server, params);
     const name = mustString(params, 'name');
     const turns = optionalInteger(params, 'turns');
-    return target.service.teammates.last(name, turns ?? undefined);
+    try {
+      validateLastTurns(turns ?? undefined);
+    } catch {
+      throw new AdminError(
+        'BAD_REQUEST',
+        'teammate.last turns must be an integer in 1..50',
+      );
+    }
+    const cursor = optionalString(params, 'cursor');
+    const includeTools = optionalBooleanField(params, 'include_tools')[
+      'include_tools'
+    ];
+    try {
+      return await target.service.teammates.last(name, {
+        ...(turns !== null ? { turns } : {}),
+        ...(cursor !== null ? { cursor } : {}),
+        ...(includeTools !== null ? { includeTools } : {}),
+      });
+    } catch (error) {
+      return mapAgentTranscriptAdminError(error);
+    }
   },
 
   'teammate.capabilities': async (server, params) => (

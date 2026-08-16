@@ -10,7 +10,9 @@ export function asError(error: unknown): Error {
 export function reserveSource(
   key: string | undefined,
   committed: Set<string>,
+  committedOrder: string[],
   pending: Map<string, Promise<RuntimeAdmission>>,
+  committedLimit: number,
   operation: () => Promise<RuntimeAdmission>,
 ): Promise<RuntimeAdmission> {
   if (key === undefined || key === '') return operation();
@@ -27,6 +29,11 @@ export function reserveSource(
   void task.then((admission) => {
     if (admission.status === 'submitted' || admission.status === 'ambiguous') {
       committed.add(key);
+      committedOrder.push(key);
+      while (committedOrder.length > committedLimit) {
+        const evicted = committedOrder.shift();
+        if (evicted !== undefined) committed.delete(evicted);
+      }
     }
     if (pending.get(key) === task) pending.delete(key);
   });

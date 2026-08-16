@@ -107,7 +107,7 @@ describe('builtin:claude-code loads the real @excitedjs/agent-runtime-claude-cod
       setCheckpoint: async () => {},
     };
     const context: AgentRuntimeCreateContext<DispatcherClaudeCodeConfig> = {
-      identity: { runtime_id: 'flow', checkpoint_id: null },
+      identity: { runtime_id: 'flow', checkpoint: null },
       config,
       cwd: tmp,
       mcpServers: [],

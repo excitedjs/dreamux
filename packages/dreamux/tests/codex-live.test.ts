@@ -522,7 +522,7 @@ describe('codex live integration', () => {
       process.env['CODEX_HOME'] = isolatedCodexHome;
 
       const runtime = new CodexRuntime(
-        { runtime_id: 'schema-live', checkpoint_id: null },
+        { runtime_id: 'schema-live', checkpoint: null },
         {
           cwd,
           state,
@@ -621,7 +621,6 @@ describe('codex live integration', () => {
           score: 7,
           nullableFlag: null,
         });
-        expect(await runtime.getLast()).toEqual({ text: resultText });
 
         const liveClient = client!;
         const request = turnStartRequests(liveClient)[0];

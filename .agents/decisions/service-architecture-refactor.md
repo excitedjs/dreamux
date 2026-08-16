@@ -22,14 +22,20 @@ The `dispatcher-service/` object model evolved across multiple iterations and ca
 
 ## Decision
 
-Restructure the service layer around a **Collection + Service pattern**, and unify agent runtime lifecycle management through a shared `TeammateService` entity. The dispatcher *has* an agent (not *is* an agent); the team *has* a leader agent. Delivery flows through a per-dispatcher, per-turn in-memory `CompletionRouter`, not direct references between entities.
+Restructure the service layer around a **Collection + Service pattern**, and
+unify agent runtime lifecycle management through a shared `TeammateService`
+entity. The dispatcher *has* an agent (not *is* an agent); the team *has* a
+leader agent.
 
 > **Current decision:** The Collection + Service topology remains accepted.
 > The `CompletionRouter` registry, `producerName:turnId` keys, settle callbacks,
 > Collection-owned close/release behavior, and runtime-only shutdown sweeps in
 > this historical record no longer describe current behavior. Completion
 > initiators are captured by closure on entity-owned object Turns, and
-> `TeammateService` owns the lifecycle command path.
+> `TeammateService` owns the lifecycle command path. The sections below through
+> the rollout plan preserve the original issue #233 design history; use the
+> current note above, the current-state references, and the superseding
+> entity-owned lifecycle decision for present behavior.
 
 ### Symmetric Collection + Service Pattern
 
@@ -198,9 +204,8 @@ classDiagram
         +spawn() TeammateService
         +list() TeammateService[]
         +get(name) TeammateService
-        +close(name, note)
-        -identityStore: IdentityStore
-        -turnsStore: TurnsStore
+        +last(name, query)
+        -identityStore: AgentIdentityStore
         -worktrees: WorktreeManager
     }
     class TeammateService {
@@ -210,20 +215,14 @@ classDiagram
         +send(prompt)
         +close(note)
         +status()
-        +history(opts)
-        +last(turns)
         +completionInput(envelope)
     }
     class ChannelBindingStore
     class TeamStore
-    class IdentityStore
-    class TurnsStore
+    class AgentIdentityStore
     class WorktreeManager
-    class CompletionRouter {
-        -pending: Map~completionKey, initiator~
-        -terminal: Set~completionKey~
-        +register(completionKey, initiator)
-        +settle(completionKey, completion)
+    class CompletionDeliveryPolicy {
+        +deliver(initiator, completion)
     }
     Server --> DispatcherCollection
     DispatcherCollection --> DispatcherService
@@ -236,59 +235,54 @@ classDiagram
     TeamService o-- TeammateService : has a leader
     TeamService o-- TeammateCollection : owns members (team_id scope)
     TeammateCollection o-- TeammateService
-    TeammateCollection o-- IdentityStore
-    TeammateCollection o-- TurnsStore
+    TeammateCollection o-- AgentIdentityStore
     TeammateCollection o-- WorktreeManager
-    DispatcherService o-- CompletionRouter
-    TeammateService ..> CompletionRouter : register on send/spawn
-    CompletionRouter ..> TeammateService : calls completionInput
+    DispatcherService o-- CompletionDeliveryPolicy
+    TeammateService ..> CompletionDeliveryPolicy : captured closure
 ```
 
 ### State Directory Layout
 
-Reorganize per-dispatcher state to reflect the new hierarchy:
+The later
+[entity-owned lifecycle decision](entity-owned-teammate-lifecycle-and-object-turns.md)
+keeps the symmetric entity hierarchy but removes Dreamux Turn archives, rolling
+conversation summaries, and the completion-router registry. Current
+per-dispatcher state is:
 
 ```
 state/<dispatcher-id>/
-  identity.json            # the dispatcher agent's own identity (+ rolling summary) — debug only
-  turn.jsonl               # the dispatcher agent's own turns — debug only
+  identity.json            # dispatcher agent identity + runtime session association
   status.json              # dispatcher status — AUTHORITATIVE for rebuild/creation
   access.json              # access control
   chat-bots.json           # peer bot awareness
   channel-bindings.json    # channel bindings
   teammate/                # dispatcher-owned teammates
     <name>/
-      identity.json        # identity + rolling summary (the record)
-      turn.jsonl           # turn events (folded by `last`)
+      identity.json        # identity/lifecycle/worktree/session facts
   team/
     <team-name>/           # one directory per team
-      identity.json        # the team leader's identity (+ rolling summary)
-      turn.jsonl           # the team leader's turns
+      identity.json        # the team leader's identity/session facts
       record.json          # team record (members, bound channel, …)
       teammate/            # team-owned members
         <name>/
           identity.json
-          turn.jsonl
 ```
 
-The layout is **fully symmetric**: every agent entity is a directory holding
-`{identity.json, turn.jsonl}`, and every agent that owns sub-teammates has a
-`teammate/<name>/` subdir beside it. Writing is a blind `mkdir -p <dir>` + write;
-reading any agent, or listing any collection, uses one shared routine over
-`<scope>/teammate/<name>/`. The directory tree mirrors the object model exactly —
-the dispatcher agent's pair sits at the dispatcher root with a `teammate/`
-collection beside it, and the team leader's pair sits at the team root with its
-own `teammate/` collection. This is the intended shape, not a frozen spec —
-exact filenames and store wiring track the implementation.
+The layout is **fully symmetric**: every agent entity owns one `identity.json`,
+and every agent that owns sub-teammates has a `teammate/<name>/` subdir beside
+it. The directory tree mirrors the object model exactly — the dispatcher
+agent's identity sits at the dispatcher root with a `teammate/` collection
+beside it, and the team leader's identity sits at the team root with its own
+member collection. A current-layout `turn.jsonl` left by an older release is
+inert residue: Dreamux never creates, reads, validates, repairs, migrates, or
+automatically deletes it.
 
 `status.json` stays the **authoritative** dispatcher state for rebuild/creation.
-The dispatcher agent's `identity.json` + `turn.jsonl` are **write-only debug data
-with no consumer**. Because they live at the dispatcher *root* (not under
-`teammate/`), the teammate read chokepoints (`scopedList` / `mustIdentity`, which
-scan `teammate/<name>/`) never enumerate them — and likewise the team leader
-lives at the team *root*, so listing a team's members scans only
+The dispatcher agent's `identity.json` lives at the dispatcher *root* (not under
+`teammate/`), so teammate read chokepoints never enumerate it. Likewise the team
+leader lives at the team root, so listing a team's members scans only
 `team/<team>/teammate/<name>/` and never includes the leader. The structure
-itself enforces visibility; no `dispatcher_agent` role exclusion is needed.
+itself enforces visibility.
 
 ### Overall Hierarchy
 

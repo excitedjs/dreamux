@@ -19,6 +19,7 @@ import { BUILTIN_CODEX_PROVIDER_REF } from './provider-ref.js';
 import { resolveCodexBinPath } from './bin.js';
 import { codexAgentRuntimeDiagnostic } from './diagnostic.js';
 import { allocateCodexSocketPath } from './internal/socket.js';
+import { readCodexTranscript } from './transcript/reader.js';
 import type {
   AgentRuntimeCapabilities,
   AgentRuntime,
@@ -59,6 +60,8 @@ export interface CodexAgentRuntimeProviderOptions {
   codexClientFactory?: (socketPath: string) => CodexWsClient;
   restartBackoffBaseMs?: number;
   restartBackoffMaxMs?: number;
+  /** Override native transcript path validation for deterministic tests. */
+  validateTranscriptPath?: CodexRuntimeDeps['validateTranscriptPath'];
 }
 
 export const CODEX_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
@@ -135,6 +138,7 @@ export function createCodexAgentRuntimeProvider(
     readConfig(rawConfig, context) {
       return readDispatcherCodexConfig(rawConfig, context.file, context.prefix);
     },
+    readTranscript: readCodexTranscript,
     createRuntime(context: AgentRuntimeCreateContext<DispatcherCodexConfig>): AgentRuntime {
       if (context.state === undefined) {
         throw new Error('codex runtime requires a state sink in the create context');
@@ -190,6 +194,9 @@ export function createCodexAgentRuntimeProvider(
           : {}),
         ...(options.restartBackoffMaxMs !== undefined
           ? { restartBackoffMaxMs: options.restartBackoffMaxMs }
+          : {}),
+        ...(options.validateTranscriptPath !== undefined
+          ? { validateTranscriptPath: options.validateTranscriptPath }
           : {}),
       };
       return new CodexRuntime(context.identity, deps);

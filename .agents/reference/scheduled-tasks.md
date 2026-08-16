@@ -73,8 +73,9 @@ For `prompt-agent` jobs the scheduler:
 3. Calls `completionInput({ text, sourceId: "scheduled:<job-id>:<fire-seq>" })`;
    the id is stable for one fire but differs across recurring fires of the same
    job so runtime-side dedupe cannot collapse later occurrences.
-4. Records a structured turn origin `{ kind: "scheduled", job_id }` in the
-   dispatcher agent turn archive.
+4. Keeps the structured turn origin `{ kind: "scheduled", job_id }` only on the
+   in-process entity Turn for lifecycle/delivery correlation. Dreamux persists no
+   per-Turn archive.
 5. Updates `last_fired_at`, recomputes `next_run_at`, and disables one-shot jobs.
 
 It does not observe terminal success or failure of the agent turn. `deliver`

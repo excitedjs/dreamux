@@ -8,7 +8,6 @@ import type {
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
-import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import type {
   AgentEntityCloseResult,
@@ -21,7 +20,6 @@ export interface TeammateServiceDeps {
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   identities: AgentIdentityStore;
-  turnsStore: AgentTurnsStore;
   /**
    * The worktree manager backing `close` (cleanup) and a closed-teammate reopen
    * (reprepare). Omitted only for the dispatcher agent (issue #233 Phase 5),

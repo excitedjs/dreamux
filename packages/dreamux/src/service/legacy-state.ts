@@ -15,9 +15,9 @@ import { dispatcherTeamDir, dispatcherTeamMateDir } from '../platform/paths.js';
  *
  * #233 replaced the flat per-name files with a directory per entity:
  *   teammate/records/<name>.json + teammate/turns/<name>.jsonl
- *     → teammate/<name>/{identity.json, turn.jsonl}
+ *     → teammate/<name>/identity.json plus provider-native transcripts
  *   team/records/<team>.json
- *     → team/<team>/record.json (+ leader identity.json/turn.jsonl + members)
+ *     → team/<team>/record.json (+ leader identity.json + members)
  *   team/channel-bindings.json
  *     → channel-bindings.json at the dispatcher root
  * The `teammate/` and `team/` directories themselves stay valid (they now hold
@@ -68,15 +68,15 @@ function removedStatePaths(dispatcherId: string): LegacyStateFinding[] {
     },
     {
       path: join(teammate, 'turns'),
-      what: 'pre-#233 flat TeamMate turns directory, replaced by teammate/<name>/turn.jsonl',
+      what: 'pre-#233 flat TeamMate turns directory, removed in favor of provider-native transcripts',
     },
     {
       path: join(teammate, 'sessions.jsonl'),
-      what: 'pre-#199 TeamMate/Team session ledger, replaced by per-entity teammate/<name>/turn.jsonl',
+      what: 'pre-#199 TeamMate/Team session ledger, replaced by identity checkpoints plus provider-native transcripts',
     },
     {
       path: join(teammate, 'history'),
-      what: 'pre-#182 per-name TeamMate history index, folded into the identity plus the turn archive',
+      what: 'pre-#182 per-name TeamMate history index, replaced by identity/lifecycle history and provider-native transcript reads',
     },
     {
       path: join(team, 'records'),
@@ -114,7 +114,7 @@ export function legacyDispatcherStateMessage(
     `dispatcher ${dispatcherId} has pre-#199 local state this version no longer reads:\n` +
     `${lines.join('\n')}\n` +
     'Dreamux 0.x does not migrate old state. Delete the listed path(s); the current ' +
-    'records + per-name turns layout rebuilds on the next run. The files are left untouched.'
+    'per-entity identity and Team record layout rebuilds on the next run. The files are left untouched.'
   );
 }
 

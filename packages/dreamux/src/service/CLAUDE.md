@@ -144,8 +144,8 @@ directly unless the symbol belongs on the explicit `service/index.ts` facade.
   `TeammateCollection` constructs, subscribes to, caches, resolves, and reads
   entities; it does not own their close state machine. `TeammateService` owns
   one identity, its process-local Workflow lock, runtime, canonical Turn
-  objects, terminal persistence, delivery closures, and idempotent logical
-  close. `completion-router/` contains the stateless per-dispatcher delivery
+  objects, terminal outcome/delivery convergence, and idempotent logical close.
+  `completion-router/` contains the stateless per-dispatcher delivery
   policy; it keeps no Turn registry or terminal cache. Neutral agent config and
   read helpers live under `agent-entity/`, never under the Collection. The
   cross-cutting helpers
@@ -206,16 +206,13 @@ directly unless the symbol belongs on the explicit `service/index.ts` facade.
   drives; a dispatcher inspects Teams via `team.*` compact summaries, never
   `teammate.*`.
 - **State is a symmetric directory per agent entity (issue #233).** Every agent
-  is a directory holding `identity.json` (identity + optional `identity_prompt`
-  append-only role guidance + rolling recovery summary: turn_count /
-  last_seen_at / last prompt+assistant previews — the single source
-  for `history` / `list` / `status`, no event fold) and `turn.jsonl` (the ONLY
-  JSONL store: strict version 2 with one complete terminal row per Turn, no
-  service Turn identifier and no submit/settled join, folded by `last`).
-  Terminal append precedes the rolling `identity.json` projection; retrying a
-  failed projection never appends a second row. Placement is by role:
+  is a directory holding `identity.json`: durable identity/lifecycle/worktree
+  facts, optional append-only `identity_prompt` role guidance, and an atomic
+  runtime-native `session_id` plus nullable `transcript_locator` checkpoint.
+  It contains no per-Turn archive or rolling conversation projection.
+  Placement is by role:
   `teammate/<name>/` for dispatcher-owned teammates, `team/<team>/` for the team
-  *leader* (its pair sits at the team root, beside `record.json`), and
+  *leader* (its identity sits at the team root, beside `record.json`), and
   `team/<team>/teammate/<name>/` for team members. The `teammate/` and `team/`
   dirs are blind-scan collections of entity dirs only — `channel-bindings.json`
   sits at the dispatcher root, never inside a collection. Identity create uses
@@ -223,15 +220,24 @@ directly unless the symbol belongs on the explicit `service/index.ts` facade.
   derives every path from the identity's `role` + `team_id` (`paths.ts`
   `dispatcherAgentEntityDir`). Reads/lists scan `<scope>/teammate/<name>/`; a
   team-scoped read-by-name two-probes (member dir, then team root for the
-  leader). `last` reads the identity first (existence/scope), then the turn
-  archive — it never starts a runtime, so a closed teammate stays recoverable.
+  leader). `last` reads the identity first (existence/scope), then delegates a
+  cold bounded read to the selected provider's native transcript capability. It
+  never materializes an entity or starts a runtime, so a closed teammate stays
+  recoverable. Provider-native transcript paths are exposed only on direct
+  TeamMate spawn/send receipts; `last`, history, status, Workflow, Channel, and
+  logs never project them.
   Teammate **names stay dispatcher-global**: the live `AgentIdentityStore`
   checks persisted entity directory names before allocating a TeamLeader,
   dispatcher-TeamMate, or Team-member name. Directory names remain occupied
   even when an identity is unreadable, and identity creation is no-clobber.
   The reserved-name guard (`assertNotReservedAgentName`) blocks names that would
   recreate a legacy leaf (`records` / `turns` / …). `session_id` is the
-  runtime-native thread id, persisted directly.
+  runtime-native thread id, persisted atomically with `transcript_locator`.
+  A current-layout `turn.jsonl` left by an older Dreamux is inert residue:
+  Dreamux never creates, opens, stats, lists, validates, repairs, migrates, or
+  deletes it, and its condition cannot block startup or any lifecycle/read
+  operation. Existing rolling conversation keys in `identity.json` are ignored
+  as unknown legacy extras and may disappear on a later normal rewrite.
 - **Old state fails loud, it is never migrated (issue #199 Slice 5, #233).** 0.x
   has no schema migration (issue #98). `legacy-state.ts` is the one place that
   knows the removed layout: `detectLegacyDispatcherState` probes the removed

@@ -199,7 +199,13 @@ export class TeammateRuntimeOwner {
       context: {
         identity: {
           runtime_id: this.options.runtimeId,
-          checkpoint_id: identity.session_id,
+          checkpoint:
+            identity.session_id === null
+              ? null
+              : {
+                  id: identity.session_id,
+                  transcript_locator: identity.transcript_locator,
+                },
         },
         config: agent.config,
         cwd: identity.cwd,

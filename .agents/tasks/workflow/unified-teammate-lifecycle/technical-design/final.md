@@ -5,9 +5,10 @@
 - **Solution status:** Final proposal for operator review
 - **Implementation authorization:** Not granted
 - **Requirement:** [`requirement.md`](../requirement.md)
-- **Frozen requirement SHA-256:** `4367fcdee10bbe23c5af6a2a3806772fcda3eb57887432552d3b0488e45c264a`
-- **Source baseline inspected:** `6b8ec14b080389bf6c6ae36fa336ec0451e401ec`
-- **Focused review inputs:**
+- **Frozen requirement SHA-256:** `e44f6411914cd1ff5ea49c55f09bbae17ad162f62335123f43d89ea0405208d0`
+- **Original source baseline inspected:** `6b8ec14b080389bf6c6ae36fa336ec0451e401ec`
+- **Reopened implementation baseline inspected:** `3badc3a5b7547ff1455843436dbfea88f15a0d86`
+- **Original focused review inputs:**
   - [`lock-native-id-entity.md`](reviews/lock-native-id-entity.md), SHA-256
     `6e78d2e05eea6f2ec8092ee630d9cfde6e1fc02bb5651cda507f46ef5b4da294`
   - [`lock-native-id-membership.md`](reviews/lock-native-id-membership.md),
@@ -15,13 +16,14 @@
     `0a001c5fa21d43125388e2c3346d5238a5b1a8bd1fdf5bd50bdb63777702b33e`
   - [`lock-native-id-events.md`](reviews/lock-native-id-events.md), SHA-256
     `be034804559796a2de649ebb5cdf6503de91d25794fa1ee0ee10326106d54954`
-
 This file is the single authoritative solution. The earlier proposals and the
-superseded first revision of this file are consultation history only.
+superseded revisions of this file are consultation history only. The
+entity-owned lifecycle implementation already present on the reopened baseline
+is retained unless this revision explicitly deletes or changes it.
 
 ## Executive Decision
 
-The solution uses two deliberately small foundational capabilities:
+The solution uses three deliberately small foundational capabilities:
 
 1. `TeammateService.lock()` owns the active-Workflow write fence and returns a
    restricted handle. No separate claims registry, public command adapter, or
@@ -29,19 +31,40 @@ The solution uses two deliberately small foundational capabilities:
 2. One accepted logical model turn is represented by one in-process object.
    `RuntimeTurn` and `Turn` objects, promises, and captured closures replace
    every Dreamux service-level turn identifier and reverse-lookup map.
+3. Each `AgentRuntimeProvider` owns a cold `readTranscript()` query over its
+   Runtime-native transcript. Dreamux stores no Turn archive and no rolling
+   conversation projection. `TeammateCollection.last()` delegates directly to
+   the selected provider without materializing or starting a TeamMate.
 
 Ownership is therefore:
 
 - `WorkflowService` owns Workflow membership, call ordering, terminal intent,
   and the decision to close its member TeamMates.
 - `TeammateService` owns mutation admission, the process-local lock, runtime
-  start/stop, Turn objects, persistence, close, and lifecycle publication.
+  start/stop, in-process Turn objects, close, and lifecycle publication.
 - `TeammateCollection` owns construction, directory/read queries, caching, and
-  subscription to entity lifecycle facts. It never performs an entity close
-  merely to update its own cache.
+  subscription to entity lifecycle facts. It owns the cold `last` entry point
+  but not native transcript parsing. It never performs an entity close merely
+  to update its own cache.
 - runtime providers own any provider-native protocol identifiers. Those values
-  never cross into Dreamux service, Workflow, MCP, Channel, or persisted Turn
-  contracts.
+  never cross into Dreamux service, Workflow, MCP, Channel, or transcript
+  result contracts.
+
+The selected Runtime session association is the one durable bridge between a
+TeamMate and its native history:
+
+```ts
+interface AgentRuntimeResumeCheckpoint {
+  id: string;
+  transcript_locator?: string | null;
+}
+```
+
+Core persists that association atomically as `session_id` plus
+`transcript_locator`. The locator is provider-produced, provider-validated, and
+never interpreted by core. Direct TeamMate `spawn` and `send` receipts expose
+the validated canonical absolute path as `transcript_path`; all other public
+surfaces keep it private.
 
 `workflow_stop` is a truthful terminal barrier. It returns success only after
 the runner is stopped, every created member has executed the TeamMate-owned
@@ -68,7 +91,24 @@ agree on terminal state, and every member lock has been released.
   `RuntimeTurn`. Workflow retains that object directly.
 - Completion delivery is a captured closure using a stateless bounded policy,
   not a router registry.
-- Turn persistence is one complete terminal row with no ID.
+- Dreamux persists no Turn row and no Turn-derived rolling snapshot.
+- Existing Dreamux `turn.jsonl` files are inert residue. They are never read,
+  validated, repaired, preflighted, migrated, or automatically deleted.
+- `identity.json` contains no `turn_count`, `last_seen_at`,
+  `last_prompt_preview`, or `last_assistant_preview`.
+- `last` is a turn-only, backward-pageable, tool-aware cold query over the
+  selected provider's native transcript.
+- Codex uses JSON-RPC `thread.path` as its primary native locator. Claude Code
+  pins a provider-generated UUID through native `--session-id` and derives the
+  canonical native path before accepting a fresh turn.
+- Direct TeamMate `spawn` and `send` receipts always carry
+  `transcript_path: string | null`; it is non-null whenever the TeamMate has an
+  established, validated native session association, independent of the
+  current turn-admission status.
+- External providers may implement the required neutral transcript contract
+  outside this repository. This task adds no new built-in provider, and the
+  operator-prohibited provider family is absent from repository and publication
+  surfaces.
 - MCP receipts, Workflow projections, history/last, Channel delivery results,
   and Channel event contracts expose no Turn ID.
 - The unused `turn.submitted` and `turn.settled` Channel event pair is deleted.
@@ -95,6 +135,18 @@ agree on terminal state, and every member lock has been released.
 - runtime-only shutdown sweeps
 - speculative observational Turn labels
 - keeping Channel Turn events without a production consumer
+- strict v2 Dreamux Turn archives or a compatibility reader for old archives
+- startup failure or a rebuild requirement caused by Dreamux `turn.jsonl`
+- rolling conversation summaries inside `identity.json`
+- a live-runtime `getLast()` cache as a second history source
+- built-in grep, time filtering, regex search, semantic search, or a Dreamux
+  transcript index/cache
+- a caller-configurable transcript output-byte budget
+- a Claude SessionStart Hook or auxiliary IPC bridge used only to recover a
+  transcript path
+- any implementation, registration, package, documentation, fixture, test, or
+  compatibility branch for the operator-prohibited provider family
+- a new shared app-server kernel package in this slice
 - replay, request fingerprints, durable provider leases, or a general JSONL
   repair engine in this task
 
@@ -135,6 +187,9 @@ flowchart LR
   Provider[AgentRuntime provider] -->|RuntimeTurn object| Entity
   Entity -->|Turn object| Workflow
   Entity -->|captured closure| Delivery[Stateless completion delivery policy]
+  Collection -->|cold read query| Provider
+  Provider -->|native transcript page| Collection
+  Runtime[Live Runtime] -->|checkpoint + locator fact| Identity[identity.json]
 ```
 
 Rules:
@@ -148,13 +203,17 @@ Rules:
    fact. No listener is awaited by the entity.
 5. Turn settlement, Workflow correlation, and completion delivery use direct
    object references and closures.
+6. `last` resolves identity and provider configuration without resolving an
+   entity, creating a Runtime, or acquiring a lifecycle lock.
+7. A provider owns locator validation, native discovery, history projection,
+   cursor parsing, tool pairing, bounds, and native errors.
 
 ## Ownership and Interaction Matrix
 
 | Surface | Owner | Interaction | Why the direction is valid |
 | --- | --- | --- | --- |
 | TeamMate construction | `TeammateCollection` | command returning an entity-owned handle | Construction is a container capability, not lifecycle ownership. |
-| Durable TeamMate identity | `TeammateService` through identity store | entity command/query | The entity writes its own lifecycle projection. |
+| Durable TeamMate identity | `TeammateService` through identity store | entity command/query | The entity writes its own lifecycle and Runtime-session association. |
 | Active Workflow write exclusion | `TeammateService` | `lock()` command | Only the entity can atomically fence all of its mutation methods. |
 | Workflow membership | `WorkflowService` record | Workflow state | The lock is not durable membership and stores no Workflow identity. |
 | Public `send` / `close` | `TeammateService` | Collection resolve query, then entity command | Collection performs no post-command bookkeeping. |
@@ -164,10 +223,13 @@ Rules:
 | Service Turn outcome | entity-owned `Turn` | object promise/latch | No callback fan-out or ID lookup exists. |
 | Workflow Agent correlation | `WorkflowRun.AgentCall` | direct `Turn` reference | Runner IPC continues to correlate by Workflow Agent `index`. |
 | Completion delivery | source `Turn` plus stateless policy | captured closure | No register-after-submit race or registry exists. |
-| Turn history | entity-owned Turn persistence | one terminal append | No submit/settled join exists. |
+| Detailed conversation history | selected `AgentRuntimeProvider` | cold read query | The provider reads the Runtime-native transcript; Dreamux owns no duplicate archive. |
+| Transcript locator | selected `AgentRuntimeProvider` | checkpoint fact | Core persists one opaque canonical path with the provider-owned session ID. |
+| Direct `spawn` / `send` receipt path | `TeammateService` projects the persisted association | read projection after command | The path is exposed only to the direct caller; turn status does not redefine session identity. |
 | Live entity cache | `TeammateCollection` | query plus fact subscription | Cache is derived state; lifecycle remains entity-owned. |
 | Lifecycle fact | `TeammateService` | queued post-transition event | Subscribers cannot affect the transition. |
-| Roster/status/history/last | Collection and stores | read query | Reads remain available while locked. |
+| Roster/status/history | Collection and identity store | read query | Identity/lifecycle reads never open native transcripts. |
+| `last` | Collection entry point, provider content owner | cold read query | Works while locked or evicted and starts no Runtime. |
 | Spawn failure cleanup | factory before publication; Workflow after return | direct entity close | No Collection bulk-release path is needed. |
 | Worktree cleanup | entity or Team that owns that worktree | owner command | Collection forwarding is not a lifecycle requirement. |
 | Team dissolve ordering | Team dissolve controller | stop Workflows, then wait ordinary writers | Locked members are controlled only through Workflow. |
@@ -317,7 +379,7 @@ Publication contract:
   is published;
 - locked unlock after Workflow terminal commit: the instance retires, then the
   fact is queued;
-- persistence failure: no terminal fact;
+- durable identity close failure: no terminal fact;
 - publication is microtask/queue based, non-replayed, and never awaited;
 - each listener is isolated and its failure is logged.
 
@@ -386,11 +448,10 @@ cannot create a child after close has won.
 interface Turn {
   readonly runtime: RuntimeTurn;
   readonly origin: AgentEntityTurnOrigin | null;
-  readonly promptPreview: string | null;
+  readonly prompt: string | null;
   readonly intent: string | null;
   readonly submittedAt: number;
   readonly settled: Promise<TurnOutcome>;
-  readonly persistence: Promise<void>;
   readonly delivery: Promise<void>;
 }
 ```
@@ -399,15 +460,16 @@ The implementation is an entity-private class with:
 
 - a one-shot `trySettle(outcome)` method;
 - the runtime object;
-- bounded prompt metadata;
-- one terminal persistence task;
+- process-local prompt/origin/intent/timestamp facts required by the frozen
+  requirement;
 - an optional completion-delivery closure;
 - one delivery task.
 
 Runtime completion and close-induced stop call the same one-shot method. The
-first outcome wins; later calls do nothing and cannot write or deliver again.
-`settled` resolves only after the winning terminal row and required rolling
-identity projection commit.
+first outcome wins; later calls do nothing and cannot deliver again. `settled`
+is a total terminal-outcome promise and resolves immediately after the first
+outcome is selected. There is no Turn persistence task and no settlement
+rejection caused by filesystem state.
 
 The entity has one `currentTurn` slot, not a map. It serializes admission
 continuations and retains the slot until all already-admitted joins have
@@ -423,10 +485,16 @@ already-reserved stopped outcome. The slot is not cleared until terminal
 processing and all possible joins drain.
 
 The first accepted logical input establishes origin, submitted time, intent, and
-prompt summary. Folds do not create another terminal row or increment
-`turn_count`. The first eligible initiating public action may attach the
-completion closure if the Turn did not already have one. Workflow membership
-prevents unrelated public input from folding into a Workflow Turn.
+prompt. Folds reuse the same object and never create a second delivery. The
+first eligible initiating public action may attach the completion closure if
+the Turn did not already have one. Workflow membership prevents unrelated
+public input from folding into a Workflow Turn.
+
+`EntityTurnCoordinator` retains settled Turns only until their delivery tasks
+converge. `hasUnpersistedCurrent()` becomes `hasUnsettledCurrent()`;
+`persistAndDeliverRetained()` becomes `settleAndDeliverRetained()`; and
+`turnPersistenceTail`, archive retry state, projection retry state, and
+automatic persistence-failure callbacks are deleted.
 
 ### Direct Completion Delivery
 
@@ -443,9 +511,9 @@ interface CompletionDeliveryPolicy {
 ```
 
 The initiating send resolves the initiator before runtime admission and captures
-it in the Turn closure. Settlement runs exactly one delivery task after terminal
-persistence. Workflow Agent calls do not use reverse completion delivery; they
-await their retained `Turn`.
+it in the Turn closure. Settlement runs exactly one delivery task after the
+outcome latch wins. Workflow Agent calls do not use reverse completion delivery;
+they await their retained `Turn`.
 
 Delivery rules preserve at-most-once behavior without an ID:
 
@@ -457,62 +525,286 @@ Delivery rules preserve at-most-once behavior without an ID:
 - spill filenames are storage-owned opaque exclusive paths, never Turn labels;
 - completion input never installs another reverse-delivery closure.
 
-### Terminal Turn Persistence
+### No Dreamux Turn Persistence
 
-The v2 archive writes exactly one complete row:
+Dreamux does not persist Turn history. Delete the complete Turn archive stack:
 
-```ts
-interface AgentTerminalTurnRecordV2 {
-  version: 2;
-  type: 'terminal';
-  submitted_at: number;
-  settled_at: number;
-  turn_origin: AgentEntityTurnOrigin | null;
-  prompt_preview: string | null;
-  intent: string | null;
-  settle_status: 'completed' | 'failed' | 'stopped';
-  assistant: string | null;
-  assistant_preview: string | null;
-  assistant_truncated: boolean;
-}
-```
+- `AgentTurnsStore`;
+- `turns-store.ts`;
+- `dispatcherAgentTurnsPath()`;
+- archive row types, validators, torn-tail logic, and preview helpers;
+- boot preflight and rebuild instructions;
+- every `turnsStore` dependency and composition-root instance;
+- `recordTerminalTurn()` and rolling identity projection;
+- archive-gated settlement, delivery, close, Workflow failure, and degraded
+  status branches.
 
-There is no Turn ID. The Turn owns one serialized persistence phase:
+The compatibility rule is no-touch fail-open:
 
-1. append the complete terminal row;
-2. update rolling identity exactly once;
-3. resolve `settled`;
-4. start the bounded completion delivery task if present.
+> No Dreamux code path creates, stats, lists, opens, parses, validates, repairs,
+> migrates, warns about, or automatically deletes current-layout
+> `turn.jsonl`.
 
-Append failures are no longer swallowed. Close drains Turn persistence and
-cannot report success if an accepted Turn has no durable terminal outcome. If
-the row commits but rolling identity update fails, an in-process retry resumes
-only the projection and never appends a second row.
+Version 1, version 2, malformed, torn, invalid UTF-8, oversized, unreadable,
+directory-in-place-of-file, or absent archives behave identically: they have no
+effect on startup, reads, send/resume, close, Workflow, Team dissolve, or
+shutdown.
 
-The turns writer performs bounded trailing-fragment hygiene before its next
-append: if the final JSONL line is torn, truncate only that incomplete tail, then
-append the new complete row. This is not replay or a general repair engine.
+The old identity keys `turn_count`, `last_seen_at`, `last_prompt_preview`, and
+`last_assistant_preview` are likewise ignored on read, omitted from the
+in-memory identity shape, and dropped on the next ordinary identity rewrite.
+They are not added to fail-loud removed-field checks and are not migrated to
+another Dreamux state file.
 
-The old v1 split-row archive is intentionally not retained as a permanent
-ID-joining read path. A preflight/loader encountering a non-empty v1
-`turn.jsonl` fails loudly with the release's exact rebuild instruction:
+`teammate_history` becomes an identity/lifecycle directory query:
 
-```text
-Rebuild: stop Dreamux, back up the affected dispatcher state, then delete every
-legacy turn.jsonl below ~/.dreamux/state/<dispatcher-id>/ before restarting.
-TeamMate identities and runtime checkpoints remain; historical Turn detail in
-those deleted archives is discarded.
-```
-
-This is a Rush breaking change and requires the owning maintenance reference to
-describe only the accepted v2 current state. The self-upgrade path obtains the
-concrete transition from the staged target's change note; current-state
-references do not embed migration history.
+- sort by `updated_at` descending, then `name`;
+- `since`/`until` compare `updated_at`;
+- grep searches identity-owned name/runtime/repo/intent/close-note fields only;
+- no transcript is opened.
 
 Workflow record/journal readers may accept an older extra `turn_id` field only
 to ignore it. They never use it for matching. New writes and all projections
-omit the field. This compatible input tolerance does not preserve an ID-based
-relationship or an ID join.
+omit the field.
+
+### Runtime Session Association
+
+The provider-produced Runtime checkpoint is the only durable history locator:
+
+```ts
+export interface AgentRuntimeResumeCheckpoint {
+  readonly id: string;
+  readonly transcript_locator?: string | null;
+}
+
+interface AgentEntityIdentity {
+  session_id: string | null;
+  transcript_locator: string | null;
+}
+```
+
+`setCheckpoint()` atomically replaces both fields. A lost-checkpoint replacement
+cannot inherit the old locator. Old identities without the locator read it as
+`null`; a present non-string value is treated as `null`, not as a startup error.
+The locator is never interpreted by core.
+
+Providers validate locators in this order:
+
+1. require an absolute path;
+2. canonicalize the provider's native transcript roots and the candidate's
+   deepest existing parent;
+3. reject lexical, symlink, junction, case-fold, or alternate-drive escape,
+   including for a not-yet-created final file;
+4. require a provider-native transcript filename/representation;
+5. once the file exists, open read-only with no-follow semantics where
+   available and revalidate the opened file/root;
+6. when readable, validate native session metadata against checkpoint `id`.
+
+An in-root missing/stale locator may use provider-owned native discovery.
+`last` never refreshes identity, locator, or `updated_at`; successful live
+start/resume is the single writer of the association.
+
+### Provider-Native `last`
+
+`AgentRuntimeProvider` gains one required cold query:
+
+```ts
+export interface AgentRuntimeTranscriptQuery {
+  turns: number;              // 1..50, default 1
+  cursor?: string;
+  includeTools?: boolean;     // default true
+}
+
+export type AgentRuntimeTranscriptBlock =
+  | {
+      kind: 'message';
+      role: 'user' | 'assistant';
+      text: string;
+      truncated: boolean;
+    }
+  | {
+      kind: 'tool';
+      name: string;
+      input: string | null;
+      output: string | null;
+      status: 'ok' | 'error';
+      inputTruncated: boolean;
+      outputTruncated: boolean;
+    };
+
+export interface AgentRuntimeTranscriptTurn {
+  startedAt: number | null;
+  endedAt: number | null;
+  blocks: readonly AgentRuntimeTranscriptBlock[];
+}
+
+export interface AgentRuntimeTranscriptPage {
+  turns: readonly AgentRuntimeTranscriptTurn[]; // oldest first
+  nextCursor: string | null;
+  truncated: boolean;
+}
+
+export interface AgentRuntimeTranscriptError extends Error {
+  name: 'AgentRuntimeTranscriptError';
+  reason:
+    | 'checkpoint_missing'
+    | 'not_found'
+    | 'unreadable'
+    | 'invalid'
+    | 'locator_outside_root'
+    | 'session_mismatch'
+    | 'cursor_invalid'
+    | 'cursor_query_mismatch'
+    | 'cursor_stale'
+    | 'scan_unsupported';
+}
+
+export interface AgentRuntimeTranscriptContext<TConfig = unknown> {
+  checkpoint: AgentRuntimeResumeCheckpoint | null;
+  config: TConfig;
+  cwd: string;
+  injectEnv?: Readonly<Record<string, string>>;
+  outputBudgetBytes: 262144;
+  logger?: DreamuxLogger;
+}
+
+export interface AgentRuntimeProvider<TConfig = unknown> {
+  readTranscript(
+    query: AgentRuntimeTranscriptQuery,
+    context: AgentRuntimeTranscriptContext<TConfig>,
+  ): Promise<AgentRuntimeTranscriptPage>;
+}
+```
+
+The provider method is required rather than capability-optional. Both existing
+public built-ins implement it. External providers must implement it to satisfy
+the new contract; this task adds no new built-in adapter.
+
+Providers throw the structural `AgentRuntimeTranscriptError` above and expose no
+arbitrary public-message field. Core recognizes the exact `name + reason` shape
+and maps each reason to one fixed, bounded, path-free admin/MCP message. Unknown
+or malformed provider exceptions use the existing generic internal error. Raw
+provider messages, locators, config, and filesystem details never cross the
+public boundary.
+
+`TeammateCollection.last()`:
+
+1. validates `name`, `turns`, cursor length, and `include_tools`;
+2. reads durable identity without materializing an entity;
+3. resolves the configured provider through a neutral lower runtime-selection
+   helper shared with live launch;
+4. calls `readTranscript()` with the persisted association and fixed budget;
+5. combines the page with a read-only TeamMate status projection.
+
+`TeammateService.last()` and `AgentRuntime.getLast()` are deleted.
+
+The query has no built-in grep, regex, semantic search, or time filters. Full
+search is caller-owned through `transcript_path` on direct receipts.
+
+### Transcript Page Semantics
+
+- `turns` is a maximum result count from 1 through 50.
+- Providers scan completed turns newest-to-oldest and return selected turns
+  oldest-first.
+- Tool calls and results are paired inside the provider using native IDs, then
+  projected as one `tool` block with no native correlation ID.
+- `include_tools: false` removes tool blocks. Changing it invalidates a cursor;
+  changing `turns` does not.
+- Reasoning/thinking, system/control records, usage, protocol envelopes,
+  transcript locators, provider home/socket paths, and native IDs are omitted.
+- Model-visible workspace paths and commands inside bounded tool content remain
+  eligible content.
+- Fixed source caps are 16,384 characters for message text, 4,096 characters
+  each for rendered tool input/output, and 64 blocks per turn.
+- Structured tool input/output is rendered as deterministic compact JSON with
+  sorted object keys and secret-named fields recursively redacted.
+- The service owns one fixed 262,144-byte UTF-8 serialized `turns` budget.
+  Providers enforce it and core verifies it. Callers cannot override it.
+- The first selected turn is returned even when oversized, with deterministic
+  UTF-8-safe prefix clipping and `truncated: true`; later non-fitting turns are
+  omitted and remain reachable by `next_cursor`.
+- An open native tail is omitted. Known structural corruption fails only
+  `last`; unknown forward-compatible records are ignored when they are not
+  required for a selected turn.
+
+### Stateless Cursor
+
+Core treats cursors as opaque strings and stores no registry, cache, table, or
+object lookup. A provider cursor is versioned base64url data containing:
+
+- a fingerprint of effective `include_tools`;
+- a logical-history generation digest;
+- a representation-independent storage position for the next older turn;
+- a one-way boundary-integrity digest over the exact native record bytes at that
+  position.
+
+It contains no path, recoverable content, secret, or native
+turn/message/call ID, including hashed native IDs used as positions. The
+boundary digest is SHA-256 over raw bytes and is used only to detect same-
+generation in-place rewrites; it is never a storage position and cannot recover
+the record. Providers may use native IDs in-memory to compute a generation
+digest, but the position itself is numeric storage location such as lineage
+segment ordinal plus canonical byte offset, or Claude JSONL line/byte offset.
+
+Ordinary append-only growth preserves a cursor. Revert, lineage replacement,
+Claude compact/snip, shrink/replacement, or position mismatch returns
+`cursor_stale`. Archive relocation and plain/compressed representation change
+alone do not.
+
+Every provider enforces bounded decoded bytes, native records, completed turns,
+and elapsed time per call. When a bound is reached before the requested count,
+it returns the turns found plus `next_cursor`. Every continuation cursor must
+advance to an older numeric position. If a bounded newest window contains only
+an open tail and no complete turn, the provider returns `nextCursor: null`; a
+later fresh query without a cursor observes the completed turn. A completed
+turn larger than one scan window must not return the same empty page and cursor
+forever and returns `scan_unsupported` when safe progress is impossible. No
+parsed transcript or cursor state is retained across calls.
+
+For a large indexless single-frame `.jsonl.zst`, deep backward pagination cannot
+be both stateless and bounded. The provider uses a validated native read-only
+index when available. If no index exists and the required decompression exceeds
+the scan bound, `last` returns typed `scan_unsupported`; it does not build a
+Dreamux side index, materialize/rewrite native history, or decode without bound.
+
+### Direct Receipt `transcript_path`
+
+Every returned direct TeamMate `spawn` and `send` receipt contains:
+
+```ts
+interface AgentEntitySubmissionResult {
+  status: 'submitted' | 'duplicate' | 'stopped' | 'failed' | 'ambiguous';
+  error?: string;
+  transcript_path: string | null;
+}
+```
+
+Nullability follows the TeamMate's validated Runtime session association, not
+the current turn status:
+
+- once a canonical native path has been established, every later receipt
+  returns that path, including duplicate, failed, ambiguous, or stopped turns;
+- it is `null` only when no native path has ever been established.
+
+Codex requires successful `thread/start` / `thread/resume` to return a non-null
+`thread.path`; it canonicalizes, confines, validates, and persists the path
+before turn admission. A missing/invalid path prevents a `submitted` result.
+
+Claude Code fresh start pre-generates a UUID, passes native
+`--session-id <uuid>`, derives the canonical native
+`<config-home>/projects/<project>/<uuid>.jsonl` path, and persists the
+association before admission. Resume uses the persisted ID/path. Dreamux adds no
+Hook/IPC bridge and creates no placeholder file; an immediate caller may see
+`ENOENT` or an incomplete first append and retry.
+
+The accepted Codex and Claude runtime policies allow their model tools to read
+native session files. This change adds no writable root and no broader write
+permission.
+
+By explicit operator decision, the machine-local path is public only on direct
+TeamMate `spawn` / `send` receipts. It is absent from list, status, history,
+`last`, Workflow, Team, Channel, completion delivery, logs, metrics, and public
+errors.
 
 ### External and Durable Boundaries
 
@@ -521,9 +813,11 @@ uses its own real domain key or a status-only result:
 
 | Boundary | Target contract |
 | --- | --- |
-| MCP TeamMate/Team spawn/send receipt | status, error if applicable, and TeamMate projection; no Turn object or ID |
+| Direct TeamMate spawn/send receipt | status, error if applicable, TeamMate projection, and nullable native `transcript_path`; no Turn object or ID |
+| Team/Workflow indirect creation | owning aggregate projection only; no transcript path |
 | Workflow status/list Agent row | Workflow Agent `index`, TeamMate `name`, phase/status/result/error/timestamps; no Turn ID |
-| TeamMate `last` / history | complete terminal records in chronological order; no Turn ID |
+| TeamMate `history` | identity/lifecycle rows over `updated_at`; no transcript or Turn ID |
+| TeamMate `last` | provider-normalized native transcript turns plus opaque cursor; no native ID or path |
 | Workflow journal/record | `run_id`, Agent `index`, TeamMate `name`, terminal facts; no Turn ID |
 | Workflow runner IPC | Agent `index` continues to pair `agent_start` and `agent_result`; a Turn identity is unnecessary |
 | Channel exact-delivery result | submitted/duplicate/stopped/failed status only |
@@ -548,7 +842,9 @@ Dreamux Turn ID and are never used to look up a Turn object.
 5. The returned runtime object creates or reuses the current entity Turn.
 6. The initiating completion closure is attached at most once.
 7. The gate is released after admission, while the entity retains the Turn
-   until settlement/persistence completes.
+   until settlement and bounded delivery complete.
+8. The receipt projects the current persisted `transcript_locator` as
+   `transcript_path`, or `null` when no session association has ever existed.
 
 A stale resolved object that became retired before method entry rejects. The
 scope wrapper may resolve again; the old object itself never reopens.
@@ -576,16 +872,17 @@ No settle callback is matched by TeamMate name or Turn ID.
 5. Runtime stop sends TERM, waits the existing bounded interval, sends KILL,
    and proves process-group absence.
 6. Join pending admissions; any late accepted Turn also converges to stopped.
-7. Drain required Turn persistence.
+7. Settle every retained Turn exactly once and drain bounded delivery.
 8. Perform only entity-owned worktree cleanup under existing safety rules.
 9. Commit durable identity `closed`.
 10. If locked, enter `closedHeld` and return without publishing.
 11. If unlocked, retire the instance and queue `teammate.closed`.
 
 Success means runtime termination is proven and identity is durably closed. If
-runtime termination succeeds but later persistence fails, close rejects with a
-phase error that records `runtime_terminated: true`; the entity stays cached,
-admission-closed, and retryable without restarting the runtime.
+runtime termination succeeds but worktree cleanup or identity persistence fails,
+close rejects with a phase error that records `runtime_terminated: true`; the
+entity stays cached, admission-closed, and retryable without restarting the
+runtime.
 
 ### Workflow Stop
 
@@ -601,10 +898,10 @@ admission-closed, and retryable without restarting the runtime.
 9. Unlock every member; closed members synchronously retire and queue facts.
 10. Complete terminal delivery and return `{ run_id, status }`.
 
-Concurrent stop callers join one terminal task. If a close or terminal
-persistence phase fails, the Workflow remains non-terminal, retains its handles
-and locks, and exposes the error for retry. It never returns a successful
-terminal status while a member runtime remains live.
+Concurrent stop callers join one terminal task. If member close or Workflow
+terminal persistence fails, the Workflow remains non-terminal, retains its
+handles and locks, and exposes the error for retry. It never returns a
+successful terminal status while a member runtime remains live.
 
 ### Natural Completion or Failure
 
@@ -638,7 +935,7 @@ owning Workflow to stop.
 3. Stop every Workflow through the normal pipeline.
 4. Resolve and close remaining ordinary TeamMates and TeamLeaders through the
    same entity close contract.
-5. Drain accepted persistence and bounded delivery tasks.
+5. Drain accepted identity/Workflow persistence and bounded delivery tasks.
 6. Aggregate and report failures.
 
 There is no raw-runtime sweep that can claim success while entity or Workflow
@@ -650,10 +947,6 @@ state remains non-terminal.
 
 - **Termination cannot be proven:** close fails; durable closed is not written;
   retry retains authority over the same runtime/process group.
-- **Terminal Turn append fails:** Turn settlement and close fail; delivery does
-  not run.
-- **Rolling projection fails after row commit:** retry only the projection in
-  the current process.
 - **Worktree cleanup fails:** preserve the existing safety result/error; never
   falsify runtime termination.
 - **Identity close fails after termination:** close fails with
@@ -661,6 +954,10 @@ state remains non-terminal.
 - **Listener fails or stalls:** it is isolated from the publisher and cannot
   change close/unlock.
 - **Late runtime result:** the already-won Turn latch ignores it.
+- **Native transcript read fails:** only `last` fails; identity/runtime/Workflow
+  state is unchanged.
+- **Receipt path exists before first Claude append:** return the authoritative
+  path without creating a placeholder; the caller may retry file access.
 
 ### Workflow Terminal Persistence
 
@@ -682,6 +979,8 @@ No Workflow replay/resume is added.
 - current no-resume Workflow recovery still converges leftover running records
   without reconstructing Turns;
 - no completion delivery is replayed;
+- native transcript locators persist with Runtime checkpoints and remain the
+  primary cold-read path;
 - this task does not claim recovery of an arbitrary detached provider child
   after daemon crash without a durable resource lease.
 
@@ -692,6 +991,13 @@ No Workflow replay/resume is added.
 - Replace ID-bearing `AgentRuntimeTurnResult` / `TurnSettledSignal` with
   `RuntimeAdmission`, `RuntimeTurn`, and `RuntimeTurnOutcome`.
 - Remove runtime-wide `onTurnSettled`.
+- Extend `AgentRuntimeResumeCheckpoint` with nullable
+  `transcript_locator`.
+- Add the provider transcript query/page/block/error contracts and required
+  `AgentRuntimeProvider.readTranscript()`.
+- Remove `AgentRuntime.getLast()` and `AgentRuntimeLastResult`.
+- Keep transcript errors as typed reasons only; remove arbitrary provider-owned
+  public error text and add the core reason-to-public-message projection.
 - Remove Turn IDs from Channel and public delivery types.
 - Delete Channel Turn event types.
 
@@ -702,8 +1008,12 @@ No Workflow replay/resume is added.
 - Add `lock()` and the restricted handle.
 - Fence every side-effecting method inside the entity.
 - Make runtime start/stop private.
-- Add canonical `Turn` with one-shot terminal/persistence/delivery tasks.
+- Add canonical `Turn` with one-shot terminal and delivery tasks.
 - Replace Collection settle callbacks with direct runtime object observation.
+- Remove archive-gated settlement, persistence tails, persistence failure
+  projection, and `TeammateService.last()`.
+- Project nullable `transcript_path` on direct spawn/send receipts from the
+  persisted association.
 - Publish queued lifecycle facts only at the retirement boundary.
 - Move config/runtime resolution and read helpers out of
   `teammate-collection` imports into neutral lower modules.
@@ -714,6 +1024,8 @@ No Workflow replay/resume is added.
   lifecycle subscriptions.
 - Add `createLocked()` with no runtime start.
 - Detect and replace a cached retired source on resolve.
+- Resolve `last` as an identity + provider cold query without entity
+  materialization.
 - Delete ownership maps, bulk lifecycle verbs, settle callback wiring, and
   synchronous post-close eviction.
 - Public methods may remain compatibility wrappers only when they resolve and
@@ -737,11 +1049,13 @@ No Workflow replay/resume is added.
 - Capture initiator closures before provider admission.
 - Remove ID-derived envelope and spill-file names.
 
-### Turn and Workflow Persistence
+### Turn, Identity, and Workflow Persistence
 
-- Replace split v1 Turn writes with strict v2 terminal rows.
-- Add bounded torn-tail truncation before Turn append.
-- Fail loudly on legacy non-empty Turn archives with the exact rebuild action.
+- Delete Dreamux Turn persistence entirely.
+- Ignore current-layout `turn.jsonl` and removed rolling identity fields
+  fail-open, with no migration or cleanup pass.
+- Persist `session_id` and `transcript_locator` atomically.
+- Change `history` to identity-only `updated_at` semantics.
 - Remove Turn IDs from Workflow Agent records and journals; ignore an older
   extra field only for compatible input.
 - Update all public projections and schemas.
@@ -750,8 +1064,14 @@ No Workflow replay/resume is added.
 
 - Codex returns one object per native logical turn while retaining native ID
   correlation internally.
+- Codex captures and validates JSON-RPC `thread.path`, reads native lineage,
+  compression, tools, and cursors, and exposes no native IDs in public pages.
 - Claude returns one object per logical command set, removes synthetic IDs, and
   uses provider-private command lifecycle UUIDs.
+- Claude pre-generates a UUID on fresh start, passes native `--session-id`,
+  persists the deterministic transcript path, and adds no Hook IPC bridge.
+- Add no new built-in provider; keep generic external providers behind the
+  neutral required contract and keep the operator-prohibited family absent.
 - Prevent queued work from spawning after stop.
 - Make `SupervisedChild.stop()` retain retry authority and prove post-KILL
   absence; do not swallow `EPERM` as success.
@@ -764,10 +1084,13 @@ No Workflow replay/resume is added.
 - Preserve worktree safety and non-forced removal behavior.
 - Update current architecture, state/path, Dynamic Workflow, runtime, Channel,
   and bundled workflow-skill documentation.
-- Update the single owning `dreamux-maintenance` reference for the v2 Turn
-  archive.
-- Add Rush change files for public contract removal and the Turn archive
-  rebuild.
+- Update the owning `dreamux-maintenance` reference for native transcripts,
+  inert archive residue, fixed `last` bounds, receipt paths, and
+  `scan_unsupported`.
+- Revise Rush change files to lead with `BREAKING:` and `Review:`, explicitly
+  state no rebuild is needed, and contain no `Rebuild:` instruction.
+- Name the `AgentRuntimeIdentity.checkpoint_id` to typed `checkpoint` contract
+  change explicitly in the `dreamux-types` `Review:` note.
 
 ## Mandatory Deletion List
 
@@ -797,10 +1120,43 @@ No Workflow replay/resume is added.
 18. split Turn submit/settled writers and steady-state ID join reader
 19. `ChannelTurnSubmittedEvent`, `ChannelTurnSettledEvent`, their publication,
     subscriptions, fixture output, exports, and tests
-20. `AgentTurnsStore` dependency on `DispatcherCoreEventPublisher`
+20. `AgentTurnsStore`, `turns-store.ts`, all archive types/readers/writers,
+    validation, repair, preview, and boot-preflight code
 21. Workflow Agent `turn_id` and submit/result callback matching
 22. MCP, admin, history, Workflow, and Channel projections of Turn IDs
 23. `TeammateService` imports from `teammate-collection`
+24. `dispatcherAgentTurnsPath()` and every `turnsStore` dependency, accessor,
+    constructor argument, and composition-root instance
+25. `AgentEntityTurnRecord`, `AgentTerminalTurnInput`, `turnsScopeOf`,
+    `foldLastTurns`, and `recordTerminalTurn`
+26. Turn `persistence`, persistence retry/tail, terminal-row/projection state,
+    archive-gated delivery, and persistence-failure degraded status
+27. `turn_count`, `last_seen_at`, `last_prompt_preview`, and
+    `last_assistant_preview` in identity, history rows, updates, parsers,
+    sorting, filters, grep, schemas, docs, and tests
+28. `AgentRuntime.getLast()`, `AgentRuntimeLastResult`, Codex/Claude live
+    `lastResult` caches, conformance entries, and tests
+29. `TeammateService.last()` and every cold-history path that materializes an
+    entity or Runtime
+30. Workflow archive-settlement rejection handling that becomes unreachable
+    once `Turn.settled` is total
+31. strict-v2 archive tests and the legacy archive rebuild instruction
+32. stale Channel Turn-event documentation that survived source deletion
+33. public `grep`, `since`, `until`, or `max_bytes` parameters on `last`
+34. text-only or archive-shaped `last` result DTOs
+35. core cursor maps/registries, transcript caches/indexes, and cursor positions
+    derived from native IDs, including hashed native IDs
+36. automatic cleanup, migration, warnings, permission probes, or schema probes
+    for current-layout Dreamux `turn.jsonl`
+37. generic `session_meta` / `session_metadata` maps; retain one typed nullable
+    `transcript_locator`
+38. Claude transcript-path command Hooks, callback servers, subprocesses,
+    placeholder files, or auxiliary IPC
+39. any implementation, package, registry entry, dependency, config,
+    documentation, fixture, test, or compatibility branch for the
+    operator-prohibited provider family
+40. public transcript paths anywhere except direct TeamMate `spawn` / `send`
+    receipts
 
 Keep provider-native IDs only inside their provider packages. Keep identifiers
 that belong to real surrounding domains: Workflow run, Workflow Agent index,
@@ -819,7 +1175,18 @@ storage path.
 - no runtime-wide ID-bearing settle callback;
 - no Turn registry in core;
 - no Channel Turn event pair;
-- no raw runtime shutdown success path.
+- no raw runtime shutdown success path;
+- no Dreamux Turn archive, Turn-history projection, or rolling identity
+  conversation field;
+- no live Runtime history cache or live-runtime `last` path;
+- no core transcript cursor registry/cache/index;
+- no native ID or transcript path in `last` pages/cursors;
+- no transcript path outside direct TeamMate spawn/send receipts;
+- no operator-prohibited provider-family token in any tracked/untracked
+  repository artifact, added task-diff line, current task commit message,
+  current public Issue/PR text, or public PR head ref;
+- no Claude Hook/IPC transcript-path bridge;
+- no startup or lifecycle dependency on Dreamux `turn.jsonl`.
 
 Provider-private ID use is allowed only inside the matching runtime package.
 
@@ -843,7 +1210,7 @@ Provider-private ID use is allowed only inside the matching runtime package.
 ### Turn Object and Provider Races
 
 1. Codex and Claude folds return strict-equal `RuntimeTurn` objects.
-2. Entity folds return strict-equal `Turn` objects with one count, row, and
+2. Entity folds return strict-equal `Turn` objects with one settlement and one
    delivery.
 3. Provider settlement before admission promise return is retained by the
    object latch.
@@ -860,19 +1227,61 @@ Provider-private ID use is allowed only inside the matching runtime package.
 10. A process group still alive after KILL makes runtime stop and entity close
     fail.
 
-### Persistence and Public Boundaries
+### State, Transcript, and Public Boundaries
 
-1. One logical Turn with folds writes one v2 terminal row and increments
-   `turn_count` once.
-2. Terminal append failure prevents settlement success, delivery, and close.
-3. Projection retry after committed row does not append twice.
-4. A torn tail is truncated before the next complete append.
-5. A legacy v1 Turn archive fails loudly with the documented rebuild action.
-6. Workflow records with an older extra `turn_id` load but the value is ignored
+1. Spawn/send/close never creates a Dreamux `turn.jsonl` and never writes a
+   Turn-derived identity field.
+2. Boot and every lifecycle/read path succeeds with v1, v2, malformed, torn,
+   invalid-UTF8, oversized, unreadable, directory, and absent legacy residue;
+   instrumentation proves no archive open/stat/list.
+3. Existing identities with any values/types in the four removed rolling keys
+   load, and their next ordinary rewrite drops the keys.
+4. `history` sorts/filters by `updated_at`, greps identity fields only, and
+   opens no native transcript.
+5. Workflow records with an older extra `turn_id` load but the value is ignored
    and never projected.
-7. Snapshot MCP/admin receipts, Workflow list/status, history/last, Channel
-   results, public types, and logs; none contains a Turn object, ID, or surrogate.
-8. Assert Channel Turn event types and all publishers/subscribers are absent.
+6. Direct `spawn` and `send` receipts always include
+   `transcript_path: string | null`; all statuses on an established session
+   return the same canonical path, and never-established identities return null.
+7. Snapshot/static gates prove `transcript_path` is absent from list, status,
+   history, `last`, Workflow, Team, Channel, completion, logs, metrics, and
+   errors.
+8. Codex `thread.path` is captured before admission, canonicalized,
+   root-confined, session-validated, persisted, and returned.
+9. Claude fresh start passes a generated UUID through native `--session-id`,
+   persists the deterministic path before admission, and creates no placeholder
+   file; immediate ENOENT and later native creation are covered.
+10. The calling model can read/grep the returned native path under each
+    supported Runtime policy; no new writable root is introduced.
+11. `last` on a closed, evicted TeamMate starts/materializes no Runtime and
+    performs no identity write on success, fallback, cursor error, or parse
+    error.
+12. `last` accepts only `turns`, cursor, and `include_tools`; output has exact
+    message/tool unions, fixed caps, fixed 262144-byte budget, and no raw
+    reasoning/control/native IDs/locators.
+13. Pagination covers append stability, `include_tools` cursor mismatch,
+    boundary-digest mismatch, native rewrite staleness,
+    archive/representation movement stability, malformed cursor, strictly
+    advancing scan-bound continuation, null-cursor open-tail retry, a completed
+    turn larger than one scan window, and `scan_unsupported`.
+14. Codex fixtures cover active/archived, revert selection,
+    `history_base` lineage, `.jsonl`, `.jsonl.zst`, and both task_/turn_ wire
+    aliases.
+15. Claude fixtures cover path resolution, parent chain, parallel tool branches,
+    compact/snip, sidechain/meta exclusion, tool-result pairing, open tails,
+    and cursor staleness.
+16. Locator traversal/symlink/junction/session-mismatch fixtures prove no
+    arbitrary file read.
+17. Using an out-of-repository token set, scans over every tracked/untracked
+    repository artifact, added task-diff line, current task commit message,
+    current public Issue/PR title/body/comments/reviews, and public PR head ref
+    prove the operator-prohibited provider family is absent. Git-internal
+    worktree files, ignored dependency/build output, and immutable
+    already-public history before this task are excluded explicitly.
+18. Assert Channel Turn event types and all publishers/subscribers are absent.
+19. Every transcript-error reason maps to one fixed path-free public message;
+    arbitrary provider error text, native paths, and unknown exceptions do not
+    cross admin or MCP output.
 
 ### Workflow, Dissolve, and Shutdown
 
@@ -900,7 +1309,8 @@ Provider-private ID use is allowed only inside the matching runtime package.
 
 - focused unit and integration suites;
 - load-bearing non-blocking inbound, close/reopen, Team dissolve, worktree
-  safety, shutdown, and persistence suites without weakened assertions;
+  safety, shutdown, identity persistence, and Workflow persistence suites
+  without weakened assertions;
 - Rush build, typecheck, test typecheck, lint, and test;
 - Rush change verification;
 - `.agents/scripts/check.sh`;
@@ -915,7 +1325,7 @@ Not implemented here:
 2. durable cross-daemon provider resource lease and crash reaper;
 3. durable Workflow-runner lease/reaper;
 4. provider request replay or fingerprints;
-5. generalized JSONL repair/fsync/cross-process locking;
+5. generalized native-transcript search/index/cache or JSONL repair;
 6. replacement of unrelated legacy event publishers.
 
 No temporary bridge in this task may implement half of these contracts.
@@ -925,14 +1335,15 @@ No temporary bridge in this task may implement half of these contracts.
 One developer owns implementation. Review the single final diff in these logical
 slices:
 
-1. neutral RuntimeTurn types and provider object contracts;
-2. entity lock, Turn, close, retirement event, and termination proof;
-3. Collection construction/cache subscription and removal of ownership paths;
-4. direct completion delivery and public boundary cleanup;
-5. Workflow create/stop/terminal ordering;
-6. Team dissolve and Server shutdown;
-7. v2 persistence, documentation, maintenance reference, change notes, and full
-   verification.
+1. neutral RuntimeTurn, checkpoint, transcript page, cursor, and error contracts;
+2. entity Turn persistence deletion plus preserved lock/close/delivery behavior;
+3. Collection cold `last`, identity/history cleanup, and receipt-path projection;
+4. Codex native locator/transcript/pagination support;
+5. Claude pinned session/path plus native transcript projection;
+6. Workflow/Team/shutdown regression validation;
+7. fail-open residue, documentation, maintenance reference, change notes,
+   repository and current GitHub publication red-line scans, and
+   full verification.
 
 These are review boundaries, not compatibility layers. The final implementation
 deletes the old paths.

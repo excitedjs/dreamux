@@ -59,7 +59,7 @@ export function teamLeaderHandle(input: {
       status: (name) => read((service) => service.teammates.status(name)),
       history: (historyInput) =>
         read((service) => service.teammates.history(historyInput)),
-      last: (name, turns) => read((service) => service.teammates.last(name, turns)),
+      last: (name, query) => read((service) => service.teammates.last(name, query)),
       getCapabilities: () =>
         read(async (service) => service.teammates.getCapabilities()),
     },

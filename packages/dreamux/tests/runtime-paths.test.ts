@@ -15,7 +15,6 @@ import {
   dispatcherCompletionSpillDir,
   dispatcherDir,
   dispatcherAgentIdentityPath,
-  dispatcherAgentTurnsPath,
   dispatcherTeamDir,
   dispatcherTeamMateDir,
   dispatcherTeamNameClaimPath,
@@ -89,8 +88,8 @@ describe('runtime paths', () => {
     expect(dispatcherCompletionSpillDir('dispatcher-a')).toBe(
       join(cacheRoot(), 'dispatcher-a', 'spill'),
     );
-    // #233 symmetric layout: each agent is a directory holding
-    // {identity.json, turn.jsonl}. The dispatcher `teammate/` and `team/` dirs
+    // #233 symmetric layout: each agent is a directory holding identity.json.
+    // The dispatcher `teammate/` and `team/` dirs
     // hold ONLY entity dirs; channel bindings live at the dispatcher root.
     expect(dispatcherTeamMateDir('dispatcher-a')).toBe(
       join(stateRoot(), 'dispatcher-a', 'teammate'),
@@ -101,7 +100,7 @@ describe('runtime paths', () => {
     expect(dispatcherChannelBindingsPath('dispatcher-a')).toBe(
       join(stateRoot(), 'dispatcher-a', 'channel-bindings.json'),
     );
-    // A dispatcher-owned teammate: teammate/<name>/{identity.json, turn.jsonl}.
+    // A dispatcher-owned teammate: teammate/<name>/identity.json.
     const reviewer = {
       dispatcherId: 'dispatcher-a',
       name: 'reviewer-1',
@@ -110,9 +109,6 @@ describe('runtime paths', () => {
     };
     expect(dispatcherAgentIdentityPath(reviewer)).toBe(
       join(stateRoot(), 'dispatcher-a', 'teammate', 'reviewer-1', 'identity.json'),
-    );
-    expect(dispatcherAgentTurnsPath(reviewer)).toBe(
-      join(stateRoot(), 'dispatcher-a', 'teammate', 'reviewer-1', 'turn.jsonl'),
     );
     // A team scope: leader pair + record.json at the team root, members under
     // team/<team>/teammate/<name>/.
@@ -135,16 +131,6 @@ describe('runtime paths', () => {
     ).toBe(join(stateRoot(), 'dispatcher-a', 'team', 'alpha', 'identity.json'));
     expect(dispatcherTeamTeamMateDir('dispatcher-a', 'alpha')).toBe(
       join(stateRoot(), 'dispatcher-a', 'team', 'alpha', 'teammate'),
-    );
-    expect(
-      dispatcherAgentTurnsPath({
-        dispatcherId: 'dispatcher-a',
-        name: 'member-1',
-        teamId: 'alpha',
-        role: 'team_member',
-      }),
-    ).toBe(
-      join(stateRoot(), 'dispatcher-a', 'team', 'alpha', 'teammate', 'member-1', 'turn.jsonl'),
     );
     // Per-runtime app-server log paths are no longer core path builders: each
     // runtime package composes a flat `<logsDir>/<engine>/<runtime_id>.log`

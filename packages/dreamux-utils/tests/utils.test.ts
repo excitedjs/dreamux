@@ -17,12 +17,16 @@ import {
   COMPLETION_INLINE_BUDGET_DEFAULT,
   COMPLETION_INLINE_BUDGET_MAX,
   completionInlineBudget,
+  createTranscriptScanBudget,
   ensureOwnerOnlyDir,
+  isPathWithin,
   isProcessGroupAlive,
   killProcessGroup,
   isProcessAlive,
   isPlainObject,
+  isTranscriptDigest,
   pathExists,
+  readTranscriptBytesAt,
   rejectUnknownKeys,
   removeEmptyLogFile,
   renderChannelBlock,
@@ -30,6 +34,7 @@ import {
   requireNonEmptyString,
   resolveCompletionBody,
   SupervisedChild,
+  transcriptDigest,
   type CompletionBodyInput,
 } from '../src/index.js';
 
@@ -252,6 +257,65 @@ describe('turn-render', () => {
     expect(
       renderChannelBlock('feishu', [['1bad', 'x'], ['ok', 'a<b&c']], 'body'),
     ).toBe('<channel source="feishu" ok="a&lt;b&amp;c">\nbody\n</channel>');
+  });
+});
+
+describe('transcript primitives', () => {
+  it('creates and validates opaque SHA-256 digests', () => {
+    const digest = transcriptDigest('boundary bytes');
+    expect(digest).toHaveLength(43);
+    expect(isTranscriptDigest(digest)).toBe(true);
+    expect(isTranscriptDigest('not-a-digest')).toBe(false);
+  });
+
+  it('enforces count and elapsed discovery bounds through a caller error', () => {
+    let now = 10;
+    const budget = createTranscriptScanBudget({
+      maxEntries: 2,
+      maxElapsedMs: 5,
+      now: () => now,
+      limitError: () => new Error('bounded'),
+    });
+    budget.inspect(2);
+    expect(() => budget.inspect()).toThrow('bounded');
+
+    const elapsed = createTranscriptScanBudget({
+      maxEntries: 10,
+      maxElapsedMs: 5,
+      now: () => now,
+      limitError: () => new Error('elapsed'),
+    });
+    now = 16;
+    expect(() => elapsed.inspect()).toThrow('elapsed');
+  });
+
+  it('fills an exact positional window across controlled short reads', async () => {
+    const source = Buffer.from('0123456789', 'utf8');
+    const reader = {
+      async read(
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) {
+        const bytesRead = Math.min(2, length, source.length - position);
+        if (bytesRead <= 0) return { bytesRead: 0 };
+        source.copy(buffer, offset, position, position + bytesRead);
+        return { bytesRead };
+      },
+    };
+    await expect(readTranscriptBytesAt(reader, 3, 6)).resolves.toEqual(
+      Buffer.from('345678'),
+    );
+    await expect(readTranscriptBytesAt(reader, 8, 6)).resolves.toEqual(
+      Buffer.from('89'),
+    );
+  });
+
+  it('checks lexical containment without prefix confusion', () => {
+    expect(isPathWithin('/native/root', '/native/root/session.jsonl')).toBe(true);
+    expect(isPathWithin('/native/root', '/native/root-other/session.jsonl'))
+      .toBe(false);
   });
 });
 

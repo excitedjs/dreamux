@@ -75,11 +75,12 @@ each document's owner defines whether any field can be maintained externally.
 
 Important children:
 
-- `~/.dreamux/state/<dispatcher-id>/identity.json` + `turn.jsonl`: the dispatcher
-  agent's authoritative runtime recovery record at the dispatcher *root* (not
-  under `teammate/`), so the `teammate.*` read chokepoints never enumerate it.
-  Every entity `turn.jsonl` is a fully server-owned strict version-2 archive
-  with one complete terminal row per logical Turn and no persisted Turn id.
+- `~/.dreamux/state/<dispatcher-id>/identity.json`: the dispatcher agent's
+  authoritative identity/lifecycle/runtime-session recovery record at the
+  dispatcher *root* (not under `teammate/`), so the `teammate.*` read
+  chokepoints never enumerate it. It may contain the provider-owned native
+  session id plus nullable opaque `transcript_locator`; it contains no rolling
+  conversation projection.
 - `~/.dreamux/state/<dispatcher-id>/access.json`: dispatcher-local Feishu V3
   access state with mixed field ownership. `version` is Channel/schema-owned;
   `dm_policy` and `group.*` are operator policy; `allow_users` is shared between
@@ -94,10 +95,10 @@ Important children:
   target-owned Team-dissolve operation/handoff correlation used while a target
   is closing. This is fully server-owned Dreamux core state, not Channel
   provider or operator state.
-- `~/.dreamux/state/<dispatcher-id>/teammate/`: TeamMate durable task ledgers.
-  Each `identity.json` may include `identity_prompt`, the persisted append-only
-  model-facing role guidance for that TeamMate; old records without it read as
-  `null`.
+- `~/.dreamux/state/<dispatcher-id>/teammate/`: dispatcher-owned TeamMate
+  entity directories. Each `identity.json` owns identity, lifecycle, worktree,
+  intent, role guidance, and the provider-native session association. It may
+  include `identity_prompt`; old records without it read as `null`.
 - `~/.dreamux/state/<dispatcher-id>/team/<team-id>/record.json`: fully
   server-owned Team state. Its nullable `dissolve` fact is owned by
   `TeamCollection` and records the accepted operation, caller/generation,
@@ -137,6 +138,15 @@ remain code-owned and are recomposed at launch rather than persisted.
 Legacy identity records that point at old under-state worktree paths are read
 verbatim. Dreamux does not rewrite or delete them during ordinary startup.
 
+Dreamux owns no per-Turn archive. A current-layout per-entity `turn.jsonl`
+created by an older release is inert residue: Dreamux never creates, stats,
+lists, opens, validates, repairs, migrates, warns about, or automatically
+deletes it. Its presence, contents, permissions, type, or parseability cannot
+block startup, reads, lifecycle operations, Workflow, Team dissolve, or
+shutdown. Detailed conversation history is owned by the selected Agent Runtime
+provider's native transcript; `last` performs a bounded cold read through the
+neutral provider contract without persisting a copy or cursor in Dreamux state.
+
 `access.json` is always under the fixed state path above, independent of
 `DREAMUX_CONFIG_DIR`. Manual access maintenance requires an independent
 operator to keep the owning Channel fully stopped across post-stop re-read,
@@ -150,7 +160,7 @@ Key source:
 - `/packages/dreamux/src/platform/paths.ts`
 - `/packages/dreamux/src/state/dispatcher-store.ts`
 - `/packages/dreamux/src/service/agent-entity/identity-store.ts`
-- `/packages/dreamux/src/service/agent-entity/turns-store.ts`
+- `/packages/dreamux/src/service/agent-entity/transcript-reader.ts`
 - `/packages/dreamux/src/service/team-collection/store.ts`
 - `/packages/dreamux/src/service/collaboration-space/store.ts`
 - `/packages/dreamux/src/service/scheduler/store.ts`

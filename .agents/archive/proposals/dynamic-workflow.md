@@ -9,7 +9,7 @@
 
 状态：草案 v5 —— 已折入本方常驻评审团两席评审（v2）、奥菲利亚三席联合评审
 （Issue #309，B1–B5 / D1–D5 / L1–L3 / P2 全部裁定落实）与异构 runtime 复
-审（claude-seed / trae-claude）的补充发现。MVP 范围已按操作者「先跑起来、
+审（两个异构外部 runtime）的补充发现。MVP 范围已按操作者「先跑起来、
 精简、不过度防御」基调收敛：MVP 砍 `opts.name` 复用（每次 `agent()`
 spawn 新 agent、完全隔离，避免在途 turn 被打扰导致结果偏差）、双作用域
 collection 形态对齐现有 `TeammateCollection` 所有权模式、supervised-child

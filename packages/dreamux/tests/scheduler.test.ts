@@ -907,9 +907,6 @@ function controllableIdle(): {
     wasCheckpointResumed() {
       return false;
     },
-    async getLast() {
-      return null;
-    },
     async getContext() {
       return null;
     },

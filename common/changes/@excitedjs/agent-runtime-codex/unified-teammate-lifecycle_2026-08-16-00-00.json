@@ -2,7 +2,7 @@
   "changes": [
     {
       "packageName": "@excitedjs/agent-runtime-codex",
-      "comment": "BREAKING: Codex runtime submissions now return RuntimeAdmission with stable RuntimeTurn objects; native app-server Turn IDs remain provider-private. Request uncertainty is reported as ambiguous, folded native aliases converge before the canonical Turn settles, and runtime stop tears down transport before draining every started admission.",
+      "comment": "BREAKING: Review: external consumers must implement the required cold readTranscript provider method, persist thread.path with the native session checkpoint, and handle RuntimeAdmission plus stable RuntimeTurn objects instead of public app-server Turn IDs. Codex now reads bounded provider-neutral pages from active, archived, compressed, and history-base native rollouts; request uncertainty is ambiguous, folded aliases converge before settlement, and stop tears down transport before draining every started admission. No rebuild is required: existing Codex rollouts and Dreamux checkpoints remain readable, with provider-native rediscovery when a stored locator is absent or stale.",
       "type": "major"
     }
   ],

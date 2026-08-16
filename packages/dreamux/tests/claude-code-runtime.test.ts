@@ -69,6 +69,9 @@ const FEISHU_MCP: AgentRuntimeMcpServer = {
   args: ['channel-mcp', '--provider', 'builtin:feishu', '--channel-id', 'primary', '--dispatcher', 'flow', '--admin-socket', '/tmp/a.sock'],
 };
 
+const TEST_SESSION_ID = '00000000-0000-4000-8000-000000000001';
+const PREVIOUS_SESSION_ID = '00000000-0000-4000-8000-000000000002';
+
 function claudeCodeProvider(
   options: Omit<ClaudeCodeAgentRuntimeProviderOptions, 'descriptor'> = {},
 ) {
@@ -98,6 +101,14 @@ function claudeDispatcher(
 
 function okOutcome(sessionId: string | null = 'session-abc'): TurnOutcome {
   return { isError: false, text: 'done', sessionId, subtype: 'success', errors: [], hasStructuredOutput: false };
+}
+
+function pinnedSessionId(spec: ClaudeCodeSessionSpec): string | null {
+  for (const flag of ['--session-id', '--resume']) {
+    const index = spec.args.indexOf(flag);
+    if (index >= 0) return spec.args[index + 1] ?? null;
+  }
+  return null;
 }
 
 /** A fake resident session: records turns, plays a scripted outcome sequence. */
@@ -155,7 +166,10 @@ function fakeFleet(
         const outcome = outcomes[Math.min(turnIndex, outcomes.length - 1)];
         turnIndex += 1;
         if (outcome instanceof Error) throw outcome;
-        return outcome as TurnOutcome;
+        return {
+          ...outcome,
+          sessionId: pinnedSessionId(spec),
+        } as TurnOutcome;
       },
       async steerTurn(prompt, options) {
         prompts.push(prompt);
@@ -182,6 +196,7 @@ function controllableFleet(): FakeFleet & {
   const sessions: FakeSession[] = [];
   let pendingResolve: ((outcome: TurnOutcome) => void) | null = null;
   let pendingReject: ((error: Error) => void) | null = null;
+  let pendingSessionId: string | null = null;
   const factory: ClaudeCodeSessionFactory = (spec) => {
     let alive = false;
     let starts = 0;
@@ -207,6 +222,7 @@ function controllableFleet(): FakeFleet & {
         return new Promise<TurnOutcome>((resolve, reject) => {
           pendingResolve = resolve;
           pendingReject = reject;
+          pendingSessionId = pinnedSessionId(spec);
         });
       },
       async steerTurn(prompt, options) {
@@ -228,14 +244,16 @@ function controllableFleet(): FakeFleet & {
     factory,
     sessions,
     resolveNext(outcome = okOutcome()) {
-      pendingResolve?.(outcome);
+      pendingResolve?.({ ...outcome, sessionId: pendingSessionId });
       pendingResolve = null;
       pendingReject = null;
+      pendingSessionId = null;
     },
     rejectNext(error: Error) {
       pendingReject?.(error);
       pendingResolve = null;
       pendingReject = null;
+      pendingSessionId = null;
     },
   };
 }
@@ -469,8 +487,20 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const state = new AgentRuntimeStateStore(identities, identity);
     const runtime = claudeCodeProvider({
       sessionFactory: fleet.factory,
+      generateSessionId: () => TEST_SESSION_ID,
+      resolveTranscriptPath: async ({ sessionId }) =>
+        join(cwd, `${sessionId}.jsonl`),
     }).createRuntime({
-      identity: { runtime_id: 'flow', checkpoint_id: identity.session_id },
+      identity: {
+        runtime_id: 'flow',
+        checkpoint:
+          identity.session_id === null
+            ? null
+            : {
+                id: identity.session_id,
+                transcript_locator: identity.transcript_locator,
+              },
+      },
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd,
       mcpServers: [FEISHU_MCP],
@@ -781,16 +811,18 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
   it('resumes a persisted session and threads --resume into the launch args', async () => {
     const fleet = fakeFleet([okOutcome('session-new')]);
-    const { runtime } = await makeRuntime(fleet, { resumeSession: 'session-prev' });
+    const { runtime } = await makeRuntime(fleet, {
+      resumeSession: PREVIOUS_SESSION_ID,
+    });
     expect(runtime.wasCheckpointResumed()).toBe(true);
-    expect((runtime.getCheckpoint()?.id ?? null)).toBe('session-prev');
+    expect((runtime.getCheckpoint()?.id ?? null)).toBe(PREVIOUS_SESSION_ID);
     await runtime.start();
     expect(
       fleet.sessions[0]?.spec.args.slice(
         fleet.sessions[0].spec.args.indexOf('--resume'),
         fleet.sessions[0].spec.args.indexOf('--resume') + 2,
       ),
-    ).toEqual(['--resume', 'session-prev']);
+    ).toEqual(['--resume', PREVIOUS_SESSION_ID]);
   });
 
   it('submits an inbound turn (accept -> run), dedupes, and captures the session', async () => {
@@ -803,7 +835,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
     await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
     expect(fleet.sessions[0]?.prompts[0]).toBe('do it');
-    await waitFor(() => (runtime.getCheckpoint()?.id ?? null) === 'session-abc');
+    await waitFor(() => (runtime.getCheckpoint()?.id ?? null) === TEST_SESSION_ID);
 
     const dup = await runtime.channelInput({
       sourceId: 'm1',
@@ -930,12 +962,10 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
   it('folds a channel inbound into an active completionInput turn', async () => {
     // The active slot is shared, not channel-only: a Dreamux-owned send that
     // started the turn must also accept channel-XML inbound as a steer. When
-    // the steer arrives before the resident child has picked up the initial
-    // submit, it lands in `pendingSteers` and is prepended to the full prompt
-    // at turn-start (same path the existing channel-folding test uses for the
-    // pre-session window).
+    // Hold the first native outcome open so the steer deterministically reaches
+    // the same active logical Turn.
     const settled: RuntimeTurnOutcome[] = [];
-    const fleet = fakeFleet([okOutcome('session-abc')]);
+    const fleet = controllableFleet();
     const { runtime } = await makeRuntime(fleet, {
       observeOutcome: (outcome) => settled.push(outcome),
     });
@@ -946,6 +976,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       sourceId: 'send:mate-1:first',
     });
     expect(first.status).toBe('submitted');
+    await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
 
     const second = await runtime.channelInput({
       sourceId: 'm-inbound',
@@ -964,6 +995,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     }
     expect(second.turn).toBe(first.turn);
 
+    fleet.resolveNext();
     await waitFor(() => settled.length === 1);
     // The same logical turn carries both the original plain text and the
     // channel-rendered inbound. Depending on the resident-session scheduling
@@ -1032,7 +1064,6 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(settled.map((outcome) =>
       outcome.status === 'completed' ? outcome.resultText : null,
     )).toEqual(['done', null]);
-    expect(await runtime.getLast()).toEqual({ text: 'done' });
   });
 
   it('starts a fresh logical turn for a sequential send after the previous turn completed', async () => {
@@ -1074,7 +1105,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
 
     const secondSettled: RuntimeTurnOutcome[] = [];
     const secondRuntime = await makeRuntime(fakeFleet([okOutcome('session-abc')]), {
-      resumeSession: 'session-abc',
+      resumeSession: TEST_SESSION_ID,
       observeOutcome: (outcome) => secondSettled.push(outcome),
     });
     await secondRuntime.runtime.start();
@@ -1351,7 +1382,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     await expect(first.turn.settled).resolves.toMatchObject({
       status: 'completed',
     });
-    await waitFor(() => (runtime.getCheckpoint()?.id ?? null) === 'session-abc');
+    await waitFor(() => (runtime.getCheckpoint()?.id ?? null) === TEST_SESSION_ID);
 
     // The resident child dies unexpectedly → degraded.
     fleet.sessions[0]?.triggerExit();
@@ -1371,7 +1402,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(respawn.spec.args.slice(
       respawn.spec.args.indexOf('--resume'),
       respawn.spec.args.indexOf('--resume') + 2,
-    )).toEqual(['--resume', 'session-abc']);
+    )).toEqual(['--resume', TEST_SESSION_ID]);
     await waitFor(() => runtime.getStatus() === 'ready');
   });
 

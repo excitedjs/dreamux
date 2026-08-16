@@ -23,5 +23,14 @@ export interface ClaudeCodeRuntimeDeps {
   skillSources?: readonly AgentRuntimeSkillSource[];
   disableFeatures?: readonly string[];
   outputSchema?: Record<string, unknown>;
+  generateSessionId?: () => string;
+  resolveTranscriptPath?: (input: {
+    sessionId: string;
+    cwd: string;
+    locator: string | null;
+    env: NodeJS.ProcessEnv;
+    resume: boolean;
+  }) => Promise<string>;
+  sourceIdDedupeWindow?: number;
   logger?: DreamuxLogger;
 }

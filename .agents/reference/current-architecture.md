@@ -230,14 +230,19 @@ semi-resident agents. `spawn` creates one, `send` submits follow-up turns and
 reopens closed agents, and read tools (`history`, `list`, `status`, `last`) do
 not start a runtime.
 
-Agent entity state — identity, turn archive, runtime state, and the shared
-types/name validation — lives in the neutral
+Agent entity state — identity, runtime state, transcript read coordination, and
+the shared types/name validation — lives in the neutral
 `/packages/dreamux/src/service/agent-entity/` layer. It is path-based and
-role-agnostic: `DispatcherService` builds one shared `AgentIdentityStore` +
-`AgentTurnsStore` pair at construction and injects it into the dispatcher
-agent, the dispatcher-scope `TeammateCollection`, and each Team's
-`TeamCollection` / `TeamService` / member `TeammateCollection`. Stores are
-never self-built inside agent collections (PR #282 owner-boundary fix).
+role-agnostic: `DispatcherService` builds one shared `AgentIdentityStore` at
+construction and injects it into the dispatcher agent, the dispatcher-scope
+`TeammateCollection`, and each Team's `TeamCollection` / `TeamService` / member
+`TeammateCollection`. Collections never self-build the store (PR #282
+owner-boundary fix). Detailed conversation history is not a Dreamux state
+store: `TeammateCollection.last()` reads identity, resolves the selected
+`AgentRuntimeProvider`, and delegates a bounded cold `readTranscript()` without
+materializing an entity or starting a runtime. `list` and `history` apply the
+same dispatcher/team role predicate as targeted reads before projecting any
+physically discovered identity.
 
 Team creation takes `name_prefix` and returns a concrete `team_name` with a
 4–8 character random suffix. Core publishes a fully written
@@ -276,16 +281,17 @@ TeamLeaders still use their scoped TeamMate MCP to send to members.
 
 Each `TeamService` directly builds and holds its TeamLeader `TeammateService`
 through `/packages/dreamux/src/service/team-service/leader-agent.ts`, using the
-same dispatcher-owned identity store, turns store, worktree manager, and
-completion-delivery policy that its owning `TeamCollection` injects. The per-team
-`TeammateCollection` is members-only: it spawns and caches team members under
-`team/<team>/teammate/<name>/`, while the TeamLeader lives at the team root and
-is never cached in the collection's entity map.
+same dispatcher-owned identity store, worktree manager, and
+completion-delivery policy that its owning `TeamCollection` injects. The
+per-team `TeammateCollection` is members-only: it spawns and caches team members
+under `team/<team>/teammate/<name>/`, while the TeamLeader lives at the team
+root and is never cached in the collection's entity map.
 
 `TeammateService` is the sole lifecycle command owner for every dispatcher
 agent, TeamMate, TeamLeader, and Team member. It owns mutation admission, its
 process-local Workflow lock, raw runtime authority, in-process Turn objects,
-terminal persistence, close single-flight, and committed retirement fact.
+terminal outcome selection, bounded completion delivery, close single-flight,
+and committed retirement fact.
 `TeammateCollection` owns scoped construction, canonical per-name
 materialization, cache subscription, roster queries, and read projection. A
 close fact lets the Collection remove only its own exact cached reference; the
@@ -293,10 +299,27 @@ Collection does not run entity close steps or a runtime-only shutdown sweep.
 
 One accepted logical input is one provider-owned `RuntimeTurn` plus one
 entity-owned `Turn`. Folds return the exact same object. The first terminal
-outcome is snapshotted, persisted as one strict version-2 terminal
-`turn.jsonl` row, and optionally delivered through a closure captured from the
-initiating action. Public receipts, Workflow records, Channel contracts, and
-persisted rows do not carry a Turn id for in-process correlation.
+outcome is snapshotted into the object-owned latch and optionally delivered
+through a closure captured from the initiating action. Dreamux persists no Turn
+archive or rolling conversation projection. Public receipts, Workflow records,
+Channel contracts, and identity state do not carry a Turn id for in-process
+correlation.
+
+The runtime checkpoint persists the provider-owned session id plus an optional
+opaque `transcript_locator`. Direct TeamMate `spawn` and `send` receipts expose
+that validated canonical native path as `transcript_path`; list, status,
+history, `last`, Workflow, Team, Channel, completion delivery, logs, and metrics
+do not. `last` returns provider-neutral bounded message/tool blocks, an opaque
+backward cursor, and truncation state. Existing per-entity `turn.jsonl` files
+are inert residue: Dreamux does not create, stat, list, open, validate, repair,
+migrate, warn about, or automatically delete them.
+
+The two built-in transcript readers keep native schemas, discovery rules,
+locator validation, cursor envelopes, and typed provider errors inside their
+runtime packages. Neutral byte/hash/safety mechanics — fixed source/output
+bounds, transcript digest validation, bounded discovery accounting, exact
+positional reads, deterministic rendering, and lexical path containment — are
+single-sourced in `/packages/dreamux-utils/src/transcript.ts`.
 
 `TeamCollection` owns the single durable Team dissolve lifecycle. An accepted
 operation is stored on the Team record before its receipt, carries the first

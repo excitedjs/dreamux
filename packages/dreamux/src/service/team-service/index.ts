@@ -29,7 +29,6 @@ import type {
   TeammateOps,
 } from '../teammate-collection/types.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
-import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import {
   optionalLifecycleText,
   requireLifecycleText,
@@ -68,7 +67,6 @@ export interface TeamServiceDeps {
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   worktrees: WorktreeManager;
   identities: AgentIdentityStore;
-  turnsStore: AgentTurnsStore;
   completionDelivery: CompletionDeliveryPolicy;
   initiatorFor: (
     producer: AgentEntityIdentity,
@@ -124,7 +122,6 @@ export class TeamService {
       agentRuntimeProviders: deps.agentRuntimeProviders,
       worktrees: deps.worktrees,
       identities: deps.identities,
-      turnsStore: deps.turnsStore,
       completionDelivery: deps.completionDelivery,
       initiatorFor: deps.initiatorFor,
       isShuttingDown: deps.isShuttingDown,
@@ -640,7 +637,6 @@ export class TeamService {
       config: this.deps.config,
       agentRuntimeProviders: this.deps.agentRuntimeProviders,
       identities: this.deps.identities,
-      turnsStore: this.deps.turnsStore,
       worktrees: this.deps.worktrees,
       log: this.deps.log,
     });

@@ -5,10 +5,8 @@ import type {
 
 import { dispatcherCompletionSpillDir } from '../../platform/paths.js';
 import {
-  foldLastTurns,
   toRecordRow,
   toStatus,
-  validateLastTurns,
 } from '../agent-entity/read-helpers.js';
 import { AgentRuntimeStateStore } from '../agent-entity/runtime-state.js';
 import {
@@ -16,7 +14,6 @@ import {
   type AgentEntityCloseResult,
   type AgentEntityIdentity,
   type AgentEntityIdentityStatus,
-  type AgentEntityLastResult,
   type AgentEntityRecordRow,
   type AgentEntityRuntimeStatus,
   type AgentEntitySendResult,
@@ -66,7 +63,6 @@ export class TeammateService {
   private state: AgentRuntimeStateStore;
   private readonly runtimeOwner: TeammateRuntimeOwner;
   private readonly turns: EntityTurnCoordinator;
-  private turnPersistenceFailure: Error | null = null;
   private phase: EntityPhase = 'active';
   private ordinaryMutations = 0;
   private readonly ordinaryIdleWaiters = new Set<() => void>();
@@ -102,11 +98,6 @@ export class TeammateService {
       name: () => this.name,
       intent: () => this.current().intent,
       isActive: () => this.phase === 'active',
-      onAutomaticPersistenceFailure: (error) => {
-        this.observeTurnPersistenceFailure(error);
-      },
-      turnsStore: deps.turnsStore,
-      state: this.state,
     });
   }
 
@@ -150,7 +141,7 @@ export class TeammateService {
     if (this.ordinaryMutations !== 0) {
       throw new Error(`TeamMate ${JSON.stringify(this.name)} is being mutated`);
     }
-    if (this.turns.hasUnpersistedCurrent()) {
+    if (this.turns.hasUnsettledCurrent()) {
       throw new Error(`TeamMate ${JSON.stringify(this.name)} has an active Turn`);
     }
     const token = Object.freeze({});
@@ -192,7 +183,11 @@ export class TeammateService {
           ? { deliverCompletion: delivery }
           : {}),
       });
-      return { teammate: this.status(), ...toSubmissionResult(turn) };
+      return {
+        teammate: this.status(),
+        ...toSubmissionResult(turn),
+        transcript_path: this.transcriptPath(),
+      };
     } finally {
       leave();
     }
@@ -371,6 +366,10 @@ export class TeammateService {
     );
   }
 
+  transcriptPath(): string | null {
+    return this.current().transcript_locator;
+  }
+
   /** Read-only lifecycle projection; durable closure is still store-owned. */
   private effectiveIdentityStatus(
     identity: AgentEntityIdentity,
@@ -381,39 +380,7 @@ export class TeammateService {
     ) {
       return 'stopped';
     }
-    if (
-      this.phase === 'closing' &&
-      this.turnPersistenceFailure !== null
-    ) {
-      return 'degraded';
-    }
     return identity.status;
-  }
-
-  private observeTurnPersistenceFailure(error: Error): void {
-    if (this.turnPersistenceFailure !== null) return;
-    this.turnPersistenceFailure = error;
-    if (this.phase === 'active') this.phase = 'closing';
-    this.deps.log.error(
-      { teammate: this.name, error },
-      'TeamMate terminal Turn persistence failed',
-    );
-  }
-
-  async last(turns?: number): Promise<AgentEntityLastResult> {
-    const requestedTurns = validateLastTurns(turns);
-    const identity = this.current();
-    const lastTurns = await foldLastTurns(
-      this.deps.turnsStore,
-      identity,
-      requestedTurns,
-    );
-    return {
-      teammate: this.status(),
-      requested_turns: requestedTurns,
-      returned_turns: lastTurns.length,
-      turns: lastTurns,
-    };
   }
 
   waitIdle(): Promise<void> {
@@ -564,7 +531,7 @@ export class TeammateService {
       await this.turns.drainAdmissions();
       this.turns.selectStoppedForCurrent();
       await this.waitForOrdinaryMutations();
-      await this.turns.persistAndDeliverRetained();
+      await this.turns.settleAndDeliverRetained();
 
       const identity = this.current();
       const shouldCleanup =
@@ -579,7 +546,6 @@ export class TeammateService {
         status: 'closed',
         closedAt,
         closeNote,
-        lastSeenAt: closedAt,
         worktree,
       });
       if (token === null) {
@@ -681,6 +647,7 @@ export class TeammateService {
     }
     return this.deps.worktrees;
   }
+
 }
 
 function unsupportedPreparedCompletion(

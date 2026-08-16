@@ -11,7 +11,6 @@ import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
   AgentRuntimeCreateContext,
-  AgentRuntimeLastResult,
   AgentRuntimeProvider,
   AgentRuntimeStatus,
   AgentRuntimeTextInput,
@@ -73,10 +72,6 @@ export class FakeRuntime implements AgentRuntime {
     return false;
   }
 
-  async getLast(): Promise<AgentRuntimeLastResult> {
-    return { text: 'fake last' };
-  }
-
   async getContext(): Promise<null> {
     return null;
   }
@@ -98,6 +93,9 @@ export function fakeRuntimeCatalog(
       ref: { source: 'builtin', id: 'test-runtime', raw: FAKE_RUNTIME_REF },
     },
     getCapabilities: () => CAPABILITIES,
+    async readTranscript() {
+      return { turns: [], nextCursor: null, truncated: false };
+    },
     createRuntime(_context: AgentRuntimeCreateContext) {
       const runtime = new FakeRuntime();
       runtimes.push(runtime);

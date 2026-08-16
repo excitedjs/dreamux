@@ -59,9 +59,10 @@ describe('codex plain completionInput delivery', () => {
       codexHomeDoctor: () => {
         /* fake codex tests need no real operator auth */
       },
+      validateTranscriptPath: async (path) => path,
     });
     const runtime = provider.createRuntime({
-      identity: { runtime_id: 'flow', checkpoint_id: null },
+      identity: { runtime_id: 'flow', checkpoint: null },
       config: dispatcherCodexConfig(dispatcher),
       cwd: tmp,
       mcpServers: [],

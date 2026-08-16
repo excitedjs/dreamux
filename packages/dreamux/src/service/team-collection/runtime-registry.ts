@@ -279,7 +279,6 @@ export class TeamRuntimeRegistry {
       agentRuntimeProviders: collection.agentRuntimeProviders,
       worktrees: this.opts.worktrees,
       identities: collection.identities,
-      turnsStore: collection.turnsStore,
       completionDelivery: collection.completionDelivery,
       initiatorFor: collection.initiatorFor,
       isShuttingDown: collection.isShuttingDown,

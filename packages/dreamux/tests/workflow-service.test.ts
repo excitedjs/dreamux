@@ -80,7 +80,6 @@ class FakeLockedTeammates implements WorkflowTeammateFactory {
   createError: Error | null = null;
   submitError: Error | null = null;
   nextAdmission: Exclude<TurnAdmission, { status: 'submitted' }> | null = null;
-  turnPersistenceError: Error | null = null;
   autoOutcome: RuntimeTurnOutcome | null = null;
   createGate: Promise<void> | null = null;
   closeGate: Promise<void> | null = null;
@@ -115,24 +114,14 @@ class FakeLockedTeammates implements WorkflowTeammateFactory {
         if (this.nextAdmission !== null) return this.nextAdmission;
         const runtimeTurn = controllableRuntimeTurn();
         materialization.runtimeTurn = runtimeTurn;
-        const turnPersistenceError = this.turnPersistenceError;
-        const settled = turnPersistenceError === null
-          ? runtimeTurn.turn.settled
-          : runtimeTurn.turn.settled.then(() => {
-              throw turnPersistenceError;
-            });
-        void settled.catch(() => undefined);
-        const persisted = settled.then(() => undefined);
-        void persisted.catch(() => undefined);
         const turn: Turn = Object.freeze({
           runtime: runtimeTurn.turn,
           origin: submitInput.turnOrigin,
-          promptPreview: input.prompt,
+          prompt: input.prompt,
           intent: input.intent ?? null,
           submittedAt: Date.now(),
-          settled,
-          persistence: persisted,
-          delivery: persisted,
+          settled: runtimeTurn.turn.settled,
+          delivery: runtimeTurn.turn.settled.then(() => undefined),
         });
         if (this.autoOutcome !== null) runtimeTurn.settle(this.autoOutcome);
         return { status: 'submitted', turn };
@@ -815,57 +804,6 @@ describe('WorkflowService', () => {
       closed: true,
       unlocked: true,
     });
-  });
-
-  it('host-fails and closes when a concrete Turn reports persistence failure', async () => {
-    const runId = 'run-agent-turn-persistence-failed';
-    const persistenceError = 'TeamMate terminal Turn persistence failed';
-    const ctx = await context([runId], (harness) => {
-      harness.onSend = (message, runner) => {
-        if (message.type !== 'agent_result' || message.error === undefined) return;
-        runner.emit({ type: 'run_result', status: 'completed', result: 'ignored' });
-      };
-    });
-    ctx.teammates.turnPersistenceError = new Error(persistenceError);
-    await ctx.service.run({ script: validScript() });
-    const runner = ctx.runner.latest();
-
-    runner.emit({
-      type: 'agent_start',
-      index: 0,
-      prompt: 'fail after runtime settlement',
-      options: {},
-    });
-    await vi.waitFor(() => {
-      expect(ctx.teammates.materializations).toHaveLength(1);
-      expect(ctx.teammates.materializations[0]?.submitCalls).toBe(1);
-    });
-    expect(ctx.teammates.settle(0, 'completed', 'provider result')).toBe(true);
-
-    await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
-    expect(agentResults(runner)).toEqual([
-      { type: 'agent_result', index: 0, error: persistenceError },
-    ]);
-    expect(await ctx.service.status({ run_id: runId })).toMatchObject({
-      status: 'failed',
-      error: persistenceError,
-      agents: [{ status: 'failed', error: persistenceError }],
-    });
-    expect(ctx.teammates.materializations).toHaveLength(1);
-    expect(ctx.teammates.materializations[0]).toMatchObject({
-      submitCalls: 1,
-      closeCalls: 1,
-      unlockCalls: 1,
-      closed: true,
-      unlocked: true,
-    });
-    expect((await journalEvents(runId)).map((event) => event.kind)).toEqual([
-      'run',
-      'submit',
-      'result',
-      'end',
-    ]);
-    expect(ctx.initiator.received[0]?.status).toBe('failed');
   });
 
   it('waits for in-flight materialization and closes the returned locked handle', async () => {

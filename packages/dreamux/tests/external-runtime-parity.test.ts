@@ -13,7 +13,6 @@ import { AgentRuntimeProviderCatalog } from '../src/agent-runtime/catalog.js';
 import { loadConfig } from '../src/config/config.js';
 import { createTeammateService } from '../src/service/teammate-service/factory.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
-import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
 import type {
   AgentEntityWorktreeIdentity,
 } from '../src/service/agent-entity/types.js';
@@ -123,18 +122,6 @@ async function writeConfigFile(input: {
   await chmod(configFile, 0o600);
 }
 
-async function waitFor(
-  predicate: () => boolean | Promise<boolean>,
-  timeoutMs = 2000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error('waitFor timed out');
-}
-
 describe('external runtime production parity', () => {
   let root: string;
   let previousHome: string | undefined;
@@ -190,7 +177,6 @@ describe('external runtime production parity', () => {
 
     const log = noopLog();
     const identities = new AgentIdentityStore(log);
-    const turnsStore = new AgentTurnsStore();
     const identity = await identities.create({
       dispatcherId: 'flow',
       name: 'external-peer',
@@ -214,7 +200,6 @@ describe('external runtime production parity', () => {
       config,
       agentRuntimeProviders,
       identities,
-      turnsStore,
       worktrees: new WorktreeManager(),
       log,
     });
@@ -226,13 +211,27 @@ describe('external runtime production parity', () => {
     expect(sent.status).toBe('submitted');
     expect(sent).not.toHaveProperty('turn');
 
-    await waitFor(async () => (await teammate.last(1)).returned_turns === 1);
-
-    const last = await teammate.last(1);
+    const sessionId = teammate.current().session_id;
+    const last = await agentRuntimeProviders
+      .resolve(EXTERNAL_RUNTIME_REF)
+      .readTranscript(
+        { turns: 1, includeTools: true },
+        {
+          checkpoint: sessionId === null ? null : { id: sessionId },
+          config: config.agents['external-agent']!.config,
+          cwd: workspace,
+          outputBudgetBytes: 262_144,
+        },
+      );
     expect(last.turns).toMatchObject([
       {
-        settle_status: 'completed',
-        assistant: 'settled-by-generic-loader: exercise neutral runtime seam',
+        blocks: [
+          {
+            kind: 'message',
+            role: 'assistant',
+            text: 'settled-by-generic-loader: exercise neutral runtime seam',
+          },
+        ],
       },
     ]);
 

@@ -22,7 +22,6 @@ import {
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import {
   dreamuxRoot,
-  dispatcherAgentTurnsPath,
   dispatcherChannelBindingsPath,
   dispatcherCollaborationSpacesPath,
   isRealPathUnderDreamuxRoot,
@@ -274,7 +273,7 @@ describe('dispatcher workspace cwd contract (issue #182 PR-4)', () => {
       await server.shutdown();
     });
 
-    it('rejects a legacy Turn archive before starting a disabled dispatcher runtime', async () => {
+    it('ignores inert Turn archive residue for a disabled dispatcher', async () => {
       const config = testDreamuxConfig([
         testDispatcherConfig({
           id: 'flow',
@@ -282,12 +281,15 @@ describe('dispatcher workspace cwd contract (issue #182 PR-4)', () => {
           enabled: false,
         }),
       ]);
-      const archive = dispatcherAgentTurnsPath({
-        dispatcherId: 'flow',
-        name: 'reviewer',
-        teamId: null,
-        role: 'teammate',
-      });
+      const archive = join(
+        process.env['HOME']!,
+        '.dreamux',
+        'state',
+        'flow',
+        'teammate',
+        'reviewer',
+        'turn.jsonl',
+      );
       await mkdir(dirname(archive), { recursive: true });
       writeFileSync(
         archive,
@@ -302,9 +304,8 @@ describe('dispatcher workspace cwd contract (issue #182 PR-4)', () => {
         agentRuntimeProviderCatalog: codexAgentRuntimeCatalog(),
       });
 
-      await expect(server.start()).rejects.toThrow(
-        /incompatible local state[\s\S]*legacy v1 Turn archive[\s\S]*Rebuild:/,
-      );
+      await expect(server.start()).resolves.toBeUndefined();
+      expect(readFileSync(archive, 'utf8')).toContain('"turn_id":"old"');
       await server.shutdown();
     });
   });

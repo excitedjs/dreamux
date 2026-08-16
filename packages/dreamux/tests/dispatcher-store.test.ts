@@ -124,10 +124,9 @@ describe('dispatcher root identity authority', () => {
     });
     await identities.update(first, {
       sessionId: 'session-a',
+      transcriptLocator: '/native/session-a.jsonl',
       status: 'running',
       lastError: 'provider detail',
-      turnCount: 3,
-      lastPromptPreview: 'last prompt',
     });
 
     const ensured = await ensureDispatcherIdentity(identities, {
@@ -145,10 +144,9 @@ describe('dispatcher root identity authority', () => {
       team_id: null,
       agent_runtime: 'agent-a',
       session_id: 'session-a',
+      transcript_locator: '/native/session-a.jsonl',
       status: 'running',
       last_error: 'provider detail',
-      turn_count: 3,
-      last_prompt_preview: 'last prompt',
     });
     await expect(identities.dispatcherIdentity('flow')).resolves.toMatchObject({
       role: 'dispatcher',

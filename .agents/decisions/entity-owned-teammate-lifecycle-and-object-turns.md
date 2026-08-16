@@ -30,7 +30,7 @@ durable TeamMate lifecycle converged.
 ## Decision
 
 `TeammateService` is the sole owner of one TeamMate's mutation admission, lock,
-runtime authority, in-process Turn objects, terminal persistence, close
+runtime authority, in-process Turn objects, terminal outcome/delivery, close
 single-flight, and committed retirement fact.
 
 - `TeammateService.lock()` returns one restricted handle. Workflow holds that
@@ -51,15 +51,19 @@ provider and one `Turn` object owned by the entity.
 
 - Folds return the exact same object. Workflow retains the object directly.
 - The first terminal outcome is snapshotted and wins one object-owned latch.
-- Terminal persistence writes one strict version-2 `turn.jsonl` row. Public,
-  service, Workflow, Channel, and persisted contracts carry no Turn id merely
-  to reconstruct an in-process relationship.
+- Dreamux persists no Turn archive or rolling conversation projection. Public,
+  service, Workflow, Channel, and identity contracts carry no Turn id merely to
+  reconstruct an in-process relationship.
 - Completion delivery is a closure captured by the initiating action. It runs
-  after terminal persistence through one stateless, deadline-bounded policy.
+  after the outcome latch wins through one stateless, deadline-bounded policy.
   Only provider-proven pre-admission failure may retry; ambiguous or
   post-admission failure is terminal.
 - Provider-native ids remain private implementation details inside provider
   packages.
+- The selected runtime checkpoint persists the provider-native session id plus
+  an optional opaque transcript locator. `last` delegates a bounded cold read to
+  the selected provider without materializing an entity, starting a runtime, or
+  storing transcript content/cursors in Dreamux.
 
 The neutral runtime contract therefore distinguishes `failed` from `ambiguous`
 admission and requires `AgentRuntime.stop()` to fence new input synchronously and
@@ -77,12 +81,21 @@ later return a newly accepted `RuntimeTurn`.
 - Cold-cache shutdown is intentionally allowed to perform canonical
   materialization before close. Collection materialization is a query/factory
   capability; lifecycle callers still issue entity commands.
-- `turn.jsonl` version 2 is an incompatible persisted format. Legacy archives
-  fail loudly with the release's rebuild instruction. Complete malformed rows
-  are never repaired or truncated; only a demonstrably incomplete final JSON
-  fragment may be discarded before append.
+- Existing per-entity `turn.jsonl` files are inert residue from an older
+  implementation. Dreamux never creates, opens, stats, lists, validates,
+  repairs, migrates, warns about, or automatically deletes them; their
+  condition cannot block startup, reads, lifecycle operations, Workflow, Team
+  dissolve, or shutdown.
+- `identity.json` remains identity/lifecycle/runtime-session state and contains
+  no `turn_count`, `last_seen_at`, or prompt/assistant previews. Existing copies
+  of those keys are ignored and disappear on a later ordinary rewrite.
+- Direct TeamMate `spawn` and `send` receipts expose the validated native
+  transcript path when a runtime session association exists. Other public
+  surfaces, logs, and events do not. `last` returns provider-neutral bounded
+  message/tool blocks and opaque pagination cursors from the native transcript.
 - External Agent Runtime providers must implement object Turns, conservative
-  admission classification, and stop-time admission convergence.
+  admission classification, stop-time admission convergence, and the neutral
+  cold transcript read contract.
 - Architecture gates prohibit the removed ownership verbs, service/public Turn
   ids, Channel Turn events, reverse lookup registries, and runtime-only shutdown
   paths.

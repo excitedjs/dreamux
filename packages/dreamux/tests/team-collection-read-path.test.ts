@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
@@ -22,7 +28,6 @@ import {
   type AgentIdentityCreateInput,
   type AgentIdentityUpdateInput,
 } from '../src/service/agent-entity/identity-store.js';
-import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
 import type { AgentEntityIdentity } from '../src/service/agent-entity/types.js';
 import { TeammateCollection } from '../src/service/teammate-collection/index.js';
 import { TeammateService } from '../src/service/teammate-service/index.js';
@@ -137,7 +142,6 @@ describe('TeamCollection read path (issue #233 R4)', () => {
       }),
     ]);
     const log = noopLog();
-    const turnsStore = new AgentTurnsStore();
     const agentSuffixes = ['aaaa', 'bbbbbbbb'];
     const teams = new TeamCollection({
       dispatcherId: 'dispatcher-a',
@@ -145,7 +149,6 @@ describe('TeamCollection read path (issue #233 R4)', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore,
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -177,20 +180,12 @@ describe('TeamCollection read path (issue #233 R4)', () => {
       expect((await team.teammates.last(spawn.teammate.name)).returned_turns)
         .toBe(1);
     });
-    const memberTurns = [];
-    for await (const row of turnsStore.stream({
-      dispatcherId: 'dispatcher-a',
-      name: spawn.teammate.name,
-      teamId: team.id,
-      role: 'team_member',
-    })) {
-      memberTurns.push(row);
-    }
-    expect(memberTurns).toContainEqual(
+    const last = await team.teammates.last(spawn.teammate.name);
+    expect(last.turns[0]?.blocks).toContainEqual(
       expect.objectContaining({
-        type: 'terminal',
-        turn_origin: 'team_leader',
-        prompt_preview: 'do the work',
+        kind: 'message',
+        role: 'user',
+        text: 'do the work',
       }),
     );
 
@@ -233,7 +228,6 @@ describe('TeamCollection read path (issue #233 R4)', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -300,7 +294,6 @@ describe('entity-owned TeamMate lock lifecycle', () => {
       }, options.contexts),
       worktrees: new WorktreeManager(),
       identities: options.identities ?? new AgentIdentityStore(noopLog()),
-      turnsStore: new AgentTurnsStore(),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       suffixGenerator: () => 'a1b2',
@@ -356,6 +349,100 @@ describe('entity-owned TeamMate lock lifecycle', () => {
     expect(() =>
       handle.submit({ prompt: 'late', turnOrigin: 'dispatcher' }),
     ).toThrow(/stale TeamMate lock/u);
+  });
+
+  it('cold-reads last after eviction without materializing a Runtime or writing identity', async () => {
+    const runtimes: FakeRuntime[] = [];
+    const teammates = collection(runtimes, true);
+    const spawned = await teammates.spawn({
+      name: 'reviewer',
+      prompt: 'cold history',
+      intent: 'verify cold read',
+      agentRuntime: 'agent-a',
+    });
+    await teammates.close({
+      name: spawned.teammate.name,
+      note: 'evict before cold read',
+    });
+    await vi.waitFor(() => {
+      expect(teammates.materializedEntities()).toHaveLength(0);
+    });
+    const identityPath = dispatcherAgentIdentityPath({
+      dispatcherId: 'dispatcher-a',
+      name: spawned.teammate.name,
+      teamId: null,
+      role: 'teammate',
+    });
+    const identityBefore = readFileSync(identityPath, 'utf8');
+    const runtimeCount = runtimes.length;
+
+    await expect(teammates.last(spawned.teammate.name)).resolves.toMatchObject({
+      returned_turns: 1,
+    });
+
+    expect(runtimes).toHaveLength(runtimeCount);
+    expect(teammates.materializedEntities()).toHaveLength(0);
+    expect(readFileSync(identityPath, 'utf8')).toBe(identityBefore);
+  });
+
+  it('filters wrong-role and wrong-team identities from a dispatcher roster', async () => {
+    const runtimes: FakeRuntime[] = [];
+    const identities = new AgentIdentityStore(noopLog());
+    const teammates = collection(runtimes, false, { identities });
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const valid = await identities.create({
+      dispatcherId: 'dispatcher-a',
+      name: 'valid-worker',
+      role: 'teammate',
+      teamId: null,
+      agentRuntime: 'agent-a',
+      sourceCwd: workspace,
+      sourceRepo: null,
+      cwd: workspace,
+      runtimeCwd: workspace,
+      worktree: {
+        mode: 'reuse-cwd',
+        slug: null,
+        path: workspace,
+        branch: null,
+        base_ref: null,
+        cleanup: 'keep',
+        cleanup_state: 'not-managed',
+        cleanup_error: null,
+      },
+      intent: 'valid',
+      status: 'closed',
+    });
+    for (const pollution of [
+      { name: 'wrong-role', role: 'team_member', team_id: null },
+      { name: 'wrong-team', role: 'teammate', team_id: 'other-team' },
+    ] as const) {
+      const path = dispatcherAgentIdentityPath({
+        dispatcherId: 'dispatcher-a',
+        name: pollution.name,
+        teamId: null,
+        role: 'teammate',
+      });
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(
+        path,
+        `${JSON.stringify({
+          ...valid,
+          ...pollution,
+          intent: 'must stay hidden',
+        })}\n`,
+      );
+    }
+
+    await expect(teammates.list()).resolves.toMatchObject([
+      { name: 'valid-worker' },
+    ]);
+    await expect(teammates.history({})).resolves.toMatchObject({
+      items: [{ name: 'valid-worker' }],
+    });
+    await expect(teammates.status('wrong-role')).rejects.toThrow(/does not exist/u);
+    await expect(teammates.status('wrong-team')).rejects.toThrow(/does not exist/u);
   });
 
   it('publishes one locked canonical entity across durable creation and joins cleanup', async () => {
@@ -506,7 +593,7 @@ describe('entity-owned TeamMate lock lifecycle', () => {
     if (admission.status !== 'submitted') throw new Error('expected submitted');
     await contexts[0]!.state!.setStatus('ready');
     runtimes[0]!.settle(0);
-    await admission.turn.persistence;
+    await admission.turn.settled;
     expect(entity.current().status).toBe('running');
 
     await expect(handle.close({ note: 'first attempt' })).rejects.toMatchObject({
@@ -602,7 +689,7 @@ describe('entity-owned TeamMate lock lifecycle', () => {
     await vi.waitFor(async () => {
       expect((await teammates.last(spawned.teammate.name, 3)).returned_turns)
         .toBe(2);
-      expect(entity.current().turn_count).toBe(2);
+      expect(runtimes[0]!.transcriptTurns).toHaveLength(2);
     });
 
     const handle = entity.lock();
@@ -620,7 +707,7 @@ describe('entity-owned TeamMate lock lifecycle', () => {
       }),
     ).resolves.toMatchObject({ status: 'submitted' });
     await vi.waitFor(() => {
-      expect(entity.current().turn_count).toBe(3);
+      expect(runtimes[0]!.transcriptTurns).toHaveLength(3);
     });
   });
 
@@ -730,7 +817,6 @@ describe('TeamCollection route readiness recovery', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities,
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -781,7 +867,6 @@ describe('TeamCollection route readiness recovery', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -866,7 +951,6 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -917,7 +1001,6 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       }),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -958,7 +1041,6 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -993,7 +1075,6 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities,
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -1057,7 +1138,6 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities,
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -1115,7 +1195,6 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({
         dispatcherId: 'dispatcher-a',
         log,
@@ -1164,7 +1243,6 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities,
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -1219,7 +1297,6 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -1286,7 +1363,6 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       }),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -1348,7 +1424,6 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
       }),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({
         dispatcherId: 'dispatcher-a',
         log,
@@ -1421,7 +1496,6 @@ describe('TeamCollection identity prompt launch behavior', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes, {}, contexts),
       worktrees: new WorktreeManager(),
       identities,
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -1496,7 +1570,6 @@ describe('TeamCollection identity prompt launch behavior', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -1536,7 +1609,7 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it('submits to the TeamLeader, records dispatcher turn_origin, and returns the public response shape', async () => {
+  it('submits to the TeamLeader and returns the public response shape', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
     const runtimes: FakeRuntime[] = [];
@@ -1549,14 +1622,12 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       }),
     ]);
     const log = noopLog();
-    const turnsStore = new AgentTurnsStore();
     const teams = new TeamCollection({
       dispatcherId: 'dispatcher-a',
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore,
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -1592,27 +1663,9 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
     expect(runtimes).toHaveLength(1);
     expect(runtimes[0]!.submitted.map((input) => input.text)).toEqual(['follow up']);
 
-    const team = await teams.get('alpha');
     runtimes[0]!.settle(0);
-    await vi.waitFor(async () => {
-      expect((await team.leader.last()).returned_turns).toBe(1);
-    });
-    const identity = team.leader.current();
-    const rows = [];
-    for await (const row of turnsStore.stream({
-      dispatcherId: identity.dispatcher_id,
-      name: identity.name,
-      teamId: identity.team_id,
-      role: identity.role,
-    })) {
-      rows.push(row);
-    }
-    expect(rows).toContainEqual(
-      expect.objectContaining({
-        type: 'terminal',
-        turn_origin: 'dispatcher',
-        prompt_preview: 'follow up',
-      }),
+    await vi.waitFor(() =>
+      expect(runtimes[0]!.transcriptTurns).toHaveLength(1),
     );
 
     await teams.stopAll();
@@ -1635,7 +1688,6 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       dispatcherId: 'dispatcher-a',
       log,
     });
-    const turnsStore = new AgentTurnsStore();
     const teams = new TeamCollection({
       dispatcherId: 'dispatcher-a',
       config,
@@ -1644,7 +1696,6 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       }),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore,
       completionDelivery,
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -1697,7 +1748,6 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -1762,7 +1812,6 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -1849,7 +1898,6 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
         agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
         worktrees: new WorktreeManager(),
         identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
         initiatorFor: async () => null,
         isShuttingDown: () => false,
@@ -2033,7 +2081,6 @@ describe('TeamCollection TeamLeader lifecycle and dispatcher send', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees,
       identities,
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -2169,7 +2216,6 @@ describe('closing a team member must not remove the shared team worktree', () =>
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
@@ -2266,7 +2312,6 @@ describe('team dissolve syncs cleanup_state to the leader and members (#237)', (
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log),
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({ dispatcherId: 'dispatcher-a', log }),
       initiatorFor: async () => null,
       isShuttingDown: () => false,

@@ -22,7 +22,8 @@ Also ask:
 
 Current callback seams in the codebase:
 
-- `initiatorFor` — `DispatcherService` → `CompletionRouter` (delivery target resolution)
+- `initiatorFor` — `DispatcherService` → Team/Teammate construction
+  (delivery-target resolution before an initiating action captures its closure)
 - `leaderChannelDescriptors` — `DispatcherService` → `TeamCollection` → `TeamService` → `buildLeader()` (channel MCP descriptor provisioning)
 - `getRuntime` + `submitScheduled` — container → `SchedulerService` (runtime access and scheduled input submission)
 

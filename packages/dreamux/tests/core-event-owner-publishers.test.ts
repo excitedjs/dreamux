@@ -12,9 +12,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { resetRuntimeConfig } from '../src/platform/paths.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
-import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
 import { DispatcherCoreEventBus } from '../src/service/dispatcher-core-events/index.js';
 import { TeamStore } from '../src/service/team-collection/store.js';
+import { EntityTurn } from '../src/service/teammate-service/turn-recording.js';
+import { controllableRuntimeTurn } from './helpers/runtime-turn.js';
 
 function noopLogger(): DreamuxLogger {
   const log = {
@@ -95,7 +96,7 @@ describe('core event owner publishers', () => {
       worktree: worktree(root),
       status: 'starting',
     });
-    leader = await identities.update(leader, { lastSeenAt: 9 });
+    leader = await identities.update(leader, { intent: 'updated leader intent' });
     await identities.update(leader, { status: 'running' });
 
     expect(events).toEqual([
@@ -114,7 +115,7 @@ describe('core event owner publishers', () => {
     lease.revoke();
   });
 
-  it('persists terminal Turn rows without publishing Channel Turn events', async () => {
+  it('settles an entity Turn without publishing Channel Turn events', async () => {
     const log = noopLogger();
     const bus = new DispatcherCoreEventBus({
       dispatcherId: 'dispatcher-a',
@@ -128,57 +129,50 @@ describe('core event owner publishers', () => {
     lease.source.on('binding.route', (event) => { events.push(event); });
     lease.source.on('binding.collaboration_space', (event) => { events.push(event); });
 
-    const turns = new AgentTurnsStore();
-    const row = await turns.appendTerminal(
-      {
-        dispatcherId: 'dispatcher-a',
-        name: 'member-a',
-        teamId: 'team-a',
-        role: 'team_member',
-      },
-      {
-        submittedAt: 1,
-        settledAt: 2,
-        turnOrigin: 'channel',
-        prompt: 'private prompt',
-        intent: null,
-        settleStatus: 'completed',
-        assistant: 'private assistant',
-      },
+    const runtime = controllableRuntimeTurn();
+    const turn = new EntityTurn(
+      runtime.turn,
+      'channel',
+      'private prompt',
+      null,
+      1,
+      'member-a',
+      null,
     );
+    runtime.settle({
+      status: 'completed',
+      resultText: 'private assistant',
+      truncated: false,
+    });
 
-    expect(row).toMatchObject({ version: 2, type: 'terminal' });
+    await expect(turn.settled).resolves.toMatchObject({ status: 'completed' });
     expect(events).toEqual([]);
     lease.revoke();
   });
 
-  it('rejects an archive append failure and publishes no substitute fact', async () => {
+  it('settles without consulting an unusable Dreamux home', async () => {
     const blockedHome = join(root, 'blocked-home');
     writeFileSync(blockedHome, 'not a directory');
     process.env['HOME'] = blockedHome;
     process.env['DREAMUX_ROOT'] = blockedHome;
     resetRuntimeConfig();
 
-    const turns = new AgentTurnsStore();
-    await expect(
-      turns.appendTerminal(
-        {
-          dispatcherId: 'dispatcher-a',
-          name: 'member-a',
-          teamId: 'team-a',
-          role: 'team_member',
-        },
-        {
-          submittedAt: 1,
-          settledAt: 2,
-          turnOrigin: 'channel',
-          prompt: 'private prompt',
-          intent: null,
-          settleStatus: 'failed',
-          assistant: null,
-        },
-      ),
-    ).rejects.toThrow();
+    const runtime = controllableRuntimeTurn();
+    const turn = new EntityTurn(
+      runtime.turn,
+      'channel',
+      'private prompt',
+      null,
+      1,
+      'member-a',
+      null,
+    );
+    runtime.settle({ status: 'failed', error: new Error('provider failed') });
+
+    await expect(turn.settled).resolves.toMatchObject({
+      status: 'failed',
+      error: expect.objectContaining({ message: 'provider failed' }),
+    });
   });
 });
 

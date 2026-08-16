@@ -6,25 +6,25 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import type { AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
 
 import {
-  adapterExists,
-  skillAdapterKey,
+  skillAdapterManifest,
   skillDirsInRoot,
   uniqueSkillSources,
+  validateSkillAdapter,
 } from './skill-adapter.js';
 
 /** Atomically materialize the Claude-compatible view of role-gated skills. */
 export async function materializeClaudeSkillAddDir(
   skillAddDirRoot: string,
   sources: readonly AgentRuntimeSkillSource[],
+  testHooks: { beforePublish?: () => void | Promise<void> } = {},
 ): Promise<void> {
   if (sources.length === 0) return;
-  const manifest = join(skillAddDirRoot, '.dreamux-skill-adapter.json');
-  if (await adapterExists(manifest)) return;
+  if (await validateSkillAdapter(skillAddDirRoot, sources)) return;
   const tmpRoot = `${skillAddDirRoot}.${randomUUID()}.tmp`;
   const tmpSkillsRoot = join(tmpRoot, '.claude', 'skills');
   try {
@@ -46,22 +46,17 @@ export async function materializeClaudeSkillAddDir(
     }
     await writeFile(
       join(tmpRoot, '.dreamux-skill-adapter.json'),
-      `${JSON.stringify({
-        version: 1,
-        key: skillAdapterKey(sources),
-        sources: uniqueSkillSources(sources).map((source) => ({
-          name: source.name,
-          path: resolve(source.path),
-        })),
-      }, null, 2)}\n`,
+      `${JSON.stringify(skillAdapterManifest(sources), null, 2)}\n`,
       { mode: 0o600 },
     );
     await mkdir(dirname(skillAddDirRoot), { recursive: true });
+    await testHooks.beforePublish?.();
     await rename(tmpRoot, skillAddDirRoot);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'EEXIST' || code === 'ENOTEMPTY') {
       await rm(tmpRoot, { recursive: true, force: true }).catch(() => undefined);
-      return;
+      if (await validateSkillAdapter(skillAddDirRoot, sources)) return;
     }
     await rm(tmpRoot, { recursive: true, force: true }).catch(() => undefined);
     throw err;

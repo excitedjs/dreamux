@@ -17,8 +17,8 @@
  *         chat-bots.json
  *         channel-bindings.json
  *         collaboration-spaces.json
- *         teammate/<name>/    dispatcher-owned teammates: {identity.json, turn.jsonl}
- *         team/<team>/        one dir per team: leader {identity.json, turn.jsonl},
+ *         teammate/<name>/    dispatcher-owned teammate identity
+ *         team/<team>/        one dir per team: leader identity,
  *                             record.json, teammate/<name>/ members
  *     logs/
  *       dreamux-server.log
@@ -327,7 +327,7 @@ export function dispatcherTeamDir(id: string): string {
 
 /**
  * One team's root directory (issue #233 symmetric layout). Holds the team
- * leader's `{identity.json, turn.jsonl}` pair at its root, the team `record.json`,
+ * leader's `identity.json` at its root, the team `record.json`,
  * and a `teammate/` sub-collection of the team's members.
  */
 export function dispatcherTeamScopeDir(id: string, teamId: string): string {
@@ -414,7 +414,7 @@ export type AgentEntityRole =
  * `teammate.*` read chokepoints never enumerate it (issue #233 Phase 5). A
  * `team_leader` lives at its team root; a `team_member` under that team's
  * `teammate/<name>/`; an ordinary `teammate` under the dispatcher's
- * `teammate/<name>/`. Every entity directory holds `identity.json` + `turn.jsonl`.
+ * `teammate/<name>/`. Every entity directory holds `identity.json`.
  */
 export function dispatcherAgentEntityDir(input: {
   dispatcherId: string;
@@ -440,7 +440,7 @@ export function dispatcherAgentEntityDir(input: {
   );
 }
 
-/** `<entity-dir>/identity.json` — identity plus the rolling recovery summary. */
+/** `<entity-dir>/identity.json` — durable identity and runtime association. */
 export function dispatcherAgentIdentityPath(input: {
   dispatcherId: string;
   name: string;
@@ -448,16 +448,6 @@ export function dispatcherAgentIdentityPath(input: {
   role: AgentEntityRole;
 }): string {
   return join(dispatcherAgentEntityDir(input), 'identity.json');
-}
-
-/** `<entity-dir>/turn.jsonl` — the per-entity append-only turns archive. */
-export function dispatcherAgentTurnsPath(input: {
-  dispatcherId: string;
-  name: string;
-  teamId: string | null;
-  role: AgentEntityRole;
-}): string {
-  return join(dispatcherAgentEntityDir(input), 'turn.jsonl');
 }
 
 export function dispatcherChannelBindingsPath(id: string): string {

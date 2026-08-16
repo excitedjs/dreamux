@@ -17,7 +17,6 @@ import { CollaborationSpaceStore } from '../src/service/collaboration-space/stor
 import { TeamCollection } from '../src/service/team-collection/index.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
-import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
 import { CompletionDeliveryPolicy } from '../src/service/completion-router/index.js';
 import { resetRuntimeConfig } from '../src/platform/paths.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
@@ -106,7 +105,6 @@ describe('collaboration target per-target repo close cleanup', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(),
       worktrees: new WorktreeManager(),
       identities: new AgentIdentityStore(log as never),
-      turnsStore: new AgentTurnsStore(),
       completionDelivery: new CompletionDeliveryPolicy({
         dispatcherId: 'flow',
         log: log as never,

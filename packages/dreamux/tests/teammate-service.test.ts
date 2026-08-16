@@ -7,7 +7,6 @@ import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
   AgentRuntimeCreateContext,
-  AgentRuntimeLastResult,
   AgentRuntimeProvider,
   AgentRuntimeStatus,
   AgentRuntimeTextInput,
@@ -24,13 +23,7 @@ import {
 
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
-import {
-  AgentTurnsStore,
-  type AgentTerminalTurnInput,
-  type AgentTurnsScope,
-} from '../src/service/agent-entity/turns-store.js';
 import type { AgentEntityWorktreeIdentity } from '../src/service/agent-entity/types.js';
-import { dispatcherAgentTurnsPath } from '../src/platform/paths.js';
 import { createTeamLeaderAgent } from '../src/service/team-service/leader-agent.js';
 import { CompletionDeliveryPolicy } from '../src/service/completion-router/index.js';
 import type { TeammateService } from '../src/service/teammate-service/index.js';
@@ -84,10 +77,6 @@ class FakeRuntime implements AgentRuntime {
 
   wasCheckpointResumed(): boolean {
     return false;
-  }
-
-  async getLast(): Promise<AgentRuntimeLastResult> {
-    return { text: 'fake last' };
   }
 
   async getContext(): Promise<null> {
@@ -173,20 +162,6 @@ class DeferredAdmissionRuntime extends FakeRuntime {
   }
 }
 
-class RetryableTurnsStore extends AgentTurnsStore {
-  allowAppend = false;
-  attempts = 0;
-
-  override async appendTerminal(
-    scope: AgentTurnsScope,
-    input: AgentTerminalTurnInput,
-  ) {
-    this.attempts += 1;
-    if (!this.allowAppend) throw new Error('archive unavailable');
-    return super.appendTerminal(scope, input);
-  }
-}
-
 function fakeRuntimeCatalog(
   runtimes: FakeRuntime[],
   contexts: AgentRuntimeCreateContext[] = [],
@@ -200,6 +175,28 @@ function fakeRuntimeCatalog(
       ref: { source: 'builtin', id: 'test-runtime', raw: FAKE_RUNTIME_REF },
     },
     getCapabilities: () => CAPABILITIES,
+    async readTranscript(query) {
+      return {
+        turns: runtimes
+          .flatMap((runtime) =>
+            runtime.textSubmitted.map((input) => ({
+              startedAt: null,
+              endedAt: null,
+              blocks: [
+                {
+                  kind: 'message' as const,
+                  role: 'user' as const,
+                  text: input.text,
+                  truncated: false,
+                },
+              ],
+            })),
+          )
+          .slice(-query.turns),
+        nextCursor: null,
+        truncated: false,
+      };
+    },
     createRuntime(context: AgentRuntimeCreateContext) {
       const runtime = createRuntime();
       contexts.push(context);
@@ -254,11 +251,9 @@ async function createTestTeamLeader(input: {
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   identity?: string;
   start?: boolean;
-  turnsStore?: AgentTurnsStore;
 }): Promise<TeammateService> {
   const log = noopLog();
   const identities = new AgentIdentityStore(log);
-  const turnsStore = input.turnsStore ?? new AgentTurnsStore();
   const identity = await identities.create({
     dispatcherId: input.dispatcherId,
     name: input.name,
@@ -289,7 +284,6 @@ async function createTestTeamLeader(input: {
     config: input.config,
     agentRuntimeProviders: input.agentRuntimeProviders,
     identities,
-    turnsStore,
     worktrees: new WorktreeManager(),
     log,
   });
@@ -711,18 +705,11 @@ describe('TeammateService channel input routing', () => {
 
     runtime.settle({ status: 'completed', resultText: 'done', truncated: false });
     await firstAdmission.turn.delivery;
-    expect(leader.current().turn_count).toBe(1);
-    const archive = dispatcherAgentTurnsPath({
-      dispatcherId: 'dispatcher-a',
-      name: 'tl-alpha-0001',
-      teamId: 'alpha',
-      role: 'team_leader',
-    });
-    expect(readFileSync(archive, 'utf8').trimEnd().split('\n')).toHaveLength(1);
     expect(firstDelivery).toHaveBeenCalledTimes(1);
     expect(secondDelivery).not.toHaveBeenCalled();
-    await expect(leader.last(1)).resolves.toMatchObject({
-      turns: [{ prompt_preview: 'first prompt', settle_status: 'completed' }],
+    await expect(firstAdmission.turn.settled).resolves.toMatchObject({
+      status: 'completed',
+      resultText: 'done',
     });
   });
 
@@ -818,7 +805,6 @@ describe('TeammateService channel input routing', () => {
     await expect(admission.turn.settled).resolves.toEqual({ status: 'stopped' });
     const closed = await closing;
     expect(closed.teammate.status).toBe('closed');
-    expect(leader.current().turn_count).toBe(1);
   });
 
   it('records no Turn when close wins before runtime admission', async () => {
@@ -866,22 +852,25 @@ describe('TeammateService channel input routing', () => {
     await expect(closing).resolves.toMatchObject({
       teammate: { status: 'closed' },
     });
-    expect(leader.current().turn_count).toBe(0);
-    await expect(leader.last(1)).resolves.toMatchObject({
-      returned_turns: 0,
-      turns: [],
-    });
     expect(delivery).not.toHaveBeenCalled();
   });
 
-  it('keeps close retryable when terminal append has not committed', async () => {
+  it('ignores inert Turn archive residue during settlement and close', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
     const runtimes: FakeRuntime[] = [];
-    const contexts: AgentRuntimeCreateContext[] = [];
     const created: DeferredAdmissionRuntime[] = [];
-    const turnsStore = new RetryableTurnsStore();
     const delivery = vi.fn(async () => undefined);
+    const residue = join(
+      process.env['HOME']!,
+      '.dreamux',
+      'state',
+      'dispatcher-a',
+      'team',
+      'alpha',
+      'turn.jsonl',
+    );
+    mkdirSync(residue, { recursive: true });
     const config = testDreamuxConfig([
       testDispatcherConfig({
         id: 'dispatcher-a',
@@ -897,15 +886,13 @@ describe('TeammateService channel input routing', () => {
       agentRuntime: 'agent-a',
       workspace,
       config,
-      turnsStore,
-      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, contexts, () => {
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, [], () => {
         const runtime = new DeferredAdmissionRuntime();
         created.push(runtime);
         return runtime;
       }),
     });
     const runtime = created[0]!;
-    await contexts[0]!.state!.setStatus('ready');
     const closedFacts: unknown[] = [];
     const subscription = leader.onClosed((fact) => {
       closedFacts.push(fact);
@@ -919,90 +906,19 @@ describe('TeammateService channel input routing', () => {
     const admission = await admitted;
     if (admission.status !== 'submitted') throw new Error('expected submitted admission');
     runtime.settle({ status: 'completed', resultText: 'done', truncated: false });
-    await waitFor(() => turnsStore.attempts > 0);
+    await expect(admission.turn.settled).resolves.toMatchObject({
+      status: 'completed',
+      resultText: 'done',
+    });
+    await expect(admission.turn.delivery).resolves.toBeUndefined();
+    expect(delivery).toHaveBeenCalledTimes(1);
 
-    await expect(admission.turn.settled).rejects.toThrow(/archive unavailable/u);
-    expect(leader.current()).toMatchObject({
-      status: 'running',
-      turn_count: 0,
-      closed_at: null,
-      close_note: null,
-    });
-    expect(leader.status()).toMatchObject({
-      status: 'degraded',
-      runtime_status: 'ready',
-      closed_at: null,
-      close_note: null,
-    });
-    await expect(leader.last(1)).resolves.toMatchObject({
-      teammate: {
-        status: 'degraded',
-        runtime_status: 'ready',
-        closed_at: null,
-      },
-      returned_turns: 0,
-      turns: [],
-    });
-    await expect(leader.send({
-      prompt: 'must remain fenced behind failed persistence',
-      turnOrigin: 'dispatcher',
-    })).rejects.toThrow(/cannot accept send/u);
-    expect(runtime.textSubmitted).toHaveLength(1);
-    expect(runtime.stopCount).toBe(0);
-    expect(delivery).not.toHaveBeenCalled();
-    expect(closedFacts).toEqual([]);
-
-    await expect(leader.close({ note: 'first attempt' })).rejects.toMatchObject({
-      runtime_terminated: true,
-    });
-    expect(leader.current()).toMatchObject({
-      status: 'running',
-      closed_at: null,
-      close_note: null,
-    });
-    expect(leader.status()).toMatchObject({
-      status: 'stopped',
-      runtime_status: null,
-      closed_at: null,
-      close_note: null,
-    });
-    await expect(leader.last(1)).resolves.toMatchObject({
-      teammate: {
-        status: 'stopped',
-        runtime_status: null,
-        closed_at: null,
-      },
-    });
-    expect(leader.runtimeStatus()).toBeNull();
-    expect(leader.isRetired()).toBe(false);
-    expect(runtime.stopCount).toBe(1);
-    await Promise.resolve();
-    expect(closedFacts).toEqual([]);
-    expect(delivery).not.toHaveBeenCalled();
-
-    turnsStore.allowAppend = true;
-    await expect(leader.close({ note: 'retry' })).resolves.toMatchObject({
+    await expect(leader.close({ note: 'complete' })).resolves.toMatchObject({
       teammate: { status: 'closed' },
     });
-    expect(leader.current().turn_count).toBe(1);
     expect(leader.current().status).toBe('closed');
     expect(runtime.stopCount).toBe(1);
-    expect(turnsStore.attempts).toBe(3);
-    await expect(admission.turn.persistence).resolves.toBeUndefined();
-    await expect(admission.turn.settled).rejects.toThrow(/archive unavailable/u);
-    const archive = dispatcherAgentTurnsPath({
-      dispatcherId: 'dispatcher-a',
-      name: 'tl-alpha-0001',
-      teamId: 'alpha',
-      role: 'team_leader',
-    });
-    const rows = readFileSync(archive, 'utf8').trimEnd().split('\n');
-    expect(rows).toHaveLength(1);
-    expect(JSON.parse(rows[0]!)).toMatchObject({
-      settle_status: 'completed',
-      assistant: 'done',
-    });
-    expect(delivery).toHaveBeenCalledTimes(1);
+    expect(() => readFileSync(residue, 'utf8')).toThrow();
     await vi.waitFor(() => expect(closedFacts).toHaveLength(1));
     subscription.unsubscribe();
   });
@@ -1077,7 +993,6 @@ describe('TeammateService channel input routing', () => {
     expect(runtime.textSubmitted).toEqual([]);
     expect(runtimes).toHaveLength(1);
     expect(leader.status()).toMatchObject({ name: 'tl-alpha-0001' });
-    await expect(leader.last(1)).resolves.toMatchObject({ returned_turns: 0 });
     await expect(leader.waitIdle()).resolves.toBeUndefined();
     expect(leader.runtimeStatus()).toBe('ready');
     expect(leader.checkpointId()).toBe('thread-fake');
@@ -1124,11 +1039,14 @@ describe('TeammateService channel input routing', () => {
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
     });
-    let expectedTurnCount = 0;
+    const runtime = runtimes[0]!;
+    let expectedSubmissionCount = 0;
     const waitForTurn = async (): Promise<void> => {
-      expectedTurnCount += 1;
+      expectedSubmissionCount += 1;
       await vi.waitFor(() => {
-        expect(leader.current().turn_count).toBe(expectedTurnCount);
+        expect(runtime.submitted.length + runtime.textSubmitted.length).toBe(
+          expectedSubmissionCount,
+        );
       });
     };
     const assertLockLoses = (): void => {
@@ -1152,7 +1070,7 @@ describe('TeammateService channel input routing', () => {
     if (channelAdmission.status !== 'submitted') {
       throw new Error('expected submitted channel input');
     }
-    await channelAdmission.turn.persistence;
+    await channelAdmission.turn.settled;
     await waitForTurn();
 
     const scheduled = leader.scheduledInput({
@@ -1166,7 +1084,7 @@ describe('TeammateService channel input routing', () => {
     if (scheduledAdmission.status !== 'submitted') {
       throw new Error('expected submitted scheduled input');
     }
-    await scheduledAdmission.turn.persistence;
+    await scheduledAdmission.turn.settled;
     await waitForTurn();
 
     const control = leader.controlInput({
@@ -1178,7 +1096,7 @@ describe('TeammateService channel input routing', () => {
     if (controlAdmission.status !== 'submitted') {
       throw new Error('expected submitted control input');
     }
-    await controlAdmission.turn.persistence;
+    await controlAdmission.turn.settled;
     await waitForTurn();
 
     const preparing = leader.prepareCompletion({

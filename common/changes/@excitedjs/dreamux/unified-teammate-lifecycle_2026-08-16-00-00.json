@@ -2,7 +2,7 @@
   "changes": [
     {
       "packageName": "@excitedjs/dreamux",
-      "comment": "BREAKING: Agent turn.jsonl archives now require strict schema version 2 single-row terminal records without Turn IDs. TeamMate and Team prompt-submission MCP receipts no longer expose Turn objects or Turn IDs; they retain entity or Team projections plus top-level admission status, including admission-ambiguous failures that are never retried. Completion delivery is internally deadline-bounded, and workflow_stop now waits for terminal Agent, journal, record, lock, and delivery convergence. Rebuild: stop Dreamux, back up the affected dispatcher state, then delete every legacy turn.jsonl below ~/.dreamux/state/<dispatcher-id>/ before restarting. TeamMate identities and runtime checkpoints remain; historical Turn detail in those deleted archives is discarded.",
+      "comment": "BREAKING: Review: TeamMate last now reads provider-native transcripts with turns 1..50, opaque backward cursors, optional tool blocks, and a fixed 262144-byte budget; direct spawn/send receipts add nullable transcript_path, while history uses identity updated_at and no rolling conversation fields. Dreamux no longer creates or reads per-entity turn.jsonl archives, public Turn IDs are removed, ambiguous admission is never retried, completion delivery is deadline-bounded, and Workflow/Team/shutdown close waits for entity-owned Turn and delivery convergence. No rebuild is required: every existing Dreamux turn.jsonl is inert ignored residue, retired identity projection keys are accepted as unknown extras, and provider-native sessions are rediscovered when needed.",
       "type": "major"
     }
   ],

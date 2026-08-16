@@ -2,7 +2,6 @@ import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
   AgentRuntimeCreateContext,
-  AgentRuntimeLastResult,
   AgentRuntimeProvider,
   AgentRuntimeStatus,
   AgentRuntimeTextInput,
@@ -35,6 +34,16 @@ export class FakeRuntime implements AgentRuntime {
   private status: AgentRuntimeStatus = 'declared';
   private readonly queuedStopErrors: Error[] = [];
   private readonly turns: ControllableRuntimeTurn[] = [];
+  readonly transcriptTurns: Array<{
+    startedAt: number | null;
+    endedAt: number | null;
+    blocks: Array<{
+      kind: 'message';
+      role: 'user' | 'assistant';
+      text: string;
+      truncated: false;
+    }>;
+  }> = [];
 
   constructor(
     private readonly opts: {
@@ -62,6 +71,27 @@ export class FakeRuntime implements AgentRuntime {
           ? { status, error: new Error('fake Turn failed') }
           : { status },
     );
+    if (status === 'completed') {
+      const input = this.textSubmitted[index]?.text ?? this.submitted[index]?.text ?? '';
+      this.transcriptTurns.push({
+        startedAt: null,
+        endedAt: null,
+        blocks: [
+          {
+            kind: 'message',
+            role: 'user',
+            text: input,
+            truncated: false,
+          },
+          {
+            kind: 'message',
+            role: 'assistant',
+            text: this.opts.lastText ?? '',
+            truncated: false,
+          },
+        ],
+      });
+    }
   }
 
   async start(): Promise<void> {
@@ -126,10 +156,6 @@ export class FakeRuntime implements AgentRuntime {
     return false;
   }
 
-  async getLast(): Promise<AgentRuntimeLastResult> {
-    return { text: this.opts.lastText ?? 'fake last' };
-  }
-
   async getContext(): Promise<null> {
     return null;
   }
@@ -161,6 +187,12 @@ export function fakeRuntimeCatalog(
       ref: { source: 'builtin', id: 'test-runtime', raw: FAKE_RUNTIME_REF },
     },
     getCapabilities: () => CAPABILITIES,
+    async readTranscript(query) {
+      const turns = runtimes
+        .flatMap((runtime) => runtime.transcriptTurns)
+        .slice(-query.turns);
+      return { turns, nextCursor: null, truncated: false };
+    },
     createRuntime(context: AgentRuntimeCreateContext) {
       contexts.push(context);
       const runtime = opts.createRuntime?.() ?? new FakeRuntime(opts);

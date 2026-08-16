@@ -2,8 +2,8 @@
  * Fake codex app-server backed by an in-process `ws` WebSocket.Server.
  *
  * Implements the minimal JSON-RPC surface dreamux drives:
- *   - request:  thread/start  → { thread: { id } }
- *   - request:  thread/resume → { thread: { id: params.threadId } }
+ *   - request:  thread/start  → { thread: { id, path } }
+ *   - request:  thread/resume → { thread: { id: params.threadId, path } }
  *   - request:  turn/start    → { turn: { id } }, then async:
  *                                 item/completed (agentMessage)
  *                                 turn/completed
@@ -154,7 +154,12 @@ export async function startFakeCodex(opts: FakeCodexOptions = {}): Promise<FakeC
     if (method === 'thread/start') {
       threadStartParams.push({ ...params });
       const tid = `thread_fake_${nextThreadId++}`;
-      send(ws, { id, result: { thread: { id: tid } } });
+      send(ws, {
+        id,
+        result: {
+          thread: { id: tid, path: `/fake/codex/${tid}.jsonl` },
+        },
+      });
       return;
     }
     if (method === 'thread/resume') {
@@ -167,7 +172,12 @@ export async function startFakeCodex(opts: FakeCodexOptions = {}): Promise<FakeC
         return;
       }
       const tid = String(params['threadId'] ?? `thread_fake_${nextThreadId++}`);
-      send(ws, { id, result: { thread: { id: tid } } });
+      send(ws, {
+        id,
+        result: {
+          thread: { id: tid, path: `/fake/codex/${tid}.jsonl` },
+        },
+      });
       return;
     }
     if (method === 'thread/inject_items') {

@@ -110,6 +110,11 @@ export interface McpToolDefinition extends McpToolMetadata {
   handler: McpToolHandler;
   /** Optional operation-local text selected from the projected success value. */
   successText?: (result: McpToolResult) => string | undefined;
+  /**
+   * Fixed out-of-band diagnostic for failures whose upstream error may carry
+   * private provider or filesystem detail. Public output remains sanitized.
+   */
+  failureLogMessage?: string | ((error: unknown) => string | undefined);
 }
 
 export interface McpServerIdentity {
@@ -259,8 +264,9 @@ function buildMcpServer(
  * canonical value as structured content, adds only text selected by that
  * definition's optional success policy, formats an explicitly public tool
  * error as an `isError` result, and turns every other failure into a fixed
- * sanitized error after logging it in full out of band. It never exposes a raw
- * `Error.message` to the model.
+ * sanitized error after emitting either the tool's bounded diagnostic or the
+ * ordinary full out-of-band diagnostic. It never exposes a raw `Error.message`
+ * to the model.
  */
 async function executeTool(
   tool: McpToolDefinition,
@@ -281,7 +287,11 @@ async function executeTool(
     if (err instanceof PublicToolError) {
       return { content: [{ type: 'text', text: err.message }], isError: true };
     }
-    log(`tool '${tool.name}' failed: ${describeError(err)}`);
+    const failureLogMessage =
+      typeof tool.failureLogMessage === 'function'
+        ? tool.failureLogMessage(err)
+        : tool.failureLogMessage;
+    log(failureLogMessage ?? `tool '${tool.name}' failed: ${describeError(err)}`);
     return {
       content: [{ type: 'text', text: SANITIZED_TOOL_ERROR }],
       isError: true,

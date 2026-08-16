@@ -191,7 +191,7 @@ describe('claude-code live integration (opt-in)', () => {
     const state = new AgentRuntimeStateStore(identities, identity);
 
     const runtime = claudeCodeProvider().createRuntime({
-      identity: { runtime_id: 'live', checkpoint_id: null },
+      identity: { runtime_id: 'live', checkpoint: null },
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: home,
       mcpServers: [],

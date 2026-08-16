@@ -31,6 +31,8 @@ export interface ClaudeCodeResidentArgsInput {
   mcpConfigJson: string;
   /** Resume an existing Claude Code session, when one is known (spawn-time). */
   resumeSessionId?: string | null;
+  /** Pin a fresh native session id before the first turn is admitted. */
+  freshSessionId?: string | null;
   /**
    * Launcher-supplied ordered dispatcher/role system-prompt content. Claude Code
    * applies it as an APPEND via one native `--append-system-prompt` argument.
@@ -147,6 +149,12 @@ export function claudeCodeResidentArgs(input: ClaudeCodeResidentArgsInput): stri
     input.resumeSessionId !== ''
   ) {
     args.push('--resume', input.resumeSessionId);
+  } else if (
+    input.freshSessionId !== undefined &&
+    input.freshSessionId !== null &&
+    input.freshSessionId !== ''
+  ) {
+    args.push('--session-id', input.freshSessionId);
   }
   // Structured output: `--json-schema` is a spawn-time CLI flag, so it can only
   // be set from the create context (never per-turn). When present, every turn's

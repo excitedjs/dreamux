@@ -224,5 +224,5 @@ keeps the general runtime contract deterministic.
 - Adding a generic JSON Schema compiler to Dreamux core or
   `@excitedjs/dreamux-types`.
 - Emulating model retry in Dreamux.
-- Changing Claude Code or Traex structured-output behavior.
+- Changing another provider's structured-output behavior.
 - Supporting every JSON Schema draft keyword in this slice.

@@ -69,6 +69,7 @@ export async function ensureDispatcherIdentity(
       team_id: null,
       agent_runtime: input.agentRuntime,
       session_id: null,
+      transcript_locator: null,
       source_cwd: input.sourceCwd,
       source_repo: null,
       cwd: input.cwd,
@@ -83,10 +84,6 @@ export async function ensureDispatcherIdentity(
       last_error: null,
       closed_at: null,
       close_note: null,
-      turn_count: 0,
-      last_seen_at: now,
-      last_prompt_preview: null,
-      last_assistant_preview: null,
     };
     return identities.upsert(identity);
   }
@@ -114,6 +111,7 @@ export async function ensureDispatcherIdentity(
       ? {}
       : {
           session_id: null,
+          transcript_locator: null,
           status: 'stopped' as const,
           last_error: null,
           closed_at: null,

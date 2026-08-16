@@ -8,7 +8,6 @@ import type { AgentIdentityUpdateInput } from './identity-store.js';
 import {
   runtimeStatusToIdentityStatus,
   type AgentEntityIdentity,
-  type AgentEntityTurnRecord,
 } from './types.js';
 
 export class AgentRuntimeStateStore implements AgentRuntimeStateCallbacks {
@@ -30,18 +29,6 @@ export class AgentRuntimeStateStore implements AgentRuntimeStateCallbacks {
    */
   async updateIntent(intent: string): Promise<void> {
     await this.update({ intent });
-  }
-
-  /** Project one already-committed terminal row into the rolling identity. */
-  async recordTerminalTurn(row: AgentEntityTurnRecord): Promise<void> {
-    await this.mutate((current) => ({
-      turnCount: current.turn_count + 1,
-      lastSeenAt: row.settled_at,
-      lastPromptPreview: row.prompt_preview,
-      ...(row.assistant_preview !== null
-        ? { lastAssistantPreview: row.assistant_preview }
-        : {}),
-    }));
   }
 
   update(input: AgentIdentityUpdateInput): Promise<AgentEntityIdentity> {
@@ -74,11 +61,9 @@ export class AgentRuntimeStateStore implements AgentRuntimeStateCallbacks {
   }
 
   async setCheckpoint(checkpoint: AgentRuntimeResumeCheckpoint): Promise<void> {
-    // #199 Slice 3: persist the runtime-native thread id directly as the public
-    // session_id. Runtime packages interpret the id in their own native format
-    // when reopened.
     await this.update({
       sessionId: checkpoint.id,
+      transcriptLocator: checkpoint.transcript_locator ?? null,
     });
   }
 

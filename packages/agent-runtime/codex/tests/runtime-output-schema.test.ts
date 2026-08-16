@@ -14,12 +14,13 @@ describe('CodexRuntime portable output schema settlement', () => {
     const process = new DeferredProcess();
     let processCount = 0;
     const runtime = new CodexRuntime(
-      { runtime_id: 'flow', checkpoint_id: null },
+      { runtime_id: 'flow', checkpoint: null },
       {
         cwd: '/fake/cwd',
         state: noopState(),
         paths: PATHS,
         allocateSocketPath: () => '/fake/run/flow.sock',
+        validateTranscriptPath: async (path) => path,
         codexProcessFactory: () => {
           processCount += 1;
           return process as never;
@@ -45,12 +46,13 @@ describe('CodexRuntime portable output schema settlement', () => {
     const process = new DeferredProcess();
     let processCount = 0;
     const runtime = new CodexRuntime(
-      { runtime_id: 'flow', checkpoint_id: null },
+      { runtime_id: 'flow', checkpoint: null },
       {
         cwd: '/fake/cwd',
         state: noopState(),
         paths: PATHS,
         allocateSocketPath: () => '/fake/run/flow.sock',
+        validateTranscriptPath: async (path) => path,
         codexProcessFactory: () => {
           processCount += 1;
           return process as never;
@@ -79,12 +81,13 @@ describe('CodexRuntime portable output schema settlement', () => {
     let doctorCalls = 0;
     let processCount = 0;
     const runtime = new CodexRuntime(
-      { runtime_id: 'flow', checkpoint_id: null },
+      { runtime_id: 'flow', checkpoint: null },
       {
         cwd: '/fake/cwd',
         state: noopState(),
         paths: PATHS,
         allocateSocketPath: () => '/fake/run/flow.sock',
+        validateTranscriptPath: async (path) => path,
         codexHomeDoctor: async () => {
           doctorCalls += 1;
           await doctor.promise;
@@ -112,12 +115,13 @@ describe('CodexRuntime portable output schema settlement', () => {
     const process = new FakeProcess();
     const client = new DeferredReadyClient();
     const runtime = new CodexRuntime(
-      { runtime_id: 'flow', checkpoint_id: null },
+      { runtime_id: 'flow', checkpoint: null },
       {
         cwd: '/fake/cwd',
         state: noopState(),
         paths: PATHS,
         allocateSocketPath: () => '/fake/run/flow.sock',
+        validateTranscriptPath: async (path) => path,
         codexProcessFactory: () => process as never,
         codexClientFactory: () => client as never,
       },
@@ -144,12 +148,13 @@ describe('CodexRuntime portable output schema settlement', () => {
       const process = new FakeProcess();
       const client = new DeferredRequestClient(blockedMethod);
       const runtime = new CodexRuntime(
-        { runtime_id: 'flow', checkpoint_id: null },
+        { runtime_id: 'flow', checkpoint: null },
         {
           cwd: '/fake/cwd',
           state: noopState(),
           paths: PATHS,
           allocateSocketPath: () => '/fake/run/flow.sock',
+        validateTranscriptPath: async (path) => path,
           ...(skillSources === undefined ? {} : { skillSources }),
           codexProcessFactory: () => process as never,
           codexClientFactory: () => client as never,
@@ -173,12 +178,13 @@ describe('CodexRuntime portable output schema settlement', () => {
     const process = new FakeProcess();
     const client = new DeferredRequestClient('thread/resume', true);
     const runtime = new CodexRuntime(
-      { runtime_id: 'flow', checkpoint_id: 'thread-existing' },
+      { runtime_id: 'flow', checkpoint: { id: 'thread-existing', transcript_locator: '/fake/sessions/thread-existing.jsonl' } },
       {
         cwd: '/fake/cwd',
         state: noopState(),
         paths: PATHS,
         allocateSocketPath: () => '/fake/run/flow.sock',
+        validateTranscriptPath: async (path) => path,
         codexProcessFactory: () => process as never,
         codexClientFactory: () => client as never,
       },
@@ -189,6 +195,66 @@ describe('CodexRuntime portable output schema settlement', () => {
     await client.requestStarted;
     await expect(runtime.stop()).resolves.toBeUndefined();
     await expect(starting).rejects.toThrow(/stopping/);
+    expect(client.methods).toEqual(['initialize', 'thread/resume']);
+    expect(process.reapCalls).toBe(1);
+  });
+
+  it('does not publish a fresh association when checkpoint persistence fails', async () => {
+    const process = new FakeProcess();
+    const client = new DeferredRequestClient('never');
+    const runtime = new CodexRuntime(
+      { runtime_id: 'flow', checkpoint: null },
+      {
+        cwd: '/fake/cwd',
+        state: {
+          async setStatus() {},
+          async setCheckpoint() {
+            throw new Error('checkpoint write failed');
+          },
+        },
+        paths: PATHS,
+        allocateSocketPath: () => '/fake/run/flow.sock',
+        validateTranscriptPath: async (path) => path,
+        codexProcessFactory: () => process as never,
+        codexClientFactory: () => client as never,
+      },
+    );
+
+    await expect(runtime.start()).rejects.toThrow('checkpoint write failed');
+    expect(runtime.getCheckpoint()).toBeNull();
+    expect(client.methods).toEqual(['initialize', 'thread/start']);
+    expect(process.reapCalls).toBe(1);
+  });
+
+  it('preserves the old association when resumed checkpoint persistence fails', async () => {
+    const oldCheckpoint = {
+      id: 'thread-existing',
+      transcript_locator: '/fake/sessions/thread-existing.jsonl',
+    };
+    const process = new FakeProcess();
+    const client = new DeferredRequestClient('never');
+    const runtime = new CodexRuntime(
+      { runtime_id: 'flow', checkpoint: oldCheckpoint },
+      {
+        cwd: '/fake/cwd',
+        state: {
+          async setStatus() {},
+          async setCheckpoint() {
+            throw new Error('resume checkpoint write failed');
+          },
+        },
+        paths: PATHS,
+        allocateSocketPath: () => '/fake/run/flow.sock',
+        validateTranscriptPath: async (path) => path,
+        codexProcessFactory: () => process as never,
+        codexClientFactory: () => client as never,
+      },
+    );
+
+    await expect(runtime.start()).rejects.toThrow(
+      'resume checkpoint write failed',
+    );
+    expect(runtime.getCheckpoint()).toEqual(oldCheckpoint);
     expect(client.methods).toEqual(['initialize', 'thread/resume']);
     expect(process.reapCalls).toBe(1);
   });
@@ -205,12 +271,13 @@ describe('CodexRuntime portable output schema settlement', () => {
       },
     };
     const runtime = new CodexRuntime(
-      { runtime_id: 'flow', checkpoint_id: null },
+      { runtime_id: 'flow', checkpoint: null },
       {
         cwd: '/fake/cwd',
         state,
         paths: PATHS,
         allocateSocketPath: () => '/fake/run/flow.sock',
+        validateTranscriptPath: async (path) => path,
         codexProcessFactory: () => process as never,
         codexClientFactory: () => new RuntimeFakeClient() as never,
       },
@@ -244,12 +311,13 @@ describe('CodexRuntime portable output schema settlement', () => {
     };
     const client = new RuntimeFakeClient();
     const runtime = new CodexRuntime(
-      { runtime_id: 'flow', checkpoint_id: null },
+      { runtime_id: 'flow', checkpoint: null },
       {
         cwd: '/fake/cwd',
         state,
         paths: PATHS,
         allocateSocketPath: () => '/fake/run/flow.sock',
+        validateTranscriptPath: async (path) => path,
         codexProcessFactory: () => new FakeProcess() as never,
         codexClientFactory: () => client as never,
       },
@@ -288,12 +356,13 @@ describe('CodexRuntime portable output schema settlement', () => {
       },
     };
     const runtime = new CodexRuntime(
-      { runtime_id: 'flow', checkpoint_id: null },
+      { runtime_id: 'flow', checkpoint: null },
       {
         cwd: '/fake/cwd',
         state,
         paths: PATHS,
         allocateSocketPath: () => '/fake/run/flow.sock',
+        validateTranscriptPath: async (path) => path,
         codexProcessFactory: () => process as never,
         codexClientFactory: () => client as never,
       },
@@ -314,12 +383,13 @@ describe('CodexRuntime portable output schema settlement', () => {
     const process = new FailedStartProcess();
     let processCount = 0;
     const runtime = new CodexRuntime(
-      { runtime_id: 'flow', checkpoint_id: null },
+      { runtime_id: 'flow', checkpoint: null },
       {
         cwd: '/fake/cwd',
         state: noopState(),
         paths: PATHS,
         allocateSocketPath: () => '/fake/run/flow.sock',
+        validateTranscriptPath: async (path) => path,
         codexProcessFactory: () => {
           processCount += 1;
           return process as never;
@@ -339,15 +409,16 @@ describe('CodexRuntime portable output schema settlement', () => {
     expect(runtime.getStatus()).toBe('stopped');
   });
 
-  it('preserves lastResult and emits failed settlement when restoration fails', async () => {
+  it('keeps prior Turn outcome independent when restoration fails', async () => {
     const client = new RuntimeFakeClient();
     const runtime = new CodexRuntime(
-      { runtime_id: 'flow', checkpoint_id: null },
+      { runtime_id: 'flow', checkpoint: null },
       {
         cwd: '/fake/cwd',
         state: noopState(),
         paths: PATHS,
         allocateSocketPath: () => '/fake/run/flow.sock',
+        validateTranscriptPath: async (path) => path,
         codexProcessFactory: () => new FakeProcess() as never,
         codexClientFactory: () => client as never,
       },
@@ -360,7 +431,6 @@ describe('CodexRuntime portable output schema settlement', () => {
         sourceId: 'plain',
       }));
       const plainOutcome = await plainTurn.settled;
-      expect(await runtime.getLast()).toEqual({ text: 'plain result' });
 
       const structuredTurn = requireSubmittedTurn(await runtime.completionInput({
         text: 'structured',
@@ -376,7 +446,6 @@ describe('CodexRuntime portable output schema settlement', () => {
       }));
       const structuredOutcome = await structuredTurn.settled;
 
-      expect(await runtime.getLast()).toEqual({ text: 'plain result' });
       expect(plainOutcome).toEqual({
         status: 'completed',
         resultText: 'plain result',
@@ -398,12 +467,13 @@ describe('CodexRuntime portable output schema settlement', () => {
     const secondClient = new RuntimeFakeClient();
     const clients = [firstClient, secondClient];
     const runtime = new CodexRuntime(
-      { runtime_id: 'flow', checkpoint_id: null },
+      { runtime_id: 'flow', checkpoint: null },
       {
         cwd: '/fake/cwd',
         state: noopState(),
         paths: PATHS,
         allocateSocketPath: () => '/fake/run/flow.sock',
+        validateTranscriptPath: async (path) => path,
         codexProcessFactory: () => new FakeProcess() as never,
         codexClientFactory: () => {
           const client = clients.shift();
@@ -440,7 +510,6 @@ describe('CodexRuntime portable output schema settlement', () => {
         resultText: 'plain result',
         truncated: false,
       });
-      expect(await runtime.getLast()).toEqual({ text: 'plain result' });
     } finally {
       await runtime.stop();
     }
@@ -453,12 +522,13 @@ describe('CodexRuntime portable output schema settlement', () => {
     const processes = [new FakeProcess(), new FakeProcess()];
     let processCount = 0;
     const runtime = new CodexRuntime(
-      { runtime_id: 'flow', checkpoint_id: null },
+      { runtime_id: 'flow', checkpoint: null },
       {
         cwd: '/fake/cwd',
         state: noopState(),
         paths: PATHS,
         allocateSocketPath: () => '/fake/run/flow.sock',
+        validateTranscriptPath: async (path) => path,
         codexProcessFactory: () => {
           const process = processes[processCount++];
           if (process === undefined) throw new Error('unexpected replacement process');
@@ -500,12 +570,13 @@ describe('CodexRuntime portable output schema settlement', () => {
     const processes = [firstProcess, retainedProcess, recoveredProcess];
     let processCount = 0;
     const runtime = new CodexRuntime(
-      { runtime_id: 'flow', checkpoint_id: null },
+      { runtime_id: 'flow', checkpoint: null },
       {
         cwd: '/fake/cwd',
         state: noopState(),
         paths: PATHS,
         allocateSocketPath: () => '/fake/run/flow.sock',
+        validateTranscriptPath: async (path) => path,
         codexProcessFactory: () => {
           const process = processes[processCount];
           processCount += 1;
@@ -574,11 +645,20 @@ class RuntimeFakeClient {
       } as R;
     }
     if (method === 'thread/start') {
-      return { thread: { id: 'thread-1' } } as R;
+      return {
+        thread: {
+          id: 'thread-1',
+          path: '/fake/sessions/thread-1.jsonl',
+        },
+      } as R;
     }
     if (method === 'thread/resume') {
+      const threadId = (params as { threadId: string }).threadId;
       return {
-        thread: { id: (params as { threadId: string }).threadId },
+        thread: {
+          id: threadId,
+          path: `/fake/sessions/${threadId}.jsonl`,
+        },
       } as R;
     }
     if (method !== 'turn/start') throw new Error(`unexpected method ${method}`);
@@ -704,11 +784,21 @@ class DeferredRequestClient extends RuntimeFakeClient {
           return;
         }
         if (method === 'thread/start') {
-          resolve({ thread: { id: 'thread-1' } } as R);
+          resolve({
+            thread: {
+              id: 'thread-1',
+              path: '/fake/sessions/thread-1.jsonl',
+            },
+          } as R);
           return;
         }
         if (method === 'thread/resume') {
-          resolve({ thread: { id: 'thread-existing' } } as R);
+          resolve({
+            thread: {
+              id: 'thread-existing',
+              path: '/fake/sessions/thread-existing.jsonl',
+            },
+          } as R);
           return;
         }
         resolve({} as R);

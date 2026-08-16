@@ -38,34 +38,43 @@ subscriber.
 
 ## Current alignment
 
-- Status: Confirmed; requirement clarification is complete and the task is
-  ready for architect-led technical solution.
+- Status: Reopened clarification is complete. The operator rejected
+  Dreamux-owned Turn archives and rolling conversation snapshots in
+  `identity.json`, expanded the replacement `last` surface into a bounded,
+  pageable Runtime-native transcript query with tool activity, and then added
+  the repository-publication red line for one operator-prohibited external
+  provider family.
 - Source baseline inspected during clarification:
   `6b8ec14b080389bf6c6ae36fa336ec0451e401ec`.
+- Reopened implementation baseline inspected:
+  `3badc3a5b7547ff1455843436dbfea88f15a0d86`.
 
-### Confirmed current behavior
+### Confirmed lineage and current behavior
 
-- `WorkflowRun` calls `OwnedTeammateOps.spawnOwned()` and records the returned
+- On the original clarification baseline, `WorkflowRun` called
+  `OwnedTeammateOps.spawnOwned()` and recorded the returned
   concrete TeamMate `name` and `turn_id` in its own Workflow agent record.
   Workflow therefore already has the durable business fact that relates a run
   agent to a TeamMate.
-- `TeammateCollection.spawnOwned()` uses the same identity store, worktree
+- On that baseline, `TeammateCollection.spawnOwned()` used the same identity
+  store, worktree
   preparation, `TeammateService` factory, runtime-provider seam, turn store, and
   live entity cache as ordinary TeamMate creation. There is no separate
   Workflow-only runtime tree.
 - Workflow-created TeamMates are in the collection's normal identity roster.
   The existing `list`, `status`, `history`, and `last` read paths therefore make
   them visible through the normal TeamMate MCP surface.
-- The collection currently keeps a process-local
+- On that baseline, the collection kept a process-local
   `Map<TeamMateName, OwnedTeammateOwner>`, rejects ordinary `send` and `close`
   operations for entries in that map, and implements Workflow cleanup through
   `releaseAllOwned(owner)`.
-- After current owner release succeeds, the collection removes the process-local
+- After owner release on that baseline, the collection removed the process-local
   exclusivity entry and evicts the live entity but retains its durable identity
   and history. A later ordinary `send` resolves that identity, reopens the
   closed TeamMate through `ensureStarted({ reopenClosed: true })`, and continues
   it as a normal TeamMate. This behavior has focused test coverage.
-- `TeammateService.close()` and owner-only `release()` already converge on
+- On that baseline, `TeammateService.close()` and owner-only `release()`
+  converged on
   `transitionToClosed()`. That method stops the runtime first, then drains local
   submission and settlement persistence, performs any entity-owned worktree
   cleanup, and persists the identity as closed.
@@ -73,11 +82,45 @@ subscriber.
   model turn to finish naturally. Both built-in runtimes stop their resident
   process group through `SupervisedChild`: signal `SIGTERM`, wait for at most
   one second by default, then signal `SIGKILL`.
-- The current Workflow stop path returns the reserved `stopped` result before
+- The original Workflow stop path returned the reserved `stopped` result before
   finalization completes. Finalization drains agent tasks before it asks the
   collection to release Workflow-owned TeamMates, so a turn that never settles
   can keep the Workflow durably running and can hold Team dissolve at its writer
   idle barrier.
+- The reviewed implementation on the reopened baseline already satisfies the
+  entity-owned lock, object Turn, close-first Workflow/Team/shutdown, and
+  bounded provider-termination requirements. Those decisions remain accepted.
+- That implementation also introduced a strict v2 Dreamux `turn.jsonl`,
+  startup preflight, and a required manual rebuild for older archives. The
+  operator rejected this compatibility cost: any Dreamux `turn.jsonl`, whether
+  old, malformed, unreadable, or absent, must be irrelevant to startup and
+  lifecycle behavior.
+- The same implementation writes `turn_count`, `last_seen_at`,
+  `last_prompt_preview`, and `last_assistant_preview` into `identity.json`.
+  Source audit found no lifecycle, resume, Workflow, close, or Runtime consumer
+  for these fields. They are consumed only by `teammate_history` display,
+  ordering/filtering, and grep, plus tests and documentation.
+- `last` is the only product read path that requires multi-turn conversation
+  detail. Resume uses the Runtime-native `session_id`; Workflow recovery uses
+  its own `record.json` and `journal.jsonl`; list/status/history can operate
+  from TeamMate identity and lifecycle state.
+- Official Codex app-server `thread/start` and `thread/resume` responses include
+  `thread.path`, the Runtime-owned rollout JSONL path. Claude Code stream-json
+  init exposes `session_id` rather than `transcript_path`, while its native
+  storage code resolves
+  `<config-home>/projects/<project>/<session-id>.jsonl`, including cross-project
+  and worktree fallback discovery.
+- The operator wants `last` to remain a focused reverse-turn reader rather than
+  a general transcript search engine. It must preserve backward-compatible
+  `last(name, turns)` behavior while adding backward pagination and tool
+  activity. Full-text search is delegated to the calling model through the
+  Runtime-native session file path returned by `spawn` and `send`.
+- Repository publication red line: this repository implements and documents
+  only its existing public built-in Runtime providers in this task. The
+  operator-prohibited external provider family must not be named, registered,
+  packaged, documented, tested, or otherwise exposed. Other external providers
+  remain governed by the neutral plugin contract; this task neither adds nor
+  removes their unrelated historical documentation.
 
 ### Desired outcome
 
@@ -98,6 +141,11 @@ Establish one architecture in which:
    `TeammateService`, `TeammateCollection`, and `WorkflowService` that exists
    only so an outer container can observe an inner entity fact must be audited
    and reversed to entity-owned state plus fact publication.
+7. Dreamux persists no per-Turn archive or rolling conversation snapshot.
+   Runtime transcripts are the sole detailed conversation source for `last`.
+8. Existing Dreamux `turn.jsonl` files and removed rolling identity fields are
+   tolerated without migration or startup failure and are never read as
+   authority.
 
 ## Required ownership model
 
@@ -140,7 +188,8 @@ must be a self-contained entity operation, including:
 - ensuring built-in runtime teardown is bounded and escalates to force-killing
   the resident process group;
 - converging unfinished turns to an observable stopped outcome;
-- draining and persisting entity-owned turn and identity state;
+- draining in-process Turn settlement and persisting only entity-owned identity
+  and lifecycle state;
 - performing only cleanup that the entity itself owns;
 - reaching one idempotent closed result under concurrent callers;
 - publishing an explicit lifecycle event after the relevant close transition.
@@ -169,9 +218,10 @@ is durably terminal.
 dispatcher or Team scope. It owns:
 
 - the one creation path and `TeammateService` factory;
-- durable roster and turn-store access;
+- durable roster access;
 - live entity registration and lookup;
 - normal TeamMate read surfaces;
+- delegation of transcript reads to the selected Agent Runtime provider;
 - subscriptions to contained entity lifecycle events;
 - removal of a closed entity from its live references/cache after observing the
   entity's close event.
@@ -317,7 +367,7 @@ not in membership, mutation, close, or unlock semantics.
   outcome is exposed through an idempotent promise/latch. A runtime fold or
   steer into an already-active logical turn returns the same object.
 - `TeammateService` owns a `Turn` object that directly retains the runtime turn,
-  prompt/origin/intent, timestamps, terminal state, persistence task, and the
+  prompt/origin/intent, timestamps, terminal state, and the
   completion-delivery closure captured from the initiating caller.
 - `WorkflowRun.AgentCall` retains the concrete `Turn` object. It does not write
   an ID and later accept a callback that must be matched back to the call.
@@ -327,9 +377,9 @@ not in membership, mutation, close, or unlock semantics.
 - A normal send captures its initiator in the Turn's completion-delivery
   closure. Settlement invokes the shared bounded delivery policy directly; no
   `producerName + turnId -> initiator` registration or reverse lookup is used.
-- Turn history persists one complete terminal record from the settled Turn
-  object. It does not append separate submit/settled rows and later join them by
-  ID.
+- Turn settlement does not persist a Dreamux Turn record. The in-process Turn
+  latch is the service correlation authority; the selected Runtime's native
+  transcript is the detailed historical record.
 - Dreamux service records, Workflow records/journal rows, TeamMate MCP receipts,
   `last`/history results, and Channel turn events do not expose a turn ID merely
   to preserve this in-process relationship.
@@ -345,14 +395,100 @@ not in membership, mutation, close, or unlock semantics.
 - Claude Code's synthetic `claude-turn-<runtime>-<counter>` identifier is
   removed together with the service-level turn-ID contract.
 
+### Runtime-native transcript history
+
+- `last` is a provider-neutral query whose implementation is owned by each
+  Agent Runtime provider. Dreamux core supplies the persisted Runtime
+  checkpoint/session, Runtime working directory, and provider config; the
+  provider locates and parses its own native transcript without starting or
+  resuming a model process.
+- The two existing public built-in Runtime families are mandatory in this
+  change: official Codex app-server and Claude Code stream-json. This is not an
+  optional-capability rollout in which either built-in may silently return no
+  history.
+- Codex captures the native rollout path returned as `thread.path` by
+  successful `thread/start` and `thread/resume`. The path is provider-owned
+  metadata associated with the Runtime checkpoint, not a Dreamux Turn
+  identifier or conversation copy.
+- Claude Code resolves the native transcript from its `session_id`, configured
+  Claude home, Runtime cwd, and the provider's own project/worktree search
+  rules. Dreamux core must not duplicate Claude's path-sanitization or
+  cross-project lookup rules.
+- Codex uses the directly returned `thread.path` as the normal persisted
+  locator. Session-ID discovery is a provider-owned fallback only when that
+  locator is absent, stale, moved, archived, reverted, compressed, or from
+  older state that predates the locator.
+- Claude Code's public stream-json init exposes no transcript path. The Claude
+  provider resolves the path from native storage rules after it learns the
+  authoritative `session_id`, persists that locator with the Runtime session
+  association, and falls back to native rediscovery when it is absent or stale.
+  This task does not inject a SessionStart command Hook or another IPC bridge
+  merely to obtain the Hook-only `transcript_path`.
+- `last` reads completed native conversation turns and returns the newest
+  requested turns in chronological order. It may expose richer native message
+  content than the former Dreamux archive, but the public result remains
+  provider-neutral and must not leak provider-private IDs or filesystem paths.
+- A returned turn is an ordered sequence of provider-neutral blocks:
+  - a `message` block contains `role: user | assistant` and bounded text;
+  - a `tool` block combines one native tool call with its result, exposing the
+    model-visible tool name, bounded rendered input/output, terminal status,
+    and truncation flags;
+  - providers may use native call IDs internally to pair calls and results, but
+    no call, item, message, turn, thread, or session ID crosses the provider
+    boundary.
+- Raw reasoning/thinking, system prompts, provider control records, native
+  filesystem paths, usage metadata, and opaque protocol envelopes are not
+  returned. Tool activity is enabled by default because the operator explicitly
+  wants the replacement to be stronger than the current text-only `last`.
+- The query remains compatible with the existing `turns` argument and adds:
+  - `cursor?: string`: opaque backward-pagination cursor from the prior result;
+  - `include_tools?: boolean`: defaults to `true`; when false, tool blocks are
+    omitted.
+- `turns` defaults to 1 and becomes a maximum result count in the range 1
+  through 50. Providers read completed turns newest-to-oldest and return the
+  selected turns oldest-first.
+- The response includes `next_cursor` when older query results may remain and
+  `truncated` when any returned block was clipped to honor the service-owned
+  fixed 262144-byte UTF-8 transcript payload budget.
+  Cursors are self-contained provider-owned storage positions with a query
+  fingerprint and may carry one-way boundary-integrity digests. They contain no
+  filesystem path, recoverable transcript content, secret, or provider-native
+  turn/message/call ID. A boundary digest is SHA-256 over the exact native
+  boundary record bytes and exists only to detect in-place rewrites; it cannot
+  be used as a storage position or recover the record. Changing `include_tools`
+  invalidates an existing cursor; changing `turns` does not.
+- A cursor must remain valid while the native transcript is append-only.
+  Ordinary append-only turn growth must not change the page boundary. Native
+  rewrite, revert, logical compaction/snip, or lineage replacement may
+  invalidate it; archive movement or plain-to-compressed representation changes
+  alone must not. The provider returns a clear cursor-specific query error
+  rather than silently duplicating or skipping results.
+- The first selected turn is always returned when at least one complete turn
+  exists on the requested page. If it alone exceeds the fixed payload budget,
+  its blocks are
+  deterministically clipped to fit, `truncated` is true, and `next_cursor`
+  advances past that turn.
+  Additional turns that do not fit are omitted and remain reachable through
+  `next_cursor`.
+- Native transcript absence, unreadability, or parse failure makes that `last`
+  call fail with a clear typed provider-owned reason. Providers do not supply
+  arbitrary public error text; core maps each recognized transcript-error
+  reason to one fixed, path-free admin/MCP message and maps unknown exceptions
+  to the existing generic internal error. The failure must not start a Runtime,
+  rewrite the transcript, mutate identity, or affect send, close, Workflow,
+  Team dissolve, or Server startup.
+- `AgentRuntime.getLast()` as an in-memory single-result snapshot is not a
+  substitute for this cold multi-turn transcript query and must not remain as a
+  second competing history source.
+
 ### Visibility
 
 - Workflow-created TeamMates remain visible through the existing scoped
   TeamMate `list`, `status`, `history`, and `last` surfaces during and after
-  their lifecycle, subject to the same durable-history rules as other
-  TeamMates.
-- Closing and live-cache removal must not erase their durable identity, history,
-  or Workflow linkage.
+  their lifecycle. `history` is an identity/lifecycle directory query; `last`
+  reads the Runtime-native transcript.
+- Closing and live-cache removal must not erase their durable identity,
+  Runtime session association, native transcript, or Workflow linkage.
 - While a TeamMate has an active Workflow membership, ordinary TeamMate `send`
   is prohibited. The active membership is an exclusive write claim: only the
   Workflow may submit the turn(s) defined by its orchestration.
@@ -384,6 +520,70 @@ not in membership, mutation, close, or unlock semantics.
   restored. Subsequent `send` and `close` act on the retained TeamMate identity,
   not on the terminal Workflow.
 
+### Submission receipts and native session path
+
+- Every returned `spawn` / `send` receipt contains
+  `transcript_path: string | null`, independently of submission status. It is
+  non-null whenever that TeamMate has a validated Runtime session/transcript
+  association, including a duplicate, failed, ambiguous, or stopped turn on an
+  already-established session. It is null only when no native transcript path
+  has ever been established for that identity. Turn-admission uncertainty does
+  not make an already-known session path uncertain.
+- This path is intentionally public to the calling model so it can use ordinary
+  file-reading or shell-grep tools for ad hoc full-text investigation outside
+  the bounded `last` surface.
+- The path is the same canonical, provider-owned locator persisted with the
+  Runtime checkpoint and consumed by `last`. Dreamux does not copy, rewrite, or
+  project the transcript into another file.
+- Codex obtains the absolute path directly from successful JSON-RPC
+  `thread/start` / `thread/resume` before accepting the first turn. Its
+  submitted receipt therefore requires the returned `thread.path` to be
+  non-null, canonical, confined to the provider transcript roots, and native
+  session-matched.
+- Claude Code supports a native `--session-id <uuid>` start argument. For a
+  fresh resident session, the provider generates the UUID before spawning,
+  computes and validates the native transcript path from that ID/cwd/config
+  home, passes the same UUID to Claude, and persists the association before
+  accepting a turn. Resume reuses the persisted ID and path. No Hook IPC bridge
+  is needed.
+- A successful Claude admission may precede the first transcript append. The
+  receipt path is nevertheless authoritative for that native session; a model
+  that immediately reads it may observe `ENOENT` or an incomplete file and may
+  retry. Dreamux must not create a placeholder transcript.
+- The existing public Codex and Claude Code tool environments can read their
+  native session paths under the accepted Dreamux runtime policies. This change
+  adds no extra writable root and no broader write permission.
+- `transcript_path` may expose a machine-local path by explicit operator
+  decision. It is allowed only on direct TeamMate `spawn` / `send` receipts and
+  must not be added to list, status, history, Workflow projections, Channel
+  events, completion delivery, logs, metrics, or public error messages.
+
+### Identity and fail-open compatibility
+
+- `identity.json` contains durable TeamMate identity, Runtime session
+  association, lifecycle status, worktree ownership, intent, and related
+  configuration facts. It does not contain rolling conversation projections.
+- Remove `turn_count`, `last_seen_at`, `last_prompt_preview`, and
+  `last_assistant_preview` from new identities, in-memory identity types,
+  updates, TeamMate history rows, filters, sorting, grep, schemas, and
+  documentation.
+- Existing identity files may still contain those four removed keys. Readers
+  ignore them as unknown legacy extras; their presence never blocks startup,
+  list/status/history, resume, send, close, Workflow, dissolve, or shutdown.
+  A later normal identity rewrite may drop them without a migration pass.
+- `teammate_history` sorts by `updated_at`. Its `since` and `until` filters apply
+  to `updated_at`; grep no longer searches prompt/assistant previews. Detailed
+  conversation inspection belongs to `last`.
+- Dreamux no longer creates, appends, validates, repairs, preflights, streams,
+  or otherwise reads TeamMate `turn.jsonl`.
+- Any existing Dreamux `turn.jsonl` is inert legacy residue. Its presence,
+  contents, version, permissions, or parseability never blocks startup or any
+  lifecycle operation. No manual deletion, rewrite, backup, or migration is
+  required.
+- The change may perform best-effort cleanup only when deletion is provably
+  safe, but cleanup failure is ignored and must not become a new startup or
+  close dependency. Leaving old files in place is valid.
+
 ## Scope
 
 - Architecture and contracts across `WorkflowService`, `WorkflowRun`,
@@ -399,7 +599,15 @@ not in membership, mutation, close, or unlock semantics.
 - Workflow-created TeamMate behavior during Team dissolve and Server shutdown.
 - Built-in Codex and Claude Code teardown only where needed to satisfy the
   common TeamMate close contract.
-- Focused concurrency, lifecycle, persistence, and integration tests.
+- Runtime-native transcript discovery and parsing for the existing public
+  Codex and Claude Code built-ins, including cold reads after process restart.
+- A provider-neutral transcript contract that external providers may implement
+  outside this repository without a new repository-owned built-in adapter in
+  this task.
+- Removal of Dreamux TeamMate Turn archives and rolling identity conversation
+  projections, with fail-open compatibility for existing files and fields.
+- Focused concurrency, lifecycle, persistence, transcript, and integration
+  tests.
 - Current architecture, Dynamic Workflow, provider-runtime, and maintenance
   documentation affected by the final design.
 
@@ -410,6 +618,16 @@ not in membership, mutation, close, or unlock semantics.
 - A natural-completion grace period after explicit stop.
 - Workflow replay/resume or configurable stop policies.
 - Replacing TeamMate history or scoped MCP read surfaces.
+- Copying, normalizing, rewriting, repairing, or migrating Runtime-native
+  transcript files.
+- Preserving the former Dreamux `last` row shape when native transcripts can
+  provide a more truthful provider-neutral conversation shape.
+- Exposing raw model reasoning/thinking, provider system/control records,
+  unbounded native tool payloads, or a caller-configurable output-byte budget
+  through `last`.
+- Built-in full-text, regex, or semantic search in `last`, or a new Dreamux
+  transcript cache/index. Callers that need search consume the returned native
+  `transcript_path` with their own read/grep code.
 - Changing worktree safety rules or deleting branches/refs.
 - Feishu topic-close inference or PR #316.
 - Picking an arbitrary MCP timeout before the bounded service lifecycle is
@@ -420,6 +638,9 @@ not in membership, mutation, close, or unlock semantics.
 - A Dreamux-owned `submission_id`, service-level turn ID, request fingerprint,
   or provider replay protocol. In-process object identity and closures own
   service-level turn correlation.
+- Allowing an existing public built-in to omit transcript support. Both current
+  built-ins must implement the contract in this change. Unnamed external
+  providers must implement the required neutral method to remain compatible.
 
 ## Constraints and invariants
 
@@ -435,6 +656,8 @@ not in membership, mutation, close, or unlock semantics.
   signals, or provider-specific settlement behavior.
 - The existing single TeamMate creation path, identity roster, history, and
   TeamMate MCP read visibility are preserved.
+- `identity.json` remains the TeamMate/session/lifecycle identity record. It
+  must not become a rolling conversation index or cache.
 - TeamMate identity is not owned by or permanently typed to one Workflow.
   Workflow membership must be a separable orchestration relationship whose
   lifecycle can end while the TeamMate remains reusable.
@@ -446,9 +669,41 @@ not in membership, mutation, close, or unlock semantics.
   adapter merely to reconstruct in-process service relationships.
 - Public MCP/admin submission receipts report acceptance status without a turn
   ID.
-- TeamMate history stores and returns complete terminal turn records in
-  chronological order without a turn ID.
+- TeamMate `history` returns identity/lifecycle rows. TeamMate `last` returns
+  recent Runtime-native conversation turns in chronological order without a
+  provider-private ID or transcript path.
 - Workflow Agent records and journal rows do not contain a turn ID.
+- Runtime transcript discovery and parsing stays inside the Runtime provider.
+  Core must not name Codex rollout schemas, Claude project slugs, or
+  provider-native message variants.
+- This repository must not name, register, package, document, fixture, test, or
+  otherwise expose the operator-prohibited external provider family. Generic
+  external providers remain behind the neutral contract.
+- Persisted transcript location metadata, if required for deterministic cold
+  reads, is part of the selected Runtime session association and is
+  provider-opaque. It contains no Turn content and is not an authority over the
+  provider's own transcript. Providers must fall back to native session lookup
+  when a captured path is stale.
+- A provider must canonicalize and confine every persisted or rediscovered
+  locator to that provider's configured native transcript roots, then validate
+  the native session metadata against the persisted Runtime session before
+  returning content. A malformed locator cannot turn `last` into an arbitrary
+  local-file reader.
+- A `last` failure is a read-query failure only. It cannot mutate TeamMate
+  state, start or resume a Runtime, or participate in Turn settlement, close,
+  Workflow terminalization, dissolve, or Server startup.
+- `last` pagination is stateless in Dreamux core. Core stores no cursor registry
+  and performs no cursor-to-object reverse lookup; each provider validates and
+  interprets its own opaque cursor.
+- Providers must enforce both result-count and byte budgets while streaming or
+  bounded-scanning their native history. They must not materialize an
+  unbounded transcript merely because the public result is small.
+- Each provider must impose a documented internal scan bound and return a
+  continuation cursor when the requested turn count is not reached before that
+  bound. A large transcript must not monopolize the service.
+- Removed Dreamux archive files and rolling identity fields are always
+  fail-open. No loader, preflight, maintenance command, or self-upgrade path may
+  require their migration or deletion.
 - Every lifecycle fact has one authoritative owner. Events communicate facts;
   subscribers do not complete another module's state machine.
 - Publish/subscribe is the preferred collaboration shape for committed entity
@@ -521,10 +776,10 @@ not in membership, mutation, close, or unlock semantics.
 17. After Workflow completion or stop, an ordinary `send` to the retained
    TeamMate reopens it through the existing TeamMate resume path without
    changing the terminal Workflow.
-18. AgentRuntime, TeamMate, Workflow, completion delivery, and history use one
+18. AgentRuntime, TeamMate, Workflow, and completion delivery use one
     shared in-process Turn object per logical turn; no service-layer map or
     persisted/public turn ID is used to reconstruct that relationship.
-19. Public TeamMate receipts, Workflow Agent projections, TeamMate history, and
+19. Public TeamMate receipts, Workflow Agent projections, TeamMate reads, and
     Channel provider contracts no longer expose `turn_id`; the unused Channel
     turn submitted/settled event pair is removed.
 20. After a successful Workflow stop, no Workflow-created runtime remains live,
@@ -540,6 +795,82 @@ not in membership, mutation, close, or unlock semantics.
     claim, creation-only capability, event route, or close rule prevents a
     future Workflow from attaching an existing ordinary or historical Workflow
     TeamMate without creating a second entity.
+25. Dreamux performs no TeamMate `turn.jsonl` write, read, validation, repair,
+    or startup preflight. Existing files of any version or condition are
+    ignored without migration and cannot block startup or lifecycle operations.
+26. New and rewritten `identity.json` records contain no `turn_count`,
+    `last_seen_at`, `last_prompt_preview`, or `last_assistant_preview`. Readers
+    accept and ignore those keys in existing files.
+27. `teammate_history` remains a cold identity/lifecycle query, sorts and
+    filters time ranges by `updated_at`, and does not depend on transcript
+    availability.
+28. `teammate_last` cold-reads the Runtime-native transcript without starting
+    or resuming the Runtime and returns up to the requested number of newest
+    completed conversation turns in chronological order.
+29. The existing public Codex and Claude Code built-ins each pass deterministic
+    native transcript tests covering fresh start, resume/reopen, process
+    restart, multiple turns, provider-private field stripping, and
+    missing/corrupt transcript query errors.
+30. A transcript read or parse error affects only the `last` call. The same
+    TeamMate can still start/resume, accept input, close, participate in a
+    Workflow, and be handled by Team dissolve and Server shutdown.
+31. The existing `last(name, turns?)` call remains valid; `turns` accepts 1
+    through 50 and returns selected turns oldest-first.
+32. `last` supports opaque backward pagination. Reusing `next_cursor` with the
+    same `include_tools` value produces the next older page without duplicates;
+    append-only transcript growth does not change that page boundary. A
+    boundary-record digest mismatch returns `cursor_stale`, and every non-null
+    continuation cursor advances to an older numeric position. If the newest
+    bounded window contains only an open native tail and no complete turn, the
+    response returns `next_cursor: null`; a later fresh query without a cursor
+    observes the turn after the provider finishes appending it.
+33. `last` accepts no `grep`, `since`, or `until` parameter. `include_tools`
+    is applied inside the provider-owned native transcript reader and defaults
+    to true.
+34. Tool calls and results are returned as ordered, paired, provider-neutral
+    `tool` blocks by default. No native correlation ID, session ID, transcript
+    path, raw reasoning, or control record appears in the public result.
+35. The service-owned fixed 262144-byte UTF-8 transcript payload budget sets
+    `truncated: true` when returned content must be clipped. Providers never
+    exceed this budget, and callers cannot override it.
+36. An invalid, mismatched-query, or native-rewrite-stale cursor fails only the
+    `last` call with a typed provider-owned reason and performs no state write.
+    Core maps every recognized reason to a fixed path-free public message;
+    provider-supplied arbitrary public text is not part of the contract.
+37. A persisted transcript locator outside the canonical provider-owned roots,
+    or a candidate whose native session metadata does not match the TeamMate's
+    Runtime session, is rejected without returning file content.
+38. Pagination remains bounded on very large transcripts: when the provider's
+    internal scan bound is reached before enough completed turns are found, the
+    response returns the turns found so far plus `next_cursor` for continuation
+    instead of scanning without bound. A non-null continuation must strictly
+    advance to an older numeric position; if the native representation cannot
+    make safe progress within the bound, the provider returns
+    `scan_unsupported` rather than repeating the same empty page and cursor.
+    An open tail with no complete turn returns a null cursor and is retried only
+    through a later fresh query.
+39. Every returned `spawn` and `send` receipt contains
+    `transcript_path: string | null`. It returns the canonical absolute
+    Runtime-native path whenever the TeamMate has an established session
+    association, regardless of turn-admission status, and otherwise returns
+    null. No second Runtime or copied file is created.
+40. Codex rejects a submitted receipt when successful start/resume did not
+    provide a valid native `thread.path`. Claude fresh start pins one generated
+    native `--session-id` and corresponding transcript path before admission.
+41. `transcript_path` appears only in direct `spawn` / `send` receipts. Static
+    and snapshot tests prove it is absent from list/status/history/last,
+    Workflow, Channel, completion, logs, metrics, and errors.
+42. Scans over every tracked or untracked repository artifact, every added line
+    in the complete task diff, and the current task commit messages and public
+    Issue/PR title, body, comments, reviews, and public head ref contain no
+    reference, package, registration, config, documentation, fixture, test, or
+    implementation for the operator-prohibited provider family. The scan token
+    set is supplied outside repository artifacts so the red line does not
+    reproduce the prohibited name. Git-internal worktree files, ignored
+    installed dependencies/build outputs, and immutable already-public history
+    before this task are outside the gate. Generic external-provider
+    compatibility remains expressed by the neutral `AgentRuntimeProvider`
+    contract.
 
 ## Decisions and unknowns
 
@@ -571,6 +902,31 @@ not in membership, mutation, close, or unlock semantics.
   remain provider-internal; Claude Code removes
   `claude-turn-<runtime>-<counter>`, and Dreamux removes turn-ID-based router,
   Workflow, history, receipt, and event contracts.
+- Dreamux-owned TeamMate `turn.jsonl` is deleted rather than versioned or
+  migrated. Existing files are inert and fail-open.
+- `identity.json` does not retain `turn_count`, `last_seen_at`, prompt preview,
+  or assistant preview. Those fields have no lifecycle consumer and are not
+  moved to another Dreamux state file.
+- TeamMate `last` reads the selected Runtime's native transcript. The existing
+  public Codex built-in uses its app-server/native rollout contract, and the
+  existing public Claude Code built-in uses its native session transcript
+  discovery. Both are required in this change.
+- TeamMate `last` includes bounded tool call/result blocks by default and gains
+  pagination and an `include_tools` switch. It does not provide grep/time
+  filters. The output budget is fixed by the service and raw reasoning remains
+  excluded.
+- `spawn` and `send` receipts expose the canonical Runtime-native session file
+  absolute path whenever the TeamMate has one, so the calling model can
+  implement its own file search.
+- Codex persists JSON-RPC `thread.path` as the primary locator. Claude
+  pre-generates a UUID, passes it through native `--session-id`, derives and
+  persists the corresponding native path before admission, and later confirms
+  the same session through stream-json init; no Hook IPC bridge is added.
+- The operator-prohibited provider family is not named or exposed anywhere in
+  current repository artifacts or task publication surfaces. Generic external
+  providers continue to use the neutral Runtime contract.
+- `teammate_history` remains an identity/lifecycle query and no longer serves as
+  a weak conversation search index.
 - TeammateCollection listens for TeamMate lifecycle events and removes closed
   live references; it must not become the mandatory executor of TeamMate close.
 - The dependency-reversal requirement applies to all analogous three-module
@@ -590,6 +946,9 @@ not in membership, mutation, close, or unlock semantics.
 - Existing Codex and Claude Code process-group teardown is the correct lower
   layer to satisfy the common close contract, but its post-`SIGKILL`
   verification and error semantics may require strengthening.
+- Codex `thread.path` is the best direct native locator, but the provider still
+  needs a session-id lookup fallback because the upstream field is marked
+  unstable and native archive operations may move a rollout.
 
 ### Technical-design questions
 
@@ -605,3 +964,8 @@ them in the technical solution and reviewers must verify owner correctness:
 - Which existing external/public consumers, if any, need a separate
   observational turn label after turn-ID-based service correlation is removed,
   and can their event/receipt be made self-contained instead?
+- What exact opaque cursor position and generation fingerprint does each
+  provider use so ordinary appends preserve pagination while native logical
+  rewrites fail clearly?
+- What exact per-provider internal scan bound keeps reverse-turn queries bounded
+  without making ordinary reverse-turn queries unexpectedly incomplete?

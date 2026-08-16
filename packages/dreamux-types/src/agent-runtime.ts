@@ -55,6 +55,11 @@ export interface AgentRuntimeSkillSource {
 export interface AgentRuntimeResumeCheckpoint {
   /** Runtime-owned checkpoint id persisted by Dreamux and interpreted by the runtime. */
   id: string;
+  /**
+   * Provider-produced canonical native transcript locator. Dreamux persists
+   * this value atomically with {@link id} and never interprets it.
+   */
+  transcript_locator?: string | null;
 }
 
 export interface AgentRuntimeResumeCapability {
@@ -126,13 +131,68 @@ export interface UnsupportedAgentRuntimeFeatureError extends Error {
   feature: string;
 }
 
-export interface AgentRuntimeLastResult {
-  text: string | null;
-}
-
 export interface AgentRuntimeContextSnapshot {
   usedTokens: number | null;
   windowTokens: number | null;
+}
+
+export interface AgentRuntimeTranscriptQuery {
+  turns: number;
+  cursor?: string;
+  includeTools?: boolean;
+}
+
+export type AgentRuntimeTranscriptBlock =
+  | {
+      kind: 'message';
+      role: 'user' | 'assistant';
+      text: string;
+      truncated: boolean;
+    }
+  | {
+      kind: 'tool';
+      name: string;
+      input: string | null;
+      output: string | null;
+      status: 'ok' | 'error';
+      inputTruncated: boolean;
+      outputTruncated: boolean;
+    };
+
+export interface AgentRuntimeTranscriptTurn {
+  startedAt: number | null;
+  endedAt: number | null;
+  blocks: readonly AgentRuntimeTranscriptBlock[];
+}
+
+export interface AgentRuntimeTranscriptPage {
+  turns: readonly AgentRuntimeTranscriptTurn[];
+  nextCursor: string | null;
+  truncated: boolean;
+}
+
+export interface AgentRuntimeTranscriptContext<TConfig = unknown> {
+  checkpoint: AgentRuntimeResumeCheckpoint | null;
+  config: TConfig;
+  cwd: string;
+  injectEnv?: Readonly<Record<string, string>>;
+  outputBudgetBytes: 262144;
+  logger?: DreamuxLogger;
+}
+
+export interface AgentRuntimeTranscriptError extends Error {
+  name: 'AgentRuntimeTranscriptError';
+  reason:
+    | 'checkpoint_missing'
+    | 'not_found'
+    | 'unreadable'
+    | 'invalid'
+    | 'locator_outside_root'
+    | 'session_mismatch'
+    | 'cursor_invalid'
+    | 'cursor_query_mismatch'
+    | 'cursor_stale'
+    | 'scan_unsupported';
 }
 
 export interface AgentRuntimePathContext {
@@ -253,10 +313,10 @@ export interface AgentRuntimeIdentity {
   /** The runtime instance id (the dispatcher/teammate id the launcher assigns). */
   runtime_id: string;
   /**
-   * A prior resumable checkpoint id the launcher recovered, or null for a fresh
-   * start. The runtime interprets the id in its own native format.
+   * A prior resumable checkpoint the launcher recovered, or null for a fresh
+   * start. The runtime interprets both the id and transcript locator.
    */
-  checkpoint_id?: string | null;
+  checkpoint: AgentRuntimeResumeCheckpoint | null;
 }
 
 /**
@@ -358,11 +418,6 @@ export interface AgentRuntime {
   getCheckpoint(): AgentRuntimeResumeCheckpoint | null;
   wasCheckpointResumed(): boolean;
   /**
-   * The last assistant/user-visible result, or `null` when unavailable.
-   * Core treats `null` as "not reported".
-   */
-  getLast(): Promise<AgentRuntimeLastResult | null>;
-  /**
    * Context-window usage, or `null` when unavailable.
    */
   getContext(): Promise<AgentRuntimeContextSnapshot | null>;
@@ -435,6 +490,10 @@ export interface AgentRuntimeProvider<TConfig = unknown> {
    * delegates provider-specific raw config collection to this capability.
    */
   onboard?: ProviderOnboard<Record<string, unknown>>;
+  readTranscript(
+    query: AgentRuntimeTranscriptQuery,
+    context: AgentRuntimeTranscriptContext<TConfig>,
+  ): Promise<AgentRuntimeTranscriptPage>;
   createRuntime(context: AgentRuntimeCreateContext<TConfig>): AgentRuntime;
 }
 

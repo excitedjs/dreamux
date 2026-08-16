@@ -146,6 +146,9 @@ native identifiers.
   of one reserved source shares the same admission result.
 - A source commits after acceptance or ambiguous post-admission failure. It is
   released only after a provider-proven pre-admission failure.
+- Resident runtimes bound committed source ids with a FIFO window; pending
+  reservations remain separate single-flight state and are never evicted before
+  native admission resolves.
 - `stop()` initiates provider teardown before waiting on startup, restart, or
   submission work that teardown is expected to reject.
 
@@ -161,6 +164,13 @@ Source:
 - `/packages/agent-runtime/claude-code/src/source-reservation.ts`
 - `/packages/agent-runtime/claude-code/src/rpc.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
+
+Provider-native transcript formats, locator discovery, cursor envelopes, and
+typed errors stay inside each runtime package. Both built-ins reuse
+`/packages/dreamux-utils/src/transcript.ts` for provider-neutral digest checks,
+bounded scan accounting, exact positional reads, path containment, rendering,
+and output budgets; duplicating those security and determinism primitives in
+each provider is not an accepted boundary.
 
 ## Codex Portable Output Schema
 

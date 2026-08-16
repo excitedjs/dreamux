@@ -15,7 +15,6 @@ import {
   bundledTeamLeaderSkillRoot,
 } from '../../platform/paths.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
-import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import { cronMcpServerDescriptor } from '../scheduler/mcp-config.js';
 import {
@@ -40,7 +39,6 @@ export interface TeamLeaderAgentDeps {
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   identities: AgentIdentityStore;
-  turnsStore: AgentTurnsStore;
   worktrees: WorktreeManager;
   log: DreamuxLogger;
 }
@@ -70,7 +68,6 @@ export function createTeamLeaderAgent(
     config: deps.config,
     agentRuntimeProviders: deps.agentRuntimeProviders,
     identities: deps.identities,
-    turnsStore: deps.turnsStore,
     worktrees: deps.worktrees,
     log: deps.log,
   });

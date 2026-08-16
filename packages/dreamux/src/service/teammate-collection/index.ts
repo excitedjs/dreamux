@@ -13,18 +13,16 @@ import {
   clampHistoryLimit,
   decodeCursor,
   encodeCursor,
-  foldLastTurns,
   matchesRecordQuery,
   toRecordRow,
   toStatus,
-  validateLastTurns,
 } from '../agent-entity/read-helpers.js';
 import {
   assertDispatcherScopedTeammate,
   assertTeamScopedAgent,
   childAgentRuntimeId,
 } from '../agent-entity/runtime-profile.js';
-import { AgentTurnsStore } from '../agent-entity/turns-store.js';
+import { readAgentTranscript } from '../agent-entity/transcript-reader.js';
 import {
   optionalLifecycleText,
   requireLifecycleText,
@@ -34,6 +32,7 @@ import {
   type AgentEntityHistoryQuery,
   type AgentEntityHistoryResult,
   type AgentEntityIdentity,
+  type AgentEntityLastQuery,
   type AgentEntityLastResult,
   type AgentEntityRecordRow,
   type AgentEntityRuntimeStatus,
@@ -74,7 +73,6 @@ export interface TeammateCollectionOptions {
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   worktrees: WorktreeManager;
   identities: AgentIdentityStore;
-  turnsStore: AgentTurnsStore;
   completionDelivery?: CompletionDeliveryPolicy;
   initiatorFor?: (
     producer: AgentEntityIdentity,
@@ -102,7 +100,6 @@ export class TeammateCollection implements TeammateOps {
   private readonly dispatcherId: string;
   private readonly teamScope: string | null;
   private readonly identities: AgentIdentityStore;
-  private readonly turnsStore: AgentTurnsStore;
   private readonly worktrees: WorktreeManager;
   private readonly entities = new Map<string, TeammateService>();
   private readonly subscriptions = new Map<string, TeammateClosedSubscription>();
@@ -113,7 +110,6 @@ export class TeammateCollection implements TeammateOps {
     this.teamScope = opts.teamScope;
     this.worktrees = opts.worktrees;
     this.identities = opts.identities;
-    this.turnsStore = opts.turnsStore;
   }
 
   async spawn(input: SpawnTeamMateRequest): Promise<AgentEntitySpawnResult> {
@@ -125,7 +121,11 @@ export class TeammateCollection implements TeammateOps {
         turnOrigin: this.teamScope === null ? 'dispatcher' : 'team_leader',
         ...(delivery !== null ? { deliverCompletion: delivery } : {}),
       });
-      return { teammate: entity.status(), ...submission };
+      return {
+        teammate: entity.status(),
+        ...submission,
+        transcript_path: entity.transcriptPath(),
+      };
     } catch (error) {
       await this.closeAfterFailedCreation(entity);
       throw error;
@@ -206,7 +206,6 @@ export class TeammateCollection implements TeammateOps {
     }
     rows.sort(
       (a, b) =>
-        b.last_seen_at - a.last_seen_at ||
         b.updated_at - a.updated_at ||
         a.name.localeCompare(b.name),
     );
@@ -220,20 +219,26 @@ export class TeammateCollection implements TeammateOps {
     };
   }
 
-  async last(name: string, turns?: number): Promise<AgentEntityLastResult> {
-    const requestedTurns = validateLastTurns(turns);
+  async last(
+    name: string,
+    query: number | AgentEntityLastQuery = {},
+  ): Promise<AgentEntityLastResult> {
     const identity = await this.mustIdentity(validateTeamMateName(name));
     const entity = this.liveEntity(identity.name);
-    const lastTurns = await foldLastTurns(
-      this.turnsStore,
+    const transcript = await readAgentTranscript({
+      config: this.opts.config,
+      providers: this.opts.agentRuntimeProviders,
       identity,
-      requestedTurns,
-    );
+      query: typeof query === 'number' ? { turns: query } : query,
+      log: this.opts.log,
+    });
     return {
       teammate: entity?.status() ?? toStatus(identity, null),
-      requested_turns: requestedTurns,
-      returned_turns: lastTurns.length,
-      turns: lastTurns,
+      requested_turns: transcript.requestedTurns,
+      returned_turns: transcript.turns.length,
+      turns: transcript.turns,
+      next_cursor: transcript.nextCursor,
+      truncated: transcript.truncated,
     };
   }
 
@@ -300,10 +305,6 @@ export class TeammateCollection implements TeammateOps {
         name: entity.name,
         waitIdle: entity.waitIdleCapability(),
       }));
-  }
-
-  turns(): AgentTurnsStore {
-    return this.turnsStore;
   }
 
   private async createFreshEntity(
@@ -438,7 +439,6 @@ export class TeammateCollection implements TeammateOps {
       config: this.opts.config,
       agentRuntimeProviders: this.opts.agentRuntimeProviders,
       identities: this.identities,
-      turnsStore: this.turnsStore,
       worktrees: this.worktrees,
       log: this.opts.log,
     });
@@ -520,23 +520,29 @@ export class TeammateCollection implements TeammateOps {
     return identity;
   }
 
-  private rosterList(): Promise<AgentEntityIdentity[]> {
-    return this.identities.list(
+  private async rosterList(): Promise<AgentEntityIdentity[]> {
+    const identities = await this.identities.list(
       this.dispatcherId,
       this.teamScope ?? undefined,
     );
+    return identities.filter((identity) =>
+      this.assertInCollection(identity, false));
   }
 
-  private assertInCollection(identity: AgentEntityIdentity): void {
+  private assertInCollection(
+    identity: AgentEntityIdentity,
+    throwOnMismatch = true,
+  ): boolean {
     const valid =
       identity.dispatcher_id === this.dispatcherId &&
       (this.teamScope === null
         ? identity.team_id === null && identity.role === 'teammate'
         : identity.team_id === this.teamScope &&
           identity.role === 'team_member');
-    if (!valid) {
+    if (!valid && throwOnMismatch) {
       throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
     }
+    return valid;
   }
 
   private async resolveCompletionDelivery(

@@ -5,6 +5,7 @@ import type {
   AgentEntityCloseResult,
   AgentEntityHistoryQuery,
   AgentEntityHistoryResult,
+  AgentEntityLastQuery,
   AgentEntityLastResult,
   AgentEntityRuntimeStatus,
   AgentEntitySendResult,
@@ -75,6 +76,9 @@ export interface TeammateOps {
   history(
     input: Omit<AgentEntityHistoryQuery, 'teamId'>,
   ): Promise<AgentEntityHistoryResult>;
-  last(name: string, turns?: number): Promise<AgentEntityLastResult>;
+  last(
+    name: string,
+    query?: number | AgentEntityLastQuery,
+  ): Promise<AgentEntityLastResult>;
   getCapabilities(): AgentEntityCapabilities;
 }

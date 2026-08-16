@@ -3,7 +3,6 @@ import type {
   AgentRuntimeCapabilities,
   AgentRuntimeContextSnapshot,
   AgentRuntimeCreateContext,
-  AgentRuntimeLastResult,
   AgentRuntimeProviderFactory,
   AgentRuntimeStatus,
   AgentRuntimeTextInput,
@@ -50,7 +49,7 @@ class ExternalParityRuntime implements AgentRuntime {
     private readonly context: AgentRuntimeCreateContext<ExternalParityRuntimeConfig>,
     private readonly observation: ExternalRuntimeObservation,
   ) {
-    this.threadId = context.identity.checkpoint_id ?? null;
+    this.threadId = context.identity.checkpoint?.id ?? null;
   }
 
   async start(): Promise<void> {
@@ -111,10 +110,6 @@ class ExternalParityRuntime implements AgentRuntime {
     return false;
   }
 
-  async getLast(): Promise<AgentRuntimeLastResult | null> {
-    return { text: this.observation.lastText };
-  }
-
   async getContext(): Promise<AgentRuntimeContextSnapshot | null> {
     return null;
   }
@@ -138,6 +133,30 @@ export const provider: AgentRuntimeProviderFactory<ExternalParityRuntimeConfig> 
             ? rawConfig['finalTextPrefix']
             : 'external-runtime-completed',
         model: typeof rawConfig['model'] === 'string' ? rawConfig['model'] : 'fake',
+      };
+    },
+    async readTranscript(query) {
+      const text = externalRuntimeObservations.at(-1)?.lastText ?? null;
+      return {
+        turns:
+          text === null || query.turns < 1
+            ? []
+            : [
+                {
+                  startedAt: null,
+                  endedAt: null,
+                  blocks: [
+                    {
+                      kind: 'message' as const,
+                      role: 'assistant' as const,
+                      text,
+                      truncated: false,
+                    },
+                  ],
+                },
+              ],
+        nextCursor: null,
+        truncated: false,
       };
     },
     createRuntime(context) {

@@ -6,7 +6,6 @@ import type { DreamuxConfig } from '../../config/config.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
-import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import type { ChannelService } from '../channel-service/index.js';
 import type { CollaborationSpaceService } from '../collaboration-space/index.js';
 import type { DispatcherCoreEventBus } from '../dispatcher-core-events/index.js';
@@ -35,7 +34,6 @@ interface DispatcherInputSourceLifecycleOptions {
   channelProviders: ChannelProviderCatalog;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   identities: AgentIdentityStore;
-  turnsStore: AgentTurnsStore;
   log: DreamuxLogger;
   channels: ChannelService;
   adminSocketPath: string;
@@ -144,7 +142,6 @@ export class DispatcherInputSourceLifecycle {
       config: this.opts.config,
       agentRuntimeProviders: this.opts.agentRuntimeProviders,
       identities: this.opts.identities,
-      turnsStore: this.opts.turnsStore,
       log: this.opts.log,
       mcpServers: dispatcherMcpServerDescriptors({
         dispatcherId: this.opts.dispatcherId,

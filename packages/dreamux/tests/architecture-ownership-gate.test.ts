@@ -14,7 +14,6 @@ import {
 } from '../src/platform/paths.js';
 import { TeammateCollection } from '../src/service/teammate-collection/index.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
-import { AgentTurnsStore } from '../src/service/agent-entity/turns-store.js';
 import type { AgentEntityWorktreeIdentity } from '../src/service/agent-entity/types.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
@@ -745,7 +744,6 @@ describe('architecture ownership gate (#233)', () => {
     await mkdir(workspace, { recursive: true });
     const log = noopLog();
     const identities = new AgentIdentityStore(log);
-    const turnsStore = new AgentTurnsStore();
     const worktree = {
       mode: 'reuse-cwd',
       slug: null,
@@ -785,7 +783,6 @@ describe('architecture ownership gate (#233)', () => {
       agentRuntimeProviders: fakeRuntimeCatalog(),
       worktrees: new WorktreeManager(),
       identities,
-      turnsStore,
       log,
     });
 
@@ -845,9 +842,25 @@ describe('architecture ownership gate (#233)', () => {
       })}\n`,
     );
 
-    await expect(
-      identities.get('dispatcher-a', 'legacy-worker'),
-    ).resolves.toMatchObject({ identity_prompt: null });
+    const loaded = await identities.get('dispatcher-a', 'legacy-worker');
+    expect(loaded).toMatchObject({
+      identity_prompt: null,
+      transcript_locator: null,
+    });
+    if (loaded === null) throw new Error('legacy identity was not loaded');
+    await identities.update(loaded, { intent: 'rewritten work' });
+    const rewritten = JSON.parse(await readFile(path, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    for (const removed of [
+      'turn_count',
+      'last_seen_at',
+      'last_prompt_preview',
+      'last_assistant_preview',
+    ]) {
+      expect(rewritten).not.toHaveProperty(removed);
+    }
   });
 
   it('builds conversational agents through the factory without launch forks', async () => {

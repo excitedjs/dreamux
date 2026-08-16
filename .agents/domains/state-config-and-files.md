@@ -71,7 +71,9 @@ state mechanisms:
 - no persisted reaction ledger;
 - no persisted runtime socket path;
 - no workspace-local `.codex/skills` installation;
-- no dispatcher-root `status.json` recovery authority (identity + turn archive are the agent entity state);
+- no dispatcher-root `status.json` recovery authority (`identity.json` is the
+  Dreamux agent-entity recovery state; detailed history stays in the
+  provider-native transcript);
 - no durable `runtime/<name>/` scratch under the dispatcher state root (runtime scratch is volatile and lives under `run/`).
 
 Removed paths may be detected to produce fail-loud diagnostics, but current
@@ -124,39 +126,36 @@ state/<dispatcher-id>/
   channel-bindings.json
   cron-jobs.json
   identity.json
-  turn.jsonl
   teammate/<name>/
     identity.json
-    turn.jsonl
   team/<team-name>/
     name-claim.json
     identity.json
-    turn.jsonl
     record.json
     cron-jobs.json
     teammate/<name>/
       identity.json
-      turn.jsonl
 ```
 
-The dispatcher root `identity.json` + `turn.jsonl` are the dispatcher agent's
-entity state and sit structurally outside the `teammate/` collection. TeamLeader
-state lives at the Team root; Team member state lives under that Team's member
-collection. `name-claim.json` is the Team namespace's permanent ownership
-record: a complete sibling temp file is published with an atomic no-clobber
-hard link before a Team or collaboration-target side effect, so readers never
-observe a partial claim. The claim is never removed, including after dissolve.
-There is no separate `status.json` recovery authority and no durable
-`runtime/<name>/` scratch under the dispatcher state root — runtime scratch is
-volatile and lives under `run/`.
+The dispatcher root `identity.json` is the dispatcher agent's entity state and
+sits structurally outside the `teammate/` collection. TeamLeader state lives at
+the Team root; Team member state lives under that Team's member collection.
+Every identity owns lifecycle/worktree/intent/role guidance plus the
+runtime-native `session_id` and nullable opaque `transcript_locator`; it owns no
+rolling conversation projection. `name-claim.json` is the Team namespace's
+permanent ownership record: a complete sibling temp file is published with an
+atomic no-clobber hard link before a Team or collaboration-target side effect,
+so readers never observe a partial claim. The claim is never removed, including
+after dissolve. There is no separate `status.json` recovery authority and no
+durable `runtime/<name>/` scratch under the dispatcher state root — runtime
+scratch is volatile and lives under `run/`.
 
-Every entity `turn.jsonl` uses strict schema version 2. Each complete non-empty
-line is one terminal logical Turn with submission metadata, terminal status, and
-bounded assistant output. There are no split submit/settle rows and no public or
-persisted Turn identifier. Startup, reads, and append preparation validate every
-complete row. A demonstrably incomplete final JSON fragment may be ignored on
-read and truncated before the next append; complete malformed, mixed-version, or
-schema-invalid rows fail loudly and are never repaired in place.
+Dreamux persists no per-Turn archive. A per-entity `turn.jsonl` left by an older
+release is inert residue: Dreamux never creates, stats, lists, opens, validates,
+repairs, migrates, warns about, or automatically deletes it. Its condition
+cannot block startup or any read/lifecycle operation. Detailed history belongs
+to the selected provider's native transcript. `last` performs a bounded cold
+provider query and stores no copy, index, or cursor in Dreamux state.
 
 Each Team `record.json` is fully server-owned. Its nullable `dissolve` object is
 the TeamCollection authority for one accepted operation: operation id,
@@ -213,14 +212,16 @@ The base owns read/write mechanics:
 The base does not own paths or schemas. Path builders stay in `platform/paths.ts`
 and each concrete store owns validation and domain methods.
 
-Append-only JSONL turn archives and directory listing logic remain concrete-store
-responsibilities.
+Append-only JSONL stores that remain in the current contract (for example
+Workflow journals) stay concrete-store responsibilities. Agent transcript
+formats and discovery belong to their runtime provider package.
 
 Source:
 
 - `/packages/dreamux/src/platform/json-document-store.ts`
 - `/packages/dreamux/src/service/scheduler/store.ts`
-- `/packages/dreamux/src/service/agent-entity/turns-store.ts`
+- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
+- `/packages/dreamux/src/service/agent-entity/transcript-reader.ts`
 
 ## Run Files And Runtime Sockets
 

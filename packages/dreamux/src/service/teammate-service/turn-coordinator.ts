@@ -3,8 +3,6 @@ import type {
   RuntimeTurn,
 } from '@excitedjs/dreamux-types';
 
-import type { AgentRuntimeStateStore } from '../agent-entity/runtime-state.js';
-import type { AgentTurnsStore } from '../agent-entity/turns-store.js';
 import type { AgentEntityTurnOrigin } from '../agent-entity/types.js';
 import type { CompletionDeliveryResult } from '../completion-router/index.js';
 import {
@@ -18,9 +16,6 @@ interface EntityTurnCoordinatorOptions {
   name: () => string;
   intent: () => string | null;
   isActive: () => boolean;
-  onAutomaticPersistenceFailure: (error: Error) => void;
-  turnsStore: AgentTurnsStore;
-  state: AgentRuntimeStateStore;
 }
 
 export interface EntityTurnInput {
@@ -38,18 +33,17 @@ type ObservedRuntimeAdmission =
   | { status: 'fulfilled'; admission: RuntimeAdmission }
   | { status: 'rejected'; error: Error };
 
-/** Entity-owned serialization for provider admission and durable Turn work. */
+/** Entity-owned serialization for provider admission and in-process Turn work. */
 export class EntityTurnCoordinator {
   private readonly pendingAdmissions = new Set<Promise<unknown>>();
   private admissionContinuationTail: Promise<void> = Promise.resolve();
   private currentTurn: EntityTurn | null = null;
   private readonly retainedTurns = new Set<EntityTurn>();
-  private turnPersistenceTail: Promise<void> = Promise.resolve();
 
   constructor(private readonly opts: EntityTurnCoordinatorOptions) {}
 
-  hasUnpersistedCurrent(): boolean {
-    return this.currentTurn !== null && !this.currentTurn.isPersisted();
+  hasUnsettledCurrent(): boolean {
+    return this.currentTurn !== null && !this.currentTurn.isOutcomeSelected();
   }
 
   submitRuntimeTurn(
@@ -128,11 +122,10 @@ export class EntityTurnCoordinator {
     }
   }
 
-  async persistAndDeliverRetained(): Promise<void> {
+  async settleAndDeliverRetained(): Promise<void> {
     const turns = [...this.retainedTurns];
     for (const turn of turns) {
       if (!turn.isOutcomeSelected()) turn.trySettle({ status: 'stopped' });
-      await turn.ensurePersisted();
     }
     for (const turn of turns) await turn.ensureDelivery();
   }
@@ -174,15 +167,10 @@ export class EntityTurnCoordinator {
       input.intent,
       input.submittedAt,
       this.opts.name(),
-      this.opts.turnsStore,
-      this.opts.state,
       input.deliverCompletion ?? null,
-      this.opts.onAutomaticPersistenceFailure,
-      this.turnPersistenceTail,
     );
     this.currentTurn = turn;
     this.retainedTurns.add(turn);
-    this.turnPersistenceTail = turn.persistence;
     return turn;
   }
 

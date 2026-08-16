@@ -8,7 +8,8 @@ It implements the public `AgentRuntimeProvider` contract from
 [`@excitedjs/dreamux-types`](../../dreamux-types) against the Codex
 `app-server`: process supervision, the WebSocket RPC client, the `initialize`
 handshake, thread start/resume, the per-runtime turn manager, teammate
-completion delivery, and Codex doctor diagnostics.
+completion delivery, bounded native transcript pagination, and Codex doctor
+diagnostics.
 
 ## Boundary
 
@@ -84,6 +85,24 @@ Codex logical turn, including inputs folded into the active native turn. Codex
 observes only the object's terminal outcome. Runtime stop resolves every
 unsettled public object as stopped after the supervised process group is proven
 absent.
+
+## Native transcripts
+
+Codex `thread/start` and `thread/resume` return the native `thread.path`. This
+package validates and canonicalizes that rollout path under Codex's
+`sessions`/`archived_sessions` roots, verifies its session metadata, and
+persists it with the runtime checkpoint before admission can be reported.
+Cold reads can rediscover active, archived, `.jsonl`, or `.jsonl.zst`
+representations and follow native `history_base` lineage without starting a
+runtime.
+
+`readTranscript` projects completed native turns into provider-neutral
+message/tool blocks. It owns opaque append-stable cursors, rewrite and query
+mismatch detection, bounded scanning, payload redaction/truncation, and the
+fixed host output budget. If a compressed or lineage transcript cannot be read
+within the native scan bound, it fails with `scan_unsupported` rather than
+performing an unbounded scan. Native Turn/rollout IDs and filesystem paths never
+appear in transcript pages.
 
 All accepted native `turn/start` aliases folded into that object remain in its
 canonical active slot until their responses and native terminal output have

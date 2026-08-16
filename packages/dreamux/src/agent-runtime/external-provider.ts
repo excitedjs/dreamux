@@ -103,6 +103,9 @@ function assertExternalAgentRuntimeProvider(
   if (typeof candidate.createRuntime !== 'function') {
     context.fail('provider.createRuntime must be a function');
   }
+  if (typeof candidate.readTranscript !== 'function') {
+    context.fail('provider.readTranscript must be a function');
+  }
   if (candidate.readConfig !== undefined && typeof candidate.readConfig !== 'function') {
     context.fail('provider.readConfig must be a function when present');
   }
@@ -139,7 +142,6 @@ function assertRuntimeHandle(
     'getStatus',
     'getCheckpoint',
     'wasCheckpointResumed',
-    'getLast',
     'getContext',
     'getCapabilities',
   ];

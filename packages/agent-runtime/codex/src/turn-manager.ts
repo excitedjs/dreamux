@@ -62,7 +62,7 @@ export interface TurnManagerOptions {
   messageIdDedupeWindow?: number;
   /** Optional logger; defaults to console.error. */
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
-  /** Best-effort runtime-local snapshot hook for `AgentRuntime.getLast()`. */
+  /** Provider-private terminal observer used by focused diagnostics/tests. */
   onTurnCompleted?: (turn: CollectedTurn) => void;
 }
 

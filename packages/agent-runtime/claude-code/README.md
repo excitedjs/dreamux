@@ -9,7 +9,8 @@ It implements the public `AgentRuntimeProvider` contract from
 stream-json child: process supervision, the stream-json wire protocol (line
 framing, turn aggregation, control-request replies), per-turn idle-deadline
 handling, MCP config translation (`--mcp-config`), teammate completion delivery
-as a plain user turn, and Claude Code doctor diagnostics.
+as a plain user turn, bounded native transcript pagination, and Claude Code
+doctor diagnostics.
 
 ## Boundary
 
@@ -50,3 +51,22 @@ uses of the same reserved source share the same admission outcome. Accordingly,
 native write may have been accepted and must not be retried automatically.
 Runtime stop synchronously fences new input, releases pending capability/write
 waiters, and drains all already-started admission calls before it resolves.
+
+## Native sessions and transcripts
+
+For a fresh runtime this package generates the native UUID before launch,
+passes it through Claude Code's `--session-id`, and deterministically derives
+the native transcript under
+`<CLAUDE_CONFIG_DIR-or-~/.claude>/projects/<project>/<session-id>.jsonl`.
+The validated canonical path is persisted with the checkpoint before admission
+can be reported. Resume keeps the authoritative native session id and can
+rediscover a moved transcript across Claude Code project directories. No
+SessionStart Hook, callback process, placeholder file, or auxiliary IPC bridge
+is used to discover `transcript_path`.
+
+`readTranscript` is a cold bounded read that never starts a Claude process. It
+applies native rewrite lineage, returns completed provider-neutral
+message/tool blocks in chronological order, and owns opaque cursors, query and
+rewrite mismatch detection, payload redaction/truncation, and the fixed host
+output budget. Native command/session IDs and filesystem paths never appear in
+transcript pages.

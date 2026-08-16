@@ -20,6 +20,8 @@ import type {
   AgentRuntimeStateCallbacks,
 } from '@excitedjs/dreamux-types';
 
+const TEST_SESSION_ID = '11111111-1111-4111-8111-111111111111';
+
 interface FakeSession extends ClaudeCodeSession {
   readonly prompts: string[];
   resolve(outcome?: TurnOutcome): void;
@@ -85,6 +87,8 @@ describe('ClaudeCodeRuntime activity', () => {
         mcpServers: [],
         sessionFactory: fakeFactory(sessions),
         resolveBinPath: (bin) => bin,
+        generateSessionId: () => TEST_SESSION_ID,
+        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
       },
     );
     await runtime.start();
@@ -124,6 +128,8 @@ describe('ClaudeCodeRuntime activity', () => {
           return session;
         },
         resolveBinPath: (bin) => bin,
+        generateSessionId: () => TEST_SESSION_ID,
+        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
       },
     );
     await runtime.start();
@@ -152,7 +158,7 @@ describe('ClaudeCodeRuntime activity', () => {
     liveSession.emit({
       type: 'system',
       subtype: 'init',
-      session_id: 'session-1',
+      session_id: TEST_SESSION_ID,
       capabilities: ['msg_lifecycle_v1'],
     });
     const follow = await followPromise;
@@ -188,6 +194,8 @@ describe('ClaudeCodeRuntime activity', () => {
           return session;
         },
         resolveBinPath: (bin) => bin,
+        generateSessionId: () => TEST_SESSION_ID,
+        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
       },
     );
     await runtime.start();
@@ -212,7 +220,7 @@ describe('ClaudeCodeRuntime activity', () => {
     liveSession.emit({
       type: 'system',
       subtype: 'init',
-      session_id: 'session-1',
+      session_id: TEST_SESSION_ID,
       capabilities: ['msg_lifecycle_v1'],
     });
     await flush();
@@ -246,7 +254,7 @@ describe('ClaudeCodeRuntime activity', () => {
     liveSession.emit({
       type: 'system',
       subtype: 'init',
-      session_id: 'session-1',
+      session_id: TEST_SESSION_ID,
       capabilities: [],
     });
 
@@ -283,7 +291,7 @@ describe('ClaudeCodeRuntime activity', () => {
     liveSession.emit({
       type: 'system',
       subtype: 'init',
-      session_id: 'session-1',
+      session_id: TEST_SESSION_ID,
       capabilities: ['msg_lifecycle_v1'],
     });
     const [firstResult, concurrentResult] = await Promise.all([first, concurrent]);
@@ -327,7 +335,7 @@ describe('ClaudeCodeRuntime activity', () => {
     liveSession.emit({
       type: 'system',
       subtype: 'init',
-      session_id: 'session-1',
+      session_id: TEST_SESSION_ID,
       capabilities: ['msg_lifecycle_v1'],
     });
 
@@ -347,6 +355,64 @@ describe('ClaudeCodeRuntime activity', () => {
     await expect(initial.turn.settled).resolves.toEqual({ status: 'stopped' });
   });
 
+  it('bounds committed source ids while retaining pending and recent duplicates', async () => {
+    const prompts: string[] = [];
+    let alive = false;
+    const runtime = new ClaudeCodeRuntime(
+      { runtime_id: 'flow' },
+      {
+        config: defaultDispatcherClaudeCodeConfig(),
+        cwd: root,
+        state: state(),
+        paths: paths(root),
+        mcpServers: [],
+        sessionFactory: () => ({
+          async start() {
+            alive = true;
+          },
+          async stop() {
+            alive = false;
+          },
+          isAlive: () => alive,
+          setOnExit() {},
+          async submitTurn(prompt) {
+            prompts.push(prompt);
+            return okOutcome();
+          },
+          async steerTurn() {},
+        }),
+        resolveBinPath: (bin) => bin,
+        generateSessionId: () => TEST_SESSION_ID,
+        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
+        sourceIdDedupeWindow: 2,
+      },
+    );
+    await runtime.start();
+
+    for (const sourceId of ['one', 'two', 'three']) {
+      const admission = await runtime.completionInput({
+        text: sourceId,
+        sourceId,
+      });
+      if (admission.status !== 'submitted') throw new Error('expected submitted');
+      await expect(admission.turn.settled).resolves.toMatchObject({
+        status: 'completed',
+      });
+    }
+    await expect(
+      runtime.completionInput({ text: 'recent duplicate', sourceId: 'three' }),
+    ).resolves.toEqual({ status: 'duplicate' });
+
+    const evicted = await runtime.completionInput({
+      text: 'evicted retry',
+      sourceId: 'one',
+    });
+    if (evicted.status !== 'submitted') throw new Error('expected submitted');
+    await evicted.turn.settled;
+    expect(prompts).toEqual(['one', 'two', 'three', 'evicted retry']);
+    await runtime.stop();
+  });
+
   it('joins concurrent starts and creates one resident session', async () => {
     const sessions: ClaudeCodeSession[] = [];
     const started = deferred<void>();
@@ -364,6 +430,8 @@ describe('ClaudeCodeRuntime activity', () => {
           return session;
         },
         resolveBinPath: (bin) => bin,
+        generateSessionId: () => TEST_SESSION_ID,
+        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
       },
     );
 
@@ -390,6 +458,8 @@ describe('ClaudeCodeRuntime activity', () => {
         mcpServers: [],
         sessionFactory: () => inertSession(async () => started.promise, stop),
         resolveBinPath: (bin) => bin,
+        generateSessionId: () => TEST_SESSION_ID,
+        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
       },
     );
 
@@ -415,6 +485,8 @@ describe('ClaudeCodeRuntime activity', () => {
         mcpServers: [],
         sessionFactory: fakeFactory(sessions),
         resolveBinPath: (bin) => bin,
+        generateSessionId: () => TEST_SESSION_ID,
+        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
       },
     );
     await runtime.start();
@@ -469,6 +541,8 @@ describe('ClaudeCodeRuntime activity', () => {
           },
         }),
         resolveBinPath: (bin) => bin,
+        generateSessionId: () => TEST_SESSION_ID,
+        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
       },
     );
     await runtime.start();
@@ -491,6 +565,202 @@ describe('ClaudeCodeRuntime activity', () => {
     await expect(initial.turn.settled).resolves.toEqual({ status: 'stopped' });
   });
 
+  it('does not publish a ghost association when a fresh child start fails', async () => {
+    let stopCalls = 0;
+    const checkpointWrites: unknown[] = [];
+    const runtime = new ClaudeCodeRuntime(
+      { runtime_id: 'flow', checkpoint: null },
+      {
+        config: defaultDispatcherClaudeCodeConfig(),
+        cwd: root,
+        state: {
+          async setStatus() {},
+          async setCheckpoint(checkpoint) {
+            checkpointWrites.push(checkpoint);
+          },
+        },
+        paths: paths(root),
+        mcpServers: [],
+        sessionFactory: () => ({
+          async start() {
+            throw new Error('fresh child failed');
+          },
+          async stop() {
+            stopCalls += 1;
+          },
+          isAlive: () => false,
+          setOnExit() {},
+          async submitTurn() {
+            return okOutcome();
+          },
+          async steerTurn() {},
+        }),
+        resolveBinPath: (bin) => bin,
+        generateSessionId: () => TEST_SESSION_ID,
+        resolveTranscriptPath: async () => join(root, 'fresh.jsonl'),
+      },
+    );
+
+    await expect(runtime.start()).rejects.toThrow('fresh child failed');
+    expect(runtime.getCheckpoint()).toBeNull();
+    expect(checkpointWrites).toEqual([]);
+    expect(stopCalls).toBe(1);
+  });
+
+  it('reaps a fresh child when checkpoint persistence fails', async () => {
+    let alive = false;
+    let stopCalls = 0;
+    const runtime = new ClaudeCodeRuntime(
+      { runtime_id: 'flow', checkpoint: null },
+      {
+        config: defaultDispatcherClaudeCodeConfig(),
+        cwd: root,
+        state: {
+          async setStatus() {},
+          async setCheckpoint() {
+            throw new Error('checkpoint write failed');
+          },
+        },
+        paths: paths(root),
+        mcpServers: [],
+        sessionFactory: () => ({
+          async start() {
+            alive = true;
+          },
+          async stop() {
+            stopCalls += 1;
+            alive = false;
+          },
+          isAlive: () => alive,
+          setOnExit() {},
+          async submitTurn() {
+            return okOutcome();
+          },
+          async steerTurn() {},
+        }),
+        resolveBinPath: (bin) => bin,
+        generateSessionId: () => TEST_SESSION_ID,
+        resolveTranscriptPath: async () => join(root, 'fresh.jsonl'),
+      },
+    );
+
+    await expect(runtime.start()).rejects.toThrow('checkpoint write failed');
+    expect(runtime.getCheckpoint()).toBeNull();
+    expect(alive).toBe(false);
+    expect(stopCalls).toBe(1);
+  });
+
+  it('does not admit a turn before the fresh checkpoint commits', async () => {
+    const checkpointWrite = deferred<void>();
+    const submitted: string[] = [];
+    let alive = false;
+    const runtime = new ClaudeCodeRuntime(
+      { runtime_id: 'flow', checkpoint: null },
+      {
+        config: defaultDispatcherClaudeCodeConfig(),
+        cwd: root,
+        state: {
+          async setStatus() {},
+          async setCheckpoint() {
+            await checkpointWrite.promise;
+          },
+        },
+        paths: paths(root),
+        mcpServers: [],
+        sessionFactory: () => ({
+          async start() {
+            alive = true;
+          },
+          async stop() {
+            alive = false;
+          },
+          isAlive: () => alive,
+          setOnExit() {},
+          async submitTurn(prompt) {
+            submitted.push(prompt);
+            return okOutcome();
+          },
+          async steerTurn() {},
+        }),
+        resolveBinPath: (bin) => bin,
+        generateSessionId: () => TEST_SESSION_ID,
+        resolveTranscriptPath: async () => join(root, 'fresh.jsonl'),
+      },
+    );
+
+    const starting = runtime.start();
+    await waitFor(() => alive);
+    const admission = runtime.channelInput({
+      sourceId: 'before-checkpoint',
+      text: 'wait for association',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(submitted).toEqual([]);
+    expect(runtime.getCheckpoint()).toBeNull();
+
+    checkpointWrite.resolve(undefined);
+    await starting;
+    const accepted = await admission;
+    if (accepted.status !== 'submitted') throw new Error('expected submitted');
+    await expect(accepted.turn.settled).resolves.toMatchObject({
+      status: 'completed',
+    });
+    expect(submitted).toEqual(['wait for association']);
+    expect(runtime.getCheckpoint()).toEqual({
+      id: TEST_SESSION_ID,
+      transcript_locator: join(root, 'fresh.jsonl'),
+    });
+    await runtime.stop();
+  });
+
+  it('preserves the old association when resumed locator persistence fails', async () => {
+    const oldCheckpoint = {
+      id: '22222222-2222-4222-8222-222222222222',
+      transcript_locator: join(root, 'old.jsonl'),
+    };
+    let alive = false;
+    let stopCalls = 0;
+    const runtime = new ClaudeCodeRuntime(
+      { runtime_id: 'flow', checkpoint: oldCheckpoint },
+      {
+        config: defaultDispatcherClaudeCodeConfig(),
+        cwd: root,
+        state: {
+          async setStatus() {},
+          async setCheckpoint() {
+            throw new Error('resume checkpoint write failed');
+          },
+        },
+        paths: paths(root),
+        mcpServers: [],
+        sessionFactory: () => ({
+          async start() {
+            alive = true;
+          },
+          async stop() {
+            stopCalls += 1;
+            alive = false;
+          },
+          isAlive: () => alive,
+          setOnExit() {},
+          async submitTurn() {
+            return okOutcome();
+          },
+          async steerTurn() {},
+        }),
+        resolveBinPath: (bin) => bin,
+        resolveTranscriptPath: async () => join(root, 'refreshed.jsonl'),
+      },
+    );
+
+    await expect(runtime.start()).rejects.toThrow(
+      'resume checkpoint write failed',
+    );
+    expect(runtime.getCheckpoint()).toEqual(oldCheckpoint);
+    expect(alive).toBe(false);
+    expect(stopCalls).toBe(1);
+  });
+
   it('returns a rejected promise instead of throwing when start follows stop', async () => {
     const runtime = new ClaudeCodeRuntime(
       { runtime_id: 'flow' },
@@ -502,6 +772,8 @@ describe('ClaudeCodeRuntime activity', () => {
         mcpServers: [],
         sessionFactory: () => inertSession(async () => undefined),
         resolveBinPath: (bin) => bin,
+        generateSessionId: () => TEST_SESSION_ID,
+        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
       },
     );
     await runtime.start();
@@ -562,6 +834,8 @@ describe('ClaudeCodeRuntime activity', () => {
           return session;
         },
         resolveBinPath: (bin) => bin,
+        generateSessionId: () => TEST_SESSION_ID,
+        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
       },
     );
     await runtime.start();
@@ -679,6 +953,8 @@ function rpcRuntime(
         return session;
       },
       resolveBinPath: (bin) => bin,
+        generateSessionId: () => TEST_SESSION_ID,
+        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
     },
   );
 }
@@ -702,7 +978,7 @@ function completeRpcCommand(
     type: 'result',
     subtype: 'success',
     result,
-    session_id: 'session-1',
+    session_id: TEST_SESSION_ID,
   });
 }
 
@@ -748,7 +1024,7 @@ function okOutcome(): TurnOutcome {
   return {
     isError: false,
     text: 'done',
-    sessionId: 'sess-1',
+    sessionId: TEST_SESSION_ID,
     subtype: 'success',
     errors: [],
     hasStructuredOutput: false,

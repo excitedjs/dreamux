@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { vi } from 'vitest';
 
 import { AgentIdentityStore } from '../../src/service/agent-entity/identity-store.js';
-import { AgentTurnsStore } from '../../src/service/agent-entity/turns-store.js';
 import { CompletionDeliveryPolicy } from '../../src/service/completion-router/index.js';
 import type { CompletionInitiator } from '../../src/service/completion-router/index.js';
 import { TeamCollection } from '../../src/service/team-collection/index.js';
@@ -57,7 +56,6 @@ export function createTeamDissolveFixture() {
         }),
         worktrees: input.worktrees,
         identities: new AgentIdentityStore(log),
-        turnsStore: new AgentTurnsStore(),
         completionDelivery: new CompletionDeliveryPolicy({
           dispatcherId: 'dispatcher-a',
           log,

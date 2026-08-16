@@ -43,7 +43,7 @@ describe('external provider fixture', () => {
 
   it('delivers a plain text turn through required completionInput', async () => {
     const runtime = fixtureRuntimeProvider.createRuntime({
-      identity: { runtime_id: 'd1', checkpoint_id: null },
+      identity: { runtime_id: 'd1', checkpoint: null },
       config: { model: 'm' },
       cwd: '/tmp/fixture',
       mcpServers: [],
@@ -88,7 +88,7 @@ describe('external provider fixture', () => {
     expect(config).toEqual({ model: 'fixture-model' });
 
     const runtime = fixtureRuntimeProvider.createRuntime({
-      identity: { runtime_id: 'd1', checkpoint_id: null },
+      identity: { runtime_id: 'd1', checkpoint: null },
       config: config ?? { model: 'default' },
       cwd: '/tmp/fixture',
       mcpServers: [],

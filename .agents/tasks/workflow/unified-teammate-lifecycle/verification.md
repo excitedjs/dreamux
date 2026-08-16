@@ -1,5 +1,296 @@
 # Verification
 
+## Current Native-Transcript Iteration
+
+### Scope
+
+- Requirement SHA-256:
+  `e44f6411914cd1ff5ea49c55f09bbae17ad162f62335123f43d89ea0405208d0`
+- Approved solution SHA-256:
+  `157cb2602c2986d7877ab34085be6b7401c33c5778f9657ec85f4c866c05f300`
+- Baseline `next` commit:
+  `3b74f9bc59437cd234047473321a131658295126`
+- Review target: the complete branch and working-tree change, including every
+  tracked modification and every untracked file present when the workflow
+  scope was resolved.
+- TeamLeader pre-review completed after one implementation writer and one
+  remediation turn. The independent implementation review and its accepted
+  remediation are complete.
+
+### TeamLeader Pre-Review
+
+The TeamLeader inspected the complete implementation and the relevant upstream
+Codex and Claude Code native-storage sources. The initial developer delivery
+passed its own package checks, but TeamLeader pre-review returned five
+root-cause groups to the same sole writer:
+
+1. **Native path authority and file confinement.** Claude long-path hashing,
+   relative config-home resolution, prospective symlink confinement, existing
+   transcript session evidence, and both built-ins' open-after-validation
+   TOCTOU handling needed to match the native owners precisely.
+2. **Claude native conversation reconstruction.** Parallel tool activity is a
+   DAG, not a single parent chain, and a completed turn requires native
+   `turn_duration` evidence rather than mere assistant output. Open tool tails
+   must remain invisible.
+3. **Codex lineage and cursor correctness.** `history_base.thread_id` denotes a
+   rollout id after revert and can differ from the stable thread id. Active and
+   archived candidates, nested reverted lineage, compressed relocation, and
+   strictly older continuation positions needed independent proof.
+4. **Bounded reads and public errors.** Discovery, metadata records, rewrite
+   scans, boundary records, malformed cursors, provider exceptions, and
+   unreadable paths needed deterministic bounds and fixed path-free public
+   mappings.
+5. **Runtime-session checkpoint transactions.** Fresh and resumed Claude/Codex
+   associations must publish only after native startup/path validation and one
+   atomic checkpoint write; failure must preserve the old association and prove
+   child/process teardown.
+
+The same writer repaired all five groups. The TeamLeader then re-read the final
+implementation and focused fixtures. The final code uses provider-owned
+no-follow opened-file handles with identity revalidation, native session
+evidence, bounded discovery and parsing, append-stable rewrite evidence,
+realistic Claude DAG/completion fixtures, rollout-id-aware Codex lineage, and
+checkpoint-before-admission transactions. No remaining pre-review blocker was
+found.
+
+### TeamLeader Commands And Results
+
+Focused deterministic suites:
+
+- Claude transcript and runtime-activity:
+  - `2` files, `43` tests passed.
+- Codex transcript and runtime-output-schema:
+  - `2` files, `38` tests passed.
+- Dreamux transcript/admin/MCP/read/lifecycle:
+  - `5` files, `152` tests passed.
+
+Repository gates:
+
+- `node common/scripts/install-run-rush.js build`
+  - Passed; all projects were already up to date.
+- `node common/scripts/install-run-rush.js typecheck`
+  - Passed for every package defining work.
+- `node common/scripts/install-run-rush.js typecheck:tests`
+  - Passed for every package defining test typecheck.
+- `node common/scripts/install-run-rush.js lint`
+  - Passed for every package defining work.
+- `CI=true DREAMUX_RUN_LIVE_MODEL_GATE=0 node common/scripts/install-run-rush.js test`
+  - Passed.
+  - `dreamux-types`: `26` passed.
+  - `dreamux-utils`: `16` passed.
+  - `agent-runtime-claude-code`: `106` passed.
+  - `agent-runtime-codex`: `117` passed.
+  - `feishu-channel`: `274` passed.
+  - `dreamux`: `1052` passed, `5` skipped.
+- `node common/scripts/install-run-rush.js change --verify --no-fetch`
+  - Exited successfully.
+  - Rush emitted the existing warning that no baseline remote URL is declared
+    and named `origin/main`; no fetch was attempted.
+- `python3 .agents/skills/dev-workflow/scripts/init_task.py check --domain workflow --slug unified-teammate-lifecycle`
+  - Passed.
+- `.agents/scripts/check.sh`
+  - Passed: `KB OK (119 files reachable from root.md)`.
+- `git diff --check`
+  - Passed.
+
+### Independent Implementation Review
+
+One new non-Codex `xhigh` code-review workflow reviewed the complete workspace:
+
+- Run: `run-5c6e0b04-59c4-467a-b794-58568e695e93`
+- Coverage: complete; no failed finder, failed verifier location, or partial
+  coverage.
+- Finders: `7`.
+- Candidates: `32`.
+- Independently verified: `32`.
+- Refuted candidates: `13`.
+- Primary reported findings after root-cause merging: `14`.
+
+TeamLeader adjudication accepted eight findings:
+
+1. bound Claude resident source-id deduplication while retaining pending
+   single-flight and accepted/ambiguous duplicate semantics;
+2. make concurrent Claude skill materialization converge on a valid
+   `EEXIST`/`ENOTEMPTY` winner and fail loud on a malformed winner;
+3. replace single-call positional transcript reads with bounded exact reads for
+   Claude metadata/windows and Codex uncompressed windows;
+4. apply the collection role/team predicate to roster-backed `list` and
+   `history`, not only targeted reads;
+5. map only `AgentTranscriptReadError` through the fixed transcript public-error
+   table so ordinary TeamMate domain errors retain their normal diagnostics;
+6. validate the public provider `readTranscript()` `turns` input as an integer
+   in `1..50` at both built-in boundaries;
+7. replace locale-dependent Claude parallel-branch ordering with deterministic
+   code-unit ordering;
+8. single-source neutral transcript digest, digest validation, discovery
+   budget, exact positional read, and path-containment primitives in
+   `@excitedjs/dreamux-utils`.
+
+TeamLeader rejected six findings:
+
+1. Early unlock after a sibling close failure contradicts the frozen invariant
+   that close failure leaves the Workflow non-terminal, fully locked, and
+   retryable.
+2. Swallowing process-group `EPERM` would falsely claim termination and weaken
+   the approved bounded KILL proof.
+3. Changing Team-scoped read handles to bypass `TeamService` would move the
+   existing Team generation/read-lease boundary and was not a transcript-reader
+   entity/runtime materialization regression.
+4. Reserving a corrupt TeamLeader name from a second state source is an
+   existing corrupt-state authority decision, not a safe incidental change for
+   this task.
+5. Reclassifying late Agent exceptions after a Workflow terminal request is a
+   diagnostic preference; it did not prove an incorrect external outcome and
+   would let late work challenge the selected terminal intent.
+6. Reintroducing shutdown-only terminal-delivery discard would restore the
+   second lifecycle path that the approved truthful stop pipeline removes.
+
+No rejected finding was implemented.
+
+### Accepted-Finding Remediation
+
+The same sole writer repaired all eight accepted findings without changing
+`.agents/**`, committing, pushing, or changing GitHub state. TeamLeader
+inspected the resulting source and regression tests.
+
+Focused TeamLeader reruns:
+
+- Claude runtime, skill materializer, and transcript: `3` files, `52` tests
+  passed.
+- Codex transcript: `1` file, `25` tests passed.
+- Dreamux Utils: `1` file, `20` tests passed.
+- Dreamux collection/admin/MCP transcript paths: `3` files, `92` tests passed.
+
+Final repository gates:
+
+- `node common/scripts/install-run-rush.js build`
+  - Passed; all projects were up to date.
+- `node common/scripts/install-run-rush.js typecheck`
+  - Passed for every package defining work.
+- `node common/scripts/install-run-rush.js typecheck:tests`
+  - Passed for every package defining test typecheck.
+- `node common/scripts/install-run-rush.js lint`
+  - Passed for every package defining work.
+- `CI=true DREAMUX_RUN_LIVE_MODEL_GATE=0 node common/scripts/install-run-rush.js test`
+  - Passed with exit code `0`.
+  - The warning output is from intentional failure/stop/restart-path tests.
+  - The two real-model Codex cases used the repository's existing CI skip
+    policy; no load-bearing test assertion was weakened.
+- `node common/scripts/install-run-rush.js change --verify --no-fetch`
+  - Passed with the existing baseline-remote warning.
+- `python3 .agents/skills/dev-workflow/scripts/init_task.py check --domain workflow --slug unified-teammate-lifecycle`
+  - Passed.
+- `.agents/scripts/check.sh`
+  - Passed: `KB OK (119 files reachable from root.md)`.
+- `git diff --check`
+  - Passed.
+
+Post-remediation static checks also found:
+
+- no direct `FileHandle.read()` remains in either built-in transcript module;
+- no locale-dependent comparison remains in Claude transcript reconstruction;
+- both providers consume the shared neutral transcript primitives;
+- repository artifacts and added lines contain zero prohibited-family matches;
+- the frozen requirement and solution SHA-256 values remain exact.
+
+### Architecture, Deletion, And Publication Gates
+
+Repo-wide product-source searches found no remaining:
+
+- Dreamux Turn archive store, path builder, record type, validator, append,
+  preflight, or archive-gated settlement/delivery code;
+- rolling identity conversation field or preview projection;
+- runtime `getLast()` / `lastResult` history source;
+- public/service/persisted Turn id or submission id;
+- Channel Turn submitted/settled event type, publisher, or subscriber;
+- Claude synthetic Turn counter/id implementation;
+- legacy `checkpoint_id` contract.
+
+`transcript_path` is present only in the direct TeamMate `spawn` / `send`
+receipt types, service projections, and MCP receipt schema/projector.
+`transcript_locator` remains the private runtime checkpoint field. List,
+status, history, `last`, Workflow, Team, Channel, completion delivery, core
+events, and public error projections contain neither path.
+
+Using the out-of-repository prohibited-family token set, the following exact
+counts were all zero:
+
+- tracked repository artifacts;
+- untracked repository artifacts;
+- added task-diff lines;
+- current task commit messages;
+- Issue #337 title/body/comments;
+- PR #338 title/body/comments/reviews/public head ref.
+
+Added-line scans for private registry/domain markers, machine-local paths, real
+Feishu ids, and common credential token shapes were also zero.
+
+### Live Gates And Known Limitations
+
+The implementation writer ran the live gates after the final remediation:
+
+- Claude Code `2.1.228`: `3/3` live tests passed.
+- Codex `0.147.0`: `5/7` live tests passed.
+  - The structured-output model turn timed out after repeated external service
+    reconnects; native app-server `turn/start` reported no local protocol
+    failure.
+  - The mid-turn injection gate timed out waiting for the external model to
+    begin command execution after MCP readiness and user-message submission.
+
+The TeamLeader's deterministic full run used the repository's existing
+`DREAMUX_RUN_LIVE_MODEL_GATE=0` policy and did not reinterpret those two
+external model-service failures as local implementation failures.
+
+`gitleaks` is unavailable locally and network attempts to obtain the pinned
+binary are not reliable in this environment. The repository-artifact,
+added-line, publication-surface, and targeted credential scans above passed,
+but CI must still run the canonical gitleaks gate.
+
+Rush `5.140.0` warns that Node `22.16.0` is outside its tested-version list.
+Every executed Rush command otherwise completed successfully.
+
+### Knowledge Closeout
+
+The approved requirement and solution still cover the final implementation;
+the accepted review corrections strengthen boundedness, determinism, neutral
+utility ownership, and public-error fidelity without changing the product
+contract.
+
+Updated current knowledge owners:
+
+- [Current architecture](/.agents/reference/current-architecture.md)
+- [Repo structure](/.agents/reference/repo-structure.md)
+- [Service topology](/.agents/reference/service-topology.md)
+- [Provider runtime](/.agents/domains/provider-runtime.md)
+- [Dispatcher orchestration](/.agents/domains/dispatcher-orchestration.md)
+- [State, config, and files](/.agents/domains/state-config-and-files.md)
+- [State and paths](/.agents/reference/state-and-paths.md)
+- [Channel runtime](/.agents/reference/channel-runtime.md)
+- [Entity-owned TeamMate lifecycle and object Turns](/.agents/decisions/entity-owned-teammate-lifecycle-and-object-turns.md)
+- [Provider architecture realignment](/.agents/decisions/provider-architecture-realignment.md)
+- bundled maintenance
+  `packages/dreamux/skills/dispatcher/dreamux-maintenance/references/service-lifecycle.md`
+
+The shared transcript primitives are current package-boundary facts in
+`@excitedjs/dreamux-utils`; provider-native schemas, locators, cursor envelopes,
+and typed provider errors remain in their owning runtime packages. No new
+decision record is required because this is the approved neutral-provider
+boundary applied consistently rather than a new architectural choice.
+
+Residual delivery gates:
+
+- PR #338 must be replaced with the reviewed workspace and pass normal CI.
+- Canonical gitleaks remains required in CI because the pinned binary was not
+  available locally.
+- The two real-model Codex gates require a healthy external model service; the
+  local protocol/app-server prerequisites passed as recorded above.
+
+## Superseded Strict-Archive Iteration Evidence
+
+The sections below are preserved as historical verification for the previous
+strict Dreamux `turn.jsonl` iteration. They do not verify the current approved
+native-transcript implementation and must not be used as its review gate.
+
 ## Scope
 
 - Requirement SHA-256:
