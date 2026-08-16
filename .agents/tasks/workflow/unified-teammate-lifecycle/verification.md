@@ -193,6 +193,50 @@ Post-remediation static checks also found:
 - repository artifacts and added lines contain zero prohibited-family matches;
 - the frozen requirement and solution SHA-256 values remain exact.
 
+### PR CI Canonical-Path Correction
+
+PR #338 first ran against commit
+`c5802be4fdb3ba3a37c1a3ad892bcd0c0de6c840`. Ubuntu Rush and every
+non-Rush gate passed. The macOS Rush test job exposed four test-only
+lexical-path assumptions:
+
+- three Claude transcript assertions expected a temporary path under
+  `/var/...`, while the product correctly returned its canonical realpath;
+- one Codex prospective thread-path assertion made the same lexical-versus-
+  canonical comparison.
+
+The product implementation was unchanged. The two provider transcript test
+files now compute canonical expected paths with `realpath()`, preserving root
+confinement, native session evidence, and TOCTOU checks. The Codex oracle keeps
+its independence from product path builders by appending
+`relative(configuredRoot, path)` to the canonical configured root.
+
+TeamLeader pre-review after the CI correction:
+
+- Claude transcript: `33/33` passed.
+- Claude package: typecheck and lint passed; `115/115` tests passed.
+- Codex transcript: `25/25` passed.
+- Codex package: typecheck and lint passed; `122/122` tests passed.
+- `git diff --check` and frozen-hash verification passed.
+
+Because CI feedback changed repository tests, the correction received a new
+non-Codex `xhigh` implementation review:
+
+- Run: `run-994e9dd0-535d-4e8b-8a95-91e823168b19`
+- Scope: only the two uncommitted provider transcript test files.
+- Coverage: complete; `7/7` finders, no failed verifier location, no partial
+  coverage.
+- Candidates: `2`, both verified at one source location.
+- Correctness blockers: none.
+- Reported finding: one confirmed cleanup item asking the Codex expected path
+  to reuse the test's already-constructed relative tail instead of duplicating
+  the date/filename layout.
+
+The TeamLeader accepted that cleanup finding. The same sole writer applied it
+without changing product code or `.agents/**`; the Codex focused, typecheck,
+lint, full-package, and diff checks passed again. No accepted finding remains
+unresolved.
+
 ### Architecture, Deletion, And Publication Gates
 
 Repo-wide product-source searches found no remaining:

@@ -4,6 +4,7 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  realpath,
   rename,
   rm,
   stat,
@@ -719,6 +720,7 @@ describe('Claude Code native transcript reader', () => {
     await mkdir(dirname(moved), { recursive: true });
     await writeFile(moved, await readFile(fixture.path));
     await unlink(fixture.path);
+    const canonicalMoved = await realpath(moved);
 
     await expect(
       locateClaudeTranscript({
@@ -727,7 +729,7 @@ describe('Claude Code native transcript reader', () => {
         locator: fixture.path,
         env: { HOME: fixture.root, CLAUDE_CONFIG_DIR: join(fixture.root, '.claude') },
       }),
-    ).resolves.toMatchObject({ path: moved });
+    ).resolves.toMatchObject({ path: canonicalMoved });
   });
 
   it('matches native Bun/Zig path hashing for long cwd values', async () => {
@@ -761,7 +763,12 @@ describe('Claude Code native transcript reader', () => {
       HOME: root,
       CLAUDE_CONFIG_DIR: 'relative-config',
     });
-    expect(path.startsWith(join(runtimeCwd, 'relative-config', 'projects')))
+    const canonicalRuntimeCwd = await realpath(runtimeCwd);
+    expect(
+      path.startsWith(
+        join(canonicalRuntimeCwd, 'relative-config', 'projects'),
+      ),
+    )
       .toBe(true);
   });
 
@@ -820,6 +827,7 @@ describe('Claude Code native transcript reader', () => {
     const longPath = join(legacyProject, `${SESSION_ID}.jsonl`);
     await mkdir(legacyProject, { recursive: true });
     await writeEntries(longPath, conversationTurns(1));
+    const canonicalLongPath = await realpath(longPath);
     await expect(
       locateClaudeTranscript({
         sessionId: SESSION_ID,
@@ -830,7 +838,7 @@ describe('Claude Code native transcript reader', () => {
         },
         worktreePaths: [],
       }),
-    ).resolves.toMatchObject({ path: longPath });
+    ).resolves.toMatchObject({ path: canonicalLongPath });
 
     await unlink(longPath);
     const sibling = join(fixture.root, 'sibling-worktree');
@@ -845,6 +853,7 @@ describe('Claude Code native transcript reader', () => {
     );
     await mkdir(dirname(siblingPath), { recursive: true });
     await writeEntries(siblingPath, conversationTurns(1));
+    const canonicalSiblingPath = await realpath(siblingPath);
     await expect(
       locateClaudeTranscript({
         sessionId: SESSION_ID,
@@ -855,7 +864,7 @@ describe('Claude Code native transcript reader', () => {
         },
         worktreePaths: [fixture.cwd, sibling],
       }),
-    ).resolves.toMatchObject({ path: siblingPath });
+    ).resolves.toMatchObject({ path: canonicalSiblingPath });
 
     await unlink(siblingPath);
     const crossProject = join(
@@ -867,6 +876,7 @@ describe('Claude Code native transcript reader', () => {
     );
     await mkdir(dirname(crossProject), { recursive: true });
     await writeEntries(crossProject, conversationTurns(1));
+    const canonicalCrossProject = await realpath(crossProject);
     await expect(
       locateClaudeTranscript({
         sessionId: SESSION_ID,
@@ -877,7 +887,7 @@ describe('Claude Code native transcript reader', () => {
         },
         worktreePaths: [],
       }),
-    ).resolves.toMatchObject({ path: crossProject });
+    ).resolves.toMatchObject({ path: canonicalCrossProject });
   });
 
   it('bounds all-project discovery and oversized metadata records', async () => {

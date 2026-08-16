@@ -3,6 +3,7 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  realpath,
   rename,
   rm,
   symlink,
@@ -10,7 +11,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, sep } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { zstdCompressSync } from 'node:zlib';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -593,20 +594,24 @@ describe('Codex native transcript reader', () => {
   it('accepts a confined exact-session thread path before the first append', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dreamux-codex-thread-path-'));
     roots.push(root);
+    const configuredRoot = join(root, '.codex');
     const path = join(
-      root,
-      '.codex',
+      configuredRoot,
       'sessions',
       '2026',
       '08',
       '16',
       `rollout-2026-08-16T00-00-00-${SESSION_ID}.jsonl`,
     );
-    await mkdir(join(root, '.codex'), { recursive: true });
+    await mkdir(configuredRoot, { recursive: true });
     const rootsForTest = await resolveCodexTranscriptRoots({
       HOME: root,
-      CODEX_HOME: join(root, '.codex'),
+      CODEX_HOME: configuredRoot,
     });
+    const canonicalPath = join(
+      await realpath(configuredRoot),
+      relative(configuredRoot, path),
+    );
 
     await expect(
       validateCodexThreadPath(
@@ -615,7 +620,7 @@ describe('Codex native transcript reader', () => {
         rootsForTest,
       ),
     ).resolves.toMatchObject({
-      path,
+      path: canonicalPath,
       sessionId: SESSION_ID,
       rolloutId: SESSION_ID,
     });
