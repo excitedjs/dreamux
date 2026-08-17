@@ -234,6 +234,55 @@ describe('parseLine', () => {
     }
   });
 
+  it('parses a top-level command_lifecycle envelope', () => {
+    // The resident CLI emits `command_lifecycle` as a top-level `type`.
+    const line = parseLine(
+      JSON.stringify({
+        type: 'command_lifecycle',
+        command_uuid: 'c1',
+        state: 'completed',
+      }),
+    );
+    expect(line).toMatchObject({
+      kind: 'command_lifecycle',
+      commandUuid: 'c1',
+      state: 'completed',
+    });
+  });
+
+  it('parses a system-subtype command_lifecycle envelope (backward compatibility)', () => {
+    // Older streams (and the test fixture) emit it as a `system` subtype.
+    const line = parseLine(
+      JSON.stringify({
+        type: 'system',
+        subtype: 'command_lifecycle',
+        command_uuid: 'c2',
+        state: 'started',
+      }),
+    );
+    expect(line).toMatchObject({
+      kind: 'command_lifecycle',
+      commandUuid: 'c2',
+      state: 'started',
+    });
+  });
+
+  it('nulls an unrecognized command_lifecycle state', () => {
+    const line = parseLine(
+      JSON.stringify({
+        type: 'command_lifecycle',
+        command_uuid: 'c3',
+        state: 'some-future-state',
+      }),
+    );
+    if (line.kind === 'command_lifecycle') {
+      expect(line.commandUuid).toBe('c3');
+      expect(line.state).toBeNull();
+    } else {
+      throw new Error('expected command_lifecycle');
+    }
+  });
+
   it('classifies unmodelled JSON as other and non-JSON as parse_error', () => {
     expect(parseLine(JSON.stringify({ type: 'stream_event', event: {} })).kind).toBe('other');
     expect(parseLine('not json').kind).toBe('parse_error');

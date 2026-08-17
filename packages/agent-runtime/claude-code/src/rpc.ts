@@ -19,24 +19,24 @@ import {
 } from './stream.js';
 import type { ParsedLine, TurnOutcome, TurnSubmitOptions } from './types.js';
 
-type AcceptedCommandState =
-  | 'accepted'
-  | 'queued'
-  | 'started'
-  | 'completed'
-  | 'cancelled'
-  | 'discarded';
-
 interface PendingTurn {
   resolve: (outcome: TurnOutcome) => void;
   reject: (err: Error) => void;
   aggregator: TurnAggregator;
   timer: NodeJS.Timeout | null;
-  commands: Map<string, AcceptedCommandState>;
+  /**
+   * Set once a live steer has been written into this turn. A `priority` steer
+   * can make Claude Code close the interrupted run and drain the queued steer
+   * in the same stdout flush, emitting more than one `result` for one Dreamux
+   * logical turn. When steered, settlement is deferred one tick so those
+   * follow-up results fold into the same turn (last result wins) instead of
+   * the first becoming a silent late result.
+   */
+  steered: boolean;
+  settleImmediate: NodeJS.Immediate | null;
+  deferredOutcome: TurnOutcome | null;
   capabilityWaiters: PendingSteer[];
   writeWaiters: Map<string, PendingWriteSteer>;
-  finalOutcome: TurnOutcome | null;
-  resultCount: number;
 }
 
 interface PendingSteer {
@@ -99,14 +99,13 @@ export class ClaudeCodeStreamRpc {
         reject,
         aggregator: new TurnAggregator(),
         timer: null,
-        commands: new Map(),
+        steered: false,
+        settleImmediate: null,
+        deferredOutcome: null,
         capabilityWaiters: [],
         writeWaiters: new Map(),
-        finalOutcome: null,
-        resultCount: 0,
       };
       const commandUuid = randomUUID();
-      pending.commands.set(commandUuid, 'accepted');
       this.pending = pending;
       // Arm the idle deadline (reset on every inbound stream line in `onLine`).
       this.armIdleTimer(pending);
@@ -169,7 +168,7 @@ export class ClaudeCodeStreamRpc {
       );
     }
     const commandUuid = randomUUID();
-    pending.commands.set(commandUuid, 'accepted');
+    pending.steered = true;
     return new Promise<void>((resolve, reject) => {
       pending.writeWaiters.set(commandUuid, { resolve, reject });
       const fail = (error: unknown): void =>
@@ -209,16 +208,46 @@ export class ClaudeCodeStreamRpc {
    * Detach the in-flight turn: clear its deadline timer and null `pending`,
    * returning it so the caller can resolve or reject it exactly once.
    */
-  private settlePending(
-    capabilityFailure = capabilityUndecidedTurnEndedError(),
-  ): PendingTurn | null {
+  private settlePending(failure?: Error): PendingTurn | null {
     const pending = this.pending;
     if (pending === null) return null;
     if (pending.timer !== null) clearTimeout(pending.timer);
+    if (pending.settleImmediate !== null) clearImmediate(pending.settleImmediate);
     this.pending = null;
-    this.rejectCapabilityWaiters(pending, capabilityFailure);
-    this.rejectWriteWaiters(pending, capabilityFailure);
+    // On an explicit failure (write error, stop, idle reap) both waiter kinds
+    // get the real error. On a clean `result` settlement there is no error:
+    // capability waiters never got a decision, while write waiters were written
+    // but unconfirmed — distinct messages for distinct conditions.
+    this.rejectCapabilityWaiters(
+      pending,
+      failure ?? capabilityUndecidedTurnEndedError(),
+    );
+    this.rejectWriteWaiters(pending, failure ?? steerWriteUnconfirmedError());
     return pending;
+  }
+
+  /**
+   * Fold a steered turn's results into one settlement. A `priority` steer can
+   * make Claude Code close the interrupted run and immediately drain the queued
+   * steer in the same stdout flush, emitting more than one `result` for one
+   * Dreamux logical turn. Defer settlement to the next tick so those follow-up
+   * results are still folded into this turn (last result wins) instead of the
+   * first becoming a silent late result.
+   */
+  private deferSteeredResult(
+    pending: PendingTurn,
+    outcome: TurnOutcome | null,
+  ): void {
+    pending.deferredOutcome = outcome;
+    if (pending.settleImmediate !== null) return;
+    pending.settleImmediate = setImmediate(() => {
+      if (this.pending !== pending) return;
+      const finalOutcome = pending.deferredOutcome;
+      const settled = this.settlePending();
+      if (settled === null) return;
+      if (finalOutcome !== null) settled.resolve(finalOutcome);
+      else settled.reject(new Error('claude turn ended without a result'));
+    });
   }
 
   /**
@@ -263,31 +292,44 @@ export class ClaudeCodeStreamRpc {
         break;
       case 'command_lifecycle': {
         const pending = this.pending;
-        if (
-          pending === null ||
-          line.commandUuid === null ||
-          line.state === null ||
-          !pending.commands.has(line.commandUuid)
-        ) {
-          break;
-        }
+        if (pending === null || line.commandUuid === null) break;
+        // `command_lifecycle` coordinates live-steer admission (writeWaiters)
+        // and proves lifecycle capability only; it is never a settlement gate.
+        // The turn settles on the `result` envelope (see the `result` case).
         const newlySupported = this.lifecycleSupported === null;
         if (newlySupported) this.lifecycleSupported = true;
         this.resolveWriteWaiter(pending, line.commandUuid);
-        pending.commands.set(line.commandUuid, line.state);
-        this.tryComplete(pending);
         if (newlySupported && this.pending === pending) {
           this.flushCapabilityWaiters(pending);
         }
         break;
       }
       case 'result': {
-        if (this.pending === null) break;
+        if (this.pending === null) {
+          // A late result (e.g. a steered command draining in a later stdout
+          // flush after the turn already settled) has no turn to settle. Log
+          // it so the drop is diagnosable rather than silent.
+          this.options.log?.(
+            'warn',
+            'claude result envelope arrived with no pending turn; ignored',
+          );
+          break;
+        }
         this.pending.aggregator.accept(line);
         const outcome = this.pending.aggregator.outcome();
-        this.pending.finalOutcome = outcome;
-        this.pending.resultCount += 1;
-        this.tryComplete(this.pending);
+        if (this.pending.steered) {
+          this.deferSteeredResult(this.pending, outcome);
+          break;
+        }
+        // The `result` envelope is the terminal event for an unsteered turn:
+        // settle on it. The runtime converts an error outcome into a failed
+        // turn, so resolving here honors the send→return contract without
+        // depending on lifecycle envelopes the resident CLI may emit in a
+        // shape we do not parse.
+        const pending = this.settlePending();
+        if (pending === null) break;
+        if (outcome !== null) pending.resolve(outcome);
+        else pending.reject(new Error('claude turn ended without a result'));
         break;
       }
       case 'control_request':
@@ -305,39 +347,6 @@ export class ClaudeCodeStreamRpc {
       default:
         break;
     }
-  }
-
-  private tryComplete(pending: PendingTurn): void {
-    if (this.pending !== pending) return;
-    if (this.lifecycleSupported !== true) {
-      if (pending.finalOutcome !== null) {
-        this.settlePending()?.resolve(pending.finalOutcome);
-      }
-      return;
-    }
-
-    const states = [...pending.commands.values()];
-    if (states.some((state) => !isTerminalCommandState(state))) return;
-    const unsuccessful = states.find(
-      (state) => state === 'cancelled' || state === 'discarded',
-    );
-    if (unsuccessful !== undefined) {
-      const error = new Error(`claude command was ${unsuccessful}`);
-      this.settlePending(error)?.reject(error);
-      return;
-    }
-
-    const completedCommandCount = states.filter(
-      (state) => state === 'completed',
-    ).length;
-    if (
-      pending.finalOutcome === null ||
-      pending.resultCount < completedCommandCount
-    ) {
-      return;
-    }
-    const outcome = pending.finalOutcome;
-    this.settlePending()?.resolve(outcome);
   }
 
   private decideLifecycleSupport(supported: boolean): void {
@@ -449,10 +458,6 @@ export class ClaudeCodeStreamRpc {
   }
 }
 
-function isTerminalCommandState(state: AcceptedCommandState): boolean {
-  return state === 'completed' || state === 'cancelled' || state === 'discarded';
-}
-
 function lifecycleUnsupportedError(): Error {
   return preAdmissionError(
     'claude resident session cannot prove live-steer lifecycle: ' +
@@ -463,6 +468,13 @@ function lifecycleUnsupportedError(): Error {
 function capabilityUndecidedTurnEndedError(): Error {
   return preAdmissionError(
     'claude resident turn ended before live-steer capability was decided',
+  );
+}
+
+function steerWriteUnconfirmedError(): Error {
+  return new ClaudeSteerAdmissionError(
+    'ambiguous',
+    'claude resident turn ended before the steer write was confirmed',
   );
 }
 
