@@ -65,6 +65,17 @@ export interface ResultEnvelope {
   /** The success-path final text (`result`); `null` for error subtypes. */
   readonly text: string | null;
   readonly sessionId: string | null;
+  /**
+   * The `uuid` of the inbound user message this result answers
+   * (`result.user_message_uuid`), or `null` on builds that omit it.
+   *
+   * This is the only attribution key on the wire: `result` carries no
+   * `command_uuid`, its own `uuid` is server-generated, and `session_id` is
+   * shared by every turn of the resident session. The RPC layer uses it to
+   * fold several results into one logical turn and to reject a result that
+   * belongs to an already-settled turn.
+   */
+  readonly userMessageUuid: string | null;
   /** Error subtypes may carry a message list; empty otherwise. */
   readonly errors: readonly string[];
   /**

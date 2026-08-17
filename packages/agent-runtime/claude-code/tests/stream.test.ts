@@ -134,6 +134,44 @@ describe('parseLine', () => {
     }
   });
 
+  it('extracts user_message_uuid as the result attribution key', () => {
+    // `result.user_message_uuid` echoes the client-supplied `uuid` of the
+    // command it answers. It is the only key that tells the several results
+    // of one steered turn apart (`result` carries no `command_uuid`, its own
+    // `uuid` is server-generated, and `session_id` is shared session-wide).
+    const line = parseLine(
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        result: 'answer',
+        session_id: 's1',
+        uuid: 'server-generated',
+        user_message_uuid: 'client-command-uuid',
+      }),
+    );
+    if (line.kind === 'result') {
+      expect(line.outcome.userMessageUuid).toBe('client-command-uuid');
+    } else {
+      throw new Error('expected result');
+    }
+  });
+
+  it('nulls user_message_uuid when the build does not emit it', () => {
+    const line = parseLine(
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        result: 'answer',
+        session_id: 's1',
+      }),
+    );
+    if (line.kind === 'result') {
+      expect(line.outcome.userMessageUuid).toBeNull();
+    } else {
+      throw new Error('expected result');
+    }
+  });
+
   it('treats any non-success result subtype as an error', () => {
     const line = parseLine(
       JSON.stringify({

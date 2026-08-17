@@ -165,6 +165,45 @@ Source:
 - `/packages/agent-runtime/claude-code/src/rpc.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
 
+### Claude Code Stream-Json Settlement
+
+Both runtimes implement the same fold: the Codex active-turn slot waits on every
+native turn id it accepted, and the Claude Code RPC waits on every command uuid
+it submitted. These are the `claude` stream-json wire facts that contract rests
+on, probed against a live resident session (2.1.231) rather than inferred:
+
+- A `priority` steer does not interrupt the running command. Claude finishes and
+  answers the in-flight command first, then runs the steer.
+- The CLI emits one `result` envelope per consumed command, each with
+  `num_turns: 1`. A steered logical turn therefore produces several results,
+  seconds apart, in separate stdout flushes — not one batched flush.
+- `result.user_message_uuid` echoes the client-supplied `uuid` of the inbound
+  user message. It is the only usable attribution key: `result` carries no
+  `command_uuid`, its own `uuid` is server-generated, and `session_id` is shared
+  by every turn of the resident session.
+- `command_lifecycle` is a top-level `type` (`{type, command_uuid, state, uuid,
+  session_id}`); the `system`-subtype shape is only kept for older streams and
+  fixtures. Its terminal `completed` arrives *after* that command's `result`, so
+  no lifecycle state can serve as a positive settlement gate. Its
+  settlement-relevant use is negative: a `cancelled`/`discarded` command will
+  never produce a `result` and must leave the waited-on set.
+
+Consequently a logical turn settles when every submitted command uuid has
+produced a result, carrying the last submitted command's outcome; an
+unattributable result (uuid absent) settles the turn to avoid a hang, and a
+result for a uuid this turn never submitted is dropped rather than allowed to
+settle another turn. Losing one command to a drop is survivable — the turn's
+remaining commands still settle it — but losing every command is terminal and
+fails the turn immediately, because the idle deadline is not an acceptable
+backstop there: it reaps the resident child, and unrelated stream lines re-arm
+it.
+
+Source:
+
+- `/packages/agent-runtime/claude-code/src/rpc.ts`
+- `/packages/agent-runtime/claude-code/src/stream.ts`
+- `/packages/agent-runtime/claude-code/tests/rpc.test.ts`
+
 Provider-native transcript formats, locator discovery, cursor envelopes, and
 typed errors stay inside each runtime package. Both built-ins reuse
 `/packages/dreamux-utils/src/transcript.ts` for provider-neutral digest checks,

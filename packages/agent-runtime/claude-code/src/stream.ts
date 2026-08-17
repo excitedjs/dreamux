@@ -129,6 +129,10 @@ function parseResult(o: JsonObject): ResultEnvelope {
     isError,
     text,
     sessionId: str(o['session_id']),
+    // The client-supplied `uuid` of the user message this result answers. The
+    // resident CLI emits one `result` per consumed command, so this is what
+    // tells several results of one logical turn apart (see `rpc.ts`).
+    userMessageUuid: str(o['user_message_uuid']),
     errors,
     hasStructuredOutput,
   };

@@ -3,6 +3,13 @@
  *
  * The supervisor owns the child process. This class owns one in-flight turn,
  * stdout line demux, turn aggregation, and defensive control-request replies.
+ *
+ * One Dreamux logical turn can span several CLI commands: a live steer folds
+ * into the turn that is already running, and the CLI answers each command with
+ * its own `result` envelope. Settlement therefore follows the same three
+ * contracts the Codex runtime's active-turn slot already implements, keyed on
+ * `result.user_message_uuid` instead of a native turn id: fold then wait, last
+ * submission wins, and attribute-by-id-or-drop.
  */
 
 import type { Writable } from 'node:stream';
@@ -25,16 +32,27 @@ interface PendingTurn {
   aggregator: TurnAggregator;
   timer: NodeJS.Timeout | null;
   /**
-   * Set once a live steer has been written into this turn. A `priority` steer
-   * can make Claude Code close the interrupted run and drain the queued steer
-   * in the same stdout flush, emitting more than one `result` for one Dreamux
-   * logical turn. When steered, settlement is deferred one tick so those
-   * follow-up results fold into the same turn (last result wins) instead of
-   * the first becoming a silent late result.
+   * The command uuids folded into this logical turn, in submission order: the
+   * initial command plus every live steer written into it. Claude Code emits
+   * one `result` per consumed command, so a steered turn produces several —
+   * seconds apart, in separate stdout flushes. This is the fold's waited-on
+   * set (Codex's `acceptedTurnIds` / `pendingNativeTurnIds`); a command that
+   * can never produce a `result` leaves it via {@link
+   * ClaudeCodeStreamRpc.dropSubmittedCommand}.
    */
-  steered: boolean;
-  settleImmediate: NodeJS.Immediate | null;
-  deferredOutcome: TurnOutcome | null;
+  submitted: string[];
+  /**
+   * Per-command outcome, captured from the aggregator at the moment that
+   * command's `result` was accepted. The turn settles on the outcome of the
+   * *last* entry of {@link submitted} — last submission wins, no concatenation.
+   */
+  results: Map<string, TurnOutcome>;
+  /**
+   * Why the most recent command left {@link submitted} without answering
+   * (Codex's `lastSubmissionError`). Only read when the fold empties, to name
+   * the cause in the turn's rejection.
+   */
+  lastDropReason: string | null;
   capabilityWaiters: PendingSteer[];
   writeWaiters: Map<string, PendingWriteSteer>;
 }
@@ -94,18 +112,18 @@ export class ClaudeCodeStreamRpc {
       );
     }
     return new Promise<TurnOutcome>((resolve, reject) => {
+      const commandUuid = randomUUID();
       const pending: PendingTurn = {
         resolve,
         reject,
         aggregator: new TurnAggregator(),
         timer: null,
-        steered: false,
-        settleImmediate: null,
-        deferredOutcome: null,
+        submitted: [commandUuid],
+        results: new Map(),
+        lastDropReason: null,
         capabilityWaiters: [],
         writeWaiters: new Map(),
       };
-      const commandUuid = randomUUID();
       this.pending = pending;
       // Arm the idle deadline (reset on every inbound stream line in `onLine`).
       this.armIdleTimer(pending);
@@ -168,11 +186,19 @@ export class ClaudeCodeStreamRpc {
       );
     }
     const commandUuid = randomUUID();
-    pending.steered = true;
+    // The steer folds into this logical turn: from here on the turn settles
+    // only once this command has produced its own `result` too, and — being
+    // the newest submission — its outcome is the one the turn settles with.
+    pending.submitted.push(commandUuid);
     return new Promise<void>((resolve, reject) => {
       pending.writeWaiters.set(commandUuid, { resolve, reject });
-      const fail = (error: unknown): void =>
+      const fail = (error: unknown): void => {
+        // Reject the waiter first: dropping the command may settle the turn,
+        // and settlement rejects surviving waiters with the generic
+        // "turn ended before the steer write was confirmed" message.
         this.rejectWriteWaiter(pending, commandUuid, ambiguousWriteError(error));
+        this.dropSubmittedCommand(pending, commandUuid, 'steer write failed');
+      };
       try {
         this.stdin.write(
           `${buildUserMessage(prompt, { priority: 'now', ...options }, commandUuid)}\n`,
@@ -212,7 +238,6 @@ export class ClaudeCodeStreamRpc {
     const pending = this.pending;
     if (pending === null) return null;
     if (pending.timer !== null) clearTimeout(pending.timer);
-    if (pending.settleImmediate !== null) clearImmediate(pending.settleImmediate);
     this.pending = null;
     // On an explicit failure (write error, stop, idle reap) both waiter kinds
     // get the real error. On a clean `result` settlement there is no error:
@@ -227,27 +252,74 @@ export class ClaudeCodeStreamRpc {
   }
 
   /**
-   * Fold a steered turn's results into one settlement. A `priority` steer can
-   * make Claude Code close the interrupted run and immediately drain the queued
-   * steer in the same stdout flush, emitting more than one `result` for one
-   * Dreamux logical turn. Defer settlement to the next tick so those follow-up
-   * results are still folded into this turn (last result wins) instead of the
-   * first becoming a silent late result.
+   * Fold-then-wait settlement, ported from the Codex active-turn slot
+   * (`finalizeSlotIfReady` in `@excitedjs/agent-runtime-codex`): the logical
+   * turn settles only once *every* command folded into it has produced its
+   * `result`, and it settles with the outcome of the last submitted command
+   * (Codex's `accepted.at(-1)`) — not a concatenation.
+   *
+   * Waiting is what makes a steered turn correct: a `priority` steer does not
+   * interrupt the running command, so Claude answers the original command
+   * first and the steer's own `result` lands seconds later, in a later stdout
+   * flush. Settling on the first result would return the pre-steer answer and
+   * leave the real one to be dropped as a late result.
+   *
+   * Waiting has one terminal exception: if the fold empties (every command was
+   * cancelled, discarded, or lost its steer write) nothing can ever answer this
+   * turn, so it is failed here and now. Leaving it to the idle deadline would
+   * be worse than slow — that path reaps the resident child, and any unrelated
+   * stream line re-arms it, so a healthy session could be killed long after the
+   * turn became unanswerable.
    */
-  private deferSteeredResult(
+  private settleIfFolded(pending: PendingTurn): void {
+    if (this.pending !== pending) return;
+    const finalUuid = pending.submitted.at(-1);
+    if (finalUuid === undefined) {
+      const error = new Error(
+        'claude turn lost every submitted command before any result arrived ' +
+          `(last: ${pending.lastDropReason ?? 'dropped from the turn'})`,
+      );
+      // Pass the cause into `settlePending` so surviving steer waiters get the
+      // real reason instead of the generic write-unconfirmed message.
+      this.settlePending(error)?.reject(error);
+      return;
+    }
+    for (const commandUuid of pending.submitted) {
+      if (!pending.results.has(commandUuid)) return;
+    }
+    // Guarded by the loop above: the final command has a recorded outcome.
+    const outcome = pending.results.get(finalUuid)!;
+    this.settlePending()?.resolve(outcome);
+  }
+
+  /**
+   * Stop waiting on a command that can never produce a `result` — the CLI
+   * reported it `cancelled`/`discarded`, or its steer write failed. Mirrors
+   * Codex's `recordTurnStartFailure`: the submission leaves the fold and the
+   * turn re-checks readiness with what did arrive, so a dropped steer cannot
+   * reintroduce a hang. The drop is logged because the CLI gives no other
+   * trace of a command it silently declined to run.
+   *
+   * Dropping never fails the turn on its own — the turn's other commands still
+   * settle it normally. It only becomes terminal when it empties the fold, and
+   * `settleIfFolded` owns that decision.
+   */
+  private dropSubmittedCommand(
     pending: PendingTurn,
-    outcome: TurnOutcome | null,
+    commandUuid: string,
+    reason: string,
   ): void {
-    pending.deferredOutcome = outcome;
-    if (pending.settleImmediate !== null) return;
-    pending.settleImmediate = setImmediate(() => {
-      if (this.pending !== pending) return;
-      const finalOutcome = pending.deferredOutcome;
-      const settled = this.settlePending();
-      if (settled === null) return;
-      if (finalOutcome !== null) settled.resolve(finalOutcome);
-      else settled.reject(new Error('claude turn ended without a result'));
-    });
+    if (pending.results.has(commandUuid)) return;
+    const index = pending.submitted.indexOf(commandUuid);
+    if (index < 0) return;
+    pending.submitted.splice(index, 1);
+    pending.lastDropReason = reason;
+    this.options.log?.(
+      'warn',
+      `claude command ${commandUuid} ${reason}; it can no longer produce a ` +
+        'result and is dropped from the pending turn',
+    );
+    this.settleIfFolded(pending);
   }
 
   /**
@@ -294,18 +366,32 @@ export class ClaudeCodeStreamRpc {
         const pending = this.pending;
         if (pending === null || line.commandUuid === null) break;
         // `command_lifecycle` coordinates live-steer admission (writeWaiters)
-        // and proves lifecycle capability only; it is never a settlement gate.
-        // The turn settles on the `result` envelope (see the `result` case).
+        // and proves lifecycle capability; it is never a *positive* settlement
+        // gate. `completed` in particular arrives after that command's
+        // `result`, so the turn settles on `result` (see the `result` case).
         const newlySupported = this.lifecycleSupported === null;
         if (newlySupported) this.lifecycleSupported = true;
         this.resolveWriteWaiter(pending, line.commandUuid);
         if (newlySupported && this.pending === pending) {
           this.flushCapabilityWaiters(pending);
         }
+        // The one settlement-relevant lifecycle fact: a cancelled/discarded
+        // command is one the CLI will never answer. It must leave the fold or
+        // the turn would wait on a `result` that is not coming. It does not
+        // fail the turn — the turn's other commands still settle it normally,
+        // and only an emptied fold is terminal (see `settleIfFolded`).
+        if (line.state === 'cancelled' || line.state === 'discarded') {
+          this.dropSubmittedCommand(
+            pending,
+            line.commandUuid,
+            `was ${line.state} by claude`,
+          );
+        }
         break;
       }
       case 'result': {
-        if (this.pending === null) {
+        const pending = this.pending;
+        if (pending === null) {
           // A late result (e.g. a steered command draining in a later stdout
           // flush after the turn already settled) has no turn to settle. Log
           // it so the drop is diagnosable rather than silent.
@@ -315,21 +401,48 @@ export class ClaudeCodeStreamRpc {
           );
           break;
         }
-        this.pending.aggregator.accept(line);
-        const outcome = this.pending.aggregator.outcome();
-        if (this.pending.steered) {
-          this.deferSteeredResult(this.pending, outcome);
+        const commandUuid = line.outcome.userMessageUuid;
+        if (commandUuid !== null && !pending.submitted.includes(commandUuid)) {
+          // Attribute-by-id-or-drop (Codex looks native completions up by turn
+          // id and drops the unmatched ones). A result for a command this turn
+          // never submitted belongs to an already-settled turn; applying it
+          // here would hand this turn someone else's answer. Drop it — and in
+          // particular do not let it settle anything.
+          this.options.log?.(
+            'warn',
+            `claude result envelope for unsubmitted command ${commandUuid}; ` +
+              'ignored (it belongs to an already-settled turn)',
+          );
           break;
         }
-        // The `result` envelope is the terminal event for an unsteered turn:
-        // settle on it. The runtime converts an error outcome into a failed
-        // turn, so resolving here honors the send→return contract without
-        // depending on lifecycle envelopes the resident CLI may emit in a
-        // shape we do not parse.
-        const pending = this.settlePending();
-        if (pending === null) break;
-        if (outcome !== null) pending.resolve(outcome);
-        else pending.reject(new Error('claude turn ended without a result'));
+        // Accept every attributed result so session id and the assistant-text
+        // fallback stay correct, and snapshot the outcome now: the aggregator
+        // is last-result-wins, so a later result would overwrite it.
+        pending.aggregator.accept(line);
+        // Non-null by construction: the aggregator just took a `result`.
+        const outcome = pending.aggregator.outcome()!;
+        if (commandUuid === null) {
+          // No attribution key (older CLI builds, and the fixtures). Waiting
+          // for a fold that cannot be observed would hang the turn, so degrade
+          // to settle-on-this-result. The runtime converts an error outcome
+          // into a failed turn, so resolving here honors the send→return
+          // contract either way.
+          if (pending.submitted.length > 1) {
+            // Degrading is lossy exactly here: this turn was steered, so the
+            // answer it settles with is the pre-steer one. Say so rather than
+            // let a stale reply look like a normal settlement.
+            this.options.log?.(
+              'warn',
+              'claude result envelope carries no user_message_uuid; settling ' +
+                `a turn of ${pending.submitted.length} commands on this ` +
+                'result — later results will be dropped as late',
+            );
+          }
+          this.settlePending()?.resolve(outcome);
+          break;
+        }
+        pending.results.set(commandUuid, outcome);
+        this.settleIfFolded(pending);
         break;
       }
       case 'control_request':

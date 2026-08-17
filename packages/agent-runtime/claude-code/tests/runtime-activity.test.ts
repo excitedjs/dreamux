@@ -979,6 +979,10 @@ function completeRpcCommand(
     subtype: 'success',
     result,
     session_id: TEST_SESSION_ID,
+    // The real CLI echoes the command's client-supplied uuid here; it is what
+    // lets a steered turn fold several results into one settlement instead of
+    // returning the pre-steer answer.
+    user_message_uuid: envelope.uuid,
   });
 }
 
