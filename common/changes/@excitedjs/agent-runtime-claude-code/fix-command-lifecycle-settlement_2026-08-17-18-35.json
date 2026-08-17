@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-claude-code",
+      "comment": "Settle turns on the `result` envelope instead of gating on `command_lifecycle` terminal state, and parse `command_lifecycle` as a top-level `type` (the resident CLI's actual wire shape, keeping the `system`-subtype shape for backward compatibility). The previous lifecycle gate never opened for top-level envelopes, so turns hung until the 600s idle reap even though `result` had arrived. Steered turns defer settlement one tick so multiple results drained in one stdout flush fold into one settlement (last result wins); `command_lifecycle` now coordinates live-steer admission only. A `result` arriving with no pending turn logs a warning instead of being dropped silently.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code",
+  "email": "053700@gmail.com"
+}
