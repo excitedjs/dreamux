@@ -167,36 +167,49 @@ Source:
 
 ### Claude Code Stream-Json Settlement
 
-Both runtimes implement the same fold: the Codex active-turn slot waits on every
-native turn id it accepted, and the Claude Code RPC waits on every command uuid
-it submitted. These are the `claude` stream-json wire facts that contract rests
-on, probed against a live resident session (2.1.231) rather than inferred:
+Both runtimes wait for every native submission folded into a logical turn to
+converge, but they read convergence off different signals. Codex has a native
+turn id per submission. Claude Code does not: these are the `claude`
+stream-json wire facts, probed against a live resident session (2.1.231) rather
+than inferred, and the repo has guessed them wrong twice.
 
-- A `priority` steer does not interrupt the running command. Claude finishes and
-  answers the in-flight command first, then runs the steer.
-- The CLI emits one `result` envelope per consumed command, each with
-  `num_turns: 1`. A steered logical turn therefore produces several results,
-  seconds apart, in separate stdout flushes — not one batched flush.
-- `result.user_message_uuid` echoes the client-supplied `uuid` of the inbound
-  user message. It is the only usable attribution key: `result` carries no
-  `command_uuid`, its own `uuid` is server-generated, and `session_id` is shared
-  by every turn of the resident session.
-- `command_lifecycle` is a top-level `type` (`{type, command_uuid, state, uuid,
+- **Commands fold.** A message that arrives while the in-flight turn is inside a
+  tool call is absorbed into that turn at the next query-loop boundary: the CLI
+  issues `started` for each queued command, answers them together, and emits a
+  **single** `result` (3 commands → 1 result, observed). Folding does not depend
+  on `priority`; a message with no priority field folds too. A command that
+  arrives between turns runs alone and gets its own `result`.
+- **`result.user_message_uuid` is not a completion ledger.** A folded command's
+  uuid never appears on any `result`, so counting one result per submitted uuid
+  deadlocks. When several commands fold, the single result does not reliably
+  carry the first-submitted uuid — a higher-priority later uuid has been
+  observed instead. It is usable only as a cross-talk guard.
+- **`priority: 'now'` genuinely interrupts.** The running command goes
+  `cancelled` and the CLI emits a `result` with `subtype:
+  "error_during_execution"` and **no** `result` key and **no**
+  `user_message_uuid`. "Missing uuid" therefore cannot mean "settle now" —
+  that artifact would settle the turn on an interrupt.
+- **`command_lifecycle` is the only 1:1 signal.** Every submitted uuid reaches a
+  terminal state (`queued → started → completed | cancelled`), folded commands
+  included. It is a top-level `type` (`{type, command_uuid, state, uuid,
   session_id}`); the `system`-subtype shape is only kept for older streams and
-  fixtures. Its terminal `completed` arrives *after* that command's `result`, so
-  no lifecycle state can serve as a positive settlement gate. Its
-  settlement-relevant use is negative: a `cancelled`/`discarded` command will
-  never produce a `result` and must leave the waited-on set.
+  fixtures.
+- **Ordering between lifecycle and result is not stable.** Terminal states have
+  been observed both before and after the result they belong to. Only eventual
+  arrival may be assumed.
 
-Consequently a logical turn settles when every submitted command uuid has
-produced a result, carrying the last submitted command's outcome; an
-unattributable result (uuid absent) settles the turn to avoid a hang, and a
-result for a uuid this turn never submitted is dropped rather than allowed to
-settle another turn. Losing one command to a drop is survivable — the turn's
-remaining commands still settle it — but losing every command is terminal and
-fails the turn immediately, because the idle deadline is not an acceptable
-backstop there: it reaps the resident child, and unrelated stream lines re-arm
-it.
+Consequently a logical turn settles when **every submitted command uuid has
+reached a terminal lifecycle state and at least one `result` has been seen**,
+carrying the last result seen (the aggregator is last-result-wins). A result
+naming a uuid this turn never submitted is dropped rather than allowed to settle
+another turn. Two escapes keep that gate from hanging: a build with no
+`msg_lifecycle_v1` has no lifecycle signal at all and settles on its first
+result; and a turn whose commands all ended without ever running (`cancelled`,
+`discarded`, or a failed steer write) can never be answered and fails
+immediately, because the idle deadline is not an acceptable backstop there — it
+reaps the resident child, and unrelated stream lines re-arm it. A turn that did
+run a command keeps waiting for its result, since terminality does not imply the
+result has already been emitted.
 
 Source:
 
