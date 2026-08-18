@@ -129,6 +129,10 @@ function parseResult(o: JsonObject): ResultEnvelope {
     isError,
     text,
     sessionId: str(o['session_id']),
+    // The client-supplied `uuid` of the user message this result answers. The
+    // resident CLI emits one `result` per consumed command, so this is what
+    // tells several results of one logical turn apart (see `rpc.ts`).
+    userMessageUuid: str(o['user_message_uuid']),
     errors,
     hasStructuredOutput,
   };
@@ -165,22 +169,14 @@ export function parseLine(line: string): ParsedLine {
         };
       }
       if (subtype === 'command_lifecycle') {
-        const state = str(parsed['state']);
-        return {
-          kind: 'command_lifecycle',
-          commandUuid: str(parsed['command_uuid']),
-          state:
-            state === 'queued' ||
-            state === 'started' ||
-            state === 'completed' ||
-            state === 'cancelled' ||
-            state === 'discarded'
-              ? state
-              : null,
-          raw: parsed,
-        };
+        return parseCommandLifecycle(parsed);
       }
       return { kind: 'other', type, subtype, raw: parsed };
+    case 'command_lifecycle':
+      // The resident CLI emits `command_lifecycle` as a top-level `type`
+      // ({"type":"command_lifecycle",...}); the `system`-subtype shape above
+      // is kept for backward compatibility with older streams and fixtures.
+      return parseCommandLifecycle(parsed);
     case 'assistant':
       return {
         kind: 'assistant',
@@ -225,6 +221,28 @@ export function parseLine(line: string): ParsedLine {
     default:
       return { kind: 'other', type, subtype, raw: parsed };
   }
+}
+
+/**
+ * Parse a `command_lifecycle` envelope. The resident CLI emits it as a
+ * top-level `type`; older streams (and the test fixture) emit it as a
+ * `system` subtype. Both shapes carry the same `command_uuid`/`state` fields.
+ */
+function parseCommandLifecycle(parsed: Record<string, unknown>): ParsedLine {
+  const state = str(parsed['state']);
+  return {
+    kind: 'command_lifecycle',
+    commandUuid: str(parsed['command_uuid']),
+    state:
+      state === 'queued' ||
+      state === 'started' ||
+      state === 'completed' ||
+      state === 'cancelled' ||
+      state === 'discarded'
+        ? state
+        : null,
+    raw: parsed,
+  };
 }
 
 // ─── Outbound message builders (stdin) ──────────────────────────────────────

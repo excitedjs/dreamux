@@ -58,13 +58,29 @@ function assistantLine(text: string): string {
   })}\n`;
 }
 
-function resultLine(text = 'final'): string {
+/**
+ * A terminal `result` envelope. `userMessageUuid` is the CLI's
+ * `result.user_message_uuid` — the client-supplied `uuid` of the command this
+ * result answers, and the only key that tells the several results of one
+ * steered turn apart. Omitting it models an older build that does not emit it.
+ */
+function resultLine(text = 'final', userMessageUuid?: string): string {
   return `${JSON.stringify({
     type: 'result',
     subtype: 'success',
     result: text,
     session_id: 's1',
+    ...(userMessageUuid === undefined
+      ? {}
+      : { user_message_uuid: userMessageUuid }),
   })}\n`;
+}
+
+/** Let the event loop turn, so any premature settlement would already have fired. */
+function macrotask(): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
 }
 
 function initLine(capabilities: string[] = ['msg_lifecycle_v1']): string {
@@ -76,15 +92,60 @@ function initLine(capabilities: string[] = ['msg_lifecycle_v1']): string {
   })}\n`;
 }
 
+type LifecycleState =
+  | 'queued'
+  | 'started'
+  | 'completed'
+  | 'cancelled'
+  | 'discarded';
+
+/** The legacy `system`-subtype lifecycle shape (older streams, the fixture). */
 function commandLifecycleLine(
   commandUuid: string,
-  state: 'queued' | 'started' | 'completed' | 'cancelled' | 'discarded',
+  state: LifecycleState,
 ): string {
   return `${JSON.stringify({
     type: 'system',
     subtype: 'command_lifecycle',
     command_uuid: commandUuid,
     state,
+  })}\n`;
+}
+
+/**
+ * The resident CLI's real lifecycle shape: a top-level `type`, one envelope
+ * per state transition. Every submitted uuid walks `queued → started →
+ * completed | cancelled`, folded commands included — which is why terminality
+ * here, not result counting, is the settlement gate.
+ */
+function lifecycleChunk(
+  commandUuid: string,
+  ...states: LifecycleState[]
+): string {
+  return states
+    .map(
+      (state) =>
+        `${JSON.stringify({
+          type: 'command_lifecycle',
+          command_uuid: commandUuid,
+          state,
+          uuid: `srv-${state}-${commandUuid}`,
+          session_id: 's1',
+        })}\n`,
+    )
+    .join('');
+}
+
+/**
+ * What a `priority: 'now'` interrupt leaves behind: an error result with
+ * neither a `result` key nor a `user_message_uuid`. It is an artifact of the
+ * cancelled command, not an answer, so it must not settle a turn on its own.
+ */
+function interruptArtifactLine(): string {
+  return `${JSON.stringify({
+    type: 'result',
+    subtype: 'error_during_execution',
+    session_id: 's1',
   })}\n`;
 }
 
@@ -133,7 +194,7 @@ describe('ClaudeCodeStreamRpc idle deadline (issue #156)', () => {
 
     // The terminal result settles the turn (and clears the timer).
     rpc.onStdoutChunk(commandLifecycleLine(commandUuid, 'completed'));
-    rpc.onStdoutChunk(resultLine());
+    rpc.onStdoutChunk(resultLine('final', commandUuid));
     const outcome = await turn;
     expect(outcome.isError).toBe(false);
     expect(outcome.text).toBe('final');
@@ -199,6 +260,104 @@ describe('ClaudeCodeStreamRpc idle deadline (issue #156)', () => {
     vi.advanceTimersByTime(100); // crosses the window from the last line
     await rejection;
     expect(reap).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects at once when no command ever ran, without waiting on the idle reap', async () => {
+    const stdin = new FakeStdin();
+    const reap = vi.fn();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 1_000,
+      reapOnTimeout: reap,
+    });
+
+    const turn = rpc.submitTurn('go');
+    const commandUuid = writtenCommandUuid(stdin, 0);
+    const rejection = expect(turn).rejects.toThrow(
+      /without running any of its commands.*cancelled/u,
+    );
+
+    // The turn's only command is cancelled and never ran, so no `result` can
+    // arrive. Nothing can answer this turn: fail on the cancellation itself.
+    rpc.onStdoutChunk(initLine());
+    rpc.onStdoutChunk(commandLifecycleLine(commandUuid, 'cancelled'));
+
+    // No clock advanced, so this rejection cannot have come from the deadline.
+    await rejection;
+    expect(reap).not.toHaveBeenCalled();
+
+    // And the deadline died with the turn: a healthy resident child is never
+    // reaped as collateral, however long it stays quiet afterwards.
+    vi.advanceTimersByTime(10_000);
+    expect(reap).not.toHaveBeenCalled();
+  });
+
+  it('fails a multi-command turn only once the last unrun command is terminal', async () => {
+    const stdin = new FakeStdin();
+    const reap = vi.fn();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 1_000,
+      reapOnTimeout: reap,
+    });
+
+    const turn = rpc.submitTurn('first');
+    const initialUuid = writtenCommandUuid(stdin, 0);
+    rpc.onStdoutChunk(initLine());
+    await rpc.steerTurn('second', { priority: 'next' });
+    const steerUuid = writtenCommandUuid(stdin, 1);
+    const rejection = expect(turn).rejects.toThrow(
+      /without running any of its commands.*discarded/u,
+    );
+
+    // Losing one of two commands is survivable — the turn waits on the other.
+    rpc.onStdoutChunk(commandLifecycleLine(initialUuid, 'cancelled'));
+    let settled = false;
+    const observed = turn.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    // Losing the last one is terminal, and the message names that last cause.
+    rpc.onStdoutChunk(commandLifecycleLine(steerUuid, 'discarded'));
+    await rejection;
+    await observed;
+    expect(settled).toBe(true);
+    vi.advanceTimersByTime(10_000);
+    expect(reap).not.toHaveBeenCalled();
+  });
+
+  it('keeps waiting when a command completed but its result has not arrived yet', async () => {
+    const stdin = new FakeStdin();
+    const reap = vi.fn();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 1_000,
+      reapOnTimeout: reap,
+    });
+
+    const turn = rpc.submitTurn('go');
+    const commandUuid = writtenCommandUuid(stdin, 0);
+    rpc.onStdoutChunk(initLine());
+
+    // Terminal lifecycle states are observed both before and after the result
+    // they belong to, so "every command terminal" alone must NOT be read as
+    // "no result is coming" — that would reject a turn whose answer is in the
+    // next flush.
+    rpc.onStdoutChunk(commandLifecycleLine(commandUuid, 'completed'));
+    let settled = false;
+    void turn.finally(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    rpc.onStdoutChunk(resultLine('late but real', commandUuid));
+    await expect(turn).resolves.toMatchObject({ text: 'late but real' });
+    expect(reap).not.toHaveBeenCalled();
   });
 
   it('enables Remote Control with a startup control request and captures the URL', () => {
@@ -272,7 +431,7 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     expect(stdin.writes).toHaveLength(1);
 
     rpc.onStdoutChunk(
-      `${initLine()}${commandLifecycleLine(initialUuid, 'completed')}${resultLine('initial result')}`,
+      `${initLine()}${commandLifecycleLine(initialUuid, 'completed')}${resultLine('initial result', initialUuid)}`,
     );
     await Promise.all([second, third]);
 
@@ -293,12 +452,12 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     await Promise.resolve();
     expect(turnSettled).toBe(false);
 
+    rpc.onStdoutChunk(resultLine('first steer result', firstSteerUuid));
     rpc.onStdoutChunk(commandLifecycleLine(firstSteerUuid, 'completed'));
-    rpc.onStdoutChunk(resultLine('first steer result'));
-    rpc.onStdoutChunk(commandLifecycleLine(secondSteerUuid, 'completed'));
     await Promise.resolve();
     expect(turnSettled).toBe(false);
-    rpc.onStdoutChunk(resultLine('final steer result'));
+    rpc.onStdoutChunk(resultLine('final steer result', secondSteerUuid));
+    rpc.onStdoutChunk(commandLifecycleLine(secondSteerUuid, 'completed'));
 
     await expect(turn).resolves.toMatchObject({
       text: 'final steer result',
@@ -317,7 +476,7 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     const firstUuid = writtenCommandUuid(stdin, 0);
     rpc.onStdoutChunk(initLine());
     rpc.onStdoutChunk(commandLifecycleLine(firstUuid, 'completed'));
-    rpc.onStdoutChunk(resultLine('first result'));
+    rpc.onStdoutChunk(resultLine('first result', firstUuid));
     await expect(firstTurn).resolves.toMatchObject({ text: 'first result' });
 
     const secondTurn = rpc.submitTurn('second');
@@ -328,10 +487,10 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     await steer;
     const steerUuid = writtenCommandUuid(stdin, 2);
 
+    rpc.onStdoutChunk(resultLine('second result', secondUuid));
     rpc.onStdoutChunk(commandLifecycleLine(secondUuid, 'completed'));
-    rpc.onStdoutChunk(resultLine('second result'));
+    rpc.onStdoutChunk(resultLine('third result', steerUuid));
     rpc.onStdoutChunk(commandLifecycleLine(steerUuid, 'completed'));
-    rpc.onStdoutChunk(resultLine('third result'));
     await expect(secondTurn).resolves.toMatchObject({ text: 'third result' });
   });
 
@@ -343,6 +502,7 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     });
 
     const turn = rpc.submitTurn('first');
+    const initialUuid = writtenCommandUuid(stdin, 0);
     const steer = rpc.steerTurn('second');
     const rejection = expect(steer).rejects.toThrow(/msg_lifecycle_v1/u);
     await Promise.resolve();
@@ -352,7 +512,10 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     await rejection;
     expect(stdin.writes).toHaveLength(1);
 
-    rpc.onStdoutChunk(resultLine('done'));
+    // No `msg_lifecycle_v1`, so no `command_lifecycle` will ever arrive: the
+    // result is the only terminal signal this build has, and the turn settles
+    // on it (the one degrade path).
+    rpc.onStdoutChunk(resultLine('done', initialUuid));
     await expect(turn).resolves.toMatchObject({ text: 'done' });
   });
 
@@ -386,13 +549,14 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     });
 
     const turn = rpc.submitTurn('first');
+    const initialUuid = writtenCommandUuid(stdin, 0);
     const steer = rpc.steerTurn('second');
     const steerRejection = expect(steer).rejects.toThrow(
       /ended before live-steer capability was decided/u,
     );
     expect(stdin.writes).toHaveLength(1);
 
-    rpc.onStdoutChunk(resultLine('done'));
+    rpc.onStdoutChunk(resultLine('done', initialUuid));
 
     await expect(turn).resolves.toMatchObject({ text: 'done' });
     await steerRejection;
@@ -423,10 +587,10 @@ describe('ClaudeCodeStreamRpc active steering', () => {
       priority: 'next',
     });
 
+    rpc.onStdoutChunk(resultLine('initial', initialUuid));
     rpc.onStdoutChunk(commandLifecycleLine(initialUuid, 'completed'));
-    rpc.onStdoutChunk(resultLine('initial'));
+    rpc.onStdoutChunk(resultLine('done', steerUuid));
     rpc.onStdoutChunk(commandLifecycleLine(steerUuid, 'completed'));
-    rpc.onStdoutChunk(resultLine('done'));
     await expect(turn).resolves.toMatchObject({ text: 'done', isError: false });
   });
 
@@ -457,7 +621,7 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     expect(stdin.writes).toHaveLength(2);
   });
 
-  it('waits for the result of every accepted live-steer alias', async () => {
+  it('settles a fold of three commands answered by ONE result, at the last completed', async () => {
     const stdin = new FakeStdin();
     const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
       turnTimeoutMs: 5_000,
@@ -468,75 +632,327 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     const initialUuid = writtenCommandUuid(stdin, 0);
     rpc.onStdoutChunk(initLine());
     await rpc.steerTurn('second', { priority: 'next' });
-    const firstSteerUuid = writtenCommandUuid(stdin, 1);
-    await rpc.steerTurn('third', { priority: 'next' });
-    const secondSteerUuid = writtenCommandUuid(stdin, 2);
+    await rpc.steerTurn('third');
+    const secondUuid = writtenCommandUuid(stdin, 1);
+    const thirdUuid = writtenCommandUuid(stdin, 2);
 
-    let settled = false;
-    void turn.finally(() => {
-      settled = true;
+    const settlements: string[] = [];
+    void turn.then(
+      (outcome) => settlements.push(`resolved:${outcome.text}`),
+      (err: Error) => settlements.push(`rejected:${err.message}`),
+    );
+
+    // The probed fold: messages queued while the in-flight turn is inside a
+    // tool call are absorbed at the next query-loop boundary, answered
+    // together, and produce ONE result. The folded uuids are never named by
+    // any result — counting results per submitted uuid deadlocks here.
+    rpc.onStdoutChunk(lifecycleChunk(initialUuid, 'queued', 'started'));
+    await macrotask();
+    rpc.onStdoutChunk(lifecycleChunk(secondUuid, 'queued'));
+    rpc.onStdoutChunk(lifecycleChunk(thirdUuid, 'queued'));
+    rpc.onStdoutChunk(
+      lifecycleChunk(secondUuid, 'started') + lifecycleChunk(thirdUuid, 'started'),
+    );
+    await macrotask();
+
+    rpc.onStdoutChunk(lifecycleChunk(secondUuid, 'completed'));
+    rpc.onStdoutChunk(lifecycleChunk(thirdUuid, 'completed'));
+    await macrotask();
+    expect(settlements).toEqual([]);
+
+    rpc.onStdoutChunk(resultLine('one answer for all three', initialUuid));
+    await macrotask();
+    // Two of three commands are terminal and the turn's only result is in:
+    // still not done, because the host command has not gone terminal yet.
+    expect(settlements).toEqual([]);
+
+    rpc.onStdoutChunk(lifecycleChunk(initialUuid, 'completed'));
+    await expect(turn).resolves.toMatchObject({
+      text: 'one answer for all three',
+      isError: false,
+    });
+    await macrotask();
+    expect(settlements).toEqual(['resolved:one answer for all three']);
+  });
+
+  it('settles unfolded commands on the last one, not the first result', async () => {
+    const stdin = new FakeStdin();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 5_000,
+      reapOnTimeout: () => undefined,
     });
 
-    rpc.onStdoutChunk(commandLifecycleLine(initialUuid, 'completed'));
-    rpc.onStdoutChunk(resultLine('initial result'));
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(settled).toBe(false);
+    const turn = rpc.submitTurn('first');
+    const initialUuid = writtenCommandUuid(stdin, 0);
+    rpc.onStdoutChunk(initLine());
+    await rpc.steerTurn('second', { priority: 'next' });
+    const steerUuid = writtenCommandUuid(stdin, 1);
 
-    rpc.onStdoutChunk(commandLifecycleLine(firstSteerUuid, 'completed'));
-    rpc.onStdoutChunk(resultLine('first steer result'));
-    await Promise.resolve();
-    expect(settled).toBe(false);
+    const settlements: string[] = [];
+    void turn.then(
+      (outcome) => settlements.push(`resolved:${outcome.text}`),
+      (err: Error) => settlements.push(`rejected:${err.message}`),
+    );
 
-    rpc.onStdoutChunk(commandLifecycleLine(secondSteerUuid, 'completed'));
-    await Promise.resolve();
-    expect(settled).toBe(false);
+    // A command that lands between turns runs on its own and gets its own
+    // result, seconds apart from the next one and in a separate flush.
+    rpc.onStdoutChunk(resultLine('initial result', initialUuid));
+    await macrotask();
+    rpc.onStdoutChunk(lifecycleChunk(initialUuid, 'completed'));
+    await macrotask();
+    expect(settlements).toEqual([]);
 
-    rpc.onStdoutChunk(resultLine('second steer result'));
+    rpc.onStdoutChunk(lifecycleChunk(steerUuid, 'started'));
+    rpc.onStdoutChunk(resultLine('steer result', steerUuid));
+    await macrotask();
+    expect(settlements).toEqual([]);
+
+    rpc.onStdoutChunk(lifecycleChunk(steerUuid, 'completed'));
+    await expect(turn).resolves.toMatchObject({ text: 'steer result' });
+    await macrotask();
+    expect(settlements).toEqual(['resolved:steer result']);
+  });
+
+  it('settles a fold whose result lands before the folded commands complete', async () => {
+    const stdin = new FakeStdin();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 5_000,
+      reapOnTimeout: () => undefined,
+    });
+
+    const turn = rpc.submitTurn('first');
+    const initialUuid = writtenCommandUuid(stdin, 0);
+    rpc.onStdoutChunk(initLine());
+    await rpc.steerTurn('second', { priority: 'next' });
+    const steerUuid = writtenCommandUuid(stdin, 1);
+
+    const settlements: string[] = [];
+    void turn.then(
+      (outcome) => settlements.push(`resolved:${outcome.text}`),
+      (err: Error) => settlements.push(`rejected:${err.message}`),
+    );
+
+    // Lifecycle/result ordering flips between scenarios: here the fold's
+    // single result arrives BEFORE the folded commands go terminal. The gate
+    // must depend on eventual arrival only, never on order — and the result
+    // carries the later, steered uuid rather than the first-submitted one.
+    rpc.onStdoutChunk(lifecycleChunk(initialUuid, 'completed'));
+    await macrotask();
+    expect(settlements).toEqual([]);
+
+    rpc.onStdoutChunk(resultLine('folded answer', steerUuid));
+    await macrotask();
+    expect(settlements).toEqual([]);
+
+    rpc.onStdoutChunk(lifecycleChunk(steerUuid, 'completed'));
+    await expect(turn).resolves.toMatchObject({ text: 'folded answer' });
+    await macrotask();
+    expect(settlements).toEqual(['resolved:folded answer']);
+  });
+
+  it('does not settle on the artifact result a priority interrupt produces', async () => {
+    const stdin = new FakeStdin();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 5_000,
+      reapOnTimeout: () => undefined,
+    });
+
+    const turn = rpc.submitTurn('first');
+    const initialUuid = writtenCommandUuid(stdin, 0);
+    rpc.onStdoutChunk(initLine());
+    await rpc.steerTurn('interrupt', { priority: 'now' });
+    const steerUuid = writtenCommandUuid(stdin, 1);
+
+    const settlements: string[] = [];
+    void turn.then(
+      (outcome) => settlements.push(`resolved:${outcome.text}`),
+      (err: Error) => settlements.push(`rejected:${err.message}`),
+    );
+
+    // `priority: 'now'` genuinely interrupts: the running command is cancelled
+    // and the CLI emits an `error_during_execution` envelope with neither a
+    // `result` key nor a `user_message_uuid`. That artifact must not settle
+    // the turn — the interrupting command's real answer is still coming.
+    rpc.onStdoutChunk(lifecycleChunk(initialUuid, 'cancelled'));
+    rpc.onStdoutChunk(interruptArtifactLine());
+    await macrotask();
+    expect(settlements).toEqual([]);
+
+    rpc.onStdoutChunk(resultLine('interrupting answer', steerUuid));
+    rpc.onStdoutChunk(lifecycleChunk(steerUuid, 'completed'));
+    await expect(turn).resolves.toMatchObject({
+      text: 'interrupting answer',
+      isError: false,
+    });
+    await macrotask();
+    expect(settlements).toEqual(['resolved:interrupting answer']);
+  });
+
+  it('does not let a settled turn\'s late result settle the next turn', async () => {
+    const stdin = new FakeStdin();
+    const log = vi.fn();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 5_000,
+      reapOnTimeout: () => undefined,
+      log,
+    });
+
+    // Turn A settles.
+    const turnA = rpc.submitTurn('a');
+    const uuidA = writtenCommandUuid(stdin, 0);
+    rpc.onStdoutChunk(initLine());
+    rpc.onStdoutChunk(resultLine('a result', uuidA));
+    rpc.onStdoutChunk(lifecycleChunk(uuidA, 'completed'));
+    await expect(turnA).resolves.toMatchObject({ text: 'a result' });
+
+    // Turn B opens in the window before A's trailing traffic has drained.
+    const turnB = rpc.submitTurn('b');
+    const uuidB = writtenCommandUuid(stdin, 1);
+    let settledB = false;
+    void turnB.finally(() => {
+      settledB = true;
+    });
+
+    // A stale result for A must never settle B — B would hand its sender A's
+    // answer. It is dropped with a warning instead.
+    log.mockClear();
+    rpc.onStdoutChunk(resultLine('a stale result', uuidA));
+    await macrotask();
+    expect(settledB).toBe(false);
+    expect(log).toHaveBeenCalledWith(
+      'warn',
+      expect.stringContaining(uuidA),
+    );
+
+    // B still settles on its own result, with its own text.
+    rpc.onStdoutChunk(resultLine('b result', uuidB));
+    rpc.onStdoutChunk(lifecycleChunk(uuidB, 'completed'));
+    await expect(turnB).resolves.toMatchObject({ text: 'b result' });
+  });
+
+  it('settles on the first result when the build has no lifecycle signal', async () => {
+    const stdin = new FakeStdin();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 5_000,
+      reapOnTimeout: () => undefined,
+    });
+
+    const turn = rpc.submitTurn('go');
+    // No `msg_lifecycle_v1`: no `command_lifecycle` envelope will ever arrive,
+    // so waiting for lifecycle terminality would hang forever. The result is
+    // the only terminal event such a build has.
+    rpc.onStdoutChunk(initLine([]));
+    rpc.onStdoutChunk(resultLine('done'));
+
+    await expect(turn).resolves.toMatchObject({ text: 'done', isError: false });
+  });
+
+  it('does not hang or reject when a steered command is discarded', async () => {
+    const stdin = new FakeStdin();
+    const log = vi.fn();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 5_000,
+      reapOnTimeout: () => undefined,
+      log,
+    });
+
+    const turn = rpc.submitTurn('first');
+    const initialUuid = writtenCommandUuid(stdin, 0);
+    rpc.onStdoutChunk(initLine());
+    await rpc.steerTurn('second', { priority: 'next' });
+    const steerUuid = writtenCommandUuid(stdin, 1);
+
+    // A discarded command never produces anything further, so it is terminal
+    // and the turn stops waiting on it — but it must not fail the turn: the
+    // command that did run still answers it normally.
+    rpc.onStdoutChunk(lifecycleChunk(steerUuid, 'discarded'));
+    expect(log).toHaveBeenCalledWith('warn', expect.stringContaining(steerUuid));
+
+    rpc.onStdoutChunk(resultLine('done', initialUuid));
+    rpc.onStdoutChunk(lifecycleChunk(initialUuid, 'completed'));
+
+    await expect(turn).resolves.toMatchObject({ text: 'done', isError: false });
+  });
+
+  it('settles as soon as the last outstanding command is discarded', async () => {
+    const stdin = new FakeStdin();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 5_000,
+      reapOnTimeout: () => undefined,
+    });
+
+    const turn = rpc.submitTurn('first');
+    const initialUuid = writtenCommandUuid(stdin, 0);
+    rpc.onStdoutChunk(initLine());
+    await rpc.steerTurn('second', { priority: 'next' });
+    const steerUuid = writtenCommandUuid(stdin, 1);
+
+    // The initial command runs and answers; the turn then waits only on the
+    // steer, which the CLI discards. That empties the outstanding set, so the
+    // turn settles right there with what did arrive.
+    rpc.onStdoutChunk(resultLine('initial result', initialUuid));
+    rpc.onStdoutChunk(lifecycleChunk(initialUuid, 'completed'));
+    await macrotask();
+    rpc.onStdoutChunk(lifecycleChunk(steerUuid, 'discarded'));
 
     await expect(turn).resolves.toMatchObject({
-      text: 'second steer result',
+      text: 'initial result',
       isError: false,
     });
   });
 
-  it.each([
-    ['initial', 0, 'cancelled'],
-    ['initial', 0, 'discarded'],
-    ['first steer', 1, 'cancelled'],
-    ['first steer', 1, 'discarded'],
-    ['second steer', 2, 'cancelled'],
-    ['second steer', 2, 'discarded'],
-  ] as const)(
-    'rejects the logical turn when the %s alias is %s',
-    async (_alias, rejectedIndex, terminalState) => {
-      const stdin = new FakeStdin();
-      const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
-        turnTimeoutMs: 5_000,
-        reapOnTimeout: () => undefined,
-      });
+  it('settles on the result when the resident CLI emits command_lifecycle as a top-level type', async () => {
+    const stdin = new FakeStdin();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 5_000,
+      reapOnTimeout: () => undefined,
+    });
 
-      const turn = rpc.submitTurn('first');
-      rpc.onStdoutChunk(initLine());
-      await rpc.steerTurn('second');
-      await rpc.steerTurn('third');
-      const commandUuids = [0, 1, 2].map((index) =>
-        writtenCommandUuid(stdin, index),
-      );
-      const rejection = expect(turn).rejects.toThrow(terminalState);
+    const turn = rpc.submitTurn('go');
+    const commandUuid = writtenCommandUuid(stdin, 0);
 
-      rpc.onStdoutChunk(resultLine('earlier result'));
-      for (const [index, commandUuid] of commandUuids.entries()) {
-        rpc.onStdoutChunk(
-          commandLifecycleLine(
-            commandUuid,
-            index === rejectedIndex ? terminalState : 'completed',
-          ),
-        );
-      }
-      await rejection;
-    },
-  );
+    // The resident CLI emits `command_lifecycle` as a top-level `type`
+    // ({"type":"command_lifecycle",...}), not as a `system` subtype. The turn
+    // must still settle on the `result` envelope regardless of that shape.
+    rpc.onStdoutChunk(
+      `${JSON.stringify({
+        type: 'command_lifecycle',
+        command_uuid: commandUuid,
+        state: 'completed',
+      })}\n`,
+    );
+    rpc.onStdoutChunk(resultLine('final', commandUuid));
+
+    await expect(turn).resolves.toMatchObject({
+      text: 'final',
+      isError: false,
+    });
+  });
+
+  it('logs a warning when a result arrives with no pending turn', async () => {
+    const stdin = new FakeStdin();
+    const log = vi.fn();
+    const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
+      turnTimeoutMs: 5_000,
+      reapOnTimeout: () => undefined,
+      log,
+    });
+
+    const turn = rpc.submitTurn('go');
+    const commandUuid = writtenCommandUuid(stdin, 0);
+    rpc.onStdoutChunk(commandLifecycleLine(commandUuid, 'completed'));
+    rpc.onStdoutChunk(resultLine('first', commandUuid));
+    await expect(turn).resolves.toMatchObject({ text: 'first' });
+
+    // A late result (e.g. a steered command draining in a later stdout flush)
+    // has no turn to settle; it must be logged, not silently dropped.
+    log.mockClear();
+    rpc.onStdoutChunk(resultLine('late'));
+    expect(log).toHaveBeenCalledWith(
+      'warn',
+      expect.stringContaining('no pending turn'),
+    );
+  });
 
   it('fails live steer loudly when command lifecycle is unavailable', async () => {
     const stdin = new FakeStdin();
@@ -551,7 +967,7 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     await expect(rpc.steerTurn('second')).rejects.toThrow(/msg_lifecycle_v1/);
     expect(stdin.writes).toHaveLength(1);
 
-    rpc.onStdoutChunk(resultLine('done'));
+    rpc.onStdoutChunk(resultLine('done', initialUuid));
     await expect(turn).resolves.toMatchObject({ text: 'done' });
     expect(initialUuid).toMatch(UUID_RE);
   });

@@ -134,6 +134,44 @@ describe('parseLine', () => {
     }
   });
 
+  it('extracts user_message_uuid as the result attribution key', () => {
+    // `result.user_message_uuid` echoes the client-supplied `uuid` of the
+    // command it answers. It is the only key that tells the several results
+    // of one steered turn apart (`result` carries no `command_uuid`, its own
+    // `uuid` is server-generated, and `session_id` is shared session-wide).
+    const line = parseLine(
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        result: 'answer',
+        session_id: 's1',
+        uuid: 'server-generated',
+        user_message_uuid: 'client-command-uuid',
+      }),
+    );
+    if (line.kind === 'result') {
+      expect(line.outcome.userMessageUuid).toBe('client-command-uuid');
+    } else {
+      throw new Error('expected result');
+    }
+  });
+
+  it('nulls user_message_uuid when the build does not emit it', () => {
+    const line = parseLine(
+      JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        result: 'answer',
+        session_id: 's1',
+      }),
+    );
+    if (line.kind === 'result') {
+      expect(line.outcome.userMessageUuid).toBeNull();
+    } else {
+      throw new Error('expected result');
+    }
+  });
+
   it('treats any non-success result subtype as an error', () => {
     const line = parseLine(
       JSON.stringify({
@@ -231,6 +269,55 @@ describe('parseLine', () => {
       expect(line.response).toEqual({
         session_url: 'https://example.invalid/session/fake',
       });
+    }
+  });
+
+  it('parses a top-level command_lifecycle envelope', () => {
+    // The resident CLI emits `command_lifecycle` as a top-level `type`.
+    const line = parseLine(
+      JSON.stringify({
+        type: 'command_lifecycle',
+        command_uuid: 'c1',
+        state: 'completed',
+      }),
+    );
+    expect(line).toMatchObject({
+      kind: 'command_lifecycle',
+      commandUuid: 'c1',
+      state: 'completed',
+    });
+  });
+
+  it('parses a system-subtype command_lifecycle envelope (backward compatibility)', () => {
+    // Older streams (and the test fixture) emit it as a `system` subtype.
+    const line = parseLine(
+      JSON.stringify({
+        type: 'system',
+        subtype: 'command_lifecycle',
+        command_uuid: 'c2',
+        state: 'started',
+      }),
+    );
+    expect(line).toMatchObject({
+      kind: 'command_lifecycle',
+      commandUuid: 'c2',
+      state: 'started',
+    });
+  });
+
+  it('nulls an unrecognized command_lifecycle state', () => {
+    const line = parseLine(
+      JSON.stringify({
+        type: 'command_lifecycle',
+        command_uuid: 'c3',
+        state: 'some-future-state',
+      }),
+    );
+    if (line.kind === 'command_lifecycle') {
+      expect(line.commandUuid).toBe('c3');
+      expect(line.state).toBeNull();
+    } else {
+      throw new Error('expected command_lifecycle');
     }
   });
 

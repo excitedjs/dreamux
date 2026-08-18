@@ -968,17 +968,23 @@ function completeRpcCommand(
     uuid?: unknown;
   };
   if (typeof envelope.uuid !== 'string') throw new Error('missing command uuid');
-  session.emit({
-    type: 'system',
-    subtype: 'command_lifecycle',
-    command_uuid: envelope.uuid,
-    state: 'completed',
-  });
+  // Wire order matters, and this is the order the real CLI uses for a command
+  // it runs on its own: the answer, then the command's terminal lifecycle
+  // state. Terminality is what closes the turn, so emitting `completed` first
+  // would claim the command is done before its answer exists.
   session.emit({
     type: 'result',
     subtype: 'success',
     result,
     session_id: TEST_SESSION_ID,
+    // The client-supplied uuid the CLI echoes back; the RPC uses it only to
+    // reject a result belonging to an already-settled turn.
+    user_message_uuid: envelope.uuid,
+  });
+  session.emit({
+    type: 'command_lifecycle',
+    command_uuid: envelope.uuid,
+    state: 'completed',
   });
 }
 

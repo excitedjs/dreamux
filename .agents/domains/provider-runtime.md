@@ -165,6 +165,58 @@ Source:
 - `/packages/agent-runtime/claude-code/src/rpc.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
 
+### Claude Code Stream-Json Settlement
+
+Both runtimes wait for every native submission folded into a logical turn to
+converge, but they read convergence off different signals. Codex has a native
+turn id per submission. Claude Code does not: these are the `claude`
+stream-json wire facts, probed against a live resident session (2.1.231) rather
+than inferred, and the repo has guessed them wrong twice.
+
+- **Commands fold.** A message that arrives while the in-flight turn is inside a
+  tool call is absorbed into that turn at the next query-loop boundary: the CLI
+  issues `started` for each queued command, answers them together, and emits a
+  **single** `result` (3 commands → 1 result, observed). Folding does not depend
+  on `priority`; a message with no priority field folds too. A command that
+  arrives between turns runs alone and gets its own `result`.
+- **`result.user_message_uuid` is not a completion ledger.** A folded command's
+  uuid never appears on any `result`, so counting one result per submitted uuid
+  deadlocks. When several commands fold, the single result does not reliably
+  carry the first-submitted uuid — a higher-priority later uuid has been
+  observed instead. It is usable only as a cross-talk guard.
+- **`priority: 'now'` genuinely interrupts.** The running command goes
+  `cancelled` and the CLI emits a `result` with `subtype:
+  "error_during_execution"` and **no** `result` key and **no**
+  `user_message_uuid`. "Missing uuid" therefore cannot mean "settle now" —
+  that artifact would settle the turn on an interrupt.
+- **`command_lifecycle` is the only 1:1 signal.** Every submitted uuid reaches a
+  terminal state (`queued → started → completed | cancelled`), folded commands
+  included. It is a top-level `type` (`{type, command_uuid, state, uuid,
+  session_id}`); the `system`-subtype shape is only kept for older streams and
+  fixtures.
+- **Ordering between lifecycle and result is not stable.** Terminal states have
+  been observed both before and after the result they belong to. Only eventual
+  arrival may be assumed.
+
+Consequently a logical turn settles when **every submitted command uuid has
+reached a terminal lifecycle state and at least one `result` has been seen**,
+carrying the last result seen (the aggregator is last-result-wins). A result
+naming a uuid this turn never submitted is dropped rather than allowed to settle
+another turn. Two escapes keep that gate from hanging: a build with no
+`msg_lifecycle_v1` has no lifecycle signal at all and settles on its first
+result; and a turn whose commands all ended without ever running (`cancelled`,
+`discarded`, or a failed steer write) can never be answered and fails
+immediately, because the idle deadline is not an acceptable backstop there — it
+reaps the resident child, and unrelated stream lines re-arm it. A turn that did
+run a command keeps waiting for its result, since terminality does not imply the
+result has already been emitted.
+
+Source:
+
+- `/packages/agent-runtime/claude-code/src/rpc.ts`
+- `/packages/agent-runtime/claude-code/src/stream.ts`
+- `/packages/agent-runtime/claude-code/tests/rpc.test.ts`
+
 Provider-native transcript formats, locator discovery, cursor envelopes, and
 typed errors stay inside each runtime package. Both built-ins reuse
 `/packages/dreamux-utils/src/transcript.ts` for provider-neutral digest checks,
