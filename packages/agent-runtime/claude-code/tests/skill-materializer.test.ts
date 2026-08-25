@@ -26,8 +26,8 @@ describe('Claude skill materialization', () => {
 
   it('converges when a concurrent valid winner occupies the target directory', async () => {
     const fixture = await createFixture();
-    const firstReady = deferred<void>();
-    const releaseFirst = deferred<void>();
+    const firstReady = deferred();
+    const releaseFirst = deferred();
     const first = materializeClaudeSkillAddDir(
       fixture.target,
       fixture.sources,
@@ -57,8 +57,8 @@ describe('Claude skill materialization', () => {
 
   it('fails loud when a concurrent winner leaves a malformed target', async () => {
     const fixture = await createFixture();
-    const publishReady = deferred<void>();
-    const releasePublish = deferred<void>();
+    const publishReady = deferred();
+    const releasePublish = deferred();
     const materializing = materializeClaudeSkillAddDir(
       fixture.target,
       fixture.sources,

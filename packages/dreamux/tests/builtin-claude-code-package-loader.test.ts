@@ -113,6 +113,7 @@ describe('builtin:claude-code loads the real @excitedjs/agent-runtime-claude-cod
       mcpServers: [],
       paths,
       state,
+      activitySink: () => {},
     };
 
     // No host base-env / session factory injected: the package falls back to

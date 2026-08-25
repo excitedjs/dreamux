@@ -100,6 +100,7 @@ describe('builtin:codex loads the real @excitedjs/agent-runtime-codex package', 
       mcpServers: [],
       paths,
       state,
+      activitySink: () => {},
     };
 
     // No host socket allocator injected: the package falls back to its own
