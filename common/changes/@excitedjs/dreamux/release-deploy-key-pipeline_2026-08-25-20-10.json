@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Release pipeline pushes to the protected main/next branches now authenticate with the repository release deploy key under the release-branch-pr-gate ruleset; promote-next relies on the push-triggered release run instead of an explicit dispatch. No package behavior or version change.",
+      "type": "none"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

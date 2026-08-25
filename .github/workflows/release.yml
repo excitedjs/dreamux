@@ -34,10 +34,16 @@
 # Manual dispatch against main is a retry hook for stable only; stable npm
 # publishes must not come from feature branches.
 #
-# When a version bump is needed, the release job pushes the generated
-# package.json / CHANGELOG commit back to main with the workflow GITHUB_TOKEN.
-# This repository's main protection must continue to allow that bot push, or a
-# future stricter protection rule must grant github-actions[bot] a bypass.
+# When a version bump is needed, the version job pushes the generated
+# package.json / CHANGELOG commit back to main (and re-syncs next) over SSH
+# with the release deploy key (Actions secret RELEASE_DEPLOY_KEY, public half
+# registered as the read-write deploy key "release-pipeline"). The
+# `release-branch-pr-gate` repository ruleset requires pull requests on
+# main/next for every ordinary actor — GitHub cannot exempt the Actions app —
+# and lists deploy keys as its bypass actor, so the deploy key is the only
+# push identity available to this pipeline. The job fails loudly when the
+# secret is missing. The bump commit carries [skip ci], so its deploy-key
+# push does not retrigger this workflow.
 #
 # Prerelease channels reuse this same file (and therefore the same npm
 # trusted-publisher entry, Workflow: release.yml). Pushes to `next` publish
@@ -62,8 +68,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 jobs:
   version:
@@ -72,7 +77,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: write
+      contents: read
     outputs:
       should_publish: ${{ steps.version.outputs.should_publish }}
     steps:
@@ -84,6 +89,25 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.x'
+
+      - name: Set up release deploy key (ruleset bypass push identity)
+        # Unconditional and fail-loud: a release run that cannot push the
+        # version bump must die here, not after change files were applied.
+        env:
+          RELEASE_DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_DEPLOY_KEY}" ]; then
+            echo "::error::RELEASE_DEPLOY_KEY secret is missing; the ruleset-protected main/next branches cannot be pushed without the release deploy key."
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "${RELEASE_DEPLOY_KEY}" > ~/.ssh/release_deploy_key
+          chmod 600 ~/.ssh/release_deploy_key
+          # Pin GitHub's SSH host keys from the meta API instead of trusting
+          # first use.
+          curl -fsS https://api.github.com/meta \
+            | jq -r '.ssh_keys[] | "github.com " + .' > ~/.ssh/release_known_hosts
 
       - name: Apply pending change files (rush)
         id: version
@@ -127,15 +151,14 @@ jobs:
       - name: Push version bump
         if: steps.version.outputs.changed == 'true'
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GIT_SSH_COMMAND: ssh -i ~/.ssh/release_deploy_key -o IdentitiesOnly=yes -o UserKnownHostsFile=~/.ssh/release_known_hosts
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           git add packages common/changes
           git commit -m "chore(release): version packages [skip ci]"
-          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git push origin HEAD:"${GITHUB_REF_NAME}"
+          git push "git@github.com:${GITHUB_REPOSITORY}.git" HEAD:"${GITHUB_REF_NAME}"
 
       - name: sync next onto the freshly bumped main (topology invariant)
         # The long-lived fast-forward contract between next and main is:
@@ -160,7 +183,7 @@ jobs:
         # refused to run earlier).
         if: github.ref == 'refs/heads/main' && steps.version.outputs.changed == 'true'
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GIT_SSH_COMMAND: ssh -i ~/.ssh/release_deploy_key -o IdentitiesOnly=yes -o UserKnownHostsFile=~/.ssh/release_known_hosts
         run: |
           set -euo pipefail
           git fetch origin next
@@ -172,7 +195,7 @@ jobs:
           # normal fast-forward path.
           pre_bump_sha=$(git rev-parse HEAD^)
           if [ "$old_next_sha" = "$pre_bump_sha" ]; then
-            git push origin "refs/heads/main:refs/heads/next"
+            git push "git@github.com:${GITHUB_REPOSITORY}.git" "refs/heads/main:refs/heads/next"
             echo "Sync next ${old_next_sha} → ${new_main_sha} (release bump only)."
           else
             echo "Skipping next sync: next already moved (${old_next_sha}) past pre-bump (${pre_bump_sha})."

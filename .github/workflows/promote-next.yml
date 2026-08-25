@@ -19,30 +19,33 @@
 #      rebase, and true merge commits all rewrite commit metadata on
 #      main and would drop the link between a beta.<run_number> publish
 #      and the exact commit that shipped as stable.
-#   4. Push the fast-forwarded main back to origin.
-#   5. Dispatch release.yml against the freshly pushed main via
-#      `gh workflow run release.yml --ref main`. The explicit dispatch is
-#      required because step (4) uses the built-in GITHUB_TOKEN, and
-#      GitHub's documented anti-infinite-loop guard prevents a
-#      GITHUB_TOKEN-originated `git push` from re-triggering other
-#      workflows. `on.push.main` in release.yml therefore does NOT fire
-#      automatically; coupling is still git-topology-based (the ref to be
-#      released is `main` at its newly fast-forwarded SHA), we just nudge
-#      the other workflow ourselves.
+#   4. Push the fast-forwarded main back to origin over SSH with the
+#      release deploy key. The `release-branch-pr-gate` repository ruleset
+#      requires pull requests on main/next for every ordinary actor and
+#      GitHub cannot grant the Actions app a bypass, so the ruleset lists
+#      deploy keys as its bypass actor and this push authenticates as the
+#      repository's release deploy key instead of GITHUB_TOKEN.
+#   5. A deploy-key push is an ordinary push, so `on.push.main` in
+#      release.yml fires by itself — no explicit dispatch step. (The old
+#      GITHUB_TOKEN push was invisible to other workflows under GitHub's
+#      anti-infinite-loop guard and needed a manual `gh workflow run`
+#      nudge.) If the promoted HEAD commit message ever contains
+#      [skip ci], or the auto-triggered run must be retried, dispatch
+#      release.yml against main by hand — manual dispatch remains the
+#      documented retry hook.
 #
-# Permissions:
-#   contents:write  — push the fast-forwarded main back.
-#   actions:write   — dispatch the release.yml workflow after the push.
-#   Using the workflow GITHUB_TOKEN (not a PAT) keeps this workflow
-#   self-contained. The main branch protection must allow the
-#   `github-actions[bot]` identity to bypass or satisfy push rules,
-#   exactly as the release.yml version job already requires.
+# Push identity:
+#   The Actions secret RELEASE_DEPLOY_KEY holds the private half of the
+#   read-write repository deploy key "release-pipeline"; its public half
+#   is registered on this repository and the ruleset lists deploy keys as
+#   bypass actors. The workflow fails loudly when the secret is missing.
+#   GITHUB_TOKEN stays contents:read — nothing here pushes with it.
 #
 # Operator usage:
 #   Actions → promote-next → Run workflow → Run (no inputs).
 #   A single click drives the whole stable-release path:
-#     topo guard → ff merge → push main → dispatch release.yml →
-#     release.yml version job → release.yml publish → npm `latest`.
+#     topo guard → ff merge → deploy-key push main → release.yml
+#     on.push → version job → publish → npm `latest`.
 
 name: promote-next
 
@@ -54,8 +57,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 jobs:
   promote:
@@ -131,43 +133,30 @@ jobs:
             echo "noop=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: push main to origin
+      - name: set up release deploy key (ruleset bypass push identity)
         if: steps.ff.outputs.noop != 'true'
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
         run: |
           set -euo pipefail
-          git config user.name  'github-actions[bot]'
-          git config user.email 'github-actions[bot]@users.noreply.github.com'
-          git remote set-url origin \
-            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git push origin main
-          echo "Pushed main → origin."
-          echo "Next step dispatches release.yml on the new main explicitly."
-
-      - name: dispatch release.yml on main (stable publish)
-        if: steps.ff.outputs.noop != 'true'
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          # Required because GitHub deliberately prevents a `git push` made
-          # with the default GITHUB_TOKEN from triggering new workflow runs
-          # (anti-infinite-loop guard). Without this explicit dispatch, the
-          # on.push.main trigger in release.yml would silently not fire.
-          # `gh` is preinstalled on ubuntu-latest.
-          gh workflow run release.yml --ref main
-          sleep 5
-          # Print the newest release.yml run URL for convenience (best-effort)
-          run_url=$(gh run list \
-            --workflow release.yml \
-            --branch main \
-            --limit 1 \
-            --json url \
-            --jq '.[0].url' \
-            || true)
-          if [ -n "$run_url" ]; then
-            echo "release.yml run: $run_url"
-          else
-            echo "release.yml was dispatched; check Actions tab for the latest main run."
+          if [ -z "${RELEASE_DEPLOY_KEY}" ]; then
+            echo "::error::RELEASE_DEPLOY_KEY secret is missing; the ruleset-protected main branch cannot be pushed without the release deploy key."
+            exit 1
           fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "${RELEASE_DEPLOY_KEY}" > ~/.ssh/release_deploy_key
+          chmod 600 ~/.ssh/release_deploy_key
+          # Pin GitHub's SSH host keys from the meta API instead of trusting
+          # first use.
+          curl -fsS https://api.github.com/meta \
+            | jq -r '.ssh_keys[] | "github.com " + .' > ~/.ssh/release_known_hosts
+
+      - name: push main to origin (deploy key)
+        if: steps.ff.outputs.noop != 'true'
+        env:
+          GIT_SSH_COMMAND: ssh -i ~/.ssh/release_deploy_key -o IdentitiesOnly=yes -o UserKnownHostsFile=~/.ssh/release_known_hosts
+        run: |
+          set -euo pipefail
+          git push "git@github.com:${GITHUB_REPOSITORY}.git" main
+          echo "Pushed main → origin via the release deploy key."
+          echo "release.yml triggers on this push by itself (deploy-key pushes are visible to on.push)."
