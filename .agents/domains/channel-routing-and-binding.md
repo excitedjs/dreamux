@@ -82,9 +82,11 @@ respond visibly in the source channel, it must call a provider-owned channel
 tool. Tool failures are returned as MCP errors and logged; there is no durable
 outbound retry queue in core.
 
-Reaction ownership and inbound de-duplication are process-local provider facts
-unless the provider domain page says otherwise. Core state must not grow a
-generic persisted reaction ledger or inbound message queue.
+Inbound de-duplication and Channel presentation state are process-local provider
+facts unless the provider domain page says otherwise. Feishu automatic progress
+uses session-local COT cards; explicit reactions remain model-facing tool calls.
+Core state must not grow a persisted COT presentation, reaction ledger, or
+inbound message queue.
 
 Source:
 

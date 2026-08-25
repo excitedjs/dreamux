@@ -1,12 +1,17 @@
 # Non-blocking dispatcher inbound
 
-- **Status:** Implemented runtime contract for issue #63
+- **Status:** Implemented runtime contract for issue #63. Its non-blocking
+  inbound gate remains binding; its automatic reaction progress surface is
+  superseded by
+  [Feishu COT conversation display](../decisions/feishu-cot-conversation-display.md).
 - **Source:** https://github.com/excitedjs/dreamux/issues/63
 - **Affects:** `/packages/agent-runtime/codex/src/turn-manager.ts`,
   `/packages/agent-runtime/codex/src/events.ts`,
   `/packages/channel/feishu-channel/src/feishu-channel.ts`,
   `/packages/channel/feishu-channel/src/feishu-message.ts`,
+  `/packages/channel/feishu-channel/src/feishu-cot-adapter.ts`,
   `/packages/dreamux/src/service/dispatcher-service/index.ts`,
+  `/packages/dreamux/src/channel/conversation-projection.ts`,
   `/packages/dreamux/tests/fake-codex.ts`,
   `/packages/dreamux/tests/codex-live.test.ts`,
   `/packages/agent-runtime/codex/tests/turn-manager.test.ts`
@@ -94,9 +99,10 @@ flowchart LR
 `turn/completed`. A long Codex turn therefore blocks later accepted Feishu
 messages from reaching Codex.
 
-The channel added one `RECEIVED_REACTION_EMOJI` after the old Codex runtime
-`enqueueInbound()` path returned true. Issue #63 replaced this historical path
-with a three-state channel-owned reaction flow.
+The channel added one received reaction after the old Codex runtime
+`enqueueInbound()` path returned true. Issue #63 first replaced this historical
+path with a three-state channel-owned reaction flow. That progress surface is
+also historical: COT cards now present automatic conversation progress.
 
 ## Runtime Model
 
@@ -104,11 +110,11 @@ with a three-state channel-owned reaction flow.
 flowchart LR
   Inbound["Feishu inbound"] --> Gate["access gate"]
   Gate --> Dedupe["message_id dedupe"]
-  Dedupe --> Received["react: received"]
-  Received --> Start["turn/start"]
-  Start --> Doing["react: in progress"]
-  Doing --> Reply["MCP reply"]
-  Reply --> Clear["remove reaction"]
+  Dedupe --> Start["turn/start"]
+  Start --> Accepted["submission accepted"]
+  Accepted --> Project["conversation projection"]
+  Project --> Card["anchored COT card"]
+  Accepted --> Reply["model-facing reply or react tool"]
 ```
 
 Every accepted, deduped inbound message submits exactly one `turn/start`.
@@ -134,10 +140,12 @@ inbound.
 
 - Keep the Dispatcher Service as the neutral runtime/channel bridge.
 - Forward each Channel provider delivery request to the selected Agent Runtime
-  and return the real `InboundDeliveryResult`, including
-  duplicate/submitted/failed information.
+  and return the real `InboundDeliveryResult`, including duplicate, submitted,
+  and failed information.
 - Do not introduce a dispatcher-level mutex, production observer, or
   active/idle branch.
+- Inject the neutral conversation projection into the dispatcher agent. This
+  observation path does not delay or alter delivery.
 
 `/packages/agent-runtime/codex/src/events.ts`
 
@@ -151,23 +159,12 @@ inbound.
 
 `/packages/channel/feishu-channel/src/feishu-channel.ts`
 
-- In `FeishuChannelSession`'s inbound message handler, add the received emoji
-  immediately after the access gate passes and `message_id` dedupe reports a
-  miss. Do not react to dropped messages or duplicate redeliveries.
-- After the Channel delivery route returns a submitted `InboundDeliveryResult`,
-  replace the received reaction with the in-progress emoji.
-- In the channel-owned `reply` MCP handler, keep clearing the channel-owned
-  reaction for `input.messageId` after the model reply is sent.
-- Replace the single `receivedReactions` map with a channel-owned inbound
-  reaction ledger that stores the current reaction id and state per message id.
-  A reaction is replaced **add-then-cancel** (issue #69): add the new emoji
-  first, store it, then remove the previous channel-owned reaction id, so the
-  message never shows a zero-reaction window during `[received] → [in progress]`.
-  A failed or empty add keeps the previous reaction and ledger entry.
-- Keep `pendingReceivedReactionClears`: an MCP reply can still clear before an
-  async add/replace reaction call finishes. With add-then-cancel, a late clear
-  removes the just-added reaction and does not store it; the previous reaction is
-  already taken by `clearInboundReaction`, which read the ledger before any store.
+- Do not add, replace, or clean up automatic reactions during inbound delivery.
+- Subscribe the session COT adapter to the neutral conversation event source.
+  Dispatcher events render only when their frozen `channel_origin` belongs to
+  this session; foreign and origin-less dispatcher streams are strict no-ops.
+- Keep `reply` and the deliberate model-facing `react` tool independent of the
+  automatic progress surface.
 
 `/packages/channel/feishu-channel/src/feishu-message.ts`
 
@@ -175,23 +172,18 @@ inbound.
   (`chat_id`, `message_id`, `sender_id`, `sender_name`, `create_time`) so the
   model can reply to the correct source message after interleaving.
 
-## Reaction Contract
+## Conversation Display Contract
 
-The channel-owned reaction has three visible states:
+The automatic received/in-progress reaction tri-state and its add-then-cancel
+ordering are superseded. Accepted inbound creates no automatic reaction. The
+channel instead consumes display-only turn facts and pins a COT card to the
+turn's inbound Feishu message. Settlement wraps that card in place; display
+failures are diagnostics and never affect admission, delivery, or settlement.
 
-- Feishu channel receives the message, after access-pass and dedupe-miss: add
-  `[received]`. "Immediately" means before Codex submission, not before
-  access/dedupe.
-- Codex accepts `turn/start`: replace with `[in progress]` immediately at
-  submission acceptance, not at model consumption. The replacement is
-  add-then-cancel (add `[in progress]`, then remove `[received]`).
-- The model replies through MCP `reply` for that `message_id`: remove the
-  channel-owned reaction.
-
-If `turn/start` rejects before Codex accepts the input, keep `[received]` and
-log the submission failure. If Codex accepts the input and the later turn fails,
-aborts, or is interrupted before a reply, a remaining `[in progress]` reaction
-is accepted. Do not add an observer or extra state machine only to clean it up.
+This presentation change does not weaken issue #63. Delivery still crosses the
+runtime `turn/start` boundary before waiting for completion, and another inbound
+must be accepted while the current turn is active. The model-facing `react`
+tool remains available for deliberate reactions.
 
 ## Tests
 
@@ -201,9 +193,8 @@ Fake-Codex tests must cover:
 - while a fake turn is active, a later `turn/start` is accepted and folds into
   that active fake turn rather than producing a second completed turn;
 - no mutex/backlog waits for `turn/completed`;
-- reaction path `[received] -> [in progress] -> removed`;
-- clear-before-add still prevents a late async reaction add from resurrecting a
-  cleared channel-owned reaction;
+- no automatic reaction is added on inbound, submission, or settlement;
+- the model-facing `react` tool still invokes the explicit provider operation;
 - no stale-`activeTurnId` / `NoActiveTurn` fallback test remains, because
   dreamux no longer calls `turn/steer`.
 
@@ -216,8 +207,8 @@ Feishu inbound during that mid-turn window, and prove:
   queuing behind completion, or starting a parallel turn;
 - the folded marker is processed after the synchronous operation returns and
   the ReAct loop advances;
-- the reaction sequence for that inbound is `[received] -> [in progress] ->
-  removed`.
+- no automatic inbound progress reaction is emitted.
 
-This live gate is the load-bearing proof. Static review and fake tests are not
-enough for issue #63.
+This live gate remains the load-bearing proof. COT rendering tests complement it
+but do not replace it; static review and fake tests alone are not enough for
+issue #63.

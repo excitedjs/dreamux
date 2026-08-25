@@ -190,6 +190,6 @@ Only these items remain unimplemented:
 - `doc_comment` handling.
 
 (The one-shot discovery-context injection and the list-known-bots tool landed in
-issue #69 — see the two sections above; the add-then-cancel reaction ordering it
-also carried is in
-[`/.agents/domains/non-blocking-dispatcher-inbound.md`](/.agents/domains/non-blocking-dispatcher-inbound.md).)
+issue #69 — see the two sections above. Its former add-then-cancel automatic
+reaction ordering is superseded by
+[Feishu COT conversation display](../decisions/feishu-cot-conversation-display.md).)

@@ -41,7 +41,7 @@ For Feishu, the session owns:
 - `/introduce` trust changes;
 - known/trusted peer-bot state;
 - inbound message formatting and attachment normalization;
-- channel-owned reaction state;
+- channel-owned COT presentation state;
 - Feishu MCP tool backing.
 
 Key source:
@@ -124,11 +124,11 @@ is escaped exactly once at the final Channel boundary. After current-message
 enrichment, one optional two-second parent read may add the bounded reply type;
 the returned parent body and children are discarded.
 
-Topic chat-mode discovery and received/in-progress reaction operations are
-also bounded and session-aware. A hung SDK request cannot keep session close or
+Topic chat-mode discovery and COT create/append/finish operations are also
+bounded and session-aware. A hung SDK request cannot keep session close or
 dispatcher restart waiting indefinitely. Late route results cannot record a
-stale message target, and a late reaction result is cleaned up best-effort
-without entering the current session ledger.
+stale message target, and expired COT work is reaped from the session-local
+presentation indexes.
 
 Sender names are best-effort and never gate delivery. Event-provided names win;
 known/trusted bot state names bot senders without a contact call; and every
@@ -259,9 +259,9 @@ The Channel contract has optional provider-neutral collaboration-space fields:
 providers may attach `ChannelInboundEnvelope.container` on inbound deliveries
 and may call `ChannelRoutes.targetLifecycle` with `target_created` /
 `target_closed` events. `ChannelRoutes.deliver(input, envelope)` returns the
-neutral `InboundDeliveryResult`; the channel provider owns any platform ACK or
-reaction lifecycle around this call. Core never directly acknowledges the
-platform.
+neutral `InboundDeliveryResult`; the channel provider owns any platform
+acknowledgement or conversation presentation around this call. Core never
+directly acknowledges the platform.
 
 Core uses only `(channel_id, container_key, target_key)` plus the current
 binding generation; it must not parse Feishu `chat_id`, `thread_id`, chat mode,
@@ -384,21 +384,26 @@ publish after their normal write point:
   returns a real transition.
 - `CollaborationSpaceService` publishes collaboration-space bind/unbind events
   after the space store returns a real transition.
+- the conversation projection publishes display-only turn lifecycle and
+  activity facts for the dispatcher agent and TeamLeaders.
 
 Channel sessions receive only a public `ChannelCoreEventSource`. It supports
 typed `on(...)` subscriptions and idempotent per-listener `unsubscribe()`;
 providers cannot emit, enumerate, or remove other listeners. The source covers
-allowlisted Team, agent, route-binding, and collaboration-space-binding facts
-for the current dispatcher only. There is no Channel Turn submitted/settled
-event pair; runtime Turn objects and native transcripts remain outside this
-event surface. Binding events are dispatcher-wide live broadcasts, not
+allowlisted Team, agent, route-binding, collaboration-space-binding, and
+conversation-display facts for the current dispatcher only. The display union
+contains `turn.submitted`, `turn.message`, `turn.tool_call`, and `turn.settled`.
+It exposes one process-local `turn_id` for presentation correlation but no
+runtime-native Turn object or transcript. Binding events are dispatcher-wide
+live broadcasts, not
 channel-id scoped streams; the endpoint snapshot names the provider ref and
 provider-owned opaque `meta`, so only the matching provider should interpret
 it. Bound route events include the concrete TeamLeader name, TeamLeader runtime
 id, and runtime cwd; ordinary Team/agent events still carry no repository/path
-data. No event contains prompt text, assistant text, native transcript paths,
-raw errors, platform user identity, cursor, acknowledgement, `claim_id`, or
-binding fallbacks.
+data. Conversation events may contain bounded, redacted user/assistant display
+text and bounded tool arguments/results. Other events contain no prompt or
+assistant text. No event contains native transcript paths, raw errors, platform
+user identity, cursor, acknowledgement, `claim_id`, or binding fallbacks.
 
 The two binding kinds are action-discriminated public unions. A route-bound
 event requires its runtime-bearing current Team projection, a route-unbound
@@ -425,8 +430,80 @@ Key source:
 - `/packages/dreamux/src/service/team-collection/store.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
 - `/packages/dreamux/src/service/collaboration-space/index.ts`
+- `/packages/dreamux/src/channel/conversation-projection.ts`
+- `/packages/dreamux/src/service/teammate-service/turn-coordinator.ts`
 - `/packages/dreamux/src/service/dispatcher-service/collaboration-routing.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
+
+## Feishu COT Conversation Display
+
+The neutral conversation projection is a capability of the dispatcher agent
+and team-scoped entities, not a Feishu role filter in core. TeamLeaders and
+Team members publish the event surface; team-less dispatcher-spawned TeamMates
+do not participate. Its scope is either a team-less dispatcher or a named
+TeamLeader/Team member; an origin-less
+dispatcher turn is rejected by one core predicate before submitted, activity,
+or settled facts can enter the bus.
+
+The Feishu session subscribes through `feishu-cot-adapter`. It owns card
+anchoring, event-to-card projection, bounded outbox batching, serialized I/O,
+and diagnostics. An inbound card is pinned to that turn's message. For a
+TeamLeader, each successfully created Reply message is observed synchronously
+and fail-open; its same-target receipt may anchor the next card, while the
+team-group binding notification is the fallback before any inbound exists. A
+receipt cannot recreate missing leader state or cross the current conversation
+target: the chat, target type, and target key must all match, so topic groups
+also stay within the same topic thread. A delayed notification commits its
+fallback only if the endpoint still routes to the same Team and leader.
+Late submitted and fallback anchors consult two bounded fences: a leader-wide
+fence set by Team close and endpoint-scoped route fences set by unbind or
+replacement. Team starting/running clears both kinds for that leader, while a
+matching re-bind clears its endpoint route fence. Re-anchor, unbind,
+replacement, Team close, and session close therefore fence late callbacks
+without disabling another live endpoint. Fence matching and route-driven
+interruption use the anchor's authoritative binding endpoint, not its visible
+target fallbacks. TeamLeaders keep one active
+presentation and settle it only on a matching `turn_id`. Dispatcher
+presentation state is keyed by agent, chat, and turn, so concurrent chats and
+interleaved turns cannot steal or close each other's cards; a foreign
+`channel_origin` is a strict no-op. These
+next/fallback anchor mechanics are TeamLeader-only and do not apply to
+dispatchers.
+Feishu ignores Team-member events explicitly; it never routes them through the
+leader state machine. Leader message and tool activity must also match the
+state's single admitted `turn_id`, preventing a fence-rejected or superseded
+turn from opening or appending to another endpoint's card.
+
+Every admitted EntityTurn that enters conversation projection publishes exactly
+one terminal display fact from its own submission settlement, including
+`completed`, `failed`, and `stopped`; non-participating turns publish no display
+events. Completed assistant text and live activity are redacted and bounded in
+core. The early-activity buffer and projected activity-id set each retain at
+most 512 facts per submission and drop newest with one warning. Feishu retains
+at most 512 dispatcher conversations, 512 dispatcher turns per session, and 64
+turns per chat, again refusing newest work without partial index state. COT I/O
+has a 20-second operation deadline so settled draining state is eventually
+reaped.
+
+The whole path is display-only and fail-open. Projection publisher, sanitizer,
+identity, and logger failures cannot change runtime admission, settlement,
+completion delivery, or retention cleanup. COT transport failures abandon only
+the presentation. The automatic received/in-progress reaction lifecycle is
+removed; the deliberate model-facing `react` tool and `addReaction` transport
+surface remain.
+
+Key source:
+
+- `/packages/dreamux-types/src/channel.ts`
+- `/packages/dreamux/src/channel/conversation-projection.ts`
+- `/packages/dreamux/src/service/teammate-service/turn-coordinator.ts`
+- `/packages/channel/feishu-channel/src/feishu-cot-adapter.ts`
+- `/packages/channel/feishu-channel/src/feishu-cot-state.ts`
+- `/packages/channel/feishu-channel/src/feishu-cot-session.ts`
+- `/packages/channel/feishu-channel/src/feishu-cot-events.ts`
+- `/packages/channel/feishu-channel/src/feishu-cot-outbox.ts`
+- `/packages/channel/feishu-channel/src/feishu-cot-io.ts`
+- `/packages/channel/feishu-transport/src/transport/cot.ts`
 
 The built-in Feishu provider implements first-inbound collaboration routing for
 real topic-mode groups. After the access gate accepts an inbound, the provider
@@ -526,13 +603,14 @@ Current cross-cutting Feishu contracts live in domain docs:
 - [Feishu pairing access](../domains/feishu-pairing-access.md)
 - [Non-blocking dispatcher inbound](../domains/non-blocking-dispatcher-inbound.md)
 
-Use those pages for `/introduce`, trusted bot context, reaction timing,
-pairing-token gate rules, Owner-only approval card semantics, and
-Codex `turn/start` folding details.
+Use those pages for `/introduce`, trusted bot context, COT progress display,
+pairing-token gate rules, Owner-only approval card semantics, and Codex
+`turn/start` folding details.
 
 ## Decision Trail
 
 - [Channel-scoped collaboration and core events](../decisions/channel-scoped-collaboration-and-core-events.md)
+- [Feishu COT conversation display](../decisions/feishu-cot-conversation-display.md)
 - [Feishu binding notification events](../decisions/feishu-binding-notification-events.md)
 - [NPM package split and channel targets](../decisions/npm-package-split-and-channel-targets.md)
 - [Provider architecture realignment](../decisions/provider-architecture-realignment.md)

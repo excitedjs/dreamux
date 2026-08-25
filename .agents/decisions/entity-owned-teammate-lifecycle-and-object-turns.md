@@ -1,7 +1,9 @@
 # Entity-owned TeamMate lifecycle and object Turns
 
 - **Status:** Accepted and implemented; the object-turn settlement clause is
-  superseded by [provider-completion-token-routing](provider-completion-token-routing.md)
+  superseded by [provider-completion-token-routing](provider-completion-token-routing.md),
+  and the no-Channel-turn-events clause is superseded by
+  [feishu-cot-conversation-display](feishu-cot-conversation-display.md)
 - **Date:** 2026-08-16
 - **Affects:** `@excitedjs/dreamux-types`,
   `@excitedjs/agent-runtime-codex`,
@@ -52,9 +54,11 @@ provider and one `Turn` object owned by the entity.
 
 - Folds return the exact same object. Workflow retains the object directly.
 - The first terminal outcome is snapshotted and wins one object-owned latch.
-- Dreamux persists no Turn archive or rolling conversation projection. Public,
-  service, Workflow, Channel, and identity contracts carry no Turn id merely to
-  reconstruct an in-process relationship.
+- Dreamux persists no Turn archive or rolling conversation projection. Public
+  service receipts, Workflow records, and identity state carry no Turn id merely
+  to reconstruct an in-process relationship. The later display-only Channel
+  event surface carries a process-local turn id solely for presentation
+  correlation.
 - Completion delivery is a closure captured by the initiating action. It runs
   after the outcome latch wins through one stateless, deadline-bounded policy.
   Only provider-proven pre-admission failure may retry; ambiguous or
@@ -97,9 +101,11 @@ later return a newly accepted `RuntimeTurn`.
 - External Agent Runtime providers must implement object Turns, conservative
   admission classification, stop-time admission convergence, and the neutral
   cold transcript read contract.
-- Architecture gates prohibit the removed ownership verbs, service/public Turn
-  ids, Channel Turn events, reverse lookup registries, and runtime-only shutdown
-  paths.
+- Architecture gates prohibit the removed ownership verbs, service receipt Turn
+  ids, reverse lookup registries, and runtime-only shutdown paths. The only
+  Channel Turn event exception is the live, display-only conversation surface
+  recorded in
+  [Feishu COT conversation display](feishu-cot-conversation-display.md).
 
 ## Alternatives Considered
 
