@@ -143,6 +143,7 @@ export function createClaudeCodeAgentRuntimeProvider(
         config: context.config,
         cwd: context.cwd,
         state: context.state,
+        activitySink: context.activitySink,
         paths: context.paths,
         mcpServers: context.mcpServers,
         sessionFactory,

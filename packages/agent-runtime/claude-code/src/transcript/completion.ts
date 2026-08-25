@@ -48,11 +48,25 @@ export function isHumanPrompt(value: Record<string, unknown>): boolean {
 }
 
 function isCompletionMarker(value: Record<string, unknown>): boolean {
+  if (value['isSidechain'] === true || value['isMeta'] === true) return false;
+  if (value['type'] === 'system') {
+    return value['subtype'] === 'turn_duration';
+  }
+  if (value['type'] !== 'assistant') return false;
+  const message = recordValue(value['message']);
   return (
-    value['type'] === 'system' &&
-    value['subtype'] === 'turn_duration' &&
-    value['isSidechain'] !== true &&
-    value['isMeta'] !== true
+    message?.['role'] === 'assistant' &&
+    isTerminalAssistantStopReason(message['stop_reason'])
+  );
+}
+
+function isTerminalAssistantStopReason(value: unknown): boolean {
+  return (
+    value === 'end_turn' ||
+    value === 'max_tokens' ||
+    value === 'stop_sequence' ||
+    value === 'refusal' ||
+    value === 'model_context_window_exceeded'
   );
 }
 

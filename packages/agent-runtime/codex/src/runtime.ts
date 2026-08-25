@@ -31,6 +31,7 @@ import type {
   DreamuxLogger,
   InboundTurnInput,
   RuntimeAdmission,
+  RuntimeActivitySink,
 } from '@excitedjs/dreamux-types';
 import { BUILTIN_CODEX_PROVIDER_REF } from './provider-ref.js';
 import { CODEX_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
@@ -73,6 +74,7 @@ export interface CodexRuntimeDeps {
     threadId: string,
   ) => Promise<string>;
   logger?: DreamuxLogger;
+  activitySink: RuntimeActivitySink;
 }
 
 export class CodexRuntime implements AgentRuntime {
@@ -288,6 +290,7 @@ export class CodexRuntime implements AgentRuntime {
       getThreadId: () => this.threadId,
       client: this.client,
       log: this.log,
+      activitySink: this.deps.activitySink,
     });
   }
 

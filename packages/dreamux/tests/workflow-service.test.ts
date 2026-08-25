@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   DreamuxLogger,
-  RuntimeTurnOutcome,
+  RuntimeSubmission,
+  RuntimeSubmissionSettlement,
 } from '@excitedjs/dreamux-types';
 
 import {
@@ -30,6 +31,7 @@ import type { LockedTeammate } from '../src/service/teammate-service/types.js';
 import type {
   Turn,
   TurnAdmission,
+  TurnOutcome,
 } from '../src/service/teammate-service/turn-recording.js';
 import { WorkflowJournal } from '../src/service/workflow-service/journal.js';
 import type {
@@ -50,9 +52,11 @@ import type {
   AgentEntityRuntimeStatus,
 } from '../src/service/agent-entity/types.js';
 import {
-  controllableRuntimeTurn,
-  type ControllableRuntimeTurn,
-} from './helpers/runtime-turn.js';
+  completedCompletion,
+  controllableRuntimeSubmission,
+  failedCompletion,
+  type ControllableRuntimeSubmission,
+} from './helpers/runtime-submission.js';
 
 const SCOPE: WorkflowScopePathInput = {
   dispatcherId: 'dispatcher-workflow-test',
@@ -70,7 +74,54 @@ interface FakeMaterialization {
   unlockCalls: number;
   closed: boolean;
   unlocked: boolean;
-  runtimeTurn: ControllableRuntimeTurn | null;
+  runtimeTurn: ControllableRuntimeSubmission | null;
+  runtimeTurnReady: ReturnType<typeof deferred<void>>;
+}
+
+/**
+ * The fake TeammateFactory stands in for the whole TeamMate layer, so it owns
+ * the same seam `EntityTurn` owns in production: a provider settlement is
+ * translated into the Turn-level outcome the WorkflowService consumes.
+ * `completed`/`failed` are real native result boundaries and therefore carry a
+ * completion token; `stopped` never produces one.
+ */
+function toSettlement(
+  submission: RuntimeSubmission,
+  outcome: TurnOutcome,
+): RuntimeSubmissionSettlement {
+  switch (outcome.status) {
+    case 'completed':
+      return {
+        kind: 'completion',
+        completion: completedCompletion(
+          submission,
+          outcome.resultText,
+          outcome.truncated,
+        ),
+      };
+    case 'failed':
+      return {
+        kind: 'completion',
+        completion: failedCompletion(submission, outcome.error),
+      };
+    case 'stopped':
+      return { kind: 'stopped' };
+  }
+}
+
+function toTurnOutcome(settlement: RuntimeSubmissionSettlement): TurnOutcome {
+  if (settlement.kind === 'completion') {
+    return settlement.completion.status === 'completed'
+      ? {
+          status: 'completed',
+          resultText: settlement.completion.resultText,
+          truncated: settlement.completion.truncated,
+        }
+      : { status: 'failed', error: settlement.completion.error };
+  }
+  return settlement.kind === 'failed'
+    ? { status: 'failed', error: settlement.error }
+    : { status: 'stopped' };
 }
 
 class FakeLockedTeammates implements WorkflowTeammateFactory {
@@ -80,8 +131,9 @@ class FakeLockedTeammates implements WorkflowTeammateFactory {
   createError: Error | null = null;
   submitError: Error | null = null;
   nextAdmission: Exclude<TurnAdmission, { status: 'submitted' }> | null = null;
-  autoOutcome: RuntimeTurnOutcome | null = null;
+  autoOutcome: TurnOutcome | null = null;
   createGate: Promise<void> | null = null;
+  submitGate: Promise<void> | null = null;
   closeGate: Promise<void> | null = null;
   closeError: Error | null = null;
   closeAttempts = 0;
@@ -103,6 +155,7 @@ class FakeLockedTeammates implements WorkflowTeammateFactory {
       closed: false,
       unlocked: false,
       runtimeTurn: null,
+      runtimeTurnReady: deferred<void>(),
     };
     this.materializations.push(materialization);
     const handle: LockedTeammate = {
@@ -112,24 +165,32 @@ class FakeLockedTeammates implements WorkflowTeammateFactory {
         expect(submitInput.prompt).toBe(input.prompt);
         if (this.submitError !== null) throw this.submitError;
         if (this.nextAdmission !== null) return this.nextAdmission;
-        const runtimeTurn = controllableRuntimeTurn();
+        await this.submitGate;
+        const runtimeTurn = controllableRuntimeSubmission();
         materialization.runtimeTurn = runtimeTurn;
+        materialization.runtimeTurnReady.resolve();
+        const settled = runtimeTurn.submission.settled.then(toTurnOutcome);
         const turn: Turn = Object.freeze({
-          runtime: runtimeTurn.turn,
+          id: `turn-${materialization.submitCalls}`,
+          runtime: runtimeTurn.submission,
           origin: submitInput.turnOrigin,
           prompt: input.prompt,
           intent: input.intent ?? null,
           submittedAt: Date.now(),
-          settled: runtimeTurn.turn.settled,
-          delivery: runtimeTurn.turn.settled.then(() => undefined),
+          settled,
+          delivery: settled.then(() => undefined),
         });
-        if (this.autoOutcome !== null) runtimeTurn.settle(this.autoOutcome);
+        if (this.autoOutcome !== null) {
+          runtimeTurn.settle(
+            toSettlement(runtimeTurn.submission, this.autoOutcome),
+          );
+        }
         return { status: 'submitted', turn };
       },
       close: async (): Promise<{ teammate: AgentEntityRuntimeStatus }> => {
         materialization.closeCalls += 1;
         this.closeAttempts += 1;
-        materialization.runtimeTurn?.settle({ status: 'stopped' });
+        materialization.runtimeTurn?.stop();
         await this.closeGate;
         if (this.closeError !== null) throw this.closeError;
         materialization.closed = true;
@@ -152,21 +213,27 @@ class FakeLockedTeammates implements WorkflowTeammateFactory {
     return Object.freeze(handle);
   }
 
-  settle(
+  async settle(
     position: number,
-    status: RuntimeTurnOutcome['status'],
+    status: TurnOutcome['status'],
     result: string | null,
-  ): boolean {
+  ): Promise<boolean> {
     const materialization = this.materializations[position];
-    if (materialization?.runtimeTurn === null || materialization === undefined) {
-      throw new Error(`missing submitted fake TeamMate ${position}`);
+    if (materialization === undefined) {
+      throw new Error(`missing fake TeamMate ${position}`);
     }
-    const outcome: RuntimeTurnOutcome = status === 'completed'
+    await materialization.runtimeTurnReady.promise;
+    if (materialization.runtimeTurn === null) {
+      throw new Error(`fake TeamMate ${position} submitted without a Turn`);
+    }
+    const outcome: TurnOutcome = status === 'completed'
       ? { status, resultText: result, truncated: false }
       : status === 'failed'
         ? { status, error: new Error(result ?? 'runtime Turn failed') }
         : { status: 'stopped' };
-    return materialization.runtimeTurn.settle(outcome);
+    return materialization.runtimeTurn.settle(
+      toSettlement(materialization.runtimeTurn.submission, outcome),
+    );
   }
 }
 
@@ -593,7 +660,7 @@ describe('WorkflowService', () => {
     const stopTask = ctx.service.stopAll();
     await vi.waitFor(() => expect(ctx.teammates.closeAttempts).toBe(1));
     expect(agentResults(runner)).toEqual([]);
-    expect(ctx.teammates.settle(0, 'completed', 'late result')).toBe(false);
+    expect(await ctx.teammates.settle(0, 'completed', 'late result')).toBe(false);
     closeGate.resolve();
     await stopTask;
     expect(await ctx.service.status({ run_id: 'run-fenced-queue' }))
@@ -687,7 +754,7 @@ describe('WorkflowService', () => {
     await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
   });
 
-  it('passes outputSchema and workflow role guidance once, then fails invalid successful JSON', async () => {
+  it('passes outputSchema and workflow guidance once, then rejects invalid successful JSON', async () => {
     const ctx = await context(['run-schema']);
     await ctx.service.run({ script: validScript() });
     const runner = ctx.runner.latest();
@@ -737,7 +804,7 @@ describe('WorkflowService', () => {
     expect(ctx.initiator.received[0]?.status).toBe('failed');
   });
 
-  it('fails an empty successful structured result with an accurate runner error', async () => {
+  it('rejects an empty successful structured result', async () => {
     const ctx = await context(['run-schema-empty']);
     await ctx.service.run({ script: validScript() });
     const runner = ctx.runner.latest();
@@ -906,7 +973,7 @@ describe('WorkflowService', () => {
       options: {},
     });
     await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
-    expect(ctx.teammates.settle(0, 'completed', 'agent result')).toBe(true);
+    expect(await ctx.teammates.settle(0, 'completed', 'agent result')).toBe(true);
     await vi.waitFor(() => expect(agentResults(runner)).toHaveLength(1));
 
     runner.emit({
@@ -1106,7 +1173,7 @@ describe('WorkflowService', () => {
       options: {},
     });
     await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
-    expect(ctx.teammates.settle(0, 'completed', 'first result')).toBe(true);
+    expect(await ctx.teammates.settle(0, 'completed', 'first result')).toBe(true);
 
     await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
     expect(await ctx.service.status({ run_id: runId })).toMatchObject({
@@ -1155,7 +1222,9 @@ describe('WorkflowService', () => {
       options: {},
     });
     await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
-    expect(ctx.teammates.settle(0, 'completed', 'durable Agent result')).toBe(true);
+    expect(
+      await ctx.teammates.settle(0, 'completed', 'durable Agent result'),
+    ).toBe(true);
     await vi.waitFor(() => expect(ctx.teammates.closeAttempts).toBe(1));
     expect((await journalEvents(runId)).filter(
       (event) => event.kind === 'result',
@@ -1215,7 +1284,7 @@ describe('WorkflowService', () => {
       options: {},
     });
     await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
-    expect(ctx.teammates.settle(0, 'completed', 'done')).toBe(true);
+    expect(await ctx.teammates.settle(0, 'completed', 'done')).toBe(true);
     await vi.waitFor(() => expect(agentResults(runner)).toHaveLength(1));
     runner.emit({ type: 'run_result', status: 'completed', result: 'done' });
 
@@ -1269,6 +1338,8 @@ describe('WorkflowService', () => {
     );
     await ctx.service.run({ script: validScript() });
     const runner = ctx.runner.latest();
+    const allowSubmit = deferred<void>();
+    ctx.teammates.submitGate = allowSubmit.promise;
     runner.emit({
       type: 'agent_start',
       index: 0,
@@ -1276,7 +1347,17 @@ describe('WorkflowService', () => {
       options: {},
     });
     await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
-    expect(ctx.teammates.settle(0, 'completed', 'agent done')).toBe(true);
+    let settleCompleted = false;
+    const settleTask = ctx.teammates
+      .settle(0, 'completed', 'agent done')
+      .then((settled) => {
+        settleCompleted = true;
+        return settled;
+      });
+    await Promise.resolve();
+    expect(settleCompleted).toBe(false);
+    allowSubmit.resolve();
+    await expect(settleTask).resolves.toBe(true);
     await vi.waitFor(() => expect(agentResults(runner)).toHaveLength(1));
     runner.emit({
       type: 'run_result',
@@ -1331,7 +1412,7 @@ describe('WorkflowService', () => {
       options: {},
     });
     await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
-    expect(ctx.teammates.settle(0, 'completed', 'done')).toBe(true);
+    expect(await ctx.teammates.settle(0, 'completed', 'done')).toBe(true);
     await vi.waitFor(() => expect(agentResults(runner)).toHaveLength(1));
 
     const journalPath = workflowRunJournalPath({ ...SCOPE, runId });
@@ -1481,7 +1562,7 @@ describe('WorkflowService', () => {
     expect(ctx.initiator.received[0]?.status).toBe('completed');
   });
 
-  it('defaults concurrency, rejects invalid values, and queues excess agent starts server-side', async () => {
+  it('defaults concurrency, rejects invalid values, and queues excess starts', async () => {
     const ctx = await context([
       'run-default-concurrency',
       'run-queued-concurrency',
@@ -1551,6 +1632,10 @@ describe('WorkflowService', () => {
   });
 
   it('accepts 1000 lifetime agent calls and rejects call 1001 before materialization', async () => {
+    // This case owns the lifetime admission boundary, not record-store throughput.
+    // Each accepted agent otherwise rewrites an increasingly large record, making
+    // the fixed 1000/1001 assertion depend on CI disk speed rather than behavior.
+    vi.spyOn(WorkflowRunStore.prototype, 'write').mockResolvedValue(undefined);
     const ctx = await context(['run-agent-limit']);
     ctx.teammates.nextAdmission = {
       status: 'failed',
@@ -1626,7 +1711,7 @@ describe('WorkflowService', () => {
     expect((await journalEvents('run-stop')).some(
       (event) => event.kind === 'end',
     )).toBe(false);
-    expect(ctx.teammates.settle(0, 'completed', 'late result')).toBe(false);
+    expect(await ctx.teammates.settle(0, 'completed', 'late result')).toBe(false);
 
     closeGate.resolve();
     await expect(stop).resolves.toEqual({
@@ -1730,9 +1815,9 @@ describe('WorkflowService', () => {
     }
     await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(2));
 
-    const firstSettle = ctx.teammates.settle(0, 'completed', 'first');
+    const firstSettle = await ctx.teammates.settle(0, 'completed', 'first');
     await writeStarted.promise;
-    const secondSettle = ctx.teammates.settle(1, 'completed', 'second');
+    const secondSettle = await ctx.teammates.settle(1, 'completed', 'second');
     await vi.waitFor(async () =>
       expect((await ctx.service.status({ run_id: 'run-shutdown-mutation' }))
         .agents[1]?.status).toBe('completed'));
@@ -1791,11 +1876,11 @@ describe('WorkflowService', () => {
     }
     await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(2));
 
-    const firstSettle = ctx.teammates.settle(0, 'completed', 'first');
+    const firstSettle = await ctx.teammates.settle(0, 'completed', 'first');
     await writeStarted.promise;
     const shutdown = ctx.service.stopAll();
     await vi.waitFor(() => expect(ctx.teammates.closeAttempts).toBe(2));
-    const secondSettle = ctx.teammates.settle(1, 'completed', 'late');
+    const secondSettle = await ctx.teammates.settle(1, 'completed', 'late');
     expect(secondSettle).toBe(false);
     allowWrite.resolve();
     expect(firstSettle).toBe(true);
@@ -1830,7 +1915,7 @@ describe('WorkflowService', () => {
       options: {},
     });
     await vi.waitFor(() => expect(ctx.teammates.materializations).toHaveLength(1));
-    expect(ctx.teammates.settle(0, 'completed', 'done')).toBe(true);
+    expect(await ctx.teammates.settle(0, 'completed', 'done')).toBe(true);
     runner.emit({ type: 'run_result', status: 'completed', result: 'done' });
     await vi.waitFor(() => expect(ctx.teammates.closeAttempts).toBe(1));
 
@@ -1870,7 +1955,7 @@ describe('WorkflowService', () => {
     expect(ctx.initiator.received).toHaveLength(0);
     expect(ctx.teammates.closes).toEqual([]);
 
-    expect(ctx.teammates.settle(0, 'completed', 'late result')).toBe(false);
+    expect(await ctx.teammates.settle(0, 'completed', 'late result')).toBe(false);
     closeGate.resolve();
     await vi.waitFor(() => expect(ctx.initiator.received).toHaveLength(1));
     expect(ctx.initiator.received[0]?.status).toBe('failed');

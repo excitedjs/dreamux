@@ -158,6 +158,7 @@ export function createCodexAgentRuntimeProvider(
       const deps: CodexRuntimeDeps = {
         cwd: context.cwd,
         state: context.state,
+        activitySink: context.activitySink,
         paths,
         // The package owns socket allocation: pick a fresh name in the first of
         // the host's preference-ordered candidate dirs that fits the budget.

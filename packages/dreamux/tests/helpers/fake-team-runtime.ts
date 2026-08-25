@@ -1,3 +1,15 @@
+/**
+ * The richer team/dissolve/scheduler fake runtime, migrated to the value-keyed
+ * submission/completion contract.
+ *
+ * Fold vs queue is expressed by WIRING, never by a "how many pushes" knob:
+ * - {@link FakeRuntime.settle} settles one submission with its OWN fresh token
+ *   (the queued shape);
+ * - {@link FakeRuntime.foldSettle} settles several submissions with ONE shared
+ *   frozen token (the steer/fold shape);
+ * - {@link FakeRuntime.stopSettle} settles internally with no token at all, so
+ *   close/dissolve can never manufacture a push.
+ */
 import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
@@ -7,8 +19,10 @@ import type {
   AgentRuntimeTextInput,
   DreamuxLogger,
   InboundTurnInput,
+  RuntimeActivity,
+  RuntimeActivitySink,
   RuntimeAdmission,
-  RuntimeTurnOutcome,
+  RuntimeCompletion,
 } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../src/agent-runtime/index.js';
@@ -16,8 +30,11 @@ import type {
   CompletionDeliveryResult,
   PreparedCompletionFact,
 } from '../../src/service/completion-router/index.js';
-import type { ControllableRuntimeTurn } from './runtime-turn.js';
-import { controllableRuntimeTurn } from './runtime-turn.js';
+import type { ControllableRuntimeSubmission } from './runtime-submission.js';
+import {
+  controllableRuntimeSubmission,
+  foldSubmissions,
+} from './runtime-submission.js';
 
 export const FAKE_RUNTIME_REF = 'test:runtime';
 
@@ -26,6 +43,8 @@ const CAPABILITIES: AgentRuntimeCapabilities = {
   structuredOutput: { supported: true, scope: 'per-turn' },
 };
 
+export type FakeSettleStatus = 'completed' | 'failed' | 'stopped';
+
 export class FakeRuntime implements AgentRuntime {
   readonly providerRef = FAKE_RUNTIME_REF;
   readonly submitted: InboundTurnInput[] = [];
@@ -33,7 +52,9 @@ export class FakeRuntime implements AgentRuntime {
   stopAttempts = 0;
   private status: AgentRuntimeStatus = 'declared';
   private readonly queuedStopErrors: Error[] = [];
-  private readonly turns: ControllableRuntimeTurn[] = [];
+  private readonly submissions: ControllableRuntimeSubmission[] = [];
+  /** Installed by `createRuntime` so a suite can push live activity facts. */
+  activitySink: RuntimeActivitySink | null = null;
   readonly transcriptTurns: Array<{
     startedAt: number | null;
     endedAt: number | null;
@@ -57,41 +78,83 @@ export class FakeRuntime implements AgentRuntime {
     } = {},
   ) {}
 
-  settle(index = 0, status: RuntimeTurnOutcome['status'] = 'completed'): void {
-    const pending = this.turns[index];
-    if (pending === undefined) throw new Error(`missing fake Turn ${index}`);
-    pending.settle(
-      status === 'completed'
-        ? {
-            status,
-            resultText: this.opts.lastText ?? null,
-            truncated: false,
-          }
-        : status === 'failed'
-          ? { status, error: new Error('fake Turn failed') }
-          : { status },
-    );
+  /** Every accepted submission, in send order. */
+  get pending(): readonly ControllableRuntimeSubmission[] {
+    return this.submissions;
+  }
+
+  private require(index: number): ControllableRuntimeSubmission {
+    const pending = this.submissions[index];
+    if (pending === undefined) throw new Error(`missing fake submission ${index}`);
+    return pending;
+  }
+
+  /** Settle ONE submission on its own native result boundary (queued shape). */
+  settle(index = 0, status: FakeSettleStatus = 'completed'): void {
+    const pending = this.require(index);
     if (status === 'completed') {
-      const input = this.textSubmitted[index]?.text ?? this.submitted[index]?.text ?? '';
-      this.transcriptTurns.push({
-        startedAt: null,
-        endedAt: null,
-        blocks: [
-          {
-            kind: 'message',
-            role: 'user',
-            text: input,
-            truncated: false,
-          },
-          {
-            kind: 'message',
-            role: 'assistant',
-            text: this.opts.lastText ?? '',
-            truncated: false,
-          },
-        ],
-      });
+      pending.complete(this.opts.lastText ?? null);
+      this.recordTranscript(index);
+      return;
     }
+    if (status === 'failed') {
+      pending.failCompletion(new Error('fake Turn failed'));
+      return;
+    }
+    pending.stop();
+  }
+
+  /**
+   * Settle several submissions with ONE shared frozen completion token: the
+   * steer/fold shape. The first index is the display representative.
+   */
+  foldSettle(indexes: readonly number[], resultText?: string | null): RuntimeCompletion {
+    const members = indexes.map((index) => this.require(index));
+    const completion = foldSubmissions(
+      members,
+      resultText ?? this.opts.lastText ?? null,
+    );
+    const first = indexes[0];
+    if (first !== undefined) this.recordTranscript(first);
+    return completion;
+  }
+
+  /** Settle internally with NO completion token: close/dissolve must not push. */
+  stopSettle(index = 0): void {
+    this.require(index).stop();
+  }
+
+  /** Settle as an internal, non-result failure: no token, so no push. */
+  failSettle(index: number, error: Error): void {
+    this.require(index).fail(error);
+  }
+
+  /** Emit a live activity fact through the installed sink. */
+  emitActivity(index: number, activity: RuntimeActivity, occurredAt = Date.now()): void {
+    const sink = this.activitySink;
+    if (sink === null) throw new Error('fake runtime has no activity sink installed');
+    sink(Object.freeze({
+      submission: this.require(index).submission,
+      activity: Object.freeze(activity),
+      occurredAt,
+    }));
+  }
+
+  private recordTranscript(index: number): void {
+    const input = this.textSubmitted[index]?.text ?? this.submitted[index]?.text ?? '';
+    this.transcriptTurns.push({
+      startedAt: null,
+      endedAt: null,
+      blocks: [
+        { kind: 'message', role: 'user', text: input, truncated: false },
+        {
+          kind: 'message',
+          role: 'assistant',
+          text: this.opts.lastText ?? '',
+          truncated: false,
+        },
+      ],
+    });
   }
 
   async start(): Promise<void> {
@@ -108,6 +171,9 @@ export class FakeRuntime implements AgentRuntime {
     const error = this.queuedStopErrors.shift() ?? this.opts.stopError;
     if (error !== undefined) throw error;
     this.status = 'stopped';
+    // Contract: stop() must not return while an accepted submission is still
+    // unsettled. No native result was observed, so these are internal `stopped`.
+    for (const pending of this.submissions) pending.stop();
   }
 
   failNextStop(error: Error): void {
@@ -117,12 +183,13 @@ export class FakeRuntime implements AgentRuntime {
   async channelInput(input: InboundTurnInput): Promise<RuntimeAdmission> {
     if (this.opts.submitError !== undefined) throw this.opts.submitError;
     this.submitted.push(input);
-    const pending = controllableRuntimeTurn();
-    this.turns.push(pending);
+    const pending = controllableRuntimeSubmission();
+    this.submissions.push(pending);
     if (this.opts.settleImmediately) {
-      queueMicrotask(() => this.settle(this.turns.indexOf(pending)));
+      const index = this.submissions.indexOf(pending);
+      queueMicrotask(() => this.settle(index));
     }
-    return { status: 'submitted', turn: pending.turn };
+    return { status: 'submitted', submission: pending.submission };
   }
 
   async completionInput(input: AgentRuntimeTextInput): Promise<RuntimeAdmission> {
@@ -132,12 +199,12 @@ export class FakeRuntime implements AgentRuntime {
     if (this.opts.completionResult !== undefined) {
       return this.opts.completionResult;
     }
-    const pending = controllableRuntimeTurn();
-    this.turns.push(pending);
+    const pending = controllableRuntimeSubmission();
+    this.submissions.push(pending);
     if (this.opts.settleImmediately) {
-      this.settle(this.turns.indexOf(pending));
+      this.settle(this.submissions.indexOf(pending));
     }
-    return { status: 'submitted', turn: pending.turn };
+    return { status: 'submitted', submission: pending.submission };
   }
 
   async waitIdle(): Promise<void> {
@@ -196,6 +263,7 @@ export function fakeRuntimeCatalog(
     createRuntime(context: AgentRuntimeCreateContext) {
       contexts.push(context);
       const runtime = opts.createRuntime?.(context) ?? new FakeRuntime(opts);
+      runtime.activitySink = context.activitySink ?? null;
       runtimes.push(runtime);
       return runtime;
     },
@@ -213,6 +281,8 @@ export function fakeRuntimeCatalog(
 
 export class FakeInitiator {
   readonly completions: PreparedCompletionFact[] = [];
+  /** Stable process-local recipient identity, preserved across wrappers. */
+  readonly recipientKey = {};
 
   async prepareCompletion(completion: PreparedCompletionFact) {
     this.completions.push(completion);

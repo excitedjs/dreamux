@@ -1,6 +1,7 @@
 # Entity-owned TeamMate lifecycle and object Turns
 
-- **Status:** Accepted and implemented
+- **Status:** Accepted and implemented; the object-turn settlement clause is
+  superseded by [provider-completion-token-routing](provider-completion-token-routing.md)
 - **Date:** 2026-08-16
 - **Affects:** `@excitedjs/dreamux-types`,
   `@excitedjs/agent-runtime-codex`,

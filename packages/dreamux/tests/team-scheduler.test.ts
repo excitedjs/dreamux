@@ -44,7 +44,7 @@ import { ChannelProviderCatalog } from '../src/channel/catalog.js';
 import { createBuiltinProviderRegistry } from '../src/registry/index.js';
 import { Server } from '../src/server.js';
 import { writeRestartIntent } from '../src/daemon/restart-intent.js';
-import { completedRuntimeTurn } from './helpers/runtime-turn.js';
+import { completedRuntimeSubmission } from './helpers/runtime-submission.js';
 
 const FAKE_RUNTIME_REF = 'test:runtime';
 
@@ -76,13 +76,13 @@ class FakeRuntime implements AgentRuntime {
 
   async channelInput(input: InboundTurnInput): Promise<RuntimeAdmission> {
     this.submitted.push(input);
-    return { status: 'submitted', turn: completedRuntimeTurn('fake last') };
+    return { status: 'submitted', submission: completedRuntimeSubmission('fake last') };
   }
 
   async completionInput(input: AgentRuntimeTextInput): Promise<RuntimeAdmission> {
     this.textSubmitted.push(input);
     this.onCompletion?.();
-    return { status: 'submitted', turn: completedRuntimeTurn('fake last') };
+    return { status: 'submitted', submission: completedRuntimeSubmission('fake last') };
   }
 
   async waitIdle(): Promise<void> {}
@@ -1027,6 +1027,11 @@ describe('TeamLeader cron scheduler lifecycle', () => {
       prompt: 'follow up',
     });
     expect(sent.status).toBe('submitted');
+    // Wire-leak guard: `team.send` returns this verbatim over the admin JSON-RPC
+    // wire, so it must stay a plain projection and never carry the raw runtime
+    // handle. Under the value-keyed contract that handle is `submission` (a live
+    // Promise); asserting the retired `turn` name would be unfalsifiable.
+    expect(sent).not.toHaveProperty('submission');
     expect(sent).not.toHaveProperty('turn');
     expect(runtimes).toHaveLength(1);
     expect(runtimes[0]!.textSubmitted.map((input) => input.text)).toEqual([

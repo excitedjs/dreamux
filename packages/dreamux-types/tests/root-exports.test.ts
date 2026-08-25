@@ -28,6 +28,35 @@ import { describe, it, expect } from 'vitest';
 const here = dirname(fileURLToPath(import.meta.url));
 const indexFile = join(here, '..', 'src', 'index.ts');
 
+/** Parse the names re-exported by every `export type { ... } from '...'` block. */
+function rootExportNames(): string[] {
+  const source = readFileSync(indexFile, 'utf8');
+  const names = new Set<string>();
+  const block = /export\s+type\s+\{([^}]*)\}\s+from/g;
+  let match: RegExpExecArray | null;
+  while ((match = block.exec(source)) !== null) {
+    for (const raw of match[1].split(',')) {
+      const name = raw.trim();
+      if (name !== '') names.add(name);
+    }
+  }
+  return [...names].sort();
+}
+
+/** Every `export interface`/`export type` name declared across the source modules. */
+function sourceModulePublicTypeNames(): string[] {
+  const srcDir = join(here, '..', 'src');
+  const names = new Set<string>();
+  const decl = /export\s+(?:interface|type)\s+([A-Za-z0-9_]+)/g;
+  for (const file of readdirSync(srcDir)) {
+    if (!file.endsWith('.ts') || file === 'index.ts') continue;
+    const source = readFileSync(join(srcDir, file), 'utf8');
+    let match: RegExpExecArray | null;
+    while ((match = decl.exec(source)) !== null) names.add(match[1]);
+  }
+  return [...names].sort();
+}
+
 /** The intended public root API. Keep sorted; grow only by deliberate review. */
 const ALLOWLIST = [
   'AgentRuntime',
@@ -37,8 +66,8 @@ const ALLOWLIST = [
   'AgentRuntimeCreateContext',
   'AgentRuntimeDiagnostic',
   'AgentRuntimeDiagnosticContext',
-  'AgentRuntimeDiagnosticRunner',
   'AgentRuntimeDiagnosticResult',
+  'AgentRuntimeDiagnosticRunner',
   'AgentRuntimeIdentity',
   'AgentRuntimeMcpServer',
   'AgentRuntimePathContext',
@@ -85,8 +114,8 @@ const ALLOWLIST = [
   'ChannelCoreEventSubscription',
   'ChannelDiagnostic',
   'ChannelDiagnosticContext',
-  'ChannelDiagnosticRunner',
   'ChannelDiagnosticResult',
+  'ChannelDiagnosticRunner',
   'ChannelExactDeliveryInput',
   'ChannelExactDeliveryResult',
   'ChannelInboundEnvelope',
@@ -119,12 +148,13 @@ const ALLOWLIST = [
   'InboundAttachment',
   'InboundDeliveryResult',
   'InboundTurnInput',
+  'JsonValue',
   'NpmProviderRef',
   'ProviderBinCheck',
-  'ProviderDiagnosticRunner',
-  'ProviderDiagnosticScope',
   'ProviderDescriptor',
   'ProviderDiagnosticResult',
+  'ProviderDiagnosticRunner',
+  'ProviderDiagnosticScope',
   'ProviderFactory',
   'ProviderFactoryContext',
   'ProviderKind',
@@ -135,45 +165,40 @@ const ALLOWLIST = [
   'ProviderOnboardSecretPrompt',
   'ProviderOnboardTextPrompt',
   'ProviderRef',
-  'RuntimeAdmission',
-  'RuntimeTurn',
-  'RuntimeTurnOutcome',
   'ProviderRefSource',
+  'RuntimeActivity',
+  'RuntimeActivityEvent',
+  'RuntimeActivitySink',
+  'RuntimeAdmission',
+  'RuntimeCompletion',
+  'RuntimeSubmission',
+  'RuntimeSubmissionSettlement',
   'UnsupportedAgentRuntimeFeatureError',
 ];
-
-/** Parse the names re-exported by every `export type { ... } from '...'` block. */
-function rootExportNames(): string[] {
-  const source = readFileSync(indexFile, 'utf8');
-  const names = new Set<string>();
-  const block = /export\s+type\s+\{([^}]*)\}\s+from/g;
-  let match: RegExpExecArray | null;
-  while ((match = block.exec(source)) !== null) {
-    for (const raw of match[1].split(',')) {
-      const name = raw.trim();
-      if (name !== '') names.add(name);
-    }
-  }
-  return [...names].sort();
-}
-
-/** Every `export interface`/`export type` name declared across the source modules. */
-function sourceModulePublicTypeNames(): string[] {
-  const srcDir = join(here, '..', 'src');
-  const names = new Set<string>();
-  const decl = /export\s+(?:interface|type)\s+([A-Za-z0-9_]+)/g;
-  for (const file of readdirSync(srcDir)) {
-    if (!file.endsWith('.ts') || file === 'index.ts') continue;
-    const source = readFileSync(join(srcDir, file), 'utf8');
-    let match: RegExpExecArray | null;
-    while ((match = decl.exec(source)) !== null) names.add(match[1]);
-  }
-  return [...names].sort();
-}
 
 describe('dreamux-types root export surface', () => {
   it('matches the reviewed allowlist exactly (no casual change)', () => {
     expect(rootExportNames()).toEqual([...ALLOWLIST].sort());
+  });
+
+  it('no longer publishes the retired turn-keyed names', () => {
+    // The value-keyed contract split `RuntimeTurn` into a submission (one
+    // accepted send) and a completion (one native result). Both retired names
+    // must stay off the public surface, or an external provider could author
+    // against a contract Dreamux no longer honours.
+    expect(rootExportNames()).not.toContain('RuntimeTurn');
+    expect(rootExportNames()).not.toContain('RuntimeTurnOutcome');
+    for (const name of [
+      'RuntimeSubmission',
+      'RuntimeSubmissionSettlement',
+      'RuntimeCompletion',
+      'RuntimeActivity',
+      'RuntimeActivityEvent',
+      'RuntimeActivitySink',
+      'RuntimeAdmission',
+    ]) {
+      expect(rootExportNames()).toContain(name);
+    }
   });
 
   it('aggregates every public type from the source modules (hides nothing)', () => {

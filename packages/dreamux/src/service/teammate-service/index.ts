@@ -81,6 +81,11 @@ export class TeammateService {
   ) {
     this.ownsWorktreeOnClose = options.ownsWorktreeOnClose;
     this.state = new AgentRuntimeStateStore(deps.identities, identity);
+    this.turns = new EntityTurnCoordinator({
+      name: () => this.name,
+      intent: () => this.current().intent,
+      isActive: () => this.phase === 'active',
+    });
     this.runtimeOwner = new TeammateRuntimeOwner(
       deps,
       dispatcherId,
@@ -92,13 +97,9 @@ export class TeammateService {
         markClosing: () => {
           this.phase = 'closing';
         },
+        activitySink: this.turns.activitySink,
       },
     );
-    this.turns = new EntityTurnCoordinator({
-      name: () => this.name,
-      intent: () => this.current().intent,
-      isActive: () => this.phase === 'active',
-    });
   }
 
   get name(): string {
@@ -525,11 +526,9 @@ export class TeammateService {
     closeNote: string,
     token: object | null,
   ): Promise<AgentEntityCloseResult> {
-    this.turns.selectStoppedForCurrent();
     await this.runtimeOwner.stopForClose();
     try {
       await this.turns.drainAdmissions();
-      this.turns.selectStoppedForCurrent();
       await this.waitForOrdinaryMutations();
       await this.turns.settleAndDeliverRetained();
 

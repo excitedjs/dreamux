@@ -297,13 +297,20 @@ materialization, cache subscription, roster queries, and read projection. A
 close fact lets the Collection remove only its own exact cached reference; the
 Collection does not run entity close steps or a runtime-only shutdown sweep.
 
-One accepted logical input is one provider-owned `RuntimeTurn` plus one
-entity-owned `Turn`. Folds return the exact same object. The first terminal
-outcome is snapshotted into the object-owned latch and optionally delivered
-through a closure captured from the initiating action. Dreamux persists no Turn
-archive or rolling conversation projection. Public receipts, Workflow records,
-Channel contracts, and identity state do not carry a Turn id for in-process
-correlation.
+One accepted send is one provider-owned `RuntimeSubmission` plus one
+entity-owned `Turn`. Providers create an immutable `RuntimeCompletion` at each
+real native result boundary and settle the related submissions with it: folded
+sends settle with the same completion object, queued sends settle with distinct
+completions in provider order, and stop without an observed final result
+settles as `stopped` with no completion. The first terminal outcome is
+snapshotted into the object-owned latch, and delivery flows through the core
+`completion-router`, which delivers at-most-once per producer, completion
+token, and recipient while preserving provider order — never keyed by native
+ids, completion text, or slot heuristics. Providers report live assistant/tool
+activity through the submission's synchronous activity sink; transcripts remain
+cold history only. Dreamux persists no Turn archive or rolling conversation
+projection. Public receipts, Workflow records, Channel contracts, and identity
+state do not carry a Turn id for in-process correlation.
 
 The runtime checkpoint persists the provider-owned session id plus an optional
 opaque `transcript_locator`. Direct TeamMate `spawn` and `send` receipts expose
@@ -402,7 +409,7 @@ Every Agent call records its materialization promise immediately, retains the
 restricted locked TeamMate handle, and then retains the concrete `Turn` returned
 by submission. Intermediate Agent results await that object directly; no settle
 callback or Turn lookup map is involved. The run's terminal completion captures
-the original caller and invokes the shared stateless bounded delivery policy.
+the original caller and delivers through the shared completion-routing path.
 `workflow_run` still creates the durable run and captures terminal delivery
 before runner startup, so compilation, dialect, syntax, and metadata failures
 become durable asynchronous failed runs after the immediate `{ run_id }`

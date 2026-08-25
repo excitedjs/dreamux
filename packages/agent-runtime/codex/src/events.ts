@@ -8,8 +8,10 @@
  */
 
 import type { CodexWsClient } from './rpc.js';
+import { createHash } from 'node:crypto';
 import type {
   ItemCompletedNotification,
+  ItemStartedNotification,
   ThreadItem,
   TurnCompletedNotification,
   TurnErrorNotification,
@@ -25,6 +27,7 @@ export interface CollectedTurn {
 
 export interface TurnCollector {
   awaitTurn(turnId?: string): Promise<CollectedTurn>;
+  releaseTurn(turnId: string): void;
   dispose(): void;
 }
 
@@ -60,8 +63,13 @@ export interface TurnSubscriptionOptions {
   acceptAnyThread?: boolean;
   /** Diagnostic hook fired for EVERY notification, before any filtering. */
   onTrace?: (event: TurnTraceEvent) => void;
-  /** Keep listening while one logical Turn awaits several native aliases. */
+  /** Keep listening while a resident runtime observes successive native turns. */
   retainAfterTerminal?: boolean;
+  onItemStarted?: (turnId: string, item: ThreadItem) => void;
+  onItemCompleted?: (turnId: string, item: ThreadItem, occurredAt: number) => void;
+  onTerminal?: (turnId: string, terminal: CollectedTurn | Error) => void;
+  onUnscopedFailure?: (error: Error) => void;
+  onProtocolViolation?: (error: Error) => void;
 }
 
 /**
@@ -83,8 +91,10 @@ export function subscribeTurnCollection(
   const itemsByTurn = new Map<string, ThreadItem[]>();
   const completedByTurn = new Map<string, CollectedTurn>();
   const failuresByTurn = new Map<string, Error>();
+  const terminalFingerprints = new Map<string, string>();
   let firstCompleted: CollectedTurn | null = null;
   let firstFailure: Error | null = null;
+  let firstFailureTurnId: string | null = null;
   let unscopedFailure: Error | null = null;
   let closed = false;
   let unsubscribe = (): void => {};
@@ -103,6 +113,7 @@ export function subscribeTurnCollection(
     itemsByTurn.clear();
     completedByTurn.clear();
     failuresByTurn.clear();
+    terminalFingerprints.clear();
     unsubscribe();
   };
 
@@ -145,24 +156,59 @@ export function subscribeTurnCollection(
       });
     }
     if (closed || !matches) return;
-    if (notif.method === 'item/completed') {
+    if (notif.method === 'item/started') {
+      const params = notif.params as ItemStartedNotification;
+      if (terminalFingerprints.has(params.turnId)) return;
+      options.onItemStarted?.(params.turnId, params.item);
+    } else if (notif.method === 'item/completed') {
       const params = notif.params as ItemCompletedNotification;
+      if (terminalFingerprints.has(params.turnId)) return;
       const bucket = itemsByTurn.get(params.turnId) ?? [];
       bucket.push(params.item);
       itemsByTurn.set(params.turnId, bucket);
+      options.onItemCompleted?.(params.turnId, params.item, params.completedAtMs);
     } else if (notif.method === 'turn/completed') {
       const params = notif.params as TurnCompletedNotification;
       if (params.turn.error != null) {
         const failure = new Error(params.turn.error.message || 'codex turn failed');
+        const terminalState = rememberTerminal(
+          terminalFingerprints,
+          params.turn.id,
+          terminalFingerprint('failed', failure.message),
+        );
+        if (terminalState === 'conflict') {
+          options.onProtocolViolation?.(new Error(
+            `codex emitted conflicting terminal facts for turn ${params.turn.id}`,
+          ));
+          return;
+        }
+        if (terminalState === 'duplicate') return;
         failuresByTurn.set(params.turn.id, failure);
-        firstFailure ??= failure;
+        if (firstFailure === null) {
+          firstFailure = failure;
+          firstFailureTurnId = params.turn.id;
+        }
+        options.onTerminal?.(params.turn.id, failure);
         resolveAwaiting();
         return;
       }
       const items = itemsByTurn.get(params.turn.id) ?? params.turn.items ?? [];
       const completed = { threadId, turnId: params.turn.id, items };
+      const terminalState = rememberTerminal(
+        terminalFingerprints,
+        params.turn.id,
+        terminalFingerprint('completed', params.turn),
+      );
+      if (terminalState === 'conflict') {
+        options.onProtocolViolation?.(new Error(
+          `codex emitted conflicting terminal facts for turn ${params.turn.id}`,
+        ));
+        return;
+      }
+      if (terminalState === 'duplicate') return;
       completedByTurn.set(params.turn.id, completed);
       firstCompleted ??= completed;
+      options.onTerminal?.(params.turn.id, completed);
       resolveAwaiting();
     } else if (notif.method === 'error') {
       const params = notif.params as TurnErrorNotification;
@@ -171,9 +217,30 @@ export function subscribeTurnCollection(
       // eventual `turn/completed`, so we ignore it here.
       if (params.willRetry === false) {
         const failure = new Error(params.error?.message ?? 'codex turn error');
-        if (typeof params.turnId === 'string') failuresByTurn.set(params.turnId, failure);
-        else unscopedFailure = failure;
-        firstFailure ??= failure;
+        if (typeof params.turnId === 'string') {
+          const terminalState = rememberTerminal(
+            terminalFingerprints,
+            params.turnId,
+            terminalFingerprint('failed', failure.message),
+          );
+          if (terminalState === 'conflict') {
+            options.onProtocolViolation?.(new Error(
+              `codex emitted conflicting terminal facts for turn ${params.turnId}`,
+            ));
+            return;
+          }
+          if (terminalState === 'duplicate') return;
+          failuresByTurn.set(params.turnId, failure);
+          options.onTerminal?.(params.turnId, failure);
+        }
+        else {
+          unscopedFailure = failure;
+          options.onUnscopedFailure?.(failure);
+        }
+        if (firstFailure === null) {
+          firstFailure = failure;
+          firstFailureTurnId = typeof params.turnId === 'string' ? params.turnId : null;
+        }
         resolveAwaiting();
       }
     }
@@ -225,6 +292,16 @@ export function subscribeTurnCollection(
       });
       return promise;
     },
+    releaseTurn(turnId: string): void {
+      itemsByTurn.delete(turnId);
+      completedByTurn.delete(turnId);
+      failuresByTurn.delete(turnId);
+      if (firstCompleted?.turnId === turnId) firstCompleted = null;
+      if (firstFailureTurnId === turnId) {
+        firstFailure = null;
+        firstFailureTurnId = null;
+      }
+    },
     dispose(): void {
       const error = new Error('codex turn collector disposed');
       for (const waiter of awaiting.values()) waiter.reject(error);
@@ -232,6 +309,28 @@ export function subscribeTurnCollection(
       closeCollector();
     },
   };
+}
+
+const TERMINAL_FINGERPRINT_LIMIT = 1_024;
+
+function terminalFingerprint(kind: string, payload: unknown): string {
+  return createHash('sha256').update(JSON.stringify([kind, payload])).digest('base64url');
+}
+
+function rememberTerminal(
+  terminals: Map<string, string>,
+  turnId: string,
+  fingerprint: string,
+): 'new' | 'duplicate' | 'conflict' {
+  const previous = terminals.get(turnId);
+  if (previous !== undefined) return previous === fingerprint ? 'duplicate' : 'conflict';
+  terminals.set(turnId, fingerprint);
+  while (terminals.size > TERMINAL_FINGERPRINT_LIMIT) {
+    const oldest = terminals.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    terminals.delete(oldest);
+  }
+  return 'new';
 }
 
 function traceTurnId(params: Record<string, unknown>): string | null {

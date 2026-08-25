@@ -1,15 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { RuntimeTurn, RuntimeTurnOutcome } from '@excitedjs/dreamux-types';
+import type { RuntimeCompletion, RuntimeSubmission } from '@excitedjs/dreamux-types';
+
+import type { PreparedCompletionFact } from '../src/service/completion-router/index.js';
+import type { TurnCompletionDelivery } from '../src/service/teammate-service/turn-recording.js';
 import { EntityTurn } from '../src/service/teammate-service/turn-recording.js';
+import {
+  completedCompletion,
+  controllableRuntimeSubmission,
+} from './helpers/runtime-submission.js';
 
 describe('entity-owned in-process Turn terminal pipeline', () => {
   it('settles immediately without a persistence dependency', async () => {
-    const runtime = deferredRuntimeTurn();
-    const delivery = vi.fn(async () => undefined);
-    const turn = makeTurn(runtime.turn, delivery);
+    const runtime = controllableRuntimeSubmission();
+    const delivery = deliveryMock();
+    const turn = makeTurn(runtime.submission, delivery);
 
-    runtime.settle({ status: 'completed', resultText: 'done', truncated: false });
+    const completion = runtime.complete('done');
 
     await expect(turn.settled).resolves.toEqual({
       status: 'completed',
@@ -18,38 +25,92 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
     });
     await turn.delivery;
     expect(delivery).toHaveBeenCalledTimes(1);
+    expect(delivery).toHaveBeenCalledWith(completion, {
+      kind: 'teammate',
+      source: 'reviewer',
+      status: 'completed',
+      result: 'done',
+    });
   });
 
-  it('lets close-induced stopped win once over a late runtime result', async () => {
-    const runtime = deferredRuntimeTurn();
-    const delivery = vi.fn(async () => undefined);
-    const turn = makeTurn(runtime.turn, delivery);
+  it('settles a close-induced stopped submission without any delivery', async () => {
+    const runtime = controllableRuntimeSubmission();
+    const delivery = deliveryMock();
+    const turn = makeTurn(runtime.submission, delivery);
 
-    expect(turn.trySettle({ status: 'stopped' })).toBe(true);
-    runtime.settle({ status: 'completed', resultText: 'late', truncated: false });
-    await turn.delivery;
+    expect(turn.isSettled()).toBe(false);
+    expect(runtime.stop()).toBe(true);
+    // A submission settles once: a result offered after the stop is a no-op and
+    // can never retroactively turn this turn into a push.
+    expect(
+      runtime.settle({
+        kind: 'completion',
+        completion: completedCompletion(runtime.submission, 'late'),
+      }),
+    ).toBe(false);
 
     await expect(turn.settled).resolves.toEqual({ status: 'stopped' });
-    expect(delivery).toHaveBeenCalledTimes(1);
-    expect(delivery).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 'stopped', result: null }),
-    );
+    await turn.delivery;
+    expect(turn.isSettled()).toBe(true);
+    expect(delivery).not.toHaveBeenCalled();
+  });
+
+  it('settles an internal runtime failure without any delivery', async () => {
+    const runtime = controllableRuntimeSubmission();
+    const delivery = deliveryMock();
+    const turn = makeTurn(runtime.submission, delivery);
+    const runtimeError = new Error('runtime went away before any result');
+
+    expect(runtime.fail(runtimeError)).toBe(true);
+
+    const settled = await turn.settled;
+    expect(settled.status).toBe('failed');
+    if (settled.status !== 'failed') throw new Error('expected failed outcome');
+    expect(settled.error).toBe(runtimeError);
+    await turn.delivery;
+    expect(delivery).not.toHaveBeenCalled();
+  });
+
+  it('settles a rejected submission promise without any delivery', async () => {
+    const rejection = new Error('settled promise rejected');
+    // The helper only models the documented settlement values; a provider that
+    // rejects `settled` outright is still not a native result, so it must not
+    // produce a completion token or a push.
+    const submission: RuntimeSubmission = Object.freeze({
+      settled: Promise.reject(rejection),
+    });
+    const delivery = deliveryMock();
+    const turn = makeTurn(submission, delivery);
+
+    const settled = await turn.settled;
+    expect(settled.status).toBe('failed');
+    if (settled.status !== 'failed') throw new Error('expected failed outcome');
+    expect(settled.error).toBe(rejection);
+    await turn.delivery;
+    expect(delivery).not.toHaveBeenCalled();
   });
 
   it('makes an early delivery read await and retain delivery rejection', async () => {
-    const runtime = deferredRuntimeTurn();
+    const runtime = controllableRuntimeSubmission();
     let rejectDelivery!: (error: Error) => void;
+    let markInvoked!: () => void;
+    const invoked = new Promise<void>((resolve) => {
+      markInvoked = resolve;
+    });
     const delivery = vi.fn(
-      () => new Promise<void>((_resolve, reject) => {
-        rejectDelivery = reject;
-      }),
+      (_completion: RuntimeCompletion, _fact: PreparedCompletionFact) =>
+        new Promise<void>((_resolve, reject) => {
+          rejectDelivery = reject;
+          markInvoked();
+        }),
     );
-    const turn = makeTurn(runtime.turn, delivery);
+    const turn = makeTurn(runtime.submission, delivery);
 
     const observedDelivery = turn.delivery;
-    runtime.settle({ status: 'completed', resultText: 'done', truncated: false });
-    await waitFor(() => delivery.mock.calls.length === 1);
-    expect(await isSettled(observedDelivery)).toBe(false);
+    runtime.complete('done');
+    await invoked;
+    expect(delivery).toHaveBeenCalledTimes(1);
+    expect(await hasSettled(observedDelivery)).toBe(false);
 
     rejectDelivery(new Error('delivery unavailable'));
     await expect(observedDelivery).rejects.toThrow(/delivery unavailable/);
@@ -57,80 +118,82 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
     expect(delivery).toHaveBeenCalledTimes(1);
   });
 
-  it('snapshots a completed provider outcome before later mutation', async () => {
-    const runtime = deferredRuntimeTurn();
-    const delivery = vi.fn(async () => undefined);
-    const turn = makeTurn(runtime.turn, delivery);
-    const outcome: RuntimeTurnOutcome & {
-      resultText: string | null;
-      truncated: boolean;
-    } = { status: 'completed', resultText: 'first', truncated: false };
+  it('reports and delivers the frozen provider completion token as-is', async () => {
+    const runtime = controllableRuntimeSubmission();
+    const delivery = deliveryMock();
+    const turn = makeTurn(runtime.submission, delivery);
+    const completion = completedCompletion(runtime.submission, 'first');
 
-    runtime.settle(outcome);
-    await waitFor(() => turn.isOutcomeSelected());
-    outcome.resultText = 'mutated';
-    outcome.truncated = true;
-
+    runtime.settle({ kind: 'completion', completion });
     const settled = await turn.settled;
+    expect(turn.isSettled()).toBe(true);
+
+    // The token is provider-owned and frozen: a later mutation attempt cannot
+    // rewrite what this turn already reported or what it hands to delivery.
+    expect(() => Object.assign(completion, { resultText: 'mutated', truncated: true }))
+      .toThrow(TypeError);
+
     await turn.delivery;
     expect(settled).toEqual({
       status: 'completed',
       resultText: 'first',
       truncated: false,
     });
-    expect(settled).not.toBe(outcome);
-    expect(Object.isFrozen(settled)).toBe(true);
-    expect(delivery).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 'completed', result: 'first' }),
-    );
+    const [deliveredCompletion, deliveredFact] = delivery.mock.calls[0] ?? [];
+    expect(deliveredCompletion).toBe(completion);
+    expect(Object.isFrozen(deliveredCompletion)).toBe(true);
+    expect(deliveredFact).toEqual({
+      kind: 'teammate',
+      source: 'reviewer',
+      status: 'completed',
+      result: 'first',
+    });
   });
 
-  it('snapshots failed error semantics without retaining provider error mutation', async () => {
-    const runtime = deferredRuntimeTurn();
-    const turn = makeTurn(runtime.turn, vi.fn(async () => undefined));
+  it('delivers a failed completion token as a real result boundary', async () => {
+    const runtime = controllableRuntimeSubmission();
+    const delivery = deliveryMock();
+    const turn = makeTurn(runtime.submission, delivery);
     const providerError = new Error('first failure');
     providerError.name = 'ProviderFailure';
 
-    runtime.settle({ status: 'failed', error: providerError });
-    await waitFor(() => turn.isOutcomeSelected());
-    providerError.name = 'MutatedFailure';
-    providerError.message = 'mutated';
-    providerError.stack = 'mutated stack';
+    const completion = runtime.failCompletion(providerError);
 
     const settled = await turn.settled;
     expect(settled.status).toBe('failed');
     if (settled.status !== 'failed') throw new Error('expected failed outcome');
-    expect(settled.error).not.toBe(providerError);
-    expect(settled.error).toMatchObject({
-      name: 'ProviderFailure',
-      message: 'first failure',
+    expect(settled.error).toBe(providerError);
+    await turn.delivery;
+    expect(delivery).toHaveBeenCalledTimes(1);
+    expect(delivery).toHaveBeenCalledWith(completion, {
+      kind: 'teammate',
+      source: 'reviewer',
+      status: 'failed',
+      result: null,
     });
-    expect(settled.error.stack).not.toBe('mutated stack');
-    expect(Object.isFrozen(settled.error)).toBe(true);
-    expect(Object.isFrozen(settled)).toBe(true);
   });
 
-  it('installs at most one completion delivery closure', async () => {
-    const runtime = deferredRuntimeTurn();
-    const first = vi.fn(async () => undefined);
-    const second = vi.fn(async () => undefined);
-    const turn = makeTurn(runtime.turn, first);
-    turn.attachDelivery(second);
+  it('starts the completion delivery at most once', async () => {
+    const runtime = controllableRuntimeSubmission();
+    const delivery = deliveryMock();
+    const turn = makeTurn(runtime.submission, delivery);
 
-    runtime.settle({ status: 'completed', resultText: 'done', truncated: false });
+    const beforeSettlement = [turn.delivery, turn.ensureDelivery()];
+    runtime.complete('done');
+    await Promise.all(beforeSettlement);
+    await Promise.all([turn.delivery, turn.ensureDelivery()]);
     await turn.delivery;
 
-    expect(first).toHaveBeenCalledTimes(1);
-    expect(second).not.toHaveBeenCalled();
+    expect(delivery).toHaveBeenCalledTimes(1);
   });
 });
 
 function makeTurn(
-  runtime: RuntimeTurn,
-  delivery: ReturnType<typeof vi.fn>,
+  submission: RuntimeSubmission,
+  delivery: TurnCompletionDelivery | null,
 ): EntityTurn {
   return new EntityTurn(
-    runtime,
+    submission,
     'dispatcher',
     'review this',
     'review',
@@ -140,18 +203,16 @@ function makeTurn(
   );
 }
 
-function deferredRuntimeTurn(): {
-  turn: RuntimeTurn;
-  settle: (outcome: RuntimeTurnOutcome) => void;
-} {
-  let settle!: (outcome: RuntimeTurnOutcome) => void;
-  const settled = new Promise<RuntimeTurnOutcome>((resolve) => {
-    settle = resolve;
-  });
-  return { turn: Object.freeze({ settled }), settle };
+function deliveryMock() {
+  return vi.fn(
+    async (
+      _completion: RuntimeCompletion,
+      _fact: PreparedCompletionFact,
+    ): Promise<void> => undefined,
+  );
 }
 
-async function isSettled(promise: Promise<unknown>): Promise<boolean> {
+async function hasSettled(promise: Promise<unknown>): Promise<boolean> {
   return Promise.race([
     promise.then(
       () => true,
@@ -159,13 +220,4 @@ async function isSettled(promise: Promise<unknown>): Promise<boolean> {
     ),
     new Promise<false>((resolve) => setImmediate(() => resolve(false))),
   ]);
-}
-
-async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  throw new Error('waitFor timed out');
 }

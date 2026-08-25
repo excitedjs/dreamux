@@ -275,14 +275,65 @@ export interface AgentRuntimeStateCallbacks {
   ): Promise<void>;
 }
 
-export type RuntimeTurnOutcome =
-  | { status: 'completed'; resultText: string | null; truncated: boolean }
-  | { status: 'failed'; error: Error }
-  | { status: 'stopped' };
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly JsonValue[]
+  | { readonly [key: string]: JsonValue };
 
-/** A provider-owned in-flight turn. Folds return this exact object. */
-export interface RuntimeTurn {
-  readonly settled: Promise<RuntimeTurnOutcome>;
+/** One accepted provider submission. Its identity never implies folding. */
+export interface RuntimeSubmission {
+  readonly settled: Promise<RuntimeSubmissionSettlement>;
+}
+
+/** A provider-observed native result and the opaque completion identity. */
+export type RuntimeCompletion =
+  | {
+      readonly status: 'completed';
+      readonly displaySubmission: RuntimeSubmission;
+      readonly resultText: string | null;
+      readonly truncated: boolean;
+    }
+  | {
+      readonly status: 'failed';
+      readonly displaySubmission: RuntimeSubmission;
+      readonly error: Error;
+    };
+
+export type RuntimeSubmissionSettlement =
+  | { readonly kind: 'completion'; readonly completion: RuntimeCompletion }
+  | { readonly kind: 'failed'; readonly error: Error }
+  | { readonly kind: 'stopped' };
+
+export type RuntimeActivity =
+  | {
+      readonly kind: 'assistant.message';
+      readonly id: string;
+      readonly text: string;
+      readonly truncated: boolean;
+    }
+  | {
+      readonly kind: 'tool.call';
+      readonly id: string;
+      readonly callId: string;
+      readonly toolName: string;
+      readonly status: 'started' | 'completed' | 'failed';
+      readonly arguments: JsonValue | null;
+      readonly result: JsonValue | null;
+      readonly error: string | null;
+    };
+
+export interface RuntimeActivityEvent {
+  readonly submission: RuntimeSubmission;
+  readonly activity: RuntimeActivity;
+  readonly occurredAt: number;
+}
+
+/** Synchronous, non-backpressuring sink invoked for native activity facts. */
+export interface RuntimeActivitySink {
+  (event: RuntimeActivityEvent): void;
 }
 
 /**
@@ -296,7 +347,7 @@ export interface RuntimeTurn {
  * provider documents and returns the explicit `failed` result instead.
  */
 export type RuntimeAdmission =
-  | { status: 'submitted'; turn: RuntimeTurn }
+  | { status: 'submitted'; submission: RuntimeSubmission }
   | { status: 'duplicate' }
   | { status: 'stopped' }
   | { status: 'skipped' }
@@ -369,6 +420,8 @@ export interface AgentRuntimeCreateContext<TConfig = unknown> {
    * "no schema constraint" — the common case.
    */
   outputSchema?: Record<string, unknown>;
+  /** Required live activity sink, installed before the runtime starts. */
+  activitySink: RuntimeActivitySink;
   logger?: DreamuxLogger;
   paths?: AgentRuntimePathContext;
   state?: AgentRuntimeStateCallbacks;
@@ -396,7 +449,7 @@ export interface AgentRuntime {
    * Fence new input synchronously, terminate the owned runtime, and converge
    * every `channelInput`/`completionInput` call that started before the fence.
    * This promise MUST NOT resolve while an already-started admission can still
-   * resolve to a newly accepted {@link RuntimeTurn}.
+   * resolve to a newly accepted {@link RuntimeSubmission}.
    */
   stop(): Promise<void>;
   /**

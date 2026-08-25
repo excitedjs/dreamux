@@ -53,9 +53,11 @@ Dispatcher orchestration verbs such as `spawn`, `send`, `close`, `list`, and
 Team operations belong to Dreamux core services and MCP surfaces, never to the
 runtime instance.
 
-An accepted input returns one stable `RuntimeTurn` object with one terminal
-outcome promise. A provider fold or steer into the active logical turn returns
-the exact same object. Provider-native ids may exist inside the provider package,
+An accepted input returns one `RuntimeSubmission` handle whose settlement
+resolves to a provider-owned immutable `RuntimeCompletion` created at the real
+native result boundary. A provider fold or steer into the active logical turn
+settles with the exact same completion object; a queued input settles with a
+distinct completion in native order. Provider-native ids may exist inside the provider package,
 but they do not cross the neutral boundary for host correlation.
 
 `RuntimeAdmission.failed` is reserved for provider-proven pre-admission failure.
@@ -139,9 +141,10 @@ The runtime object is the provider-owned authority for native submission and
 termination; Dreamux core never reconstructs runtime activity from callbacks or
 native identifiers.
 
-- One accepted logical input returns one `RuntimeTurn`.
-- Native aliases folded into the logical input must converge before that object
-  settles.
+- One accepted input returns one `RuntimeSubmission`; one real native result
+  produces one `RuntimeCompletion` that settles every submission it covers.
+- Native aliases folded into the logical input must converge before the shared
+  completion settles.
 - The provider owns its private source-deduplication reservation. Concurrent use
   of one reserved source shares the same admission result.
 - A source commits after acceptance or ambiguous post-admission failure. It is
@@ -257,7 +260,7 @@ codec. Its fingerprint canonically covers both the wire schema and restoration
 plan. Compatible structured followers may fold into the active turn; a different
 fingerprint or structured/unstructured mixing fails before another
 `turn/start`. The codec remains private to the canonical active slot, and every
-accepted native alias converges before the public `RuntimeTurn` settles.
+accepted native alias converges before the public submission settles.
 
 Restoration runs once, behind the existing pending-turn mutual-exclusion guard,
 before `onTurnCompleted`. A successful restoration is the only structured text

@@ -1,34 +1,59 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+/**
+ * Claude Code native-result attribution and live activity projection.
+ *
+ * These tests drive the REAL protocol seam: a `ClaudeCodeStreamRpc` over a fake
+ * stdin, whose `onProtocolEvent` output is fed straight into
+ * `handleProtocolEvent()` against a hand-built `ActiveTurn`. The fakes replay
+ * nothing but native NDJSON stdout lines — `system/init`, `command_lifecycle`,
+ * `assistant`, `user` (tool results) and `result`. No fake is ever told how many
+ * completions to produce; fold vs queue is expressed purely as "which command
+ * uuids are in the started set when a `result` arrives", and the assertions are
+ * on the resulting completion-token identity and count.
+ *
+ * Contract under test:
+ *  - one native result => exactly one FROZEN `RuntimeCompletion` token;
+ *  - folded submissions settle with an `Object.is`-identical token;
+ *  - each further native result mints a DISTINCT token, even byte-identical text;
+ *  - `result.user_message_uuid` is diagnostics only;
+ *  - an unattributable / conflicting result fails loudly and mints NO token;
+ *  - the interrupt artifact and non-`completed` lifecycle states mint NO token;
+ *  - activity is pushed LIVE from the stream, before the terminal result,
+ *    referencing the display representative, and a folded follower never
+ *    replays it.
+ */
+
 import type { Writable } from 'node:stream';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { defaultDispatcherClaudeCodeConfig } from '../src/config.js';
 import { ClaudeCodeStreamRpc } from '../src/rpc.js';
-import { ClaudeCodeRuntime } from '../src/runtime.js';
+import {
+  createRuntimeSubmission,
+  handleProtocolEvent,
+  type ActiveTurn,
+  type ProtocolEventContext,
+  type SubmissionDeferred,
+} from '../src/runtime-submissions.js';
+import type { ClaudeCodeSession } from '../src/types.js';
 import type {
-  ClaudeCodeSession,
-  ClaudeCodeSessionFactory,
-  ClaudeCodeSessionSpec,
-  TurnOutcome,
-  TurnSubmitOptions,
-} from '../src/supervisor.js';
-import type {
-  AgentRuntimePathContext,
-  AgentRuntimeStateCallbacks,
+  RuntimeActivityEvent,
+  RuntimeCompletion,
+  RuntimeSubmission,
+  RuntimeSubmissionSettlement,
 } from '@excitedjs/dreamux-types';
 
 const TEST_SESSION_ID = '11111111-1111-4111-8111-111111111111';
 
-interface FakeSession extends ClaudeCodeSession {
-  readonly prompts: string[];
-  resolve(outcome?: TurnOutcome): void;
-  die(): void;
+type LogLevel = 'info' | 'warn' | 'error';
+
+interface LogEntry {
+  level: LogLevel;
+  message: string;
+  error?: unknown;
 }
 
-class RpcStdin {
+/** stdin double: records the written NDJSON and confirms writes synchronously. */
+class FakeStdin {
   writable = true;
   readonly writes: string[] = [];
 
@@ -39,1032 +64,739 @@ class RpcStdin {
   }
 }
 
-class DeferredRpcStdin extends RpcStdin {
-  private callback: ((error?: Error | null) => void) | null = null;
+class Harness {
+  readonly stdin = new FakeStdin();
+  readonly activities: RuntimeActivityEvent[] = [];
+  /** Logs raised by `handleProtocolEvent` (attribution failures, sink faults). */
+  readonly protocolLogs: LogEntry[] = [];
+  /** Logs raised by the RPC itself (interrupt artifact, declined commands). */
+  readonly rpcLogs: LogEntry[] = [];
+  reapCalls = 0;
+  readonly active: ActiveTurn;
+  readonly rpc: ClaudeCodeStreamRpc;
 
-  override write(
-    chunk: string,
-    callback?: (error?: Error | null) => void,
-  ): boolean {
-    this.writes.push(chunk);
-    if (this.writes.length === 1) callback?.(null);
-    else this.callback = callback ?? null;
-    return true;
-  }
+  private sink: (event: RuntimeActivityEvent) => void = (event) => {
+    this.activities.push(event);
+  };
 
-  finish(error?: Error): void {
-    const callback = this.callback;
-    this.callback = null;
-    callback?.(error ?? null);
-  }
-}
+  private submitPromise: Promise<void> | null = null;
 
-interface RpcBackedSession extends ClaudeCodeSession {
-  readonly stdin: RpcStdin;
-  emit(line: Record<string, unknown>): void;
-}
-
-describe('ClaudeCodeRuntime activity', () => {
-  let root: string;
-
-  beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'dreamux-claude-activity-'));
-  });
-
-  afterEach(() => {
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  it('waitIdle resolves after a steered channel turn without counting the steer', async () => {
-    const sessions: FakeSession[] = [];
-    const runtime = new ClaudeCodeRuntime(
-      { runtime_id: 'flow' },
-      {
-        config: defaultDispatcherClaudeCodeConfig(),
-        cwd: root,
-        state: state(),
-        paths: paths(root),
-        mcpServers: [],
-        sessionFactory: fakeFactory(sessions),
-        resolveBinPath: (bin) => bin,
-        generateSessionId: () => TEST_SESSION_ID,
-        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
+  constructor(initialCommandUuid: string) {
+    this.active = createActiveTurn(initialCommandUuid);
+    const context: ProtocolEventContext = {
+      threadId: TEST_SESSION_ID,
+      outputSchemaEnabled: false,
+      activitySink: (event) => {
+        this.sink(event);
       },
-    );
-    await runtime.start();
-
-    await expect(
-      runtime.channelInput({ sourceId: 'msg-1', text: 'first' }),
-    ).resolves.toMatchObject({ status: 'submitted' });
-    await waitFor(() => sessions[0]?.prompts.length === 1);
-
-    await expect(
-      runtime.channelInput({ sourceId: 'msg-2', text: 'second' }),
-    ).resolves.toMatchObject({ status: 'submitted' });
-
-    let idle = false;
-    void runtime.waitIdle().then(() => {
-      idle = true;
-    });
-    await flush();
-    expect(idle).toBe(false);
-
-    sessions[0]!.resolve();
-    await waitFor(() => idle);
-  });
-
-  it('folds a pre-init follow-up into the same RuntimeTurn after capability readiness', async () => {
-    let session: RpcBackedSession | null = null;
-    const runtime = new ClaudeCodeRuntime(
-      { runtime_id: 'flow' },
-      {
-        config: defaultDispatcherClaudeCodeConfig(),
-        cwd: root,
-        state: state(),
-        paths: paths(root),
-        mcpServers: [],
-        sessionFactory: () => {
-          session = rpcBackedSession();
-          return session;
-        },
-        resolveBinPath: (bin) => bin,
-        generateSessionId: () => TEST_SESSION_ID,
-        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
+      log: (level, message, error) => {
+        this.protocolLogs.push({ level, message, error });
       },
-    );
-    await runtime.start();
-
-    const initial = await runtime.completionInput({
-      text: 'first',
-      sourceId: 'completion:first',
-    });
-    if (initial.status !== 'submitted') throw new Error('expected submitted turn');
-    await waitFor(() => session?.stdin.writes.length === 1);
-    const liveSession = session;
-    if (liveSession === null) throw new Error('expected resident session');
-
-    const followPromise = runtime.completionInput({
-      text: 'second',
-      sourceId: 'completion:second',
-    });
-    let followSettled = false;
-    void followPromise.finally(() => {
-      followSettled = true;
-    });
-    await flush();
-    expect(followSettled).toBe(false);
-    expect(liveSession.stdin.writes).toHaveLength(1);
-
-    liveSession.emit({
-      type: 'system',
-      subtype: 'init',
-      session_id: TEST_SESSION_ID,
-      capabilities: ['msg_lifecycle_v1'],
-    });
-    const follow = await followPromise;
-    expect(follow.status).toBe('submitted');
-    if (follow.status !== 'submitted') throw new Error('expected submitted steer');
-    expect(follow.turn).toBe(initial.turn);
-    expect(liveSession.stdin.writes).toHaveLength(2);
-    expect(
-      JSON.parse(liveSession.stdin.writes[1] ?? '{}'),
-    ).toMatchObject({ priority: 'next' });
-
-    completeRpcCommand(liveSession, 0, 'initial result');
-    completeRpcCommand(liveSession, 1, 'final result');
-    await expect(initial.turn.settled).resolves.toMatchObject({
-      status: 'completed',
-      resultText: 'final result',
-    });
-    await runtime.stop();
-  });
-
-  it('returns stopped and writes no queued pre-init steer after runtime stop', async () => {
-    let session: RpcBackedSession | null = null;
-    const runtime = new ClaudeCodeRuntime(
-      { runtime_id: 'flow' },
-      {
-        config: defaultDispatcherClaudeCodeConfig(),
-        cwd: root,
-        state: state(),
-        paths: paths(root),
-        mcpServers: [],
-        sessionFactory: () => {
-          session = rpcBackedSession();
-          return session;
-        },
-        resolveBinPath: (bin) => bin,
-        generateSessionId: () => TEST_SESSION_ID,
-        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
-      },
-    );
-    await runtime.start();
-
-    const initial = await runtime.completionInput({
-      text: 'first',
-      sourceId: 'completion:first',
-    });
-    if (initial.status !== 'submitted') throw new Error('expected submitted turn');
-    await waitFor(() => session?.stdin.writes.length === 1);
-    const liveSession = session;
-    if (liveSession === null) throw new Error('expected resident session');
-
-    const follow = runtime.completionInput({
-      text: 'second',
-      sourceId: 'completion:second',
-    });
-    await flush();
-    expect(liveSession.stdin.writes).toHaveLength(1);
-
-    const stopping = runtime.stop();
-    liveSession.emit({
-      type: 'system',
-      subtype: 'init',
-      session_id: TEST_SESSION_ID,
-      capabilities: ['msg_lifecycle_v1'],
-    });
-    await flush();
-    expect(liveSession.stdin.writes).toHaveLength(1);
-    await stopping;
-
-    await expect(follow).resolves.toEqual({ status: 'stopped' });
-    await expect(initial.turn.settled).resolves.toEqual({ status: 'stopped' });
-  });
-
-  it('shares and releases a concurrent source reservation after proven unsupported steer', async () => {
-    let session: RpcBackedSession | null = null;
-    const runtime = rpcRuntime(root, (created) => {
-      session = created;
-    });
-    await runtime.start();
-    const initial = await runtime.completionInput({
-      text: 'first',
-      sourceId: 'initial',
-    });
-    if (initial.status !== 'submitted') throw new Error('expected submitted');
-    await waitFor(() => session?.stdin.writes.length === 1);
-    const liveSession = session;
-    if (liveSession === null) throw new Error('expected resident session');
-
-    const first = runtime.completionInput({ text: 'follow', sourceId: 'same' });
-    const concurrent = runtime.completionInput({
-      text: 'follow duplicate',
-      sourceId: 'same',
-    });
-    liveSession.emit({
-      type: 'system',
-      subtype: 'init',
-      session_id: TEST_SESSION_ID,
-      capabilities: [],
-    });
-
-    await expect(first).resolves.toMatchObject({ status: 'failed' });
-    await expect(concurrent).resolves.toMatchObject({ status: 'failed' });
-    await expect(runtime.completionInput({
-      text: 'safe retry',
-      sourceId: 'same',
-    })).resolves.toMatchObject({ status: 'failed' });
-    expect(liveSession.stdin.writes).toHaveLength(1);
-    await runtime.stop();
-  });
-
-  it('commits one accepted concurrent source reservation and returns one RuntimeTurn', async () => {
-    let session: RpcBackedSession | null = null;
-    const runtime = rpcRuntime(root, (created) => {
-      session = created;
-    });
-    await runtime.start();
-    const initial = await runtime.channelInput({
-      text: 'first',
-      sourceId: 'initial',
-    });
-    if (initial.status !== 'submitted') throw new Error('expected submitted');
-    await waitFor(() => session?.stdin.writes.length === 1);
-    const liveSession = session;
-    if (liveSession === null) throw new Error('expected resident session');
-
-    const first = runtime.channelInput({ text: 'follow', sourceId: 'same' });
-    const concurrent = runtime.channelInput({
-      text: 'follow duplicate',
-      sourceId: 'same',
-    });
-    liveSession.emit({
-      type: 'system',
-      subtype: 'init',
-      session_id: TEST_SESSION_ID,
-      capabilities: ['msg_lifecycle_v1'],
-    });
-    const [firstResult, concurrentResult] = await Promise.all([first, concurrent]);
-    expect(firstResult.status).toBe('submitted');
-    expect(concurrentResult.status).toBe('submitted');
-    if (
-      firstResult.status !== 'submitted' ||
-      concurrentResult.status !== 'submitted'
-    ) {
-      throw new Error('expected shared submitted admission');
-    }
-    expect(firstResult.turn).toBe(initial.turn);
-    expect(concurrentResult.turn).toBe(initial.turn);
-    expect(liveSession.stdin.writes).toHaveLength(2);
-    await expect(runtime.channelInput({
-      text: 'accepted retry',
-      sourceId: 'same',
-    })).resolves.toEqual({ status: 'duplicate' });
-
-    completeRpcCommand(liveSession, 0, 'first result');
-    completeRpcCommand(liveSession, 1, 'final result');
-    await initial.turn.settled;
-    await runtime.stop();
-  });
-
-  it('commits a post-write ambiguous source and never writes its retry', async () => {
-    const stdin = new DeferredRpcStdin();
-    let session: RpcBackedSession | null = null;
-    const runtime = rpcRuntime(root, (created) => {
-      session = created;
-    }, stdin);
-    await runtime.start();
-    const initial = await runtime.completionInput({
-      text: 'first',
-      sourceId: 'initial',
-    });
-    if (initial.status !== 'submitted') throw new Error('expected submitted');
-    await waitFor(() => stdin.writes.length === 1);
-    const liveSession = session;
-    if (liveSession === null) throw new Error('expected resident session');
-    liveSession.emit({
-      type: 'system',
-      subtype: 'init',
-      session_id: TEST_SESSION_ID,
-      capabilities: ['msg_lifecycle_v1'],
-    });
-
-    const admission = runtime.completionInput({
-      text: 'ambiguous follow',
-      sourceId: 'same',
-    });
-    await waitFor(() => stdin.writes.length === 2);
-    stdin.finish(new Error('native callback lost'));
-    await expect(admission).resolves.toMatchObject({ status: 'ambiguous' });
-    await expect(runtime.completionInput({
-      text: 'must not retry',
-      sourceId: 'same',
-    })).resolves.toEqual({ status: 'duplicate' });
-    expect(stdin.writes).toHaveLength(2);
-    await runtime.stop();
-    await expect(initial.turn.settled).resolves.toEqual({ status: 'stopped' });
-  });
-
-  it('bounds committed source ids while retaining pending and recent duplicates', async () => {
-    const prompts: string[] = [];
-    let alive = false;
-    const runtime = new ClaudeCodeRuntime(
-      { runtime_id: 'flow' },
-      {
-        config: defaultDispatcherClaudeCodeConfig(),
-        cwd: root,
-        state: state(),
-        paths: paths(root),
-        mcpServers: [],
-        sessionFactory: () => ({
-          async start() {
-            alive = true;
-          },
-          async stop() {
-            alive = false;
-          },
-          isAlive: () => alive,
-          setOnExit() {},
-          async submitTurn(prompt) {
-            prompts.push(prompt);
-            return okOutcome();
-          },
-          async steerTurn() {},
-        }),
-        resolveBinPath: (bin) => bin,
-        generateSessionId: () => TEST_SESSION_ID,
-        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
-        sourceIdDedupeWindow: 2,
-      },
-    );
-    await runtime.start();
-
-    for (const sourceId of ['one', 'two', 'three']) {
-      const admission = await runtime.completionInput({
-        text: sourceId,
-        sourceId,
-      });
-      if (admission.status !== 'submitted') throw new Error('expected submitted');
-      await expect(admission.turn.settled).resolves.toMatchObject({
-        status: 'completed',
-      });
-    }
-    await expect(
-      runtime.completionInput({ text: 'recent duplicate', sourceId: 'three' }),
-    ).resolves.toEqual({ status: 'duplicate' });
-
-    const evicted = await runtime.completionInput({
-      text: 'evicted retry',
-      sourceId: 'one',
-    });
-    if (evicted.status !== 'submitted') throw new Error('expected submitted');
-    await evicted.turn.settled;
-    expect(prompts).toEqual(['one', 'two', 'three', 'evicted retry']);
-    await runtime.stop();
-  });
-
-  it('joins concurrent starts and creates one resident session', async () => {
-    const sessions: ClaudeCodeSession[] = [];
-    const started = deferred<void>();
-    const runtime = new ClaudeCodeRuntime(
-      { runtime_id: 'flow' },
-      {
-        config: defaultDispatcherClaudeCodeConfig(),
-        cwd: root,
-        state: state(),
-        paths: paths(root),
-        mcpServers: [],
-        sessionFactory: () => {
-          const session = inertSession(async () => started.promise);
-          sessions.push(session);
-          return session;
-        },
-        resolveBinPath: (bin) => bin,
-        generateSessionId: () => TEST_SESSION_ID,
-        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
-      },
-    );
-
-    const first = runtime.start();
-    const second = runtime.start();
-    expect(second).toBe(first);
-    await waitFor(() => sessions.length === 1);
-    started.resolve(undefined);
-    await first;
-    expect(runtime.getStatus()).toBe('ready');
-    await runtime.stop();
-  });
-
-  it('does not publish ready or leak a session when stop wins during start', async () => {
-    const started = deferred<void>();
-    const stop = vi.fn(async () => undefined);
-    const runtime = new ClaudeCodeRuntime(
-      { runtime_id: 'flow' },
-      {
-        config: defaultDispatcherClaudeCodeConfig(),
-        cwd: root,
-        state: state(),
-        paths: paths(root),
-        mcpServers: [],
-        sessionFactory: () => inertSession(async () => started.promise, stop),
-        resolveBinPath: (bin) => bin,
-        generateSessionId: () => TEST_SESSION_ID,
-        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
-      },
-    );
-
-    const starting = runtime.start();
-    await flush();
-    const stopping = runtime.stop();
-    started.resolve(undefined);
-    await expect(starting).rejects.toThrow(/stopped/);
-    await stopping;
-    expect(stop).toHaveBeenCalledTimes(1);
-    expect(runtime.getStatus()).toBe('stopped');
-  });
-
-  it('does not create a replacement session for queued work after stop', async () => {
-    const sessions: FakeSession[] = [];
-    const runtime = new ClaudeCodeRuntime(
-      { runtime_id: 'flow' },
-      {
-        config: defaultDispatcherClaudeCodeConfig(),
-        cwd: root,
-        state: state(),
-        paths: paths(root),
-        mcpServers: [],
-        sessionFactory: fakeFactory(sessions),
-        resolveBinPath: (bin) => bin,
-        generateSessionId: () => TEST_SESSION_ID,
-        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
-      },
-    );
-    await runtime.start();
-    sessions[0]!.die();
-
-    const admissionPromise = runtime.channelInput({
-      sourceId: 'queued',
-      text: 'go',
-    });
-    const stopping = runtime.stop();
-    const admission = await admissionPromise;
-    await stopping;
-
-    expect(sessions).toHaveLength(1);
-    expect(admission).toEqual({ status: 'stopped' });
-  });
-
-  it('does not submit a queued live steer after stop wins', async () => {
-    const turnOutcome = deferred<TurnOutcome>();
-    const firstSteer = deferred<void>();
-    const submitPrompts: string[] = [];
-    const steerPrompts: string[] = [];
-    let alive = false;
-    const runtime = new ClaudeCodeRuntime(
-      { runtime_id: 'flow' },
-      {
-        config: defaultDispatcherClaudeCodeConfig(),
-        cwd: root,
-        state: state(),
-        paths: paths(root),
-        mcpServers: [],
-        sessionFactory: () => ({
-          async start() {
-            alive = true;
-          },
-          async stop() {
-            alive = false;
-            firstSteer.resolve(undefined);
-            turnOutcome.resolve(okOutcome());
-          },
-          isAlive: () => alive,
-          setOnExit() {
-            /* no-op */
-          },
-          submitTurn(prompt) {
-            submitPrompts.push(prompt);
-            return turnOutcome.promise;
-          },
-          async steerTurn(prompt) {
-            steerPrompts.push(prompt);
-            await firstSteer.promise;
-          },
-        }),
-        resolveBinPath: (bin) => bin,
-        generateSessionId: () => TEST_SESSION_ID,
-        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
-      },
-    );
-    await runtime.start();
-
-    const initial = await runtime.channelInput({
-      sourceId: 'initial',
-      text: 'initial',
-    });
-    if (initial.status !== 'submitted') throw new Error('expected submitted');
-    await waitFor(() => submitPrompts.length === 1);
-    const first = runtime.channelInput({ sourceId: 'steer-1', text: 'steer one' });
-    await waitFor(() => steerPrompts.length === 1);
-    const second = runtime.channelInput({ sourceId: 'steer-2', text: 'steer two' });
-
-    await runtime.stop();
-    firstSteer.resolve(undefined);
-    await Promise.all([first, second]);
-
-    expect(steerPrompts).toEqual(['steer one']);
-    await expect(initial.turn.settled).resolves.toEqual({ status: 'stopped' });
-  });
-
-  it('does not publish a ghost association when a fresh child start fails', async () => {
-    let stopCalls = 0;
-    const checkpointWrites: unknown[] = [];
-    const runtime = new ClaudeCodeRuntime(
-      { runtime_id: 'flow', checkpoint: null },
-      {
-        config: defaultDispatcherClaudeCodeConfig(),
-        cwd: root,
-        state: {
-          async setStatus() {},
-          async setCheckpoint(checkpoint) {
-            checkpointWrites.push(checkpoint);
-          },
-        },
-        paths: paths(root),
-        mcpServers: [],
-        sessionFactory: () => ({
-          async start() {
-            throw new Error('fresh child failed');
-          },
-          async stop() {
-            stopCalls += 1;
-          },
-          isAlive: () => false,
-          setOnExit() {},
-          async submitTurn() {
-            return okOutcome();
-          },
-          async steerTurn() {},
-        }),
-        resolveBinPath: (bin) => bin,
-        generateSessionId: () => TEST_SESSION_ID,
-        resolveTranscriptPath: async () => join(root, 'fresh.jsonl'),
-      },
-    );
-
-    await expect(runtime.start()).rejects.toThrow('fresh child failed');
-    expect(runtime.getCheckpoint()).toBeNull();
-    expect(checkpointWrites).toEqual([]);
-    expect(stopCalls).toBe(1);
-  });
-
-  it('reaps a fresh child when checkpoint persistence fails', async () => {
-    let alive = false;
-    let stopCalls = 0;
-    const runtime = new ClaudeCodeRuntime(
-      { runtime_id: 'flow', checkpoint: null },
-      {
-        config: defaultDispatcherClaudeCodeConfig(),
-        cwd: root,
-        state: {
-          async setStatus() {},
-          async setCheckpoint() {
-            throw new Error('checkpoint write failed');
-          },
-        },
-        paths: paths(root),
-        mcpServers: [],
-        sessionFactory: () => ({
-          async start() {
-            alive = true;
-          },
-          async stop() {
-            stopCalls += 1;
-            alive = false;
-          },
-          isAlive: () => alive,
-          setOnExit() {},
-          async submitTurn() {
-            return okOutcome();
-          },
-          async steerTurn() {},
-        }),
-        resolveBinPath: (bin) => bin,
-        generateSessionId: () => TEST_SESSION_ID,
-        resolveTranscriptPath: async () => join(root, 'fresh.jsonl'),
-      },
-    );
-
-    await expect(runtime.start()).rejects.toThrow('checkpoint write failed');
-    expect(runtime.getCheckpoint()).toBeNull();
-    expect(alive).toBe(false);
-    expect(stopCalls).toBe(1);
-  });
-
-  it('does not admit a turn before the fresh checkpoint commits', async () => {
-    const checkpointWrite = deferred<void>();
-    const submitted: string[] = [];
-    let alive = false;
-    const runtime = new ClaudeCodeRuntime(
-      { runtime_id: 'flow', checkpoint: null },
-      {
-        config: defaultDispatcherClaudeCodeConfig(),
-        cwd: root,
-        state: {
-          async setStatus() {},
-          async setCheckpoint() {
-            await checkpointWrite.promise;
-          },
-        },
-        paths: paths(root),
-        mcpServers: [],
-        sessionFactory: () => ({
-          async start() {
-            alive = true;
-          },
-          async stop() {
-            alive = false;
-          },
-          isAlive: () => alive,
-          setOnExit() {},
-          async submitTurn(prompt) {
-            submitted.push(prompt);
-            return okOutcome();
-          },
-          async steerTurn() {},
-        }),
-        resolveBinPath: (bin) => bin,
-        generateSessionId: () => TEST_SESSION_ID,
-        resolveTranscriptPath: async () => join(root, 'fresh.jsonl'),
-      },
-    );
-
-    const starting = runtime.start();
-    await waitFor(() => alive);
-    const admission = runtime.channelInput({
-      sourceId: 'before-checkpoint',
-      text: 'wait for association',
-    });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(submitted).toEqual([]);
-    expect(runtime.getCheckpoint()).toBeNull();
-
-    checkpointWrite.resolve(undefined);
-    await starting;
-    const accepted = await admission;
-    if (accepted.status !== 'submitted') throw new Error('expected submitted');
-    await expect(accepted.turn.settled).resolves.toMatchObject({
-      status: 'completed',
-    });
-    expect(submitted).toEqual(['wait for association']);
-    expect(runtime.getCheckpoint()).toEqual({
-      id: TEST_SESSION_ID,
-      transcript_locator: join(root, 'fresh.jsonl'),
-    });
-    await runtime.stop();
-  });
-
-  it('preserves the old association when resumed locator persistence fails', async () => {
-    const oldCheckpoint = {
-      id: '22222222-2222-4222-8222-222222222222',
-      transcript_locator: join(root, 'old.jsonl'),
     };
-    let alive = false;
-    let stopCalls = 0;
-    const runtime = new ClaudeCodeRuntime(
-      { runtime_id: 'flow', checkpoint: oldCheckpoint },
-      {
-        config: defaultDispatcherClaudeCodeConfig(),
-        cwd: root,
-        state: {
-          async setStatus() {},
-          async setCheckpoint() {
-            throw new Error('resume checkpoint write failed');
-          },
-        },
-        paths: paths(root),
-        mcpServers: [],
-        sessionFactory: () => ({
-          async start() {
-            alive = true;
-          },
-          async stop() {
-            stopCalls += 1;
-            alive = false;
-          },
-          isAlive: () => alive,
-          setOnExit() {},
-          async submitTurn() {
-            return okOutcome();
-          },
-          async steerTurn() {},
-        }),
-        resolveBinPath: (bin) => bin,
-        resolveTranscriptPath: async () => join(root, 'refreshed.jsonl'),
+    this.rpc = new ClaudeCodeStreamRpc(this.stdin as unknown as Writable, {
+      turnTimeoutMs: 60_000,
+      log: (level, message, error) => {
+        this.rpcLogs.push({ level, message, error });
       },
-    );
+      reapOnTimeout: () => {
+        this.reapCalls += 1;
+      },
+      onProtocolEvent: (event) => {
+        handleProtocolEvent(this.active, event, context);
+      },
+    });
+  }
 
-    await expect(runtime.start()).rejects.toThrow(
-      'resume checkpoint write failed',
-    );
-    expect(runtime.getCheckpoint()).toEqual(oldCheckpoint);
-    expect(alive).toBe(false);
-    expect(stopCalls).toBe(1);
+  /** The initial native command of this resident execution window. */
+  submit(commandUuid: string, text: string): SubmissionDeferred {
+    const deferred = this.addSubmission(commandUuid);
+    this.submitPromise = this.rpc.submitTurn(text, {}, commandUuid);
+    void this.submitPromise.catch(() => undefined);
+    return deferred;
+  }
+
+  /** A live steer written into the same execution window. */
+  async steer(
+    commandUuid: string,
+    text: string,
+    priority: 'now' | 'next' = 'next',
+  ): Promise<SubmissionDeferred> {
+    const deferred = this.addSubmission(commandUuid);
+    await this.rpc.steerTurn(text, { priority }, commandUuid);
+    return deferred;
+  }
+
+  emit(line: Record<string, unknown>): void {
+    this.rpc.onStdoutChunk(`${JSON.stringify(line)}\n`);
+  }
+
+  /** Resolves once every submitted command drained and a result was seen. */
+  async drained(): Promise<void> {
+    await this.submitPromise;
+  }
+
+  failActivitySink(error: Error): void {
+    this.sink = (event) => {
+      this.activities.push(event);
+      throw error;
+    };
+  }
+
+  dispose(): void {
+    this.rpc.failPending(new Error('test teardown'));
+  }
+
+  private addSubmission(commandUuid: string): SubmissionDeferred {
+    const deferred = createRuntimeSubmission();
+    this.active.submissions.set(commandUuid, deferred);
+    return deferred;
+  }
+}
+
+function createActiveTurn(initialCommandUuid: string): ActiveTurn {
+  let resolveSession!: (session: ClaudeCodeSession) => void;
+  let rejectSession!: (error: Error) => void;
+  const sessionReady = new Promise<ClaudeCodeSession>((resolve, reject) => {
+    resolveSession = resolve;
+    rejectSession = reject;
+  });
+  void sessionReady.catch(() => undefined);
+  return {
+    initialCommandUuid,
+    submissions: new Map(),
+    started: [],
+    completedCommands: new Set(),
+    activitySequence: 0,
+    tools: new Map(),
+    session: null,
+    sessionReady,
+    resolveSession,
+    rejectSession,
+    steerQueue: Promise.resolve(),
+    generation: 0,
+  };
+}
+
+// ─── native stdout line builders (real wire shapes only) ────────────────────
+
+function initLine(capabilities: readonly string[]): Record<string, unknown> {
+  return {
+    type: 'system',
+    subtype: 'init',
+    session_id: TEST_SESSION_ID,
+    model: 'claude-sonnet-4-5',
+    capabilities,
+  };
+}
+
+function lifecycleLine(
+  commandUuid: string,
+  state: 'queued' | 'started' | 'completed' | 'cancelled' | 'discarded' | 'refused',
+): Record<string, unknown> {
+  return { type: 'command_lifecycle', command_uuid: commandUuid, state };
+}
+
+function successResultLine(
+  text: string,
+  userMessageUuid?: string,
+): Record<string, unknown> {
+  return {
+    type: 'result',
+    subtype: 'success',
+    is_error: false,
+    result: text,
+    session_id: TEST_SESSION_ID,
+    ...(userMessageUuid !== undefined
+      ? { user_message_uuid: userMessageUuid }
+      : {}),
+  };
+}
+
+function errorResultLine(
+  subtype: string,
+  errors: readonly string[],
+): Record<string, unknown> {
+  return {
+    type: 'result',
+    subtype,
+    is_error: true,
+    errors,
+    session_id: TEST_SESSION_ID,
+  };
+}
+
+/**
+ * The artifact a `priority: 'now'` interrupt leaves behind: an
+ * `error_during_execution` result with no final text and no
+ * `user_message_uuid`. It is not a native answer boundary.
+ */
+function interruptArtifactLine(): Record<string, unknown> {
+  return {
+    type: 'result',
+    subtype: 'error_during_execution',
+    is_error: true,
+    session_id: TEST_SESSION_ID,
+  };
+}
+
+function assistantTextLine(
+  messageId: string,
+  ...texts: readonly string[]
+): Record<string, unknown> {
+  return {
+    type: 'assistant',
+    session_id: TEST_SESSION_ID,
+    message: {
+      id: messageId,
+      role: 'assistant',
+      content: texts.map((text) => ({ type: 'text', text })),
+    },
+  };
+}
+
+function assistantToolUseLine(
+  messageId: string,
+  toolUseId: string,
+  name: string,
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    type: 'assistant',
+    session_id: TEST_SESSION_ID,
+    message: {
+      id: messageId,
+      role: 'assistant',
+      content: [{ type: 'tool_use', id: toolUseId, name, input }],
+    },
+  };
+}
+
+function toolResultLine(
+  messageId: string,
+  toolUseId: string,
+  content: unknown,
+  isError = false,
+): Record<string, unknown> {
+  return {
+    type: 'user',
+    session_id: TEST_SESSION_ID,
+    message: {
+      id: messageId,
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: toolUseId,
+          content,
+          ...(isError ? { is_error: true } : {}),
+        },
+      ],
+    },
+  };
+}
+
+// ─── assertion helpers ──────────────────────────────────────────────────────
+
+function completionOf(settlement: RuntimeSubmissionSettlement): RuntimeCompletion {
+  if (settlement.kind !== 'completion') {
+    throw new Error(`expected a completion settlement, got ${settlement.kind}`);
+  }
+  return settlement.completion;
+}
+
+function completedOf(
+  settlement: RuntimeSubmissionSettlement,
+): Extract<RuntimeCompletion, { status: 'completed' }> {
+  const completion = completionOf(settlement);
+  if (completion.status !== 'completed') {
+    throw new Error(`expected a completed token, got ${completion.status}`);
+  }
+  return completion;
+}
+
+function failureOf(settlement: RuntimeSubmissionSettlement): Error {
+  if (settlement.kind !== 'failed') {
+    throw new Error(`expected a failed settlement, got ${settlement.kind}`);
+  }
+  return settlement.error;
+}
+
+function toolCallOf(
+  event: RuntimeActivityEvent | undefined,
+): Extract<RuntimeActivityEvent['activity'], { kind: 'tool.call' }> {
+  if (event === undefined) throw new Error('missing activity event');
+  if (event.activity.kind !== 'tool.call') {
+    throw new Error(`expected tool.call, got ${event.activity.kind}`);
+  }
+  return event.activity;
+}
+
+function assistantMessageOf(
+  event: RuntimeActivityEvent | undefined,
+): Extract<RuntimeActivityEvent['activity'], { kind: 'assistant.message' }> {
+  if (event === undefined) throw new Error('missing activity event');
+  if (event.activity.kind !== 'assistant.message') {
+    throw new Error(`expected assistant.message, got ${event.activity.kind}`);
+  }
+  return event.activity;
+}
+
+interface Tracked {
+  settled: boolean;
+  settlement: RuntimeSubmissionSettlement | null;
+}
+
+function track(submission: RuntimeSubmission): Tracked {
+  const state: Tracked = { settled: false, settlement: null };
+  void submission.settled.then((settlement) => {
+    state.settled = true;
+    state.settlement = settlement;
+  });
+  return state;
+}
+
+function flush(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
+const harnesses: Harness[] = [];
+
+function harness(initialCommandUuid = 'cmd-a'): Harness {
+  const created = new Harness(initialCommandUuid);
+  harnesses.push(created);
+  return created;
+}
+
+afterEach(() => {
+  for (const created of harnesses.splice(0)) created.dispose();
+});
+
+describe('claude native result attribution', () => {
+  it('two commands started before one native result settle with the identical frozen token', async () => {
+    const h = harness();
+    const a = h.submit('cmd-a', 'first');
+    h.emit(initLine(['msg_lifecycle_v1']));
+    h.emit(lifecycleLine('cmd-a', 'started'));
+    const b = await h.steer('cmd-b', 'second');
+    h.emit(lifecycleLine('cmd-b', 'started'));
+    // One native result while BOTH uuids are in the started set => one fold.
+    h.emit(successResultLine('folded answer'));
+    h.emit(lifecycleLine('cmd-a', 'completed'));
+    h.emit(lifecycleLine('cmd-b', 'completed'));
+    await h.drained();
+
+    const first = completionOf(await a.submission.settled);
+    const second = completionOf(await b.submission.settled);
+    expect(first).toBe(second);
+    expect(Object.isFrozen(first)).toBe(true);
+    const completed = completedOf(await a.submission.settled);
+    expect(completed.resultText).toBe('folded answer');
+    expect(completed.truncated).toBe(false);
+    // The display representative is the first command that entered `started`.
+    expect(completed.displaySubmission).toBe(a.submission);
+    expect(completed.displaySubmission).not.toBe(b.submission);
   });
 
-  it('returns a rejected promise instead of throwing when start follows stop', async () => {
-    const runtime = new ClaudeCodeRuntime(
-      { runtime_id: 'flow' },
-      {
-        config: defaultDispatcherClaudeCodeConfig(),
-        cwd: root,
-        state: state(),
-        paths: paths(root),
-        mcpServers: [],
-        sessionFactory: () => inertSession(async () => undefined),
-        resolveBinPath: (bin) => bin,
-        generateSessionId: () => TEST_SESSION_ID,
-        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
-      },
-    );
-    await runtime.start();
-    await runtime.stop();
+  it('a command that starts only after the first result gets its own distinct token', async () => {
+    const h = harness();
+    const a = h.submit('cmd-a', 'first');
+    h.emit(initLine(['msg_lifecycle_v1']));
+    h.emit(lifecycleLine('cmd-a', 'started'));
+    const b = await h.steer('cmd-b', 'second');
+    // The steer is only queued when the first result lands: no fold.
+    h.emit(lifecycleLine('cmd-b', 'queued'));
+    h.emit(successResultLine('answer one'));
+    h.emit(lifecycleLine('cmd-a', 'completed'));
+    h.emit(lifecycleLine('cmd-b', 'started'));
+    h.emit(successResultLine('answer two'));
+    h.emit(lifecycleLine('cmd-b', 'completed'));
+    await h.drained();
 
-    let startPromise: Promise<void> | null = null;
-    expect(() => {
-      startPromise = runtime.start();
-    }).not.toThrow();
-    await expect(startPromise).rejects.toThrow(/stopped/u);
+    const first = completedOf(await a.submission.settled);
+    const second = completedOf(await b.submission.settled);
+    expect(first).not.toBe(second);
+    expect(first.resultText).toBe('answer one');
+    expect(second.resultText).toBe('answer two');
+    expect(first.displaySubmission).toBe(a.submission);
+    expect(second.displaySubmission).toBe(b.submission);
   });
 
-  it('clears a failed active slot so the next input can create a fresh session', async () => {
-    const sessions: Array<FakeSession & { startCalls: number }> = [];
-    let factoryCalls = 0;
-    const runtime = new ClaudeCodeRuntime(
-      { runtime_id: 'flow' },
-      {
-        config: defaultDispatcherClaudeCodeConfig(),
-        cwd: root,
-        state: state(),
-        paths: paths(root),
-        mcpServers: [],
-        sessionFactory: () => {
-          const index = factoryCalls++;
-          let alive = false;
-          const prompts: string[] = [];
-          const session: FakeSession & { startCalls: number } = {
-            prompts,
-            startCalls: 0,
-            async start() {
-              session.startCalls += 1;
-              if (index === 1) throw new Error('replacement spawn failed');
-              alive = true;
-            },
-            async stop() {
-              alive = false;
-            },
-            isAlive: () => alive,
-            setOnExit() {
-              /* no-op */
-            },
-            async submitTurn(prompt) {
-              prompts.push(prompt);
-              return okOutcome();
-            },
-            async steerTurn(prompt) {
-              prompts.push(prompt);
-            },
-            resolve() {
-              /* turns resolve immediately */
-            },
-            die() {
-              alive = false;
-            },
-          };
-          sessions.push(session);
-          return session;
-        },
-        resolveBinPath: (bin) => bin,
-        generateSessionId: () => TEST_SESSION_ID,
-        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
-      },
-    );
-    await runtime.start();
-    sessions[0]!.die();
+  it('three native results in one execution window attribute per started command', async () => {
+    const h = harness();
+    const a = h.submit('cmd-a', 'first');
+    h.emit(initLine(['msg_lifecycle_v1']));
+    const b = await h.steer('cmd-b', 'second');
+    const c = await h.steer('cmd-c', 'third');
 
-    const failed = await runtime.channelInput({ sourceId: 'first', text: 'first' });
-    if (failed.status !== 'submitted') throw new Error('expected submitted input');
-    await expect(failed.turn.settled).resolves.toMatchObject({ status: 'failed' });
+    h.emit(lifecycleLine('cmd-a', 'started'));
+    h.emit(successResultLine('one'));
+    h.emit(lifecycleLine('cmd-a', 'completed'));
+    h.emit(lifecycleLine('cmd-b', 'started'));
+    h.emit(successResultLine('two'));
+    h.emit(lifecycleLine('cmd-b', 'completed'));
+    h.emit(lifecycleLine('cmd-c', 'started'));
+    h.emit(successResultLine('three'));
+    h.emit(lifecycleLine('cmd-c', 'completed'));
+    await h.drained();
 
-    const recovered = await runtime.channelInput({ sourceId: 'second', text: 'second' });
-    if (recovered.status !== 'submitted') throw new Error('expected submitted input');
-    await expect(recovered.turn.settled).resolves.toMatchObject({ status: 'completed' });
-    expect(sessions).toHaveLength(3);
-    expect(sessions[2]!.prompts).toEqual(['second']);
-    await runtime.stop();
+    const first = completedOf(await a.submission.settled);
+    const second = completedOf(await b.submission.settled);
+    const third = completedOf(await c.submission.settled);
+    expect([first.resultText, second.resultText, third.resultText]).toEqual([
+      'one',
+      'two',
+      'three',
+    ]);
+    expect(first).not.toBe(second);
+    expect(second).not.toBe(third);
+    expect(first).not.toBe(third);
+    expect(first.displaySubmission).toBe(a.submission);
+    expect(second.displaySubmission).toBe(b.submission);
+    expect(third.displaySubmission).toBe(c.submission);
+  });
+
+  it('two native results with byte-identical text still mint two distinct tokens', async () => {
+    const h = harness();
+    const a = h.submit('cmd-a', 'first');
+    h.emit(initLine(['msg_lifecycle_v1']));
+    h.emit(lifecycleLine('cmd-a', 'started'));
+    const b = await h.steer('cmd-b', 'second');
+    h.emit(successResultLine('identical body'));
+    h.emit(lifecycleLine('cmd-a', 'completed'));
+    h.emit(lifecycleLine('cmd-b', 'started'));
+    h.emit(successResultLine('identical body'));
+    h.emit(lifecycleLine('cmd-b', 'completed'));
+    await h.drained();
+
+    const first = completedOf(await a.submission.settled);
+    const second = completedOf(await b.submission.settled);
+    expect(first.resultText).toBe(second.resultText);
+    expect(first).not.toBe(second);
+    expect(first.displaySubmission).not.toBe(second.displaySubmission);
+  });
+
+  it('result.user_message_uuid is diagnostics only and never steals attribution', async () => {
+    const h = harness();
+    const a = h.submit('cmd-a', 'first');
+    h.emit(initLine(['msg_lifecycle_v1']));
+    h.emit(lifecycleLine('cmd-a', 'started'));
+    const b = await h.steer('cmd-b', 'second');
+    const c = await h.steer('cmd-c', 'third');
+    h.emit(lifecycleLine('cmd-b', 'started'));
+    // The uuid names the SECOND command; the started set still owns attribution.
+    h.emit(successResultLine('folded answer', 'cmd-b'));
+    h.emit(lifecycleLine('cmd-a', 'completed'));
+    h.emit(lifecycleLine('cmd-b', 'completed'));
+
+    h.emit(lifecycleLine('cmd-c', 'started'));
+    // No uuid at all on the second result: identical handling.
+    h.emit(successResultLine('third answer'));
+    h.emit(lifecycleLine('cmd-c', 'completed'));
+    await h.drained();
+
+    const folded = completedOf(await a.submission.settled);
+    expect(completionOf(await b.submission.settled)).toBe(folded);
+    expect(folded.displaySubmission).toBe(a.submission);
+
+    const third = completedOf(await c.submission.settled);
+    expect(third).not.toBe(folded);
+    expect(third.resultText).toBe('third answer');
+    expect(third.displaySubmission).toBe(c.submission);
+    expect(h.reapCalls).toBe(0);
+  });
+
+  it('an error-subtype result still mints one completion token with status failed', async () => {
+    const h = harness();
+    const a = h.submit('cmd-a', 'first');
+    h.emit(initLine(['msg_lifecycle_v1']));
+    h.emit(lifecycleLine('cmd-a', 'started'));
+    h.emit(errorResultLine('error_max_turns', ['max turns exceeded']));
+    h.emit(lifecycleLine('cmd-a', 'completed'));
+    await h.drained();
+
+    const settlement = await a.submission.settled;
+    // A native error result is still a native answer: a token, not {kind:'failed'}.
+    expect(settlement.kind).toBe('completion');
+    const completion = completionOf(settlement);
+    expect(completion.status).toBe('failed');
+    expect(Object.isFrozen(completion)).toBe(true);
+    if (completion.status !== 'failed') throw new Error('unreachable');
+    expect(completion.error.message).toMatch(/max turns exceeded/u);
+    expect(completion.displaySubmission).toBe(a.submission);
   });
 });
 
-function fakeFactory(sessions: FakeSession[]): ClaudeCodeSessionFactory {
-  return (spec: ClaudeCodeSessionSpec) => {
-    let alive = false;
-    let resolveTurn: ((outcome: TurnOutcome) => void) | null = null;
-    const prompts: string[] = [];
-    const session: FakeSession = {
-      prompts,
-      async start() {
-        alive = true;
-      },
-      async stop() {
-        alive = false;
-        resolveTurn?.({
-          isError: true,
-          text: '',
-          sessionId: null,
-          subtype: 'stopped',
-          errors: ['stopped'],
-          hasStructuredOutput: false,
-        });
-        resolveTurn = null;
-      },
-      isAlive: () => alive,
-      setOnExit() {
-        /* no-op */
-      },
-      submitTurn(prompt: string, _options?: TurnSubmitOptions) {
-        prompts.push(prompt);
-        return new Promise<TurnOutcome>((resolve) => {
-          resolveTurn = resolve;
-        });
-      },
-      async steerTurn(prompt: string, _options?: TurnSubmitOptions) {
-        prompts.push(prompt);
-      },
-      resolve(outcome = okOutcome()) {
-        resolveTurn?.(outcome);
-        resolveTurn = null;
-      },
-      die() {
-        alive = false;
-      },
-    };
-    void spec;
-    sessions.push(session);
-    return session;
-  };
-}
+describe('claude unattributable native results', () => {
+  it('a second result with no newly started command fails loudly and mints no token', async () => {
+    const h = harness();
+    const a = h.submit('cmd-a', 'first');
+    h.emit(initLine(['msg_lifecycle_v1']));
+    h.emit(lifecycleLine('cmd-a', 'started'));
+    const b = await h.steer('cmd-b', 'second');
+    h.emit(successResultLine('answer one'));
+    const firstToken = completedOf(await a.submission.settled);
 
-function rpcBackedSession(stdin: RpcStdin = new RpcStdin()): RpcBackedSession {
-  const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
-    turnTimeoutMs: 5_000,
-    reapOnTimeout: () => undefined,
+    // Conflicting terminal: a result arrives while nothing new started and a
+    // command has already been attributed.
+    h.emit(successResultLine('impossible second answer'));
+    await flush();
+
+    const failure = failureOf(await b.submission.settled);
+    expect(failure.message).toMatch(/conflicting result/u);
+    expect(
+      h.protocolLogs.some(
+        (entry) =>
+          entry.level === 'error' && /conflicting result/u.test(entry.message),
+      ),
+    ).toBe(true);
+    // The already-settled submission keeps its original token: the duplicate
+    // terminal created no second completion.
+    expect(completionOf(await a.submission.settled)).toBe(firstToken);
+    expect(firstToken.resultText).toBe('answer one');
   });
-  let alive = false;
-  return {
-    stdin,
-    async start() {
-      alive = true;
-    },
-    async stop() {
-      rpc.failPending(new Error('claude resident session stopped mid-turn'));
-      alive = false;
-    },
-    isAlive: () => alive,
-    setOnExit() {
-      /* no-op */
-    },
-    submitTurn(prompt, options) {
-      return rpc.submitTurn(prompt, options);
-    },
-    steerTurn(prompt, options) {
-      return rpc.steerTurn(prompt, options);
-    },
-    emit(line) {
-      rpc.onStdoutChunk(`${JSON.stringify(line)}\n`);
-    },
-  };
-}
 
-function rpcRuntime(
-  root: string,
-  onSession: (session: RpcBackedSession) => void,
-  stdin: RpcStdin = new RpcStdin(),
-): ClaudeCodeRuntime {
-  return new ClaudeCodeRuntime(
-    { runtime_id: 'flow' },
-    {
-      config: defaultDispatcherClaudeCodeConfig(),
-      cwd: root,
-      state: state(),
-      paths: paths(root),
-      mcpServers: [],
-      sessionFactory: () => {
-        const session = rpcBackedSession(stdin);
-        onSession(session);
-        return session;
-      },
-      resolveBinPath: (bin) => bin,
-        generateSessionId: () => TEST_SESSION_ID,
-        resolveTranscriptPath: async () => join(root, 'native-session.jsonl'),
-    },
-  );
-}
+  it('a result with no started lifecycle and several submissions fails loudly instead of guessing', async () => {
+    const h = harness();
+    const a = h.submit('cmd-a', 'first');
+    h.emit(initLine(['msg_lifecycle_v1']));
+    const b = await h.steer('cmd-b', 'second');
+    // No `command_lifecycle` started fact ever arrives for either command.
+    h.emit(successResultLine('ambiguous answer'));
+    await flush();
 
-function completeRpcCommand(
-  session: RpcBackedSession,
-  writeIndex: number,
-  result: string,
-): void {
-  const envelope = JSON.parse(session.stdin.writes[writeIndex] ?? '{}') as {
-    uuid?: unknown;
-  };
-  if (typeof envelope.uuid !== 'string') throw new Error('missing command uuid');
-  // Wire order matters, and this is the order the real CLI uses for a command
-  // it runs on its own: the answer, then the command's terminal lifecycle
-  // state. Terminality is what closes the turn, so emitting `completed` first
-  // would claim the command is done before its answer exists.
-  session.emit({
-    type: 'result',
-    subtype: 'success',
-    result,
-    session_id: TEST_SESSION_ID,
-    // The client-supplied uuid the CLI echoes back; the RPC uses it only to
-    // reject a result belonging to an already-settled turn.
-    user_message_uuid: envelope.uuid,
+    const firstFailure = failureOf(await a.submission.settled);
+    const secondFailure = failureOf(await b.submission.settled);
+    expect(firstFailure.message).toMatch(
+      /cannot be attributed without command started lifecycle/u,
+    );
+    expect(secondFailure).toBe(firstFailure);
+    expect(h.activities).toHaveLength(0);
   });
-  session.emit({
-    type: 'command_lifecycle',
-    command_uuid: envelope.uuid,
-    state: 'completed',
+
+  it('a lone submission with no lifecycle capability is still attributed to that submission', async () => {
+    const h = harness();
+    const a = h.submit('cmd-a', 'only');
+    // No `msg_lifecycle_v1`: this build will never emit command_lifecycle.
+    h.emit(initLine([]));
+    h.emit(successResultLine('single answer'));
+    await h.drained();
+
+    const completion = completedOf(await a.submission.settled);
+    expect(completion.resultText).toBe('single answer');
+    expect(completion.displaySubmission).toBe(a.submission);
+    expect(h.protocolLogs).toHaveLength(0);
   });
-}
+});
 
-function inertSession(
-  start: () => Promise<void>,
-  stop: () => Promise<void> = async () => undefined,
-): ClaudeCodeSession {
-  let alive = false;
-  return {
-    async start() {
-      await start();
-      alive = true;
-    },
-    async stop() {
-      await stop();
-      alive = false;
-    },
-    isAlive: () => alive,
-    setOnExit() {
-      /* no-op */
-    },
-    async submitTurn() {
-      return okOutcome();
-    },
-    async steerTurn() {
-      /* no-op */
-    },
-  };
-}
+describe('claude non-answer native events', () => {
+  it('the priority:now interrupt artifact mints no token and the real later result does', async () => {
+    const h = harness();
+    const a = h.submit('cmd-a', 'first');
+    h.emit(initLine(['msg_lifecycle_v1']));
+    h.emit(lifecycleLine('cmd-a', 'started'));
+    const b = await h.steer('cmd-b', 'interrupting steer', 'now');
+    const trackedA = track(a.submission);
+    const trackedB = track(b.submission);
 
-function deferred<T>(): {
-  promise: Promise<T>;
-  resolve: (value: T) => void;
-} {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((settle) => {
-    resolve = settle;
+    h.emit(interruptArtifactLine());
+    await flush();
+    expect(trackedA.settled).toBe(false);
+    expect(trackedB.settled).toBe(false);
+    expect(
+      h.rpcLogs.some(
+        (entry) =>
+          entry.level === 'warn' &&
+          /interrupt result artifact ignored/u.test(entry.message),
+      ),
+    ).toBe(true);
+
+    h.emit(lifecycleLine('cmd-b', 'started'));
+    h.emit(successResultLine('real answer'));
+    h.emit(lifecycleLine('cmd-a', 'completed'));
+    h.emit(lifecycleLine('cmd-b', 'completed'));
+    await h.drained();
+
+    const completion = completedOf(await a.submission.settled);
+    expect(completionOf(await b.submission.settled)).toBe(completion);
+    expect(completion.resultText).toBe('real answer');
   });
-  return { promise, resolve };
-}
 
-function okOutcome(): TurnOutcome {
-  return {
-    isError: false,
-    text: 'done',
-    sessionId: TEST_SESSION_ID,
-    subtype: 'success',
-    errors: [],
-    hasStructuredOutput: false,
-  };
-}
+  it('cancelled, refused and discarded lifecycle states mint no completion token', async () => {
+    const h = harness();
+    const a = h.submit('cmd-a', 'first');
+    h.emit(initLine(['msg_lifecycle_v1']));
+    const b = await h.steer('cmd-b', 'second');
+    const c = await h.steer('cmd-c', 'third');
+    const d = await h.steer('cmd-d', 'fourth');
+    const tracked = [b, c, d].map((deferred) => track(deferred.submission));
 
-function state(): AgentRuntimeStateCallbacks {
-  return {
-    async setStatus() {
-      /* no-op */
-    },
-    async setCheckpoint() {
-      /* no-op */
-    },
-  };
-}
+    h.emit(lifecycleLine('cmd-b', 'cancelled'));
+    h.emit(lifecycleLine('cmd-c', 'refused'));
+    h.emit(lifecycleLine('cmd-d', 'discarded'));
+    await flush();
+    expect(tracked.map((state) => state.settled)).toEqual([false, false, false]);
+    expect(h.activities).toHaveLength(0);
 
-function paths(root: string): AgentRuntimePathContext {
-  return {
-    cacheDir: () => join(root, 'cache'),
-    logsDir: () => join(root, 'logs'),
-    runtimeSocketDirs: () => [join(root, 'run')],
-  };
-}
+    h.emit(lifecycleLine('cmd-a', 'started'));
+    h.emit(successResultLine('surviving answer'));
+    h.emit(lifecycleLine('cmd-a', 'completed'));
+    await h.drained();
 
-async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error('waitFor timed out');
-}
+    const completion = completedOf(await a.submission.settled);
+    expect(completion.displaySubmission).toBe(a.submission);
+    // Internal-only lifecycle states never produced a token of their own.
+    expect(tracked.map((state) => state.settled)).toEqual([false, false, false]);
+  });
+});
 
-async function flush(): Promise<void> {
-  await new Promise((resolve) => setImmediate(resolve));
-}
+describe('claude live activity projection', () => {
+  it('projects assistant activity for one no-lifecycle submission before completion', async () => {
+    const h = harness();
+    const only = h.submit('cmd-a', 'only');
+    h.emit(initLine([]));
+
+    h.emit(assistantTextLine('msg_1', 'live without lifecycle'));
+    expect(h.activities).toHaveLength(1);
+    expect(assistantMessageOf(h.activities[0]).text).toBe(
+      'live without lifecycle',
+    );
+    expect(h.activities[0]?.submission).toBe(only.submission);
+    expect(track(only.submission).settled).toBe(false);
+
+    h.emit(successResultLine('final answer'));
+    await h.drained();
+    expect(completedOf(await only.submission.settled).resultText).toBe(
+      'final answer',
+    );
+  });
+
+  it('projects tool use and result for one no-lifecycle submission before completion', async () => {
+    const h = harness();
+    const only = h.submit('cmd-a', 'only');
+    h.emit(initLine([]));
+
+    h.emit(assistantToolUseLine('msg_1', 'toolu_1', 'Bash', { command: 'pwd' }));
+    h.emit(toolResultLine('msg_2', 'toolu_1', '/workspace'));
+    expect(h.activities).toHaveLength(2);
+    expect(toolCallOf(h.activities[0])).toMatchObject({
+      callId: 'toolu_1',
+      toolName: 'Bash',
+      status: 'started',
+      arguments: { command: 'pwd' },
+    });
+    expect(toolCallOf(h.activities[1])).toMatchObject({
+      callId: 'toolu_1',
+      toolName: 'Bash',
+      status: 'completed',
+      result: '/workspace',
+    });
+    expect(h.activities.every((event) => event.submission === only.submission))
+      .toBe(true);
+
+    h.emit(successResultLine('tool finished'));
+    await h.drained();
+    expect(completedOf(await only.submission.settled).resultText).toBe(
+      'tool finished',
+    );
+  });
+
+  it('projects assistant text and tool calls live before the terminal result, once per folded stream', async () => {
+    const h = harness();
+    const a = h.submit('cmd-a', 'first');
+    h.emit(initLine(['msg_lifecycle_v1']));
+    h.emit(lifecycleLine('cmd-a', 'started'));
+    const b = await h.steer('cmd-b', 'second');
+    h.emit(lifecycleLine('cmd-b', 'started'));
+    const trackedA = track(a.submission);
+
+    h.emit(assistantTextLine('msg_1', 'looking into it'));
+    h.emit(assistantToolUseLine('msg_2', 'toolu_1', 'Bash', { command: 'ls' }));
+    h.emit(toolResultLine('msg_3', 'toolu_1', 'file.txt'));
+    h.emit(assistantToolUseLine('msg_4', 'toolu_2', 'Read', { path: '/missing' }));
+    h.emit(toolResultLine('msg_5', 'toolu_2', 'ENOENT: no such file', true));
+
+    // Live: every activity fact is already delivered while the turn is still
+    // running, before any result arrives.
+    expect(h.activities).toHaveLength(5);
+    await flush();
+    expect(trackedA.settled).toBe(false);
+
+    expect(h.activities.map((event) => event.activity.kind)).toEqual([
+      'assistant.message',
+      'tool.call',
+      'tool.call',
+      'tool.call',
+      'tool.call',
+    ]);
+    expect(assistantMessageOf(h.activities[0]).text).toBe('looking into it');
+    expect(assistantMessageOf(h.activities[0]).truncated).toBe(false);
+
+    const started = toolCallOf(h.activities[1]);
+    const completed = toolCallOf(h.activities[2]);
+    expect(started.status).toBe('started');
+    expect(started.callId).toBe('toolu_1');
+    expect(started.toolName).toBe('Bash');
+    expect(started.arguments).toEqual({ command: 'ls' });
+    expect(completed.status).toBe('completed');
+    // Started and terminal facts share one stable non-empty callId.
+    expect(completed.callId).toBe(started.callId);
+    expect(completed.callId).not.toBe('');
+    expect(completed.toolName).toBe('Bash');
+    expect(completed.arguments).toEqual({ command: 'ls' });
+    expect(completed.result).toBe('file.txt');
+    expect(completed.error).toBeNull();
+    expect(completed.id).not.toBe(started.id);
+
+    const failedStart = toolCallOf(h.activities[3]);
+    const failed = toolCallOf(h.activities[4]);
+    expect(failedStart.callId).toBe('toolu_2');
+    expect(failed.callId).toBe('toolu_2');
+    expect(failed.status).toBe('failed');
+    expect(failed.toolName).toBe('Read');
+    expect(failed.result).toBe('ENOENT: no such file');
+
+    // The folded stream projects once, against the display representative.
+    for (const event of h.activities) {
+      expect(event.submission).toBe(a.submission);
+      expect(event.submission).not.toBe(b.submission);
+    }
+
+    h.emit(successResultLine('done looking'));
+    h.emit(lifecycleLine('cmd-a', 'completed'));
+    h.emit(lifecycleLine('cmd-b', 'completed'));
+    await h.drained();
+
+    // The follower never replays the stream after the terminal result.
+    expect(h.activities).toHaveLength(5);
+    const completion = completedOf(await a.submission.settled);
+    expect(completionOf(await b.submission.settled)).toBe(completion);
+    expect(completion.displaySubmission).toBe(a.submission);
+  });
+
+  it('a throwing activity sink is caught and never breaks the native turn', async () => {
+    const h = harness();
+    const a = h.submit('cmd-a', 'first');
+    h.failActivitySink(new Error('sink exploded'));
+    h.emit(initLine(['msg_lifecycle_v1']));
+    h.emit(lifecycleLine('cmd-a', 'started'));
+    h.emit(assistantTextLine('msg_1', 'first block', 'second block'));
+
+    // Both blocks were attempted: one throw did not abort the projection loop.
+    expect(h.activities).toHaveLength(2);
+    const warnings = h.protocolLogs.filter(
+      (entry) =>
+        entry.level === 'warn' &&
+        /activity projection failed/u.test(entry.message),
+    );
+    expect(warnings).toHaveLength(2);
+
+    h.emit(successResultLine('unaffected answer'));
+    h.emit(lifecycleLine('cmd-a', 'completed'));
+    await h.drained();
+
+    const completion = completedOf(await a.submission.settled);
+    expect(completion.resultText).toBe('unaffected answer');
+  });
+});

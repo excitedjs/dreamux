@@ -15,7 +15,7 @@ import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.j
 import { DispatcherCoreEventBus } from '../src/service/dispatcher-core-events/index.js';
 import { TeamStore } from '../src/service/team-collection/store.js';
 import { EntityTurn } from '../src/service/teammate-service/turn-recording.js';
-import { controllableRuntimeTurn } from './helpers/runtime-turn.js';
+import { controllableRuntimeSubmission } from './helpers/runtime-submission.js';
 
 function noopLogger(): DreamuxLogger {
   const log = {
@@ -129,9 +129,9 @@ describe('core event owner publishers', () => {
     lease.source.on('binding.route', (event) => { events.push(event); });
     lease.source.on('binding.collaboration_space', (event) => { events.push(event); });
 
-    const runtime = controllableRuntimeTurn();
+    const runtime = controllableRuntimeSubmission();
     const turn = new EntityTurn(
-      runtime.turn,
+      runtime.submission,
       'channel',
       'private prompt',
       null,
@@ -139,11 +139,7 @@ describe('core event owner publishers', () => {
       'member-a',
       null,
     );
-    runtime.settle({
-      status: 'completed',
-      resultText: 'private assistant',
-      truncated: false,
-    });
+    runtime.complete('private assistant');
 
     await expect(turn.settled).resolves.toMatchObject({ status: 'completed' });
     expect(events).toEqual([]);
@@ -157,9 +153,9 @@ describe('core event owner publishers', () => {
     process.env['DREAMUX_ROOT'] = blockedHome;
     resetRuntimeConfig();
 
-    const runtime = controllableRuntimeTurn();
+    const runtime = controllableRuntimeSubmission();
     const turn = new EntityTurn(
-      runtime.turn,
+      runtime.submission,
       'channel',
       'private prompt',
       null,
@@ -167,7 +163,7 @@ describe('core event owner publishers', () => {
       'member-a',
       null,
     );
-    runtime.settle({ status: 'failed', error: new Error('provider failed') });
+    runtime.failCompletion(new Error('provider failed'));
 
     await expect(turn.settled).resolves.toMatchObject({
       status: 'failed',

@@ -22,7 +22,6 @@ import {
 import type {
   ClaudeCodeSession,
   ClaudeCodeSessionSpec,
-  TurnOutcome,
   TurnSubmitOptions,
 } from './types.js';
 
@@ -112,6 +111,7 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
         });
       },
       onRemoteControlUrl: this.spec.onRemoteControlUrl,
+      onProtocolEvent: this.spec.onProtocolEvent,
     });
     this.rpc = rpc;
     child.stdout?.setEncoding('utf8');
@@ -124,19 +124,21 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
   async submitTurn(
     prompt: string,
     options: TurnSubmitOptions = {},
-  ): Promise<TurnOutcome> {
+    commandUuid?: string,
+  ): Promise<void> {
     if (this.stopRequested || this.stopped) {
       return Promise.reject(new Error('claude resident session is stopped'));
     }
     if (this.child === null || this.exited || this.rpc === null) {
       return Promise.reject(new Error('claude resident child is not running'));
     }
-    return this.rpc.submitTurn(prompt, options);
+    return this.rpc.submitTurn(prompt, options, commandUuid);
   }
 
   async steerTurn(
     prompt: string,
     options: TurnSubmitOptions = {},
+    commandUuid?: string,
   ): Promise<void> {
     if (this.stopRequested || this.stopped) {
       return Promise.reject(
@@ -154,7 +156,7 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
         ),
       );
     }
-    return this.rpc.steerTurn(prompt, options);
+    return this.rpc.steerTurn(prompt, options, commandUuid);
   }
 
   async stop(): Promise<void> {

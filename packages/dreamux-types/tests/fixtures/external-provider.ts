@@ -15,6 +15,20 @@
  * implement these surfaces has to be a root export. The fixture is type-checked
  * by the package's test typecheck; the runtime assertions live in
  * `fixtures.test.ts`.
+ *
+ * Value-keyed submission/completion contract (task
+ * `restore-value-keyed-turn-contract`): an accepted send is ONE
+ * `RuntimeSubmission`, and a provider-observed native result is ONE frozen
+ * `RuntimeCompletion` token. Submission identity never implies folding — the
+ * TOKEN does. The fixture exposes both native shapes so a caller can prove the
+ * difference from outside, without any "number of completions" knob:
+ *
+ * - queue: {@link fixtureRuntimeProvider}'s runtime opens and closes one native
+ *   turn per accepted send, so two sends settle with two DISTINCT tokens even
+ *   when their text is identical.
+ * - fold: {@link createNativeTurnWindowRuntimeFixture} keeps a native turn OPEN
+ *   until the caller reports a result, so every send accepted inside that
+ *   window settles with the SAME `Object.is`-identical frozen token.
  */
 import type {
   AgentRuntime,
@@ -48,8 +62,12 @@ import type {
   ChannelToolDescriptor,
   DreamuxLogger,
   InboundTurnInput,
+  RuntimeActivityEvent,
+  RuntimeActivitySink,
   RuntimeAdmission,
-  RuntimeTurn,
+  RuntimeCompletion,
+  RuntimeSubmission,
+  RuntimeSubmissionSettlement,
 } from '@excitedjs/dreamux-types';
 
 export const EXTERNAL_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
@@ -72,15 +90,78 @@ interface FixtureRuntimeConfig {
   model: string;
 }
 
+/** One accepted send the fixture has not settled yet. */
+interface PendingFixtureSubmission {
+  readonly submission: RuntimeSubmission;
+  settle(settlement: RuntimeSubmissionSettlement): void;
+}
+
+/**
+ * Open one accepted send. Settlement is one-shot: later calls are ignored, so a
+ * submission drained by `stop()` can never be re-settled by a late result.
+ */
+function openSubmission(): PendingFixtureSubmission {
+  let resolve!: (settlement: RuntimeSubmissionSettlement) => void;
+  const settled = new Promise<RuntimeSubmissionSettlement>((resolveSettled) => {
+    resolve = resolveSettled;
+  });
+  const submission: RuntimeSubmission = Object.freeze({ settled });
+  let done = false;
+  return {
+    submission,
+    settle(settlement) {
+      if (done) return;
+      done = true;
+      resolve(settlement);
+    },
+  };
+}
+
+/**
+ * Mint the frozen, opaque completion token for ONE provider-observed native
+ * result. `displaySubmission` is the send that owns the display position for
+ * that result — for a folded native turn, the first send admitted into it.
+ */
+function mintCompletion(
+  displaySubmission: RuntimeSubmission,
+  resultText: string | null,
+): RuntimeCompletion {
+  return Object.freeze<RuntimeCompletion>({
+    status: 'completed',
+    displaySubmission,
+    resultText,
+    truncated: false,
+  });
+}
+
+/**
+ * One accepted send that has already observed its own native result.
+ *
+ * Note the circular reference the contract forces: the token names the
+ * submission (`displaySubmission`) and the submission settles with the token.
+ * So the deferred submission is created FIRST, the token is frozen around it,
+ * and only then is the submission resolved with `{ kind: 'completion' }`.
+ */
+function settledSubmission(resultText: string | null): RuntimeSubmission {
+  const pending = openSubmission();
+  const completion = mintCompletion(pending.submission, resultText);
+  pending.settle({ kind: 'completion', completion });
+  return pending.submission;
+}
+
 class FixtureRuntime implements AgentRuntime {
   readonly providerRef = 'npm:@example/fixture-runtime';
   private status: AgentRuntimeStatus = 'declared';
   private threadId: string | null = null;
   private readonly logger?: DreamuxLogger;
+  /** Required by the create context and captured before `start()` runs. */
+  private readonly activitySink: RuntimeActivitySink;
+  private clock = 0;
 
   constructor(context: AgentRuntimeCreateContext<FixtureRuntimeConfig>) {
     this.logger = context.logger;
     this.threadId = context.identity.checkpoint?.id ?? null;
+    this.activitySink = context.activitySink;
   }
 
   async start(): Promise<void> {
@@ -96,8 +177,8 @@ class FixtureRuntime implements AgentRuntime {
     this.status = 'stopped';
   }
 
-  async channelInput(_input: InboundTurnInput): Promise<RuntimeAdmission> {
-    return { status: 'submitted', turn: completedRuntimeTurn() };
+  async channelInput(input: InboundTurnInput): Promise<RuntimeAdmission> {
+    return this.admit(`channel:${input.text}`);
   }
 
   getStatus(): AgentRuntimeStatus {
@@ -120,9 +201,170 @@ class FixtureRuntime implements AgentRuntime {
     return EXTERNAL_RUNTIME_CAPABILITIES;
   }
 
-  async completionInput(_input: AgentRuntimeTextInput): Promise<RuntimeAdmission> {
-    return { status: 'submitted', turn: completedRuntimeTurn() };
+  async completionInput(input: AgentRuntimeTextInput): Promise<RuntimeAdmission> {
+    return this.admit(`completion:${input.text}`);
   }
+
+  /**
+   * Each accepted send opens AND closes its own native turn, so two sends
+   * settle with two distinct tokens even when their text is identical. See
+   * {@link createNativeTurnWindowRuntimeFixture} for the folding shape.
+   */
+  private admit(resultText: string): RuntimeAdmission {
+    if (this.status === 'stopping' || this.status === 'stopped') {
+      return { status: 'stopped' };
+    }
+    const pending = openSubmission();
+    // Live activity is reported against the send that owns it, before the
+    // native result settles it.
+    this.report(pending.submission, resultText);
+    const completion = mintCompletion(pending.submission, resultText);
+    pending.settle({ kind: 'completion', completion });
+    return { status: 'submitted', submission: pending.submission };
+  }
+
+  private report(submission: RuntimeSubmission, text: string): void {
+    this.clock += 1;
+    this.activitySink({
+      submission,
+      activity: {
+        kind: 'assistant.message',
+        id: `fixture-message-${this.clock}`,
+        text,
+        truncated: false,
+      },
+      occurredAt: 1_700_000_000_000 + this.clock,
+    });
+  }
+}
+
+/**
+ * Runtime fixture for the FOLD half of the contract: the native turn stays OPEN
+ * until the caller reports a result, so every send admitted inside that window
+ * settles with ONE `Object.is`-identical frozen token. Closing the window
+ * before the next send yields the queue shape instead — the boundary, not a
+ * knob, is what decides.
+ */
+class NativeTurnWindowFixtureRuntime implements AgentRuntime {
+  readonly providerRef = 'npm:@example/fixture-runtime';
+  private status: AgentRuntimeStatus = 'declared';
+  private readonly activitySink: RuntimeActivitySink;
+  private readonly openWindow: PendingFixtureSubmission[] = [];
+  private clock = 0;
+
+  constructor(context: AgentRuntimeCreateContext<FixtureRuntimeConfig>) {
+    this.activitySink = context.activitySink;
+  }
+
+  async start(): Promise<void> {
+    this.status = 'ready';
+  }
+
+  async resume(): Promise<void> {
+    this.status = 'ready';
+  }
+
+  async stop(): Promise<void> {
+    this.status = 'stopping';
+    // No native result was observed, so these mint NO token.
+    for (const pending of this.openWindow.splice(0)) {
+      pending.settle({ kind: 'stopped' });
+    }
+    this.status = 'stopped';
+  }
+
+  async channelInput(_input: InboundTurnInput): Promise<RuntimeAdmission> {
+    return this.admit();
+  }
+
+  async completionInput(_input: AgentRuntimeTextInput): Promise<RuntimeAdmission> {
+    return this.admit();
+  }
+
+  getStatus(): AgentRuntimeStatus {
+    return this.status;
+  }
+
+  getCheckpoint(): null {
+    return null;
+  }
+
+  wasCheckpointResumed(): boolean {
+    return false;
+  }
+
+  async getContext(): Promise<AgentRuntimeContextSnapshot | null> {
+    return null;
+  }
+
+  getCapabilities(): AgentRuntimeCapabilities {
+    return EXTERNAL_RUNTIME_CAPABILITIES;
+  }
+
+  /** Report ONE native result, closing the open fold window. */
+  completeNativeTurn(resultText: string | null): RuntimeCompletion {
+    const folded = this.openWindow.splice(0);
+    if (folded.length === 0) {
+      throw new Error('no open native turn to complete');
+    }
+    // The FIRST send admitted into the window owns the display position.
+    const displaySubmission = folded[0].submission;
+    if (resultText !== null) {
+      this.clock += 1;
+      const event: RuntimeActivityEvent = {
+        submission: displaySubmission,
+        activity: {
+          kind: 'assistant.message',
+          id: `fixture-window-message-${this.clock}`,
+          text: resultText,
+          truncated: false,
+        },
+        occurredAt: 1_700_000_000_000 + this.clock,
+      };
+      this.activitySink(event);
+    }
+    const completion = mintCompletion(displaySubmission, resultText);
+    for (const pending of folded) {
+      pending.settle({ kind: 'completion', completion });
+    }
+    return completion;
+  }
+
+  private admit(): RuntimeAdmission {
+    if (this.status === 'stopping' || this.status === 'stopped') {
+      return { status: 'stopped' };
+    }
+    const pending = openSubmission();
+    this.openWindow.push(pending);
+    return { status: 'submitted', submission: pending.submission };
+  }
+}
+
+/**
+ * The fold/queue seam an outside caller drives: sends accepted before
+ * `completeNativeTurn()` share ONE token; sends separated by a
+ * `completeNativeTurn()` boundary each get their own.
+ */
+export function createNativeTurnWindowRuntimeFixture(): {
+  runtime: AgentRuntime;
+  completeNativeTurn(resultText: string | null): RuntimeCompletion;
+  activity: readonly RuntimeActivityEvent[];
+} {
+  const activity: RuntimeActivityEvent[] = [];
+  const runtime = new NativeTurnWindowFixtureRuntime({
+    identity: { runtime_id: 'fixture-window', checkpoint: null },
+    config: { model: 'fixture-model' },
+    cwd: '/tmp/fixture',
+    mcpServers: [],
+    activitySink: (event) => {
+      activity.push(event);
+    },
+  });
+  return {
+    runtime,
+    completeNativeTurn: (resultText) => runtime.completeNativeTurn(resultText),
+    activity,
+  };
 }
 
 /**
@@ -186,10 +428,15 @@ class PendingAdmissionFixtureRuntime implements AgentRuntime {
   private admit(): Promise<RuntimeAdmission> {
     if (this.stopping) return Promise.resolve({ status: 'stopped' });
     this.onAdmissionStarted();
+    // The fence is checked AFTER the transport settles, so a stopped admission
+    // mints no completion token at all.
     const admission = this.transportGate.then<RuntimeAdmission>(() =>
       this.stopping
         ? { status: 'stopped' }
-        : { status: 'submitted', turn: completedRuntimeTurn() },
+        : {
+            status: 'submitted',
+            submission: settledSubmission('pending admission result'),
+          },
     );
     this.pending.add(admission);
     void admission.finally(() => this.pending.delete(admission));
@@ -368,16 +615,6 @@ class FixtureChannelSession implements ChannelSession {
   messageBelongsToTarget(input: ChannelMessageTargetCheck): boolean {
     return input.target.target_key === input.message_id;
   }
-}
-
-function completedRuntimeTurn(): RuntimeTurn {
-  return Object.freeze({
-    settled: Promise.resolve({
-      status: 'completed' as const,
-      resultText: null,
-      truncated: false,
-    }),
-  });
 }
 
 const channelDescriptor: ChannelProviderDescriptor = {

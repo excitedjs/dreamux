@@ -2,6 +2,7 @@ import type {
   AgentRuntime,
   AgentRuntimeCreateContext,
   AgentRuntimeProvider,
+  RuntimeActivitySink,
 } from '@excitedjs/dreamux-types';
 
 import {
@@ -27,6 +28,7 @@ interface TeammateRuntimeOwnerCallbacks {
   current: () => AgentEntityIdentity;
   isActive: () => boolean;
   markClosing: () => void;
+  activitySink: RuntimeActivitySink;
 }
 
 /** Raw runtime authority retained exclusively inside one TeamMate entity. */
@@ -212,6 +214,7 @@ export class TeammateRuntimeOwner {
         skillSources: this.options.skillSources ?? [],
         disableFeatures: this.options.disableFeatures ?? [],
         outputSchema: this.options.outputSchema,
+        activitySink: this.callbacks.activitySink,
         ...(this.options.systemPrompt !== undefined
           ? { systemPrompt: this.options.systemPrompt }
           : {}),

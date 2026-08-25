@@ -71,6 +71,7 @@ export class TeamCollection {
    */
   private readonly routeLifecycle = new KeyedAsyncQueue();
   private readonly routeClosing = new Set<string>();
+  private readonly leaderRecipientKeys = new Map<string, object>();
   private readonly dissolves: TeamDissolveController;
   private readonly reads: TeamCollectionReadModel;
   private readonly runtimes: TeamRuntimeRegistry;
@@ -96,6 +97,7 @@ export class TeamCollection {
       completionInitiator: (teamId, delegate) =>
         this.completionInitiatorThroughAvailability(
           teamId,
+          delegate.recipientKey ?? delegate,
           (_service, completion) => delegate.prepareCompletion(completion),
         ),
       withTeamLeaderLease: (lease, task) =>
@@ -374,6 +376,7 @@ export class TeamCollection {
     const leaderName = record.leader_name;
     return this.completionInitiatorThroughAvailability(
       id,
+      this.leaderRecipientKey(id, leaderName),
       async (service, completion) => {
         if (service.leaderName !== leaderName) {
           return unsupportedPreparedCompletion(
@@ -456,12 +459,14 @@ export class TeamCollection {
 
   private completionInitiatorThroughAvailability(
     teamId: string,
+    recipientKey: object,
     deliver: (
       service: TeamService,
       completion: Parameters<CompletionInitiator['prepareCompletion']>[0],
     ) => ReturnType<CompletionInitiator['prepareCompletion']>,
   ): CompletionInitiator {
     return {
+      recipientKey,
       prepareCompletion: async (completion) => {
         let prepared;
         try {
@@ -492,6 +497,16 @@ export class TeamCollection {
         });
       },
     };
+  }
+
+  private leaderRecipientKey(teamId: string, leaderName: string): object {
+    const key = `${teamId}\0${leaderName}`;
+    let identity = this.leaderRecipientKeys.get(key);
+    if (identity === undefined) {
+      identity = Object.freeze({});
+      this.leaderRecipientKeys.set(key, identity);
+    }
+    return identity;
   }
 
   async isOpenTeam(teamId: string): Promise<boolean> {

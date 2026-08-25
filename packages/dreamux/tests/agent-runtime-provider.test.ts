@@ -18,6 +18,7 @@ import { createClaudeCodeAgentRuntimeProvider } from '@excitedjs/agent-runtime-c
 import { codexAgentRuntimeCatalog } from './helpers/fake-agent-runtime.js';
 import { hostRuntimePaths } from '../src/agent-runtime/host-paths.js';
 import { asAgentRuntimeDescriptor } from './helpers/provider.js';
+import { completedRuntimeSubmission } from './helpers/runtime-submission.js';
 import type {
   AgentRuntime,
   AgentRuntimeCapabilities,
@@ -67,12 +68,12 @@ class FakeExternalRuntime implements AgentRuntime {
 
   async channelInput(input: InboundTurnInput): Promise<RuntimeAdmission> {
     this.submitted.push(input);
-    return { status: 'submitted', turn: completedRuntimeTurn() };
+    return { status: 'submitted', submission: completedRuntimeSubmission() };
   }
 
   async completionInput(input: AgentRuntimeTextInput): Promise<RuntimeAdmission> {
     this.textSubmitted.push(input);
-    return { status: 'submitted', turn: completedRuntimeTurn() };
+    return { status: 'submitted', submission: completedRuntimeSubmission() };
   }
 
   getStatus(): ReturnType<AgentRuntime['getStatus']> {
@@ -94,16 +95,6 @@ class FakeExternalRuntime implements AgentRuntime {
   getCapabilities(): AgentRuntimeCapabilities {
     return EXTERNAL_CAPABILITIES;
   }
-}
-
-function completedRuntimeTurn() {
-  return Object.freeze({
-    settled: Promise.resolve({
-      status: 'completed' as const,
-      resultText: null,
-      truncated: false,
-    }),
-  });
 }
 
 function externalFactory(options: {
@@ -154,6 +145,7 @@ describe('AgentRuntimeProviderCatalog', () => {
       config: dispatcherCodexConfig(dispatcher),
       cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
+      activitySink: () => {},
       state: noopState(),
       paths: hostRuntimePaths,
     });
@@ -243,6 +235,7 @@ describe('AgentRuntimeProviderCatalog', () => {
       config: {},
       cwd: '/tmp/dreamux-test-cwd',
       mcpServers: [],
+      activitySink: () => {},
       state: noopState(),
       paths: hostRuntimePaths,
     });
@@ -403,6 +396,7 @@ describe('AgentRuntimeProviderCatalog', () => {
         config: {},
         cwd: '/tmp/dreamux-test-cwd',
         mcpServers: [],
+        activitySink: () => {},
       }),
     ).toThrow(/runtime\.channelInput must be a function/);
   });
@@ -455,6 +449,7 @@ describe('AgentRuntimeProviderCatalog', () => {
         config: {},
         cwd: '/tmp/dreamux-test-cwd',
         mcpServers: [],
+        activitySink: () => {},
       }),
     ).not.toThrow();
   });

@@ -1,11 +1,13 @@
 /**
  * A minimal in-memory {@link AgentRuntime} + catalog for tests that need a REAL
  * {@link TeamCollection} (and therefore a real leader runtime) without spinning
- * up the heavyweight codex/claude-code providers. It mirrors the local fake in
- * `team-collection-read-path.test.ts`: a runtime that starts/stops cleanly and
- * records submitted turns, exposed through an `AgentRuntimeProviderCatalog` keyed
- * by {@link FAKE_RUNTIME_REF}. Use it when the assertion is about the surrounding
- * lifecycle (managed worktrees, dissolve/close) rather than runtime behavior.
+ * up the heavyweight codex/claude-code providers. Use it when the assertion is
+ * about the surrounding lifecycle (managed worktrees, dissolve/close) rather
+ * than runtime behavior.
+ *
+ * Migrated to the value-keyed contract: an accepted send returns a
+ * {@link RuntimeSubmission}, and a native result boundary is modelled as a
+ * frozen {@link RuntimeCompletion} token (see `./runtime-submission.js`).
  */
 import type {
   AgentRuntime,
@@ -19,7 +21,10 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../src/agent-runtime/index.js';
-import { completedRuntimeTurn, controllableRuntimeTurn } from './runtime-turn.js';
+import {
+  completedRuntimeSubmission,
+  controllableRuntimeSubmission,
+} from './runtime-submission.js';
 
 export const FAKE_RUNTIME_REF = 'test:runtime';
 
@@ -48,14 +53,17 @@ export class FakeRuntime implements AgentRuntime {
 
   async channelInput(input: InboundTurnInput): Promise<RuntimeAdmission> {
     this.submitted.push(input);
-    return { status: 'submitted', turn: completedRuntimeTurn() };
+    return { status: 'submitted', submission: completedRuntimeSubmission() };
   }
 
   async completionInput(
     input: AgentRuntimeTextInput,
   ): Promise<RuntimeAdmission> {
     this.submitted.push({ sourceId: input.sourceId ?? '', text: input.text });
-    return { status: 'submitted', turn: controllableRuntimeTurn().turn };
+    return {
+      status: 'submitted',
+      submission: controllableRuntimeSubmission().submission,
+    };
   }
 
   async waitIdle(): Promise<void> {}

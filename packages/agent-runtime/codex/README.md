@@ -79,8 +79,10 @@ normal completion, terminal failure, explicit disposal, or runtime stop. A
 rejected `turn/start` therefore cannot leave a stale collector observing or
 buffering notifications from a later turn.
 
-The public runtime boundary returns one stable `RuntimeTurn` object for each
-Codex logical turn, including inputs folded into the active native turn. Codex
+The public runtime boundary returns one `RuntimeSubmission` handle per accepted
+send; submissions folded into the active native turn settle with the same
+immutable `RuntimeCompletion`, and queued submissions settle with distinct
+completions in native order. Codex
 `turnId` values remain private correlation keys in this package; Dreamux core
 observes only the object's terminal outcome. Runtime stop resolves every
 unsettled public object as stopped after the supervised process group is proven

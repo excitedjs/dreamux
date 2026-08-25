@@ -1,4 +1,4 @@
-import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import type { DreamuxLogger, RuntimeCompletion } from '@excitedjs/dreamux-types';
 
 import { errorInfo } from '../../platform/error-info.js';
 
@@ -33,6 +33,8 @@ export interface PreparedCompletionDelivery {
 }
 
 export interface CompletionInitiator {
+  /** Stable process-local identity preserved by availability wrappers. */
+  readonly recipientKey?: object;
   prepareCompletion(
     completion: PreparedCompletionFact,
   ): Promise<PreparedCompletionDelivery>;
@@ -46,9 +48,18 @@ type DeadlineResult<T> =
   | { status: 'rejected'; error: Error }
   | { status: 'timed_out' };
 
-/** Stateless, at-most-once completion delivery policy. */
+interface CompletionEntry {
+  readonly recipients: WeakMap<object, Promise<void>>;
+}
+
+/** Stateful completion-token router and transport delivery policy. */
 export class CompletionDeliveryPolicy {
   private readonly attemptTimeoutMs: number;
+  private readonly producerCompletions = new Map<
+    string,
+    WeakMap<RuntimeCompletion, CompletionEntry>
+  >();
+  private readonly recipientTails = new WeakMap<object, Promise<void>>();
 
   constructor(
     private readonly deps: {
@@ -66,6 +77,40 @@ export class CompletionDeliveryPolicy {
   }
 
   async deliver(
+    initiator: CompletionInitiator,
+    completion: PreparedCompletionFact,
+  ): Promise<void> {
+    await this.deliverPrepared(initiator, completion);
+  }
+
+  deliverRuntime(
+    initiator: CompletionInitiator,
+    token: RuntimeCompletion,
+    completion: PreparedCompletionFact,
+  ): Promise<void> {
+    const recipientKey = initiator.recipientKey ?? initiator;
+    let completions = this.producerCompletions.get(completion.source);
+    if (completions === undefined) {
+      completions = new WeakMap();
+      this.producerCompletions.set(completion.source, completions);
+    }
+    let entry = completions.get(token);
+    if (entry === undefined) {
+      entry = { recipients: new WeakMap() };
+      completions.set(token, entry);
+    }
+    const existing = entry.recipients.get(recipientKey);
+    if (existing !== undefined) return existing;
+
+    const previous = this.recipientTails.get(recipientKey) ?? Promise.resolve();
+    const delivery = previous.catch(() => undefined).then(() =>
+      this.deliverPrepared(initiator, completion));
+    entry.recipients.set(recipientKey, delivery);
+    this.recipientTails.set(recipientKey, delivery);
+    return delivery;
+  }
+
+  private async deliverPrepared(
     initiator: CompletionInitiator,
     completion: PreparedCompletionFact,
   ): Promise<void> {

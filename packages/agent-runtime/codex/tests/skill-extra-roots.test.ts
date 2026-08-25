@@ -7,8 +7,6 @@
  * order so the test can prove `skills/extraRoots/set` lands AFTER `initialize`
  * and BEFORE `thread/start`.
  */
-import { join } from 'node:path';
-
 import { describe, it, expect } from 'vitest';
 
 import { CodexRuntime } from '../src/runtime.js';
@@ -205,6 +203,7 @@ function buildRuntime(
     allocateSocketPath: () => '/fake/run/flow.sock',
     validateTranscriptPath: async (path) => path,
     skillSources,
+    activitySink: () => {},
     codexProcessFactory: () => new FakeProcess() as never,
     codexClientFactory: () => client as never,
     ...(systemPrompt?.replace !== undefined
@@ -519,26 +518,28 @@ describe('codex skills/extraRoots/set injection', () => {
 
     await runtime.start();
     const first = await runtime.channelInput({ sourceId: 'm1', text: 'first' });
-    if (first.status !== 'submitted') throw new Error('first Turn was not submitted');
-    const firstOutcome = await first.turn.settled;
+    if (first.status !== 'submitted') throw new Error('first send was not submitted');
+    const firstOutcome = await first.submission.settled;
     const second = await runtime.channelInput({ sourceId: 'm2', text: 'empty' });
-    if (second.status !== 'submitted') throw new Error('second Turn was not submitted');
-    const secondOutcome = await second.turn.settled;
+    if (second.status !== 'submitted') throw new Error('second send was not submitted');
+    const secondOutcome = await second.submission.settled;
     await runtime.stop();
 
-    expect(firstOutcome).toMatchObject({ status: 'completed', resultText: 'first' });
-    expect(secondOutcome).toMatchObject({ status: 'completed', resultText: null });
+    if (firstOutcome.kind !== 'completion') {
+      throw new Error('first send did not settle with a completion');
+    }
+    if (secondOutcome.kind !== 'completion') {
+      throw new Error('second send did not settle with a completion');
+    }
+    expect(firstOutcome.completion).toMatchObject({ status: 'completed', resultText: 'first' });
+    expect(secondOutcome.completion).toMatchObject({ status: 'completed', resultText: null });
+    // Queued native results are DISTINCT tokens: the second result must not
+    // inherit (or be folded into) the first result's token or its text.
+    expect(secondOutcome.completion).not.toBe(firstOutcome.completion);
+    expect(firstOutcome.completion.displaySubmission).toBe(first.submission);
+    expect(secondOutcome.completion.displaySubmission).toBe(second.submission);
   });
 });
-
-async function waitFor(predicate: () => boolean): Promise<void> {
-  const deadline = Date.now() + 1000;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error('waitFor timed out');
-}
 
 describe('isUnsupportedRpcMethodError', () => {
   it('classifies capability/version-gap rejections as unsupported', () => {

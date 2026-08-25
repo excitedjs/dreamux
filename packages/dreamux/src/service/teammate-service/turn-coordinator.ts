@@ -1,6 +1,7 @@
 import type {
+  RuntimeActivitySink,
   RuntimeAdmission,
-  RuntimeTurn,
+  RuntimeSubmission,
 } from '@excitedjs/dreamux-types';
 
 import type { AgentEntityTurnOrigin } from '../agent-entity/types.js';
@@ -33,49 +34,26 @@ type ObservedRuntimeAdmission =
   | { status: 'fulfilled'; admission: RuntimeAdmission }
   | { status: 'rejected'; error: Error };
 
-/** Entity-owned serialization for provider admission and in-process Turn work. */
+/** Entity-owned serialization for provider admission and in-process display work. */
 export class EntityTurnCoordinator {
   private readonly pendingAdmissions = new Set<Promise<unknown>>();
   private admissionContinuationTail: Promise<void> = Promise.resolve();
-  private currentTurn: EntityTurn | null = null;
   private readonly retainedTurns = new Set<EntityTurn>();
 
   constructor(private readonly opts: EntityTurnCoordinatorOptions) {}
 
+  readonly activitySink: RuntimeActivitySink = () => {};
+
   hasUnsettledCurrent(): boolean {
-    return this.currentTurn !== null && !this.currentTurn.isOutcomeSelected();
+    return [...this.retainedTurns].some((turn) => !turn.isSettled());
   }
 
   submitRuntimeTurn(
     operation: () => Promise<RuntimeAdmission>,
     input: EntityTurnInput,
   ): Promise<TurnAdmission> {
-    if (!this.opts.isActive()) {
-      return Promise.resolve({ status: 'stopped' });
-    }
-    const captured = this.capture(input);
-    let admission: Promise<RuntimeAdmission>;
-    try {
-      admission = operation();
-    } catch (error) {
-      return Promise.resolve({
-        status: 'ambiguous',
-        error: asError(error),
-      });
-    }
-    const observed = observeRuntimeAdmission(admission);
-    return this.enqueueAdmissionContinuation(async () => {
-      const result = await observed;
-      if (result.status === 'rejected') {
-        return { status: 'ambiguous', error: result.error };
-      }
-      if (result.admission.status !== 'submitted') {
-        return admissionWithoutTurn(result.admission);
-      }
-      const turn = this.attachRuntimeTurn(result.admission.turn, captured);
-      if (!this.opts.isActive()) turn.trySettle({ status: 'stopped' });
-      return { status: 'submitted', turn };
-    });
+    if (!this.opts.isActive()) return Promise.resolve({ status: 'stopped' });
+    return this.submitObserved(operation, input);
   }
 
   submitCompletion(
@@ -83,11 +61,34 @@ export class EntityTurnCoordinator {
     input: EntityTurnInput,
   ): Promise<CompletionDeliveryResult> {
     if (!this.opts.isActive()) {
-      return Promise.resolve({
-        status: 'unsupported',
-        reason: 'runtime stopped',
-      });
+      return Promise.resolve({ status: 'unsupported', reason: 'runtime stopped' });
     }
+    return this.submitObserved(operation, input).then(
+      turnAdmissionToCompletionDelivery,
+    );
+  }
+
+  async drainAdmissions(): Promise<void> {
+    while (this.pendingAdmissions.size > 0) {
+      await Promise.allSettled([...this.pendingAdmissions]);
+    }
+  }
+
+  async settleAndDeliverRetained(): Promise<void> {
+    await Promise.resolve();
+    const unsettled = [...this.retainedTurns].filter((turn) => !turn.isSettled());
+    if (unsettled.length > 0) {
+      throw new Error(
+        `runtime stop returned with ${unsettled.length} unsettled submission(s) for ${this.opts.name()}`,
+      );
+    }
+    for (const turn of [...this.retainedTurns]) await turn.ensureDelivery();
+  }
+
+  private submitObserved(
+    operation: () => Promise<RuntimeAdmission>,
+    input: EntityTurnInput,
+  ): Promise<TurnAdmission> {
     const captured = this.capture(input);
     let admission: Promise<RuntimeAdmission>;
     try {
@@ -102,37 +103,14 @@ export class EntityTurnCoordinator {
         return { status: 'ambiguous', error: result.error };
       }
       if (result.admission.status !== 'submitted') {
-        return turnAdmissionToCompletionDelivery(
-          admissionWithoutTurn(result.admission),
-        );
+        return admissionWithoutTurn(result.admission);
       }
-      const turn = this.attachRuntimeTurn(result.admission.turn, captured);
-      if (!this.opts.isActive()) turn.trySettle({ status: 'stopped' });
-      return { status: 'accepted' };
+      const turn = this.attachSubmission(result.admission.submission, captured);
+      return { status: 'submitted', turn };
     });
   }
 
-  selectStoppedForCurrent(): void {
-    this.currentTurn?.trySettle({ status: 'stopped' });
-  }
-
-  async drainAdmissions(): Promise<void> {
-    while (this.pendingAdmissions.size > 0) {
-      await Promise.allSettled([...this.pendingAdmissions]);
-    }
-  }
-
-  async settleAndDeliverRetained(): Promise<void> {
-    const turns = [...this.retainedTurns];
-    for (const turn of turns) {
-      if (!turn.isOutcomeSelected()) turn.trySettle({ status: 'stopped' });
-    }
-    for (const turn of turns) await turn.ensureDelivery();
-  }
-
-  private enqueueAdmissionContinuation<T>(
-    task: () => Promise<T>,
-  ): Promise<T> {
+  private enqueueAdmissionContinuation<T>(task: () => Promise<T>): Promise<T> {
     const continuation = this.admissionContinuationTail.then(task, task);
     this.admissionContinuationTail = continuation.then(
       () => undefined,
@@ -145,23 +123,12 @@ export class EntityTurnCoordinator {
     return continuation;
   }
 
-  private attachRuntimeTurn(
-    runtimeTurn: RuntimeTurn,
+  private attachSubmission(
+    submission: RuntimeSubmission,
     input: CapturedEntityTurnInput,
   ): EntityTurn {
-    const current = this.currentTurn;
-    if (current !== null && current.runtime === runtimeTurn) {
-      current.attachDelivery(input.deliverCompletion ?? null);
-      return current;
-    }
-    if (current !== null) {
-      void current.ensureDelivery().then(
-        () => this.retainedTurns.delete(current),
-        () => undefined,
-      );
-    }
     const turn = new EntityTurn(
-      runtimeTurn,
+      submission,
       input.turnOrigin,
       input.prompt,
       input.intent,
@@ -169,17 +136,15 @@ export class EntityTurnCoordinator {
       this.opts.name(),
       input.deliverCompletion ?? null,
     );
-    this.currentTurn = turn;
     this.retainedTurns.add(turn);
+    void turn.ensureDelivery().finally(() => {
+      this.retainedTurns.delete(turn);
+    }).catch(() => undefined);
     return turn;
   }
 
   private capture(input: EntityTurnInput): CapturedEntityTurnInput {
-    return {
-      ...input,
-      intent: this.opts.intent(),
-      submittedAt: Date.now(),
-    };
+    return { ...input, intent: this.opts.intent(), submittedAt: Date.now() };
   }
 }
 
@@ -206,10 +171,7 @@ function turnAdmissionToCompletionDelivery(
     case 'ambiguous':
       return { status: 'ambiguous', error: result.error };
     case 'skipped':
-      return {
-        status: 'failed',
-        error: new Error('completion delivery unexpectedly skipped'),
-      };
+      return { status: 'failed', error: new Error('completion delivery unexpectedly skipped') };
   }
 }
 

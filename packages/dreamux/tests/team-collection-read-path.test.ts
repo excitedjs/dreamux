@@ -15,9 +15,11 @@ const execFileAsync = promisify(execFile);
 
 import type {
   AgentRuntimeCreateContext,
+  AgentRuntimeProvider,
   RuntimeAdmission,
 } from '@excitedjs/dreamux-types';
 
+import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import { TeamCollection } from '../src/service/team-collection/index.js';
 import { TeamStore } from '../src/service/team-collection/store.js';
 import {
@@ -46,7 +48,7 @@ import {
   fakeRuntimeCatalog,
   noopLog,
 } from './helpers/fake-team-runtime.js';
-import { completedRuntimeTurn } from './helpers/runtime-turn.js';
+import { completedRuntimeSubmission } from './helpers/runtime-submission.js';
 
 class RetryableCloseIdentityStore extends AgentIdentityStore {
   allowClose = false;
@@ -79,6 +81,34 @@ class GatedCreateIdentityStore extends AgentIdentityStore {
       throw new Error('identity creation failed after durable publication');
     }
     return identity;
+  }
+}
+
+class ResumeTrackingRuntime extends FakeRuntime {
+  startCalls = 0;
+  resumeCalls = 0;
+
+  constructor(readonly createContext: AgentRuntimeCreateContext) {
+    super({ settleImmediately: true });
+  }
+
+  override async start(): Promise<void> {
+    this.startCalls += 1;
+    await super.start();
+    if (this.createContext.state === undefined) {
+      throw new Error('resume test runtime requires a state sink');
+    }
+    await this.createContext.state.setCheckpoint({
+      id: 'restart-session',
+      transcript_locator: null,
+    });
+    await this.createContext.state.setStatus('ready');
+  }
+
+  override async resume(): Promise<void> {
+    this.resumeCalls += 1;
+    await super.resume();
+    await this.createContext.state?.setStatus('ready');
   }
 }
 
@@ -273,7 +303,7 @@ describe('direct TeamMate receipt transcript association', () => {
   });
 
   it.each([
-    ['submitted', { status: 'submitted', turn: completedRuntimeTurn() }],
+    ['submitted', { status: 'submitted', submission: completedRuntimeSubmission() }],
     ['duplicate', { status: 'duplicate' }],
     ['failed', { status: 'failed', error: new Error('rejected') }],
     ['ambiguous', { status: 'ambiguous', error: new Error('unknown') }],
@@ -1595,6 +1625,134 @@ describe('TeamCollection create without a prompt fires no leader turn', () => {
     } finally {
       update.mockRestore();
     }
+  });
+});
+
+describe('TeamCollection TeamLeader restart resume contract', () => {
+  let root: string;
+  let previousHome: string | undefined;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'dreamux-team-restart-resume-'));
+    previousHome = process.env['HOME'];
+    process.env['HOME'] = join(root, 'home');
+    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
+    mkdirSync(process.env['HOME'], { recursive: true });
+  });
+
+  afterEach(() => {
+    if (previousHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = previousHome;
+    delete process.env['DREAMUX_ROOT'];
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('rebuilds an idle leader with its durable checkpoint and resumes before send', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const log = noopLog();
+    const identities = new AgentIdentityStore(log);
+    const runtimes: ResumeTrackingRuntime[] = [];
+    const contexts: AgentRuntimeCreateContext[] = [];
+    const provider: AgentRuntimeProvider = {
+      ref: FAKE_RUNTIME_REF,
+      descriptor: {
+        id: 'restart-resume-runtime',
+        kind: 'agentRuntime',
+        ref: {
+          source: 'builtin',
+          id: 'restart-resume-runtime',
+          raw: FAKE_RUNTIME_REF,
+        },
+      },
+      getCapabilities: () => ({
+        resume: { supported: true },
+        structuredOutput: { supported: true, scope: 'per-turn' },
+      }),
+      async readTranscript() {
+        return { turns: [], nextCursor: null, truncated: false };
+      },
+      createRuntime(context) {
+        contexts.push(context);
+        const runtime = new ResumeTrackingRuntime(context);
+        runtimes.push(runtime);
+        return runtime;
+      },
+    };
+    const agentRuntimeProviders = {
+      list: () => [provider],
+      resolve(ref: string) {
+        if (ref !== FAKE_RUNTIME_REF) {
+          throw new Error(`unexpected runtime provider ${JSON.stringify(ref)}`);
+        }
+        return provider;
+      },
+    } as AgentRuntimeProviderCatalog;
+    const makeTeams = () => new TeamCollection({
+      dispatcherId: 'dispatcher-a',
+      config,
+      agentRuntimeProviders,
+      worktrees: new WorktreeManager(),
+      identities,
+      completionDelivery: new CompletionDeliveryPolicy({
+        dispatcherId: 'dispatcher-a',
+        log,
+      }),
+      initiatorFor: async () => null,
+      isShuttingDown: () => false,
+      adminSocketPath: '/tmp/admin.sock',
+      leaderChannelDescriptors: () => [],
+      agentNameSuffixGenerator: () => 'aaaa',
+      log,
+    });
+
+    const firstCollection = makeTeams();
+    const created = await firstCollection.create({
+      name: 'restart-resume',
+      leaderAgentRuntime: 'agent-a',
+      intent: 'survive collection restart',
+    });
+    expect(created.status).toBeNull();
+    expect(runtimes).toHaveLength(1);
+    expect(runtimes[0]).toMatchObject({ startCalls: 1, resumeCalls: 0 });
+    await expect(
+      identities.leaderIdentity('dispatcher-a', 'restart-resume'),
+    ).resolves.toMatchObject({
+      status: 'running',
+      session_id: 'restart-session',
+      transcript_locator: null,
+    });
+
+    // Model process loss without Core shutdown semantics: stop only the fake
+    // runtime authority, then abandon the first in-memory collection.
+    await runtimes[0]!.stop();
+
+    const recoveredCollection = makeTeams();
+    const sent = await recoveredCollection.sendToLeader('restart-resume', {
+      prompt: 'follow up after restart',
+      initiator: new FakeInitiator(),
+    });
+
+    expect(sent.status).toBe('submitted');
+    expect(runtimes).toHaveLength(2);
+    expect(runtimes[1]).toMatchObject({ startCalls: 0, resumeCalls: 1 });
+    expect(contexts[1]?.identity.checkpoint).toEqual({
+      id: 'restart-session',
+      transcript_locator: null,
+    });
+    expect(runtimes[1]!.textSubmitted).toContainEqual({
+      text: 'follow up after restart',
+    });
+
+    await runtimes[1]!.stop();
   });
 });
 

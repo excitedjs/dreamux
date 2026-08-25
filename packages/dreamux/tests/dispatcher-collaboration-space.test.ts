@@ -18,7 +18,7 @@ import type {
   AgentRuntimeStatus,
   AgentRuntimeTextInput,
   RuntimeAdmission,
-  RuntimeTurnOutcome,
+  RuntimeSubmissionSettlement,
   ChannelCollaborationTargetEnsureResult,
   ChannelCoreEvent,
   ChannelCoreEventSource,
@@ -60,10 +60,11 @@ import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
 import { feishuChannelCatalog } from './helpers/fake-channel.js';
 import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
 import {
-  completedRuntimeTurn,
-  controllableRuntimeTurn,
-  type ControllableRuntimeTurn,
-} from './helpers/runtime-turn.js';
+  completedCompletion,
+  completedRuntimeSubmission,
+  controllableRuntimeSubmission,
+  type ControllableRuntimeSubmission,
+} from './helpers/runtime-submission.js';
 
 const RUNTIME_REF = 'test:runtime';
 const CHANNEL_REF = 'test:channel';
@@ -77,8 +78,15 @@ class FakeRuntime implements AgentRuntime {
   readonly providerRef = RUNTIME_REF;
   readonly submitted: InboundTurnInput[] = [];
   readonly textSubmitted: AgentRuntimeTextInput[] = [];
-  readonly channelTurns: ControllableRuntimeTurn[] = [];
+  readonly channelSubmissions: ControllableRuntimeSubmission[] = [];
   private status: AgentRuntimeStatus = 'declared';
+  /**
+   * Sends admitted while an earlier send is still unsettled join the SAME
+   * native stream, so they settle with ONE shared completion token (the
+   * steer/fold shape). Every accepted send still gets its own
+   * `RuntimeSubmission`: identity alone never carries the folding fact.
+   */
+  private activeFold: ControllableRuntimeSubmission[] = [];
 
   async start(): Promise<void> {
     this.status = 'ready';
@@ -90,20 +98,26 @@ class FakeRuntime implements AgentRuntime {
 
   async stop(): Promise<void> {
     this.status = 'stopped';
+    // Contract: stop() must not return while an accepted submission is still
+    // unsettled. No native result was observed, so every one of them settles as
+    // the internal `stopped` terminal state: no completion token, no push.
+    for (const pending of this.channelSubmissions) pending.stop();
+    this.activeFold = [];
   }
 
   async waitIdle(): Promise<void> {}
 
   async channelInput(input: InboundTurnInput): Promise<RuntimeAdmission> {
     this.submitted.push(input);
-    const turn = controllableRuntimeTurn();
-    this.channelTurns.push(turn);
-    return { status: 'submitted', turn: turn.turn };
+    const pending = controllableRuntimeSubmission();
+    this.channelSubmissions.push(pending);
+    this.activeFold.push(pending);
+    return { status: 'submitted', submission: pending.submission };
   }
 
   async completionInput(input: AgentRuntimeTextInput): Promise<RuntimeAdmission> {
     this.textSubmitted.push(input);
-    return { status: 'submitted', turn: completedRuntimeTurn('fake last') };
+    return { status: 'submitted', submission: completedRuntimeSubmission('fake last') };
   }
 
   getStatus(): AgentRuntimeStatus {
@@ -126,10 +140,19 @@ class FakeRuntime implements AgentRuntime {
     return CAPABILITIES;
   }
 
-  settle(outcome: RuntimeTurnOutcome, index = 0): void {
-    if (!this.channelTurns[index]?.settle(outcome)) {
-      throw new Error(`channel Turn ${index} is missing or already settled`);
+  /**
+   * Settle one native result boundary. Everything folded into that boundary
+   * settles with the SAME token, so the router can prove a single push.
+   */
+  settle(settlement: RuntimeSubmissionSettlement, index = 0): void {
+    const pending = this.channelSubmissions[index];
+    if (pending === undefined || pending.isSettled()) {
+      throw new Error(`channel submission ${index} is missing or already settled`);
     }
+    const folded = this.activeFold.includes(pending);
+    const members = folded ? this.activeFold : [pending];
+    for (const member of members) member.settle(settlement);
+    if (folded) this.activeFold = [];
   }
 }
 
@@ -167,7 +190,10 @@ function fakeRuntimeCatalog(
 }
 
 function fakeChannelCatalog(
-  onStart?: (routes: ChannelRoutes) => void | Promise<void>,
+  onStart?: (
+    routes: ChannelRoutes,
+    channelId: string,
+  ) => void | Promise<void>,
 ): ChannelProviderCatalog {
   const provider: ChannelProvider = {
     ref: CHANNEL_REF,
@@ -181,7 +207,7 @@ function fakeChannelCatalog(
         provider: context.provider,
         channel_id: context.channel_id,
         async start(routes) {
-          await onStart?.(routes);
+          await onStart?.(routes, context.channel_id);
         },
         async close() {},
         async resolveTarget() {
@@ -235,7 +261,8 @@ function strictChannelDispatcher(input: {
     config,
     dispatchers: new DispatcherStore(config),
     agentRuntimeProviders: fakeRuntimeCatalog(runtimes, contexts),
-    channelProviders: fakeChannelCatalog(async (startedRoutes) => {
+    channelProviders: fakeChannelCatalog(async (startedRoutes, channelId) => {
+      if (channelId !== primaryChannel.id) return;
       routeGenerations.push(startedRoutes);
       routes = startedRoutes;
       await input.onStart?.(startedRoutes);
@@ -413,6 +440,11 @@ describe('DispatcherService collaboration-space routing', () => {
               })
             : workspace,
         );
+        await expect(
+          harness.dispatcher.getTeamStatus(first.team_name),
+        ).resolves.toMatchObject({
+          team: { leader_agent_runtime: 'dispatcher-runtime' },
+        });
         expect(harness.runtimes[0]?.submitted).toEqual([]);
       } finally {
         await harness.dispatcher.stop();
@@ -883,14 +915,19 @@ describe('DispatcherService collaboration-space routing', () => {
       });
       expect(harness.runtimes).toHaveLength(1);
 
+      const strictSubmission = harness.runtimes[0]!.channelSubmissions[0]!;
       harness.runtimes[0]!.settle({
-        status: 'completed',
-        resultText: 'strict answer',
-        truncated: true,
+        kind: 'completion',
+        completion: completedCompletion(
+          strictSubmission.submission,
+          'strict answer',
+          true,
+        ),
       });
-      await expect(
-        harness.runtimes[0]!.channelTurns[0]!.turn.settled,
-      ).resolves.toMatchObject({ status: 'completed' });
+      await expect(strictSubmission.submission.settled).resolves.toMatchObject({
+        kind: 'completion',
+        completion: { status: 'completed', resultText: 'strict answer', truncated: true },
+      });
 
       const leaderName = events.find(
         (event) => event.kind === 'team.state',

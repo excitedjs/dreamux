@@ -63,7 +63,7 @@ import type { DreamuxConfig } from '../src/config/config.js';
 import type {
   AgentRuntimePathContext,
   AgentRuntimeStateCallbacks,
-  RuntimeTurnOutcome,
+  RuntimeSubmissionSettlement,
 } from '@excitedjs/dreamux-types';
 import type {
   ServerNotification,
@@ -508,7 +508,7 @@ describe('codex live integration', () => {
       const isolatedCodexHome = createIsolatedCodexHome(dir);
       const cwd = join(dir, 'cwd');
       const socketPath = join(dir, 'codex.sock');
-      let settledTurn: RuntimeTurnOutcome | undefined;
+      let settlement: RuntimeSubmissionSettlement | undefined;
       let client: RecordingCodexWsClient | null = null;
       const paths: AgentRuntimePathContext = {
         cacheDir: () => join(dir, 'cache'),
@@ -539,6 +539,9 @@ describe('codex live integration', () => {
           codexHomeDoctor: () => {
             /* real Codex auth is supplied through the isolated CODEX_HOME */
           },
+          // The live activity sink is required and installed before start; this
+          // gate asserts settlement, not activity, so it only has to exist.
+          activitySink: () => {},
         },
       );
 
@@ -579,14 +582,14 @@ describe('codex live integration', () => {
         if (admission.status !== 'submitted') {
           throw new Error(`portable structured-output turn was ${admission.status}`);
         }
-        void admission.turn.settled.then((outcome) => {
-          settledTurn = outcome;
+        void admission.submission.settled.then((next) => {
+          settlement = next;
         });
         try {
           await waitFor(
-            () => settledTurn !== undefined,
+            () => settlement !== undefined,
             120_000,
-            'portable structured-output turn settled',
+            'portable structured-output submission settled',
           );
         } catch (err) {
           const liveClient = client!;
@@ -599,22 +602,39 @@ describe('codex live integration', () => {
           );
         }
 
-        if (settledTurn?.status !== 'completed') {
+        // A real native result must arrive as a completion token. `stopped`
+        // and `{ kind: 'failed' }` are internal terminal states that carry no
+        // token at all, so they are failures of this gate, not results.
+        const completion =
+          settlement?.kind === 'completion' ? settlement.completion : null;
+        if (completion === null || completion.status !== 'completed') {
           const liveClient = client!;
-          const detail = settledTurn?.status === 'failed'
-            ? settledTurn.error.message
-            : 'no settlement error';
+          const label =
+            settlement === undefined
+              ? 'missing'
+              : settlement.kind === 'completion'
+                ? `completion:${settlement.completion.status}`
+                : settlement.kind;
+          const detail =
+            completion !== null && completion.status === 'failed'
+              ? completion.error.message
+              : settlement?.kind === 'failed'
+                ? settlement.error.message
+                : 'no settlement error';
           throw new Error(
-            `portable structured-output turn ${settledTurn?.status ?? 'missing'}: ` +
+            `portable structured-output submission ${label}: ` +
               `${detail}; ` +
               `recent notifications: ${notificationDebugSummary(liveClient)}`,
           );
         }
-        expect(settledTurn).toMatchObject({
+        // One send, one native result: the token displays through exactly the
+        // submission that produced it.
+        expect(completion.displaySubmission).toBe(admission.submission);
+        expect(completion).toMatchObject({
           status: 'completed',
           resultText: expect.any(String) as string,
         });
-        const resultText = settledTurn.resultText;
+        const resultText = completion.resultText;
         expect(resultText).not.toBeNull();
         expect(JSON.parse(resultText ?? '')).toEqual({
           kind: 'portable',

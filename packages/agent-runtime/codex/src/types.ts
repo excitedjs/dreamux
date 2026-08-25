@@ -117,6 +117,12 @@ export interface ItemCompletedNotification {
   item: ThreadItem;
 }
 
+export interface ItemStartedNotification {
+  threadId: string;
+  turnId: string;
+  item: ThreadItem;
+}
+
 /** JSON-RPC envelope shapes (codex omits the `jsonrpc` version field). */
 export interface RequestEnvelope {
   method: string;

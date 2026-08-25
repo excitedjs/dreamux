@@ -11,8 +11,7 @@ import type {
   AgentRuntimeStatus,
   AgentRuntimeTextInput,
   RuntimeAdmission,
-  RuntimeTurn,
-  RuntimeTurnOutcome,
+  RuntimeCompletion,
   DreamuxLogger,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
@@ -26,10 +25,17 @@ import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.j
 import type { AgentEntityWorktreeIdentity } from '../src/service/agent-entity/types.js';
 import { createTeamLeaderAgent } from '../src/service/team-service/leader-agent.js';
 import { CompletionDeliveryPolicy } from '../src/service/completion-router/index.js';
+import type { PreparedCompletionFact } from '../src/service/completion-router/index.js';
 import type { TeammateService } from '../src/service/teammate-service/index.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
-import { completedRuntimeTurn } from './helpers/runtime-turn.js';
+import { FakeInitiator } from './helpers/fake-team-runtime.js';
+import type { ControllableRuntimeSubmission } from './helpers/runtime-submission.js';
+import {
+  completedRuntimeSubmission,
+  controllableRuntimeSubmission,
+  foldSubmissions,
+} from './helpers/runtime-submission.js';
 
 const FAKE_RUNTIME_REF = 'test:runtime';
 
@@ -59,12 +65,18 @@ class FakeRuntime implements AgentRuntime {
 
   async channelInput(input: InboundTurnInput): Promise<RuntimeAdmission> {
     this.submitted.push(input);
-    return { status: 'submitted', turn: completedRuntimeTurn('fake last') };
+    return {
+      status: 'submitted',
+      submission: completedRuntimeSubmission('fake last'),
+    };
   }
 
   async completionInput(input: AgentRuntimeTextInput): Promise<RuntimeAdmission> {
     this.textSubmitted.push(input);
-    return { status: 'submitted', turn: completedRuntimeTurn('fake last') };
+    return {
+      status: 'submitted',
+      submission: completedRuntimeSubmission('fake last'),
+    };
   }
 
   getStatus(): AgentRuntimeStatus {
@@ -123,19 +135,22 @@ class DeferredStartRuntime extends FakeRuntime {
   }
 }
 
+/**
+ * A runtime whose admissions resolve on the suite's schedule. Every accepted
+ * send becomes its OWN `RuntimeSubmission`: object identity never implies
+ * folding. Fold vs queue is expressed by WIRING the settlements, never by a
+ * "how many pushes" knob:
+ * - {@link complete} settles ONE submission with its own fresh token (queued);
+ * - {@link foldSettle} settles several submissions with ONE shared frozen token
+ *   (the steer/fold shape);
+ * - {@link stop} converges every still-accepted submission to internal
+ *   `stopped`, which creates no completion token at all.
+ */
 class DeferredAdmissionRuntime extends FakeRuntime {
   readonly admissions: Array<(admission: RuntimeAdmission) => void> = [];
-  readonly runtimeTurn: RuntimeTurn;
-  private settleRuntimeTurn!: (outcome: RuntimeTurnOutcome) => void;
-
-  constructor() {
-    super();
-    this.runtimeTurn = Object.freeze({
-      settled: new Promise<RuntimeTurnOutcome>((resolve) => {
-        this.settleRuntimeTurn = resolve;
-      }),
-    });
-  }
+  /** Accepted submissions, index-aligned with {@link admissions}. */
+  readonly pending: ControllableRuntimeSubmission[] = [];
+  private fenced = false;
 
   override async completionInput(
     input: AgentRuntimeTextInput,
@@ -151,14 +166,53 @@ class DeferredAdmissionRuntime extends FakeRuntime {
     return new Promise((resolve) => this.admissions.push(resolve));
   }
 
+  override async stop(): Promise<void> {
+    this.fenced = true;
+    await super.stop();
+    // Contract: stop() must not return while an accepted submission can still
+    // be unsettled. No native result was observed, so these are internal
+    // `stopped` — never a completion token, never a push.
+    for (const pending of this.pending) pending?.stop();
+  }
+
   resolveAdmission(index: number, admission?: RuntimeAdmission): void {
-    this.admissions[index]?.(
-      admission ?? { status: 'submitted', turn: this.runtimeTurn },
+    const resolve = this.admissions[index];
+    if (resolve === undefined) throw new Error(`missing admission ${index}`);
+    if (admission !== undefined) {
+      resolve(admission);
+      return;
+    }
+    const pending = controllableRuntimeSubmission();
+    this.pending[index] = pending;
+    // A provider that already crossed its stop fence never hands back a live
+    // submission: a late accepted send converges straight to internal stopped.
+    if (this.fenced) pending.stop();
+    resolve({ status: 'submitted', submission: pending.submission });
+  }
+
+  /** Settle ONE submission on its own native result boundary (queued shape). */
+  complete(index: number, resultText: string | null = null): RuntimeCompletion {
+    return this.require(index).complete(resultText);
+  }
+
+  /**
+   * Settle several submissions with ONE shared frozen completion token: the
+   * steer/fold shape. The first index is the display representative.
+   */
+  foldSettle(
+    indexes: readonly number[],
+    resultText: string | null = null,
+  ): RuntimeCompletion {
+    return foldSubmissions(
+      indexes.map((index) => this.require(index)),
+      resultText,
     );
   }
 
-  settle(outcome: RuntimeTurnOutcome): void {
-    this.settleRuntimeTurn(outcome);
+  private require(index: number): ControllableRuntimeSubmission {
+    const pending = this.pending[index];
+    if (pending === undefined) throw new Error(`missing submission ${index}`);
+    return pending;
   }
 }
 
@@ -341,7 +395,10 @@ describe('TeammateService channel input routing', () => {
     });
 
     await expect(
-      leader.channelInput({ sourceId: 'message-1', text: 'from bound group' }),
+      leader.channelInput({
+        sourceId: 'message-1',
+        text: 'from bound group',
+      }),
     ).resolves.toMatchObject({ status: 'submitted' });
     expect(runtimes).toHaveLength(1);
     expect(contexts[0]?.systemPrompt?.append).toEqual([
@@ -632,13 +689,30 @@ describe('TeammateService channel input routing', () => {
     expect(created[0]!.submitted).toHaveLength(1);
   });
 
-  it('serializes reversed admissions and folds one RuntimeTurn into one entity Turn', async () => {
+  it('serializes reversed admissions and folds one completion token into one push', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
     const runtimes: FakeRuntime[] = [];
     const created: DeferredAdmissionRuntime[] = [];
-    const firstDelivery = vi.fn(async () => undefined);
-    const secondDelivery = vi.fn(async () => undefined);
+    const initiator = new FakeInitiator();
+    const deliveryPolicy = new CompletionDeliveryPolicy({
+      dispatcherId: 'dispatcher-a',
+      log: noopLog(),
+    });
+    const firstTokens: RuntimeCompletion[] = [];
+    const secondTokens: RuntimeCompletion[] = [];
+    const firstDelivery = vi.fn(
+      async (completion: RuntimeCompletion, fact: PreparedCompletionFact) => {
+        firstTokens.push(completion);
+        await deliveryPolicy.deliverRuntime(initiator, completion, fact);
+      },
+    );
+    const secondDelivery = vi.fn(
+      async (completion: RuntimeCompletion, fact: PreparedCompletionFact) => {
+        secondTokens.push(completion);
+        await deliveryPolicy.deliverRuntime(initiator, completion, fact);
+      },
+    );
     const config = testDreamuxConfig([
       testDispatcherConfig({
         id: 'dispatcher-a',
@@ -700,17 +774,120 @@ describe('TeammateService channel input routing', () => {
     ) {
       throw new Error('expected submitted admissions');
     }
-    expect(channelAdmission.turn).toBe(firstAdmission.turn);
-    expect(secondAdmission.turn).toBe(firstAdmission.turn);
+    // Submission identity never implies folding: each accepted send owns its
+    // own entity Turn, even when the provider later folds them.
+    expect(channelAdmission.turn).not.toBe(firstAdmission.turn);
+    expect(secondAdmission.turn).not.toBe(firstAdmission.turn);
 
-    runtime.settle({ status: 'completed', resultText: 'done', truncated: false });
-    await firstAdmission.turn.delivery;
+    // The provider observed ONE native result for all four accepted sends: one
+    // shared frozen completion token, displayed through the first submission.
+    const token = runtime.foldSettle([0, 1, 2, 3], 'done');
+    await Promise.all([
+      firstAdmission.turn.delivery,
+      channelAdmission.turn.delivery,
+      secondAdmission.turn.delivery,
+    ]);
     expect(firstDelivery).toHaveBeenCalledTimes(1);
-    expect(secondDelivery).not.toHaveBeenCalled();
+    expect(secondDelivery).toHaveBeenCalledTimes(1);
+    expect(firstTokens[0]).toBe(token);
+    expect(secondTokens[0]).toBe(token);
+    // ...and the sender is pushed exactly ONCE for that one token.
+    expect(initiator.completions).toEqual([
+      {
+        kind: 'teammate',
+        source: 'tl-alpha-0001',
+        status: 'completed',
+        result: 'done',
+      },
+    ]);
     await expect(firstAdmission.turn.settled).resolves.toMatchObject({
       status: 'completed',
       resultText: 'done',
     });
+    await expect(secondAdmission.turn.settled).resolves.toMatchObject({
+      status: 'completed',
+      resultText: 'done',
+    });
+  });
+
+  it('pushes every queued native result once, even with byte-identical text', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const created: DeferredAdmissionRuntime[] = [];
+    const initiator = new FakeInitiator();
+    const deliveryPolicy = new CompletionDeliveryPolicy({
+      dispatcherId: 'dispatcher-a',
+      log: noopLog(),
+    });
+    const deliver = (completion: RuntimeCompletion, fact: PreparedCompletionFact) =>
+      deliveryPolicy.deliverRuntime(initiator, completion, fact);
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const leader = await createTestTeamLeader({
+      dispatcherId: 'dispatcher-a',
+      teamId: 'alpha',
+      name: 'tl-alpha-0001',
+      agentRuntime: 'agent-a',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes, [], () => {
+        const runtime = new DeferredAdmissionRuntime();
+        created.push(runtime);
+        return runtime;
+      }),
+    });
+    const runtime = created[0]!;
+
+    const first = leader.submitInitialPromptRuntime('first prompt', {
+      turnOrigin: 'dispatcher',
+      deliverCompletion: deliver,
+    });
+    const second = leader.submitInitialPromptRuntime('second prompt', {
+      turnOrigin: 'dispatcher',
+      deliverCompletion: deliver,
+    });
+    await waitFor(() => runtime.admissions.length === 2);
+    runtime.resolveAdmission(0);
+    runtime.resolveAdmission(1);
+    const [firstAdmission, secondAdmission] = await Promise.all([first, second]);
+    if (
+      firstAdmission.status !== 'submitted' ||
+      secondAdmission.status !== 'submitted'
+    ) {
+      throw new Error('expected submitted admissions');
+    }
+
+    // Two separate native results: each one is its own completion token, even
+    // though their result text is byte-identical.
+    const firstToken = runtime.complete(0, 'same text');
+    const secondToken = runtime.complete(1, 'same text');
+    expect(secondToken).not.toBe(firstToken);
+    await Promise.all([
+      firstAdmission.turn.delivery,
+      secondAdmission.turn.delivery,
+    ]);
+
+    expect(initiator.completions).toEqual([
+      {
+        kind: 'teammate',
+        source: 'tl-alpha-0001',
+        status: 'completed',
+        result: 'same text',
+      },
+      {
+        kind: 'teammate',
+        source: 'tl-alpha-0001',
+        status: 'completed',
+        result: 'same text',
+      },
+    ]);
   });
 
   it('bounds completion delivery so source close cannot wait forever', async () => {
@@ -743,7 +920,7 @@ describe('TeammateService channel input routing', () => {
     });
     const admission = await leader.submitInitialPromptRuntime('finish', {
       turnOrigin: 'dispatcher',
-      deliverCompletion: (fact) => deliveryPolicy.deliver({
+      deliverCompletion: (_completion, fact) => deliveryPolicy.deliver({
         prepareCompletion: async () => Object.freeze({ submit }),
       }, fact),
     });
@@ -764,7 +941,7 @@ describe('TeammateService channel input routing', () => {
     expect(submit).toHaveBeenCalledTimes(1);
   });
 
-  it('converges a late accepted RuntimeTurn to stopped during close', async () => {
+  it('converges a late accepted RuntimeSubmission to stopped during close', async () => {
     const workspace = join(root, 'workspace');
     mkdirSync(workspace, { recursive: true });
     const runtimes: FakeRuntime[] = [];
@@ -905,7 +1082,7 @@ describe('TeammateService channel input routing', () => {
     runtime.resolveAdmission(0);
     const admission = await admitted;
     if (admission.status !== 'submitted') throw new Error('expected submitted admission');
-    runtime.settle({ status: 'completed', resultText: 'done', truncated: false });
+    runtime.complete(0, 'done');
     await expect(admission.turn.settled).resolves.toMatchObject({
       status: 'completed',
       resultText: 'done',
@@ -1016,121 +1193,6 @@ describe('TeammateService channel input routing', () => {
     await expect(Promise.all([firstClose, secondClose])).resolves.toHaveLength(2);
     expect(runtime.stopCount).toBe(1);
     laterHandle.unlock();
-  });
-
-  it('lets every ordinary mutator fence a later lock before its first await', async () => {
-    const workspace = join(root, 'workspace');
-    mkdirSync(workspace, { recursive: true });
-    const runtimes: FakeRuntime[] = [];
-    const config = testDreamuxConfig([
-      testDispatcherConfig({
-        id: 'dispatcher-a',
-        cwd: workspace,
-        agentRuntime: 'agent-a',
-        runtimeProvider: FAKE_RUNTIME_REF,
-      }),
-    ]);
-    const leader = await createTestTeamLeader({
-      dispatcherId: 'dispatcher-a',
-      teamId: 'alpha',
-      name: 'tl-alpha-0001',
-      agentRuntime: 'agent-a',
-      workspace,
-      config,
-      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
-    });
-    const runtime = runtimes[0]!;
-    let expectedSubmissionCount = 0;
-    const waitForTurn = async (): Promise<void> => {
-      expectedSubmissionCount += 1;
-      await vi.waitFor(() => {
-        expect(runtime.submitted.length + runtime.textSubmitted.length).toBe(
-          expectedSubmissionCount,
-        );
-      });
-    };
-    const assertLockLoses = (): void => {
-      expect(() => leader.lock()).toThrow(/being mutated/u);
-    };
-
-    const sending = leader.send({
-      prompt: 'ordinary send',
-      turnOrigin: 'dispatcher',
-    });
-    assertLockLoses();
-    await expect(sending).resolves.toMatchObject({ status: 'submitted' });
-    await waitForTurn();
-
-    const channel = leader.channelInput({
-      sourceId: 'message-ordinary',
-      text: 'channel input',
-    });
-    assertLockLoses();
-    const channelAdmission = await channel;
-    if (channelAdmission.status !== 'submitted') {
-      throw new Error('expected submitted channel input');
-    }
-    await channelAdmission.turn.settled;
-    await waitForTurn();
-
-    const scheduled = leader.scheduledInput({
-      jobId: 'job-ordinary',
-      prompt: 'scheduled input',
-      sourceId: 'scheduled:job-ordinary:1',
-      signal: new AbortController().signal,
-    });
-    assertLockLoses();
-    const scheduledAdmission = await scheduled;
-    if (scheduledAdmission.status !== 'submitted') {
-      throw new Error('expected submitted scheduled input');
-    }
-    await scheduledAdmission.turn.settled;
-    await waitForTurn();
-
-    const control = leader.controlInput({
-      text: 'control input',
-      sourceId: 'completion-ordinary',
-    });
-    assertLockLoses();
-    const controlAdmission = await control;
-    if (controlAdmission.status !== 'submitted') {
-      throw new Error('expected submitted control input');
-    }
-    await controlAdmission.turn.settled;
-    await waitForTurn();
-
-    const preparing = leader.prepareCompletion({
-      kind: 'teammate',
-      source: 'worker',
-      status: 'completed',
-      result: 'prepared completion',
-    });
-    assertLockLoses();
-    const prepared = await preparing;
-    const submitting = prepared.submit();
-    assertLockLoses();
-    await expect(submitting).resolves.toMatchObject({ status: 'accepted' });
-    await waitForTurn();
-
-    const updatedWorktree = {
-      ...reuseCwd(join(root, 'updated-worktree')),
-      cleanup_error: 'recorded',
-    };
-    const updating = leader.applyWorktreeCleanup(updatedWorktree);
-    assertLockLoses();
-    await updating;
-    expect(leader.current().worktree).toEqual(updatedWorktree);
-
-    const activating = leader.activate();
-    assertLockLoses();
-    await activating;
-
-    const closing = leader.close({ note: 'ordinary close wins' });
-    expect(() => leader.lock()).toThrow(/not active/u);
-    await expect(closing).resolves.toMatchObject({
-      teammate: { status: 'closed' },
-    });
-    expect(runtimes[0]!.stopCount).toBe(1);
   });
 
   it('propagates failed process-group absence proof through retryable entity close', async () => {

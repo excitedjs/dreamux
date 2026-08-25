@@ -83,6 +83,7 @@ instead of this decision index.
 - [npm-package-split-and-channel-targets](npm-package-split-and-channel-targets.md)
 - [npm-release-oidc](npm-release-oidc.md)
 - [provider-architecture-realignment](provider-architecture-realignment.md)
+- [provider-completion-token-routing](provider-completion-token-routing.md)
 - [provider-references-and-capability-registry](provider-references-and-capability-registry.md)
 - [providerized-config-state-compatibility](providerized-config-state-compatibility.md)
 - [runtime-run-root](runtime-run-root.md)

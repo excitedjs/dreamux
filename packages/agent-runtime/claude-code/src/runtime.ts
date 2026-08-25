@@ -11,8 +11,8 @@ import { skillAdapterKey } from './skill-adapter.js';
 import { materializeClaudeSkillAddDir } from './skill-materializer.js';
 import {
   type ClaudeCodeSession,
-  type TurnSubmitOptions,
 } from './supervisor.js';
+import type { ClaudeProtocolEvent, TurnSubmitOptions } from './types.js';
 import {
   DEFAULT_MESSAGE_ID_DEDUPE_WINDOW,
   renderChannelInput,
@@ -20,9 +20,13 @@ import {
 } from '@excitedjs/dreamux-utils';
 import { CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
 import { consoleFallbackLogger } from './logger.js';
-import { createRuntimeTurn } from './runtime-turn.js';
 import { ClaudeSteerAdmissionError } from './rpc.js';
 import type { ClaudeCodeRuntimeDeps } from './runtime-deps.js';
+import {
+  createRuntimeSubmission,
+  handleProtocolEvent,
+  type ActiveTurn,
+} from './runtime-submissions.js';
 import {
   asError,
   classifySteerFailure,
@@ -31,7 +35,6 @@ import {
 import {
   buildClaudeProcessEnv,
   resolveRuntimeTranscriptPath,
-  resultTextFromTurnOutcome,
 } from './runtime-session.js';
 import type {
   AgentRuntimeCapabilities,
@@ -42,19 +45,7 @@ import type {
   DreamuxLogger,
   InboundTurnInput,
   RuntimeAdmission,
-  RuntimeTurn,
-  RuntimeTurnOutcome,
 } from '@excitedjs/dreamux-types';
-interface ActiveTurn {
-  runtimeTurn: RuntimeTurn;
-  settle: (outcome: RuntimeTurnOutcome) => boolean;
-  pendingSteers: string[];
-  session: ClaudeCodeSession | null;
-  steerQueue: Promise<void>;
-  generation: number;
-  /** Options passed to the initial `submitTurn` for this logical turn. */
-  submitOptions?: TurnSubmitOptions;
-}
 
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -217,7 +208,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     if (this.stopTask !== null) return this.stopTask;
     this.stopped = true;
     this.generation += 1;
-    this.activeTurn?.settle({ status: 'stopped' });
+    if (this.activeTurn !== null) this.stopUnsettled(this.activeTurn);
     const task = this.stopRuntime();
     this.stopTask = task;
     try {
@@ -284,42 +275,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private async acceptTextInput(
     input: AgentRuntimeTextInput,
   ): Promise<RuntimeAdmission> {
-    if (this.stopped) return { status: 'stopped' };
-    // Plain-text teammate/completion turns share the same active steerable
-    // logical-turn slot as channel inbound (PR #282 E2E regression): a send
-    // that arrives while an earlier turn is still in-flight folds into that
-    // active turn via `steerTurn({ priority: 'next' })` and returns the same
-    // exact RuntimeTurn, aligned with the Codex active-slot semantics. This is
-    // the runtime-owned plain-text path — no channel/XML
-    // rendering is applied.
-    const active = this.activeTurn;
-    if (active !== null) {
-      try {
-        await this.steerActiveTurn(active, input.text);
-        return { status: 'submitted', turn: active.runtimeTurn };
-      } catch (err) {
-        return classifySteerFailure(err, this.stopped);
-      }
-    }
-    const runtimeTurn = createRuntimeTurn();
-    this.recordQueuedTurnStart();
-    const turn: ActiveTurn = {
-      runtimeTurn: runtimeTurn.turn,
-      settle: runtimeTurn.settle,
-      pendingSteers: [],
-      session: null,
-      steerQueue: Promise.resolve(),
-      generation: this.generation,
-      // Dreamux-owned plain text turns are real user turns, not synthetic
-      // system injections.
-      submitOptions: { isSynthetic: false },
-    };
-    this.activeTurn = turn;
-    void this.runActiveTurnOnQueue(input.text, turn).then(
-      (resultText) => this.markTurnSucceeded(turn, resultText),
-      (err) => this.markTurnFailed(turn, err),
-    );
-    return { status: 'submitted', turn: turn.runtimeTurn };
+    return this.acceptInput(input.text, { isSynthetic: false });
   }
 
   channelInput(input: InboundTurnInput): Promise<RuntimeAdmission> {
@@ -350,40 +306,57 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   }
 
   private async acceptChannelInput(text: string): Promise<RuntimeAdmission> {
+    return this.acceptInput(text);
+  }
+
+  private async acceptInput(
+    text: string,
+    submitOptions?: TurnSubmitOptions,
+  ): Promise<RuntimeAdmission> {
     if (this.stopped) return { status: 'stopped' };
+    const commandUuid = randomUUID();
+    const deferred = createRuntimeSubmission();
     const active = this.activeTurn;
     if (active !== null) {
+      active.submissions.set(commandUuid, deferred);
       try {
-        await this.steerActiveTurn(active, text);
-        return { status: 'submitted', turn: active.runtimeTurn };
-      } catch (err) {
-        return classifySteerFailure(err, this.stopped);
+        await this.steerActiveTurn(active, text, commandUuid);
+        return { status: 'submitted', submission: deferred.submission };
+      } catch (error) {
+        active.submissions.delete(commandUuid);
+        deferred.settle({ kind: 'failed', error: asError(error) });
+        return classifySteerFailure(error, this.stopped);
       }
     }
-    const runtimeTurn = createRuntimeTurn();
     this.recordQueuedTurnStart();
+    let resolveSession!: (session: ClaudeCodeSession) => void;
+    let rejectSession!: (error: Error) => void;
+    const sessionReady = new Promise<ClaudeCodeSession>((resolve, reject) => {
+      resolveSession = resolve;
+      rejectSession = reject;
+    });
+    void sessionReady.catch(() => undefined);
     const turn: ActiveTurn = {
-      runtimeTurn: runtimeTurn.turn,
-      settle: runtimeTurn.settle,
-      pendingSteers: [],
+      initialCommandUuid: commandUuid,
+      submissions: new Map([[commandUuid, deferred]]),
+      started: [],
+      completedCommands: new Set(),
+      activitySequence: 0,
+      tools: new Map(),
       session: null,
+      sessionReady,
+      resolveSession,
+      rejectSession,
       steerQueue: Promise.resolve(),
       generation: this.generation,
-      // Channel-initial turns carry no explicit submit options; the native
-      // `submitTurn(prompt)` call is unchanged from before the shared active-slot
-      // refactor (the existing test asserts `submitOptions[0]` is undefined).
+      ...(submitOptions !== undefined ? { submitOptions } : {}),
     };
     this.activeTurn = turn;
-    // Submit-then-serialize: return after accept (so the channel can ack
-    // promptly), run the turn on the serial queue. A turn failure cannot be
-    // returned to this caller without blocking the channel ack on full turn
-    // completion. Instead, a failed turn drives the runtime to `degraded` with a
-    // persisted `last_error` (visible via status/doctor) — never swallowed.
     void this.runActiveTurnOnQueue(text, turn).then(
-      (resultText) => this.markTurnSucceeded(turn, resultText),
+      () => this.markTurnSucceeded(turn),
       (err) => this.markTurnFailed(turn, err),
     );
-    return { status: 'submitted', turn: turn.runtimeTurn };
+    return { status: 'submitted', submission: deferred.submission };
   }
 
   private trackAdmission(
@@ -417,7 +390,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private runActiveTurnOnQueue(
     prompt: string,
     active: ActiveTurn,
-  ): Promise<string | null> {
+  ): Promise<void> {
     const run = this.queue.then(() => this.runActiveTurn(prompt, active));
     this.queue = run.then(
       () => undefined,
@@ -429,42 +402,34 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private async runActiveTurn(
     prompt: string,
     active: ActiveTurn,
-  ): Promise<string | null> {
+  ): Promise<void> {
     try {
       this.assertGeneration(active.generation);
       const session = await this.ensureSession();
       this.assertGeneration(active.generation);
-      const steers = active.pendingSteers.splice(0);
-      const fullPrompt =
-        steers.length === 0 ? prompt : [prompt, ...steers].join('\n\n');
-      const outcome = session.submitTurn(fullPrompt, active.submitOptions);
-      active.session = session;
-      const settled = await outcome;
-      this.assertGeneration(active.generation);
-      const resultText = resultTextFromTurnOutcome(
-        settled,
-        this.threadId,
-        this.deps.outputSchema !== undefined,
+      const outcome = session.submitTurn(
+        prompt,
+        active.submitOptions,
+        active.initialCommandUuid,
       );
+      active.session = session;
+      active.resolveSession(session);
+      await outcome;
+      this.assertGeneration(active.generation);
       this.log('info', 'claude-code turn completed');
-      return resultText;
     } finally {
       active.session = null;
       if (this.activeTurn === active) this.activeTurn = null;
-      active.pendingSteers = [];
     }
   }
 
   private async steerActiveTurn(
     active: ActiveTurn,
     prompt: string,
+    commandUuid: string,
   ): Promise<void> {
     this.assertGeneration(active.generation);
-    const session = active.session;
-    if (session === null) {
-      active.pendingSteers.push(prompt);
-      return;
-    }
+    const session = active.session ?? await active.sessionReady;
     const steer = active.steerQueue.then(() => {
       this.assertGeneration(active.generation);
       if (active.session !== session || this.session !== session) {
@@ -473,7 +438,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
           'claude-code session changed before live steer',
         );
       }
-      return session.steerTurn(prompt, { priority: 'next' });
+      return session.steerTurn(prompt, { priority: 'next' }, commandUuid);
     });
     active.steerQueue = steer.then(
       () => undefined,
@@ -485,14 +450,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 
   private async markTurnSucceeded(
     turn: ActiveTurn,
-    resultText: string | null,
   ): Promise<void> {
     this.recordQueuedTurnEnd();
-    turn.settle({
-      status: 'completed',
-      resultText,
-      truncated: false,
-    });
+    this.stopUnsettled(turn);
     if (this.stopped) return;
     if (this.status !== 'ready') await this.setStatus('ready');
   }
@@ -500,21 +460,25 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private async markTurnFailed(turn: ActiveTurn, err: unknown): Promise<void> {
     this.recordQueuedTurnEnd();
     this.log('error', 'claude-code turn failed', err);
+    turn.rejectSession(asError(err));
     // A turn that fails after stop() was requested (the resident child is being
     // torn down) is a `stopped` settlement; otherwise it is a genuine `failed`.
     // Fire before the stopped early-return so an interrupted teammate turn is
     // never lost.
-    turn.settle(
-      this.stopped
-        ? { status: 'stopped' }
-        : {
-            status: 'failed',
-            error: err instanceof Error ? err : new Error(String(err)),
-          },
-    );
+    for (const deferred of turn.submissions.values()) {
+      deferred.settle(this.stopped
+        ? { kind: 'stopped' }
+        : { kind: 'failed', error: asError(err) });
+    }
     if (this.stopped) return;
     // Surface the failure as durable runtime state rather than swallowing it.
     await this.setStatus('degraded', err);
+  }
+
+  private stopUnsettled(turn: ActiveTurn): void {
+    for (const deferred of turn.submissions.values()) {
+      deferred.settle({ kind: 'stopped' });
+    }
   }
 
   private recordQueuedTurnStart(): void {
@@ -593,6 +557,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
             this.log('info', `claude-code remote control URL: ${url}`);
           }
         : undefined,
+      onProtocolEvent: (event) => this.onProtocolEvent(event),
       log: (level, msg, err) => this.log(level, msg, err),
     });
     session.setOnExit(() => {
@@ -663,6 +628,17 @@ export class ClaudeCodeRuntime implements AgentRuntime {
         new Error('claude resident child exited'),
       );
     }
+  }
+
+  private onProtocolEvent(event: ClaudeProtocolEvent): void {
+    const active = this.activeTurn;
+    if (active === null) return;
+    handleProtocolEvent(active, event, {
+      threadId: this.threadId,
+      outputSchemaEnabled: this.deps.outputSchema !== undefined,
+      activitySink: this.deps.activitySink,
+      log: (level, message, error) => this.log(level, message, error),
+    });
   }
   private assertGeneration(generation: number): void {
     if (this.stopped || generation !== this.generation) {

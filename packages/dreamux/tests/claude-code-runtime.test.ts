@@ -8,6 +8,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -51,8 +52,9 @@ import type {
   AgentRuntimeSystemPrompt,
   DreamuxLogger,
   RuntimeAdmission,
-  RuntimeTurn,
-  RuntimeTurnOutcome,
+  RuntimeCompletion,
+  RuntimeSubmission,
+  RuntimeSubmissionSettlement,
 } from '@excitedjs/dreamux-types';
 
 const noopLogger: DreamuxLogger = {
@@ -111,6 +113,29 @@ function pinnedSessionId(spec: ClaudeCodeSessionSpec): string | null {
   return null;
 }
 
+/**
+ * The native result no longer travels back through the `submitTurn` promise —
+ * that promise now only reports "every accepted command drained". Attribution
+ * and settlement travel over the `onProtocolEvent` seam instead, so a faithful
+ * session double has to replay the same two protocol facts the resident CLI
+ * emits: a `command_lifecycle` `started` that names which submitted commands
+ * the next result speaks for, then the `result` envelope itself.
+ */
+function emitCommandStarted(
+  spec: ClaudeCodeSessionSpec,
+  commandUuid: string,
+): void {
+  spec.onProtocolEvent?.({
+    kind: 'command_lifecycle',
+    commandUuid,
+    state: 'started',
+  });
+}
+
+function emitResult(spec: ClaudeCodeSessionSpec, outcome: TurnOutcome): void {
+  spec.onProtocolEvent?.({ kind: 'result', outcome });
+}
+
 /** A fake resident session: records turns, plays a scripted outcome sequence. */
 interface FakeSession extends ClaudeCodeSession {
   readonly spec: ClaudeCodeSessionSpec;
@@ -160,20 +185,24 @@ function fakeFleet(
       setOnExit(handler) {
         onExit = handler;
       },
-      async submitTurn(prompt, options) {
+      async submitTurn(prompt, options, commandUuid = randomUUID()) {
         prompts.push(prompt);
         submitOptions.push(options);
         const outcome = outcomes[Math.min(turnIndex, outcomes.length - 1)];
         turnIndex += 1;
         if (outcome instanceof Error) throw outcome;
-        return {
-          ...outcome,
-          sessionId: pinnedSessionId(spec),
-        } as TurnOutcome;
+        // Publish the result BEFORE resolving: the runtime drops protocol
+        // events once `submitTurn` resolves and it releases the active turn.
+        emitCommandStarted(spec, commandUuid);
+        emitResult(spec, { ...outcome, sessionId: pinnedSessionId(spec) });
       },
-      async steerTurn(prompt, options) {
+      async steerTurn(prompt, options, commandUuid = randomUUID()) {
         prompts.push(prompt);
         submitOptions.push(options);
+        // A live steer joins the in-flight command group; the CLI announces it
+        // with its own `started`, and the next `result` then speaks for every
+        // started command at once.
+        emitCommandStarted(spec, commandUuid);
       },
       async stop() {
         alive = false;
@@ -189,14 +218,35 @@ function fakeFleet(
   return { factory, sessions };
 }
 
+function fleetFromFactory(factory: ClaudeCodeSessionFactory): FakeFleet {
+  const sessions: FakeSession[] = [];
+  return {
+    sessions,
+    factory: (spec) => {
+      const session = factory(spec) as FakeSession;
+      sessions.push(session);
+      return session;
+    },
+  };
+}
+
+/**
+ * A fleet whose native result is released by the TEST, not by `submitTurn`.
+ *
+ * `submitTurn` announces its `command_lifecycle` `started` immediately and then
+ * parks: while it is parked the runtime still owns an active turn, so later
+ * sends take the live-steer path and join the SAME command group. `resolveNext`
+ * publishes the one `result` envelope that speaks for every started command and
+ * only then drains the submit promise — the same ordering the real resident CLI
+ * produces, and the ordering the runtime requires (it drops protocol events once
+ * it releases the active turn).
+ */
 function controllableFleet(): FakeFleet & {
   resolveNext(outcome?: TurnOutcome): void;
-  rejectNext(error: Error): void;
 } {
   const sessions: FakeSession[] = [];
-  let pendingResolve: ((outcome: TurnOutcome) => void) | null = null;
-  let pendingReject: ((error: Error) => void) | null = null;
-  let pendingSessionId: string | null = null;
+  let pendingResolve: (() => void) | null = null;
+  let pendingResult: ((outcome: TurnOutcome) => void) | null = null;
   const factory: ClaudeCodeSessionFactory = (spec) => {
     let alive = false;
     let starts = 0;
@@ -216,18 +266,20 @@ function controllableFleet(): FakeFleet & {
       setOnExit(handler) {
         onExit = handler;
       },
-      async submitTurn(prompt, options) {
+      async submitTurn(prompt, options, commandUuid = randomUUID()) {
         prompts.push(prompt);
         submitOptions.push(options);
-        return new Promise<TurnOutcome>((resolve, reject) => {
+        emitCommandStarted(spec, commandUuid);
+        return new Promise<void>((resolve) => {
           pendingResolve = resolve;
-          pendingReject = reject;
-          pendingSessionId = pinnedSessionId(spec);
+          pendingResult = (outcome) =>
+            emitResult(spec, { ...outcome, sessionId: pinnedSessionId(spec) });
         });
       },
-      async steerTurn(prompt, options) {
+      async steerTurn(prompt, options, commandUuid = randomUUID()) {
         prompts.push(prompt);
         submitOptions.push(options);
+        emitCommandStarted(spec, commandUuid);
       },
       async stop() {
         alive = false;
@@ -244,30 +296,33 @@ function controllableFleet(): FakeFleet & {
     factory,
     sessions,
     resolveNext(outcome = okOutcome()) {
-      pendingResolve?.({ ...outcome, sessionId: pendingSessionId });
+      pendingResult?.(outcome);
+      pendingResolve?.();
       pendingResolve = null;
-      pendingReject = null;
-      pendingSessionId = null;
-    },
-    rejectNext(error: Error) {
-      pendingReject?.(error);
-      pendingResolve = null;
-      pendingReject = null;
-      pendingSessionId = null;
+      pendingResult = null;
     },
   };
 }
 
-function fleetFromFactory(factory: ClaudeCodeSessionFactory): FakeFleet {
-  const sessions: FakeSession[] = [];
-  return {
-    sessions,
-    factory: (spec) => {
-      const session = factory(spec) as FakeSession;
-      sessions.push(session);
-      return session;
-    },
-  };
+/** Narrow an admission to the one accepted submission it carries. */
+function submittedSubmission(admission: RuntimeAdmission): RuntimeSubmission {
+  if (admission.status !== 'submitted') {
+    throw new Error(`expected a submitted admission, got ${admission.status}`);
+  }
+  return admission.submission;
+}
+
+/**
+ * Narrow a settlement to the provider-observed completion token it carries.
+ * `{kind:'failed'}` and `{kind:'stopped'}` deliberately carry NO token.
+ */
+function expectCompletion(
+  settlement: RuntimeSubmissionSettlement,
+): RuntimeCompletion {
+  if (settlement.kind !== 'completion') {
+    throw new Error(`expected a completion settlement, got ${settlement.kind}`);
+  }
+  return settlement.completion;
 }
 
 // 10s, not 2s: loaded shared CI runners (macOS especially) can stall a forked
@@ -401,25 +456,6 @@ describe('builtin:claude-code provider', () => {
   });
 });
 
-function observeRuntimeTurnOutcomes(
-  runtime: AgentRuntime,
-  observe: (outcome: RuntimeTurnOutcome) => void,
-): void {
-  const seen = new WeakSet<RuntimeTurn>();
-  const capture = (admission: RuntimeAdmission): RuntimeAdmission => {
-    if (admission.status === 'submitted' && !seen.has(admission.turn)) {
-      seen.add(admission.turn);
-      void admission.turn.settled.then(observe);
-    }
-    return admission;
-  };
-  const channelInput = runtime.channelInput.bind(runtime);
-  const completionInput = runtime.completionInput.bind(runtime);
-  runtime.channelInput = async (input) => capture(await channelInput(input));
-  runtime.completionInput = async (input) =>
-    capture(await completionInput(input));
-}
-
 describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
   let home: string;
   let previousHome: string | undefined;
@@ -445,7 +481,6 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     fleet: FakeFleet,
     opts: {
       resumeSession?: string;
-      observeOutcome?: (settled: RuntimeTurnOutcome) => void;
       systemPrompt?: AgentRuntimeSystemPrompt;
       skillSources?: AgentRuntimeSkillSource[];
       disableFeatures?: readonly string[];
@@ -506,6 +541,9 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       mcpServers: [FEISHU_MCP],
       state,
       paths: hostRuntimePaths,
+      // Required by the create context: the sink is installed before start so
+      // no native activity fact can be produced without a live consumer.
+      activitySink: () => {},
       ...(opts.systemPrompt !== undefined ? { systemPrompt: opts.systemPrompt } : {}),
       ...(opts.skillSources !== undefined
         ? { skillSources: opts.skillSources }
@@ -516,9 +554,6 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       outputSchema: opts.outputSchema,
       ...(opts.logger !== undefined ? { logger: opts.logger } : {}),
     });
-    if (opts.observeOutcome !== undefined) {
-      observeRuntimeTurnOutcomes(runtime, opts.observeOutcome);
-    }
     runtimes.push(runtime);
     return {
       runtime,
@@ -845,321 +880,6 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(fleet.sessions[0]?.prompts).toHaveLength(1);
   });
 
-  it('steers follow-up sends into the active channel turn and settles once', async () => {
-    const settled: RuntimeTurnOutcome[] = [];
-    const fleet = controllableFleet();
-    const { runtime } = await makeRuntime(fleet, {
-      observeOutcome: (outcome) => settled.push(outcome),
-    });
-    await runtime.start();
-
-    const first = await runtime.channelInput({ sourceId: 'm1', text: 'first' });
-    expect(first.status).toBe('submitted');
-    await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
-
-    const second = await runtime.channelInput({ sourceId: 'm2', text: 'second' });
-    const third = await runtime.channelInput({ sourceId: 'm3', text: 'third' });
-    expect(second.status).toBe('submitted');
-    expect(third.status).toBe('submitted');
-    if (
-      first.status !== 'submitted' ||
-      second.status !== 'submitted' ||
-      third.status !== 'submitted'
-    ) {
-      throw new Error('expected submitted admissions');
-    }
-    expect(second.turn).toBe(first.turn);
-    expect(third.turn).toBe(first.turn);
-    expect(fleet.sessions[0]?.prompts).toEqual(['first', 'second', 'third']);
-    expect(fleet.sessions[0]?.submitOptions).toEqual([
-      undefined,
-      { priority: 'next' },
-      { priority: 'next' },
-    ]);
-
-    fleet.resolveNext(okOutcome('session-abc'));
-    await waitFor(() => settled.length === 1);
-    expect(settled).toEqual([
-      {
-        status: 'completed',
-        resultText: 'done',
-        truncated: false,
-      },
-    ]);
-  });
-
-  it('folds Dreamux-owned completionInput sends into the active logical turn', async () => {
-    // PR #282 E2E regression: spawn a TeamMate turn that does `sleep 30`, then
-    // `send` two follow-ups (S30_B, S30_C) while the first is in-flight. Before
-    // the fix each `send` (which routes through `completionInput`) created its
-    // own logical turn + its own completion, so B/C produced "收到 S30_B" /
-    // "收到 S30_C" instead of folding into the active turn. The runtime must
-    // treat `completionInput` the same way it already treated `channelInput`:
-    // same active steerable slot, same RuntimeTurn object, one outcome.
-    const settled: RuntimeTurnOutcome[] = [];
-    const fleet = controllableFleet();
-    const { runtime } = await makeRuntime(fleet, {
-      observeOutcome: (outcome) => settled.push(outcome),
-    });
-    await runtime.start();
-
-    const first = await runtime.completionInput({
-      text: 'sleep 30; echo CLAUDE_SLEEP30_BURST_FINAL tokens=S30_A,S30_B,S30_C',
-      sourceId: 'send:mate-1:first',
-    });
-    expect(first.status).toBe('submitted');
-    await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
-
-    const second = await runtime.completionInput({
-      text: 'S30_B',
-      sourceId: 'send:mate-1:second',
-    });
-    const third = await runtime.completionInput({
-      text: 'S30_C',
-      sourceId: 'send:mate-1:third',
-    });
-    // Both follow-ups fold into the active logical Turn object.
-    expect(second.status).toBe('submitted');
-    expect(third.status).toBe('submitted');
-    if (
-      first.status !== 'submitted' ||
-      second.status !== 'submitted' ||
-      third.status !== 'submitted'
-    ) {
-      throw new Error('expected submitted admissions');
-    }
-    expect(second.turn).toBe(first.turn);
-    expect(third.turn).toBe(first.turn);
-
-    // The first prompt is the original send; S30_B and S30_C are steered in
-    // with `priority: 'next'` (the Codex-aligned active-slot semantics).
-    expect(fleet.sessions[0]?.prompts).toEqual([
-      'sleep 30; echo CLAUDE_SLEEP30_BURST_FINAL tokens=S30_A,S30_B,S30_C',
-      'S30_B',
-      'S30_C',
-    ]);
-    expect(fleet.sessions[0]?.submitOptions).toEqual([
-      { isSynthetic: false },
-      { priority: 'next' },
-      { priority: 'next' },
-    ]);
-
-    // A single logical turn settles.
-    fleet.resolveNext(okOutcome('session-abc'));
-    await waitFor(() => settled.length === 1);
-    if (first.status !== 'submitted') {
-      throw new Error('expected first submitted');
-    }
-    expect(settled).toEqual([
-      {
-        status: 'completed',
-        resultText: 'done',
-        truncated: false,
-      },
-    ]);
-  });
-
-  it('folds a channel inbound into an active completionInput turn', async () => {
-    // The active slot is shared, not channel-only: a Dreamux-owned send that
-    // started the turn must also accept channel-XML inbound as a steer. When
-    // Hold the first native outcome open so the steer deterministically reaches
-    // the same active logical Turn.
-    const settled: RuntimeTurnOutcome[] = [];
-    const fleet = controllableFleet();
-    const { runtime } = await makeRuntime(fleet, {
-      observeOutcome: (outcome) => settled.push(outcome),
-    });
-    await runtime.start();
-
-    const first = await runtime.completionInput({
-      text: 'first send',
-      sourceId: 'send:mate-1:first',
-    });
-    expect(first.status).toBe('submitted');
-    await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
-
-    const second = await runtime.channelInput({
-      sourceId: 'm-inbound',
-      text: 'inbound follow-up',
-      body: 'inbound follow-up',
-      source: 'feishu',
-      attrs: [
-        ['chat_id', 'oc:chat-1'],
-        ['message_id', 'om:msg-2'],
-      ],
-    });
-    // Channel inbound folds into the active turn and returns the same object.
-    expect(second.status).toBe('submitted');
-    if (first.status !== 'submitted' || second.status !== 'submitted') {
-      throw new Error('expected submitted admissions');
-    }
-    expect(second.turn).toBe(first.turn);
-
-    fleet.resolveNext();
-    await waitFor(() => settled.length === 1);
-    // The same logical turn carries both the original plain text and the
-    // channel-rendered inbound. Depending on the resident-session scheduling
-    // point, the steer is either joined into the initial prompt or submitted
-    // as the next native message; both are one RuntimeTurn.
-    const modelInput = fleet.sessions[0]?.prompts.join('\n\n') ?? '';
-    expect(modelInput).toContain('first send');
-    expect(modelInput).toContain('<channel source="feishu"');
-    expect(modelInput).toContain('inbound follow-up');
-    // The initial completionInput turn is a real user turn, not synthetic.
-    expect(fleet.sessions[0]?.submitOptions[0]).toEqual({ isSynthetic: false });
-    if (first.status !== 'submitted') {
-      throw new Error('expected first submitted');
-    }
-    expect(settled[0]).toMatchObject({ status: 'completed' });
-  });
-
-  it('starts a fresh logical turn for completionInput after the prior turn settled', async () => {
-    // Sequential submissions receive distinct logical Turn objects.
-    const settled: RuntimeTurnOutcome[] = [];
-    const fleet = fakeFleet([okOutcome('session-abc'), okOutcome('session-abc')]);
-    const { runtime } = await makeRuntime(fleet, {
-      observeOutcome: (outcome) => settled.push(outcome),
-    });
-    await runtime.start();
-
-    const first = await runtime.completionInput({
-      text: 'first',
-      sourceId: 'send:mate-1:first',
-    });
-    await waitFor(() => settled.length === 1);
-    const second = await runtime.completionInput({
-      text: 'second',
-      sourceId: 'send:mate-1:second',
-    });
-    await waitFor(() => settled.length === 2);
-
-    expect(first.status).toBe('submitted');
-    expect(second.status).toBe('submitted');
-    if (first.status !== 'submitted' || second.status !== 'submitted') {
-      throw new Error('expected submitted turns');
-    }
-    expect(first.turn).not.toBe(second.turn);
-    expect(settled.map((outcome) => outcome.status)).toEqual([
-      'completed',
-      'completed',
-    ]);
-  });
-
-  it('does not reuse the prior successful result for a later empty successful turn', async () => {
-    const settled: RuntimeTurnOutcome[] = [];
-    const fleet = fakeFleet([
-      okOutcome('session-abc'),
-      { ...okOutcome('session-abc'), text: '' },
-    ]);
-    const { runtime } = await makeRuntime(fleet, {
-      observeOutcome: (outcome) => settled.push(outcome),
-    });
-    await runtime.start();
-
-    await runtime.channelInput({ sourceId: 'm1', text: 'first' });
-    await waitFor(() => settled.length === 1);
-    await runtime.channelInput({ sourceId: 'm2', text: 'second' });
-    await waitFor(() => settled.length === 2);
-
-    expect(settled.map((outcome) =>
-      outcome.status === 'completed' ? outcome.resultText : null,
-    )).toEqual(['done', null]);
-  });
-
-  it('starts a fresh logical turn for a sequential send after the previous turn completed', async () => {
-    const settled: RuntimeTurnOutcome[] = [];
-    const fleet = fakeFleet([okOutcome('session-abc'), okOutcome('session-abc')]);
-    const { runtime } = await makeRuntime(fleet, {
-      observeOutcome: (outcome) => settled.push(outcome),
-    });
-    await runtime.start();
-
-    const first = await runtime.channelInput({ sourceId: 'm1', text: 'first' });
-    await waitFor(() => settled.length === 1);
-    const second = await runtime.channelInput({ sourceId: 'm2', text: 'second' });
-    await waitFor(() => settled.length === 2);
-
-    expect(first.status).toBe('submitted');
-    expect(second.status).toBe('submitted');
-    if (first.status !== 'submitted' || second.status !== 'submitted') {
-      throw new Error('expected submitted turns');
-    }
-    expect(first.turn).not.toBe(second.turn);
-    expect(settled.map((outcome) => outcome.status)).toEqual([
-      'completed',
-      'completed',
-    ]);
-  });
-
-  it('does not reuse logical Turn objects across resumed runtime instances', async () => {
-    const firstSettled: RuntimeTurnOutcome[] = [];
-    const firstRuntime = await makeRuntime(fakeFleet([okOutcome('session-abc')]), {
-      observeOutcome: (outcome) => firstSettled.push(outcome),
-    });
-    await firstRuntime.runtime.start();
-    const first = await firstRuntime.runtime.channelInput({
-      sourceId: 'm1',
-      text: 'first',
-    });
-    await waitFor(() => firstSettled.length === 1);
-
-    const secondSettled: RuntimeTurnOutcome[] = [];
-    const secondRuntime = await makeRuntime(fakeFleet([okOutcome('session-abc')]), {
-      resumeSession: TEST_SESSION_ID,
-      observeOutcome: (outcome) => secondSettled.push(outcome),
-    });
-    await secondRuntime.runtime.start();
-    const second = await secondRuntime.runtime.channelInput({
-      sourceId: 'm2',
-      text: 'second',
-    });
-    await waitFor(() => secondSettled.length === 1);
-
-    expect(first.status).toBe('submitted');
-    expect(second.status).toBe('submitted');
-    if (first.status !== 'submitted' || second.status !== 'submitted') {
-      throw new Error('expected submitted turns');
-    }
-    expect(first.turn).not.toBe(second.turn);
-  });
-
-  it('delivers completionInput as a plain user turn', async () => {
-    const fleet = controllableFleet();
-    const { runtime } = await makeRuntime(fleet);
-    await runtime.start();
-
-    const deliveryPromise = runtime.completionInput({
-      text: 'TeamMate reviewer has finished its task. Output below:\n\nall done',
-      sourceId: 'completion:mate-1',
-    });
-    // The turn is queued but the session outcome is NOT resolved yet.
-    // The delivery should return submitted immediately (submit-then-serialize),
-    // decoupled from model thinking time.
-    const result = await deliveryPromise;
-    expect(result).toMatchObject({ status: 'submitted' });
-    if (result.status !== 'submitted') {
-      throw new Error('expected submitted completionInput result');
-    }
-    expect(result.turn).toEqual(expect.objectContaining({
-      settled: expect.any(Promise),
-    }));
-
-    // Admission returns before the resident session has necessarily installed
-    // its native outcome resolver. Wait for native submission, then resolve it
-    // so teardown never races an unresolved fake Turn.
-    await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
-    fleet.resolveNext(okOutcome('session-abc'));
-    await result.turn.settled;
-
-    const prompt = fleet.sessions[0]?.prompts[0] ?? '';
-    expect(prompt).toBe('TeamMate reviewer has finished its task. Output below:\n\nall done');
-    expect(prompt).not.toContain('<task-notification>');
-    expect(prompt).not.toContain('<task-id>');
-    expect(prompt).not.toContain('<teammate_session_completion');
-    // Delivered as ordinary input, NOT a synthetic notification.
-    expect(fleet.sessions[0]?.submitOptions[0]).toEqual({ isSynthetic: false });
-  });
-
   it('returns the structural unsupported-feature error for outputSchema', async () => {
     const { runtime } = await makeRuntime(fakeFleet());
     await runtime.start();
@@ -1195,38 +915,6 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     const flagIndex = args.indexOf('--json-schema');
     expect(flagIndex).toBeGreaterThanOrEqual(0);
     expect(args[flagIndex + 1]).toBe(JSON.stringify(schema));
-  });
-
-  it('fails a completed schema turn that lacks native structured_output', async () => {
-    const settled: RuntimeTurnOutcome[] = [];
-    const schema = {
-      type: 'object',
-      properties: { answer: { type: 'string' } },
-      required: ['answer'],
-      additionalProperties: false,
-    };
-    const fleet = fakeFleet([okOutcome('session-abc')]);
-    const { runtime } = await makeRuntime(fleet, {
-      outputSchema: schema,
-      observeOutcome: (outcome) => settled.push(outcome),
-    });
-    await runtime.start();
-
-    await expect(runtime.completionInput({
-      text: 'return structured output',
-      sourceId: 'completion:schema-native',
-      outputSchema: schema,
-    })).resolves.toMatchObject({ status: 'submitted' });
-    await waitFor(() => settled.length === 1);
-
-    expect(settled).toEqual([
-      expect.objectContaining({
-        status: 'failed',
-        error: expect.objectContaining({
-          message: expect.stringContaining('did not return structured_output'),
-        }),
-      }),
-    ]);
   });
 
   it('omits --json-schema when no create-context schema is set', async () => {
@@ -1333,21 +1021,48 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(store.get('flow')?.last_error).toContain('turn boom');
   });
 
-  it('surfaces an error result envelope as a degraded turn', async () => {
+  it('surfaces an error result envelope as a failed completion, not runtime degradation', async () => {
+    // Contract change: a native `result` carrying an error subtype IS a real
+    // provider-observed completion boundary. It now settles the submission with
+    // an opaque `failed` completion token routed back to the sender, instead of
+    // the pre-split behaviour where the error escaped through the submitTurn
+    // promise and degraded the whole runtime. `{kind:'failed'}` stays reserved
+    // for internal terminal states that produce no completion token at all.
     const fleet = fakeFleet([
       { isError: true, text: '', sessionId: 'session-abc', subtype: 'error_during_execution', errors: ['model overloaded'], hasStructuredOutput: false },
     ]);
     const { runtime, store } = await makeRuntime(fleet);
     await runtime.start();
-    await runtime.channelInput({
+    const admission = await runtime.channelInput({
       sourceId: 'm1',
       text: 'go',
     });
-    await waitFor(() =>
-      runtime.getStatus() === 'degraded' &&
-      (store.get('flow')?.last_error?.includes('model overloaded') ?? false),
-    );
-    expect(store.get('flow')?.last_error).toContain('model overloaded');
+    if (admission.status !== 'submitted') {
+      throw new Error(`expected submitted, got ${admission.status}`);
+    }
+
+    const settlement = await admission.submission.settled;
+    if (settlement.kind !== 'completion') {
+      throw new Error(`expected a completion settlement, got ${settlement.kind}`);
+    }
+    const { completion } = settlement;
+    if (completion.status !== 'failed') {
+      throw new Error(`expected a failed completion, got ${completion.status}`);
+    }
+    expect(completion.error.message).toContain('model overloaded');
+    // The token is frozen, provider-owned, and displays through the one
+    // submission that represents this native stream.
+    expect(completion.displaySubmission).toBe(admission.submission);
+    expect(Object.isFrozen(completion)).toBe(true);
+
+    // The turn drained normally: an error result is a per-completion outcome,
+    // so the resident runtime stays healthy and records no last_error. The
+    // extra tick gives an (incorrect) asynchronous degrade time to land, since
+    // markTurnFailed releases waitIdle before it persists `degraded`.
+    await runtime.waitIdle?.();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(runtime.getStatus()).toBe('ready');
+    expect(store.get('flow')?.last_error).toBeNull();
   });
 
   it('recovers to ready after a failed turn is followed by a successful one', async () => {
@@ -1365,44 +1080,6 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       sourceId: 'm2',
       text: 'second',
     });
-    await waitFor(() => runtime.getStatus() === 'ready');
-  });
-
-  it('degrades on an unexpected child exit and re-spawns (with --resume) on the next turn', async () => {
-    const fleet = fakeFleet([okOutcome('session-abc'), okOutcome('session-abc')]);
-    const { runtime, store } = await makeRuntime(fleet);
-    await runtime.start();
-
-    // First turn establishes the session id.
-    const first = await runtime.channelInput({
-      sourceId: 'm1',
-      text: 'first',
-    });
-    if (first.status !== 'submitted') throw new Error(first.status);
-    await expect(first.turn.settled).resolves.toMatchObject({
-      status: 'completed',
-    });
-    await waitFor(() => (runtime.getCheckpoint()?.id ?? null) === TEST_SESSION_ID);
-
-    // The resident child dies unexpectedly → degraded.
-    fleet.sessions[0]?.triggerExit();
-    await waitFor(() =>
-      runtime.getStatus() === 'degraded' &&
-      (store.get('flow')?.last_error?.includes('exited') ?? false),
-    );
-    expect(store.get('flow')?.last_error).toContain('exited');
-
-    // Next turn re-spawns a fresh session that resumes the captured session id.
-    await runtime.channelInput({
-      sourceId: 'm2',
-      text: 'second',
-    });
-    await waitFor(() => fleet.sessions.length === 2);
-    const respawn = fleet.sessions[1]!;
-    expect(respawn.spec.args.slice(
-      respawn.spec.args.indexOf('--resume'),
-      respawn.spec.args.indexOf('--resume') + 2,
-    )).toEqual(['--resume', TEST_SESSION_ID]);
     await waitFor(() => runtime.getStatus() === 'ready');
   });
 
@@ -1469,44 +1146,421 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
     expect(store.get('flow')?.last_error).toContain('delivery boom');
   });
 
-  it('settles the submitted RuntimeTurn as completed', async () => {
-    const settled: RuntimeTurnOutcome[] = [];
-    const fleet = fakeFleet([okOutcome('session-abc')]);
-    const { runtime } = await makeRuntime(fleet, {
-      observeOutcome: (outcome) => settled.push(outcome),
+  it('steers follow-up sends into the active channel turn and settles once', async () => {
+    const fleet = controllableFleet();
+    const { runtime } = await makeRuntime(fleet);
+    await runtime.start();
+
+    const first = await runtime.channelInput({ sourceId: 'm1', text: 'first' });
+    expect(first.status).toBe('submitted');
+    await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
+
+    const second = await runtime.channelInput({ sourceId: 'm2', text: 'second' });
+    const third = await runtime.channelInput({ sourceId: 'm3', text: 'third' });
+    expect(second.status).toBe('submitted');
+    expect(third.status).toBe('submitted');
+    const submissions = [first, second, third].map(submittedSubmission);
+    // Every accepted send gets its OWN submission — object identity never
+    // implies folding under the locked contract.
+    expect(submissions[1]).not.toBe(submissions[0]);
+    expect(submissions[2]).not.toBe(submissions[0]);
+
+    expect(fleet.sessions[0]?.prompts).toEqual(['first', 'second', 'third']);
+    expect(fleet.sessions[0]?.submitOptions).toEqual([
+      undefined,
+      { priority: 'next' },
+      { priority: 'next' },
+    ]);
+
+    fleet.resolveNext(okOutcome('session-abc'));
+    const completions = await Promise.all(
+      submissions.map(async (submission) =>
+        expectCompletion(await submission.settled),
+      ),
+    );
+    // ONE native result -> ONE shared frozen token. Because the token is
+    // `Object.is`-identical for all three sends, the sender is pushed once.
+    expect(completions[1]).toBe(completions[0]);
+    expect(completions[2]).toBe(completions[0]);
+    expect(new Set(completions).size).toBe(1);
+    expect(completions[0]).toMatchObject({
+      status: 'completed',
+      resultText: 'done',
+      truncated: false,
     });
+    expect(completions[0]?.displaySubmission).toBe(submissions[0]);
+    expect(Object.isFrozen(completions[0])).toBe(true);
+  });
+
+  it('folds Dreamux-owned completionInput sends into the active logical turn', async () => {
+    // PR #282 E2E regression: spawn a TeamMate turn that does `sleep 30`, then
+    // `send` two follow-ups (S30_B, S30_C) while the first is in-flight. Before
+    // the fix each `send` (which routes through `completionInput`) created its
+    // own logical turn + its own completion, so B/C produced "收到 S30_B" /
+    // "收到 S30_C" instead of folding into the active turn. Under the locked
+    // contract `completionInput` must behave exactly like `channelInput`: same
+    // active steerable slot, ONE native result, ONE shared completion token.
+    const fleet = controllableFleet();
+    const { runtime } = await makeRuntime(fleet);
+    await runtime.start();
+
+    const first = await runtime.completionInput({
+      text: 'sleep 30; echo CLAUDE_SLEEP30_BURST_FINAL tokens=S30_A,S30_B,S30_C',
+      sourceId: 'send:mate-1:first',
+    });
+    expect(first.status).toBe('submitted');
+    await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
+
+    const second = await runtime.completionInput({
+      text: 'S30_B',
+      sourceId: 'send:mate-1:second',
+    });
+    const third = await runtime.completionInput({
+      text: 'S30_C',
+      sourceId: 'send:mate-1:third',
+    });
+    expect(second.status).toBe('submitted');
+    expect(third.status).toBe('submitted');
+    const submissions = [first, second, third].map(submittedSubmission);
+
+    // The first prompt is the original send; S30_B and S30_C are steered in
+    // with `priority: 'next'` (the Codex-aligned active-slot semantics).
+    expect(fleet.sessions[0]?.prompts).toEqual([
+      'sleep 30; echo CLAUDE_SLEEP30_BURST_FINAL tokens=S30_A,S30_B,S30_C',
+      'S30_B',
+      'S30_C',
+    ]);
+    expect(fleet.sessions[0]?.submitOptions).toEqual([
+      { isSynthetic: false },
+      { priority: 'next' },
+      { priority: 'next' },
+    ]);
+
+    fleet.resolveNext(okOutcome('session-abc'));
+    const completions = await Promise.all(
+      submissions.map(async (submission) =>
+        expectCompletion(await submission.settled),
+      ),
+    );
+    // One logical turn settles: one token, so one push for the burst.
+    expect(new Set(completions).size).toBe(1);
+    expect(completions[1]).toBe(completions[0]);
+    expect(completions[2]).toBe(completions[0]);
+    expect(completions[0]).toMatchObject({
+      status: 'completed',
+      resultText: 'done',
+      truncated: false,
+    });
+    expect(completions[0]?.displaySubmission).toBe(submissions[0]);
+  });
+
+  it('folds a channel inbound into an active completionInput turn', async () => {
+    // The active slot is shared, not channel-only: a Dreamux-owned send that
+    // started the turn must also accept channel-XML inbound as a steer. The
+    // first native outcome is held open so the steer deterministically reaches
+    // the same active command group.
+    const fleet = controllableFleet();
+    const { runtime } = await makeRuntime(fleet);
+    await runtime.start();
+
+    const first = await runtime.completionInput({
+      text: 'first send',
+      sourceId: 'send:mate-1:first',
+    });
+    expect(first.status).toBe('submitted');
+    await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
+
+    const second = await runtime.channelInput({
+      sourceId: 'm-inbound',
+      text: 'inbound follow-up',
+      body: 'inbound follow-up',
+      source: 'feishu',
+      attrs: [
+        ['chat_id', 'oc:chat-1'],
+        ['message_id', 'om:msg-2'],
+      ],
+    });
+    expect(second.status).toBe('submitted');
+    const firstSubmission = submittedSubmission(first);
+    const secondSubmission = submittedSubmission(second);
+
+    fleet.resolveNext();
+    const firstCompletion = expectCompletion(await firstSubmission.settled);
+    const secondCompletion = expectCompletion(await secondSubmission.settled);
+    // The same native result carries both the original plain text and the
+    // channel-rendered inbound, so both sends settle with the SAME token.
+    expect(secondCompletion).toBe(firstCompletion);
+    expect(firstCompletion.status).toBe('completed');
+    expect(firstCompletion.displaySubmission).toBe(firstSubmission);
+
+    const modelInput = fleet.sessions[0]?.prompts.join('\n\n') ?? '';
+    expect(modelInput).toContain('first send');
+    expect(modelInput).toContain('<channel source="feishu"');
+    expect(modelInput).toContain('inbound follow-up');
+    // The initial completionInput turn is a real user turn, not synthetic.
+    expect(fleet.sessions[0]?.submitOptions[0]).toEqual({ isSynthetic: false });
+  });
+
+  it('starts a fresh logical turn for completionInput after the prior turn settled', async () => {
+    // Sequential submissions are QUEUED, not folded: each native result creates
+    // its own token even though both results are byte-identical.
+    const fleet = fakeFleet([okOutcome('session-abc'), okOutcome('session-abc')]);
+    const { runtime } = await makeRuntime(fleet);
+    await runtime.start();
+
+    const first = await runtime.completionInput({
+      text: 'first',
+      sourceId: 'send:mate-1:first',
+    });
+    const firstCompletion = expectCompletion(
+      await submittedSubmission(first).settled,
+    );
+    // The active slot is only released after the submit promise drains; wait
+    // for idle so the next send genuinely queues instead of steering.
+    await runtime.waitIdle?.();
+
+    const second = await runtime.completionInput({
+      text: 'second',
+      sourceId: 'send:mate-1:second',
+    });
+    const secondCompletion = expectCompletion(
+      await submittedSubmission(second).settled,
+    );
+
+    expect(submittedSubmission(second)).not.toBe(submittedSubmission(first));
+    expect(secondCompletion).not.toBe(firstCompletion);
+    expect([firstCompletion.status, secondCompletion.status]).toEqual([
+      'completed',
+      'completed',
+    ]);
+    // Two distinct tokens with identical payloads -> one push EACH, in order.
+    expect(firstCompletion).toMatchObject({ resultText: 'done' });
+    expect(secondCompletion).toMatchObject({ resultText: 'done' });
+  });
+
+  it('does not reuse the prior successful result for a later empty successful turn', async () => {
+    const fleet = fakeFleet([
+      okOutcome('session-abc'),
+      { ...okOutcome('session-abc'), text: '' },
+    ]);
+    const { runtime } = await makeRuntime(fleet);
+    await runtime.start();
+
+    const first = await runtime.channelInput({ sourceId: 'm1', text: 'first' });
+    const firstCompletion = expectCompletion(
+      await submittedSubmission(first).settled,
+    );
+    await runtime.waitIdle?.();
+
+    const second = await runtime.channelInput({ sourceId: 'm2', text: 'second' });
+    const secondCompletion = expectCompletion(
+      await submittedSubmission(second).settled,
+    );
+
+    expect(secondCompletion).not.toBe(firstCompletion);
+    expect(
+      [firstCompletion, secondCompletion].map((completion) =>
+        completion.status === 'completed' ? completion.resultText : null,
+      ),
+    ).toEqual(['done', null]);
+  });
+
+  it('starts a fresh logical turn for a sequential send after the previous turn completed', async () => {
+    const fleet = fakeFleet([okOutcome('session-abc'), okOutcome('session-abc')]);
+    const { runtime } = await makeRuntime(fleet);
+    await runtime.start();
+
+    const first = await runtime.channelInput({ sourceId: 'm1', text: 'first' });
+    const firstCompletion = expectCompletion(
+      await submittedSubmission(first).settled,
+    );
+    await runtime.waitIdle?.();
+
+    const second = await runtime.channelInput({ sourceId: 'm2', text: 'second' });
+    const secondCompletion = expectCompletion(
+      await submittedSubmission(second).settled,
+    );
+
+    expect(submittedSubmission(second)).not.toBe(submittedSubmission(first));
+    // Distinct native results -> distinct tokens, even byte-identical ones.
+    expect(secondCompletion).not.toBe(firstCompletion);
+    expect([firstCompletion.status, secondCompletion.status]).toEqual([
+      'completed',
+      'completed',
+    ]);
+  });
+
+  it('does not reuse logical Turn objects across resumed runtime instances', async () => {
+    const firstRuntime = await makeRuntime(fakeFleet([okOutcome('session-abc')]));
+    await firstRuntime.runtime.start();
+    const first = await firstRuntime.runtime.channelInput({
+      sourceId: 'm1',
+      text: 'first',
+    });
+    const firstCompletion = expectCompletion(
+      await submittedSubmission(first).settled,
+    );
+
+    const secondRuntime = await makeRuntime(fakeFleet([okOutcome('session-abc')]), {
+      resumeSession: TEST_SESSION_ID,
+    });
+    await secondRuntime.runtime.start();
+    const second = await secondRuntime.runtime.channelInput({
+      sourceId: 'm2',
+      text: 'second',
+    });
+    const secondCompletion = expectCompletion(
+      await submittedSubmission(second).settled,
+    );
+
+    // A resumed instance never inherits the prior instance's submission or its
+    // completion token: each native result owns a fresh identity.
+    expect(submittedSubmission(second)).not.toBe(submittedSubmission(first));
+    expect(secondCompletion).not.toBe(firstCompletion);
+  });
+
+  it('delivers completionInput as a plain user turn', async () => {
+    const fleet = controllableFleet();
+    const { runtime } = await makeRuntime(fleet);
+    await runtime.start();
+
+    // The turn is queued but the native result is NOT released yet. The
+    // delivery must return submitted immediately (submit-then-serialize),
+    // decoupled from model thinking time.
+    const result = await runtime.completionInput({
+      text: 'TeamMate reviewer has finished its task. Output below:\n\nall done',
+      sourceId: 'completion:mate-1',
+    });
+    expect(result).toMatchObject({ status: 'submitted' });
+    const submission = submittedSubmission(result);
+    expect(submission.settled).toBeInstanceOf(Promise);
+
+    // Admission returns before the resident session has necessarily installed
+    // its native outcome resolver. Wait for native submission, then release it
+    // so teardown never races an unsettled submission.
+    await waitFor(() => fleet.sessions[0]?.prompts.length === 1);
+    fleet.resolveNext(okOutcome('session-abc'));
+    expect(expectCompletion(await submission.settled).status).toBe('completed');
+
+    const prompt = fleet.sessions[0]?.prompts[0] ?? '';
+    expect(prompt).toBe('TeamMate reviewer has finished its task. Output below:\n\nall done');
+    expect(prompt).not.toContain('<task-notification>');
+    expect(prompt).not.toContain('<task-id>');
+    expect(prompt).not.toContain('<teammate_session_completion');
+    // Delivered as ordinary input, NOT a synthetic notification.
+    expect(fleet.sessions[0]?.submitOptions[0]).toEqual({ isSynthetic: false });
+  });
+
+  it('fails a completed schema turn that lacks native structured_output', async () => {
+    const schema = {
+      type: 'object',
+      properties: { answer: { type: 'string' } },
+      required: ['answer'],
+      additionalProperties: false,
+    };
+    // `okOutcome` carries `hasStructuredOutput: false`, i.e. claude returned a
+    // successful `result` envelope with no validated structured object.
+    const fleet = fakeFleet([okOutcome('session-abc')]);
+    const { runtime } = await makeRuntime(fleet, { outputSchema: schema });
+    await runtime.start();
+
+    const admission = await runtime.completionInput({
+      text: 'return structured output',
+      sourceId: 'completion:schema-native',
+      outputSchema: schema,
+    });
+    expect(admission.status).toBe('submitted');
+
+    const completion = expectCompletion(
+      await submittedSubmission(admission).settled,
+    );
+    // A native result that violates the session's --json-schema is still a
+    // provider-observed completion boundary: it settles as a `failed`
+    // COMPLETION token (which is routed to the sender), not as an internal
+    // `{kind:'failed'}` (which produces no token at all).
+    expect(completion.status).toBe('failed');
+    if (completion.status !== 'failed') throw new Error('expected failed completion');
+    expect(completion.error.message).toContain('did not return structured_output');
+    expect(completion.displaySubmission).toBe(submittedSubmission(admission));
+    expect(Object.isFrozen(completion)).toBe(true);
+  });
+
+  it('degrades on an unexpected child exit and re-spawns (with --resume) on the next turn', async () => {
+    const fleet = fakeFleet([okOutcome('session-abc'), okOutcome('session-abc')]);
+    const { runtime, store } = await makeRuntime(fleet);
+    await runtime.start();
+
+    // First turn establishes the session id.
+    const first = await runtime.channelInput({
+      sourceId: 'm1',
+      text: 'first',
+    });
+    expect(
+      expectCompletion(await submittedSubmission(first).settled).status,
+    ).toBe('completed');
+    await runtime.waitIdle?.();
+    await waitFor(() => (runtime.getCheckpoint()?.id ?? null) === TEST_SESSION_ID);
+
+    // The resident child dies unexpectedly → degraded.
+    fleet.sessions[0]?.triggerExit();
+    await waitFor(() =>
+      runtime.getStatus() === 'degraded' &&
+      (store.get('flow')?.last_error?.includes('exited') ?? false),
+    );
+    expect(store.get('flow')?.last_error).toContain('exited');
+
+    // Next turn re-spawns a fresh session that resumes the captured session id.
+    await runtime.channelInput({
+      sourceId: 'm2',
+      text: 'second',
+    });
+    await waitFor(() => fleet.sessions.length === 2);
+    const respawn = fleet.sessions[1]!;
+    expect(respawn.spec.args.slice(
+      respawn.spec.args.indexOf('--resume'),
+      respawn.spec.args.indexOf('--resume') + 2,
+    )).toEqual(['--resume', TEST_SESSION_ID]);
+    await waitFor(() => runtime.getStatus() === 'ready');
+  });
+
+  it('settles the submitted RuntimeSubmission as completed', async () => {
+    const fleet = fakeFleet([okOutcome('session-abc')]);
+    const { runtime } = await makeRuntime(fleet);
     await runtime.start();
 
     const submit = await runtime.channelInput({ sourceId: 'm1', text: 'go' });
     expect(submit.status).toBe('submitted');
+    const submission = submittedSubmission(submit);
 
-    await waitFor(() => settled.length === 1);
-    expect(settled[0]?.status).toBe('completed');
-    if (submit.status !== 'submitted') throw new Error('expected submitted');
-    await expect(submit.turn.settled).resolves.toBe(settled[0]);
+    const completion = expectCompletion(await submission.settled);
+    expect(completion.status).toBe('completed');
+    if (completion.status !== 'completed') throw new Error('expected completed');
+    expect(completion.resultText).toBe('done');
+    expect(completion.truncated).toBe(false);
+    // The token is a frozen, provider-owned opaque identity that displays
+    // through the one submission representing this native stream.
+    expect(completion.displaySubmission).toBe(submission);
+    expect(Object.isFrozen(completion)).toBe(true);
   });
 
-  it('settles the submitted RuntimeTurn as failed', async () => {
-    const settled: RuntimeTurnOutcome[] = [];
+  it('settles the submitted RuntimeSubmission as failed', async () => {
     const fleet = fakeFleet([new Error('turn boom')]);
-    const { runtime } = await makeRuntime(fleet, {
-      observeOutcome: (outcome) => settled.push(outcome),
-    });
+    const { runtime } = await makeRuntime(fleet);
     await runtime.start();
 
-    await runtime.channelInput({ sourceId: 'm1', text: 'go' });
-
-    await waitFor(() => settled.length === 1);
-    expect(settled[0]?.status).toBe('failed');
-    const outcome = settled[0];
-    if (outcome?.status !== 'failed') throw new Error('expected failed outcome');
-    expect(outcome.error.message).toContain('turn boom');
+    const submit = await runtime.channelInput({ sourceId: 'm1', text: 'go' });
+    const settlement = await submittedSubmission(submit).settled;
+    // A submit that dies before any native result is NOT a completion: it
+    // carries no token, so nothing is ever pushed for it.
+    expect(settlement.kind).toBe('failed');
+    if (settlement.kind !== 'failed') throw new Error('expected failed settlement');
+    expect(settlement.error.message).toContain('turn boom');
   });
 
-  it('settles the submitted RuntimeTurn as stopped when stop wins', async () => {
-    const settled: RuntimeTurnOutcome[] = [];
-    // A turn whose submitTurn never settles on its own; stop() tears the session
-    // down, which rejects the in-flight turn — it must settle as `stopped`.
+  it('settles the submitted RuntimeSubmission as stopped when stop wins', async () => {
+    // A submit that never drains on its own; stop() tears the session down,
+    // which rejects the in-flight submit — it must settle as `stopped`, and a
+    // `stopped` settlement creates no completion token at all.
     let releaseTurn: (() => void) | null = null;
     const blockingFactory: ClaudeCodeSessionFactory = (spec) => {
       let alive = false;
@@ -1519,7 +1573,7 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
           alive = true;
         },
         async submitTurn() {
-          return new Promise<TurnOutcome>((_resolve, reject) => {
+          return new Promise<void>((_resolve, reject) => {
             releaseTurn = () =>
               reject(new Error('claude resident session stopped mid-turn'));
           });
@@ -1535,15 +1589,13 @@ describe('ClaudeCodeRuntime resident lifecycle (fake session)', () => {
       void spec;
       return session;
     };
-    const { runtime } = await makeRuntime(fleetFromFactory(blockingFactory), {
-      observeOutcome: (outcome) => settled.push(outcome),
-    });
+    const { runtime } = await makeRuntime(fleetFromFactory(blockingFactory));
     await runtime.start();
-    await runtime.channelInput({ sourceId: 'm1', text: 'go' });
+    const submit = await runtime.channelInput({ sourceId: 'm1', text: 'go' });
+    const submission = submittedSubmission(submit);
     await waitFor(() => releaseTurn !== null);
 
     await runtime.stop();
-    await waitFor(() => settled.length === 1);
-    expect(settled[0]?.status).toBe('stopped');
+    await expect(submission.settled).resolves.toEqual({ kind: 'stopped' });
   });
 });

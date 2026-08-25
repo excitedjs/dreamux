@@ -8,6 +8,8 @@ import type {
   AgentRuntimeTextInput,
   InboundTurnInput,
   RuntimeAdmission,
+  RuntimeSubmission,
+  RuntimeSubmissionSettlement,
 } from '@excitedjs/dreamux-types';
 
 interface ExternalParityRuntimeConfig {
@@ -24,6 +26,8 @@ export interface ExternalRuntimeObservation {
   disableFeatures: readonly string[];
   skillSourceNames: string[];
   injectEnvKeys: string[];
+  /** Proves core installed the required live activity sink before start. */
+  hasActivitySink: boolean;
   starts: number;
   stops: number;
   submittedTexts: string[];
@@ -80,7 +84,7 @@ class ExternalParityRuntime implements AgentRuntime {
     await Promise.resolve();
     return {
       status: 'submitted',
-      turn: completedRuntimeTurn(this.observation.lastText),
+      submission: completedSubmission(this.observation.lastText),
     };
   }
 
@@ -94,7 +98,7 @@ class ExternalParityRuntime implements AgentRuntime {
     await Promise.resolve();
     return {
       status: 'submitted',
-      turn: completedRuntimeTurn(this.observation.lastText),
+      submission: completedSubmission(this.observation.lastText),
     };
   }
 
@@ -169,6 +173,7 @@ export const provider: AgentRuntimeProviderFactory<ExternalParityRuntimeConfig> 
         disableFeatures: context.disableFeatures ?? [],
         skillSourceNames: context.skillSources?.map((source) => source.name) ?? [],
         injectEnvKeys: Object.keys(context.injectEnv ?? {}).sort(),
+        hasActivitySink: typeof context.activitySink === 'function',
         starts: 0,
         stops: 0,
         submittedTexts: [],
@@ -181,12 +186,25 @@ export const provider: AgentRuntimeProviderFactory<ExternalParityRuntimeConfig> 
 
 export default provider;
 
-function completedRuntimeTurn(resultText: string | null) {
-  return Object.freeze({
-    settled: Promise.resolve({
+function completedSubmission(resultText: string | null): RuntimeSubmission {
+  // One accepted send -> one submission; this fixture's runtime answers each
+  // send on its own native result boundary, so every submission gets its OWN
+  // frozen completion token (the queued shape). Folding would instead reuse a
+  // single token across several submissions.
+  let resolve!: (settlement: RuntimeSubmissionSettlement) => void;
+  const submission: RuntimeSubmission = Object.freeze({
+    settled: new Promise<RuntimeSubmissionSettlement>((accept) => {
+      resolve = accept;
+    }),
+  });
+  resolve({
+    kind: 'completion',
+    completion: Object.freeze({
       status: 'completed' as const,
+      displaySubmission: submission,
       resultText,
       truncated: false,
     }),
   });
+  return submission;
 }

@@ -195,6 +195,11 @@ describe('claude-code live integration (opt-in)', () => {
       config: dispatcherClaudeCodeConfig(dispatcher),
       cwd: home,
       mcpServers: [],
+      activitySink: () => {
+        /* live gate asserts session reuse, not activity fan-out; the sink is
+           still installed before `start()` because the create context now
+           requires it */
+      },
       state,
       paths: hostRuntimePaths,
     });

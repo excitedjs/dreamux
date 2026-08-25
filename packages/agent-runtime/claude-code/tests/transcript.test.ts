@@ -1,6 +1,5 @@
 import {
   appendFile,
-  chmod,
   mkdtemp,
   mkdir,
   readFile,
@@ -117,7 +116,7 @@ describe('Claude Code native transcript reader', () => {
         { type: 'text', text: 'open' },
       ]),
     ];
-    await writeFile(fixture.path, `${entries.map(JSON.stringify).join('\n')}\n`);
+    await writeFile(fixture.path, `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`);
 
     const page = await read(fixture, { turns: 2, includeTools: true });
     expect(page.turns).toHaveLength(1);
@@ -545,6 +544,87 @@ describe('Claude Code native transcript reader', () => {
     expect(publicText(complete)).toContain('now complete');
   });
 
+  it.each([
+    'end_turn',
+    'max_tokens',
+    'stop_sequence',
+    'refusal',
+    'model_context_window_exceeded',
+  ])(
+    'recognizes current Claude terminal stop reason %s without turn_duration',
+    async (stopReason) => {
+      const fixture = await createFixture();
+      await writeEntries(fixture.path, [
+        message(null, 'u1', 'user', [
+          { type: 'text', text: 'current prompt' },
+        ]),
+        {
+          ...message('u1', 'a1', 'assistant', [
+            { type: 'text', text: 'current answer' },
+          ]),
+          message: {
+            id: 'native-a1',
+            role: 'assistant',
+            stop_reason: stopReason,
+            content: [{ type: 'text', text: 'current answer' }],
+          },
+        },
+      ]);
+
+      const page = await read(fixture, { turns: 1 });
+      expect(page.nextCursor).toBeNull();
+      expect(publicText(page)).toContain('current answer');
+    },
+  );
+
+  it.each(['tool_use', 'pause_turn', 'future_stop_reason'])(
+    'keeps current Claude non-terminal stop reason %s as an open tail',
+    async (stopReason) => {
+      const fixture = await createFixture();
+      await writeEntries(fixture.path, [
+        message(null, 'u1', 'user', [
+          { type: 'text', text: 'open prompt' },
+        ]),
+        {
+          ...message('u1', 'a1', 'assistant', [
+            { type: 'text', text: 'partial answer' },
+          ]),
+          message: {
+            id: 'native-a1',
+            role: 'assistant',
+            stop_reason: stopReason,
+            content: [{ type: 'text', text: 'partial answer' }],
+          },
+        },
+      ]);
+
+      await expect(read(fixture, { turns: 1 })).resolves.toMatchObject({
+        turns: [],
+        nextCursor: null,
+      });
+    },
+  );
+
+  it('paginates adjacent current-format turns without merging them', async () => {
+    const fixture = await createFixture();
+    await writeEntries(fixture.path, [
+      currentConversationTurn(null, 'u1', 'a1', 'first prompt', 'first answer'),
+      currentConversationTurn('a1', 'u2', 'a2', 'second prompt', 'second answer'),
+    ].flat());
+
+    const newest = await read(fixture, { turns: 1 });
+    expect(publicText(newest)).toContain('second answer');
+    expect(publicText(newest)).not.toContain('first answer');
+    expect(newest.nextCursor).not.toBeNull();
+
+    const older = await read(fixture, {
+      turns: 1,
+      cursor: newest.nextCursor!,
+    });
+    expect(publicText(older)).toContain('first answer');
+    expect(publicText(older)).not.toContain('second answer');
+  });
+
   it('returns a null cursor for an oversized open tool chain', async () => {
     const fixture = await createFixture();
     const filler = Array.from({ length: 850 }, (_, index) => ({
@@ -623,7 +703,6 @@ describe('Claude Code native transcript reader', () => {
           content: [{ type: 'text', text: 'terminal answer' }],
         },
       },
-      turnDuration('a-final', 'duration-tool'),
     ]);
     const complete = await read(fixture, { turns: 1 });
     expect(publicText(complete)).toContain('terminal answer');
@@ -1124,14 +1203,14 @@ async function writeEntries(
   path: string,
   entries: readonly Record<string, unknown>[],
 ): Promise<void> {
-  await writeFile(path, `${entries.map(JSON.stringify).join('\n')}\n`);
+  await writeFile(path, `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`);
 }
 
 async function appendEntries(
   path: string,
   entries: readonly Record<string, unknown>[],
 ): Promise<void> {
-  await appendFile(path, `${entries.map(JSON.stringify).join('\n')}\n`);
+  await appendFile(path, `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`);
 }
 
 function conversationTurns(count: number): Record<string, unknown>[] {
@@ -1173,6 +1252,29 @@ function conversationTurn(
       },
     },
     turnDuration(assistantId, assistantId.replace(/^a/, 'd')),
+  ];
+}
+
+function currentConversationTurn(
+  parent: string | null,
+  userId: string,
+  assistantId: string,
+  prompt: string,
+  answer: string,
+): Record<string, unknown>[] {
+  return [
+    message(parent, userId, 'user', [{ type: 'text', text: prompt }]),
+    {
+      ...message(userId, assistantId, 'assistant', [
+        { type: 'text', text: answer },
+      ]),
+      message: {
+        id: `native-${assistantId}`,
+        role: 'assistant',
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: answer }],
+      },
+    },
   ];
 }
 

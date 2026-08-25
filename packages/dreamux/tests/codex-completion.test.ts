@@ -66,6 +66,9 @@ describe('codex plain completionInput delivery', () => {
       config: dispatcherCodexConfig(dispatcher),
       cwd: tmp,
       mcpServers: [],
+      activitySink: () => {
+        /* this suite asserts admission/dedupe, not live activity */
+      },
       state: noopState(),
       paths,
     });

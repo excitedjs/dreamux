@@ -6,7 +6,7 @@ import type {
   AgentRuntimePathContext,
   AgentRuntimeStateCallbacks,
   RuntimeAdmission,
-  RuntimeTurn,
+  RuntimeSubmission,
 } from '@excitedjs/dreamux-types';
 
 describe('CodexRuntime portable output schema settlement', () => {
@@ -16,6 +16,7 @@ describe('CodexRuntime portable output schema settlement', () => {
     const runtime = new CodexRuntime(
       { runtime_id: 'flow', checkpoint: null },
       {
+        activitySink: () => {},
         cwd: '/fake/cwd',
         state: noopState(),
         paths: PATHS,
@@ -48,6 +49,7 @@ describe('CodexRuntime portable output schema settlement', () => {
     const runtime = new CodexRuntime(
       { runtime_id: 'flow', checkpoint: null },
       {
+        activitySink: () => {},
         cwd: '/fake/cwd',
         state: noopState(),
         paths: PATHS,
@@ -83,6 +85,7 @@ describe('CodexRuntime portable output schema settlement', () => {
     const runtime = new CodexRuntime(
       { runtime_id: 'flow', checkpoint: null },
       {
+        activitySink: () => {},
         cwd: '/fake/cwd',
         state: noopState(),
         paths: PATHS,
@@ -117,6 +120,7 @@ describe('CodexRuntime portable output schema settlement', () => {
     const runtime = new CodexRuntime(
       { runtime_id: 'flow', checkpoint: null },
       {
+        activitySink: () => {},
         cwd: '/fake/cwd',
         state: noopState(),
         paths: PATHS,
@@ -150,6 +154,7 @@ describe('CodexRuntime portable output schema settlement', () => {
       const runtime = new CodexRuntime(
         { runtime_id: 'flow', checkpoint: null },
         {
+          activitySink: () => {},
           cwd: '/fake/cwd',
           state: noopState(),
           paths: PATHS,
@@ -180,6 +185,7 @@ describe('CodexRuntime portable output schema settlement', () => {
     const runtime = new CodexRuntime(
       { runtime_id: 'flow', checkpoint: { id: 'thread-existing', transcript_locator: '/fake/sessions/thread-existing.jsonl' } },
       {
+        activitySink: () => {},
         cwd: '/fake/cwd',
         state: noopState(),
         paths: PATHS,
@@ -205,6 +211,7 @@ describe('CodexRuntime portable output schema settlement', () => {
     const runtime = new CodexRuntime(
       { runtime_id: 'flow', checkpoint: null },
       {
+        activitySink: () => {},
         cwd: '/fake/cwd',
         state: {
           async setStatus() {},
@@ -236,6 +243,7 @@ describe('CodexRuntime portable output schema settlement', () => {
     const runtime = new CodexRuntime(
       { runtime_id: 'flow', checkpoint: oldCheckpoint },
       {
+        activitySink: () => {},
         cwd: '/fake/cwd',
         state: {
           async setStatus() {},
@@ -273,6 +281,7 @@ describe('CodexRuntime portable output schema settlement', () => {
     const runtime = new CodexRuntime(
       { runtime_id: 'flow', checkpoint: null },
       {
+        activitySink: () => {},
         cwd: '/fake/cwd',
         state,
         paths: PATHS,
@@ -313,6 +322,7 @@ describe('CodexRuntime portable output schema settlement', () => {
     const runtime = new CodexRuntime(
       { runtime_id: 'flow', checkpoint: null },
       {
+        activitySink: () => {},
         cwd: '/fake/cwd',
         state,
         paths: PATHS,
@@ -358,6 +368,7 @@ describe('CodexRuntime portable output schema settlement', () => {
     const runtime = new CodexRuntime(
       { runtime_id: 'flow', checkpoint: null },
       {
+        activitySink: () => {},
         cwd: '/fake/cwd',
         state,
         paths: PATHS,
@@ -385,6 +396,7 @@ describe('CodexRuntime portable output schema settlement', () => {
     const runtime = new CodexRuntime(
       { runtime_id: 'flow', checkpoint: null },
       {
+        activitySink: () => {},
         cwd: '/fake/cwd',
         state: noopState(),
         paths: PATHS,
@@ -421,18 +433,30 @@ describe('CodexRuntime portable output schema settlement', () => {
         validateTranscriptPath: async (path) => path,
         codexProcessFactory: () => new FakeProcess() as never,
         codexClientFactory: () => client as never,
+        activitySink: () => {},
       },
     );
 
     await runtime.start();
     try {
-      const plainTurn = requireSubmittedTurn(await runtime.completionInput({
+      const plainSubmission = requireSubmittedSubmission(await runtime.completionInput({
         text: 'plain',
         sourceId: 'plain',
       }));
-      const plainOutcome = await plainTurn.settled;
+      const plainSettlement = await plainSubmission.settled;
+      if (plainSettlement.kind !== 'completion') {
+        throw new Error(`expected a completion settlement, got ${plainSettlement.kind}`);
+      }
+      const plainCompletion = plainSettlement.completion;
+      expect(plainCompletion).toMatchObject({
+        status: 'completed',
+        resultText: 'plain result',
+        truncated: false,
+      });
+      expect(plainCompletion.displaySubmission).toBe(plainSubmission);
+      expect(Object.isFrozen(plainCompletion)).toBe(true);
 
-      const structuredTurn = requireSubmittedTurn(await runtime.completionInput({
+      const structuredSubmission = requireSubmittedSubmission(await runtime.completionInput({
         text: 'structured',
         sourceId: 'structured',
         outputSchema: {
@@ -444,18 +468,36 @@ describe('CodexRuntime portable output schema settlement', () => {
           additionalProperties: false,
         },
       }));
-      const structuredOutcome = await structuredTurn.settled;
+      const structuredSettlement = await structuredSubmission.settled;
 
-      expect(plainOutcome).toEqual({
+      // A restoration failure is still a provider-observed native result, so it
+      // yields its own failed completion token for that submission only.
+      expect(structuredSettlement).toMatchObject({
+        kind: 'completion',
+        completion: {
+          status: 'failed',
+          error: expect.objectContaining({
+            message: expect.stringContaining('$.values: expected array'),
+          }),
+        },
+      });
+      if (structuredSettlement.kind !== 'completion') {
+        throw new Error('expected a completion settlement for the structured submission');
+      }
+      expect(structuredSettlement.completion.displaySubmission).toBe(structuredSubmission);
+      expect(structuredSettlement.completion).not.toBe(plainCompletion);
+
+      // The earlier native result is untouched: same token identity, same status.
+      const plainSettlementAgain = await plainSubmission.settled;
+      expect(plainSettlementAgain).toBe(plainSettlement);
+      if (plainSettlementAgain.kind !== 'completion') {
+        throw new Error('the earlier submission lost its completion settlement');
+      }
+      expect(plainSettlementAgain.completion).toBe(plainCompletion);
+      expect(plainSettlementAgain.completion).toMatchObject({
         status: 'completed',
         resultText: 'plain result',
         truncated: false,
-      });
-      expect(structuredOutcome).toMatchObject({
-        status: 'failed',
-        error: expect.objectContaining({
-          message: expect.stringContaining('$.values: expected array'),
-        }),
       });
     } finally {
       await runtime.stop();
@@ -482,12 +524,13 @@ describe('CodexRuntime portable output schema settlement', () => {
         },
         restartBackoffBaseMs: 0,
         restartBackoffMaxMs: 0,
+        activitySink: () => {},
       },
     );
 
     await runtime.start();
     try {
-      const oldTurn = requireSubmittedTurn(await runtime.completionInput({
+      const oldSubmission = requireSubmittedSubmission(await runtime.completionInput({
         text: 'old structured turn',
         outputSchema: {
           type: 'object',
@@ -498,18 +541,28 @@ describe('CodexRuntime portable output schema settlement', () => {
       firstClient.emitClose(new Error('restart requested'));
       await waitFor(() => runtime.getStatus() === 'ready' && clients.length === 0);
 
-      await expect(oldTurn.settled).resolves.toEqual({ status: 'stopped' });
+      // The restart produced no native result, so there is no completion token.
+      await expect(oldSubmission.settled).resolves.toEqual({ kind: 'stopped' });
       firstClient.emitCompleted('thread-1', 'turn-1', '{"optional":null}');
       await new Promise((resolve) => setImmediate(resolve));
+      await expect(oldSubmission.settled).resolves.toEqual({ kind: 'stopped' });
 
-      const newTurn = requireSubmittedTurn(
+      const newSubmission = requireSubmittedSubmission(
         await runtime.completionInput({ text: 'new plain turn' }),
       );
-      await expect(newTurn.settled).resolves.toEqual({
-        status: 'completed',
-        resultText: 'plain result',
-        truncated: false,
+      const newSettlement = await newSubmission.settled;
+      expect(newSettlement).toMatchObject({
+        kind: 'completion',
+        completion: {
+          status: 'completed',
+          resultText: 'plain result',
+          truncated: false,
+        },
       });
+      if (newSettlement.kind !== 'completion') {
+        throw new Error('expected a completion settlement after the restart');
+      }
+      expect(newSettlement.completion.displaySubmission).toBe(newSubmission);
     } finally {
       await runtime.stop();
     }
@@ -524,6 +577,7 @@ describe('CodexRuntime portable output schema settlement', () => {
     const runtime = new CodexRuntime(
       { runtime_id: 'flow', checkpoint: null },
       {
+        activitySink: () => {},
         cwd: '/fake/cwd',
         state: noopState(),
         paths: PATHS,
@@ -572,6 +626,7 @@ describe('CodexRuntime portable output schema settlement', () => {
     const runtime = new CodexRuntime(
       { runtime_id: 'flow', checkpoint: null },
       {
+        activitySink: () => {},
         cwd: '/fake/cwd',
         state: noopState(),
         paths: PATHS,
@@ -604,11 +659,11 @@ describe('CodexRuntime portable output schema settlement', () => {
   });
 });
 
-function requireSubmittedTurn(admission: RuntimeAdmission): RuntimeTurn {
+function requireSubmittedSubmission(admission: RuntimeAdmission): RuntimeSubmission {
   if (admission.status !== 'submitted') {
     throw new Error(`expected submitted admission, got ${admission.status}`);
   }
-  return admission.turn;
+  return admission.submission;
 }
 
 class RuntimeFakeClient {

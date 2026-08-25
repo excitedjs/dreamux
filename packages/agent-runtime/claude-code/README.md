@@ -34,9 +34,11 @@ through the same package-loader path as external `npm:` providers.
 
 ## Turn lifecycle
 
-The public runtime boundary returns one stable `RuntimeTurn` object for a
-logical Claude command set. Inputs merged before session creation and supported
-live steering reuse that exact object. Command UUIDs are private wire aliases;
+The public runtime boundary returns one `RuntimeSubmission` handle per accepted
+send, settled by an immutable provider-owned `RuntimeCompletion` created at each
+real native result boundary. Inputs merged before session creation and supported
+live steering settle with the same completion object; queued sends settle with
+distinct completions in native order. Command UUIDs are private wire aliases;
 when `msg_lifecycle_v1` is available, all aliases must reach a terminal command
 state and a final result must be captured before the object settles. Live steer
 fails loudly without that capability. Runtime stop fences queued session work,
