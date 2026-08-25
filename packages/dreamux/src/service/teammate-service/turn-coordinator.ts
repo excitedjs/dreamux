@@ -79,8 +79,7 @@ export class EntityTurnCoordinator {
     const unsettled = [...this.retainedTurns].filter((turn) => !turn.isSettled());
     if (unsettled.length > 0) {
       throw new Error(
-        `runtime stop returned with ${unsettled.length} unsettled submission(s) for ` +
-        `${this.opts.name()}: ${unsettled.map((turn) => turn.id).join(', ')}`,
+        `runtime stop returned with ${unsettled.length} unsettled submission(s) for ${this.opts.name()}`,
       );
     }
     for (const turn of [...this.retainedTurns]) await turn.ensureDelivery();
