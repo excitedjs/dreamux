@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto';
+
 import type {
   RuntimeAdmission,
-  RuntimeTurn,
-  RuntimeTurnOutcome,
+  RuntimeCompletion,
+  RuntimeSubmission,
 } from '@excitedjs/dreamux-types';
 
 import type {
@@ -10,13 +12,19 @@ import type {
 } from '../agent-entity/types.js';
 import type { PreparedCompletionFact } from '../completion-router/index.js';
 
-export type TurnOutcome = RuntimeTurnOutcome;
+export type TurnOutcome =
+  | { status: 'completed'; resultText: string | null; truncated: boolean }
+  | { status: 'failed'; error: Error }
+  | { status: 'stopped' };
+
 export type TurnCompletionDelivery = (
+  completion: RuntimeCompletion,
   fact: PreparedCompletionFact,
 ) => Promise<void>;
 
 export interface Turn {
-  readonly runtime: RuntimeTurn;
+  readonly id: string;
+  readonly runtime: RuntimeSubmission;
   readonly origin: AgentEntityTurnOrigin | null;
   readonly prompt: string | null;
   readonly intent: string | null;
@@ -31,56 +39,54 @@ export type TurnAdmission =
   | { status: 'failed' | 'ambiguous'; error: Error };
 
 export class EntityTurn implements Turn {
+  readonly id = randomUUID();
   readonly settled: Promise<TurnOutcome>;
 
   private selectedOutcome: TurnOutcome | null = null;
-  private deliveryClosure: TurnCompletionDelivery | null;
+  private selectedCompletion: RuntimeCompletion | null = null;
   private deliveryTask: Promise<void> | null = null;
-  private resolveSettled!: (outcome: TurnOutcome) => void;
 
   constructor(
-    readonly runtime: RuntimeTurn,
+    readonly runtime: RuntimeSubmission,
     readonly origin: AgentEntityTurnOrigin | null,
     readonly prompt: string | null,
     readonly intent: string | null,
     readonly submittedAt: number,
     private readonly sourceName: string,
-    delivery: TurnCompletionDelivery | null,
+    private readonly deliveryClosure: TurnCompletionDelivery | null,
   ) {
-    this.deliveryClosure = delivery;
-    this.settled = new Promise((resolve) => {
-      this.resolveSettled = resolve;
+    this.settled = runtime.settled.then((settlement): TurnOutcome => {
+      if (settlement.kind === 'completion') {
+        this.selectedCompletion = settlement.completion;
+        const outcome = settlement.completion.status === 'completed'
+          ? {
+              status: 'completed' as const,
+              resultText: settlement.completion.resultText,
+              truncated: settlement.completion.truncated,
+            }
+          : { status: 'failed' as const, error: settlement.completion.error };
+        this.selectedOutcome = outcome;
+        this.startDeliveryIfReady();
+        return outcome;
+      }
+      const outcome = settlement.kind === 'failed'
+        ? { status: 'failed' as const, error: settlement.error }
+        : { status: 'stopped' as const };
+      this.selectedOutcome = outcome;
+      return outcome;
+    }, (error: unknown): TurnOutcome => {
+      const outcome = { status: 'failed' as const, error: asError(error) };
+      this.selectedOutcome = outcome;
+      return outcome;
     });
-    void runtime.settled.then(
-      (outcome) => this.trySettle(outcome),
-      (error) =>
-        this.trySettle({
-          status: 'failed',
-          error: error instanceof Error ? error : new Error(String(error)),
-        }),
-    );
   }
 
   get delivery(): Promise<void> {
     return this.ensureDelivery();
   }
 
-  isOutcomeSelected(): boolean {
+  isSettled(): boolean {
     return this.selectedOutcome !== null;
-  }
-
-  attachDelivery(delivery: TurnCompletionDelivery | null): void {
-    if (delivery === null || this.deliveryClosure !== null) return;
-    this.deliveryClosure = delivery;
-    this.startDeliveryIfReady();
-  }
-
-  trySettle(outcome: TurnOutcome): boolean {
-    if (this.selectedOutcome !== null) return false;
-    this.selectedOutcome = snapshotOutcome(outcome);
-    this.resolveSettled(this.selectedOutcome);
-    this.startDeliveryIfReady();
-    return true;
   }
 
   async ensureDelivery(): Promise<void> {
@@ -93,19 +99,19 @@ export class EntityTurn implements Turn {
     if (
       this.deliveryTask !== null ||
       this.deliveryClosure === null ||
-      this.selectedOutcome === null
+      this.selectedCompletion === null
     ) {
       return;
     }
-    const outcome = this.selectedOutcome;
+    const completion = this.selectedCompletion;
     const fact: PreparedCompletionFact = {
       kind: 'teammate',
       source: this.sourceName,
-      status: outcome.status,
-      result: outcome.status === 'completed' ? outcome.resultText : null,
+      status: completion.status,
+      result: completion.status === 'completed' ? completion.resultText : null,
     };
-    const delivery = this.deliveryClosure;
-    this.deliveryTask = Promise.resolve().then(() => delivery(fact));
+    this.deliveryTask = Promise.resolve().then(() =>
+      this.deliveryClosure!(completion, fact));
     void this.deliveryTask.catch(() => undefined);
   }
 }
@@ -134,27 +140,6 @@ export function admissionWithoutTurn(
   return admission;
 }
 
-function snapshotOutcome(outcome: TurnOutcome): TurnOutcome {
-  switch (outcome.status) {
-    case 'completed':
-      return Object.freeze({
-        status: 'completed',
-        resultText: outcome.resultText,
-        truncated: outcome.truncated,
-      });
-    case 'failed':
-      return Object.freeze({
-        status: 'failed',
-        error: snapshotError(outcome.error),
-      });
-    case 'stopped':
-      return Object.freeze({ status: 'stopped' });
-  }
-}
-
-function snapshotError(error: Error): Error {
-  const snapshot = new Error(error.message);
-  snapshot.name = error.name;
-  if (error.stack !== undefined) snapshot.stack = error.stack;
-  return Object.freeze(snapshot);
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }

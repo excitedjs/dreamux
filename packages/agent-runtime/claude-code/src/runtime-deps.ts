@@ -4,6 +4,7 @@ import type {
   AgentRuntimeSkillSource,
   AgentRuntimeStateCallbacks,
   DreamuxLogger,
+  RuntimeActivitySink,
 } from '@excitedjs/dreamux-types';
 
 import type { DispatcherClaudeCodeConfig } from './config.js';
@@ -33,4 +34,5 @@ export interface ClaudeCodeRuntimeDeps {
   }) => Promise<string>;
   sourceIdDedupeWindow?: number;
   logger?: DreamuxLogger;
+  activitySink: RuntimeActivitySink;
 }

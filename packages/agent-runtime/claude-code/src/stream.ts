@@ -129,9 +129,9 @@ function parseResult(o: JsonObject): ResultEnvelope {
     isError,
     text,
     sessionId: str(o['session_id']),
-    // The client-supplied `uuid` of the user message this result answers. The
-    // resident CLI emits one `result` per consumed command, so this is what
-    // tells several results of one logical turn apart (see `rpc.ts`).
+    // The client-supplied `uuid` of a user message associated with this result.
+    // It is optional and is validated as a hint; command lifecycle remains the
+    // ownership source when one result represents several started commands.
     userMessageUuid: str(o['user_message_uuid']),
     errors,
     hasStructuredOutput,
@@ -239,6 +239,7 @@ function parseCommandLifecycle(parsed: Record<string, unknown>): ParsedLine {
       state === 'completed' ||
       state === 'cancelled' ||
       state === 'discarded'
+      || state === 'refused'
         ? state
         : null,
     raw: parsed,
@@ -364,5 +365,14 @@ export class TurnAggregator {
       errors: r.errors,
       hasStructuredOutput: r.hasStructuredOutput,
     };
+  }
+
+  /** Consume one native result boundary while retaining the session identity. */
+  takeOutcome(): TurnOutcome | null {
+    const outcome = this.outcome();
+    if (outcome === null) return null;
+    this.result = null;
+    this.lastAssistantText = '';
+    return outcome;
   }
 }

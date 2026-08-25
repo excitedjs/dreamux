@@ -553,7 +553,8 @@ export class TeammateCollection implements TeammateOps {
     if (policy === undefined || initiator === undefined || initiator === null) {
       return null;
     }
-    return (fact) => policy.deliver(initiator, fact);
+    return (completion, fact) =>
+      policy.deliverRuntime(initiator, completion, fact);
   }
 
   private assertStructuredOutputSupported(agentRuntimeId: string): void {

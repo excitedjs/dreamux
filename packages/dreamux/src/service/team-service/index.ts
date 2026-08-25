@@ -558,8 +558,12 @@ export class TeamService {
       prompt: input.prompt,
       ...(input.intent !== undefined ? { intent: input.intent } : {}),
       turnOrigin: 'dispatcher',
-      deliverCompletion: (fact) =>
-        this.deps.completionDelivery.deliver(input.initiator, fact),
+      deliverCompletion: (completion, fact) =>
+        this.deps.completionDelivery.deliverRuntime(
+          input.initiator,
+          completion,
+          fact,
+        ),
     });
     return {
       team: this.view(),
@@ -654,21 +658,23 @@ export class TeamService {
     const initiator = await this.deps.initiatorFor(leader.current());
     return initiator === null
       ? null
-      : (fact: Parameters<CompletionDeliveryPolicy['deliver']>[1]) =>
-          this.deps.completionDelivery.deliver(initiator, fact);
+      : (
+          completion: Parameters<CompletionDeliveryPolicy['deliverRuntime']>[1],
+          fact: Parameters<CompletionDeliveryPolicy['deliverRuntime']>[2],
+        ) => this.deps.completionDelivery.deliverRuntime(
+          initiator,
+          completion,
+          fact,
+        );
   }
 
   private mustRecord(): TeamRecord {
-    if (this.record === null) {
-      throw new Error(`Team ${JSON.stringify(this.id)} is not booted`);
-    }
+    if (this.record === null) throw new Error(`Team ${JSON.stringify(this.id)} is not booted`);
     return this.record;
   }
 
   private mustLeader(): TeammateService {
-    if (this.leader_ === null) {
-      throw new Error(`Team ${JSON.stringify(this.id)} leader is not booted`);
-    }
+    if (this.leader_ === null) throw new Error(`Team ${JSON.stringify(this.id)} leader is not booted`);
     return this.leader_;
   }
 
@@ -676,9 +682,7 @@ export class TeamService {
     return { teamId: this.id, leaderName: this.leaderName };
   }
 
-  private static schedulerLifecycleFor(
-    service: TeamService,
-  ): TeamSchedulerLifecycle {
+  private static schedulerLifecycleFor(service: TeamService): TeamSchedulerLifecycle {
     return {
       start: () => service.scheduler_.start(),
       stop: () => service.scheduler_.stop(),

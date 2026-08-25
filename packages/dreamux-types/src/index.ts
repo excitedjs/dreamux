@@ -79,9 +79,14 @@ export type {
   AgentRuntimeTranscriptPage,
   AgentRuntimeTranscriptQuery,
   AgentRuntimeTranscriptTurn,
+  JsonValue,
   RuntimeAdmission,
-  RuntimeTurn,
-  RuntimeTurnOutcome,
+  RuntimeActivity,
+  RuntimeActivityEvent,
+  RuntimeActivitySink,
+  RuntimeCompletion,
+  RuntimeSubmission,
+  RuntimeSubmissionSettlement,
   UnsupportedAgentRuntimeFeatureError,
 } from './agent-runtime.js';
 export type {

@@ -1,11 +1,11 @@
 /**
  * Claude Code stream-json turn RPC.
  *
- * The supervisor owns the child process. This class owns one in-flight turn,
- * stdout line demux, turn aggregation, and defensive control-request replies.
+ * The supervisor owns the child process. This class owns one in-flight command
+ * group, stdout line demux, command drainage, and defensive control replies.
  *
- * One Dreamux logical turn can span several CLI commands: a live steer is
- * written into the turn that is already running. How the CLI answers them is
+ * One resident CLI execution window can span several submitted commands: a
+ * live steer is written while the CLI is already running. How the CLI answers them is
  * not fixed, which is what makes settlement subtle (probed against a live
  * 2.1.231 resident session):
  *
@@ -20,17 +20,15 @@
  *    only sometimes, is not reliably the first-submitted uuid of a fold, and
  *    is absent entirely on the `error_during_execution` artifact a
  *    `priority: 'now'` interrupt produces.
- *  - **`command_lifecycle` is the only 1:1 signal.** Every submitted uuid
- *    reaches a terminal state (`completed` or `cancelled`), folded ones
- *    included. Its ordering against `result` is not stable — terminal states
- *    have been observed both before and after the result.
+ *  - **`command_lifecycle` is the attribution signal.** Started commands identify
+ *    the submissions represented by the next native `result`; terminal states
+ *    drain the resident execution window. Its ordering against `result` is not
+ *    stable.
  *
- * So the turn settles on lifecycle terminality, not on counting results: every
- * submitted command must have reached a terminal state, and at least one
- * `result` must have been seen. The outcome is the last result seen
- * (`TurnAggregator` is already last-result-wins). `user_message_uuid` survives
- * only as a cross-talk guard: a result naming a command this turn never
- * submitted belongs to an already-settled turn.
+ * Every valid `result` is forwarded immediately as its own native completion
+ * boundary. Lifecycle terminality only decides when the command group has
+ * drained and the resident session may accept a new initial command; it never
+ * aggregates several results into one completion.
  */
 
 import type { Writable } from 'node:stream';
@@ -45,15 +43,15 @@ import {
   parseLine,
   TurnAggregator,
 } from './stream.js';
-import type { ParsedLine, TurnOutcome, TurnSubmitOptions } from './types.js';
+import type { ParsedLine, TurnSubmitOptions } from './types.js';
 
 interface PendingTurn {
-  resolve: (outcome: TurnOutcome) => void;
+  resolve: () => void;
   reject: (err: Error) => void;
   aggregator: TurnAggregator;
   timer: NodeJS.Timeout | null;
   /**
-   * Every command uuid written into this logical turn, in submission order:
+   * Every command uuid written into this resident execution window, in submission order:
    * the initial command plus each live steer. Commands never leave this list —
    * they only become terminal.
    */
@@ -61,12 +59,14 @@ interface PendingTurn {
   /**
    * The subset of {@link submitted} that has reached a terminal
    * `command_lifecycle` state, meaning "this command will produce nothing
-   * further". One rule covers both endings: a command answered inside a fold
-   * (`completed`, its uuid never named by any `result`) and a command that is
+   * further". One rule covers both endings: a command represented by a shared
+   * result (`completed`, its uuid may never be named by that `result`) and one that is
    * never answered at all (`cancelled`/`discarded`, or a steer whose write
    * failed).
    */
   terminal: Set<string>;
+  /** Commands started since the last result boundary, retained through terminal lifecycle. */
+  startedSinceResult: Set<string>;
   /** Whether any command reached `completed`, i.e. the CLI actually ran one. */
   ranAnyCommand: boolean;
   /** Whether a `result` envelope has been accepted into {@link aggregator}. */
@@ -84,6 +84,7 @@ interface PendingTurn {
 interface PendingSteer {
   prompt: string;
   options: TurnSubmitOptions;
+  commandUuid: string;
   resolve: () => void;
   reject: (error: Error) => void;
 }
@@ -110,6 +111,7 @@ export interface ClaudeCodeStreamRpcOptions {
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
   reapOnTimeout: () => void;
   onRemoteControlUrl?: (url: string) => void;
+  onProtocolEvent?: import('./types.js').ClaudeCodeSessionSpec['onProtocolEvent'];
 }
 
 export class ClaudeCodeStreamRpc {
@@ -126,7 +128,8 @@ export class ClaudeCodeStreamRpc {
   async submitTurn(
     prompt: string,
     options: TurnSubmitOptions = {},
-  ): Promise<TurnOutcome> {
+    commandUuid: string = randomUUID(),
+  ): Promise<void> {
     if (!this.stdin.writable) {
       return Promise.reject(new Error('claude resident child is not running'));
     }
@@ -135,8 +138,7 @@ export class ClaudeCodeStreamRpc {
         new Error('claude resident session is already mid-turn'),
       );
     }
-    return new Promise<TurnOutcome>((resolve, reject) => {
-      const commandUuid = randomUUID();
+    return new Promise<void>((resolve, reject) => {
       const pending: PendingTurn = {
         resolve,
         reject,
@@ -144,6 +146,7 @@ export class ClaudeCodeStreamRpc {
         timer: null,
         submitted: [commandUuid],
         terminal: new Set(),
+        startedSinceResult: new Set(),
         ranAnyCommand: false,
         sawResult: false,
         lastAbnormalReason: null,
@@ -175,6 +178,7 @@ export class ClaudeCodeStreamRpc {
   async steerTurn(
     prompt: string,
     options: TurnSubmitOptions = {},
+    commandUuid: string = randomUUID(),
   ): Promise<void> {
     if (!this.stdin.writable) {
       return Promise.reject(
@@ -192,16 +196,17 @@ export class ClaudeCodeStreamRpc {
     }
     if (this.lifecycleSupported === null) {
       return new Promise<void>((resolve, reject) => {
-        pending.capabilityWaiters.push({ prompt, options, resolve, reject });
+        pending.capabilityWaiters.push({ prompt, options, commandUuid, resolve, reject });
       });
     }
-    return this.writeSteer(pending, prompt, options);
+    return this.writeSteer(pending, prompt, options, commandUuid);
   }
 
   private writeSteer(
     pending: PendingTurn,
     prompt: string,
     options: TurnSubmitOptions,
+    commandUuid: string = randomUUID(),
   ): Promise<void> {
     if (this.pending !== pending) {
       return Promise.reject(capabilityUndecidedTurnEndedError());
@@ -211,8 +216,7 @@ export class ClaudeCodeStreamRpc {
         preAdmissionError('claude resident child is not running'),
       );
     }
-    const commandUuid = randomUUID();
-    // The steer joins this logical turn: from here on the turn cannot settle
+    // The steer joins this resident execution window: from here on it cannot drain
     // until this command has also reached a terminal lifecycle state.
     pending.submitted.push(commandUuid);
     return new Promise<void>((resolve, reject) => {
@@ -312,10 +316,9 @@ export class ClaudeCodeStreamRpc {
   }
 
   /**
-   * The settlement gate: every submitted command has reached a terminal
-   * lifecycle state AND at least one `result` has been seen. The outcome is
-   * whatever the aggregator last took, since the CLI may answer several
-   * commands with a single `result` and never name the folded uuids.
+   * The drainage gate: every submitted command has reached a terminal
+   * lifecycle state AND at least one valid `result` has been seen. Result
+   * identity and settlement have already been forwarded one-by-one.
    *
    * Two escapes, both anti-hang:
    *
@@ -336,14 +339,15 @@ export class ClaudeCodeStreamRpc {
   private settleIfReady(pending: PendingTurn): void {
     if (this.pending !== pending) return;
     if (pending.sawResult && this.lifecycleSupported !== true) {
-      this.settleWithAggregatedResult(pending);
+      this.settlePending()?.resolve();
       return;
     }
+    if (pending.startedSinceResult.size > 0) return;
     for (const commandUuid of pending.submitted) {
       if (!pending.terminal.has(commandUuid)) return;
     }
     if (pending.sawResult) {
-      this.settleWithAggregatedResult(pending);
+      this.settlePending()?.resolve();
       return;
     }
     if (pending.ranAnyCommand) return;
@@ -354,15 +358,6 @@ export class ClaudeCodeStreamRpc {
     // Pass the cause into `settlePending` so surviving steer waiters get the
     // real reason instead of the generic write-unconfirmed message.
     this.settlePending(error)?.reject(error);
-  }
-
-  /** Settle with the last `result` the aggregator took (last result wins). */
-  private settleWithAggregatedResult(pending: PendingTurn): void {
-    // Non-null by construction: `sawResult` is only set after the aggregator
-    // accepted a `result`, and the runtime turns an error outcome into a
-    // failed turn, so resolving is right for both success and error subtypes.
-    const outcome = pending.aggregator.outcome()!;
-    this.settlePending()?.resolve(outcome);
   }
 
   /**
@@ -404,15 +399,23 @@ export class ClaudeCodeStreamRpc {
         break;
       case 'assistant':
         this.pending?.aggregator.accept(line);
+        this.options.onProtocolEvent?.({ kind: 'stream', line });
         break;
       case 'command_lifecycle': {
         const pending = this.pending;
         if (pending === null || line.commandUuid === null) break;
+        if (line.state !== null) {
+          this.options.onProtocolEvent?.({
+            kind: 'command_lifecycle',
+            commandUuid: line.commandUuid,
+            state: line.state,
+          });
+        }
+        if (line.state === 'started') pending.startedSinceResult.add(line.commandUuid);
         // `command_lifecycle` does double duty: it coordinates live-steer
         // admission (writeWaiters) and proves lifecycle capability, and its
-        // terminal states are the settlement gate — the only signal that stays
-        // 1:1 with submitted commands when the CLI folds several of them into
-        // one `result`.
+        // terminal states are the drainage gate when the CLI represents several
+        // started commands with one `result`.
         const newlySupported = this.lifecycleSupported === null;
         if (newlySupported) this.lifecycleSupported = true;
         this.resolveWriteWaiter(pending, line.commandUuid);
@@ -422,7 +425,8 @@ export class ClaudeCodeStreamRpc {
         if (this.pending !== pending) break;
         if (line.state === 'completed') {
           this.markCommandTerminal(pending, line.commandUuid, null);
-        } else if (line.state === 'cancelled' || line.state === 'discarded') {
+        } else if (line.state === 'cancelled' || line.state === 'discarded' || line.state === 'refused') {
+          pending.startedSinceResult.delete(line.commandUuid);
           this.markCommandTerminal(
             pending,
             line.commandUuid,
@@ -434,34 +438,42 @@ export class ClaudeCodeStreamRpc {
       case 'result': {
         const pending = this.pending;
         if (pending === null) {
-          // A late result (e.g. a steered command draining in a later stdout
-          // flush after the turn already settled) has no turn to settle. Log
-          // it so the drop is diagnosable rather than silent.
-          this.options.log?.(
-            'warn',
-            'claude result envelope arrived with no pending turn; ignored',
+          const error = new Error(
+            'claude result envelope arrived without an attributable command group',
           );
+          this.options.log?.('error', error.message, error);
+          this.options.reapOnTimeout();
           break;
         }
         const commandUuid = line.outcome.userMessageUuid;
         if (commandUuid !== null && !pending.submitted.includes(commandUuid)) {
-          // Cross-talk guard: a result naming a command this turn never
-          // submitted belongs to an already-settled turn, and applying it here
-          // would hand this turn someone else's answer.
-          this.options.log?.(
-            'warn',
+          const error = new Error(
             `claude result envelope for unsubmitted command ${commandUuid}; ` +
-              'ignored (it belongs to an already-settled turn)',
+              'native completion ownership is ambiguous',
           );
+          this.options.log?.('error', error.message, error);
+          this.settlePending(error)?.reject(error);
+          this.options.reapOnTimeout();
           break;
         }
-        // A result with no `user_message_uuid` is kept, not treated as a
-        // settlement trigger: the interrupt artifact (`error_during_execution`
-        // with no `result` key) has no uuid, and so does a plain older-build
-        // result. Whether the turn is done is decided by lifecycle terminality
-        // alone.
+        // The interrupt artifact (`error_during_execution` with no result) is
+        // not a native answer boundary. Older valid results may omit the uuid.
+        if (
+          line.outcome.subtype === 'error_during_execution' &&
+          line.outcome.userMessageUuid === null &&
+          line.outcome.text === null
+        ) {
+          this.options.log?.('warn', 'claude interrupt result artifact ignored');
+          break;
+        }
         pending.aggregator.accept(line);
+        const outcome = pending.aggregator.takeOutcome()!;
+        pending.startedSinceResult.clear();
         pending.sawResult = true;
+        this.options.onProtocolEvent?.({
+          kind: 'result',
+          outcome,
+        });
         this.settleIfReady(pending);
         break;
       }
@@ -478,6 +490,7 @@ export class ClaudeCodeStreamRpc {
         );
         break;
       default:
+        this.options.onProtocolEvent?.({ kind: 'stream', line });
         break;
     }
   }
@@ -497,7 +510,12 @@ export class ClaudeCodeStreamRpc {
   private flushCapabilityWaiters(pending: PendingTurn): void {
     const waiters = pending.capabilityWaiters.splice(0);
     for (const waiter of waiters) {
-      void this.writeSteer(pending, waiter.prompt, waiter.options).then(
+      void this.writeSteer(
+        pending,
+        waiter.prompt,
+        waiter.options,
+        waiter.commandUuid,
+      ).then(
         waiter.resolve,
         waiter.reject,
       );

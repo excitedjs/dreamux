@@ -55,7 +55,8 @@ export type CommandLifecycleState =
   | 'started'
   | 'completed'
   | 'cancelled'
-  | 'discarded';
+  | 'discarded'
+  | 'refused';
 
 /** The terminal `result` envelope, reduced to what the runtime records per turn. */
 export interface ResultEnvelope {
@@ -69,11 +70,11 @@ export interface ResultEnvelope {
    * The `uuid` of the inbound user message this result answers
    * (`result.user_message_uuid`), or `null` on builds that omit it.
    *
-   * This is the only attribution key on the wire: `result` carries no
+   * This is an optional attribution hint on the wire: `result` carries no
    * `command_uuid`, its own `uuid` is server-generated, and `session_id` is
-   * shared by every turn of the resident session. The RPC layer uses it to
-   * fold several results into one logical turn and to reject a result that
-   * belongs to an already-settled turn.
+   * shared by every execution window of the resident session. The RPC layer
+   * validates a present value against submitted commands; started lifecycle
+   * facts own attribution when this field is absent.
    */
   readonly userMessageUuid: string | null;
   /** Error subtypes may carry a message list; empty otherwise. */
@@ -145,7 +146,17 @@ export interface ClaudeCodeSessionSpec {
   onRemoteControlUrl?: (url: string) => void;
   /** Diagnostic logger for protocol-level events (parse errors, control answers). */
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
+  onProtocolEvent?: (event: ClaudeProtocolEvent) => void;
 }
+
+export type ClaudeProtocolEvent =
+  | {
+      readonly kind: 'command_lifecycle';
+      readonly commandUuid: string;
+      readonly state: CommandLifecycleState;
+    }
+  | { readonly kind: 'stream'; readonly line: ParsedLine }
+  | { readonly kind: 'result'; readonly outcome: TurnOutcome };
 
 /**
  * A resident Claude Code session. Full turns are serialized by the caller;
@@ -155,10 +166,18 @@ export interface ClaudeCodeSessionSpec {
 export interface ClaudeCodeSession {
   /** Spawn the child and resolve once it is up (reject on spawn error). */
   start(): Promise<void>;
-  /** Submit one user turn; resolve with the outcome when `result` lands. */
-  submitTurn(prompt: string, options?: TurnSubmitOptions): Promise<TurnOutcome>;
+  /** Submit one user turn; resolve once all accepted commands have drained. */
+  submitTurn(
+    prompt: string,
+    options?: TurnSubmitOptions,
+    commandUuid?: string,
+  ): Promise<void>;
   /** Send a user message into the active turn without awaiting a separate result. */
-  steerTurn(prompt: string, options?: TurnSubmitOptions): Promise<void>;
+  steerTurn(
+    prompt: string,
+    options?: TurnSubmitOptions,
+    commandUuid?: string,
+  ): Promise<void>;
   /** Whether the child is currently alive. */
   isAlive(): boolean;
   /**
