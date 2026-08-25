@@ -1,6 +1,15 @@
 # Change Log - @excitedjs/feishu-channel
 
-This log was last generated on Mon, 27 Jul 2026 08:35:50 GMT and should not be manually modified.
+This log was last generated on Tue, 25 Aug 2026 11:45:34 GMT and should not be manually modified.
+
+## 5.0.0
+Tue, 25 Aug 2026 11:45:34 GMT
+
+### Breaking changes
+
+- BREAKING: Review: before deploying, inspect every existing non-empty group.allow_chats entry under both group.policy=allowlist and group.policy=follow-user; keep only groups whose human membership should be trusted and whose passive known-bot observation should remain enabled. Previously, follow-user ignored allow_chats for ordinary human delivery, while allowlist still applied dm_policy and allow_users after the chat check. Now either non-block policy trusts every exactly classified human in a listed chat after the global mention gate. access.json remains V3 and needs no rebuild; the new authorization meaning takes effect in place when the new server starts. The package-root gate input remains unchanged, and callers must classify an exact human before passing is_bot_sender=false.
+- BREAKING: Publish complete Feishu MCP tool metadata and closed input/output schemas. Successful reply and react calls now return direct canonical message_ids and reaction_id objects, while live and sessionless list_chat_bots calls return the same direct chat_id, known, and trusted result.
+- BREAKING: Review: Channel contract consumers must use status-only delivery results, treat admission-ambiguous as terminal and non-replayed, and stop subscribing to the removed turn.submitted and turn.settled events. Feishu delivery no longer exposes Dreamux Turn IDs. No rebuild is required: Feishu config, access state, bindings, and transport state formats are unchanged.
 
 ## 4.1.1
 Mon, 27 Jul 2026 08:35:50 GMT

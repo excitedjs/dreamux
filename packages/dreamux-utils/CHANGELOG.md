@@ -1,6 +1,18 @@
 # Change Log - @excitedjs/dreamux-utils
 
-This log was last generated on Mon, 27 Jul 2026 08:35:50 GMT and should not be manually modified.
+This log was last generated on Tue, 25 Aug 2026 11:45:34 GMT and should not be manually modified.
+
+## 0.4.0
+Tue, 25 Aug 2026 11:45:34 GMT
+
+### Minor changes
+
+- Add a neutral SupervisedChild process-group lifecycle primitive.
+- BREAKING: Review: callers of completion body preparation must stop supplying a public completion ID, and process supervisors must handle stop failures when process-group absence cannot be proved. Oversized completion spills now use opaque exclusive names; shared transcript helpers provide stable rendering, redaction, caps, and fixed-budget projection for provider-owned native readers. No rebuild is required: spill artifacts are rebuildable cache and the new transcript helpers persist no state.
+
+### Patches
+
+- Cap native transcript tool names at 256 Unicode code points and report page truncation only when returned content is clipped. No rebuild is required because transcript projection remains stateless.
 
 ## 0.3.4
 Mon, 27 Jul 2026 08:35:50 GMT

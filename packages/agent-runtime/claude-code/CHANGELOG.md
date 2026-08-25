@@ -1,6 +1,20 @@
 # Change Log - @excitedjs/agent-runtime-claude-code
 
-This log was last generated on Mon, 27 Jul 2026 08:35:50 GMT and should not be manually modified.
+This log was last generated on Tue, 25 Aug 2026 11:45:34 GMT and should not be manually modified.
+
+## 0.5.0
+Tue, 25 Aug 2026 11:45:34 GMT
+
+### Minor changes
+
+- BREAKING: Review: turn settlement now creates provider-owned completion tokens at real native result boundaries on top of lifecycle-terminality gating: folded live-steer sends resolve to one shared completion, queued sends resolve to distinct completions in native order, stop without an observed final result settles as stopped without fabricating a completion, and live assistant/tool activity is reported through the submission activity sink. The Last completion boundary now recognizes terminal results correctly. Test typecheck now actually covers tests/. No rebuild is required because these are runtime contract changes, not persisted state migrations.
+- Support structured output via the create-context outputSchema, mapped to the native --json-schema flag on the resident stream-json session. A per-turn schema matching the spawn-time one is a no-op; a differing one still fails loud.
+- Pass --json-schema at resident session creation so structured_output is enforced for the session lifetime. Prefer structured_output over free-form result text, fail loud when a schema session returns none, and cache lastResult only after all validation passes so failed turns never leak unvalidated text.
+- BREAKING: Review: external consumers must implement the required cold readTranscript provider method, persist the native transcript locator with the session checkpoint, and handle RuntimeAdmission plus stable RuntimeTurn objects instead of public command identifiers. Fresh Claude Code sessions are now pinned with --session-id, native transcript pagination owns opaque cursors and bounded provider-neutral projection, live steer fails loudly without msg_lifecycle_v1, post-write uncertainty is ambiguous, and stop drains every started admission. No rebuild is required: existing native Claude sessions and Dreamux checkpoints remain readable, with provider-native rediscovery when a stored locator is absent or stale.
+
+### Patches
+
+- Settle resident turns when every submitted command has reached a terminal `command_lifecycle` state and at least one `result` has been seen, and parse `command_lifecycle` as a top-level `type` (the resident CLI's actual wire shape, keeping the `system`-subtype shape for backward compatibility). The previous gate never opened for top-level envelopes, so turns hung until the 600s idle reap even though `result` had arrived. Counting results per command cannot replace it: the CLI folds messages that arrive during a tool call into the running turn and answers several commands with a single `result`, and a folded command's uuid never appears on any result. Lifecycle terminality is the only signal that stays 1:1 with submitted commands, and its ordering against `result` is not stable, so the turn now waits for eventual arrival of both and settles with the last result seen. A `result` naming a command the pending turn never submitted is warned about and dropped instead of settling it with another turn's answer; the uuid-less envelope a `priority: 'now'` interrupt produces no longer settles a turn on its own. A command reported `cancelled`/`discarded` stops being waited on with a warning and does not fail a turn its other commands can still answer, but a turn whose commands all ended without ever running now fails immediately with the cause instead of waiting for the idle deadline, which would have reaped a healthy resident child. A build without `msg_lifecycle_v1` settles on its first result. A `result` arriving with no pending turn logs a warning instead of being dropped silently.
 
 ## 0.4.3
 Mon, 27 Jul 2026 08:35:50 GMT

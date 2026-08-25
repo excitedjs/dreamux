@@ -2,6 +2,51 @@
   "name": "@excitedjs/agent-runtime-codex",
   "entries": [
     {
+      "version": "0.4.0",
+      "tag": "@excitedjs/agent-runtime-codex_v0.4.0",
+      "date": "Tue, 25 Aug 2026 11:45:34 GMT",
+      "comments": {
+        "patch": [
+          {
+            "comment": "Compile the supported provider-neutral outputSchema subset into Codex strict schemas, restore optional-field semantics on completed JSON, and reject incompatible schemas or active-turn folding before submission."
+          },
+          {
+            "comment": "Forward structured output schemas to Codex turn/start."
+          },
+          {
+            "comment": "Unsubscribe Codex turn collectors after completion, failure, rejected turn/start, direct-run cleanup, and runtime stop so stale collectors cannot observe later turns."
+          },
+          {
+            "comment": "Stop native transcript pagination at the oldest completed Codex turn while preserving continuations when bounded scanning has not reached the transcript origin. No rebuild is required because native rollout and cursor formats are unchanged."
+          }
+        ],
+        "minor": [
+          {
+            "comment": "BREAKING: Review: the turn manager now settles submissions with provider-owned completion tokens at thread result boundaries: folded submissions share one completion, queued submissions settle as distinct completions in native order, stop without an observed final result settles as stopped without fabricating a completion, and live activity flows through the submission activity sink. Test typecheck now actually covers tests/. No rebuild is required because these are runtime contract changes, not persisted state migrations."
+          },
+          {
+            "comment": "BREAKING: Review: external consumers must implement the required cold readTranscript provider method, persist thread.path with the native session checkpoint, and handle RuntimeAdmission plus stable RuntimeTurn objects instead of public app-server Turn IDs. Codex now reads bounded provider-neutral pages from active, archived, compressed, and history-base native rollouts; request uncertainty is ambiguous, folded aliases converge before settlement, and stop tears down transport before draining every started admission. No rebuild is required: existing Codex rollouts and Dreamux checkpoints remain readable, with provider-native rediscovery when a stored locator is absent or stale."
+          }
+        ],
+        "none": [
+          {
+            "comment": "Correct comments to state that turn_timeout_ms is accepted and defaulted by the config reader but is not consumed by CodexRuntime and currently has no runtime effect. Documentation-only; no package behavior or version change."
+          },
+          {
+            "comment": "Add test-only contract coverage for forwarding outputSchema and collecting validated JSON output. No published runtime behavior or version change."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.8.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.4.0`"
+          }
+        ]
+      }
+    },
+    {
       "version": "0.3.4",
       "tag": "@excitedjs/agent-runtime-codex_v0.3.4",
       "date": "Mon, 27 Jul 2026 08:35:50 GMT",

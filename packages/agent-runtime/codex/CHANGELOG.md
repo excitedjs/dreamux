@@ -1,6 +1,21 @@
 # Change Log - @excitedjs/agent-runtime-codex
 
-This log was last generated on Mon, 27 Jul 2026 08:35:50 GMT and should not be manually modified.
+This log was last generated on Tue, 25 Aug 2026 11:45:34 GMT and should not be manually modified.
+
+## 0.4.0
+Tue, 25 Aug 2026 11:45:34 GMT
+
+### Minor changes
+
+- BREAKING: Review: the turn manager now settles submissions with provider-owned completion tokens at thread result boundaries: folded submissions share one completion, queued submissions settle as distinct completions in native order, stop without an observed final result settles as stopped without fabricating a completion, and live activity flows through the submission activity sink. Test typecheck now actually covers tests/. No rebuild is required because these are runtime contract changes, not persisted state migrations.
+- BREAKING: Review: external consumers must implement the required cold readTranscript provider method, persist thread.path with the native session checkpoint, and handle RuntimeAdmission plus stable RuntimeTurn objects instead of public app-server Turn IDs. Codex now reads bounded provider-neutral pages from active, archived, compressed, and history-base native rollouts; request uncertainty is ambiguous, folded aliases converge before settlement, and stop tears down transport before draining every started admission. No rebuild is required: existing Codex rollouts and Dreamux checkpoints remain readable, with provider-native rediscovery when a stored locator is absent or stale.
+
+### Patches
+
+- Compile the supported provider-neutral outputSchema subset into Codex strict schemas, restore optional-field semantics on completed JSON, and reject incompatible schemas or active-turn folding before submission.
+- Forward structured output schemas to Codex turn/start.
+- Unsubscribe Codex turn collectors after completion, failure, rejected turn/start, direct-run cleanup, and runtime stop so stale collectors cannot observe later turns.
+- Stop native transcript pagination at the oldest completed Codex turn while preserving continuations when bounded scanning has not reached the transcript origin. No rebuild is required because native rollout and cursor formats are unchanged.
 
 ## 0.3.4
 Mon, 27 Jul 2026 08:35:50 GMT

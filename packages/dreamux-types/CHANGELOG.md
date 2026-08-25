@@ -1,6 +1,16 @@
 # Change Log - @excitedjs/dreamux-types
 
-This log was last generated on Mon, 27 Jul 2026 08:35:50 GMT and should not be manually modified.
+This log was last generated on Tue, 25 Aug 2026 11:45:34 GMT and should not be manually modified.
+
+## 0.8.0
+Tue, 25 Aug 2026 11:45:34 GMT
+
+### Minor changes
+
+- BREAKING: Review: the Agent Runtime contract now settles submissions with provider-owned completion tokens: submit returns a RuntimeSubmission whose settlement resolves to an immutable RuntimeCompletion created at each real native result boundary, folded sends share one completion object, queued sends settle as distinct completions in provider order, stop without an observed final result settles as stopped without a completion, and providers report live assistant/tool activity through the submission's synchronous activity sink. Update every provider to create completion tokens at result boundaries and stop deriving settlement from per-send slots. No rebuild is required because these are provider and public TypeScript contract changes, not persisted Dreamux state migrations.
+- Add outputSchema to AgentRuntimeCreateContext for spawn-time structured output, alongside the existing per-turn outputSchema on text turn inputs and the structural unsupported-feature error contract.
+- BREAKING: Expand ChannelToolDescriptor with standard MCP title, icon, annotation, and output-schema metadata, and require every provider tool to declare an inputSchema. Existing external Channel providers must add an input schema to each published tool descriptor.
+- BREAKING: Review: update every Agent Runtime provider to replace AgentRuntimeIdentity.checkpoint_id with typed checkpoint: AgentRuntimeResumeCheckpoint | null, remove AgentRuntime.getLast(), implement required cold readTranscript queries/pages/typed-reason errors, persist the native transcript_locator with its session checkpoint, and return RuntimeAdmission with stable RuntimeTurn objects. Provider-private Turn IDs, transcript locators, cursor positions, and arbitrary transcript error messages no longer belong in shared results; failed proves pre-admission rejection, ambiguous forbids automatic retry, and stop drains all started admissions. Channel delivery results remain status-only with no Turn lifecycle events. No rebuild is required because these are provider and public TypeScript contract changes, not persisted Dreamux state migrations.
 
 ## 0.7.0
 Mon, 27 Jul 2026 08:35:50 GMT
