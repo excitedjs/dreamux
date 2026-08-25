@@ -156,6 +156,14 @@ approves that tradeoff; its breaking note must lead with `BREAKING:`, immediatel
 include `Review:` with the required operator check, explicitly say no rebuild is
 needed, and contain no `Rebuild:` instruction.
 
+While a package stays on the 0.x version line, its change files must never
+use type `major` — Rush bumps a 0.x package straight to 1.0.0 on a pending
+major. Record breaking changes for 0.x packages as type `minor` with the
+`BREAKING:` note leading. Packages already past 1.0.0 (for example
+`@excitedjs/feishu-channel`) use real semver majors. CI enforces the 0.x rule
+(`ci.yml`, "Forbid major change files on the 0.x line"); the operator decides
+when a package leaves 0.x.
+
 ## Commits
 
 - Use real author identity. If git reports an auto-detected email, set

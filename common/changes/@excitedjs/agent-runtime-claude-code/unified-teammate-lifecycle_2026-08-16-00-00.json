@@ -3,7 +3,7 @@
     {
       "packageName": "@excitedjs/agent-runtime-claude-code",
       "comment": "BREAKING: Review: external consumers must implement the required cold readTranscript provider method, persist the native transcript locator with the session checkpoint, and handle RuntimeAdmission plus stable RuntimeTurn objects instead of public command identifiers. Fresh Claude Code sessions are now pinned with --session-id, native transcript pagination owns opaque cursors and bounded provider-neutral projection, live steer fails loudly without msg_lifecycle_v1, post-write uncertainty is ambiguous, and stop drains every started admission. No rebuild is required: existing native Claude sessions and Dreamux checkpoints remain readable, with provider-native rediscovery when a stored locator is absent or stale.",
-      "type": "major"
+      "type": "minor"
     }
   ],
   "packageName": "@excitedjs/agent-runtime-claude-code"

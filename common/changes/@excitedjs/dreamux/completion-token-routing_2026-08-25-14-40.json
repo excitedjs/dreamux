@@ -3,7 +3,7 @@
     {
       "packageName": "@excitedjs/dreamux",
       "comment": "BREAKING: Review: completion push-back now equals the number of logical completions the provider actually produced instead of the number of accepted sends. The new completion-router delivers at-most-once per producer, completion token, and recipient while preserving provider order: folded sends deliver one push-back, queued sends deliver ordered distinct push-backs even when their text is identical, duplicate terminal notifications never deliver twice, and close before an observed final result settles as stopped with zero push-backs. Review consumers that assumed one push-back per send. No rebuild is required because delivery relationships are in-process facts, not persisted Dreamux state.",
-      "type": "major"
+      "type": "minor"
     }
   ],
   "packageName": "@excitedjs/dreamux"
