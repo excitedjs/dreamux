@@ -34,14 +34,12 @@ function textEvent(text: string): FeishuInboundEvent {
 }
 
 describe('channel-reminder is unaffected by inbound HTML transcoding', () => {
-  it('requires a separate acknowledgement only when work must precede the answer', () => {
+  it('requires channel-tool delivery without prescribing progress messages', () => {
     expect(CHANNEL_REMINDER).toMatch(
       /^<channel-reminder>[^<]+<\/channel-reminder>$/,
     );
     expect(CHANNEL_REMINDER).toContain('channel reply tool');
     expect(CHANNEL_REMINDER).toContain('never as plain assistant text');
-    expect(CHANNEL_REMINDER).toMatch(/Answer now if ready/i);
-    expect(CHANNEL_REMINDER).toMatch(/otherwise acknowledge,[^<]*report back/i);
     expect(CHANNEL_REMINDER).not.toContain(
       'Acknowledge it with a brief reply through that tool first, then start the work.',
     );

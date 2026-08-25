@@ -17,7 +17,6 @@ import {
 } from './connection.js'
 import {
   createTransportDiagnostics,
-  type TransportDiagnostics,
   type TransportLogger,
 } from './diagnostics.js'
 import {
@@ -26,6 +25,20 @@ import {
   type FeishuMessageReadRequest,
   type FeishuMessageReadResponse,
 } from './message-read.js'
+import {
+  createFeishuCotClient,
+  type FeishuCotClient,
+} from './cot.js'
+import {
+  resolveAppOwner,
+  resolveBotInfo,
+  type FeishuAppOwnerIdentity,
+  type FeishuBotInfo,
+} from './identity.js'
+export {
+  FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER,
+  type FeishuAppOwnerIdentity,
+} from './identity.js'
 export type {
   FeishuMessageReadItem,
   FeishuMessageReadMode,
@@ -37,15 +50,35 @@ export type {
 const WS_HANDSHAKE_TIMEOUT_MS = 15_000
 const WS_STARTUP_GRACE_MS = 30_000
 
-// application/v6 owner.type: enterprise-member owner for a custom app.
-export const FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER = 2
-
 export interface FeishuSendResult {
     messageIds: string[]
 }
 
 export interface FeishuSendOptions {
     signal?: AbortSignal
+    /**
+     * Synchronous receipt for each message the platform confirms creating.
+     * It fires before the next rendered card is sent, preserving partial-send
+     * ordering for callers that need platform-visible facts as they happen.
+     * Observer failures are non-authoritative and never affect message sends.
+     * Text `send` consumes this field; `sendCard` accepts only `signal`.
+     */
+    readonly onMessageCreated?: (receipt: {
+      readonly messageId: string
+      readonly ordinal: number
+    }) => void
+}
+
+function notifyMessageCreated(
+  options: Pick<FeishuSendOptions, 'onMessageCreated'> | undefined,
+  messageId: string,
+  ordinal: number,
+): void {
+  try {
+    options?.onMessageCreated?.({ messageId, ordinal })
+  } catch {
+    // Display observers are non-authoritative after platform success.
+  }
 }
 
 export interface FeishuCreateGroupInput {
@@ -171,17 +204,6 @@ export interface FeishuMessageResourceFetcher {
   ): Promise<FeishuMessageResourceResponse>
 }
 
-/**
- * Raw identity of the app creator / owner, returned by
- * `GET /open-apis/application/v6/applications/{appId}` with
- * `user_id_type=open_id`.
- */
-export interface FeishuAppOwnerIdentity {
-  creatorOpenId?: string
-  ownerOpenId?: string
-  ownerType?: number
-}
-
 const COMMENT_FILE_TYPES = ['doc', 'docx', 'sheet', 'file'] as const
 type CommentFileType = (typeof COMMENT_FILE_TYPES)[number]
 
@@ -247,18 +269,21 @@ export interface FeishuTransport {
     readonly selfId: string | undefined
     readonly selfName: string | undefined
     start(routes: InboundRoutes): Promise<void>
-    send(target: OutboundTarget, text: string): Promise<FeishuSendResult>
+    send(
+      target: OutboundTarget,
+      text: string,
+      options?: Pick<FeishuSendOptions, 'onMessageCreated'>,
+    ): Promise<FeishuSendResult>
     sendCard(
       target: OutboundTarget,
       card: unknown,
-      options?: FeishuSendOptions,
+      options?: Pick<FeishuSendOptions, 'signal'>,
     ): Promise<FeishuSendResult>
     createGroup(input: FeishuCreateGroupInput): Promise<FeishuCreateGroupResult>
     inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult>
     /** Optional capability for custom transports; callers must fail safe when absent. */
     getChatMode?(chatId: string): Promise<FeishuChatMode | undefined>
     addReaction(messageId: string, emoji: string): Promise<string>
-    removeReaction(messageId: string, reactionId: string): Promise<void>
     editText(messageId: string, text: string): Promise<void>
     fetchDocComment(fileToken: string, fileType: string, commentId: string): Promise<FeishuDocComment | null>
     fetchDocMeta(fileToken: string, fileType: string): Promise<FeishuDocMeta | null>
@@ -266,6 +291,12 @@ export interface FeishuTransport {
     readMessage?(request: FeishuMessageReadRequest): Promise<FeishuMessageReadResponse>
     /** Optional best-effort contact lookup for an accepted human sender. */
     resolveUserName?(openId: string): Promise<string | undefined>
+    /**
+     * Optional COT (chain-of-thought) message operations. Absent on a custom or
+     * older transport; callers must treat absence as "no COT surface" and keep
+     * working without one.
+     */
+    readonly cot?: FeishuCotClient
     resolveAppOwner(): Promise<FeishuAppOwnerIdentity>
     close(): Promise<void>
 }
@@ -362,7 +393,11 @@ export function createFeishuTransport(
       await openInbound(routes)
     },
 
-    async send(target: OutboundTarget, text: string): Promise<FeishuSendResult> {
+    async send(
+      target: OutboundTarget,
+      text: string,
+      options?: Pick<FeishuSendOptions, 'onMessageCreated'>,
+    ): Promise<FeishuSendResult> {
       const cards = renderMarkdownToCards(textWithLeadingMentions(target, text))
       const messageIds: string[] = []
       for (const card of cards) {
@@ -370,7 +405,11 @@ export function createFeishuTransport(
         assertCardContentFits(content)
         const res = await sendInteractiveCard(client, target, content)
         const id = res.data?.message_id
-        if (id) messageIds.push(id)
+        if (id) {
+          const ordinal = messageIds.length
+          messageIds.push(id)
+          notifyMessageCreated(options, id, ordinal)
+        }
       }
       return { messageIds }
     },
@@ -378,7 +417,7 @@ export function createFeishuTransport(
     async sendCard(
       target: OutboundTarget,
       card: unknown,
-      options?: FeishuSendOptions,
+      options?: Pick<FeishuSendOptions, 'signal'>,
     ): Promise<FeishuSendResult> {
       const content = JSON.stringify(card)
       assertCardContentFits(content)
@@ -445,12 +484,6 @@ export function createFeishuTransport(
         data: { reaction_type: { emoji_type: emoji } },
       })
       return res.data?.reaction_id ?? ''
-    },
-
-    async removeReaction(messageId: string, reactionId: string): Promise<void> {
-      await client.im.messageReaction.delete({
-        path: { message_id: messageId, reaction_id: reactionId },
-      })
     },
 
     async editText(messageId: string, text: string): Promise<void> {
@@ -547,6 +580,8 @@ export function createFeishuTransport(
       return fetchUserName(client, openId)
     },
 
+    cot: createFeishuCotClient(client),
+
     async resolveAppOwner(): Promise<FeishuAppOwnerIdentity> {
       return resolveAppOwner(client, diag, creds.appId)
     },
@@ -570,109 +605,6 @@ function textWithLeadingMentions(target: OutboundTarget, text: string): string {
   const mentions = target.mentionUserIds ?? []
   if (mentions.length === 0) return text
   return `${mentions.map((id) => `<@${id}>`).join(' ')}\n${text}`
-}
-
-const BOT_INFO_ATTEMPTS = 3
-
-interface FeishuBotInfo {
-  openId?: string
-  appName?: string
-}
-
-async function resolveBotInfo(
-  client: lark.Client,
-  diag: TransportDiagnostics,
-): Promise<FeishuBotInfo | undefined> {
-  for (let attempt = 1; attempt <= BOT_INFO_ATTEMPTS; attempt++) {
-    try {
-      const res = await client.request<{ bot?: { open_id?: string, app_name?: string } }>({
-        method: 'GET',
-        url: '/open-apis/bot/v3/info',
-      })
-      const openId = res.bot?.open_id
-      const appName = res.bot?.app_name
-      if (openId) {
-        return {
-          openId,
-          ...(appName !== undefined && appName !== '' ? { appName } : {}),
-        }
-      }
-      diag.diagnostic(
-        'bot info response carried no open_id — groups that ' +
-          'require an @-mention will drop every message until the channel restarts',
-      )
-      return undefined
-    } catch (err) {
-      if (attempt < BOT_INFO_ATTEMPTS) {
-        await delay(attempt * 500)
-        continue
-      }
-      diag.diagnostic(
-        `could not resolve the bot open_id after ${BOT_INFO_ATTEMPTS} ` +
-          'attempts — groups that require an @-mention will drop every message ' +
-          'until the channel restarts:',
-        err,
-      )
-      return undefined
-    }
-  }
-  return undefined
-}
-
-async function resolveAppOwner(
-  client: lark.Client,
-  diag: TransportDiagnostics,
-  appId: string,
-): Promise<FeishuAppOwnerIdentity> {
-  const identity: FeishuAppOwnerIdentity = {}
-  for (let attempt = 1; attempt <= BOT_INFO_ATTEMPTS; attempt++) {
-    try {
-      const res = await client.request<{
-        data?: {
-          app?: {
-            creator_id?: string
-            owner?: { owner_id?: string; type?: number; owner_type?: number }
-          }
-        }
-      }>({
-        method: 'GET',
-        url: `/open-apis/application/v6/applications/${encodeURIComponent(appId)}`,
-        params: { lang: 'zh_cn', user_id_type: 'open_id' },
-      })
-      const app = res.data?.app
-      if (typeof app?.creator_id === 'string' && app.creator_id !== '') {
-        identity.creatorOpenId = app.creator_id
-      }
-      const ownerId = app?.owner?.owner_id
-      const ownerType = app?.owner?.type ?? app?.owner?.owner_type
-      if (typeof ownerType === 'number') identity.ownerType = ownerType
-      if (
-        typeof ownerId === 'string' &&
-        ownerId !== '' &&
-        (ownerType === undefined || ownerType === FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER)
-      ) {
-        identity.ownerOpenId = ownerId
-      }
-      return identity
-    } catch (err) {
-      if (attempt < BOT_INFO_ATTEMPTS) {
-        await delay(attempt * 500)
-        continue
-      }
-      diag.diagnostic(
-        'could not resolve the Feishu app owner via application/v6. ' +
-          'Ensure the app has scope `application:application:self_manage` ' +
-          'or `admin:app.info:readonly`:',
-        err,
-      )
-      return identity
-    }
-  }
-  return identity
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function raceConnectionReady(ready: Promise<void>): Promise<boolean> {

@@ -14,6 +14,7 @@ const CORE_EVENT = Symbol('dispatcher-core-event');
 
 export interface DispatcherCoreEventPublisher {
   publish(dispatcherId: string, event: ChannelCoreEvent): void;
+  hasSources?(): boolean;
 }
 
 /**
@@ -38,6 +39,7 @@ export class DispatcherCoreEventBus extends EventEmitter {
       publish: (dispatcherId: string, event: ChannelCoreEvent) => {
         this.publish(dispatcherId, event);
       },
+      hasSources: () => this.sources.size > 0,
     });
   }
 
@@ -54,7 +56,13 @@ export class DispatcherCoreEventBus extends EventEmitter {
       },
     });
     this.sources.add(source);
-    return source;
+    return {
+      source: source.source,
+      revoke: () => {
+        source.revoke();
+        this.sources.delete(source);
+      },
+    };
   }
 
   revokeSources(): void {

@@ -2,6 +2,7 @@ import type {
   AgentRuntimeMcpServer,
   ChannelSession,
   ChannelTarget,
+  ChannelToolCallerContext,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
@@ -27,6 +28,8 @@ interface ChannelToolInvocation {
   name: string;
   /** Raw provider-owned tool arguments, forwarded opaquely to the session. */
   arguments: unknown;
+  /** Resolved caller identity, forwarded verbatim to the session seam. */
+  caller: ChannelToolCallerContext;
   /** Which channel's bot the egress leaves through (issue #209). Omitted → primary. */
   channelId?: string;
 }
@@ -178,7 +181,11 @@ class ChannelSessions {
         name: input.name,
         arguments: (input.arguments ?? {}) as Record<string, unknown>,
       },
-      { dispatcher_id: this.opts.dispatcherId, channel_id: session.channel_id },
+      {
+        dispatcher_id: this.opts.dispatcherId,
+        channel_id: session.channel_id,
+        caller: input.caller,
+      },
     );
   }
 

@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import { describe, it, expect } from 'vitest';
+import ts from 'typescript';
 
 import { createFeishuChannelProvider } from '../src/index.js';
 
@@ -39,6 +40,50 @@ const RELATIVE_ESCAPE = /from\s+['"]\.\.\/\.\.\//;
 // channel package must reach the platform only through it, never directly.
 const LARK_SDK_IMPORT = /from\s+['"]@larksuiteoapi\//;
 const TEST_DOUBLE_EXPORT = /\b(?:createFakeFeishuBot|FakeFeishuBot)\b/;
+const DISTINCTIVE_RUNTIME_TERMS = new Set([
+  'exec_command',
+  'apply_patch',
+  'commandActions',
+  'contentItems',
+  'structuredContent',
+  'inputText',
+  'inputImage',
+  'aggregatedOutput',
+]);
+const ORDINARY_RUNTIME_TOOL_NAMES = new Set([
+  'Read',
+  'Write',
+  'Edit',
+  'Grep',
+  'Glob',
+  'Bash',
+]);
+const APPROVED_COT_ACTION_DISPLAY_NAMES = new Set(['Read', 'Edit', 'Bash']);
+
+function runtimeVocabulary(source: string): string[] {
+  const sourceFile = ts.createSourceFile(
+    'source.ts',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const found = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    const value = ts.isIdentifier(node) || ts.isStringLiteralLike(node)
+      ? node.text
+      : null;
+    if (
+      value !== null &&
+      (DISTINCTIVE_RUNTIME_TERMS.has(value) || ORDINARY_RUNTIME_TOOL_NAMES.has(value))
+    ) {
+      found.add(value);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return [...found].sort();
+}
 
 describe('feishu-channel import boundary', () => {
   const files = walk(join(pkgRoot, 'src'));
@@ -69,6 +114,28 @@ describe('feishu-channel import boundary', () => {
       TEST_DOUBLE_EXPORT.test(readFileSync(file, 'utf8')),
     );
     expect(offenders).toEqual([]);
+  });
+
+  it('keeps provider-specific runtime vocabulary out of the channel package', () => {
+    const offenders = files.flatMap((file) => {
+      const terms = runtimeVocabulary(readFileSync(file, 'utf8')).filter((term) => {
+        if (!ORDINARY_RUNTIME_TOOL_NAMES.has(term)) return true;
+        return !(
+          file.endsWith('/feishu-cot-events.ts') &&
+          APPROVED_COT_ACTION_DISPLAY_NAMES.has(term)
+        );
+      });
+      return terms.map((term) => `${file}:${term}`);
+    });
+    expect(offenders).toEqual([]);
+  });
+
+  it('detects runtime vocabulary in code while ignoring comments', () => {
+    expect(runtimeVocabulary(`
+      // commandActions and Bash in comments do not count.
+      const commandActions = 'exec_command';
+      const display = 'Bash';
+    `)).toEqual(['Bash', 'commandActions', 'exec_command']);
   });
 
   it('the channel provider is constructable against the public contract only', () => {

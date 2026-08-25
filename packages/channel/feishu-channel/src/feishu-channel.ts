@@ -5,6 +5,8 @@ import type {
   ChannelBindingCollaborationSpaceEvent,
   ChannelBindingRouteEvent,
   ChannelTarget,
+  ChannelToolCallerContext,
+  ChannelToolContext,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 import type {
@@ -28,6 +30,7 @@ import {
   isFeishuOperationError,
   runFeishuBoundedOperation,
 } from './feishu-bounded-operation.js';
+import { FeishuCotSessionSeam } from './feishu-cot-session.js';
 import {
   FEISHU_TOOLS,
   type FeishuMcpListChatBotsInput,
@@ -42,7 +45,6 @@ import {
   sendReply as sessionSendReply,
   addReaction as sessionAddReaction,
   sessionHandle,
-  type FeishuChannelState,
   type SessionHandle,
 } from './feishu-session-ops.js';
 import { onMessage as sessionOnMessage } from './feishu-session-inbound.js';
@@ -60,9 +62,6 @@ import {
  */
 export type ChannelLogger = import('./feishu-mcp-tools.js').ChannelLogger;
 
-export const RECEIVED_REACTION_EMOJI = 'Get';
-export const IN_PROGRESS_REACTION_EMOJI = 'OnIt';
-
 export interface WireChatBot {
   open_id: string;
   name?: string;
@@ -77,6 +76,12 @@ export interface FeishuMcpListChatBotsResult {
 export interface FeishuChannelSessionOptions {
   /** The owning dispatcher id — used only for log fields, never for paths. */
   dispatcherId: string;
+  /**
+   * This session's dispatcher-local channel id. The neutral provider adapter
+   * always supplies it; a session built without one matches no channel origin
+   * and therefore presents no COT.
+   */
+  channelId?: string;
   /** Feishu bot app id (host resolves it from config). */
   appId: string;
   /** Feishu bot app secret (host resolves it; empty string skips auth in tests). */
@@ -132,25 +137,23 @@ interface FeishuSessionLifecycle {
   inFlight: Set<Promise<unknown>>;
 }
 
+interface BindingRouteOwner {
+  readonly teamName: string;
+  readonly leaderName: string;
+}
+
 const FEISHU_BINDING_NOTIFICATION_SEND_TIMEOUT_MS = 20_000;
 
 export class FeishuChannelSession {
   readonly ref = BUILTIN_FEISHU_PROVIDER_REF;
   readonly bot: FeishuBot;
-  /**
-   * In-memory session state. Exposed to the package-local helpers in
-   * `feishu-session-ops.ts` through the session handle; the class keeps the
-   * field readonly on the outside via typing (helpers only mutate Maps/Sets).
-   */
-  readonly state: FeishuChannelState = {
-    inboundReactions: new Map(),
-    pendingReceivedReactionClears: new Set(),
-  };
   private readonly targetRouter: FeishuTargetRouter;
   private readonly _accessMutex = new AsyncMutex();
   private readonly inactiveFence = alwaysActiveSessionFence();
   private lifecycle: FeishuSessionLifecycle | undefined;
   private readonly coreEventSubscriptions: ChannelCoreEventSubscription[] = [];
+  private readonly bindingRouteOwners = new Map<string, BindingRouteOwner>();
+  private readonly cot: FeishuCotSessionSeam;
 
   constructor(private readonly opts: FeishuChannelSessionOptions) {
     this.bot = opts.botFactory !== undefined
@@ -165,6 +168,12 @@ export class FeishuChannelSession {
     this.targetRouter = new FeishuTargetRouter({
       chatModes: this.bot,
       log: opts.log,
+    });
+    this.cot = new FeishuCotSessionSeam({
+      dispatcherId: opts.dispatcherId,
+      channelId: opts.channelId,
+      log: opts.log,
+      cotClient: () => this.bot.cot,
     });
   }
 
@@ -181,7 +190,6 @@ export class FeishuChannelSession {
   private handleForFence(fence: FeishuSessionFence): SessionHandle {
     return sessionHandle(
       this.opts,
-      this.state,
       this.bot,
       this._accessMutex,
       this.bot.botDisplayName ?? 'Dreamux bot',
@@ -221,7 +229,13 @@ export class FeishuChannelSession {
       },
     };
     this.lifecycle = lifecycle;
+    this.bindingRouteOwners.clear();
     this.subscribeBindingNotifications(coreEvents, lifecycle);
+    this.coreEventSubscriptions.push(
+      ...this.cot.start(coreEvents, () =>
+        lifecycle.fence.isCurrent(),
+      ),
+    );
     try {
       await this.bot.start({
         onBotMemberAdded: async (added) => {
@@ -257,7 +271,9 @@ export class FeishuChannelSession {
       }
     } catch (error) {
       controller.abort();
-      this.unsubscribeBindingNotifications();
+      this.bindingRouteOwners.clear();
+      this.unsubscribeCoreEvents();
+      await this.cot.close();
       await Promise.allSettled([...lifecycle.inFlight]);
       if (this.lifecycle === lifecycle) this.lifecycle = undefined;
       throw error;
@@ -269,7 +285,12 @@ export class FeishuChannelSession {
     if (lifecycle !== undefined) {
       lifecycle.controller.abort();
     }
-    this.unsubscribeBindingNotifications();
+    this.bindingRouteOwners.clear();
+    this.unsubscribeCoreEvents();
+    // Interrupt every live card before the bot goes away. The adapter fences
+    // itself first and drains within a bounded window, so a slow Feishu can
+    // never hold session shutdown open.
+    await this.cot.close();
     if (lifecycle !== undefined) {
       await Promise.allSettled([...lifecycle.inFlight]);
     }
@@ -282,6 +303,7 @@ export class FeishuChannelSession {
   async handleMcpTool(
     toolName: FeishuToolName,
     rawArguments: unknown,
+    context?: ChannelToolContext,
   ): Promise<FeishuToolResult> {
     const def = FEISHU_TOOLS.find((t) => t.name === toolName);
     if (def === undefined) {
@@ -295,14 +317,19 @@ export class FeishuChannelSession {
           chatId: string,
           text: string,
           opts?: { messageId?: string; mentionUserIds?: string[] },
-        ) => this.sendReply({
-          chatId,
-          text,
-          ...(opts?.messageId !== undefined ? { messageId: opts.messageId } : {}),
-          ...(opts?.mentionUserIds !== undefined
-            ? { mentionUserIds: opts.mentionUserIds }
-            : {}),
-        }),
+        ) => this.sendReply(
+          {
+            chatId,
+            text,
+            ...(opts?.messageId !== undefined
+              ? { messageId: opts.messageId }
+              : {}),
+            ...(opts?.mentionUserIds !== undefined
+              ? { mentionUserIds: opts.mentionUserIds }
+              : {}),
+          },
+          context?.caller,
+        ),
         react: async (
           chatId: string | undefined,
           messageId: string,
@@ -379,8 +406,29 @@ export class FeishuChannelSession {
   // ── Thin wrappers around extracted helpers (kept for handleMcpTool & start)
   private async sendReply(
     input: FeishuMcpReplyInput,
+    caller: ChannelToolCallerContext | undefined,
   ): Promise<{ message_ids: string[] }> {
-    const r = await sessionSendReply(this.handle, input);
+    const lifecycle = this.lifecycle;
+    const r = await sessionSendReply(this.handle, {
+      ...input,
+      ...(caller?.kind === 'team_leader'
+        ? {
+            onMessageCreated: ({ messageId }: { messageId: string }) =>
+              this.cot.refreshReplyNextAnchor({
+                caller,
+                chatId: input.chatId,
+                messageId,
+                resolveTarget: () => this.targetRouter.resolveTarget({
+                  chat_id: input.chatId,
+                  ...(input.messageId !== undefined
+                    ? { message_id: input.messageId }
+                    : {}),
+                }),
+                isCurrent: () => lifecycle?.fence.isCurrent() === true,
+              }),
+          }
+        : {}),
+    });
     return { message_ids: r.messageIds };
   }
 
@@ -404,7 +452,18 @@ export class FeishuChannelSession {
     if (coreEvents === undefined) return;
     this.coreEventSubscriptions.push(
       coreEvents.on('binding.route', (event) => {
+        this.recordBindingRoute(event);
         this.enqueueBindingNotification(event, lifecycle);
+      }),
+    );
+    this.coreEventSubscriptions.push(
+      coreEvents.on('team.state', (event) => {
+        if (event.status !== 'closed') return;
+        for (const [key, owner] of this.bindingRouteOwners) {
+          if (owner.teamName === event.team_name) {
+            this.bindingRouteOwners.delete(key);
+          }
+        }
       }),
     );
     this.coreEventSubscriptions.push(
@@ -414,10 +473,24 @@ export class FeishuChannelSession {
     );
   }
 
-  private unsubscribeBindingNotifications(): void {
+  private unsubscribeCoreEvents(): void {
     for (const subscription of this.coreEventSubscriptions.splice(0)) {
       subscription.unsubscribe();
     }
+  }
+
+  private recordBindingRoute(event: ChannelBindingRouteEvent): void {
+    if (event.endpoint.provider !== BUILTIN_FEISHU_PROVIDER_REF) return;
+    const key = bindingRouteKey(event);
+    const current = event.current_team;
+    if (current === null) {
+      this.bindingRouteOwners.delete(key);
+      return;
+    }
+    this.bindingRouteOwners.set(key, {
+      teamName: current.team_name,
+      leaderName: current.leader_name,
+    });
   }
 
   private enqueueBindingNotification(
@@ -496,6 +569,11 @@ export class FeishuChannelSession {
           },
           'Feishu binding notification sent',
         );
+        this.setRouteFallbackAnchor(
+          event,
+          target.conversationId,
+          result.messageIds[0],
+        );
         return;
       } catch (err) {
         if (isFeishuOperationError(err, 'aborted')) {
@@ -529,6 +607,62 @@ export class FeishuChannelSession {
       }
     }
   }
+
+  private setRouteFallbackAnchor(
+    event: ChannelBindingRouteEvent | ChannelBindingCollaborationSpaceEvent,
+    chatId: string,
+    messageId: string | undefined,
+  ): void {
+    if (
+      event.kind !== 'binding.route' ||
+      event.current_team === null ||
+      messageId === undefined ||
+      messageId === ''
+    ) {
+      return;
+    }
+    const current = this.bindingRouteOwners.get(bindingRouteKey(event));
+    if (
+      current?.teamName !== event.current_team.team_name ||
+      current.leaderName !== event.current_team.leader_name
+    ) {
+      return;
+    }
+    try {
+      this.cot.setBindingFallbackAnchor(
+        event.current_team.team_name,
+        event.current_team.leader_name,
+        {
+          chatId,
+          messageId,
+          target: {
+            target_type: event.endpoint.endpoint_type,
+            target_key: event.endpoint.endpoint_key,
+            bindable: true,
+            ...(event.endpoint.display !== null
+              ? { display: event.endpoint.display }
+              : {}),
+            ...(event.endpoint.canonical_url !== null
+              ? { canonical_url: event.endpoint.canonical_url }
+              : {}),
+            meta: { ...event.endpoint.meta, chat_id: chatId },
+          },
+          binding: structuredClone(event.endpoint),
+        },
+      );
+    } catch {
+      // COT is display-only; its bookkeeping cannot fail the sent notification.
+    }
+  }
+}
+
+function bindingRouteKey(event: ChannelBindingRouteEvent): string {
+  return JSON.stringify([
+    event.endpoint.provider,
+    event.endpoint.channel_id,
+    event.endpoint.endpoint_type,
+    event.endpoint.endpoint_key,
+  ]);
 }
 
 /**

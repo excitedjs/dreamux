@@ -486,6 +486,7 @@ describe('TurnManager live activity projection', () => {
         id: 'turn-1:call-7:started',
         callId: 'call-7',
         toolName: 'exec_command',
+        action: 'run',
         status: 'started',
         arguments: 'ls -a',
         result: null,
@@ -496,6 +497,7 @@ describe('TurnManager live activity projection', () => {
         id: 'turn-1:call-7:completed',
         callId: 'call-7',
         toolName: 'exec_command',
+        action: 'run',
         status: 'completed',
         arguments: 'ls -a',
         result: 'a\nb',
@@ -636,6 +638,105 @@ describe('TurnManager live activity projection', () => {
       'terminal:turn-1',
       'activity:turn-2:item-turn-2:completed',
       'terminal:turn-2',
+    ]);
+  });
+
+  it('classifies command actions and tool item types without name guessing', async () => {
+    const client = new ScriptedFakeCodexClient(['turn-1']);
+    const harness = createHarness(client);
+    await harness.manager.enqueue(input('msg-1', 'work'));
+
+    const items: ThreadItem[] = [
+      { type: 'commandExecution', id: 'read', commandActions: [{ type: 'read' }] },
+      { type: 'commandExecution', id: 'list', commandActions: [{ type: 'listFiles' }] },
+      { type: 'commandExecution', id: 'search', commandActions: [{ type: 'search' }] },
+      { type: 'commandExecution', id: 'unknown', commandActions: [{ type: 'unknown' }] },
+      {
+        type: 'commandExecution',
+        id: 'mixed',
+        commandActions: [{ type: 'read' }, { type: 'search' }],
+      },
+      { type: 'fileChange', id: 'edit', changes: [] },
+      { type: 'dynamicToolCall', id: 'dynamic', name: 'Read', input: {} },
+      { type: 'mcpToolCall', id: 'mcp', server: 'docs', tool: 'lookup', input: {} },
+    ];
+    for (const item of items) client.emitItemStarted('thread-1', 'turn-1', item);
+
+    expect(harness.activity.map((event) => {
+      const activity = event.activity;
+      if (activity.kind !== 'tool.call') throw new Error('expected tool activity');
+      return [activity.toolName, activity.action];
+    })).toEqual([
+      ['exec_command', 'read'],
+      ['exec_command', 'list_files'],
+      ['exec_command', 'search'],
+      ['exec_command', 'run'],
+      ['exec_command', 'run'],
+      ['apply_patch', 'edit'],
+      ['Read', null],
+      ['docs.lookup', null],
+    ]);
+  });
+
+  it('normalizes dynamic tool results and retains failed provider output', async () => {
+    const client = new ScriptedFakeCodexClient(['turn-1']);
+    const harness = createHarness(client);
+    await harness.manager.enqueue(input('msg-1', 'work'));
+
+    client.emitItemCompleted('thread-1', 'turn-1', {
+      type: 'dynamicToolCall',
+      id: 'text',
+      name: 'lookup',
+      status: 'completed',
+      contentItems: [
+        { type: 'inputText', text: 'one' },
+        { type: 'inputText', text: 'two' },
+      ],
+    }, 1);
+    client.emitItemCompleted('thread-1', 'turn-1', {
+      type: 'dynamicToolCall',
+      id: 'mixed',
+      name: 'lookup',
+      status: 'completed',
+      contentItems: [
+        { type: 'inputText', text: 'text' },
+        { type: 'inputImage', imageUrl: 'opaque' },
+      ],
+    }, 2);
+    client.emitItemCompleted('thread-1', 'turn-1', {
+      type: 'dynamicToolCall',
+      id: 'empty',
+      name: 'lookup',
+      status: 'completed',
+      contentItems: [],
+    }, 3);
+    client.emitItemCompleted('thread-1', 'turn-1', {
+      type: 'dynamicToolCall',
+      id: 'failed',
+      name: 'lookup',
+      status: 'failed',
+      contentItems: [{ type: 'inputText', text: 'failed output' }],
+      error: [{ type: 'inputText', text: 'provider failure' }],
+    }, 4);
+
+    expect(harness.activity.map((event) => event.activity)).toMatchObject([
+      { action: null, status: 'completed', result: 'one\ntwo', error: null },
+      {
+        action: null,
+        status: 'completed',
+        result: [
+          { type: 'inputText', text: 'text' },
+          { type: 'inputImage', imageUrl: 'opaque' },
+        ],
+        error: null,
+      },
+      { action: null, status: 'completed', result: null, error: null },
+      {
+        action: null,
+        status: 'failed',
+        result: 'failed output',
+        error: 'provider failure',
+      },
     ]);
   });
 

@@ -2,6 +2,7 @@ import type {
   AgentRuntimeCapabilities,
   AgentRuntimeSkillSource,
   AgentRuntimeStatus,
+  ChannelOrigin,
 } from "@excitedjs/dreamux-types";
 
 export const TEAMMATE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -104,11 +105,20 @@ export interface AgentEntityRuntimeStatus {
   close_note: string | null;
 }
 
+/**
+ * Where a turn came from. The channel branch carries the neutral
+ * {@link ChannelOrigin} frozen at routing time, so the conversation projection
+ * can broadcast the inbound location with the turn's submitted fact. The
+ * origin remains provider-neutral; presentation policy belongs to Channel
+ * consumers rather than this submission contract.
+ */
 export type AgentEntityTurnOrigin =
-  | "channel"
+  | { kind: "channel"; channel_origin: ChannelOrigin | null }
   | "dispatcher"
   | "team_leader"
-  | { kind: "scheduled"; job_id: string };
+  | { kind: "scheduled"; job_id: string }
+  | { kind: "completion" }
+  | { kind: "control" };
 
 export interface CreateTeamLeaderInput {
   name: string;

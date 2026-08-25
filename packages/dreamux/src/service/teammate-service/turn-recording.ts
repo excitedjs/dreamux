@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type {
   RuntimeAdmission,
   RuntimeCompletion,
@@ -21,6 +23,7 @@ export type TurnCompletionDelivery = (
 ) => Promise<void>;
 
 export interface Turn {
+  readonly id: string;
   readonly runtime: RuntimeSubmission;
   readonly origin: AgentEntityTurnOrigin | null;
   readonly prompt: string | null;
@@ -36,6 +39,7 @@ export type TurnAdmission =
   | { status: 'failed' | 'ambiguous'; error: Error };
 
 export class EntityTurn implements Turn {
+  readonly id = randomUUID();
   readonly settled: Promise<TurnOutcome>;
 
   private selectedOutcome: TurnOutcome | null = null;

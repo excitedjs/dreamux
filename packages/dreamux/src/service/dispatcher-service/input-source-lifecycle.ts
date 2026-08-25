@@ -2,6 +2,7 @@ import type { ChannelSession, DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
+import type { ConversationProjection } from '../../channel/conversation-projection.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
@@ -34,6 +35,7 @@ interface DispatcherInputSourceLifecycleOptions {
   channelProviders: ChannelProviderCatalog;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   identities: AgentIdentityStore;
+  conversationProjection: ConversationProjection;
   log: DreamuxLogger;
   channels: ChannelService;
   adminSocketPath: string;
@@ -142,6 +144,7 @@ export class DispatcherInputSourceLifecycle {
       config: this.opts.config,
       agentRuntimeProviders: this.opts.agentRuntimeProviders,
       identities: this.opts.identities,
+      conversationProjection: this.opts.conversationProjection,
       log: this.opts.log,
       mcpServers: dispatcherMcpServerDescriptors({
         dispatcherId: this.opts.dispatcherId,

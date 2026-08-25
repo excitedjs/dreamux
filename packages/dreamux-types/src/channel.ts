@@ -22,7 +22,13 @@ import type {
   ProviderFactory,
   ProviderOnboard,
 } from './provider.js';
+import type {
+  ChannelBindingCollaborationSpaceEvent,
+  ChannelBindingEndpointSnapshot,
+  ChannelBindingRouteEvent,
+} from './channel-binding.js';
 import type { InboundDeliveryResult, InboundTurnInput } from './turn.js';
+import type { RuntimeToolAction } from './agent-runtime.js';
 
 export interface ChannelTarget {
   target_type: string;
@@ -167,10 +173,30 @@ export interface ChannelToolCall {
   arguments: Record<string, unknown>;
 }
 
+/**
+ * Who asked core to invoke a provider-owned channel tool, resolved before
+ * authorization and passed through verbatim. `team_name` is the Team store key
+ * — the same value core publishes on every {@link ChannelCoreEvent} — so a
+ * provider may join tool calls and core events on it without core learning any
+ * provider concept.
+ */
+export type ChannelToolCallerContext =
+  | { readonly kind: 'dispatcher' }
+  | {
+      readonly kind: 'team_leader';
+      readonly team_name: string;
+      readonly leader_name: string;
+    };
+
 export interface ChannelToolContext {
-  dispatcher_id: string;
-  channel_id: string;
-  logger?: DreamuxLogger;
+  readonly dispatcher_id: string;
+  readonly channel_id: string;
+  /**
+   * Required here, but a provider running against an older core may still see
+   * it missing at runtime; degrade safely rather than assume a TeamLeader.
+   */
+  readonly caller: ChannelToolCallerContext;
+  readonly logger?: DreamuxLogger;
 }
 
 export interface ChannelMessageTargetCheck {
@@ -272,94 +298,106 @@ export interface ChannelAgentStateEvent {
     | 'closed';
 }
 
-export interface ChannelBindingEndpointSnapshot {
+/**
+ * The provider-neutral inbound location a Channel turn was routed from, frozen
+ * at routing time and broadcast once with that turn's submitted fact.
+ *
+ * `target` is the original inbound target; `binding` is the endpoint whose Team
+ * binding accepted the route, or `null` when the dispatcher accepted the
+ * target directly. Target and binding differ whenever a more specific target
+ * (a thread) is delivered through a less-specific binding fallback (its
+ * group), so both facts are kept. `message_id` may be absent, per
+ * {@link ChannelInboundEnvelope}.
+ */
+export interface ChannelOrigin {
   readonly provider: string;
   readonly channel_id: string;
-  readonly endpoint_type: string;
-  readonly endpoint_key: string;
-  readonly display: string | null;
-  readonly canonical_url: string | null;
-  readonly meta: Readonly<Record<string, unknown>>;
+  readonly message_id: string | null;
+  readonly target: ChannelTarget;
+  readonly binding: ChannelBindingEndpointSnapshot | null;
 }
 
-export interface ChannelBindingRouteOwnerSnapshot {
-  readonly team_name: string;
-  readonly leader_name: string;
-}
+/** Provider-neutral fact describing which Core input path submitted a turn. */
+export type ChannelTurnSource =
+  | 'channel'
+  | 'dispatcher'
+  | 'team_leader'
+  | 'scheduled'
+  | 'completion'
+  | 'control';
 
-export interface ChannelBindingRouteTeamSnapshot
-  extends ChannelBindingRouteOwnerSnapshot {
-  readonly leader_agent_runtime: string;
-  readonly runtime_cwd: string;
-}
+/** The provider-neutral entity scope that can publish Channel conversation facts. */
+export type ChannelConversationScope =
+  | {
+      readonly team_name: null;
+      readonly role: 'dispatcher';
+    }
+  | {
+      readonly team_name: string;
+      readonly role: 'team_leader' | 'team_member';
+    };
 
-export interface ChannelBindingRouteBoundEvent {
+interface ChannelTurnEventScope {
   readonly schema_version: 1;
-  readonly kind: 'binding.route';
   readonly occurred_at: number;
-  readonly action: 'bound';
-  readonly transition: 'bound' | 'replaced';
-  readonly endpoint: ChannelBindingEndpointSnapshot;
-  readonly previous_team: ChannelBindingRouteOwnerSnapshot | null;
-  readonly current_team: ChannelBindingRouteTeamSnapshot;
+  readonly agent_name: string;
+  readonly turn_id: string;
 }
 
-export interface ChannelBindingRouteUnboundEvent {
-  readonly schema_version: 1;
-  readonly kind: 'binding.route';
-  readonly occurred_at: number;
-  readonly action: 'unbound';
-  readonly transition: 'unbound';
-  readonly endpoint: ChannelBindingEndpointSnapshot;
-  readonly previous_team: ChannelBindingRouteOwnerSnapshot;
-  readonly current_team: null;
-}
+export type ChannelTurnSubmittedEvent = ChannelConversationScope &
+  ChannelTurnEventScope & {
+  readonly kind: 'turn.submitted';
+  /**
+   * Proves that Core captured a presentable Channel inbound location. A real
+   * Channel input can still omit this field when its route snapshot fails, so
+   * absence must not be interpreted as a non-Channel source.
+   */
+  readonly channel_origin?: ChannelOrigin;
+  /** Optional for compatibility with older Core publishers and fixtures. */
+  readonly turn_source?: ChannelTurnSource;
+};
 
-export type ChannelBindingRouteEvent =
-  | ChannelBindingRouteBoundEvent
-  | ChannelBindingRouteUnboundEvent;
+export type ChannelTurnSettledEvent = ChannelConversationScope &
+  ChannelTurnEventScope & {
+  readonly kind: 'turn.settled';
+  readonly status: 'completed' | 'failed' | 'stopped';
+  readonly assistant: string | null;
+  readonly assistant_truncated: boolean;
+  readonly redacted: boolean;
+};
 
-export interface ChannelBindingCollaborationSpacePolicySnapshot {
-  readonly leader_agent_runtime: string;
-  readonly repo_cwd: string | null;
-  readonly worktree:
-    | { readonly mode: 'default' }
-    | {
-        readonly mode: 'managed';
-        readonly base_ref: string | null;
-        readonly cleanup: 'delete-on-close';
-      };
-}
+export type ChannelTurnMessageEvent = ChannelConversationScope &
+  ChannelTurnEventScope & {
+  readonly kind: 'turn.message';
+  readonly event_id: string;
+  readonly message_role: 'user' | 'assistant';
+  readonly content: string;
+  readonly content_truncated: boolean;
+  readonly redacted: boolean;
+};
 
-export interface ChannelBindingCollaborationSpaceBoundEvent {
-  readonly schema_version: 1;
-  readonly kind: 'binding.collaboration_space';
-  readonly occurred_at: number;
-  readonly action: 'bound';
-  readonly transition: 'bound';
-  readonly container: ChannelBindingEndpointSnapshot;
-  readonly space_name: string;
-  readonly current_binding: ChannelBindingCollaborationSpacePolicySnapshot;
-}
-
-export interface ChannelBindingCollaborationSpaceUnboundEvent {
-  readonly schema_version: 1;
-  readonly kind: 'binding.collaboration_space';
-  readonly occurred_at: number;
-  readonly action: 'unbound';
-  readonly transition: 'unbound';
-  readonly container: ChannelBindingEndpointSnapshot;
-  readonly space_name: string;
-  readonly current_binding: null;
-}
-
-export type ChannelBindingCollaborationSpaceEvent =
-  | ChannelBindingCollaborationSpaceBoundEvent
-  | ChannelBindingCollaborationSpaceUnboundEvent;
+export type ChannelTurnToolCallEvent = ChannelConversationScope &
+  ChannelTurnEventScope & {
+  readonly kind: 'turn.tool_call';
+  readonly event_id: string;
+  readonly call_id: string;
+  readonly tool_name: string;
+  readonly tool_action: RuntimeToolAction | null;
+  readonly status: 'started' | 'completed' | 'failed';
+  readonly arguments_json: string | null;
+  readonly result_json: string | null;
+  readonly arguments_truncated: boolean;
+  readonly result_truncated: boolean;
+  readonly redacted: boolean;
+};
 
 export type ChannelCoreEvent =
   | ChannelTeamStateEvent
   | ChannelAgentStateEvent
+  | ChannelTurnSubmittedEvent
+  | ChannelTurnSettledEvent
+  | ChannelTurnMessageEvent
+  | ChannelTurnToolCallEvent
   | ChannelBindingRouteEvent
   | ChannelBindingCollaborationSpaceEvent;
 

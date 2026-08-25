@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type {
+  ChannelOrigin,
   InboundDeliveryResult,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
@@ -359,10 +360,11 @@ export class TeamCollection {
   async deliverToLeader(
     teamId: string,
     turn: InboundTurnInput,
+    channelOrigin?: ChannelOrigin,
   ): Promise<InboundDeliveryResult> {
     const id = validateTeamId(teamId);
     return this.withTeamAvailable(id, (service) =>
-      service.deliverToLeader(turn),
+      service.deliverToLeader(turn, channelOrigin),
     );
   }
 

@@ -69,7 +69,7 @@ daemon/service/config/log work, or missing-reply investigations.
 ## Channel Notes
 
 - If a provider-exposed channel reply tool is available for the source message,
-  use it for visible acceptance, final status, and blockers. Assistant text,
+  use it for meaningful progress, blockers, and final status. Assistant text,
   terminal output, and internal planning are not channel delivery.
 - At key task milestones, report progress promptly. Prefer the reply tool for
   the latest user message's channel source in the current task when that

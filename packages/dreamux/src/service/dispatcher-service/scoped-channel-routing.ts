@@ -28,7 +28,10 @@ interface DispatcherScopedChannelRoutingOptions {
   collaborationSpaces: CollaborationSpaceService;
   log: DreamuxLogger;
   admit: <T>(task: () => Promise<T>) => Promise<T>;
-  fallback: (turn: InboundTurnInput) => Promise<InboundDeliveryResult>;
+  fallback: (
+    turn: InboundTurnInput,
+    envelope: ChannelInboundEnvelope,
+  ) => Promise<InboundDeliveryResult>;
   isUnavailable: () => boolean;
 }
 
@@ -87,6 +90,7 @@ export class DispatcherScopedChannelRouting {
         teams: this.opts.teams,
         collaborationSpaces: this.opts.collaborationSpaces,
         fallback: this.opts.fallback,
+        log: this.opts.log,
       }),
     );
   }

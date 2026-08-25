@@ -7,8 +7,7 @@
  *
  * The neutral seam is now fully load-bearing (issue #209 cleanup): `start(routes)`
  * forwards the normalized turn input + routing envelope to `routes.deliver` and
- * returns core's real status-only `InboundDeliveryResult`, which the
- * session's reaction ledger keys off; provider-level static tools,
+ * returns core's real status-only `InboundDeliveryResult`; provider-level static tools,
  * `handleSessionlessTool`, `getIdentity`, `reply`, `react`, `resolveTarget`,
  * `handleTool`, and `messageBelongsToTarget` are all wired to the real session
  * logic. Core converges its dispatcher wiring onto this neutral `ChannelSession`
@@ -31,6 +30,7 @@ import type {
   ChannelSessionlessToolContext,
   ChannelTarget,
   ChannelToolCall,
+  ChannelToolContext,
   ChannelToolDescriptor,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
@@ -127,8 +127,7 @@ class FeishuChannelSessionAdapter implements ChannelSession {
     await this.session.start({
       // The session normalized the turn into `input`; forward it plus the
       // channel routing envelope to core, and return core's
-      // Real delivery status so the session's reaction ledger
-      // keys off the actually-submitted turn — not a fabricated id.
+      // Real delivery status from the actually-submitted turn.
       submitTurn: (input, envelope) =>
         routes.deliver(input, inboundEnvelopeToChannelEnvelope(this.channel_id, envelope)),
     }, routes.coreEvents);
@@ -162,10 +161,16 @@ class FeishuChannelSessionAdapter implements ChannelSession {
     });
   }
 
-  async handleTool(call: ChannelToolCall): Promise<unknown> {
+  async handleTool(
+    call: ChannelToolCall,
+    context: ChannelToolContext,
+  ): Promise<unknown> {
+    // Forward caller identity for provider-owned authorization and auditing.
+    // COT anchoring comes only from the inbound turn's channel origin.
     return this.session.handleMcpTool(
       call.name as 'reply' | 'react' | 'list_chat_bots',
       call.arguments,
+      context,
     );
   }
 
@@ -297,6 +302,7 @@ export function createFeishuChannelProvider(
       const cacheRoot = context.cache_root ?? stateDir;
       const session = new FeishuChannelSession({
         dispatcherId: context.dispatcher_id,
+        channelId: context.channel_id,
         appId: context.config.appId,
         appSecret: context.config.appSecret,
         stateDir,

@@ -255,6 +255,7 @@ describe('role-specific bundled Dreamux skills', () => {
     expect(basePrompt).toContain('Load `dispatcher-workflow` before');
     expect(basePrompt).toContain('Load `dreamux-maintenance` before');
     expect(basePrompt).toContain('provider-exposed reply tool');
+    expect(basePrompt).toMatch(/meaningful progress[\s\S]{0,80}blockers[\s\S]{0,80}final status/i);
     expect(basePrompt).toContain('MCP tool results as the authority');
     expect(basePrompt).toMatch(/warm, curious, collaborative/i);
     expect(basePrompt).toMatch(/local reads[\s\S]{0,120}parallelize/i);
@@ -276,6 +277,17 @@ describe('role-specific bundled Dreamux skills', () => {
     expect(appendPrompt).toMatch(/delegate repository work to TeamMates or Teams/i);
     expect(appendPrompt).toMatch(/do not poll `last`[\s\S]{0,120}pushes task results/i);
     expect(appendPrompt).toMatch(/task was submitted successfully[\s\S]{0,160}end the turn naturally/i);
+    expect(appendPrompt).toMatch(/meaningful progress[\s\S]{0,80}blocker[\s\S]{0,80}final-status/i);
+    expect(allDispatcherPrompts).not.toMatch(/visible acceptance/i);
+    expect(allDispatcherPrompts).not.toMatch(/otherwise acknowledge/i);
+
+    const teamLeaderSkill = readBundledSkill('team-workflow');
+    const dispatcherSkill = readBundledSkill('dispatcher-workflow');
+    for (const skill of [teamLeaderSkill, dispatcherSkill]) {
+      expect(skill).toMatch(/meaningful progress[\s\S]{0,80}blockers[\s\S]{0,80}final status/i);
+      expect(skill).not.toMatch(/visible acceptance/i);
+      expect(skill).not.toMatch(/otherwise acknowledge/i);
+    }
 
     expect(allDispatcherPrompts).not.toContain('The tm CLI is the labeled fallback');
     expect(allDispatcherPrompts).not.toContain('tm CLI');

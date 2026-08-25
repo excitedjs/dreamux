@@ -1,8 +1,26 @@
+import type { ChannelToolCallerContext } from '@excitedjs/dreamux-types';
+
 import type { ChannelService } from '../channel-service/index.js';
 
+/**
+ * The core-internal caller identity. `teamId` is the Team store key, which is
+ * exactly the `team_name` core publishes on channel core events — so the
+ * neutral {@link ChannelToolCallerContext} handed to a provider joins tool
+ * calls and events on one value.
+ */
 export type ChannelToolCaller =
   | { kind: 'dispatcher' }
   | { kind: 'team_leader'; teamId: string; leaderName: string };
+
+function toCallerContext(caller: ChannelToolCaller): ChannelToolCallerContext {
+  return caller.kind === 'dispatcher'
+    ? { kind: 'dispatcher' }
+    : {
+        kind: 'team_leader',
+        team_name: caller.teamId,
+        leader_name: caller.leaderName,
+      };
+}
 
 export async function invokeDispatcherChannelTool(input: {
   channels: ChannelService;
@@ -28,6 +46,7 @@ export async function invokeDispatcherChannelTool(input: {
     ...(input.providerRef !== undefined ? { providerRef: input.providerRef } : {}),
     name: input.name,
     arguments: input.arguments,
+    caller: toCallerContext(input.caller),
     ...(input.channelId !== undefined ? { channelId: input.channelId } : {}),
   });
 }

@@ -30,6 +30,7 @@ import {
 import { TeammateCollection } from '../teammate-collection/index.js';
 import type { TeammateOps } from '../teammate-collection/types.js';
 import { AgentIdentityStore } from '../agent-entity/identity-store.js';
+import { createConversationProjection } from '../../channel/conversation-projection.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import { WorktreeManager } from '../worktree/manager.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
@@ -38,6 +39,7 @@ import { SchedulerService } from '../scheduler/service.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
 import { CronJobStore } from '../scheduler/store.js';
 import { ChannelService, type ChannelRouteOwner } from '../channel-service/index.js';
+import { channelOriginFromDispatcherRoute } from '../channel-origin.js';
 import { CollaborationSpaceService } from '../collaboration-space/index.js';
 import { DispatcherCoreEventBus } from '../dispatcher-core-events/index.js';
 import type {
@@ -111,6 +113,10 @@ export class DispatcherService {
 
     const worktrees = new WorktreeManager();
     const identities = new AgentIdentityStore(opts.log, this.coreEvents.publisher);
+    const conversationProjection = createConversationProjection({
+      coreEvents: this.coreEvents.publisher,
+      log: opts.log,
+    });
 
     this.channels = new ChannelService({
       dispatcherId: opts.id,
@@ -144,6 +150,7 @@ export class DispatcherService {
       agentRuntimeProviders: opts.agentRuntimeProviders,
       worktrees,
       identities,
+      conversationProjection,
       completionDelivery,
       initiatorFor: (producer) => this.initiatorFor(producer),
       isShuttingDown: () => this.shuttingDown || this.stopping,
@@ -159,6 +166,7 @@ export class DispatcherService {
       agentRuntimeProviders: opts.agentRuntimeProviders,
       worktrees,
       identities,
+      conversationProjection,
       completionDelivery,
       initiatorFor: (producer) => this.initiatorFor(producer),
       isShuttingDown: () => this.shuttingDown || this.stopping,
@@ -209,8 +217,22 @@ export class DispatcherService {
       collaborationSpaces: this.collaborationSpaces,
       log: this.log,
       admit: (task) => this.admitOperation(task),
-      fallback: async (turn) =>
-        asInboundDeliveryResult(await this.mustAgent().channelInput(turn)),
+      fallback: async (turn, envelope) => {
+        const channelOrigin = channelOriginFromDispatcherRoute(envelope);
+        if (channelOrigin === null) {
+          opts.log.warn(
+            {
+              channel_id: envelope.channel_id,
+              provider: envelope.provider,
+              target_type: envelope.target.target_type,
+            },
+            'channel origin could not be snapshotted; delivering the dispatcher turn without one',
+          );
+        }
+        return asInboundDeliveryResult(
+          await this.mustAgent().channelInput(turn, channelOrigin ?? undefined),
+        );
+      },
       isUnavailable: () => this.shuttingDown || this.stopping,
     });
     this.inputSources = new DispatcherInputSourceLifecycle({
@@ -220,6 +242,7 @@ export class DispatcherService {
       channelProviders: opts.channelProviders,
       agentRuntimeProviders: opts.agentRuntimeProviders,
       identities,
+      conversationProjection,
       log: opts.log,
       channels: this.channels,
       adminSocketPath: adminSocket,

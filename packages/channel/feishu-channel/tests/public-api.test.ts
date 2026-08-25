@@ -11,6 +11,11 @@ describe('@excitedjs/feishu-channel public API', () => {
     expect(Object.hasOwn(feishuChannel, 'createFakeFeishuBot')).toBe(false);
   });
 
+  it('does not retain automatic inbound reaction constants', () => {
+    expect(Object.hasOwn(feishuChannel, 'RECEIVED_REACTION_EMOJI')).toBe(false);
+    expect(Object.hasOwn(feishuChannel, 'IN_PROGRESS_REACTION_EMOJI')).toBe(false);
+  });
+
   it('retains the gate input ABI and requires prior exact-human classification', () => {
     type PublicGateInput = Parameters<typeof feishuChannel.dreamuxFeishuGate>[1];
     const input: PublicGateInput = {

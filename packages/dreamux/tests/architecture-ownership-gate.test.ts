@@ -780,7 +780,7 @@ describe('architecture ownership gate (#233)', () => {
     ]);
   });
 
-  it('keeps one truthful shutdown path and no service Turn identifiers', async () => {
+  it('keeps one truthful shutdown path and no service Turn identifier authority', async () => {
     assertNoHits(
       'Shutdown invariant violated: runtime-only shutdown path returned.',
       await findSourceHits(
@@ -811,9 +811,17 @@ describe('architecture ownership gate (#233)', () => {
       'Shutdown invariant violated: raw AgentRuntime authority escaped the TeamMate entity boundary.',
       runtimeAuthorityLeaks,
     );
+    const turnIdentifierAuthority = (await findSourceHits(
+      SERVICE_ROOT,
+      /\bturn_?id\b/iu,
+    )).filter((hit) => !(
+      sourceRelativePath(hit.file) ===
+        'service/teammate-service/turn-coordinator.ts' &&
+      hit.text.startsWith('turn_id: turn.id,')
+    ));
     assertNoHits(
       'Turn identity invariant violated: service code must coordinate with Turn objects, not identifiers.',
-      await findSourceHits(SERVICE_ROOT, /\bturn_?id\b/iu),
+      turnIdentifierAuthority,
     );
   });
 

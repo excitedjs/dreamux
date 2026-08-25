@@ -151,12 +151,12 @@ describe('Feishu session lifecycle fencing', () => {
     expect(submitted).toEqual([]);
   });
 
-  it('does not let a hung received reaction block close', async () => {
-    const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-feishu-reaction-hung-'));
+  it('never calls the reaction surface during inbound delivery', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-feishu-no-auto-reaction-'));
     dirs.push(stateDir);
     await allowSender(stateDir);
     const bot = createFakeFeishuBot();
-    bot.setReactionDelay('Get', new Promise(() => undefined));
+    bot.setReactionError(new Error('automatic reaction attempted'));
     const submitted: string[] = [];
     const session = new FeishuChannelSession({
       dispatcherId: 'dispatcher-a',
@@ -174,73 +174,16 @@ describe('Feishu session lifecycle fencing', () => {
       },
     });
 
-    const delivery = bot.inject({
-      ...event('om_reaction_hung'),
+    await bot.inject({
+      ...event('om_no_auto_reaction'),
       messageType: 'text',
       rawContent: JSON.stringify({ text: 'hello' }),
       parsedText: 'hello',
     });
-    await vi.waitFor(() => {
-      expect(bot.reactionOps).toHaveLength(1);
-    });
 
     await session.close();
-    await delivery;
-    expect(submitted).toEqual([]);
-    expect(bot.reactionOps).toEqual([
-      expect.objectContaining({ op: 'add', messageId: 'om_reaction_hung' }),
-    ]);
-  });
-
-  it('does not let a hung in-progress reaction block close', async () => {
-    const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-feishu-progress-hung-'));
-    dirs.push(stateDir);
-    await allowSender(stateDir);
-    const bot = createFakeFeishuBot();
-    bot.setReactionDelay('OnIt', new Promise(() => undefined));
-    const session = new FeishuChannelSession({
-      dispatcherId: 'dispatcher-a',
-      appId: 'app-test',
-      appSecret: '',
-      stateDir,
-      attachmentCacheDir: join(stateDir, 'attachments'),
-      log: logger(),
-      botFactory: () => bot,
-    });
-    await session.start({
-      submitTurn: async (): Promise<InboundDeliveryResult> => ({
-        status: 'submitted',
-      }),
-    });
-
-    const delivery = bot.inject({
-      ...event('om_progress_hung'),
-      messageType: 'text',
-      rawContent: JSON.stringify({ text: 'hello' }),
-      parsedText: 'hello',
-    });
-    await vi.waitFor(() => {
-      expect(bot.reactionOps.filter((entry) => entry.op === 'add')).toHaveLength(2);
-    });
-
-    await session.close();
-    await delivery;
-    expect(bot.reactionOps).toEqual([
-      expect.objectContaining({
-        op: 'add',
-        messageId: 'om_progress_hung',
-        emoji: 'Get',
-      }),
-      expect.objectContaining({
-        op: 'add',
-        messageId: 'om_progress_hung',
-        emoji: 'OnIt',
-      }),
-      expect.objectContaining({
-        op: 'remove',
-        messageId: 'om_progress_hung',
-      }),
-    ]);
+    expect(submitted).toEqual(['om_no_auto_reaction']);
+    expect(bot.reactionOps).toEqual([]);
   });
 
   it('revokes a hanging sender-name lookup before close and never submits it', async () => {
@@ -285,7 +228,7 @@ describe('Feishu session lifecycle fencing', () => {
     await session.close();
     await delivery;
     expect(submitted).toEqual([]);
-    expect(bot.reactionOps.map((entry) => entry.op)).toEqual(['add', 'remove']);
+    expect(bot.reactionOps).toEqual([]);
 
     resolvedName.resolve('Late Ada');
     await Promise.resolve();
@@ -326,7 +269,7 @@ describe('Feishu session lifecycle fencing', () => {
     await session.close();
     await oldDelivery;
     expect(submitted).toEqual([]);
-    expect(bot.reactionOps.map((entry) => entry.op)).toEqual(['add', 'remove']);
+    expect(bot.reactionOps).toEqual([]);
 
     await session.start(submitter);
     bot.setMessageRead('om_new', 'user_card_content', readResponse('om_new'));
@@ -413,16 +356,14 @@ describe('Feishu session lifecycle fencing', () => {
 
     expect(submitted).toEqual([]);
     expect(readdirSync(join(stateDir, 'attachments'))).toEqual([]);
-    expect(bot.reactionOps.map((entry) => entry.op)).toEqual(['add', 'remove']);
+    expect(bot.reactionOps).toEqual([]);
   });
 
-  it('clears received when close races the in-progress reaction replacement', async () => {
-    const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-feishu-reaction-close-'));
+  it('closes cleanly after an inbound without reaction cleanup work', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-feishu-no-reaction-close-'));
     dirs.push(stateDir);
     await allowSender(stateDir);
     const bot = createFakeFeishuBot();
-    const progress = deferred<void>();
-    bot.setReactionDelay('OnIt', progress.promise);
     const session = new FeishuChannelSession({
       dispatcherId: 'dispatcher-a',
       appId: 'app-test',
@@ -438,20 +379,9 @@ describe('Feishu session lifecycle fencing', () => {
       }),
     });
 
-    const delivery = bot.inject(event('om_reaction_close'));
-    await vi.waitFor(() => {
-      expect(bot.reactionOps.filter((entry) => entry.op === 'add')).toHaveLength(2);
-    });
-    const closing = session.close();
-    progress.resolve(undefined);
-    await closing;
-    await delivery;
+    await bot.inject(event('om_reaction_close'));
+    await session.close();
 
-    expect(bot.reactionOps.map((entry) => entry.op)).toEqual([
-      'add',
-      'add',
-      'remove',
-      'remove',
-    ]);
+    expect(bot.reactionOps).toEqual([]);
   });
 });

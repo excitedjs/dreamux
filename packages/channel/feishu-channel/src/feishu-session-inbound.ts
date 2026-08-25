@@ -4,8 +4,8 @@
  *
  * Owns the full onMessage flow: introduce/trusted-bot injection, the
  * two-lock access gate (LOCK-1 gate compute + LOCK-2 pair merge after send),
- * and the submitTurn delivery path. Primitive operations (reply/reaction
- * ledger, token approval, introduce ack) live in `feishu-session-ops.ts`.
+ * and the submitTurn delivery path. Primitive operations (reply, token
+ * approval, introduce ack) live in `feishu-session-ops.ts`.
  */
 
 import {
@@ -52,18 +52,14 @@ import { buildPairingApprovalCard } from './feishu-pairing-card.js';
 import { BUILTIN_FEISHU_PROVIDER_REF } from './provider-ref.js';
 import {
   CHANNEL_REMINDER,
-  clearInboundReaction,
   sendIntroduceAck,
   sendCard,
   sendReply,
-  setInboundReaction,
   type SessionHandle,
 } from './feishu-session-ops.js';
-import {
-  IN_PROGRESS_REACTION_EMOJI,
-  RECEIVED_REACTION_EMOJI,
-  type FeishuInboundEnvelope,
-  type FeishuInboundSubmitter,
+import type {
+  FeishuInboundEnvelope,
+  FeishuInboundSubmitter,
 } from './feishu-channel.js';
 
 const log = (h: SessionHandle) => h.opts.log;
@@ -229,9 +225,6 @@ export async function onMessage(
           messageId: action.prompt_message_id,
           mentionUserIds: [inbound.sender_id],
         });
-        if (event.messageId !== '' && event.messageId !== action.prompt_message_id) {
-          await clearInboundReaction(h, event.messageId);
-        }
       } catch (err) {
         log(h).error(
           {
@@ -365,7 +358,6 @@ async function deliverAcceptedMessage(
   submitter: FeishuInboundSubmitter,
 ): Promise<void> {
   const work = createFeishuInboundWork(h.sessionFence);
-  let reactionCreated = false;
   try {
     work.assertSessionActive();
     const route = await runFeishuInboundWork(
@@ -373,15 +365,6 @@ async function deliverAcceptedMessage(
       () => h.targetRouter.projectInbound(acceptedEvent, work.signal),
     );
     work.assertSessionActive();
-    reactionCreated = await setInboundReaction(
-      h,
-      acceptedEvent.messageId,
-      acceptedEvent.chatId,
-      RECEIVED_REACTION_EMOJI,
-      'received',
-      work,
-    );
-
     const namedEvent = await enrichSenderName(h, acceptedEvent, work);
     const event = await enrichFeishuInbound(
       namedEvent,
@@ -437,10 +420,8 @@ async function deliverAcceptedMessage(
       delivery = await submitter.submitTurn(input, envelope);
     } catch (err) {
       // A rejected provider call cannot prove whether the native admission
-      // boundary was crossed. Clear the reaction and record terminal ambiguity;
-      // webhook replay must never duplicate a possibly accepted input.
-      await clearInboundReaction(h, event.messageId);
-      reactionCreated = false;
+      // boundary was crossed. Record terminal ambiguity; webhook replay must
+      // never duplicate a possibly accepted input.
       const message = err instanceof Error ? err.message : String(err);
       const stack = err instanceof Error ? err.stack : undefined;
       log(h).error(
@@ -455,8 +436,6 @@ async function deliverAcceptedMessage(
       return;
     }
     if (!work.isSessionActive()) {
-      await clearInboundReaction(h, event.messageId);
-      reactionCreated = false;
       return;
     }
     if (delivery.status === 'submitted') {
@@ -475,26 +454,8 @@ async function deliverAcceptedMessage(
           baseline.generation,
         );
       }
-      const progressReactionCreated = await setInboundReaction(
-        h,
-        event.messageId,
-        event.chatId,
-        IN_PROGRESS_REACTION_EMOJI,
-        'in_progress',
-        work,
-      );
-      // setInboundReaction fences the newly-added reaction itself. Recheck the
-      // handler generation before relinquishing ownership of the prior
-      // `received` reaction so close-during-replacement cannot strand it.
-      work.assertSessionActive();
-      if (!progressReactionCreated) {
-        await clearInboundReaction(h, event.messageId);
-      }
-      reactionCreated = false;
       return;
     }
-    await clearInboundReaction(h, event.messageId);
-    reactionCreated = false;
     if (delivery.status === 'failed' || delivery.status === 'ambiguous') {
       const message =
         delivery.error instanceof Error
@@ -514,9 +475,6 @@ async function deliverAcceptedMessage(
       );
     }
   } catch (error) {
-    if (reactionCreated) {
-      await clearInboundReaction(h, acceptedEvent.messageId);
-    }
     if (!isFeishuOperationError(error, 'aborted')) throw error;
   } finally {
     work.dispose();

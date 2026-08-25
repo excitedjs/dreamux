@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   createFeishuBot,
@@ -18,6 +18,7 @@ import type {
   FeishuMessageResourceResponse,
   FeishuMessageReadRequest,
   FeishuMessageReadResponse,
+  FeishuSendOptions,
   FeishuSendResult,
   FeishuTransport,
   InboundRoutes,
@@ -37,8 +38,13 @@ class FakeTransport implements FeishuTransport {
     this.routes = routes;
   }
 
-  async send(target: OutboundTarget, text: string): Promise<FeishuSendResult> {
+  async send(
+    target: OutboundTarget,
+    text: string,
+    options?: Pick<FeishuSendOptions, 'onMessageCreated'>,
+  ): Promise<FeishuSendResult> {
     this.sent.push({ target, text });
+    options?.onMessageCreated?.({ messageId: 'message-sent', ordinal: 0 });
     return { messageIds: ['message-sent'] };
   }
 
@@ -60,10 +66,6 @@ class FakeTransport implements FeishuTransport {
   }
 
   async addReaction(): Promise<string> {
-    throw new Error('unused in this test');
-  }
-
-  async removeReaction(): Promise<void> {
     throw new Error('unused in this test');
   }
 
@@ -108,6 +110,27 @@ class FakeTransport implements FeishuTransport {
 }
 
 describe('createFeishuBot inbound channel', () => {
+  it('forwards the per-message creation observer to the transport', async () => {
+    const transport = new FakeTransport();
+    const bot = createFeishuBot(
+      { appId: 'app-test', appSecret: 'secret-test' },
+      { createTransport: () => transport },
+    );
+    const observer = vi.fn();
+
+    const result = await bot.send(
+      { chatId: 'chat-id-1' },
+      'hello',
+      { onMessageCreated: observer },
+    );
+
+    expect(result).toEqual({ messageIds: ['message-sent'] });
+    expect(observer).toHaveBeenCalledWith({
+      messageId: 'message-sent',
+      ordinal: 0,
+    });
+  });
+
   it('registers only im.message.receive_v1 and normalizes raw events', async () => {
     const transport = new FakeTransport();
     const createdWith: CreateBotOptions[] = [];

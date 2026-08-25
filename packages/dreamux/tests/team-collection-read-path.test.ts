@@ -16,10 +16,15 @@ const execFileAsync = promisify(execFile);
 import type {
   AgentRuntimeCreateContext,
   AgentRuntimeProvider,
+  ChannelCoreEvent,
   RuntimeAdmission,
 } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
+import {
+  createConversationProjection,
+  type ConversationProjection,
+} from '../src/channel/conversation-projection.js';
 import { TeamCollection } from '../src/service/team-collection/index.js';
 import { TeamStore } from '../src/service/team-collection/store.js';
 import {
@@ -445,6 +450,8 @@ describe('entity-owned TeamMate lock lifecycle', () => {
     options: {
       identities?: AgentIdentityStore;
       contexts?: AgentRuntimeCreateContext[];
+      conversationProjection?: ConversationProjection;
+      teamScope?: string | null;
     } = {},
   ): TeammateCollection {
     const workspace = join(root, 'workspace');
@@ -459,19 +466,111 @@ describe('entity-owned TeamMate lock lifecycle', () => {
     ]);
     return new TeammateCollection({
       dispatcherId: 'dispatcher-a',
-      teamScope: null,
+      teamScope: options.teamScope ?? null,
       config,
       agentRuntimeProviders: fakeRuntimeCatalog(runtimes, {
         settleImmediately,
       }, options.contexts),
       worktrees: new WorktreeManager(),
       identities: options.identities ?? new AgentIdentityStore(noopLog()),
+      ...(options.conversationProjection !== undefined
+        ? { conversationProjection: options.conversationProjection }
+        : {}),
       initiatorFor: async () => null,
       isShuttingDown: () => false,
       suffixGenerator: () => 'a1b2',
       log: noopLog(),
     });
   }
+
+  function projectionHarness(): {
+    projection: ConversationProjection;
+    events: ChannelCoreEvent[];
+  } {
+    const events: ChannelCoreEvent[] = [];
+    return {
+      events,
+      projection: createConversationProjection({
+        coreEvents: {
+          hasSources: () => true,
+          publish: (_dispatcherId, event) => events.push(event),
+        },
+        log: noopLog(),
+      }),
+    };
+  }
+
+  it('projects a stopped settlement for each admitted member turn on close', async () => {
+    const runtimes: FakeRuntime[] = [];
+    const { projection, events } = projectionHarness();
+    const teammates = collection(runtimes, false, {
+      conversationProjection: projection,
+      teamScope: 'team-a',
+    });
+    const handle = await teammates.createLocked({
+      name: 'member',
+      prompt: 'review',
+      intent: 'team member',
+      agentRuntime: 'agent-a',
+      sharedWorkspace: {
+        sourceCwd: join(root, 'workspace'),
+        sourceRepo: null,
+        runtimeCwd: join(root, 'workspace'),
+        worktree: {
+          mode: 'reuse-cwd',
+          slug: null,
+          path: join(root, 'workspace'),
+          branch: null,
+          base_ref: null,
+          cleanup: 'keep',
+          cleanup_state: 'not-managed',
+          cleanup_error: null,
+        },
+      },
+    });
+    const first = await handle.submit({
+      prompt: 'first',
+      turnOrigin: 'dispatcher',
+    });
+    const second = await handle.submit({
+      prompt: 'second',
+      turnOrigin: 'dispatcher',
+    });
+
+    await handle.close({ note: 'Team closed' });
+    if (first.status === 'submitted') await first.turn.settled;
+    if (second.status === 'submitted') await second.turn.settled;
+
+    expect(events.filter(({ kind }) => kind === 'turn.submitted')).toHaveLength(2);
+    expect(events.filter(({ kind }) => kind === 'turn.settled')).toEqual([
+      expect.objectContaining({ role: 'team_member', status: 'stopped' }),
+      expect.objectContaining({ role: 'team_member', status: 'stopped' }),
+    ]);
+  });
+
+  it('keeps dispatcher-spawned TeamMate turns outside conversation projection', async () => {
+    const runtimes: FakeRuntime[] = [];
+    const { projection, events } = projectionHarness();
+    const teammates = collection(runtimes, false, {
+      conversationProjection: projection,
+      teamScope: null,
+    });
+    const handle = await teammates.createLocked({
+      name: 'helper',
+      prompt: 'help',
+      intent: 'dispatcher helper',
+      agentRuntime: 'agent-a',
+    });
+    const admission = await handle.submit({
+      prompt: 'work',
+      turnOrigin: 'dispatcher',
+    });
+    runtimes[0]!.settle();
+    if (admission.status === 'submitted') await admission.turn.settled;
+
+    expect(events).toEqual([]);
+    await handle.close({ note: 'done' });
+  });
 
   it('creates and locks before runtime start, then closes and retires on unlock', async () => {
     const runtimes: FakeRuntime[] = [];

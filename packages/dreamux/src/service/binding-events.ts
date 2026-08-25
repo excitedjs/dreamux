@@ -13,6 +13,7 @@ import type {
 import type { CollaborationSpaceBindTransition } from './collaboration-space/store.js';
 import type { CollaborationSpaceRecord } from './collaboration-space/types.js';
 import type { DispatcherCoreEventPublisher } from './dispatcher-core-events/index.js';
+import { immutableJsonSnapshot } from './frozen-snapshot.js';
 import type { TeamRouteProjection } from './team-collection/types.js';
 
 export function publishRouteBindTransition(input: {
@@ -90,7 +91,12 @@ export function publishCollaborationSpaceUnbound(input: {
   });
 }
 
-function endpointFromBinding(binding: ChannelBinding): ChannelBindingEndpointSnapshot {
+/**
+ * The immutable endpoint snapshot published on binding events and frozen into a
+ * {@link ChannelOrigin}. Exported so routing builds the identical shape instead
+ * of a second, drifting projection of the same binding row.
+ */
+export function endpointFromBinding(binding: ChannelBinding): ChannelBindingEndpointSnapshot {
   return Object.freeze({
     provider: binding.provider,
     channel_id: binding.channel_id,
@@ -160,16 +166,7 @@ function collaborationPolicy(
 }
 
 function immutableMetadataSnapshot(
-  meta: Record<string, unknown>,
+  meta: Record<string, unknown> | undefined,
 ): Readonly<Record<string, unknown>> {
-  const snapshot = JSON.parse(JSON.stringify(meta)) as Record<string, unknown>;
-  return deepFreeze(snapshot);
-}
-
-function deepFreeze<T>(value: T): T {
-  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) {
-    return value;
-  }
-  for (const nested of Object.values(value)) deepFreeze(nested);
-  return Object.freeze(value);
+  return immutableJsonSnapshot(meta ?? {});
 }

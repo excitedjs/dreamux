@@ -18,6 +18,11 @@ import {
   createFakeFeishuBot,
   type FakeFeishuBot,
 } from './helpers/fake-feishu-bot.js';
+import { submitted, userMessage } from './helpers/cot-fixtures.js';
+import {
+  createFakeCotClient,
+  settleCot,
+} from './helpers/fake-cot-client.js';
 
 function logger() {
   return {
@@ -27,6 +32,14 @@ function logger() {
     debug: vi.fn(),
     trace: vi.fn(),
   };
+}
+
+function deferred(): { promise: Promise<void>; resolve(): void } {
+  let resolvePromise: (() => void) | undefined;
+  const promise = new Promise<void>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return { promise, resolve: () => resolvePromise?.() };
 }
 
 function eventSource(): ChannelCoreEventSource & {
@@ -207,6 +220,138 @@ describe('Feishu binding notification cards', () => {
     expect(cardJson).not.toContain('chat_type');
     expect(cardJson).not.toContain('claim_id');
     expect(cardJson).not.toContain('prompt');
+  });
+
+  it('feeds a successful route notification back as the leader COT fallback', async () => {
+    const cot = createFakeCotClient();
+    const bot = Object.assign(createFakeFeishuBot('app-with-cot'), { cot });
+    const log = logger();
+    const source = eventSource();
+    const s = session({ stateDir, bot, log });
+    await start({ session: s, source });
+
+    source.emit(routeEvent());
+    await vi.waitFor(() => {
+      expect(bot.sentCards).toHaveLength(1);
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ event_kind: 'binding.route' }),
+        'Feishu binding notification sent',
+      );
+    });
+    source.emit(submitted({
+      team_name: 'alpha',
+      agent_name: 'leader-alpha',
+      turn_id: 'completion-after-binding',
+      turn_source: 'completion',
+      channel_origin: undefined,
+    }));
+    source.emit(userMessage({
+      team_name: 'alpha',
+      agent_name: 'leader-alpha',
+      event_id: 'completion-after-binding-message',
+      turn_id: 'completion-after-binding',
+    }));
+    await settleCot();
+    await s.close();
+
+    expect(cot.createRequests()).toHaveLength(1);
+    expect(cot.createRequests()[0]?.data).toMatchObject({
+      receive_id: 'chat-a',
+      origin_message_id: 'message-fake-1',
+    });
+  });
+
+  it('drops a binding fallback when the route changes before send completion', async () => {
+    const cot = createFakeCotClient();
+    const bot = Object.assign(createFakeFeishuBot('app-stale-binding'), { cot });
+    const log = logger();
+    const source = eventSource();
+    const s = session({ stateDir, bot, log });
+    await start({ session: s, source });
+    const firstSend = deferred();
+    bot.setSendCardDelay(firstSend.promise);
+
+    source.emit(routeEvent());
+    await vi.waitFor(() => {
+      expect(bot.sentCards).toHaveLength(1);
+    });
+    bot.setSendCardDelay(null);
+    const replacement: ChannelBindingRouteEvent = {
+      ...routeEvent(),
+      transition: 'replaced',
+      previous_team: {
+        team_name: 'alpha',
+        leader_name: 'leader-alpha',
+      },
+      current_team: {
+        team_name: 'beta',
+        leader_name: 'leader-beta',
+        leader_agent_runtime: 'test:runtime',
+        runtime_cwd: '/tmp/dreamux/work-beta',
+      },
+    };
+    source.emit(replacement);
+    await vi.waitFor(() => {
+      expect(bot.sentCards).toHaveLength(2);
+      expect(log.info).toHaveBeenCalledTimes(1);
+    });
+    firstSend.resolve();
+    await vi.waitFor(() => {
+      expect(log.info).toHaveBeenCalledTimes(2);
+    });
+
+    source.emit(submitted({
+      team_name: 'alpha',
+      agent_name: 'leader-alpha',
+      turn_id: 'completion-after-replaced-binding',
+      turn_source: 'completion',
+      channel_origin: undefined,
+    }));
+    source.emit(userMessage({
+      team_name: 'alpha',
+      agent_name: 'leader-alpha',
+      event_id: 'completion-after-replaced-binding-message',
+      turn_id: 'completion-after-replaced-binding',
+    }));
+    await settleCot();
+    await s.close();
+
+    expect(cot.createRequests()).toEqual([]);
+  });
+
+  it('does not feed collaboration-space notifications into leader COT', async () => {
+    const cot = createFakeCotClient();
+    const bot = Object.assign(createFakeFeishuBot('app-space-with-cot'), { cot });
+    const log = logger();
+    const source = eventSource();
+    const s = session({ stateDir, bot, log });
+    await start({ session: s, source });
+
+    source.emit(spaceEvent());
+    await vi.waitFor(() => {
+      expect(bot.sentCards).toHaveLength(1);
+      expect(log.info).toHaveBeenCalledWith(
+        expect.objectContaining({ event_kind: 'binding.collaboration_space' }),
+        'Feishu binding notification sent',
+      );
+    });
+    source.emit(submitted({
+      team_name: 'alpha',
+      agent_name: 'leader-alpha',
+      turn_id: 'completion-after-space-binding',
+      turn_source: 'completion',
+      channel_origin: undefined,
+    }));
+    source.emit(userMessage({
+      team_name: 'alpha',
+      agent_name: 'leader-alpha',
+      event_id: 'completion-after-space-binding-message',
+      turn_id: 'completion-after-space-binding',
+    }));
+    await settleCot();
+    await s.close();
+
+    expect(cot.createRequests()).toEqual([]);
   });
 
   it('sends topic route cards as replies to the persisted trigger message', async () => {

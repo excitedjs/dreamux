@@ -14,6 +14,7 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import { errorInfo } from '../../platform/error-info.js';
+import { channelOriginFromRoute } from '../channel-origin.js';
 import type { ChannelService } from '../channel-service/index.js';
 import type { CollaborationSpaceService } from '../collaboration-space/index.js';
 import { CollaborationTargetOperationError } from '../collaboration-space/operation-error.js';
@@ -248,7 +249,9 @@ export async function routeTeamOrCollaborationChannelInput(input: {
   channels: ChannelService;
   teams: TeamCollection;
   collaborationSpaces: CollaborationSpaceService;
-  fallback: (turn: InboundTurnInput) => Promise<InboundDeliveryResult>;
+  fallback: (turn: InboundTurnInput, envelope: ChannelInboundEnvelope) =>
+    Promise<InboundDeliveryResult>;
+  log?: DreamuxLogger;
 }): Promise<InboundDeliveryResult> {
   const {
     channelId,
@@ -259,6 +262,7 @@ export async function routeTeamOrCollaborationChannelInput(input: {
     teams,
     collaborationSpaces,
     fallback,
+    log,
   } = input;
   const target = envelope.target;
   if (target.bindable) {
@@ -272,6 +276,7 @@ export async function routeTeamOrCollaborationChannelInput(input: {
         channelId,
         turn,
         targets: [target],
+        envelope, log,
         channels,
         teams,
       });
@@ -301,7 +306,7 @@ export async function routeTeamOrCollaborationChannelInput(input: {
             }),
           });
         if (provisioned !== null) {
-          if (provisioned.lifecycle_status === 'detached') return fallback(turn);
+          if (provisioned.lifecycle_status === 'detached') return fallback(turn, envelope);
           if (provisioned.lifecycle_status !== 'active') {
             return {
               status: 'failed',
@@ -314,6 +319,7 @@ export async function routeTeamOrCollaborationChannelInput(input: {
             channelId,
             turn,
             targets: [target],
+            envelope, log,
             channels,
             teams,
           });
@@ -362,6 +368,7 @@ export async function routeTeamOrCollaborationChannelInput(input: {
         channelId,
         turn,
         targets: [target],
+        envelope, log,
         channels,
         teams,
       });
@@ -373,12 +380,13 @@ export async function routeTeamOrCollaborationChannelInput(input: {
         ),
       };
     }
-    if (exactBindingUnavailable) return fallback(turn);
+    if (exactBindingUnavailable) return fallback(turn, envelope);
     try {
       const lessSpecific = await deliverToFirstBoundTarget({
         channelId,
         turn,
         targets: target.binding_fallbacks ?? [],
+        envelope, log,
         channels,
         teams,
       });
@@ -390,13 +398,15 @@ export async function routeTeamOrCollaborationChannelInput(input: {
       };
     }
   }
-  return fallback(turn);
+  return fallback(turn, envelope);
 }
 
 async function deliverToFirstBoundTarget(input: {
   channelId: string;
   turn: InboundTurnInput;
   targets: ChannelInboundEnvelope['target'][];
+  envelope: ChannelInboundEnvelope;
+  log: DreamuxLogger | undefined;
   channels: ChannelService;
   teams: TeamCollection;
 }): Promise<
@@ -410,12 +420,24 @@ async function deliverToFirstBoundTarget(input: {
       target,
     });
     if (routed === null) continue;
+    const origin = channelOriginFromRoute({ envelope: input.envelope, binding: routed.binding });
+    if (origin === null) {
+      input.log?.warn(
+        {
+          channel_id: input.channelId,
+          provider: input.envelope.provider,
+          target_type: input.envelope.target.target_type,
+        },
+        'channel origin could not be snapshotted; delivering the turn without one',
+      );
+    }
     try {
       return {
         status: 'delivered',
         result: await input.teams.deliverToLeader(
           routed.owner.teamName,
           input.turn,
+          origin ?? undefined,
         ),
       };
     } catch (error) {

@@ -1,5 +1,6 @@
 import type {
   AgentRuntime,
+  ChannelOrigin,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
@@ -82,9 +83,13 @@ export class TeammateService {
     this.ownsWorktreeOnClose = options.ownsWorktreeOnClose;
     this.state = new AgentRuntimeStateStore(deps.identities, identity);
     this.turns = new EntityTurnCoordinator({
-      name: () => this.name,
+      identity: () => this.current(),
       intent: () => this.current().intent,
       isActive: () => this.phase === 'active',
+      ...(deps.conversationProjection !== undefined
+        ? { conversationProjection: deps.conversationProjection }
+        : {}),
+      log: deps.log,
     });
     this.runtimeOwner = new TeammateRuntimeOwner(
       deps,
@@ -226,14 +231,23 @@ export class TeammateService {
     }
   }
 
-  async channelInput(input: InboundTurnInput): Promise<TurnAdmission> {
+  async channelInput(
+    input: InboundTurnInput,
+    channelOrigin?: ChannelOrigin,
+  ): Promise<TurnAdmission> {
     const leave = this.enterOrdinaryMutation('channel input');
     try {
       await this.runtimeOwner.ensureStarted({ reopenClosed: true });
       const runtime = this.runtimeOwner.mustRuntime();
       return await this.turns.submitRuntimeTurn(
         () => runtime.channelInput(input),
-        { turnOrigin: 'channel', prompt: input.text },
+        {
+          turnOrigin: {
+            kind: 'channel',
+            channel_origin: channelOrigin ?? null,
+          },
+          prompt: input.text,
+        },
       );
     } finally {
       leave();
@@ -284,7 +298,7 @@ export class TeammateService {
               ? { sourceId: input.sourceId }
               : {}),
           }),
-        { turnOrigin: null, prompt: input.text },
+        { turnOrigin: { kind: 'control' }, prompt: input.text },
       );
     } finally {
       leave();
@@ -478,7 +492,7 @@ export class TeammateService {
       }
       return await this.turns.submitCompletion(
         () => runtime.completionInput({ text }),
-        { turnOrigin: null, prompt: text },
+        { turnOrigin: { kind: 'completion' }, prompt: text },
       );
     } finally {
       leave();

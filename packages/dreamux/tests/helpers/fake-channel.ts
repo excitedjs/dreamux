@@ -9,7 +9,7 @@
  * - `feishuChannelCatalog(botFactory)` — the REAL `@excitedjs/feishu-channel`
  *   provider with its bot connection replaced by a test bot (the provider's
  *   `botFactory` seam). Use it when a test verifies real Feishu wire semantics
- *   (reply/react mapping, reaction tri-state, the sender-loop gate).
+ *   (reply/react mapping, inbound delivery, and the sender-loop gate).
  * - `stubChannelCatalog()` — a no-op `ChannelSession` that only needs to start /
  *   close so a dispatcher comes up. Use it when the channel is incidental (the
  *   test drives completion delivery or routing through other seams).

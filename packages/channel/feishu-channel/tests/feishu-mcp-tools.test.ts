@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
@@ -14,6 +14,16 @@ import {
   parseFeishuMcpToolInput,
 } from '../src/index.js';
 import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
+import {
+  groupTarget,
+  origin,
+  settled,
+  submitted,
+  topicTarget,
+  userMessage,
+} from './helpers/cot-fixtures.js';
+import { createFakeCoreEventSource } from './helpers/fake-core-events.js';
+import { createFakeCotClient, settleCot } from './helpers/fake-cot-client.js';
 
 const temporaryRoots: string[] = [];
 
@@ -26,6 +36,70 @@ function temporaryRoot(): string {
 function logger(): DreamuxLogger {
   const noop = () => undefined;
   return { trace: noop, debug: noop, info: noop, warn: noop, error: noop };
+}
+
+async function startedCotSession(
+  appId: string,
+  log: DreamuxLogger = logger(),
+) {
+  const root = temporaryRoot();
+  const bot = createFakeFeishuBot(appId);
+  const cot = createFakeCotClient();
+  Object.defineProperty(bot, 'cot', { value: cot });
+  const events = createFakeCoreEventSource();
+  const provider = createFeishuChannelProvider({ botFactory: () => bot });
+  const session = provider.createSession({
+    dispatcher_id: 'dispatcher-a',
+    channel_id: 'primary',
+    provider: 'builtin:feishu',
+    config: { appId, appSecret: 'secret' },
+    logger: log,
+    state_root: root,
+    cache_root: root,
+  });
+  await session.start({
+    deliver: async () => ({ status: 'submitted' }),
+    coreEvents: events.source,
+  });
+  if (session.handleTool === undefined) throw new Error('missing Feishu handleTool');
+  return {
+    bot,
+    cot,
+    events,
+    session,
+    handleTool: session.handleTool.bind(session),
+  };
+}
+
+function teamLeaderContext() {
+  return {
+    dispatcher_id: 'dispatcher-a',
+    channel_id: 'primary',
+    caller: {
+      kind: 'team_leader' as const,
+      team_name: 'team-alpha',
+      leader_name: 'leader',
+    },
+  };
+}
+
+function dispatcherContext() {
+  return {
+    dispatcher_id: 'dispatcher-a',
+    channel_id: 'primary',
+    caller: { kind: 'dispatcher' as const },
+  };
+}
+
+function deferred(): { promise: Promise<void>; resolve(): void } {
+  let resolvePromise: (() => void) | undefined;
+  const promise = new Promise<void>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return {
+    promise,
+    resolve: () => resolvePromise?.(),
+  };
 }
 
 afterEach(() => {
@@ -165,7 +239,11 @@ describe('Feishu MCP tool surface', () => {
             text: 'hello',
           },
         },
-        { dispatcher_id: 'dispatcher-a', channel_id: 'primary' },
+        {
+          dispatcher_id: 'dispatcher-a',
+          channel_id: 'primary',
+          caller: { kind: 'dispatcher' },
+        },
       ),
     ).resolves.toEqual({ message_ids: ['message-fake-1'] });
     await expect(
@@ -178,7 +256,11 @@ describe('Feishu MCP tool surface', () => {
             emoji: 'THUMBSUP',
           },
         },
-        { dispatcher_id: 'dispatcher-a', channel_id: 'primary' },
+        {
+          dispatcher_id: 'dispatcher-a',
+          channel_id: 'primary',
+          caller: { kind: 'dispatcher' },
+        },
       ),
     ).resolves.toEqual({ reaction_id: 'reaction-fake-1' });
 
@@ -196,6 +278,184 @@ describe('Feishu MCP tool surface', () => {
         reactionId: 'reaction-fake-1',
       },
     ]);
+    await session.close();
+  });
+
+  it('anchors the next leader COT card to the visible Reply message', async () => {
+    const { cot, events, session, handleTool } = await startedCotSession(
+      'mcp-cot-lifecycle',
+    );
+    events.emit(submitted({
+      channel_origin: origin({ target: groupTarget() }),
+    }));
+    await settleCot();
+    expect(cot.createRequests()).toHaveLength(1);
+    expect(cot.createRequests()[0]?.data?.['origin_message_id']).toBe('om-source-1');
+
+    await handleTool(
+      {
+        name: 'reply',
+        arguments: {
+          chat_id: 'oc-group-1',
+          text: 'visible reply',
+        },
+      },
+      teamLeaderContext(),
+    );
+    expect(cot.createRequests()).toHaveLength(1);
+
+    events.emit(settled());
+    await settleCot();
+    expect(cot.eventsFor('cot-1')).toContainEqual(expect.objectContaining({
+      eventType: 'RUN_FINISHED',
+      content: expect.objectContaining({ status: 'done' }),
+    }));
+    events.emit(submitted({
+      turn_id: 'turn-2',
+      turn_source: 'completion',
+      channel_origin: undefined,
+    }));
+    events.emit(userMessage({
+      event_id: 'turn-2-message',
+      turn_id: 'turn-2',
+    }));
+    await settleCot();
+    expect(cot.createRequests()).toHaveLength(2);
+    expect(cot.createRequests()[1]?.data?.['origin_message_id'])
+      .toBe('message-fake-1');
+    await session.close();
+  });
+
+  it('keeps Reply successful when its receipt observer and logger throw', async () => {
+    const baseLog = logger();
+    const throwingLog: DreamuxLogger = {
+      ...baseLog,
+      warn: () => {
+        throw new Error('logger failed');
+      },
+    };
+    const { bot, session, handleTool } = await startedCotSession(
+      'mcp-cot-fail-open',
+      throwingLog,
+    );
+    const internals = session as unknown as {
+      session: {
+        cot: {
+          adapter?: { refreshNextAnchor(): void };
+          refreshReplyNextAnchor(): void;
+        };
+      };
+    };
+    const cotSeam = internals.session.cot;
+    if (cotSeam.adapter === undefined) throw new Error('missing Feishu COT adapter');
+    cotSeam.adapter.refreshNextAnchor = () => {
+      throw new Error('adapter observer failed');
+    };
+
+    await expect(handleTool(
+      {
+        name: 'reply',
+        arguments: { chat_id: 'oc-group-1', text: 'first reply' },
+      },
+      teamLeaderContext(),
+    )).resolves.toEqual({ message_ids: ['message-fake-1'] });
+
+    cotSeam.refreshReplyNextAnchor = () => {
+      throw new Error('receipt observer failed');
+    };
+    await expect(handleTool(
+      {
+        name: 'reply',
+        arguments: { chat_id: 'oc-group-1', text: 'second reply' },
+      },
+      teamLeaderContext(),
+    )).resolves.toEqual({ message_ids: ['message-fake-2'] });
+    expect(bot.sentMessages).toHaveLength(2);
+    await session.close();
+  });
+
+  it('does not update leader COT anchors for dispatcher Replies', async () => {
+    const { cot, events, session, handleTool } = await startedCotSession(
+      'mcp-cot-dispatcher-reply',
+    );
+    events.emit(submitted());
+    await settleCot();
+
+    await handleTool(
+      {
+        name: 'reply',
+        arguments: { chat_id: 'oc-group-1', text: 'dispatcher reply' },
+      },
+      dispatcherContext(),
+    );
+    events.emit(settled());
+    events.emit(submitted({
+      turn_id: 'turn-2',
+      turn_source: 'completion',
+      channel_origin: undefined,
+    }));
+    events.emit(userMessage({
+      event_id: 'turn-2-message',
+      turn_id: 'turn-2',
+    }));
+    await settleCot();
+
+    expect(cot.createRequests().map((request) =>
+      request.data?.['origin_message_id']))
+      .toEqual(['om-source-1', 'om-source-1']);
+    await session.close();
+  });
+
+  it('drops a late leader Reply receipt after the conversation moves chats', async () => {
+    const { bot, cot, events, session, handleTool } = await startedCotSession(
+      'mcp-cot-stale-receipt',
+    );
+    events.emit(submitted({
+      channel_origin: origin({ target: groupTarget() }),
+    }));
+    await settleCot();
+    const receipt = deferred();
+    bot.setSendReceiptDelay(receipt.promise);
+
+    const reply = handleTool(
+      {
+        name: 'reply',
+        arguments: {
+          chat_id: 'oc-group-1',
+          text: 'late reply',
+        },
+      },
+      teamLeaderContext(),
+    );
+    await vi.waitFor(() => {
+      expect(bot.sentMessages).toHaveLength(1);
+    });
+    events.emit(submitted({
+      turn_id: 'turn-2',
+      channel_origin: origin({
+        message_id: 'om-source-2',
+        target: topicTarget('oc-group-2', 'omt-thread-2'),
+      }),
+    }));
+    await settleCot();
+    receipt.resolve();
+    await reply;
+
+    events.emit(settled({ turn_id: 'turn-2' }));
+    events.emit(submitted({
+      turn_id: 'turn-3',
+      turn_source: 'completion',
+      channel_origin: undefined,
+    }));
+    events.emit(userMessage({
+      event_id: 'turn-3-message',
+      turn_id: 'turn-3',
+    }));
+    await settleCot();
+
+    expect(cot.createRequests().map((request) =>
+      request.data?.['origin_message_id']))
+      .toEqual(['om-source-1', 'om-source-2', 'om-source-2']);
     await session.close();
   });
 
@@ -225,7 +485,11 @@ describe('Feishu MCP tool surface', () => {
 
     const live = await session.handleTool(
       { name: 'list_chat_bots', arguments: { chat_id: 'chat-a' } },
-      { dispatcher_id: 'dispatcher-a', channel_id: 'primary' },
+      {
+        dispatcher_id: 'dispatcher-a',
+        channel_id: 'primary',
+        caller: { kind: 'dispatcher' },
+      },
     );
     const sessionless = await provider.handleSessionlessTool(
       'list_chat_bots',

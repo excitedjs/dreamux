@@ -2,6 +2,7 @@ import type { AgentRuntimeSystemPrompt, DreamuxLogger } from '@excitedjs/dreamux
 import { unsupportedFeatureError } from '@excitedjs/dreamux-utils';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
+import type { ConversationProjection } from '../../channel/conversation-projection.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import {
   agentRuntimeCapability,
@@ -74,6 +75,7 @@ export interface TeammateCollectionOptions {
   worktrees: WorktreeManager;
   identities: AgentIdentityStore;
   completionDelivery?: CompletionDeliveryPolicy;
+  conversationProjection?: ConversationProjection | undefined;
   initiatorFor?: (
     producer: AgentEntityIdentity,
   ) => Promise<CompletionInitiator | null>;
@@ -440,6 +442,9 @@ export class TeammateCollection implements TeammateOps {
       agentRuntimeProviders: this.opts.agentRuntimeProviders,
       identities: this.identities,
       worktrees: this.worktrees,
+      ...(this.opts.conversationProjection !== undefined
+        ? { conversationProjection: this.opts.conversationProjection }
+        : {}),
       log: this.opts.log,
     });
   }
