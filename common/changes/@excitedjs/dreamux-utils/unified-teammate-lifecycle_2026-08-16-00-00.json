@@ -3,7 +3,7 @@
     {
       "packageName": "@excitedjs/dreamux-utils",
       "comment": "BREAKING: Review: callers of completion body preparation must stop supplying a public completion ID, and process supervisors must handle stop failures when process-group absence cannot be proved. Oversized completion spills now use opaque exclusive names; shared transcript helpers provide stable rendering, redaction, caps, and fixed-budget projection for provider-owned native readers. No rebuild is required: spill artifacts are rebuildable cache and the new transcript helpers persist no state.",
-      "type": "major"
+      "type": "minor"
     }
   ],
   "packageName": "@excitedjs/dreamux-utils"

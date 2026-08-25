@@ -3,7 +3,7 @@
     {
       "packageName": "@excitedjs/agent-runtime-codex",
       "comment": "BREAKING: Review: the turn manager now settles submissions with provider-owned completion tokens at thread result boundaries: folded submissions share one completion, queued submissions settle as distinct completions in native order, stop without an observed final result settles as stopped without fabricating a completion, and live activity flows through the submission activity sink. Test typecheck now actually covers tests/. No rebuild is required because these are runtime contract changes, not persisted state migrations.",
-      "type": "major"
+      "type": "minor"
     }
   ],
   "packageName": "@excitedjs/agent-runtime-codex"

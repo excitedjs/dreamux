@@ -156,6 +156,11 @@ approves that tradeoff; its breaking note must lead with `BREAKING:`, immediatel
 include `Review:` with the required operator check, explicitly say no rebuild is
 needed, and contain no `Rebuild:` instruction.
 
+While Dreamux stays on the 0.x version line, change files must never use type
+`major` — Rush bumps a 0.x package straight to 1.0.0 on a pending major.
+Record breaking changes as type `minor` with the `BREAKING:` note leading;
+the operator decides when the project leaves 0.x.
+
 ## Commits
 
 - Use real author identity. If git reports an auto-detected email, set
