@@ -32,9 +32,12 @@
 4. `turn-coordinator.ts`: token settlement, admission, and close drainage as
    designed; the activity sink is a type-safe no-op receiver until the channel
    telemetry task lands.
-5. `turn-recording.ts` carries a diagnostic per-turn id (`readonly id =
-   randomUUID()`) referenced by the close-drainage error message. Reviewed
-   explicitly: it plays no routing or dedup role; kept for diagnosability.
+5. `turn-recording.ts` initially carried a diagnostic per-turn id referenced by
+   the stop-drain error message. Reviewed explicitly (no routing or dedup
+   role); the operator decided on 2026-08-25 to drop it for this round because
+   nothing in this repository consumes it yet — the stop error reports only the
+   unsettled count and entity name. It can return with the channel telemetry
+   task, which needs a per-turn grouping key.
 6. `claude-code/src/runtime-submissions.ts` reports submission lifecycle only;
    tool-action display reporting is deferred to the channel telemetry task.
 
