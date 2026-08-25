@@ -33,14 +33,36 @@ debug dump; see [Promotion step](#4-promotion-stable) below.
 
 | Branch | Purpose | Lifetime | Protected |
 |---|---|---|---|
-| `main` | Stable npm `latest` head; one commit per release plus `[skip ci]` version bumps | permanent | push restricted to `github-actions[bot]` only |
-| `next` | Default PR base; beta channel head | permanent | squash-merge only via PR; bot allowed to fast-forward on release |
+| `main` | Stable npm `latest` head; one commit per release plus `[skip ci]` version bumps | permanent | ruleset PR gate; only the release deploy key pushes directly |
+| `next` | Default PR base; beta channel head | permanent | squash-merge only via PR (1 approval); release deploy key may fast-forward on release |
 | `feature/<slug>` | In-progress work for one PR | lives from branch-off to PR merge; PR squash merge deletes it | no |
 | `team/<slug>` | Reserved for TeamMate team integration branches; merged via PR | same as feature | no |
 
 PRs target `next`, never `main`. The GitHub repo default branch is
 `next`. Hotfixes, like every other change, land on `next` first and
 ship through the normal promote path.
+
+## Branch protection model
+
+Two layers guard `main` and `next`:
+
+- **Classic branch protection** on each branch blocks force pushes and
+  deletions and applies to administrators (`enforce_admins`). It carries
+  no pull-request rule.
+- **Repository ruleset `release-branch-pr-gate`** (targets
+  `refs/heads/main` and `refs/heads/next`) requires a pull request with
+  1 approving review for every ordinary actor — including
+  administrators and `github-actions[bot]` — and lists **deploy keys**
+  as its only bypass actor.
+
+The bypass exists because GitHub cannot exempt the Actions app from a
+pull-request rule (neither classic protection nor rulesets accept it as
+a bypass actor). The release pipeline therefore pushes over SSH with the
+repository's read-write deploy key `release-pipeline`; its private half
+lives in the Actions secret `RELEASE_DEPLOY_KEY`, and both pushing
+workflows fail loudly when the secret is missing. Rotating the key means:
+generate a new keypair, replace the deploy key and the secret — no
+workflow change.
 
 ## The four-step path
 
@@ -179,28 +201,23 @@ Pipeline steps:
    main already equals next (nothing to promote); the remaining steps
    below all skip on `noop`.
 
-5. **Push `main` to origin.**
-   Uses the workflow `GITHUB_TOKEN` (not a PAT) as the
-   `github-actions[bot]` identity. Main branch protection must allow
-   this identity.
-
-   *Known GitHub behavior:* A `git push` performed with the default
-   workflow `GITHUB_TOKEN` does **not** re-trigger `on.push.main` in
-   release.yml. This is GitHub's documented anti-infinite-loop guard.
-   The next step therefore nudges release.yml explicitly.
-
-6. **Dispatch release.yml on the freshly pushed main.**
-   `gh workflow run release.yml --ref main`, using the same
-   `GITHUB_TOKEN` (this is why promote-next declares
-   `permissions.actions: write`). Prints the newest release run URL
-   back into the promote-next log so the operator can follow along.
+5. **Push `main` to origin with the release deploy key.**
+   The push authenticates over SSH as the repository's release deploy
+   key — the `release-branch-pr-gate` ruleset's bypass actor (see
+   [Branch protection model](#branch-protection-model)); `GITHUB_TOKEN`
+   stays `contents: read`. A deploy-key push is an ordinary push, so
+   `on.push.main` in release.yml fires by itself and no dispatch step
+   exists. If the promoted HEAD commit message ever contains
+   `[skip ci]`, or the triggered run must be retried, dispatch
+   release.yml against `main` by hand — manual dispatch remains the
+   retry hook.
 
 Source reference: promote-next.yml header comments document this
-six-step shape and the known coupling to release.yml.
+five-step shape and the push-triggered coupling to release.yml.
 
-### 5. Stable version + publish (chained off promote-next step 6)
+### 5. Stable version + publish (triggered by the promote push)
 
-The dispatch from promote-next lands on release.yml targeting `main`.
+The deploy-key push of `main` fires release.yml's `on.push` trigger.
 Two jobs run in sequence; the `prerelease` job for stable branches is
 intentionally skipped.
 
@@ -212,9 +229,10 @@ intentionally skipped.
   If no change files are present, `should_publish=false` and both the
   version bump and the subsequent publish step short-circuit.
 - Produces one commit on main:
-  `chore(release): version packages [skip ci]`. The `[skip ci]` footer
-  prevents the push from re-triggering release.yml if someone later
-  adds a push-based trigger to main again.
+  `chore(release): version packages [skip ci]`, pushed with the release
+  deploy key. The `[skip ci]` footer is load-bearing: deploy-key pushes
+  are visible to `on.push`, and this footer is what stops the bump push
+  (and its next-sync below) from retriggering release.yml.
 - **Critical invariant repair step — `sync next onto the freshly bumped main`.**
   Immediately after pushing the version commit to main, the version
   job fetches `next`, compares its SHA to `HEAD^` (the pre-bump main
@@ -260,9 +278,10 @@ Related decision:
 | Failure | Where caught | Recovery |
 |---|---|---|
 | Topology violation: main is not an ancestor of next | promote-next step 3 | Read the divergence-dump section of the log. (a) If main shows only `chore(release)` commits from a prior release, re-anchor next: cherry-pick the `[skip ci]` bump onto next or force-align next to main at the release SHA, then re-run promote. (b) If main shows a non-release commit, that is a process bug — remove/revert it from main and land the change through the normal PR→next path instead. |
-| GITHUB_TOKEN push of main did not trigger release.yml | promote-next logs; absence of a new release run URL | Built-in to promote-next V2: the dispatch step (step 6) is the explicit workaround. If this ever appears to regress, re-check that `permissions.actions: write` is still declared and that `gh` still ships on `ubuntu-latest`. |
+| Promote push of main did not trigger release.yml | Actions tab: no new release run on main after promote | Check whether the promoted HEAD commit message contains `[skip ci]` (workflows are skipped for it). Recovery either way: `Actions → release.yml → Run workflow → main` — manual dispatch is the designed retry hook. |
+| Pipeline push rejected (GH013 rule violations) or deploy-key auth failed | promote-next push step / release.yml version job logs | Verify the `release-branch-pr-gate` ruleset still lists deploy keys as bypass actors, the `release-pipeline` deploy key still exists with write access, and the `RELEASE_DEPLOY_KEY` secret matches it. The setup steps already fail loudly when the secret is absent. |
 | version job produced the bump commit, but publish failed mid-upload | release.yml publish job logs | Re-run the workflow with the same commit via `Actions → release.yml → Run workflow → main`. The version job detects the bump commit has already been produced (change files consumed, no diff in `packages/` and `common/changes/`) and short-circuits with `should_publish=true` on `workflow_dispatch` so only the publish job re-runs. Do not push a new commit just to re-trigger CI. |
-| Version bump was pushed but sync-next step failed | release.yml version step | Verify next branch protection allows the `github-actions[bot]` identity to push. If `next` moved between the bump and the sync, the step logs "Skipping next sync" intentionally; the next PR merged into next will land on top of the pre-release state from the prior beta, and promote-next will still fast-forward because the beta branch is a descendant of main. |
+| Version bump was pushed but sync-next step failed | release.yml version step | Verify the deploy-key bypass (previous row) is intact for `next`. If `next` moved between the bump and the sync, the step logs "Skipping next sync" intentionally; the next PR merged into next will land on top of the pre-release state from the prior beta, and promote-next will still fast-forward because the beta branch is a descendant of main. |
 | Author email fails commit-metadata CI gate | PR CI, or pre-commit hook locally | Fix with `git config user.email <your-github-email>`. Privacy addresses (`*@users.noreply.github.com`) are explicitly allowed. Local pre-commit hook mirrors the CI check; run `rush update` (or `rush install`) to ensure the hook is wired. |
 | Rush change verify fails on a workflow-only PR | PR CI `rush-change-status` job | Generate a `type: none` change file for the package whose workflow or surface is being altered. Workflow-only changes still need a paper trail in the CHANGELOG. |
 
