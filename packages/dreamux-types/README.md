@@ -24,7 +24,7 @@ shared structural types.
 - the complete Agent Runtime provider contract: `AgentRuntimeProvider`,
   `AgentRuntime`, the neutral `AgentRuntimeCreateContext`, capabilities, role,
   skill sources, completion delivery, `RuntimeAdmission`, canonical
-  `RuntimeTurn`/`RuntimeTurnOutcome`, resume checkpoints, provider-native
+  `RuntimeSubmission`/`RuntimeCompletion` settlement, resume checkpoints, provider-native
   transcript queries/pages/errors, MCP server descriptor, neutral state
   callbacks, and diagnostic helper shapes. Provider-native Turn identifiers,
   cursor positions, and transcript formats remain private inside provider

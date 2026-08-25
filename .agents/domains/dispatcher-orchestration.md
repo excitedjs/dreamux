@@ -118,12 +118,15 @@ scope, then delegates a bounded cold read to the selected Agent Runtime
 provider's native transcript. It materializes no entity and stores no transcript
 copy, index, or cursor.
 
-Every accepted logical input is retained as one entity-owned `Turn` object over
-one provider-owned `RuntimeTurn`. Folds return the same object. Public receipts,
-Workflow records, Channel contracts, and identity state do not expose an id
-merely to re-find that in-process object. The first immutable outcome wins the
-object latch; optional completion delivery is a bounded captured closure.
-Dreamux persists no Turn archive or rolling conversation projection.
+Every accepted send is retained as one entity-owned `Turn` object over one
+provider-owned `RuntimeSubmission`. Providers settle submissions with immutable
+`RuntimeCompletion` tokens created at real native result boundaries: folded
+sends share one completion, queued sends settle with distinct completions in
+provider order. Public receipts, Workflow records, Channel contracts, and
+identity state do not expose an id merely to re-find that in-process object.
+The first immutable outcome wins the object latch; delivery flows through the
+core `completion-router`, at-most-once per producer, completion token, and
+recipient. Dreamux persists no Turn archive or rolling conversation projection.
 
 The runtime checkpoint stores the provider-native session id plus an optional
 opaque transcript locator. Direct TeamMate `spawn` and `send` receipts expose

@@ -50,6 +50,8 @@ import {
 } from '@excitedjs/agent-runtime-codex';
 import { Server } from '../src/server.js';
 import {
+  IN_PROGRESS_REACTION_EMOJI,
+  RECEIVED_REACTION_EMOJI,
   type FeishuInboundEvent,
 } from '@excitedjs/feishu-channel';
 import { feishuChannelCatalog } from './helpers/fake-channel.js';
@@ -796,8 +798,19 @@ describe('codex live integration', () => {
         expect(turnStartRequests(liveClient)).toHaveLength(2);
         expect(notifications(liveClient, 'turn/completed')).toHaveLength(1);
 
-        expect(bot.reactionOps.filter((operation) =>
-          operation.messageId === markerMessageId)).toEqual([]);
+        const markerReactions = bot.reactions.filter(
+          (reaction) => reaction.messageId === markerMessageId,
+        );
+        expect(markerReactions.map((reaction) => reaction.emoji)).toEqual([
+          RECEIVED_REACTION_EMOJI,
+          IN_PROGRESS_REACTION_EMOJI,
+        ]);
+        const markerRemoved = bot.removedReactions.filter(
+          (reaction) => reaction.messageId === markerMessageId,
+        );
+        expect(markerRemoved.map((reaction) => reaction.reactionId)).toEqual(
+          markerReactions.map((reaction) => reaction.reactionId),
+        );
       } finally {
         await server?.shutdown();
         if (previousHome === undefined) delete process.env['HOME'];
