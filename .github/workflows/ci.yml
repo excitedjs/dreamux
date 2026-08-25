@@ -58,20 +58,35 @@ jobs:
         run: git fetch origin "${{ github.base_ref }}" --depth=1
       - name: Verify Rush change files
         run: node common/scripts/install-run-rush.js change --verify --target-branch "origin/${{ github.base_ref }}" --no-fetch
-      # While Dreamux stays on the 0.x version line, a pending `major` change
-      # file would make Rush bump the package straight to 1.0.0 (how the
+      # While a package stays on the 0.x version line, a pending `major`
+      # change file would make Rush bump it straight to 1.0.0 (how the
       # 2026-08-16 release run produced an unwanted, never-published 1.0.0
-      # version state). Breaking changes are recorded as `minor` with a leading
-      # `BREAKING:` note instead (CLAUDE.md, Changelog Responsibility). The
-      # scan covers the full pending set, not the PR diff: the invariant is
-      # that no major is pending at release time, wherever it came from. The
-      # operator removes this gate when the project leaves 0.x.
+      # version state for the core packages). For 0.x packages, breaking
+      # changes are recorded as `minor` with a leading `BREAKING:` note
+      # instead (CLAUDE.md, Changelog Responsibility). Packages already past
+      # 1.0.0 (e.g. @excitedjs/feishu-channel) use real semver majors and are
+      # exempt. The scan covers the full pending set, not the PR diff: the
+      # invariant is that no 0.x major is pending at release time, wherever
+      # it came from. The operator lifts a package out of this gate by moving
+      # its version past 1.0.0.
       - name: Forbid major change files on the 0.x line
         run: |
           node -e '
             const fs = require("fs");
             const path = require("path");
-            const root = "common/changes";
+            const versions = new Map();
+            const collect = (dir) => {
+              for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                if (entry.name === "node_modules") continue;
+                const p = path.join(dir, entry.name);
+                if (entry.isDirectory()) collect(p);
+                else if (entry.name === "package.json") {
+                  const pkg = JSON.parse(fs.readFileSync(p, "utf8"));
+                  if (pkg.name && pkg.version) versions.set(pkg.name, pkg.version);
+                }
+              }
+            };
+            collect("packages");
             const bad = [];
             const walk = (dir) => {
               for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -80,17 +95,23 @@ jobs:
                 else if (entry.name.endsWith(".json")) {
                   const doc = JSON.parse(fs.readFileSync(p, "utf8"));
                   for (const change of doc.changes ?? []) {
-                    if (String(change.type).toLowerCase() === "major") bad.push(p);
+                    if (String(change.type).toLowerCase() !== "major") continue;
+                    const version = versions.get(change.packageName);
+                    if (version === undefined) {
+                      bad.push([p, change.packageName + " has a pending major change file but no package.json under packages/ — cannot prove it is past 0.x"]);
+                    } else if (version.startsWith("0.")) {
+                      bad.push([p, change.packageName + " is on the 0.x line (" + version + ") — record the breaking change as type minor with a leading BREAKING: note (CLAUDE.md, Changelog Responsibility)"]);
+                    }
                   }
                 }
               }
             };
-            if (fs.existsSync(root)) walk(root);
-            for (const p of bad) {
-              console.error("::error file=" + p + "::major change files are forbidden while Dreamux is on the 0.x line — record the breaking change as type minor with a leading BREAKING: note (CLAUDE.md, Changelog Responsibility)");
+            if (fs.existsSync("common/changes")) walk("common/changes");
+            for (const [p, message] of bad) {
+              console.error("::error file=" + p + "::" + message);
             }
             if (bad.length) process.exit(1);
-            console.log("no pending major change files");
+            console.log("no pending major change files for 0.x packages");
           '
 
   commit-metadata:
