@@ -22,6 +22,7 @@ import type {
   RuntimeCompletion,
   RuntimeSubmission,
   RuntimeSubmissionSettlement,
+  RuntimeToolAction,
 } from '@excitedjs/dreamux-types';
 
 interface SubmissionDeferred {
@@ -449,17 +450,71 @@ function itemActivity(turnId: string, item: ThreadItem, phase: 'started' | 'comp
   }
   const toolName = toolNameFor(item);
   if (toolName === null) return null;
-  const failed = phase === 'completed' && (item['status'] === 'failed' || item['error'] != null);
+  const failed = phase === 'completed' &&
+    (item['status'] === 'failed' || item['error'] != null || item['success'] === false);
+  const error = failed ? renderProviderError(item['error']) : null;
   return {
     kind: 'tool.call',
     id: `${turnId}:${itemId}:${phase}`,
     callId: itemId,
     toolName,
+    action: toolActionFor(item),
     status: phase === 'started' ? 'started' : failed ? 'failed' : 'completed',
-    arguments: toJsonValue(item['arguments'] ?? item['input'] ?? item['command'] ?? null),
-    result: phase === 'completed' ? toJsonValue(item['result'] ?? item['output'] ?? item['aggregatedOutput'] ?? null) : null,
-    error: failed ? String(item['error'] ?? 'tool call failed') : null,
+    arguments: toJsonValue(item['arguments'] ?? item['input'] ?? item['command'] ?? item['changes'] ?? null),
+    result: phase === 'completed' ? resultFor(item) : null,
+    error,
   };
+}
+
+function toolActionFor(item: ThreadItem): RuntimeToolAction | null {
+  if (item.type === 'commandExecution') return commandActionFor(item['commandActions']);
+  if (item.type === 'fileChange') return 'edit';
+  return null;
+}
+
+function commandActionFor(value: unknown): RuntimeToolAction {
+  if (!Array.isArray(value) || value.length === 0) return 'run';
+  const actions = value.map((entry): RuntimeToolAction | null => {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return null;
+    switch ((entry as Record<string, unknown>)['type']) {
+      case 'read': return 'read';
+      case 'listFiles': return 'list_files';
+      case 'search': return 'search';
+      case 'unknown': return 'run';
+      default: return null;
+    }
+  });
+  const first = actions[0];
+  return first !== null && actions.every((action) => action === first) ? first : 'run';
+}
+
+function resultFor(item: ThreadItem): JsonValue | null {
+  const result = item['result'] ?? item['output'] ?? item['aggregatedOutput'];
+  if (result !== undefined) return toJsonValue(result);
+  if (item.type === 'dynamicToolCall') return normalizeInputTextItems(item['contentItems']);
+  return null;
+}
+
+function normalizeInputTextItems(value: unknown): JsonValue | null {
+  if (!Array.isArray(value)) return toJsonValue(value);
+  if (value.length === 0) return null;
+  const texts = value.map((entry) => {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return null;
+    const record = entry as Record<string, unknown>;
+    return record['type'] === 'inputText' && typeof record['text'] === 'string'
+      ? record['text']
+      : null;
+  });
+  return texts.every((text): text is string => text !== null)
+    ? texts.join('\n')
+    : toJsonValue(value);
+}
+
+function renderProviderError(value: unknown): string | null {
+  if (value == null) return null;
+  const normalized = normalizeInputTextItems(value);
+  if (normalized === null) return null;
+  return typeof normalized === 'string' ? normalized : JSON.stringify(normalized);
 }
 
 function toolNameFor(item: ThreadItem): string | null {

@@ -60,8 +60,8 @@ description: MCP operation notes for Team work. Load before using this Team's Te
 ## Channel Notes
 
 - If a provider-exposed channel reply tool is available for the bound source,
-  use it for visible acceptance, final status, and blockers. Assistant text and
-  internal planning are not channel delivery.
+  use it for meaningful progress, blockers, and final status. Assistant text
+  and internal planning are not channel delivery.
 - At key task milestones, report progress promptly. Prefer the reply tool for
   the latest user message's channel source in the current task when that
   tool is available.

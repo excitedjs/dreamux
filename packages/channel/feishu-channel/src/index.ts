@@ -17,8 +17,6 @@ export {
 export {
   FeishuChannelSession,
   FeishuChannelCapabilityError,
-  RECEIVED_REACTION_EMOJI,
-  IN_PROGRESS_REACTION_EMOJI,
   toWireChatBot,
   type FeishuChannelSessionOptions,
   type FeishuInboundSubmitter,

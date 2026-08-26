@@ -1,12 +1,14 @@
-import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { describe, expect, it } from 'vitest';
+
 import {
-  RECEIVED_REACTION_EMOJI,
   createFeishuChannelProvider,
+  defaultDispatcherAccessState,
   saveDispatcherAccess,
+  type FeishuInboundEvent,
 } from '@excitedjs/feishu-channel';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { dispatcherDir } from '../src/platform/paths.js';
@@ -32,7 +34,7 @@ const log = ((): DreamuxLogger => {
 // provider seam — the same path production drives. The package's `botFactory`
 // test option swaps the live Lark connection for the fake bot; egress flows
 // through the real reply/react wire mapping.
-function feishuSession() {
+function feishuSession(stateRoot = dispatcherDir('flow')) {
   const bot = createFakeFeishuBot('app-test');
   const provider = createFeishuChannelProvider({ botFactory: () => bot });
   const session = provider.createSession({
@@ -41,89 +43,9 @@ function feishuSession() {
     provider: BUILTIN_FEISHU_PROVIDER_REF,
     config: { appId: 'app-test', appSecret: 'secret-test' },
     logger: log,
-    state_root: dispatcherDir('flow'),
+    state_root: stateRoot,
   });
   return { bot, session };
-}
-
-function inboundEvent(messageId: string) {
-  return {
-    messageId,
-    chatId: 'chat-1',
-    chatType: 'group',
-    senderId: 'sender-1',
-    senderType: 'user',
-    senderName: 'Ada Sender',
-    messageType: 'text',
-    rawContent: JSON.stringify({ text: '<at id="fake-open-id-app-test"></at> hi' }),
-    parsedText: '@bot hi',
-    mentions: [
-      {
-        key: '@_user_1',
-        id: { open_id: 'fake-open-id-app-test' },
-        name: 'Bot',
-      },
-    ],
-    createTime: '1782660000000',
-    raw: {},
-  };
-}
-
-async function assertNonSubmittedDeliveryClearsReceivedReaction(
-  delivery:
-    | { status: 'duplicate' }
-    | { status: 'stopped' }
-    | { status: 'failed'; error: Error },
-): Promise<void> {
-  const stateDir = mkdtempSync(join(tmpdir(), 'dreamux-feishu-ack-'));
-  try {
-    const bot = createFakeFeishuBot('app-test');
-    const provider = createFeishuChannelProvider({ botFactory: () => bot });
-    const session = provider.createSession({
-      dispatcher_id: 'flow',
-      channel_id: 'primary',
-      provider: BUILTIN_FEISHU_PROVIDER_REF,
-      config: { appId: 'app-test', appSecret: 'secret-test' },
-      logger: log,
-      state_root: stateDir,
-    });
-    await saveDispatcherAccess(stateDir, {
-      version: 3,
-      dm_policy: 'pairing',
-      allow_users: ['sender-1'],
-      group: { policy: 'follow-user', allow_chats: [], require_mention: true },
-      pending: {},
-      observed_chats: [],
-      warnings: [],
-      last_gate: { at: 0 },
-    });
-    await session.start({
-      deliver: async () => delivery,
-    });
-    await bot.inject(inboundEvent(`msg-${delivery.status}`));
-
-    expect(bot.reactions).toEqual([
-      {
-        messageId: `msg-${delivery.status}`,
-        emoji: RECEIVED_REACTION_EMOJI,
-        reactionId: 'reaction-fake-1',
-      },
-    ]);
-    expect(bot.removedReactions).toEqual([
-      { messageId: `msg-${delivery.status}`, reactionId: 'reaction-fake-1' },
-    ]);
-    expect(bot.reactionOps).toEqual([
-      {
-        op: 'add',
-        messageId: `msg-${delivery.status}`,
-        emoji: RECEIVED_REACTION_EMOJI,
-        reactionId: 'reaction-fake-1',
-      },
-      { op: 'remove', messageId: `msg-${delivery.status}`, reactionId: 'reaction-fake-1' },
-    ]);
-  } finally {
-    rmSync(stateDir, { recursive: true, force: true });
-  }
 }
 
 describe('built-in Feishu channel', () => {
@@ -139,7 +61,11 @@ describe('built-in Feishu channel', () => {
           mention_user_ids: ['user-1'],
         },
       },
-      { dispatcher_id: 'flow', channel_id: 'primary' },
+      {
+        dispatcher_id: 'flow',
+        channel_id: 'primary',
+        caller: { kind: 'dispatcher' },
+      },
     );
 
     expect(result).toEqual({
@@ -158,7 +84,11 @@ describe('built-in Feishu channel', () => {
     const { bot, session } = feishuSession();
     const result = await session.handleTool!(
       { name: 'react', arguments: { message_id: 'msg-1', emoji: 'OK' } },
-      { dispatcher_id: 'flow', channel_id: 'primary' },
+      {
+        dispatcher_id: 'flow',
+        channel_id: 'primary',
+        caller: { kind: 'dispatcher' },
+      },
     );
 
     expect(result).toEqual({
@@ -169,12 +99,48 @@ describe('built-in Feishu channel', () => {
     ]);
   });
 
-  it.each([
-    [{ status: 'duplicate' } as const],
-    [{ status: 'stopped' } as const],
-    [{ status: 'failed', error: new Error('boom') } as const],
-  ])('clears optimistic received reaction when delivery is %s', async (delivery) => {
-    await assertNonSubmittedDeliveryClearsReceivedReaction(delivery);
+  it('keeps the model-facing react tool while automatic reactions stay absent', async () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), 'dreamux-channel-reaction-'));
+    try {
+      const access = defaultDispatcherAccessState();
+      access.dm_policy = 'allowlist';
+      access.allow_users = ['sender-test'];
+      await saveDispatcherAccess(stateRoot, access);
+      const { bot, session } = feishuSession(stateRoot);
+      const delivered: string[] = [];
+      try {
+        await session.start({
+          deliver: async (input) => {
+            delivered.push(input.sourceId);
+            return { status: 'submitted' };
+          },
+        });
+        const inbound: FeishuInboundEvent = {
+          messageId: 'message-inbound',
+          chatId: 'chat-direct',
+          chatType: 'p2p',
+          senderId: 'sender-test',
+          senderType: 'user',
+          senderName: 'Ada',
+          messageType: 'text',
+          rawContent: JSON.stringify({ text: 'hello' }),
+          parsedText: 'hello',
+          mentions: [],
+          createTime: '1710000000000',
+          raw: {},
+        };
+
+        await bot.inject(inbound);
+
+        expect(delivered).toEqual(['message-inbound']);
+        expect(bot.reactions).toEqual([]);
+        expect(bot.reactionOps).toEqual([]);
+      } finally {
+        await session.close();
+      }
+    } finally {
+      rmSync(stateRoot, { recursive: true, force: true });
+    }
   });
 });
 

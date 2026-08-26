@@ -21,6 +21,7 @@ import {
 } from '@excitedjs/dreamux-utils';
 
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
+import type { ConversationProjection } from '../src/channel/conversation-projection.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
 import type { AgentEntityWorktreeIdentity } from '../src/service/agent-entity/types.js';
 import { createTeamLeaderAgent } from '../src/service/team-service/leader-agent.js';
@@ -305,6 +306,7 @@ async function createTestTeamLeader(input: {
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   identity?: string;
   start?: boolean;
+  conversationProjection?: ConversationProjection;
 }): Promise<TeammateService> {
   const log = noopLog();
   const identities = new AgentIdentityStore(log);
@@ -338,6 +340,9 @@ async function createTestTeamLeader(input: {
     config: input.config,
     agentRuntimeProviders: input.agentRuntimeProviders,
     identities,
+    ...(input.conversationProjection !== undefined
+      ? { conversationProjection: input.conversationProjection }
+      : {}),
     worktrees: new WorktreeManager(),
     log,
   });
@@ -1311,6 +1316,54 @@ describe('TeammateService channel input routing', () => {
       text: 'scheduled report',
       sourceId: 'scheduled:job-1:2',
     });
+  });
+
+  it('threads control and completion origins into TeamLeader projection', async () => {
+    const workspace = join(root, 'workspace');
+    mkdirSync(workspace, { recursive: true });
+    const runtimes: FakeRuntime[] = [];
+    const projected: Array<{ prompt: string | null; origin: unknown }> = [];
+    const projection: ConversationProjection = {
+      projectSubmitted(_identity, turn): void {
+        projected.push({ prompt: turn.prompt, origin: turn.origin });
+      },
+      projectActivity(): void {},
+      projectSettled(): void {},
+    };
+    const config = testDreamuxConfig([
+      testDispatcherConfig({
+        id: 'dispatcher-a',
+        cwd: workspace,
+        agentRuntime: 'agent-a',
+        runtimeProvider: FAKE_RUNTIME_REF,
+      }),
+    ]);
+    const leader = await createTestTeamLeader({
+      dispatcherId: 'dispatcher-a',
+      teamId: 'alpha',
+      name: 'tl-alpha-0001',
+      agentRuntime: 'agent-a',
+      workspace,
+      config,
+      agentRuntimeProviders: fakeRuntimeCatalog(runtimes),
+      conversationProjection: projection,
+    });
+
+    await leader.controlInput({ text: 'control input', sourceId: 'control-1' });
+    const prepared = await leader.prepareCompletion({
+      kind: 'teammate',
+      source: 'worker',
+      status: 'completed',
+      result: 'prepared completion',
+    });
+    await prepared.submit();
+    await waitFor(() => projected.length === 2);
+
+    expect(projected.find(({ prompt }) => prompt === 'control input')?.origin)
+      .toEqual({ kind: 'control' });
+    expect(projected.find(({ prompt }) =>
+      prompt?.includes('prepared completion') === true)?.origin)
+      .toEqual({ kind: 'completion' });
   });
 });
 

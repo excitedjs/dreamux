@@ -158,6 +158,8 @@ describe('dispatcher prompt matches registered Dreamux MCP tools', () => {
     expect(appendPrompt).toMatch(/Do not read or edit repository code files/i);
     expect(appendPrompt).toMatch(/do not poll `last`[\s\S]{0,120}pushes task results/i);
     expect(appendPrompt).toMatch(/task was submitted successfully[\s\S]{0,160}end the turn naturally/i);
+    expect(allDispatcherPrompts).not.toMatch(/visible acceptance/i);
+    expect(allDispatcherPrompts).not.toMatch(/otherwise acknowledge/i);
     expect(allDispatcherPrompts).not.toContain('bind_channel({ team_name, channel_id?, meta })');
     expect(allDispatcherPrompts).not.toContain('create, send, list, status, history, dissolve');
     expect(allDispatcherPrompts).not.toContain('ctx and history_events');

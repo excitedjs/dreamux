@@ -55,9 +55,10 @@ Inbound delivery receipts are status-only (`submitted`, `duplicate`, `stopped`,
 `failed`, or `ambiguous`). `failed` proves pre-admission rejection; `ambiguous`
 means delivery may have crossed the runtime boundary and is terminal for the
 inbound event, so Feishu does not replay it. The Channel contract does not
-expose a Dreamux Turn identifier, and the read-only core event stream contains
-binding and collaboration facts rather than Turn submitted/settled lifecycle
-events.
+expose a Dreamux Turn identifier. The read-only core event stream projects
+sanitized submitted, activity, and settled lifecycle facts for dispatcher and
+TeamLeader conversations; Feishu anchors each presentation to the turn's
+inbound message.
 
 Test doubles are deliberately test-local and are not part of the published
 package API.
@@ -123,8 +124,7 @@ Topic replies still require an observed source `message_id`; a standalone
 Feishu's reply-to-message API rather than a send-to-thread endpoint.
 
 > Production note: `@excitedjs/dreamux` drives this package through a thin
-> core-owned adapter that uses the richer host-shaped session API (a
-> result-returning inbound submitter the reaction ledger keys off). The neutral
+> core-owned adapter that uses the richer host-shaped session API. The neutral
 > `ChannelSession.start(routes)` path is real and contract-tested, but is not the
 > production wiring today. See
 > [`.agents/decisions/npm-package-split-and-channel-targets.md`](../../../.agents/decisions/npm-package-split-and-channel-targets.md).

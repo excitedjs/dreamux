@@ -9,6 +9,7 @@ import type {
   ChannelProviderDescriptor,
   ChannelSession,
   ChannelTarget,
+  ChannelToolContext,
 } from '@excitedjs/dreamux-types';
 
 import { ChannelProviderCatalog } from '../src/channel/catalog.js';
@@ -17,6 +18,7 @@ import {
   createBuiltinProviderRegistry,
   parseProviderRef,
 } from '../src/registry/index.js';
+import { invokeDispatcherChannelTool } from '../src/service/dispatcher-service/channel-tool-invocation.js';
 import { ChannelService } from '../src/service/channel-service/index.js';
 import { ChannelSessions } from '../src/service/channel-service/channel-sessions.js';
 import { ChannelBindingStore } from '../src/service/channel-binding/store.js';
@@ -601,5 +603,97 @@ describe('ChannelService binding ownership', () => {
 
     expect(sessions.live().get('primary')).toBe(newSession);
     expect(newCloseCalls).toBe(0);
+  });
+});
+
+describe('channel tool caller identity', () => {
+  let root: string;
+  let previousHome: string | undefined;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'dreamux-channel-caller-'));
+    previousHome = process.env['HOME'];
+    process.env['HOME'] = root;
+    resetRuntimeConfig();
+  });
+
+  afterEach(() => {
+    if (previousHome === undefined) delete process.env['HOME'];
+    else process.env['HOME'] = previousHome;
+    resetRuntimeConfig();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  async function serviceWithToolRecorder(): Promise<{
+    service: ChannelService;
+    contexts: ChannelToolContext[];
+  }> {
+    const contexts: ChannelToolContext[] = [];
+    const service = new ChannelService({
+      dispatcherId: 'dispatcher-a',
+      config: testDreamuxConfig([
+        testDispatcherConfig({ id: 'dispatcher-a', channelId: 'primary' }),
+      ]),
+      channelProviders: channelProviderCatalog(),
+      channelLoggerFactory: () => ({}) as never,
+    });
+    const sessions = await service.build();
+    const session = sessions.get('primary');
+    if (session === undefined) throw new Error('expected primary session');
+    session.handleTool = async (_call, context) => {
+      contexts.push(context);
+      return { ok: true };
+    };
+    service.adopt(sessions);
+    return { service, contexts };
+  }
+
+  it('hands the provider a TeamLeader caller keyed by the Team store name', async () => {
+    const { service, contexts } = await serviceWithToolRecorder();
+    await service.bindResolvedTarget({
+      team: teamProjection('alpha', 'leader-a'),
+      channelId: 'primary',
+      target: groupTarget('chat-a'),
+    });
+
+    await invokeDispatcherChannelTool({
+      channels: service,
+      channelId: 'primary',
+      name: 'reply',
+      arguments: { chat_id: 'chat-a' },
+      caller: { kind: 'team_leader', teamId: 'alpha', leaderName: 'leader-a' },
+    });
+
+    expect(contexts).toEqual([
+      {
+        dispatcher_id: 'dispatcher-a',
+        channel_id: 'primary',
+        caller: {
+          kind: 'team_leader',
+          team_name: 'alpha',
+          leader_name: 'leader-a',
+        },
+      },
+    ]);
+  });
+
+  it('hands the provider an explicit dispatcher caller', async () => {
+    const { service, contexts } = await serviceWithToolRecorder();
+
+    await invokeDispatcherChannelTool({
+      channels: service,
+      channelId: 'primary',
+      name: 'reply',
+      arguments: { chat_id: 'chat-a' },
+      caller: { kind: 'dispatcher' },
+    });
+
+    expect(contexts).toEqual([
+      {
+        dispatcher_id: 'dispatcher-a',
+        channel_id: 'primary',
+        caller: { kind: 'dispatcher' },
+      },
+    ]);
   });
 });

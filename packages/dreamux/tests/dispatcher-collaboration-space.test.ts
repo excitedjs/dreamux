@@ -23,6 +23,7 @@ import type {
   ChannelCoreEvent,
   ChannelCoreEventSource,
   ChannelCoreEventSubscription,
+  ChannelOrigin,
   ChannelProvider,
   ChannelRoutes,
   ChannelSession,
@@ -1597,6 +1598,266 @@ describe('DispatcherService collaboration-space routing', () => {
       log: noopLog(),
     })).rejects.toThrow(/unknown channel target lifecycle event kind.*target_renamed/);
     expect(closeAccepts).toBe(0);
+  });
+
+  it('freezes the exact inbound target and matched binding into leader delivery', async () => {
+    const delivered: Array<ChannelOrigin | undefined> = [];
+    const targetMeta = { chat_id: 'chat-a', nested: { value: 'before' } };
+    const bindingMeta = { chat_id: 'chat-a', mode: 'group' };
+    const binding = {
+      channel_id: 'primary',
+      provider: CHANNEL_REF,
+      target_type: 'topic',
+      target_key: 'topic-a',
+      display: 'Topic A',
+      canonical_url: null,
+      meta: bindingMeta,
+      team_name: 'team-a',
+      leader_name: 'leader-a',
+      claim_id: null,
+      active: true,
+      created_at: 1,
+      updated_at: 1,
+      deactivated_at: null,
+    };
+    const channels = {
+      async resolveInboundBinding() {
+        return {
+          binding,
+          owner: { kind: 'team', teamName: 'team-a', leaderName: 'leader-a' },
+        };
+      },
+    } as unknown as ChannelService;
+    const teams = {
+      async isOpenTeam() {
+        return true;
+      },
+      async deliverToLeader(
+        _teamName: string,
+        _turn: InboundTurnInput,
+        origin: ChannelOrigin | undefined,
+      ) {
+        delivered.push(origin);
+        return { status: 'submitted' as const };
+      },
+    } as unknown as TeamCollection;
+    const envelope = {
+      provider: CHANNEL_REF,
+      channel_id: 'primary',
+      message_id: 'message-a',
+      target: {
+        target_type: 'topic',
+        target_key: 'topic-a',
+        bindable: true,
+        meta: targetMeta,
+      },
+    } as const;
+
+    const result = await routeTeamOrCollaborationChannelInput({
+      channelId: 'primary',
+      dispatcherAgentRuntime: 'dispatcher-runtime',
+      turn: { text: 'work', sourceId: 'message-a' },
+      envelope,
+      channels,
+      teams,
+      collaborationSpaces: {
+        reconcileInboundTargetRoute: async () => null,
+      } as unknown as CollaborationSpaceService,
+      fallback: async (): Promise<InboundDeliveryResult> => ({
+        status: 'failed',
+        error: new Error('unexpected fallback'),
+      }),
+    });
+    targetMeta.nested.value = 'after';
+    bindingMeta.mode = 'changed';
+
+    expect(result).toEqual({ status: 'submitted' });
+    expect(delivered).toEqual([{
+      provider: CHANNEL_REF,
+      channel_id: 'primary',
+      message_id: 'message-a',
+      target: {
+        target_type: 'topic',
+        target_key: 'topic-a',
+        bindable: true,
+        meta: { chat_id: 'chat-a', nested: { value: 'before' } },
+      },
+      binding: {
+        provider: CHANNEL_REF,
+        channel_id: 'primary',
+        endpoint_type: 'topic',
+        endpoint_key: 'topic-a',
+        display: 'Topic A',
+        canonical_url: null,
+        meta: { chat_id: 'chat-a', mode: 'group' },
+      },
+    }]);
+    expect(delivered[0]?.target.meta).toEqual({
+      chat_id: 'chat-a',
+      nested: { value: 'before' },
+    });
+    expect(Object.isFrozen(delivered[0])).toBe(true);
+    expect(Object.isFrozen(delivered[0]?.target)).toBe(true);
+  });
+
+  it('keeps the exact inbound target when a fallback binding accepts the turn', async () => {
+    const delivered: Array<ChannelOrigin | undefined> = [];
+    const binding = {
+      channel_id: 'primary',
+      provider: CHANNEL_REF,
+      target_type: 'group',
+      target_key: 'chat-a',
+      display: null,
+      canonical_url: null,
+      meta: { chat_id: 'chat-a' },
+      team_name: 'team-a',
+      leader_name: 'leader-a',
+      claim_id: null,
+      active: true,
+      created_at: 1,
+      updated_at: 1,
+      deactivated_at: null,
+    };
+    const channels = {
+      async resolveInboundBinding(input: { target: { target_key: string } }) {
+        if (input.target.target_key === 'topic-a') return null;
+        return {
+          binding,
+          owner: { kind: 'team', teamName: 'team-a', leaderName: 'leader-a' },
+        };
+      },
+      channelProviderRef() {
+        return CHANNEL_REF;
+      },
+    } as unknown as ChannelService;
+    const teams = {
+      async isOpenTeam() {
+        return true;
+      },
+      async deliverToLeader(
+        _teamName: string,
+        _turn: InboundTurnInput,
+        origin: ChannelOrigin | undefined,
+      ) {
+        delivered.push(origin);
+        return { status: 'submitted' as const };
+      },
+    } as unknown as TeamCollection;
+
+    await routeTeamOrCollaborationChannelInput({
+      channelId: 'primary',
+      dispatcherAgentRuntime: 'dispatcher-runtime',
+      turn: { text: 'work', sourceId: 'message-a' },
+      envelope: {
+        provider: CHANNEL_REF,
+        channel_id: 'primary',
+        target: {
+          target_type: 'topic',
+          target_key: 'topic-a',
+          bindable: true,
+          meta: { thread_id: 'thread-a' },
+          binding_fallbacks: [{
+            target_type: 'group',
+            target_key: 'chat-a',
+            bindable: true,
+          }],
+        },
+      },
+      channels,
+      teams,
+      collaborationSpaces: {
+        reconcileInboundTargetRoute: async () => null,
+        provisionClaimedTarget: async () => null,
+      } as unknown as CollaborationSpaceService,
+      fallback: async (): Promise<InboundDeliveryResult> => ({
+        status: 'failed',
+        error: new Error('unexpected fallback'),
+      }),
+    });
+
+    expect(delivered[0]).toMatchObject({
+      message_id: null,
+      target: { target_key: 'topic-a', meta: { thread_id: 'thread-a' } },
+      binding: { endpoint_key: 'chat-a', meta: { chat_id: 'chat-a' } },
+    });
+  });
+
+  it('delivers without an origin when provider metadata cannot be snapshotted', async () => {
+    const warnings: Array<{ fields: unknown; message: string }> = [];
+    const cyclic: Record<string, unknown> = {};
+    cyclic['self'] = cyclic;
+    const channels = {
+      async resolveInboundBinding() {
+        return {
+          binding: {
+            channel_id: 'primary',
+            provider: CHANNEL_REF,
+            target_type: 'topic',
+            target_key: 'topic-a',
+            display: null,
+            canonical_url: null,
+            meta: {},
+            team_name: 'team-a',
+            leader_name: 'leader-a',
+            claim_id: null,
+            active: true,
+            created_at: 1,
+            updated_at: 1,
+            deactivated_at: null,
+          },
+          owner: { kind: 'team', teamName: 'team-a', leaderName: 'leader-a' },
+        };
+      },
+    } as unknown as ChannelService;
+    const deliverToLeader = vi.fn(async (
+      _teamName: string,
+      _turn: InboundTurnInput,
+      _origin: ChannelOrigin | undefined,
+    ): Promise<InboundDeliveryResult> => ({ status: 'submitted' }));
+    const log = {
+      ...noopLog(),
+      warn(fields: unknown, message: string) {
+        warnings.push({ fields, message });
+      },
+    } as DreamuxLogger;
+
+    await routeTeamOrCollaborationChannelInput({
+      channelId: 'primary',
+      dispatcherAgentRuntime: 'dispatcher-runtime',
+      turn: { text: 'work', sourceId: 'message-a' },
+      envelope: {
+        provider: CHANNEL_REF,
+        channel_id: 'primary',
+        target: {
+          target_type: 'topic',
+          target_key: 'topic-a',
+          bindable: true,
+          meta: cyclic,
+        },
+      },
+      channels,
+      teams: {
+        isOpenTeam: async () => true,
+        deliverToLeader,
+      } as unknown as TeamCollection,
+      collaborationSpaces: {
+        reconcileInboundTargetRoute: async () => null,
+      } as unknown as CollaborationSpaceService,
+      fallback: async (): Promise<InboundDeliveryResult> => ({
+        status: 'failed',
+        error: new Error('unexpected fallback'),
+      }),
+      log,
+    });
+
+    expect(deliverToLeader).toHaveBeenCalledWith(
+      'team-a',
+      { text: 'work', sourceId: 'message-a' },
+      undefined,
+    );
+    expect(warnings).toEqual([expect.objectContaining({
+      message: 'channel origin could not be snapshotted; delivering the turn without one',
+    })]);
   });
 
   it('does not fall back to the dispatcher when collaboration provisioning fails', async () => {

@@ -5,9 +5,10 @@ The single place that imports the Feishu SDK.
 
 ## Scope
 
-- **transport** — connect / receive / send / `addReaction` / `removeReaction` /
-  `editText` / `getChatMode` / `fetchDocComment` / `fetchDocMeta` / bot open_id
-  resolution / auth via the `@larksuiteoapi/node-sdk` SDK.
+- **transport** — connect / receive / send / `addReaction` / `editText` /
+  chain-of-thought message I/O / `getChatMode` / `fetchDocComment` /
+  `fetchDocMeta` / bot open_id resolution / auth via the
+  `@larksuiteoapi/node-sdk` SDK.
 - **render** — markdown → Feishu v2 card (including inline `<@open_id>` parsing
   for @-mentions embedded in message text).
 - **parse** — Feishu message content → forwardable text, including:
@@ -25,7 +26,7 @@ on `transport.start(routes)`; inbound events are parsed on arrival and projected
 into the `parse/`-normalized shapes before being forwarded.
 
 Outbound and lookup calls (`transport.send`, `transport.addReaction`,
-`transport.removeReaction`, `transport.getChatMode`, `transport.fetchDocMeta`,
+`transport.cot`, `transport.getChatMode`, `transport.fetchDocMeta`,
 `transport.fetchDocComment`, `transport.downloadMessageResource`) are thin
 wrappers around the corresponding Lark SDK endpoints. They accept platform-native
 parameters (Feishu `chat_id`, `message_id`, `file_key`, …) and return

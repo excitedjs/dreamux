@@ -7,6 +7,7 @@ import {
   DISABLE_FEATURE_CRON,
   type AgentRuntimeProviderCatalog,
 } from '../../agent-runtime/index.js';
+import type { ConversationProjection } from '../../channel/conversation-projection.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import {
@@ -35,6 +36,7 @@ export interface DispatcherAgentDeps {
   mcpServers: readonly AgentRuntimeMcpServer[];
   identity: AgentEntityIdentity;
   identities: AgentIdentityStore;
+  conversationProjection: ConversationProjection;
 }
 
 /**
@@ -56,6 +58,7 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
     config: deps.config,
     agentRuntimeProviders: deps.agentRuntimeProviders,
     identities: deps.identities,
+    conversationProjection: deps.conversationProjection,
     // The dispatcher agent has no worktree — it neither spawns nor closes, so it
     // never reaches the worktree manager (issue #233 Phase 5).
     log: deps.log,

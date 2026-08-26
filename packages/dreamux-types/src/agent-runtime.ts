@@ -307,6 +307,17 @@ export type RuntimeSubmissionSettlement =
   | { readonly kind: 'failed'; readonly error: Error }
   | { readonly kind: 'stopped' };
 
+/**
+ * What a tool invocation does, classified by the runtime that owns the tool
+ * vocabulary. `null` means the runtime has no such classification for this call.
+ */
+export type RuntimeToolAction =
+  | 'read'
+  | 'list_files'
+  | 'search'
+  | 'edit'
+  | 'run';
+
 export type RuntimeActivity =
   | {
       readonly kind: 'assistant.message';
@@ -319,6 +330,7 @@ export type RuntimeActivity =
       readonly id: string;
       readonly callId: string;
       readonly toolName: string;
+      readonly action: RuntimeToolAction | null;
       readonly status: 'started' | 'completed' | 'failed';
       readonly arguments: JsonValue | null;
       readonly result: JsonValue | null;

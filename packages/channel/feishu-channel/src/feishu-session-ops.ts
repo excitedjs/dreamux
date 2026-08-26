@@ -10,7 +10,10 @@
  */
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
-import { FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER } from '@excitedjs/feishu-transport';
+import {
+  FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER,
+  type FeishuSendOptions,
+} from '@excitedjs/feishu-transport';
 import type {
   ChannelOutboundTarget,
   FeishuBot,
@@ -37,13 +40,9 @@ import { AsyncMutex } from './lib/mutex.js';
 import type { FeishuChannelSessionOptions } from './feishu-channel.js';
 import type { PeerBot } from './chat-bots-store.js';
 import type { FeishuTargetRouter } from './feishu-target-router.js';
-import {
-  FeishuOperationError,
-  runFeishuBoundedOperation,
-} from './feishu-bounded-operation.js';
+import { FeishuOperationError } from './feishu-bounded-operation.js';
 import {
   alwaysActiveSessionFence,
-  type FeishuInboundWorkContext,
   type FeishuSessionFence,
 } from './feishu-inbound-work.js';
 
@@ -51,32 +50,14 @@ import {
 // In-memory state & constants (mirror the class fields)
 // ─────────────────────────────────────────────────────────────────────────
 
-export const MAX_PENDING_RECEIVED_REACTION_CLEARS = 1024;
-const FEISHU_REACTION_OPERATION_TIMEOUT_MS = 2_000;
-
 /**
  * Appended to every delivered inbound's content as a standing guardrail: a
  * channel message must be answered with the channel reply tool, not a plain
- * assistant message. A separate acknowledgement is required only when work is
- * needed before the substantive answer, so immediately answerable requests get
- * one direct visible reply. Placed at the very end of the body the runtime
- * wraps into its `<channel>` block.
+ * assistant message. Placed at the very end of the body the runtime wraps into
+ * its `<channel>` block.
  */
 export const CHANNEL_REMINDER =
-  '<channel-reminder>Reply through the channel reply tool, never as plain assistant text. Answer now if ready; otherwise acknowledge, then report back.</channel-reminder>';
-
-export type InboundReactionState = 'received' | 'in_progress';
-
-export interface InboundReactionLedgerEntry {
-  chatId: string;
-  reactionId: string;
-  state: InboundReactionState;
-}
-
-export interface FeishuChannelState {
-  inboundReactions: Map<string, InboundReactionLedgerEntry>;
-  pendingReceivedReactionClears: Set<string>;
-}
+  '<channel-reminder>Reply through the channel reply tool, never as plain assistant text.</channel-reminder>';
 
 export interface PairingApprovalResult {
   status: 'ok' | 'not_found' | 'error';
@@ -87,7 +68,6 @@ export interface PairingApprovalResult {
 /** Opaque resource bundle a session builds for each helper call. */
 export interface SessionHandle {
   opts: FeishuChannelSessionOptions;
-  state: FeishuChannelState;
   bot: FeishuBot;
   accessMutex: AsyncMutex;
   botDisplayName: string;
@@ -98,7 +78,6 @@ export interface SessionHandle {
 /** Build a package-private handle from a session's internal fields. */
 export function sessionHandle(
   opts: FeishuChannelSessionOptions,
-  state: FeishuChannelState,
   bot: FeishuBot,
   accessMutex: AsyncMutex,
   botDisplayName: string,
@@ -107,7 +86,6 @@ export function sessionHandle(
 ): SessionHandle {
   return {
     opts,
-    state,
     bot,
     accessMutex,
     botDisplayName,
@@ -145,7 +123,13 @@ function openIdLogFields(name: string, openId: string): Record<string, unknown> 
 
 export async function sendReply(
   h: SessionHandle,
-  input: { chatId: string; text: string; messageId?: string; mentionUserIds?: string[] },
+  input: {
+    chatId: string;
+    text: string;
+    messageId?: string;
+    mentionUserIds?: string[];
+    onMessageCreated?: FeishuSendOptions['onMessageCreated'];
+  },
 ): Promise<{ messageIds: string[] }> {
   let result: { messageIds: string[] };
   try {
@@ -158,6 +142,7 @@ export async function sendReply(
           : {}),
       }),
       input.text,
+      { onMessageCreated: input.onMessageCreated },
     );
   } catch (err) {
     log(h).error(
@@ -181,9 +166,6 @@ export async function sendReply(
     },
     'feishu message sent',
   );
-  if (input.messageId !== undefined) {
-    await clearInboundReaction(h, input.messageId);
-  }
   return result;
 }
 
@@ -234,12 +216,6 @@ export async function sendCard(
       'feishu interactive card sent',
     );
   }
-  if (
-    input.mode !== 'background' &&
-    input.target.replyTo !== undefined
-  ) {
-    await clearInboundReaction(h, input.target.replyTo);
-  }
   return result;
 }
 
@@ -272,174 +248,6 @@ export async function addReaction(
     'feishu reaction added',
   );
   return reactionId;
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Inbound reaction ledger (were `private setInboundReaction` etc.)
-// ─────────────────────────────────────────────────────────────────────────
-
-export async function setInboundReaction(
-  h: SessionHandle,
-  messageId: string,
-  chatId: string,
-  emoji: string,
-  state: InboundReactionState,
-  work?: FeishuInboundWorkContext,
-): Promise<boolean> {
-  if (messageId === '') return false;
-  if (h.state.pendingReceivedReactionClears.has(messageId)) return false;
-  if (!h.sessionFence.isCurrent()) return false;
-
-  const previous = h.state.inboundReactions.get(messageId);
-  let reactionId: string;
-  try {
-    reactionId = await runReactionOperation(
-      () => h.bot.addReaction(messageId, emoji),
-      work,
-      (lateReactionId) =>
-        removeReactionWithinTimeout(h, messageId, lateReactionId),
-    );
-  } catch (err) {
-    log(h).warn(
-      {
-        dispatcher_id: h.opts.dispatcherId,
-        message_id: messageId,
-        err: errInfo(err),
-      },
-      `failed to add the ${state} reaction`,
-    );
-    return false;
-  }
-  if (reactionId === '') {
-    log(h).warn(
-      { dispatcher_id: h.opts.dispatcherId, message_id: messageId },
-      `Feishu returned no reaction_id for the ${state} reaction`,
-    );
-    return false;
-  }
-
-  if (!h.sessionFence.isCurrent()) {
-    try {
-      await removeReactionWithinTimeout(h, messageId, reactionId);
-    } catch (err) {
-      log(h).warn(
-        {
-          dispatcher_id: h.opts.dispatcherId,
-          message_id: messageId,
-          err: errInfo(err),
-        },
-        `failed to clear the revoked ${state} reaction`,
-      );
-    }
-    return false;
-  }
-
-  if (h.state.pendingReceivedReactionClears.has(messageId)) {
-    try {
-      await removeReactionWithinTimeout(h, messageId, reactionId);
-    } catch (err) {
-      log(h).warn(
-        {
-          dispatcher_id: h.opts.dispatcherId,
-          message_id: messageId,
-          err: errInfo(err),
-        },
-        `failed to clear the late ${state} reaction`,
-      );
-    }
-    return false;
-  }
-
-  h.state.inboundReactions.set(messageId, { chatId, reactionId, state });
-
-  if (previous !== undefined) {
-    try {
-      await removeReactionWithinTimeout(
-        h,
-        messageId,
-        previous.reactionId,
-      );
-    } catch (err) {
-      log(h).warn(
-        {
-          dispatcher_id: h.opts.dispatcherId,
-          message_id: messageId,
-          err: errInfo(err),
-        },
-        `failed to replace the ${previous.state} reaction`,
-      );
-    }
-  }
-  return true;
-}
-
-export async function clearInboundReaction(
-  h: SessionHandle,
-  messageId: string,
-): Promise<void> {
-  rememberPendingReceivedReactionClear(h, messageId);
-  const reaction = h.state.inboundReactions.get(messageId);
-  if (reaction === undefined) return;
-  try {
-    await removeReactionWithinTimeout(h, messageId, reaction.reactionId);
-    h.state.inboundReactions.delete(messageId);
-  } catch (err) {
-    log(h).warn(
-      {
-        dispatcher_id: h.opts.dispatcherId,
-        message_id: messageId,
-        err: errInfo(err),
-      },
-      `failed to clear the ${reaction.state} reaction`,
-    );
-  }
-}
-
-function runReactionOperation<T>(
-  operation: () => Promise<T>,
-  work: FeishuInboundWorkContext | undefined,
-  onLateValue?: (value: T) => void | Promise<void>,
-): Promise<T> {
-  const deadlineAt = Math.min(
-    Date.now() + FEISHU_REACTION_OPERATION_TIMEOUT_MS,
-    work?.deadlineAt ?? Number.POSITIVE_INFINITY,
-  );
-  return runFeishuBoundedOperation({
-    operation,
-    deadlineAt,
-    ...(work !== undefined
-      ? {
-          signal: work.signal,
-          beforeStart: work.assertEnrichmentActive,
-        }
-      : {}),
-    ...(onLateValue !== undefined ? { onLateValue } : {}),
-  });
-}
-
-function removeReactionWithinTimeout(
-  h: SessionHandle,
-  messageId: string,
-  reactionId: string,
-): Promise<void> {
-  return runFeishuBoundedOperation({
-    operation: () => h.bot.removeReaction(messageId, reactionId),
-    deadlineAt: Date.now() + FEISHU_REACTION_OPERATION_TIMEOUT_MS,
-  });
-}
-
-export function rememberPendingReceivedReactionClear(
-  h: SessionHandle,
-  messageId: string,
-): void {
-  h.state.pendingReceivedReactionClears.add(messageId);
-  while (
-    h.state.pendingReceivedReactionClears.size > MAX_PENDING_RECEIVED_REACTION_CLEARS
-  ) {
-    const oldest = h.state.pendingReceivedReactionClears.values().next().value;
-    if (typeof oldest !== 'string') return;
-    h.state.pendingReceivedReactionClears.delete(oldest);
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────

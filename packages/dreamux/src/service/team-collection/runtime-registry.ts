@@ -279,6 +279,9 @@ export class TeamRuntimeRegistry {
       agentRuntimeProviders: collection.agentRuntimeProviders,
       worktrees: this.opts.worktrees,
       identities: collection.identities,
+      ...(collection.conversationProjection !== undefined
+        ? { conversationProjection: collection.conversationProjection }
+        : {}),
       completionDelivery: collection.completionDelivery,
       initiatorFor: collection.initiatorFor,
       isShuttingDown: collection.isShuttingDown,

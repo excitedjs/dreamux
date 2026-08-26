@@ -60,9 +60,8 @@ Design background:
   behavior. Bundled skills are injected at runtime by role (not written into
   the dispatcher cwd).
 - **Inbound state is in memory.** The server keeps only process-local turn
-  queues, message dedupe, coalescing state, and received-reaction ownership.
-  Restarting the server drops unprocessed inbound messages and may leave
-  received reactions behind.
+  queues, message dedupe, and coalescing state. Restarting the server drops
+  unprocessed inbound messages.
 - **Outbound is MCP reply-only.** Assistant text emitted by a runtime is never
   forwarded to a channel automatically. The model must call provider-specific
   channel MCP tools such as `reply` or `react`, and those tools exist only when
@@ -413,9 +412,9 @@ node common/scripts/install-run-rush.js test
 ```
 
 - `tests/smoke.test.ts` — fake-Codex dispatcher behavior: access gate,
-  per-message turn/start inbound submission, process-local dedupe, reaction
-  tri-state, MCP reply-only outbound, thread resume, app-server restart
-  behavior, and approval fail-fast.
+  per-message turn/start inbound submission, process-local dedupe, MCP
+  reply-only outbound, thread resume, app-server restart behavior, and
+  approval fail-fast.
 - `tests/bin-launcher.test.ts` — real launcher and repo-root shim behavior from
   arbitrary cwd and through symlinks.
 - `tests/doctor.test.ts` — standalone doctor checks for config, Codex home,

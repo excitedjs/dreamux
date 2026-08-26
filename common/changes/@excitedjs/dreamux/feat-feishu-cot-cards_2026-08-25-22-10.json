@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "BREAKING: Review: Channel consumers must handle the new display-only per-turn conversation stream for dispatcher, TeamLeader, and Team-member conversations, including exactly one settled event for every participating admitted turn. No rebuild is needed. Dreamux projects the neutral stream for Channel providers; Feishu COT renders dispatcher and TeamLeader events only.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

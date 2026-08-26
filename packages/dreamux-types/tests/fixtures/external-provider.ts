@@ -60,6 +60,8 @@ import type {
   ChannelTarget,
   ChannelToolCall,
   ChannelToolDescriptor,
+  ChannelTurnSource,
+  ChannelTurnSubmittedEvent,
   DreamuxLogger,
   InboundTurnInput,
   RuntimeActivityEvent,
@@ -69,6 +71,26 @@ import type {
   RuntimeSubmission,
   RuntimeSubmissionSettlement,
 } from '@excitedjs/dreamux-types';
+
+export const fixtureTurnSources: readonly ChannelTurnSource[] = [
+  'channel',
+  'dispatcher',
+  'team_leader',
+  'scheduled',
+  'completion',
+  'control',
+];
+
+/** Older publishers remain valid because the additive source fact is optional. */
+export const legacySubmittedEvent: ChannelTurnSubmittedEvent = {
+  schema_version: 1,
+  kind: 'turn.submitted',
+  occurred_at: 1,
+  team_name: 'fixture-team',
+  agent_name: 'fixture-leader',
+  role: 'team_leader',
+  turn_id: 'fixture-turn',
+};
 
 export const EXTERNAL_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
   resume: { supported: false },

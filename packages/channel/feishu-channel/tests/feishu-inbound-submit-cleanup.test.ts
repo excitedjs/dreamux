@@ -2,38 +2,35 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
+  DreamuxLogger,
   InboundDeliveryResult,
   InboundTurnInput,
 } from '@excitedjs/dreamux-types';
 
 import type { FeishuInboundEvent } from '../src/bot.js';
 import {
-  saveDispatcherAccess,
   defaultDispatcherAccessState,
+  saveDispatcherAccess,
   type DmPolicy,
 } from '../src/feishu-gate.js';
-import { onMessage } from '../src/feishu-session-inbound.js';
-import {
-  IN_PROGRESS_REACTION_EMOJI,
-  RECEIVED_REACTION_EMOJI,
-  type FeishuInboundEnvelope,
-  type FeishuInboundSubmitter,
+import type {
+  FeishuInboundEnvelope,
+  FeishuInboundSubmitter,
 } from '../src/feishu-channel.js';
+import { onMessage } from '../src/feishu-session-inbound.js';
 import {
   CHANNEL_REMINDER,
   sessionHandle,
-  type FeishuChannelState,
 } from '../src/feishu-session-ops.js';
-import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
-import { AsyncMutex } from '../src/lib/mutex.js';
 import { FeishuTargetRouter } from '../src/feishu-target-router.js';
-import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import { AsyncMutex } from '../src/lib/mutex.js';
+import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
 
 function noopLogger(): DreamuxLogger {
-  const noop = () => {};
+  const noop = () => undefined;
   return {
     trace: noop,
     debug: noop,
@@ -46,7 +43,7 @@ function noopLogger(): DreamuxLogger {
 }
 
 function makeEvent(overrides: Partial<FeishuInboundEvent> = {}): FeishuInboundEvent {
-  const base: FeishuInboundEvent = {
+  return {
     messageId: 'msg-1',
     chatId: 'chat-1',
     chatType: 'p2p',
@@ -60,8 +57,8 @@ function makeEvent(overrides: Partial<FeishuInboundEvent> = {}): FeishuInboundEv
     mentions: [],
     createTime: '1710000000000',
     raw: null,
+    ...overrides,
   };
-  return { ...base, ...overrides };
 }
 
 describe('feishu inbound delivery', () => {
@@ -83,7 +80,6 @@ describe('feishu inbound delivery', () => {
   }
 
   function buildHandle(
-    state: FeishuChannelState,
     bot: ReturnType<typeof createFakeFeishuBot>,
     log: DreamuxLogger = noopLogger(),
   ) {
@@ -97,7 +93,6 @@ describe('feishu inbound delivery', () => {
         log,
         botFactory: () => bot,
       },
-      state,
       bot,
       new AsyncMutex(),
       'Dreamux bot',
@@ -105,144 +100,47 @@ describe('feishu inbound delivery', () => {
     );
   }
 
-  it('clears the pre-delivery `received` reaction when submitTurn throws', async () => {
+  it.each([
+    ['submitted', { status: 'submitted' } as const],
+    ['duplicate', { status: 'duplicate' } as const],
+    ['stopped', { status: 'stopped' } as const],
+    ['failed', { status: 'failed', error: new Error('failed') } as const],
+    ['ambiguous', { status: 'ambiguous', error: new Error('lost') } as const],
+  ])('performs no automatic reaction when delivery is %s', async (_name, result) => {
     await allowSender();
-    const bot = createFakeFeishuBot('fake-bot');
-    const state: FeishuChannelState = {
-      inboundReactions: new Map(),
-      pendingReceivedReactionClears: new Set(),
-    };
-    const messages: string[] = [];
-    const handle = buildHandle(state, bot, captureLogger(messages));
+    const bot = createFakeFeishuBot();
+    const submitTurn = vi.fn(async (): Promise<InboundDeliveryResult> => result);
 
-    const submitter: FeishuInboundSubmitter = {
-      submitTurn: async (
-        _input: InboundTurnInput,
-        _envelope: FeishuInboundEnvelope,
-      ): Promise<InboundDeliveryResult> => {
-        throw new Error('boom submit failed');
-      },
-    };
-
-    await onMessage(handle, makeEvent(), submitter);
-
-    // Reaction ledger should be empty (the pre-delivery `received` was cleared).
-    expect(state.inboundReactions.size).toBe(0);
-
-    // The bot should have observed an `add` (received) followed by a `remove`.
-    const ops = bot.reactionOps;
-    const addOps = ops.filter((op) => op.op === 'add');
-    const removeOps = ops.filter((op) => op.op === 'remove');
-    expect(addOps.length).toBeGreaterThanOrEqual(1);
-    expect(addOps[0]?.emoji).toBe(RECEIVED_REACTION_EMOJI);
-    expect(removeOps.length).toBeGreaterThanOrEqual(1);
-    // The removed reaction id matches the added reaction id (same reaction
-    // cleared, not a different one).
-    expect(removeOps[0]?.reactionId).toBe(addOps[0]?.reactionId);
-    expect(messages).toContain(
-      'feishu inbound admission was ambiguous; not replaying',
-    );
-  });
-
-  it('clears received and never marks progress for an ambiguous admission', async () => {
-    await allowSender();
-    const bot = createFakeFeishuBot('fake-bot');
-    const state: FeishuChannelState = {
-      inboundReactions: new Map(),
-      pendingReceivedReactionClears: new Set(),
-    };
-    const messages: string[] = [];
-    const handle = buildHandle(state, bot, captureLogger(messages));
-    const submitTurn = vi.fn(async (): Promise<InboundDeliveryResult> => ({
-      status: 'ambiguous',
-      error: new Error('native response was lost'),
-    }));
-
-    await onMessage(handle, makeEvent(), { submitTurn });
+    await onMessage(buildHandle(bot), makeEvent(), { submitTurn });
 
     expect(submitTurn).toHaveBeenCalledTimes(1);
-    expect(state.inboundReactions.size).toBe(0);
-    expect(bot.reactionOps).toEqual([
-      expect.objectContaining({ op: 'add', emoji: RECEIVED_REACTION_EMOJI }),
-      expect.objectContaining({ op: 'remove' }),
-    ]);
-    expect(messages).toContain(
-      'feishu inbound admission was ambiguous; not replaying',
-    );
+    expect(bot.reactionOps).toEqual([]);
   });
 
-  it('upgrades received to in_progress when submitTurn returns submitted', async () => {
+  it('keeps thrown admission ambiguous without replay or automatic reaction', async () => {
     await allowSender();
-    const bot = createFakeFeishuBot('fake-bot');
-    const state: FeishuChannelState = {
-      inboundReactions: new Map(),
-      pendingReceivedReactionClears: new Set(),
-    };
-    const handle = buildHandle(state, bot);
+    const bot = createFakeFeishuBot();
+    const messages: string[] = [];
+    const submitTurn = vi.fn(async (
+      _input: InboundTurnInput,
+      _envelope: FeishuInboundEnvelope,
+    ): Promise<InboundDeliveryResult> => {
+      throw new Error('boom submit failed');
+    });
 
-    const submitter: FeishuInboundSubmitter = {
-      submitTurn: async (): Promise<InboundDeliveryResult> => ({
-        status: 'submitted',
-      }),
-    };
+    await onMessage(buildHandle(bot, captureLogger(messages)), makeEvent(), {
+      submitTurn,
+    });
 
-    await onMessage(handle, makeEvent(), submitter);
-
-    // Ledger holds the in_progress reaction, not received.
-    expect(state.inboundReactions.size).toBe(1);
-    const entry = state.inboundReactions.get('msg-1');
-    expect(entry?.state).toBe('in_progress');
-
-    const emojis = bot.reactionOps
-      .filter((op) => op.op === 'add')
-      .map((op) => op.emoji);
-    expect(emojis).toContain(RECEIVED_REACTION_EMOJI);
-    expect(emojis).toContain(IN_PROGRESS_REACTION_EMOJI);
-  });
-
-  it('clears received when adding the in_progress reaction fails', async () => {
-    await allowSender();
-    const bot = createFakeFeishuBot('fake-bot');
-    const addReaction = bot.addReaction.bind(bot);
-    bot.addReaction = async (messageId, emoji) => {
-      if (emoji === IN_PROGRESS_REACTION_EMOJI) {
-        throw new Error('progress reaction failed');
-      }
-      return addReaction(messageId, emoji);
-    };
-    const state: FeishuChannelState = {
-      inboundReactions: new Map(),
-      pendingReceivedReactionClears: new Set(),
-    };
-    const handle = buildHandle(state, bot);
-    const submitter: FeishuInboundSubmitter = {
-      submitTurn: async (): Promise<InboundDeliveryResult> => ({
-        status: 'submitted',
-      }),
-    };
-
-    await onMessage(handle, makeEvent(), submitter);
-
-    expect(state.inboundReactions.size).toBe(0);
-    expect(bot.reactionOps).toEqual([
-      expect.objectContaining({
-        op: 'add',
-        emoji: RECEIVED_REACTION_EMOJI,
-      }),
-      expect.objectContaining({ op: 'remove' }),
-    ]);
+    expect(submitTurn).toHaveBeenCalledTimes(1);
+    expect(bot.reactionOps).toEqual([]);
+    expect(messages).toContain('feishu inbound admission was ambiguous; not replaying');
   });
 
   it('appends one trusted channel reminder at the end of the submitted body', async () => {
     await allowSender();
-    const bot = createFakeFeishuBot('fake-bot');
-    const state: FeishuChannelState = {
-      inboundReactions: new Map(),
-      pendingReceivedReactionClears: new Set(),
-    };
-    const handle = buildHandle(state, bot);
+    const bot = createFakeFeishuBot();
     let captured: InboundTurnInput | undefined;
-
     const submitter: FeishuInboundSubmitter = {
       submitTurn: async (input): Promise<InboundDeliveryResult> => {
         captured = input;
@@ -250,9 +148,8 @@ describe('feishu inbound delivery', () => {
       },
     };
 
-    await onMessage(handle, makeEvent(), submitter);
+    await onMessage(buildHandle(bot), makeEvent(), submitter);
 
-    expect(captured).toBeDefined();
     expect(captured?.body.match(/<channel-reminder>/g)).toHaveLength(1);
     expect(captured?.body.endsWith(`\n\n${CHANNEL_REMINDER}`)).toBe(true);
     expect(captured?.text).toBe(captured?.body);

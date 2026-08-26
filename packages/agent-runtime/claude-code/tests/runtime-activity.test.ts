@@ -683,12 +683,14 @@ describe('claude live activity projection', () => {
     expect(toolCallOf(h.activities[0])).toMatchObject({
       callId: 'toolu_1',
       toolName: 'Bash',
+      action: 'run',
       status: 'started',
       arguments: { command: 'pwd' },
     });
     expect(toolCallOf(h.activities[1])).toMatchObject({
       callId: 'toolu_1',
       toolName: 'Bash',
+      action: 'run',
       status: 'completed',
       result: '/workspace',
     });
@@ -700,6 +702,112 @@ describe('claude live activity projection', () => {
     expect(completedOf(await only.submission.settled).resultText).toBe(
       'tool finished',
     );
+  });
+
+  it('classifies named tool actions without inferring unknown tools', () => {
+    const h = harness();
+    h.submit('cmd-a', 'only');
+    h.emit(initLine([]));
+
+    const cases = [
+      ['Read', 'read'],
+      ['Glob', 'search'],
+      ['Grep', 'search'],
+      ['WebSearch', 'search'],
+      ['Write', 'edit'],
+      ['Edit', 'edit'],
+      ['MultiEdit', 'edit'],
+      ['NotebookEdit', 'edit'],
+      ['Bash', 'run'],
+      ['PowerShell', 'run'],
+      ['Task', null],
+      ['TodoWrite', null],
+      ['WebFetch', null],
+      ['mcp__docs__lookup', null],
+    ] as const;
+    for (const [index, [toolName]] of cases.entries()) {
+      h.emit(assistantToolUseLine(
+        `msg_${index}`,
+        `toolu_${index}`,
+        toolName,
+        { value: index },
+      ));
+    }
+
+    expect(h.activities.map((event) => toolCallOf(event).action)).toEqual(
+      cases.map(([, action]) => action),
+    );
+  });
+
+  it('normalizes tool-result text blocks and preserves mixed provider content', () => {
+    const h = harness();
+    h.submit('cmd-a', 'only');
+    h.emit(initLine([]));
+
+    h.emit(assistantToolUseLine('msg_1', 'toolu_1', 'Read', { path: 'one' }));
+    h.emit(toolResultLine('msg_2', 'toolu_1', [
+      { type: 'text', text: 'one' },
+      { type: 'text', text: 'two' },
+    ]));
+    h.emit(assistantToolUseLine('msg_3', 'toolu_2', 'Read', { path: 'mixed' }));
+    h.emit(toolResultLine('msg_4', 'toolu_2', [
+      { type: 'text', text: 'text' },
+      { type: 'image', source: 'opaque' },
+    ]));
+    h.emit(assistantToolUseLine('msg_5', 'toolu_3', 'Read', { path: 'empty' }));
+    h.emit(toolResultLine('msg_6', 'toolu_3', []));
+    h.emit(assistantToolUseLine('msg_7', 'toolu_4', 'Read', { path: 'failed' }));
+    h.emit(toolResultLine('msg_8', 'toolu_4', [
+      { type: 'text', text: 'failed output' },
+    ], true));
+    h.emit(assistantToolUseLine('msg_9', 'toolu_5', 'Read', { path: 'unknown' }));
+    h.emit(toolResultLine('msg_10', 'toolu_5', [], true));
+
+    const results = h.activities
+      .map((event) => toolCallOf(event))
+      .filter((activity) => activity.status !== 'started');
+    expect(results).toMatchObject([
+      { action: 'read', result: 'one\ntwo', error: null },
+      {
+        action: 'read',
+        result: [
+          { type: 'text', text: 'text' },
+          { type: 'image', source: 'opaque' },
+        ],
+        error: null,
+      },
+      { action: 'read', result: null, error: null },
+      {
+        action: 'read',
+        status: 'failed',
+        result: 'failed output',
+        error: 'failed output',
+      },
+      {
+        action: 'read',
+        status: 'failed',
+        result: null,
+        error: null,
+      },
+    ]);
+  });
+
+  it('serializes structured failed tool-result detail into error', () => {
+    const h = harness();
+    const detail = [
+      { type: 'text', text: 'failed output' },
+      { type: 'image', source: 'opaque' },
+    ];
+    h.submit('cmd-a', 'only');
+    h.emit(initLine([]));
+    h.emit(assistantToolUseLine('msg_1', 'toolu_1', 'Read', { path: 'mixed' }));
+    h.emit(toolResultLine('msg_2', 'toolu_1', detail, true));
+
+    expect(toolCallOf(h.activities[1])).toMatchObject({
+      status: 'failed',
+      result: detail,
+      error: JSON.stringify(detail),
+    });
   });
 
   it('projects assistant text and tool calls live before the terminal result, once per folded stream', async () => {
@@ -755,7 +863,9 @@ describe('claude live activity projection', () => {
     expect(failed.callId).toBe('toolu_2');
     expect(failed.status).toBe('failed');
     expect(failed.toolName).toBe('Read');
+    expect(failed.action).toBe('read');
     expect(failed.result).toBe('ENOENT: no such file');
+    expect(failed.error).toBe('ENOENT: no such file');
 
     // The folded stream projects once, against the display representative.
     for (const event of h.activities) {

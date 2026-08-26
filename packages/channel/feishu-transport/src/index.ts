@@ -93,6 +93,19 @@ export {
   type InboundRoutes,
   type RouteHandler,
 } from './transport/feishu.js'
+export {
+  FEISHU_COT_APPEND_MAX_EVENTS,
+  FeishuCotApiError,
+  createFeishuCotClient,
+  type FeishuCotAppendInput,
+  type FeishuCotClient,
+  type FeishuCotClientOptions,
+  type FeishuCotCompleteInput,
+  type FeishuCotCompleteReason,
+  type FeishuCotCreateInput,
+  type FeishuCotCreateResult,
+  type FeishuCotEventInput,
+} from './transport/cot.js'
 export type { TransportLogger } from './transport/diagnostics.js'
 
 // ── small shared util ──

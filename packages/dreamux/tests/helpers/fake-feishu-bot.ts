@@ -35,14 +35,12 @@ export interface FakeFeishuBot extends FeishuBot {
     emoji: string;
     reactionId: string;
   }>;
-  readonly removedReactions: Array<{
+  readonly reactionOps: Array<{
+    op: 'add';
     messageId: string;
+    emoji: string;
     reactionId: string;
   }>;
-  readonly reactionOps: Array<
-    | { op: 'add'; messageId: string; emoji: string; reactionId: string }
-    | { op: 'remove'; messageId: string; reactionId: string }
-  >;
   inject(event: FeishuInboundEvent): Promise<void>;
   setChatMode(chatId: string, mode: FeishuChatMode | Error): void;
 }
@@ -52,7 +50,6 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
   const sentMessages: FakeFeishuBot['sentMessages'] = [];
   const sentCards: FakeFeishuBot['sentCards'] = [];
   const reactions: FakeFeishuBot['reactions'] = [];
-  const removedReactions: FakeFeishuBot['removedReactions'] = [];
   const reactionOps: FakeFeishuBot['reactionOps'] = [];
   const chatModes = new Map<string, FeishuChatMode | Error>();
   let routes: FeishuInboundRoutes | null = null;
@@ -111,10 +108,6 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       return reactionId;
     },
 
-    async removeReaction(messageId: string, reactionId: string): Promise<void> {
-      removedReactions.push({ messageId, reactionId });
-      reactionOps.push({ op: 'remove', messageId, reactionId });
-    },
 
     async fetchMessageResource(
       _request: FeishuMessageResourceRequest,
@@ -142,9 +135,6 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       return reactions;
     },
 
-    get removedReactions() {
-      return removedReactions;
-    },
 
     get reactionOps() {
       return reactionOps;

@@ -68,7 +68,7 @@ state mechanisms:
 - no `~/.codex-host/` Dreamux runtime home;
 - no dispatcher-private `CODEX_HOME`;
 - no persisted inbound message queue;
-- no persisted reaction ledger;
+- no persisted reaction or COT presentation ledger;
 - no persisted runtime socket path;
 - no workspace-local `.codex/skills` installation;
 - no dispatcher-root `status.json` recovery authority (`identity.json` is the

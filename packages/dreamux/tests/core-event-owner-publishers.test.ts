@@ -132,7 +132,7 @@ describe('core event owner publishers', () => {
     const runtime = controllableRuntimeSubmission();
     const turn = new EntityTurn(
       runtime.submission,
-      'channel',
+      { kind: 'channel', channel_origin: null },
       'private prompt',
       null,
       1,
@@ -156,7 +156,7 @@ describe('core event owner publishers', () => {
     const runtime = controllableRuntimeSubmission();
     const turn = new EntityTurn(
       runtime.submission,
-      'channel',
+      { kind: 'channel', channel_origin: null },
       'private prompt',
       null,
       1,

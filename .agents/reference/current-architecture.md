@@ -11,7 +11,8 @@ configuration loading, provider registries, durable state, and one
 `DispatcherService` per enabled dispatcher. Each `DispatcherService` *has an*
 agent: a contained `TeammateService` that owns the agent runtime lifecycle
 (Phase 5, #233). The dispatcher-only concerns — channel sessions, restart-notice
-injection, role MCP assembly, completion routing — stay on `DispatcherService`;
+injection, role MCP assembly, completion routing, and the neutral conversation
+projection — stay on `DispatcherService`;
 there is no separate `DispatcherRuntimeService`.
 
 Key source:
@@ -186,7 +187,7 @@ The Channel provider owns provider-specific session behavior. The built-in
 Feishu provider (`builtin:feishu`) lives in
 `/packages/channel/feishu-channel/`; it owns long-connection handling, access
 and mention gates, `/introduce`, peer-bot trust state, inbound formatting,
-reaction state, target resolution, and its `reply` / `react` /
+COT presentation state, target resolution, and its `reply` / `react` /
 `list_chat_bots` tool surface.
 
 The Feishu session classifies raw chat and sender identity exactly before bot
@@ -216,6 +217,22 @@ delivery never falls back to another target or the dispatcher agent, and the
 fact source is live-session-only and best-effort rather than a historical state
 surface. Every Channel session generation receives revocable strict-route and
 event-source leases; stop or failed start revokes them before session close.
+
+Core's neutral conversation projection is injected into the dispatcher agent
+and team-scoped entity construction paths. It turns sanitized runtime
+activity and EntityTurn lifecycle facts into display-only `turn.submitted`,
+`turn.message`, `turn.tool_call`, and exactly-once `turn.settled` events. A
+team-less dispatcher scope requires a frozen Channel origin; TeamLeaders and
+Team members publish, while team-less dispatcher-spawned TeamMates do not. The
+Feishu session consumes dispatcher and TeamLeader facts as
+conversation-anchored COT cards: inbound messages are primary, while a
+TeamLeader's latest same-target Reply receipt may anchor the next card and its
+team-group binding notification is the pre-inbound fallback. Staleness fences
+prevent late callbacks from reviving closed or replaced state, and dispatcher
+state remains isolated per chat and turn. Projection and card I/O are fail-open
+relative to turn admission, settlement, completion delivery, and shutdown.
+Automatic received/in-progress reactions are removed; the explicit
+model-facing `react` tool remains.
 
 Read [Channel runtime](channel-runtime.md) first, then the domain contracts:
 
@@ -308,9 +325,12 @@ snapshotted into the object-owned latch, and delivery flows through the core
 token, and recipient while preserving provider order — never keyed by native
 ids, completion text, or slot heuristics. Providers report live assistant/tool
 activity through the submission's synchronous activity sink; transcripts remain
-cold history only. Dreamux persists no Turn archive or rolling conversation
-projection. Public receipts, Workflow records, Channel contracts, and identity
-state do not carry a Turn id for in-process correlation.
+cold history only. Conversation-bearing entities may feed that activity into the
+live, non-persistent conversation display projection. Dreamux persists no Turn
+archive or rolling conversation projection. Service receipts, Workflow records,
+completion routing, and identity state do not carry a Turn id for in-process
+correlation; the Channel display event surface carries one process-local
+`turn_id` solely to correlate a presentation with its lifecycle.
 
 The runtime checkpoint persists the provider-owned session id plus an optional
 opaque `transcript_locator`. Direct TeamMate `spawn` and `send` receipts expose
@@ -759,6 +779,7 @@ Key source:
 - [Provider architecture realignment](../decisions/provider-architecture-realignment.md)
 - [NPM package split and channel targets](../decisions/npm-package-split-and-channel-targets.md)
 - [Entity-owned TeamMate lifecycle and object Turns](../decisions/entity-owned-teammate-lifecycle-and-object-turns.md)
+- [Feishu COT conversation display](../decisions/feishu-cot-conversation-display.md)
 - [Domain knowledge](../domains/README.md) for stable provider, channel,
   orchestration, state/file, scheduled-work, and repository contracts
 - [Runtime run root](../decisions/runtime-run-root.md)

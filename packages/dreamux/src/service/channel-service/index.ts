@@ -2,6 +2,7 @@ import type {
   AgentRuntimeMcpServer,
   ChannelSession,
   ChannelTarget,
+  ChannelToolCallerContext,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
@@ -58,6 +59,8 @@ export interface ChannelToolInvocation {
   channelId?: string;
   name: string;
   arguments: Record<string, unknown>;
+  /** Resolved caller identity, forwarded verbatim to the provider seam. */
+  caller: ChannelToolCallerContext;
 }
 
 export class ChannelService {
@@ -130,6 +133,7 @@ export class ChannelService {
       ...(input.providerRef !== undefined ? { providerRef: input.providerRef } : {}),
       name: input.name,
       arguments: input.arguments,
+      caller: input.caller,
       channelId,
     });
   }

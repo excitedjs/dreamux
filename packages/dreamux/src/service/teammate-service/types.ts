@@ -15,6 +15,7 @@ import type {
 } from '../agent-entity/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import type { TurnAdmission } from './turn-recording.js';
+import type { ConversationProjection } from '../../channel/conversation-projection.js';
 
 export interface TeammateServiceDeps {
   config: DreamuxConfig;
@@ -26,6 +27,7 @@ export interface TeammateServiceDeps {
    * which never closes or reopens, so it never reaches the manager.
    */
   worktrees?: WorktreeManager;
+  conversationProjection?: ConversationProjection;
   log: DreamuxLogger;
 }
 

@@ -1,5 +1,6 @@
 import type {
   AgentRuntimeMcpServer,
+  ChannelOrigin,
   DreamuxLogger,
   InboundDeliveryResult,
   InboundTurnInput,
@@ -29,6 +30,7 @@ import type {
   TeammateOps,
 } from '../teammate-collection/types.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
+import type { ConversationProjection } from '../../channel/conversation-projection.js';
 import {
   optionalLifecycleText,
   requireLifecycleText,
@@ -67,6 +69,7 @@ export interface TeamServiceDeps {
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   worktrees: WorktreeManager;
   identities: AgentIdentityStore;
+  conversationProjection?: ConversationProjection;
   completionDelivery: CompletionDeliveryPolicy;
   initiatorFor: (
     producer: AgentEntityIdentity,
@@ -103,11 +106,9 @@ export class TeamService {
   private record: TeamRecord | null = null;
   private leader_: TeammateService | null = null;
   readonly id: string;
-  /** The team's OWN members collection (`teamScope: team_id`, issue #233). Held
-   * as the concrete class internally because the lifecycle methods the team
-   * drives (`stopAll` / `applyWorktreeCleanup` / workspace-injecting `spawn`)
-   * live off `TeammateOps`. The PUBLIC surface stays the narrow admin op set via
-  * the `teammates` getter — never re-expose those internal verbs to callers. */
+  /** The team's OWN members collection (`teamScope: team_id`, issue #233).
+   * Its concrete class owns the lifecycle methods driven by the team; the PUBLIC
+   * surface stays the narrow `teammates` admin ops — never expose internal verbs. */
   private readonly teammateCollection: TeammateCollection;
   private readonly scheduler_: SchedulerService;
   private readonly schedulerCommands: SchedulerCommands;
@@ -122,6 +123,7 @@ export class TeamService {
       agentRuntimeProviders: deps.agentRuntimeProviders,
       worktrees: deps.worktrees,
       identities: deps.identities,
+      conversationProjection: deps.conversationProjection,
       completionDelivery: deps.completionDelivery,
       initiatorFor: deps.initiatorFor,
       isShuttingDown: deps.isShuttingDown,
@@ -539,9 +541,12 @@ export class TeamService {
     );
   }
 
-  async deliverToLeader(turn: InboundTurnInput): Promise<InboundDeliveryResult> {
+  async deliverToLeader(
+    turn: InboundTurnInput,
+    channelOrigin?: ChannelOrigin,
+  ): Promise<InboundDeliveryResult> {
     if (this.mustRecord().status === 'closed') return { status: 'stopped' };
-    return asInboundDeliveryResult(await this.leader.channelInput(turn));
+    return asInboundDeliveryResult(await this.leader.channelInput(turn, channelOrigin));
   }
 
   async sendToLeader(input: {
@@ -641,6 +646,9 @@ export class TeamService {
       config: this.deps.config,
       agentRuntimeProviders: this.deps.agentRuntimeProviders,
       identities: this.deps.identities,
+      ...(this.deps.conversationProjection !== undefined
+        ? { conversationProjection: this.deps.conversationProjection }
+        : {}),
       worktrees: this.deps.worktrees,
       log: this.deps.log,
     });

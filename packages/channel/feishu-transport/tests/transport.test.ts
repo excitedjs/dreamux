@@ -294,6 +294,84 @@ describe('createFeishuTransport — send', () => {
     expect(result.messageIds[1]).toBe('om_b')
   })
 
+  test('observes each multi-card message before sending the next card', async () => {
+    const stub = stubClient()
+    stub.create.mockImplementation(async () => ({
+      data: { message_id: `om_${stub.create.mock.calls.length}` },
+    }))
+    const transport = buildTransport(stub)
+    const receipts: Array<{ messageId: string; ordinal: number }> = []
+    const createCountsAtReceipt: number[] = []
+
+    const result = await transport.send(
+      { chatId: 'oc_chat' },
+      'x'.repeat(60_000),
+      {
+        onMessageCreated: (receipt) => {
+          receipts.push(receipt)
+          createCountsAtReceipt.push(stub.create.mock.calls.length)
+        },
+      },
+    )
+
+    expect(result.messageIds.length).toBeGreaterThan(1)
+    expect(receipts).toEqual(result.messageIds.map((messageId, ordinal) => ({
+      messageId,
+      ordinal,
+    })))
+    expect(createCountsAtReceipt).toEqual(
+      result.messageIds.map((_messageId, ordinal) => ordinal + 1),
+    )
+  })
+
+  test('reports only created messages before a later multi-card send fails', async () => {
+    const stub = stubClient()
+    const failure = new Error('second card failed')
+    stub.create.mockResolvedValueOnce({ data: { message_id: 'om_created' } } as never)
+    stub.create.mockRejectedValueOnce(failure)
+    const transport = buildTransport(stub)
+    const observer = vi.fn()
+
+    await expect(transport.send(
+      { chatId: 'oc_chat' },
+      'x'.repeat(60_000),
+      { onMessageCreated: observer },
+    )).rejects.toBe(failure)
+
+    expect(stub.create).toHaveBeenCalledTimes(2)
+    expect(observer).toHaveBeenCalledTimes(1)
+    expect(observer).toHaveBeenCalledWith({
+      messageId: 'om_created',
+      ordinal: 0,
+    })
+  })
+
+  test('contains observer failures and continues a multi-card send', async () => {
+    const stub = stubClient()
+    stub.create.mockImplementation(async () => ({
+      data: { message_id: `om_${stub.create.mock.calls.length}` },
+    }))
+    const transport = buildTransport(stub)
+    const observer = vi.fn((_receipt: {
+      messageId: string
+      ordinal: number
+    }) => {
+      throw new Error('observer failed')
+    })
+
+    const result = await transport.send(
+      { chatId: 'oc_chat' },
+      'x'.repeat(60_000),
+      { onMessageCreated: observer },
+    )
+
+    expect(result.messageIds.length).toBeGreaterThan(1)
+    expect(observer).toHaveBeenCalledTimes(result.messageIds.length)
+    expect(observer.mock.calls.map(([receipt]) => receipt)).toEqual(
+      result.messageIds.map((messageId, ordinal) => ({ messageId, ordinal })),
+    )
+  })
+
   test('sendCard sends caller-owned interactive card JSON without markdown rendering', async () => {
     const stub = stubClient()
     const transport = buildTransport(stub)
@@ -494,20 +572,6 @@ describe('createFeishuTransport — reactions', () => {
     expect(await transport.addReaction('om_target', 'THUMBSUP')).toBe('')
   })
 
-  test('removeReaction deletes by message and reaction id', async () => {
-    const stub = stubClient()
-    const transport = buildTransport(stub)
-
-    await transport.removeReaction('om_target', 'rk_stub')
-
-    expect(stub.reactionDelete).toHaveBeenCalledTimes(1)
-    const calls = stub.reactionDelete.mock.calls as unknown as Array<
-      [{ path: { message_id: string; reaction_id: string } }]
-    >
-    const call = calls[0]?.[0]
-    expect(call?.path.message_id).toBe('om_target')
-    expect(call?.path.reaction_id).toBe('rk_stub')
-  })
 })
 
 describe('createFeishuTransport — group chats', () => {

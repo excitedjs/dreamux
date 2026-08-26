@@ -37,6 +37,7 @@ import {
   type FeishuSendOptions,
   type FeishuAppOwnerIdentity,
   type FeishuChatMode,
+  type FeishuCotClient,
   type FeishuTransport,
   type InboundContentPart,
   type InboundResource,
@@ -144,17 +145,20 @@ export interface FeishuBot extends FeishuMessageResourceFetcher {
   readonly botOpenId: string | undefined;
   readonly botDisplayName: string | undefined;
   start(routes: FeishuInboundRoutes): Promise<void>;
-  send(target: OutboundTarget, text: string): Promise<FeishuSendResult>;
+  send(
+    target: OutboundTarget,
+    text: string,
+    options?: Pick<FeishuSendOptions, 'onMessageCreated'>,
+  ): Promise<FeishuSendResult>;
   sendCard(
     target: OutboundTarget,
     card: unknown,
-    options?: FeishuSendOptions,
+    options?: Pick<FeishuSendOptions, 'signal'>,
   ): Promise<FeishuSendResult>;
   inviteMembers(input: FeishuInviteMembersInput): Promise<FeishuInviteMembersResult>;
   /** Optional for externally supplied bots; absence disables topic projection. */
   getChatMode?(chatId: string): Promise<FeishuChatMode | undefined>;
   addReaction(messageId: string, emoji: string): Promise<string>;
-  removeReaction(messageId: string, reactionId: string): Promise<void>;
   fetchMessageResource(
     request: FeishuMessageResourceRequest,
   ): Promise<FeishuMessageResourceResponse>;
@@ -164,6 +168,11 @@ export interface FeishuBot extends FeishuMessageResourceFetcher {
   ): Promise<FeishuMessageReadResponse>;
   /** Optional contact lookup for an accepted human sender. */
   resolveUserName?(openId: string): Promise<string | undefined>;
+  /**
+   * Optional Feishu COT surface. A fake or externally supplied bot that omits
+   * it simply presents no chain-of-thought card; nothing else changes.
+   */
+  readonly cot?: FeishuCotClient;
   resolveAppOwner(): Promise<FeishuAppOwnerIdentity>;
   close(): Promise<void>;
 }
@@ -256,15 +265,19 @@ export function createFeishuBot(
       await transport.start(table);
     },
 
-    async send(target: OutboundTarget, text: string): Promise<FeishuSendResult> {
-      const { messageIds } = await transport.send(target, text);
+    async send(
+      target: OutboundTarget,
+      text: string,
+      options?: Pick<FeishuSendOptions, 'onMessageCreated'>,
+    ): Promise<FeishuSendResult> {
+      const { messageIds } = await transport.send(target, text, options);
       return { messageIds };
     },
 
     async sendCard(
       target: OutboundTarget,
       card: unknown,
-      options?: FeishuSendOptions,
+      options?: Pick<FeishuSendOptions, 'signal'>,
     ): Promise<FeishuSendResult> {
       const { messageIds } = await transport.sendCard(target, card, options);
       return { messageIds };
@@ -280,10 +293,6 @@ export function createFeishuBot(
 
     addReaction(messageId: string, emoji: string): Promise<string> {
       return transport.addReaction(messageId, emoji);
-    },
-
-    removeReaction(messageId: string, reactionId: string): Promise<void> {
-      return transport.removeReaction(messageId, reactionId);
     },
 
     fetchMessageResource(
@@ -310,6 +319,8 @@ export function createFeishuBot(
           },
         }
       : {}),
+
+    ...(transport.cot !== undefined ? { cot: transport.cot } : {}),
 
     resolveAppOwner(): Promise<FeishuAppOwnerIdentity> {
       return transport.resolveAppOwner();

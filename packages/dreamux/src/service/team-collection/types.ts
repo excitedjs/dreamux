@@ -16,6 +16,7 @@ import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
+import type { ConversationProjection } from '../../channel/conversation-projection.js';
 import type {
   CompletionDeliveryPolicy,
   CompletionInitiator,
@@ -54,6 +55,7 @@ export interface TeamCollectionOptions {
   log: DreamuxLogger;
   workflowLog?: DreamuxLogger;
   coreEvents?: DispatcherCoreEventPublisher;
+  conversationProjection?: ConversationProjection;
   nameSuffixGenerator?: SuffixGenerator;
   agentNameSuffixGenerator?: SuffixGenerator;
 }

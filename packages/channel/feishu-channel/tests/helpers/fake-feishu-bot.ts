@@ -39,15 +39,12 @@ export interface FakeFeishuBot extends FeishuBot {
     emoji: string;
     reactionId: string;
   }>;
-  readonly removedReactions: Array<{
+  readonly reactionOps: Array<{
+    op: 'add';
     messageId: string;
+    emoji: string;
     reactionId: string;
   }>;
-  /** Combined add/remove timeline, in call order (tests assert ordering). */
-  readonly reactionOps: Array<
-    | { op: 'add'; messageId: string; emoji: string; reactionId: string }
-    | { op: 'remove'; messageId: string; reactionId: string }
-  >;
   readonly chatModeRequests: string[];
   readonly messageReadRequests: FeishuMessageReadRequest[];
   readonly messageResourceRequests: FeishuMessageResourceRequest[];
@@ -57,9 +54,9 @@ export interface FakeFeishuBot extends FeishuBot {
   setAppOwner(owner: FeishuAppOwnerIdentity): void;
   setChatMode(chatId: string, mode: FeishuChatMode | Error | undefined): void;
   setSendError(err: Error | null): void;
+  setSendReceiptDelay(delay: Promise<void> | null): void;
   setSendCardDelay(delay: Promise<void> | null): void;
   setReactionError(err: Error | null): void;
-  setRemoveReactionError(err: Error | null): void;
   setReactionDelay(emoji: string, delay: Promise<void> | null): void;
   setMessageResource(
     fileKey: string,
@@ -83,9 +80,9 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
   let nextMessageId = 1;
   let nextReactionId = 1;
   let sendError: Error | null = null;
+  let sendReceiptDelay: Promise<void> | null = null;
   let sendCardDelay: Promise<void> | null = null;
   let reactionError: Error | null = null;
-  let removeReactionError: Error | null = null;
   const reactionDelays = new Map<string, Promise<void>>();
   let appOwner: FeishuAppOwnerIdentity = {};
   const messageResources = new Map<
@@ -103,7 +100,6 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
   const openId: string | undefined = `fake-open-id-${appId}`;
   const displayName = `Fake ${appId}`;
   const reactions: FakeFeishuBot['reactions'] = [];
-  const removedReactions: FakeFeishuBot['removedReactions'] = [];
   const reactionOps: FakeFeishuBot['reactionOps'] = [];
 
   return {
@@ -117,10 +113,20 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     async start(r: FeishuInboundRoutes): Promise<void> {
       routes = r;
     },
-    async send(target: OutboundTarget, text: string): Promise<FeishuSendResult> {
+    async send(
+      target: OutboundTarget,
+      text: string,
+      options?: Pick<FeishuSendOptions, 'onMessageCreated'>,
+    ): Promise<FeishuSendResult> {
       if (sendError !== null) throw sendError;
       const id = `message-fake-${nextMessageId++}`;
       sent.push({ chatId: target.chatId, target, text, messageIds: [id] });
+      if (sendReceiptDelay !== null) await sendReceiptDelay;
+      try {
+        options?.onMessageCreated?.({ messageId: id, ordinal: 0 });
+      } catch {
+        // Match the transport's fail-open receipt observer boundary.
+      }
       return { messageIds: [id] };
     },
     async sendCard(
@@ -151,11 +157,6 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       reactionOps.push({ op: 'add', messageId, emoji, reactionId });
       await reactionDelays.get(emoji);
       return reactionId;
-    },
-    async removeReaction(messageId: string, reactionId: string): Promise<void> {
-      if (removeReactionError !== null) throw removeReactionError;
-      removedReactions.push({ messageId, reactionId });
-      reactionOps.push({ op: 'remove', messageId, reactionId });
     },
     async fetchMessageResource(
       request: FeishuMessageResourceRequest,
@@ -195,9 +196,6 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     get reactions() {
       return reactions;
     },
-    get removedReactions() {
-      return removedReactions;
-    },
     get reactionOps() {
       return reactionOps;
     },
@@ -232,14 +230,14 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     setSendError(err: Error | null): void {
       sendError = err;
     },
+    setSendReceiptDelay(delay: Promise<void> | null): void {
+      sendReceiptDelay = delay;
+    },
     setSendCardDelay(delay: Promise<void> | null): void {
       sendCardDelay = delay;
     },
     setReactionError(err: Error | null): void {
       reactionError = err;
-    },
-    setRemoveReactionError(err: Error | null): void {
-      removeReactionError = err;
     },
     setReactionDelay(emoji: string, delay: Promise<void> | null): void {
       if (delay === null) reactionDelays.delete(emoji);

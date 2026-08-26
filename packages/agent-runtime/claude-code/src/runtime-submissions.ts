@@ -8,6 +8,7 @@ import type {
   RuntimeCompletion,
   RuntimeSubmission,
   RuntimeSubmissionSettlement,
+  RuntimeToolAction,
 } from '@excitedjs/dreamux-types';
 
 export interface SubmissionDeferred {
@@ -215,6 +216,7 @@ function activityForBlock(
       id: `${messageId}:${callId}:started`,
       callId,
       toolName: name,
+      action: namedToolAction(name),
       status: 'started',
       arguments: args,
       result: null,
@@ -226,16 +228,53 @@ function activityForBlock(
   if (callId === null || callId === '') return null;
   const known = active.tools.get(callId);
   const failed = block['is_error'] === true;
+  const result = normalizeTextBlocks(block['content']);
   return {
     kind: 'tool.call',
     id: `${messageId}:${callId}:result`,
     callId,
     toolName: known?.name ?? 'tool',
+    action: namedToolAction(known?.name),
     status: failed ? 'failed' : 'completed',
     arguments: known?.arguments ?? null,
-    result: toJsonValue(block['content']),
-    error: failed ? renderJsonValue(block['content']) : null,
+    result,
+    error: failed ? displayError(result) : null,
   };
+}
+
+function displayError(value: JsonValue | null): string | null {
+  if (value === null) return null;
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+function namedToolAction(value: unknown): RuntimeToolAction | null {
+  switch (value) {
+    case 'Read': return 'read';
+    case 'Grep':
+    case 'Glob':
+    case 'WebSearch': return 'search';
+    case 'Write':
+    case 'Edit':
+    case 'MultiEdit':
+    case 'NotebookEdit': return 'edit';
+    case 'Bash':
+    case 'PowerShell': return 'run';
+    default: return null;
+  }
+}
+
+function normalizeTextBlocks(value: unknown): JsonValue | null {
+  if (!Array.isArray(value)) return toJsonValue(value);
+  if (value.length === 0) return null;
+  const texts = value.map((entry) => {
+    const record = recordValue(entry);
+    return record?.['type'] === 'text' && typeof record['text'] === 'string'
+      ? record['text']
+      : null;
+  });
+  return texts.every((text): text is string => text !== null)
+    ? texts.join('\n')
+    : toJsonValue(value);
 }
 
 function recordValue(value: unknown): Record<string, unknown> | null {
@@ -255,10 +294,6 @@ function toJsonValue(value: unknown): JsonValue | null {
   } catch {
     return String(value);
   }
-}
-
-function renderJsonValue(value: unknown): string {
-  return typeof value === 'string' ? value : JSON.stringify(value);
 }
 
 function asError(error: unknown): Error {
