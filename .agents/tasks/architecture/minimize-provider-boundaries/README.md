@@ -32,7 +32,10 @@
 - Solution review Issue: [#349 Architecture: minimize Agent Runtime and Channel provider boundaries](https://github.com/excitedjs/dreamux/issues/349)
 - Solution workflow: Complex three-proposal consultation with one independent round followed by one cross-review round; selected by the operator through the Team's bound channel on 2026-08-27.
 - Blockers: None. Channel and Core are same-process and lifecycle-coupled; no independent Channel offline/reconnect, remote state synchronization, startup Team-read reconciliation, snapshot, or replay model is required. Remaining items are technical-solution obligations.
-- Next action: Restore the retained Codex system-prompt test, correct the Stage 1 public type, review that correction for drift, and resume the same Claude Developer at Stage 2.
+- Next action: Stage 2 passed TeamLeader drift review after the Agent Runtime,
+  Core admission, state-lease, and active Activity corrections. Continue the
+  same Claude Developer at Stage 3: replace the parallel admin dispatch surface
+  with the single domain-namespaced Core Command registry and its two adapters.
 - Related tasks: Surfaced after [Feishu COT Conversation Cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md); this is an independent architecture outcome.
 
 ## Development approval
