@@ -14,6 +14,14 @@ Channel invocation and observation ports designed. Existing Feishu behavior,
 `ChannelRoutes` members, or other provider call sites are migration evidence,
 not the source of the new Core Command or event catalogs.
 
+This document records the product and architecture scenarios discussed so far;
+it is not authority to erase an unexamined, load-bearing behavior found in
+current source or a prior Decision. During implementation, any conflict between
+this text and a concrete existing behavior, consumer, protocol, or historical
+Decision is a mandatory stop condition. The TeamLeader must present the code
+evidence and consequence to the operator for a new decision rather than infer
+that the document silently supersedes the discovered behavior.
+
 This clarification intentionally changes some existing behavior and public
 surface. In particular, external-route binding moves from Core to the owning
 Channel, TeamLeader Channel-tool egress is no longer restricted by Core
@@ -48,6 +56,14 @@ as a compatibility alias.
   system prompt, skill sources, feature disabling, structured output, paths,
   state callbacks, logging, and injected environment are mixed into one surface
   with different necessity and support characteristics.
+- The system-prompt input already has two neutral forms because the built-in
+  runtimes have different native capabilities. A Dispatcher supplies both a
+  complete replacement prompt and a focused append prompt: Codex consumes the
+  replacement form, while Claude Code, which cannot replace its native system
+  prompt, consumes the append form. A TeamLeader supplies append-only role
+  instructions, which both built-in runtimes append. This distinction is
+  load-bearing behavior and must not be flattened to one string or implemented
+  by branching on a concrete Provider id in Core.
 - TeamMate MCP `last` is a required user capability but currently obtains its
   data exclusively through `provider.readTranscript`, asking each provider to
   locate and parse a runtime-native transcript after the runtime may already be
@@ -423,6 +439,13 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   the neutral output schema supplied by Core; it is not feature-gated, and the
   current `structuredOutput.supported`/`scope` capability advertisement is
   removed.
+- System-prompt delivery retains the neutral `{ replace?, append? }` pair. For
+  a Dispatcher, Core supplies both the complete replacement instructions and
+  the focused append instructions; each Provider selects the native form it
+  supports. For a TeamLeader, Core supplies only append instructions and every
+  Provider appends them. Core must not branch on a concrete Provider id to make
+  this choice, and a Provider must not apply both forms when `replace` is
+  present.
 - Live activity reporting is optional. A runtime may emit transient assistant
   message and tool-call facts through the Core-supplied activity sink. A
   runtime that emits none still executes and settles turns normally; its COT
@@ -652,6 +675,11 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - Every supported Provider honors neutral structured-output schemas. Workflow
   does not depend on a provider capability advertisement or fail as an
   unsupported feature solely because a different Provider is selected.
+- Dispatcher system-prompt behavior remains runtime-correct without a Core
+  Provider-id branch: Codex replaces its base instructions from `replace`,
+  Claude Code appends the focused Dispatcher delta from `append`, and neither
+  duplicates both forms. TeamLeader instructions are append-only for both
+  built-in runtimes.
 - The minimal live runtime handle implements only `start`, union-input
   `submit`, and `stop`; Core status/checkpoint reads come from the Core-owned
   state projection populated by the push sink.
@@ -761,6 +789,12 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - Structured output is mandatory for every Provider and is part of the neutral
   submission/start contract rather than a capability bit. The current
   structured-output `scope` field is removed.
+- The neutral create context keeps `systemPrompt` as
+  `{ replace?: string; append?: readonly string[] }`. Dispatcher construction
+  supplies both forms so Codex can replace its base instructions and Claude
+  Code can append only the focused role delta. TeamLeader construction supplies
+  append only, and both built-in runtimes append it. This behavior is selected
+  inside the Provider adapter, never by a Core branch on Provider identity.
 - Provider-level `getCapabilities()` is retained for Provider enumeration and
   public discovery metadata, including tags. Live runtime
   `getCapabilities()` remains deleted.
@@ -866,9 +900,10 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   pagination over an actively growing session, field schema, bounds, and
   migration from `readTranscript` remain technical choices. The decision to
   return unified Activity Records rather than Provider-native lines is final.
-- The minimum neutral role/tool launch context required for TeamLeader and
-  TeamMate operation, including Dreamux tool injection, instructions, cwd, and
-  recovery identity.
+- The remaining minimum neutral role/tool launch context required for
+  TeamLeader and TeamMate operation, including Dreamux tool injection, cwd, and
+  recovery identity. System-prompt replace/append semantics are fixed above and
+  are no longer an open design choice.
 - Whether provider discovery, config parsing, onboarding, identity, and
   diagnostics remain on one facade or compose separately.
 - The exact Channel lifecycle/control base members.

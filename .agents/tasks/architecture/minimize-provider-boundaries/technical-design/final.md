@@ -1,15 +1,21 @@
 # Technical Design: Minimal Provider Boundaries
 
-## Status and authority
+## Status and working authority
 
-This is the authoritative technical solution for the frozen requirement at
+This is the current technical design baseline for the requirement at
 `requirement.md` SHA-256
-`803bf0d086f38c583ba3d146f96de098c828e07bb27ef5b1510e63536da8798d`.
+`996580fa8f32fdd09795d79f6639581f4a9e70cdb3cdaf13b66f2b8f8083e9dd`.
 
 It reconciles the three independent proposals and their single cross-review
 round. Where proposals disagreed, this design follows the frozen requirement
 and current source behavior rather than reviewer votes. It changes no product
 code and does not grant development approval.
+
+It is authoritative only for scenarios it actually models. It does not silently
+supersede a load-bearing behavior, consumer, protocol, or prior Decision that
+implementation later discovers was not considered here. Any such conflict stops
+the current implementation stage and returns to the operator with concrete code
+evidence and consequences before this design is revised.
 
 ## Governing principle: domain ownership drives names and code layout
 
@@ -167,7 +173,7 @@ interface AgentRuntimeCreateContext<
   readonly identity: AgentRuntimeIdentity<TSession>;
   readonly config: TConfig;
   readonly cwd: string;
-  readonly systemPrompt?: string;
+  readonly systemPrompt?: AgentRuntimeSystemPrompt;
   readonly mcpServers: readonly AgentRuntimeMcpServer[];
   readonly skillSources: readonly AgentRuntimeSkillSource[];
   readonly disabledFeatures: readonly string[];
@@ -194,7 +200,20 @@ interface AgentRuntimeIdentity<TSession extends AgentRuntimeSessionRef> {
 interface AgentRuntimeSessionRef {
   readonly id: string;
 }
+
+interface AgentRuntimeSystemPrompt {
+  readonly replace?: string;
+  readonly append?: readonly string[];
+}
 ```
+
+The two system-prompt forms are a neutral capability bridge, not duplicated
+content. Dispatcher construction supplies both the complete replacement prompt
+and a focused append delta. The Codex Provider consumes `replace` and ignores
+`append` when replacement is present; the Claude Code Provider cannot replace
+its native system prompt and consumes `append`. TeamLeader construction supplies
+only `append`, which both Providers apply. Core therefore never branches on a
+concrete Provider id, and a Provider never applies both Dispatcher forms.
 
 Every Provider defines its own JSON-serializable `TSession`, with `id` as the
 only shared field. A Provider that resumes from an id alone uses
@@ -1027,6 +1046,9 @@ ambiguity.
 ### Add or reshape
 
 - minimal Agent Runtime types and loader conformance;
+- retained neutral system-prompt `{ replace?, append? }` delivery, with
+  Dispatcher replacement/append selection owned by each Provider adapter and
+  TeamLeader instructions remaining append-only;
 - leased state/activity sinks and `fresh | resumed` start result;
 - neutral active-session Activity reader and `last` adapter;
 - unified Core Command registry, domain-owned schemas/handlers, admin-socket and

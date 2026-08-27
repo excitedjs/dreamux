@@ -2,13 +2,15 @@
 
 ## Authority
 
-This plan executes the frozen requirement at SHA-256
-`803bf0d086f38c583ba3d146f96de098c828e07bb27ef5b1510e63536da8798d`
-and the authoritative technical design at SHA-256
-`62e48dc31ea49356b0836abb2bf73523591989d57a199bb8266ab59061b6477d`.
+This plan executes the current requirement baseline at SHA-256
+`996580fa8f32fdd09795d79f6639581f4a9e70cdb3cdaf13b66f2b8f8083e9dd`
+and the current technical design baseline at SHA-256
+`c456165258757c1ea6df8a753691d118b691fca379e65205f9c3450395e7c452`.
 The operator granted development approval on 2026-08-27 with the staged
-protocol below. Product decisions in the requirement and technical design remain
-authoritative over implementation convenience.
+protocol below. Recorded product decisions remain authoritative over
+implementation convenience only for the scenarios they explicitly cover.
+Neither document is authority to discard a conflicting current-code behavior or
+historical Decision that the design did not examine.
 
 ## Operating protocol
 
@@ -25,8 +27,11 @@ authoritative over implementation convenience.
    broken while the incompatible refactor is in flight.
 4. If a stage contains an unexpected change, the TeamLeader asks the Developer
    why it is required before accepting the stage. If implementation discovers a
-   product or architecture scenario not covered by the frozen inputs, work stops
-   and the TeamLeader asks the operator; neither agent invents the missing rule.
+   product or architecture scenario not covered by the design, or any conflict
+   between the written baseline and a load-bearing current-code behavior,
+   consumer, protocol, or prior Decision, work stops. The TeamLeader presents
+   the concrete evidence and consequence to the operator; neither agent treats
+   the document as an implicit override or invents the missing rule.
 5. After all production stages, the Developer reconciles the full tree until
    type checking succeeds and distributable artifacts build. This is the first
    mandatory compile/build gate.
@@ -57,6 +62,9 @@ authoritative over implementation convenience.
 - Add generic Provider-owned session identity, `start/submit/stop`, leased push
   state, neutral recent Activity Records, Channel lifecycle/ports, Channel MCP
   composition, canonical Command/event types, and required root exports.
+- Retain neutral system-prompt replace/append forms: Dispatcher supplies both
+  and each Provider selects its native mechanism; TeamLeader remains
+  append-only for every Provider, with no Core Provider-id branch.
 - Delete the old public members and Core Collaboration Space/binding types with
   no compatibility aliases.
 - Validation: every mandatory member has a frozen use case; no provider-specific
