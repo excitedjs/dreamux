@@ -426,15 +426,22 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   Dreamux runtime necessarily provides and Core necessarily consumes.
 - The live runtime handle has exactly three mandatory execution methods:
   `start`, `submit`, and `stop`.
-- `submit` accepts one flat neutral input containing prepared `text` and an
-  optional runtime-local `sourceId`. It replaces the separate `channelInput`
-  and `completionInput` methods without retaining a `kind` or source taxonomy
-  at the Provider seam. Channel owns external-envelope interpretation and XML
-  rendering before Core submission; Dreamux-owned callers likewise prepare
-  their final text before calling the runtime.
+- `submit` accepts one flat neutral input containing only prepared `text`. It
+  replaces the separate `channelInput` and `completionInput` methods without
+  retaining a `kind`, source taxonomy, or Dreamux idempotency key at the
+  Provider seam. Channel owns external-envelope interpretation and XML rendering
+  before Core submission; Dreamux-owned callers likewise prepare their final
+  text before calling the runtime.
 - Core retains turn origin, correlation, intent, and event `turn_source` in its
   own admission/turn records. Those Core facts do not cross the Agent Runtime
   Provider seam merely to classify identical text submission behavior.
+- Stable submission source identity and bounded process-local deduplication
+  belong to the Core admission owner. The dedupe namespace includes the target
+  entity and Core-known invocation origin. Concurrent repeats share the pending
+  admission; after `submitted` or `ambiguous`, a bounded recent repeat returns
+  public `duplicate`; `failed`, `stopped`, and provider-internal `skipped` do not
+  consume the key. This keeps the existing no-cross-restart guarantee while
+  removing Dreamux idempotency policy from every Provider adapter.
 - `start` owns both fresh launch and checkpoint-aware launch using the create
   context supplied by Core. With no prior session it starts fresh; with a prior
   session reference it must restore continuous model context. Recovery failure
@@ -705,6 +712,9 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   clearly only when a caller requests an absent capability.
 - Existing runtime admission, settlement, stop fencing, completion routing, and
   supported activity delivery remain correct.
+- Agent Runtime `submit` accepts only prepared text and has no source id or
+  source-derived `duplicate` result. Core preserves public duplicate behavior
+  through one target-and-origin-scoped bounded admission ledger.
 - Every supported Provider honors neutral structured-output schemas. Workflow
   does not depend on a provider capability advertisement or fail as an
   unsupported feature solely because a different Provider is selected.
@@ -721,8 +731,8 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   `thread/start`, `thread/resume`, and resume-fallback `thread/start`; Claude
   Code passes them through `--append-system-prompt` on every fresh or resumed
   resident-process spawn. Neither Provider relies on native session retention.
-- The minimal live runtime handle implements only `start`, union-input
-  `submit`, and `stop`; Core status/checkpoint reads come from the Core-owned
+- The minimal live runtime handle implements only `start`, text-only `submit`,
+  and `stop`; Core status/checkpoint reads come from the Core-owned
   state projection populated by the push sink.
 - No Provider or live runtime exposes `waitIdle`, and neither scheduler nor
   Team dissolve waits for or derives an idle state before continuing. Dissolve
@@ -830,6 +840,9 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   source identity, and opaque correlation fields. Channel owns external-message
   XML rendering before invocation; Core and Agent Runtime never reconstruct a
   Channel envelope.
+- `source_id` and the public `duplicate` result are Core admission semantics.
+  Agent Runtime `submit` receives no source id and its admission union contains
+  no source-derived `duplicate` branch.
 - Runtime status and checkpoint transitions are push-only into Core-owned
   state. The live handle does not duplicate them with pull queries.
 - Structured output is mandatory for every Provider and is part of the neutral

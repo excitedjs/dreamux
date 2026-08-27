@@ -3,9 +3,9 @@
 ## Authority
 
 This plan executes the current requirement baseline at SHA-256
-`4bbaa002810b3b561626c037fb26b50fe4bfd988887bfeb3574c53650087b26f`
+`acf90312dbeb02861654172943f1fd016de04d6c7c6a6c9c155e78889d0d5f28`
 and the current technical design baseline at SHA-256
-`3a4d76b35345cb37197c9eb519f0806275c48e3bbf5afcdd2700e8353c0f1647`.
+`30fa81118a9008eb28d171113bc87cb9e5acfe9fbf78d3028efd49aa67c28010`.
 The operator granted development approval on 2026-08-27 with the staged
 protocol below. Recorded product decisions remain authoritative over
 implementation convenience only for the scenarios they explicitly cover.
@@ -65,6 +65,8 @@ historical Decision that the design did not examine.
 - Keep Agent Runtime `submit` and `team.submit` flat: Channel renders its final
   model-facing XML/text before invocation, and neither seam retains an inbound
   versus text discriminator.
+- Keep `source_id` and duplicate admission in Core. Agent Runtime `submit`
+  accepts text only and contains no Dreamux dedupe policy.
 - Retain neutral system-prompt replace/append forms: Dispatcher supplies both
   and each Provider selects its native mechanism; TeamLeader remains
   append-only for every Provider. Preserve ordinary TeamMate and Workflow
@@ -90,8 +92,9 @@ historical Decision that the design did not examine.
 - Reshape Core runtime ownership, admission, settlement, restart notice, and
   `last` without weakening existing invariants.
 - Remove runtime-owned Channel rendering and source-kind branching. Preserve
-  only prepared text plus optional source identity at the Provider seam; keep
-  origin, correlation, and event source in Core-owned turn state.
+  only prepared text at the Provider seam; keep source identity, bounded
+  process-local dedupe, origin, correlation, and event source in Core-owned
+  admission/turn state.
 - Validation: implementation follows sections 1 and 4 of the final design; no
   Core branch on concrete Provider identity appears.
 

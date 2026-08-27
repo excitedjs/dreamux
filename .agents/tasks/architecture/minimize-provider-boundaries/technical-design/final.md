@@ -4,7 +4,7 @@
 
 This is the current technical design baseline for the requirement at
 `requirement.md` SHA-256
-`4bbaa002810b3b561626c037fb26b50fe4bfd988887bfeb3574c53650087b26f`.
+`acf90312dbeb02861654172943f1fd016de04d6c7c6a6c9c155e78889d0d5f28`.
 
 It reconciles the three independent proposals and their single cross-review
 round. Where proposals disagreed, this design follows the frozen requirement
@@ -276,21 +276,22 @@ interface AgentRuntimeStartOutcome {
 
 interface AgentRuntimeSubmissionInput {
   readonly text: string;
-  readonly sourceId?: string;
 }
 ```
 
-The existing `RuntimeAdmission` union remains intact, including `submitted`,
-`duplicate`, `stopped`, `skipped`, `failed`, and `ambiguous`. Only its
-`submitted` branch carries the immutable `RuntimeSubmission` object whose
-identity Core uses as the settlement correlation key. The Command boundary
-normalizes internal `skipped` to public `stopped`; the Provider seam does not.
-The runtime input is deliberately flat. `sourceId` preserves runtime-local
-deduplication where a caller has a stable identity; it is not model-visible.
-Core keeps the authoritative origin and event `turn_source` on its own turn
-record. A Provider neither receives nor interprets an `InboundTurnInput`, a
-Channel/Dreamux source enum, intent, opaque display correlation, or XML
-rendering instructions.
+`RuntimeAdmission` contains `submitted`, `stopped`, `skipped`, `failed`, and
+`ambiguous`. Only `submitted` carries the immutable `RuntimeSubmission` object
+whose identity Core uses as the settlement correlation key. Source-derived
+`duplicate` is no longer a Provider result: Core returns it before calling the
+runtime when its admission ledger has already accepted the same source key. The
+Command boundary normalizes internal `skipped` to public `stopped`; the Provider
+seam does not.
+
+The runtime input is deliberately flat. Core keeps stable source identity,
+authoritative origin, intent, opaque display correlation, and event
+`turn_source` on its own turn/admission state. A Provider receives only text; it
+neither receives nor interprets an `InboundTurnInput`, a Channel/Dreamux source
+enum, source id, or XML rendering instructions.
 
 Channel produces the complete model-facing `text` before invoking Core,
 including any Channel-owned XML envelope. Dreamux-owned completion, scheduler,
@@ -638,8 +639,15 @@ the same flat payload. A Channel renders its external message into complete
 model-facing text, including its own XML envelope, before invocation. The
 invoker scopes a Channel-supplied source identity to the calling Channel. A
 `submitted` result carries the Core `turn_id`; `duplicate` does not invent one
-because the current Provider-owned deduplication result has no submission
-identity or source-to-turn ledger.
+because Core did not create a second runtime submission or turn identity.
+
+Core owns one bounded, process-local admission ledger per target entity and
+Core-known invocation-origin scope. A non-empty `source_id` reserves the key
+before runtime admission. Concurrent repeats await the same pending admission;
+`submitted` or `ambiguous` commits the key into the bounded recent window and a
+later repeat returns `duplicate`; `failed`, `stopped`, or provider-internal
+`skipped` releases it. An omitted or empty `source_id` bypasses deduplication.
+The ledger deliberately retains the current no-cross-restart guarantee.
 
 `TEAM_NOT_FOUND` and `TEAM_CLOSED` are typed pre-admission failures. Only those
 failures permit the Channel to remove a stale binding and retry once to the
@@ -1104,9 +1112,9 @@ compile breaks are resolved inside the same implementation change.
 - A minimal Agent Runtime Provider loads and runs one fresh turn with only the
   mandatory provider members and a live handle containing only
   `start/submit/stop`.
-- Runtime contract fixtures prove `submit` accepts only prepared text plus an
-  optional source identity, with no Channel/plain-text discriminator, source
-  enum, inbound envelope, or runtime-owned XML rendering.
+- Runtime contract fixtures prove `submit` accepts only prepared text, with no
+  source identity, Channel/plain-text discriminator, source enum, inbound
+  envelope, or runtime-owned XML rendering.
 - A resumed fixture proves non-null session continuity, loud recovery failure,
   continuity reporting before first submit, and stop-racing-start convergence.
 - Prompt fixtures prove Dispatcher replace/append selection, TeamLeader
@@ -1142,6 +1150,10 @@ compile breaks are resolved inside the same implementation change.
 - `team.submit` tests cover Dispatcher/default delivery, TeamLeader delivery,
   duplicate, stopped, failed, ambiguous, stable `turn_id`, opaque correlation,
   and retry only after `TEAM_NOT_FOUND`/`TEAM_CLOSED`.
+- Core admission tests prove target-and-origin-scoped pending coalescing,
+  bounded process-local dedupe, commit only after `submitted`/`ambiguous`, key
+  release after `failed`/`stopped`/`skipped`, bypass without `source_id`, and no
+  source id crossing the Agent Runtime seam.
 - Channel submission tests prove Channel renders its external envelope and XML
   before invoking the flat `team.submit` Command, while Core preserves origin,
   correlation, event source, admission, and settlement outside the runtime
