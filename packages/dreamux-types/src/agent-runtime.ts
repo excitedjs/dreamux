@@ -288,6 +288,19 @@ export type RuntimeAdmission =
   | { status: 'ambiguous'; error: Error };
 
 /**
+ * Neutral system-prompt input. When both forms are present they are alternate
+ * representations of the same instructions, and a Provider applies at most one
+ * of them — whichever its runtime supports. `append` fragment order is
+ * significant. Dreamux re-supplies the reconstructed bundle on every
+ * runtime-context creation; a Provider must never become the authority for
+ * prompt state.
+ */
+export interface AgentRuntimeSystemPrompt {
+  readonly replace?: string;
+  readonly append?: readonly string[];
+}
+
+/**
  * The neutral facts required to launch one Dreamux role. Immutable: prior
  * session identity reaches `start` only through this object.
  */
@@ -303,8 +316,8 @@ export interface AgentRuntimeCreateContext<
    * derived inside the runtime.
    */
   readonly cwd: string;
-  /** Core-supplied role instructions. */
-  readonly systemPrompt?: string;
+  /** Core-supplied role instructions; see {@link AgentRuntimeSystemPrompt}. */
+  readonly systemPrompt?: AgentRuntimeSystemPrompt;
   /**
    * MCP servers Core injects for this runtime instance. Already fully resolved:
    * an empty array means "no MCP servers", and the provider must launch exactly

@@ -86,6 +86,7 @@ export type {
   AgentRuntimeStateUpdate,
   AgentRuntimeStatus,
   AgentRuntimeSubmissionInput,
+  AgentRuntimeSystemPrompt,
   RuntimeActivity,
   RuntimeActivityEvent,
   RuntimeAdmission,
