@@ -317,6 +317,11 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - A Channel that supports external-route binding owns provider-specific
   `bind_channel`, `unbind_channel`, and `list_bindings` MCP tools. They are
   present only in the Dispatcher catalog; a TeamLeader does not see them.
+  Feishu additionally retains its explicit Collaboration Space MCP product
+  flow as Channel-owned tools: Dispatcher can bind an external Feishu
+  container as an automatic-provisioning space, unbind it, and inspect the
+  Channel-owned space state. These are Feishu Channel tools, not restored Core
+  Collaboration Space Commands or types.
   Reply/react and other Channel tools may be exposed to Dispatcher and/or
   TeamLeader according to Channel policy. None are Team MCP or Core Commands.
 
@@ -479,6 +484,13 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   Team is the only Core container used to represent an automatically created
   external collaboration target. The Core Collaboration Space service, state,
   commands, reads, target claims, binding events, and public types are removed.
+- Removing the Core container does not remove the external product story.
+  Feishu Channel exposes Dispatcher-only MCP operations to bind/unbind/list/read
+  a Feishu container as a Collaboration Space. That label denotes a
+  Channel-owned automatic-provisioning policy and target hierarchy, not a Core
+  entity. Binding the space persists the Feishu container identity plus Team
+  creation policy in Channel state; later unmatched child targets provision and
+  bind ordinary Teams through generic `team.create` and `team.submit` Commands.
 - External target creation is a real Channel-owned input. A supporting Channel
   owns policy, provider-specific identity, binding, and a durable provisioning
   saga. It first persists a local provisioning record and stable request id,
@@ -571,7 +583,9 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   provider-owned Channel MCP forwarding.
 - Removal of the Core Collaboration Space domain, persistence, public types,
   commands, reads, events, routing callbacks, tests, and maintenance/docs
-  surfaces. Team remains the only Core collaboration container.
+  surfaces. Team remains the only Core collaboration container, while the
+  Feishu Channel retains the external Collaboration Space MCP workflow and owns
+  its replacement policy/state.
 - Removal of the Core binding store and Team binding surfaces; Channel-owned
   binding persistence, provider tools, state migration, tests, and public
   documentation.
@@ -714,8 +728,12 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   submits the first message only after binding. Core contains no Collaboration
   Space object, external target claim, or collaboration binding event.
 - Dispatcher can call Channel-owned `bind_channel`, `unbind_channel`, and
-  `list_bindings` through the existing MCP proxy. Team MCP and Core admin
-  methods no longer expose `bind_channel` or `transfer_back`.
+  `list_bindings` through the existing MCP proxy. Feishu also provides
+  Dispatcher-only `bind_collaboration_space`, `unbind_collaboration_space`,
+  `get_collaboration_space`, and `list_collaboration_spaces` tools backed only
+  by Feishu Channel state and generic Team Commands. Team MCP and Core admin
+  methods no longer expose `bind_channel`, `transfer_back`, or
+  `collaboration_space.*`.
 - Channel submits a resolved stable `team_name`, Core delivers only to its
   TeamLeader, unmatched inbound reaches the
   Dispatcher Agent, and stale targets can fall back only after a typed
@@ -817,7 +835,10 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   it.
 - Core Collaboration Space is deleted. Channel composes the same external
   product effect by creating and binding ordinary Teams through generic Core
-  Commands; all target provisioning state and recovery live in Channel.
+  Commands; all target provisioning state and recovery live in Channel. Feishu
+  retains a dedicated Dispatcher-facing Collaboration Space MCP suite as the
+  explicit entry point for registering and inspecting that Channel-owned
+  provisioning policy.
 - Automatic provisioning creates a normal Team and a removable default binding.
   Removing or closing the external target removes that binding without
   dissolving the Team; unbound Teams are ordinary supported state. Dissolving a

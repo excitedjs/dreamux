@@ -4,7 +4,7 @@
 
 This is the authoritative technical solution for the frozen requirement at
 `requirement.md` SHA-256
-`7895d39a7f47c557afb82f8f0bc7c46520566566cc14557bae5572d646bd5e2c`.
+`803bf0d086f38c583ba3d146f96de098c828e07bb27ef5b1510e63536da8798d`.
 
 It reconciles the three independent proposals and their single cross-review
 round. Where proposals disagreed, this design follows the frozen requirement
@@ -837,8 +837,13 @@ rules and provider schema/errors remain intact.
 
 Feishu owns `bind_channel`, `unbind_channel`, and `list_bindings`. They are
 Dispatcher-audience tools enforced from the retained caller context. They are
-not Core Commands and there is no `transfer_back` alias. Reply/react and other
-Channel tools continue to use the same MCP path.
+not Core Commands and there is no `transfer_back` alias. Feishu also owns the
+Dispatcher-only `bind_collaboration_space`, `unbind_collaboration_space`,
+`get_collaboration_space`, and `list_collaboration_spaces` tools. This suite
+preserves the explicit product operation of registering a Feishu group/topic
+container for automatic Team provisioning; it does not restore a Core
+Collaboration Space entity. Reply/react and other Channel tools continue to use
+the same MCP path.
 
 ## 3. Channel-owned routing and provisioning
 
@@ -855,6 +860,12 @@ provider-private. Binding records store the provider's own target metadata and
 one stable TeamLeader `team_name`. Manual unbind or external target closure
 removes only the binding. Unbound Teams are normal.
 
+The same Channel-owned document has a separate Collaboration Space policy
+section keyed by Feishu's opaque container metadata. It records the Team
+creation policy and the hierarchy rule used to recognize child targets; it does
+not contain a Core Collaboration Space id. The four Feishu Collaboration Space
+MCP tools create, remove, read, and list only those policy records.
+
 Every live Channel receives `team.state`. A durable Team-close transition causes
 it to atomically remove all local bindings to that stable name. Channel and Core
 share one process and lifecycle; listeners attach before relevant work is
@@ -869,8 +880,10 @@ created.
 
 ### 3.2 Provisioning saga
 
-An automatic-provisioning Channel persists `{generation, request_id, phase,
-target_metadata, first_delivery_identity}` before invoking Core. It then:
+When an unmatched Feishu child target belongs to a locally registered
+Collaboration Space policy, the Channel starts automatic provisioning. It
+persists `{generation, request_id, phase, space_policy_id, target_metadata,
+first_delivery_identity}` before invoking Core. It then:
 
 1. calls `team.create` with the persisted request id;
 2. receives the stable ready Team name;
@@ -889,8 +902,11 @@ before first submission, platform redelivery may be needed; this refactor does
 not introduce a retained external-message outbox.
 
 The old Core Collaboration Space service, target claims, exact-delivery
-callbacks, policy configuration, and events are deleted. Target close removes
-the default binding and does not dissolve the ordinary Team.
+callbacks, policy configuration, and events are deleted. The Feishu MCP suite
+and Channel-owned policy replace the external user flow without recreating that
+Core authority. Unbinding a Collaboration Space stops future automatic
+provisioning but does not dissolve already-created Teams; target close removes
+the target's default binding and does not dissolve the ordinary Team.
 
 ### 3.3 Fail-loud cutover
 
@@ -1005,6 +1021,7 @@ ambiguity.
   binding-owner egress authorization;
 - Core channel-binding service/store/admin/Team MCP surface and binding events;
 - Core Collaboration Space service/state/config/public types/MCP/admin/events;
+  the similarly named Feishu Channel MCP product flow remains;
 - `bind_channel` and `transfer_back` from Team MCP, with no aliases.
 
 ### Add or reshape
@@ -1016,7 +1033,8 @@ ambiguity.
   in-process adapters, typed errors, and durable Team-create ledger;
 - six-event registry, fail-open scoped subscriptions, and lifecycle fencing;
 - Channel lifecycle port and optional MCP composition;
-- Feishu-owned binding/provisioning state and tools;
+- Feishu-owned direct binding and Collaboration Space policy/provisioning state,
+  plus both MCP tool suites;
 - dissolve partial-state and background-cleanup state machine;
 - fail-loud legacy-state/config detection and operator instructions.
 
@@ -1088,6 +1106,10 @@ compile breaks are resolved inside the same implementation change.
 - Binding tests cover exact topic then parent fallback, independent unbind,
   multiple bindings per Team, Team-close invalidation, defensive stale cleanup,
   Dispatcher-only binding tools, and no Core binding mirror/query.
+- Feishu Collaboration Space tests cover explicit bind/unbind/get/list, child
+  target recognition, idempotent Team provisioning, no eager Core container,
+  unbind without Team dissolve, and absence of Core Collaboration Space state,
+  Commands, events, or types.
 - State-event tests prove creation and every later lifecycle transition publish
   `teammate.state` for Dispatcher, TeamLeader, ordinary member, and standalone
   TeamMate roles; contained changes also republish `team.state` with the current
@@ -1111,9 +1133,9 @@ compile breaks are resolved inside the same implementation change.
   durable logical close, and background cleanup retry.
 - Scheduler tests prove immediate submission while busy, allowed folding, and
   no held-fire/idle behavior.
-- Negative surface tests prove deleted methods, callbacks, events, Commands,
-  aliases, Collaboration Space types, and binding stores cannot be imported or
-  loaded.
+- Negative surface tests prove deleted methods, callbacks, events, Core
+  Collaboration Space Commands/types, aliases, and binding stores cannot be
+  imported or loaded; they do not reject the Feishu-owned MCP tools or policy.
 - Architecture tests enforce the domain vocabulary and import boundaries:
   `team.*` handlers delegate to the Team owner, `teammate.*` facts originate in
   the TeamMate owner, `AgentRuntime` names stay behind the Provider seam, and
@@ -1151,7 +1173,8 @@ This is a source- and state-incompatible change:
   references under `.agents/`, then run the knowledge gate.
 
 Change notes must explicitly cover Provider contract replacement, Activity
-Records, removed Collaboration Space and binding state/config, Channel-owned
+Records, removal of the Core Collaboration Space and binding state/config,
+replacement by Feishu-owned Collaboration Space policy/tools, Channel-owned
 binding recreation, scheduler/dissolve behavior, and removed MCP/admin names.
 
 ## 9. Rejected alternatives
