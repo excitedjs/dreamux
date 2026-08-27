@@ -4,7 +4,7 @@
 
 This is the authoritative technical solution for the frozen requirement at
 `requirement.md` SHA-256
-`349635060d19afe73ed3d1e84df5070bce225364553389f5074c624180598a07`.
+`7895d39a7f47c557afb82f8f0bc7c46520566566cc14557bae5572d646bd5e2c`.
 
 It reconciles the three independent proposals and their single cross-review
 round. Where proposals disagreed, this design follows the frozen requirement
@@ -63,11 +63,15 @@ ports:
 - live runtime activity remains optional and feeds the existing COT projection;
 - a Channel session is controlled directly in-process through lifecycle
   methods;
-- Channel-to-Core mutation uses one generic `invoke(command, payload)` port;
+- Channel-to-Core mutation and `admin.sock` both use one generic Core Command
+  registry through transport adapters with identical semantics;
 - Core-to-Channel observation uses one live, best-effort subscription port;
-- Agent-to-Channel MCP remains a separate optional composition;
-- the initial Channel Command catalog contains only `team.submit` and
-  idempotent `team.create`;
+- Channel MCP registration flows through Core into Dispatcher and TeamLeader
+  Agent Runtimes, while their tool calls return through the same Core-owned
+  proxy to live-session or provider-level Channel handlers;
+- every registered Core Command is callable through both `admin.sock` and the
+  Channel port, with no exposure policy; the Feishu refactor consumes only
+  `team.submit` and idempotent `team.create`;
 - the initial Channel event catalog contains only `team.state`, `teammate.state`,
   `teammate.turn.submitted`, `teammate.turn.settled`,
   `teammate.turn.message`, and `teammate.turn.tool_call`;
@@ -367,7 +371,7 @@ interface ChannelProvider<TConfig> {
   readonly config?: ChannelConfigCapability<TConfig>;
   readonly onboard?: ChannelOnboardCapability;
   readonly diagnostic?: ChannelDiagnosticCapability;
-  readonly sessionlessMcp?: ChannelSessionlessMcpCapability;
+  readonly mcp?: ChannelMcpCapability<TConfig>;
 }
 
 interface ChannelInstance {
@@ -398,6 +402,49 @@ interface ChannelEventSource {
 interface ChannelEventSubscription {
   unsubscribe(): void;
 }
+
+type ChannelMcpCaller =
+  | { readonly kind: "dispatcher" }
+  | {
+      readonly kind: "team_leader";
+      readonly team_name: string;
+      readonly leader_name: string;
+    };
+
+interface ChannelMcpCapability<TConfig> {
+  describe(
+    config: TConfig,
+    context: { readonly caller: ChannelMcpCaller },
+  ): readonly ChannelMcpToolRegistration[];
+
+  invoke?(
+    call: ChannelMcpCall,
+    context: ChannelMcpCallContext,
+  ): Promise<JsonValue>;
+}
+
+interface ChannelMcpToolRegistration {
+  readonly tool: ChannelMcpToolDescriptor;
+  readonly target: "session" | "provider";
+}
+
+interface ChannelSessionMcpCapability {
+  invoke(
+    call: ChannelMcpCall,
+    context: ChannelMcpCallContext,
+  ): Promise<JsonValue>;
+}
+
+interface ChannelMcpCall {
+  readonly name: string;
+  readonly arguments: Readonly<Record<string, JsonValue>>;
+}
+
+interface ChannelMcpCallContext {
+  readonly dispatcher_id: string;
+  readonly channel_id: string;
+  readonly caller: ChannelMcpCaller;
+}
 ```
 
 `createSession`, `initialize`, `start`, and `close` are direct same-process
@@ -413,28 +460,115 @@ Channel. Adding a Command or event changes only its catalog/schema and
 consumers, not the base lifecycle interface.
 
 MCP is deliberately composed outside the base session. A Channel with no tools
-does not implement fake members, while live and provider-level sessionless tools
-retain explicit owners. Provider identity/config discovery and operational
-capabilities remain direct control-plane concerns. As with Agent Runtime
-Providers, Channel registration `ref` and `descriptor` live only in Core's
-`RegisteredProvider` wrapper and are not echoed on this interface.
+does not implement fake members. A `target: "session"` registration requires the
+created instance's `mcp` handler; a `target: "provider"` registration requires
+the Provider capability's optional `invoke` handler. Core validates those pairs
+before injection, so no unavailable tool is advertised. Provider
+identity/config discovery and operational capabilities remain direct
+control-plane concerns. As with Agent Runtime Providers, Channel registration
+`ref` and `descriptor` live only in Core's `RegisteredProvider` wrapper and are
+not echoed on this interface.
 
 ### 2.2 Command protocol
 
-The in-process invoker and any admin adapter use the same Core-owned registry.
-The public function accepts a name and JSON-compatible payload, but Core resolves
-that name to a versioned schema, validates size and shape, attaches the invoker's
-dispatcher and Channel identity, and returns a typed result or error.
+There is one authoritative `CoreCommandRegistry`, not an admin method table plus
+a Channel catalog. Three adapters converge on it:
 
-The initial registry is exactly:
+```text
+admin CLI / Dreamux MCP shims -> admin.sock NDJSON adapter --\
+ChannelProvider              -> in-process invoke adapter ----> CoreCommandRegistry
+Channel MCP stdio shim       -> admin.sock NDJSON adapter --/          |
+                                                                      v
+                                                           domain Command handler
+```
+
+Both public adapters accept a name and JSON-compatible payload. They resolve the
+same definition, run the same size/shape validation, attach their factual caller
+context, execute the same domain handler, and return the same typed result or
+error. The socket envelope `{id, method, params}` is only transport framing.
+`adminMethods` is deleted as an independent authority; the admin server becomes
+an adapter over the registry.
+
+```ts
+interface CoreCommandDefinition<Name extends string, Input, Output> {
+  readonly name: Name;
+  readonly version: 1;
+  readonly input: JsonSchema;
+  readonly output: JsonSchema;
+  parse(payload: JsonValue): Input;
+  execute(context: CoreCommandContext, input: Input): Promise<Output>;
+}
+
+type CoreCommandSource = "admin_socket" | "channel" | "mcp_proxy";
+
+interface CoreCommandContext {
+  readonly source: CoreCommandSource;
+  readonly dispatcher_id?: string;
+  readonly channel_id?: string;
+  readonly caller?: ChannelMcpCaller;
+}
+
+interface CoreCommandRegistry {
+  invoke(
+    context: CoreCommandContext,
+    name: string,
+    payload: JsonValue,
+  ): Promise<JsonValue>;
+}
+```
+
+`source` and caller fields are facts needed by some domain operations, logging,
+deduplication, or the Channel-MCP lease. They never filter the registry. There
+is deliberately no exposure/audience property, allowlist, describe-by-caller,
+or capability negotiation: every registered Command is callable by both the
+admin-socket and Channel adapters, subject only to the Command's ordinary input
+and domain invariants.
+
+The normalized registry is grouped by the entity that owns each action:
+
+| Namespace | Canonical Commands after this refactor |
+| --- | --- |
+| Server | `server.status` |
+| Dispatcher | `dispatcher.list`, `dispatcher.status`, `dispatcher.start`, `dispatcher.stop` |
+| Team | `team.create`, `team.submit`, `team.list`, `team.status`, `team.history`, `team.dissolve` |
+| TeamMate | `teammate.spawn`, `teammate.submit`, `teammate.close`, `teammate.list`, `teammate.status`, `teammate.history`, `teammate.last`, `teammate.capabilities` |
+| Workflow | `workflow.run`, `workflow.status`, `workflow.stop`, `workflow.list` |
+| Scheduler | `scheduler.cron.create`, `scheduler.cron.update`, `scheduler.cron.delete`, `scheduler.cron.list` |
+| Channel MCP infrastructure | `channel.mcp.describe`, `channel.mcp.invoke` |
+
+The inventory deliberately removes `team.bind_channel` and
+`team.transfer_back`: external binding is Channel-owned MCP behavior. It removes
+the complete `collaboration_space.*` family with the deleted Core container.
+`channel.invoke_tool` is replaced by the generic lease-bound
+`channel.mcp.invoke`. `team.send` and `teammate.send` become the domain-consistent
+`team.submit` and `teammate.submit`; no old-name aliases remain. CLI and
+Agent-facing MCP tool names may remain human-oriented adapter vocabulary, but
+their execution delegates to these canonical Commands rather than reimplementing
+schemas or policy.
+
+Feishu uses only `team.submit` and `team.create` in this implementation. That is
+a consumer scope statement, not a smaller registry or a permission boundary.
+Another Channel can invoke any Command above without a Core contract change.
+
+The two Commands whose contracts change materially for Channel use are:
 
 #### `team.submit`
 
 ```ts
 interface TeamSubmitCommand {
   readonly team_name?: string;
-  readonly input: InboundTurnInput;
-  readonly correlation?: string;
+  readonly submission:
+    | {
+        readonly kind: "inbound";
+        readonly input: InboundTurnInput;
+        readonly correlation?: string;
+      }
+    | {
+        readonly kind: "text";
+        readonly text: string;
+        readonly intent?: string;
+        readonly source_id?: string;
+      };
 }
 
 interface TeamSubmitResult {
@@ -450,16 +584,17 @@ interface TeamSubmitResult {
 ```
 
 Omitting `team_name` targets the Dispatcher Agent; otherwise Core resolves the
-stable Team and submits only to its TeamLeader. The invoker scopes source
-deduplication to the calling Channel. A successful/duplicate result carries the
-Core `turn_id`.
+stable Team and submits only to its TeamLeader. The `inbound` variant is used by
+Channel bridges; the `text` variant replaces current admin `team.send`. The
+invoker scopes inbound source deduplication to the calling Channel. A
+successful/duplicate result carries the Core `turn_id`.
 
 `TEAM_NOT_FOUND` and `TEAM_CLOSED` are typed pre-admission failures. Only those
 failures permit the Channel to remove a stale binding and retry once to the
 Dispatcher. An unknown boundary outcome is `ambiguous`; it is never retried.
 The existing `skipped -> stopped` boundary normalization remains.
 
-`correlation` is a bounded opaque Channel-chosen string. Core never parses,
+Inbound `correlation` is a bounded opaque Channel-chosen string. Core never parses,
 routes, authorizes, or deduplicates with it. The session-bound invoker already
 establishes Channel provenance, so no provider/channel wrapper is duplicated in
 the value. Core echoes it unchanged on all related submitted/activity/settled
@@ -471,9 +606,13 @@ events.
 interface TeamCreateCommand {
   readonly request_id: string;
   readonly name_prefix?: string;
-  readonly agent_runtime: string;
-  readonly intent?: string;
-  readonly identity?: string;
+  readonly intent: string;
+  readonly leader: {
+    readonly agent_runtime: string;
+    readonly identity?: string;
+    readonly prompt?: string;
+    readonly skill_sources?: readonly AgentRuntimeSkillSource[];
+  };
   readonly repo?: ManagedRepoRequest;
 }
 
@@ -483,10 +622,11 @@ interface TeamCreateResult {
 }
 ```
 
-The payload preserves the existing automatic-provisioning inputs, including an
-optional bounded identity, but does not expose arbitrary prompts or skill roots.
-Core still injects mandatory TeamLeader instructions and skills. `identity` is
-Channel-owned automatic-provisioning policy, not a general Agent-control port.
+The payload preserves the existing admin Team-creation capability while adding
+restart-durable request identity. Core still injects mandatory TeamLeader
+instructions and skill sources; supplied values extend rather than remove
+those requirements. Feishu automatic provisioning supplies only the smaller
+subset it owns, but the shared Command does not define a Feishu-only schema.
 
 Core canonicalizes the validated creation payload and persists
 `request_id -> {payload_hash, reserved_team_name, status}` before resource
@@ -501,8 +641,11 @@ emits an actionable operational diagnostic. This failure is preferable to
 creating a duplicate Team or silently editing server-owned state. The ledger is
 Core-owned and atomically persisted; Channel targets never enter it.
 
-No Team read, Team dissolve, TeamMate, Workflow, scheduler, binding, host, or
-diagnostic capability is added to the Channel Command registry.
+All other surviving definitions retain their current domain behavior while
+moving parsing, errors, and execution out of `admin/methods.ts` into their
+domain-owned Command modules. The Channel adapter can invoke them without
+additional registration. Non-Command Provider configuration, onboarding, and
+diagnostics remain direct control-plane capabilities.
 
 ### 2.3 Event protocol and catalog
 
@@ -595,10 +738,79 @@ machinery in this refactor.
 
 ### 2.5 Channel MCP forwarding
 
-Core retains the existing Agent Runtime MCP injection and forwarding chain but
-generalizes its types around the optional MCP composition. It validates the
-declared tool, schema, execution location, result, and caller context, then
-forwards to a live session MCP handler or provider-level sessionless handler.
+Channel MCP has two opposite halves and is the third cross-boundary mechanism,
+separate from Channel Commands and events:
+
+```text
+registration / injection
+ChannelProvider.mcp.describe(config, caller)
+  -> Core validates the caller-specific registrations
+  -> Core builds its own channel-MCP proxy descriptor
+  -> AgentRuntimeCreateContext.mcpServers
+  -> Agent Runtime Provider configures the native Agent exactly as supplied
+
+tool invocation
+native Agent tools/call
+  -> MCP JSON-RPC over the Core-owned stdio proxy
+  -> Core Channel-MCP router with baked caller/channel scope
+  -> ChannelInstance.mcp.invoke OR ChannelProvider.mcp.invoke
+  -> canonical Channel result/error returns along the same route
+```
+
+Core asks `describe` only for Dispatcher and TeamLeader runtime construction.
+It never injects Channel MCP into an ordinary Team member or standalone
+TeamMate. The Channel returns a caller-specific catalog, so Feishu's
+`bind_channel`, `unbind_channel`, and `list_bindings` registrations appear only
+for Dispatcher while reply/react may also appear for TeamLeader. Core does not
+know those names or encode their product policy.
+
+For each non-empty catalog, Core validates unique names, JSON-compatible tool
+metadata, input/output schemas, and declared handler target. It then creates a
+short-lived in-memory `ChannelMcpLease` bound to the runtime generation,
+dispatcher, configured Channel instance, caller, validated registrations, and
+resolved handlers. The public Provider seam does not expose this host lease.
+
+Core gives the Agent Runtime an `AgentRuntimeMcpServer` for one generic
+`dreamux channel-mcp` stdio shim. Its launch data contains only the admin-socket
+location and an opaque lease token, preferably through the child environment
+rather than command-line JSON. It does not carry a base64 tool catalog,
+provider ref, caller fields, or Channel policy. The Agent Runtime Provider
+launches exactly the supplied MCP server list; it neither discovers Channel
+tools nor loads Channel packages.
+
+At shim startup, one internal `channel.mcp.describe` request presents the lease
+token over the existing Unix admin socket. Core checks the live lease and
+returns its already validated tool metadata. The shim creates one official MCP
+SDK `McpServer` and programmatically calls `registerTool` for every returned
+descriptor. Each registered SDK handler is the same small closure parameterized
+only by tool name: it sends `channel.mcp.invoke {lease, name, arguments}` back
+over the socket. The official SDK remains the sole owner of MCP negotiation,
+`tools/list`, input/output schema validation, cancellation, and JSON-RPC error
+framing.
+
+On invoke, Core verifies that the lease is live and the named tool belongs to
+its frozen catalog, then dispatches using the registration's `target`, never a
+hard-coded tool name. `session` reaches the resolved
+`ChannelInstance.mcp.invoke`; `provider` reaches the resolved
+`ChannelProvider.mcp.invoke` and works without a live session. The canonical
+result/error returns through the same Unix socket and stdio connection. The
+model supplies only tool arguments; routing identity is absent from its schema.
+
+Catalogs are immutable for one runtime generation. A configuration or catalog
+change takes effect on the next runtime construction rather than mutating an
+already initialized MCP server. Runtime replacement or stop revokes all of its
+Channel MCP leases synchronously; a late describe/invoke fails before Channel
+dispatch. Channel handlers remain alive until accepted runtime work and MCP
+calls have converged during shutdown.
+
+This retains one unavoidable process hop: the native Agent owns a stdio MCP
+child while the authoritative Channel instance lives inside Dreamux Core. The
+generic shim plus one Unix-socket hop is the minimum that preserves both facts.
+Loading the Channel Provider in the shim would create a second Channel authority;
+moving MCP serving into every Agent Runtime Provider would leak Channel and MCP
+policy through the neutral runtime seam; a Core-hosted HTTP MCP server would add
+listener, authentication, transport-support, and lifecycle surface without
+removing the proxy boundary. All three alternatives are rejected.
 
 Caller context survives only where MCP dispatch, audit, logging, and existing
 COT anchoring consume it. Core binding-owner and message-to-target proof are
@@ -782,8 +994,8 @@ ambiguity.
 - minimal Agent Runtime types and loader conformance;
 - leased state/activity sinks and `fresh | resumed` start result;
 - neutral active-session Activity reader and `last` adapter;
-- Core Command registry, two schemas, in-process invoker, typed errors, and
-  durable Team-create ledger;
+- unified Core Command registry, domain-owned schemas/handlers, admin-socket and
+  in-process adapters, typed errors, and durable Team-create ledger;
 - six-event registry, fail-open scoped subscriptions, and lifecycle fencing;
 - Channel lifecycle port and optional MCP composition;
 - Feishu-owned binding/provisioning state and tools;
@@ -832,11 +1044,17 @@ compile breaks are resolved inside the same implementation change.
 - Active and closed Activity fixtures prove stable cursor pagination,
   chronological records, tool filtering, bounds, neutral errors, and absence of
   native paths or tool contents.
-- A minimal Channel fixture constructs, initializes, subscribes, starts,
-  invokes both Commands, receives each event kind, and closes without any
-  provider-specific or MCP stub.
+- A minimal Channel fixture constructs, initializes, subscribes, starts, invokes
+  `team.submit` and `team.create`, receives each event kind, and closes without
+  any provider-specific or MCP stub.
+- Registry contract tests enumerate every canonical Command and prove the admin
+  socket and Channel adapters resolve the same definition, schema, handler,
+  result, and error. No adapter owns a second method table or exposure policy.
 - A no-MCP fixture has no MCP composition; live and sessionless MCP fixtures
   both forward tools with caller context.
+- Channel MCP injection tests prove caller-specific catalogs reach only
+  Dispatcher and TeamLeader create contexts, ordinary TeamMates receive none,
+  and Agent Runtime Providers launch the exact Core-supplied MCP descriptors.
 
 ### Behavioral gates
 
@@ -856,6 +1074,11 @@ compile breaks are resolved inside the same implementation change.
   `teammate.state` for Dispatcher, TeamLeader, ordinary member, and standalone
   TeamMate roles; contained changes also republish `team.state` with the current
   TeamLeader/member summaries and never place Dispatcher in a Team snapshot.
+- Channel MCP round-trip tests cover registration validation, Dispatcher versus
+  TeamLeader visibility, lease-bound caller/channel scope, official-SDK dynamic
+  registration, session and provider handler targets, canonical result/error
+  return, lease revocation, and absence of catalog JSON or tool-name branches in
+  launch arguments and Core.
 - COT regression tests preserve the current cards, correlation, scheduled and
   completion anchors, redaction/truncation, and tool input/result rendering.
   Provider/observer errors and subscription revocation cannot change Core
@@ -916,8 +1139,9 @@ binding recreation, scheduler/dissolve behavior, and removed MCP/admin names.
 ## 9. Rejected alternatives
 
 - Do not translate every old `ChannelRoutes` callback into a Command.
-- Do not expose Workflow, scheduler, TeamMate management, Team reads, or host
-  maintenance to Channel.
+- Do not build a Channel-specific Command subset, exposure policy, or duplicate
+  handler table. Feishu's two-command consumption scope is not a registry
+  boundary.
 - Do not add Core-to-Channel queries, binding mirrors, replay, snapshots, or
   independent Channel reconnection.
 - Do not keep `waitIdle` or derive another idle model.

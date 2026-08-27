@@ -136,9 +136,11 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   tools currently adapt overlapping subsets of these services, but are
   transports rather than the authority for the capability catalog.
 - Completion routing and Agent Runtime ownership are internal orchestration
-  capabilities. Server/dispatcher start-stop, daemon, configuration,
-  onboarding, and diagnostics are host-maintenance capabilities. Neither class
-  automatically belongs in the external Channel Command catalog.
+  capabilities. Server/dispatcher start-stop and status are host-maintenance
+  capabilities already invoked through `admin.sock`; they remain Commands in
+  the unified Core catalog even though a current Channel may never call them.
+  Daemon process bootstrap, configuration, onboarding, and diagnostics that are
+  not current admin Commands remain direct host control-plane capabilities.
 - Turn admission currently has two equivalent boundary adapters, one for
   dispatcher delivery and one for Team delivery. Both normalize the shared
   internal `TurnAdmission` vocabulary to
@@ -176,44 +178,51 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - Product-specific routing, collaboration, binding, or platform methods do not
   become base lifecycle members.
 
-### 2. Channel-to-Core Command invocation
+### 2. Unified Core Command invocation
 
 - A Channel owns the complete loop for receiving an external message,
   interpreting it, deciding what Dreamux action to take, and selecting a Core
   Command.
 - The base mutation boundary is one request/response primitive equivalent to
   `const result = await invoke(command, payload)`.
-- Core owns the Command catalog. It is derived from stable Core domain use cases
-  and an explicit decision about which of those use cases an external bridge may
-  invoke, not from the methods a current Channel happens to call.
-- Trust applies only after a capability is deliberately placed in the small
-  Channel Command catalog; it does not make every Dreamux business capability a
-  Channel Command. A catalogued Command needs no second Channel-specific
-  allowlist, but still owns the validation, admission, authorization, and
-  idempotency rules that apply to all callers.
+- Core owns one Command registry. `admin.sock` and the in-process Channel
+  `invoke` port are peer transport adapters into that same registry; they do not
+  own separate method tables, schemas, validation, errors, or execution paths.
+- Every Command registered in the Core registry is callable through both
+  adapters. There is no transport-specific exposure policy, allowlist, or
+  capability negotiation. A current Channel may consume only a small subset,
+  but non-consumption is not a permission boundary and does not produce a
+  second Channel catalog.
 - Each Command has a Core-owned name, input, result, error, authorization,
   admission, and idempotency contract independent of Feishu, Slack, Telegram,
   or another provider.
-- A Dreamux capability may remain Agent/MCP-only and need no Channel Command.
-  Shared domain services do not imply shared transport exposure.
+- Caller and transport identity may be attached as execution context where the
+  domain operation needs it, but it must not be used to hide registered
+  Commands from Channel callers. Domain validation and authorization remain
+  properties of the Command itself rather than an exposure layer.
 - Existing `deliver`, `ensureCollaborationTarget`, `deliverExact`, and
   `targetLifecycle` are only a migration inventory. Requirement and solution
   work must decide whether their underlying Core use cases belong in the new
   catalog, are already covered by a more fundamental Core capability, or should
   be removed. They are not automatically translated one-for-one into Commands.
 - Future Channel-originated behavior extends the Core-owned Command
-  catalog/schema rather than the base Channel interface.
-- The Channel catalog includes external turn submission/admission and the
-  idempotent Team creation needed for Channel-owned automatic provisioning.
-  Workflow, scheduler, and their lifecycle/status operations remain internal
-  Dreamux capabilities callable by Agents through Dreamux MCP only; they expose
-  neither Channel Commands nor Channel events. The current Core Channel-binding
-  and Collaboration Space families are not carried forward. External routing
-  moves to Channel, while Team is the sole Core container used to realize an
-  external collaboration target.
-- Host-maintenance capabilities such as daemon/dispatcher process control,
-  configuration, onboard, and doctor are not part of the Channel Command
-  catalog. They remain in the local operator/CLI control plane.
+  registry/schema rather than the base Channel interface or a parallel admin
+  method table.
+- The unified catalog is organized by authoritative Dreamux domains. Its
+  surviving public families are `server.*`, `dispatcher.*`, `team.*`,
+  `teammate.*`, `workflow.*`, and `scheduler.cron.*`; the exact target names are
+  frozen by the technical design after a complete inventory of current
+  `admin.sock` methods. This refactor does not create a generic capability
+  namespace or retain transport-named domain actions.
+- The current Core Channel-binding and Collaboration Space command families are
+  not carried forward. External binding moves to Channel-owned MCP tools, while
+  Team is the sole Core container used to realize an external collaboration
+  target. The Channel-MCP proxy's lease-bound describe/invoke operations also
+  use the same registry mechanism, but remain infrastructure operations rather
+  than Dreamux domain capabilities.
+- The Feishu Channel implementation changed in this refactor calls only
+  `team.submit` and restart-durable idempotent `team.create`. That implementation
+  scope does not narrow what another Channel may invoke through the shared port.
 - Turn submission accepts an optional stable `team_name` selected by the
   Channel and delivers only to that Team's TeamLeader. Omission selects the
   Dispatcher Agent. Team lookup failure is a proven pre-admission result;
@@ -283,20 +292,33 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 
 ### 4. Optional Channel MCP extension
 
-- A Channel may register a provider/config-specific MCP tool catalog. Dreamux
-  owns the Agent Runtime MCP descriptor and proxies it to the runtime.
-- Agent Runtime tool calls return through Dreamux to a Channel-owned handler;
-  the provider's canonical result or error returns through the same path.
+- A Channel may register a provider/config- and caller-specific MCP tool
+  catalog. Channel MCP is injected only into Dispatcher and TeamLeader Agent
+  Runtimes; ordinary Team members and standalone TeamMates do not receive it.
+  The Channel owns which tools are visible to each of those two caller roles.
+- The registration direction is Channel Provider -> Dreamux Core -> Agent
+  Runtime Provider -> native Agent. Dreamux owns and validates the concrete
+  Agent Runtime MCP server descriptor and proxy launcher; a Channel declares
+  tool schemas and handling ownership but does not inject arbitrary launcher
+  commands into Agent Runtime configuration.
+- The invocation direction is native Agent -> MCP stdio proxy -> Dreamux Core ->
+  the registered Channel handler. Core attaches the Dispatcher, configured
+  Channel instance, and caller identity from the scoped MCP server; tool
+  arguments cannot forge that routing context. The provider's canonical result
+  or error returns through the same path.
 - This mechanism is distinct from Channel-to-Core Command invocation and
   Core-to-Channel event delivery.
 - The design must support both live-session tools and provider-level
-  sessionless tools such as the current `list_chat_bots` behavior.
+  sessionless tools such as the current `list_chat_bots` behavior. Tool
+  registration declares which owner handles a call; Core contains no
+  tool-name-specific routing branches.
 - Direct `reply?` and `react?` base-session members are not retained when their
   behavior is already provider-owned MCP capability.
 - A Channel that supports external-route binding owns provider-specific
-  `bind_channel`, `unbind_channel`, and `list_bindings` MCP tools. Dispatcher and
-  other permitted Agents invoke them through the same Dreamux MCP proxy; they
-  are not Team MCP or Core Commands.
+  `bind_channel`, `unbind_channel`, and `list_bindings` MCP tools. They are
+  present only in the Dispatcher catalog; a TeamLeader does not see them.
+  Reply/react and other Channel tools may be exposed to Dispatcher and/or
+  TeamLeader according to Channel policy. None are Team MCP or Core Commands.
 
 ### Channel-owned external routing
 
@@ -654,13 +676,16 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - A minimal Channel fixture can be directly constructed/started/stopped,
   invoke Core Commands, and receive Core events without Team-, worktree-, or
   provider-specific base methods.
-- The final Command catalog is traced to Core-owned domain use cases and an
-  explicit external-callability decision; it is not a one-for-one rewrite of
-  current Channel callback members.
-- The initial Channel Command catalog contains only external `team.submit` and
-  restart-durable idempotent `team.create` for automatic provisioning. Team,
-  TeamMate, Workflow, scheduler, and other Agent operations remain MCP-only
-  unless a later requirement explicitly adds a Channel Command.
+- The final unified Command catalog is traced to Core-owned domain use cases,
+  organized by domain namespace, and shared without drift by the `admin.sock`
+  and Channel adapters; it is not a one-for-one rewrite of current Channel
+  callback members.
+- Every surviving registered Command is invocable through both `admin.sock` and
+  Channel `invoke`, with no exposure policy. The Feishu Channel implementation
+  in this refactor invokes only external `team.submit` and restart-durable
+  idempotent `team.create`; Team, TeamMate, Workflow, scheduler, dispatcher, and
+  server Commands remain available through the same port without requiring
+  Feishu to consume them.
 - The final event catalog is traced to stable Core facts rather than the needs
   of a concrete Channel implementation.
 - The initial event catalog contains only Team state, the unified
@@ -754,13 +779,15 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - Core capabilities and observable facts are designed first and independently
   of Channel differences. Channel ports are adapters to that Core-owned catalog;
   current Channel call sites do not define it.
-- Channel is trusted for the deliberately small set of Commands exposed to it;
-  trust does not turn internal Dreamux capabilities into Channel Commands.
-- Workflow and scheduler are Agent/MCP-only internal capabilities. They expose
-  no Channel Commands or lifecycle events. Host-maintenance operations likewise
-  remain outside the Channel surface.
-- The initial Channel Command catalog is exactly external `team.submit` plus
-  restart-durable idempotent `team.create` for automatic provisioning. The
+- Channel and `admin.sock` invoke the same complete Core Command registry. No
+  exposure policy or per-transport allowlist exists; transport identity is
+  execution context rather than catalog filtering.
+- Workflow, scheduler, TeamMate, Team, dispatcher, and server operations already
+  represented as Commands are callable through that shared registry. This does
+  not require corresponding Core events, and configuration/onboard/diagnostic
+  control-plane operations that are not Commands stay outside it.
+- The Feishu Channel work in this refactor calls exactly external `team.submit`
+  plus restart-durable idempotent `team.create` for automatic provisioning. The
   initial event catalog is the Team aggregate state, unified TeamMate state, and
   namespaced TeamMate turn facts needed for binding invalidation and the frozen
   post-COT presentation. The generic ports are intentionally extensible, but no
@@ -824,9 +851,10 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - Whether provider discovery, config parsing, onboarding, identity, and
   diagnostics remain on one facade or compose separately.
 - The exact Channel lifecycle/control base members.
-- After the minimal exposed capabilities are fixed, their exact Command names
-  and schemas remain technical choices. Internal Agent/MCP and host-maintenance
-  capabilities remain separate.
+- The complete current `admin.sock` method inventory must be normalized into
+  domain-owned Command names and schemas. The registry structure, typed
+  invocation context, and adapter composition remain technical choices, but no
+  second Channel catalog or exposure policy may be introduced.
 - After the public event categories and visibility policy are fixed, their exact
   schemas remain a technical choice.
 - The transport-independent Command/event catalog shape, versioning, validation,
