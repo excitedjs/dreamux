@@ -15,11 +15,12 @@
   [Codex proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/codex.md),
   [Claude proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/claude.md), and
   [Trae Seed 2.1 proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/trae-seed-2-1.md).
-- Final solution: [Authoritative technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `b4a1bd81929b9b3751f097177c374293724953ab696f0161ae8688a331bcda2f`.
+- Final solution: [Authoritative technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `f0274078ae213d02c7cd2d0008d06714d8ac7901c3de45971935f398d7ad1e7d`.
+- Fable audit: The first final pass accepted the architecture and found two contract-snapshot defects: `AgentRuntime.submit` returned the wrong type and Channel identity discovery was omitted. Both are corrected in the current solution revision; focused re-audit is pending.
 - Solution review Issue: [#349 Architecture: minimize Agent Runtime and Channel provider boundaries](https://github.com/excitedjs/dreamux/issues/349)
 - Solution workflow: Complex three-proposal consultation with one independent round followed by one cross-review round; selected by the operator through the Team's bound channel on 2026-08-27.
 - Blockers: None. Channel and Core are same-process and lifecycle-coupled; no independent Channel offline/reconnect, remote state synchronization, startup Team-read reconciliation, snapshot, or replay model is required. Remaining items are technical-solution obligations.
-- Next action: Fable performs the final architecture audit, then the operator reviews the authoritative solution through Issue #349. Product code remains unchanged until explicit development approval.
+- Next action: Fable performs a focused re-audit of the corrected contract snapshot, then the operator reviews the authoritative solution through Issue #349. Product code remains unchanged until explicit development approval.
 - Related tasks: Surfaced after [Feishu COT Conversation Cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md); this is an independent architecture outcome.
 
 ## Development approval

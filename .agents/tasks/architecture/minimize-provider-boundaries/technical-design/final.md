@@ -179,6 +179,13 @@ interface AgentRuntimeCreateContext<
   readonly logger?: AgentRuntimeLogger;
 }
 
+interface AgentRuntimeMcpServer {
+  readonly name: string;
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly env?: Readonly<Record<string, string>>;
+}
+
 interface AgentRuntimeIdentity<TSession extends AgentRuntimeSessionRef> {
   readonly runtimeId: string;
   readonly session: TSession | null;
@@ -220,7 +227,7 @@ structured-output scope negotiation.
 ```ts
 interface AgentRuntime {
   start(): Promise<AgentRuntimeStartOutcome>;
-  submit(input: AgentRuntimeSubmissionInput): RuntimeSubmission;
+  submit(input: AgentRuntimeSubmissionInput): Promise<RuntimeAdmission>;
   stop(): Promise<void>;
 }
 
@@ -241,11 +248,14 @@ type AgentRuntimeSubmissionInput =
     };
 ```
 
-The existing `RuntimeSubmission` object identity and settlement contract remain
-unchanged because Core uses the object as its correlation key. The union keeps
-Channel-rendered input distinct from Dreamux-owned plain text. It also preserves
-source and deduplication semantics for completion, scheduled, control, prompt,
-and Channel turns.
+The existing `RuntimeAdmission` union remains intact, including `submitted`,
+`duplicate`, `stopped`, `skipped`, `failed`, and `ambiguous`. Only its
+`submitted` branch carries the immutable `RuntimeSubmission` object whose
+identity Core uses as the settlement correlation key. The Command boundary
+normalizes internal `skipped` to public `stopped`; the Provider seam does not.
+The input union keeps Channel-rendered input distinct from Dreamux-owned plain
+text and preserves source/deduplication semantics for completion, scheduled,
+control, prompt, and Channel turns.
 
 `start` receives prior session identity only through the immutable create
 context. A non-null session must restore continuous model context; failure
@@ -369,9 +379,14 @@ interface ChannelProvider<TConfig> {
   ): Promise<ChannelInstance>;
 
   readonly config?: ChannelConfigCapability<TConfig>;
+  readonly identity?: ChannelIdentityCapability<TConfig>;
   readonly onboard?: ChannelOnboardCapability;
   readonly diagnostic?: ChannelDiagnosticCapability;
   readonly mcp?: ChannelMcpCapability<TConfig>;
+}
+
+interface ChannelIdentityCapability<TConfig> {
+  get(config: TConfig): string;
 }
 
 interface ChannelInstance {
@@ -587,7 +602,9 @@ Omitting `team_name` targets the Dispatcher Agent; otherwise Core resolves the
 stable Team and submits only to its TeamLeader. The `inbound` variant is used by
 Channel bridges; the `text` variant replaces current admin `team.send`. The
 invoker scopes inbound source deduplication to the calling Channel. A
-successful/duplicate result carries the Core `turn_id`.
+`submitted` result carries the Core `turn_id`; `duplicate` does not invent one
+because the current Provider-owned deduplication result has no submission
+identity or source-to-turn ledger.
 
 `TEAM_NOT_FOUND` and `TEAM_CLOSED` are typed pre-admission failures. Only those
 failures permit the Channel to remove a stale binding and retry once to the
@@ -605,7 +622,7 @@ events.
 ```ts
 interface TeamCreateCommand {
   readonly request_id: string;
-  readonly name_prefix?: string;
+  readonly name_prefix: string;
   readonly intent: string;
   readonly leader: {
     readonly agent_runtime: string;
@@ -619,6 +636,7 @@ interface TeamCreateCommand {
 interface TeamCreateResult {
   readonly status: "created" | "existing" | "closed";
   readonly team_name: string;
+  readonly leader_name: string;
 }
 ```
 
