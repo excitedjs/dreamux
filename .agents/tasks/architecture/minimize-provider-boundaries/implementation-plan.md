@@ -75,6 +75,86 @@ for the operator only when a genuinely unmodeled choice changes product
 behavior, externally visible semantics, persistence, destructive data handling,
 or another policy that cannot be derived safely from existing evidence.
 
+## Operator-raised cases
+
+These are concrete failures caught by the operator during this task. They are
+mandatory review precedents, not historical anecdotes:
+
+1. **System prompts were flattened to one string.** The written design omitted
+   a load-bearing current behavior and the Stage 1 contract mechanically
+   followed it. The review should first have inspected all current consumers and
+   prior Decisions. The retained neutral contract has ordered `replace` and
+   `append` forms: Dispatcher supplies both representations, each Provider
+   selects one native mechanism, and TeamLeader, ordinary TeamMate identity, and
+   Workflow operation prompts remain append-only. Dreamux reconstructs and
+   re-supplies the bundle whenever a runtime context is created; Provider-native
+   resume retention is never authoritative.
+2. **The merged submit method kept a replacement `kind` discriminator.** Removing
+   `channelInput` and `completionInput` while recreating the same split inside a
+   union was a rename, not a boundary reduction. The mandatory challenge is why
+   identical runtime behavior needs a source taxonomy. Agent Runtime now accepts
+   only final text; Channel renders its own external XML before invocation, and
+   Core retains origin and display facts without sending them through the
+   Provider seam.
+3. **`sourceId` and duplicate policy were left in every Provider adapter.** The
+   correct question was which layer owns stable invocation identity. Core knows
+   the target entity and invocation origin, so Core owns the bounded
+   process-local admission ledger and public `duplicate` result. Agent Runtime
+   receives no source id and contains no Dreamux idempotency policy.
+4. **Written baselines were treated as authority over unexamined source.** A
+   requirement or design snapshot only governs scenarios it actually modeled.
+   When current code, a real consumer, a protocol invariant, or a prior Decision
+   conflicts with it, implementation stops and the conflict is investigated;
+   the code is never mechanically reshaped to make the document true.
+5. **Domain names reflected transport mechanics instead of ownership.** Generic
+   names such as `turn.submit`, `agent.state`, and unscoped `turn.tool_call`
+   obscured the entity boundary. The locked vocabulary is `team.submit`,
+   `teammate.state`, and `teammate.turn.*`; Dispatcher and TeamLeader are also
+   TeamMates. The same ownership rule applies to modules, files, internal types,
+   and function names, not only public strings.
+6. **The first Command design confused today's Feishu usage with the platform
+   catalog.** Feishu currently needs only `team.submit` and `team.create`, but
+   that is a consumer fact, not an exposure policy. `admin.sock`, Channel
+   invocation, CLI adapters, and Agent MCP facades delegate to one canonical,
+   domain-namespaced Core Command registry. Do not build a second registry or an
+   exposure-policy layer.
+7. **The Channel-MCP-to-Agent path was initially missing.** Tool definitions are
+   registered in the official-SDK MCP shim used by Dispatcher and TeamLeader.
+   Each invocation is forwarded through `admin.sock` to Core, then dispatched
+   through the canonical Command mechanism to the owning Channel. A design that
+   shows only Channel-to-Core Commands is incomplete unless this reverse tool
+   path, its caller context, lease, lifecycle, and error return are also closed.
+8. **Deleting the Core Collaboration Space container was over-applied to the
+   product flow.** Core does not regain a Collaboration Space domain object, but
+   Feishu retains Dispatcher-only Channel MCP tools for binding, unbinding,
+   getting, and listing its Channel-owned collaboration-space policy. Automatic
+   provisioning composes ordinary Team Commands. Deleting an owner does not
+   imply deleting a user capability that can be cleanly re-owned.
+9. **Binding was modeled around Feishu identifiers inside Core.** Topic and chat
+   hierarchy are Channel knowledge. Channel owns its opaque local binding state
+   and selects a TeamLeader target before `team.submit`; Core does not interpret
+   provider metadata or rebuild parent-topic fallbacks. A composite view may
+   deliberately require separate Team and Channel reads rather than duplicating
+   binding authority in Team state.
+10. **`last` was treated as settled transcript history.** Its actual user story
+    is observing a TeamMate that may remain inside one active turn for an hour.
+    Provider-owned recent Activity Records therefore cover the growing active
+    session and expose assistant messages plus tool name/status; Dreamux state is
+    queried separately. A neutral name alone is insufficient if the consumer
+    story still fails.
+11. **`waitIdle` was defended after its product purpose had disappeared.** Team
+    dissolve is destructive cancellation, not graceful drainage: stop Workflow
+    and TeamMate processes immediately, fence further work, check owned worktree
+    safety, allow explicit `force`, and move expensive physical cleanup to the
+    background. Do not preserve a capability merely because old orchestration
+    consumed it.
+12. **COT was at risk of being redesigned as a reliable event system.** Its
+    current display is intentionally a live, best-effort projection: Provider
+    emits normalized activity, Core applies the existing redaction/projection,
+    and Channel consumes the event without replay, retransmission, or local
+    message storage. Preserve the tuned presentation and fail-open behavior;
+    lifecycle correctness belongs to Core state, not the COT stream.
+
 ## Stage ledger
 
 ### Stage 0: remove coupled tests
