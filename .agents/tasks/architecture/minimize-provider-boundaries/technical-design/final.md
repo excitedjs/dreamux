@@ -4,7 +4,7 @@
 
 This is the authoritative technical solution for the frozen requirement at
 `requirement.md` SHA-256
-`89e95d7fb3fd0dcf5585484becbd529a34d6d425e73aae500a31595210a5433c`.
+`527711f503b9a948a1e5eb0b58187b6736abeae3b9f7fb74084a4793df47642e`.
 
 It reconciles the three independent proposals and their single cross-review
 round. Where proposals disagreed, this design follows the frozen requirement
@@ -30,7 +30,8 @@ ports:
 - the initial Channel Command catalog contains only `turn.submit` and
   idempotent `team.create`;
 - the initial Channel event catalog contains only `team.state`, `agent.state`,
-  `turn.submitted`, `turn.settled`, `turn.message`, and `turn.tool_call`;
+  `teammate.turn.submitted`, `teammate.turn.settled`,
+  `teammate.turn.message`, and `teammate.turn.tool_call`;
 - external binding and provisioning become Channel-owned;
 - Core binding and Collaboration Space authorities are deleted;
 - scheduler and dissolve no longer depend on runtime idleness.
@@ -471,16 +472,19 @@ bounded JSON-compatible payload. The initial event union is exactly:
 
 - `team.state`;
 - `agent.state`;
-- `turn.submitted`;
-- `turn.settled`;
-- `turn.message`;
-- `turn.tool_call`.
+- `teammate.turn.submitted`;
+- `teammate.turn.settled`;
+- `teammate.turn.message`;
+- `teammate.turn.tool_call`.
 
-`turn.submitted` includes the Core `turn_id`, `team_name`/agent identity,
-required `turn_source`, and optional unchanged Channel correlation. Later turn
-events correlate by `turn_id` and carry the same optional Channel correlation.
-`turn_source` is not duplicated on later events because current consumers need
-it only to establish the COT anchor at submission.
+The `teammate` namespace identifies the Core entity that owns the whole turn
+event family; adding later domains does not overload a global `turn.*`
+namespace. `teammate.turn.submitted` includes the Core `turn_id`,
+`team_name`/agent identity, required `turn_source`, and optional unchanged
+Channel correlation. Later turn events correlate by `turn_id` and carry the same
+optional Channel correlation. `turn_source` is not duplicated on later events
+because current consumers need it only to establish the COT anchor at
+submission.
 
 Provider-normalized live activity continues through the existing Core
 conversation projection, redaction, truncation, and event payloads. Tool

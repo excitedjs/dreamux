@@ -244,7 +244,8 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   mechanism.
 - Core does not persist event message/tool contents for replay. It records only
   critical operational logs and does not use a local event-content store.
-- The current post-COT `turn.message` and `turn.tool_call` event behavior is a
+- The current post-COT message/tool-call behavior, exposed through the target
+  `teammate.turn.message` and `teammate.turn.tool_call` events, is a
   frozen compatibility baseline, not a redesign target. Providers emit the
   existing normalized real-time activity shape. Core applies the existing
   bounded presentation projection, workspace/secret redaction, and truncation,
@@ -261,12 +262,14 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   returns it unchanged on every submitted, activity, and settled event for that
   turn so the Channel can associate live presentation with the exact external
   interaction.
-- The initial event catalog is deliberately minimal: existing `team.state`,
-  `agent.state`, `turn.submitted`, `turn.settled`, `turn.message`, and
-  `turn.tool_call` facts required for Team binding invalidation and the frozen
-  COT behavior. Core binding/Collaboration Space events are deleted; Workflow,
-  scheduler, TeamMate-management, and other internal MCP capabilities add no
-  Channel events in this change.
+- The initial event catalog is deliberately minimal: `team.state`,
+  `agent.state`, `teammate.turn.submitted`, `teammate.turn.settled`,
+  `teammate.turn.message`, and `teammate.turn.tool_call` facts required for Team
+  binding invalidation and the frozen COT behavior. The `teammate` namespace
+  makes the owning Core entity explicit for the complete turn-event family.
+  Core binding/Collaboration Space events are deleted; Workflow, scheduler,
+  TeamMate-management, and other internal MCP capabilities add no Channel events
+  in this change.
 
 ### 4. Optional Channel MCP extension
 
@@ -712,9 +715,10 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   changing admission or settlement.
 - Existing COT presentation is unchanged. Providers emit the current normalized
   real-time activity shape; Core applies the current projection, redaction, and
-  truncation and publishes best-effort live `turn.message`/`turn.tool_call`
-  events. No retry, replay, retention, acknowledgement, or delivery guarantee is
-  added, and Channel observation remains fail-open.
+  truncation and publishes best-effort live `teammate.turn.message` /
+  `teammate.turn.tool_call` events. No retry, replay, retention,
+  acknowledgement, or delivery guarantee is added, and Channel observation
+  remains fail-open.
 - Provider `waitIdle` is removed without a replacement idle query or derived
   idle state. Scheduler submits every due fire immediately through normal
   admission and allows Provider-native folding into active work; it has no
