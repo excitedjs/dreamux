@@ -22,7 +22,7 @@ historical Decision that the design did not examine.
    unrelated test files stay intact. New coverage is intentionally deferred
    until the production design is complete.
 3. After every production stage, the TeamLeader reviews the whole stage diff
-   only for drift from the frozen requirement/design and for unexpected scope.
+   for requirement/design drift, unexpected scope, and architectural integrity.
    Intermediate typecheck, build, and coverage are not stage gates and may be
    broken while the incompatible refactor is in flight.
 4. If a stage contains an unexpected change, the TeamLeader asks the Developer
@@ -41,6 +41,39 @@ historical Decision that the design did not examine.
 7. Only after the production body and approved review corrections are complete,
    the Developer launches ultracode and orchestrates multiple Sonnet nodes to
    create the complete replacement test suite in one dedicated testing stage.
+
+## TeamLeader supervision charter
+
+The Developer owns implementation; the TeamLeader owns architectural judgment
+and actively challenges the implementation. A stage is not acceptable merely
+because it follows the written design, compiles locally, or appears mechanically
+complete. The TeamLeader must inspect the code and ask why each non-obvious
+choice exists before accepting it.
+
+Every stage review explicitly tests the following questions:
+
+- Which layer is authoritative for each fact, state transition, and action?
+- Why does each value cross its boundary, and can the owning layer keep it
+  instead?
+- Does the change duplicate a capability or state already owned elsewhere?
+- Should a reusable capability replace a provider, transport, or caller special
+  case?
+- Do domain namespaces, file placement, types, and function names describe the
+  real ownership and behavior?
+- Are concurrency, lifecycle, shutdown, recovery, and failure semantics closed
+  without hidden races or partial authority?
+- Did the implementation introduce compatibility glue, temporary adapters,
+  parallel mechanisms, or dead legacy surfaces outside the approved design?
+- After deletions and moves, is there exactly one authoritative mechanism and a
+  complete cleanup trail?
+
+When the answer is not evident from current source and prior Decisions, the
+TeamLeader challenges the Developer for the necessity, alternatives, and
+affected invariants. The TeamLeader resolves technical and layering questions
+from evidence instead of escalating routine implementation details. Work stops
+for the operator only when a genuinely unmodeled choice changes product
+behavior, externally visible semantics, persistence, destructive data handling,
+or another policy that cannot be derived safely from existing evidence.
 
 ## Stage ledger
 
