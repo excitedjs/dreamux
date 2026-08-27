@@ -64,6 +64,18 @@ as a compatibility alias.
   instructions, which both built-in runtimes append. This distinction is
   load-bearing behavior and must not be flattened to one string or implemented
   by branching on a concrete Provider id in Core.
+- Ordinary TeamMates and team members also use append-only prompt fragments.
+  Their owner currently preserves the established ordering of operation-owned
+  fragments first and the persisted `identity_prompt` last. Workflow supplies
+  its machine-result and structured-output guidance as an operation-owned
+  fragment through that same path. These fragments are load-bearing role and
+  execution policy, not first-turn text.
+- Dreamux owns the durable or deterministic sources from which append fragments
+  are rebuilt. Native sessions are not prompt-state authorities: Codex does not
+  persist `developerInstructions`, and Claude Code receives
+  `--append-system-prompt` on every resident-process spawn, including a
+  `--resume` spawn. Initial creation, close/reopen, process restart, Team
+  rebuild, and runtime resume therefore all re-supply the ordered fragments.
 - TeamMate MCP `last` is a required user capability but currently obtains its
   data exclusively through `provider.readTranscript`, asking each provider to
   locate and parse a runtime-native transcript after the runtime may already be
@@ -443,9 +455,19 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   a Dispatcher, Core supplies both the complete replacement instructions and
   the focused append instructions; each Provider selects the native form it
   supports. For a TeamLeader, Core supplies only append instructions and every
-  Provider appends them. Core must not branch on a concrete Provider id to make
-  this choice, and a Provider must not apply both forms when `replace` is
-  present.
+  Provider appends them. Ordinary TeamMate and team-member identity guidance,
+  plus Workflow or other operation-owned guidance, also remains ordered
+  append-only input. The current owner-defined ordering is preserved:
+  operation-owned fragments precede the persisted identity fragment. Core must
+  not branch on a concrete Provider id to make this choice, and a Provider must
+  not apply both forms when `replace` is present.
+- Core persists or deterministically reconstructs prompt sources and re-supplies
+  the selected ordered fragments whenever it rebuilds a runtime context:
+  initial creation, close/reopen, process restart, Team rebuild, and runtime
+  resume. Providers map that value to their native start/resume mechanism and
+  own idempotence against native persistence. They must not assume a resumed
+  native session retained prior append guidance or hide the prompt source in
+  Provider-owned state.
 - Live activity reporting is optional. A runtime may emit transient assistant
   message and tool-call facts through the Core-supplied activity sink. A
   runtime that emits none still executes and settles turns normally; its COT
@@ -679,7 +701,15 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   Provider-id branch: Codex replaces its base instructions from `replace`,
   Claude Code appends the focused Dispatcher delta from `append`, and neither
   duplicates both forms. TeamLeader instructions are append-only for both
-  built-in runtimes.
+  built-in runtimes. Ordinary TeamMate and team-member identity guidance and
+  Workflow/operation-owned guidance remain ordered append-only fragments, with
+  operation fragments before persisted identity guidance.
+- Fresh launch, close/reopen, process restart, Team rebuild, and runtime resume
+  all re-supply append-only prompt fragments from Dreamux-owned durable or
+  deterministic sources. Codex passes them as `developerInstructions` on
+  `thread/start`, `thread/resume`, and resume-fallback `thread/start`; Claude
+  Code passes them through `--append-system-prompt` on every fresh or resumed
+  resident-process spawn. Neither Provider relies on native session retention.
 - The minimal live runtime handle implements only `start`, union-input
   `submit`, and `stop`; Core status/checkpoint reads come from the Core-owned
   state projection populated by the push sink.
@@ -793,8 +823,17 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   `{ replace?: string; append?: readonly string[] }`. Dispatcher construction
   supplies both forms so Codex can replace its base instructions and Claude
   Code can append only the focused role delta. TeamLeader construction supplies
-  append only, and both built-in runtimes append it. This behavior is selected
+  append only, and both built-in runtimes append it. Ordinary TeamMate and
+  team-member identity prompts plus Workflow and other operation-owned prompt
+  fragments also remain append-only in their existing owner-defined order:
+  operation fragments first, persisted identity last. This behavior is selected
   inside the Provider adapter, never by a Core branch on Provider identity.
+- Dreamux owns every durable or deterministic append-prompt source and
+  re-supplies the ordered fragments on initial creation, close/reopen, process
+  restart, Team rebuild, and runtime resume. Codex receives them again as
+  `developerInstructions`; Claude Code receives them again through
+  `--append-system-prompt`. Provider-native session history is not authority for
+  whether the guidance survives.
 - Provider-level `getCapabilities()` is retained for Provider enumeration and
   public discovery metadata, including tags. Live runtime
   `getCapabilities()` remains deleted.

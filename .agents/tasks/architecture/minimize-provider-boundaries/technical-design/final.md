@@ -4,7 +4,7 @@
 
 This is the current technical design baseline for the requirement at
 `requirement.md` SHA-256
-`996580fa8f32fdd09795d79f6639581f4a9e70cdb3cdaf13b66f2b8f8083e9dd`.
+`bb41254a1f0e9f07a2626921bf9fdde7e11b7e83d0a19a7946f14b76729290dd`.
 
 It reconciles the three independent proposals and their single cross-review
 round. Where proposals disagreed, this design follows the frozen requirement
@@ -214,6 +214,26 @@ and a focused append delta. The Codex Provider consumes `replace` and ignores
 its native system prompt and consumes `append`. TeamLeader construction supplies
 only `append`, which both Providers apply. Core therefore never branches on a
 concrete Provider id, and a Provider never applies both Dispatcher forms.
+
+Ordinary TeamMate and team-member construction also remains append-only. The
+owner preserves the current fragment order: operation-owned fragments first,
+followed by the persisted `identity_prompt` when present. Workflow contributes
+`WORKFLOW_AGENT_SYSTEM_PROMPT` as an operation-owned fragment before the
+identity fragment so its machine-result and structured-output contract remains
+model-facing policy rather than turn text. TeamLeader construction similarly
+keeps its deterministic Team role fragments before its optional persisted
+identity fragment.
+
+Dreamux owns prompt sources, not rendered Provider prompt blobs. Persisted
+identity records and deterministic owner policy reconstruct the same ordered
+bundle for initial creation, close/reopen, process restart, Team rebuild, and
+runtime resume. Codex receives append-only bundles as rendered
+`developerInstructions` on fresh `thread/start`, `thread/resume`, and fallback
+`thread/start`; it cannot rely on native persistence because Codex does not
+persist `developerInstructions`. Claude Code receives the rendered bundle again
+through `--append-system-prompt` whenever its resident process is spawned,
+including a `--resume` spawn. Providers own idempotence against their native
+session model, but they never become the source of prompt persistence.
 
 Every Provider defines its own JSON-serializable `TSession`, with `id` as the
 only shared field. A Provider that resumes from an id alone uses
@@ -1067,7 +1087,7 @@ dependency order:
 
 1. reshape `@excitedjs/dreamux-types` contracts and root export locks;
 2. update Codex and Claude Code providers to the new runtime, state, structured
-   output, and Activity contracts;
+   output, Activity, and prompt-re-supply contracts;
 3. organize Core implementation by the Team and TeamMate domain owners, then
    implement runtime ownership, Activity reader, Command/event registries,
    lifecycle fences, scheduler, dissolve, and idempotency ledger;
@@ -1090,6 +1110,10 @@ compile breaks are resolved inside the same implementation change.
   `start/submit/stop`.
 - A resumed fixture proves non-null session continuity, loud recovery failure,
   continuity reporting before first submit, and stop-racing-start convergence.
+- Prompt fixtures prove Dispatcher replace/append selection, TeamLeader
+  append-only delivery, ordinary TeamMate/Workflow fragment ordering, and
+  re-supply on close/reopen, process restart, Team rebuild, native resume, and
+  resume-fallback fresh launch without Core Provider-id branching.
 - A generic-session fixture persists and restores an extended Provider-owned
   resume object without Core interpreting or dropping its extra JSON fields.
 - Provider loader fixtures prove registration works without implementation-level

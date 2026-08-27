@@ -3,9 +3,9 @@
 ## Authority
 
 This plan executes the current requirement baseline at SHA-256
-`996580fa8f32fdd09795d79f6639581f4a9e70cdb3cdaf13b66f2b8f8083e9dd`
+`bb41254a1f0e9f07a2626921bf9fdde7e11b7e83d0a19a7946f14b76729290dd`
 and the current technical design baseline at SHA-256
-`c456165258757c1ea6df8a753691d118b691fca379e65205f9c3450395e7c452`.
+`e8dc75bade851fa27cf8ad4d67b2885267bbac2891182f039c412513aed29ff1`.
 The operator granted development approval on 2026-08-27 with the staged
 protocol below. Recorded product decisions remain authoritative over
 implementation convenience only for the scenarios they explicitly cover.
@@ -64,7 +64,10 @@ historical Decision that the design did not examine.
   composition, canonical Command/event types, and required root exports.
 - Retain neutral system-prompt replace/append forms: Dispatcher supplies both
   and each Provider selects its native mechanism; TeamLeader remains
-  append-only for every Provider, with no Core Provider-id branch.
+  append-only for every Provider. Preserve ordinary TeamMate and Workflow
+  operation-owned append fragments in their existing order, and re-supply all
+  Dreamux-owned prompt sources on every runtime-context rebuild, with no Core
+  Provider-id branch.
 - Delete the old public members and Core Collaboration Space/binding types with
   no compatibility aliases.
 - Validation: every mandatory member has a frozen use case; no provider-specific
@@ -76,6 +79,11 @@ historical Decision that the design did not examine.
 - Implement mandatory continuous recovery, session-bound structured output,
   leased state updates, optional live activity, and active-session recent
   Activity reads.
+- Re-supply ordered append-only prompt fragments on fresh launch,
+  close/reopen, process restart, Team rebuild, and resume. Codex maps them to
+  `developerInstructions`; Claude Code maps them to
+  `--append-system-prompt`. Preserve operation fragments before persisted
+  TeamMate identity guidance.
 - Reshape Core runtime ownership, admission, settlement, restart notice, and
   `last` without weakening existing invariants.
 - Validation: implementation follows sections 1 and 4 of the final design; no
