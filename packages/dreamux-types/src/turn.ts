@@ -44,10 +44,3 @@ export interface InboundTurnInput {
   /** Structured attachments for future per-runtime rendering. */
   attachments?: readonly InboundAttachment[];
 }
-
-export type InboundDeliveryResult =
-  | { status: 'duplicate' }
-  | { status: 'stopped' }
-  | { status: 'submitted' }
-  | { status: 'failed'; error: Error }
-  | { status: 'ambiguous'; error: Error };

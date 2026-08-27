@@ -151,28 +151,39 @@ export interface ProviderOnboard<TConfig = unknown> {
 }
 
 /**
- * The context Dreamux core hands a provider package's factory export. Mirrors the
- * core loader's call exactly — the canonical `ref` and the seed `descriptor` the
- * provider must echo back on its own `descriptor`. `TDescriptor` lets kind-
- * specific factory aliases carry the already-narrowed descriptor kind.
+ * Core-owned registration identity paired with a loaded provider
+ * implementation.
+ *
+ * Registration metadata is loader state, not a provider capability: Core parses
+ * the configured canonical reference, validates its kind, and keeps the
+ * resulting {@link ProviderDescriptor} beside the implementation it loaded.
+ * Registry lookup, duplicate detection, diagnostics, onboarding, logging, and
+ * MCP naming all read from this wrapper, so a provider implementation never
+ * becomes a second identity authority and never echoes `ref`/`descriptor` back.
  */
-export interface ProviderFactoryContext<
-  TDescriptor extends ProviderDescriptor = ProviderDescriptor,
-> {
+export interface RegisteredProvider<TProvider> {
+  readonly descriptor: ProviderDescriptor;
+  readonly implementation: TProvider;
+}
+
+/**
+ * The context Dreamux core hands a provider package's factory export. It
+ * carries only the canonical reference Core resolved, as a fact the factory may
+ * use for its own logging or error text. It is deliberately not a seed
+ * descriptor: the factory has nothing to echo back, because Core keeps the sole
+ * authoritative descriptor in its {@link RegisteredProvider} wrapper.
+ */
+export interface ProviderFactoryContext {
   /** Canonical provider ref, e.g. `npm:some-pkg#provider` or `builtin:codex`. */
   ref: string;
-  /** Seed descriptor the provider must echo back on its own `descriptor`. */
-  descriptor: TDescriptor;
 }
 
 /**
  * A provider package's factory export (default export, or the named export a
  * `npm:pkg#export` ref selects). Dreamux core invokes it with a
- * {@link ProviderFactoryContext} and registers the returned provider.
+ * {@link ProviderFactoryContext} and registers the returned provider under its
+ * own descriptor.
  */
-export type ProviderFactory<
-  TProvider,
-  TDescriptor extends ProviderDescriptor = ProviderDescriptor,
-> = (
-  context: ProviderFactoryContext<TDescriptor>,
+export type ProviderFactory<TProvider> = (
+  context: ProviderFactoryContext,
 ) => TProvider | Promise<TProvider>;
