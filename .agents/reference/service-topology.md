@@ -44,20 +44,20 @@ rediscover issue #233 by trial and error.
 
 - Cron ownership is on the conversational-agent container: dispatcher cron is
   built by `DispatcherService`, team-leader cron is built by `TeamService`, and
-  `TeammateService` carries no `SchedulerService`. Enforced by
-  `/packages/dreamux/tests/architecture-ownership-gate.test.ts`.
+  `TeammateService` carries no `SchedulerService`. The construction sites in
+  `/packages/dreamux/src/service/dispatcher-service/index.ts` and
+  `/packages/dreamux/src/service/team-service/index.ts` are the current source
+  anchors for this ownership rule.
 - Every conversational agent goes through `createTeammateService`; `new
   TeammateService(...)` is allowed only in
-  `/packages/dreamux/src/service/teammate-service/factory.ts:19`. Enforced by
-  `/packages/dreamux/tests/architecture-ownership-gate.test.ts`.
+  `/packages/dreamux/src/service/teammate-service/factory.ts:19`.
 - The team leader is held by `TeamService`, not by the members collection.
   `TeammateCollection.assertInCollection` admits dispatcher `teammate` or team
   `team_member` only, and a team-scoped collection must reject a `team_leader`
-  read-by-name. Enforced by
-  `/packages/dreamux/tests/architecture-ownership-gate.test.ts`.
+  read-by-name.
 - `TeamCollection` owns team registry/cache behavior; `TeamService` owns team
-  entity behavior, leader policy, and member collection scope. Enforced by the
-  topology source anchors here plus the ownership-gate tests.
+  entity behavior, leader policy, and member collection scope. The topology
+  source anchors above are the current enforcement evidence.
 - Channel binding creation, lookup, summaries, transfer-back, and TeamLeader egress checks are owned by `ChannelService`; `TeamService`, `TeamMateService`, and `TeamCollection` do not own binding-store access. Core runtime and channel operations stay behind neutral seams:
   `AgentRuntimeProvider` / `AgentRuntimeProviderCatalog` for agents and
   `ChannelProvider` / `ChannelProviderCatalog` for channels. Service objects
