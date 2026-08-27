@@ -4,7 +4,7 @@
 
 This is the authoritative technical solution for the frozen requirement at
 `requirement.md` SHA-256
-`527711f503b9a948a1e5eb0b58187b6736abeae3b9f7fb74084a4793df47642e`.
+`349635060d19afe73ed3d1e84df5070bce225364553389f5074c624180598a07`.
 
 It reconciles the three independent proposals and their single cross-review
 round. Where proposals disagreed, this design follows the frozen requirement
@@ -27,9 +27,9 @@ ports:
 - Channel-to-Core mutation uses one generic `invoke(command, payload)` port;
 - Core-to-Channel observation uses one live, best-effort subscription port;
 - Agent-to-Channel MCP remains a separate optional composition;
-- the initial Channel Command catalog contains only `turn.submit` and
+- the initial Channel Command catalog contains only `team.submit` and
   idempotent `team.create`;
-- the initial Channel event catalog contains only `team.state`, `agent.state`,
+- the initial Channel event catalog contains only `team.state`, `teammate.state`,
   `teammate.turn.submitted`, `teammate.turn.settled`,
   `teammate.turn.message`, and `teammate.turn.tool_call`;
 - external binding and provisioning become Channel-owned;
@@ -389,16 +389,16 @@ dispatcher and Channel identity, and returns a typed result or error.
 
 The initial registry is exactly:
 
-#### `turn.submit`
+#### `team.submit`
 
 ```ts
-interface TurnSubmitCommand {
+interface TeamSubmitCommand {
   readonly team_name?: string;
   readonly input: InboundTurnInput;
   readonly correlation?: string;
 }
 
-interface TurnSubmitResult {
+interface TeamSubmitResult {
   readonly status:
     | "submitted"
     | "duplicate"
@@ -471,11 +471,50 @@ Every event uses a versioned immutable envelope with Core-owned validation and a
 bounded JSON-compatible payload. The initial event union is exactly:
 
 - `team.state`;
-- `agent.state`;
+- `teammate.state`;
 - `teammate.turn.submitted`;
 - `teammate.turn.settled`;
 - `teammate.turn.message`;
 - `teammate.turn.tool_call`.
+
+The two state events use these minimum payloads:
+
+```ts
+interface TeammateStateEvent {
+  readonly kind: "teammate.state";
+  readonly occurred_at: number;
+  readonly teammate_name: string;
+  readonly role: "dispatcher" | "teammate" | "team_leader" | "team_member";
+  readonly team_name: string | null;
+  readonly status: "starting" | "running" | "degraded" | "stopped" | "closed";
+}
+
+interface TeamStateMemberSummary {
+  readonly teammate_name: string;
+  readonly role: "team_leader" | "team_member";
+  readonly status: "starting" | "running" | "degraded" | "stopped" | "closed";
+}
+
+interface TeamStateEvent {
+  readonly kind: "team.state";
+  readonly occurred_at: number;
+  readonly team_name: string;
+  readonly leader_name: string;
+  readonly status: "starting" | "running" | "closed";
+  readonly teammates: readonly TeamStateMemberSummary[];
+}
+```
+
+All Dreamux Agent entities are TeamMates at this event boundary. Persisting a
+new Dispatcher, TeamLeader, ordinary member, or standalone TeamMate publishes
+its first `teammate.state`; later state transitions publish the same kind. No
+separate creation event is added. A Dispatcher has `team_name: null` and never
+appears in a `team.state` member summary.
+
+`team.state` is intentionally redundant. Core republishes the aggregate when
+the Team lifecycle changes or when a contained TeamLeader/member is created or
+changes state. Its `teammates` array is a current bounded summary, not a second
+state authority: Core Team and Agent stores remain authoritative.
 
 The `teammate` namespace identifies the Core entity that owns the whole turn
 event family; adding later domains does not overload a global `turn.*`
@@ -567,7 +606,7 @@ target_metadata, first_delivery_identity}` before invoking Core. It then:
 1. calls `team.create` with the persisted request id;
 2. receives the stable ready Team name;
 3. atomically installs the default binding;
-4. calls `turn.submit` for the first external message using the original stable
+4. calls `team.submit` for the first external message using the original stable
    source identity;
 5. marks the saga complete.
 
@@ -761,7 +800,7 @@ compile breaks are resolved inside the same implementation change.
 
 ### Behavioral gates
 
-- `turn.submit` tests cover Dispatcher/default delivery, TeamLeader delivery,
+- `team.submit` tests cover Dispatcher/default delivery, TeamLeader delivery,
   duplicate, stopped, failed, ambiguous, stable `turn_id`, opaque correlation,
   and retry only after `TEAM_NOT_FOUND`/`TEAM_CLOSED`.
 - `team.create` tests cover crash points before reservation, after reservation,
@@ -773,6 +812,10 @@ compile breaks are resolved inside the same implementation change.
 - Binding tests cover exact topic then parent fallback, independent unbind,
   multiple bindings per Team, Team-close invalidation, defensive stale cleanup,
   Dispatcher-only binding tools, and no Core binding mirror/query.
+- State-event tests prove creation and every later lifecycle transition publish
+  `teammate.state` for Dispatcher, TeamLeader, ordinary member, and standalone
+  TeamMate roles; contained changes also republish `team.state` with the current
+  TeamLeader/member summaries and never place Dispatcher in a Team snapshot.
 - COT regression tests preserve the current cards, correlation, scheduled and
   completion anchors, redaction/truncation, and tool input/result rendering.
   Provider/observer errors and subscription revocation cannot change Core

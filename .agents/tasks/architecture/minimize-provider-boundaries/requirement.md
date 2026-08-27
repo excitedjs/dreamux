@@ -239,7 +239,7 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   work is fenced during shutdown. Process restart restores Channel-owned local
   state rather than replaying or remotely synchronizing Core events.
 - Channel is not given general Core read Commands to compensate for missed
-  events. A later `turn.submit` result of `TEAM_NOT_FOUND` or `TEAM_CLOSED`
+  events. A later `team.submit` result of `TEAM_NOT_FOUND` or `TEAM_CLOSED`
   remains a defensive stale-binding cleanup path, not the normal synchronization
   mechanism.
 - Core does not persist event message/tool contents for replay. It records only
@@ -263,13 +263,23 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   turn so the Channel can associate live presentation with the exact external
   interaction.
 - The initial event catalog is deliberately minimal: `team.state`,
-  `agent.state`, `teammate.turn.submitted`, `teammate.turn.settled`,
+  `teammate.state`, `teammate.turn.submitted`, `teammate.turn.settled`,
   `teammate.turn.message`, and `teammate.turn.tool_call` facts required for Team
   binding invalidation and the frozen COT behavior. The `teammate` namespace
   makes the owning Core entity explicit for the complete turn-event family.
   Core binding/Collaboration Space events are deleted; Workflow, scheduler,
   TeamMate-management, and other internal MCP capabilities add no Channel events
   in this change.
+- `teammate.state` covers every Dreamux Agent entity: Dispatcher, TeamLeader,
+  ordinary Team members, and standalone TeamMates. Creation publishes the first
+  state fact immediately after the identity is durably created; later lifecycle
+  transitions publish the same event kind. There is no separate
+  `teammate.created` event.
+- `team.state` is the redundant aggregate view. In addition to Team lifecycle
+  state, it carries the current bounded summary of that Team's TeamLeader and
+  members. Core republishes it when the Team lifecycle or a contained
+  TeamMate's state changes. A Dispatcher has no Team and therefore appears only
+  in `teammate.state`.
 
 ### 4. Optional Channel MCP extension
 
@@ -647,22 +657,23 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - The final Command catalog is traced to Core-owned domain use cases and an
   explicit external-callability decision; it is not a one-for-one rewrite of
   current Channel callback members.
-- The initial Channel Command catalog contains only external `turn.submit` and
+- The initial Channel Command catalog contains only external `team.submit` and
   restart-durable idempotent `team.create` for automatic provisioning. Team,
   TeamMate, Workflow, scheduler, and other Agent operations remain MCP-only
   unless a later requirement explicitly adds a Channel Command.
 - The final event catalog is traced to stable Core facts rather than the needs
   of a concrete Channel implementation.
-- The initial event catalog contains only the existing Team, Agent, and turn
-  lifecycle/activity facts required by binding invalidation and current COT. It
-  adds no Workflow, scheduler, binding, Collaboration Space, or other internal
-  capability event.
+- The initial event catalog contains only Team state, the unified
+  `teammate.state`, and the namespaced `teammate.turn.*` lifecycle/activity
+  facts required by binding invalidation and current COT. It adds no Workflow,
+  scheduler, binding, Collaboration Space, or other internal capability event.
 - Adding a Channel-originated Core capability or a Core event changes only its
   catalog/schema and consumers, not the base Channel interface.
 - Event subscribers receive live facts only. Core has no event replay/snapshot
   requirement and persists no message/tool event-content history.
-- Existing COT event kinds, normalized Provider activity, Core projection,
-  redaction/truncation, and Channel display behavior remain unchanged. Tests
+- Existing normalized Provider activity, Core projection,
+  redaction/truncation, payload behavior, and Channel display remain unchanged;
+  the turn event kinds move under `teammate.turn.*`. Tests
   preserve the post-COT baseline and prove observer failures cannot affect turn
   admission or settlement.
 - Channel-provided opaque turn correlation is returned unchanged on submitted,
@@ -748,11 +759,12 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - Workflow and scheduler are Agent/MCP-only internal capabilities. They expose
   no Channel Commands or lifecycle events. Host-maintenance operations likewise
   remain outside the Channel surface.
-- The initial Channel Command catalog is exactly external `turn.submit` plus
+- The initial Channel Command catalog is exactly external `team.submit` plus
   restart-durable idempotent `team.create` for automatic provisioning. The
-  initial event catalog is the existing Team, Agent, and turn facts needed for
-  binding invalidation and the frozen post-COT presentation. The generic ports
-  are intentionally extensible, but no speculative Command or event is added.
+  initial event catalog is the Team aggregate state, unified TeamMate state, and
+  namespaced TeamMate turn facts needed for binding invalidation and the frozen
+  post-COT presentation. The generic ports are intentionally extensible, but no
+  speculative Command or event is added.
 - Channel uses one generic request/response Command invocation primitive toward
   Core; Core uses one event-delivery primitive toward Channel.
 - Direct Provider control/lifecycle and optional Channel MCP
