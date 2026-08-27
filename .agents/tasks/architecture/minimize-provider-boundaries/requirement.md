@@ -1,0 +1,823 @@
+# Requirement
+
+## Outcome
+
+Reduce the public Agent Runtime and Channel provider contracts to the smallest
+capability-neutral mechanisms Dreamux actually needs. Channel remains Dreamux
+Core's only bridge to the outside world: it owns external-message handling and
+external-route bindings and selects Core Commands, while Core owns Dreamux
+domain state and Command execution.
+
+The design is capability-first. The Core-owned domain capabilities and facts are
+defined independently of any Channel implementation; only then are the generic
+Channel invocation and observation ports designed. Existing Feishu behavior,
+`ChannelRoutes` members, or other provider call sites are migration evidence,
+not the source of the new Core Command or event catalogs.
+
+This clarification intentionally changes some existing behavior and public
+surface. In particular, external-route binding moves from Core to the owning
+Channel, TeamLeader Channel-tool egress is no longer restricted by Core
+bindings, and the old Team `transfer_back` surface is removed rather than kept
+as a compatibility alias.
+
+## Confirmed current behavior and evidence
+
+### Agent Runtime boundary
+
+- `AgentRuntimeProvider` currently requires provider identity, capability
+  reporting, transcript reading, and runtime creation. The external-provider
+  loader rejects a provider without `getCapabilities`, `createRuntime`, or
+  `readTranscript`.
+- The live `AgentRuntime` handle currently declares lifecycle, two input paths,
+  status, checkpoint, resume observation, context usage, and capability
+  reporting. The external-provider loader requires every method except
+  `waitIdle`.
+- Core reads capabilities from `AgentRuntimeProvider`. Current Core source has
+  no production consumer of the live runtime handle's `getCapabilities` or
+  `getContext`, although external runtimes must implement both.
+- Core pulls live status and checkpoint state through `getStatus`,
+  `getCheckpoint`, and `wasCheckpointResumed`, while the create context also
+  supplies state callbacks through which the runtime pushes status and
+  checkpoint transitions into Core-owned durable identity state. The target
+  contract must choose one authoritative direction instead of preserving both
+  representations by default.
+- A runtime must expose `resume` even when its declared resume capability is
+  unsupported, and transcript reading is mandatory even though it is an
+  operational read capability rather than turn execution.
+- The create context requires an MCP-server list and an activity sink, while
+  system prompt, skill sources, feature disabling, structured output, paths,
+  state callbacks, logging, and injected environment are mixed into one surface
+  with different necessity and support characteristics.
+- TeamMate MCP `last` is a required user capability but currently obtains its
+  data exclusively through `provider.readTranscript`, asking each provider to
+  locate and parse a runtime-native transcript after the runtime may already be
+  closed. The public tool contract and this provider mechanism are currently
+  coupled even though they are not the same capability.
+- TeamMate `list`, `status`, `history`, and `get_capabilities`, and Team
+  `list`, `status`, and `history`, are served from Core-owned identity/config
+  state rather than live provider queries.
+- Team dissolve currently refuses a live writer whose runtime omits
+  `waitIdle`; scheduler also calls runtime `waitIdle` before submitting a held
+  fire. These are the only production consumers of this optional runtime
+  method. This waiting behavior has caused operational problems in dissolve
+  and is not retained in the target design.
+- TeamMate `send` promises to reopen a closed TeamMate from its recorded
+  runtime session, while Workflow uses structured output and fails clearly when
+  the selected runtime lacks it. These product contracts impose different
+  universality requirements and must not be flattened into one undifferentiated
+  capabilities object.
+
+The current production consumer matrix for public Agent Runtime functions is:
+
+| Function | Current Core consumer |
+| --- | --- |
+| `Provider.getCapabilities()` | Provider-load shape/value validation; resume launch selection; Agent Runtime capability projection; Workflow structured-output preflight. It is retained in the target state as the Provider discovery/description surface so Dreamux can enumerate Provider characteristics and tags, even though resume and structured output are no longer optional bits. |
+| `Provider.readConfig?()` | Config loading and provider-owned config validation only. |
+| `Provider.onboard?.collect()` | Interactive onboard config collection when no explicit config block is supplied. |
+| `Provider.diagnostic?.binChecks()` | `doctor`/onboard binary-check discovery and deduplication. |
+| `Provider.diagnostic?.runDiagnostic()` | `doctor`/onboard provider diagnostics. |
+| `Provider.readTranscript()` | TeamMate `last` only; this is being replaced by a mandatory neutral recent-activity reader that can observe the currently active turn. |
+| `Provider.createRuntime()` | Creation of a live Dispatcher/TeamLeader/TeamMate runtime. |
+| `Runtime.start()` | Fresh runtime launch. |
+| `Runtime.resume()` | Checkpoint launch when provider-level resume capability says supported; target design folds this into mandatory context-continuous `start`. |
+| `Runtime.stop()` | Entity close/shutdown and failed-start rollback; owns the synchronous input fence and admission convergence guarantee. |
+| `Runtime.channelInput()` | External Channel/user turn submission only; target design folds it into discriminated-union `submit`. |
+| `Runtime.completionInput()` | Scheduled, control, prompt/workflow, and Agent-to-Agent completion submissions; target design folds them into discriminated-union `submit`. |
+| `Runtime.waitIdle?()` | Scheduler held-fire delay and Team dissolve only; confirmed for deletion without a replacement idle model. |
+| `Runtime.getStatus()` | Live status/history projection and live-writer/start checks; target design replaces it with runtime-to-Core state push. |
+| `Runtime.getCheckpoint()` | Runtime status/thread projection with persisted-state fallback; target design replaces it with runtime-to-Core state push. |
+| `Runtime.wasCheckpointResumed()` | Dispatcher restart-notice injection only; target design reports start outcome without this query. |
+| `Runtime.getContext()` | No production Core consumer. It is loader-required dead surface and is deleted, not retained as an optional capability. |
+| `Runtime.getCapabilities()` | No production Core consumer. All current capability reads use the Provider-level function; the handle method is deleted. |
+
+The create context also exposes reverse-direction Core callbacks. These are not
+Provider query methods: `activitySink` accepts transient assistant/tool facts
+for live conversation projection; `state.setStatus` and `state.setCheckpoint`
+persist authoritative lifecycle/recovery state; optional
+`state.recordLostCheckpoint` records a provider-reported checkpoint replacement;
+and path callbacks supply provider-owned cache, log, and runtime-socket roots.
+
+### Channel boundary
+
+- Core currently starts a Channel session with a growing `ChannelRoutes`
+  callback object. Inbound delivery uses `deliver`; collaboration behavior adds
+  `targetLifecycle`, `ensureCollaborationTarget`, and `deliverExact`.
+- The dispatcher Core event bus flows from Core to Channel. It publishes Team,
+  Agent, binding, collaboration, turn, and activity facts through a scoped,
+  read-only event source.
+- `targetLifecycle` accepts `target_created` and `target_closed` facts from a
+  Channel and drives Collaboration Space provisioning or close. The Core
+  receiver and tests exist, but the built-in Feishu Channel currently has no
+  production call site for this callback.
+- Agent-facing Channel MCP first uses MCP JSON-RPC over stdio, then the Dreamux
+  NDJSON admin Unix-socket protocol, then `channel.invoke_tool`; Core finally
+  invokes the provider's live or sessionless tool handler.
+- Channel MCP tool discovery is static provider/config metadata. Dreamux builds
+  the MCP descriptor and injects it into the Agent Runtime; invocation later
+  reaches a live session or a provider-level sessionless handler.
+- Binding currently accepts provider-defined `meta`, calls the live session's
+  `resolveTarget(meta)`, and stores a provider-produced `target_key`. The
+  accepted issue #209 decision chose this because it assumed selectors could
+  have multiple equivalent forms. For a simple Feishu `{ chat_id }` selector,
+  current `resolveTarget` performs a local conversion rather than checking that
+  the external chat exists.
+- TeamLeader Channel MCP currently passes through
+  `authorizeTeamLeaderEgress`, including target resolution, binding-owner
+  checks, and optional `messageBelongsToTarget` proof before provider dispatch.
+- `ChannelSession.reply?` and `react?` have no Core production consumers;
+  provider-owned MCP tools are the actual outbound surface.
+
+### Core capability and fact inventory
+
+- Current Core domain services expose seven user-facing capability families:
+  turn submission/admission, Team lifecycle and reads, TeamMate lifecycle and
+  reads, Channel binding, scheduled turns, Workflow lifecycle and reads, and
+  Collaboration Space lifecycle and reads. Admin methods and Agent-facing MCP
+  tools currently adapt overlapping subsets of these services, but are
+  transports rather than the authority for the capability catalog.
+- Completion routing and Agent Runtime ownership are internal orchestration
+  capabilities. Server/dispatcher start-stop, daemon, configuration,
+  onboarding, and diagnostics are host-maintenance capabilities. Neither class
+  automatically belongs in the external Channel Command catalog.
+- Turn admission currently has two equivalent boundary adapters, one for
+  dispatcher delivery and one for Team delivery. Both normalize the shared
+  internal `TurnAdmission` vocabulary to
+  `submitted | duplicate | stopped | failed | ambiguous`, including
+  `skipped -> stopped`. This duplication is evidence that turn submission and
+  admission is one Core capability rather than a Channel-specific delivery
+  callback.
+- The current Core event source already broadcasts the complete event stream to
+  each live Channel source; the Channel id attached to a source is used for
+  lifecycle and logging rather than server-side event filtering.
+- The current public event union contains Team state, Agent state, turn
+  submitted/settled/message/tool-call facts, binding route facts, and
+  Collaboration Space binding facts. It has no Workflow or scheduler state
+  facts.
+- Team, Agent, and turn lifecycle are stable Core facts. Current binding event
+  and `ChannelOrigin` payloads depend on the `target_key` model being removed,
+  while the Collaboration Space binding event exposes runtime and worktree
+  policy. Those payloads cannot be adopted unchanged as the target event
+  catalog.
+- Turn message and tool-call events are conditional on optional Agent Runtime
+  activity reporting and currently include presentation-oriented projection,
+  redaction, and truncation behavior. Their status as stable externally
+  observable Core facts remains a product decision.
+
+## Desired behavior
+
+### 1. Direct Provider control and lifecycle
+
+- Dreamux Core directly constructs and controls every Channel through a small
+  in-process Provider/session interface. Construction, initialization, start,
+  and close do not use RPC.
+- Provider configuration, identity, onboarding, and diagnostics remain in this
+  host-to-Provider control-plane category. Which are base members and which are
+  optional composed capabilities remains to be decided.
+- Product-specific routing, collaboration, binding, or platform methods do not
+  become base lifecycle members.
+
+### 2. Channel-to-Core Command invocation
+
+- A Channel owns the complete loop for receiving an external message,
+  interpreting it, deciding what Dreamux action to take, and selecting a Core
+  Command.
+- The base mutation boundary is one request/response primitive equivalent to
+  `const result = await invoke(command, payload)`.
+- Core owns the Command catalog. It is derived from stable Core domain use cases
+  and an explicit decision about which of those use cases an external bridge may
+  invoke, not from the methods a current Channel happens to call.
+- Trust applies only after a capability is deliberately placed in the small
+  Channel Command catalog; it does not make every Dreamux business capability a
+  Channel Command. A catalogued Command needs no second Channel-specific
+  allowlist, but still owns the validation, admission, authorization, and
+  idempotency rules that apply to all callers.
+- Each Command has a Core-owned name, input, result, error, authorization,
+  admission, and idempotency contract independent of Feishu, Slack, Telegram,
+  or another provider.
+- A Dreamux capability may remain Agent/MCP-only and need no Channel Command.
+  Shared domain services do not imply shared transport exposure.
+- Existing `deliver`, `ensureCollaborationTarget`, `deliverExact`, and
+  `targetLifecycle` are only a migration inventory. Requirement and solution
+  work must decide whether their underlying Core use cases belong in the new
+  catalog, are already covered by a more fundamental Core capability, or should
+  be removed. They are not automatically translated one-for-one into Commands.
+- Future Channel-originated behavior extends the Core-owned Command
+  catalog/schema rather than the base Channel interface.
+- The Channel catalog includes external turn submission/admission and the
+  idempotent Team creation needed for Channel-owned automatic provisioning.
+  Workflow, scheduler, and their lifecycle/status operations remain internal
+  Dreamux capabilities callable by Agents through Dreamux MCP only; they expose
+  neither Channel Commands nor Channel events. The current Core Channel-binding
+  and Collaboration Space families are not carried forward. External routing
+  moves to Channel, while Team is the sole Core container used to realize an
+  external collaboration target.
+- Host-maintenance capabilities such as daemon/dispatcher process control,
+  configuration, onboard, and doctor are not part of the Channel Command
+  catalog. They remain in the local operator/CLI control plane.
+- Turn submission accepts an optional stable `team_name` selected by the
+  Channel and delivers only to that Team's TeamLeader. Omission selects the
+  Dispatcher Agent. Team lookup failure is a proven pre-admission result;
+  admission ambiguity remains non-retryable.
+
+### 3. Core-to-Channel event delivery
+
+- The base observation boundary is one event-delivery primitive equivalent to
+  `onMessage(event, payload)`.
+- A Channel may subscribe to the complete Core event stream and locally select
+  the event kinds it needs.
+- Core owns the event catalog. Events are stable Core domain facts chosen for
+  external observation, not a copy of callbacks or projections required by one
+  Channel implementation.
+- Observation is read-only and fail-open relative to authoritative Core
+  operations. Adding an event extends the event catalog/schema rather than the
+  base Channel interface.
+- Event delivery is live-only and has no replay or subscribe-time snapshot.
+  Channel Providers run in the Dreamux process and share its lifecycle; there is
+  no product model in which Core continues operating while a configured Channel
+  is independently offline and later reconnects. Core attaches the Channel event
+  consumer before admitting operations and revokes it only after relevant Core
+  work is fenced during shutdown. Process restart restores Channel-owned local
+  state rather than replaying or remotely synchronizing Core events.
+- Channel is not given general Core read Commands to compensate for missed
+  events. A later `turn.submit` result of `TEAM_NOT_FOUND` or `TEAM_CLOSED`
+  remains a defensive stale-binding cleanup path, not the normal synchronization
+  mechanism.
+- Core does not persist event message/tool contents for replay. It records only
+  critical operational logs and does not use a local event-content store.
+- The current post-COT `turn.message` and `turn.tool_call` event behavior is a
+  frozen compatibility baseline, not a redesign target. Providers emit the
+  existing normalized real-time activity shape. Core applies the existing
+  bounded presentation projection, workspace/secret redaction, and truncation,
+  then publishes the resulting display-only facts for Channel consumption.
+  Delivery is best-effort: there is no retry, retransmission, replay, retention,
+  acknowledgement, or final-delivery guarantee, and observer failure remains
+  fail-open relative to the turn.
+- The COT event payload boundary is intentionally independent from the narrower
+  `last` Activity Record boundary. This refactor must not remove current COT
+  tool arguments/results after Core redaction, alter their presentation fields,
+  or otherwise change the tuned Channel display effect.
+- A Channel-originated turn submission may carry a Channel-chosen opaque
+  correlation value. Core does not parse or authorize against that value, but
+  returns it unchanged on every submitted, activity, and settled event for that
+  turn so the Channel can associate live presentation with the exact external
+  interaction.
+- The initial event catalog is deliberately minimal: existing `team.state`,
+  `agent.state`, `turn.submitted`, `turn.settled`, `turn.message`, and
+  `turn.tool_call` facts required for Team binding invalidation and the frozen
+  COT behavior. Core binding/Collaboration Space events are deleted; Workflow,
+  scheduler, TeamMate-management, and other internal MCP capabilities add no
+  Channel events in this change.
+
+### 4. Optional Channel MCP extension
+
+- A Channel may register a provider/config-specific MCP tool catalog. Dreamux
+  owns the Agent Runtime MCP descriptor and proxies it to the runtime.
+- Agent Runtime tool calls return through Dreamux to a Channel-owned handler;
+  the provider's canonical result or error returns through the same path.
+- This mechanism is distinct from Channel-to-Core Command invocation and
+  Core-to-Channel event delivery.
+- The design must support both live-session tools and provider-level
+  sessionless tools such as the current `list_chat_bots` behavior.
+- Direct `reply?` and `react?` base-session members are not retained when their
+  behavior is already provider-owned MCP capability.
+- A Channel that supports external-route binding owns provider-specific
+  `bind_channel`, `unbind_channel`, and `list_bindings` MCP tools. Dispatcher and
+  other permitted Agents invoke them through the same Dreamux MCP proxy; they
+  are not Team MCP or Core Commands.
+
+### Channel-owned external routing
+
+- Each configured Channel instance is the sole authority for mapping its own
+  external targets to Dreamux agents. It owns target interpretation,
+  canonicalization, hierarchy/fallback rules, authorization, persistence, and
+  migration in its provider state. Core stores no external-route binding or
+  provider metadata.
+- Feishu may distinguish ordinary chats, ordinary threads, topic-group topics,
+  and parent groups using its own state and matching rules. Another Channel may
+  use a completely different model or no binding capability at all. None of
+  these identities or hierarchy concepts enter the Core contract.
+- A binding targets a stable Dreamux `team_name` and can route only to that
+  Team's TeamLeader; arbitrary TeamMate binding is not supported. Concrete Team
+  names are never reused, so a stale binding cannot silently retarget a later
+  Team.
+- On inbound, Channel resolves its own binding before invoking Core. It invokes
+  turn submission with the resolved `team_name`, or omits the target when no
+  binding exists so Core delivers to the Dispatcher Agent.
+- Core validates the requested Team before admission. A typed
+  `TEAM_NOT_FOUND` or `TEAM_CLOSED` result proves that no turn was accepted;
+  Channel may then remove stale binding state and submit once to Dispatcher.
+  Channel must not retry or fall back after an ambiguous admission.
+- Core removes its Channel binding store, binding matching, target resolution,
+  binding ownership, and Team bind/unbind operations. `resolveTarget`,
+  `resolveInboundBinding`, `target_key`, `binding_fallbacks`, and Core
+  `binding.route` facts do not survive as target-architecture concepts.
+- Channel's authoritative `list_bindings` returns each external target together
+  with its target Team/agent identity. This single read answers which external
+  targets are bound. A composite view that also needs all Teams, including
+  unbound Teams and current Team status, deliberately joins `team.list` with
+  each configured Channel instance's `list_bindings`; Core does not query
+  Channels or replicate their binding index merely to hide that join.
+- The current Team MCP `bind_channel` and `transfer_back` tools are removed.
+  Channel-owned tools use `bind_channel`, `unbind_channel`, and
+  `list_bindings`; there is no `transfer_back` compatibility alias.
+
+### Channel-tool egress
+
+- Remove Dreamux Core's binding-scoped TeamLeader Channel-tool egress
+  restriction.
+- Remove `authorizeTeamLeaderEgress`, `messageBelongsToTarget`, target-binding
+  ownership checks, and message-to-target ownership checks from this path.
+- Core selects the configured Channel instance and forwards the provider MCP
+  tool name and payload. An Agent may address any target permitted by the
+  Channel provider and the external platform.
+- This does not remove provider tool-schema validation, external-platform
+  permissions/errors, or Channel-owned inbound access/trust policy.
+- Caller context may remain only where a non-authorization consumer such as
+  logging or COT presentation proves it is necessary.
+
+### No general Core-to-Channel query port
+
+- The target contract does not add a generic Core-to-Channel request/query
+  mechanism or a Core-only Channel capability catalog.
+- Moving external-route authority to Channel and removing binding-scoped egress
+  proof eliminates the current reasons for `resolveTarget`,
+  `resolveInboundBinding`, and `messageBelongsToTarget`.
+- The four Channel mechanisms are therefore: direct Provider control/lifecycle,
+  Channel-to-Core Command invocation, Core-to-Channel event delivery, and the
+  optional Agent-to-Channel MCP registration/forwarding path.
+
+### Minimal Agent Runtime contract
+
+- A new Agent Runtime implements only execution semantics that every supported
+  Dreamux runtime necessarily provides and Core necessarily consumes.
+- The live runtime handle has exactly three mandatory execution methods:
+  `start`, `submit`, and `stop`.
+- `submit` accepts a discriminated union for Channel-rendered input and
+  Dreamux-owned plain-text input. It replaces the separate `channelInput` and
+  `completionInput` methods without erasing their different rendering
+  semantics.
+- `start` owns both fresh launch and checkpoint-aware launch using the create
+  context supplied by Core. With no prior session it starts fresh; with a prior
+  session reference it must restore continuous model context. Recovery failure
+  fails loud and must not silently start fresh. Continuity is a mandatory
+  Provider semantic rather than an optional capability or separate `resume`
+  method. Before Core admits the first submission, `start` must report whether
+  the actual launch was fresh or resumed so Dispatcher restart notification
+  remains correct; no separate `wasCheckpointResumed` query survives.
+- `stop` retains the current synchronous input fence and convergence guarantee
+  for every admission that began before the fence.
+- Runtime status and checkpoint transitions have one authoritative direction:
+  Runtime pushes them into a Core-owned state sink supplied in the create
+  context. The live handle no longer exposes `getStatus`, `getCheckpoint`, or
+  `wasCheckpointResumed`, and Core reads its own state projection.
+- The live handle also drops zero-consumer `getContext`, handle-level
+  `getCapabilities`, and duplicate `providerRef` members.
+- The live handle drops `waitIdle`. Team dissolve does not wait for or derive a
+  provider-native idle state. Dissolve intentionally terminates active runtime
+  work immediately, relies on the normal runtime stop fence and convergence
+  contract, and then cleans resources. Scheduler submits each due fire
+  immediately through the normal Core admission path without a busy check,
+  idle wait, held-fire delay, or independent-turn guarantee. Provider-native
+  folding or steering into the currently active turn is explicitly allowed.
+- Structured output is mandatory for every Provider. Every runtime must honor
+  the neutral output schema supplied by Core; it is not feature-gated, and the
+  current `structuredOutput.supported`/`scope` capability advertisement is
+  removed.
+- Live activity reporting is optional. A runtime may emit transient assistant
+  message and tool-call facts through the Core-supplied activity sink. A
+  runtime that emits none still executes and settles turns normally; its COT
+  display and corresponding live activity events are simply absent.
+- The optional activity sink is a real-time projection path; the mandatory
+  recent-activity reader is stable progress inspection. They share the neutral
+  Activity Record vocabulary where applicable, but a transient sink update is
+  not required to have a one-for-one durable reader record and the reader is
+  not a replay source for the event stream.
+- Resume continuity and neutral turn reading are mandatory elsewhere in this
+  contract. Context-window reporting is removed because Core has no consumer.
+- TeamMate `last` remains a required Dreamux progress-inspection capability for
+  Dispatcher and TeamLeader. Its primary user story is observing what a
+  TeamMate has done recently while one active turn may run for tens of minutes
+  or longer without completing. Dreamux execution status is obtained through
+  the separate status capability; `last` neither reconstructs nor returns that
+  Core-owned status.
+- Every Provider therefore implements a mandatory neutral recent-activity read
+  capability. It reads stable records from the current native session history,
+  including records already written by an in-progress turn; it must not wait
+  for a turn-completion boundary before returning useful progress.
+- The public result is record-oriented rather than completed-turn-oriented.
+  It returns a bounded recent tail in chronological order with an opaque cursor,
+  truncation, and typed public failure reasons. Each Provider projects its
+  native records into one unified Dreamux Activity Record model; Provider-native
+  JSONL lines and record formats are never returned directly. Provider internals
+  may read a native transcript file, remote history API, database, or another
+  source, but raw storage paths and provider-native record formats do not enter
+  the Core seam. The public records expose assistant messages plus tool name and
+  lifecycle status. Tool input arguments and tool output content are not exposed.
+  Tool records are included by default, while the caller may request that they
+  be omitted as a group. The exact public method name and field schema remain
+  technical solution choices.
+- The activity reader does not synthesize Core admission or settlement facts.
+  It does not require canonical failed, stopped, or ambiguous outcomes, and its
+  output is never a live settlement source or a replacement for Core status.
+- Core supplies neutral runtime/session identity and provider config/context to
+  the activity reader. Names such as `transcript_locator`, literal host output
+  budgets, native scan modes, and provider filesystem assumptions are removed
+  from the Provider seam.
+- The required Provider capabilities are derived from the settled Team and
+  TeamMate MCP behavior, including creation, role/tool availability, turn
+  submission and settlement, close/dissolve safety, reopen continuity, status,
+  and `last`; the current Provider type is not treated as the requirements list.
+- Core must not branch on concrete provider ids or import provider
+  implementations.
+- Provider-level `getCapabilities` is retained as a discovery/description
+  surface. Dreamux uses it to enumerate each Provider's public configuration
+  characteristics, selection metadata, and tags. It does not duplicate live
+  runtime state; context-continuous recovery and structured output are
+  mandatory rather than optional capability bits. Optional activity reporting
+  requires no preflight bit because absence only suppresses live projection.
+- The exact provider facade and composition of optional capabilities remain
+  open during clarification.
+
+### External target lifecycle without a Core Collaboration Space
+
+- Dreamux Core no longer defines or persists a Collaboration Space container.
+  Team is the only Core container used to represent an automatically created
+  external collaboration target. The Core Collaboration Space service, state,
+  commands, reads, target claims, binding events, and public types are removed.
+- External target creation is a real Channel-owned input. A supporting Channel
+  owns policy, provider-specific identity, binding, and a durable provisioning
+  saga. It first persists a local provisioning record and stable request id,
+  invokes the ordinary public `team.create` Command, persists the resulting
+  `team_name` as its active binding once the Team is ready, and only then invokes
+  ordinary turn submission for the first message.
+- Retrying the same provisioning request after a crash must not create a second
+  Team. The generic Team creation capability therefore exposes transport-neutral
+  idempotent request identity; Core uses that identity only to make Team creation
+  idempotent and never receives or interprets the Channel target. The accepted
+  request identity to `team_name` result is Core-owned durable state: it survives
+  Core restart and returns the same Team for every retry of that identity.
+- A Channel resumes its own incomplete provisioning records after restart. This
+  preserves one-Team creation and ready-before-first-delivery without a Core
+  target/claim/generation model. Per-target serialization and generations remain
+  entirely Channel-private.
+- Provisioning creates an ordinary Team plus one Channel-owned default binding;
+  it does not create an exclusive ownership relation between the external target
+  and the Team. The default binding can be removed independently. The Team may
+  remain alive with no bindings, and a later message from the same now-unbound
+  target may provision a different Team. Unbound Teams are normal and require no
+  orphan cleanup policy.
+- A provider may react to target closure when its platform exposes that fact by
+  generation-checking and removing its own binding. Target closure does not by
+  itself dissolve the Team or imply `force`. Feishu's lack of a close signal
+  does not require a fake callback.
+- A Team may have bindings in multiple targets or Channels. When the Team itself
+  is dissolved, every Channel invalidates all bindings that reference its stable
+  `team_name`; this is a consequence of Team closure, independent of which actor
+  requested dissolve. The in-process lifecycle-coupled Channel consumes the
+  Team-close fact and updates its own authoritative local binding state. There is
+  no independently offline Channel, startup Team-read reconciliation, remote
+  state synchronization, or replay protocol.
+- Automatic-provisioning policy is Channel-owned configuration. The current
+  Core-owned Collaboration Space policy block is removed as an incompatible
+  configuration change; its provider-specific replacement and operator rebuild
+  instructions belong to the owning Channel and the breaking change record.
+- The current dedicated `targetLifecycle`, `ensureCollaborationTarget`, and
+  `deliverExact` callbacks are deleted rather than translated into Core
+  Commands. Their user-visible effects compose from Channel state plus generic
+  Team and turn Commands.
+
+### Immediate Team dissolve
+
+- Team dissolve is a destructive stop-and-reclaim operation, not a graceful
+  drain. It never waits for an active turn to finish naturally and never exposes
+  Provider or Core idle detection. Its first runtime action is to fence new work
+  and stop the relevant Workflow and TeamMate runtimes so unfinished turns cannot
+  continue consuming tokens.
+- Dispatcher-triggered dissolve performs a non-destructive managed-worktree
+  cleanliness preflight before stopping the Team when `force` is false. A dirty
+  or unmerged worktree rejects the request without partially dismantling the
+  Team. Once the preflight passes, Core stops Workflow, every TeamMate, and the
+  TeamLeader and converges their admissions and settlements. The command does
+  not wait for physical worktree deletion.
+- TeamLeader self-dissolve first stops its Workflow and every TeamMate, then
+  checks the managed worktree while the TeamLeader remains only long enough to
+  complete the dissolve admission. A dirty or unmerged worktree is the only
+  non-forced blocker. After a clean check, Core durably accepts the dissolve and
+  stops the TeamLeader runtime without waiting for the caller turn to finish.
+  The MCP caller will commonly observe its own TeamLeader process exit before a
+  normal tool result arrives. That interrupted response is expected fail-open
+  behavior: response delivery failure never rolls back, delays, or marks the
+  already-accepted dissolve as failed.
+- A successful dissolve returns as soon as the required cleanliness check has
+  passed, child Workflow/TeamMate processes have exited, and logical close is
+  durably accepted. Physical removal of the managed worktree is always a
+  background `cleanup-pending` operation because a large checkout can take a
+  long time. Cleanup completion, retry, or failure is observable through Team
+  state but never keeps the invoking turn or terminated Team processes alive.
+  For self-dissolve, this is a logical return boundary rather than a guaranteed
+  MCP response receipt because the caller runtime is itself being terminated.
+- The dissolve surface adds `force`. For an owned managed worktree, `force: true`
+  explicitly authorizes discarding uncommitted, untracked, or unmerged local
+  changes so the worktree checkout can be removed and cannot remain as permanent
+  disk usage. It does not authorize deleting the managed Git branch or committed
+  history.
+- `force` never permits deletion of a reused cwd, source repository, repository
+  root, or any workspace not owned as this Team's managed worktree. Target
+  resolution and containment checks remain fail-loud before destructive cleanup.
+
+## Scope
+
+- Public Agent Runtime declarations in `@excitedjs/dreamux-types`.
+- Core provider loading, runtime ownership, launch adaptation,
+  submission/settlement consumers, transcript consumers, and capability
+  negotiation.
+- Public Channel provider/session declarations, Core event distribution,
+  Channel inbound routing, Channel-owned external-target provisioning, and
+  provider-owned Channel MCP forwarding.
+- Removal of the Core Collaboration Space domain, persistence, public types,
+  commands, reads, events, routing callbacks, tests, and maintenance/docs
+  surfaces. Team remains the only Core collaboration container.
+- Removal of the Core binding store and Team binding surfaces; Channel-owned
+  binding persistence, provider tools, state migration, tests, and public
+  documentation.
+- Contract fixtures, architecture gates, built-in provider migrations, Rush
+  change files, and state/config upgrade handling required by the final public
+  contract.
+
+## Non-goals
+
+- Reducing Channel product responsibility or adding a Web UI/TUI as an
+  alternate external interaction surface.
+- Standardizing how a Channel parses external messages, detects intent, or
+  selects a Core Command.
+- Preserving each current `ChannelRoutes` callback as a same-shaped Command, or
+  using an existing Channel implementation as the authority for the Core
+  capability catalog.
+- Moving Dreamux state ownership or Command implementation into a Channel.
+- Making Core understand Feishu, Slack, Telegram, or another provider's binding
+  metadata.
+- Preserving a single `team.list` response that joins authoritative Team state
+  with authoritative binding state owned by one or more Channels.
+- Removing Channel-owned input validation, platform authorization, or inbound
+  access/trust policy when removing Core's binding-scoped outbound restriction.
+- Preserving source compatibility for the `transfer_back` tool name.
+- Preserving source compatibility for the rewritten Agent Runtime or Channel
+  Provider contracts, or adding a temporary forward-compatibility adapter.
+
+## Constraints and invariants
+
+- Core remains behind provider-neutral Agent Runtime and Channel seams.
+- A mandatory member must represent a capability every supported provider
+  necessarily supplies and Core necessarily consumes.
+- Optional capability absence must not require a fake implementation merely to
+  load a provider and must fail clearly when explicitly requested.
+- Agent admission ambiguity, immutable submission identity, settlement, stop
+  fencing, and completion-delivery ordering remain intact.
+- Channel Command results preserve the current ambiguity rule: a request whose
+  admission may have crossed the boundary must not be reported as safely
+  retryable.
+- Channel binding state has one authority: the configured Channel instance.
+  Core must not retain a second binding projection or query Channel to
+  reconstruct one.
+- Channel event observation remains read-only and fail-open relative to
+  authoritative Core operations.
+- Adding a Core Command or Core event must not widen the base Channel
+  provider/session interface.
+- Every public Core Command must be justified by a Core-owned domain capability
+  and remain independent of the Channel or transport that invokes it.
+- Every externally observable Core event must be justified by a stable
+  Core-owned fact and remain independent of the Channel that consumes it.
+- Any incompatible public contract or persisted binding-shape change follows
+  Dreamux 0.x breaking-change, Rush change-file, and fail-loud upgrade rules.
+
+## Acceptance criteria
+
+- A minimal external-runtime fixture loads and executes a turn without
+  implementing non-universal operational capabilities.
+- Every mandatory provider/runtime member has an unconditional Core consumer
+  and a documented provider-neutral invariant.
+- Optional runtime capabilities can be absent without no-op methods; Core fails
+  clearly only when a caller requests an absent capability.
+- Existing runtime admission, settlement, stop fencing, completion routing, and
+  supported activity delivery remain correct.
+- Every supported Provider honors neutral structured-output schemas. Workflow
+  does not depend on a provider capability advertisement or fail as an
+  unsupported feature solely because a different Provider is selected.
+- The minimal live runtime handle implements only `start`, union-input
+  `submit`, and `stop`; Core status/checkpoint reads come from the Core-owned
+  state projection populated by the push sink.
+- No Provider or live runtime exposes `waitIdle`, and neither scheduler nor
+  Team dissolve waits for or derives an idle state before continuing. Dissolve
+  immediately stops active work; safety is provided by the mandatory stop fence,
+  convergence guarantee, trigger-specific worktree check, and owned-worktree
+  containment. Non-forced dirty/unmerged cleanup blocks, while `force: true`
+  discards local changes only in the owned managed worktree. The command returns
+  after child processes exit and durable logical-close acceptance; physical
+  worktree deletion continues asynchronously. Self-dissolve remains successful
+  when terminating the caller prevents the MCP response from being delivered.
+- A scheduled fire submits at its due time even when another turn is active. It
+  may fold into that turn and share its native completion boundary. Scheduler
+  does not implement busy-only deferral or missed-fire behavior; proven
+  pre-admission failures and admission ambiguity retain their normal generic
+  submission semantics, including no retry after ambiguity.
+- Closing and later sending to a TeamMate restores its prior model context for
+  every supported Provider; a provider cannot advertise a non-resumable mode or
+  silently replace recovery with a fresh session.
+- No Core production path branches on a concrete Agent Runtime provider id.
+- Contract tests distinguish the minimal runtime base from each optional
+  capability and reject silent capability downgrades.
+- TeamMate `last` works for every supported Agent Runtime during a long-running
+  active turn and after the live runtime closes through the mandatory neutral
+  recent-activity reader. It returns recent stable activity without requiring a
+  completed-turn boundary. Results contain assistant messages and tool
+  name/status records, never tool inputs or outputs; callers may omit all tool
+  records. Core never parses a runtime-native transcript format.
+- `Runtime.getContext()` and handle-level `getCapabilities()` are absent from
+  the target contract because they have no production Core consumer.
+- Provider-level `getCapabilities()` remains available for Provider discovery,
+  public characteristics, and tags. The structured-output `scope` field is
+  absent: recovery and structured output are mandatory, while activity
+  reporting is optional and requires no preflight query.
+- A minimal Channel fixture can be directly constructed/started/stopped,
+  invoke Core Commands, and receive Core events without Team-, worktree-, or
+  provider-specific base methods.
+- The final Command catalog is traced to Core-owned domain use cases and an
+  explicit external-callability decision; it is not a one-for-one rewrite of
+  current Channel callback members.
+- The initial Channel Command catalog contains only external `turn.submit` and
+  restart-durable idempotent `team.create` for automatic provisioning. Team,
+  TeamMate, Workflow, scheduler, and other Agent operations remain MCP-only
+  unless a later requirement explicitly adds a Channel Command.
+- The final event catalog is traced to stable Core facts rather than the needs
+  of a concrete Channel implementation.
+- The initial event catalog contains only the existing Team, Agent, and turn
+  lifecycle/activity facts required by binding invalidation and current COT. It
+  adds no Workflow, scheduler, binding, Collaboration Space, or other internal
+  capability event.
+- Adding a Channel-originated Core capability or a Core event changes only its
+  catalog/schema and consumers, not the base Channel interface.
+- Event subscribers receive live facts only. Core has no event replay/snapshot
+  requirement and persists no message/tool event-content history.
+- Existing COT event kinds, normalized Provider activity, Core projection,
+  redaction/truncation, and Channel display behavior remain unchanged. Tests
+  preserve the post-COT baseline and prove observer failures cannot affect turn
+  admission or settlement.
+- Channel-provided opaque turn correlation is returned unchanged on submitted,
+  activity, and settled events without becoming Core routing or authorization
+  state.
+- A Channel with no MCP tools does not implement fake MCP members. Live and
+  sessionless provider MCP tools remain functional when declared.
+- A binding-capable Channel persists and resolves its own provider-specific
+  routing state without exposing external identifiers or matching rules to
+  Core.
+- An automatic-provisioning Channel persists and recovers its own provisioning
+  saga, uses restart-durable idempotent `team.create`, binds only after Team readiness, and
+  submits the first message only after binding. Core contains no Collaboration
+  Space object, external target claim, or collaboration binding event.
+- Dispatcher can call Channel-owned `bind_channel`, `unbind_channel`, and
+  `list_bindings` through the existing MCP proxy. Team MCP and Core admin
+  methods no longer expose `bind_channel` or `transfer_back`.
+- Channel submits a resolved stable `team_name`, Core delivers only to its
+  TeamLeader, unmatched inbound reaches the
+  Dispatcher Agent, and stale targets can fall back only after a typed
+  pre-admission rejection.
+- Binding-only reads require one `list_bindings` call per relevant Channel.
+  Cross-domain views intentionally join Channel binding reads with Core Team
+  reads rather than creating a duplicate Core binding index.
+- TeamLeader provider MCP calls are forwarded without binding-owner or
+  message-to-target proof, while provider schema checks and platform errors
+  remain intact.
+- `resolveTarget`, `messageBelongsToTarget`, direct `reply?`/`react?`, and the
+  dedicated growing `ChannelRoutes` callbacks are absent from the final base
+  Channel contract.
+
+## Confirmed operator decisions
+
+- This is an Architecture-domain task; the changed package does not determine
+  task ownership.
+- The Agent Runtime provider contract must converge on an absolute minimum
+  necessary set.
+- The live Agent Runtime execution base is `start`, discriminated-union
+  `submit`, and `stop`. Separate channel/plain-text input methods are removed.
+- Runtime status and checkpoint transitions are push-only into Core-owned
+  state. The live handle does not duplicate them with pull queries.
+- Structured output is mandatory for every Provider and is part of the neutral
+  submission/start contract rather than a capability bit. The current
+  structured-output `scope` field is removed.
+- Provider-level `getCapabilities()` is retained for Provider enumeration and
+  public discovery metadata, including tags. Live runtime
+  `getCapabilities()` remains deleted.
+- Activity reporting is optional. A Provider that emits no activity remains a
+  valid Provider; Dreamux omits COT message/tool display for its turns without
+  changing admission or settlement.
+- Existing COT presentation is unchanged. Providers emit the current normalized
+  real-time activity shape; Core applies the current projection, redaction, and
+  truncation and publishes best-effort live `turn.message`/`turn.tool_call`
+  events. No retry, replay, retention, acknowledgement, or delivery guarantee is
+  added, and Channel observation remains fail-open.
+- Provider `waitIdle` is removed without a replacement idle query or derived
+  idle state. Scheduler submits every due fire immediately through normal
+  admission and allows Provider-native folding into active work; it has no
+  held-fire idle delay or independent queue guarantee. Team dissolve is
+  immediate and destructive: it stops child work before further
+  cleanup, does not wait for any active turn, and supports an explicit `force`
+  flag for discarding local changes in the Team-owned managed worktree.
+- TeamMate `last` is mandatory for Dispatcher and TeamLeader progress
+  inspection, while native `readTranscript` is not accepted as its public
+  abstraction. Every Provider instead implements a neutral record-oriented
+  recent-activity reader that includes stable records from the currently active
+  turn and returns unified Dreamux Activity Records containing assistant
+  messages plus tool name/status, without tool input/output; Dreamux status
+  remains a separate Core capability.
+- Closed-TeamMate context continuity is mandatory for every Provider. `start`
+  handles both fresh and existing-session launch, and a failed recovery never
+  falls back silently to a fresh context.
+- Channel is Dreamux Core's only external interaction path; its
+  responsibilities may expand while its Interface contracts.
+- External message processing and Core Command selection are Channel-internal
+  responsibilities.
+- Core capabilities and observable facts are designed first and independently
+  of Channel differences. Channel ports are adapters to that Core-owned catalog;
+  current Channel call sites do not define it.
+- Channel is trusted for the deliberately small set of Commands exposed to it;
+  trust does not turn internal Dreamux capabilities into Channel Commands.
+- Workflow and scheduler are Agent/MCP-only internal capabilities. They expose
+  no Channel Commands or lifecycle events. Host-maintenance operations likewise
+  remain outside the Channel surface.
+- The initial Channel Command catalog is exactly external `turn.submit` plus
+  restart-durable idempotent `team.create` for automatic provisioning. The
+  initial event catalog is the existing Team, Agent, and turn facts needed for
+  binding invalidation and the frozen post-COT presentation. The generic ports
+  are intentionally extensible, but no speculative Command or event is added.
+- Channel uses one generic request/response Command invocation primitive toward
+  Core; Core uses one event-delivery primitive toward Channel.
+- Direct Provider control/lifecycle and optional Channel MCP
+  registration/forwarding are separate mechanisms from those two primitives.
+- External-route binding is Channel-owned rather than Core-owned. Channel owns
+  provider-specific target matching, hierarchy, persistence, and migration,
+  then submits the resolved Dreamux `team_name` to Core for TeamLeader delivery.
+- Bindings may target TeamLeaders only; arbitrary TeamMate binding is excluded.
+- Unmatched inbound continues to the Dispatcher Agent. Stale bindings may fall
+  back only after a proven pre-admission target rejection, never after an
+  ambiguous admission.
+- Dispatcher invokes Channel-owned `bind_channel`, `unbind_channel`, and
+  `list_bindings` through Channel MCP. Team MCP/Core binding operations and the
+  old `transfer_back` name are removed without an alias.
+- Binding lists are read from their authoritative Channel. A view combining all
+  Team state with bindings performs separate Team and Channel reads; Core does
+  not query Channels or mirror their bindings to preserve a one-call join.
+- Dreamux Core's binding-scoped TeamLeader Channel-tool outbound restriction is
+  removed; it was not an operator requirement.
+- The target design has no general Core-to-Channel query port.
+- External target creation remains a supported input. Target closure remains a
+  provider-neutral optional input even though Feishu cannot currently produce
+  it.
+- Core Collaboration Space is deleted. Channel composes the same external
+  product effect by creating and binding ordinary Teams through generic Core
+  Commands; all target provisioning state and recovery live in Channel.
+- Automatic provisioning creates a normal Team and a removable default binding.
+  Removing or closing the external target removes that binding without
+  dissolving the Team; unbound Teams are ordinary supported state. Dissolving a
+  Team invalidates all Channel bindings that reference its stable `team_name`.
+- Core events are real-time only, without replay or subscribe-time snapshots.
+  Only critical operational logs are retained; Core does not locally persist
+  other message/tool event contents.
+- Channel and Core are lifecycle-coupled in the same process. Channel restores
+  its own authoritative local state on process start; Dreamux does not design an
+  independent Channel reconnect, remote synchronization, or event-replay model.
+- The full Provider/Channel rewrite is intentionally incompatible. No legacy
+  contract adapter, forward-compatibility path, or old-name alias is designed.
+- The refactor starts from the post-COT `next` baseline on a dedicated branch.
+- Product code remains unchanged until the requirement and technical solution
+  are finalized and the operator explicitly grants development approval.
+
+## Open technical design decisions
+
+- The exact Provider-level `getCapabilities()` discovery schema, including tag
+  vocabulary, which public configuration characteristics are safe to expose,
+  and whether the result is Provider-static or resolved against parsed Provider
+  config. Raw secrets and private environment values must never be exposed.
+- After the minimum product-visible Activity Record content is fixed, the exact
+  neutral method name and query/result/error/session-reference contract,
+  pagination over an actively growing session, field schema, bounds, and
+  migration from `readTranscript` remain technical choices. The decision to
+  return unified Activity Records rather than Provider-native lines is final.
+- The minimum neutral role/tool launch context required for TeamLeader and
+  TeamMate operation, including Dreamux tool injection, instructions, cwd, and
+  recovery identity.
+- Whether provider discovery, config parsing, onboarding, identity, and
+  diagnostics remain on one facade or compose separately.
+- The exact Channel lifecycle/control base members.
+- After the minimal exposed capabilities are fixed, their exact Command names
+  and schemas remain technical choices. Internal Agent/MCP and host-maintenance
+  capabilities remain separate.
+- After the public event categories and visibility policy are fixed, their exact
+  schemas remain a technical choice.
+- The transport-independent Command/event catalog shape, versioning, validation,
+  error envelope, authorization, idempotency, and in-process/admin adapters.
+- The exact event subscription API, delivery guarantees, failure isolation, and
+  shutdown fencing.
+- The MCP catalog and handler types, caller context, and live/sessionless
+  execution shape.
+- Channel-owned binding state schemas, durability, concurrency, migration, and
+  provider-specific tool contracts after the Core binding store is removed.
