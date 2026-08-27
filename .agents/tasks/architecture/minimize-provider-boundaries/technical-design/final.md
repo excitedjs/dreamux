@@ -4,7 +4,7 @@
 
 This is the current technical design baseline for the requirement at
 `requirement.md` SHA-256
-`bb41254a1f0e9f07a2626921bf9fdde7e11b7e83d0a19a7946f14b76729290dd`.
+`4bbaa002810b3b561626c037fb26b50fe4bfd988887bfeb3574c53650087b26f`.
 
 It reconciles the three independent proposals and their single cross-review
 round. Where proposals disagreed, this design follows the frozen requirement
@@ -274,17 +274,10 @@ interface AgentRuntimeStartOutcome {
   readonly continuity: "fresh" | "resumed";
 }
 
-type AgentRuntimeSubmissionInput =
-  | {
-      readonly kind: "channel";
-      readonly input: InboundTurnInput;
-    }
-  | {
-      readonly kind: "text";
-      readonly text: string;
-      readonly source: RuntimeTurnSource;
-      readonly sourceId?: string;
-    };
+interface AgentRuntimeSubmissionInput {
+  readonly text: string;
+  readonly sourceId?: string;
+}
 ```
 
 The existing `RuntimeAdmission` union remains intact, including `submitted`,
@@ -292,9 +285,19 @@ The existing `RuntimeAdmission` union remains intact, including `submitted`,
 `submitted` branch carries the immutable `RuntimeSubmission` object whose
 identity Core uses as the settlement correlation key. The Command boundary
 normalizes internal `skipped` to public `stopped`; the Provider seam does not.
-The input union keeps Channel-rendered input distinct from Dreamux-owned plain
-text and preserves source/deduplication semantics for completion, scheduled,
-control, prompt, and Channel turns.
+The runtime input is deliberately flat. `sourceId` preserves runtime-local
+deduplication where a caller has a stable identity; it is not model-visible.
+Core keeps the authoritative origin and event `turn_source` on its own turn
+record. A Provider neither receives nor interprets an `InboundTurnInput`, a
+Channel/Dreamux source enum, intent, opaque display correlation, or XML
+rendering instructions.
+
+Channel produces the complete model-facing `text` before invoking Core,
+including any Channel-owned XML envelope. Dreamux-owned completion, scheduler,
+control, prompt, and Workflow paths likewise prepare their final text before
+calling the runtime. Consequently replacing `channelInput` and
+`completionInput` does not introduce a new discriminator that recreates the old
+split under `submit`.
 
 `start` receives prior session identity only through the immutable create
 context. A non-null session must restore continuous model context; failure
@@ -611,18 +614,10 @@ The two Commands whose contracts change materially for Channel use are:
 ```ts
 interface TeamSubmitCommand {
   readonly team_name?: string;
-  readonly submission:
-    | {
-        readonly kind: "inbound";
-        readonly input: InboundTurnInput;
-        readonly correlation?: string;
-      }
-    | {
-        readonly kind: "text";
-        readonly text: string;
-        readonly intent?: string;
-        readonly source_id?: string;
-      };
+  readonly text: string;
+  readonly intent?: string;
+  readonly source_id?: string;
+  readonly correlation?: string;
 }
 
 interface TeamSubmitResult {
@@ -638,9 +633,10 @@ interface TeamSubmitResult {
 ```
 
 Omitting `team_name` targets the Dispatcher Agent; otherwise Core resolves the
-stable Team and submits only to its TeamLeader. The `inbound` variant is used by
-Channel bridges; the `text` variant replaces current admin `team.send`. The
-invoker scopes inbound source deduplication to the calling Channel. A
+stable Team and submits only to its TeamLeader. Channel and admin adapters use
+the same flat payload. A Channel renders its external message into complete
+model-facing text, including its own XML envelope, before invocation. The
+invoker scopes a Channel-supplied source identity to the calling Channel. A
 `submitted` result carries the Core `turn_id`; `duplicate` does not invent one
 because the current Provider-owned deduplication result has no submission
 identity or source-to-turn ledger.
@@ -650,7 +646,7 @@ failures permit the Channel to remove a stale binding and retry once to the
 Dispatcher. An unknown boundary outcome is `ambiguous`; it is never retried.
 The existing `skipped -> stopped` boundary normalization remains.
 
-Inbound `correlation` is a bounded opaque Channel-chosen string. Core never parses,
+`correlation` is a bounded opaque Channel-chosen string. Core never parses,
 routes, authorizes, or deduplicates with it. The session-bound invoker already
 establishes Channel provenance, so no provider/channel wrapper is duplicated in
 the value. Core echoes it unchanged on all related submitted/activity/settled
@@ -1108,6 +1104,9 @@ compile breaks are resolved inside the same implementation change.
 - A minimal Agent Runtime Provider loads and runs one fresh turn with only the
   mandatory provider members and a live handle containing only
   `start/submit/stop`.
+- Runtime contract fixtures prove `submit` accepts only prepared text plus an
+  optional source identity, with no Channel/plain-text discriminator, source
+  enum, inbound envelope, or runtime-owned XML rendering.
 - A resumed fixture proves non-null session continuity, loud recovery failure,
   continuity reporting before first submit, and stop-racing-start convergence.
 - Prompt fixtures prove Dispatcher replace/append selection, TeamLeader
@@ -1143,6 +1142,10 @@ compile breaks are resolved inside the same implementation change.
 - `team.submit` tests cover Dispatcher/default delivery, TeamLeader delivery,
   duplicate, stopped, failed, ambiguous, stable `turn_id`, opaque correlation,
   and retry only after `TEAM_NOT_FOUND`/`TEAM_CLOSED`.
+- Channel submission tests prove Channel renders its external envelope and XML
+  before invoking the flat `team.submit` Command, while Core preserves origin,
+  correlation, event source, admission, and settlement outside the runtime
+  payload.
 - `team.create` tests cover crash points before reservation, after reservation,
   during creation, and after readiness; same-id replay, closed replay,
   different-payload conflict, capacity rejection, and never-reused names.

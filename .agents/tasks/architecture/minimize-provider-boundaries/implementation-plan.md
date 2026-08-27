@@ -3,9 +3,9 @@
 ## Authority
 
 This plan executes the current requirement baseline at SHA-256
-`bb41254a1f0e9f07a2626921bf9fdde7e11b7e83d0a19a7946f14b76729290dd`
+`4bbaa002810b3b561626c037fb26b50fe4bfd988887bfeb3574c53650087b26f`
 and the current technical design baseline at SHA-256
-`e8dc75bade851fa27cf8ad4d67b2885267bbac2891182f039c412513aed29ff1`.
+`3a4d76b35345cb37197c9eb519f0806275c48e3bbf5afcdd2700e8353c0f1647`.
 The operator granted development approval on 2026-08-27 with the staged
 protocol below. Recorded product decisions remain authoritative over
 implementation convenience only for the scenarios they explicitly cover.
@@ -62,6 +62,9 @@ historical Decision that the design did not examine.
 - Add generic Provider-owned session identity, `start/submit/stop`, leased push
   state, neutral recent Activity Records, Channel lifecycle/ports, Channel MCP
   composition, canonical Command/event types, and required root exports.
+- Keep Agent Runtime `submit` and `team.submit` flat: Channel renders its final
+  model-facing XML/text before invocation, and neither seam retains an inbound
+  versus text discriminator.
 - Retain neutral system-prompt replace/append forms: Dispatcher supplies both
   and each Provider selects its native mechanism; TeamLeader remains
   append-only for every Provider. Preserve ordinary TeamMate and Workflow
@@ -86,6 +89,9 @@ historical Decision that the design did not examine.
   TeamMate identity guidance.
 - Reshape Core runtime ownership, admission, settlement, restart notice, and
   `last` without weakening existing invariants.
+- Remove runtime-owned Channel rendering and source-kind branching. Preserve
+  only prepared text plus optional source identity at the Provider seam; keep
+  origin, correlation, and event source in Core-owned turn state.
 - Validation: implementation follows sections 1 and 4 of the final design; no
   Core branch on concrete Provider identity appears.
 
@@ -119,6 +125,8 @@ historical Decision that the design did not examine.
 
 - Move direct bindings, hierarchy/fallback, persistence, stale-binding cleanup,
   and list/unbind/bind tools into Feishu Channel.
+- Move the current external-message XML rendering into Feishu Channel so its
+  `team.submit` invocation already contains final model-facing text.
 - Move Collaboration Space policy and its four Dispatcher-only MCP tools into
   Feishu Channel while keeping Team as the only Core collaboration container.
 - Implement idempotent child-target provisioning through `team.create` and

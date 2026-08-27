@@ -109,8 +109,8 @@ The current production consumer matrix for public Agent Runtime functions is:
 | `Runtime.start()` | Fresh runtime launch. |
 | `Runtime.resume()` | Checkpoint launch when provider-level resume capability says supported; target design folds this into mandatory context-continuous `start`. |
 | `Runtime.stop()` | Entity close/shutdown and failed-start rollback; owns the synchronous input fence and admission convergence guarantee. |
-| `Runtime.channelInput()` | External Channel/user turn submission only; target design folds it into discriminated-union `submit`. |
-| `Runtime.completionInput()` | Scheduled, control, prompt/workflow, and Agent-to-Agent completion submissions; target design folds them into discriminated-union `submit`. |
+| `Runtime.channelInput()` | External Channel/user turn submission only; target design moves Channel rendering into Channel and folds the resulting text into one flat `submit`. |
+| `Runtime.completionInput()` | Scheduled, control, prompt/workflow, and Agent-to-Agent completion submissions; target design folds their prepared text into the same flat `submit`. |
 | `Runtime.waitIdle?()` | Scheduler held-fire delay and Team dissolve only; confirmed for deletion without a replacement idle model. |
 | `Runtime.getStatus()` | Live status/history projection and live-writer/start checks; target design replaces it with runtime-to-Core state push. |
 | `Runtime.getCheckpoint()` | Runtime status/thread projection with persisted-state fallback; target design replaces it with runtime-to-Core state push. |
@@ -255,6 +255,12 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   Channel and delivers only to that Team's TeamLeader. Omission selects the
   Dispatcher Agent. Team lookup failure is a proven pre-admission result;
   admission ambiguity remains non-retryable.
+- `team.submit` has one flat text payload rather than inbound/text variants.
+  Channel interprets its external envelope and renders the complete model-facing
+  text, including any Channel-owned XML, before invoking the Command. Core does
+  not receive an `InboundTurnInput`, infer Channel markup, or render a Channel
+  block. Optional source identity, intent, and opaque display correlation remain
+  separate non-rendering fields.
 
 ### 3. Core-to-Channel event delivery
 
@@ -420,10 +426,15 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   Dreamux runtime necessarily provides and Core necessarily consumes.
 - The live runtime handle has exactly three mandatory execution methods:
   `start`, `submit`, and `stop`.
-- `submit` accepts a discriminated union for Channel-rendered input and
-  Dreamux-owned plain-text input. It replaces the separate `channelInput` and
-  `completionInput` methods without erasing their different rendering
-  semantics.
+- `submit` accepts one flat neutral input containing prepared `text` and an
+  optional runtime-local `sourceId`. It replaces the separate `channelInput`
+  and `completionInput` methods without retaining a `kind` or source taxonomy
+  at the Provider seam. Channel owns external-envelope interpretation and XML
+  rendering before Core submission; Dreamux-owned callers likewise prepare
+  their final text before calling the runtime.
+- Core retains turn origin, correlation, intent, and event `turn_source` in its
+  own admission/turn records. Those Core facts do not cross the Agent Runtime
+  Provider seam merely to classify identical text submission behavior.
 - `start` owns both fresh launch and checkpoint-aware launch using the create
   context supplied by Core. With no prior session it starts fresh; with a prior
   session reference it must restore continuous model context. Recovery failure
@@ -812,8 +823,13 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   task ownership.
 - The Agent Runtime provider contract must converge on an absolute minimum
   necessary set.
-- The live Agent Runtime execution base is `start`, discriminated-union
-  `submit`, and `stop`. Separate channel/plain-text input methods are removed.
+- The live Agent Runtime execution base is `start`, flat text `submit`, and
+  `stop`. Separate channel/plain-text input methods and their replacement
+  discriminator are removed.
+- `team.submit` is also a flat text Command with optional target, intent,
+  source identity, and opaque correlation fields. Channel owns external-message
+  XML rendering before invocation; Core and Agent Runtime never reconstruct a
+  Channel envelope.
 - Runtime status and checkpoint transitions are push-only into Core-owned
   state. The live handle does not duplicate them with pull queries.
 - Structured output is mandatory for every Provider and is part of the neutral
