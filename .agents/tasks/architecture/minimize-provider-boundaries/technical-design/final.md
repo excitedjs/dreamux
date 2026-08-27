@@ -11,6 +11,45 @@ round. Where proposals disagreed, this design follows the frozen requirement
 and current source behavior rather than reviewer votes. It changes no product
 code and does not grant development approval.
 
+## Governing principle: domain ownership drives names and code layout
+
+The public protocol, exported types, internal modules, classes, and functions
+must use the same Dreamux domain language. A name starts with the domain entity
+that owns the action or fact, not the transport that happened to carry it, the
+current call site, or a generic technical noun:
+
+- Team-owned actions and aggregates use `team.*`, such as `team.create`,
+  `team.submit`, and `team.state`;
+- an individual Dreamux Agent entity is consistently called a TeamMate at the
+  Core domain boundary, including Dispatcher and TeamLeader roles, so its facts
+  use `teammate.state` and `teammate.turn.*`;
+- `AgentRuntime` is reserved for the Provider/native execution seam and is not
+  used as a competing name for the Core TeamMate entity;
+- `Channel` names are reserved for bridge lifecycle, external transport,
+  provider-owned routing, and the generic Command/event ports; a Channel call
+  site never determines the name or owner of a Core capability.
+
+Code organization follows the same rule. Team Command handlers, aggregates,
+state, and policies live under the Team domain owner. TeamMate identity,
+lifecycle, submission, settlement, Activity adaptation, and event publication
+live under the TeamMate domain owner. Agent Runtime adapters and native session
+logic stay behind the Provider seam. Channel transport adapters contain no Team
+or TeamMate policy; generic Command/event dispatch contains no provider-specific
+branching.
+
+Internal classes and functions use the same ubiquitous language as their public
+contract. Examples include `TeamSubmitCommand`, `submitToTeam`,
+`TeammateStateEvent`, and `publishTeammateState`; ambiguous remnants such as
+generic `agent`, global `turn.*`, transport-named domain handlers, and historical
+callback names are renamed or deleted rather than hidden behind aliases. A
+namespace is an ownership statement, not cosmetic grouping.
+
+This is a standing implementation and review gate. Adding or moving behavior
+requires identifying its authoritative domain owner first. If the natural owner
+does not exist, reshape the module boundary instead of attaching the behavior to
+the nearest service. Tests mirror the same domains and must prove that adapters
+delegate to domain owners rather than reimplementing policy.
+
 ## Decision summary
 
 The refactor replaces two growing provider contracts with capability-neutral
@@ -43,7 +82,7 @@ adapters, deprecated aliases, dual-write periods, or automatic state migrations.
 
 | Owner | Responsibilities |
 | --- | --- |
-| Dreamux Core | Team and Agent state, runtime ownership, Command schemas and execution, admission and settlement, Team-create idempotency, event schemas and projection, state persistence, dissolve safety, MCP forwarding and caller context |
+| Dreamux Core | Team and TeamMate state, runtime ownership, Command schemas and execution, admission and settlement, Team-create idempotency, event schemas and projection, state persistence, dissolve safety, MCP forwarding and caller context |
 | Agent Runtime Provider | Native process/session lifecycle, context restoration, schema adaptation, native activity discovery and normalization, optional live activity emission |
 | Channel Provider | External transport, message interpretation, Command selection, external-route bindings, target hierarchy, provisioning saga, Channel-owned configuration/state, external rendering, Channel MCP tools |
 | `@excitedjs/dreamux-types` | Neutral contracts and catalog types only; no provider-specific paths, selectors, or runtime-native record formats |
@@ -759,7 +798,8 @@ dependency order:
 1. reshape `@excitedjs/dreamux-types` contracts and root export locks;
 2. update Codex and Claude Code providers to the new runtime, state, structured
    output, and Activity contracts;
-3. implement Core runtime ownership, Activity reader, Command/event registries,
+3. organize Core implementation by the Team and TeamMate domain owners, then
+   implement runtime ownership, Activity reader, Command/event registries,
    lifecycle fences, scheduler, dissolve, and idempotency ledger;
 4. reshape the Channel contract and MCP composition;
 5. move Feishu binding, provisioning, and COT anchor ownership into the Channel;
@@ -833,6 +873,10 @@ compile breaks are resolved inside the same implementation change.
 - Negative surface tests prove deleted methods, callbacks, events, Commands,
   aliases, Collaboration Space types, and binding stores cannot be imported or
   loaded.
+- Architecture tests enforce the domain vocabulary and import boundaries:
+  `team.*` handlers delegate to the Team owner, `teammate.*` facts originate in
+  the TeamMate owner, `AgentRuntime` names stay behind the Provider seam, and
+  Channel/transport modules do not own Team or TeamMate policy.
 
 ### Repository gates
 
