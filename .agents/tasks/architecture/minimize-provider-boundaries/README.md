@@ -93,6 +93,15 @@
   publication is the acceptance point. Missing, malformed, or unreadable records
   are `TEAM_NOT_FOUND` and reserve no name; no separate request ledger, name
   claim, or tombstone remains.
+- Stage 5 audit decision: Team-record validity covers exactly the facts required
+  to establish Team existence and, when no aligned Identity exists, to recreate
+  the TeamLeader from the Team-owned creation snapshot. The reader validates the
+  directory-bound Team identity, leader name, lifecycle status vocabulary,
+  leader runtime, repository and runtime directories, worktree identity,
+  identity prompt, and normalized skill sources. A record missing or corrupting
+  one of those facts is not a Team and reserves no name. This is not a generic
+  deep-schema defense: do not add speculative length limits, migration,
+  repair, backfill, or validation of unrelated presentation fields.
 - Stage 3 operator decision: Command failures use ordinary Error inheritance.
   `DreamuxError` owns stable codes; generic validation, real cross-process
   transport, and unknown internal failures have reusable subclasses, while
