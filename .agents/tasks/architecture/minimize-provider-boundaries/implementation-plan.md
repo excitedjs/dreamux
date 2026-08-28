@@ -3,9 +3,9 @@
 ## Authority
 
 This plan executes the current requirement baseline at SHA-256
-`acf90312dbeb02861654172943f1fd016de04d6c7c6a6c9c155e78889d0d5f28`
+`f1058c2c1225dc39c04732a6f5357827eb6d214c0ac3239ca97d9384d8a100be`
 and the current technical design baseline at SHA-256
-`30fa81118a9008eb28d171113bc87cb9e5acfe9fbf78d3028efd49aa67c28010`.
+`a042a5946bb121357e472fb3e20c508994aeab82fa562c2680c7621138c80d2b`.
 The operator granted development approval on 2026-08-27 with the staged
 protocol below. Recorded product decisions remain authoritative over
 implementation convenience only for the scenarios they explicitly cover.
@@ -144,12 +144,14 @@ mandatory review precedents, not historical anecdotes:
     local policy into managed mode with `delete-on-close`. Never delete a broader
     load-bearing domain capability merely because the first migrated consumer
     uses a smaller subset.
-11. **A bounded entry was confused with a bounded lifetime ledger.** A hard
-    count cap on never-evicted idempotency identities eventually disables Team
-    creation permanently, while manual pruning makes an old retry create a
-    duplicate Team. Bound and validate every request id, payload, and stored
-    entry, but let total entries grow with never-reused Team history; reject only
-    on a real persistence or storage failure.
+11. **A request ledger and name claim were added around a Team that did not yet
+    exist.** A valid readable Team record is the only proof of Team existence,
+    the only concrete-name owner, and the durable home of `request_id` plus its
+    payload hash. Before its exclusive atomic publication, no Team was accepted
+    and no name is occupied; after publication, the record supplies restart
+    idempotency. Missing, malformed, or unreadable records are `TEAM_NOT_FOUND`
+    for routing and do not reserve names. Do not create a separate request
+    ledger, name claim, or tombstone for a pre-Team candidate.
 12. **`last` was treated as settled transcript history.** Its actual user story
     is observing a TeamMate that may remain inside one active turn for an hour.
     Provider-owned recent Activity Records therefore cover the growing active
@@ -168,13 +170,14 @@ mandatory review precedents, not historical anecdotes:
     and Channel consumes the event without replay, retransmission, or local
     message storage. Preserve the tuned presentation and fail-open behavior;
     lifecycle correctness belongs to Core state, not the COT stream.
-15. **An unprovable name claim was mistaken for a fatal provisioning error.**
-    If the reserved candidate already has a Team but its claim is missing,
-    malformed, unreadable, or carries another token, Core cannot safely adopt
-    that Team. Persistently rotating to a new candidate preserves idempotent
-    recovery without over-defending corrupted ownership metadata as a global
-    outage; the invariant is “never adopt without proof,” not “every old
-    candidate must remain usable.”
+15. **Command failures were being collapsed into `INTERNAL` or expanded into a
+    public layer taxonomy.** Both are wrong. Use ordinary `Error` inheritance:
+    `DreamuxError` owns stable codes; `ValidationError`, `TransportError`, and
+    `InternalError` cover truly generic boundaries; specific business failures
+    extend `DreamuxError` directly. There is no `DomainError` layer. Registry
+    validation runs before every handler, only real cross-process failures are
+    transport errors, and the MCP adapter renders all known errors in one
+    concise model-understandable form. Unknown failures alone become internal.
 16. **A hypothetical oversized Command result was used to justify a global
     output cap.** No current Command has that failure mode: Activity is paged and
     budgeted, history/list results are domain-bounded, and Provider public
@@ -183,11 +186,17 @@ mandatory review precedents, not historical anecdotes:
     the domain contract that demonstrates a real need.
 17. **Every persistence `await` was treated as requiring automatic crash
     recovery.** Normal Team-creation errors already execute durable cleanup; the
-    remaining gap requires a hard process loss in the narrow interval between
-    the Team record and TeamLeader identity writes. Do not add a partial-create
-    recovery state machine without real failure evidence. The required minimal
-    behavior is truthful failure: an incomplete `starting` Team must never be
-    marked or returned as successfully existing.
+    Team record is the creation acceptance point. A hard loss before publication
+    leaves no Team and no occupied name. The remaining gap requires loss after
+    that record but before TeamLeader identity. Do not add a partial-create
+    recovery state machine without real failure evidence; an incomplete
+    `starting` Team must never be returned as successfully existing.
+18. **A review proposed changing shutdown order without checking current
+    behavior.** Preserve the established sequence: close shared Command
+    admission, begin and converge Dispatcher shutdown, drain already accepted
+    Command calls, then close the socket. Fix comments that promise stronger
+    settlement than the code provides. A request racing the fence receives
+    `ServerShuttingDownError`; do not disguise it as a Team or internal failure.
 
 ## Stage ledger
 
@@ -254,14 +263,21 @@ mandatory review precedents, not historical anecdotes:
 - Normalize all surviving Server, Dispatcher, Team, TeamMate, Workflow,
   Scheduler, and Channel-MCP infrastructure names; delete superseded names and
   Core Collaboration Space Commands.
-- Implement durable `team.create` request idempotency and the unified
-  `team.submit` admission boundary.
-- Treat an unreadable or mismatched persisted name claim as unproven ownership:
-  durably rotate the request ledger before retrying rather than adopting the
-  existing Team or failing provisioning solely for that candidate.
+- Implement durable `team.create` request idempotency inside the Team record and
+  the unified `team.submit` admission boundary. Exclusive atomic record
+  publication is the acceptance and name-ownership point; persist no separate
+  request ledger or name claim.
+- Treat a missing, malformed, or unreadable Team record as nonexistent for
+  lookup, routing, and name allocation. Return `TEAM_NOT_FOUND`; do not protect
+  or recover a Team that has no valid record.
+- Use the approved `DreamuxError` inheritance model, run shared validation before
+  handlers, distinguish only actual cross-process failures as transport errors,
+  and project known failures consistently at MCP boundaries.
+- Preserve the current shutdown order while routing both adapters through the
+  same admission fence. A racing request receives `ServerShuttingDownError`.
 - Validate Command results through their shared schema and JSON boundary, but
   do not add a speculative registry-wide output byte limit.
-- Reject an exact-claim replay whose Team remains incomplete `starting` state;
+- Reject replay whose valid Team record remains incomplete `starting` state;
   do not add automatic partial-creation recovery in this refactor.
 - Validation: every inventoried current admin method is retained, renamed, or
   deleted exactly as the final design says; both adapters resolve the same

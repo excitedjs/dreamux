@@ -4,12 +4,12 @@
 
 This is the current technical design baseline for the requirement at
 `requirement.md` SHA-256
-`acf90312dbeb02861654172943f1fd016de04d6c7c6a6c9c155e78889d0d5f28`.
+`f1058c2c1225dc39c04732a6f5357827eb6d214c0ac3239ca97d9384d8a100be`.
 
 It reconciles the three independent proposals and their single cross-review
 round. Where proposals disagreed, this design follows the frozen requirement
 and current source behavior rather than reviewer votes. It changes no product
-code and does not grant development approval.
+code; development approval is tracked separately in the task README.
 
 It is authoritative only for scenarios it actually models. It does not silently
 supersede a load-bearing behavior, consumer, protocol, or prior Decision that
@@ -551,6 +551,31 @@ domain-owned pagination or source bounds. The socket envelope
 `adminMethods` is deleted as an independent authority; the admin server becomes
 an adapter over the registry.
 
+Errors remain ordinary classes, not a second public layering protocol:
+
+```ts
+class DreamuxError extends Error {
+  readonly code: string;
+}
+
+class ValidationError extends DreamuxError {}
+class TransportError extends DreamuxError {}
+class InternalError extends DreamuxError {}
+
+class TeamNotFoundError extends DreamuxError {}
+class TeamClosedError extends DreamuxError {}
+class IdempotencyConflictError extends DreamuxError {}
+class ServerShuttingDownError extends DreamuxError {}
+```
+
+There is no `DomainError` base class and no public `layer`, `category`, or
+`retry` taxonomy. The registry validates all inputs before domain execution.
+Only cross-process framing, connection, and delivery failures become
+`TransportError`; business handlers throw their specific `DreamuxError`
+subclass. Only an unknown implementation failure becomes `InternalError`. MCP
+adapters convert these errors into one stable, concise, model-understandable
+tool failure format without exposing the inheritance tree on the wire.
+
 ```ts
 interface CoreCommandDefinition<Name extends string, Input, Output> {
   readonly name: Name;
@@ -718,36 +743,34 @@ the complete canonical repository union and honor an explicit cleanup value;
 neither is a Feishu-specific tool. The shared Command therefore does not define
 a Feishu-only schema.
 
-Core canonicalizes the validated creation payload and persists
-`request_id -> {payload_hash, reserved_team_name, status}` before resource
-creation. The same id and hash always return the same never-reused name,
-including after Core restart or Team closure. Reusing an id with a different
-hash returns `IDEMPOTENCY_CONFLICT`. A closed replay returns `closed`; a new
-provisioning generation must use a new request id.
+Core canonicalizes the validated creation payload and writes its `request_id`
+and payload hash into the Team record. Exclusive atomic publication of that
+record is the single acceptance and concrete-name ownership point. There is no
+separate `team-create-requests.json`, `name-claim.json`, claim token, or Team-name
+tombstone.
 
-An existing Team at the reserved candidate is adopted only when Core can read
-the name claim and prove the exact persisted claim token. If the claim is
-missing, malformed, unreadable, or belongs to another token, ownership is
-unproven. Core durably rotates the ledger to a new candidate before retrying and
-never adopts the old Team. This safe rename is normal recovery, not a global
-provisioning failure.
+Before the Team record is published, no Team exists and no name is occupied. A
+hard process loss in that interval may cause the retry to choose a different
+random candidate, which is correct because no accepted Team or externally valid
+route existed. After publication, the same id and hash return that Team across
+Core restart and Team closure; the same id with a different hash raises
+`IdempotencyConflictError`. A closed replay returns `closed`; a new provisioning
+generation uses a new request id.
 
-The durable request ledger is not a general transaction coordinator for every
-Team creation write. Existing ordinary-error cleanup remains authoritative. If
-an abrupt process loss leaves an exact-claim Team record in incomplete
-`starting` state before its TeamLeader identity became durable, replay fails
-loud rather than marking the request `created` or returning `existing`. This
-refactor does not add automatic reconstruction for that narrow hard-interrupt
-window without concrete operational evidence that warrants the lifecycle
-complexity.
+At startup Core scans Team records to reconstruct a process-local request-id
+index; that index is derived acceleration, never another persisted authority. A
+missing, malformed, or unreadable record means that Team does not exist for
+lookup, routing, or name allocation and produces `TeamNotFoundError`. It cannot
+receive a Channel turn or reserve a concrete name. A real write failure while
+publishing a replacement record is reported as a persistence failure rather
+than creating a phantom Team.
 
-Accepted identities are never evicted or manually pruned, and the ledger has no
-artificial total-entry limit. Each request id, canonical payload, and stored
-entry has a strict size bound, but total entries grow with historical Team
-creation in the same way as never-reused Team records and name claims. Only an
-actual persistence or storage failure rejects a new identity for capacity
-reasons. The ledger is Core-owned and atomically persisted; Channel targets
-never enter it.
+Existing ordinary-error cleanup remains authoritative. If an abrupt process
+loss occurs after the Team record acceptance point but before TeamLeader
+identity becomes durable, the valid record truthfully leaves an incomplete
+`starting` Team. Replay fails loud rather than reporting `created` or `existing`;
+this refactor does not add an automatic partial-Team reconstruction state
+machine without concrete operational evidence.
 
 All other surviving definitions retain their current domain behavior while
 moving parsing, errors, and execution out of `admin/methods.ts` into their
@@ -1091,8 +1114,8 @@ ambiguity.
 - current COT activity normalization, projection, redaction, truncation, and
   Feishu display;
 - current Channel MCP descriptor generation and admin forwarding concepts;
-- Team creation, never-reused names, managed-worktree containment, and atomic
-  JSON state primitives;
+- Team creation, valid-record-owned names, managed-worktree containment, and
+  atomic JSON state primitives;
 - dormant runtime activation and stop-racing-start protection.
 
 ### Delete
@@ -1123,7 +1146,7 @@ ambiguity.
 - leased state/activity sinks and `fresh | resumed` start result;
 - neutral active-session Activity reader and `last` adapter;
 - unified Core Command registry, domain-owned schemas/handlers, admin-socket and
-  in-process adapters, typed errors, and durable Team-create ledger;
+  in-process adapters, typed errors, and Team-record-owned creation identity;
 - six-event registry, fail-open scoped subscriptions, and lifecycle fencing;
 - Channel lifecycle port and optional MCP composition;
 - Feishu-owned direct binding and Collaboration Space policy/provisioning state,
@@ -1141,7 +1164,7 @@ dependency order:
    output, Activity, and prompt-re-supply contracts;
 3. organize Core implementation by the Team and TeamMate domain owners, then
    implement runtime ownership, Activity reader, Command/event registries,
-   lifecycle fences, scheduler, dissolve, and idempotency ledger;
+   lifecycle fences, scheduler, dissolve, and Team-record-owned idempotency;
 4. reshape the Channel contract and MCP composition;
 5. move Feishu binding, provisioning, and COT anchor ownership into the Channel;
 6. delete Core binding and Collaboration Space code/config/state surfaces;
@@ -1205,10 +1228,10 @@ compile breaks are resolved inside the same implementation change.
   before invoking the flat `team.submit` Command, while Core preserves origin,
   correlation, event source, admission, and settlement outside the runtime
   payload.
-- `team.create` tests cover crash points before reservation, after reservation,
-  during creation, and after readiness; same-id replay, closed replay,
-  different-payload conflict, individually bounded entries, unbounded historical
-  entry count, and never-reused names.
+- `team.create` tests cover failure before record publication, failure after the
+  record acceptance point, and readiness; same-id replay, closed replay,
+  different-payload conflict, exclusive atomic publication, request-index
+  reconstruction, and name ownership only while a valid record exists.
 - Channel saga tests cover crash/restart at every persisted phase,
   ready-before-bind, bind-before-first-submit, generation replacement, and no
   target data in Core.
@@ -1323,9 +1346,6 @@ binding recreation, scheduler/dissolve behavior, and removed MCP/admin names.
   in-process publisher. Providers must keep synchronous projection bounded and
   move asynchronous persistence to their own serialized mutation tail; this
   preserves current COT semantics without adding a second delivery system.
-- The non-evicting Team-create ledger grows with historical Team creation.
-  There is no artificial entry-count stop; only a real persistence or storage
-  failure prevents accepting another identity.
 - Fail-loud state/config cutover requires operators to recreate bindings and
   automatic-provisioning configuration.
 - A failed non-force dissolve may leave children stopped before ordinary Team

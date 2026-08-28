@@ -229,6 +229,20 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   a speculative registry-wide output byte limit: Activity, history, list, and
   capability domains retain their existing pagination or source-owned bounds,
   and any future large-result problem is solved by the owning Command contract.
+- Command failure uses a small ordinary `Error` inheritance tree rather than a
+  second result-envelope taxonomy. `DreamuxError` carries a stable code;
+  reusable boundary failures such as `ValidationError`, `TransportError`, and
+  `InternalError` extend it, while specific business failures such as
+  `TeamNotFoundError`, `TeamClosedError`, and `IdempotencyConflictError` extend
+  it directly. There is no `DomainError` layer. Unknown implementation failures
+  alone are normalized to `InternalError`.
+- Registry input validation runs before every handler regardless of whether the
+  call arrived through `admin.sock`, an MCP shim, or the in-process Channel
+  adapter. A cross-process adapter may then raise a specific `TransportError`
+  when framing, connection, or delivery fails; ordinary business execution
+  raises its concrete business error. The final MCP adapter renders every
+  `DreamuxError` as one consistent, concise, model-understandable error without
+  exposing the internal inheritance tree as a public protocol layer.
 - Caller and transport identity may be attached as execution context where the
   domain operation needs it, but it must not be used to hide registered
   Commands from Channel callers. Domain validation and authorization remain
@@ -377,8 +391,8 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   these identities or hierarchy concepts enter the Core contract.
 - A binding targets a stable Dreamux `team_name` and can route only to that
   Team's TeamLeader; arbitrary TeamMate binding is not supported. Concrete Team
-  names are never reused, so a stale binding cannot silently retarget a later
-  Team.
+  names are occupied only by valid readable Team records. There is no separate
+  forever-reserved name tombstone for a Team that does not exist.
 - On inbound, Channel resolves its own binding before invoking Core. It invokes
   turn submission with the resolved `team_name`, or omits the target when no
   binding exists so Core delivers to the Dispatcher Agent.
@@ -565,28 +579,32 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   invokes the ordinary public `team.create` Command, persists the resulting
   `team_name` as its active binding once the Team is ready, and only then invokes
   ordinary turn submission for the first message.
-- Retrying the same provisioning request after a crash must not create a second
-  Team. The generic Team creation capability therefore exposes transport-neutral
-  idempotent request identity; Core uses that identity only to make Team creation
-  idempotent and never receives or interprets the Channel target. The accepted
-  request identity to `team_name` result is Core-owned durable state: it survives
-  Core restart and returns the same Team for every retry of that identity.
-- Accepted `team.create` request identities have no artificial lifetime-count
-  limit and are never evicted or manually pruned. Each request id, canonical
-  payload, and persisted entry remains individually bounded and validated, while
-  the number of entries grows with the number of historical Team-creation
-  requests just as the never-reused Team history does. Only a real persistence
-  or storage failure may reject a new identity for capacity reasons.
-- If replay finds a Team record at the reserved candidate but cannot read and
-  prove the exact persisted name-claim token, Core must not adopt that Team. It
-  first persists a replacement candidate and then retries creation under the
-  same request identity. A missing, malformed, or unreadable claim therefore
-  means ownership is unproven and triggers safe renaming; it does not by itself
-  block provisioning.
+- Retrying the same accepted provisioning request after a crash must not create
+  a second Team. The generic Team creation capability therefore exposes a
+  transport-neutral request identity, which Core stores together with the
+  canonical payload hash in the Team record itself. A valid, readable Team
+  record is the sole proof that a Team exists, the sole durable owner of its
+  concrete name, and the sole durable authority for accepted `team.create`
+  idempotency. Core does not persist a separate request ledger, name claim, or
+  name tombstone.
+- Publishing the Team record through an exclusive atomic create is the
+  acceptance point. Before that record exists, the Team was not created, the
+  request was not accepted, and its generated candidate name remains free; a
+  retry may allocate a different candidate without creating a duplicate Team.
+  After publication, the same request id and payload hash resolve to that Team,
+  including after restart or closure, while the same id with a different hash
+  fails with an idempotency conflict.
+- Core reconstructs its process-local request-id index by scanning Team records.
+  Missing, malformed, or unreadable Team records are treated as nonexistent for
+  lookup, routing, and name allocation: they cannot receive a turn, do not
+  reserve their path-derived name, and produce `TEAM_NOT_FOUND` rather than a
+  phantom route. A real persistence failure while publishing a new record still
+  fails creation normally.
 - This refactor does not add a general partial-Team-creation recovery state
   machine. Ordinary creation errors continue through the existing cleanup path.
-  An abrupt process loss in the narrow interval between independently durable
-  Team and TeamLeader identity writes may leave an incomplete `starting` Team;
+  An abrupt process loss after the Team record acceptance point but before the
+  independently durable TeamLeader identity write may leave an incomplete
+  `starting` Team;
   replay must fail loud instead of reporting `created` or `existing`, and the
   operator repairs that damaged state. Automatic recovery is added only when a
   real failure history justifies the additional lifecycle complexity.

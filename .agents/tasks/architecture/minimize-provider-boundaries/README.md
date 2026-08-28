@@ -5,7 +5,8 @@
 - Goal: Reduce the public Agent Runtime and Channel contracts to minimal capability-neutral ports, with Channel bridging external interaction through Core Command invocation and Core event subscription.
 - State: `development`
 - Requirement: [Current requirement](/.agents/tasks/architecture/minimize-provider-boundaries/requirement.md)
-- Current solution input revision: `requirement.md` SHA-256 `6c1439342e469dc9c69b7413e84b0b2fd49c5aa13ea01b332cc2f7b74caae3f3`
+- Current solution input revision: `requirement.md` SHA-256 `f1058c2c1225dc39c04732a6f5357827eb6d214c0ac3239ca97d9384d8a100be`
+- Prior solution input revision: `requirement.md` SHA-256 `6c1439342e469dc9c69b7413e84b0b2fd49c5aa13ea01b332cc2f7b74caae3f3`; the operator then defined a valid readable Team record as the sole Team-existence, concrete-name, and accepted-create-idempotency authority, removing the separate request ledger and name claim, and clarified the ordinary Error inheritance model.
 - Prior solution input revision: `requirement.md` SHA-256 `366c48bfe81d98f52506b36ee3d6fb723b84e57eb7c97077e95ebce93961b33f`; a later review then over-promoted a narrow hard-process-interrupt window into an automatic partial-Team recovery requirement, which the operator rejected as unjustified complexity.
 - Prior solution input revision: `requirement.md` SHA-256 `9379059c23690491a1709af5474f5f48f5aec886b326081f075f49941f1b1f35`; the operator then approved durable candidate rotation when exact name-claim ownership cannot be proven and rejected a speculative registry-wide Command-output byte cap.
 - Prior solution input revision: `requirement.md` SHA-256 `aa8dbb4892267f54450fa7822367d2d708f823d902d15177b9b630e335973405`; TeamLeader review then clarified that fixed `delete-on-close` belongs only to Feishu-owned automatic provisioning and must not narrow the generic Team MCP surface.
@@ -26,7 +27,8 @@
   [Codex proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/codex.md),
   [Claude proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/claude.md), and
   [Trae Seed 2.1 proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/trae-seed-2-1.md).
-- Current solution baseline: [Technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `6a828b277a1b3b65609450c067fc8dab898e650924bebaa7e7e90ef8491cbce5`. It governs modeled scenarios but never silently overrides a conflicting load-bearing source behavior or prior Decision discovered during implementation; every such conflict returns to the operator.
+- Current solution baseline: [Technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `a042a5946bb121357e472fb3e20c508994aeab82fa562c2680c7621138c80d2b`. It governs modeled scenarios but never silently overrides a conflicting load-bearing source behavior or prior Decision discovered during implementation; every such conflict returns to the operator.
+- Prior final-solution revision: SHA-256 `6a828b277a1b3b65609450c067fc8dab898e650924bebaa7e7e90ef8491cbce5`; it still persisted a Team-create request ledger and name claim before a Team existed, and did not yet capture the approved Error inheritance and shutdown-race semantics.
 - Prior final-solution revision: SHA-256 `3a36054580b35bfd5427d0b35dfd074f3bd1a56856fa2adbc0b0f5fa546593d0`; it had not yet made the narrow hard-interrupt boundary and fail-loud incomplete-Team behavior explicit.
 - Prior final-solution revision: SHA-256 `7cafa98baf5b48ddb885faea94c7daafbcfc6c539a3594b9245442091108bc84`; Stage 3 review then over-defended unprovable name claims as fatal and proposed a generic output-size limit without a concrete domain failure.
 - Prior final-solution revision: SHA-256 `b0c37c9c24ce84e56e1805019ce3a95ebfbe7ff57049e7bf0a4ff7f25c89d339`; its wording could be misread as narrowing the generic Team MCP creation tool to Feishu's local repository subset.
@@ -49,12 +51,17 @@
   Feishu maps its smaller path/base-ref policy into managed mode with fixed
   `delete-on-close`; consumer minimalism must not narrow the shared domain
   capability.
-- Stage 3 operator decision: accepted `team.create` idempotency identities have
-  no artificial total-count limit and are never pruned. Individual ids, payloads,
-  and entries remain bounded; total growth follows historical Team creation.
-- Stage 3 operator decision: an existing candidate whose exact persisted claim
-  token cannot be proven is not adopted; Core durably rotates to a new name and
-  continues instead of treating that candidate as a provisioning outage.
+- Stage 3 operator decision: a valid readable Team record is the sole proof of
+  Team existence, sole concrete-name owner, and durable home of accepted
+  `team.create` request identity and payload hash. Exclusive atomic record
+  publication is the acceptance point. Missing, malformed, or unreadable records
+  are `TEAM_NOT_FOUND` and reserve no name; no separate request ledger, name
+  claim, or tombstone remains.
+- Stage 3 operator decision: Command failures use ordinary Error inheritance.
+  `DreamuxError` owns stable codes; generic validation, real cross-process
+  transport, and unknown internal failures have reusable subclasses, while
+  business errors extend `DreamuxError` directly. There is no `DomainError` or
+  public layer taxonomy; MCP renders known errors consistently for models.
 - Stage 3 operator decision: the shared Command registry validates output JSON
   representability and schemas but adds no speculative global result-size cap;
   pagination and size policy remain with domains that have a real need.
@@ -62,6 +69,10 @@
   machine for the narrow hard-interrupt window between Team and TeamLeader
   persistence. Ordinary errors retain existing cleanup; an incomplete
   `starting` replay fails loud instead of reporting success.
+- Stage 3 operator decision: preserve the existing shutdown sequence. Close the
+  shared Command admission fence, converge Dispatcher shutdown, drain accepted
+  Command calls, then close the socket. A request racing the fence receives a
+  specific `ServerShuttingDownError`.
 - Next action: finish the active Stage 3 correction round, then perform the
   TeamLeader drift audit before authorizing Stage 4.
 - Related tasks: Surfaced after [Feishu COT Conversation Cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md); this is an independent architecture outcome.
