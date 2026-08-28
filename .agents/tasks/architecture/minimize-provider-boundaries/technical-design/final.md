@@ -312,8 +312,9 @@ recreates the old split under `submit`.
 Core applies the same reduction at the `TeammateService` admitted-input seam.
 One internal `submitInput` accepts the model-facing quartet `source`, `attrs`,
 `text`, and optional `reminder`, plus only the separate Core admission/turn
-metadata actually consumed by that submission. `source` is a closed vocabulary
-that never includes `system`; a Channel invocation obtains `channel` from its
+metadata actually consumed by that submission. `source` is an open string that
+must be a safe tag name; it is not a Core enum, while the exact semantic name
+`system` is always rejected. A Channel invocation obtains `channel` from its
 factual `CoreCommandContext` and cannot supply or override the value. Stable
 source identity, authoritative Channel admission scope, intent, correlation,
 and completion delivery do not become XML attributes. The service exposes no

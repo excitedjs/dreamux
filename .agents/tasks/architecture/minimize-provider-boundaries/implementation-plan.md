@@ -253,7 +253,9 @@ mandatory review precedents, not historical anecdotes:
     entity rewriting, CDATA, or XML code elements. Preserve faithful body text
     and Markdown code fences. If a reminder is necessary, emit one generic
     `<reminder>` once at the end as a sibling, not inside every source message.
-    Tags improve clarity; they do not create a security boundary.
+    Source names are open safe tag names rather than a Core enum, but `system`
+    is forbidden and factual Channel invocations are forced to `channel`. Tags
+    improve clarity; they do not create a security boundary.
 
 ## Stage ledger
 

@@ -481,12 +481,12 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   seam has become one text-only `submit`. Every accepted ordinary input may
   materialize or reopen its target, so callers cannot select a `reopenClosed`
   mode. Its model-facing content consists of required `source`, optional
-  string-valued `attrs`, `text`, and optional `reminder`. `source` is a closed
-  Core vocabulary and never includes `system`; a Channel Command invocation is
-  forced to `channel` by factual Command context and cannot select or override
-  another source. Core admission identity, scope, intent, correlation, and
-  completion delivery remain separate non-rendering facts rather than being
-  smuggled through attributes.
+  string-valued `attrs`, `text`, and optional `reminder`. `source` is an open
+  safe tag name rather than a Core enum; the one forbidden semantic name is
+  `system`. A Channel Command invocation is forced to `channel` by factual
+  Command context and cannot select or override another source. Core admission
+  identity, scope, intent, correlation, and completion delivery remain separate
+  non-rendering facts rather than being smuggled through attributes.
 - `TeammateService` renders one paired root named by `source`, with validated
   snake_case attributes, then inserts the source body directly and closes the
   root. It does not add a `<content>` child, pretty-print indentation, XML
