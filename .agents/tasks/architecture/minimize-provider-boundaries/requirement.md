@@ -198,7 +198,7 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - Team, Agent, and turn lifecycle are stable Core facts. Current binding event
   and `ChannelOrigin` payloads depend on the `target_key` model being removed,
   while the Collaboration Space binding event exposes runtime and worktree
-  policy. Those payloads cannot be adopted unchanged as the target event
+  policy. Those payloads are deleted rather than adopted into the target event
   catalog.
 - Turn message and tool-call events are conditional on optional Agent Runtime
   activity reporting and currently include presentation-oriented projection,
@@ -285,17 +285,18 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - The Feishu Channel implementation changed in this refactor calls only
   `team.submit` and restart-durable idempotent `team.create`. That implementation
   scope does not narrow what another Channel may invoke through the shared port.
-- Turn submission accepts an optional stable `team_name` selected by the
-  Channel and delivers only to that Team's TeamLeader. Omission selects the
-  Dispatcher Agent. Team lookup failure is a proven pre-admission result;
-  admission ambiguity remains non-retryable.
+- Turn submission accepts an optional stable `team_name`: `admin.sock` omission
+  selects the Dispatcher Agent, while a Channel must resolve and supply a Team
+  before it can submit. Channel delivery goes only to that Team's TeamLeader.
+  Team lookup failure is a proven pre-admission result; admission ambiguity
+  remains non-retryable.
 - `team.submit` has one content payload rather than inbound/text variants.
   Channel interprets its external envelope and supplies source attributes,
   original model-facing body text, and an optional Channel reminder before
   invoking the Command. `TeammateService` owns the common source-envelope
   assembly; Agent Runtime receives only the resulting text. Optional source
-  identity, intent, and opaque display correlation remain separate non-rendering
-  fields.
+  identity and intent remain separate non-rendering fields. Core does not carry
+  a Channel presentation anchor or a duplicate correlation field.
 
 ### 3. Core-to-Channel event delivery
 
@@ -335,11 +336,10 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   `last` Activity Record boundary. This refactor must not remove current COT
   tool arguments/results after Core redaction, alter their presentation fields,
   or otherwise change the tuned Channel display effect.
-- A Channel-originated turn submission may carry a Channel-chosen opaque
-  correlation value. Core does not parse or authorize against that value, but
-  returns it unchanged on every submitted, activity, and settled event for that
-  turn so the Channel can associate live presentation with the exact external
-  interaction.
+- Channel records the visible-message anchor under its already-resolved
+  `team_name` and leader before invoking Core. The submitted event returns that
+  Team/Agent identity plus `turn_id`, so Channel binds its local anchor to the
+  turn without injecting `ChannelOrigin` or an opaque correlation through Core.
 - The initial event catalog is deliberately minimal: `team.state`,
   `teammate.state`, `teammate.turn.submitted`, `teammate.turn.settled`,
   `teammate.turn.message`, and `teammate.turn.tool_call` facts required for Team
@@ -409,13 +409,14 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   Team's TeamLeader; arbitrary TeamMate binding is not supported. Concrete Team
   names are occupied only by valid readable Team records. There is no separate
   forever-reserved name tombstone for a Team that does not exist.
-- On inbound, Channel resolves its own binding before invoking Core. It invokes
-  turn submission with the resolved `team_name`, or omits the target when no
-  binding exists so Core delivers to the Dispatcher Agent.
+- On inbound, Channel resolves its own binding or completes its own automatic
+  Team provisioning before invoking Core. It must invoke turn submission with
+  the resolved `team_name`; an unbound Channel input is not delivered to the
+  Dispatcher Agent.
 - Core validates the requested Team before admission. A typed
   `TEAM_NOT_FOUND` or `TEAM_CLOSED` result proves that no turn was accepted;
-  Channel may then remove stale binding state and submit once to Dispatcher.
-  Channel must not retry or fall back after an ambiguous admission.
+  Channel may repair its own binding/provisioning state, but it never falls back
+  to Dispatcher delivery. Channel must not retry after an ambiguous admission.
 - Core removes its Channel binding store, binding matching, target resolution,
   binding ownership, and Team bind/unbind operations. `resolveTarget`,
   `resolveInboundBinding`, `target_key`, `binding_fallbacks`, and Core
@@ -466,9 +467,10 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   retaining a `kind`, source taxonomy, or Dreamux idempotency key at the
   Provider seam. Channel owns external-envelope interpretation and its body
   formatting; Core assembles the source envelope before Runtime submission.
-- Core retains turn origin, correlation, intent, and event `turn_source` in its
-  own admission/turn records. Those Core facts do not cross the Agent Runtime
-  Provider seam merely to classify identical text submission behavior.
+- Core retains source identity, intent, completion delivery, and the open model
+  `source` echoed as event `turn_source` in its own admission/turn state. Those
+  Core facts do not cross the Agent Runtime Provider seam merely to classify
+  identical text submission behavior.
 - Stable submission source identity and bounded process-local deduplication
   belong to the Core admission owner. Each source owner supplies a stable
   optional `sourceId`. One Dispatcher-lifetime ledger keys the target entity and
@@ -487,19 +489,18 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   `Readonly<Record<string, string>>` `attrs`, `text`, and optional `reminder`.
   Missing `attrs` is exactly an empty attribute set. Attributes have no semantic
   order, and the object shape prevents duplicate names. `source` is an open
-  safe tag name rather than a Core enum. `system` is
-  reserved to Core-owned
+  safe tag name rather than a Core enum. `system` is reserved to Core-owned
   notices: ordinary callers cannot select it, while Dispatcher restart
   notification uses it. Channel Command and `admin.sock` inputs use `channel`.
   Agent-facing MCP spawn and submit inputs default to `task`, and model
-  completion delivery defaults to `task-notification`. Core admission identity,
-  scope, intent, correlation, and completion delivery remain separate
-  non-rendering facts rather than being smuggled through attributes.
+  completion delivery defaults to `task-notification`. Core source identity,
+  intent, and completion delivery remain separate non-rendering facts rather
+  than being smuggled through attributes.
 - `TeammateService` renders one paired root named by `source`, with open
   validated attribute names and escaped attribute values, then inserts the
   source body directly and closes the root. It does not add a `<content>` child,
-  pretty-print indentation, XML
-  entity rewriting of the body, or CDATA-based code transformation. Channel
+  pretty-print indentation, XML entity rewriting of the body, or CDATA-based
+  code transformation. Channel
   code blocks retain ordinary Markdown fences and the body stays faithful to
   the model-facing source text. When supplied, one generic `<reminder>` appears
   once after the closed source block at the end of the complete input, never
@@ -960,9 +961,9 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   the turn event kinds move under `teammate.turn.*`. Tests
   preserve the post-COT baseline and prove observer failures cannot affect turn
   admission or settlement.
-- Channel-provided opaque turn correlation is returned unchanged on submitted,
-  activity, and settled events without becoming Core routing or authorization
-  state.
+- Channel keeps presentation anchors locally. Submitted events return
+  `team_name`, Agent identity, and `turn_id`; later events correlate by
+  `turn_id`. Core carries neither `ChannelOrigin` nor presentation correlation.
 - A Channel with no MCP tools does not implement fake MCP members. Live and
   sessionless provider MCP tools remain functional when declared.
 - A binding-capable Channel persists and resolves its own provider-specific
@@ -980,8 +981,8 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   methods no longer expose `bind_channel`, `transfer_back`, or
   `collaboration_space.*`.
 - Channel submits a resolved stable `team_name`, Core delivers only to its
-  TeamLeader, unmatched inbound reaches the
-  Dispatcher Agent, and stale targets can fall back only after a typed
+  TeamLeader, unmatched inbound is not submitted, and stale targets are repaired
+  only within Channel-owned binding/provisioning policy after a typed
   pre-admission rejection.
 - Binding-only reads require one `list_bindings` call per relevant Channel.
   Cross-domain views intentionally join Channel binding reads with Core Team
@@ -1002,10 +1003,16 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - The live Agent Runtime execution base is `start`, flat text `submit`, and
   `stop`. Separate channel/plain-text input methods and their replacement
   discriminator are removed.
-- `team.submit` is one content Command with optional target, intent, source
-  identity, and opaque correlation fields. Channel owns external-message
+- `team.submit` is one content Command with optional target, intent, and source
+  identity fields. Channel owns external-message
   interpretation and body formatting; `TeammateService` owns the paired source
   envelope and Agent Runtime receives only final text.
+- Channel always supplies `team_name` and delivers only to its resolved
+  TeamLeader; only non-Channel callers such as `admin.sock` may omit it to target
+  the Dispatcher Agent. Channel presentation closes locally: it records the
+  visible anchor by Team/leader identity, then binds the Core-pushed `turn_id`
+  from the matching submitted event. Core carries no `ChannelOrigin`, opaque
+  presentation correlation, or separate `turnOrigin`.
 - Model-input source names remain open. Channel Command and `admin.sock` inputs
   use `channel`; Agent-facing MCP spawn/submit inputs default to `task`; model
   completion delivery defaults to `task-notification`; Dispatcher restart
@@ -1094,9 +1101,10 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   provider-specific target matching, hierarchy, persistence, and migration,
   then submits the resolved Dreamux `team_name` to Core for TeamLeader delivery.
 - Bindings may target TeamLeaders only; arbitrary TeamMate binding is excluded.
-- Unmatched inbound continues to the Dispatcher Agent. Stale bindings may fall
-  back only after a proven pre-admission target rejection, never after an
-  ambiguous admission.
+- Unmatched inbound is not submitted until Channel resolves or provisions a
+  Team. Stale bindings may be repaired only after a proven pre-admission target
+  rejection, never after an ambiguous admission, and never by falling back to
+  Dispatcher delivery.
 - Dispatcher invokes Channel-owned `bind_channel`, `unbind_channel`, and
   `list_bindings` through Channel MCP. Team MCP/Core binding operations and the
   old `transfer_back` name are removed without an alias.

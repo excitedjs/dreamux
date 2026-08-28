@@ -296,8 +296,8 @@ Command boundary normalizes internal `skipped` to public `stopped`; the Provider
 seam does not.
 
 The runtime input is deliberately flat. Core keeps stable source identity,
-authoritative origin, intent, opaque display correlation, and event
-`turn_source` on its own turn/admission state. A Provider receives only text; it
+intent, and the model `source` echoed as event `turn_source` on its own
+turn/admission state. A Provider receives only text; it
 neither receives nor interprets an `InboundTurnInput`, a Channel/Dreamux source
 enum, source id, or XML rendering instructions.
 
@@ -320,11 +320,12 @@ Core-owned notices: ordinary callers cannot select it, while Dispatcher restart
 notification uses it. Channel Command and `admin.sock` inputs use `channel`.
 Agent-facing MCP spawn and submit inputs default to `task`, while model
 completion delivery defaults to `task-notification`. Stable source identity,
-intent, correlation, and completion delivery do not become XML attributes. The
-service exposes no
+intent, and completion delivery do not become XML attributes. The service
+exposes no
 `channelInput`, `scheduledInput`, or `controlInput` wrappers, no
-caller-selected `reopenClosed`, and no logging label. Every ordinary admitted
-input starts or reopens the target before Runtime submission.
+caller-selected `reopenClosed`, no separate `turnOrigin`, and no logging label.
+Every ordinary admitted input starts or reopens the target before Runtime
+submission.
 
 Attribute names are open and carry no semantic order; the object shape prevents
 duplicate names. The renderer emits `<source ...attrs>`, the body text exactly
@@ -698,7 +699,6 @@ interface TeamSubmitCommand {
   readonly text: string;
   readonly intent?: string;
   readonly source_id?: string;
-  readonly correlation?: string;
 }
 
 interface TeamSubmitResult {
@@ -713,7 +713,8 @@ interface TeamSubmitResult {
 }
 ```
 
-Omitting `team_name` targets the Dispatcher Agent; otherwise Core resolves the
+Omitting `team_name` targets the Dispatcher Agent for non-Channel callers such
+as `admin.sock`; a Channel invocation must supply it. Core then resolves the
 stable Team and submits only to its TeamLeader. Channel and admin adapters use
 the same Command definition. A Channel supplies attributes, faithful body text,
 and an optional reminder; `TeammateService` renders the paired `<channel>` block
@@ -733,16 +734,11 @@ bypasses deduplication. The ledger does not retain one child ledger per entity,
 so historical entity count cannot grow a second unbounded registry. It
 deliberately retains the current no-cross-restart guarantee.
 
-`TEAM_NOT_FOUND` and `TEAM_CLOSED` are typed pre-admission failures. Only those
-failures permit the Channel to remove a stale binding and retry once to the
-Dispatcher. An unknown boundary outcome is `ambiguous`; it is never retried.
-The existing `skipped -> stopped` boundary normalization remains.
-
-`correlation` is a bounded opaque Channel-chosen string. Core never parses,
-routes, authorizes, or deduplicates with it. The session-bound invoker already
-establishes Channel provenance, so no provider/channel wrapper is duplicated in
-the value. Core echoes it unchanged on all related submitted/activity/settled
-events.
+`TEAM_NOT_FOUND` and `TEAM_CLOSED` are typed pre-admission failures. They permit
+Channel to repair its own stale binding or provisioning state, but never to
+fall back to Dispatcher delivery. An unknown boundary outcome is `ambiguous`;
+it is never retried. The existing `skipped -> stopped` boundary normalization
+remains.
 
 #### `team.create`
 
@@ -968,11 +964,12 @@ state authority: Core Team and Agent stores remain authoritative.
 The `teammate` namespace identifies the Core entity that owns the whole turn
 event family; adding later domains does not overload a global `turn.*`
 namespace. `teammate.turn.submitted` includes the Core `turn_id`,
-`team_name`/agent identity, required `turn_source`, and optional unchanged
-Channel correlation. Later turn events correlate by `turn_id` and carry the same
-optional Channel correlation. `turn_source` is not duplicated on later events
-because current consumers need it only to establish the COT anchor at
-submission.
+`team_name`/agent identity, and required open `turn_source`, which is the same
+validated source used for the model envelope. Before invoking Core, Channel
+records the visible-message anchor under its resolved Team/leader identity. The
+submitted event closes the loop by binding that local anchor to `turn_id`;
+later turn events correlate only by `turn_id`. No `ChannelOrigin` or opaque
+presentation correlation enters Core.
 
 Provider-normalized live activity continues through the existing Core
 conversation projection, redaction, truncation, and event payloads. Tool
@@ -1355,9 +1352,10 @@ compile breaks are resolved inside the same implementation change.
 
 ### Behavioral gates
 
-- `team.submit` tests cover Dispatcher/default delivery, TeamLeader delivery,
-  duplicate, stopped, failed, ambiguous, stable `turn_id`, opaque correlation,
-  and retry only after `TEAM_NOT_FOUND`/`TEAM_CLOSED`.
+- `team.submit` tests cover Dispatcher/default delivery for non-Channel callers,
+  mandatory `team_name` for Channel, TeamLeader delivery, duplicate, stopped,
+  failed, ambiguous, stable `turn_id`, no Channel-to-Dispatcher fallback, and
+  Channel-owned repair only after `TEAM_NOT_FOUND`/`TEAM_CLOSED`.
 - Core admission tests prove pending coalescing by target entity plus
   `source_id`, one globally bounded committed window, commit only after
   `submitted`/`ambiguous`, key release after `failed`/`stopped`/`skipped`,
@@ -1365,10 +1363,10 @@ compile breaks are resolved inside the same implementation change.
   the key, and no source id crossing the Agent Runtime seam.
 - Channel submission tests prove TeammateService renders the paired `<channel>`
   block with direct faithful body text and at most one final sibling
-  `<reminder>`, while Core preserves origin, correlation, event source,
-  admission, and settlement outside the Runtime payload. Tests retain Markdown
-  code fences and prove the body is not entity-escaped, CDATA-wrapped,
-  XML-code-wrapped, or indented by the outer renderer.
+  `<reminder>`, while Core preserves event source, admission, and settlement
+  outside the Runtime payload. Tests retain Markdown code fences and prove the
+  body is not entity-escaped, CDATA-wrapped, XML-code-wrapped, or indented by the
+  outer renderer.
 - Source-selection tests prove Channel Command and `admin.sock` inputs use
   `channel`, Agent-facing MCP spawn/submit inputs default to `task`, model
   completion delivery defaults to `task-notification`, Dispatcher restart
@@ -1401,11 +1399,13 @@ compile breaks are resolved inside the same implementation change.
   registration, session and provider handler targets, canonical result/error
   return, lease revocation, and absence of catalog JSON or tool-name branches in
   launch arguments and Core.
-- COT regression tests preserve the current cards, correlation, scheduled and
-  completion anchors, redaction/truncation, and tool input/result rendering.
-  Provider/observer errors and subscription revocation cannot change Core
-  admission or settlement; Channel-owned asynchronous state mutations serialize
-  and finish before session close.
+- COT regression tests preserve the current cards, Team/leader-keyed local
+  anchor binding, scheduled and completion anchors, redaction/truncation, and
+  tool input/result rendering. They prove no `ChannelOrigin`, presentation
+  correlation, or separate `turnOrigin` crosses Core. Provider/observer errors
+  and subscription revocation cannot change Core admission or settlement;
+  Channel-owned asynchronous state mutations serialize and finish before
+  session close.
 - Startup tests prove subscription happens before recovery/admission. Shutdown
   tests prove Command fencing precedes convergence, settlement can still render,
   Channel-owned mutation tails settle before resource release, and no callback

@@ -241,9 +241,9 @@ mandatory review precedents, not historical anecdotes:
 22. **Core kept three input wrappers after Runtime had already converged on one
     submit operation.** `channelInput`, `scheduledInput`, and `controlInput`
     only filled constants around the same admission path. Their remaining
-    differences belong in one discriminated source fact, not in three methods,
-    parallel `scope`/`turnOrigin` arguments, a caller-controlled reopen flag, or
-    logging labels. Every ordinary input starts or reopens its target. The
+    differences belong in the one open model/event source fact, not in three
+    methods, parallel `scope`/`turnOrigin` arguments, a caller-controlled reopen
+    flag, or logging labels. Every ordinary input starts or reopens its target. The
     scheduler's `AbortSignal` served the obsolete held-fire/idle-wait mechanism
     and could not cancel a submitted Runtime turn; delete it and keep lifecycle
     validation inside Scheduler immediately before the shared submission.
@@ -318,8 +318,9 @@ mandatory review precedents, not historical anecdotes:
   `last` without weakening existing invariants.
 - Remove runtime-owned Channel rendering and source-kind branching. Preserve
   only prepared text at the Provider seam; keep source identity, bounded
-  process-local dedupe, origin, correlation, and event source in Core-owned
-  admission/turn state.
+  process-local dedupe, intent, and the open model/event source in Core-owned
+  admission/turn state. Keep Channel anchors local and delete `ChannelOrigin`,
+  presentation correlation, and the separate `turnOrigin` field.
 - Validation: implementation follows sections 1 and 4 of the final design; no
   Core branch on concrete Provider identity appears.
 
@@ -383,9 +384,12 @@ mandatory review precedents, not historical anecdotes:
 - Move direct bindings, hierarchy/fallback, persistence, stale-binding cleanup,
   and list/unbind/bind tools into Feishu Channel.
 - Keep Feishu external-message interpretation and faithful body formatting in
-  Channel. Pass attrs/text/reminder through `team.submit`; let
-  `TeammateService` assemble the paired `<channel>` block and optional final
-  sibling reminder.
+  Channel. Require a resolved `team_name`, record the visible-message anchor in
+  Channel under Team/leader identity before invocation, pass attrs/text/reminder
+  through `team.submit`, and bind the local anchor to the `turn_id` returned by
+  the submitted event. Let `TeammateService` assemble the paired `<channel>`
+  block and optional final sibling reminder; pass no `ChannelOrigin`,
+  presentation correlation, or separate `turnOrigin` through Core.
 - Move Collaboration Space policy and its four Dispatcher-only MCP tools into
   Feishu Channel while keeping Team as the only Core collaboration container.
 - Implement idempotent child-target provisioning through `team.create` and
