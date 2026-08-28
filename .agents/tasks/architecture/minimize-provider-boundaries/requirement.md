@@ -582,9 +582,10 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - Feishu automatic provisioning owns only a repository path and base reference.
   It translates that local policy into the canonical `managed` request and
   always supplies `cleanup: "delete-on-close"`; it does not expose or infer the
-  advanced repository controls. The same fixed cleanup behavior applies to the
-  simple Feishu-facing Team creation tool so automatic provisioning does not
-  leave managed worktrees permanently on disk.
+  advanced repository controls, so automatic provisioning does not leave managed
+  worktrees permanently on disk. This fixed Feishu mapping does not narrow the
+  generic Team MCP or `admin.sock` creation surfaces: both retain the complete
+  canonical repository union and honor the caller's explicit cleanup policy.
 - A Channel resumes its own incomplete provisioning records after restart. This
   preserves one-Team creation and ready-before-first-delivery without a Core
   target/claim/generation model. Per-target serialization and generations remain

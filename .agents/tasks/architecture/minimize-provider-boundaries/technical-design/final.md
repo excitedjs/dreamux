@@ -708,9 +708,11 @@ requirements.
 Feishu automatic provisioning supplies only the smaller repository policy it
 owns. The Channel maps its local `{path, base_ref}` policy into
 `{mode: "managed", path, base_ref, cleanup: "delete-on-close"}` before invoking
-the canonical Command. The simple Feishu-facing Team creation tool uses the same
-fixed cleanup value. It does not surface the advanced controls, and the shared
-Command does not define a Feishu-only schema.
+the canonical Command. This fixed mapping is private to Feishu-owned automatic
+provisioning. The generic Team MCP and `admin.sock` surfaces continue to expose
+the complete canonical repository union and honor an explicit cleanup value;
+neither is a Feishu-specific tool. The shared Command therefore does not define
+a Feishu-only schema.
 
 Core canonicalizes the validated creation payload and persists
 `request_id -> {payload_hash, reserved_team_name, status}` before resource
