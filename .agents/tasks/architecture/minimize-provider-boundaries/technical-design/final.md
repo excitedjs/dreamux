@@ -4,18 +4,19 @@
 
 This is the current technical design baseline for the requirement at
 `requirement.md` SHA-256
-`f1058c2c1225dc39c04732a6f5357827eb6d214c0ac3239ca97d9384d8a100be`.
+`8bce0f28a1146df4a4b14c1286f297350481d314d0a2e48ffe82df615a0bf780`.
 
 It reconciles the three independent proposals and their single cross-review
-round. Where proposals disagreed, this design follows the frozen requirement
-and current source behavior rather than reviewer votes. It changes no product
-code; development approval is tracked separately in the task README.
-
-It is authoritative only for scenarios it actually models. It does not silently
-supersede a load-bearing behavior, consumer, protocol, or prior Decision that
-implementation later discovers was not considered here. Any such conflict stops
-the current implementation stage and returns to the operator with concrete code
-evidence and consequences before this design is revised.
+round. Requirement text, this design, current source, and prior Decisions are
+evidence, not independent authorities that must be preserved. The target is the
+final product shape and the operator's explicit product principles. Existing
+mechanisms survive only when their purpose remains real and their ownership and
+cost fit that target; being deployed, load-bearing, or historically recorded is
+not a preservation argument. A discovered conflict stops implementation only
+when it reveals a genuinely unmodeled product choice. Otherwise the TeamLeader
+uses evidence to remove the obsolete or bad design rather than mechanically
+making either the document or current code true. Development approval is tracked
+separately in the task README.
 
 ## Governing principle: domain ownership drives names and code layout
 

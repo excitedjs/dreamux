@@ -3,14 +3,14 @@
 ## Authority
 
 This plan executes the current requirement baseline at SHA-256
-`f1058c2c1225dc39c04732a6f5357827eb6d214c0ac3239ca97d9384d8a100be`
+`8bce0f28a1146df4a4b14c1286f297350481d314d0a2e48ffe82df615a0bf780`
 and the current technical design baseline at SHA-256
-`a042a5946bb121357e472fb3e20c508994aeab82fa562c2680c7621138c80d2b`.
+`c2332ef6a78aecd35776d552e6301c66e7022bf7e25571f2518db4bc243b44ef`.
 The operator granted development approval on 2026-08-27 with the staged
-protocol below. Recorded product decisions remain authoritative over
-implementation convenience only for the scenarios they explicitly cover.
-Neither document is authority to discard a conflicting current-code behavior or
-historical Decision that the design did not examine.
+protocol below. The final product shape and explicit operator product principles
+are authoritative. Requirement text, technical design, current source, and
+historical Decisions are evidence to investigate, not competing authorities or
+automatic preservation requirements.
 
 ## Operating protocol
 
@@ -26,12 +26,13 @@ historical Decision that the design did not examine.
    Intermediate typecheck, build, and coverage are not stage gates and may be
    broken while the incompatible refactor is in flight.
 4. If a stage contains an unexpected change, the TeamLeader asks the Developer
-   why it is required before accepting the stage. If implementation discovers a
-   product or architecture scenario not covered by the design, or any conflict
-   between the written baseline and a load-bearing current-code behavior,
-   consumer, protocol, or prior Decision, work stops. The TeamLeader presents
-   the concrete evidence and consequence to the operator; neither agent treats
-   the document as an implicit override or invents the missing rule.
+   why it is required before accepting the stage. A conflict among written
+   baselines, current code, consumers, protocols, or prior Decisions triggers
+   investigation, not automatic preservation of any side. The TeamLeader asks
+   what real target-product problem each mechanism solves and removes it when no
+   such justification survives. Work stops for the operator only when the
+   conflict exposes a genuinely unmodeled choice that changes final product
+   behavior or policy; neither agent invents that missing rule.
 5. After all production stages, the Developer reconciles the full tree until
    type checking succeeds and distributable artifacts build. This is the first
    mandatory compile/build gate.
@@ -67,13 +68,14 @@ Every stage review explicitly tests the following questions:
 - After deletions and moves, is there exactly one authoritative mechanism and a
   complete cleanup trail?
 
-When the answer is not evident from current source and prior Decisions, the
-TeamLeader challenges the Developer for the necessity, alternatives, and
-affected invariants. The TeamLeader resolves technical and layering questions
-from evidence instead of escalating routine implementation details. Work stops
-for the operator only when a genuinely unmodeled choice changes product
-behavior, externally visible semantics, persistence, destructive data handling,
-or another policy that cannot be derived safely from existing evidence.
+Current source and prior Decisions explain how the system arrived here; they do
+not decide what must remain. The TeamLeader challenges the Developer for the
+necessity, alternatives, and affected invariants of every non-obvious mechanism,
+then judges it against the desired final product. A deployed or load-bearing
+mechanism may be deleted as bad design. Work stops for the operator only when a
+genuinely unmodeled choice changes product behavior, externally visible
+semantics, persistence, destructive data handling, or another policy that
+cannot be derived safely from the confirmed product principles.
 
 ## Operator-raised cases
 
@@ -101,11 +103,14 @@ mandatory review precedents, not historical anecdotes:
    the target entity and invocation origin, so Core owns the bounded
    process-local admission ledger and public `duplicate` result. Agent Runtime
    receives no source id and contains no Dreamux idempotency policy.
-4. **Written baselines were treated as authority over unexamined source.** A
-   requirement or design snapshot only governs scenarios it actually modeled.
-   When current code, a real consumer, a protocol invariant, or a prior Decision
-   conflicts with it, implementation stops and the conflict is investigated;
-   the code is never mechanically reshaped to make the document true.
+4. **Written baselines and current code were alternately treated as authority.**
+   Both moves are wrong. A requirement snapshot, current implementation, real
+   consumer, protocol, and prior Decision are evidence about intent and
+   consequences. The TeamLeader investigates the conflict and judges every
+   mechanism against the desired final product. Existing code is never preserved
+   merely because it is load-bearing, and code is never mechanically reshaped
+   merely to make a document true. Escalation is reserved for a genuinely
+   unmodeled product choice.
 5. **Domain names reflected transport mechanics instead of ownership.** Generic
    names such as `turn.submit`, `agent.state`, and unscoped `turn.tool_call`
    obscured the entity boundary. The locked vocabulary is `team.submit`,
@@ -144,14 +149,17 @@ mandatory review precedents, not historical anecdotes:
     local policy into managed mode with `delete-on-close`. Never delete a broader
     load-bearing domain capability merely because the first migrated consumer
     uses a smaller subset.
-11. **A request ledger and name claim were added around a Team that did not yet
-    exist.** A valid readable Team record is the only proof of Team existence,
-    the only concrete-name owner, and the durable home of `request_id` plus its
-    payload hash. Before its exclusive atomic publication, no Team was accepted
-    and no name is occupied; after publication, the record supplies restart
-    idempotency. Missing, malformed, or unreadable records are `TEAM_NOT_FOUND`
-    for routing and do not reserve names. Do not create a separate request
-    ledger, name claim, or tombstone for a pre-Team candidate.
+11. **An existing bad persistence design was mistaken for an invariant.** The
+    deployed `name-claim.json`, followed by a new request ledger, protected a
+    candidate before any Team existed and multiplied durable authorities without
+    product value. Historical deployment does not justify carrying that design
+    through a refactor. A valid readable Team record is the only proof of Team
+    existence, the only concrete-name owner, and the durable home of
+    `request_id` plus its payload hash. Before its exclusive atomic publication,
+    no Team was accepted and no name is occupied; after publication, the record
+    supplies restart idempotency. Missing, malformed, or unreadable records are
+    `TEAM_NOT_FOUND` for routing and do not reserve names. Delete the separate
+    request ledger, name claim, and tombstone model completely.
 12. **`last` was treated as settled transcript history.** Its actual user story
     is observing a TeamMate that may remain inside one active turn for an hour.
     Provider-owned recent Activity Records therefore cover the growing active

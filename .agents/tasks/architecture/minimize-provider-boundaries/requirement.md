@@ -14,13 +14,16 @@ Channel invocation and observation ports designed. Existing Feishu behavior,
 `ChannelRoutes` members, or other provider call sites are migration evidence,
 not the source of the new Core Command or event catalogs.
 
-This document records the product and architecture scenarios discussed so far;
-it is not authority to erase an unexamined, load-bearing behavior found in
-current source or a prior Decision. During implementation, any conflict between
-this text and a concrete existing behavior, consumer, protocol, or historical
-Decision is a mandatory stop condition. The TeamLeader must present the code
-evidence and consequence to the operator for a new decision rather than infer
-that the document silently supersedes the discovered behavior.
+This document, current source, and prior Decisions are investigation evidence;
+none is automatically the target architecture. The final product shape and the
+operator's explicit product principles are authoritative. During implementation,
+the TeamLeader must ask why every existing mechanism exists, whether it solves a
+real target-product problem, and whether its cost and ownership still belong in
+the final design. A behavior is not preserved merely because it is deployed,
+load-bearing, or recorded historically; refactoring deliberately removes bad
+designs once their product value is disproved. Work stops for the operator only
+when a conflict exposes a genuinely unmodeled choice that would change final
+product behavior, persistence, destructive handling, or another product policy.
 
 This clarification intentionally changes some existing behavior and public
 surface. In particular, external-route binding moves from Core to the owning
