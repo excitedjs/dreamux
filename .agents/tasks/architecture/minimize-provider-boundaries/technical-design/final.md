@@ -301,24 +301,37 @@ authoritative origin, intent, opaque display correlation, and event
 neither receives nor interprets an `InboundTurnInput`, a Channel/Dreamux source
 enum, source id, or XML rendering instructions.
 
-Channel produces the complete model-facing `text` before invoking Core,
-including any Channel-owned XML envelope. Dreamux-owned completion, scheduler,
-control, prompt, and Workflow paths likewise prepare their final text before
-calling the runtime. Consequently replacing `channelInput` and
-`completionInput` does not introduce a new discriminator that recreates the old
-split under `submit`.
+Channel produces its source attributes, faithful model-facing body text, and
+optional reminder before invoking Core. Dreamux-owned completion, scheduler,
+control, prompt, and Workflow paths likewise provide their source-specific
+body. `TeammateService` assembles the common outer source envelope, then calls
+the Runtime with final text. Consequently replacing `channelInput` and
+`completionInput` does not introduce a Provider-side discriminator that
+recreates the old split under `submit`.
 
 Core applies the same reduction at the `TeammateService` admitted-input seam.
-One internal `submitInput` accepts prepared text, one discriminated source fact,
-and optional accepted-turn metadata such as intent or completion delivery. The
-source fact contains its optional stable source identity plus exactly the facts
-needed for its branch: authoritative Channel admission scope and optional
-display origin, scheduled job identity, internal control, or Dispatcher
-delivery. `TeammateService` derives the admission-ledger namespace and recorded
-turn origin from that one fact. It exposes no `channelInput`, `scheduledInput`,
-or `controlInput` wrappers, no separate `scope` plus `turnOrigin` pair, no
+One internal `submitInput` accepts the model-facing quartet `source`, `attrs`,
+`text`, and optional `reminder`, plus only the separate Core admission/turn
+metadata actually consumed by that submission. `source` is a closed vocabulary
+that never includes `system`; a Channel invocation obtains `channel` from its
+factual `CoreCommandContext` and cannot supply or override the value. Stable
+source identity, authoritative Channel admission scope, intent, correlation,
+and completion delivery do not become XML attributes. The service exposes no
+`channelInput`, `scheduledInput`, or `controlInput` wrappers, no
 caller-selected `reopenClosed`, and no logging label. Every ordinary admitted
 input starts or reopens the target before Runtime submission.
+
+The renderer emits `<source ...attrs>`, the body text exactly as the source's
+model-facing formatter produced it, and `</source>` with no extra content node
+or pretty-print indentation. Attribute names are validated as snake_case XML
+names and invalid names fail loud; attribute values are escaped. The body is
+not rewritten merely to satisfy an XML parser: no entity conversion, CDATA
+wrapper, or XML-specific code element is added. Channel code uses ordinary
+Markdown fences. An optional reminder is emitted once after the closed source
+block as the final generic `<reminder>...</reminder>` sibling. It is never
+repeated inside each message. These XML-like tags improve model provenance and
+boundary recognition; they are not treated as an injection or authorization
+boundary.
 
 Cron cancellation remains private to Scheduler. A due fire checks its lifecycle
 generation and current durable job immediately before calling `submitInput`.
@@ -696,9 +709,10 @@ interface TeamSubmitResult {
 
 Omitting `team_name` targets the Dispatcher Agent; otherwise Core resolves the
 stable Team and submits only to its TeamLeader. Channel and admin adapters use
-the same flat payload. A Channel renders its external message into complete
-model-facing text, including its own XML envelope, before invocation. The
-invoker scopes a Channel-supplied source identity to the calling Channel. A
+the same Command definition. A Channel supplies attributes, faithful body text,
+and an optional reminder; `TeammateService` renders the paired `<channel>` block
+and forces the source from factual Channel context. The invoker scopes a
+Channel-supplied source identity to the calling Channel. A
 `submitted` result carries the Core `turn_id`; `duplicate` does not invent one
 because Core did not create a second runtime submission or turn identity.
 
@@ -1339,10 +1353,12 @@ compile breaks are resolved inside the same implementation change.
   bounded process-local dedupe, commit only after `submitted`/`ambiguous`, key
   release after `failed`/`stopped`/`skipped`, bypass without `source_id`, and no
   source id crossing the Agent Runtime seam.
-- Channel submission tests prove Channel renders its external envelope and XML
-  before invoking the flat `team.submit` Command, while Core preserves origin,
-  correlation, event source, admission, and settlement outside the runtime
-  payload.
+- Channel submission tests prove TeammateService renders the paired `<channel>`
+  block with direct faithful body text and at most one final sibling
+  `<reminder>`, while Core preserves origin, correlation, event source,
+  admission, and settlement outside the Runtime payload. Tests retain Markdown
+  code fences and prove the body is not entity-escaped, CDATA-wrapped,
+  XML-code-wrapped, or indented by the outer renderer.
 - `team.create` tests cover failure before record publication, failure after the
   record acceptance point, and readiness; same-id replay, closed replay,
   different-payload conflict, exclusive atomic publication, request-index

@@ -289,12 +289,13 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   Channel and delivers only to that Team's TeamLeader. Omission selects the
   Dispatcher Agent. Team lookup failure is a proven pre-admission result;
   admission ambiguity remains non-retryable.
-- `team.submit` has one flat text payload rather than inbound/text variants.
-  Channel interprets its external envelope and renders the complete model-facing
-  text, including any Channel-owned XML, before invoking the Command. Core does
-  not receive an `InboundTurnInput`, infer Channel markup, or render a Channel
-  block. Optional source identity, intent, and opaque display correlation remain
-  separate non-rendering fields.
+- `team.submit` has one content payload rather than inbound/text variants.
+  Channel interprets its external envelope and supplies source attributes,
+  original model-facing body text, and an optional Channel reminder before
+  invoking the Command. `TeammateService` owns the common source-envelope
+  assembly; Agent Runtime receives only the resulting text. Optional source
+  identity, intent, and opaque display correlation remain separate non-rendering
+  fields.
 
 ### 3. Core-to-Channel event delivery
 
@@ -463,9 +464,8 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - `submit` accepts one flat neutral input containing only prepared `text`. It
   replaces the separate `channelInput` and `completionInput` methods without
   retaining a `kind`, source taxonomy, or Dreamux idempotency key at the
-  Provider seam. Channel owns external-envelope interpretation and XML rendering
-  before Core submission; Dreamux-owned callers likewise prepare their final
-  text before calling the runtime.
+  Provider seam. Channel owns external-envelope interpretation and its body
+  formatting; Core assembles the source envelope before Runtime submission.
 - Core retains turn origin, correlation, intent, and event `turn_source` in its
   own admission/turn records. Those Core facts do not cross the Agent Runtime
   Provider seam merely to classify identical text submission behavior.
@@ -480,11 +480,22 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   `channelInput`, `scheduledInput`, or `controlInput` wrappers after the Runtime
   seam has become one text-only `submit`. Every accepted ordinary input may
   materialize or reopen its target, so callers cannot select a `reopenClosed`
-  mode. The input carries prepared text, one discriminated Core source fact,
-  and only the optional accepted-turn metadata that Core actually consumes.
-  That source fact is the single authority from which Core derives both the
-  admission namespace and the recorded turn origin; callers do not pass a
-  separate scope, origin, source id, or mutation label.
+  mode. Its model-facing content consists of required `source`, optional
+  string-valued `attrs`, `text`, and optional `reminder`. `source` is a closed
+  Core vocabulary and never includes `system`; a Channel Command invocation is
+  forced to `channel` by factual Command context and cannot select or override
+  another source. Core admission identity, scope, intent, correlation, and
+  completion delivery remain separate non-rendering facts rather than being
+  smuggled through attributes.
+- `TeammateService` renders one paired root named by `source`, with validated
+  snake_case attributes, then inserts the source body directly and closes the
+  root. It does not add a `<content>` child, pretty-print indentation, XML
+  entity rewriting of the body, or CDATA-based code transformation. Channel
+  code blocks retain ordinary Markdown fences and the body stays faithful to
+  the model-facing source text. When supplied, one generic `<reminder>` appears
+  once after the closed source block at the end of the complete input, never
+  repeated inside each message. XML-like tags are model-facing provenance and
+  boundary hints, not a security boundary.
 - Scheduler owns cron-fire lifecycle and cancellation entirely within the
   scheduler boundary. A due fire validates its current generation and durable
   job immediately before invoking the ordinary admitted-input operation. No
@@ -981,10 +992,10 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - The live Agent Runtime execution base is `start`, flat text `submit`, and
   `stop`. Separate channel/plain-text input methods and their replacement
   discriminator are removed.
-- `team.submit` is also a flat text Command with optional target, intent,
-  source identity, and opaque correlation fields. Channel owns external-message
-  XML rendering before invocation; Core and Agent Runtime never reconstruct a
-  Channel envelope.
+- `team.submit` is one content Command with optional target, intent, source
+  identity, and opaque correlation fields. Channel owns external-message
+  interpretation and body formatting; `TeammateService` owns the paired source
+  envelope and Agent Runtime receives only final text.
 - `source_id` and the public `duplicate` result are Core admission semantics.
   Agent Runtime `submit` receives no source id and its admission union contains
   no source-derived `duplicate` branch.

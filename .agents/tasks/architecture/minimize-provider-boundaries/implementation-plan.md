@@ -91,13 +91,13 @@ mandatory review precedents, not historical anecdotes:
    Workflow operation prompts remain append-only. Dreamux reconstructs and
    re-supplies the bundle whenever a runtime context is created; Provider-native
    resume retention is never authoritative.
-2. **The merged submit method kept a replacement `kind` discriminator.** Removing
+2. **The merged Runtime submit method kept a replacement `kind` discriminator.** Removing
    `channelInput` and `completionInput` while recreating the same split inside a
    union was a rename, not a boundary reduction. The mandatory challenge is why
    identical runtime behavior needs a source taxonomy. Agent Runtime now accepts
-   only final text; Channel renders its own external XML before invocation, and
-   Core retains origin and display facts without sending them through the
-   Provider seam.
+   only final text; TeammateService renders the Core source envelope and Core
+   retains origin and display facts without sending them as a taxonomy through
+   the Provider seam.
 3. **`sourceId` and duplicate policy were left in every Provider adapter.** The
    correct question was which layer owns stable invocation identity. Core knows
    the target entity and invocation origin, so Core owns the bounded
@@ -247,6 +247,13 @@ mandatory review precedents, not historical anecdotes:
     scheduler's `AbortSignal` served the obsolete held-fire/idle-wait mechanism
     and could not cancel a submitted Runtime turn; delete it and keep lifecycle
     validation inside Scheduler immediately before the shared submission.
+23. **A structured model hint was over-designed as parser-grade XML.** Models
+    consume a token stream, not a DOM. Keep one paired source tag for provenance
+    and body boundaries, but do not pay for `<content>`, pretty indentation,
+    entity rewriting, CDATA, or XML code elements. Preserve faithful body text
+    and Markdown code fences. If a reminder is necessary, emit one generic
+    `<reminder>` once at the end as a sibling, not inside every source message.
+    Tags improve clarity; they do not create a security boundary.
 
 ## Stage ledger
 
@@ -268,9 +275,10 @@ mandatory review precedents, not historical anecdotes:
 - Add generic Provider-owned session identity, `start/submit/stop`, leased push
   state, neutral recent Activity Records, Channel lifecycle/ports, Channel MCP
   composition, canonical Command/event types, and required root exports.
-- Keep Agent Runtime `submit` and `team.submit` flat: Channel renders its final
-  model-facing XML/text before invocation, and neither seam retains an inbound
-  versus text discriminator.
+- Keep Agent Runtime `submit` flat final text. Channel supplies attributes and
+  faithful body text; `TeammateService` assembles the common source envelope.
+  Neither the Runtime seam nor the Command keeps an inbound-versus-text
+  discriminator.
 - Keep `source_id` and duplicate admission in Core. Agent Runtime `submit`
   accepts text only and contains no Dreamux dedupe policy.
 - Retain neutral system-prompt replace/append forms: Dispatcher supplies both
@@ -363,8 +371,10 @@ mandatory review precedents, not historical anecdotes:
 
 - Move direct bindings, hierarchy/fallback, persistence, stale-binding cleanup,
   and list/unbind/bind tools into Feishu Channel.
-- Move the current external-message XML rendering into Feishu Channel so its
-  `team.submit` invocation already contains final model-facing text.
+- Keep Feishu external-message interpretation and faithful body formatting in
+  Channel. Pass attrs/text/reminder through `team.submit`; let
+  `TeammateService` assemble the paired `<channel>` block and optional final
+  sibling reminder.
 - Move Collaboration Space policy and its four Dispatcher-only MCP tools into
   Feishu Channel while keeping Team as the only Core collaboration container.
 - Implement idempotent child-target provisioning through `team.create` and
