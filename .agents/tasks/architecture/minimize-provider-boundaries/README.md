@@ -216,8 +216,165 @@ generic: it provides the open envelope and admission mechanisms but never
 interprets Channel, cron, task, or any future source's business meaning and
 never branches on a concrete source name.
 
-- Next action: finish the active Stage 3 correction round, then perform the
-  TeamLeader drift audit before authorizing Stage 4.
+## TeamLeader failure ledger for the final Fable audit
+
+This ledger records confirmed TeamLeader mistakes during this refactor. It is
+not a list of hypothetical risks and it is not a preservation list for the
+current implementation. Each item names a reasoning failure that already
+produced an incorrect requirement, design, implementation direction, or review
+instruction. The final Fable audit must inspect the complete current diff for
+every item below, identify every surviving instance line by line, and then look
+for additional instances of the same failure patterns. Passing this checklist
+does not imply that the diff is clean.
+
+1. **Treating existing design as authority.** I initially asked the Developer
+   to preserve deployed mechanisms and historical Decisions without first
+   proving that they belonged in the final product. That inverted the refactor's
+   authority: current code and history are evidence, while the confirmed final
+   product shape is authoritative. Fable must challenge every compatibility
+   shim, preserved wrapper, copied state machine, and "load-bearing" mechanism
+   that has no independent product behavior.
+2. **Designing upgrade compatibility for disposable state.** I spent review
+   effort on old-record migration, backfill, aliases, and rebuild behavior after
+   the operator had scoped this work to fresh installations and declared local
+   Team and Agent runtime state disposable. Fable must find any compatibility
+   reader, lazy backfill, migration branch, or old-shape fallback that survived
+   without an independently confirmed product need.
+3. **Creating durable Team-creation coordination outside the Team record.** I
+   accepted a request ledger, name claim, tombstone-like ownership, and
+   hard-interrupt recovery around Team creation. These mechanisms made
+   intermediate execution state compete with the valid readable Team record,
+   which is the sole Team-existence, concrete-name, and accepted-request
+   authority. Fable must search for every persisted claim, reservation, request
+   ledger, partial-Team recovery record, or name owner outside `record.json`.
+4. **Promoting narrow interruption windows into product recovery.** I repeatedly
+   treated "the process can stop between two awaits" as a requirement to resume
+   or compensate the interrupted operation. The product explicitly permits
+   volatile intermediate work to disappear. Fable must reject recovery,
+   replay, scanning, compensation, and repair state whose only justification is
+   preserving an unfinished in-process operation.
+5. **Persisting runtime topology as Agent identity.** I accepted persisted
+   `role`, invented the non-product `team_member` vocabulary, and allowed
+   identity contents to select storage location. Runtime role and path already
+   follow from the owning Service, Collection, and constructor-bound directory
+   hierarchy. Fable must find persisted role fields, role-based path selection,
+   dispatcher-wide identity path re-derivation, and any remaining
+   `team_member` concept.
+6. **Confusing Team authority with TeamLeader identity authority.** I proposed
+   Team-side identity synthesis, overwrite, and repair instead of checking only
+   the minimum Team-to-identity link and delegating identity creation or runtime
+   restoration to `TeamMateService`. Fable must find Team code that stamps,
+   merges, rewrites, or reconstructs identity rather than preserving an aligned
+   identity or invoking the normal TeamMate creation path.
+7. **Preserving submission wrappers and fields by proximity.** I retained
+   `channelInput`, `scheduledInput`, `controlInput`, caller-selected reopen,
+   `scope`, opaque correlation, `turnOrigin`, logging labels, and a leaked
+   scheduler `AbortSignal` before proving distinct behavior or consumers. Fable
+   must enumerate every producer and consumer of the final submission surface
+   and reject any wrapper or field without an independent behavioral effect.
+8. **Optimizing model input for an XML parser rather than the model.** I
+   accepted `<content>`, CDATA conversion, XML entity rewriting of the body,
+   pretty indentation, and repeated per-message reminders. These changed or
+   inflated the user's text without demonstrated model benefit. Fable must
+   verify faithful body and Markdown-code preservation, one compact paired
+   source envelope, attribute-value escaping only, and at most one optional
+   sibling `<reminder>`.
+9. **Giving duplicate admission the wrong lifetime and dimensions.** I accepted
+   one ledger per historical entity and a redundant invocation-origin scope,
+   creating unbounded retention and duplicate keys for facts already owned by
+   target plus source ID. Fable must prove one bounded Dispatcher-lifetime
+   ledger, no per-entity registry growth, and no scope or origin dimension that
+   lacks a separate deduplication meaning.
+10. **Smuggling Channel presentation correlation through Core.** I tried to
+    preserve `ChannelOrigin`, presentation correlation, and manual anchors in
+    Core instead of closing presentation through Channel-owned state and pushed
+    `turn_id` facts. I later accepted a per-session, per-Team anchor mutex that
+    could not distinguish the same Team's events broadcast to multiple Channel
+    sessions. Fable must reject Core presentation tokens and prove exact
+    Channel-local association by the returned and emitted `turn_id`, including
+    concurrent sessions bound to the same Team.
+11. **Flattening Agent-facing MCP tools into domain Commands.** I initially
+    treated shims as direct aliases for Team, TeamMate, Cron, and Channel
+    Commands, despite the required generic `mcp.toolcall` boundary and
+    runtime-bound delegate. Fable must prove that generic MCP infrastructure is
+    business-blind and that each delegate owns its catalog, caller context,
+    source, completion behavior, authorization, and direct owning-object call.
+12. **Deleting unmatched Channel delivery by misreading a Team-specific
+    statement.** I rewrote the requirement so every Channel input required a
+    Team and unbound input was dropped, even though the operator only said that
+    a delivery *to a Team* necessarily has a Team or leader name. This error was
+    introduced in commit `4655d6593a90262126c684559800aac1377af9c3` and the
+    documentation correction was committed as `8ba508f3`. Fable must prove that
+    unmatched input reaches the Dispatcher Agent, stale typed Team-route
+    rejection removes the stale binding and falls back once, and no silent-drop
+    interpretation survives.
+13. **Inferring product intent from the transport adapter.** I allowed
+    `team.submit` to choose completion delivery from whether the call arrived
+    through Channel or admin, and accepted removal of Dispatcher COT as a side
+    effect of the same mistaken Channel narrowing. Completion ownership belongs
+    to the real caller, not the adapter class; existing Dispatcher and
+    TeamLeader Feishu presentation must remain unless explicitly removed.
+    Fable must search for `isChannelInvocation`-style behavioral branching and
+    role filters that silently erase Dispatcher presentation.
+14. **Turning host shutdown into logical close.** I accepted shutdown and
+    startup-rollback paths that materialized dormant entities, persisted
+    `closed`, emitted retirement facts, or performed worktree cleanup. Host stop
+    releases runtime authority; explicit close, Team dissolve, creation failure,
+    and Workflow-owned lifecycle are the durable close owners. Fable must trace
+    every stop and rollback path to prove that ordinary persisted entities are
+    not logically closed as a host-cleanup side effect.
+15. **Forcing defensive implementation before proving a product boundary.** I
+    instructed the Developer to add validators, freeze/copy layers, limits, and
+    edge-case guards because code could theoretically be malformed, rather than
+    first identifying a real producer, consumer, user-visible consequence, or
+    data consequence. Confirmed examples include the expanded Core-event
+    payload validators and speculative global limits that were later removed or
+    deferred. Fable must review each non-domain limit, duplicate validation,
+    canonicalization pass, and "unreachable" guard; keep only a demonstrated
+    external, persistence, authorization, or cross-owner boundary. This does
+    not authorize deleting proven boundaries such as immutable cross-Channel
+    event delivery, JSON wire normalization, or MCP lease authorization.
+16. **Persisting Feishu automatic-provisioning execution progress.** I carried
+    the old Core `ProvisionedTargetRecord` state machine into Channel as
+    `provisioning[]`, with `request_id`, phases, resume, and finish operations.
+    That repeats the same durable-intermediate-state mistake as the deleted Team
+    name/request records. Space policy and completed bindings are durable;
+    automatic creation is process-local and may disappear. A valid Team record
+    means the Team exists; no record means it does not. After restart, an
+    unmatched target is delivered to the Dispatcher Agent. Fable must require
+    deletion of the persisted provisioning rows, phase machine, recovery scan,
+    and restart resume path, and must reject any replacement outbox or repair
+    ledger.
+17. **Treating Collaboration Space generation as cancellation rather than a
+    snapshot version.** I proposed invalidating an older in-flight creation when
+    the Space policy changed. The operator's product model is snapshot-based:
+    a Team creation accepted before an update uses the old runtime, identity,
+    and repository snapshot; a creation accepted after the update uses the new
+    snapshot; already-created Teams are untouched. Fable must find any current
+    generation comparison that cancels or rewrites already-started work. This
+    rule does not make the in-process operation durable: the captured snapshot
+    remains memory-only and is lost with the process.
+18. **Reviewing by command rather than collaborating on ownership.** I too often
+    translated my first interpretation into mandatory Developer constraints,
+    especially for defensive code, instead of showing the evidence, discussing
+    the ownership model, and letting the Developer challenge the design under
+    the same product principles. Fable must not inherit my instructions as
+    truth. It must independently reconstruct the product consequence of every
+    surviving mechanism and call out both unnecessary defense and missing
+    product behavior.
+
+The final Fable audit is read-only first. It must report evidence before any
+repair round: current `file:line`, the real trigger, the product or persisted
+data consequence, the violated operator principle, and the smallest correction.
+Pure code-edge hardening that has no demonstrated product consequence belongs in
+the final holistic code review and must not be promoted into product state or
+architecture merely because it is possible.
+
+- Next action: finish the active Stage 5 correction round, review each remaining
+  product issue with the operator one at a time, and do not advance the later
+  stages until the confirmed Stage 0-5 drift is removed. After implementation
+  and ordinary review are complete, run the independent line-by-line Fable
+  audit required by the failure ledger above.
 - Related tasks: Surfaced after [Feishu COT Conversation Cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md); this is an independent architecture outcome.
 
 ## Development approval
