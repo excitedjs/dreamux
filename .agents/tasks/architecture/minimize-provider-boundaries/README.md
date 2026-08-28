@@ -181,6 +181,13 @@
   existing Teams are never rewritten. Generation identifies a policy snapshot
   and is not a cancellation token. Losing the process loses the in-flight
   snapshot and requires no recovery.
+- Stage 5 audit decision: `unbind_collaboration_space` affects future automatic
+  provisioning only. An in-process creation that already captured a policy
+  snapshot continues and may commit its completed binding; later unmatched
+  targets have no policy and go to the Dispatcher Agent. Do not add a
+  cancellation flag, generation re-check, cleanup branch, or removal of an
+  already-published Team record merely to make unbind interrupt an accepted
+  function call.
 - Stage 5 audit decision: persisted Feishu routing facts become live only after
   their atomic file write succeeds. An update is prepared against an isolated
   next document, serialized with other writes, persisted, and then published as
