@@ -4,7 +4,7 @@
 
 This is the current technical design baseline for the requirement at
 `requirement.md` SHA-256
-`dd40eba6529e9bac30607dcbf0d085f22210b76e6d501a00450a082ad2f1fc00`.
+`29d1b68baf4e5dc69ad43d8d7a94b76a51ea3a70d2e8e6df59f06189d76ea42b`.
 
 It reconciles the three independent proposals and their single cross-review
 round. Requirement text, this design, current source, and prior Decisions are
@@ -17,6 +17,13 @@ when it reveals a genuinely unmodeled product choice. Otherwise the TeamLeader
 uses evidence to remove the obsolete or bad design rather than mechanically
 making either the document or current code true. Development approval is tracked
 separately in the task README.
+
+This solution targets a fresh installation. Local Dispatcher, Team, Agent,
+scheduler, and workflow records are operational and discardable; this task does
+not design old-shape migration, lazy backfill, compatibility reads, or rebuild
+instructions for them. Public package changes still receive normal release
+notes, but an old local record is never allowed to complicate or become an
+authority over the final state model.
 
 ## Governing principle: domain ownership drives names and code layout
 
@@ -782,10 +789,19 @@ no preservation authority.
 The Team record is not a second complete TeamLeader identity. It retains Team
 existence and lifecycle, `leader_name`, and only the stable Team-owned creation
 inputs required to call the ordinary `TeamMateService` creation path when the
-leader has no usable identity. Provider session, Agent status, last error, and
-other mutable runtime state remain solely in the TeamLeader identity. This is a
-creation request plus a minimal relationship check, not two peer Agent-state
-authorities.
+leader has no usable identity: the accepted normalized identity prompt and
+normalized skill sources are included. Provider session, Agent status, last
+error, and other mutable runtime state remain solely in the TeamLeader identity.
+An aligned identity is restored exactly; the Team record fields are neither
+compared with it nor used to overwrite it. This is a creation request plus a
+minimal relationship check, not two peer Agent-state authorities.
+
+Records that predate this final shape are outside the implementation contract.
+If the two stable creation-input fields are absent, they read as an empty prompt
+and empty caller-supplied skill list. Core does not backfill them from an aligned
+identity and does not fail the Team for their absence. This narrow default is not
+an upgrade system; it merely keeps missing disposable data from becoming a new
+product authority.
 
 `AgentEntityIdentity` no longer persists `role`. Runtime topology already owns
 that fact: `DispatcherService` creates the Dispatcher Agent, its
@@ -1369,12 +1385,13 @@ admission assertions to make the refactor pass.
 
 ## 8. Release and knowledge updates
 
-This is a source- and state-incompatible change:
+This is a source-incompatible change and defines a fresh local-state model:
 
 - use Rush change files for every affected package;
 - 0.x packages use `minor` with a `BREAKING:` lead; packages already past 1.0
   use the real semver breaking level required by the repository;
-- every state/config incompatibility includes an exact `Rebuild:` instruction;
+- no migration, compatibility, or `Rebuild:` contract is created for superseded
+  local Dispatcher/Team/Agent runtime state;
 - no generated changelog is hand-edited;
 - public type export-lock tests are updated intentionally;
 - config/state ownership changes update

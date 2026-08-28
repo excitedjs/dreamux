@@ -229,6 +229,15 @@ mandatory review precedents, not historical anecdotes:
     entity name, and `TeamMateService` receives an entity directory. Do not pass
     logical ids plus a derived role into a global Store so it can guess the path
     that the caller already knows.
+21. **Upgrade compatibility was being treated as product behavior.** This task
+    targets a fresh installation. Team records, Agent identities, and the other
+    local runtime files below a Dispatcher are operational, discardable state;
+    they do not justify migrations, lazy backfill, compatibility readers, or
+    rebuild workflows. Build the clean final state model directly. In
+    particular, a Team record stores the normalized TeamLeader identity prompt
+    and skill sources needed for future creation, while an aligned Identity is
+    restored exactly. A record missing those fields reads them as empty and is
+    never backfilled from Identity.
 
 ## Stage ledger
 

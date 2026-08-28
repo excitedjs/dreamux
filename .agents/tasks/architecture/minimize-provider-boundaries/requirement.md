@@ -14,6 +14,14 @@ Channel invocation and observation ports designed. Existing Feishu behavior,
 `ChannelRoutes` members, or other provider call sites are migration evidence,
 not the source of the new Core Command or event catalogs.
 
+The implementation target is a fresh installation. This task does not design an
+old-to-new transition for superseded local runtime state, does not preserve old
+record shapes, and does not add migration, lazy backfill, compatibility reads, or
+operator rebuild flows for them. Team records, Agent identities, scheduler data,
+and other state below a Dispatcher are operational state that may be discarded;
+their value is the current product behavior they enable, not cross-version data
+retention.
+
 This document, current source, and prior Decisions are investigation evidence;
 none is automatically the target architecture. The final product shape and the
 operator's explicit product principles are authoritative. During implementation,
@@ -616,10 +624,13 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - The Team record and TeamLeader identity have different, deliberately narrow
   authority. The Team record owns Team existence, Team lifecycle, `leader_name`,
   and only the stable Team-owned creation inputs needed to ask `TeamMateService`
-  to create a missing leader. It does not mirror Provider session state or
-  mutable Agent lifecycle fields. The TeamLeader identity owns the TeamLeader's
-  actual Agent state and is the only input from which an existing TeamLeader
-  runtime is reconstructed.
+  to create a missing leader. Those inputs include the normalized TeamLeader
+  identity prompt and normalized skill sources originally accepted for the Team.
+  It does not mirror Provider session state or mutable Agent lifecycle fields.
+  The TeamLeader identity owns the TeamLeader's actual Agent state and is the
+  only input from which an existing TeamLeader runtime is reconstructed. An
+  aligned identity is restored exactly and is never overwritten or compared
+  against the Team record's creation-input copy.
 - An Agent identity does not persist `role`. Runtime ownership already supplies
   that fact without ambiguity: `DispatcherService` owns the Dispatcher Agent,
   its `TeammateCollection` owns Dispatcher-scoped TeamMates, `TeamService` owns
@@ -661,6 +672,11 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   never restarts one. This is aggregate reconciliation through the existing
   owner, not direct cross-store repair, a separate durable recovery coordinator,
   or another state authority.
+- Records produced before this final shape are outside the task contract. Missing
+  TeamLeader identity-prompt or skill-source fields are treated as empty values;
+  Dreamux does not backfill them from an aligned Identity and does not block the
+  Team on their absence. No upgrade-time compatibility behavior may become a
+  second authority or complicate the fresh-install design.
 - The canonical `team.create` Command preserves the complete transport-neutral
   repository capability already available through `admin.sock`. Its repository
   request is a discriminated union: `reuse-cwd` may reuse a specified or default
@@ -761,9 +777,9 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - Removal of the Core binding store and Team binding surfaces; Channel-owned
   binding persistence, provider tools, state migration, tests, and public
   documentation.
-- Contract fixtures, architecture gates, built-in provider migrations, Rush
-  change files, and state/config upgrade handling required by the final public
-  contract.
+- Contract fixtures, architecture gates, built-in provider adaptation, and Rush
+  change files required by the final public contract. Migration or rebuild
+  handling for superseded local Dispatcher/Team/Agent state is out of scope.
 
 ## Non-goals
 
@@ -784,6 +800,9 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - Preserving source compatibility for the `transfer_back` tool name.
 - Preserving source compatibility for the rewritten Agent Runtime or Channel
   Provider contracts, or adding a temporary forward-compatibility adapter.
+- Preserving, importing, backfilling, or migrating local state written by an
+  older Dreamux design. The target state layout and schemas are evaluated as a
+  fresh installation.
 
 ## Constraints and invariants
 
@@ -808,8 +827,9 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   and remain independent of the Channel or transport that invokes it.
 - Every externally observable Core event must be justified by a stable
   Core-owned fact and remain independent of the Channel that consumes it.
-- Any incompatible public contract or persisted binding-shape change follows
-  Dreamux 0.x breaking-change, Rush change-file, and fail-loud upgrade rules.
+- Incompatible public package contracts still receive the required Rush change
+  records. This task does not add compatibility or rebuild machinery for old
+  local runtime-state shapes; fresh-install state is the only accepted model.
 
 ## Acceptance criteria
 
