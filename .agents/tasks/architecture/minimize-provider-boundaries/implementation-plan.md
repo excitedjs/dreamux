@@ -344,6 +344,9 @@ mandatory review precedents, not historical anecdotes:
   the unified `team.submit` admission boundary. Exclusive atomic record
   publication is the acceptance and name-ownership point; persist no separate
   request ledger or name claim.
+- Include optional string-record `attrs` and optional `reminder` in the
+  canonical `team.submit` payload now. Stage 5 connects the Feishu producer to
+  these existing fields; it must not reopen or extend the Core Command contract.
 - Treat a missing, malformed, or unreadable Team record as nonexistent for
   lookup, routing, and name allocation. Return `TEAM_NOT_FOUND`; do not protect
   or recover a Team that has no valid record. Orphan TeamLeader identity and

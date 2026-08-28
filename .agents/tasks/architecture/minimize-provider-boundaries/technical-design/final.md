@@ -717,7 +717,9 @@ The two Commands whose contracts change materially for Channel use are:
 ```ts
 interface TeamSubmitCommand {
   readonly team_name?: string;
+  readonly attrs?: Readonly<Record<string, string>>;
   readonly text: string;
+  readonly reminder?: string;
   readonly intent?: string;
   readonly source_id?: string;
 }
@@ -738,10 +740,11 @@ Omitting `team_name` targets the Dispatcher Agent for non-Channel callers such
 as `admin.sock`; a Channel invocation must supply it. Core then resolves the
 stable Team and submits only to its TeamLeader. Channel and admin adapters use
 the same Command definition. A Channel supplies attributes, faithful body text,
-and an optional reminder; `TeammateService` renders the paired `<channel>` block
-and forces the source from factual Channel context. A `submitted` result carries
-the Core `turn_id`; `duplicate` does not invent one because Core did not create
-a second runtime submission or turn identity.
+and an optional reminder through this Command; these are not deferred additions
+to a later Channel stage. `TeammateService` renders the paired `<channel>` block
+and forces the source from factual invocation context. A `submitted` result
+carries the Core `turn_id`; `duplicate` does not invent one because Core did not
+create a second runtime submission or turn identity.
 
 Core owns one bounded, process-local admission ledger for the Dispatcher
 lifetime. A non-empty `source_id` reserves `[target entity, source_id]` before

@@ -1013,10 +1013,12 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - The live Agent Runtime execution base is `start`, flat text `submit`, and
   `stop`. Separate channel/plain-text input methods and their replacement
   discriminator are removed.
-- `team.submit` is one content Command with optional target, intent, and source
-  identity fields. Channel owns external-message
-  interpretation and body formatting; `TeammateService` owns the paired source
-  envelope and Agent Runtime receives only final text.
+- `team.submit` is one content Command with optional target, attributes,
+  reminder, intent, and source identity fields. Channel owns external-message
+  interpretation and body formatting and supplies its attributes and reminder
+  through this Command; those fields are part of the canonical boundary rather
+  than a Stage 5 extension. `TeammateService` owns the paired source envelope
+  and Agent Runtime receives only final text.
 - Channel always supplies `team_name` and delivers only to its resolved
   TeamLeader; only non-Channel callers such as `admin.sock` may omit it to target
   the Dispatcher Agent. Channel presentation closes locally: it records the
