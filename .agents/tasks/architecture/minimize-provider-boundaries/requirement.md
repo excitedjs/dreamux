@@ -566,6 +566,12 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   idempotent and never receives or interprets the Channel target. The accepted
   request identity to `team_name` result is Core-owned durable state: it survives
   Core restart and returns the same Team for every retry of that identity.
+- Accepted `team.create` request identities have no artificial lifetime-count
+  limit and are never evicted or manually pruned. Each request id, canonical
+  payload, and persisted entry remains individually bounded and validated, while
+  the number of entries grows with the number of historical Team-creation
+  requests just as the never-reused Team history does. Only a real persistence
+  or storage failure may reject a new identity for capacity reasons.
 - The canonical `team.create` Command preserves the complete transport-neutral
   repository capability already available through `admin.sock`. Its repository
   request is a discriminated union: `reuse-cwd` may reuse a specified or default

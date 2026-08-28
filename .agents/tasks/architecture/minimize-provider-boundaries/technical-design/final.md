@@ -719,11 +719,13 @@ including after Core restart or Team closure. Reusing an id with a different
 hash returns `IDEMPOTENCY_CONFLICT`. A closed replay returns `closed`; a new
 provisioning generation must use a new request id.
 
-Accepted identities are never silently evicted. The ledger has an explicit
-configured maximum; reaching it rejects a new identity before acceptance and
-emits an actionable operational diagnostic. This failure is preferable to
-creating a duplicate Team or silently editing server-owned state. The ledger is
-Core-owned and atomically persisted; Channel targets never enter it.
+Accepted identities are never evicted or manually pruned, and the ledger has no
+artificial total-entry limit. Each request id, canonical payload, and stored
+entry has a strict size bound, but total entries grow with historical Team
+creation in the same way as never-reused Team records and name claims. Only an
+actual persistence or storage failure rejects a new identity for capacity
+reasons. The ledger is Core-owned and atomically persisted; Channel targets
+never enter it.
 
 All other surviving definitions retain their current domain behavior while
 moving parsing, errors, and execution out of `admin/methods.ts` into their
@@ -1183,7 +1185,8 @@ compile breaks are resolved inside the same implementation change.
   payload.
 - `team.create` tests cover crash points before reservation, after reservation,
   during creation, and after readiness; same-id replay, closed replay,
-  different-payload conflict, capacity rejection, and never-reused names.
+  different-payload conflict, individually bounded entries, unbounded historical
+  entry count, and never-reused names.
 - Channel saga tests cover crash/restart at every persisted phase,
   ready-before-bind, bind-before-first-submit, generation replacement, and no
   target data in Core.

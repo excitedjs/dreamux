@@ -144,19 +144,25 @@ mandatory review precedents, not historical anecdotes:
     local policy into managed mode with `delete-on-close`. Never delete a broader
     load-bearing domain capability merely because the first migrated consumer
     uses a smaller subset.
-11. **`last` was treated as settled transcript history.** Its actual user story
+11. **A bounded entry was confused with a bounded lifetime ledger.** A hard
+    count cap on never-evicted idempotency identities eventually disables Team
+    creation permanently, while manual pruning makes an old retry create a
+    duplicate Team. Bound and validate every request id, payload, and stored
+    entry, but let total entries grow with never-reused Team history; reject only
+    on a real persistence or storage failure.
+12. **`last` was treated as settled transcript history.** Its actual user story
     is observing a TeamMate that may remain inside one active turn for an hour.
     Provider-owned recent Activity Records therefore cover the growing active
     session and expose assistant messages plus tool name/status; Dreamux state is
     queried separately. A neutral name alone is insufficient if the consumer
     story still fails.
-12. **`waitIdle` was defended after its product purpose had disappeared.** Team
+13. **`waitIdle` was defended after its product purpose had disappeared.** Team
     dissolve is destructive cancellation, not graceful drainage: stop Workflow
     and TeamMate processes immediately, fence further work, check owned worktree
     safety, allow explicit `force`, and move expensive physical cleanup to the
     background. Do not preserve a capability merely because old orchestration
     consumed it.
-13. **COT was at risk of being redesigned as a reliable event system.** Its
+14. **COT was at risk of being redesigned as a reliable event system.** Its
     current display is intentionally a live, best-effort projection: Provider
     emits normalized activity, Core applies the existing redaction/projection,
     and Channel consumes the event without replay, retransmission, or local
