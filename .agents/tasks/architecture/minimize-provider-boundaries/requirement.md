@@ -470,12 +470,13 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   own admission/turn records. Those Core facts do not cross the Agent Runtime
   Provider seam merely to classify identical text submission behavior.
 - Stable submission source identity and bounded process-local deduplication
-  belong to the Core admission owner. The dedupe namespace includes the target
-  entity and Core-known invocation origin. Concurrent repeats share the pending
-  admission; after `submitted` or `ambiguous`, a bounded recent repeat returns
-  public `duplicate`; `failed`, `stopped`, and provider-internal `skipped` do not
-  consume the key. This keeps the existing no-cross-restart guarantee while
-  removing Dreamux idempotency policy from every Provider adapter.
+  belong to the Core admission owner. Each source owner supplies a stable
+  optional `sourceId`; the per-target ledger keys only that ID and does not carry
+  an additional origin scope. Concurrent repeats share the pending admission;
+  after `submitted` or `ambiguous`, a bounded recent repeat returns public
+  `duplicate`; `failed`, `stopped`, and provider-internal `skipped` do not consume
+  the key. This keeps the existing no-cross-restart guarantee while removing
+  Dreamux idempotency policy from every Provider adapter.
 - `TeammateService` has one admitted-input operation. It does not preserve
   `channelInput`, `scheduledInput`, or `controlInput` wrappers after the Runtime
   seam has become one text-only `submit`. Every accepted ordinary input may
@@ -876,7 +877,7 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   supported activity delivery remain correct.
 - Agent Runtime `submit` accepts only prepared text and has no source id or
   source-derived `duplicate` result. Core preserves public duplicate behavior
-  through one target-and-origin-scoped bounded admission ledger.
+  through one per-target bounded admission ledger keyed by optional `sourceId`.
 - Every supported Provider honors neutral structured-output schemas. Workflow
   does not depend on a provider capability advertisement or fail as an
   unsupported feature solely because a different Provider is selected.

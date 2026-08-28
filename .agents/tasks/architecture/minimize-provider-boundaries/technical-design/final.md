@@ -320,8 +320,8 @@ Core-owned notices: ordinary callers cannot select it, while Dispatcher restart
 notification uses it. Channel Command and `admin.sock` inputs use `channel`.
 Agent-facing MCP spawn and submit inputs default to `task`, while model
 completion delivery defaults to `task-notification`. Stable source identity,
-authoritative Channel admission scope, intent, correlation, and completion
-delivery do not become XML attributes. The service exposes no
+intent, correlation, and completion delivery do not become XML attributes. The
+service exposes no
 `channelInput`, `scheduledInput`, or `controlInput` wrappers, no
 caller-selected `reopenClosed`, and no logging label. Every ordinary admitted
 input starts or reopens the target before Runtime submission.
@@ -717,15 +717,15 @@ Omitting `team_name` targets the Dispatcher Agent; otherwise Core resolves the
 stable Team and submits only to its TeamLeader. Channel and admin adapters use
 the same Command definition. A Channel supplies attributes, faithful body text,
 and an optional reminder; `TeammateService` renders the paired `<channel>` block
-and forces the source from factual Channel context. The invoker scopes a
-Channel-supplied source identity to the calling Channel. A
-`submitted` result carries the Core `turn_id`; `duplicate` does not invent one
-because Core did not create a second runtime submission or turn identity.
+and forces the source from factual Channel context. A `submitted` result carries
+the Core `turn_id`; `duplicate` does not invent one because Core did not create
+a second runtime submission or turn identity.
 
-Core owns one bounded, process-local admission ledger per target entity and
-Core-known invocation-origin scope. A non-empty `source_id` reserves the key
-before runtime admission. Concurrent repeats await the same pending admission;
-`submitted` or `ambiguous` commits the key into the bounded recent window and a
+Core owns one bounded, process-local admission ledger per target entity. A
+non-empty `source_id` reserves that ID before runtime admission; there is no
+additional invocation-origin scope in the key. Each source owner is responsible
+for supplying a stable ID. Concurrent repeats await the same pending admission;
+`submitted` or `ambiguous` commits the ID into the bounded recent window and a
 later repeat returns `duplicate`; `failed`, `stopped`, or provider-internal
 `skipped` releases it. An omitted or empty `source_id` bypasses deduplication.
 The ledger deliberately retains the current no-cross-restart guarantee.
@@ -1355,10 +1355,10 @@ compile breaks are resolved inside the same implementation change.
 - `team.submit` tests cover Dispatcher/default delivery, TeamLeader delivery,
   duplicate, stopped, failed, ambiguous, stable `turn_id`, opaque correlation,
   and retry only after `TEAM_NOT_FOUND`/`TEAM_CLOSED`.
-- Core admission tests prove target-and-origin-scoped pending coalescing,
+- Core admission tests prove per-target pending coalescing by `source_id`,
   bounded process-local dedupe, commit only after `submitted`/`ambiguous`, key
-  release after `failed`/`stopped`/`skipped`, bypass without `source_id`, and no
-  source id crossing the Agent Runtime seam.
+  release after `failed`/`stopped`/`skipped`, bypass without `source_id`, no
+  origin scope in the key, and no source id crossing the Agent Runtime seam.
 - Channel submission tests prove TeammateService renders the paired `<channel>`
   block with direct faithful body text and at most one final sibling
   `<reminder>`, while Core preserves origin, correlation, event source,

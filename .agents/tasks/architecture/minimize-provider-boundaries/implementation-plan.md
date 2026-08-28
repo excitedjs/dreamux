@@ -288,7 +288,9 @@ mandatory review precedents, not historical anecdotes:
   Neither the Runtime seam nor the Command keeps an inbound-versus-text
   discriminator.
 - Keep `source_id` and duplicate admission in Core. Agent Runtime `submit`
-  accepts text only and contains no Dreamux dedupe policy.
+  accepts text only and contains no Dreamux dedupe policy. Key the per-target
+  ledger directly by the optional source-owned ID; do not preserve an extra
+  invocation-origin scope.
 - Retain neutral system-prompt replace/append forms: Dispatcher supplies both
   and each Provider selects its native mechanism; TeamLeader remains
   append-only for every Provider. Preserve ordinary TeamMate and Workflow
