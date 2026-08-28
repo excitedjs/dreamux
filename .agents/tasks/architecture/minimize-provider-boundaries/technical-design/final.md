@@ -4,7 +4,7 @@
 
 This is the current technical design baseline for the requirement at
 `requirement.md` SHA-256
-`de13b7478c5f153c22f85029d0cb881459423117ea3c2ff82e8290c9c30850cc`.
+`dd40eba6529e9bac30607dcbf0d085f22210b76e6d501a00450a082ad2f1fc00`.
 
 It reconciles the three independent proposals and their single cross-review
 round. Requirement text, this design, current source, and prior Decisions are
@@ -795,6 +795,33 @@ directory hierarchy encodes the same scope. `team_member` is deleted from
 persisted types, internal domain vocabulary, and public event values without a
 compatibility alias.
 
+The object graph binds persistence roots at construction:
+
+```text
+{DREAMUX_HOME}/state/{dispatcher_id}/
+├── identity.json
+├── teammate/{teammate_name}/identity.json
+└── team/{team_name}/
+    ├── record.json
+    ├── identity.json
+    └── teammate/{teammate_name}/identity.json
+```
+
+`DispatcherService` receives the Dispatcher state root and passes its
+`teammate/` and `team/` child roots to the corresponding Collections.
+`TeamCollection` passes `team/{team_name}` to `TeamService`; `TeamService` uses
+that root for its TeamLeader and passes its `teammate/` child root to the
+Team-scoped `TeammateCollection`. A Collection appends only the concrete entity
+name. A `TeamMateService` and its identity storage receive the already-resolved
+entity directory.
+
+Consequently no lower layer receives a logical locator tuple and recomputes its
+own path. In particular, identity read/write/update APIs do not accept or inspect
+`role` to choose a directory, and persisted identity contents never decide where
+they are stored. The host path builders are used by the owning composition root
+when it initializes children, not by an identity store trying to rediscover its
+owner.
+
 Reconciliation checks only `dispatcher_id`, `team_id`, and
 `name === team.leader_name` to prove that the identity belongs to the Team's
 leader. It does not compare or synchronize every identity field with the Team
@@ -804,9 +831,8 @@ its Provider session.
 
 When prompt/skill composition, completion routing, runtime validation, or event
 presentation needs a role, the owning Service or Collection supplies the
-runtime-derived value `dispatcher`, `team_leader`, or `teammate`. Path builders
-receive the already-known owner/scope rather than reading a role from identity.
-No derived role is written back into durable identity.
+runtime-derived value `dispatcher`, `team_leader`, or `teammate`. No derived role
+is written back into durable identity.
 
 If an active `starting` or `running` Team has no readable aligned identity, the
 Team layer does not synthesize or persist one. It calls the normal

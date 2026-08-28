@@ -626,6 +626,19 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   the TeamLeader, and its `TeammateCollection` owns Team-scoped TeamMates. The
   directory hierarchy encodes the same scope. `team_member` is not a Dreamux
   entity or vocabulary and is removed without a compatibility alias.
+- Persistence roots are bound when those owners are constructed. From
+  `{DREAMUX_HOME}/state/{dispatcher_id}`, `DispatcherService` owns its root Agent,
+  its `TeammateCollection` owns `teammate/`, and its `TeamCollection` owns
+  `team/`. Each `TeamService` owns `team/{team_name}`, its TeamLeader uses that
+  same Team root, and its `TeammateCollection` owns
+  `team/{team_name}/teammate/`. An individual collection appends only the entity
+  name to its already-bound root. No Agent identity field participates in path
+  selection.
+- Identity storage APIs therefore operate on an entity directory or a
+  construction-bound collection root supplied by the owner. They must not
+  accept `dispatcher_id`, `team_id`, `role`, and `name` as a locator tuple and
+  re-derive a path from persisted contents. Read, create, update, and recovery
+  all use the same owner-bound location.
 - Core validates only the minimum persisted ownership link needed to know that
   an identity belongs to the TeamLeader: `dispatcher_id`, `team_id`, and
   `name === team.leader_name`. It does not compare or synchronize every identity

@@ -3,9 +3,9 @@
 ## Authority
 
 This plan executes the current requirement baseline at SHA-256
-`de13b7478c5f153c22f85029d0cb881459423117ea3c2ff82e8290c9c30850cc`
+`dd40eba6529e9bac30607dcbf0d085f22210b76e6d501a00450a082ad2f1fc00`
 and the current technical design baseline at SHA-256
-`786f046223bfb6883e3f2605bd60147035aecfd5945edb45189e1448e5c94bee`.
+`71831201a09e3e5e408aa1d3f2a815f14237ec8ade5adfcf10c3cb95988051eb`.
 The operator granted development approval on 2026-08-27 with the staged
 protocol below. The final product shape and explicit operator product principles
 are authoritative. Requirement text, technical design, current source, and
@@ -222,6 +222,13 @@ mandatory review precedents, not historical anecdotes:
     the non-product term `team_member`. Delete the persisted field and that
     vocabulary. Owners derive `dispatcher`, `team_leader`, or `teammate` only
     when runtime behavior or event presentation needs it.
+20. **A dispatcher-wide identity store flattened the object graph and then
+    re-derived paths from identity fields.** The symmetric state layout already
+    assigns every root when Services and Collections are constructed. Preserve
+    that composition: each owner passes a child root, Collections append only an
+    entity name, and `TeamMateService` receives an entity directory. Do not pass
+    logical ids plus a derived role into a global Store so it can guess the path
+    that the caller already knows.
 
 ## Stage ledger
 
@@ -301,11 +308,12 @@ mandatory review precedents, not historical anecdotes:
   the Team record; keep Provider session and mutable Agent state only in the
   TeamLeader identity. Remove persisted identity `role` and delete
   `team_member`; derive runtime role from the owning Service/Collection and
-  directory scope. Check only `dispatcher_id`, `team_id`, and leader name.
-  Preserve an aligned identity and restore from it; otherwise call
+  directory scope. Bind Dispatcher, Team, and both Teammate collection roots at
+  construction; pass resolved entity directories downward and never re-derive a
+  path from identity contents. Check only `dispatcher_id`, `team_id`, and leader
+  name. Preserve an aligned identity and restore from it; otherwise call
   `TeamMateService`'s normal creation path and let that owner create identity as
-  part of creating the TeamLeader. The Team layer never writes identity
-  directly.
+  part of creating the TeamLeader. The Team layer never writes identity directly.
 - Use the approved `DreamuxError` inheritance model, run shared validation before
   handlers, distinguish only actual cross-process failures as transport errors,
   give transport failures stable `TRANSPORT_ERROR`, keep Team not-found/closed/

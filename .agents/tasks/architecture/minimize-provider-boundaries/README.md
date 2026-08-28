@@ -5,7 +5,8 @@
 - Goal: Reduce the public Agent Runtime and Channel contracts to minimal capability-neutral ports, with Channel bridging external interaction through Core Command invocation and Core event subscription.
 - State: `development`
 - Requirement: [Current requirement](/.agents/tasks/architecture/minimize-provider-boundaries/requirement.md)
-- Current solution input revision: `requirement.md` SHA-256 `de13b7478c5f153c22f85029d0cb881459423117ea3c2ff82e8290c9c30850cc`
+- Current solution input revision: `requirement.md` SHA-256 `dd40eba6529e9bac30607dcbf0d085f22210b76e6d501a00450a082ad2f1fc00`
+- Prior solution input revision: `requirement.md` SHA-256 `de13b7478c5f153c22f85029d0cb881459423117ea3c2ff82e8290c9c30850cc`; the operator then made the symmetric constructor-bound persistence roots explicit and rejected any identity-store path re-derivation from logical fields.
 - Prior solution input revision: `requirement.md` SHA-256 `d40ca59f624db37e7c97c40c0cd156435233f8054528a8cd02e7e774eaab5a57`; the operator then removed persisted Agent `role` as duplicated runtime topology and deleted the non-product `team_member` vocabulary.
 - Prior solution input revision: `requirement.md` SHA-256 `8bce0f28a1146df4a4b14c1286f297350481d314d0a2e48ffe82df615a0bf780`; the operator then separated Team aggregate authority from TeamLeader identity ownership: Team checks only the minimum identity link, preserves an aligned identity, and delegates both missing-identity creation and runtime restoration to `TeamMateService`.
 - Prior solution input revision: `requirement.md` SHA-256 `f1058c2c1225dc39c04732a6f5357827eb6d214c0ac3239ca97d9384d8a100be`; the operator then clarified that existing code and historical Decisions are evidence rather than preservation authorities, and that the refactor must remove bad deployed designs in favor of the final product shape.
@@ -30,7 +31,8 @@
   [Codex proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/codex.md),
   [Claude proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/claude.md), and
   [Trae Seed 2.1 proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/trae-seed-2-1.md).
-- Current solution baseline: [Technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `786f046223bfb6883e3f2605bd60147035aecfd5945edb45189e1448e5c94bee`. Requirement text, technical design, current source, and prior Decisions are evidence; the final product shape and explicit operator principles are authoritative. Existing load-bearing code has no automatic preservation right.
+- Current solution baseline: [Technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `71831201a09e3e5e408aa1d3f2a815f14237ec8ade5adfcf10c3cb95988051eb`. Requirement text, technical design, current source, and prior Decisions are evidence; the final product shape and explicit operator principles are authoritative. Existing load-bearing code has no automatic preservation right.
+- Prior final-solution revision: SHA-256 `786f046223bfb6883e3f2605bd60147035aecfd5945edb45189e1448e5c94bee`; it removed persisted role but had not yet prohibited the dispatcher-wide Store from flattening the object graph and recomputing paths that constructors already owned.
 - Prior final-solution revision: SHA-256 `e861e80b250b21fedac5796ccf4cd08d97b0ba74f8a783e38cb2647d8301bba7`; it still treated identity `role` and `team_member` as persisted ownership evidence rather than deriving runtime context from the owning Service, Collection, and directory scope.
 - Prior final-solution revision: SHA-256 `c2332ef6a78aecd35776d552e6301c66e7022bf7e25571f2518db4bc243b44ef`; it treated an incomplete accepted Team as a fail-loud terminal state and had not yet separated minimum Team-to-identity validation from TeamMate-owned identity creation and restoration.
 - Prior final-solution revision: SHA-256 `a042a5946bb121357e472fb3e20c508994aeab82fa562c2680c7621138c80d2b`; it removed the extra Team-creation authorities but still described existing load-bearing source and historical Decisions too strongly as preservation constraints.
@@ -104,6 +106,13 @@
   `dispatcher`, `team_leader`, or `teammate` from that owner context.
   `team_member` is deleted from persisted types, internal vocabulary, and public
   event values without a compatibility alias.
+- Stage 3 operator decision: persistence location is constructor-owned.
+  `DispatcherService` binds the Dispatcher state root, passes `teammate/` and
+  `team/` roots to its Collections, `TeamCollection` passes each concrete Team
+  root to `TeamService`, and `TeamService` passes its `teammate/` root to its
+  Collection. A collection appends only the entity name; a `TeamMateService`
+  receives the resolved entity directory. Identity contents never select or
+  re-derive their own path.
 - Implementation authority principle: existing design is not the target by
   default. The TeamLeader challenges why each mechanism exists and retains it
   only when it serves the confirmed final product. Deployed, load-bearing, or
