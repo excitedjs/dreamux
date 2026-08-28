@@ -481,17 +481,20 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   seam has become one text-only `submit`. Every accepted ordinary input may
   materialize or reopen its target, so callers cannot select a `reopenClosed`
   mode. Its model-facing content consists of required `source`, optional
-  string-valued `attrs`, `text`, and optional `reminder`. `source` is an open
-  safe tag name rather than a Core enum. `system` is reserved to Core-owned
+  `Readonly<Record<string, string>>` `attrs`, `text`, and optional `reminder`.
+  Attributes have no semantic order, and the object shape prevents duplicate
+  names. `source` is an open safe tag name rather than a Core enum. `system` is
+  reserved to Core-owned
   notices: ordinary callers cannot select it, while Dispatcher restart
   notification uses it. Channel Command and `admin.sock` inputs use `channel`.
   Agent-facing MCP spawn and submit inputs default to `task`, and model
   completion delivery defaults to `task-notification`. Core admission identity,
   scope, intent, correlation, and completion delivery remain separate
   non-rendering facts rather than being smuggled through attributes.
-- `TeammateService` renders one paired root named by `source`, with validated
-  snake_case attributes, then inserts the source body directly and closes the
-  root. It does not add a `<content>` child, pretty-print indentation, XML
+- `TeammateService` renders one paired root named by `source`, with open
+  validated attribute names and escaped attribute values, then inserts the
+  source body directly and closes the root. It does not add a `<content>` child,
+  pretty-print indentation, XML
   entity rewriting of the body, or CDATA-based code transformation. Channel
   code blocks retain ordinary Markdown fences and the body stays faithful to
   the model-facing source text. When supplied, one generic `<reminder>` appears
@@ -1002,6 +1005,10 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   use `channel`; Agent-facing MCP spawn/submit inputs default to `task`; model
   completion delivery defaults to `task-notification`; Dispatcher restart
   notification alone uses the Core-reserved `system` source.
+- Model-input attributes use `Readonly<Record<string, string>>`. They carry no
+  semantic ordering, cannot contain duplicate names, keep names open subject to
+  start-tag safety validation, and rely on TeammateService for attribute-value
+  escaping.
 - `source_id` and the public `duplicate` result are Core admission semantics.
   Agent Runtime `submit` receives no source id and its admission union contains
   no source-derived `duplicate` branch.

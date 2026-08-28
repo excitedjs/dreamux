@@ -310,9 +310,10 @@ the Runtime with final text. Consequently replacing `channelInput` and
 recreates the old split under `submit`.
 
 Core applies the same reduction at the `TeammateService` admitted-input seam.
-One internal `submitInput` accepts the model-facing quartet `source`, `attrs`,
-`text`, and optional `reminder`, plus only the separate Core admission/turn
-metadata actually consumed by that submission. `source` is an open string that
+One internal `submitInput` accepts the model-facing quartet `source`, optional
+`attrs: Readonly<Record<string, string>>`, `text`, and optional `reminder`, plus
+only the separate Core admission/turn metadata actually consumed by that
+submission. `source` is an open string that
 must be a safe tag name; it is not a Core enum. `system` is reserved to
 Core-owned notices: ordinary callers cannot select it, while Dispatcher restart
 notification uses it. Channel Command and `admin.sock` inputs use `channel`.
@@ -324,17 +325,18 @@ delivery do not become XML attributes. The service exposes no
 caller-selected `reopenClosed`, and no logging label. Every ordinary admitted
 input starts or reopens the target before Runtime submission.
 
-The renderer emits `<source ...attrs>`, the body text exactly as the source's
-model-facing formatter produced it, and `</source>` with no extra content node
-or pretty-print indentation. Attribute names are validated as snake_case XML
-names and invalid names fail loud; attribute values are escaped. The body is
-not rewritten merely to satisfy an XML parser: no entity conversion, CDATA
-wrapper, or XML-specific code element is added. Channel code uses ordinary
-Markdown fences. An optional reminder is emitted once after the closed source
-block as the final generic `<reminder>...</reminder>` sibling. It is never
-repeated inside each message. These XML-like tags improve model provenance and
-boundary recognition; they are not treated as an injection or authorization
-boundary.
+Attribute names are open and carry no semantic order; the object shape prevents
+duplicate names. The renderer emits `<source ...attrs>`, the body text exactly
+as the source's model-facing formatter produced it, and `</source>` with no
+extra content node or pretty-print indentation. Attribute names are validated
+for start-tag safety and invalid names fail loud; attribute values are escaped.
+The body is not rewritten merely to satisfy an XML parser: no entity conversion,
+CDATA wrapper, or XML-specific code element is added. Channel code uses
+ordinary Markdown fences. An optional reminder is emitted once after the
+closed source block as the final generic `<reminder>...</reminder>` sibling. It
+is never repeated inside each message. These XML-like tags improve model
+provenance and boundary recognition; they are not treated as an injection or
+authorization boundary.
 
 Cron cancellation remains private to Scheduler. A due fire checks its lifecycle
 generation and current durable job immediately before calling `submitInput`.
@@ -1367,6 +1369,9 @@ compile breaks are resolved inside the same implementation change.
   completion delivery defaults to `task-notification`, Dispatcher restart
   notification uses Core-reserved `system`, and ordinary callers cannot select
   `system`.
+- Attribute tests prove object-shaped string attributes cannot express duplicate
+  names, accept open safe names, reject names that can break the start tag, and
+  escape attribute values without rewriting the body.
 - `team.create` tests cover failure before record publication, failure after the
   record acceptance point, and readiness; same-id replay, closed replay,
   different-payload conflict, exclusive atomic publication, request-index

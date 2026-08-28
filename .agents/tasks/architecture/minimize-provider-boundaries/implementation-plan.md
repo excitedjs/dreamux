@@ -257,8 +257,10 @@ mandatory review precedents, not historical anecdotes:
     `system` for Core-owned notices and use it for Dispatcher restart
     notification. Channel Command and `admin.sock` inputs use `channel`;
     Agent-facing MCP spawn/submit input defaults to `task`; model completion
-    delivery defaults to `task-notification`. Tags improve clarity; they do not
-    create a security boundary.
+    delivery defaults to `task-notification`. Represent attributes as an open
+    `Readonly<Record<string, string>>`: they have no semantic order, cannot
+    duplicate a name, and are validated and value-escaped by TeammateService.
+    Tags improve clarity; they do not create a security boundary.
 
 ## Stage ledger
 
