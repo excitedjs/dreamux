@@ -313,11 +313,13 @@ Core applies the same reduction at the `TeammateService` admitted-input seam.
 One internal `submitInput` accepts the model-facing quartet `source`, `attrs`,
 `text`, and optional `reminder`, plus only the separate Core admission/turn
 metadata actually consumed by that submission. `source` is an open string that
-must be a safe tag name; it is not a Core enum, while the exact semantic name
-`system` is always rejected. A Channel invocation obtains `channel` from its
-factual `CoreCommandContext` and cannot supply or override the value. Stable
-source identity, authoritative Channel admission scope, intent, correlation,
-and completion delivery do not become XML attributes. The service exposes no
+must be a safe tag name; it is not a Core enum. `system` is reserved to
+Core-owned notices: ordinary callers cannot select it, while Dispatcher restart
+notification uses it. Channel Command and `admin.sock` inputs use `channel`.
+Agent-facing MCP spawn and submit inputs default to `task`, while model
+completion delivery defaults to `task-notification`. Stable source identity,
+authoritative Channel admission scope, intent, correlation, and completion
+delivery do not become XML attributes. The service exposes no
 `channelInput`, `scheduledInput`, or `controlInput` wrappers, no
 caller-selected `reopenClosed`, and no logging label. Every ordinary admitted
 input starts or reopens the target before Runtime submission.
@@ -1360,6 +1362,11 @@ compile breaks are resolved inside the same implementation change.
   admission, and settlement outside the Runtime payload. Tests retain Markdown
   code fences and prove the body is not entity-escaped, CDATA-wrapped,
   XML-code-wrapped, or indented by the outer renderer.
+- Source-selection tests prove Channel Command and `admin.sock` inputs use
+  `channel`, Agent-facing MCP spawn/submit inputs default to `task`, model
+  completion delivery defaults to `task-notification`, Dispatcher restart
+  notification uses Core-reserved `system`, and ordinary callers cannot select
+  `system`.
 - `team.create` tests cover failure before record publication, failure after the
   record acceptance point, and readiness; same-id replay, closed replay,
   different-payload conflict, exclusive atomic publication, request-index

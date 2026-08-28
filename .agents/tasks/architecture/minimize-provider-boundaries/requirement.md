@@ -482,10 +482,12 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   materialize or reopen its target, so callers cannot select a `reopenClosed`
   mode. Its model-facing content consists of required `source`, optional
   string-valued `attrs`, `text`, and optional `reminder`. `source` is an open
-  safe tag name rather than a Core enum; the one forbidden semantic name is
-  `system`. A Channel Command invocation is forced to `channel` by factual
-  Command context and cannot select or override another source. Core admission
-  identity, scope, intent, correlation, and completion delivery remain separate
+  safe tag name rather than a Core enum. `system` is reserved to Core-owned
+  notices: ordinary callers cannot select it, while Dispatcher restart
+  notification uses it. Channel Command and `admin.sock` inputs use `channel`.
+  Agent-facing MCP spawn and submit inputs default to `task`, and model
+  completion delivery defaults to `task-notification`. Core admission identity,
+  scope, intent, correlation, and completion delivery remain separate
   non-rendering facts rather than being smuggled through attributes.
 - `TeammateService` renders one paired root named by `source`, with validated
   snake_case attributes, then inserts the source body directly and closes the
@@ -996,6 +998,10 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   identity, and opaque correlation fields. Channel owns external-message
   interpretation and body formatting; `TeammateService` owns the paired source
   envelope and Agent Runtime receives only final text.
+- Model-input source names remain open. Channel Command and `admin.sock` inputs
+  use `channel`; Agent-facing MCP spawn/submit inputs default to `task`; model
+  completion delivery defaults to `task-notification`; Dispatcher restart
+  notification alone uses the Core-reserved `system` source.
 - `source_id` and the public `duplicate` result are Core admission semantics.
   Agent Runtime `submit` receives no source id and its admission union contains
   no source-derived `duplicate` branch.
