@@ -4,7 +4,7 @@
 
 This is the current technical design baseline for the requirement at
 `requirement.md` SHA-256
-`d40ca59f624db37e7c97c40c0cd156435233f8054528a8cd02e7e774eaab5a57`.
+`de13b7478c5f153c22f85029d0cb881459423117ea3c2ff82e8290c9c30850cc`.
 
 It reconciles the three independent proposals and their single cross-review
 round. Requirement text, this design, current source, and prior Decisions are
@@ -787,13 +787,26 @@ other mutable runtime state remain solely in the TeamLeader identity. This is a
 creation request plus a minimal relationship check, not two peer Agent-state
 authorities.
 
-Reconciliation checks only the fields required to prove that the identity is
-the Team's leader, including dispatcher, Team id, leader name, and role, plus
-any further field strictly required to prevent attaching the wrong Agent. It
-does not compare or synchronize every identity field with the Team record. If
-the readable identity agrees, Core preserves it verbatim and asks
+`AgentEntityIdentity` no longer persists `role`. Runtime topology already owns
+that fact: `DispatcherService` creates the Dispatcher Agent, its
+`TeammateCollection` creates Dispatcher-scoped TeamMates, `TeamService` creates
+the TeamLeader, and its `TeammateCollection` creates Team-scoped TeamMates. The
+directory hierarchy encodes the same scope. `team_member` is deleted from
+persisted types, internal domain vocabulary, and public event values without a
+compatibility alias.
+
+Reconciliation checks only `dispatcher_id`, `team_id`, and
+`name === team.leader_name` to prove that the identity belongs to the Team's
+leader. It does not compare or synchronize every identity field with the Team
+record. If the readable identity agrees, Core preserves it verbatim and asks
 `TeamMateService` to restore the TeamLeader only from that identity, including
 its Provider session.
+
+When prompt/skill composition, completion routing, runtime validation, or event
+presentation needs a role, the owning Service or Collection supplies the
+runtime-derived value `dispatcher`, `team_leader`, or `teammate`. Path builders
+receive the already-known owner/scope rather than reading a role from identity.
+No derived role is written back into durable identity.
 
 If an active `starting` or `running` Team has no readable aligned identity, the
 Team layer does not synthesize or persist one. It calls the normal
@@ -833,14 +846,16 @@ interface TeammateStateEvent {
   readonly kind: "teammate.state";
   readonly occurred_at: number;
   readonly teammate_name: string;
-  readonly role: "dispatcher" | "teammate" | "team_leader" | "team_member";
+  /** Runtime projection supplied by the owning Service; never persisted. */
+  readonly role: "dispatcher" | "teammate" | "team_leader";
   readonly team_name: string | null;
   readonly status: "starting" | "running" | "degraded" | "stopped" | "closed";
 }
 
-interface TeamStateMemberSummary {
+interface TeamStateTeammateSummary {
   readonly teammate_name: string;
-  readonly role: "team_leader" | "team_member";
+  /** Runtime projection supplied by TeamService; never persisted. */
+  readonly role: "team_leader" | "teammate";
   readonly status: "starting" | "running" | "degraded" | "stopped" | "closed";
 }
 
@@ -850,18 +865,19 @@ interface TeamStateEvent {
   readonly team_name: string;
   readonly leader_name: string;
   readonly status: "starting" | "running" | "closed";
-  readonly teammates: readonly TeamStateMemberSummary[];
+  readonly teammates: readonly TeamStateTeammateSummary[];
 }
 ```
 
 All Dreamux Agent entities are TeamMates at this event boundary. Persisting a
-new Dispatcher, TeamLeader, ordinary member, or standalone TeamMate publishes
-its first `teammate.state`; later state transitions publish the same kind. No
-separate creation event is added. A Dispatcher has `team_name: null` and never
-appears in a `team.state` member summary.
+new Dispatcher, TeamLeader, Team-scoped TeamMate, or Dispatcher-scoped TeamMate
+publishes its first `teammate.state`; later state transitions publish the same
+kind. No separate creation event is added. A Dispatcher has `team_name: null`
+and never appears in a `team.state` teammate summary. Event `role` is derived by
+the publisher from its runtime owner and scope; it is not read from identity.
 
 `team.state` is intentionally redundant. Core republishes the aggregate when
-the Team lifecycle changes or when a contained TeamLeader/member is created or
+the Team lifecycle changes or when a contained TeamLeader/TeamMate is created or
 changes state. Its `teammates` array is a current bounded summary, not a second
 state authority: Core Team and Agent stores remain authoritative.
 

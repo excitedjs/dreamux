@@ -67,7 +67,8 @@ as a compatibility alias.
   instructions, which both built-in runtimes append. This distinction is
   load-bearing behavior and must not be flattened to one string or implemented
   by branching on a concrete Provider id in Core.
-- Ordinary TeamMates and team members also use append-only prompt fragments.
+- Ordinary TeamMates, whether Dispatcher-scoped or Team-scoped, also use
+  append-only prompt fragments.
   Their owner currently preserves the established ordering of operation-owned
   fragments first and the persisted `identity_prompt` last. Workflow supplies
   its machine-result and structured-output guidance as an operation-owned
@@ -619,12 +620,22 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   mutable Agent lifecycle fields. The TeamLeader identity owns the TeamLeader's
   actual Agent state and is the only input from which an existing TeamLeader
   runtime is reconstructed.
-- Core validates only the minimum ownership link needed to know that an identity
-  belongs to the TeamLeader, such as its name, Team id, role, and any other field
-  required to prevent attaching the wrong Agent. It does not compare or
-  synchronize every identity field with Team state. When the identity is
-  readable and that link agrees, Core preserves it exactly and asks
-  `TeamMateService` to restore the TeamLeader from the identity.
+- An Agent identity does not persist `role`. Runtime ownership already supplies
+  that fact without ambiguity: `DispatcherService` owns the Dispatcher Agent,
+  its `TeammateCollection` owns Dispatcher-scoped TeamMates, `TeamService` owns
+  the TeamLeader, and its `TeammateCollection` owns Team-scoped TeamMates. The
+  directory hierarchy encodes the same scope. `team_member` is not a Dreamux
+  entity or vocabulary and is removed without a compatibility alias.
+- Core validates only the minimum persisted ownership link needed to know that
+  an identity belongs to the TeamLeader: `dispatcher_id`, `team_id`, and
+  `name === team.leader_name`. It does not compare or synchronize every identity
+  field with Team state. When the identity is readable and that link agrees,
+  Core preserves it exactly and asks `TeamMateService` to restore the TeamLeader
+  from the identity.
+- When runtime behavior needs an entity role for prompt/skill composition,
+  completion routing, validation, or event presentation, the owning Service or
+  Collection supplies the derived value `dispatcher`, `team_leader`, or
+  `teammate`. That runtime projection is never written back into identity.
 - When an active `starting` or `running` Team has no usable aligned TeamLeader
   identity, the Team record still decides that the Team and its leader should
   exist, but the Team layer must not construct or persist an identity itself. It

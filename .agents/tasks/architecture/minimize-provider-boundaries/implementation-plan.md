@@ -3,9 +3,9 @@
 ## Authority
 
 This plan executes the current requirement baseline at SHA-256
-`d40ca59f624db37e7c97c40c0cd156435233f8054528a8cd02e7e774eaab5a57`
+`de13b7478c5f153c22f85029d0cb881459423117ea3c2ff82e8290c9c30850cc`
 and the current technical design baseline at SHA-256
-`e861e80b250b21fedac5796ccf4cd08d97b0ba74f8a783e38cb2647d8301bba7`.
+`786f046223bfb6883e3f2605bd60147035aecfd5945edb45189e1448e5c94bee`.
 The operator granted development approval on 2026-08-27 with the staged
 protocol below. The final product shape and explicit operator product principles
 are authoritative. Requirement text, technical design, current source, and
@@ -215,6 +215,13 @@ mandatory review precedents, not historical anecdotes:
     Command calls, then close the socket. Fix comments that promise stronger
     settlement than the code provides. A request racing the fence receives
     `ServerShuttingDownError`; do not disguise it as a Team or internal failure.
+19. **Runtime topology was persisted back into identity as `role`.** That field
+    duplicated facts already owned by `DispatcherService`, `TeamService`, their
+    respective `TeammateCollection`s, and the directory hierarchy. It then
+    became a false authority for paths, routing, skills, and events and invented
+    the non-product term `team_member`. Delete the persisted field and that
+    vocabulary. Owners derive `dispatcher`, `team_leader`, or `teammate` only
+    when runtime behavior or event presentation needs it.
 
 ## Stage ledger
 
@@ -292,10 +299,13 @@ mandatory review precedents, not historical anecdotes:
   invalid record and resurrect the Team.
 - Keep only the stable Team-owned input needed to invoke TeamMate creation in
   the Team record; keep Provider session and mutable Agent state only in the
-  TeamLeader identity. Check only the minimum ownership link. Preserve an
-  aligned identity and restore from it; otherwise call `TeamMateService`'s
-  normal creation path and let that owner create identity as part of creating
-  the TeamLeader. The Team layer never writes identity directly.
+  TeamLeader identity. Remove persisted identity `role` and delete
+  `team_member`; derive runtime role from the owning Service/Collection and
+  directory scope. Check only `dispatcher_id`, `team_id`, and leader name.
+  Preserve an aligned identity and restore from it; otherwise call
+  `TeamMateService`'s normal creation path and let that owner create identity as
+  part of creating the TeamLeader. The Team layer never writes identity
+  directly.
 - Use the approved `DreamuxError` inheritance model, run shared validation before
   handlers, distinguish only actual cross-process failures as transport errors,
   give transport failures stable `TRANSPORT_ERROR`, keep Team not-found/closed/
