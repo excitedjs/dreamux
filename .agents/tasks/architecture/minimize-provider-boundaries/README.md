@@ -196,6 +196,15 @@
   after submission does not prove non-admission and must not trigger a second
   delivery. Do not replace this acceptance boundary with a blanket retry or a
   blanket no-fallback rule.
+- Stage 5 audit decision: moving external binding ownership into Channel does
+  not remove a TeamLeader's existing self-service routing capability. Feishu
+  advertises `bind_channel` and `unbind_channel` to TeamLeader callers as well
+  as the Dispatcher. The Dispatcher form may name any Team. The TeamLeader form
+  has no caller-selected Team field: it uses the Team identity already bound
+  into the MCP lease, may bind only to itself, and may release only a target
+  currently bound to itself. Collaboration Space administration and the global
+  binding listing remain Dispatcher-only. Do not restore a Core binding store
+  or smuggle a caller-selected Team through the Channel seam.
 - Stage 5 audit decision: persisted Feishu routing facts become live only after
   their atomic file write succeeds. An update is prepared against an isolated
   next document, serialized with other writes, persisted, and then published as
