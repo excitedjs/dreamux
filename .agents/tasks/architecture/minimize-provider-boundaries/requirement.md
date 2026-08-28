@@ -566,6 +566,19 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   idempotent and never receives or interprets the Channel target. The accepted
   request identity to `team_name` result is Core-owned durable state: it survives
   Core restart and returns the same Team for every retry of that identity.
+- The canonical `team.create` Command preserves the complete transport-neutral
+  repository capability already available through `admin.sock`. Its repository
+  request is a discriminated union: `reuse-cwd` may reuse a specified or default
+  working directory, while `managed` may specify `path`, `base_ref`, `branch`,
+  `slug`, and `cleanup`. Omitting the repository request keeps the existing
+  default workspace behavior. This shared Command must not be narrowed to the
+  smaller subset currently needed by Feishu.
+- Feishu automatic provisioning owns only a repository path and base reference.
+  It translates that local policy into the canonical `managed` request and
+  always supplies `cleanup: "delete-on-close"`; it does not expose or infer the
+  advanced repository controls. The same fixed cleanup behavior applies to the
+  simple Feishu-facing Team creation tool so automatic provisioning does not
+  leave managed worktrees permanently on disk.
 - A Channel resumes its own incomplete provisioning records after restart. This
   preserves one-Team creation and ready-before-first-delivery without a Core
   target/claim/generation model. Per-target serialization and generations remain

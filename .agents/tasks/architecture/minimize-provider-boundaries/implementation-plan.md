@@ -136,19 +136,27 @@ mandatory review precedents, not historical anecdotes:
    provider metadata or rebuild parent-topic fallbacks. A composite view may
    deliberately require separate Team and Channel reads rather than duplicating
    binding authority in Team state.
-10. **`last` was treated as settled transcript history.** Its actual user story
+10. **A minimal consumer payload was mistaken for the canonical Command
+    capability.** Feishu automatic provisioning only needs a repository path and
+    base ref, but the existing transport-neutral `team.create` path also supports
+    reusing a cwd and controlling managed-worktree branch, slug, and cleanup.
+    The shared Command preserves that discriminated union; Feishu maps its small
+    local policy into managed mode with `delete-on-close`. Never delete a broader
+    load-bearing domain capability merely because the first migrated consumer
+    uses a smaller subset.
+11. **`last` was treated as settled transcript history.** Its actual user story
     is observing a TeamMate that may remain inside one active turn for an hour.
     Provider-owned recent Activity Records therefore cover the growing active
     session and expose assistant messages plus tool name/status; Dreamux state is
     queried separately. A neutral name alone is insufficient if the consumer
     story still fails.
-11. **`waitIdle` was defended after its product purpose had disappeared.** Team
+12. **`waitIdle` was defended after its product purpose had disappeared.** Team
     dissolve is destructive cancellation, not graceful drainage: stop Workflow
     and TeamMate processes immediately, fence further work, check owned worktree
     safety, allow explicit `force`, and move expensive physical cleanup to the
     background. Do not preserve a capability merely because old orchestration
     consumed it.
-12. **COT was at risk of being redesigned as a reliable event system.** Its
+13. **COT was at risk of being redesigned as a reliable event system.** Its
     current display is intentionally a live, best-effort projection: Provider
     emits normalized activity, Core applies the existing redaction/projection,
     and Channel consumes the event without replay, retransmission, or local

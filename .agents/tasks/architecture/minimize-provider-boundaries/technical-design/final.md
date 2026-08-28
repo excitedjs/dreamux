@@ -663,6 +663,20 @@ events.
 #### `team.create`
 
 ```ts
+type TeamCreateRepoRequest =
+  | {
+      readonly mode: "reuse-cwd";
+      readonly path?: string;
+    }
+  | {
+      readonly mode: "managed";
+      readonly path?: string;
+      readonly base_ref?: string;
+      readonly branch?: string;
+      readonly slug?: string;
+      readonly cleanup?: "keep" | "delete-on-close";
+    };
+
 interface TeamCreateCommand {
   readonly request_id: string;
   readonly name_prefix: string;
@@ -673,7 +687,7 @@ interface TeamCreateCommand {
     readonly prompt?: string;
     readonly skill_sources?: readonly AgentRuntimeSkillSource[];
   };
-  readonly repo?: ManagedRepoRequest;
+  readonly repo?: TeamCreateRepoRequest;
 }
 
 interface TeamCreateResult {
@@ -684,10 +698,19 @@ interface TeamCreateResult {
 ```
 
 The payload preserves the existing admin Team-creation capability while adding
-restart-durable request identity. Core still injects mandatory TeamLeader
-instructions and skill sources; supplied values extend rather than remove
-those requirements. Feishu automatic provisioning supplies only the smaller
-subset it owns, but the shared Command does not define a Feishu-only schema.
+restart-durable request identity. An omitted `repo` retains the existing default
+workspace behavior. `reuse-cwd` preserves reuse of a caller-selected or default
+working directory. `managed` preserves the existing optional path, base ref,
+branch, slug, and cleanup controls. Core still injects mandatory TeamLeader
+instructions and skill sources; supplied values extend rather than remove those
+requirements.
+
+Feishu automatic provisioning supplies only the smaller repository policy it
+owns. The Channel maps its local `{path, base_ref}` policy into
+`{mode: "managed", path, base_ref, cleanup: "delete-on-close"}` before invoking
+the canonical Command. The simple Feishu-facing Team creation tool uses the same
+fixed cleanup value. It does not surface the advanced controls, and the shared
+Command does not define a Feishu-only schema.
 
 Core canonicalizes the validated creation payload and persists
 `request_id -> {payload_hash, reserved_team_name, status}` before resource
