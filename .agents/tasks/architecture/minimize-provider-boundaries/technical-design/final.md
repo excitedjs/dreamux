@@ -721,14 +721,17 @@ and forces the source from factual Channel context. A `submitted` result carries
 the Core `turn_id`; `duplicate` does not invent one because Core did not create
 a second runtime submission or turn identity.
 
-Core owns one bounded, process-local admission ledger per target entity. A
-non-empty `source_id` reserves that ID before runtime admission; there is no
-additional invocation-origin scope in the key. Each source owner is responsible
-for supplying a stable ID. Concurrent repeats await the same pending admission;
-`submitted` or `ambiguous` commits the ID into the bounded recent window and a
-later repeat returns `duplicate`; `failed`, `stopped`, or provider-internal
-`skipped` releases it. An omitted or empty `source_id` bypasses deduplication.
-The ledger deliberately retains the current no-cross-restart guarantee.
+Core owns one bounded, process-local admission ledger for the Dispatcher
+lifetime. A non-empty `source_id` reserves `[target entity, source_id]` before
+runtime admission; there is no additional invocation-origin scope in the key.
+Each source owner is responsible for supplying a stable ID. Concurrent repeats
+await the same pending admission; `submitted` or `ambiguous` commits the key
+into one globally bounded recent window and a later repeat returns `duplicate`;
+`failed`, `stopped`, or provider-internal `skipped` releases it. Pending entries
+exist only while their submission is unsettled. An omitted or empty `source_id`
+bypasses deduplication. The ledger does not retain one child ledger per entity,
+so historical entity count cannot grow a second unbounded registry. It
+deliberately retains the current no-cross-restart guarantee.
 
 `TEAM_NOT_FOUND` and `TEAM_CLOSED` are typed pre-admission failures. Only those
 failures permit the Channel to remove a stale binding and retry once to the
@@ -1355,10 +1358,11 @@ compile breaks are resolved inside the same implementation change.
 - `team.submit` tests cover Dispatcher/default delivery, TeamLeader delivery,
   duplicate, stopped, failed, ambiguous, stable `turn_id`, opaque correlation,
   and retry only after `TEAM_NOT_FOUND`/`TEAM_CLOSED`.
-- Core admission tests prove per-target pending coalescing by `source_id`,
-  bounded process-local dedupe, commit only after `submitted`/`ambiguous`, key
-  release after `failed`/`stopped`/`skipped`, bypass without `source_id`, no
-  origin scope in the key, and no source id crossing the Agent Runtime seam.
+- Core admission tests prove pending coalescing by target entity plus
+  `source_id`, one globally bounded committed window, commit only after
+  `submitted`/`ambiguous`, key release after `failed`/`stopped`/`skipped`,
+  bypass without `source_id`, no per-entity ledger retention, no origin scope in
+  the key, and no source id crossing the Agent Runtime seam.
 - Channel submission tests prove TeammateService renders the paired `<channel>`
   block with direct faithful body text and at most one final sibling
   `<reminder>`, while Core preserves origin, correlation, event source,

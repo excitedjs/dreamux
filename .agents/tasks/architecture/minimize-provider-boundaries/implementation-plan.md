@@ -100,9 +100,9 @@ mandatory review precedents, not historical anecdotes:
    the Provider seam.
 3. **`sourceId` and duplicate policy were left in every Provider adapter.** The
    correct question was which layer owns stable invocation identity. Core knows
-   the target entity and invocation origin, so Core owns the bounded
-   process-local admission ledger and public `duplicate` result. Agent Runtime
-   receives no source id and contains no Dreamux idempotency policy.
+   the target entity, so Core owns one globally bounded Dispatcher-lifetime
+   process-local admission ledger and the public `duplicate` result. Agent
+   Runtime receives no source id and contains no Dreamux idempotency policy.
 4. **Written baselines and current code were alternately treated as authority.**
    Both moves are wrong. A requirement snapshot, current implementation, real
    consumer, protocol, and prior Decision are evidence about intent and
@@ -288,9 +288,10 @@ mandatory review precedents, not historical anecdotes:
   Neither the Runtime seam nor the Command keeps an inbound-versus-text
   discriminator.
 - Keep `source_id` and duplicate admission in Core. Agent Runtime `submit`
-  accepts text only and contains no Dreamux dedupe policy. Key the per-target
-  ledger directly by the optional source-owned ID; do not preserve an extra
-  invocation-origin scope.
+  accepts text only and contains no Dreamux dedupe policy. Use one globally
+  bounded Dispatcher-lifetime ledger keyed by target entity plus optional
+  source-owned ID; do not preserve an extra invocation-origin scope or a child
+  ledger per historical entity.
 - Retain neutral system-prompt replace/append forms: Dispatcher supplies both
   and each Provider selects its native mechanism; TeamLeader remains
   append-only for every Provider. Preserve ordinary TeamMate and Workflow
