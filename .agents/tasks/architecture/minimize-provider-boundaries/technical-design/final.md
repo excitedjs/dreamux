@@ -313,7 +313,8 @@ Core applies the same reduction at the `TeammateService` admitted-input seam.
 One internal `submitInput` accepts the model-facing quartet `source`, optional
 `attrs: Readonly<Record<string, string>>`, `text`, and optional `reminder`, plus
 only the separate Core admission/turn metadata actually consumed by that
-submission. `source` is an open string that
+submission. Omitted `attrs` is exactly the empty attribute set. `source` is an
+open string that
 must be a safe tag name; it is not a Core enum. `system` is reserved to
 Core-owned notices: ordinary callers cannot select it, while Dispatcher restart
 notification uses it. Channel Command and `admin.sock` inputs use `channel`.
@@ -1371,7 +1372,8 @@ compile breaks are resolved inside the same implementation change.
   `system`.
 - Attribute tests prove object-shaped string attributes cannot express duplicate
   names, accept open safe names, reject names that can break the start tag, and
-  escape attribute values without rewriting the body.
+  escape attribute values without rewriting the body. Omitted attributes render
+  exactly like an empty object.
 - `team.create` tests cover failure before record publication, failure after the
   record acceptance point, and readiness; same-id replay, closed replay,
   different-payload conflict, exclusive atomic publication, request-index

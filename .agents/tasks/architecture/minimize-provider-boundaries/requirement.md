@@ -482,8 +482,9 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   materialize or reopen its target, so callers cannot select a `reopenClosed`
   mode. Its model-facing content consists of required `source`, optional
   `Readonly<Record<string, string>>` `attrs`, `text`, and optional `reminder`.
-  Attributes have no semantic order, and the object shape prevents duplicate
-  names. `source` is an open safe tag name rather than a Core enum. `system` is
+  Missing `attrs` is exactly an empty attribute set. Attributes have no semantic
+  order, and the object shape prevents duplicate names. `source` is an open
+  safe tag name rather than a Core enum. `system` is
   reserved to Core-owned
   notices: ordinary callers cannot select it, while Dispatcher restart
   notification uses it. Channel Command and `admin.sock` inputs use `channel`.
@@ -1007,8 +1008,8 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   notification alone uses the Core-reserved `system` source.
 - Model-input attributes use `Readonly<Record<string, string>>`. They carry no
   semantic ordering, cannot contain duplicate names, keep names open subject to
-  start-tag safety validation, and rely on TeammateService for attribute-value
-  escaping.
+  start-tag safety validation, rely on TeammateService for attribute-value
+  escaping, and default to the empty set when omitted.
 - `source_id` and the public `duplicate` result are Core admission semantics.
   Agent Runtime `submit` receives no source id and its admission union contains
   no source-derived `duplicate` branch.
