@@ -236,9 +236,10 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   second result-envelope taxonomy. `DreamuxError` carries a stable code;
   reusable boundary failures such as `ValidationError`, `TransportError`, and
   `InternalError` extend it, while specific business failures such as
-  `TeamNotFoundError`, `TeamClosedError`, and `IdempotencyConflictError` extend
-  it directly. There is no `DomainError` layer. Unknown implementation failures
-  alone are normalized to `InternalError`.
+  `TeamNotFoundError`, `TeamClosedError`, `TeamGenerationChangedError`, and
+  `IdempotencyConflictError` extend it directly. There is no `DomainError`
+  layer. Unknown implementation failures alone are normalized to
+  `InternalError`.
 - Registry input validation runs before every handler regardless of whether the
   call arrived through `admin.sock`, an MCP shim, or the in-process Channel
   adapter. A cross-process adapter may then raise a specific `TransportError`
@@ -246,6 +247,8 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   raises its concrete business error. The final MCP adapter renders every
   `DreamuxError` as one consistent, concise, model-understandable error without
   exposing the internal inheritance tree as a public protocol layer.
+  `TransportError` has its own stable `TRANSPORT_ERROR` code and is never
+  reported as request validation.
 - Caller and transport identity may be attached as execution context where the
   domain operation needs it, but it must not be used to hide registered
   Commands from Channel callers. Domain validation and authorization remain
@@ -603,14 +606,37 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   reserve their path-derived name, and produce `TEAM_NOT_FOUND` rather than a
   phantom route. A real persistence failure while publishing a new record still
   fails creation normally.
-- This refactor does not add a general partial-Team-creation recovery state
-  machine. Ordinary creation errors continue through the existing cleanup path.
-  An abrupt process loss after the Team record acceptance point but before the
-  independently durable TeamLeader identity write may leave an incomplete
-  `starting` Team;
-  replay must fail loud instead of reporting `created` or `existing`, and the
-  operator repairs that damaged state. Automatic recovery is added only when a
-  real failure history justifies the additional lifecycle complexity.
+- TeamLeader identity and every other file below a Team scope are subordinate to
+  that valid Team record for Team existence. When no valid record exists,
+  leftover identity, scheduler, workflow, or member state is orphan data: it
+  does not prove a Team exists and cannot reserve the concrete name. Likewise,
+  a cached in-memory Team snapshot may not overwrite an invalid record and
+  resurrect a Team that the durable authority says does not exist.
+- The Team record and TeamLeader identity have different, deliberately narrow
+  authority. The Team record owns Team existence, Team lifecycle, `leader_name`,
+  and only the stable Team-owned creation inputs needed to ask `TeamMateService`
+  to create a missing leader. It does not mirror Provider session state or
+  mutable Agent lifecycle fields. The TeamLeader identity owns the TeamLeader's
+  actual Agent state and is the only input from which an existing TeamLeader
+  runtime is reconstructed.
+- Core validates only the minimum ownership link needed to know that an identity
+  belongs to the TeamLeader, such as its name, Team id, role, and any other field
+  required to prevent attaching the wrong Agent. It does not compare or
+  synchronize every identity field with Team state. When the identity is
+  readable and that link agrees, Core preserves it exactly and asks
+  `TeamMateService` to restore the TeamLeader from the identity.
+- When an active `starting` or `running` Team has no usable aligned TeamLeader
+  identity, the Team record still decides that the Team and its leader should
+  exist, but the Team layer must not construct or persist an identity itself. It
+  invokes the ordinary `TeamMateService` creation path with the Team-owned leader
+  creation inputs; that service creates and persists the identity as part of
+  creating the TeamLeader, then starts the runtime from its own identity. A
+  malformed or ownership-mismatched identity is replaced only through that same
+  TeamMate-owned creation path. A `starting` Team becomes `running` only after
+  the leader is usable; a `running` Team restores its leader; a `closed` Team
+  never restarts one. This is aggregate reconciliation through the existing
+  owner, not direct cross-store repair, a separate durable recovery coordinator,
+  or another state authority.
 - The canonical `team.create` Command preserves the complete transport-neutral
   repository capability already available through `admin.sock`. Its repository
   request is a discriminated union: `reuse-cwd` may reuse a specified or default

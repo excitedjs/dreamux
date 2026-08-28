@@ -3,9 +3,9 @@
 ## Authority
 
 This plan executes the current requirement baseline at SHA-256
-`8bce0f28a1146df4a4b14c1286f297350481d314d0a2e48ffe82df615a0bf780`
+`d40ca59f624db37e7c97c40c0cd156435233f8054528a8cd02e7e774eaab5a57`
 and the current technical design baseline at SHA-256
-`c2332ef6a78aecd35776d552e6301c66e7022bf7e25571f2518db4bc243b44ef`.
+`e861e80b250b21fedac5796ccf4cd08d97b0ba74f8a783e38cb2647d8301bba7`.
 The operator granted development approval on 2026-08-27 with the staged
 protocol below. The final product shape and explicit operator product principles
 are authoritative. Requirement text, technical design, current source, and
@@ -159,7 +159,10 @@ mandatory review precedents, not historical anecdotes:
     no Team was accepted and no name is occupied; after publication, the record
     supplies restart idempotency. Missing, malformed, or unreadable records are
     `TEAM_NOT_FOUND` for routing and do not reserve names. Delete the separate
-    request ledger, name claim, and tombstone model completely.
+    request ledger, name claim, and tombstone model completely. TeamLeader
+    identity and all other files under a Team scope are subordinate orphan data
+    when no valid record exists: they do not block reuse, and an old cached
+    snapshot must not resurrect the missing Team through an update.
 12. **`last` was treated as settled transcript history.** Its actual user story
     is observing a TeamMate that may remain inside one active turn for an hour.
     Provider-owned recent Activity Records therefore cover the growing active
@@ -185,20 +188,27 @@ mandatory review precedents, not historical anecdotes:
     extend `DreamuxError` directly. There is no `DomainError` layer. Registry
     validation runs before every handler, only real cross-process failures are
     transport errors, and the MCP adapter renders all known errors in one
-    concise model-understandable form. Unknown failures alone become internal.
+    concise model-understandable form. `TransportError` uses
+    `TRANSPORT_ERROR`, not `BAD_REQUEST`; Team absence, closure, and generation
+    replacement use distinct operation-independent classes/codes. Unknown
+    failures alone become internal.
 16. **A hypothetical oversized Command result was used to justify a global
     output cap.** No current Command has that failure mode: Activity is paged and
     budgeted, history/list results are domain-bounded, and Provider public
     configuration is bounded at discovery. Keep shared JSON representability
     and schema validation so adapters cannot drift, but add size limits only to
     the domain contract that demonstrates a real need.
-17. **Every persistence `await` was treated as requiring automatic crash
-    recovery.** Normal Team-creation errors already execute durable cleanup; the
-    Team record is the creation acceptance point. A hard loss before publication
-    leaves no Team and no occupied name. The remaining gap requires loss after
-    that record but before TeamLeader identity. Do not add a partial-create
-    recovery state machine without real failure evidence; an incomplete
-    `starting` Team must never be returned as successfully existing.
+17. **Team and TeamLeader identity authority were conflated in both
+    directions.** The Team record decides whether the Team and leader should
+    exist, but it must not become a complete mirror of the TeamLeader identity.
+    Check only the minimal ownership link. Preserve an aligned identity exactly
+    and let `TeamMateService` restore the TeamLeader from it. If an active Team
+    has no usable aligned identity, the Team layer calls the normal TeamMate
+    creation operation; it never writes identity itself. `TeamMateService`
+    creates identity as part of TeamLeader creation and then starts from that
+    identity. A `starting` Team continues to `running`, a `running` Team restores
+    its leader, and a `closed` Team never restarts. This needs no direct
+    cross-store repair or separate recovery coordinator.
 18. **A review proposed changing shutdown order without checking current
     behavior.** Preserve the established sequence: close shared Command
     admission, begin and converge Dispatcher shutdown, drain already accepted
@@ -277,16 +287,27 @@ mandatory review precedents, not historical anecdotes:
   request ledger or name claim.
 - Treat a missing, malformed, or unreadable Team record as nonexistent for
   lookup, routing, and name allocation. Return `TEAM_NOT_FOUND`; do not protect
-  or recover a Team that has no valid record.
+  or recover a Team that has no valid record. Orphan TeamLeader identity and
+  other subordinate files do not block reuse; cached state cannot rewrite the
+  invalid record and resurrect the Team.
+- Keep only the stable Team-owned input needed to invoke TeamMate creation in
+  the Team record; keep Provider session and mutable Agent state only in the
+  TeamLeader identity. Check only the minimum ownership link. Preserve an
+  aligned identity and restore from it; otherwise call `TeamMateService`'s
+  normal creation path and let that owner create identity as part of creating
+  the TeamLeader. The Team layer never writes identity directly.
 - Use the approved `DreamuxError` inheritance model, run shared validation before
   handlers, distinguish only actual cross-process failures as transport errors,
-  and project known failures consistently at MCP boundaries.
+  give transport failures stable `TRANSPORT_ERROR`, keep Team not-found/closed/
+  generation errors distinct, and project known failures consistently at MCP
+  boundaries.
 - Preserve the current shutdown order while routing both adapters through the
   same admission fence. A racing request receives `ServerShuttingDownError`.
 - Validate Command results through their shared schema and JSON boundary, but
   do not add a speculative registry-wide output byte limit.
-- Reject replay whose valid Team record remains incomplete `starting` state;
-  do not add automatic partial-creation recovery in this refactor.
+- Reconcile an active Team with its TeamLeader identity on replay: continue a
+  `starting` Team after its leader becomes usable, restore a `running` Team, and
+  never restart a `closed` Team. Add no third durable recovery mechanism.
 - Validation: every inventoried current admin method is retained, renamed, or
   deleted exactly as the final design says; both adapters resolve the same
   definition.

@@ -5,7 +5,8 @@
 - Goal: Reduce the public Agent Runtime and Channel contracts to minimal capability-neutral ports, with Channel bridging external interaction through Core Command invocation and Core event subscription.
 - State: `development`
 - Requirement: [Current requirement](/.agents/tasks/architecture/minimize-provider-boundaries/requirement.md)
-- Current solution input revision: `requirement.md` SHA-256 `8bce0f28a1146df4a4b14c1286f297350481d314d0a2e48ffe82df615a0bf780`
+- Current solution input revision: `requirement.md` SHA-256 `d40ca59f624db37e7c97c40c0cd156435233f8054528a8cd02e7e774eaab5a57`
+- Prior solution input revision: `requirement.md` SHA-256 `8bce0f28a1146df4a4b14c1286f297350481d314d0a2e48ffe82df615a0bf780`; the operator then separated Team aggregate authority from TeamLeader identity ownership: Team checks only the minimum identity link, preserves an aligned identity, and delegates both missing-identity creation and runtime restoration to `TeamMateService`.
 - Prior solution input revision: `requirement.md` SHA-256 `f1058c2c1225dc39c04732a6f5357827eb6d214c0ac3239ca97d9384d8a100be`; the operator then clarified that existing code and historical Decisions are evidence rather than preservation authorities, and that the refactor must remove bad deployed designs in favor of the final product shape.
 - Prior solution input revision: `requirement.md` SHA-256 `6c1439342e469dc9c69b7413e84b0b2fd49c5aa13ea01b332cc2f7b74caae3f3`; the operator then defined a valid readable Team record as the sole Team-existence, concrete-name, and accepted-create-idempotency authority, removing the separate request ledger and name claim, and clarified the ordinary Error inheritance model.
 - Prior solution input revision: `requirement.md` SHA-256 `366c48bfe81d98f52506b36ee3d6fb723b84e57eb7c97077e95ebce93961b33f`; a later review then over-promoted a narrow hard-process-interrupt window into an automatic partial-Team recovery requirement, which the operator rejected as unjustified complexity.
@@ -28,7 +29,8 @@
   [Codex proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/codex.md),
   [Claude proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/claude.md), and
   [Trae Seed 2.1 proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/trae-seed-2-1.md).
-- Current solution baseline: [Technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `c2332ef6a78aecd35776d552e6301c66e7022bf7e25571f2518db4bc243b44ef`. Requirement text, technical design, current source, and prior Decisions are evidence; the final product shape and explicit operator principles are authoritative. Existing load-bearing code has no automatic preservation right.
+- Current solution baseline: [Technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `e861e80b250b21fedac5796ccf4cd08d97b0ba74f8a783e38cb2647d8301bba7`. Requirement text, technical design, current source, and prior Decisions are evidence; the final product shape and explicit operator principles are authoritative. Existing load-bearing code has no automatic preservation right.
+- Prior final-solution revision: SHA-256 `c2332ef6a78aecd35776d552e6301c66e7022bf7e25571f2518db4bc243b44ef`; it treated an incomplete accepted Team as a fail-loud terminal state and had not yet separated minimum Team-to-identity validation from TeamMate-owned identity creation and restoration.
 - Prior final-solution revision: SHA-256 `a042a5946bb121357e472fb3e20c508994aeab82fa562c2680c7621138c80d2b`; it removed the extra Team-creation authorities but still described existing load-bearing source and historical Decisions too strongly as preservation constraints.
 - Prior final-solution revision: SHA-256 `6a828b277a1b3b65609450c067fc8dab898e650924bebaa7e7e90ef8491cbce5`; it still persisted a Team-create request ledger and name claim before a Team existed, and did not yet capture the approved Error inheritance and shutdown-race semantics.
 - Prior final-solution revision: SHA-256 `3a36054580b35bfd5427d0b35dfd074f3bd1a56856fa2adbc0b0f5fa546593d0`; it had not yet made the narrow hard-interrupt boundary and fail-loud incomplete-Team behavior explicit.
@@ -64,17 +66,35 @@
   transport, and unknown internal failures have reusable subclasses, while
   business errors extend `DreamuxError` directly. There is no `DomainError` or
   public layer taxonomy; MCP renders known errors consistently for models.
+- Stage 3 operator decision: `TransportError` uses stable
+  `TRANSPORT_ERROR`, not `BAD_REQUEST`; connection, timeout, closed-socket, and
+  malformed-response failures are transport failures. Team not-found, closed,
+  and generation-changed failures remain distinct, operation-independent
+  business errors rather than one reason-tagged `TeamUnavailableError`.
 - Stage 3 operator decision: the shared Command registry validates output JSON
   representability and schemas but adds no speculative global result-size cap;
   pagination and size policy remain with domains that have a real need.
-- Stage 3 operator decision: do not build a partial-Team-creation recovery state
-  machine for the narrow hard-interrupt window between Team and TeamLeader
-  persistence. Ordinary errors retain existing cleanup; an incomplete
-  `starting` replay fails loud instead of reporting success.
+- Stage 3 operator decision: Team and TeamLeader identity have distinct narrow
+  authority. Team state decides whether the aggregate and leader should exist;
+  TeamLeader identity is the sole runtime-reconstruction input. The Team record
+  keeps only stable Team-owned input needed to invoke leader creation, never
+  Provider session or mutable Agent state. Check only the minimum ownership
+  link. Preserve an aligned identity exactly and let `TeamMateService` restore
+  from it. For an active Team with no usable aligned identity, the Team layer
+  calls the normal TeamMate creation path; `TeamMateService`, not the Team layer,
+  creates identity as part of creating the TeamLeader. Continue `starting`,
+  restore `running`, and never restart `closed`; add no direct cross-store repair
+  or third durable recovery mechanism.
 - Stage 3 operator decision: preserve the existing shutdown sequence. Close the
   shared Command admission fence, converge Dispatcher shutdown, drain accepted
   Command calls, then close the socket. A request racing the fence receives a
   specific `ServerShuttingDownError`.
+- Stage 3 operator decision: state below a Team scope is meaningful only under a
+  valid Team record. Orphan TeamLeader identity or other subordinate files do
+  not block concrete-name reuse, and an in-memory snapshot cannot resurrect a
+  Team whose record is invalid or unreadable. Once a valid record exists,
+  identity reconciliation follows the distinct Team-versus-identity authority
+  above rather than blindly overwriting a matching identity.
 - Implementation authority principle: existing design is not the target by
   default. The TeamLeader challenges why each mechanism exists and retains it
   only when it serves the confirmed final product. Deployed, load-bearing, or

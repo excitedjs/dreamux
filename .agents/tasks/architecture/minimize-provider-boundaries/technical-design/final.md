@@ -4,7 +4,7 @@
 
 This is the current technical design baseline for the requirement at
 `requirement.md` SHA-256
-`8bce0f28a1146df4a4b14c1286f297350481d314d0a2e48ffe82df615a0bf780`.
+`d40ca59f624db37e7c97c40c0cd156435233f8054528a8cd02e7e774eaab5a57`.
 
 It reconciles the three independent proposals and their single cross-review
 round. Requirement text, this design, current source, and prior Decisions are
@@ -565,17 +565,22 @@ class InternalError extends DreamuxError {}
 
 class TeamNotFoundError extends DreamuxError {}
 class TeamClosedError extends DreamuxError {}
+class TeamGenerationChangedError extends DreamuxError {}
 class IdempotencyConflictError extends DreamuxError {}
 class ServerShuttingDownError extends DreamuxError {}
 ```
 
 There is no `DomainError` base class and no public `layer`, `category`, or
 `retry` taxonomy. The registry validates all inputs before domain execution.
-Only cross-process framing, connection, and delivery failures become
-`TransportError`; business handlers throw their specific `DreamuxError`
-subclass. Only an unknown implementation failure becomes `InternalError`. MCP
-adapters convert these errors into one stable, concise, model-understandable
-tool failure format without exposing the inheritance tree on the wire.
+Only cross-process framing, connection, timeout, malformed-response, and
+delivery failures become `TransportError` with stable code `TRANSPORT_ERROR`;
+they are never reported as `BAD_REQUEST`. Business handlers throw their specific
+`DreamuxError` subclass. Team absence, closure, and generation replacement are
+different errors with operation-independent codes; a read or route lease never
+reports `TEAM_SUBMIT_FAILED`. Only an unknown implementation failure becomes
+`InternalError`. MCP adapters convert these errors into one stable, concise,
+model-understandable tool failure format without exposing the inheritance tree
+on the wire.
 
 ```ts
 interface CoreCommandDefinition<Name extends string, Input, Output> {
@@ -766,12 +771,42 @@ receive a Channel turn or reserve a concrete name. A real write failure while
 publishing a replacement record is reported as a persistence failure rather
 than creating a phantom Team.
 
-Existing ordinary-error cleanup remains authoritative. If an abrupt process
-loss occurs after the Team record acceptance point but before TeamLeader
-identity becomes durable, the valid record truthfully leaves an incomplete
-`starting` Team. Replay fails loud rather than reporting `created` or `existing`;
-this refactor does not add an automatic partial-Team reconstruction state
-machine without concrete operational evidence.
+All other state below that Team directory is subordinate for Team existence.
+Without a valid Team record, an old TeamLeader identity, scheduler file,
+workflow state, member collection, or cached in-memory record is orphan data: it
+cannot block reuse of the concrete name, be adopted by routing, or recreate the
+Team through a later ordinary update. This is intentional data handling: an
+identity without the sole existence record belongs to no product Team and has
+no preservation authority.
+
+The Team record is not a second complete TeamLeader identity. It retains Team
+existence and lifecycle, `leader_name`, and only the stable Team-owned creation
+inputs required to call the ordinary `TeamMateService` creation path when the
+leader has no usable identity. Provider session, Agent status, last error, and
+other mutable runtime state remain solely in the TeamLeader identity. This is a
+creation request plus a minimal relationship check, not two peer Agent-state
+authorities.
+
+Reconciliation checks only the fields required to prove that the identity is
+the Team's leader, including dispatcher, Team id, leader name, and role, plus
+any further field strictly required to prevent attaching the wrong Agent. It
+does not compare or synchronize every identity field with the Team record. If
+the readable identity agrees, Core preserves it verbatim and asks
+`TeamMateService` to restore the TeamLeader only from that identity, including
+its Provider session.
+
+If an active `starting` or `running` Team has no readable aligned identity, the
+Team layer does not synthesize or persist one. It calls the normal
+`TeamMateService` creation operation with the Team-owned leader creation inputs;
+that owner creates and persists identity as part of creating the TeamLeader and
+then starts the runtime from its own identity. A malformed or ownership-
+mismatched identity, including orphan identity at a reused concrete name, is
+replaceable only inside that TeamMate-owned creation operation. A `starting`
+Team moves to `running` only after the leader is usable; a `running` Team
+restores its leader without inventing a second Team; a `closed` Team never
+starts one. Ordinary-error cleanup remains in place. This is deterministic
+aggregate reconciliation through the existing owner, not direct cross-store
+repair, a new durable recovery record, name claim, or general coordinator.
 
 All other surviving definitions retain their current domain behavior while
 moving parsing, errors, and execution out of `admin/methods.ts` into their
