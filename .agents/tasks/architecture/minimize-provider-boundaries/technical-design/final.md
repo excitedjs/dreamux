@@ -739,15 +739,15 @@ interface TeamSubmitResult {
 }
 ```
 
-Omitting `team_name` targets the Dispatcher Agent for non-Channel callers such
-as `admin.sock`; a Channel invocation must supply it. Core then resolves the
+Omitting `team_name` targets the Dispatcher Agent; supplying it resolves the
 stable Team and submits only to its TeamLeader. Channel and admin adapters use
-the same Command definition. A Channel supplies attributes, faithful body text,
-and an optional reminder through this Command; these are not deferred additions
-to a later Channel stage. `TeammateService` renders the paired `<channel>` block
-and forces the source from factual invocation context. A `submitted` result
-carries the Core `turn_id`; `duplicate` does not invent one because Core did not
-create a second runtime submission or turn identity.
+the same target semantics and the same Command definition. A Channel supplies
+attributes, faithful body text, and an optional reminder through this Command;
+these are not deferred additions to a later Channel stage. `TeammateService`
+renders the paired `<channel>` block and forces the source from factual
+invocation context. A `submitted` result carries the Core `turn_id`; `duplicate`
+does not invent one because Core did not create a second runtime submission or
+turn identity.
 
 Core owns one bounded, process-local admission ledger for the Dispatcher
 lifetime. A non-empty `source_id` reserves `[target entity, source_id]` before
@@ -762,10 +762,9 @@ so historical entity count cannot grow a second unbounded registry. It
 deliberately retains the current no-cross-restart guarantee.
 
 `TEAM_NOT_FOUND` and `TEAM_CLOSED` are typed pre-admission failures. They permit
-Channel to repair its own stale binding or provisioning state, but never to
-fall back to Dispatcher delivery. An unknown boundary outcome is `ambiguous`;
-it is never retried. The existing `skipped -> stopped` boundary normalization
-remains.
+Channel to remove stale binding state and submit once to the Dispatcher Agent.
+An unknown boundary outcome is `ambiguous`; it is never retried or followed by
+fallback. The existing `skipped -> stopped` boundary normalization remains.
 
 #### `team.create`
 
@@ -990,13 +989,14 @@ state authority: Core Team and Agent stores remain authoritative.
 
 The `teammate` namespace identifies the Core entity that owns the whole turn
 event family; adding later domains does not overload a global `turn.*`
-namespace. `teammate.turn.submitted` includes the Core `turn_id`,
-`team_name`/agent identity, and required open `turn_source`, which is the same
+namespace. `teammate.turn.submitted` includes the Core `turn_id`, optional
+`team_name`, agent identity, and required open `turn_source`, which is the same
 validated source used for the model envelope. Before invoking Core, Channel
-records the visible-message anchor under its resolved Team/leader identity. The
-submitted event closes the loop by binding that local anchor to `turn_id`;
-later turn events correlate only by `turn_id`. No `ChannelOrigin` or opaque
-presentation correlation enters Core.
+keeps the visible-message anchor local. The submitted result and event close the
+loop by letting only the invoking session bind that anchor to the exact
+`turn_id`, whether the recipient is Dispatcher or TeamLeader; later turn events
+correlate only by `turn_id`. No `ChannelOrigin` or opaque presentation
+correlation enters Core.
 
 Provider-normalized live activity continues through the existing Core
 conversation projection, redaction, truncation, and event payloads. Tool
@@ -1385,10 +1385,10 @@ compile breaks are resolved inside the same implementation change.
 
 ### Behavioral gates
 
-- `team.submit` tests cover Dispatcher/default delivery for non-Channel callers,
-  mandatory `team_name` for Channel, TeamLeader delivery, duplicate, stopped,
-  failed, ambiguous, stable `turn_id`, no Channel-to-Dispatcher fallback, and
-  Channel-owned repair only after `TEAM_NOT_FOUND`/`TEAM_CLOSED`.
+- `team.submit` tests cover Dispatcher/default delivery for both Channel and
+  admin callers, TeamLeader delivery, duplicate, stopped, failed, ambiguous,
+  stable `turn_id`, and Channel-owned fallback only after
+  `TEAM_NOT_FOUND`/`TEAM_CLOSED`.
 - Core admission tests prove pending coalescing by target entity plus
   `source_id`, one globally bounded committed window, commit only after
   `submitted`/`ambiguous`, key release after `failed`/`stopped`/`skipped`,
@@ -1432,13 +1432,13 @@ compile breaks are resolved inside the same implementation change.
   registration, session and provider handler targets, canonical result/error
   return, lease revocation, and absence of catalog JSON or tool-name branches in
   launch arguments and Core.
-- COT regression tests preserve the current cards, Team/leader-keyed local
-  anchor binding, scheduled and completion anchors, redaction/truncation, and
-  tool input/result rendering. They prove no `ChannelOrigin`, presentation
-  correlation, or separate `turnOrigin` crosses Core. Provider/observer errors
-  and subscription revocation cannot change Core admission or settlement;
-  Channel-owned asynchronous state mutations serialize and finish before
-  session close.
+- COT regression tests preserve the current Dispatcher and TeamLeader cards,
+  exact-turn local anchor binding, scheduled and completion anchors,
+  redaction/truncation, and tool input/result rendering. They prove no
+  `ChannelOrigin`, presentation correlation, or separate `turnOrigin` crosses
+  Core. Provider/observer errors and subscription revocation cannot change Core
+  admission or settlement; Channel-owned asynchronous state mutations finish
+  before session close.
 - Startup tests prove subscription happens before recovery/admission. Shutdown
   tests prove Command fencing precedes convergence, settlement can still render,
   Channel-owned mutation tails settle before resource release, and no callback

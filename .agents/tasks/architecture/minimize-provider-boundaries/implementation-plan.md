@@ -405,12 +405,13 @@ mandatory review precedents, not historical anecdotes:
 - Move direct bindings, hierarchy/fallback, persistence, stale-binding cleanup,
   and list/unbind/bind tools into Feishu Channel.
 - Keep Feishu external-message interpretation and faithful body formatting in
-  Channel. Require a resolved `team_name`, record the visible-message anchor in
-  Channel under Team/leader identity before invocation, pass attrs/text/reminder
-  through `team.submit`, and bind the local anchor to the `turn_id` returned by
-  the submitted event. Let `TeammateService` assemble the paired `<channel>`
-  block and optional final sibling reminder; pass no `ChannelOrigin`,
-  presentation correlation, or separate `turnOrigin` through Core.
+  Channel. Supply a resolved `team_name` for TeamLeader delivery and omit it for
+  Dispatcher delivery. Keep the visible-message anchor in Channel, pass
+  attrs/text/reminder through `team.submit`, and bind only the invoking
+  session's anchor to the exact returned `turn_id` and matching submitted event.
+  Let `TeammateService` assemble the paired `<channel>` block and optional final
+  sibling reminder; pass no `ChannelOrigin`, presentation correlation, or
+  separate `turnOrigin` through Core.
 - Move Collaboration Space policy and its four Dispatcher-only MCP tools into
   Feishu Channel while keeping Team as the only Core collaboration container.
 - Implement idempotent child-target provisioning through `team.create` and
