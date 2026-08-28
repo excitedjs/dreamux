@@ -188,6 +188,14 @@
   cancellation flag, generation re-check, cleanup branch, or removal of an
   already-published Team record merely to make unbind interrupt an accepted
   function call.
+- Stage 5 audit decision: every Feishu inbound message whose non-admission is
+  proven still has the Dispatcher Agent as its fallback recipient. Automatic
+  provisioning failure before `team.submit`, and a typed pre-admission
+  `TEAM_NOT_FOUND` or `TEAM_CLOSED` rejection, therefore deliver the original
+  message once to the Dispatcher Agent. An ambiguous result or unknown failure
+  after submission does not prove non-admission and must not trigger a second
+  delivery. Do not replace this acceptance boundary with a blanket retry or a
+  blanket no-fallback rule.
 - Stage 5 audit decision: persisted Feishu routing facts become live only after
   their atomic file write succeeds. An update is prepared against an isolated
   next document, serialized with other writes, persisted, and then published as
