@@ -5,7 +5,8 @@
 - Goal: Reduce the public Agent Runtime and Channel contracts to minimal capability-neutral ports, with Channel bridging external interaction through Core Command invocation and Core event subscription.
 - State: `development`
 - Requirement: [Current requirement](/.agents/tasks/architecture/minimize-provider-boundaries/requirement.md)
-- Current solution input revision: `requirement.md` SHA-256 `9379059c23690491a1709af5474f5f48f5aec886b326081f075f49941f1b1f35`
+- Current solution input revision: `requirement.md` SHA-256 `366c48bfe81d98f52506b36ee3d6fb723b84e57eb7c97077e95ebce93961b33f`
+- Prior solution input revision: `requirement.md` SHA-256 `9379059c23690491a1709af5474f5f48f5aec886b326081f075f49941f1b1f35`; the operator then approved durable candidate rotation when exact name-claim ownership cannot be proven and rejected a speculative registry-wide Command-output byte cap.
 - Prior solution input revision: `requirement.md` SHA-256 `aa8dbb4892267f54450fa7822367d2d708f823d902d15177b9b630e335973405`; TeamLeader review then clarified that fixed `delete-on-close` belongs only to Feishu-owned automatic provisioning and must not narrow the generic Team MCP surface.
 - Prior solution input revision: `requirement.md` SHA-256 `90eac997bfc4f8427aa464dfa0a95e3de598d8b73164479b5f9e318dc0f77326`; the operator then rejected an artificial lifetime-count limit for never-evicted Team-creation idempotency identities.
 - Prior solution input revision: `requirement.md` SHA-256 `acf90312dbeb02861654172943f1fd016de04d6c7c6a6c9c155e78889d0d5f28`; Stage 3 implementation review then exposed that the narrow Feishu provisioning payload had incorrectly replaced the broader existing `team.create` repository capability.
@@ -24,7 +25,8 @@
   [Codex proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/codex.md),
   [Claude proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/claude.md), and
   [Trae Seed 2.1 proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/trae-seed-2-1.md).
-- Current solution baseline: [Technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `7cafa98baf5b48ddb885faea94c7daafbcfc6c539a3594b9245442091108bc84`. It governs modeled scenarios but never silently overrides a conflicting load-bearing source behavior or prior Decision discovered during implementation; every such conflict returns to the operator.
+- Current solution baseline: [Technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `3a36054580b35bfd5427d0b35dfd074f3bd1a56856fa2adbc0b0f5fa546593d0`. It governs modeled scenarios but never silently overrides a conflicting load-bearing source behavior or prior Decision discovered during implementation; every such conflict returns to the operator.
+- Prior final-solution revision: SHA-256 `7cafa98baf5b48ddb885faea94c7daafbcfc6c539a3594b9245442091108bc84`; Stage 3 review then over-defended unprovable name claims as fatal and proposed a generic output-size limit without a concrete domain failure.
 - Prior final-solution revision: SHA-256 `b0c37c9c24ce84e56e1805019ce3a95ebfbe7ff57049e7bf0a4ff7f25c89d339`; its wording could be misread as narrowing the generic Team MCP creation tool to Feishu's local repository subset.
 - Prior final-solution revision: SHA-256 `ef90aec0bf56975f354452489701ec4617778ed0c838da797be9c3080cde014b`; it still imposed a configured hard count on identities that could never be safely evicted.
 - Prior final-solution revision: SHA-256 `30fa81118a9008eb28d171113bc87cb9e5acfe9fbf78d3028efd49aa67c28010`; it modeled only Feishu's minimal managed-repository subset and therefore did not preserve the complete existing `team.create` repository union.
@@ -48,9 +50,14 @@
 - Stage 3 operator decision: accepted `team.create` idempotency identities have
   no artificial total-count limit and are never pruned. Individual ids, payloads,
   and entries remain bounded; total growth follows historical Team creation.
-- Next action: return Stage 3 to the same Claude Developer for the two operator
-  decisions plus TeamLeader-identified idempotency, validation, caller-domain,
-  shutdown-admission, and cleanup corrections.
+- Stage 3 operator decision: an existing candidate whose exact persisted claim
+  token cannot be proven is not adopted; Core durably rotates to a new name and
+  continues instead of treating that candidate as a provisioning outage.
+- Stage 3 operator decision: the shared Command registry validates output JSON
+  representability and schemas but adds no speculative global result-size cap;
+  pagination and size policy remain with domains that have a real need.
+- Next action: finish the active Stage 3 correction round, then perform the
+  TeamLeader drift audit before authorizing Stage 4.
 - Related tasks: Surfaced after [Feishu COT Conversation Cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md); this is an independent architecture outcome.
 
 ## Development approval

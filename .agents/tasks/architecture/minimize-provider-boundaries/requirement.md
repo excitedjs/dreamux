@@ -224,6 +224,11 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - Each Command has a Core-owned name, input, result, error, authorization,
   admission, and idempotency contract independent of Feishu, Slack, Telegram,
   or another provider.
+- The shared registry validates Command inputs and outputs against the same
+  schemas and JSON-representability rules for every adapter. It does not impose
+  a speculative registry-wide output byte limit: Activity, history, list, and
+  capability domains retain their existing pagination or source-owned bounds,
+  and any future large-result problem is solved by the owning Command contract.
 - Caller and transport identity may be attached as execution context where the
   domain operation needs it, but it must not be used to hide registered
   Commands from Channel callers. Domain validation and authorization remain
@@ -572,6 +577,12 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   the number of entries grows with the number of historical Team-creation
   requests just as the never-reused Team history does. Only a real persistence
   or storage failure may reject a new identity for capacity reasons.
+- If replay finds a Team record at the reserved candidate but cannot read and
+  prove the exact persisted name-claim token, Core must not adopt that Team. It
+  first persists a replacement candidate and then retries creation under the
+  same request identity. A missing, malformed, or unreadable claim therefore
+  means ownership is unproven and triggers safe renaming; it does not by itself
+  block provisioning.
 - The canonical `team.create` Command preserves the complete transport-neutral
   repository capability already available through `admin.sock`. Its repository
   request is a discriminated union: `reuse-cwd` may reuse a specified or default

@@ -168,6 +168,19 @@ mandatory review precedents, not historical anecdotes:
     and Channel consumes the event without replay, retransmission, or local
     message storage. Preserve the tuned presentation and fail-open behavior;
     lifecycle correctness belongs to Core state, not the COT stream.
+15. **An unprovable name claim was mistaken for a fatal provisioning error.**
+    If the reserved candidate already has a Team but its claim is missing,
+    malformed, unreadable, or carries another token, Core cannot safely adopt
+    that Team. Persistently rotating to a new candidate preserves idempotent
+    recovery without over-defending corrupted ownership metadata as a global
+    outage; the invariant is “never adopt without proof,” not “every old
+    candidate must remain usable.”
+16. **A hypothetical oversized Command result was used to justify a global
+    output cap.** No current Command has that failure mode: Activity is paged and
+    budgeted, history/list results are domain-bounded, and Provider public
+    configuration is bounded at discovery. Keep shared JSON representability
+    and schema validation so adapters cannot drift, but add size limits only to
+    the domain contract that demonstrates a real need.
 
 ## Stage ledger
 
@@ -236,6 +249,11 @@ mandatory review precedents, not historical anecdotes:
   Core Collaboration Space Commands.
 - Implement durable `team.create` request idempotency and the unified
   `team.submit` admission boundary.
+- Treat an unreadable or mismatched persisted name claim as unproven ownership:
+  durably rotate the request ledger before retrying rather than adopting the
+  existing Team or failing provisioning solely for that candidate.
+- Validate Command results through their shared schema and JSON boundary, but
+  do not add a speculative registry-wide output byte limit.
 - Validation: every inventoried current admin method is retained, renamed, or
   deleted exactly as the final design says; both adapters resolve the same
   definition.

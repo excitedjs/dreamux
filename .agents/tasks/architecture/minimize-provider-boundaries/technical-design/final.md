@@ -541,9 +541,13 @@ Channel MCP stdio shim       -> admin.sock NDJSON adapter --/          |
 ```
 
 Both public adapters accept a name and JSON-compatible payload. They resolve the
-same definition, run the same size/shape validation, attach their factual caller
-context, execute the same domain handler, and return the same typed result or
-error. The socket envelope `{id, method, params}` is only transport framing.
+same definition, run the same input shape/size validation and output
+shape/JSON-representability validation, attach their factual caller context,
+execute the same domain handler, and return the same typed result or error. The
+registry adds no generic output byte cap without a concrete domain failure
+scenario: Activity, history, list, and capability results retain their existing
+domain-owned pagination or source bounds. The socket envelope
+`{id, method, params}` is only transport framing.
 `adminMethods` is deleted as an independent authority; the admin server becomes
 an adapter over the registry.
 
@@ -720,6 +724,13 @@ creation. The same id and hash always return the same never-reused name,
 including after Core restart or Team closure. Reusing an id with a different
 hash returns `IDEMPOTENCY_CONFLICT`. A closed replay returns `closed`; a new
 provisioning generation must use a new request id.
+
+An existing Team at the reserved candidate is adopted only when Core can read
+the name claim and prove the exact persisted claim token. If the claim is
+missing, malformed, unreadable, or belongs to another token, ownership is
+unproven. Core durably rotates the ledger to a new candidate before retrying and
+never adopts the old Team. This safe rename is normal recovery, not a global
+provisioning failure.
 
 Accepted identities are never evicted or manually pruned, and the ledger has no
 artificial total-entry limit. Each request id, canonical payload, and stored
@@ -1303,9 +1314,9 @@ binding recreation, scheduler/dissolve behavior, and removed MCP/admin names.
   in-process publisher. Providers must keep synchronous projection bounded and
   move asynchronous persistence to their own serialized mutation tail; this
   preserves current COT semantics without adding a second delivery system.
-- The non-evicting Team-create ledger can fill. New provisioning then fails
-  before acceptance with an actionable diagnostic rather than risking duplicate
-  Teams.
+- The non-evicting Team-create ledger grows with historical Team creation.
+  There is no artificial entry-count stop; only a real persistence or storage
+  failure prevents accepting another identity.
 - Fail-loud state/config cutover requires operators to recreate bindings and
   automatic-provisioning configuration.
 - A failed non-force dissolve may leave children stopped before ordinary Team
