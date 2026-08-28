@@ -476,6 +476,22 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   public `duplicate`; `failed`, `stopped`, and provider-internal `skipped` do not
   consume the key. This keeps the existing no-cross-restart guarantee while
   removing Dreamux idempotency policy from every Provider adapter.
+- `TeammateService` has one admitted-input operation. It does not preserve
+  `channelInput`, `scheduledInput`, or `controlInput` wrappers after the Runtime
+  seam has become one text-only `submit`. Every accepted ordinary input may
+  materialize or reopen its target, so callers cannot select a `reopenClosed`
+  mode. The input carries prepared text, one discriminated Core source fact,
+  and only the optional accepted-turn metadata that Core actually consumes.
+  That source fact is the single authority from which Core derives both the
+  admission namespace and the recorded turn origin; callers do not pass a
+  separate scope, origin, source id, or mutation label.
+- Scheduler owns cron-fire lifecycle and cancellation entirely within the
+  scheduler boundary. A due fire validates its current generation and durable
+  job immediately before invoking the ordinary admitted-input operation. No
+  `AbortSignal`, held-fire token, busy wait, or scheduler-specific cancellation
+  mechanism crosses into `TeammateService`; once admission reaches Runtime,
+  deletion or shutdown does not retroactively pretend the turn was never
+  submitted.
 - `start` owns both fresh launch and checkpoint-aware launch using the create
   context supplied by Core. With no prior session it starts fresh; with a prior
   session reference it must restore continuous model context. Recovery failure

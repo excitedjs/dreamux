@@ -238,6 +238,15 @@ mandatory review precedents, not historical anecdotes:
     and skill sources needed for future creation, while an aligned Identity is
     restored exactly. A record missing those fields reads them as empty and is
     never backfilled from Identity.
+22. **Core kept three input wrappers after Runtime had already converged on one
+    submit operation.** `channelInput`, `scheduledInput`, and `controlInput`
+    only filled constants around the same admission path. Their remaining
+    differences belong in one discriminated source fact, not in three methods,
+    parallel `scope`/`turnOrigin` arguments, a caller-controlled reopen flag, or
+    logging labels. Every ordinary input starts or reopens its target. The
+    scheduler's `AbortSignal` served the obsolete held-fire/idle-wait mechanism
+    and could not cancel a submitted Runtime turn; delete it and keep lifecycle
+    validation inside Scheduler immediately before the shared submission.
 
 ## Stage ledger
 

@@ -308,6 +308,25 @@ calling the runtime. Consequently replacing `channelInput` and
 `completionInput` does not introduce a new discriminator that recreates the old
 split under `submit`.
 
+Core applies the same reduction at the `TeammateService` admitted-input seam.
+One internal `submitInput` accepts prepared text, one discriminated source fact,
+and optional accepted-turn metadata such as intent or completion delivery. The
+source fact contains its optional stable source identity plus exactly the facts
+needed for its branch: authoritative Channel admission scope and optional
+display origin, scheduled job identity, internal control, or Dispatcher
+delivery. `TeammateService` derives the admission-ledger namespace and recorded
+turn origin from that one fact. It exposes no `channelInput`, `scheduledInput`,
+or `controlInput` wrappers, no separate `scope` plus `turnOrigin` pair, no
+caller-selected `reopenClosed`, and no logging label. Every ordinary admitted
+input starts or reopens the target before Runtime submission.
+
+Cron cancellation remains private to Scheduler. A due fire checks its lifecycle
+generation and current durable job immediately before calling `submitInput`.
+Scheduler never passes an `AbortSignal` through Core: the signal could only
+prevent a held fire before Runtime admission and could never cancel an already
+submitted turn. Because this design has no idle wait or held fire, the signal
+and its cross-service contract have no surviving purpose.
+
 `start` receives prior session identity only through the immutable create
 context. A non-null session must restore continuous model context; failure
 rejects and never silently becomes fresh. The Provider must durably publish its
@@ -1195,7 +1214,9 @@ At the due time, scheduler uses the ordinary submission path immediately. It
 does not check busy/idle, wait, hold a fire, or create a second queue. Native
 folding or steering into an active turn is allowed. Proven pre-admission failure
 and ambiguous admission keep their generic semantics, including no retry after
-ambiguity.
+ambiguity. Scheduler validates its own lifecycle generation and the current
+durable job immediately before submission; this owner-local fence does not add
+an `AbortSignal` or scheduler-specific method to `TeammateService`.
 
 ## 5. Change inventory
 
