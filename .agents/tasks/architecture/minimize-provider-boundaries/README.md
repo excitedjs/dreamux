@@ -5,7 +5,8 @@
 - Goal: Reduce the public Agent Runtime and Channel contracts to minimal capability-neutral ports, with Channel bridging external interaction through Core Command invocation and Core event subscription.
 - State: `development`
 - Requirement: [Current requirement](/.agents/tasks/architecture/minimize-provider-boundaries/requirement.md)
-- Current solution input revision: `requirement.md` SHA-256 `4cf3a6fe591caeac24925d8e72dec84b8d3a0a18f0632a53bd5b6c0707a85d31`
+- Current solution input revision: `requirement.md` SHA-256 `7c4b5c8f13103080426c841586c245a3fce00a141545709eba55db015cf0389c`
+- Prior solution input revision: `requirement.md` SHA-256 `4cf3a6fe591caeac24925d8e72dec84b8d3a0a18f0632a53bd5b6c0707a85d31`; the operator then restored the previously discussed universal MCP delegate architecture: every tool call converges through generic MCP infrastructure and a runtime-bound delegate rather than flattening Team, TeamMate, Cron, or Channel tools into domain Commands.
 - Prior solution input revision: `requirement.md` SHA-256 `666386b915db3553fe5436ae6d7def7634917ebf8e708fea79828738907b1b36`; implementation audit then exposed that the canonical `team.submit` interface omitted the Channel attributes and reminder its own target narrative required, incorrectly deferring a known Core contract to Stage 5.
 - Prior solution input revision: `requirement.md` SHA-256 `46bea76019056f03daf4e853f130a727b74d106c61ca524fb56decfd762eee76`; the operator then locked the exact seven-field `submitInput` contract and required the concrete field-by-field reduction process to govern every later adjustment, with Core remaining business-agnostic for arbitrary Channel forms.
 - Prior solution input revision: `requirement.md` SHA-256 `13e61811a1fbe91e8002739739444ce41e336d0a0376817c32851ba5c2f1fc6a`; the operator then closed Channel presentation entirely through Channel-owned Team/leader anchor state plus Core turn events, deleting `ChannelOrigin`, presentation correlation, and separate `turnOrigin` from Core.
@@ -43,7 +44,8 @@
   [Codex proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/codex.md),
   [Claude proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/claude.md), and
   [Trae Seed 2.1 proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/trae-seed-2-1.md).
-- Current solution baseline: [Technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `54034bc0deefeefdff1310ad431bce69e512329a02c5fc42f64945f8130b7b4c`. Requirement text, technical design, current source, and prior Decisions are evidence; the final product shape and explicit operator principles are authoritative. Existing load-bearing code has no automatic preservation right.
+- Current solution baseline: [Technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `5c74dc37bf0681b2c8e722a3cab3cf1c7b240395a8007b73b6586c9c6b80a05e`. Requirement text, technical design, current source, and prior Decisions are evidence; the final product shape and explicit operator principles are authoritative. Existing load-bearing code has no automatic preservation right.
+- Prior final-solution revision: SHA-256 `54034bc0deefeefdff1310ad431bce69e512329a02c5fc42f64945f8130b7b4c`; it correctly modeled a Channel MCP lease but failed to generalize the same delegate boundary to Team, TeamMate, Cron, and other Agent-facing MCP servers, leaving their shims incorrectly mapped to domain Commands.
 - Prior final-solution revision: SHA-256 `e87f24cc1ca224407398f9b73212fb058d875a7e9f234cf6cf6dc09557b439da`; it locked `submitInput` but its `team.submit` interface still omitted the already-confirmed Channel attributes and reminder, contradicting the surrounding delivery contract.
 - Prior final-solution revision: SHA-256 `54bfc6b43ce9ad37c058fbbafe1ff2e4a726f0413b9bd200ffe01147afd4d10f`; it had converged the generic envelope semantics but had not frozen the complete `submitInput` signature or recorded the concrete review sequence as the mandatory method for later surfaces.
 - Prior final-solution revision: SHA-256 `dd23103bcdbcb5c79dd02c02feef498b4079961867e7a96e95f362b08f34b520`; it still routed Channel presentation anchors through Core Turn/Event metadata instead of using Team/leader identity and `turn_id` to close the loop inside Channel.
@@ -145,6 +147,15 @@
   skill sources needed for missing-identity creation. Aligned identities remain
   untouched. If those fields are absent, they read as empty and are never
   backfilled from Identity.
+- MCP architecture decision: Agent-facing MCP tools never flatten into the
+  domain Command registry. Every official-SDK shim sends actual calls through
+  one generic `mcp.toolcall` infrastructure Command using an opaque
+  runtime-generation lease. Core resolves an `McpServerDelegate`; internal
+  delegates call owning service objects directly, while Channel delegates call
+  registered live/sessionless Channel handlers. The delegate, not the shim or a
+  domain Command alias, owns caller context, task source, completion behavior,
+  visibility, and model-facing errors. `mcp.describe` supplies the delegate's
+  validated catalog to the generic shim.
 - Implementation authority principle: existing design is not the target by
   default. The TeamLeader challenges why each mechanism exists and retains it
   only when it serves the confirmed final product. Deployed, load-bearing, or
@@ -189,6 +200,11 @@ not evidence that it belongs in the final contract.
    `{ source, attrs?, text, reminder?, sourceId?, intent?, deliverCompletion? }`;
    future changes must reopen this reasoning rather than append another field or
    compatibility wrapper by proximity.
+8. When one field still needs adapter-specific explanation, re-check the whole
+   call topology instead of adding transport metadata. The apparent conflict
+   between `channel` and `task` exposed that MCP shims had been incorrectly
+   flattened into domain Commands. Restoring one generic MCP tool-call Command
+   plus runtime-bound delegates removed the conflict at its real boundary.
 
 For every later refactor surface, the TeamLeader must perform the same producer,
 consumer, behavior, ownership, lifetime, model-clarity, and failure-semantics

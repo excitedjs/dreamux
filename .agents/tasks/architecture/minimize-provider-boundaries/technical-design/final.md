@@ -598,19 +598,22 @@ not echoed on this interface.
 ### 2.2 Command protocol
 
 There is one authoritative `CoreCommandRegistry`, not an admin method table plus
-a Channel catalog. Three adapters converge on it:
+a Channel catalog. Admin and Channel domain calls converge on it; MCP uses only
+the registry's generic delegate infrastructure:
 
 ```text
-admin CLI / Dreamux MCP shims -> admin.sock NDJSON adapter --\
-ChannelProvider              -> in-process invoke adapter ----> CoreCommandRegistry
-Channel MCP stdio shim       -> admin.sock NDJSON adapter --/          |
-                                                                      v
-                                                           domain Command handler
+admin CLI       -> admin.sock NDJSON adapter --\
+ChannelProvider -> in-process invoke adapter ----> CoreCommandRegistry
+                                                    -> domain Command handler
+
+generic MCP shim -> admin.sock -> mcp.describe / mcp.toolcall
+                                   -> runtime-bound McpServerDelegate
+                                   -> direct owning-object method
 ```
 
-Both public adapters accept a name and JSON-compatible payload. They resolve the
+The two domain adapters accept a name and JSON-compatible payload. They resolve the
 same definition, run the same input shape/size validation and output
-shape/JSON-representability validation, attach their factual caller context,
+shape/JSON-representability validation, attach their factual transport context,
 execute the same domain handler, and return the same typed result or error. The
 registry adds no generic output byte cap without a concrete domain failure
 scenario: Activity, history, list, and capability results retain their existing
@@ -659,13 +662,12 @@ interface CoreCommandDefinition<Name extends string, Input, Output> {
   execute(context: CoreCommandContext, input: Input): Promise<Output>;
 }
 
-type CoreCommandSource = "admin_socket" | "channel" | "mcp_proxy";
+type CoreCommandSource = "admin_socket" | "channel";
 
 interface CoreCommandContext {
   readonly source: CoreCommandSource;
   readonly dispatcher_id?: string;
   readonly channel_id?: string;
-  readonly caller?: ChannelMcpCaller;
 }
 
 interface CoreCommandRegistry {
@@ -677,8 +679,9 @@ interface CoreCommandRegistry {
 }
 ```
 
-`source` and caller fields are facts needed by some domain operations, logging,
-deduplication, or the Channel-MCP lease. They never filter the registry. There
+`source` and addressing fields are facts needed by some domain operations and
+logging. MCP caller identity belongs to the opaque delegate lease rather than
+this domain-Command context. These fields never filter the registry. There
 is deliberately no exposure/audience property, allowlist, describe-by-caller,
 or capability negotiation: every registered Command is callable by both the
 admin-socket and Channel adapters, subject only to the Command's ordinary input
@@ -694,17 +697,17 @@ The normalized registry is grouped by the entity that owns each action:
 | TeamMate | `teammate.spawn`, `teammate.submit`, `teammate.close`, `teammate.list`, `teammate.status`, `teammate.history`, `teammate.last`, `teammate.capabilities` |
 | Workflow | `workflow.run`, `workflow.status`, `workflow.stop`, `workflow.list` |
 | Scheduler | `scheduler.cron.create`, `scheduler.cron.update`, `scheduler.cron.delete`, `scheduler.cron.list` |
-| Channel MCP infrastructure | `channel.mcp.describe`, `channel.mcp.invoke` |
+| MCP infrastructure | `mcp.describe`, `mcp.toolcall` |
 
 The inventory deliberately removes `team.bind_channel` and
 `team.transfer_back`: external binding is Channel-owned MCP behavior. It removes
 the complete `collaboration_space.*` family with the deleted Core container.
-`channel.invoke_tool` is replaced by the generic lease-bound
-`channel.mcp.invoke`. `team.send` and `teammate.send` become the domain-consistent
+`channel.invoke_tool` is replaced by the generic lease-bound MCP delegate.
+`team.send` and `teammate.send` become the domain-consistent
 `team.submit` and `teammate.submit`; no old-name aliases remain. CLI and
-Agent-facing MCP tool names may remain human-oriented adapter vocabulary, but
-their execution delegates to these canonical Commands rather than reimplementing
-schemas or policy.
+Agent-facing MCP tool names may remain human-oriented adapter vocabulary. They
+do not alias canonical Commands: one generic MCP tool-call Command resolves an
+in-memory delegate, and that delegate calls the owning object method directly.
 
 Feishu uses only `team.submit` and `team.create` in this implementation. That is
 a consumer scope statement, not a smaller registry or a permission boundary.
@@ -1024,72 +1027,77 @@ snapshot, outbox, event-content persistence, or final-delivery guarantee. A
 future need for delivery guarantees would be a new requirement, not hidden
 machinery in this refactor.
 
-### 2.5 Channel MCP forwarding
+### 2.5 Generic MCP server delegation
 
-Channel MCP has two opposite halves and is the third cross-boundary mechanism,
-separate from Channel Commands and events:
+MCP delegation has registration and invocation halves. The mechanism is shared
+by every MCP server and remains separate from Channel Commands and events:
 
 ```text
 registration / injection
-ChannelProvider.mcp.describe(config, caller)
-  -> Core validates the caller-specific registrations
-  -> Core builds its own channel-MCP proxy descriptor
+domain owner or ChannelProvider builds an McpServerDelegate
+  -> Core validates the delegate's caller-specific registrations
+  -> Core leases the delegate and builds its generic MCP shim descriptor
   -> AgentRuntimeCreateContext.mcpServers
   -> Agent Runtime Provider configures the native Agent exactly as supplied
 
 tool invocation
 native Agent tools/call
-  -> MCP JSON-RPC over the Core-owned stdio proxy
-  -> Core Channel-MCP router with baked caller/channel scope
-  -> ChannelInstance.mcp.invoke OR ChannelProvider.mcp.invoke
-  -> canonical Channel result/error returns along the same route
+  -> MCP JSON-RPC over the Core-owned generic stdio shim
+  -> mcp.toolcall { lease, name, arguments }
+  -> Core resolves the runtime-generation McpServerDelegate
+  -> delegate calls a domain object, ChannelInstance, or ChannelProvider
+  -> canonical MCP result/error returns along the same route
 ```
 
-Core asks `describe` only for Dispatcher and TeamLeader runtime construction.
-It never injects Channel MCP into an ordinary Team member or standalone
-TeamMate. The Channel returns a caller-specific catalog, so Feishu's
+Every injected MCP server is one Core-owned delegate. Internal delegates expose
+the Team, TeamMate, Scheduler, Workflow, or other tools appropriate to that
+Agent; they call the owning service objects programmatically and never map tool
+names to domain Commands. A Channel delegate is optional and is injected only
+for Dispatcher and TeamLeader runtimes, never an ordinary TeamMate. The Channel
+returns a caller-specific catalog, so Feishu's
 `bind_channel`, `unbind_channel`, and `list_bindings` registrations appear only
 for Dispatcher while reply/react may also appear for TeamLeader. Core does not
 know those names or encode their product policy.
 
 For each non-empty catalog, Core validates unique names, JSON-compatible tool
-metadata, input/output schemas, and declared handler target. It then creates a
-short-lived in-memory `ChannelMcpLease` bound to the runtime generation,
-dispatcher, configured Channel instance, caller, validated registrations, and
-resolved handlers. The public Provider seam does not expose this host lease.
+metadata, input/output schemas, and handler ownership. It then creates a
+short-lived in-memory lease bound to the runtime generation, delegate, caller,
+validated registrations, and resolved handlers. The public Provider seam does
+not expose this host lease.
 
-Core gives the Agent Runtime an `AgentRuntimeMcpServer` for one generic
-`dreamux channel-mcp` stdio shim. Its launch data contains only the admin-socket
+Core gives the Agent Runtime an `AgentRuntimeMcpServer` for the generic Dreamux
+MCP stdio shim. Its launch data contains only the admin-socket
 location and an opaque lease token, preferably through the child environment
 rather than command-line JSON. It does not carry a base64 tool catalog,
-provider ref, caller fields, or Channel policy. The Agent Runtime Provider
+domain/provider ref, caller fields, or Channel policy. The Agent Runtime Provider
 launches exactly the supplied MCP server list; it neither discovers Channel
 tools nor loads Channel packages.
 
-At shim startup, one internal `channel.mcp.describe` request presents the lease
+At shim startup, one internal `mcp.describe` request presents the lease
 token over the existing Unix admin socket. Core checks the live lease and
 returns its already validated tool metadata. The shim creates one official MCP
 SDK `McpServer` and programmatically calls `registerTool` for every returned
 descriptor. Each registered SDK handler is the same small closure parameterized
-only by tool name: it sends `channel.mcp.invoke {lease, name, arguments}` back
+only by tool name: it sends `mcp.toolcall {lease, name, arguments}` back
 over the socket. The official SDK remains the sole owner of MCP negotiation,
 `tools/list`, input/output schema validation, cancellation, and JSON-RPC error
 framing.
 
 On invoke, Core verifies that the lease is live and the named tool belongs to
-its frozen catalog, then dispatches using the registration's `target`, never a
-hard-coded tool name. `session` reaches the resolved
-`ChannelInstance.mcp.invoke`; `provider` reaches the resolved
-`ChannelProvider.mcp.invoke` and works without a live session. The canonical
-result/error returns through the same Unix socket and stdio connection. The
-model supplies only tool arguments; routing identity is absent from its schema.
+its frozen catalog, then calls the delegate, never a hard-coded tool name. An
+internal delegate calls its owning object method; a Channel registration with
+`session` reaches the resolved `ChannelInstance.mcp.invoke`, while `provider`
+reaches `ChannelProvider.mcp.invoke` and works without a live session. The
+canonical result/error returns through the same Unix socket and stdio
+connection. The model supplies only tool arguments; routing identity is absent
+from its schema.
 
-Catalogs are immutable for one runtime generation. A configuration or catalog
-change takes effect on the next runtime construction rather than mutating an
-already initialized MCP server. Runtime replacement or stop revokes all of its
-Channel MCP leases synchronously; a late describe/invoke fails before Channel
-dispatch. Channel handlers remain alive until accepted runtime work and MCP
-calls have converged during shutdown.
+Catalogs and delegates are immutable for one runtime generation. A configuration
+or catalog change takes effect on the next runtime construction rather than
+mutating an already initialized MCP server. Runtime replacement or stop revokes all of its
+MCP leases synchronously; a late describe/toolcall fails before delegate
+dispatch. Delegates and their Channel handlers remain alive until accepted
+runtime work and MCP calls have converged during shutdown.
 
 This retains one unavoidable process hop: the native Agent owns a stdio MCP
 child while the authoritative Channel instance lives inside Dreamux Core. The
@@ -1368,8 +1376,9 @@ compile breaks are resolved inside the same implementation change.
 - Registry contract tests enumerate every canonical Command and prove the admin
   socket and Channel adapters resolve the same definition, schema, handler,
   result, and error. No adapter owns a second method table or exposure policy.
-- A no-MCP fixture has no MCP composition; live and sessionless MCP fixtures
-  both forward tools with caller context.
+- A no-MCP fixture has no MCP composition; internal-object, live-Channel, and
+  sessionless-Channel delegates all forward tools with lease-bound caller
+  context and no shim-to-domain-Command mapping.
 - Channel MCP injection tests prove caller-specific catalogs reach only
   Dispatcher and TeamLeader create contexts, ordinary TeamMates receive none,
   and Agent Runtime Providers launch the exact Core-supplied MCP descriptors.

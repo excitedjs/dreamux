@@ -119,16 +119,18 @@ mandatory review precedents, not historical anecdotes:
    and function names, not only public strings.
 6. **The first Command design confused today's Feishu usage with the platform
    catalog.** Feishu currently needs only `team.submit` and `team.create`, but
-   that is a consumer fact, not an exposure policy. `admin.sock`, Channel
-   invocation, CLI adapters, and Agent MCP facades delegate to one canonical,
-   domain-namespaced Core Command registry. Do not build a second registry or an
-   exposure-policy layer.
-7. **The Channel-MCP-to-Agent path was initially missing.** Tool definitions are
-   registered in the official-SDK MCP shim used by Dispatcher and TeamLeader.
-   Each invocation is forwarded through `admin.sock` to Core, then dispatched
-   through the canonical Command mechanism to the owning Channel. A design that
-   shows only Channel-to-Core Commands is incomplete unless this reverse tool
-   path, its caller context, lease, lifecycle, and error return are also closed.
+   that is a consumer fact, not an exposure policy. `admin.sock` and Channel
+   invocation adapt the same canonical domain Commands. Agent MCP is different:
+   its tools converge through one generic MCP infrastructure Command and a
+   runtime-bound delegate that calls domain objects directly. Do not flatten MCP
+   tools into the domain Command registry or build a second domain registry.
+7. **The MCP-to-Core delegate path was initially modeled only for Channel.** All
+   Agent-facing MCP servers use the official-SDK generic shim. Every actual tool
+   call crosses `admin.sock` as one generic `mcp.toolcall`, resolves an opaque
+   runtime-generation delegate, and lets that delegate call either an internal
+   domain object or a Channel handler. Caller context, lease, lifecycle, source,
+   completion delivery, and model-facing errors belong to the delegate rather
+   than a shim-to-domain-Command mapping.
 8. **Deleting the Core Collaboration Space container was over-applied to the
    product flow.** Core does not regain a Collaboration Space domain object, but
    Feishu retains Dispatcher-only Channel MCP tools for binding, unbinding,
@@ -337,8 +339,11 @@ mandatory review precedents, not historical anecdotes:
   definitions and one `CoreCommandRegistry`.
 - Adapt both `admin.sock` NDJSON and Channel in-process `invoke` to that registry
   without exposure policy or duplicate schemas/handlers.
+- Remove the assumption that Agent MCP facades are adapters to domain Commands.
+  The only MCP-shaped Commands are the generic delegate infrastructure; domain
+  MCP behavior belongs to the runtime-bound delegate and direct object methods.
 - Normalize all surviving Server, Dispatcher, Team, TeamMate, Workflow,
-  Scheduler, and Channel-MCP infrastructure names; delete superseded names and
+  Scheduler, and generic MCP infrastructure names; delete superseded names and
   Core Collaboration Space Commands.
 - Implement durable `team.create` request idempotency inside the Team record and
   the unified `team.submit` admission boundary. Exclusive atomic record
@@ -378,14 +383,20 @@ mandatory review precedents, not historical anecdotes:
   deleted exactly as the final design says; both adapters resolve the same
   definition.
 
-### Stage 4: Channel lifecycle, events, and MCP proxy
+### Stage 4: Channel lifecycle, events, and generic MCP delegation
 
 - Replace `ChannelRoutes` with direct lifecycle plus `invoke` and event source.
 - Implement the six-event Team/TeamMate catalog and preserve current COT
   projection, redaction, truncation, and fail-open delivery semantics.
-- Implement Channel MCP catalog registration, official-SDK stdio shim,
-  lease-bound `channel.mcp.describe`/`channel.mcp.invoke`, live/sessionless
-  dispatch, and Dispatcher/TeamLeader injection only.
+- Generalize MCP catalog registration and the official-SDK stdio shim across all
+  Agent-facing MCP servers. Implement lease-bound `mcp.describe` and
+  `mcp.toolcall`; each in-memory `McpServerDelegate` owns its catalog, caller
+  context, direct object/Channel dispatch, input source, completion behavior,
+  and model error projection. Delete shim mappings to domain Commands and the
+  Channel-only `channel.mcp.describe`/`channel.mcp.invoke` split.
+- Preserve Channel live/sessionless handler dispatch and its Dispatcher/
+  TeamLeader-only visibility as one delegate implementation, not as a separate
+  proxy architecture.
 - Validation: base Channel interfaces stay small; MCP remains optional
   composition; Core contains no provider tool-name branch.
 

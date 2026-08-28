@@ -250,10 +250,13 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   layer. Unknown implementation failures alone are normalized to
   `InternalError`.
 - Registry input validation runs before every handler regardless of whether the
-  call arrived through `admin.sock`, an MCP shim, or the in-process Channel
-  adapter. A cross-process adapter may then raise a specific `TransportError`
-  when framing, connection, or delivery fails; ordinary business execution
-  raises its concrete business error. The final MCP adapter renders every
+  call arrived through `admin.sock`, the in-process Channel adapter, or the
+  generic MCP delegate infrastructure. Agent-facing domain MCP tools do not map
+  themselves to domain Commands: one generic MCP call Command resolves an
+  opaque runtime-bound delegate, and that delegate invokes the owning object
+  method directly. A cross-process adapter may then raise a specific
+  `TransportError` when framing, connection, or delivery fails; ordinary
+  business execution raises its concrete business error. The final MCP adapter renders every
   `DreamuxError` as one consistent, concise, model-understandable error without
   exposing the internal inheritance tree as a public protocol layer.
   `TransportError` has its own stable `TRANSPORT_ERROR` code and is never
@@ -262,6 +265,15 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   domain operation needs it, but it must not be used to hide registered
   Commands from Channel callers. Domain validation and authorization remain
   properties of the Command itself rather than an exposure layer.
+- Agent-facing MCP is not an alternate spelling of the domain Command catalog.
+  Every MCP shim sends actual tool calls through the same generic
+  `mcp.toolcall` infrastructure Command. Core resolves a runtime-generation
+  `McpServerDelegate`; the delegate owns the tool catalog, caller context,
+  model-input source, completion behavior, error projection, and direct call to
+  a Team, TeamMate, Scheduler, Workflow, Channel session, or Channel provider
+  object. Individual MCP tools never become Command definitions merely because
+  the shim is cross-process. `mcp.describe` exposes the delegate's validated
+  catalog to the generic official-SDK shim without flattening it into Core.
 - Existing `deliver`, `ensureCollaborationTarget`, `deliverExact`, and
   `targetLifecycle` are only a migration inventory. Requirement and solution
   work must decide whether their underlying Core use cases belong in the new
@@ -279,9 +291,9 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - The current Core Channel-binding and Collaboration Space command families are
   not carried forward. External binding moves to Channel-owned MCP tools, while
   Team is the sole Core container used to realize an external collaboration
-  target. The Channel-MCP proxy's lease-bound describe/invoke operations also
-  use the same registry mechanism, but remain infrastructure operations rather
-  than Dreamux domain capabilities.
+  target. Channel MCP uses the same generic `McpServerDelegate` and
+  `mcp.describe`/`mcp.toolcall` infrastructure as every other MCP server; it is
+  not a Channel-specific Command family.
 - The Feishu Channel implementation changed in this refactor calls only
   `team.submit` and restart-durable idempotent `team.create`. That implementation
   scope does not narrow what another Channel may invoke through the shared port.
@@ -359,7 +371,20 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   TeamMate's state changes. A Dispatcher has no Team and therefore appears only
   in `teammate.state`.
 
-### 4. Optional Channel MCP extension
+### 4. Generic MCP delegation and optional Channel extension
+
+- Every Agent-facing MCP server is represented in Core by a short-lived
+  `McpServerDelegate` bound to one runtime generation. The Agent Runtime receives
+  only a generic Core-owned stdio shim descriptor and an opaque lease. At
+  startup the shim obtains the delegate's validated catalog through
+  `mcp.describe`; every registered handler sends `mcp.toolcall { lease, name,
+  arguments }`. The generic router validates the lease and tool membership, then
+  calls the delegate. It never switches on a domain or provider tool name.
+- Internal delegates call Team, TeamMate, Scheduler, Workflow, and other owning
+  objects directly. They do not translate tools into `team.*`, `teammate.*`, or
+  other domain Commands. This is where Agent-task `source`, reverse completion,
+  caller identity, tool visibility, and model-understandable error projection
+  belong. The shim contains transport/SDK mechanics only.
 
 - A Channel may register a provider/config- and caller-specific MCP tool
   catalog. Channel MCP is injected only into Dispatcher and TeamLeader Agent
@@ -370,12 +395,13 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   Agent Runtime MCP server descriptor and proxy launcher; a Channel declares
   tool schemas and handling ownership but does not inject arbitrary launcher
   commands into Agent Runtime configuration.
-- The invocation direction is native Agent -> MCP stdio proxy -> Dreamux Core ->
-  the registered Channel handler. Core attaches the Dispatcher, configured
+- The invocation direction is native Agent -> generic MCP stdio shim ->
+  `mcp.toolcall` -> the Channel delegate -> the registered Channel handler.
+  The delegate attaches the Dispatcher, configured
   Channel instance, and caller identity from the scoped MCP server; tool
   arguments cannot forge that routing context. The provider's canonical result
   or error returns through the same path.
-- This mechanism is distinct from Channel-to-Core Command invocation and
+- This mechanism is distinct from Channel-to-Core domain Command invocation and
   Core-to-Channel event delivery.
 - The design must support both live-session tools and provider-level
   sessionless tools such as the current `list_chat_bots` behavior. Tool
