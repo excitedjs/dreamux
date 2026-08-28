@@ -181,6 +181,13 @@ mandatory review precedents, not historical anecdotes:
     configuration is bounded at discovery. Keep shared JSON representability
     and schema validation so adapters cannot drift, but add size limits only to
     the domain contract that demonstrates a real need.
+17. **Every persistence `await` was treated as requiring automatic crash
+    recovery.** Normal Team-creation errors already execute durable cleanup; the
+    remaining gap requires a hard process loss in the narrow interval between
+    the Team record and TeamLeader identity writes. Do not add a partial-create
+    recovery state machine without real failure evidence. The required minimal
+    behavior is truthful failure: an incomplete `starting` Team must never be
+    marked or returned as successfully existing.
 
 ## Stage ledger
 
@@ -254,6 +261,8 @@ mandatory review precedents, not historical anecdotes:
   existing Team or failing provisioning solely for that candidate.
 - Validate Command results through their shared schema and JSON boundary, but
   do not add a speculative registry-wide output byte limit.
+- Reject an exact-claim replay whose Team remains incomplete `starting` state;
+  do not add automatic partial-creation recovery in this refactor.
 - Validation: every inventoried current admin method is retained, renamed, or
   deleted exactly as the final design says; both adapters resolve the same
   definition.

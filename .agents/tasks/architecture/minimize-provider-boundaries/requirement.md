@@ -583,6 +583,13 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   same request identity. A missing, malformed, or unreadable claim therefore
   means ownership is unproven and triggers safe renaming; it does not by itself
   block provisioning.
+- This refactor does not add a general partial-Team-creation recovery state
+  machine. Ordinary creation errors continue through the existing cleanup path.
+  An abrupt process loss in the narrow interval between independently durable
+  Team and TeamLeader identity writes may leave an incomplete `starting` Team;
+  replay must fail loud instead of reporting `created` or `existing`, and the
+  operator repairs that damaged state. Automatic recovery is added only when a
+  real failure history justifies the additional lifecycle complexity.
 - The canonical `team.create` Command preserves the complete transport-neutral
   repository capability already available through `admin.sock`. Its repository
   request is a discriminated union: `reuse-cwd` may reuse a specified or default

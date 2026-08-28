@@ -732,6 +732,15 @@ unproven. Core durably rotates the ledger to a new candidate before retrying and
 never adopts the old Team. This safe rename is normal recovery, not a global
 provisioning failure.
 
+The durable request ledger is not a general transaction coordinator for every
+Team creation write. Existing ordinary-error cleanup remains authoritative. If
+an abrupt process loss leaves an exact-claim Team record in incomplete
+`starting` state before its TeamLeader identity became durable, replay fails
+loud rather than marking the request `created` or returning `existing`. This
+refactor does not add automatic reconstruction for that narrow hard-interrupt
+window without concrete operational evidence that warrants the lifecycle
+complexity.
+
 Accepted identities are never evicted or manually pruned, and the ledger has no
 artificial total-entry limit. Each request id, canonical payload, and stored
 entry has a strict size bound, but total entries grow with historical Team
