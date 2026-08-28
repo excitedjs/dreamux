@@ -158,6 +158,37 @@
   domain Command alias, owns caller context, task source, completion behavior,
   visibility, and model-facing errors. `mcp.describe` supplies the delegate's
   validated catalog to the generic shim.
+- Stage 5 audit decision: Feishu automatic provisioning is volatile execution,
+  not durable product state. The Channel persists Collaboration Space policy
+  and completed target bindings only. It does not persist provisioning rows,
+  request phases, an outbox, a recovery cursor, or a restart-resume scan. A Team
+  exists exactly when its valid Team record exists. If the process stops before
+  a binding is committed, the unfinished operation disappears; after restart an
+  unmatched target follows the ordinary Dispatcher-Agent delivery path.
+- Stage 5 audit decision: Collaboration Space policy updates use memory-only
+  snapshot semantics for already-started work. A Team creation accepted before
+  an update continues with the runtime, identity, and repository snapshot it
+  captured; a creation accepted after the update uses the new current snapshot;
+  existing Teams are never rewritten. Generation identifies a policy snapshot
+  and is not a cancellation token. Losing the process loses the in-flight
+  snapshot and requires no recovery.
+- Stage 5 audit decision: persisted Feishu routing facts become live only after
+  their atomic file write succeeds. An update is prepared against an isolated
+  next document, serialized with other writes, persisted, and then published as
+  the session's in-memory current value. A failed write leaves the prior value
+  live, so a reported failure never secretly changes routing or becomes durable
+  through an unrelated later write.
+- MCP invoke infrastructure decision: shim communication is synchronous generic
+  request-response, never event delivery. A shim calls a transport-neutral JSON
+  `invoke` facility, which invokes the ordinary `mcp.toolcall` Command through
+  `admin.sock` and returns that invocation's JSON result on the same call. The
+  reusable invoke request/result and failure boundary belong in shared
+  infrastructure such as `dreamux-utils`; they know no Command name, MCP tool,
+  Team, or Channel. Dreamux Core owns Command registration and socket binding.
+  A delegate or Channel tool returns an explicit JSON success or public failure;
+  the generic MCP shim alone converts that result into the official SDK's MCP
+  tool result. Expected public failures must tell the model what was wrong;
+  unknown thrown implementation failures remain sanitized.
 - Implementation authority principle: existing design is not the target by
   default. The TeamLeader challenges why each mechanism exists and retains it
   only when it serves the confirmed final product. Deployed, load-bearing, or
