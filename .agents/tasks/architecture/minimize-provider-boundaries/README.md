@@ -426,6 +426,42 @@ does not imply that the diff is clean.
     truth. It must independently reconstruct the product consequence of every
     surviving mechanism and call out both unnecessary defense and missing
     product behavior.
+19. **Giving one durable fact two different commit authorities.** I accepted a
+    Feishu routing store that mutated its live in-memory document before its
+    atomic write, then reported the write failure to the caller. That made a
+    failed bind active in the process and allowed an unrelated later write to
+    persist it. Fable must prove that Space policy and completed bindings become
+    live only after their atomic file commit, and that a rejected write leaves
+    the prior committed in-memory value unchanged.
+20. **Modeling expected tool rejection as a cross-package exception.** I let
+    Channel-owned actionable failures become plain thrown errors, then explored
+    public error classes and code duck typing after Core hid them as `INTERNAL`.
+    This missed the simpler existing topology: MCP shim communication is a
+    synchronous generic JSON invocation. Fable must prove that expected public
+    failures return an explicit JSON result through `mcp.toolcall`, the generic
+    shim alone assembles the official MCP error result, and events or
+    Channel-specific Core error types are not introduced.
+21. **Turning a capability move into a capability deletion.** When external
+    binding ownership moved from Core Team MCP to the Feishu Channel delegate, I
+    accepted making all binding tools Dispatcher-only. That silently removed
+    TeamLeader self-bind and self-release behavior instead of re-homing it.
+    Fable must compare behavior before and after every ownership move and prove
+    that TeamLeader binding tools derive the Team from the descriptor-bound
+    caller rather than disappearing or accepting an arbitrary Team name.
+22. **Letting deterministic non-delivery end at a log.** I accepted automatic
+    provisioning failures that occurred before any turn admission as a terminal
+    error with no recipient, even though unmatched Channel input belongs to the
+    Dispatcher Agent. Fable must prove one Dispatcher fallback whenever
+    non-admission is known, while preventing fallback after ambiguous or unknown
+    post-submit outcomes that could otherwise double-deliver.
+23. **Expanding Team-record authority without rechecking its validity
+    boundary.** Removing name claims made one readable Team record decide
+    existence, name ownership, lifecycle admission, and missing-Identity leader
+    reconstruction, while the inherited reader still validated only five
+    fields and cast the rest. Fable must validate exactly the lifecycle and
+    reconstruction facts that now carry product meaning, while rejecting a
+    generic schema framework, unrelated field validation, and speculative
+    limits.
 
 The final Fable audit is read-only first. It must report evidence before any
 repair round: current `file:line`, the real trigger, the product or persisted
