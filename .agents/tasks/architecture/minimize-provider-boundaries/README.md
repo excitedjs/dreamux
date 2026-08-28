@@ -5,7 +5,8 @@
 - Goal: Reduce the public Agent Runtime and Channel contracts to minimal capability-neutral ports, with Channel bridging external interaction through Core Command invocation and Core event subscription.
 - State: `development`
 - Requirement: [Current requirement](/.agents/tasks/architecture/minimize-provider-boundaries/requirement.md)
-- Current solution input revision: `requirement.md` SHA-256 `46bea76019056f03daf4e853f130a727b74d106c61ca524fb56decfd762eee76`
+- Current solution input revision: `requirement.md` SHA-256 `666386b915db3553fe5436ae6d7def7634917ebf8e708fea79828738907b1b36`
+- Prior solution input revision: `requirement.md` SHA-256 `46bea76019056f03daf4e853f130a727b74d106c61ca524fb56decfd762eee76`; the operator then locked the exact seven-field `submitInput` contract and required the concrete field-by-field reduction process to govern every later adjustment, with Core remaining business-agnostic for arbitrary Channel forms.
 - Prior solution input revision: `requirement.md` SHA-256 `13e61811a1fbe91e8002739739444ce41e336d0a0376817c32851ba5c2f1fc6a`; the operator then closed Channel presentation entirely through Channel-owned Team/leader anchor state plus Core turn events, deleting `ChannelOrigin`, presentation correlation, and separate `turnOrigin` from Core.
 - Prior solution input revision: `requirement.md` SHA-256 `92c8d2148879c03141454a3b96de7151810ba02d72ac5e4ca2f2f80f0e5135ca`; the operator then replaced the unbounded registry of per-entity ledgers with one globally bounded Dispatcher-lifetime ledger keyed by target entity and source ID.
 - Prior solution input revision: `requirement.md` SHA-256 `be4cd3202e0971b15b1f5b4fe62c7968f5738f5e2978ab913ed6a280ef8f6417`; the operator then removed the redundant invocation-origin dedupe scope, leaving each target ledger keyed only by its source owner's optional stable ID.
@@ -41,7 +42,8 @@
   [Codex proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/codex.md),
   [Claude proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/claude.md), and
   [Trae Seed 2.1 proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/trae-seed-2-1.md).
-- Current solution baseline: [Technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `54bfc6b43ce9ad37c058fbbafe1ff2e4a726f0413b9bd200ffe01147afd4d10f`. Requirement text, technical design, current source, and prior Decisions are evidence; the final product shape and explicit operator principles are authoritative. Existing load-bearing code has no automatic preservation right.
+- Current solution baseline: [Technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `e87f24cc1ca224407398f9b73212fb058d875a7e9f234cf6cf6dc09557b439da`. Requirement text, technical design, current source, and prior Decisions are evidence; the final product shape and explicit operator principles are authoritative. Existing load-bearing code has no automatic preservation right.
+- Prior final-solution revision: SHA-256 `54bfc6b43ce9ad37c058fbbafe1ff2e4a726f0413b9bd200ffe01147afd4d10f`; it had converged the generic envelope semantics but had not frozen the complete `submitInput` signature or recorded the concrete review sequence as the mandatory method for later surfaces.
 - Prior final-solution revision: SHA-256 `dd23103bcdbcb5c79dd02c02feef498b4079961867e7a96e95f362b08f34b520`; it still routed Channel presentation anchors through Core Turn/Event metadata instead of using Team/leader identity and `turn_id` to close the loop inside Channel.
 - Prior final-solution revision: SHA-256 `e498c30da2342e8ca96af2158e09cab8322ce9099dfde7ee5cca40d1408d1d2a`; it removed origin scope but still retained a child ledger for every entity ever hosted by a Dispatcher process, leaving historical-entity memory unbounded.
 - Prior final-solution revision: SHA-256 `0ed6a016612fcc4cfea3a5dc9ff144c0f4e03629e3cc3d2f995e4033a0e63a87`; it still carried an invocation-origin scope beside the source ID even though the ledger was already per target and source owners already produce stable IDs.
@@ -146,6 +148,54 @@
   only when it serves the confirmed final product. Deployed, load-bearing, or
   historical bad designs are removed during the refactor; only genuinely
   unmodeled product choices return to the operator.
+
+## Architecture review method: the `submitInput` case
+
+Every remaining adjustment must repeat the concrete review sequence that
+converged `TeammateService.submitInput`; a plausible existing field or wrapper is
+not evidence that it belongs in the final contract.
+
+1. Enumerate every real producer and consumer before preserving the surface.
+   This exposed Channel, cron, Agent task, task-notification, admin, and restart
+   inputs, while confirming that Agent Runtime itself consumes only final text.
+2. Compare wrappers by behavior rather than name. `channelInput`,
+   `scheduledInput`, and `controlInput` all reached the same admission and text
+   submission path, so they became one operation. Scheduler cancellation stayed
+   with Scheduler; the cross-service `AbortSignal` disappeared.
+3. Separate model-facing content from Core-only control facts. Model provenance
+   needs `source`, optional string `attrs`, faithful `text`, and optional final
+   `reminder`. Duplicate identity, recovery intent, and completion delivery stay
+   outside the rendered envelope.
+4. Challenge every extra field by asking who produces it, who consumes it, and
+   what observable behavior changes without it. This removed `scope`, opaque
+   correlation, `turnOrigin`, caller-selected `reopenClosed`, and logging labels.
+   `sourceId` survived only because a real source owner supplies it for bounded
+   process-local duplicate admission; `intent` and `deliverCompletion` survived
+   only for their distinct accepted-turn and completion behaviors.
+5. Trace lifetime and ownership, not just types. Replacing per-entity ledgers
+   with one globally bounded Dispatcher-lifetime ledger removed historical
+   entity retention. Channel presentation closed through Channel-owned
+   Team/leader anchors plus pushed `turn_id`, so no presentation token crossed
+   Core.
+6. Test the model-facing representation with actual model reviewers, then pay
+   only for demonstrated clarity. The result kept one paired source tag and an
+   optional sibling `<reminder>`, while deleting parser-oriented `<content>`,
+   CDATA/XML code conversion, body escaping, pretty indentation, and repeated
+   reminders. Markdown code fences remain faithful.
+7. Lock the contract only after every survivor has one independent use. The
+   resulting signature is exactly
+   `{ source, attrs?, text, reminder?, sourceId?, intent?, deliverCompletion? }`;
+   future changes must reopen this reasoning rather than append another field or
+   compatibility wrapper by proximity.
+
+For every later refactor surface, the TeamLeader must perform the same producer,
+consumer, behavior, ownership, lifetime, model-clarity, and failure-semantics
+audit; challenge the Developer when any answer is missing, and return only a
+genuinely product-shaping choice to the operator. Core itself stays absolutely
+generic: it provides the open envelope and admission mechanisms but never
+interprets Channel, cron, task, or any future source's business meaning and
+never branches on a concrete source name.
+
 - Next action: finish the active Stage 3 correction round, then perform the
   TeamLeader drift audit before authorizing Stage 4.
 - Related tasks: Surfaced after [Feishu COT Conversation Cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md); this is an independent architecture outcome.

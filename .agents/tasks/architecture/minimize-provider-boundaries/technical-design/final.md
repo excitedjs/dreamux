@@ -310,20 +310,41 @@ the Runtime with final text. Consequently replacing `channelInput` and
 recreates the old split under `submit`.
 
 Core applies the same reduction at the `TeammateService` admitted-input seam.
-One internal `submitInput` accepts the model-facing quartet `source`, optional
-`attrs: Readonly<Record<string, string>>`, `text`, and optional `reminder`, plus
-only the separate Core admission/turn metadata actually consumed by that
-submission. Omitted `attrs` is exactly the empty attribute set. `source` is an
-open string that
-must be a safe tag name; it is not a Core enum. `system` is reserved to
+The exact internal contract is locked as:
+
+```ts
+interface TeammateSubmitInput {
+  readonly source: string;
+  readonly attrs?: Readonly<Record<string, string>>;
+  readonly text: string;
+  readonly reminder?: string;
+  readonly sourceId?: string;
+  readonly intent?: string;
+  readonly deliverCompletion?: TurnCompletionDelivery;
+}
+```
+
+The first four fields are the complete model-facing input. `sourceId` exists
+only for Core's bounded process-local duplicate admission, `intent` updates the
+accepted turn's durable recovery subject, and `deliverCompletion` is the
+optional Core callback used when an upstream Agent must receive completion.
+None of those three fields is rendered. A duplicate admission does not rewrite
+intent because it does not create a new accepted turn. The COT user-message
+projection records the original `text`, not the assembled source envelope or
+reminder.
+
+Omitted `attrs` is exactly the empty attribute set. `source` is an open string
+that must be a safe tag name; it is not a Core enum. Core validates only the
+generic envelope contract and never interprets or branches on the business
+meaning of a concrete source or attribute. `system` is reserved to
 Core-owned notices: ordinary callers cannot select it, while Dispatcher restart
 notification uses it. Channel Command and `admin.sock` inputs use `channel`.
 Agent-facing MCP spawn and submit inputs default to `task`, while model
 completion delivery defaults to `task-notification`. Stable source identity,
 intent, and completion delivery do not become XML attributes. The service
-exposes no
-`channelInput`, `scheduledInput`, or `controlInput` wrappers, no
-caller-selected `reopenClosed`, no separate `turnOrigin`, and no logging label.
+exposes no `channelInput`, `scheduledInput`, or `controlInput` wrappers, no
+caller-selected `reopenClosed`, no `scope`, no opaque correlation, no separate
+`turnOrigin`, no `AbortSignal`, and no logging label.
 Every ordinary admitted input starts or reopens the target before Runtime
 submission.
 

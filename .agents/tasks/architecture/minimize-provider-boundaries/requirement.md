@@ -485,11 +485,21 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   `channelInput`, `scheduledInput`, or `controlInput` wrappers after the Runtime
   seam has become one text-only `submit`. Every accepted ordinary input may
   materialize or reopen its target, so callers cannot select a `reopenClosed`
-  mode. Its model-facing content consists of required `source`, optional
-  `Readonly<Record<string, string>>` `attrs`, `text`, and optional `reminder`.
+  mode. Its exact input consists only of required `source`, optional
+  `Readonly<Record<string, string>>` `attrs`, `text`, optional `reminder`,
+  optional `sourceId`, optional `intent`, and optional `deliverCompletion`.
+  `sourceId` serves only the one bounded Core duplicate ledger; `intent` updates
+  the durable recovery subject only for a newly accepted turn; and
+  `deliverCompletion` is the optional Core completion callback. These three
+  fields are never rendered. COT records the original `text`, not the assembled
+  envelope or reminder. No `scope`, opaque correlation, `turnOrigin`,
+  `AbortSignal`, or logging label survives beside this signature.
   Missing `attrs` is exactly an empty attribute set. Attributes have no semantic
   order, and the object shape prevents duplicate names. `source` is an open
-  safe tag name rather than a Core enum. `system` is reserved to Core-owned
+  safe tag name rather than a Core enum. Core validates only the generic
+  envelope shape and never interprets or branches on the business meaning of a
+  concrete source or attribute, so adding a new Channel form does not change
+  Core. `system` is reserved to Core-owned
   notices: ordinary callers cannot select it, while Dispatcher restart
   notification uses it. Channel Command and `admin.sock` inputs use `channel`.
   Agent-facing MCP spawn and submit inputs default to `task`, and model

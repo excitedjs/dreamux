@@ -292,6 +292,13 @@ mandatory review precedents, not historical anecdotes:
   bounded Dispatcher-lifetime ledger keyed by target entity plus optional
   source-owned ID; do not preserve an extra invocation-origin scope or a child
   ledger per historical entity.
+- Implement the locked `TeammateService.submitInput` signature exactly as
+  `{ source, attrs?, text, reminder?, sourceId?, intent?, deliverCompletion? }`.
+  Render only the first four fields. Use `sourceId` only for bounded duplicate
+  admission, apply `intent` only to a newly accepted turn, and use
+  `deliverCompletion` only for Core completion delivery. Delete `scope`, opaque
+  correlation, `turnOrigin`, `reopenClosed`, `AbortSignal`, logging labels, and
+  source-specific input wrappers rather than translating them into aliases.
 - Retain neutral system-prompt replace/append forms: Dispatcher supplies both
   and each Provider selects its native mechanism; TeamLeader remains
   append-only for every Provider. Preserve ordinary TeamMate and Workflow
