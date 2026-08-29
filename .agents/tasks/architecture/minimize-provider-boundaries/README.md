@@ -236,6 +236,14 @@
   the generic MCP shim alone converts that result into the official SDK's MCP
   tool result. Expected public failures must tell the model what was wrong;
   unknown thrown implementation failures remain sanitized.
+- Stage 8 audit decision: an MCP server name is a provider-neutral logical
+  identity. Core may compose the complete server set and reject duplicate names,
+  but it must not constrain or encode those names from Codex TOML, Claude Code
+  JSON, or any other Runtime's native configuration grammar. Each Agent Runtime
+  adapter quotes or escapes the unchanged logical name when it renders its own
+  native config. Adding a Runtime with a different grammar must not require a
+  Core naming change, and a more permissive Runtime must not inherit another
+  Runtime's restrictions or model-visible namespace transformation.
 - Implementation authority principle: existing design is not the target by
   default. The TeamLeader challenges why each mechanism exists and retains it
   only when it serves the confirmed final product. Deployed, load-bearing, or
