@@ -2,7 +2,7 @@
 
 - **Status:** Accepted; bin-alias portion superseded by [global-bin-onboard-serve](global-bin-onboard-serve.md), historical dispatcher `tm` bin surface superseded by MCP-only workflow skills
 - **Date:** 2026-05-28
-- **Updated:** 2026-07-14
+- **Updated:** 2026-08-29
 - **Affects:** public CLI surface, npm package name, package bin entries
 - **PR / Issue:** [issue #4](https://github.com/excitedjs/dreamux/issues/4), [issue #18](https://github.com/excitedjs/dreamux/issues/18), [issue #295](https://github.com/excitedjs/dreamux/issues/295)
 
@@ -38,7 +38,6 @@ delegation, but the MCP-only workflow-skill update removed that wrapper again.
   dreamux dispatcher list
   dreamux dispatcher status
   dreamux dispatcher start
-  dreamux dispatcher stop
   dreamux config path
   dreamux config show
   dreamux changelog
@@ -62,6 +61,9 @@ delegation, but the MCP-only workflow-skill update removed that wrapper again.
 - Dispatcher declarations are config-owned. Add or remove entries in
   `~/.dreamux/config.json` and restart `dreamux serve`; the operator CLI has no
   `dispatcher add` or `dispatcher remove` commands.
+- `dispatcher.start` performs initial activation only. There is no
+  `dispatcher.stop` or per-Dispatcher restart lifecycle; whole-process stop and
+  restart remain under `dreamux daemon` or the foreground server owner.
 - `src/cli/server.ts` and `src/cli/server-ctl.ts` remain internal delegated
   modules while the CLI is migrated. They are not package-global bins.
 - Repo-root `/bin/dreamux` remains as a source-checkout convenience shim. There

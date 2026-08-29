@@ -270,11 +270,12 @@ visible card copy or broad logs.
 An external/manual edit requires the target Channel owner to remain fully
 quiesced for the entire read-modify-write window. A target Dispatcher may only
 prepare and report a requested policy/shared-authority patch; it cannot stop
-and then continue to apply its own patch. An independent operator performs:
+its own host process and then continue to apply its own patch. An independent
+operator performs:
 
 ```text
-dispatcher stop -> confirmed stop -> post-stop re-read -> exact atomic patch
--> current-shape validation -> dispatcher start
+daemon stop -> confirmed process exit -> post-stop re-read -> exact atomic patch
+-> current-shape validation -> daemon start
 ```
 
 Change only requested operator-policy or `allow_users` fields. Preserve
@@ -282,7 +283,7 @@ Change only requested operator-policy or `allow_users` fields. Preserve
 temporary file and final mode `0600`; validate JSON and the full V3 shape
 without printing values. `dreamux doctor` is not an access-state validator.
 
-If the file is absent after confirmed stop, use the full secure V3 default as
+If the file is absent after confirmed process exit, use the full secure V3 default as
 the in-memory baseline, apply only requested policy/shared-authority fields,
 create a missing state directory at mode `0700`, and atomically create the first
 mode-`0600` file through a sibling temporary file. This is valid current-state
