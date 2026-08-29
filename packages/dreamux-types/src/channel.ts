@@ -6,7 +6,7 @@
  * reaches Core through exactly two generic ports: the Command invoker and the
  * live event source. Everything else — external transport, message
  * interpretation, Command selection, external-route bindings, target hierarchy,
- * provisioning sagas, Channel-owned configuration/state, and external rendering
+ * automatic provisioning, Channel-owned configuration/state, and rendering
  * — is owned by the Channel and never mirrored into Core.
  *
  * Channel names here are reserved for bridge lifecycle, external transport, and
@@ -18,8 +18,8 @@
  * only and must not import `@excitedjs/dreamux`.
  */
 import type { DreamuxLogger } from './logger.js';
+import type { JsonInvokeResult, JsonInvoker } from './invoke.js';
 import type { JsonValue } from './json.js';
-import type { ChannelMcpCaller } from './command.js';
 import type {
   DreamuxEnvironment,
   ProviderBinCheck,
@@ -43,8 +43,8 @@ import type {
  * receives it whole and demultiplexes inside the Channel, so adding an event
  * changes only this catalog and its consumers, never the base lifecycle.
  *
- * Binding, Collaboration Space, Workflow, scheduler, and host-maintenance
- * events are deliberately absent.
+ * Workflow, scheduler, routing, and host-maintenance events are deliberately
+ * absent.
  */
 export type ChannelCoreEvent =
   | TeamStateEvent
@@ -77,14 +77,16 @@ export interface ChannelEventSource {
   ): ChannelEventSubscription;
 }
 
-/** The generic Command port. Both public adapters share one registry. */
-export interface ChannelCommandInvoker {
-  invoke(command: string, payload: JsonValue): Promise<JsonValue>;
-}
-
-/** Everything a Channel session may reach Core through. */
+/**
+ * Everything a Channel session may reach Core through.
+ *
+ * The Command port is the shared one-request/one-result JSON invoker: a
+ * Channel names a Command, hands it a payload, and gets one answer. Both public
+ * adapters bind the same registry behind it, so a Channel gets no smaller
+ * catalog and no private door.
+ */
 export interface ChannelCorePort {
-  readonly invoke: ChannelCommandInvoker;
+  readonly invoke: JsonInvoker;
   readonly events: ChannelEventSource;
 }
 
@@ -99,7 +101,7 @@ export interface ChannelSession {
    * subscribe-before-admission provable.
    */
   initialize(port: ChannelCorePort): Promise<void>;
-  /** Resume Channel-owned provisioning sagas, then open external I/O. */
+  /** Open external I/O. Everything durable was already loaded. */
   start(): Promise<void>;
   /**
    * Stop external I/O, await the Channel-owned mutation tail, and release
@@ -121,6 +123,24 @@ export interface ChannelMcpToolAnnotations {
   idempotentHint?: boolean;
   openWorldHint?: boolean;
 }
+
+/**
+ * Who is calling a Channel-MCP-scoped operation. Core injects Channel MCP only
+ * into Dispatcher and TeamLeader runtimes, so those are the only two callers.
+ * `team_name` is the Team store key — the same value Core publishes on every
+ * Team/TeamMate event — so a Channel may join tool calls and events on it
+ * without Core learning any Channel concept.
+ *
+ * It lives with the Channel seam rather than with the Command port: the caller
+ * is bound into the MCP lease Core mints, and no Command ever reads it.
+ */
+export type ChannelMcpCaller =
+  | { readonly kind: 'dispatcher' }
+  | {
+      readonly kind: 'team_leader';
+      readonly team_name: string;
+      readonly leader_name: string;
+    };
 
 /** Standard MCP icon metadata without an SDK dependency at the provider seam. */
 export interface ChannelMcpToolIcon {
@@ -201,7 +221,7 @@ export interface ChannelMcpCapability<TConfig> {
   invoke?(
     call: ChannelMcpCall,
     context: ChannelMcpCallContext,
-  ): Promise<JsonValue>;
+  ): Promise<ChannelMcpToolOutcome>;
 }
 
 /** Serves `target: 'session'` registrations for one live Channel instance. */
@@ -209,8 +229,27 @@ export interface ChannelSessionMcpCapability {
   invoke(
     call: ChannelMcpCall,
     context: ChannelMcpCallContext,
-  ): Promise<JsonValue>;
+  ): Promise<ChannelMcpToolOutcome>;
 }
+
+/**
+ * What a Channel tool answers: the result object, or a refusal the Channel
+ * decided the model may read.
+ *
+ * A refusal is a value, not an exception, because the two sides are different
+ * packages and often different processes. A Channel that says "that chat is not
+ * bound to your Team" is stating a product fact the model can act on; making it
+ * travel would otherwise require Core and the Channel to share an error class
+ * or an error-code vocabulary, and then Core would be curating which Channel
+ * failures a model may read — a policy it has no standing to hold.
+ *
+ * A failure the Channel did not decide to publish is still thrown. Core logs it
+ * and answers with its own sanitized wording, so an unhandled bug can never
+ * become model-facing text by accident.
+ */
+export type ChannelMcpToolOutcome = JsonInvokeResult<
+  Readonly<Record<string, JsonValue>>
+>;
 
 /**
  * What `createSession` produced. MCP is composed outside the base session, so a

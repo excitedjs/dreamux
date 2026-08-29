@@ -2,10 +2,10 @@
  * The generic Core Command port (declaration-only).
  *
  * There is one authoritative Command registry, not an admin method table plus a
- * separate Channel catalog. Every adapter — the `admin.sock` NDJSON server, the
- * in-process Channel invoker, and the Channel MCP stdio shim — resolves the same
- * definition, runs the same validation, attaches its factual caller context,
- * executes the same domain handler, and returns the same typed result or error.
+ * separate Channel catalog. Both adapters — the `admin.sock` NDJSON server and
+ * the in-process Channel invoker — resolve the same definition, run the same
+ * validation, attach their factual caller context, execute the same domain
+ * handler, and return the same typed result or error.
  *
  * These types carry no exposure/audience property, allowlist, describe-by-caller
  * hook, or capability negotiation: every registered Command is callable through
@@ -16,33 +16,26 @@
 import type { JsonSchema, JsonValue } from './json.js';
 
 /**
- * Who is calling a Channel-MCP-scoped operation. Core injects Channel MCP only
- * into Dispatcher and TeamLeader runtimes, so those are the only two callers.
- * `team_name` is the Team store key — the same value Core publishes on every
- * Team/TeamMate event — so a Channel may join tool calls and events on it
- * without Core learning any Channel concept.
+ * Which adapter admitted this Command invocation.
+ *
+ * There are exactly two, because an Agent no longer reaches Commands at all: an
+ * Agent-facing MCP tool is served by its own delegate behind a runtime-generation
+ * lease, so no adapter has to describe itself as “the MCP proxy”.
  */
-export type ChannelMcpCaller =
-  | { readonly kind: 'dispatcher' }
-  | {
-      readonly kind: 'team_leader';
-      readonly team_name: string;
-      readonly leader_name: string;
-    };
-
-/** Which adapter admitted this Command invocation. */
-export type CoreCommandSource = 'admin_socket' | 'channel' | 'mcp_proxy';
+export type CoreCommandSource = 'admin_socket' | 'channel';
 
 /**
- * Factual invocation context. Some domain operations, logging, deduplication,
- * and the Channel-MCP lease consume these fields. They never filter the
- * registry.
+ * Factual invocation context. Some domain operations, logging, and deduplication
+ * consume these fields. They never filter the registry.
+ *
+ * There is no caller identity here. Caller scope belongs to whoever bound it —
+ * for MCP that is the delegate the lease resolves to — and a Command that read
+ * one would be re-deriving a fact a lower layer already owns.
  */
 export interface CoreCommandContext {
   readonly source: CoreCommandSource;
   readonly dispatcher_id?: string;
   readonly channel_id?: string;
-  readonly caller?: ChannelMcpCaller;
 }
 
 /**

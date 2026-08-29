@@ -15,4 +15,3 @@ export type {
   WorkflowStopInput,
   WorkflowStopResult,
 } from './workflow-service/types.js';
-export { ChannelToolAuthorizationError } from './channel-service/errors.js';

@@ -3,11 +3,15 @@ import type {
   RuntimeActivityEvent,
   RuntimeAdmission,
   RuntimeSubmission,
+  TeammateRole,
 } from '@excitedjs/dreamux-types';
 
-import type { ConversationProjection } from '../../channel/conversation-projection.js';
+import type {
+  ConversationProjection,
+  ProjectedAgent,
+} from '../../channel/conversation-projection.js';
 import { errorInfo } from '../../platform/error-info.js';
-import type { AgentEntityIdentity, AgentEntityTurnOrigin } from '../agent-entity/types.js';
+import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import type { CompletionDeliveryResult } from '../completion-router/index.js';
 import {
   admissionWithoutTurn,
@@ -18,6 +22,8 @@ import {
 
 interface EntityTurnCoordinatorOptions {
   identity: () => AgentEntityIdentity;
+  /** The runtime role this entity's owner derived; never read from identity. */
+  role: TeammateRole;
   intent: () => string | null;
   isActive: () => boolean;
   conversationProjection?: ConversationProjection;
@@ -27,14 +33,16 @@ interface EntityTurnCoordinatorOptions {
 export const EARLY_ACTIVITY_EVENTS_MAX = 512;
 
 export interface EntityTurnInput {
-  turnOrigin: AgentEntityTurnOrigin | null;
+  /** The open provenance name the submission was rendered under. */
+  source: string;
+  /** The source's original body, which is what display projections record. */
   prompt: string;
   deliverCompletion?: TurnCompletionDelivery;
 }
 
 interface CapturedEntityTurnInput extends EntityTurnInput {
   intent: string | null;
-  sourceName: string;
+  producerName: string;
   submittedAt: number;
 }
 
@@ -84,8 +92,8 @@ export class EntityTurnCoordinator {
       return;
     }
     if (turn.isSettled()) return;
-    this.projectDisplay(turn, 'live_activity', (projection, identity) => {
-      projection.projectActivity(identity, turn, event);
+    this.projectDisplay(turn, 'live_activity', (projection, agent) => {
+      projection.projectActivity(agent, turn, event);
     });
   };
 
@@ -175,18 +183,18 @@ export class EntityTurnCoordinator {
   ): EntityTurn {
     const turn = new EntityTurn(
       submission,
-      input.turnOrigin,
+      input.source,
       input.prompt,
       input.intent,
       input.submittedAt,
-      input.sourceName,
+      input.producerName,
       input.deliverCompletion ?? null,
     );
     this.turnsBySubmission.set(submission, turn);
     this.retainedTurns.add(turn);
     void turn.settled.then((settlement) => {
-      this.projectDisplay(turn, 'settled', (projection, identity) => {
-        projection.projectSettled({ identity, turn, settlement });
+      this.projectDisplay(turn, 'settled', (projection, agent) => {
+        projection.projectSettled({ agent, turn, settlement });
       });
     }).catch(() => undefined);
     void turn.ensureDelivery().finally(() => {
@@ -194,12 +202,12 @@ export class EntityTurnCoordinator {
     }).catch(() => undefined);
     const earlyActivity = this.earlyActivity.get(submission)?.events ?? [];
     this.earlyActivity.delete(submission);
-    this.projectDisplay(turn, 'submitted', (projection, identity) => {
-      projection.projectSubmitted(identity, turn);
+    this.projectDisplay(turn, 'submitted', (projection, agent) => {
+      projection.projectSubmitted(agent, turn);
     });
     for (const event of earlyActivity) {
-      this.projectDisplay(turn, 'early_activity', (projection, identity) => {
-        projection.projectActivity(identity, turn, event);
+      this.projectDisplay(turn, 'early_activity', (projection, agent) => {
+        projection.projectActivity(agent, turn, event);
       });
     }
     return turn;
@@ -210,7 +218,7 @@ export class EntityTurnCoordinator {
     entryPoint: ConversationProjectionEntryPoint,
     operation: (
       projection: ConversationProjection,
-      identity: AgentEntityIdentity,
+      agent: ProjectedAgent,
     ) => void,
   ): void {
     const projection = this.opts.conversationProjection;
@@ -218,7 +226,7 @@ export class EntityTurnCoordinator {
     let identity: AgentEntityIdentity | undefined;
     try {
       identity = this.opts.identity();
-      operation(projection, identity);
+      operation(projection, { identity, role: this.opts.role });
     } catch (error) {
       this.warnProjectionFailure(identity, turn, entryPoint, error);
     }
@@ -238,7 +246,7 @@ export class EntityTurnCoordinator {
             : {
                 dispatcher_id: identity.dispatcher_id,
                 agent_name: identity.name,
-                role: identity.role,
+                role: this.opts.role,
               }),
           turn_id: turn.id,
           entry_point: entryPoint,
@@ -258,7 +266,7 @@ export class EntityTurnCoordinator {
         {
           dispatcher_id: identity.dispatcher_id,
           agent_name: identity.name,
-          role: identity.role,
+          role: this.opts.role,
           maximum: EARLY_ACTIVITY_EVENTS_MAX,
         },
         'Conversation projection early activity buffer is full; dropping newest activity',
@@ -272,7 +280,7 @@ export class EntityTurnCoordinator {
     return {
       ...input,
       intent: this.opts.intent(),
-      sourceName: this.opts.identity().name,
+      producerName: this.opts.identity().name,
       submittedAt: Date.now(),
     };
   }

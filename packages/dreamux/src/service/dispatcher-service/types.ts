@@ -1,5 +1,6 @@
 import type {
   AgentRuntimeStatus,
+  CoreCommandRegistry,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
@@ -8,6 +9,7 @@ import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type { AgentEntityIdentityStatus } from '../agent-entity/types.js';
+import type { McpLeaseRegistry } from '../mcp/leases.js';
 
 export interface DispatcherServiceOptions {
   id: string;
@@ -15,6 +17,14 @@ export interface DispatcherServiceOptions {
   dispatchers: DispatcherStore;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   channelProviders: ChannelProviderCatalog;
+  /** The process-wide Agent-facing MCP lease registry this dispatcher mints into. */
+  mcpLeases: McpLeaseRegistry;
+  /**
+   * The process-wide admitted Command port. This dispatcher's Channel sessions
+   * invoke Commands through it, so they share the admin socket's catalog,
+   * validation, and shutdown fence rather than getting a second surface.
+   */
+  commands: CoreCommandRegistry;
   adminSocketPath?: string;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   workflowLoggerFactory?: (dispatcherId: string) => DreamuxLogger;

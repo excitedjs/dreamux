@@ -1,8 +1,9 @@
 import type {
-  AgentRuntimeCapabilities,
+  AgentActivityRecord,
+  AgentRuntimeSessionRef,
   AgentRuntimeSkillSource,
   AgentRuntimeStatus,
-  ChannelOrigin,
+  JsonValue,
 } from "@excitedjs/dreamux-types";
 
 export const TEAMMATE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -50,21 +51,31 @@ export type AgentEntityIdentityStatus =
   | "closed"
   | "stopped";
 
-export type AgentEntityRole =
-  | "dispatcher"
-  | "teammate"
-  | "team_leader"
-  | "team_member";
+/**
+ * Role is deliberately NOT a persisted identity field and has no type here.
+ *
+ * Only four owners can materialize an Agent — `DispatcherService` (its own root
+ * Agent), the dispatcher's `TeammateCollection`, a `TeamService` (its
+ * TeamLeader), and that Team's `TeammateCollection` — and each already knows
+ * which it is. Whoever needs a role for a prompt, a route, an assertion, or an
+ * event supplies the runtime value `dispatcher` / `team_leader` / `teammate`
+ * from that fact. A durable copy could disagree with the directory the record
+ * actually lives in, and nothing could then say which one was true. Every
+ * Team-scoped ordinary Agent is a TeamMate; there is no contained-member kind.
+ */
 
 export interface AgentEntityIdentity {
   version: 1;
   dispatcher_id: string;
   name: string;
-  role: AgentEntityRole;
   team_id: string | null;
   agent_runtime: string;
-  session_id: string | null;
-  transcript_locator: string | null;
+  /**
+   * The provider's own session object, persisted verbatim and returned only to
+   * the same provider. Core validates and reads `id` and nothing else; every
+   * other field is opaque JSON it must not interpret, index, or branch on.
+   */
+  session: AgentRuntimeSessionRef | null;
   source_cwd: string;
   source_repo: string | null;
   cwd: string;
@@ -104,21 +115,6 @@ export interface AgentEntityRuntimeStatus {
   closed_at: number | null;
   close_note: string | null;
 }
-
-/**
- * Where a turn came from. The channel branch carries the neutral
- * {@link ChannelOrigin} frozen at routing time, so the conversation projection
- * can broadcast the inbound location with the turn's submitted fact. The
- * origin remains provider-neutral; presentation policy belongs to Channel
- * consumers rather than this submission contract.
- */
-export type AgentEntityTurnOrigin =
-  | { kind: "channel"; channel_origin: ChannelOrigin | null }
-  | "dispatcher"
-  | "team_leader"
-  | { kind: "scheduled"; job_id: string }
-  | { kind: "completion" }
-  | { kind: "control" };
 
 export interface CreateTeamLeaderInput {
   name: string;
@@ -168,12 +164,10 @@ export interface AgentEntitySubmissionResult {
 
 export interface AgentEntitySpawnResult extends AgentEntitySubmissionResult {
   teammate: AgentEntityRuntimeStatus;
-  transcript_path: string | null;
 }
 
 export interface AgentEntitySendResult extends AgentEntitySubmissionResult {
   teammate: AgentEntityRuntimeStatus;
-  transcript_path: string | null;
 }
 
 export interface AgentEntityCloseResult {
@@ -219,50 +213,54 @@ export interface AgentEntityHistoryResult {
   next_cursor: string | null;
 }
 
-export type AgentEntityTranscriptBlock =
+/**
+ * One neutral activity fact projected for a `last` read. It mirrors the public
+ * {@link AgentActivityRecord} in Core's snake_case read vocabulary; tool
+ * arguments, tool results, and native record shapes never reach it.
+ */
+export type AgentEntityActivityRecord =
   | {
-      kind: 'message';
-      role: 'user' | 'assistant';
+      kind: 'assistant_message';
       text: string;
-      truncated: boolean;
+      occurred_at: string | null;
     }
   | {
       kind: 'tool';
       name: string;
-      input: string | null;
-      output: string | null;
-      status: 'ok' | 'error';
-      input_truncated: boolean;
-      output_truncated: boolean;
+      status: 'started' | 'completed' | 'failed';
+      occurred_at: string | null;
     };
 
-export interface AgentEntityTranscriptTurn {
-  started_at: number | null;
-  ended_at: number | null;
-  blocks: AgentEntityTranscriptBlock[];
-}
-
 export interface AgentEntityLastQuery {
-  turns?: number;
+  limit?: number;
   cursor?: string;
   includeTools?: boolean;
 }
 
 export interface AgentEntityLastResult {
   teammate: AgentEntityRuntimeStatus;
-  requested_turns: number;
-  returned_turns: number;
-  turns: AgentEntityTranscriptTurn[];
+  requested_records: number;
+  returned_records: number;
+  records: AgentEntityActivityRecord[];
   next_cursor: string | null;
   truncated: boolean;
 }
 
+/**
+ * One spawnable agent runtime as the public capability surface reports it.
+ *
+ * `tags` and `public_config` are the provider's own declared facts, projected
+ * through Core's validated snapshot: they let a caller tell two configured
+ * runtimes apart without Core naming any provider. Both are empty/`null` when
+ * the provider did not resolve.
+ */
 export interface AgentEntityRuntimeCapability {
   id: string;
   spawn: { agent_runtime: string };
   runtime_available: boolean;
-  resume: AgentRuntimeCapabilities["resume"];
   unsupported_reason: string | null;
+  tags: readonly string[];
+  public_config: Readonly<Record<string, JsonValue>> | null;
 }
 
 export interface AgentEntityCapabilities {

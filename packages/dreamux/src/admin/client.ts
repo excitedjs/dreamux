@@ -1,14 +1,31 @@
+/**
+ * The admin socket, bound to the shared one-request/one-result JSON invoker.
+ *
+ * This is the whole of what an out-of-process caller needs: it names a Command,
+ * hands it a payload, and gets one JSON answer back. Nothing above it knows a
+ * socket is involved, and nothing here knows what any Command means — the same
+ * neutral port Core binds in-process for a Channel, bound to a different
+ * transport.
+ *
+ * The two failure kinds stay distinct on purpose. An {@link AdminClientError}
+ * means the request reached a Command and that Command refused it; a
+ * {@link TransportError} means no answer was ever produced, which is a fact
+ * only this side can observe.
+ */
 import { connect, type Socket } from 'node:net';
 
+import type { JsonInvoker, JsonValue } from '@excitedjs/dreamux-types';
+
+import { errorMessage, TransportError } from '../platform/errors.js';
 import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
 import type { AdminRequest, AdminResponse } from './protocol.js';
 
-export interface SendAdminRequestOptions {
+export interface AdminInvokerOptions {
   socketPath?: string;
   timeoutMs?: number;
-  requestId?: string;
 }
 
+/** A failure the SERVER reported, carrying the server's own stable code. */
 export class AdminClientError extends Error {
   constructor(
     public readonly code: string,
@@ -22,26 +39,23 @@ export class AdminClientError extends Error {
 const DEFAULT_TIMEOUT_MS = 10_000;
 let nextRequestId = 1;
 
-export function sendAdminRequest(
-  method: string,
-  params: Record<string, unknown>,
-  options: SendAdminRequestOptions = {},
-): Promise<unknown> {
+export function adminJsonInvoker(
+  options: AdminInvokerOptions = {},
+): JsonInvoker {
   const socketPath = options.socketPath ?? defaultAdminSocketPath();
-  const request: AdminRequest = {
-    id: options.requestId ?? adminRequestId(),
-    method,
-    params,
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  return {
+    invoke(method: string, params: JsonValue): Promise<JsonValue> {
+      const request: AdminRequest = {
+        id: adminRequestId(),
+        method,
+        // A Command payload is a JSON object; the envelope frames it unchanged.
+        params: params as Record<string, unknown>,
+      };
+      // Whatever came back crossed the wire as JSON and parsed as JSON.
+      return sendOne(socketPath, request, timeoutMs) as Promise<JsonValue>;
+    },
   };
-  return sendOne(socketPath, request, options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-}
-
-export function sendOneAdminRequest(
-  socketPath: string,
-  request: AdminRequest,
-  timeoutMs: number = DEFAULT_TIMEOUT_MS,
-): Promise<unknown> {
-  return sendOne(socketPath, request, timeoutMs);
 }
 
 function sendOne(
@@ -54,7 +68,11 @@ function sendOne(
     let settled = false;
     let sock: Socket | null = null;
     const timer = setTimeout(() => {
-      settle(new Error(`admin socket request timed out after ${timeoutMs}ms`));
+      settle(
+        new TransportError(
+          `admin socket request timed out after ${timeoutMs}ms`,
+        ),
+      );
       try {
         sock?.destroy();
       } catch {
@@ -74,7 +92,11 @@ function sendOne(
     try {
       sock = connect(socketPath);
     } catch (err) {
-      settle(err);
+      settle(
+        new TransportError(
+          `cannot reach admin socket at ${socketPath} - ${errorMessage(err)}`,
+        ),
+      );
       return;
     }
     sock.setEncoding('utf8');
@@ -91,7 +113,13 @@ function sendOne(
         if (response.ok) settle(response.result, false);
         else settle(new AdminClientError(response.error.code, response.error.message));
       } catch (err) {
-        settle(err);
+        // A reply that will not parse never delivered an answer, whatever it
+        // was meant to say.
+        settle(
+          new TransportError(
+            `admin socket returned a malformed response - ${errorMessage(err)}`,
+          ),
+        );
       }
       sock.end();
     });
@@ -100,16 +128,20 @@ function sendOne(
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT' || code === 'ECONNREFUSED') {
         settle(
-          new Error(
+          new TransportError(
             `cannot reach admin socket at ${socketPath} - is the server running?`,
           ),
         );
       } else {
-        settle(err);
+        settle(
+          new TransportError(
+            `admin socket connection to ${socketPath} failed - ${errorMessage(err)}`,
+          ),
+        );
       }
     });
     sock.on('close', () => {
-      settle(new Error('admin socket closed without a response'));
+      settle(new TransportError('admin socket closed without a response'));
     });
   });
 }

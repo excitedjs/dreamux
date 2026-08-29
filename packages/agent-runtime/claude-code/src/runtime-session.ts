@@ -1,19 +1,4 @@
 import type { TurnOutcome } from './supervisor.js';
-import {
-  deriveClaudeTranscriptPath,
-  locateClaudeTranscript,
-} from './transcript/path.js';
-
-export interface ResolveRuntimeTranscriptPathInput {
-  sessionId: string;
-  cwd: string;
-  locator: string | null;
-  env: NodeJS.ProcessEnv;
-  resume: boolean;
-  override?: (
-    input: Omit<ResolveRuntimeTranscriptPathInput, 'override'>,
-  ) => Promise<string>;
-}
 
 export function buildClaudeProcessEnv(
   injectEnv: Record<string, string> | undefined,
@@ -24,21 +9,6 @@ export function buildClaudeProcessEnv(
     ...(injectEnv ?? {}),
     ...extraEnv,
   };
-}
-
-export function resolveRuntimeTranscriptPath(
-  input: ResolveRuntimeTranscriptPathInput,
-): Promise<string> {
-  const { override, ...pathInput } = input;
-  if (override !== undefined) return override(pathInput);
-  return input.resume
-    ? locateClaudeTranscript({
-        sessionId: input.sessionId,
-        cwd: input.cwd,
-        locator: input.locator,
-        env: input.env,
-      }).then((located) => located.path)
-    : deriveClaudeTranscriptPath(input.sessionId, input.cwd, input.env);
 }
 
 export function resultTextFromTurnOutcome(

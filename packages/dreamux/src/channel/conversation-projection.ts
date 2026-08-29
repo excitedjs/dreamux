@@ -1,22 +1,18 @@
 import { randomUUID } from 'node:crypto';
 
 import type {
-  ChannelOrigin,
-  ChannelTurnSource,
-  ChannelTurnMessageEvent,
-  ChannelTurnSettledEvent,
-  ChannelTurnSubmittedEvent,
-  ChannelTurnToolCallEvent,
   DreamuxLogger,
   JsonValue,
   RuntimeActivityEvent,
+  TeammateRole,
+  TeammateTurnMessageEvent,
+  TeammateTurnSettledEvent,
+  TeammateTurnSubmittedEvent,
+  TeammateTurnToolCallEvent,
 } from '@excitedjs/dreamux-types';
 
 import type { DispatcherCoreEventPublisher } from '../service/dispatcher-core-events/index.js';
-import type {
-  AgentEntityIdentity,
-  AgentEntityTurnOrigin,
-} from '../service/agent-entity/types.js';
+import type { AgentEntityIdentity } from '../service/agent-entity/types.js';
 
 export const ASSISTANT_TEXT_MAX = 160_000;
 export const CONVERSATION_MESSAGE_MAX = 100_000;
@@ -37,8 +33,11 @@ interface ProjectableTurn {
   readonly id: string;
   readonly submittedAt: number;
   readonly prompt: string | null;
-  /** Present on entity turns; the channel branch carries the frozen origin. */
-  readonly origin?: AgentEntityTurnOrigin | null;
+  /**
+   * The open provenance name the turn was submitted under, echoed verbatim on
+   * the submitted event. Core neither parses it nor decides anything by it.
+   */
+  readonly source: string;
 }
 
 export type ConversationTurnSettlement =
@@ -49,15 +48,27 @@ export type ConversationTurnSettlement =
     }
   | { readonly status: 'failed' | 'stopped' };
 
+/**
+ * The projected Agent: its durable identity plus the runtime role its owner
+ * derived. Role arrives with the call because only the Service that
+ * materialized the Agent knows it — a dispatcher-scoped TeamMate and a
+ * Team-scoped TeamMate carry identical records and are told apart solely by who
+ * owns them.
+ */
+export interface ProjectedAgent {
+  readonly identity: AgentEntityIdentity;
+  readonly role: TeammateRole;
+}
+
 export interface ConversationProjection {
-  projectSubmitted(identity: AgentEntityIdentity, turn: ProjectableTurn): void;
+  projectSubmitted(agent: ProjectedAgent, turn: ProjectableTurn): void;
   projectActivity(
-    identity: AgentEntityIdentity,
+    agent: ProjectedAgent,
     turn: ProjectableTurn,
     event: RuntimeActivityEvent,
   ): void;
   projectSettled(input: {
-    identity: AgentEntityIdentity;
+    agent: ProjectedAgent;
     turn: ProjectableTurn;
     settlement: ConversationTurnSettlement;
   }): void;
@@ -70,26 +81,23 @@ export function createConversationProjection(input: {
   const activityFacts = new WeakMap<object, Set<string>>();
   const activityFactsWarned = new WeakSet<object>();
   return {
-    projectSubmitted(identity, turn) {
-      const context = projectionContext(identity, turn);
-      if (context === null || turn.prompt === null || input.coreEvents.hasSources?.() === false) return;
+    projectSubmitted(agent, turn) {
+      const identity = agent.identity;
+      const scope = eventScope(agent, turn.id);
+      if (scope === null || turn.prompt === null || input.coreEvents.hasSources?.() === false) return;
       input.coreEvents.publish(
         identity.dispatcher_id,
-        submittedEvent(
-          context.scope,
-          turn.submittedAt,
-          context.channelOrigin,
-          turnSourceOf(turn),
-        ),
+        submittedEvent(scope, turn.submittedAt, turn.source),
       );
       input.coreEvents.publish(
         identity.dispatcher_id,
-        messageEvent(context.scope, randomUUID(), turn.submittedAt, 'user', turn.prompt, identity.cwd),
+        messageEvent(scope, randomUUID(), turn.submittedAt, 'user', turn.prompt, identity.cwd),
       );
     },
-    projectActivity(identity, turn, event) {
-      const context = projectionContext(identity, turn);
-      if (context === null || input.coreEvents.hasSources?.() === false) return;
+    projectActivity(agent, turn, event) {
+      const identity = agent.identity;
+      const scope = eventScope(agent, turn.id);
+      if (scope === null || input.coreEvents.hasSources?.() === false) return;
       let submissionFacts = activityFacts.get(event.submission);
       if (submissionFacts === undefined) {
         submissionFacts = new Set();
@@ -103,7 +111,7 @@ export function createConversationProjection(input: {
             {
               dispatcher_id: identity.dispatcher_id,
               agent_name: identity.name,
-              role: identity.role,
+              role: agent.role,
               turn_id: turn.id,
               maximum: CONVERSATION_ACTIVITY_FACTS_MAX,
             },
@@ -115,7 +123,7 @@ export function createConversationProjection(input: {
       submissionFacts.add(event.activity.id);
       const projected = event.activity.kind === 'assistant.message'
         ? messageEvent(
-            context.scope,
+            scope,
             event.activity.id,
             event.occurredAt,
             'assistant',
@@ -123,53 +131,46 @@ export function createConversationProjection(input: {
             identity.cwd,
             event.activity.truncated,
           )
-        : toolEvent(context.scope, event, identity.cwd);
+        : toolEvent(scope, event, identity.cwd);
       input.coreEvents.publish(identity.dispatcher_id, projected);
     },
-    projectSettled({ identity, turn, settlement }) {
-      const context = projectionContext(identity, turn);
-      if (context === null || input.coreEvents.hasSources?.() === false) return;
+    projectSettled({ agent, turn, settlement }) {
+      const identity = agent.identity;
+      const scope = eventScope(agent, turn.id);
+      if (scope === null || input.coreEvents.hasSources?.() === false) return;
       input.coreEvents.publish(
         identity.dispatcher_id,
-        settledEvent(context.scope, settlement, identity.cwd),
+        settledEvent(scope, settlement, identity.cwd),
       );
     },
   };
 }
 
-function projectionContext(
-  identity: AgentEntityIdentity,
-  turn: ProjectableTurn,
-): {
-  readonly scope: NonNullable<ReturnType<typeof eventScope>>;
-  readonly channelOrigin: ChannelOrigin | undefined;
-} | null {
-  const scope = eventScope(identity, turn.id);
-  if (scope === null) return null;
-  const channelOrigin = channelOriginOf(turn);
-  if (scope.role === 'dispatcher' && channelOrigin === undefined) return null;
-  return { scope, channelOrigin };
-}
-
-function eventScope(identity: AgentEntityIdentity, turnId: string) {
-  if (
-    (identity.role === 'team_leader' || identity.role === 'team_member') &&
-    identity.team_id !== null
-  ) {
+/**
+ * Which conversation a turn belongs to.
+ *
+ * Only two conversations exist at this boundary: a Team's, and the dispatcher's
+ * own. A dispatcher-scoped TeamMate has neither — it projects nothing — which
+ * is why the Team branch keys on the Team the owner bound, not on the role
+ * value it now shares with Team-scoped TeamMates.
+ */
+function eventScope(agent: ProjectedAgent, turnId: string) {
+  const { identity, role } = agent;
+  if (role !== 'dispatcher' && identity.team_id !== null) {
     return {
       schema_version: 1 as const,
       team_name: identity.team_id,
-      agent_name: identity.name,
-      role: identity.role,
+      teammate_name: identity.name,
+      role,
       turn_id: turnId,
     };
   }
-  if (identity.role === 'dispatcher' && identity.team_id === null) {
+  if (role === 'dispatcher' && identity.team_id === null) {
     return {
       schema_version: 1 as const,
       team_name: null,
-      agent_name: identity.name,
-      role: identity.role,
+      teammate_name: identity.name,
+      role,
       turn_id: turnId,
     };
   }
@@ -177,53 +178,24 @@ function eventScope(identity: AgentEntityIdentity, turnId: string) {
 }
 
 /**
- * The presentable inbound location captured for a Channel turn. A Channel
- * input can omit it when its route snapshot cannot be frozen; absence means
- * only that no displayable anchor was captured, not that the turn was not a
- * Channel input. Non-Channel inputs also omit it.
+ * Publish every turn of a projected conversation, whatever submitted it.
+ *
+ * Core cannot filter by provenance without learning what a concrete source
+ * means, which is exactly the coupling this boundary exists to prevent. It
+ * states the open `turn_source` and lets each Channel decide what its own
+ * presentation shows — the same place that already owns the visible-message
+ * anchor the submitted event binds to `turn_id`.
  */
-function channelOriginOf(turn: ProjectableTurn): ChannelOrigin | undefined {
-  const origin = turn.origin;
-  if (origin === null || origin === undefined || typeof origin !== 'object') {
-    return undefined;
-  }
-  return origin.kind === 'channel' ? origin.channel_origin ?? undefined : undefined;
-}
-
-function turnSourceOf(turn: ProjectableTurn): ChannelTurnSource | undefined {
-  const origin = turn.origin;
-  if (origin === null || origin === undefined) return undefined;
-  if (typeof origin === 'string') {
-    switch (origin) {
-      case 'dispatcher':
-      case 'team_leader':
-        return origin;
-    }
-  }
-  switch (origin.kind) {
-    case 'channel':
-      return 'channel';
-    case 'scheduled':
-      return 'scheduled';
-    case 'completion':
-      return 'completion';
-    case 'control':
-      return 'control';
-  }
-}
-
 function submittedEvent(
   scope: NonNullable<ReturnType<typeof eventScope>>,
   occurredAt: number,
-  channelOrigin: ChannelOrigin | undefined,
-  turnSource: ChannelTurnSource | undefined,
-): ChannelTurnSubmittedEvent {
+  turnSource: string,
+): TeammateTurnSubmittedEvent {
   return {
     ...scope,
-    kind: 'turn.submitted',
+    kind: 'teammate.turn.submitted',
     occurred_at: occurredAt,
-    ...(channelOrigin !== undefined ? { channel_origin: channelOrigin } : {}),
-    ...(turnSource !== undefined ? { turn_source: turnSource } : {}),
+    turn_source: turnSource,
   };
 }
 
@@ -231,13 +203,13 @@ function settledEvent(
   scope: NonNullable<ReturnType<typeof eventScope>>,
   settlement: ConversationTurnSettlement,
   cwd: string,
-): ChannelTurnSettledEvent {
+): TeammateTurnSettledEvent {
   const assistant = settlement.status === 'completed' && settlement.resultText !== null
     ? sanitizeText(settlement.resultText, cwd, ASSISTANT_TEXT_MAX)
     : null;
   return {
     ...scope,
-    kind: 'turn.settled',
+    kind: 'teammate.turn.settled',
     occurred_at: Date.now(),
     status: settlement.status,
     assistant: assistant?.value ?? null,
@@ -255,11 +227,11 @@ function messageEvent(
   text: string,
   cwd: string,
   sourceTruncated = false,
-): ChannelTurnMessageEvent {
+): TeammateTurnMessageEvent {
   const content = sanitizeText(text, cwd, CONVERSATION_MESSAGE_MAX);
   return {
     ...scope,
-    kind: 'turn.message',
+    kind: 'teammate.turn.message',
     event_id: eventId,
     occurred_at: occurredAt,
     message_role: role,
@@ -273,14 +245,14 @@ function toolEvent(
   scope: NonNullable<ReturnType<typeof eventScope>>,
   event: RuntimeActivityEvent,
   cwd: string,
-): ChannelTurnToolCallEvent {
+): TeammateTurnToolCallEvent {
   if (event.activity.kind !== 'tool.call') throw new Error('expected tool activity');
   const args = sanitizeJson(event.activity.arguments, cwd, CONVERSATION_TOOL_ARGUMENTS_MAX);
   const nativeResult = event.activity.error ?? event.activity.result;
   const result = sanitizeJson(nativeResult, cwd, CONVERSATION_TOOL_RESULT_MAX);
   return {
     ...scope,
-    kind: 'turn.tool_call',
+    kind: 'teammate.turn.tool_call',
     event_id: event.activity.id,
     occurred_at: event.occurredAt,
     call_id: event.activity.callId,

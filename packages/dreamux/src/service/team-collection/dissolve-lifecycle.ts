@@ -1,8 +1,6 @@
-import type { TeamLiveWriter } from '../team-service/types.js';
 import type {
   AcceptedTeamDissolve,
   TeamDissolveRecord,
-  TeamLogicalCloseExecutor,
   TeamSummary,
 } from './types.js';
 
@@ -20,9 +18,8 @@ export class DissolveMilestone<T> {
       this.resolvePromise = resolve;
       this.rejectPromise = reject;
     });
-    // Public dissolve calls return only the receipt, so logical closure may
-    // have no waiter. Keep a rejection observer attached without changing what
-    // later target-close consumers observe from the original promise.
+    // An operation rebuilt by recovery has nobody waiting on it. Keep one
+    // observer attached so its settlement is never an unhandled rejection.
     void this.promise.catch(() => undefined);
   }
 
@@ -68,14 +65,10 @@ export interface TeamDissolveOperation {
   /** Immutable TeamLeader generation captured with the accepted operation. */
   readonly leaderName: string;
   record: TeamDissolveRecord;
-  writers: TeamLiveWriter[];
-  logicalClose: TeamLogicalCloseExecutor | null;
   logical: DissolveMilestone<TeamSummary>;
   interrupt: DissolveInterruptSignal;
   runner: Promise<void> | null;
   retryTimer: NodeJS.Timeout | null;
-  /** Restart recovery must re-quiesce reattached writers before resuming. */
-  needsRecoveryIdle: boolean;
   handle: AcceptedTeamDissolve;
 }
 
@@ -83,7 +76,6 @@ export function newDissolveOperation(input: {
   teamId: string;
   leaderName: string;
   record: TeamDissolveRecord;
-  writers: TeamLiveWriter[];
 }): TeamDissolveOperation {
   const logical = new DissolveMilestone<TeamSummary>();
   const handle: AcceptedTeamDissolve = {
@@ -91,7 +83,7 @@ export function newDissolveOperation(input: {
     receipt: {
       accepted: true,
       team_name: input.teamId,
-      status: 'closing',
+      status: 'closed',
     },
     logicalClosed: logical.promise,
   };
@@ -100,13 +92,10 @@ export function newDissolveOperation(input: {
     teamId: input.teamId,
     leaderName: input.leaderName,
     record: input.record,
-    writers: input.writers,
-    logicalClose: null,
     logical,
     interrupt: new DissolveInterruptSignal(),
     runner: null,
     retryTimer: null,
-    needsRecoveryIdle: false,
     handle,
   };
   return operation;
@@ -119,8 +108,19 @@ export function retryDelayMs(attempt: number): number {
   );
 }
 
+/**
+ * Is this operation still owed work?
+ *
+ * The three terminal phases are terminal for different reasons — the Team
+ * closed, the close failed, or the post-stop check kept the workspace — but
+ * they agree on the only thing this predicate decides: nothing further will
+ * happen under that operation id, so the Team is no longer fenced by it.
+ */
 export function isActiveDissolve(
   record: TeamDissolveRecord | null,
 ): boolean {
-  return record !== null && record.phase !== 'complete' && record.phase !== 'failed';
+  return record !== null &&
+    record.phase !== 'complete' &&
+    record.phase !== 'failed' &&
+    record.phase !== 'blocked_after_stop';
 }

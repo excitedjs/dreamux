@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import {
   CodexProcess,
   type CodexProcessExit,
-  type CodexProcessOptions,
 } from './supervisor.js';
 import { CodexWsClient } from './rpc.js';
 import { performInitializeHandshake } from './handshake.js';
@@ -17,75 +16,47 @@ import type {
 import {
   TurnManager,
 } from './turn-manager.js';
-import { renderChannelInput } from '@excitedjs/dreamux-utils';
 import { createFailFastApprovalHandler } from './approval.js';
+import { RuntimeStateFence } from '@excitedjs/dreamux-utils';
 import type {
   AgentRuntime,
-  AgentRuntimeCapabilities,
   AgentRuntimeIdentity,
   AgentRuntimePathContext,
-  AgentRuntimeSkillSource,
-  AgentRuntimeStateCallbacks,
+  AgentRuntimeSessionRef,
+  AgentRuntimeStartOutcome,
+  AgentRuntimeStateSink,
+  AgentRuntimeStateUpdate,
   AgentRuntimeStatus,
-  AgentRuntimeTextInput,
-  DreamuxLogger,
-  InboundTurnInput,
+  AgentRuntimeSubmissionInput,
   RuntimeAdmission,
-  RuntimeActivitySink,
 } from '@excitedjs/dreamux-types';
-import { BUILTIN_CODEX_PROVIDER_REF } from './provider-ref.js';
-import { CODEX_AGENT_RUNTIME_CAPABILITIES } from './provider.js';
 import {
   codexProcessEnv,
   renderCodexSystemPromptAppend,
 } from './runtime-support.js';
 import { applyCodexSkillExtraRoots } from './skill-roots.js';
-import {
-  resolveCodexTranscriptRoots,
-  validateCodexThreadPath,
-} from './transcript/path.js';
+import type { CodexRuntimeDeps } from './runtime-deps.js';
 
 const DEFAULT_RESTART_BACKOFF_BASE_MS = 1000;
 const DEFAULT_RESTART_BACKOFF_MAX_MS = 30_000;
 
-export interface CodexRuntimeDeps {
-  cwd: string;
-  systemPromptReplace?: string;
-  systemPromptAppend?: readonly string[];
-  state: AgentRuntimeStateCallbacks;
-  paths: AgentRuntimePathContext;
-  allocateSocketPath: (id: string) => string;
-  skillSources?: readonly AgentRuntimeSkillSource[];
-  injectEnv?: Record<string, string>;
-  codexBinPath?: string;
-  codexProcessFactory?: (opts: CodexProcessOptions) => CodexProcess;
-  codexClientFactory?: (socketPath: string) => CodexWsClient;
-  codexHomeDoctor?: (info: {
-    runtimeId: string;
-    cwd: string;
-  }) => void | Promise<void>;
-  resolveExtraArgs?: () => string[];
-  handshakeTimeoutMs?: number;
-  extraEnv?: Record<string, string>;
-  restartBackoffBaseMs?: number;
-  restartBackoffMaxMs?: number;
-  validateTranscriptPath?: (
-    path: string,
-    threadId: string,
-  ) => Promise<string>;
-  logger?: DreamuxLogger;
-  activitySink: RuntimeActivitySink;
-}
-
 export class CodexRuntime implements AgentRuntime {
-  readonly providerRef = BUILTIN_CODEX_PROVIDER_REF;
-
   private process: CodexProcess | null = null;
   private client: CodexWsClient | null = null;
   private turnManager: TurnManager | null = null;
   private threadId: string | null = null;
-  private transcriptLocator: string | null = null;
   private threadResumed = false;
+  private startOutcome: AgentRuntimeStartOutcome | null = null;
+  /**
+   * The provider-local fatal path for authoritative state writes. Any failure
+   * to persist — a revoked lease or a plain write failure — fences input, stops
+   * the restart loop, and tears the app-server child down; the runtime never
+   * keeps running against a state record it could not update.
+   */
+  private readonly fence = new RuntimeStateFence({
+    terminate: () => this.terminateForFence(),
+    log: (level, message, error) => this.log(level, message, error),
+  });
   private status: AgentRuntimeStatus = 'declared';
   private readonly log: (
     level: 'info' | 'warn' | 'error',
@@ -95,16 +66,16 @@ export class CodexRuntime implements AgentRuntime {
   private stopping = false;
   private restarting = false;
   private generation = 0;
-  private startupTask: Promise<void> | null = null;
+  private startupTask: Promise<AgentRuntimeStartOutcome> | null = null;
   private restartTask: Promise<void> | null = null;
   private stopTask: Promise<void> | null = null;
   private restartAttempts = 0;
   private restartTimer: NodeJS.Timeout | null = null;
-  private readonly state: AgentRuntimeStateCallbacks;
+  private readonly state: AgentRuntimeStateSink<AgentRuntimeSessionRef>;
   private readonly paths: AgentRuntimePathContext;
 
   constructor(
-    public readonly identity: AgentRuntimeIdentity,
+    private readonly identity: AgentRuntimeIdentity<AgentRuntimeSessionRef>,
     private readonly deps: CodexRuntimeDeps,
   ) {
     const logger = deps.logger;
@@ -113,55 +84,32 @@ export class CodexRuntime implements AgentRuntime {
         ? (lvl, msg, err) =>
             logger[lvl](err !== undefined ? { err } : {}, msg)
         : (lvl, msg, err) => {
-            const prefix = `[dispatcher ${identity.runtime_id}] ${lvl}`;
+            const prefix = `[dispatcher ${identity.runtimeId}] ${lvl}`;
             if (err !== undefined) console.error(prefix, msg, err);
             else console.error(prefix, msg);
           };
-    this.threadId = identity.checkpoint?.id ?? null;
-    this.transcriptLocator =
-      identity.checkpoint?.transcript_locator ?? null;
+    this.threadId = identity.session?.id ?? null;
     this.state = deps.state;
     this.paths = deps.paths;
   }
 
-  get dispatcherId(): string {
-    return this.identity.runtime_id;
+  /**
+   * The host-supplied runtime id, used for this package's own paths and log
+   * fields. Private: the live handle Core holds is `start`/`submit`/`stop`, and
+   * a runtime answers no questions about itself.
+   */
+  private get dispatcherId(): string {
+    return this.identity.runtimeId;
   }
 
-  getStatus(): AgentRuntimeStatus {
-    return this.status;
-  }
-
-  getCapabilities(): AgentRuntimeCapabilities {
-    return CODEX_AGENT_RUNTIME_CAPABILITIES;
-  }
-
-  getCheckpoint(): { id: string; transcript_locator?: string | null } | null {
-    if (this.threadId === null) return null;
-    return {
-      id: this.threadId,
-      transcript_locator: this.transcriptLocator,
-    };
-  }
-
-  wasCheckpointResumed(): boolean {
-    return this.threadResumed;
-  }
-
-  async getContext(): Promise<null> {
-    return null;
-  }
-
-  async resume(): Promise<void> {
-    await this.start();
-  }
-
-  start(): Promise<void> {
+  start(): Promise<AgentRuntimeStartOutcome> {
     if (this.startupTask !== null) return this.startupTask;
     if (this.stopping || this.stopTask !== null || this.status === 'stopped') {
       return Promise.reject(new Error('codex runtime is stopped'));
     }
-    if (this.status === 'ready') return Promise.resolve();
+    if (this.status === 'ready' && this.startOutcome !== null) {
+      return Promise.resolve(this.startOutcome);
+    }
     this.restarting = false;
     this.generation += 1;
     this.clearRestartTimer();
@@ -174,29 +122,35 @@ export class CodexRuntime implements AgentRuntime {
     return task;
   }
 
-  private async startRuntime(generation: number): Promise<void> {
+  private async startRuntime(
+    generation: number,
+  ): Promise<AgentRuntimeStartOutcome> {
     this.setStatus('starting');
-    await this.state.setStatus('starting', {
-      last_started_at: Date.now(),
-    });
+    await this.publish({ kind: 'status', status: 'starting' });
 
     try {
-      await this.startCodexRuntime(generation);
+      await this.startCodexRuntime(generation, { allowFreshFallback: false });
       this.assertGeneration(generation);
       await this.markReady(generation);
+      const outcome: AgentRuntimeStartOutcome = Object.freeze({
+        continuity: this.threadResumed ? 'resumed' : 'fresh',
+      });
+      this.startOutcome = outcome;
+      return outcome;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.log('error', `start failed: ${msg}`, err);
       const failures: unknown[] = [err];
       if (!this.stopping && generation === this.generation) {
         this.setStatus('degraded');
-        try {
-          await this.state.setStatus('degraded', {
-            last_error: msg,
-          });
-        } catch (stateError) {
-          failures.push(stateError);
-        }
+        // Awaited for ordering, but not folded into `failures`: the fence has
+        // already made a failed write terminal, and start must report the
+        // original start failure.
+        await this.settleState({
+          kind: 'status',
+          status: 'degraded',
+          lastError: msg,
+        });
       }
       try {
         await this.cleanupOnFailure();
@@ -216,7 +170,10 @@ export class CodexRuntime implements AgentRuntime {
     }
   }
 
-  private async startCodexRuntime(generation: number): Promise<void> {
+  private async startCodexRuntime(
+    generation: number,
+    options: { allowFreshFallback: boolean },
+  ): Promise<void> {
     this.assertGeneration(generation);
     if (this.process !== null) {
       throw new Error(
@@ -282,13 +239,14 @@ export class CodexRuntime implements AgentRuntime {
     await this.applySkillExtraRoots();
     this.assertGeneration(generation);
 
-    await this.resolveThread(generation);
+    await this.resolveThread(generation, options);
     this.assertGeneration(generation);
 
     this.turnManager = new TurnManager({
       dispatcherId: this.dispatcherId,
       getThreadId: () => this.threadId,
       client: this.client,
+      codec: this.deps.codec,
       log: this.log,
       activitySink: this.deps.activitySink,
     });
@@ -303,11 +261,23 @@ export class CodexRuntime implements AgentRuntime {
     });
   }
 
-  private async resolveThread(generation: number): Promise<void> {
+  /**
+   * Establish the native thread for this generation.
+   *
+   * Recovery is continuous by contract: when a prior session exists, a failed
+   * `thread/resume` rejects rather than silently becoming a fresh thread. Only
+   * a mid-life restart — where start has already resolved and the caller can no
+   * longer be told — may fall back to a fresh thread, and it must publish the
+   * loss before publishing the replacement session.
+   */
+  private async resolveThread(
+    generation: number,
+    options: { allowFreshFallback: boolean },
+  ): Promise<void> {
     if (this.client === null) throw new Error('client not initialized');
     this.threadResumed = false;
     const threadInstructions = this.threadInstructionParams();
-    const existing = this.threadId ?? this.identity.checkpoint?.id ?? null;
+    const existing = this.threadId ?? this.identity.session?.id ?? null;
     if (existing === null) {
       const params: ThreadStartParams = {
         ...threadInstructions,
@@ -318,17 +288,12 @@ export class CodexRuntime implements AgentRuntime {
       );
       this.assertGeneration(generation);
       const candidateThreadId = res.thread.id;
-      const transcript = await this.validateThreadPath(
-        res.thread.path,
-        candidateThreadId,
-      );
-      await this.state.setCheckpoint({
-        id: candidateThreadId,
-        transcript_locator: transcript.path,
+      await this.publish({
+        kind: 'session',
+        session: { id: candidateThreadId },
       });
       this.assertGeneration(generation);
       this.threadId = candidateThreadId;
-      this.transcriptLocator = transcript.path;
       this.log('info', `started fresh thread ${this.threadId}`);
       return;
     }
@@ -345,6 +310,12 @@ export class CodexRuntime implements AgentRuntime {
     } catch (err) {
       this.assertGeneration(generation);
       const msg = err instanceof Error ? err.message : String(err);
+      if (!options.allowFreshFallback) {
+        throw new Error(
+          `codex could not restore session ${existing}: ${msg}`,
+          { cause: err },
+        );
+      }
       this.log(
         'warn',
         `thread/resume failed for ${existing}: ${msg}; starting fresh thread`,
@@ -355,70 +326,28 @@ export class CodexRuntime implements AgentRuntime {
       );
       this.assertGeneration(generation);
       const replacementThreadId = res.thread.id;
-      const transcript = await this.validateThreadPath(
-        res.thread.path,
-        replacementThreadId,
-      );
-      const replacement = {
-        id: replacementThreadId,
-        transcript_locator: transcript.path,
-      };
-      if (this.state.recordLostCheckpoint !== undefined) {
-        await this.state.recordLostCheckpoint(
-          {
-            id: existing,
-            transcript_locator: this.transcriptLocator,
-          },
-          replacement,
-          `thread/resume failed: ${msg}`,
-        );
-      } else {
-        await this.state.setCheckpoint(replacement);
-        await this.state.setStatus('degraded', {
-          last_error: `thread/resume failed: ${msg}`,
-        });
-      }
+      await this.publish({
+        kind: 'session_lost',
+        reason: `thread/resume failed: ${msg}`,
+      });
+      await this.publish({
+        kind: 'session',
+        session: { id: replacementThreadId },
+      });
       this.assertGeneration(generation);
       this.threadId = replacementThreadId;
-      this.transcriptLocator = transcript.path;
       return;
     }
     this.assertGeneration(generation);
     const resumedThreadId = resumed.thread.id;
-    const transcript = await this.validateThreadPath(
-      resumed.thread.path,
-      resumedThreadId,
-    );
-    await this.state.setCheckpoint({
-      id: resumedThreadId,
-      transcript_locator: transcript.path,
+    await this.publish({
+      kind: 'session',
+      session: { id: resumedThreadId },
     });
     this.assertGeneration(generation);
     this.threadId = resumedThreadId;
-    this.transcriptLocator = transcript.path;
     this.threadResumed = true;
     this.log('info', `resumed thread ${this.threadId}`);
-  }
-
-  private validateThreadPath(
-    path: string | null | undefined,
-    threadId: string,
-  ) {
-    if (path === null || path === undefined) {
-      throw new Error('Codex thread response omitted the native transcript path');
-    }
-    if (this.deps.validateTranscriptPath !== undefined) {
-      return this.deps.validateTranscriptPath(path, threadId).then(
-        (validatedPath) => ({ path: validatedPath }),
-      );
-    }
-    return resolveCodexTranscriptRoots(
-      codexProcessEnv(this.deps.injectEnv, this.deps.extraEnv),
-    ).then((roots) => validateCodexThreadPath(
-      path,
-      threadId,
-      roots,
-    ));
   }
 
   private threadInstructionParams(): Pick<
@@ -440,44 +369,67 @@ export class CodexRuntime implements AgentRuntime {
     return params;
   }
 
-  async channelInput(input: InboundTurnInput): Promise<RuntimeAdmission> {
+  async submit(input: AgentRuntimeSubmissionInput): Promise<RuntimeAdmission> {
     if (this.stopping || this.status === 'stopped') {
       return { status: 'stopped' };
     }
-    if (this.turnManager === null) {
+    const turnManager = this.turnManager;
+    if (turnManager === null) {
       return { status: 'failed', error: new Error('turn manager not initialized') };
     }
-    return this.turnManager.enqueue({ ...input, text: renderChannelInput(input) });
-  }
-
-  waitIdle(): Promise<void> {
-    return this.turnManager?.waitIdle() ?? Promise.resolve();
-  }
-
-  async completionInput(input: AgentRuntimeTextInput): Promise<RuntimeAdmission> {
-    if (this.stopping || this.status === 'stopped') {
-      return { status: 'stopped' };
-    }
-    if (this.turnManager === null) {
-      return { status: 'failed', error: new Error('turn manager not initialized') };
-    }
-    return this.turnManager.submitTextInput(input);
+    // The text is already the complete model-facing message: this runtime
+    // renders no envelope and never branches on where the turn came from.
+    return turnManager.submitInput(input);
   }
 
   stop(): Promise<void> {
-    if (this.status === 'stopped') return Promise.resolve();
     if (this.stopTask !== null) return this.stopTask;
+    // A fenced runtime is already being torn down by the fence. Join that
+    // teardown instead of publishing a terminal state through the sink that
+    // just failed, and never report a stop the fence could not prove.
+    if (this.fence.isFenced) return this.track(this.stopAfterFatalTeardown());
+    if (this.status === 'stopped') return Promise.resolve();
     if (!this.stopping) {
       this.stopping = true;
       this.generation += 1;
     }
     this.clearRestartTimer();
-    const task = this.stopRuntime();
+    return this.track(this.stopRuntime());
+  }
+
+  /** Single-flight the stop task, releasing the slot so a failure can retry. */
+  private track(task: Promise<void>): Promise<void> {
     this.stopTask = task;
     void task.catch(() => {
       if (this.stopTask === task) this.stopTask = null;
     });
     return task;
+  }
+
+  /**
+   * Converge a stop that arrived after the fence already started the fatal
+   * teardown. A teardown that succeeded left the runtime stopped; one that
+   * failed retained the client, turn manager, and child process, so this
+   * retries against that retained authority and rejects if the retry fails too.
+   */
+  private async stopAfterFatalTeardown(): Promise<void> {
+    let fatal: unknown = null;
+    try {
+      await this.fence.terminated();
+    } catch (error) {
+      fatal = error;
+    }
+    if (fatal === null) {
+      this.status = 'stopped';
+      return;
+    }
+    this.log(
+      'warn',
+      'retrying codex runtime teardown after a fatal state write left it unproven',
+      fatal,
+    );
+    await this.teardownCodexRuntime();
+    this.status = 'stopped';
   }
 
   private async stopRuntime(): Promise<void> {
@@ -487,17 +439,21 @@ export class CodexRuntime implements AgentRuntime {
     // fence prevents pre-authority startup work from publishing later.
     const teardown = this.teardownCodexRuntime();
     void teardown.catch(() => undefined);
+    // The terminal writes are awaited so stop cannot resolve before they land
+    // — Core revokes this generation's lease right after stop settles — but
+    // they do not decide whether stop converged. Only the native teardown does;
+    // a failed write is already terminal through the fence.
     const stoppingState = Promise.resolve().then(() =>
-      this.state.setStatus('stopping'));
-    const [stateResult, teardownResult] = await Promise.allSettled([
+      this.settleState({ kind: 'status', status: 'stopping' }));
+    const [, teardownResult] = await Promise.allSettled([
       stoppingState,
       teardown,
     ]);
     throwSettledFailures(
-      [stateResult, teardownResult],
+      [teardownResult],
       'codex runtime stop did not converge',
     );
-    await this.state.setStatus('stopped');
+    await this.settleState({ kind: 'status', status: 'stopped' });
     this.setStatus('stopped');
   }
 
@@ -563,17 +519,19 @@ export class CodexRuntime implements AgentRuntime {
   }
 
   private scheduleRestart(reason: string): void {
+    // A fenced runtime is terminal: `terminateForFence` sets the stop fence
+    // synchronously, so this guard also stops the restart loop.
     if (this.stopping || this.restartTimer !== null || this.restarting) return;
     const attempt = this.restartAttempts + 1;
     this.restartAttempts = attempt;
     const delay = this.restartDelayMs(attempt);
     this.log('warn', `${reason}; restarting in ${delay}ms`);
     this.setStatus('degraded');
-    void this.state
-      .setStatus('degraded', { last_error: reason })
-      .catch((err) =>
-        this.log('warn', 'failed to persist degraded status', err),
-      );
+    this.fence.publishDetached(() => this.state.publish({
+      kind: 'status',
+      status: 'degraded',
+      lastError: reason,
+    }));
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
       const task = this.restartCodexRuntime(reason, this.generation);
@@ -593,12 +551,10 @@ export class CodexRuntime implements AgentRuntime {
     let retryReason: string | null = null;
     try {
       this.setStatus('starting');
-      await this.state.setStatus('starting', {
-        last_started_at: Date.now(),
-      });
+      await this.publish({ kind: 'status', status: 'starting' });
       await this.teardownCodexRuntime();
       this.assertGeneration(generation);
-      await this.startCodexRuntime(generation);
+      await this.startCodexRuntime(generation, { allowFreshFallback: true });
       this.assertGeneration(generation);
       this.restartAttempts = 0;
       await this.markReady(generation);
@@ -616,13 +572,13 @@ export class CodexRuntime implements AgentRuntime {
       ).join('; ');
       this.log('error', `restart failed: ${msg}`, err);
       this.setStatus('degraded');
-      try {
-        await this.state.setStatus('degraded', {
-          last_error: msg,
-        });
-      } catch (stateError) {
-        this.log('warn', 'failed to persist restart failure', stateError);
-      }
+      await this.settleState({
+        kind: 'status',
+        status: 'degraded',
+        lastError: msg,
+      });
+      // A fenced runtime never reaches the retry: `scheduleRestart` refuses
+      // once the fence set the stop flag.
       retryReason = `codex app-server restart failed: ${msg}`;
     } finally {
       this.restarting = false;
@@ -651,19 +607,75 @@ export class CodexRuntime implements AgentRuntime {
   private async markReady(generation: number): Promise<void> {
     this.assertGeneration(generation);
     this.setStatus('ready');
-    await this.state.setStatus('ready', {
-      last_ready_at: Date.now(),
-      last_error: null,
-    });
+    await this.publish({ kind: 'status', status: 'ready' });
     this.assertGeneration(generation);
   }
 
+  /**
+   * Push one authoritative fact into the leased sink. Core resolves `publish`
+   * only after the durable write, so awaiting it is what makes the session and
+   * ready state durable before `start` resolves. Every failure is terminal and
+   * runs through the fence — a revoked lease means a newer generation already
+   * owns the entity, and any other failure means Core's record of this runtime
+   * can no longer be repaired from here.
+   */
+  private publish(
+    update: AgentRuntimeStateUpdate<AgentRuntimeSessionRef>,
+  ): Promise<void> {
+    return this.fence.publish(() => this.state.publish(update));
+  }
+
+  /**
+   * Persist a fact the caller's own outcome does not depend on, but whose
+   * ordering does: `stop` must not resolve before its terminal write lands,
+   * because Core keeps this generation's lease valid exactly until stop settles
+   * and a detached write would race the revocation that follows.
+   *
+   * The error is not rethrown. The fence has already made it terminal, and
+   * these callers report something else — whether the app-server child
+   * terminated, or the original start/restart failure — which a state-write
+   * failure does not change.
+   */
+  private async settleState(
+    update: AgentRuntimeStateUpdate<AgentRuntimeSessionRef>,
+  ): Promise<void> {
+    try {
+      await this.publish(update);
+    } catch {
+      // Already logged and acted on by the fence.
+    }
+  }
+
+  /**
+   * The fence's native teardown. Deliberately not `stop()`: `stop()` publishes
+   * `stopping`/`stopped` through the very sink that just proved unusable and
+   * would only produce a second failure. This closes the client, turn manager,
+   * and child process, and nothing else.
+   *
+   * It runs synchronously up to its first await, so the stop fence and bumped
+   * generation refuse new input and cancel any pending restart immediately.
+   */
+  private async terminateForFence(): Promise<void> {
+    this.stopping = true;
+    this.generation += 1;
+    this.clearRestartTimer();
+    await this.teardownCodexRuntime();
+    // Reached only when teardown converged. A failed teardown propagates to
+    // `RuntimeStateFence.terminated()` and leaves the status alone, so a later
+    // `stop()` cannot read 'stopped' off a child that was never proved dead.
+    // Assigned directly because `setStatus` refuses once the fence is closed.
+    this.status = 'stopped';
+  }
+
   private setStatus(s: AgentRuntimeStatus): void {
+    // A fenced runtime is terminal: its status is owned by the teardown, and a
+    // late background transition must not reopen it.
+    if (this.fence.isFenced) return;
     this.status = s;
   }
 
   private assertGeneration(generation: number): void {
-    if (this.stopping || generation !== this.generation) {
+    if (this.stopping || this.fence.isFenced || generation !== this.generation) {
       throw new Error('codex runtime is stopping');
     }
   }

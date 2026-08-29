@@ -17,15 +17,19 @@ export function childAgentRuntimeId(identity: AgentEntityIdentity): string {
   );
 }
 
+/**
+ * Scope assertions on a record the owner already located.
+ *
+ * They check ownership only — dispatcher and Team — because the directory the
+ * record was read from already settled which owner it belongs to. There is no
+ * persisted role to cross-check, and re-deriving one here would be a second
+ * authority for a fact the path has already answered.
+ */
 export function assertDispatcherScopedTeammate(
   identity: AgentEntityIdentity,
   dispatcherId: string,
 ): void {
-  if (
-    identity.dispatcher_id === dispatcherId &&
-    identity.role === 'teammate' &&
-    identity.team_id === null
-  ) {
+  if (identity.dispatcher_id === dispatcherId && identity.team_id === null) {
     return;
   }
   throw new Error(`agent ${JSON.stringify(identity.name)} does not exist`);
@@ -35,11 +39,7 @@ export function assertTeamScopedAgent(
   teamId: string,
 ): (identity: AgentEntityIdentity, dispatcherId: string) => void {
   return (identity, dispatcherId) => {
-    if (
-      identity.dispatcher_id === dispatcherId &&
-      identity.team_id === teamId &&
-      (identity.role === 'team_leader' || identity.role === 'team_member')
-    ) {
+    if (identity.dispatcher_id === dispatcherId && identity.team_id === teamId) {
       return;
     }
     throw new Error(`agent ${JSON.stringify(identity.name)} does not exist`);
@@ -52,7 +52,6 @@ export function assertDispatcherRootAgent(
 ): void {
   if (
     identity.dispatcher_id === dispatcherId &&
-    identity.role === 'dispatcher' &&
     identity.team_id === null &&
     identity.name === DISPATCHER_AGENT_NAME
   ) {

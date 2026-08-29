@@ -1,4 +1,6 @@
-import type { DreamuxLogger, InboundDeliveryResult } from '@excitedjs/dreamux-types';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+
+import type { InboundDeliveryResult } from '../teammate-service/turn-recording.js';
 
 import type {
   CronDeliverTarget,
@@ -31,15 +33,19 @@ export interface CronUpdateRequest {
 export interface SchedulerServiceOptions {
   ownerId: string;
   store: CronJobStore;
-  absentRuntimeStrategy: 'miss' | 'submit';
   admit<T>(task: () => Promise<T>): Promise<T>;
-  getWriter(): { waitIdle(): Promise<void> } | null;
+  /**
+   * Submit one due fire as an ordinary admitted input.
+   *
+   * No cancellation crosses this call, and no idle question either. The owner
+   * supplies the same submission path any other caller uses; whether the
+   * runtime folds the input into an active turn or starts a new one is the
+   * runtime's decision, made where it is already made.
+   */
   submitScheduled(input: {
     jobId: string;
     prompt: string;
     sourceId: string;
-    /** Aborted once this held fire has been stopped, deleted, or superseded. */
-    signal: AbortSignal;
   }): Promise<InboundDeliveryResult>;
   log: DreamuxLogger;
   now?: () => number;

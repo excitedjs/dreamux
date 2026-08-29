@@ -1,113 +1,73 @@
+/**
+ * Core's whole relationship with its Channels: build them, hold them, hand a
+ * caller the one object it needs, close them.
+ *
+ * There is no binding table behind this any more, and no route owner. A
+ * Channel decides where a message goes and says so by naming a Team; Core
+ * neither stores that decision nor reconstructs it, which is why nothing here
+ * resolves a target or authorizes an egress.
+ */
 import type {
-  AgentRuntimeMcpServer,
-  ChannelSession,
-  ChannelTarget,
-  ChannelToolCallerContext,
+  ChannelInstance,
+  ChannelSessionMcpCapability,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type {
-  DispatcherChannelCollaborationSpaceConfig,
   DispatcherChannelConfig,
   DreamuxConfig,
 } from '../../config/config.js';
-import { defaultChannelCollaborationSpaceConfig } from '../../config/config.js';
-import type {
-  ChannelBinding,
-  ChannelBindingBindTransition,
-  ChannelBindingUnbindTransition,
-} from '../channel-binding/store.js';
-import { ChannelBindingStore } from '../channel-binding/store.js';
-import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
-import {
-  publishRouteBindTransition,
-  publishRouteUnbindTransition,
-} from '../binding-events.js';
-import type { ChannelMcpCallerScope } from './mcp-descriptors.js';
 import { ChannelSessions } from './channel-sessions.js';
-import { ChannelToolAuthorizationError } from './errors.js';
-import type { TeamRouteProjection } from '../team-collection/types.js';
-
-export interface ChannelRouteOwner {
-  kind: 'team';
-  teamName: string;
-  leaderName: string;
-}
-
-export interface ChannelBindingSummary {
-  channel_id: string;
-  provider: string;
-  target_type: string;
-  target_key: string;
-  display: string | null;
-  canonical_url: string | null;
-}
 
 export interface ChannelServiceOptions {
   dispatcherId: string;
   config: DreamuxConfig;
   channelProviders: ChannelProviderCatalog;
-  bindings?: ChannelBindingStore;
-  coreEvents?: DispatcherCoreEventPublisher;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
-  adminSocketPath?: string;
-}
-
-export interface ChannelToolInvocation {
-  providerRef?: string;
-  channelId?: string;
-  name: string;
-  arguments: Record<string, unknown>;
-  /** Resolved caller identity, forwarded verbatim to the provider seam. */
-  caller: ChannelToolCallerContext;
 }
 
 export class ChannelService {
-  private readonly dispatcherId: string;
   private readonly sessions: ChannelSessions;
-  private readonly bindings: ChannelBindingStore;
-  private readonly coreEvents?: DispatcherCoreEventPublisher;
 
   constructor(opts: ChannelServiceOptions) {
-    this.dispatcherId = opts.dispatcherId;
-    this.bindings = opts.bindings ?? new ChannelBindingStore();
-    this.coreEvents = opts.coreEvents;
     this.sessions = new ChannelSessions({
       dispatcherId: opts.dispatcherId,
       config: opts.config,
       channelProviders: opts.channelProviders,
       channelLoggerFactory: opts.channelLoggerFactory,
-      ...(opts.adminSocketPath !== undefined
-        ? { adminSocketPath: opts.adminSocketPath }
-        : {}),
     });
   }
 
-  live(): Map<string, ChannelSession> {
+  live(): Map<string, ChannelInstance> {
     return this.sessions.live();
   }
 
-  build(): Promise<Map<string, ChannelSession>> {
+  build(): Promise<Map<string, ChannelInstance>> {
     return this.sessions.build();
   }
 
-  adopt(channels: Map<string, ChannelSession>): void {
+  adopt(channels: Map<string, ChannelInstance>): void {
     this.sessions.adopt(channels);
+  }
+
+  /**
+   * The MCP capability one channel's created instance composed, for the Channel
+   * MCP delegate.
+   *
+   * This is the whole of Core's involvement in a channel tool call now: hand
+   * the delegate the provider object that serves it. Core no longer resolves a
+   * target, proves a message belongs to one, or gates egress — a Channel owns
+   * its own access rules, and the caller it needs to apply them to is carried in
+   * the call context. `null` means this channel has no such object, which is
+   * how a session tool it could never serve stays out of the frozen catalog.
+   */
+  sessionMcp(channelId: string): ChannelSessionMcpCapability | null {
+    return this.sessions.sessionMcp(channelId);
   }
 
   configuredChannels(): readonly DispatcherChannelConfig[] {
     return this.sessions.configuredChannels();
-  }
-
-  collaborationSpaceConfig(
-    channelId: string,
-  ): DispatcherChannelCollaborationSpaceConfig {
-    const channel = this.configuredChannels().find((entry) => entry.id === channelId);
-    if (channel === undefined) {
-      throw new Error(`unknown channel '${channelId}'`);
-    }
-    return channel.collaborationSpace ?? defaultChannelCollaborationSpaceConfig();
   }
 
   clear(): void {
@@ -117,422 +77,4 @@ export class ChannelService {
   closeAll(log: DreamuxLogger): Promise<void> {
     return this.sessions.closeAll(log);
   }
-
-  channelMcpServerDescriptorsForCaller(
-    scope: ChannelMcpCallerScope,
-  ): AgentRuntimeMcpServer[] {
-    return this.sessions.channelMcpServerDescriptorsForCaller(scope);
-  }
-
-  async invokeTool(input: ChannelToolInvocation): Promise<unknown> {
-    const channelId = this.resolveToolChannelId(
-      input.channelId,
-      input.providerRef,
-    );
-    return this.sessions.invokeTool({
-      ...(input.providerRef !== undefined ? { providerRef: input.providerRef } : {}),
-      name: input.name,
-      arguments: input.arguments,
-      caller: input.caller,
-      channelId,
-    });
-  }
-
-  async authorizeTeamLeaderEgress(input: {
-    owner: ChannelRouteOwner;
-    channelId?: string;
-    providerRef?: string;
-    arguments: Record<string, unknown>;
-  }): Promise<{ channelId: string; target: ChannelTarget }> {
-    const channelId = this.resolveToolChannelId(
-      input.channelId,
-      input.providerRef,
-    );
-    let target: ChannelTarget;
-    try {
-      target = await this.resolveTarget(input.arguments, channelId);
-    } catch {
-      throw new ChannelToolAuthorizationError(
-        'BAD_REQUEST',
-        'TeamLeader channel tools require a resolvable target',
-      );
-    }
-
-    const messageId = input.arguments['message_id'];
-    const hasExactMessageTargetProof =
-      typeof messageId === 'string' && messageId !== '';
-    if (
-      hasExactMessageTargetProof &&
-      !(await this.messageBelongsToTarget(target, messageId, channelId))
-    ) {
-      throw new ChannelToolAuthorizationError(
-        'CHANNEL_SCOPE_DENIED',
-        'TeamLeader may act only on messages observed in bound team channels',
-      );
-    }
-
-    const ownerHasBinding = await this.ownerCanUseResolvedTarget({
-      owner: input.owner,
-      channelId,
-      target,
-      allowBindingFallbacks: hasExactMessageTargetProof,
-    });
-    if (!ownerHasBinding) {
-      throw new ChannelToolAuthorizationError(
-        'CHANNEL_SCOPE_DENIED',
-        'TeamLeader may use channels only for bound team channels',
-      );
-    }
-    return { channelId, target };
-  }
-
-  async bindResolvedTarget(input: {
-    team: TeamRouteProjection;
-    channelId: string;
-    target: ChannelTarget;
-  }): Promise<ChannelBinding> {
-    const transition = await this.bindings.bind({
-      dispatcherId: this.dispatcherId,
-      channelId: input.channelId,
-      provider: this.channelProviderRef(input.channelId),
-      target: input.target,
-      teamName: input.team.team_name,
-      leaderName: input.team.leader_name,
-    });
-    return this.commitRouteBind(transition, input.team);
-  }
-
-  async bindResolvedTargetIfAvailableToOwner(input: {
-    team: TeamRouteProjection;
-    channelId: string;
-    target: ChannelTarget;
-  }): Promise<ChannelBinding> {
-    const transition =
-      await this.bindings.bindIfAvailableToOwner({
-        dispatcherId: this.dispatcherId,
-        channelId: input.channelId,
-        provider: this.channelProviderRef(input.channelId),
-        target: input.target,
-        teamName: input.team.team_name,
-        leaderName: input.team.leader_name,
-      });
-    return this.commitRouteBind(transition, input.team);
-  }
-
-  async claimResolvedTarget(input: {
-    team: TeamRouteProjection;
-    channelId: string;
-    target: ChannelTarget;
-    claimId: string;
-  }): Promise<ChannelBinding> {
-    const transition = await this.bindings.claim({
-      dispatcherId: this.dispatcherId,
-      channelId: input.channelId,
-      provider: this.channelProviderRef(input.channelId),
-      target: input.target,
-      teamName: input.team.team_name,
-      leaderName: input.team.leader_name,
-      claimId: input.claimId,
-    });
-    return this.commitRouteBind(transition, input.team);
-  }
-
-  async transferBack(input: {
-    expectedOwner?: ChannelRouteOwner;
-    channelId?: string;
-    meta: Record<string, unknown>;
-  }): Promise<ChannelBinding | null> {
-    const channelId = this.resolveChannelId(input.channelId);
-    const target = await this.resolveTarget(input.meta, channelId);
-    const transition = await this.bindings.transferBack({
-      dispatcherId: this.dispatcherId,
-      channelId,
-      targetKey: target.target_key,
-      ...(input.expectedOwner !== undefined
-        ? {
-            expectedOwner: {
-              teamName: input.expectedOwner.teamName,
-              leaderName: input.expectedOwner.leaderName,
-            },
-          }
-        : {}),
-    });
-    return this.commitRouteUnbind(transition);
-  }
-
-  async transferResolvedTargetBack(input: {
-    expectedOwner?: ChannelRouteOwner;
-    channelId: string;
-    target: ChannelTarget;
-  }): Promise<ChannelBinding | null> {
-    const transition = await this.bindings.transferBack({
-      dispatcherId: this.dispatcherId,
-      channelId: input.channelId,
-      targetKey: input.target.target_key,
-      ...(input.expectedOwner !== undefined
-        ? {
-            expectedOwner: {
-              teamName: input.expectedOwner.teamName,
-              leaderName: input.expectedOwner.leaderName,
-            },
-          }
-        : {}),
-    });
-    return this.commitRouteUnbind(transition);
-  }
-
-  async releaseResolvedTargetIfOwned(input: {
-    owner: ChannelRouteOwner;
-    channelId: string;
-    target: ChannelTarget;
-  }): Promise<ChannelBinding | null> {
-    const transition = await this.bindings.transferBackIfOwned({
-      dispatcherId: this.dispatcherId,
-      channelId: input.channelId,
-      targetKey: input.target.target_key,
-      owner: {
-        teamName: input.owner.teamName,
-        leaderName: input.owner.leaderName,
-      },
-    });
-    return this.commitRouteUnbind(transition);
-  }
-
-  async releaseResolvedTargetIfClaimed(input: {
-    claimId: string;
-    channelId: string;
-    target: ChannelTarget;
-  }): Promise<ChannelBinding | null> {
-    const transition = await this.bindings.transferBackIfClaimed({
-      dispatcherId: this.dispatcherId,
-      channelId: input.channelId,
-      targetKey: input.target.target_key,
-      claimId: input.claimId,
-    });
-    return this.commitRouteUnbind(transition);
-  }
-
-  async resolveInboundBinding(input: {
-    channelId: string;
-    target: ChannelTarget;
-  }): Promise<{ binding: ChannelBinding; owner: ChannelRouteOwner } | null> {
-    const binding = await this.bindings.resolve({
-      dispatcherId: this.dispatcherId,
-      channelId: input.channelId,
-      targetKey: input.target.target_key,
-    });
-    if (binding === null) return null;
-    return { binding, owner: ownerFromBinding(binding) };
-  }
-
-  async ownerCanUseTarget(input: {
-    owner: ChannelRouteOwner;
-    targetKey: string;
-  }): Promise<string | null> {
-    const bindings = await this.bindings.list(this.dispatcherId);
-    const match = bindings.find(
-      (binding) =>
-        binding.active &&
-        binding.target_key === input.targetKey &&
-        ownerMatchesBinding(input.owner, binding),
-    );
-    return match?.channel_id ?? null;
-  }
-
-  private async ownerCanUseResolvedTarget(input: {
-    owner: ChannelRouteOwner;
-    channelId: string;
-    target: ChannelTarget;
-    allowBindingFallbacks: boolean;
-  }): Promise<boolean> {
-    const candidates = [
-      input.target,
-      ...(input.allowBindingFallbacks
-        ? (input.target.binding_fallbacks ?? [])
-        : []),
-    ];
-    for (const target of candidates) {
-      const binding = await this.bindings.resolve({
-        dispatcherId: this.dispatcherId,
-        channelId: input.channelId,
-        targetKey: target.target_key,
-      });
-      if (binding !== null && ownerMatchesBinding(input.owner, binding)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  async activeBindingSummaryForOwner(
-    owner: ChannelRouteOwner,
-  ): Promise<ChannelBindingSummary | null> {
-    return (await this.activeBindingSummariesForOwner(owner))[0] ?? null;
-  }
-
-  async activeBindingSummariesForOwner(
-    owner: ChannelRouteOwner,
-  ): Promise<ChannelBindingSummary[]> {
-    const bindings = await this.bindings.list(this.dispatcherId);
-    return bindings
-      .filter((binding) => binding.active && ownerMatchesBinding(owner, binding))
-      .map(bindingSummary);
-  }
-
-  async transferAllForOwner(owner: ChannelRouteOwner): Promise<ChannelBinding[]> {
-    const transferred: ChannelBinding[] = [];
-    for (const binding of await this.bindings.list(this.dispatcherId)) {
-      if (!binding.active || !ownerMatchesBinding(owner, binding)) continue;
-      const transition = await this.bindings.transferBack({
-        dispatcherId: this.dispatcherId,
-        channelId: binding.channel_id,
-        targetKey: binding.target_key,
-        expectedOwner: {
-          teamName: owner.teamName,
-          leaderName: owner.leaderName,
-        },
-      });
-      const released = this.commitRouteUnbind(transition);
-      if (released !== null) transferred.push(released);
-    }
-    return transferred;
-  }
-
-  resolveTarget(meta: unknown, channelId?: string): Promise<ChannelTarget> {
-    return this.sessions.resolveTarget(meta, channelId);
-  }
-
-  messageBelongsToTarget(
-    target: ChannelTarget,
-    messageId: string,
-    channelId?: string,
-  ): Promise<boolean> {
-    return this.sessions.messageBelongsToTarget(target, messageId, channelId);
-  }
-
-  private commitRouteBind(
-    transition: ChannelBindingBindTransition,
-    currentTeam: TeamRouteProjection,
-  ): ChannelBinding {
-    publishRouteBindTransition({
-      coreEvents: this.coreEvents,
-      dispatcherId: this.dispatcherId,
-      transition,
-      currentTeam,
-    });
-    return transition.binding;
-  }
-
-  private commitRouteUnbind(
-    transition: ChannelBindingUnbindTransition,
-  ): ChannelBinding | null {
-    publishRouteUnbindTransition({
-      coreEvents: this.coreEvents,
-      dispatcherId: this.dispatcherId,
-      transition,
-    });
-    return transition.binding;
-  }
-
-  resolveToolChannelId(requested?: string, providerRef?: string): string {
-    if (providerRef === undefined) return this.resolveChannelId(requested);
-    if (requested !== undefined) {
-      const channelId = this.resolveChannelId(requested);
-      const actualProvider = this.channelProviderRef(channelId);
-      if (actualProvider !== providerRef) {
-        throw new ChannelToolAuthorizationError(
-          'BAD_REQUEST',
-          `channel '${channelId}' for dispatcher '${this.dispatcherId}' uses provider '${actualProvider}', not '${providerRef}'`,
-        );
-      }
-      return channelId;
-    }
-    const matches = this.dispatcherChannels().filter(
-      (channel) => channel.provider === providerRef,
-    );
-    if (matches.length === 0) {
-      throw new ChannelToolAuthorizationError(
-        'BAD_REQUEST',
-        `dispatcher '${this.dispatcherId}' has no configured channel for provider '${providerRef}'`,
-      );
-    }
-    if (matches.length > 1) {
-      throw new ChannelToolAuthorizationError(
-        'BAD_REQUEST',
-        `dispatcher '${this.dispatcherId}' has ${matches.length} channels for provider '${providerRef}'; channel_id is required`,
-      );
-    }
-    return matches[0]!.id;
-  }
-
-  resolveChannelId(requested?: string): string {
-    const ids = this.dispatcherChannels().map((channel) => channel.id);
-    if (requested !== undefined) {
-      if (!ids.includes(requested)) {
-        throw new Error(
-          `unknown channel_id '${requested}' for dispatcher '${this.dispatcherId}'; ` +
-            `its configured channels are ${
-              ids.length > 0 ? ids.map((id) => `'${id}'`).join(', ') : '(none)'
-            }`,
-        );
-      }
-      return requested;
-    }
-    if (ids.length === 0) {
-      throw new Error(`dispatcher '${this.dispatcherId}' has no resolvable channel`);
-    }
-    if (ids.length > 1) {
-      throw new Error(
-        `dispatcher '${this.dispatcherId}' has ${ids.length} channels; ` +
-          'channel_id is required to select one',
-      );
-    }
-    return ids[0]!;
-  }
-
-  channelProviderRef(channelId: string): string {
-    const channel = this.dispatcherChannels().find(
-      (entry) => entry.id === channelId,
-    );
-    if (channel === undefined) {
-      throw new Error(
-        `unknown channel_id '${channelId}' for dispatcher '${this.dispatcherId}'`,
-      );
-    }
-    return channel.provider;
-  }
-
-  private dispatcherChannels(): readonly DispatcherChannelConfig[] {
-    return this.sessions.configuredChannels();
-  }
-}
-
-function ownerFromBinding(binding: ChannelBinding): ChannelRouteOwner {
-  return {
-    kind: 'team',
-    teamName: binding.team_name,
-    leaderName: binding.leader_name,
-  };
-}
-
-function ownerMatchesBinding(
-  owner: ChannelRouteOwner,
-  binding: ChannelBinding,
-): boolean {
-  return (
-    owner.kind === 'team' &&
-    binding.team_name === owner.teamName &&
-    binding.leader_name === owner.leaderName
-  );
-}
-
-function bindingSummary(binding: ChannelBinding): ChannelBindingSummary {
-  return {
-    channel_id: binding.channel_id,
-    provider: binding.provider,
-    target_type: binding.target_type,
-    target_key: binding.target_key,
-    display: binding.display,
-    canonical_url: binding.canonical_url,
-  };
 }

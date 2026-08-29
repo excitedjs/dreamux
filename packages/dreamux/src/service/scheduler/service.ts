@@ -21,7 +21,6 @@ import type {
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const MAX_JOBS_PER_OWNER = 128;
-const MAX_DEFER_MS = 60 * 60 * 1000;
 
 interface TimerSlot {
   dueAt: number;
@@ -35,9 +34,6 @@ export class SchedulerService {
   private readonly log: DreamuxLogger;
   private readonly now: () => number;
   private readonly timers = new Map<string, TimerSlot>();
-  private readonly heldFires = new Map<string, symbol>();
-  private readonly heldFireControllers = new Map<string, AbortController>();
-  private readonly stopWaiters = new Set<() => void>();
   private fireSeq = 0;
   private running = false;
   private lifecycleGeneration = 0;
@@ -77,11 +73,6 @@ export class SchedulerService {
     this.lifecycleGeneration += 1;
     for (const slot of this.timers.values()) clearTimeout(slot.timer);
     this.timers.clear();
-    this.abortHeldFires();
-    this.heldFires.clear();
-    const waiters = [...this.stopWaiters];
-    this.stopWaiters.clear();
-    for (const resolve of waiters) resolve();
   }
 
   async list(): Promise<{ jobs: CronJob[] }> {
@@ -143,8 +134,6 @@ export class SchedulerService {
 
   private async doDelete(id: string): Promise<{ id: string; deleted: boolean }> {
     this.clearTimer(id);
-    this.abortHeldFire(id);
-    this.heldFires.delete(id);
     const deleted = await this.store.delete(id);
     this.log.info(
       { owner_id: this.ownerId, job_id: id, deleted },
@@ -230,8 +219,7 @@ export class SchedulerService {
         );
         return;
       }
-      if (this.heldFires.has(jobId)) return;
-      await this.deferUntilIdleAndSubmit(job, generation);
+      await this.submitDue(job, generation);
     } catch (err) {
       this.log.error(
         { owner_id: this.ownerId, job_id: jobId, err: errorInfo(err) },
@@ -243,9 +231,8 @@ export class SchedulerService {
 
   private async dispatchAdmitted(jobId: string): Promise<void> {
     // Capture synchronously. An owner can stop the scheduler after a timer has
-    // fired but before Dispatcher admission starts this async task. That stopped
-    // generation must never install a new long idle wait after stop() has
-    // already released the existing waiters.
+    // fired but before Dispatcher admission starts this async task; that
+    // stopped generation must not submit.
     const generation = this.lifecycleGeneration;
     await this.admit(() =>
       generation === this.lifecycleGeneration
@@ -276,145 +263,63 @@ export class SchedulerService {
     }
   }
 
-  private async deferUntilIdleAndSubmit(
-    job: CronJob,
-    generation: number,
-  ): Promise<void> {
+  /**
+   * Submit a due fire, now.
+   *
+   * A cron job is a scheduled instruction, not a polite request for a quiet
+   * moment: when it is due it goes through the same submission path a person
+   * would use, and the runtime folds or steers it into whatever is running.
+   * Nothing here asks whether the agent is busy, holds a fire for later, or
+   * keeps a second queue beside the one the runtime already owns.
+   *
+   * What it does check is its own side of the boundary, immediately before
+   * submitting: the lifecycle generation that a `stop()` invalidates, and the
+   * durable job as it stands right now. Both are the scheduler's own facts —
+   * neither reaches into the submission path to cancel anything.
+   */
+  private async submitDue(job: CronJob, generation: number): Promise<void> {
+    const current = await this.store.get(job.id);
     if (generation !== this.lifecycleGeneration) return;
-    const token = Symbol(job.id);
-    this.heldFires.set(job.id, token);
-    const signal = this.signalForHeldFire(job.id, token);
-    const writer = this.opts.getWriter();
-    if (writer === null) {
-      if (this.opts.absentRuntimeStrategy === 'miss') {
-        // Dispatcher-owned scheduler: a missing runtime means the start
-        // transaction failed or was torn down; do not resurrect it outside
-        // doStart().
-        this.clearHeldFire(job.id);
-        await this.armMissed(job, 'runtime unavailable');
-        return;
-      }
-      await this.submitHeld(job, token, signal, generation);
+    if (current === null || !current.enabled) return;
+    const result = await this.opts.submitScheduled({
+      jobId: current.id,
+      prompt: current.action.prompt,
+      sourceId: this.nextFireSourceId(current.id),
+    });
+    if (result.status !== 'submitted' && result.status !== 'ambiguous') {
+      await this.armMissed(current, `scheduled submission returned ${result.status}`);
       return;
     }
-    const idle = writer.waitIdle();
-    let maxDeferTimer: NodeJS.Timeout | null = null;
-    const maxDefer = new Promise<'timeout'>((resolve) => {
-      maxDeferTimer = setTimeout(() => resolve('timeout'), MAX_DEFER_MS);
-      maxDeferTimer.unref();
-    });
-    let resolveStopped: (() => void) | null = null;
-    const stopSignal = new Promise<'stopped'>((resolve) => {
-      resolveStopped = () => resolve('stopped');
-      this.stopWaiters.add(resolveStopped);
-    });
-    let wait: 'idle' | 'timeout' | 'stopped';
-    try {
-      wait = await Promise.race([
-        idle.then(() => 'idle' as const),
-        maxDefer,
-        stopSignal,
-      ]);
-    } catch (err) {
-      this.clearHeldFire(job.id);
-      throw err;
-    } finally {
-      if (maxDeferTimer !== null) clearTimeout(maxDeferTimer);
-      if (resolveStopped !== null) this.stopWaiters.delete(resolveStopped);
-    }
-    if (this.heldFires.get(job.id) !== token) return;
-    if (wait !== 'idle') {
-      // 'stopped' or 'timeout' — terminal for this fire, release the hold.
-      this.clearHeldFire(job.id);
-      if (wait === 'stopped') return;
-      await this.armMissed(job, 'max defer exceeded');
-      return;
-    }
-
-    await this.submitHeld(job, token, signal, generation);
-  }
-
-  private async submitHeld(
-    job: CronJob,
-    token: symbol,
-    signal: AbortSignal,
-    generation: number,
-  ): Promise<void> {
-    // Keep the held token across the submit so a stop() (which clears heldFires)
-    // aborts this in-flight fire instead of submitting into a stopping owner;
-    // release the hold in `finally` only if it is still ours.
-    try {
-      const current = await this.store.get(job.id);
-      if (generation !== this.lifecycleGeneration) return;
-      if (current === null || !current.enabled) return;
-      if (signal.aborted) return;
-      const result = await this.opts.submitScheduled({
-        jobId: current.id,
-        prompt: current.action.prompt,
-        sourceId: this.nextFireSourceId(current.id),
-        signal,
-      });
-      if (signal.aborted) return;
-      if (result.status !== 'submitted' && result.status !== 'ambiguous') {
-        await this.armMissed(current, `completionInput returned ${result.status}`);
-        return;
-      }
-      if (result.status === 'ambiguous') {
-        this.log.warn(
-          { owner_id: this.ownerId, job_id: current.id },
-          'cron submission was admission-ambiguous; recording the fire without retry',
-        );
-      }
-      const firedAt = this.now();
-      const nextRunAt = current.recurring
-        ? nextRunAfter(current.cron, current.tz, firedAt)
-        : null;
-      const enabled = current.recurring;
-      const updated = await this.store.setFired({
-        id: current.id,
-        firedAt,
-        nextRunAt,
-        enabled,
-      });
-      this.log.info(
-        { owner_id: this.ownerId, job_id: current.id, fired_at: firedAt },
-        'cron job fired',
+    if (result.status === 'ambiguous') {
+      this.log.warn(
+        { owner_id: this.ownerId, job_id: current.id },
+        'cron submission was admission-ambiguous; recording the fire without retry',
       );
-      if (updated !== null) this.arm(updated);
-    } finally {
-      if (this.heldFires.get(job.id) === token) {
-        this.clearHeldFire(job.id);
-      }
     }
-  }
-
-  private signalForHeldFire(jobId: string, token: symbol): AbortSignal {
-    if (this.heldFires.get(jobId) !== token) return AbortSignal.abort();
-    let controller = this.heldFireControllers.get(jobId);
-    if (controller === undefined) {
-      controller = new AbortController();
-      this.heldFireControllers.set(jobId, controller);
+    const firedAt = this.now();
+    const nextRunAt = current.recurring
+      ? nextRunAfter(current.cron, current.tz, firedAt)
+      : null;
+    const enabled = current.recurring;
+    const updated = await this.store.setFired({
+      id: current.id,
+      firedAt,
+      nextRunAt,
+      enabled,
+    });
+    this.log.info(
+      { owner_id: this.ownerId, job_id: current.id, fired_at: firedAt },
+      'cron job fired',
+    );
+    // The fire is recorded either way; only re-arming belongs to a scheduler
+    // that is still the current one.
+    if (
+      updated !== null &&
+      this.running &&
+      generation === this.lifecycleGeneration
+    ) {
+      this.arm(updated);
     }
-    return controller.signal;
-  }
-
-  private abortHeldFire(jobId: string): void {
-    const controller = this.heldFireControllers.get(jobId);
-    if (controller === undefined) return;
-    controller.abort();
-    this.heldFireControllers.delete(jobId);
-  }
-
-  private abortHeldFires(): void {
-    for (const controller of this.heldFireControllers.values()) {
-      controller.abort();
-    }
-    this.heldFireControllers.clear();
-  }
-
-  private clearHeldFire(jobId: string): void {
-    this.abortHeldFire(jobId);
-    this.heldFires.delete(jobId);
   }
 
   private async armMissed(job: CronJob, reason: string): Promise<void> {

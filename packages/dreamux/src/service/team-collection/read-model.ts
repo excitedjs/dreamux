@@ -1,4 +1,10 @@
-import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+
+import {
+  AgentEntityCollectionStore,
+  AgentIdentityStore,
+} from '../agent-entity/identity-store.js';
+import { teamMateCollectionDir } from '../../platform/paths.js';
 import type { AgentEntityIdentityStatus } from '../agent-entity/types.js';
 import {
   clampTeamHistoryLimit,
@@ -21,12 +27,12 @@ export class TeamCollectionReadModel {
   constructor(private readonly opts: {
     dispatcherId: string;
     store: TeamStore;
-    identities: AgentIdentityStore;
+    log: DreamuxLogger;
   }) {}
 
   async list(): Promise<TeamListRow[]> {
     const out: TeamListRow[] = [];
-    for (const team of await this.opts.store.list(this.opts.dispatcherId)) {
+    for (const team of await this.opts.store.list()) {
       out.push(await this.listRow(team));
     }
     return out;
@@ -34,7 +40,7 @@ export class TeamCollectionReadModel {
 
   async history(input: TeamHistoryQuery): Promise<TeamHistoryResult> {
     const rows: TeamHistoryRow[] = [];
-    for (const team of await this.opts.store.list(this.opts.dispatcherId)) {
+    for (const team of await this.opts.store.list()) {
       const row = await this.historyRow(team);
       if (matchesTeamHistoryQuery(row, input)) rows.push(row);
     }
@@ -97,18 +103,35 @@ export class TeamCollectionReadModel {
     };
   }
 
+  /**
+   * The leader's durable status, read from this Team's root and accepted only
+   * when the record names the leader the Team record names. No probing: the
+   * leader has exactly one location and this is it.
+   */
   private async leaderState(
     team: TeamRecord,
   ): Promise<AgentEntityIdentityStatus | null> {
-    const leader = await this.opts.identities
-      .get(this.opts.dispatcherId, team.leader_name, team.team_id)
+    const leader = await new AgentIdentityStore({
+      dir: this.opts.store.teamRoot(team.team_id),
+      dispatcherId: this.opts.dispatcherId,
+      expectedName: null,
+      log: this.opts.log,
+    })
+      .read()
       .catch(() => null);
-    return leader?.status ?? null;
+    return leader !== null && leader.name === team.leader_name
+      ? leader.status
+      : null;
   }
 
+  /** Directory occupancy is the roster fact; an unreadable member still counts. */
   private async memberCount(team: TeamRecord): Promise<number> {
     return (
-      await this.opts.identities.list(this.opts.dispatcherId, team.team_id)
+      await new AgentEntityCollectionStore({
+        root: teamMateCollectionDir(this.opts.store.teamRoot(team.team_id)),
+        dispatcherId: this.opts.dispatcherId,
+        log: this.opts.log,
+      }).names()
     ).length;
   }
 }

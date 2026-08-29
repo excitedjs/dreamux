@@ -3,10 +3,8 @@ import { randomUUID } from 'node:crypto';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import { requireLifecycleText } from '../agent-entity/types.js';
-import type { ChannelRouteOwner } from '../channel-service/index.js';
 import type { KeyedAsyncQueue } from '../serial-queue.js';
 import type { TeamService } from '../team-service/index.js';
-import type { TeamLiveWriter } from '../team-service/types.js';
 import type {
   WorktreeCleanupAssessment,
   WorktreeManager,
@@ -15,7 +13,8 @@ import {
   TeamDissolveBlockedError,
   TeamDissolveFailedError,
   TeamDissolveInterruptedError,
-  TeamUnavailableError,
+  TeamClosedError,
+  TeamGenerationChangedError,
   teamErrorInfo,
 } from './errors.js';
 import {
@@ -31,14 +30,24 @@ import {
 import type { TeamStore } from './store.js';
 import type {
   AcceptedTeamDissolve,
+  AcceptedTeamLogicalClose,
   TeamDissolvePublicError,
   TeamDissolveRecord,
   TeamDissolveRequest,
-  TeamLogicalCloseExecutor,
   TeamRecord,
   TeamSummary,
 } from './types.js';
 import { validateTeamId } from './types.js';
+
+/**
+ * How long a Dispatcher-triggered dissolve may spend deciding.
+ *
+ * The pre-acceptance worktree probe runs Git under this Team's route lock, and
+ * a caller waiting on a tool result should get an answer rather than an
+ * unbounded wait on a slow repository. Self-dissolve has no such budget: the
+ * TeamLeader has already stopped its own children and is waiting on itself.
+ */
+const TEAM_DISSOLVE_DECISION_BUDGET_MS = 9_000;
 
 interface TeamDissolveControllerOptions {
   dispatcherId: string;
@@ -50,10 +59,12 @@ interface TeamDissolveControllerOptions {
   trackAcceptedOperation?<T>(task: () => Promise<T>): Promise<T>;
   mustTeam(teamId: string): Promise<TeamRecord>;
   getService(teamId: string): Promise<TeamService>;
-  activateClosing(record: TeamRecord, service: TeamService): ChannelRouteOwner;
+  activateClosing(record: TeamRecord, service: TeamService): void;
   endClosing(teamId: string, reopen: boolean): Promise<void>;
   replaceCachedRecord(teamId: string, record: TeamRecord): void;
   assertNewCloseAvailable(teamId: string): void;
+  /** Stop this Team's resources and commit its logical close. */
+  closeResources(input: AcceptedTeamLogicalClose): Promise<TeamSummary>;
 }
 
 class StaleTeamDissolveOperationError extends TeamDissolveFailedError {
@@ -81,6 +92,9 @@ export class TeamDissolveController {
       scheduleRetry: (operation) => this.scheduleRetry(operation),
       failOpen: (operation, publicError, cause) =>
         this.failOpen(operation, publicError, cause),
+      blockAfterStop: (operation, publicError, cause) =>
+        this.failOpen(operation, publicError, cause, 'blocked_after_stop'),
+      closeResources: (input) => this.opts.closeResources(input),
       logicalClosed: (operation, summary) =>
         this.markLogicalClosed(operation, summary),
       finishClosed: (operation, summary) =>
@@ -93,80 +107,79 @@ export class TeamDissolveController {
   async accept(request: TeamDissolveRequest): Promise<AcceptedTeamDissolve> {
     const teamId = validateTeamId(request.teamId);
     const note = requireLifecycleText(request.note, 'Team dissolve note');
-    const accept = () => this.acceptUnderLock(teamId, note, request);
-    return request.decisionDeadlineAt === undefined
-      ? this.opts.routeLifecycle.run(teamId, accept)
-      : this.opts.routeLifecycle.runBefore(
-          teamId,
-          request.decisionDeadlineAt,
-          accept,
-          () => new TeamDissolveFailedError(
-            'Team dissolve decision deadline exceeded before acceptance',
-          ),
-        );
+    if (request.requester.kind !== 'dispatcher') {
+      return this.opts.routeLifecycle.run(teamId, () =>
+        this.acceptUnderLock(teamId, note, request, null),
+      );
+    }
+    const deadlineAt = Date.now() + TEAM_DISSOLVE_DECISION_BUDGET_MS;
+    return this.opts.routeLifecycle.runBefore(
+      teamId,
+      deadlineAt,
+      () => this.acceptUnderLock(teamId, note, request, deadlineAt),
+      () => new TeamDissolveFailedError(
+        'Team dissolve decision deadline exceeded before acceptance',
+      ),
+    );
   }
 
+  /**
+   * Decide, then persist. What "decide" means depends on who asked.
+   *
+   * A Dispatcher checks the worktree before anything stops: a refusal must
+   * leave the Team exactly as it found it, so a dirty checkout rejects the
+   * request rather than half-dismantling a working Team. A TeamLeader cannot
+   * do that — it is itself a writer, and so is every TeamMate it started, so
+   * it stops its own children first and only then asks whether the workspace
+   * is safe to reclaim. It stays alive only long enough to be told.
+   *
+   * `force` replaces the question rather than answering it: the caller has
+   * already authorized losing what the check would have protected.
+   */
   private async acceptUnderLock(
     teamId: string,
     note: string,
     request: TeamDissolveRequest,
+    deadlineAt: number | null,
   ): Promise<AcceptedTeamDissolve> {
     const current = await this.opts.mustTeam(teamId);
     this.validateRequester(current, request);
     const priorOperationId = current.dissolve?.operation_id ?? null;
-    let active = current.dissolve;
+    const active = current.dissolve;
     if (active !== null && isActiveDissolve(active)) {
       const service = await this.opts.getService(teamId);
-      if (
-        request.requester.kind === 'collaboration_target' &&
-        !active.target_handoff_ids.includes(request.requester.handoffId)
-      ) {
-        const joined = await this.opts.store.update(current, {
-          appendTargetHandoffId: request.requester.handoffId,
-          expectedDissolveOperationId: active.operation_id,
-        });
-        service.replaceRecord(joined);
-        active = joined.dissolve!;
-      }
-      const operation = this.operationFor(
-        teamId,
-        current.leader_name,
-        active,
-        service.liveWriters(),
-      );
+      const operation = this.operationFor(teamId, current.leader_name, active);
       this.opts.activateClosing(current, service);
       return operation.handle;
     }
     this.opts.assertNewCloseAvailable(teamId);
     if (current.status === 'closed') {
-      throw new TeamUnavailableError(
-        `Team ${JSON.stringify(teamId)} is closed`,
-      );
+      throw new TeamClosedError(`Team ${JSON.stringify(teamId)} is closed`);
     }
     const service = await this.opts.getService(teamId);
-    const writers = service.liveWriters();
-    this.requireIdleCapability(writers);
-    const assessment = await this.assessWorktree(
-      current,
-      request.decisionDeadlineAt,
-    ).catch((error) => {
-      this.opts.log.warn(
-        {
-          dispatcher_id: this.opts.dispatcherId,
-          team_id: teamId,
-          err: teamErrorInfo(error),
-        },
-        'Team dissolve worktree preflight failed before acceptance',
-      );
-      throw new TeamDissolveFailedError('Team worktree assessment failed');
-    });
-    if (assessment.status === 'blocked') {
-      throw new TeamDissolveBlockedError(assessment.reason);
+    const force = request.force === true;
+    if (request.requester.kind === 'team_leader') {
+      await service.stopChildRuntimesForDissolve();
     }
-    if (
-      request.decisionDeadlineAt !== undefined &&
-      Date.now() >= request.decisionDeadlineAt
-    ) {
+    if (!force) {
+      const assessment = await this.assessWorktree(current, deadlineAt).catch(
+        (error) => {
+          this.opts.log.warn(
+            {
+              dispatcher_id: this.opts.dispatcherId,
+              team_id: teamId,
+              err: teamErrorInfo(error),
+            },
+            'Team dissolve worktree preflight failed before acceptance',
+          );
+          throw new TeamDissolveFailedError('Team worktree assessment failed');
+        },
+      );
+      if (assessment.status === 'blocked') {
+        throw new TeamDissolveBlockedError(assessment.reason);
+      }
+    }
+    if (deadlineAt !== null && Date.now() >= deadlineAt) {
       throw new TeamDissolveFailedError(
         'Team dissolve decision deadline exceeded before acceptance',
       );
@@ -177,12 +190,10 @@ export class TeamDissolveController {
       leader_name: request.requester.kind === 'team_leader'
         ? request.requester.leaderName
         : null,
-      target_handoff_ids: request.requester.kind === 'collaboration_target'
-        ? [request.requester.handoffId]
-        : [],
+      force,
       note,
       accepted_at: Date.now(),
-      phase: 'waiting_for_team_idle',
+      phase: 'stopping_runtimes',
       last_error: null,
       cleanup_attempts: 0,
       next_retry_at: null,
@@ -196,7 +207,6 @@ export class TeamDissolveController {
       teamId,
       saved.leader_name,
       saved.dissolve!,
-      writers,
     );
     this.opts.activateClosing(saved, service);
     this.opts.log.info(
@@ -212,16 +222,12 @@ export class TeamDissolveController {
     return operation.handle;
   }
 
-  start(
-    handle: AcceptedTeamDissolve,
-    logicalClose: TeamLogicalCloseExecutor,
-  ): void {
+  start(handle: AcceptedTeamDissolve): void {
     const operation = this.operations.get(handle.operationId);
     // A joined caller may publish start after the existing runner reached a
     // terminal result or shutdown suspension and removed its local operation.
     // The shared handle is already settled and restart owns any durable resume.
     if (operation === undefined) return;
-    operation.logicalClose ??= logicalClose;
     this.launch(operation);
   }
 
@@ -242,9 +248,9 @@ export class TeamDissolveController {
   }
 
   /** Restore durable gates and lifecycle work before ordinary Team work. */
-  async recover(logicalClose: TeamLogicalCloseExecutor): Promise<void> {
+  async recover(): Promise<void> {
     const toStart: TeamDissolveOperation[] = [];
-    for (const record of await this.opts.store.list(this.opts.dispatcherId)) {
+    for (const record of await this.opts.store.list()) {
       if (
         !isActiveDissolve(record.dissolve) &&
         !isObsoleteUniqueCleanupFailure(record)
@@ -282,25 +288,18 @@ export class TeamDissolveController {
         if (active === null || !isActiveDissolve(active)) return;
         const service = await this.opts.getService(current.team_id);
         this.opts.activateClosing(current, service);
-        const writers = current.status === 'closed'
-          ? service.liveWriters()
-          : await service.recoverLiveWritersForDissolve();
-        this.requireIdleCapability(writers);
         const operation = this.operationFor(
           current.team_id,
           current.leader_name,
           active,
-          writers,
         );
-        operation.needsRecoveryIdle = current.status !== 'closed';
-        operation.logicalClose ??= logicalClose;
         toStart.push(operation);
       });
     }
     for (const operation of toStart) this.launch(operation);
   }
 
-  /** Interrupt cancellable waits/timers before dispatcher admitted-task drain. */
+  /** Interrupt retry timers and phase advances before the admitted drain. */
   interruptForShutdown(): void {
     for (const operation of [...this.operations.values()]) {
       operation.interrupt.interrupt();
@@ -321,7 +320,7 @@ export class TeamDissolveController {
       request.requester.leaderName !== null &&
       request.requester.leaderName !== team.leader_name
     ) {
-      throw new TeamUnavailableError(
+      throw new TeamGenerationChangedError(
         `Team ${JSON.stringify(team.team_id)} generation is no longer current`,
       );
     }
@@ -331,7 +330,6 @@ export class TeamDissolveController {
     teamId: string,
     leaderName: string,
     record: TeamDissolveRecord,
-    writers: TeamLiveWriter[],
   ): TeamDissolveOperation {
     const existing = this.operations.get(record.operation_id);
     if (existing !== undefined) {
@@ -347,37 +345,24 @@ export class TeamDissolveController {
       // remain in store.
       return existing;
     }
-    this.requireIdleCapability(writers);
     const operation = newDissolveOperation({
       teamId: validateTeamId(teamId),
       leaderName,
       record,
-      writers,
     });
     this.operations.set(record.operation_id, operation);
     return operation;
   }
 
-  private requireIdleCapability(writers: TeamLiveWriter[]): void {
-    const missing = writers.find(
-      (writer) => writer.waitIdle === undefined,
-    );
-    if (missing !== undefined) {
-      throw new TeamDissolveFailedError(
-        `Live Team writer ${JSON.stringify(missing.name)} does not support waitIdle`,
-      );
-    }
-  }
-
   private assessWorktree(
     record: TeamRecord,
-    deadlineAt?: number,
+    deadlineAt: number | null = null,
   ): Promise<WorktreeCleanupAssessment> {
     return this.opts.worktrees.assessCleanup({
       source_cwd: record.repo_cwd,
       source_repo: record.source_repo,
       worktree: record.worktree,
-    }, deadlineAt === undefined ? {} : { deadlineAt });
+    }, deadlineAt === null ? {} : { deadlineAt });
   }
 
   private launch(operation: TeamDissolveOperation): void {
@@ -386,9 +371,6 @@ export class TeamDissolveController {
     if (this.opts.isShuttingDown()) {
       this.suspend(operation);
       return;
-    }
-    if (operation.logicalClose === null) {
-      throw new Error('Team dissolve logical-close executor is unavailable');
     }
     const track = this.opts.trackAcceptedOperation ??
       (<T>(task: () => Promise<T>) => Promise.resolve().then(task));
@@ -514,15 +496,26 @@ export class TeamDissolveController {
     return saved;
   }
 
-  /** Terminal operation: persist/recover an open failure, reopen, then reject. */
+  /**
+   * Terminal operation that never closed the Team: persist why, reopen
+   * ordinary admission, then reject.
+   *
+   * `blocked_after_stop` is the same shape with a different meaning. The Team
+   * is intact and its workspace still holds work somebody wants, so the
+   * operation is abandoned rather than retried: the TeamLeader can inspect,
+   * commit, or clean it, and a later dissolve is a new operation that repeats
+   * every check. Its children stay stopped and reopen lazily, as they would
+   * after any other stop.
+   */
   private async failOpen(
     operation: TeamDissolveOperation,
     publicError: TeamDissolvePublicError,
     cause: unknown,
+    phase: 'failed' | 'blocked_after_stop' = 'failed',
   ): Promise<void> {
-    if (operation.record.phase !== 'failed') {
+    if (operation.record.phase !== phase) {
       await this.persistDissolve(operation, {
-        phase: 'failed',
+        phase,
         last_error: publicError,
         next_retry_at: null,
       });
@@ -544,7 +537,9 @@ export class TeamDissolveController {
         error: publicError,
         err: teamErrorInfo(cause),
       },
-      'Team dissolve failed before logical close; admission restored',
+      phase === 'blocked_after_stop'
+        ? 'Team dissolve abandoned after stop; work kept, admission restored'
+        : 'Team dissolve failed before logical close; admission restored',
     );
   }
 

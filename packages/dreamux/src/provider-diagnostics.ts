@@ -51,7 +51,7 @@ export async function runDispatcherProviderDiagnostics(
   const { dispatcher, catalogs, runner, env, scope } = options;
   const runtimeProvider = catalogs.agentRuntime.resolve(
     dispatcher.runtime.provider,
-  );
+  ).implementation;
   const runtimeDiagnostic = runtimeProvider.diagnostic;
   const runtimeResult =
     runtimeDiagnostic === undefined
@@ -115,7 +115,7 @@ export function providerBinChecksForConfig(
   for (const [agentId, agent] of Object.entries(options.config.agents)) {
     const diagnostic = options.catalogs.agentRuntime.resolve(
       agent.provider,
-    ).diagnostic;
+    ).implementation.diagnostic;
     if (diagnostic === undefined) continue;
     for (const check of diagnostic.binChecks({
       runtime_id: agentId,

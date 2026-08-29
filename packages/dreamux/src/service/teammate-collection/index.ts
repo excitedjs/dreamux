@@ -1,5 +1,8 @@
-import type { AgentRuntimeSystemPrompt, DreamuxLogger } from '@excitedjs/dreamux-types';
-import { unsupportedFeatureError } from '@excitedjs/dreamux-utils';
+import type {
+  AgentRuntimeSystemPrompt,
+  DreamuxLogger,
+  JsonSchema,
+} from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ConversationProjection } from '../../channel/conversation-projection.js';
@@ -7,9 +10,12 @@ import type { DreamuxConfig } from '../../config/config.js';
 import {
   agentRuntimeCapability,
   defaultAgentRuntime,
-  resolveAgent,
 } from '../agent-entity/agent-config.js';
-import { AgentIdentityStore } from '../agent-entity/identity-store.js';
+import type {
+  AgentEntityCollectionStore,
+  AgentNameRegistry,
+} from '../agent-entity/identity-store.js';
+import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
 import {
   clampHistoryLimit,
   decodeCursor,
@@ -23,7 +29,7 @@ import {
   assertTeamScopedAgent,
   childAgentRuntimeId,
 } from '../agent-entity/runtime-profile.js';
-import { readAgentTranscript } from '../agent-entity/transcript-reader.js';
+import { readAgentActivity } from '../agent-entity/activity-reader.js';
 import {
   optionalLifecycleText,
   requireLifecycleText,
@@ -53,7 +59,11 @@ import type {
   LockedTeammate,
   TeammateClosedSubscription,
 } from '../teammate-service/types.js';
-import type { TurnCompletionDelivery } from '../teammate-service/turn-recording.js';
+import {
+  toSubmissionResult,
+  type TurnCompletionDelivery,
+} from '../teammate-service/turn-recording.js';
+import { AGENT_TASK_SOURCE } from '../submission-sources.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import {
   assertManagedWorktreeAvailable,
@@ -69,16 +79,32 @@ import type {
 
 export interface TeammateCollectionOptions {
   dispatcherId: string;
+  /** The Team this Collection belongs to, or `null` for the dispatcher's own. */
   teamScope: string | null;
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   worktrees: WorktreeManager;
-  identities: AgentIdentityStore;
+  /**
+   * The `teammate/` collection root the owner bound at construction. This
+   * Collection appends only the concrete TeamMate name to it — it never learns
+   * whether that root sits under the dispatcher or under a Team.
+   */
+  store: AgentEntityCollectionStore;
+  /** The dispatcher-global name namespace; agent names stay dispatcher-unique. */
+  names: AgentNameRegistry;
+  admissions: AdmissionLedger;
   completionDelivery?: CompletionDeliveryPolicy;
   conversationProjection?: ConversationProjection | undefined;
-  initiatorFor?: (
-    producer: AgentEntityIdentity,
-  ) => Promise<CompletionInitiator | null>;
+  /**
+   * Where a completion produced by an Agent in this collection is delivered.
+   *
+   * It takes no producer: the owner that built this collection already knows
+   * the recipient — a dispatcher-owned TeamMate reports to the dispatcher
+   * Agent, a Team's TeamMate reports to that Team's leader — and deriving it
+   * from the producing record instead would have to re-answer a question
+   * ownership already settled.
+   */
+  initiatorFor?: () => Promise<CompletionInitiator | null>;
   isShuttingDown?: () => boolean;
   suffixGenerator?: SuffixGenerator;
   log: DreamuxLogger;
@@ -86,12 +112,11 @@ export interface TeammateCollectionOptions {
 
 export interface CreateLockedTeammateOptions {
   systemPromptAppend?: readonly string[];
-  outputSchema?: Record<string, unknown>;
+  outputSchema?: JsonSchema;
 }
 
 interface FreshIdentityAllocation {
   readonly name: string;
-  readonly role: 'teammate' | 'team_member';
   readonly teamId: string | undefined;
   readonly agentRuntime: string;
   readonly identityPrompt: string | null;
@@ -101,7 +126,7 @@ interface FreshIdentityAllocation {
 export class TeammateCollection implements TeammateOps {
   private readonly dispatcherId: string;
   private readonly teamScope: string | null;
-  private readonly identities: AgentIdentityStore;
+  private readonly store: AgentEntityCollectionStore;
   private readonly worktrees: WorktreeManager;
   private readonly entities = new Map<string, TeammateService>();
   private readonly subscriptions = new Map<string, TeammateClosedSubscription>();
@@ -111,22 +136,22 @@ export class TeammateCollection implements TeammateOps {
     this.dispatcherId = opts.dispatcherId;
     this.teamScope = opts.teamScope;
     this.worktrees = opts.worktrees;
-    this.identities = opts.identities;
+    this.store = opts.store;
   }
 
   async spawn(input: SpawnTeamMateRequest): Promise<AgentEntitySpawnResult> {
     this.assertAdmissionOpen();
     const entity = await this.createFreshEntity(input);
     try {
-      const delivery = await this.resolveCompletionDelivery(entity.current());
-      const submission = await entity.submitInitialPrompt(input.prompt, {
-        turnOrigin: this.teamScope === null ? 'dispatcher' : 'team_leader',
+      const delivery = await this.resolveCompletionDelivery();
+      const submission = await entity.submitInput({
+        source: AGENT_TASK_SOURCE,
+        text: input.prompt,
         ...(delivery !== null ? { deliverCompletion: delivery } : {}),
       });
       return {
         teammate: entity.status(),
-        ...submission,
-        transcript_path: entity.transcriptPath(),
+        ...toSubmissionResult(submission),
       };
     } catch (error) {
       await this.closeAfterFailedCreation(entity);
@@ -139,12 +164,8 @@ export class TeammateCollection implements TeammateOps {
     options: CreateLockedTeammateOptions = {},
   ): Promise<LockedTeammate> {
     this.assertAdmissionOpen();
-    if (options.outputSchema !== undefined) {
-      this.assertStructuredOutputSupported(
-        input.agentRuntime ??
-          defaultAgentRuntime(this.opts.config, this.dispatcherId),
-      );
-    }
+    // No capability gate: every provider must honor the session-bound output
+    // schema, so an unsupported-feature pre-check has nothing left to check.
     let handle: LockedTeammate | null = null;
     await this.createFreshEntity(input, options, (entity) => {
       handle = entity.lock();
@@ -168,11 +189,10 @@ export class TeammateCollection implements TeammateOps {
     input: SendTeamMateInput,
   ): Promise<AgentEntitySendResult> {
     return entity.send({
-      prompt: input.prompt,
+      source: AGENT_TASK_SOURCE,
+      text: input.prompt,
       ...(input.intent !== undefined ? { intent: input.intent } : {}),
-      turnOrigin: this.teamScope === null ? 'dispatcher' : 'team_leader',
-      resolveCompletionDelivery: () =>
-        this.resolveCompletionDelivery(entity.current()),
+      resolveCompletionDelivery: () => this.resolveCompletionDelivery(),
     });
   }
 
@@ -227,20 +247,20 @@ export class TeammateCollection implements TeammateOps {
   ): Promise<AgentEntityLastResult> {
     const identity = await this.mustIdentity(validateTeamMateName(name));
     const entity = this.liveEntity(identity.name);
-    const transcript = await readAgentTranscript({
+    const activity = await readAgentActivity({
       config: this.opts.config,
       providers: this.opts.agentRuntimeProviders,
       identity,
-      query: typeof query === 'number' ? { turns: query } : query,
+      query: typeof query === 'number' ? { limit: query } : query,
       log: this.opts.log,
     });
     return {
       teammate: entity?.status() ?? toStatus(identity, null),
-      requested_turns: transcript.requestedTurns,
-      returned_turns: transcript.turns.length,
-      turns: transcript.turns,
-      next_cursor: transcript.nextCursor,
-      truncated: transcript.truncated,
+      requested_records: activity.requestedRecords,
+      returned_records: activity.records.length,
+      records: activity.records,
+      next_cursor: activity.nextCursor,
+      truncated: activity.truncated,
     };
   }
 
@@ -297,18 +317,6 @@ export class TeammateCollection implements TeammateOps {
     return entities;
   }
 
-  liveWriters(): Array<{
-    name: string;
-    waitIdle: (() => Promise<void>) | undefined;
-  }> {
-    return this.materializedEntities()
-      .filter((entity) => entity.runtimeStatus() !== null && !entity.isLocked())
-      .map((entity) => ({
-        name: entity.name,
-        waitIdle: entity.waitIdleCapability(),
-      }));
-  }
-
   private async createFreshEntity(
     input: SpawnTeamMateRequest,
     options: CreateLockedTeammateOptions = {},
@@ -322,15 +330,14 @@ export class TeammateCollection implements TeammateOps {
     );
     const teamId = this.teamScope ?? undefined;
     if (teamId !== undefined && input.sharedWorkspace === undefined) {
-      throw new Error('Team member spawn requires a shared team workspace');
+      throw new Error('Team-scoped TeamMate spawn requires a shared team workspace');
     }
-    const role: FreshIdentityAllocation['role'] =
-      teamId === undefined ? 'teammate' : 'team_member';
     const agentRuntime =
       input.agentRuntime ?? defaultAgentRuntime(this.opts.config, this.dispatcherId);
-    const name = await this.identities.allocateName({
-      dispatcherId: this.dispatcherId,
-      kind: role,
+    // The name prefix follows the collection this Collection was bound to, not
+    // anything read back out of a record.
+    const name = await this.opts.names.allocate({
+      kind: teamId === undefined ? 'dispatcher-teammate' : 'team-teammate',
       base: input.name,
       ...(this.opts.suffixGenerator !== undefined
         ? { generateSuffix: this.opts.suffixGenerator }
@@ -339,7 +346,6 @@ export class TeammateCollection implements TeammateOps {
 
     const allocation: FreshIdentityAllocation = {
       name,
-      role,
       teamId,
       agentRuntime,
       identityPrompt,
@@ -369,7 +375,7 @@ export class TeammateCollection implements TeammateOps {
     input: SpawnTeamMateRequest,
     allocation: FreshIdentityAllocation,
   ): Promise<AgentEntityIdentity> {
-    const { name, role, teamId, agentRuntime, identityPrompt } = allocation;
+    const { name, teamId, agentRuntime, identityPrompt } = allocation;
     const workspace = await resolveSpawnWorkspace({
       config: this.opts.config,
       worktrees: this.worktrees,
@@ -379,16 +385,13 @@ export class TeammateCollection implements TeammateOps {
     });
     if (input.sharedWorkspace === undefined) {
       await assertManagedWorktreeAvailable({
-        identities: this.identities,
-        dispatcherId: this.dispatcherId,
+        peers: this.store,
         name,
         worktree: workspace.worktree,
       });
     }
-    return this.identities.create({
-      dispatcherId: this.dispatcherId,
+    return this.store.entity(name).create({
       name,
-      role,
       teamId: teamId ?? null,
       agentRuntime,
       sourceCwd: workspace.sourceCwd,
@@ -426,6 +429,9 @@ export class TeammateCollection implements TeammateOps {
       identity,
       options: {
         runtimeId: childAgentRuntimeId(identity),
+        // Every Agent a TeammateCollection owns is a TeamMate, Team-scoped or
+        // not; the value comes from being this owner, never from the record.
+        role: 'teammate',
         ownsWorktreeOnClose: this.teamScope === null,
         loggerFields: { teammate: identity.name },
         assertIdentityScope:
@@ -440,7 +446,9 @@ export class TeammateCollection implements TeammateOps {
       },
       config: this.opts.config,
       agentRuntimeProviders: this.opts.agentRuntimeProviders,
-      identities: this.identities,
+      identities: this.store.entity(identity.name),
+      peers: this.store,
+      admissions: this.opts.admissions,
       worktrees: this.worktrees,
       ...(this.opts.conversationProjection !== undefined
         ? { conversationProjection: this.opts.conversationProjection }
@@ -513,11 +521,7 @@ export class TeammateCollection implements TeammateOps {
   }
 
   private async mustIdentity(name: string): Promise<AgentEntityIdentity> {
-    const identity = await this.identities.get(
-      this.dispatcherId,
-      name,
-      this.teamScope ?? undefined,
-    );
+    const identity = await this.store.entity(name).read();
     if (identity === null) {
       throw new Error(`TeamMate ${JSON.stringify(name)} does not exist`);
     }
@@ -526,56 +530,38 @@ export class TeammateCollection implements TeammateOps {
   }
 
   private async rosterList(): Promise<AgentEntityIdentity[]> {
-    const identities = await this.identities.list(
-      this.dispatcherId,
-      this.teamScope ?? undefined,
-    );
+    const identities = await this.store.list();
     return identities.filter((identity) =>
       this.assertInCollection(identity, false));
   }
 
+  /**
+   * The bound collection root already decided which Agents are reachable here —
+   * a leader lives at its Team root and is structurally unreachable through a
+   * `teammate/` scan. What is left to check is only that the record agrees
+   * about the owner it was found under.
+   */
   private assertInCollection(
     identity: AgentEntityIdentity,
     throwOnMismatch = true,
   ): boolean {
     const valid =
       identity.dispatcher_id === this.dispatcherId &&
-      (this.teamScope === null
-        ? identity.team_id === null && identity.role === 'teammate'
-        : identity.team_id === this.teamScope &&
-          identity.role === 'team_member');
+      identity.team_id === this.teamScope;
     if (!valid && throwOnMismatch) {
       throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
     }
     return valid;
   }
 
-  private async resolveCompletionDelivery(
-    identity: AgentEntityIdentity,
-  ): Promise<TurnCompletionDelivery | null> {
+  private async resolveCompletionDelivery(): Promise<TurnCompletionDelivery | null> {
     const policy = this.opts.completionDelivery;
-    const initiator = await this.opts.initiatorFor?.(identity);
+    const initiator = await this.opts.initiatorFor?.();
     if (policy === undefined || initiator === undefined || initiator === null) {
       return null;
     }
     return (completion, fact) =>
       policy.deliverRuntime(initiator, completion, fact);
-  }
-
-  private assertStructuredOutputSupported(agentRuntimeId: string): void {
-    const agent = resolveAgent(
-      this.opts.config,
-      this.dispatcherId,
-      agentRuntimeId,
-    );
-    const supported = this.opts.agentRuntimeProviders
-      .resolve(agent.provider)
-      .getCapabilities().structuredOutput?.supported;
-    if (supported === true) return;
-    throw unsupportedFeatureError(
-      'outputSchema',
-      'runtime does not support structured output (outputSchema)',
-    );
   }
 
   private assertAdmissionOpen(): void {

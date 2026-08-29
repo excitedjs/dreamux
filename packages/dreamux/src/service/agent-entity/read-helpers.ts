@@ -17,7 +17,7 @@ export function toStatus(
 ): AgentEntityRuntimeStatus {
   return {
     name: identity.name,
-    session_id: identity.session_id,
+    session_id: identity.session?.id ?? null,
     agent_runtime: identity.agent_runtime,
     repo: {
       mode: identity.worktree.mode,
@@ -57,7 +57,7 @@ export function toRecordRow(
       identity.close_note === null ? null : previewText(identity.close_note),
     cleanup_state: identity.worktree.cleanup_state,
     resume:
-      identity.closed_at === null || identity.session_id !== null
+      identity.closed_at === null || identity.session !== null
         ? { tool: 'send', name: identity.name }
         : null,
   };
@@ -102,13 +102,13 @@ export function clampHistoryLimit(input: number | undefined): number {
   return Math.min(input, 100);
 }
 
-const LAST_TURNS_DEFAULT = 1;
-const LAST_TURNS_MAX = 50;
+const LAST_LIMIT_DEFAULT = 20;
+const LAST_LIMIT_MAX = 200;
 
-export function validateLastTurns(input: number | undefined): number {
-  if (input === undefined) return LAST_TURNS_DEFAULT;
-  if (!Number.isInteger(input) || input < 1 || input > LAST_TURNS_MAX) {
-    throw new Error(`last turns must be an integer in 1..${LAST_TURNS_MAX}`);
+export function validateLastLimit(input: number | undefined): number {
+  if (input === undefined) return LAST_LIMIT_DEFAULT;
+  if (!Number.isInteger(input) || input < 1 || input > LAST_LIMIT_MAX) {
+    throw new Error(`last limit must be an integer in 1..${LAST_LIMIT_MAX}`);
   }
   return input;
 }

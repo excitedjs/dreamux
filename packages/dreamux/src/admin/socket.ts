@@ -1,9 +1,16 @@
 /**
- * The admin Unix-socket server.
+ * The admin Unix-socket server: one adapter over the Core Command registry.
  *
- * One client gets one line-delimited NDJSON stream of requests; we reply
- * with one line per request. Permissions on the socket are 0600 to keep
- * other local users out (issue #2 §"管理接口").
+ * One client gets one line-delimited NDJSON stream of requests; we reply with
+ * one line per request. Permissions on the socket are 0600 to keep other local
+ * users out (issue #2 §"管理接口").
+ *
+ * The adapter owns transport only. It frames a request, lifts the caller's
+ * `dispatcher_id` out of the payload into the Command context, and maps a typed
+ * Command failure onto the wire error. It holds no method table, no schema, no
+ * payload validation, and no exposure policy — it invokes the same admitted
+ * Command port the in-process Channel invoker does, which is where bounding,
+ * schema validation, and shutdown admission happen for both.
  */
 
 import { createServer, type Server as NetServer, type Socket } from 'node:net';
@@ -12,12 +19,13 @@ import { dirname } from 'node:path';
 
 import type { Server } from '../server.js';
 import { ensureOwnerOnlyDir } from '@excitedjs/dreamux-utils';
+import type { CoreCommandContext, JsonValue } from '@excitedjs/dreamux-types';
 import {
-  AdminError,
-  type AdminRequest,
-  type AdminResponse,
-} from './protocol.js';
-import { adminMethods } from './methods.js';
+  DreamuxError,
+  TransportError,
+  ValidationError,
+} from '../command/errors.js';
+import type { AdminRequest, AdminResponse } from './protocol.js';
 
 export interface AdminSocketServer {
   start(): Promise<void>;
@@ -293,26 +301,43 @@ async function processLine(server: Server, sock: Socket, line: string): Promise<
       throw new Error('bad request envelope');
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    write(sock, { id: '?', ok: false, error: { code: 'BAD_REQUEST', message: msg } });
+    // A line that cannot be framed never reached a Command: this is the one
+    // genuine transport failure this adapter owns.
+    const error = new TransportError(err instanceof Error ? err.message : String(err));
+    write(sock, {
+      id: '?',
+      ok: false,
+      error: { code: error.code, message: error.message },
+    });
     return;
   }
 
-  const handler = adminMethods[req.method];
-  if (handler === undefined) {
+  let context: CoreCommandContext;
+  let payload: JsonValue;
+  try {
+    ({ context, payload } = adminInvocation(req));
+  } catch (err) {
+    const error =
+      err instanceof DreamuxError
+        ? err
+        : new ValidationError(err instanceof Error ? err.message : String(err));
     write(sock, {
       id: req.id,
       ok: false,
-      error: { code: 'UNKNOWN_METHOD', message: `unknown method '${req.method}'` },
+      error: { code: error.code, message: error.message },
     });
     return;
   }
 
   try {
-    const result = await server.admitAdminRequest(() => handler(server, req.params));
+    // The same admitted port the in-process Channel invoker uses: shutdown
+    // admission is a property of invoking a Command, not of this transport.
+    const result = await server.commands.invoke(context, req.method, payload);
     write(sock, { id: req.id, ok: true, result });
   } catch (err) {
-    if (err instanceof AdminError) {
+    // A Dreamux failure already carries its own stable code; anything else is
+    // an unclassified implementation failure and is reported as such.
+    if (err instanceof DreamuxError) {
       write(sock, {
         id: req.id,
         ok: false,
@@ -327,6 +352,38 @@ async function processLine(server: Server, sock: Socket, line: string): Promise<
       error: { code: 'INTERNAL', message: msg },
     });
   }
+}
+
+/**
+ * Split one wire request into caller context and Command payload.
+ *
+ * `dispatcher_id` is addressing, not a domain field: an admin caller states
+ * which dispatcher it is talking to, exactly as a Channel session's invoker
+ * binds its own. Lifting it here — and removing it from the payload — is what
+ * lets every Command input schema stay closed around domain fields alone, while
+ * the wire shape CLI and MCP callers already send is unchanged.
+ */
+function adminInvocation(req: AdminRequest): {
+  context: CoreCommandContext;
+  payload: JsonValue;
+} {
+  const params = req.params;
+  if (params !== undefined && (typeof params !== 'object' || Array.isArray(params))) {
+    throw new ValidationError("request 'params' must be an object");
+  }
+  const { dispatcher_id: dispatcherId, ...rest } = params ?? {};
+  if (dispatcherId !== undefined && typeof dispatcherId !== 'string') {
+    throw new ValidationError("param 'dispatcher_id' must be a string");
+  }
+  return {
+    context: {
+      source: 'admin_socket',
+      ...(dispatcherId !== undefined ? { dispatcher_id: dispatcherId } : {}),
+    },
+    // The envelope was produced by `JSON.parse`, so its values are JSON by
+    // construction; the wire type is only declared loosely.
+    payload: rest as unknown as JsonValue,
+  };
 }
 
 function write(sock: Socket, response: AdminResponse): void {

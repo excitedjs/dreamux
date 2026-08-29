@@ -29,6 +29,7 @@
  */
 export type { DreamuxLogger } from './logger.js';
 export type { JsonSchema, JsonValue } from './json.js';
+export type { JsonInvokeResult, JsonInvoker } from './invoke.js';
 export type {
   AgentRuntimeProviderDescriptor,
   BuiltinProviderRef,
@@ -53,7 +54,6 @@ export type {
   ProviderRefSource,
   RegisteredProvider,
 } from './provider.js';
-export type { InboundAttachment, InboundTurnInput } from './turn.js';
 export type {
   AgentActivityError,
   AgentActivityPage,
@@ -94,41 +94,37 @@ export type {
   RuntimeSubmission,
   RuntimeSubmissionSettlement,
   RuntimeToolAction,
-  RuntimeTurnSource,
 } from './agent-runtime.js';
 export type {
   ChannelCommandError,
   ChannelCommandRetryableErrorCode,
-  ChannelMcpCaller,
   CoreCommandContext,
   CoreCommandDefinition,
   CoreCommandRegistry,
   CoreCommandSource,
 } from './command.js';
 export type {
-  ManagedRepoRequest,
   TeamCreateCommand,
+  TeamCreateRepoRequest,
   TeamCreateResult,
   TeamStateEvent,
-  TeamStateMemberSummary,
+  TeamStateTeammateSummary,
   TeamSubmitCommand,
   TeamSubmitResult,
 } from './team.js';
 export type {
-  TeamMemberRole,
+  TeamContainedRole,
   TeammateRole,
   TeammateStateEvent,
   TeammateStatus,
   TeammateTurnMessageEvent,
   TeammateTurnScope,
   TeammateTurnSettledEvent,
-  TeammateTurnSource,
   TeammateTurnSubmittedEvent,
   TeammateTurnToolCallEvent,
 } from './teammate.js';
 export type {
   ChannelBinCheck,
-  ChannelCommandInvoker,
   ChannelConfigCapability,
   ChannelConfigContext,
   ChannelCorePort,
@@ -143,10 +139,12 @@ export type {
   ChannelInstance,
   ChannelMcpCall,
   ChannelMcpCallContext,
+  ChannelMcpCaller,
   ChannelMcpCapability,
   ChannelMcpToolAnnotations,
   ChannelMcpToolDescriptor,
   ChannelMcpToolIcon,
+  ChannelMcpToolOutcome,
   ChannelMcpToolRegistration,
   ChannelOnboardCapability,
   ChannelProvider,

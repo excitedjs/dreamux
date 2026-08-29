@@ -1,10 +1,10 @@
 /**
- * Neutral inbound-turn contract declarations.
+ * Channel-owned inbound-turn shapes.
  *
- * Declaration-only subset of the core turn contract: the data shapes a provider
- * package needs to author against. The runtime helpers (`renderChannelInput`,
- * the dedupe-window constant) stay in `@excitedjs/dreamux` because they are
- * executable code, not declarations.
+ * These no longer cross the Agent Runtime seam and are not part of the package
+ * root export: a Provider receives only already-rendered text. A Channel owns
+ * turning an external message into model-facing body text and display
+ * attributes; Core assembles the provenance envelope around them.
  */
 
 /**

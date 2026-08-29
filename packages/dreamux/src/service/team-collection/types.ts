@@ -1,20 +1,20 @@
 import {
   assertNotReservedAgentName,
-  type AgentEntityIdentity,
   type AgentEntityIdentityStatus,
   type AgentEntityRuntimeStatus,
   type AgentEntitySubmissionResult,
   type AgentEntityWorktreeIdentity,
 } from '../agent-entity/types.js';
 import type {
-  AgentRuntimeMcpServer,
   AgentRuntimeSkillSource,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { DreamuxConfig } from '../../config/config.js';
-import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
+import type { AgentNameRegistry } from '../agent-entity/identity-store.js';
+import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
+import type { TeammateAgentMcp } from '../teammate-service/types.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import type { ConversationProjection } from '../../channel/conversation-projection.js';
 import type {
@@ -31,27 +31,39 @@ export interface TeamCollectionOptions {
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   worktrees: WorktreeManager;
-  /** Shared dispatcher identity store for all Team and TeamMate scopes. */
-  identities: AgentIdentityStore;
+  /**
+   * The `team/` collection root the dispatcher bound at construction. This
+   * collection appends only the concrete Team name; each `TeamService` then
+   * receives that Team root and composes its own children from it.
+   */
+  root: string;
+  /** The dispatcher-global agent-name namespace. */
+  names: AgentNameRegistry;
+  admissions: AdmissionLedger;
   // Shared per-dispatcher deps `DispatcherService` always supplies; forwarded
   // unchanged into each team's own collection so it stays topology-free (#233).
   completionDelivery: CompletionDeliveryPolicy;
-  initiatorFor: (
-    producer: AgentEntityIdentity,
-  ) => Promise<CompletionInitiator | null>;
+  /**
+   * The dispatcher's own Agent, where a TeamLeader's completions are delivered.
+   * A Team's own TeamMates report to their leader instead; each owner supplies
+   * the recipient it knows rather than deriving one from the producing record.
+   */
+  dispatcherCompletionInitiator: () => Promise<CompletionInitiator | null>;
   isShuttingDown: () => boolean;
   admitOperation?: <T>(task: () => Promise<T>) => Promise<T>;
   trackAcceptedOperation?: <T>(task: () => Promise<T>) => Promise<T>;
-  adminSocketPath: string;
   /**
-   * Build a team_leader's channel-egress MCP descriptors from the dispatcher's
-   * live channels. Channels are dispatcher-owned, so the team layer only asks
-   * for its own leader's set — it never reaches into the channel layer itself.
+   * Build one TeamLeader's Agent-facing MCP surface.
+   *
+   * The Team layer supplies the identity and nothing else. Every object those
+   * servers reach — channels, Teams, TeamMates, schedulers — is dispatcher-owned,
+   * so the dispatcher assembles them; a Team that built its own leader's tools
+   * would be re-deciding a role question it does not own.
    */
-  leaderChannelDescriptors: (input: {
+  leaderMcp: (input: {
     teamId: string;
     leaderName: string;
-  }) => readonly AgentRuntimeMcpServer[];
+  }) => TeammateAgentMcp;
   log: DreamuxLogger;
   workflowLog?: DreamuxLogger;
   coreEvents?: DispatcherCoreEventPublisher;
@@ -66,15 +78,25 @@ export type TeamStatus = 'starting' | 'running' | 'closed';
 
 export type TeamDissolveRequesterKind =
   | 'dispatcher'
-  | 'team_leader'
-  | 'collaboration_target';
+  | 'team_leader';
 
+/**
+ * Where an accepted dissolve currently is.
+ *
+ * There is no idle phase. A dissolve is a destructive stop-and-reclaim: its
+ * first runtime act is to fence admission and stop the runtimes, never to wait
+ * for a turn to end on its own. `blocked_after_stop` is the one phase that
+ * ends an operation without closing the Team — the post-stop recheck found
+ * work worth keeping, so the operation is abandoned and ordinary admission
+ * reopens over stopped children that reopen lazily like any other.
+ */
 export type TeamDissolvePhase =
-  | 'waiting_for_team_idle'
+  | 'stopping_runtimes'
   | 'closing_resources'
   | 'worktree_cleanup_pending'
   | 'complete'
-  | 'failed';
+  | 'failed'
+  | 'blocked_after_stop';
 
 export type TeamDissolvePublicError =
   | 'worktree-dirty'
@@ -90,8 +112,13 @@ export interface TeamDissolveRecord {
   requester_kind: TeamDissolveRequesterKind;
   /** Descriptor-bound generation for TeamLeader self-dissolve. */
   leader_name: string | null;
-  /** Opaque exact-target handoffs attached before target-owned runners start. */
-  target_handoff_ids: string[];
+  /**
+   * The caller's explicit authorization to discard uncommitted, untracked, or
+   * unmerged work in this Team's own managed worktree. It is recorded because
+   * a background cleanup that resumes after a restart must destroy exactly
+   * what the operator authorized, not what a later reader assumes.
+   */
+  force: boolean;
   note: string;
   accepted_at: number;
   phase: TeamDissolvePhase;
@@ -109,6 +136,21 @@ export interface TeamRecord {
   source_repo: string | null;
   leader_name: string;
   leader_agent_runtime: string;
+  /**
+   * The stable TeamLeader creation inputs this Team owns, kept beside the other
+   * leader-creation fields: the identity prompt and the already-normalized
+   * skill sources the leader was created from.
+   *
+   * They are creation inputs, not a second Agent identity — no session, status,
+   * or other mutable Agent state belongs here. They are read only when this
+   * Team has no aligned leader Identity to restore; an aligned Identity is
+   * always restored exactly as stored and is never compared against them.
+   *
+   * Both are additive: a record written before they existed reads back as no
+   * identity prompt and no admin-supplied skill sources.
+   */
+  leader_identity_prompt: string | null;
+  leader_skill_sources: readonly AgentRuntimeSkillSource[];
   runtime_cwd: string;
   worktree: AgentEntityWorktreeIdentity;
   status: TeamStatus;
@@ -117,8 +159,22 @@ export interface TeamRecord {
   updated_at: number;
   closed_at: number | null;
   close_note: string | null;
+  /**
+   * The accepted `team.create` request identity that produced this Team, and
+   * the canonical hash of its payload. Both are null for a Team created through
+   * an internal path that carries no request identity. Together they make this
+   * record the only authority a replay is decided against.
+   */
+  create_request_id: string | null;
+  create_payload_hash: string | null;
   /** Missing on older additive records and normalized to null by TeamStore. */
   dissolve: TeamDissolveRecord | null;
+}
+
+/** One accepted `team.create` request, as stored in the Team record. */
+export interface TeamCreateRequestIdentity {
+  requestId: string;
+  payloadHash: string;
 }
 
 interface TeamCreateOptions {
@@ -146,86 +202,75 @@ export interface TeamCreateInput extends TeamCreateOptions {
 }
 
 /**
- * Internal create request for a concrete name already allocated and durably
- * reserved by its owner (for example a collaboration target claim).
+ * Create request for one concrete candidate name.
+ *
+ * The name is a candidate, not a reservation: nothing owns it until the Team
+ * record is published. Omitting `createRequest` is how an internal caller
+ * creates a Team that carries no `team.create` request identity.
  */
 export interface TeamCreateAtNameInput extends TeamCreateOptions {
   name: string;
-  /**
-   * Authority for a previously persisted concrete-name claim. Omit only when
-   * TeamCollection itself should claim this exact name before creating it.
-   */
-  nameClaimToken?: string;
-}
-
-export interface TeamNameClaim {
-  name: string;
-  token: string;
+  createRequest?: TeamCreateRequestIdentity;
 }
 
 export interface TeamDissolveInput {
   teamId: string;
   /** Required dissolve reason recorded on the team record (issue #182 PR-3). */
   note: string;
+  /**
+   * Discard local work in this Team's managed worktree so the checkout can be
+   * removed. It authorizes losing uncommitted, untracked, and unmerged changes
+   * there and nothing else: never a reused cwd, a source repository, a
+   * repository root, the managed branch, or committed history.
+   */
+  force?: boolean;
 }
 
 export type TeamDissolveRequester =
   | { kind: 'dispatcher' }
-  | { kind: 'team_leader'; leaderName: string }
-  | {
-      kind: 'collaboration_target';
-      leaderName: string | null;
-      handoffId: string;
-    };
+  | { kind: 'team_leader'; leaderName: string };
 
 export interface TeamDissolveRequest extends TeamDissolveInput {
   requester: TeamDissolveRequester;
-  /** Dispatcher-only absolute deadline for pre-acceptance safety work. */
-  decisionDeadlineAt?: number;
-}
-
-export interface TeamDissolveReceipt {
-  accepted: true;
-  team_name: string;
-  status: 'closing';
 }
 
 /**
- * Internal handle. MCP projects only its receipt; target close joins logical
- * closure.
+ * What a settled dissolve reports.
+ *
+ * `accepted` and `status` are not two stages of one answer. A caller reaches
+ * this only after the operation reached durable logical close, so both are
+ * true at once. Reclaiming the managed checkout continues behind the answer
+ * and cannot change it; a dissolve that is refused or fails throws instead of
+ * returning a receipt.
  */
+export interface TeamDissolveReceipt {
+  accepted: true;
+  team_name: string;
+  status: 'closed';
+}
+
+/** Internal handle. Every caller-facing surface projects only its receipt. */
 export interface AcceptedTeamDissolve {
   operationId: string;
   receipt: TeamDissolveReceipt;
+  /**
+   * Settles when this operation's logical close is durable: the post-stop
+   * worktree check passed, every child runtime has exited, and the Team
+   * record is closed. Reclaiming the checkout happens after it and is never
+   * awaited here. A caller that joins an operation somebody else accepted
+   * waits on that same milestone, and one that joins after it settled reads
+   * the settled result.
+   */
   logicalClosed: Promise<TeamSummary>;
 }
 
-/** Input consumed by the dispatcher-side route/resource close executor. */
+/** Input consumed by the Team resource-close half of an accepted dissolve. */
 export interface AcceptedTeamLogicalClose {
   operationId: string;
   teamId: string;
   note: string;
-  owner: {
-    kind: 'team';
-    teamName: string;
-    leaderName: string;
-  };
   dissolve: TeamDissolveRecord;
   worktree: AgentEntityWorktreeIdentity;
-}
-
-export type TeamLogicalCloseExecutor = (
-  input: AcceptedTeamLogicalClose,
-) => Promise<TeamSummary>;
-
-/** Active channel target marker surfaced by the Team read tools. */
-export interface TeamChannelBindingSummary {
-  channel_id: string;
-  provider: string;
-  target_type: string;
-  target_key: string;
-  display: string | null;
-  canonical_url: string | null;
 }
 
 /**
@@ -340,21 +385,9 @@ export interface TeamCreateResult extends TeamSummary {
   error?: string;
 }
 
-export interface TeamLeaderSendResult extends AgentEntitySubmissionResult {
-  team: TeamView;
-  leader: AgentEntityRuntimeStatus;
-}
-
 export interface TeamLeaderLease {
   teamId: string;
   leaderName: string;
-}
-
-export interface TeamRouteProjection {
-  team_name: string;
-  leader_name: string;
-  leader_agent_runtime: string;
-  runtime_cwd: string;
 }
 
 export function validateTeamId(id: string): string {

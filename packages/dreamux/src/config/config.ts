@@ -3,6 +3,7 @@ import { pathExists } from '../platform/fs-errors.js';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { mkdir, open, readFile, stat } from 'node:fs/promises';
+import { asAgentRuntimeProvider } from '../agent-runtime/catalog.js';
 import {
   loadAgentRuntimeProviders,
   type ExternalAgentRuntimeModuleImporter,
@@ -26,7 +27,6 @@ import {
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 import {
   agentProviderRefs,
-  asAgentRuntimeProvider,
   asChannelProvider,
   channelProviderRefs,
   expandHome,
@@ -34,18 +34,7 @@ import {
   redactConfigSecrets,
   resolveConfigProvider,
 } from './config-helpers.js';
-import {
-  defaultChannelCollaborationSpaceConfig,
-  readChannelCollaborationSpace,
-  stringifyChannelCollaborationSpace,
-  type DispatcherChannelCollaborationSpaceConfig,
-} from './collaboration-space-config.js';
-
 export { expandHome } from './config-helpers.js';
-export {
-  defaultChannelCollaborationSpaceConfig,
-  type DispatcherChannelCollaborationSpaceConfig,
-} from './collaboration-space-config.js';
 
 export interface DreamuxConfig {
     agents: Record<string, ResolvedAgentConfig>;
@@ -75,7 +64,6 @@ export interface DispatcherConfig {
 export interface DispatcherChannelConfig {
   id: string;
   provider: string;
-    collaborationSpace?: DispatcherChannelCollaborationSpaceConfig;
     config: DispatcherProviderConfig;
     rawConfig?: DispatcherProviderConfig;
     identity?: string;
@@ -171,14 +159,6 @@ export function stringifyConfig(config: DreamuxConfig): string {
       channels: dispatcher.channels.map((channel) => ({
         id: channel.id,
         provider: channel.provider,
-        ...((channel.collaborationSpace ?? defaultChannelCollaborationSpaceConfig())
-          .defaultBinding.enabled
-          ? {
-              collaborationSpace: stringifyChannelCollaborationSpace(
-                channel.collaborationSpace ?? defaultChannelCollaborationSpaceConfig(),
-              ),
-            }
-          : {}),
         config: channel.rawConfig ?? channel.config,
       })),
       agentRuntime: dispatcher.agentRuntime,
@@ -398,7 +378,7 @@ async function readAgents(
       );
     }
     const parsedConfig =
-      ((await runtimeProvider.readConfig?.(rawConfig, {
+      ((await runtimeProvider.config?.read(rawConfig, {
         providerRef: provider.ref,
         agentId: id,
         file,
@@ -551,9 +531,20 @@ async function readDispatcherChannels(
         `dreamux config error in ${file}: ${channelPrefix.slice(0, -1)} must be an object (got ${describeType(raw)})`,
       );
     }
+    if (raw['collaborationSpace'] !== undefined) {
+      // Named rather than left to the generic unknown-key rejection: this key
+      // used to configure a real Core capability, and an operator who wrote it
+      // needs to be told where that capability went, not that it is a typo.
+      throw new Error(
+        `dreamux config error in ${file}: ${channelPrefix}collaborationSpace ` +
+          'was removed. Core no longer owns Collaboration Space policy — the ' +
+          'channel that offers the flow owns it now. Configure it there and ' +
+          'delete this key.',
+      );
+    }
     rejectUnknownKeys(
       raw,
-      new Set(['id', 'provider', 'config', 'collaborationSpace']),
+      new Set(['id', 'provider', 'config']),
       file,
       channelPrefix,
     );
@@ -583,11 +574,6 @@ async function readDispatcherChannels(
       `${channelPrefix}config`,
       { allowMissing: true },
     );
-    const collaborationSpace = readChannelCollaborationSpace(
-      raw['collaborationSpace'],
-      file,
-      `${channelPrefix}collaborationSpace.`,
-    );
     const channelProvider = asChannelProvider(
       providerRegistry.getImplementation(provider.descriptor.id),
     );
@@ -601,21 +587,20 @@ async function readDispatcherChannels(
       );
     }
     const parsed =
-      ((await channelProvider.readConfig?.(rawConfig, {
+      ((await channelProvider.config?.read(rawConfig, {
         dispatcher_id: dispatcherId,
         channel_id: id,
         provider: provider.ref,
       })) as DispatcherProviderConfig | undefined) ?? rawConfig;
     let identity = '';
     try {
-      identity = channelProvider.getIdentity?.(parsed) ?? '';
+      identity = channelProvider.identity?.get(parsed) ?? '';
     } catch {
       identity = '';
     }
     out.push({
       id,
       provider: provider.ref,
-      collaborationSpace,
       config: parsed,
       rawConfig,
       identity,

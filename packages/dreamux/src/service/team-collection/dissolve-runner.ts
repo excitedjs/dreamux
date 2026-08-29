@@ -8,10 +8,10 @@ import type {
 import {
   TeamDissolveBlockedError,
   TeamDissolveFailedError,
-  TeamDissolveInterruptedError,
 } from './errors.js';
 import type { TeamDissolveOperation } from './dissolve-lifecycle.js';
 import type {
+  AcceptedTeamLogicalClose,
   TeamDissolvePublicError,
   TeamDissolveRecord,
   TeamRecord,
@@ -42,6 +42,13 @@ interface TeamDissolveRunnerOptions {
     publicError: TeamDissolvePublicError,
     cause: unknown,
   ): Promise<void>;
+  /** Abandon an accepted operation whose post-stop work is worth keeping. */
+  blockAfterStop(
+    operation: TeamDissolveOperation,
+    publicError: TeamDissolvePublicError,
+    cause: unknown,
+  ): Promise<void>;
+  closeResources(input: AcceptedTeamLogicalClose): Promise<TeamSummary>;
   logicalClosed(operation: TeamDissolveOperation, summary: TeamSummary): void;
   finishClosed(
     operation: TeamDissolveOperation,
@@ -54,6 +61,20 @@ interface TeamDissolveRunnerOptions {
 export class TeamDissolveRunner {
   constructor(private readonly opts: TeamDissolveRunnerOptions) {}
 
+  /**
+   * Stop, then decide, then close.
+   *
+   * Acceptance already fenced this Team and, for a self-dissolve, already
+   * stopped its children. What is left is unconditional: stop every runtime
+   * that could still write the shared workspace, and only then look at it. The
+   * check before acceptance answered "may this start"; this one answers "is it
+   * still true now that nothing is running", which is the only version of the
+   * answer a destructive reclaim can act on.
+   *
+   * A `force` operation skips the question. The caller already said the local
+   * work is expendable, and asking again would only produce an answer nobody
+   * is allowed to act on.
+   */
   async run(operation: TeamDissolveOperation): Promise<void> {
     const current = await this.opts.loadCurrent(operation);
     if (
@@ -77,33 +98,10 @@ export class TeamDissolveRunner {
 
     try {
       const service = await this.opts.getService(operation.teamId);
-      service.closeWorkflowAdmission();
-      await service.stopWorkflowsForClosing();
+      await service.stopRuntimesForDissolve();
     } catch (error) {
       await this.opts.deferRetry(operation, 'resource-close-failed', error);
       return;
-    }
-
-    const closeAlreadyBegan = operation.record.phase !== 'waiting_for_team_idle';
-    if (
-      operation.record.phase === 'waiting_for_team_idle' ||
-      operation.needsRecoveryIdle
-    ) {
-      try {
-        await this.waitForTeamIdle(operation);
-        operation.needsRecoveryIdle = false;
-      } catch (error) {
-        if (error instanceof TeamDissolveInterruptedError) {
-          this.opts.suspend(operation);
-          return;
-        }
-        if (closeAlreadyBegan) {
-          await this.opts.deferRetry(operation, 'resource-close-failed', error);
-        } else {
-          await this.opts.failOpen(operation, 'resource-close-failed', error);
-        }
-        return;
-      }
     }
     if (this.suspendIfInterrupted(operation)) return;
 
@@ -115,46 +113,32 @@ export class TeamDissolveRunner {
       return;
     }
 
-    // Re-read through the controller after every writer is idle. This is both
-    // the authoritative operation-generation check and the snapshot used by
-    // the required second non-destructive worktree assessment.
+    // Re-read through the controller once everything is stopped. This is both
+    // the authoritative operation-generation check and the snapshot the
+    // required second non-destructive worktree assessment reads.
     const revalidated = await this.opts.loadCurrent(operation);
     let assessment: WorktreeCleanupAssessment;
     try {
       assessment = await this.opts.assessWorktree(revalidated);
     } catch (error) {
       if (this.suspendIfInterrupted(operation)) return;
-      if (closeAlreadyBegan) {
-        await this.opts.deferRetry(
-          operation,
-          'worktree-assessment-failed',
-          error,
-        );
-      } else {
-        await this.opts.failOpen(
-          operation,
-          'worktree-assessment-failed',
-          error,
-        );
-      }
+      await this.opts.failOpen(operation, 'worktree-assessment-failed', error);
       return;
     }
     if (this.suspendIfInterrupted(operation)) return;
     if (assessment.status === 'blocked') {
-      if (closeAlreadyBegan) {
-        await this.finishSafetyBlockedClose(
-          operation,
-          revalidated,
-          assessment,
-        );
-      } else {
-        await this.opts.failOpen(
+      if (!operation.record.force) {
+        await this.opts.blockAfterStop(
           operation,
           publicErrorForSafety(assessment.reason),
           new TeamDissolveBlockedError(assessment.reason),
         );
+        return;
       }
-      return;
+      // Still asked, because the same call is what proves this is a managed
+      // worktree that exists and is registered to this Team's repository.
+      // `force` overrides only the refusal, not the resolution behind it.
+      assessment = { status: 'eligible' };
     }
 
     await this.startLogicalClose(operation, revalidated, assessment);
@@ -252,15 +236,10 @@ export class TeamDissolveRunner {
         cleanup_state: 'cleanup-pending' as const,
         cleanup_error: null,
       };
-      const summary = await operation.logicalClose!({
+      const summary = await this.opts.closeResources({
         operationId: operation.operationId,
         teamId: operation.teamId,
         note: operation.record.note,
-        owner: {
-          kind: 'team',
-          teamName: current.team_id,
-          leaderName: operation.leaderName,
-        },
         dissolve: nextRecord,
         worktree: logicalWorktree,
       });
@@ -280,32 +259,19 @@ export class TeamDissolveRunner {
     }
   }
 
-  private async waitForTeamIdle(
-    operation: TeamDissolveOperation,
-  ): Promise<void> {
-    const interrupt = operation.interrupt;
-    if (interrupt.isInterrupted()) throw new TeamDissolveInterruptedError();
-    const idle = Promise.all(
-      operation.writers.map(async (writer) => writer.waitIdle!()),
-    ).then(() => 'idle' as const);
-    void idle.catch(() => undefined);
-    const result = await Promise.race([
-      idle,
-      interrupt.promise.then(() => 'interrupted' as const),
-    ]);
-    if (result === 'interrupted') throw new TeamDissolveInterruptedError();
-  }
-
   private async runPhysicalCleanup(
     operation: TeamDissolveOperation,
   ): Promise<void> {
     const team = await this.opts.loadCurrent(operation);
     const service = await this.opts.getService(operation.teamId);
-    const cleaned = await this.opts.worktrees.cleanup({
-      source_cwd: team.repo_cwd,
-      source_repo: team.source_repo,
-      worktree: team.worktree,
-    });
+    const cleaned = await this.opts.worktrees.cleanup(
+      {
+        source_cwd: team.repo_cwd,
+        source_repo: team.source_repo,
+        worktree: team.worktree,
+      },
+      { force: operation.record.force },
+    );
     if (cleaned.cleanup_state === 'retained-error') {
       await this.opts.deferRetry(
         operation,
@@ -343,43 +309,6 @@ export class TeamDissolveRunner {
     await this.opts.finishClosed(operation, summary);
   }
 
-  private async finishSafetyBlockedClose(
-    operation: TeamDissolveOperation,
-    current: TeamRecord,
-    assessment: Extract<WorktreeCleanupAssessment, { status: 'blocked' }>,
-  ): Promise<void> {
-    const publicError = publicErrorForSafety(assessment.reason);
-    const failed: TeamDissolveRecord = {
-      ...operation.record,
-      phase: 'failed',
-      last_error: publicError,
-      next_retry_at: null,
-    };
-    try {
-      const summary = await operation.logicalClose!({
-        operationId: operation.operationId,
-        teamId: operation.teamId,
-        note: operation.record.note,
-        owner: {
-          kind: 'team',
-          teamName: current.team_id,
-          leaderName: operation.leaderName,
-        },
-        dissolve: failed,
-        worktree: assessment.worktree,
-      });
-      await this.opts.loadCurrent(operation);
-      await this.opts.finishClosed(operation, summary);
-    } catch (error) {
-      const latest = await this.opts.loadCurrent(operation);
-      if (latest.status === 'closed' && operation.record.phase === 'failed') {
-        const summary = await (await this.opts.getService(operation.teamId)).status();
-        await this.opts.finishClosed(operation, summary);
-        return;
-      }
-      await this.opts.deferRetry(operation, publicError, error);
-    }
-  }
 }
 
 function isSafetyRetained(

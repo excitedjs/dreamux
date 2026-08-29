@@ -12,8 +12,9 @@
  *
  * It deliberately imports no admin, service, Channel provider, or caller-scope
  * types: the caller binds scope into the handler closures before handing the
- * catalog here. It never hand-writes a JSON-RPC envelope, protocol version
- * field, discovery result, or protocol error.
+ * catalog here, and after the delegate boundary that caller is a single generic
+ * shim. It never hand-writes a JSON-RPC envelope, protocol version field,
+ * discovery result, or protocol error.
  */
 import type { Readable, Writable } from 'node:stream';
 
@@ -48,20 +49,19 @@ export const DREAMUX_SUPPORTED_PROTOCOL_VERSIONS: readonly string[] = [
 ];
 
 /**
- * The fixed, model-safe text emitted for any tool failure that a domain
- * adapter did not explicitly mark as a public error. It carries no admin code,
- * provider message, or internal detail.
+ * The fixed, model-safe text emitted for any tool failure the tool's owner did
+ * not explicitly mark as a public error. It carries no error code, provider
+ * message, or internal detail.
  */
 export const SANITIZED_TOOL_ERROR =
   'The tool call could not be completed. See the Dreamux server logs for details.';
 
 /**
- * A domain-adapter-approved, model-facing tool execution error. A domain MCP
- * adapter throws this from a handler when it has mapped a specific admin or
- * provider failure to a safe public message. The shared executor formats it as
- * an `isError` tool result with that message and no `structuredContent`. Any
- * other thrown value is logged in full out of band and becomes
- * {@link SANITIZED_TOOL_ERROR}.
+ * An owner-approved, model-facing tool execution error. A handler throws this
+ * when it has mapped a specific failure to a safe public message. The shared
+ * executor formats it as an `isError` tool result with that message and no
+ * `structuredContent`. Any other thrown value is logged in full out of band and
+ * becomes {@link SANITIZED_TOOL_ERROR}.
  */
 export class PublicToolError extends Error {
   constructor(message: string) {
@@ -77,10 +77,24 @@ export class PublicToolError extends Error {
  */
 export type McpToolResult = Record<string, unknown>;
 
+/**
+ * One completed tool call: the canonical structured value, plus whatever text
+ * the tool's owner chose to say alongside it.
+ *
+ * The text travels with the result rather than being derived from it here. Only
+ * the owner of an operation knows whether a particular outcome deserves a
+ * sentence — and that owner runs in the server, on the far side of a transport
+ * this module deliberately knows nothing about.
+ */
+export interface McpToolOutcome {
+  structured: McpToolResult;
+  text?: string;
+}
+
 /** A handler for one registered tool, receiving SDK-validated arguments. */
 export type McpToolHandler = (
   args: Record<string, unknown>,
-) => Promise<McpToolResult>;
+) => Promise<McpToolOutcome>;
 
 /**
  * Tool advertisement metadata, the neutral JSON-Schema-backed descriptor a
@@ -105,16 +119,9 @@ export interface McpToolMetadata {
   icons?: Icon[];
 }
 
-/** A fully bound tool: advertisement metadata plus its execution policy. */
+/** A fully bound tool: advertisement metadata plus its handler. */
 export interface McpToolDefinition extends McpToolMetadata {
   handler: McpToolHandler;
-  /** Optional operation-local text selected from the projected success value. */
-  successText?: (result: McpToolResult) => string | undefined;
-  /**
-   * Fixed out-of-band diagnostic for failures whose upstream error may carry
-   * private provider or filesystem detail. Public output remains sanitized.
-   */
-  failureLogMessage?: string | ((error: unknown) => string | undefined);
 }
 
 export interface McpServerIdentity {
@@ -261,12 +268,10 @@ function buildMcpServer(
 
 /**
  * The single MCP-adapter-owned execution projector. It emits the handler's
- * canonical value as structured content, adds only text selected by that
- * definition's optional success policy, formats an explicitly public tool
- * error as an `isError` result, and turns every other failure into a fixed
- * sanitized error after emitting either the tool's bounded diagnostic or the
- * ordinary full out-of-band diagnostic. It never exposes a raw `Error.message`
- * to the model.
+ * canonical value as structured content, adds the text that handler chose to
+ * carry, formats an explicitly public tool error as an `isError` result, and
+ * turns every other failure into a fixed sanitized error after logging it out
+ * of band. It never exposes a raw `Error.message` to the model.
  */
 async function executeTool(
   tool: McpToolDefinition,
@@ -274,24 +279,19 @@ async function executeTool(
   log: (message: string) => void,
 ): Promise<CallToolResult> {
   try {
-    const value = await tool.handler(args);
-    const successText = tool.successText?.(value);
+    const outcome = await tool.handler(args);
     return {
       content:
-        successText === undefined
+        outcome.text === undefined
           ? []
-          : [{ type: 'text', text: successText }],
-      structuredContent: value,
+          : [{ type: 'text', text: outcome.text }],
+      structuredContent: outcome.structured,
     };
   } catch (err) {
     if (err instanceof PublicToolError) {
       return { content: [{ type: 'text', text: err.message }], isError: true };
     }
-    const failureLogMessage =
-      typeof tool.failureLogMessage === 'function'
-        ? tool.failureLogMessage(err)
-        : tool.failureLogMessage;
-    log(failureLogMessage ?? `tool '${tool.name}' failed: ${describeError(err)}`);
+    log(`tool '${tool.name}' failed: ${describeError(err)}`);
     return {
       content: [{ type: 'text', text: SANITIZED_TOOL_ERROR }],
       isError: true,
@@ -301,8 +301,8 @@ async function executeTool(
 
 /**
  * Compile one raw JSON Schema through the same official SDK adapter used for
- * registration. Descriptor assembly uses this to fail before spawning a
- * channel MCP process when a provider publishes an invalid schema.
+ * registration. Catalog validation uses this to reject an invalid schema before
+ * any tool built on it is advertised.
  */
 export function validateMcpJsonSchema(
   schema: Record<string, unknown>,

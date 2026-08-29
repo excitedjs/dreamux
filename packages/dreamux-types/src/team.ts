@@ -8,19 +8,34 @@
  */
 import type { AgentRuntimeSkillSource } from './agent-runtime.js';
 import type { ChannelCommandError } from './command.js';
-import type { TeamMemberRole, TeammateStatus } from './teammate.js';
-import type { InboundTurnInput } from './turn.js';
+import type { TeamContainedRole, TeammateStatus } from './teammate.js';
 
 /**
- * A per-Team managed repository request. It selects the source repository and
- * the ref the Team's managed worktree is created from.
+ * A Team's repository policy. It is the complete existing Team-creation
+ * capability, not a Channel-shaped subset: `reuse-cwd` reuses a caller-selected
+ * or default working directory, and `managed` creates a git worktree with the
+ * existing optional path, base ref, branch, slug, and cleanup controls. An
+ * omitted request keeps the dispatcher's default shared work directory.
+ *
+ * A Channel that owns only a narrow policy — Feishu supplies `path`/`base_ref`
+ * — maps it into the `managed` branch before invoking the Command, so no
+ * Channel-specific repository shape exists in this contract.
  */
-export interface ManagedRepoRequest {
-  /** Source repository working directory the worktree branches from. */
-  readonly path: string;
-  /** Git ref the worktree is created from. */
-  readonly base_ref: string;
-}
+export type TeamCreateRepoRequest =
+  | {
+      readonly mode: 'reuse-cwd';
+      /** Existing working directory to reuse; omitted means the default. */
+      readonly path?: string;
+    }
+  | {
+      readonly mode: 'managed';
+      /** Source repository the worktree branches from; omitted means the default. */
+      readonly path?: string;
+      readonly base_ref?: string;
+      readonly branch?: string;
+      readonly slug?: string;
+      readonly cleanup?: 'keep' | 'delete-on-close';
+    };
 
 /**
  * Create a Team with restart-durable request identity.
@@ -45,7 +60,7 @@ export interface TeamCreateCommand {
     readonly prompt?: string;
     readonly skill_sources?: readonly AgentRuntimeSkillSource[];
   };
-  readonly repo?: ManagedRepoRequest;
+  readonly repo?: TeamCreateRepoRequest;
 }
 
 export interface TeamCreateResult {
@@ -58,38 +73,49 @@ export interface TeamCreateResult {
 /**
  * Submit one turn to a Team.
  *
- * Omitting `team_name` targets the Dispatcher Agent; otherwise Core resolves the
- * stable Team and submits only to its TeamLeader. The `inbound` variant is used
- * by Channel bridges and the invoker scopes its source deduplication to the
- * calling Channel; the `text` variant is the Dreamux-owned plain-text path.
+ * Omitting `team_name` targets the Dispatcher Agent; supplying it submits only
+ * to that Team's TeamLeader. Which of the two a caller wants is the caller's
+ * own decision — a Channel routes its external conversation and says so by
+ * naming a Team or not naming one — and `admin.sock` has exactly the same two
+ * targets. Channel and admin adapters share this one flat payload: the caller
+ * interprets its own external envelope and supplies the display attributes,
+ * the faithful model-facing `text`, and at most one trailing reminder, while
+ * Core assembles the provenance envelope around them and never reads what
+ * they mean.
  */
 export interface TeamSubmitCommand {
   readonly team_name?: string;
-  readonly submission:
-    | {
-        readonly kind: 'inbound';
-        readonly input: InboundTurnInput;
-        /**
-         * A bounded opaque Channel-chosen string. Core never parses, routes,
-         * authorizes, or deduplicates with it, and echoes it unchanged on every
-         * related submitted/activity/settled event.
-         */
-        readonly correlation?: string;
-      }
-    | {
-        readonly kind: 'text';
-        readonly text: string;
-        readonly intent?: string;
-        readonly source_id?: string;
-      };
+  /**
+   * Unordered display attributes rendered onto the envelope's start tag.
+   * Omitting them is exactly the empty set. Names are open but must be safe
+   * start-tag names; values are arbitrary text and are escaped for the model.
+   * Core renders them and never interprets one.
+   */
+  readonly attrs?: Readonly<Record<string, string>>;
+  readonly text: string;
+  /**
+   * One optional note rendered once after the closed envelope, at the very end
+   * of this input. It is the caller's own standing instruction to the model,
+   * not a per-message annotation, so it is never repeated inside `text`. An
+   * empty string is exactly an omitted one; anything else is rendered as given.
+   */
+  readonly reminder?: string;
+  readonly intent?: string;
+  /**
+   * Optional stable source identity. Core — not a Provider — deduplicates with
+   * it, scoped to the target entity alone, so the owner that chooses the value
+   * is the owner responsible for it being stable. Omitted or empty bypasses
+   * deduplication entirely.
+   */
+  readonly source_id?: string;
 }
 
 /**
  * `submitted` carries the Core `turn_id`; `duplicate` does not invent one,
- * because provider-owned deduplication has no submission identity or
- * source-to-turn ledger. The provider seam's internal `skipped` is normalized to
- * `stopped` here. `ambiguous` is an unknown boundary outcome and is never
- * retried.
+ * because Core returns it before runtime admission and therefore creates no
+ * second runtime submission or turn identity. The provider seam's internal
+ * `skipped` is normalized to `stopped` here. `ambiguous` is an unknown boundary
+ * outcome and is never retried.
  */
 export interface TeamSubmitResult {
   readonly status:
@@ -102,15 +128,20 @@ export interface TeamSubmitResult {
   readonly error?: ChannelCommandError;
 }
 
-export interface TeamStateMemberSummary {
+export interface TeamStateTeammateSummary {
   readonly teammate_name: string;
-  readonly role: TeamMemberRole;
+  /**
+   * Derived by the Team that owns the row — its leader is `team_leader`, every
+   * Agent in its TeammateCollection is `teammate`. It is not read from any
+   * persisted field.
+   */
+  readonly role: TeamContainedRole;
   readonly status: TeammateStatus;
 }
 
 /**
  * The Team aggregate, republished whenever the Team lifecycle changes or a
- * contained TeamLeader/member is created or changes state.
+ * contained TeamLeader/TeamMate is created or changes state.
  *
  * It is intentionally redundant with `teammate.state`. Its `teammates` array is
  * a current bounded summary, not a second state authority: the Core Team and
@@ -123,5 +154,5 @@ export interface TeamStateEvent {
   readonly team_name: string;
   readonly leader_name: string;
   readonly status: 'starting' | 'running' | 'closed';
-  readonly teammates: readonly TeamStateMemberSummary[];
+  readonly teammates: readonly TeamStateTeammateSummary[];
 }

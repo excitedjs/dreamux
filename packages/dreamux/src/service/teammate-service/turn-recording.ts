@@ -6,10 +6,7 @@ import type {
   RuntimeSubmission,
 } from '@excitedjs/dreamux-types';
 
-import type {
-  AgentEntitySubmissionResult,
-  AgentEntityTurnOrigin,
-} from '../agent-entity/types.js';
+import type { AgentEntitySubmissionResult } from '../agent-entity/types.js';
 import type { PreparedCompletionFact } from '../completion-router/index.js';
 
 export type TurnOutcome =
@@ -25,7 +22,13 @@ export type TurnCompletionDelivery = (
 export interface Turn {
   readonly id: string;
   readonly runtime: RuntimeSubmission;
-  readonly origin: AgentEntityTurnOrigin | null;
+  /**
+   * The open provenance name this turn was submitted under — the same value the
+   * model envelope was rendered with, kept so display consumers can report it
+   * without Core re-deriving where the turn came from.
+   */
+  readonly source: string;
+  /** The source's original body, never the assembled envelope. */
   readonly prompt: string | null;
   readonly intent: string | null;
   readonly submittedAt: number;
@@ -38,6 +41,21 @@ export type TurnAdmission =
   | { status: 'duplicate' | 'stopped' | 'skipped' }
   | { status: 'failed' | 'ambiguous'; error: Error };
 
+/**
+ * What an inbound delivery reports back to whoever handed Core the message.
+ *
+ * It is a projection of {@link TurnAdmission}, not a second authority: the
+ * admission decides, this states the decision. It stays inside Core because
+ * inbound turns no longer cross the provider seam — a Channel hands Core a
+ * message and reads the answer through the Command port.
+ */
+export type InboundDeliveryResult =
+  | { status: 'duplicate' }
+  | { status: 'stopped' }
+  | { status: 'submitted' }
+  | { status: 'failed'; error: Error }
+  | { status: 'ambiguous'; error: Error };
+
 export class EntityTurn implements Turn {
   readonly id = randomUUID();
   readonly settled: Promise<TurnOutcome>;
@@ -48,11 +66,11 @@ export class EntityTurn implements Turn {
 
   constructor(
     readonly runtime: RuntimeSubmission,
-    readonly origin: AgentEntityTurnOrigin | null,
+    readonly source: string,
     readonly prompt: string | null,
     readonly intent: string | null,
     readonly submittedAt: number,
-    private readonly sourceName: string,
+    private readonly producerName: string,
     private readonly deliveryClosure: TurnCompletionDelivery | null,
   ) {
     this.settled = runtime.settled.then((settlement): TurnOutcome => {
@@ -106,7 +124,7 @@ export class EntityTurn implements Turn {
     const completion = this.selectedCompletion;
     const fact: PreparedCompletionFact = {
       kind: 'teammate',
-      source: this.sourceName,
+      source: this.producerName,
       status: completion.status,
       result: completion.status === 'completed' ? completion.resultText : null,
     };

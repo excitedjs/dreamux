@@ -1,6 +1,5 @@
 import type { DreamuxConfig } from '../config/config.js';
 import {
-  defaultChannelCollaborationSpaceConfig,
   type DispatcherConfig,
   type DispatcherProviderConfig,
   stringifyConfig,
@@ -77,7 +76,6 @@ function dispatcherConfigFromAnswers(
     channels: answers.channels.map((channel) => ({
       id: channel.id,
       provider: channel.provider,
-      collaborationSpace: defaultChannelCollaborationSpaceConfig(),
       config: cloneProviderConfig(channel.config),
       rawConfig: cloneProviderConfig(channel.config),
     })),
@@ -99,7 +97,6 @@ function cloneDispatcherConfig(dispatcher: DispatcherConfig): DispatcherConfig {
     channels: dispatcher.channels.map((channel) => ({
       id: channel.id,
       provider: channel.provider,
-      collaborationSpace: cloneCollaborationSpaceConfig(channel.collaborationSpace),
       config: cloneProviderConfig(channel.config),
       ...(channel.rawConfig === undefined
         ? {}
@@ -114,12 +111,6 @@ function cloneDispatcherConfig(dispatcher: DispatcherConfig): DispatcherConfig {
         : { rawConfig: cloneProviderConfig(dispatcher.runtime.rawConfig) }),
     },
   };
-}
-
-function cloneCollaborationSpaceConfig(
-  config: DispatcherConfig['channels'][number]['collaborationSpace'],
-): DispatcherConfig['channels'][number]['collaborationSpace'] {
-  return structuredClone(config ?? defaultChannelCollaborationSpaceConfig());
 }
 
 function cloneProviderConfig(config: unknown): DispatcherProviderConfig {

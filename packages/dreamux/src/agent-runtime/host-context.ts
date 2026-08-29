@@ -4,7 +4,7 @@
  *
  * There are no host↔neutral adapters here: core's logger IS the neutral
  * `DreamuxLogger` (see `platform/logger.ts`, pino wrapped at construction) and
- * the dispatcher store implements the neutral `AgentRuntimeStateCallbacks`
+ * the entity's runtime state issues the neutral `AgentRuntimeStateSink` lease
  * directly, so both are injected into the create context as-is. The only thing
  * that lives here is the host's process-env injection seam below.
  */

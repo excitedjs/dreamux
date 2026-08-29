@@ -1,13 +1,28 @@
+/**
+ * The live Feishu session: this Channel's whole authority, in one object.
+ *
+ * It owns external transport, message interpretation, access and trust policy,
+ * its own routing document, its own Collaboration Space policy, the automatic
+ * provisioning it runs in memory, and the visible-message anchors its cards
+ * hang under. What it hands Core is a body and, when its own routing chose a
+ * Team, that Team's name; what it takes from Core is a `turn_id` and a live
+ * event stream.
+ *
+ * The lifecycle is deliberately three calls. `initialize` loads durable state
+ * and subscribes without opening the platform, which is what makes
+ * "subscribed before anything is admitted" provable rather than hopeful.
+ * `start` opens the platform and lets messages in. `close` fences, drains this
+ * Channel's own commit queue, and releases the bot.
+ */
 import type {
-  ChannelContainer,
-  ChannelCoreEventSource,
-  ChannelCoreEventSubscription,
-  ChannelBindingCollaborationSpaceEvent,
-  ChannelBindingRouteEvent,
-  ChannelTarget,
-  ChannelToolCallerContext,
-  ChannelToolContext,
-  InboundTurnInput,
+  ChannelCoreEvent,
+  ChannelCorePort,
+  ChannelEventSubscription,
+  ChannelMcpCaller,
+  DreamuxLogger,
+  JsonInvoker,
+  JsonValue,
+  TeamSubmitResult,
 } from '@excitedjs/dreamux-types';
 import type {
   CreateBotOptions,
@@ -20,7 +35,6 @@ import {
   recordBotAdded,
   type PeerBot,
 } from './chat-bots-store.js';
-import { BUILTIN_FEISHU_PROVIDER_REF } from './provider-ref.js';
 import { AsyncMutex } from './lib/mutex.js';
 import {
   alwaysActiveSessionFence,
@@ -31,14 +45,14 @@ import {
   runFeishuBoundedOperation,
 } from './feishu-bounded-operation.js';
 import { FeishuCotSessionSeam } from './feishu-cot-session.js';
+import { FeishuProvisioning } from './feishu-provisioning.js';
+import { FeishuBindingOperations } from './feishu-session-bindings.js';
 import {
-  FEISHU_TOOLS,
-  type FeishuMcpListChatBotsInput,
-  type FeishuMcpReactInput,
-  type FeishuMcpReplyInput,
-  type FeishuToolName,
-  type FeishuToolResult,
-} from './feishu-mcp-tools.js';
+  commandErrorCode,
+  errorMessage,
+  type FeishuSubmission,
+  type FeishuSubmitOutcome,
+} from './feishu-submit.js';
 import {
   handleCardAction as sessionHandleCardAction,
   sendCard as sessionSendCard,
@@ -49,86 +63,47 @@ import {
 } from './feishu-session-ops.js';
 import { onMessage as sessionOnMessage } from './feishu-session-inbound.js';
 import { FeishuTargetRouter } from './feishu-target-router.js';
+import { FeishuRouting } from './routing/index.js';
+import { FeishuRoutingStore } from './routing/store.js';
 import {
-  collaborationSpaceNotification,
-  routeBindingNotification,
-} from './feishu-binding-notification-card.js';
+  chatTarget,
+  describeTarget,
+  type FeishuTarget,
+} from './routing/target.js';
+import type {
+  FeishuListChatBotsResult,
+  FeishuToolSession,
+  WireChatBot,
+} from './tools/types.js';
 
 /**
  * Logger shape used throughout the Feishu channel session — pino-style,
  * fields-first, matching the neutral `DreamuxLogger` contract from the host.
- * Re-exported from the barrel so tool authors don't need to reach into the
- * private registry module.
  */
-export type ChannelLogger = import('./feishu-mcp-tools.js').ChannelLogger;
-
-export interface WireChatBot {
-  open_id: string;
-  name?: string;
-}
-
-export interface FeishuMcpListChatBotsResult {
-  chat_id: string;
-  known: WireChatBot[];
-  trusted: WireChatBot[];
-}
+export type ChannelLogger = DreamuxLogger;
+export type { WireChatBot, FeishuListChatBotsResult };
 
 export interface FeishuChannelSessionOptions {
   /** The owning dispatcher id — used only for log fields, never for paths. */
   dispatcherId: string;
-  /**
-   * This session's dispatcher-local channel id. The neutral provider adapter
-   * always supplies it; a session built without one matches no channel origin
-   * and therefore presents no COT.
-   */
-  channelId?: string;
+  /** This session's dispatcher-local channel id; its routing document's key. */
+  channelId: string;
   /** Feishu bot app id (host resolves it from config). */
   appId: string;
-  /** Feishu bot app secret (host resolves it; empty string skips auth in tests). */
+  /** Feishu bot app secret (empty string skips auth in tests). */
   appSecret: string;
   /**
-   * The dispatcher's durable state directory. The session derives
-   * `access.json` / `chat-bots.json` under it — supplied by the host so the
-   * package owns no Dreamux state-layout contract.
+   * The dispatcher's durable state directory. The session derives its access,
+   * chat-bots, and routing files under it — supplied by the host so the package
+   * owns no Dreamux state-layout contract.
    */
   stateDir: string;
   /** The dispatcher's inbound-attachment cache directory (host-supplied). */
   attachmentCacheDir: string;
-  /**
-   * The host's neutral logger (`DreamuxLogger`, pino-shaped fields-first). It is
-   * used as-is by the session and handed straight to the transport — both are
-   * pino-compatible, so there is no per-boundary adapter.
-   */
-  log: import('@excitedjs/dreamux-types').DreamuxLogger;
-  /** Inject a fake bot (tests). Host wraps its `(row, secret)` seam into this. */
+  /** The host's neutral logger, handed straight to the transport. */
+  log: DreamuxLogger;
+  /** Inject a fake bot (tests), instead of a live Lark connection. */
   botFactory?: () => FeishuBot;
-}
-
-export interface FeishuInboundSubmitter {
-  submitTurn(
-    input: InboundTurnInput,
-    envelope: FeishuInboundEnvelope,
-  ): Promise<import('@excitedjs/dreamux-types').InboundDeliveryResult>;
-}
-
-export interface FeishuInboundEnvelope {
-  provider: 'builtin:feishu';
-  /** Retained for compatibility with the pre-topic public submitter contract. */
-  chatId: string;
-  chatType: 'group' | 'p2p';
-  /** Production sessions always supply the provider-normalized target. */
-  target?: ChannelTarget;
-  container?: ChannelContainer;
-  messageId: string;
-}
-
-export class FeishuChannelCapabilityError extends Error {
-  constructor(readonly toolName: string) {
-    super(
-      `${BUILTIN_FEISHU_PROVIDER_REF} does not expose the ${JSON.stringify(toolName)} MCP tool`,
-    );
-    this.name = 'FeishuChannelCapabilityError';
-  }
 }
 
 interface FeishuSessionLifecycle {
@@ -137,23 +112,23 @@ interface FeishuSessionLifecycle {
   inFlight: Set<Promise<unknown>>;
 }
 
-interface BindingRouteOwner {
-  readonly teamName: string;
-  readonly leaderName: string;
-}
-
 const FEISHU_BINDING_NOTIFICATION_SEND_TIMEOUT_MS = 20_000;
 
 export class FeishuChannelSession {
-  readonly ref = BUILTIN_FEISHU_PROVIDER_REF;
   readonly bot: FeishuBot;
+  readonly routing: FeishuRouting;
+  private readonly store: FeishuRoutingStore;
   private readonly targetRouter: FeishuTargetRouter;
+  private readonly cot: FeishuCotSessionSeam;
+  private readonly bindings: FeishuBindingOperations;
+  private readonly provisioning: FeishuProvisioning;
   private readonly _accessMutex = new AsyncMutex();
   private readonly inactiveFence = alwaysActiveSessionFence();
+  /** Live leader names, learned from `team.state`; never durable. */
+  private readonly leaderNames = new Map<string, string>();
   private lifecycle: FeishuSessionLifecycle | undefined;
-  private readonly coreEventSubscriptions: ChannelCoreEventSubscription[] = [];
-  private readonly bindingRouteOwners = new Map<string, BindingRouteOwner>();
-  private readonly cot: FeishuCotSessionSeam;
+  private subscription: ChannelEventSubscription | undefined;
+  private invoker: JsonInvoker | undefined;
 
   constructor(private readonly opts: FeishuChannelSessionOptions) {
     this.bot = opts.botFactory !== undefined
@@ -161,13 +136,21 @@ export class FeishuChannelSession {
       : createFeishuBot({
           appId: opts.appId,
           appSecret: opts.appSecret,
-          // DreamuxLogger is pino-shaped; the transport's `TransportLogger` is
-          // the same fields-first shape, so it passes through directly.
           logger: opts.log,
         } satisfies CreateBotOptions);
     this.targetRouter = new FeishuTargetRouter({
       chatModes: this.bot,
       log: opts.log,
+    });
+    this.store = new FeishuRoutingStore({
+      dispatcherId: opts.dispatcherId,
+      channelId: opts.channelId,
+      stateDir: opts.stateDir,
+    });
+    this.routing = new FeishuRouting({
+      dispatcherId: opts.dispatcherId,
+      channelId: opts.channelId,
+      store: this.store,
     });
     this.cot = new FeishuCotSessionSeam({
       dispatcherId: opts.dispatcherId,
@@ -175,48 +158,31 @@ export class FeishuChannelSession {
       log: opts.log,
       cotClient: () => this.bot.cot,
     });
+    this.bindings = new FeishuBindingOperations({
+      routing: this.routing,
+      cot: this.cot,
+      notify: (target, card, anchorTeamName) =>
+        this.notify(target, card, anchorTeamName),
+    });
+    this.provisioning = new FeishuProvisioning({
+      dispatcherId: opts.dispatcherId,
+      channelId: opts.channelId,
+      log: opts.log,
+      routing: this.routing,
+      submitter: { submit: (team, input) => this.submit(team, input) },
+      invoke: (command, payload) => this.invoke(command, payload),
+      announce: (input) => this.bindings.announceProvisioned(input),
+    });
   }
 
-  /**
-   * Build a package-private handle the session helpers operate on. Keeps the
-   * class's `private` fields truly private while still letting extracted free
-   * functions reach them — structural typing + circular type imports make
-   * this cost-free.
-   */
-  private get handle(): SessionHandle {
-    return this.handleForFence(this.lifecycle?.fence ?? this.inactiveFence);
-  }
+  // ── Lifecycle ──────────────────────────────────────────────────────────
 
-  private handleForFence(fence: FeishuSessionFence): SessionHandle {
-    return sessionHandle(
-      this.opts,
-      this.bot,
-      this._accessMutex,
-      this.bot.botDisplayName ?? 'Dreamux bot',
-      this.targetRouter,
-      fence,
-    );
-  }
-
-  private async trackLifecycleTask<T>(
-    lifecycle: FeishuSessionLifecycle,
-    task: Promise<T>,
-  ): Promise<T> {
-    lifecycle.inFlight.add(task);
-    try {
-      return await task;
-    } finally {
-      lifecycle.inFlight.delete(task);
+  async initialize(port: ChannelCorePort): Promise<void> {
+    if (this.lifecycle !== undefined) {
+      throw new Error('Feishu channel session is already initialized');
     }
-  }
-
-  async start(
-    submitter: FeishuInboundSubmitter,
-    coreEvents?: ChannelCoreEventSource,
-  ): Promise<void> {
-    if (this.lifecycle !== undefined && !this.lifecycle.controller.signal.aborted) {
-      throw new Error('Feishu channel session is already started');
-    }
+    await this.store.load();
+    this.invoker = port.invoke;
     const controller = new AbortController();
     const lifecycle: FeishuSessionLifecycle = {
       controller,
@@ -224,45 +190,40 @@ export class FeishuChannelSession {
       fence: {
         signal: controller.signal,
         isCurrent: () =>
-          this.lifecycle === lifecycle &&
-          !controller.signal.aborted,
+          this.lifecycle === lifecycle && !controller.signal.aborted,
       },
     };
     this.lifecycle = lifecycle;
-    this.bindingRouteOwners.clear();
-    this.subscribeBindingNotifications(coreEvents, lifecycle);
-    this.coreEventSubscriptions.push(
-      ...this.cot.start(coreEvents, () =>
-        lifecycle.fence.isCurrent(),
-      ),
-    );
+    this.cot.start(() => lifecycle.fence.isCurrent());
+    this.subscription = port.events.subscribe((event) => {
+      this.onCoreEvent(event);
+    });
+  }
+
+  async start(): Promise<void> {
+    const lifecycle = this.lifecycle;
+    if (lifecycle === undefined) {
+      throw new Error('Feishu channel session was started before initialize');
+    }
     try {
       await this.bot.start({
         onBotMemberAdded: async (added) => {
           if (!lifecycle.fence.isCurrent()) return;
-          await this.trackLifecycleTask(
+          await this.track(
             lifecycle,
-            recordBotAdded(
-              this.opts.stateDir,
-              added.chatId,
-              added.eventId,
-            ),
+            recordBotAdded(this.opts.stateDir, added.chatId, added.eventId),
           );
         },
         onMessage: async (event) => {
           if (!lifecycle.fence.isCurrent()) return;
-          await this.trackLifecycleTask(
+          await this.track(
             lifecycle,
-            sessionOnMessage(
-              this.handleForFence(lifecycle.fence),
-              event,
-              submitter,
-            ),
+            sessionOnMessage(this.handleForFence(lifecycle.fence), event),
           );
         },
         onCardAction: async (event) => {
           if (!lifecycle.fence.isCurrent()) return {};
-          return this.trackLifecycleTask(lifecycle, this.onCardAction(event));
+          return this.track(lifecycle, this.onCardAction(event));
         },
       });
       if (!lifecycle.fence.isCurrent()) {
@@ -270,12 +231,7 @@ export class FeishuChannelSession {
         throw new Error('Feishu channel session was closed during startup');
       }
     } catch (error) {
-      controller.abort();
-      this.bindingRouteOwners.clear();
-      this.unsubscribeCoreEvents();
-      await this.cot.close();
-      await Promise.allSettled([...lifecycle.inFlight]);
-      if (this.lifecycle === lifecycle) this.lifecycle = undefined;
+      await this.teardown(lifecycle);
       throw error;
     }
   }
@@ -283,259 +239,342 @@ export class FeishuChannelSession {
   async close(): Promise<void> {
     const lifecycle = this.lifecycle;
     if (lifecycle !== undefined) {
-      lifecycle.controller.abort();
+      await this.teardown(lifecycle);
+    } else {
+      this.subscription?.unsubscribe();
+      this.subscription = undefined;
+      await this.cot.close();
     }
-    this.bindingRouteOwners.clear();
-    this.unsubscribeCoreEvents();
+    await this.bot.close();
+  }
+
+  private async teardown(lifecycle: FeishuSessionLifecycle): Promise<void> {
+    lifecycle.controller.abort();
+    this.subscription?.unsubscribe();
+    this.subscription = undefined;
+    this.leaderNames.clear();
     // Interrupt every live card before the bot goes away. The adapter fences
     // itself first and drains within a bounded window, so a slow Feishu can
     // never hold session shutdown open.
     await this.cot.close();
-    if (lifecycle !== undefined) {
-      await Promise.allSettled([...lifecycle.inFlight]);
-    }
-    await this.bot.close();
-    if (lifecycle !== undefined && this.lifecycle === lifecycle) {
-      this.lifecycle = undefined;
+    await Promise.allSettled([...lifecycle.inFlight]);
+    // Only now is the Channel's own commit queue empty: a listener that
+    // removed a binding queued its commit without awaiting it.
+    await this.store.drain();
+    if (this.lifecycle === lifecycle) this.lifecycle = undefined;
+  }
+
+  // ── Core facts ─────────────────────────────────────────────────────────
+
+  /**
+   * The single subscription, demultiplexed.
+   *
+   * Nothing here awaits. The COT seam projects synchronously, and a closed
+   * Team's routes are removed through the store's ordinary commit, queued
+   * rather than waited on, because the event stream must not stall behind a
+   * disk write. Until that commit lands one more message can still route to
+   * the closed Team — Core rejects it before admission, and the fallback
+   * removes the route again on its way to the Dispatcher Agent.
+   */
+  private onCoreEvent(event: ChannelCoreEvent): void {
+    try {
+      this.cot.handle(event);
+      if (event.kind !== 'team.state') return;
+      if (event.status !== 'closed') {
+        this.leaderNames.set(event.team_name, event.leader_name);
+        return;
+      }
+      this.leaderNames.delete(event.team_name);
+      void this.forgetTeamRoutes(event.team_name, 'team_closed');
+    } catch (err) {
+      this.opts.log.warn(
+        {
+          dispatcher_id: this.opts.dispatcherId,
+          channel_id: this.opts.channelId,
+          event_kind: event.kind,
+          err: { message: errorMessage(err) },
+        },
+        'Feishu core-event listener failed',
+      );
     }
   }
 
-  async handleMcpTool(
-    toolName: FeishuToolName,
-    rawArguments: unknown,
-    context?: ChannelToolContext,
-  ): Promise<FeishuToolResult> {
-    const def = FEISHU_TOOLS.find((t) => t.name === toolName);
-    if (def === undefined) {
-      throw new FeishuChannelCapabilityError(toolName);
+  /**
+   * Commit the removal of every route to a Team, and say what it removed.
+   *
+   * Both reasons reach the same durable change, so they share the one commit
+   * path the store owns rather than growing a second authority beside it. A
+   * commit that fails is logged and nothing more: the route is still live, and
+   * the next message to it earns the same rejection and the same attempt.
+   *
+   * Only a closed Team is announced. That is a transition the conversation
+   * lived through — it had a Team, and the Team ended — while a stale route is
+   * this Channel correcting its own document on the way to delivering a
+   * message, and telling a group about it would be noise about nothing the
+   * group did.
+   */
+  private async forgetTeamRoutes(
+    teamName: string,
+    reason: 'team_closed' | 'stale_route',
+  ): Promise<void> {
+    const scope = {
+      dispatcher_id: this.opts.dispatcherId,
+      channel_id: this.opts.channelId,
+      team_name: teamName,
+      reason,
+    };
+    try {
+      const { removed } = await this.routing.forgetTeam(teamName);
+      if (removed.length === 0) return;
+      this.opts.log.info(
+        { ...scope, targets: removed.map((row) => describeTarget(row.target)) },
+        'removed Feishu bindings for a Team that can no longer answer',
+      );
+      // Past the commit: the rows are gone from disk, and what follows is
+      // presentation over what they said.
+      if (reason === 'team_closed') {
+        this.bindings.announceTeamClosed({ teamName, removed });
+      }
+    } catch (err) {
+      this.opts.log.warn(
+        { ...scope, err: { message: errorMessage(err) } },
+        'could not commit the removal of Feishu bindings',
+      );
     }
-    const ctx = {
-      stateDir: this.opts.stateDir,
-      session: {
-        logger: this.opts.log as ChannelLogger,
-        sendText: async (
-          chatId: string,
-          text: string,
-          opts?: { messageId?: string; mentionUserIds?: string[] },
-        ) => this.sendReply(
+  }
+
+  private invoke(command: string, payload: JsonValue): Promise<JsonValue> {
+    const invoker = this.invoker;
+    if (invoker === undefined) {
+      return Promise.reject(
+        new Error('Feishu channel session has no Core port'),
+      );
+    }
+    return invoker.invoke(command, payload);
+  }
+
+  // ── Submission ─────────────────────────────────────────────────────────
+
+  /**
+   * One turn, to whoever this Channel's routing chose.
+   *
+   * A `teamName` reaches that Team's TeamLeader; `null` omits the target and
+   * reaches the Dispatcher Agent, which is the recipient for a conversation
+   * no binding or Collaboration Space claims. Core decides nothing about
+   * which: omission *is* the Channel's decision, stated in the Command.
+   *
+   * The returned `turn_id` is what closes the presentation loop. It names the
+   * exact turn this call created, so claiming the matching submitted event is
+   * proof of ownership even when several sessions submit to one recipient at
+   * the same instant.
+   */
+  async submit(
+    teamName: string | null,
+    submission: FeishuSubmission,
+  ): Promise<FeishuSubmitOutcome> {
+    if (this.lifecycle?.fence.isCurrent() !== true) {
+      return { status: 'error', message: 'Feishu session is not live' };
+    }
+    try {
+      const raw = await this.invoke('team.submit', {
+        ...(teamName !== null ? { team_name: teamName } : {}),
+        attrs: submission.attrs,
+        text: submission.text,
+        ...(submission.reminder !== ''
+          ? { reminder: submission.reminder }
+          : {}),
+        source_id: submission.sourceId,
+      } as JsonValue);
+      const outcome = submitOutcome(raw as unknown as TeamSubmitResult);
+      if (outcome.status === 'submitted' && outcome.turnId !== null) {
+        this.cot.attachInboundAnchor(outcome.turnId, submission.anchor);
+      }
+      return outcome;
+    } catch (err) {
+      const code = commandErrorCode(err);
+      if (code === 'TEAM_NOT_FOUND' || code === 'TEAM_CLOSED') {
+        return { status: 'rejected', code, message: errorMessage(err) };
+      }
+      return { status: 'error', message: errorMessage(err) };
+    }
+  }
+
+  /** Deliver one accepted message wherever this Channel routes it. */
+  async deliver(input: {
+    target: FeishuTarget;
+    containerChatId: string | null;
+    submission: FeishuSubmission;
+  }): Promise<FeishuSubmitOutcome> {
+    const plan = this.routing.plan(input.target, input.containerChatId);
+    const { submission } = input;
+    if (plan.kind === 'dispatcher') {
+      return this.submit(null, submission);
+    }
+    const outcome = plan.kind === 'bound'
+      ? await this.submit(plan.teamName, submission)
+      : await this.provisioning.provisionForInbound({
+          space: plan.space,
+          target: input.target,
+          display: null,
+          submission,
+        });
+    if (outcome.status !== 'rejected' && outcome.status !== 'unsubmitted') {
+      return outcome;
+    }
+    // Nothing was admitted, and it is proven rather than assumed: Core refused
+    // this Team before creating anything, or provisioning never reached a
+    // Command at all. The message still has a recipient — the Dispatcher
+    // Agent, as every conversation this Channel cannot hand to a Team does.
+    //
+    // Exactly once. The fallback is an ordinary submission and its own answer
+    // is final: past that point an ambiguous admission or an unknown failure
+    // proves nothing about whether a turn exists, and nothing is sent twice on
+    // a guess.
+    if (plan.kind === 'bound') {
+      // Only a rejection can arrive from that branch, and its code says what
+      // kind of evidence removed the row. `TEAM_CLOSED` is the same close the
+      // `team.state` event proves, and it usually arrives here first: dissolve
+      // raises the Team's closing fence before it publishes the final state,
+      // so the message that gets refused precedes the event. It is announced
+      // for that reason. `TEAM_NOT_FOUND` is a row pointing at nothing, which
+      // is this Channel correcting its own document and stays silent.
+      await this.forgetTeamRoutes(
+        plan.teamName,
+        outcome.status === 'rejected' && outcome.code === 'TEAM_CLOSED'
+          ? 'team_closed'
+          : 'stale_route',
+      );
+    }
+    return this.submit(null, submission);
+  }
+
+  // ── MCP tool backing ───────────────────────────────────────────────────
+
+  toolSession(caller: ChannelMcpCaller): FeishuToolSession {
+    return {
+      logger: this.opts.log,
+      channelId: this.opts.channelId,
+      sendText: async (chatId, text, sendOpts) =>
+        this.sendReply(
           {
             chatId,
             text,
-            ...(opts?.messageId !== undefined
-              ? { messageId: opts.messageId }
+            ...(sendOpts?.messageId !== undefined
+              ? { messageId: sendOpts.messageId }
               : {}),
-            ...(opts?.mentionUserIds !== undefined
-              ? { mentionUserIds: opts.mentionUserIds }
+            ...(sendOpts?.mentionUserIds !== undefined
+              ? { mentionUserIds: sendOpts.mentionUserIds }
               : {}),
           },
-          context?.caller,
+          caller,
         ),
-        react: async (
-          chatId: string | undefined,
-          messageId: string,
-          emoji: string,
-        ) => this.addReaction({
+      react: async (chatId, messageId, emoji) =>
+        this.addReaction({
           messageId,
           emoji,
           ...(chatId !== undefined ? { chatId } : {}),
         }),
-        listKnownChatBots: async (chatId: string) => this.readChatBots({ chatId }),
-      },
+      listKnownChatBots: async (chatId) => this.readChatBots(chatId),
+      bindChannel: (input) => this.bindings.bindChannel(input),
+      unbindChannel: (input, requireOwner) =>
+        this.bindings.unbindChannel(input, requireOwner),
+      listBindings: () => this.routing.listBindings(),
+      bindSpace: (input) => this.bindings.bindSpace(input),
+      unbindSpace: (spaceName) => this.bindings.unbindSpace(spaceName),
+      getSpace: (spaceName) => this.routing.spaceByName(spaceName),
+      listSpaces: () => this.routing.listSpaces(),
     };
-    let parsed: unknown;
-    try {
-      parsed = def.parse(rawArguments);
-    } catch (err) {
-      this.opts.log.error(
-        {
-          dispatcher_id: this.opts.dispatcherId,
-          tool: toolName,
-          err: errInfo(err),
-        },
-        'feishu MCP tool parse failed',
-      );
-      throw err;
-    }
-    let result: FeishuToolResult;
-    try {
-      result = await def.handle(ctx, parsed);
-    } catch (err) {
-      this.opts.log.error(
-        {
-          dispatcher_id: this.opts.dispatcherId,
-          tool: toolName,
-          err: errInfo(err),
-        },
-        'feishu MCP tool handler failed',
-      );
-      throw err;
-    }
-    return result;
   }
 
-  messageBelongsToTarget(messageId: string, target: ChannelTarget): boolean {
-    return this.targetRouter.messageBelongsToTarget(messageId, target);
+  // ── Outbound primitives ────────────────────────────────────────────────
+
+  private async sendReply(
+    input: {
+      chatId: string;
+      text: string;
+      messageId?: string;
+      mentionUserIds?: string[];
+    },
+    caller: ChannelMcpCaller,
+  ): Promise<{ message_ids: string[] }> {
+    const lifecycle = this.lifecycle;
+    const result = await sessionSendReply(this.handle, {
+      ...input,
+      ...(caller.kind === 'team_leader'
+        ? {
+            onMessageCreated: ({ messageId }: { messageId: string }) => {
+              if (lifecycle?.fence.isCurrent() !== true) return;
+              const target = this.outboundTarget(input.chatId, input.messageId);
+              this.targetRouter.observe(messageId, target);
+              this.cot.refreshReplyNextAnchor({
+                caller,
+                anchor: { chatId: input.chatId, messageId, target },
+              });
+            },
+          }
+        : {}),
+    });
+    return { message_ids: result.messageIds };
   }
 
-  /** @deprecated Prefer exact target ownership for topic-safe authorization. */
-  messageBelongsToChat(messageId: string, chatId: string): boolean {
-    return this.targetRouter.messageBelongsToChat(messageId, chatId);
+  /** Where a reply landed, in this Channel's own terms. */
+  private outboundTarget(
+    chatId: string,
+    replyToMessageId: string | undefined,
+  ): FeishuTarget {
+    const observed = replyToMessageId === undefined
+      ? undefined
+      : this.targetRouter.targetForMessage(replyToMessageId);
+    return observed !== undefined && observed.chatId === chatId
+      ? observed
+      : chatTarget(chatId, 'group');
   }
 
-  /**
-   * Provider-owned target resolution. A known `message_id` resolves through the
-   * session's authoritative inbound ledger. Standalone topic selectors are
-   * rejected because safe topic egress requires replying to an observed source
-   * message. Core receives only the resulting neutral target.
-   */
-  resolveTarget(meta: unknown): ChannelTarget {
-    return this.targetRouter.resolveTarget(meta);
+  private async addReaction(input: {
+    messageId: string;
+    emoji: string;
+    chatId?: string;
+  }): Promise<{ reaction_id: string }> {
+    return { reaction_id: await sessionAddReaction(this.handle, input) };
   }
 
   private async readChatBots(
-    input: FeishuMcpListChatBotsInput,
-  ): Promise<FeishuMcpListChatBotsResult> {
-    const listing = await listChatBots(this.opts.stateDir, input.chatId);
+    chatId: string,
+  ): Promise<FeishuListChatBotsResult> {
+    const listing = await listChatBots(this.opts.stateDir, chatId);
     return {
-      chat_id: input.chatId,
+      chat_id: chatId,
       known: listing.known.map(toWireChatBot),
       trusted: listing.trusted.map(toWireChatBot),
     };
   }
 
-  // ── Thin wrappers around extracted helpers (kept for handleMcpTool & start)
-  private async sendReply(
-    input: FeishuMcpReplyInput,
-    caller: ChannelToolCallerContext | undefined,
-  ): Promise<{ message_ids: string[] }> {
-    const lifecycle = this.lifecycle;
-    const r = await sessionSendReply(this.handle, {
-      ...input,
-      ...(caller?.kind === 'team_leader'
-        ? {
-            onMessageCreated: ({ messageId }: { messageId: string }) =>
-              this.cot.refreshReplyNextAnchor({
-                caller,
-                chatId: input.chatId,
-                messageId,
-                resolveTarget: () => this.targetRouter.resolveTarget({
-                  chat_id: input.chatId,
-                  ...(input.messageId !== undefined
-                    ? { message_id: input.messageId }
-                    : {}),
-                }),
-                isCurrent: () => lifecycle?.fence.isCurrent() === true,
-              }),
-          }
-        : {}),
-    });
-    return { message_ids: r.messageIds };
-  }
-
-  private async addReaction(
-    input: FeishuMcpReactInput,
-  ): Promise<{ reaction_id: string }> {
-    const r = await sessionAddReaction(this.handle, input);
-    return { reaction_id: r };
-  }
-
-  private async onCardAction(
-    event: FeishuCardActionEvent,
-  ): Promise<unknown> {
+  private async onCardAction(event: FeishuCardActionEvent): Promise<unknown> {
     return sessionHandleCardAction(this.handle, event);
   }
 
-  private subscribeBindingNotifications(
-    coreEvents: ChannelCoreEventSource | undefined,
-    lifecycle: FeishuSessionLifecycle,
+  // ── Notifications ──────────────────────────────────────────────────────
+
+  private notify(
+    target: FeishuTarget,
+    card: unknown,
+    anchorTeamName: string | null,
   ): void {
-    if (coreEvents === undefined) return;
-    this.coreEventSubscriptions.push(
-      coreEvents.on('binding.route', (event) => {
-        this.recordBindingRoute(event);
-        this.enqueueBindingNotification(event, lifecycle);
-      }),
-    );
-    this.coreEventSubscriptions.push(
-      coreEvents.on('team.state', (event) => {
-        if (event.status !== 'closed') return;
-        for (const [key, owner] of this.bindingRouteOwners) {
-          if (owner.teamName === event.team_name) {
-            this.bindingRouteOwners.delete(key);
-          }
-        }
-      }),
-    );
-    this.coreEventSubscriptions.push(
-      coreEvents.on('binding.collaboration_space', (event) => {
-        this.enqueueBindingNotification(event, lifecycle);
-      }),
-    );
-  }
-
-  private unsubscribeCoreEvents(): void {
-    for (const subscription of this.coreEventSubscriptions.splice(0)) {
-      subscription.unsubscribe();
-    }
-  }
-
-  private recordBindingRoute(event: ChannelBindingRouteEvent): void {
-    if (event.endpoint.provider !== BUILTIN_FEISHU_PROVIDER_REF) return;
-    const key = bindingRouteKey(event);
-    const current = event.current_team;
-    if (current === null) {
-      this.bindingRouteOwners.delete(key);
-      return;
-    }
-    this.bindingRouteOwners.set(key, {
-      teamName: current.team_name,
-      leaderName: current.leader_name,
-    });
-  }
-
-  private enqueueBindingNotification(
-    event: ChannelBindingRouteEvent | ChannelBindingCollaborationSpaceEvent,
-    lifecycle: FeishuSessionLifecycle,
-  ): void {
-    const provider = event.kind === 'binding.route'
-      ? event.endpoint.provider
-      : event.container.provider;
-    if (
-      provider !== BUILTIN_FEISHU_PROVIDER_REF ||
-      !lifecycle.fence.isCurrent()
-    ) {
-      return;
-    }
-    void this.trackLifecycleTask(
+    const lifecycle = this.lifecycle;
+    if (lifecycle === undefined || !lifecycle.fence.isCurrent()) return;
+    void this.track(
       lifecycle,
-      this.sendBindingNotification(event, lifecycle),
-    ).catch(
-      () => undefined,
-    );
+      this.sendNotification(lifecycle, target, card, anchorTeamName),
+    ).catch(() => undefined);
   }
 
-  private async sendBindingNotification(
-    event: ChannelBindingRouteEvent | ChannelBindingCollaborationSpaceEvent,
+  private async sendNotification(
     lifecycle: FeishuSessionLifecycle,
+    target: FeishuTarget,
+    card: unknown,
+    anchorTeamName: string | null,
   ): Promise<void> {
-    const endpoint = event.kind === 'binding.route'
-      ? event.endpoint
-      : event.container;
-    const target = this.targetRouter.bindingNotificationTarget(endpoint);
-    if (target === null) {
-      this.opts.log.warn(
-        {
-          dispatcher_id: this.opts.dispatcherId,
-          event_kind: event.kind,
-          action: event.action,
-        },
-        'skipped Feishu binding notification with incomplete provider metadata',
-      );
-      return;
-    }
-    const card = event.kind === 'binding.route'
-      ? routeBindingNotification(event)
-      : collaborationSpaceNotification(event);
+    const outbound = this.targetRouter.notificationTarget(target);
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       if (!lifecycle.fence.isCurrent()) return;
       const requestController = new AbortController();
@@ -547,55 +586,30 @@ export class FeishuChannelSession {
       try {
         const result = await runFeishuBoundedOperation({
           signal: lifecycle.controller.signal,
-          deadlineAt:
-            Date.now() + FEISHU_BINDING_NOTIFICATION_SEND_TIMEOUT_MS,
+          deadlineAt: Date.now() + FEISHU_BINDING_NOTIFICATION_SEND_TIMEOUT_MS,
           operation: () => sessionSendCard(
             this.handleForFence(lifecycle.fence),
             {
-              target,
+              target: outbound,
               card,
               signal: requestController.signal,
               mode: 'background',
             },
           ),
         });
-        this.opts.log.info(
-          {
-            dispatcher_id: this.opts.dispatcherId,
-            event_kind: event.kind,
-            action: event.action,
-            attempt,
-            message_ids: result.messageIds,
-          },
-          'Feishu binding notification sent',
-        );
-        this.setRouteFallbackAnchor(
-          event,
-          target.conversationId,
-          result.messageIds[0],
-        );
+        this.onNotificationSent(target, anchorTeamName, result.messageIds[0]);
         return;
       } catch (err) {
-        if (isFeishuOperationError(err, 'aborted')) {
-          this.opts.log.debug(
-            {
-              dispatcher_id: this.opts.dispatcherId,
-              event_kind: event.kind,
-              action: event.action,
-            },
-            'Feishu binding notification cancelled during session close',
-          );
-          return;
-        }
+        if (isFeishuOperationError(err, 'aborted')) return;
         requestController.abort();
         const retrying = attempt === 1 && lifecycle.fence.isCurrent();
         this.opts.log.warn(
           {
             dispatcher_id: this.opts.dispatcherId,
-            event_kind: event.kind,
-            action: event.action,
+            channel_id: this.opts.channelId,
+            target: describeTarget(target),
             attempt,
-            err: errInfo(err),
+            err: { message: errorMessage(err) },
           },
           retrying
             ? 'Feishu binding notification failed; retrying once'
@@ -608,80 +622,76 @@ export class FeishuChannelSession {
     }
   }
 
-  private setRouteFallbackAnchor(
-    event: ChannelBindingRouteEvent | ChannelBindingCollaborationSpaceEvent,
-    chatId: string,
+  /**
+   * A sent notification is also the first message this session has seen in a
+   * freshly provisioned topic, which makes it two useful things: an address
+   * this Channel can reply into later, and a fallback anchor for the Team's
+   * first card if it speaks before anyone writes to it.
+   */
+  private onNotificationSent(
+    target: FeishuTarget,
+    anchorTeamName: string | null,
     messageId: string | undefined,
   ): void {
-    if (
-      event.kind !== 'binding.route' ||
-      event.current_team === null ||
-      messageId === undefined ||
-      messageId === ''
-    ) {
-      return;
-    }
-    const current = this.bindingRouteOwners.get(bindingRouteKey(event));
-    if (
-      current?.teamName !== event.current_team.team_name ||
-      current.leaderName !== event.current_team.leader_name
-    ) {
-      return;
-    }
+    if (messageId === undefined || messageId === '') return;
+    this.targetRouter.observe(messageId, target);
+    if (anchorTeamName === null) return;
+    const leaderName = this.leaderNames.get(anchorTeamName);
+    if (leaderName === undefined) return;
+    this.cot.setBindingFallbackAnchor(anchorTeamName, leaderName, {
+      chatId: target.chatId,
+      messageId,
+      target,
+    });
+  }
+
+  // ── Handles ────────────────────────────────────────────────────────────
+
+  get handle(): SessionHandle {
+    return this.handleForFence(this.lifecycle?.fence ?? this.inactiveFence);
+  }
+
+  private handleForFence(fence: FeishuSessionFence): SessionHandle {
+    return sessionHandle({
+      opts: this.opts,
+      bot: this.bot,
+      accessMutex: this._accessMutex,
+      botDisplayName: this.bot.botDisplayName ?? 'Dreamux bot',
+      targetRouter: this.targetRouter,
+      sessionFence: fence,
+      delivery: this,
+    });
+  }
+
+  private async track<T>(
+    lifecycle: FeishuSessionLifecycle,
+    task: Promise<T>,
+  ): Promise<T> {
+    lifecycle.inFlight.add(task);
     try {
-      this.cot.setBindingFallbackAnchor(
-        event.current_team.team_name,
-        event.current_team.leader_name,
-        {
-          chatId,
-          messageId,
-          target: {
-            target_type: event.endpoint.endpoint_type,
-            target_key: event.endpoint.endpoint_key,
-            bindable: true,
-            ...(event.endpoint.display !== null
-              ? { display: event.endpoint.display }
-              : {}),
-            ...(event.endpoint.canonical_url !== null
-              ? { canonical_url: event.endpoint.canonical_url }
-              : {}),
-            meta: { ...event.endpoint.meta, chat_id: chatId },
-          },
-          binding: structuredClone(event.endpoint),
-        },
-      );
-    } catch {
-      // COT is display-only; its bookkeeping cannot fail the sent notification.
+      return await task;
+    } finally {
+      lifecycle.inFlight.delete(task);
     }
   }
 }
 
-function bindingRouteKey(event: ChannelBindingRouteEvent): string {
-  return JSON.stringify([
-    event.endpoint.provider,
-    event.endpoint.channel_id,
-    event.endpoint.endpoint_type,
-    event.endpoint.endpoint_key,
-  ]);
+function submitOutcome(result: TeamSubmitResult): FeishuSubmitOutcome {
+  switch (result.status) {
+    case 'submitted':
+      return { status: 'submitted', turnId: result.turn_id ?? null };
+    case 'duplicate':
+    case 'stopped':
+      return { status: result.status };
+    default:
+      return { status: result.status, error: result.error ?? null };
+  }
 }
 
-/**
- * Map a peer bot to the `list_chat_bots` wire shape. Exported so the core-owned
- * `handleFeishuListChatBots` host helper (which resolves a dispatcher id to a
- * state dir) can reuse it without re-implementing the projection.
- */
+/** Map a peer bot to the `list_chat_bots` wire shape. */
 export function toWireChatBot(bot: PeerBot): WireChatBot {
   return {
     open_id: bot.openId,
     ...(bot.name !== undefined && bot.name !== '' ? { name: bot.name } : {}),
   };
-}
-
-function errInfo(err: unknown): { message: string; stack?: string } {
-  if (err instanceof Error) {
-    return err.stack !== undefined
-      ? { message: err.message, stack: err.stack }
-      : { message: err.message };
-  }
-  return { message: String(err) };
 }

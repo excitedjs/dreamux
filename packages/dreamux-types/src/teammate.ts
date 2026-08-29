@@ -6,21 +6,25 @@
  * entity that owns the whole turn event family, so later domains do not overload
  * a global `turn.*` namespace.
  *
- * Persisting a new Dispatcher, TeamLeader, ordinary member, or standalone
- * TeamMate publishes its first `teammate.state`; later transitions publish the
- * same kind. There is no separate creation event.
+ * Persisting a new Dispatcher, TeamLeader, Team-scoped TeamMate, or
+ * Dispatcher-scoped TeamMate publishes its first `teammate.state`; later
+ * transitions publish the same kind. There is no separate creation event.
  */
 import type { RuntimeToolAction } from './agent-runtime.js';
 
-/** The Core role a TeamMate holds. A Dispatcher never belongs to a Team. */
-export type TeammateRole =
-  | 'dispatcher'
-  | 'teammate'
-  | 'team_leader'
-  | 'team_member';
+/**
+ * The role a TeamMate presents at this boundary.
+ *
+ * It is a runtime projection the publishing owner derives from the Service or
+ * Collection that materialized the Agent, never a persisted field: the
+ * Dispatcher Agent is `dispatcher`, a Team's leader is `team_leader`, and every
+ * ordinary Agent — Dispatcher-scoped or Team-scoped — is `teammate`. A
+ * Dispatcher never belongs to a Team.
+ */
+export type TeammateRole = 'dispatcher' | 'teammate' | 'team_leader';
 
-/** The role of a TeamMate contained by a Team. */
-export type TeamMemberRole = 'team_leader' | 'team_member';
+/** The role of a TeamMate contained by a Team, derived the same way. */
+export type TeamContainedRole = Exclude<TeammateRole, 'dispatcher'>;
 
 export type TeammateStatus =
   | 'starting'
@@ -34,46 +38,38 @@ export interface TeammateStateEvent {
   readonly kind: 'teammate.state';
   readonly occurred_at: number;
   readonly teammate_name: string;
+  /** Runtime projection supplied by the owning Service; never persisted. */
   readonly role: TeammateRole;
-  /** `null` for a Dispatcher, which never appears in a Team member summary. */
+  /** `null` for a Dispatcher, which never appears in a Team summary. */
   readonly team_name: string | null;
   readonly status: TeammateStatus;
 }
 
-/** Which Core input path submitted a turn. */
-export type TeammateTurnSource =
-  | 'channel'
-  | 'dispatcher'
-  | 'team_leader'
-  | 'scheduled'
-  | 'completion'
-  | 'control';
-
 /**
  * The identity every turn event carries. Later turn events correlate to their
- * submission by `turn_id` and repeat the same optional Channel `correlation`.
+ * submission by `turn_id` alone.
  */
 export interface TeammateTurnScope {
   readonly schema_version: 1;
   readonly occurred_at: number;
   readonly teammate_name: string;
+  /** Runtime projection supplied by the owning Service; never persisted. */
   readonly role: TeammateRole;
   readonly team_name: string | null;
   readonly turn_id: string;
-  /**
-   * The bounded opaque string the calling Channel chose, echoed unchanged. Core
-   * never parses, routes, authorizes, or deduplicates with it.
-   */
-  readonly correlation?: string;
 }
 
 export type TeammateTurnSubmittedEvent = TeammateTurnScope & {
   readonly kind: 'teammate.turn.submitted';
   /**
-   * Required here and deliberately not repeated on later turn events: consumers
-   * need it only to establish the conversation anchor at submission time.
+   * The open provenance name the submitting owner chose — the same value Core
+   * rendered the model envelope's root from. Deliberately not a Core enum: a
+   * new Channel form names itself without a Core contract change, and a
+   * consumer that presents turns differently by provenance owns that mapping
+   * itself. Required here and not repeated on later turn events, which need
+   * only `turn_id` to reach the anchor established at submission.
    */
-  readonly turn_source: TeammateTurnSource;
+  readonly turn_source: string;
 };
 
 export type TeammateTurnSettledEvent = TeammateTurnScope & {

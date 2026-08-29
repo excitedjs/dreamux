@@ -1,5 +1,8 @@
-import type { ChannelSession, InboundDeliveryResult } from '@excitedjs/dreamux-types';
-import type { TurnAdmission } from '../teammate-service/turn-recording.js';
+import type { ChannelInstance } from '@excitedjs/dreamux-types';
+import type {
+  InboundDeliveryResult,
+  TurnAdmission,
+} from '../teammate-service/turn-recording.js';
 
 export function asInboundDeliveryResult(
   result: TurnAdmission,
@@ -21,11 +24,11 @@ export function asInboundDeliveryResult(
 }
 
 export async function closeAllBuilt(
-  channels: Map<string, ChannelSession>,
+  channels: Map<string, ChannelInstance>,
 ): Promise<void> {
-  for (const session of channels.values()) {
+  for (const instance of channels.values()) {
     try {
-      await session.close();
+      await instance.session.close();
     } catch {
       /* best effort */
     }

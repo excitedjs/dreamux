@@ -26,7 +26,6 @@ import type {
   ProviderFactory,
   ProviderOnboard,
 } from './provider.js';
-import type { InboundTurnInput } from './turn.js';
 
 /** Runtime-specific alias of the shared public logger contract. */
 export type AgentRuntimeLogger = DreamuxLogger;
@@ -238,33 +237,19 @@ export interface AgentRuntimeActivitySink {
 }
 
 /**
- * The Dreamux-owned source of a plain-text submission. Channel-rendered input
- * is the separate `channel` variant of
- * {@link AgentRuntimeSubmissionInput}, so it never appears here.
+ * The single input shape a live runtime accepts.
+ *
+ * Deliberately nothing but text: it is already the complete model-facing
+ * message, so the seam carries no discriminator, no source enum, no source
+ * identity, and no rendering instruction. Every caller prepares its final text
+ * before submitting, so a runtime never renders an envelope and never branches
+ * on where a turn came from. Stable source identity, origin, intent, and
+ * display correlation stay on Core's own turn/admission state, and Core — not a
+ * Provider — deduplicates with them.
  */
-export type RuntimeTurnSource =
-  | 'prompt'
-  | 'scheduled'
-  | 'completion'
-  | 'control';
-
-/**
- * The two input shapes a live runtime accepts. Channel-rendered input stays
- * distinct from Dreamux-owned plain text so a runtime never applies channel/XML
- * rendering to an internal turn.
- */
-export type AgentRuntimeSubmissionInput =
-  | {
-      readonly kind: 'channel';
-      readonly input: InboundTurnInput;
-    }
-  | {
-      readonly kind: 'text';
-      readonly text: string;
-      readonly source: RuntimeTurnSource;
-      /** Runtime-local dedupe/correlation hint; not model-visible text. */
-      readonly sourceId?: string;
-    };
+export interface AgentRuntimeSubmissionInput {
+  readonly text: string;
+}
 
 /**
  * Admission is separate from the eventual outcome of an accepted turn.
@@ -278,10 +263,13 @@ export type AgentRuntimeSubmissionInput =
  *
  * `skipped` remains a provider-seam state; the Command boundary — not this
  * seam — normalizes it to the public `stopped`.
+ *
+ * There is no `duplicate` admission: a Provider has no source identity to
+ * deduplicate with. Core's own admission ledger returns the public `duplicate`
+ * before it ever calls {@link AgentRuntime.submit}.
  */
 export type RuntimeAdmission =
   | { status: 'submitted'; submission: RuntimeSubmission }
-  | { status: 'duplicate' }
   | { status: 'stopped' }
   | { status: 'skipped' }
   | { status: 'failed'; error: Error }

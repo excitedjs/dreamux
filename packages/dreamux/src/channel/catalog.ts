@@ -3,10 +3,10 @@
  *
  * The channel-kind twin of `agent-runtime/catalog.ts`: a registry-backed lookup
  * that resolves a `dispatchers[].channels[].provider` ref to its neutral
- * `ChannelProvider`. Core drives every channel session through this one neutral
- * seam — it never names a concrete channel class (e.g. a provider's own session)
- * and is unaware of which package implements a `builtin:` vs an external `npm:`
- * channel provider.
+ * `ChannelProvider`. Core drives every channel session through this one
+ * neutral seam — it never names a concrete channel class (e.g. a provider's
+ * own session) and is unaware of which package implements a `builtin:` vs an
+ * external `npm:` channel provider.
  */
 import {
   formatProviderRef,
@@ -47,14 +47,14 @@ export class ChannelProviderCatalog {
     this.registry = options.registry;
   }
 
-  list(): ChannelProvider[] {
+  list(): ChannelProvider<unknown>[] {
     return this.registry
       .listByKind('channel')
       .map((descriptor) => this.channelProviderForDescriptor(descriptor))
-      .filter((provider): provider is ChannelProvider => provider !== null);
+      .filter((provider): provider is ChannelProvider<unknown> => provider !== null);
   }
 
-  resolve(ref: string): ChannelProvider {
+  resolve(ref: string): ChannelProvider<unknown> {
     let descriptor: ProviderDescriptor;
     try {
       descriptor = this.registry.resolve(ref);
@@ -80,20 +80,21 @@ export class ChannelProviderCatalog {
 
   private channelProviderForDescriptor(
     descriptor: ProviderDescriptor,
-  ): ChannelProvider | null {
+  ): ChannelProvider<unknown> | null {
     return asChannelProvider(this.registry.getImplementation(descriptor.id));
   }
 }
 
-export function asChannelProvider(value: unknown): ChannelProvider | null {
+/**
+ * Structural check for a loaded channel implementation. It asserts the session
+ * factory only: registration identity lives on the registry wrapper, so a
+ * provider has no `ref`/`descriptor` member to test.
+ */
+export function asChannelProvider(
+  value: unknown,
+): ChannelProvider<unknown> | null {
   if (typeof value !== 'object' || value === null) return null;
-  const candidate = value as Partial<ChannelProvider>;
-  if (
-    typeof candidate.ref !== 'string' ||
-    candidate.descriptor === undefined ||
-    typeof candidate.createSession !== 'function'
-  ) {
-    return null;
-  }
-  return value as ChannelProvider;
+  const candidate = value as Partial<ChannelProvider<unknown>>;
+  if (typeof candidate.createSession !== 'function') return null;
+  return value as ChannelProvider<unknown>;
 }

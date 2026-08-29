@@ -1,8 +1,6 @@
 import type {
-  AgentRuntimeMcpServer,
-  ChannelSession,
-  ChannelTarget,
-  ChannelToolCallerContext,
+  ChannelInstance,
+  ChannelSessionMcpCapability,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
@@ -16,47 +14,46 @@ import {
   dispatcherCacheDir,
   dispatcherDir,
 } from '../../platform/paths.js';
-import {
-  channelMcpServerDescriptorsForCaller,
-  type ChannelMcpCallerScope,
-} from './mcp-descriptors.js';
-
-interface ChannelToolInvocation {
-  /** Provider ref carried by the channel MCP descriptor. Used to select/verify the session. */
-  providerRef?: string;
-  /** Provider-owned tool name, forwarded opaquely (core never enumerates it). */
-  name: string;
-  /** Raw provider-owned tool arguments, forwarded opaquely to the session. */
-  arguments: unknown;
-  /** Resolved caller identity, forwarded verbatim to the session seam. */
-  caller: ChannelToolCallerContext;
-  /** Which channel's bot the egress leaves through (issue #209). Omitted → primary. */
-  channelId?: string;
-}
 
 interface ChannelSessionsOptions {
   dispatcherId: string;
   config: DreamuxConfig;
   channelProviders: ChannelProviderCatalog;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
-  adminSocketPath?: string;
 }
 
 /**
- * The channel service's live channel sessions (issue #233 Phase 5): the
- * `Map<channel_id, ChannelSession>` together with the channel-tool dispatch,
- * target resolution, and MCP descriptor assembly that key off it.
- * `ChannelService` owns one instance and `DispatcherService` publishes sessions
- * here only after their provider start succeeds. Core stays a blind MCP conduit
- * — it never names a provider's tool.
+ * The channel service's live channel instances: the
+ * `Map<channel_id, ChannelInstance>` together with the target resolution and
+ * session-MCP lookup that key off it. `ChannelService` owns one of these and
+ * `DispatcherService` publishes instances here only after their provider start
+ * succeeds.
+ *
+ * The map holds the whole {@link ChannelInstance}, not just its session,
+ * because MCP is composed beside the session rather than on it: a Channel with
+ * tools carries a {@link ChannelSessionMcpCapability} that the Channel MCP
+ * delegate has to be able to reach. Core stays a blind conduit either way — it
+ * never names a provider's tool.
  */
 class ChannelSessions {
-  private sessions: Map<string, ChannelSession> | null = null;
+  private sessions: Map<string, ChannelInstance> | null = null;
+  /**
+   * Every instance {@link build} produced, whether or not its session has been
+   * started and adopted yet.
+   *
+   * Kept beside the live map because the two answer different questions. Live
+   * means "this session is connected and may be routed to". Built means "this
+   * channel's instance exists, so whatever it composed exists too" — which is
+   * the fact a session-target MCP tool needs, and it is true from creation.
+   * Reading MCP availability off the live map instead would make a catalog
+   * frozen during startup depend on how far startup happened to have got.
+   */
+  private built: Map<string, ChannelInstance> | null = null;
 
   constructor(private readonly opts: ChannelSessionsOptions) {}
 
-  /** The live session map, or an empty map when no sessions are connected. */
-  live(): Map<string, ChannelSession> {
+  /** The live instance map, or an empty map when no sessions are connected. */
+  live(): Map<string, ChannelInstance> {
     return this.sessions ?? new Map();
   }
 
@@ -71,16 +68,16 @@ class ChannelSessions {
    * context. Sessions are NOT connected here — the caller starts them. On partial
    * failure the already-built sessions are closed.
    */
-  async build(): Promise<Map<string, ChannelSession>> {
+  async build(): Promise<Map<string, ChannelInstance>> {
     const providerLog = this.opts.channelLoggerFactory(this.opts.dispatcherId);
     const channelConfigs = this.channelConfigs();
-    const channels = new Map<string, ChannelSession>();
+    const channels = new Map<string, ChannelInstance>();
     try {
       for (const channelConfig of channelConfigs) {
         const provider = this.opts.channelProviders.resolve(channelConfig.provider);
         channels.set(
           channelConfig.id,
-          provider.createSession({
+          await provider.createSession({
             dispatcher_id: this.opts.dispatcherId,
             channel_id: channelConfig.id,
             provider: channelConfig.provider,
@@ -92,26 +89,31 @@ class ChannelSessions {
         );
       }
     } catch (err) {
-      for (const session of channels.values()) {
+      for (const instance of channels.values()) {
         try {
-          await session.close();
+          await instance.session.close();
         } catch {
           /* best effort: never started */
         }
       }
       throw err;
     }
+    // Published only once every instance exists: the failure path above already
+    // closed what it had built, and a map of closed instances must never become
+    // the answer to an availability question.
+    this.built = channels;
     return channels;
   }
 
-  /** Adopt successfully-started sessions as the live map. */
-  adopt(channels: Map<string, ChannelSession>): void {
+  /** Adopt successfully-started instances as the live map. */
+  adopt(channels: Map<string, ChannelInstance>): void {
     this.sessions = channels;
   }
 
-  /** Drop the live map (start failed or stop). */
+  /** Drop both maps (start failed, prepared sessions discarded, or stop). */
   clear(): void {
     this.sessions = null;
+    this.built = null;
   }
 
   async closeAll(log: DreamuxLogger): Promise<void> {
@@ -119,11 +121,13 @@ class ChannelSessions {
     if (sessions === null) return;
     // Detach before awaiting provider shutdown. A concurrent stop now observes
     // no live map, and a later restart/adopt cannot be clobbered when this older
-    // close finishes.
+    // close finishes. The built map goes with it: these instances are about to
+    // be closed, so nothing may still treat them as able to serve a tool.
     this.sessions = null;
-    for (const [channelId, session] of sessions) {
+    this.built = null;
+    for (const [channelId, instance] of sessions) {
       try {
-        await session.close();
+        await instance.session.close();
       } catch (err) {
         log.error(
           {
@@ -137,206 +141,23 @@ class ChannelSessions {
     }
   }
 
-  channelMcpServerDescriptorsForCaller(
-    scope: ChannelMcpCallerScope,
-  ): AgentRuntimeMcpServer[] {
-    return channelMcpServerDescriptorsForCaller({
-      dispatcherId: this.opts.dispatcherId,
-      channels: this.configuredChannels(),
-      channelProviders: this.opts.channelProviders,
-      ...(this.opts.adminSocketPath !== undefined
-        ? { adminSocketPath: this.opts.adminSocketPath }
-        : {}),
-      scope,
-    });
-  }
-
   configuredChannels(): readonly DispatcherChannelConfig[] {
     return this.channelConfigs();
   }
 
   /**
-   * Invoke a provider-owned channel tool, forwarding raw `{name, arguments}` to
-   * the channel provider seam. A live session handles it via `session.handleTool`;
-   * with no live session the provider's `handleSessionlessTool` is tried instead.
+   * The MCP capability this channel's created instance composed, or `null` when
+   * there is no instance or it composed no session tools.
+   *
+   * Read off the built map, not the live one, because this answers a
+   * composition question rather than a connectivity one: what a Channel built
+   * is what it can serve, for as long as that instance lives. Returning `null`
+   * rather than throwing keeps the decision with the Channel MCP delegate,
+   * which is the only caller and the only layer that knows whether the tool it
+   * is serving needed a session at all.
    */
-  async invokeTool(input: ChannelToolInvocation): Promise<unknown> {
-    const sessions = this.sessions;
-    if (sessions === null || sessions.size === 0) {
-      return this.invokeSessionlessTool(
-        input.providerRef,
-        input.channelId,
-        input.name,
-        input.arguments,
-      );
-    }
-    const session = this.sessionFor(sessions, input.channelId, input.providerRef);
-    if (session.handleTool === undefined) {
-      throw new Error(
-        `channel '${session.channel_id}' exposes no provider tool surface`,
-      );
-    }
-    return session.handleTool(
-      {
-        name: input.name,
-        arguments: (input.arguments ?? {}) as Record<string, unknown>,
-      },
-      {
-        dispatcher_id: this.opts.dispatcherId,
-        channel_id: session.channel_id,
-        caller: input.caller,
-      },
-    );
-  }
-
-  /**
-   * Whether a live channel session observed a message for a target — the routing
-   * ownership fact the TeamLeader egress gate keys off.
-   */
-  async messageBelongsToTarget(
-    target: ChannelTarget,
-    messageId: string,
-    channelId?: string,
-  ): Promise<boolean> {
-    const sessions = this.sessions;
-    if (sessions === null) return false;
-    const selected =
-      channelId === undefined
-        ? sessions.values()
-        : [this.sessionFor(sessions, channelId)].values();
-    for (const session of selected) {
-      const decide = session.messageBelongsToTarget;
-      if (decide === undefined) continue;
-      if (await decide.call(session, { target, message_id: messageId })) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /**
-   * Resolve a provider selector to a `ChannelTarget` via the live channel
-   * session. Requires a running dispatcher — both call paths (bind tool, inbound
-   * router) run only while a channel session is live.
-   */
-  async resolveTarget(
-    meta: unknown,
-    channelId?: string,
-    providerRef?: string,
-  ): Promise<ChannelTarget> {
-    return this.sessionFor(this.mustSessions(), channelId, providerRef).resolveTarget(
-      meta,
-    );
-  }
-
-  private async invokeSessionlessTool(
-    providerRef: string | undefined,
-    channelId: string | undefined,
-    name: string,
-    args: unknown,
-  ): Promise<unknown> {
-    const channelConfig = this.channelConfigFor(providerRef, channelId);
-    const provider = this.opts.channelProviders.resolve(channelConfig.provider);
-    if (provider.handleSessionlessTool === undefined) {
-      throw new Error(
-        `channel provider '${provider.ref}' exposes no sessionless tool surface`,
-      );
-    }
-    return provider.handleSessionlessTool(
-      name,
-      (args ?? {}) as Record<string, unknown>,
-      {
-        dispatcher_id: this.opts.dispatcherId,
-        channel_id: channelConfig.id,
-        state_root: dispatcherDir(this.opts.dispatcherId),
-        logger: this.opts.channelLoggerFactory(this.opts.dispatcherId),
-      },
-    );
-  }
-
-  private channelConfigFor(
-    providerRef?: string,
-    channelId?: string,
-  ): DispatcherChannelConfig {
-    const dispatcherId = this.opts.dispatcherId;
-    const channels = this.channelConfigs();
-    let channelConfig: DispatcherChannelConfig | undefined;
-
-    if (channelId !== undefined) {
-      channelConfig = channels.find((channel) => channel.id === channelId);
-      if (channelConfig === undefined) {
-        throw new Error(
-          `dispatcher '${dispatcherId}' has no configured channel '${channelId}'`,
-        );
-      }
-    } else if (providerRef !== undefined) {
-      channelConfig = channels.find((channel) => channel.provider === providerRef);
-      if (channelConfig === undefined) {
-        throw new Error(
-          `dispatcher '${dispatcherId}' has no configured channel for provider '${providerRef}'`,
-        );
-      }
-    } else {
-      channelConfig = channels[0];
-      if (channelConfig === undefined) {
-        throw new Error(`dispatcher '${dispatcherId}' has no configured channel`);
-      }
-    }
-
-    if (providerRef !== undefined && channelConfig.provider !== providerRef) {
-      throw new Error(
-        `dispatcher '${dispatcherId}' channel '${channelConfig.id}' is provider '${channelConfig.provider}', not '${providerRef}'`,
-      );
-    }
-    return channelConfig;
-  }
-
-  private sessionFor(
-    sessions: Map<string, ChannelSession>,
-    channelId?: string,
-    providerRef?: string,
-  ): ChannelSession {
-    const dispatcherId = this.opts.dispatcherId;
-    let session: ChannelSession | undefined;
-    if (channelId !== undefined) {
-      session = sessions.get(channelId);
-      if (session === undefined) {
-        throw new Error(
-          `dispatcher '${dispatcherId}' has no live channel '${channelId}'`,
-        );
-      }
-    } else if (providerRef !== undefined) {
-      session = Array.from(sessions.values()).find(
-        (candidate) => candidate.provider === providerRef,
-      );
-      if (session === undefined) {
-        throw new Error(
-          `dispatcher '${dispatcherId}' has no live channel for provider '${providerRef}'`,
-        );
-      }
-    } else {
-      session = sessions.values().next().value;
-      if (session === undefined) {
-        throw new Error(
-          `dispatcher '${dispatcherId}' has no live channel session`,
-        );
-      }
-    }
-
-    if (providerRef !== undefined && session.provider !== providerRef) {
-      throw new Error(
-        `dispatcher '${dispatcherId}' channel '${session.channel_id}' is provider '${session.provider}', not '${providerRef}'`,
-      );
-    }
-    return session;
-  }
-
-  private mustSessions(): Map<string, ChannelSession> {
-    const sessions = this.sessions;
-    if (sessions === null) {
-      throw new Error(`dispatcher '${this.opts.dispatcherId}' is not running`);
-    }
-    return sessions;
+  sessionMcp(channelId: string): ChannelSessionMcpCapability | null {
+    return this.built?.get(channelId)?.mcp ?? null;
   }
 
   private channelConfigs(): DispatcherChannelConfig[] {
@@ -347,5 +168,5 @@ class ChannelSessions {
   }
 }
 
-export type { ChannelSessionsOptions, ChannelToolInvocation };
+export type { ChannelSessionsOptions };
 export { ChannelSessions };

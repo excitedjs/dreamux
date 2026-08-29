@@ -1,3 +1,5 @@
+import type { TeamStateTeammateSummary } from '@excitedjs/dreamux-types';
+
 import type { CompletionInitiator } from '../completion-router/index.js';
 import { requireLifecycleText } from '../agent-entity/types.js';
 import { defaultWorkspaceEnabled } from '../../config/config.js';
@@ -5,16 +7,15 @@ import { dispatcherWorkspace } from '../worktree/workspaces.js';
 import type { KeyedAsyncQueue } from '../serial-queue.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
 import { throwSettledFailures } from '../shutdown-errors.js';
-import {
-  TeamService,
-  type TeamServiceDeps,
-} from '../team-service/index.js';
+import { TeamService } from '../team-service/index.js';
 import type {
   TeamSchedulerLifecycle,
+  TeamServiceDeps,
 } from '../team-service/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import { teamErrorInfo } from './errors.js';
 import { isActiveDissolve } from './dissolve-lifecycle.js';
+import { readTeamRoster } from './roster-reader.js';
 import type { TeamStore } from './store.js';
 import type {
   TeamCollectionOptions,
@@ -36,6 +37,8 @@ interface TeamRuntimeRegistryOptions {
     teamId: string,
     delegate: CompletionInitiator,
   ): CompletionInitiator;
+  /** This Team's own leader as a generation-bound completion recipient. */
+  leaderCompletionInitiator(teamId: string): Promise<CompletionInitiator | null>;
   withTeamLeaderLease<T>(
     lease: TeamLeaderLease,
     task: (service: TeamService) => Promise<T>,
@@ -54,18 +57,22 @@ export class TeamRuntimeRegistry {
 
   constructor(private readonly opts: TeamRuntimeRegistryOptions) {}
 
+  /**
+   * Create one Team at this candidate name, or report the name as taken.
+   *
+   * `null` means a valid Team record already occupies the candidate — the
+   * caller allocates another one. Nothing was created and no workspace side
+   * effect survives beyond the prepared worktree.
+   */
   async create(
     input: TeamCreateAtNameInput,
     teamId: string,
-    nameClaimToken: string,
-  ): Promise<TeamCreateResult> {
+  ): Promise<TeamCreateResult | null> {
     requireLifecycleText(input.intent, 'Team create intent');
-    const existing = await this.opts.store.get(this.opts.dispatcherId, teamId);
-    if (existing !== null) {
-      throw new Error(
-        `Team ${JSON.stringify(teamId)} already exists; concrete Team names are never reused`,
-      );
-    }
+    // A cheap early-out before the expensive workspace preparation. The
+    // authoritative answer is the exclusive record publication below, which
+    // reports the same thing if the name is taken in between.
+    if ((await this.opts.store.get(teamId)) !== null) return null;
     const workspaceRoot = await dispatcherWorkspace(
       this.opts.collection.config,
       this.opts.dispatcherId,
@@ -90,26 +97,29 @@ export class TeamRuntimeRegistry {
             cleanup: 'keep',
           },
         });
-    const { service, schedulerLifecycle, leaderResult } =
-      await TeamService.createNew(
-        {
-          ...this.depsBase(teamId),
-          evict: (evicted) => this.evict(teamId, evicted),
-        },
-        {
-          teamId,
-          name: input.name,
-          nameClaimToken,
-          ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
-          leaderAgentRuntime: input.leaderAgentRuntime,
-          intent: input.intent,
-          ...(input.identity !== undefined ? { identity: input.identity } : {}),
-          ...(input.skillSources !== undefined
-            ? { skillSources: input.skillSources }
-            : {}),
-          workspace,
-        },
-      );
+    const created = await TeamService.createNew(
+      {
+        ...this.depsBase(teamId),
+        evict: (evicted) => this.evict(teamId, evicted),
+      },
+      {
+        teamId,
+        name: input.name,
+        ...(input.createRequest !== undefined
+          ? { createRequest: input.createRequest }
+          : {}),
+        ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
+        leaderAgentRuntime: input.leaderAgentRuntime,
+        intent: input.intent,
+        ...(input.identity !== undefined ? { identity: input.identity } : {}),
+        ...(input.skillSources !== undefined
+          ? { skillSources: input.skillSources }
+          : {}),
+        workspace,
+      },
+    );
+    if (created === null) return null;
+    const { service, schedulerLifecycle, leaderResult } = created;
     this.publish(service, schedulerLifecycle);
     return {
       team: service.view(),
@@ -166,7 +176,7 @@ export class TeamRuntimeRegistry {
   }
 
   async startSchedulers(): Promise<void> {
-    for (const team of await this.opts.store.list(this.opts.dispatcherId)) {
+    for (const team of await this.opts.store.list()) {
       if (team.status === 'closed' || isActiveDissolve(team.dissolve)) continue;
       try {
         const service = await this.get(team.team_id);
@@ -191,14 +201,14 @@ export class TeamRuntimeRegistry {
   }
 
   async startWorkflows(): Promise<void> {
-    for (const team of await this.opts.store.list(this.opts.dispatcherId)) {
+    for (const team of await this.opts.store.list()) {
       if (team.status === 'closed' || isActiveDissolve(team.dissolve)) continue;
       await (await this.get(team.team_id)).startWorkflowAdmission();
     }
   }
 
   async recoverWorkflows(): Promise<void> {
-    for (const team of await this.opts.store.list(this.opts.dispatcherId)) {
+    for (const team of await this.opts.store.list()) {
       if (team.status === 'closed' || isActiveDissolve(team.dissolve)) continue;
       await (await this.get(team.team_id)).recoverWorkflows();
     }
@@ -212,35 +222,61 @@ export class TeamRuntimeRegistry {
     for (const scheduler of this.schedulers.values()) scheduler.lifecycle.stop();
   }
 
-  async stopAll(): Promise<void> {
-    const discoveryResults = await Promise.allSettled([
-      this.opts.store.list(this.opts.dispatcherId),
-    ]);
-    const materializationResults: PromiseSettledResult<unknown>[] =
-      discoveryResults[0]!.status === 'fulfilled'
-        ? await Promise.allSettled(
-          discoveryResults[0].value
-            .filter((team) => team.status !== 'closed')
-            .map((team) => this.get(team.team_id)),
-        )
-        : discoveryResults;
+  /**
+   * Release the runtime authority this process took over its Teams.
+   *
+   * Only Teams this process materialized are swept, because only they hold a
+   * runtime to release. The discovery pass this replaced listed every durable
+   * non-closed record and materialized it first, which on a `starting` record
+   * creates that Team's TeamLeader identity — durable work on the stop path,
+   * done to entities the run never started.
+   */
+  async stopForHost(): Promise<void> {
     const services = [...this.materialized];
     const results = await Promise.allSettled(
       // The containment root publishes its aggregate admission fence before
-      // this close-first sweep. Do not hold a Team route lock while closing
-      // members: their captured completion delivery may resolve the same
-      // TeamLeader through that route before the leader itself closes.
-      services.map((service) => service.stopAll()),
+      // this sweep. Do not hold a Team route lock while releasing members:
+      // their captured completion delivery may resolve the same TeamLeader
+      // through that route before the leader itself is released.
+      services.map((service) => service.stopForHost()),
     );
     results.forEach((result, index) => {
       if (result.status === 'fulfilled') {
         this.evict(services[index]!.id, services[index]!);
       }
     });
-    throwSettledFailures(
-      [...materializationResults, ...results],
-      'multiple durable Team resources failed to stop',
-    );
+    throwSettledFailures(results, 'multiple Team runtimes failed to stop');
+  }
+
+  /**
+   * One Team's complete contained-Agent summary, for the aggregate event.
+   *
+   * A materialized Team answers for itself: it owns those Agents, and its
+   * projection is current by construction. Any other Team is read from the
+   * authoritative identity stores instead of being reported as empty, which in
+   * that event would state that the Team has no Agents at all.
+   *
+   * The cache answers first because it is keyed and replacement-correct. A
+   * Team still being created is not cached yet — it publishes its own
+   * `running` transition before creation returns — and `materialized` is the
+   * earlier exact fact: the service owns live resources from that moment.
+   *
+   * Reading only. It must not materialize a Team: the caller runs inside the
+   * Team store's own write queue, which materialization writes through.
+   */
+  async roster(
+    team: TeamRecord,
+  ): Promise<readonly TeamStateTeammateSummary[] | null> {
+    const cached = this.cache.get(team.team_id);
+    if (cached !== undefined) return cached.teammatesSummary();
+    for (const service of this.materialized) {
+      if (service.id === team.team_id) return service.teammatesSummary();
+    }
+    return readTeamRoster({
+      teamRoot: this.opts.store.teamRoot(team.team_id),
+      record: team,
+      log: this.opts.collection.log,
+    });
   }
 
   private async rebuild(record: TeamRecord): Promise<TeamService> {
@@ -278,12 +314,17 @@ export class TeamRuntimeRegistry {
       config: collection.config,
       agentRuntimeProviders: collection.agentRuntimeProviders,
       worktrees: this.opts.worktrees,
-      identities: collection.identities,
+      // Each Team gets its own already-resolved root; nothing below rebuilds it.
+      teamRoot: this.opts.store.teamRoot(teamId),
+      names: collection.names,
+      admissions: collection.admissions,
       ...(collection.conversationProjection !== undefined
         ? { conversationProjection: collection.conversationProjection }
         : {}),
       completionDelivery: collection.completionDelivery,
-      initiatorFor: collection.initiatorFor,
+      leaderCompletionInitiator: collection.dispatcherCompletionInitiator,
+      teamMateCompletionInitiator: () =>
+        this.opts.leaderCompletionInitiator(teamId),
       isShuttingDown: collection.isShuttingDown,
       admitOperation: collection.admitOperation ?? ((task) => task()),
       availability: {
@@ -294,9 +335,11 @@ export class TeamRuntimeRegistry {
       withTeamLeaderLease: (lease, task) =>
         this.opts.withTeamLeaderLease(lease, task),
       store: this.opts.store,
-      adminSocketPath: collection.adminSocketPath,
-      leaderChannelDescriptors: collection.leaderChannelDescriptors,
+      leaderMcp: collection.leaderMcp,
       trackMaterialized: (service) => this.materialized.add(service),
+      ...(collection.coreEvents !== undefined
+        ? { coreEvents: collection.coreEvents }
+        : {}),
       log: collection.log,
       workflowLog: collection.workflowLog ?? collection.log,
       ...(collection.agentNameSuffixGenerator !== undefined

@@ -4,10 +4,8 @@ import {
   CodexProcess,
   type CodexProcessOptions,
 } from './supervisor.js';
-import {
-  CodexRuntime,
-  type CodexRuntimeDeps,
-} from './runtime.js';
+import { CodexRuntime } from './runtime.js';
+import type { CodexRuntimeDeps } from './runtime-deps.js';
 import {
   DEFAULT_CODEX_BIN,
   dispatcherCodexConfig,
@@ -15,42 +13,37 @@ import {
   type DispatcherCodexConfig,
 } from './config.js';
 import { codexArgsFromConfig, codexArgsToCli } from './args.js';
-import { BUILTIN_CODEX_PROVIDER_REF } from './provider-ref.js';
 import { resolveCodexBinPath } from './bin.js';
 import { codexAgentRuntimeDiagnostic } from './diagnostic.js';
 import { allocateCodexSocketPath } from './internal/socket.js';
-import { readCodexTranscript } from './transcript/reader.js';
+import { readCodexRecentActivity } from './activity/reader.js';
+import {
+  compileCodexOutputSchema,
+  type CodexOutputSchemaCodec,
+} from './output-schema-codec.js';
 import type {
-  AgentRuntimeCapabilities,
   AgentRuntime,
   AgentRuntimeCreateContext,
   AgentRuntimeMcpServer,
   AgentRuntimeProvider,
-  AgentRuntimeProviderDescriptor,
-  AgentRuntimeSystemPrompt,
+  AgentRuntimeProviderCapabilities,
   AgentRuntimeProviderFactory,
-  ProviderDescriptor,
-  ProviderFactoryContext,
+  AgentRuntimeSessionRef,
+  AgentRuntimeSystemPrompt,
 } from '@excitedjs/dreamux-types';
 
 /**
  * Construction options for the built-in Codex provider. The runtime's host
- * contracts now arrive on the NEUTRAL create context, not as factory hooks:
+ * contracts arrive on the NEUTRAL create context, not as factory hooks:
  * volatile socket placement comes from `context.paths.runtimeSocketDirs()` (this
  * package owns the allocation policy), and env injection comes from
  * `context.injectEnv`. Role-gated bundled skills arrive as neutral
- * `skillSources`. What remains here is the `descriptor` and the test/host seams
- * (process/WS factories, the optional Codex home pre-start check, restart
- * backoff) that let core and tests wire behavior without changing the provider.
+ * `skillSources`. Registration identity is Core's: the provider carries no
+ * descriptor. What remains here are the test/host seams (process/WS factories,
+ * the optional Codex home pre-start check, restart backoff) that let core and
+ * tests wire behavior without changing the provider.
  */
 export interface CodexAgentRuntimeProviderOptions {
-  /**
-   * The registry descriptor for `builtin:codex`. Defaults to a minimal one.
-   * Accepted wide (`ProviderDescriptor`) so a host that resolved it from its
-   * registry need not pre-narrow the kind; the factory validates it is an
-   * `agentRuntime` descriptor.
-   */
-  descriptor?: ProviderDescriptor;
   /** Optional Codex home/auth pre-start check, invoked with the runtime id and cwd. */
   codexHomeDoctor?: (info: {
     runtimeId: string;
@@ -60,20 +53,15 @@ export interface CodexAgentRuntimeProviderOptions {
   codexClientFactory?: (socketPath: string) => CodexWsClient;
   restartBackoffBaseMs?: number;
   restartBackoffMaxMs?: number;
-  /** Override native transcript path validation for deterministic tests. */
-  validateTranscriptPath?: CodexRuntimeDeps['validateTranscriptPath'];
 }
 
-export const CODEX_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
-  resume: { supported: true },
-  structuredOutput: { supported: true, scope: 'per-turn' },
-};
-
-const DEFAULT_CODEX_DESCRIPTOR: AgentRuntimeProviderDescriptor = {
-  id: 'codex',
-  kind: 'agentRuntime',
-  ref: { source: 'builtin', id: 'codex', raw: BUILTIN_CODEX_PROVIDER_REF },
-};
+/**
+ * Provider-static selection metadata. Recovery, session-bound structured
+ * output, and recent Activity reads are mandatory provider behavior, so none of
+ * them is advertised here.
+ */
+export const CODEX_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeProviderCapabilities =
+  { tags: [] };
 
 export function codexSystemPromptReplace(
   systemPrompt: AgentRuntimeSystemPrompt | undefined,
@@ -94,35 +82,20 @@ export function codexSystemPromptAppend(
   return append.length > 0 ? append : undefined;
 }
 
-/** Validate + narrow a seed descriptor to the Agent Runtime kind. */
-function asAgentRuntimeDescriptor(
-  descriptor: ProviderDescriptor,
-): AgentRuntimeProviderDescriptor {
-  if (descriptor.kind !== 'agentRuntime') {
-    throw new Error(
-      `@excitedjs/agent-runtime-codex: descriptor.kind must be 'agentRuntime' ` +
-        `(got ${JSON.stringify(descriptor.kind)})`,
-    );
-  }
-  return { ...descriptor, kind: descriptor.kind };
-}
-
 /**
  * Create the built-in Codex `AgentRuntimeProvider`. It implements the neutral
- * `@excitedjs/dreamux-types` contract: `readConfig` parses Codex runtime config,
- * `getCapabilities` reports Codex's resume support, and
- * `createRuntime` builds a {@link CodexRuntime} from the neutral create context
- * plus the host-supplied hooks.
+ * `@excitedjs/dreamux-types` contract: `config.read` parses Codex runtime
+ * config, `readRecentActivity` serves neutral Activity Records for any session,
+ * and `createRuntime` builds a {@link CodexRuntime} from the neutral create
+ * context plus the host-supplied hooks.
+ *
+ * Codex resumes from its thread id alone, so its session identity is the base
+ * {@link AgentRuntimeSessionRef}.
  */
 export function createCodexAgentRuntimeProvider(
   options: CodexAgentRuntimeProviderOptions = {},
-): AgentRuntimeProvider<DispatcherCodexConfig> {
+): AgentRuntimeProvider<DispatcherCodexConfig, AgentRuntimeSessionRef> {
   return {
-    ref: BUILTIN_CODEX_PROVIDER_REF,
-    descriptor:
-      options.descriptor === undefined
-        ? DEFAULT_CODEX_DESCRIPTOR
-        : asAgentRuntimeDescriptor(options.descriptor),
     getCapabilities: () => CODEX_AGENT_RUNTIME_CAPABILITIES,
     diagnostic: codexAgentRuntimeDiagnostic,
     onboard: {
@@ -135,17 +108,19 @@ export function createCodexAgentRuntimeProvider(
         return { bin };
       },
     },
-    readConfig(rawConfig, context) {
-      return readDispatcherCodexConfig(rawConfig, context.file, context.prefix);
+    config: {
+      read(rawConfig, context) {
+        return readDispatcherCodexConfig(rawConfig, context.file, context.prefix);
+      },
     },
-    readTranscript: readCodexTranscript,
-    createRuntime(context: AgentRuntimeCreateContext<DispatcherCodexConfig>): AgentRuntime {
-      if (context.state === undefined) {
-        throw new Error('codex runtime requires a state sink in the create context');
-      }
-      if (context.paths === undefined) {
-        throw new Error('codex runtime requires a path context in the create context');
-      }
+    readRecentActivity: (query, context) =>
+      readCodexRecentActivity(query, context),
+    async createRuntime(
+      context: AgentRuntimeCreateContext<
+        DispatcherCodexConfig,
+        AgentRuntimeSessionRef
+      >,
+    ): Promise<AgentRuntime> {
       const codexConfig = context.config;
       const codexArgs = codexArgsFromConfig(codexConfig);
       const runtimeArgs = [
@@ -155,10 +130,17 @@ export function createCodexAgentRuntimeProvider(
       const paths = context.paths;
       const systemPromptReplace = codexSystemPromptReplace(context.systemPrompt);
       const systemPromptAppend = codexSystemPromptAppend(context.systemPrompt);
+      // Bind the output schema once, here. A compile failure is a create-time
+      // error; no later submission can change or renegotiate the schema.
+      const codec: CodexOutputSchemaCodec | null =
+        context.outputSchema === undefined
+          ? null
+          : compileCodexOutputSchema(context.outputSchema);
       const deps: CodexRuntimeDeps = {
         cwd: context.cwd,
         state: context.state,
-        activitySink: context.activitySink,
+        activitySink: context.activity ?? (() => undefined),
+        codec,
         paths,
         // The package owns socket allocation: pick a fresh name in the first of
         // the host's preference-ordered candidate dirs that fits the budget.
@@ -196,9 +178,6 @@ export function createCodexAgentRuntimeProvider(
         ...(options.restartBackoffMaxMs !== undefined
           ? { restartBackoffMaxMs: options.restartBackoffMaxMs }
           : {}),
-        ...(options.validateTranscriptPath !== undefined
-          ? { validateTranscriptPath: options.validateTranscriptPath }
-          : {}),
       };
       return new CodexRuntime(context.identity, deps);
     },
@@ -215,33 +194,20 @@ export function codexRuntimeArgsForMcpServers(
 }
 
 /**
- * The context Dreamux core's generic provider package-loader passes to this
- * package's factory export. A back-compat alias of the public
- * {@link ProviderFactoryContext}, narrowed to the Agent Runtime descriptor kind
- * so the factory assigns `descriptor` without a cast.
- */
-export type CodexProviderFactoryContext =
-  ProviderFactoryContext<AgentRuntimeProviderDescriptor>;
-
-/**
  * Default export — the factory Dreamux core's generic provider-loader selects
  * for the `builtin:codex` ref (it imports this package and calls the default
- * export with `{ ref, descriptor }`). It returns a provider that runs on package
- * defaults: a standalone volatile-socket allocator and no host-injected bundled
- * skills.
+ * export with `{ ref }`). It returns a provider on package defaults: a
+ * standalone volatile-socket allocator and no host-injected bundled skills.
  *
- * The Dreamux host does NOT use this bare path in production: its launcher still
- * drives the host-shaped create context, so it constructs the provider through
- * its own core-owned adapter (`@excitedjs/dreamux` `builtin/codex/provider.ts`)
- * to map that context onto the neutral one AND inject its host contracts (the
- * shared runtime-socket root and bundled Dreamux skills; MCP shims receive an
- * explicit dreamux bin path). This default export keeps the package a
- * first-class, loadable `AgentRuntimeProvider` for the generic loader and for
- * external embedders;
- * converging core's launcher onto the neutral context so it can drive the loaded
- * provider directly is later-slice work.
+ * This is the production path. Core drives the loaded provider through the
+ * neutral facade alone — it holds no adapter for this package — and supplies
+ * every host contract (socket root, skill sources, MCP servers, state lease)
+ * through the neutral create context. The options argument of
+ * {@link createCodexAgentRuntimeProvider} exists for embedders and tests.
  */
-const codexAgentRuntimeProviderFactory: AgentRuntimeProviderFactory<DispatcherCodexConfig> =
-  (context) => createCodexAgentRuntimeProvider({ descriptor: context.descriptor });
+const codexAgentRuntimeProviderFactory: AgentRuntimeProviderFactory<
+  DispatcherCodexConfig,
+  AgentRuntimeSessionRef
+> = () => createCodexAgentRuntimeProvider();
 
 export default codexAgentRuntimeProviderFactory;

@@ -1,6 +1,7 @@
-import type { InboundDeliveryResult } from '@excitedjs/dreamux-types';
-
-import type { TurnAdmission } from '../teammate-service/turn-recording.js';
+import type {
+  InboundDeliveryResult,
+  TurnAdmission,
+} from '../teammate-service/turn-recording.js';
 
 export function asInboundDeliveryResult(
   result: TurnAdmission,

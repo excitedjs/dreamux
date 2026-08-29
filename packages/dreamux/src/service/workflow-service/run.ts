@@ -4,6 +4,7 @@ import { isUnsupportedFeatureError } from '@excitedjs/dreamux-utils';
 import { errorInfo, errorMessage } from '../../platform/error-info.js';
 import type { WorkflowCompletionFact } from '../completion-router/index.js';
 import { throwSettledFailures } from '../shutdown-errors.js';
+import { AGENT_TASK_SOURCE } from '../submission-sources.js';
 import type { SpawnTeamMateRequest } from '../teammate-collection/types.js';
 import type {
   CreateLockedTeammateOptions,
@@ -373,10 +374,9 @@ export class WorkflowRun {
 
       const admission = await handle.submit({
         prompt,
-        turnOrigin:
-          this.record.caller_kind === 'dispatcher'
-            ? 'dispatcher'
-            : 'team_leader',
+        // A Workflow step is work one Agent handed to another, exactly like an
+        // MCP spawn; who scheduled it is already the turn's own identity.
+        source: AGENT_TASK_SOURCE,
         ...(call.options.schema !== undefined
           ? { outputSchema: call.options.schema }
           : {}),

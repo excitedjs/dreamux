@@ -47,6 +47,16 @@ interface WorktreeAssessmentOptions {
   deadlineAt?: number;
 }
 
+export interface WorktreeCleanupOptions {
+  /**
+   * Discard uncommitted, untracked, and unmerged work in this worktree so the
+   * checkout can be removed. It authorizes losing that and nothing else: the
+   * managed branch and every commit on it survive, and a worktree that is not
+   * this Team's own managed checkout is never reached at all.
+   */
+  force?: boolean;
+}
+
 export class WorktreeManager {
   async prepare(input: {
     dispatcherId: string;
@@ -200,17 +210,28 @@ export class WorktreeManager {
     };
   }
 
-  async cleanup(identity: {
-    source_cwd: string;
-    source_repo: string | null;
-    worktree: AgentEntityWorktreeIdentity;
-  }): Promise<AgentEntityWorktreeIdentity> {
+  async cleanup(
+    identity: {
+      source_cwd: string;
+      source_repo: string | null;
+      worktree: AgentEntityWorktreeIdentity;
+    },
+    options: WorktreeCleanupOptions = {},
+  ): Promise<AgentEntityWorktreeIdentity> {
     const worktree = identity.worktree;
+    const force = options.force === true;
     try {
       const assessment = await this.assessCleanup(identity);
-      if (assessment.status !== 'eligible') return assessment.worktree;
+      if (assessment.status === 'terminal') return assessment.worktree;
+      if (assessment.status === 'blocked' && !force) return assessment.worktree;
       const repo = identity.source_repo ?? (await this.repoRoot(identity.source_cwd));
-      await git(repo, ['worktree', 'remove', worktree.path]);
+      if (force) await assertRemovableWorktree({ repo, path: worktree.path });
+      await git(repo, [
+        'worktree',
+        'remove',
+        ...(force ? ['--force'] : []),
+        worktree.path,
+      ]);
       return { ...worktree, cleanup_state: 'deleted', cleanup_error: null };
     } catch (err) {
       // Git's non-forced removal is the final authority. Re-read the cheap
@@ -367,6 +388,36 @@ function blockedReason(
       return 'dirty';
     case 'retained-unmerged':
       return 'unmerged';
+  }
+}
+
+/**
+ * Prove what a forced removal is about to delete.
+ *
+ * Non-forced removal can lean on Git's own refusal; a forced one cannot, so
+ * the target is resolved and matched against the repository's worktree
+ * registry first. A path that is the repository itself, or that Git does not
+ * know as a worktree of it, fails loud rather than being removed — that is the
+ * difference between reclaiming this Team's checkout and deleting somebody's
+ * source tree.
+ */
+async function assertRemovableWorktree(input: {
+  repo: string;
+  path: string;
+}): Promise<void> {
+  const target = await realpath(input.path);
+  if (target === (await realpath(input.repo))) {
+    throw new Error(
+      'refusing to remove the source repository as a managed worktree: ' +
+        input.path,
+    );
+  }
+  const entries = await listWorktrees(input.repo);
+  if (!entries.some((entry) => entry.path === target)) {
+    throw new Error(
+      'refusing to force-remove a path that is not a registered worktree of ' +
+        `${input.repo}: ${input.path}`,
+    );
   }
 }
 

@@ -4,8 +4,13 @@
  * Dreamux core owns provider loading. This module is the kind-agnostic skeleton
  * shared by the `agentRuntime` and `channel` external loaders: it resolves the
  * package name for a ref, dynamically imports the module, selects the factory
- * export, invokes it, registers the resulting descriptor + implementation, and
- * formats fail-loud load/contract errors consistently.
+ * export, invokes it, registers Core's own descriptor together with the loaded
+ * implementation, and formats fail-loud load/contract errors consistently.
+ *
+ * Registration identity is Core's: the descriptor comes from the configured ref
+ * this skeleton parsed, never from the loaded provider object. That descriptor
+ * stays inside the skeleton — each kind's spec projects the factory context its
+ * own published contract promises.
  *
  * Kind-specific contract assertions stay with each kind's loader (see
  * `../agent-runtime/external-provider.ts` and
@@ -32,16 +37,16 @@ export type ProviderModuleImporter = (
   packageName: string,
 ) => Promise<ProviderModule>;
 
-/** Context passed to a provider package's factory export. */
-export interface ProviderFactoryContext {
-  /** Canonical provider ref from config, for example `npm:some-pkg#provider`. */
-  ref: string;
-  /** Seed descriptor the provider must echo back to Dreamux. */
-  descriptor: ProviderDescriptor;
-}
-
-export type ProviderFactory<TProvider> = (
-  context: ProviderFactoryContext,
+/**
+ * A provider package's factory export.
+ *
+ * The skeleton is deliberately generic over the context: what a factory sees is
+ * that kind's published contract, not a skeleton-wide shape. Core keeps its
+ * registration descriptor internally and hands each kind only what
+ * {@link ProviderPackageLoaderSpec.factoryContext} builds.
+ */
+export type ProviderFactory<TProvider, TFactoryContext> = (
+  context: TFactoryContext,
 ) => TProvider | Promise<TProvider>;
 
 /** Context handed to a kind-specific contract assertion. */
@@ -53,13 +58,24 @@ export interface ProviderContractContext {
 }
 
 /**
- * Per-kind hooks the generic skeleton needs: how to format errors and how to
- * assert the loaded value satisfies that kind's provider contract.
+ * Per-kind hooks the generic skeleton needs: what its factory export receives,
+ * how to format errors, and how to assert the loaded value satisfies that
+ * kind's provider contract.
  */
-export interface ProviderPackageLoaderSpec<
-  TProvider extends { readonly descriptor: ProviderDescriptor },
-> {
+export interface ProviderPackageLoaderSpec<TProvider, TFactoryContext> {
   kind: ProviderKind;
+  /**
+   * Build the context this kind's factory export is called with.
+   *
+   * Core's registration descriptor stays internal to the skeleton; a kind whose
+   * published factory contract is ref-only (the Agent Runtime contract) must
+   * project exactly `{ ref }` here, so the descriptor cannot leak into a
+   * factory that has nothing to echo back.
+   */
+  factoryContext(input: {
+    ref: string;
+    descriptor: ProviderDescriptor;
+  }): TFactoryContext;
   createLoadError(
     ref: string,
     message: string,
@@ -91,11 +107,9 @@ export interface LoadProviderPackagesOptions {
  * descriptor existence alone would silently leave pre-registered built-ins
  * without a loaded implementation (the slice-3 Codex/Claude extraction path).
  */
-export async function loadProviderPackages<
-  TProvider extends { readonly descriptor: ProviderDescriptor },
->(
+export async function loadProviderPackages<TProvider, TFactoryContext>(
   options: LoadProviderPackagesOptions,
-  spec: ProviderPackageLoaderSpec<TProvider>,
+  spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
 ): Promise<void> {
   const importModule = options.importModule ?? defaultImportModule;
   for (const ref of uniqueLoadableRefs(options.refs)) {
@@ -118,17 +132,24 @@ function isImplementationLoaded(
   return registry.getImplementation(descriptor.id) !== undefined;
 }
 
-async function loadOneProviderPackage<
-  TProvider extends { readonly descriptor: ProviderDescriptor },
->(
+async function loadOneProviderPackage<TProvider, TFactoryContext>(
   registry: ProviderRegistry,
   ref: ProviderRef,
   importModule: ProviderModuleImporter,
-  spec: ProviderPackageLoaderSpec<TProvider>,
+  spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
 ): Promise<void> {
   const existing = registry.hasRef(ref.raw)
     ? registry.resolve(ref.raw)
     : undefined;
+  // Core owns the kind of a registered ref. A provider no longer echoes a
+  // descriptor back, so this is the only place a ref listed under the wrong
+  // kind (a channel ref configured as an agentRuntime, say) can fail loud.
+  if (existing !== undefined && existing.kind !== spec.kind) {
+    throw spec.createContractError(
+      ref.raw,
+      `provider ref is registered as kind ${JSON.stringify(existing.kind)}, expected ${JSON.stringify(spec.kind)}`,
+    );
+  }
   const packageName = resolvePackageName(ref, spec);
   const module = await importProviderModule(ref, packageName, importModule, spec);
   const factory = selectFactoryExport(ref, module, spec);
@@ -140,7 +161,9 @@ async function loadOneProviderPackage<
 
   let provider: TProvider;
   try {
-    provider = await factory({ ref: ref.raw, descriptor: seedDescriptor });
+    provider = await factory(
+      spec.factoryContext({ ref: ref.raw, descriptor: seedDescriptor }),
+    );
   } catch (err) {
     throw spec.createLoadError(
       ref.raw,
@@ -157,18 +180,20 @@ async function loadOneProviderPackage<
     },
   });
 
-  // A pre-registered built-in keeps its existing descriptor; only its
-  // implementation is loaded from the package. Package-backed refs register
-  // both the descriptor and the implementation.
+  // The registered descriptor is Core's own: it is parsed from the configured
+  // ref, never read back off the loaded implementation. A pre-registered
+  // built-in keeps its existing descriptor; only its implementation is loaded
+  // from the package. Package-backed refs register both.
   if (existing === undefined) {
-    registry.register(provider.descriptor);
+    registry.register(seedDescriptor);
   }
-  registry.registerImplementation(provider.descriptor.id, provider);
+  registry.registerImplementation(seedDescriptor.id, provider);
 }
 
-function resolvePackageName<
-  TProvider extends { readonly descriptor: ProviderDescriptor },
->(ref: ProviderRef, spec: ProviderPackageLoaderSpec<TProvider>): string {
+function resolvePackageName<TProvider, TFactoryContext>(
+  ref: ProviderRef,
+  spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
+): string {
   if (ref.source === 'npm') return ref.package;
   try {
     return resolveBuiltinProviderPackage(ref.id);
@@ -177,13 +202,11 @@ function resolvePackageName<
   }
 }
 
-async function importProviderModule<
-  TProvider extends { readonly descriptor: ProviderDescriptor },
->(
+async function importProviderModule<TProvider, TFactoryContext>(
   ref: ProviderRef,
   packageName: string,
   importModule: ProviderModuleImporter,
-  spec: ProviderPackageLoaderSpec<TProvider>,
+  spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
 ): Promise<ProviderModule> {
   try {
     return await importModule(packageName);
@@ -196,13 +219,11 @@ async function importProviderModule<
   }
 }
 
-function selectFactoryExport<
-  TProvider extends { readonly descriptor: ProviderDescriptor },
->(
+function selectFactoryExport<TProvider, TFactoryContext>(
   ref: ProviderRef,
   module: ProviderModule,
-  spec: ProviderPackageLoaderSpec<TProvider>,
-): ProviderFactory<TProvider> {
+  spec: ProviderPackageLoaderSpec<TProvider, TFactoryContext>,
+): ProviderFactory<TProvider, TFactoryContext> {
   const exportName = ref.source === 'npm' ? ref.export : null;
   const value = exportName === null ? module.default : module[exportName];
   if (typeof value !== 'function') {
@@ -211,7 +232,7 @@ function selectFactoryExport<
       `expected ${exportName ?? 'default'} export to be a provider factory function for kind ${JSON.stringify(spec.kind)}`,
     );
   }
-  return value as ProviderFactory<TProvider>;
+  return value as ProviderFactory<TProvider, TFactoryContext>;
 }
 
 function seedDescriptorId(ref: ProviderRef): string {

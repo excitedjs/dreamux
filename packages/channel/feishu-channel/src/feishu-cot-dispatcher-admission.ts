@@ -1,35 +1,35 @@
-/** Dispatcher COT admission from a presentable Channel turn. */
-import type {
-  ChannelTurnSubmittedEvent,
-  DreamuxLogger,
-} from '@excitedjs/dreamux-types';
+/** Dispatcher COT admission for a turn this Channel just submitted. */
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import { cotLogScope } from './feishu-cot-diagnostics.js';
 import {
   DispatcherCotStateStore,
-  type DispatcherTurnState,
-  visibleAnchorFromOrigin,
-} from './feishu-cot-state.js';
+  type KeyedDispatcherTurn,
+} from './feishu-cot-dispatcher-state.js';
+import type { VisibleMessageAnchor } from './feishu-cot-state.js';
 
-export interface DispatcherCotAdmission {
-  readonly key: string;
-  readonly state: DispatcherTurnState;
-}
-
+/**
+ * Open one Dispatcher turn under the message that produced it.
+ *
+ * The anchor is supplied rather than derived: only the session that invoked
+ * `team.submit` knows which visible message became this `turn_id`, and it says
+ * so by calling here. A turn that reaches this function is therefore already
+ * proven to be this Channel's own — nothing else can open a Dispatcher card.
+ */
 export function admitDispatcherTurn(
   store: DispatcherCotStateStore,
-  event: ChannelTurnSubmittedEvent & { readonly role: 'dispatcher' },
+  turn: {
+    readonly agentName: string;
+    readonly turnId: string;
+    readonly anchor: VisibleMessageAnchor;
+  },
   input: {
     readonly dispatcherId: string;
     readonly channelId: string | undefined;
     readonly log: DreamuxLogger;
   },
-): DispatcherCotAdmission | null {
-  const origin = event.channel_origin;
-  if (origin === undefined) return null;
-  const anchor = visibleAnchorFromOrigin(origin, input.channelId);
-  if (anchor === null) return null;
-  const started = store.begin(event.agent_name, event.turn_id, anchor);
+): KeyedDispatcherTurn | null {
+  const started = store.begin(turn.agentName, turn.turnId, turn.anchor);
   if (started.status === 'started') return started;
   if (started.status === 'full') {
     input.log.warn(
@@ -37,7 +37,7 @@ export function admitDispatcherTurn(
         ...cotLogScope({
           dispatcherId: input.dispatcherId,
           channelId: input.channelId,
-          dispatcherAgent: { agentName: event.agent_name },
+          dispatcherAgent: { agentName: turn.agentName },
         }),
         reason: started.reason,
         maximum: started.maximum,
