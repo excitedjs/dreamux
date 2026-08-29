@@ -82,9 +82,10 @@ provider-tool details.
 Each live dispatcher owns:
 
 - one selected Agent Runtime instance
-- a map of live Channel sessions keyed by dispatcher-local `channel_id`
-- provider-owned channel MCP shims for channel tools
-- Team, TeamMate, cron, and collaboration-space MCP shims owned by Dreamux core
+- one built `ChannelInstance` per configured channel, held by dispatcher-local
+  `channel_id`
+- one in-process MCP delegate per tool surface, each owned by its own domain:
+  Team, TeamMate, scheduler, workflow, and one per channel that publishes tools
 
 The first declared channel is the primary/default egress channel. A dispatcher
 with multiple channel providers can route and egress by `channel_id`; with only
@@ -93,28 +94,31 @@ with multiple channel providers can route and egress by `channel_id`; with only
 Key source:
 
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
-- `/packages/dreamux/src/service/dispatcher-service/mcp-descriptors.ts`
-- `/packages/dreamux/src/service/channel-service/mcp-descriptors.ts`
-- `/packages/dreamux/src/mcp/channel-mcp.ts`
-- `/packages/dreamux/src/mcp/collaboration-space-mcp.ts`
-- `/packages/dreamux/src/mcp/team-mcp.ts`
-- `/packages/dreamux/src/mcp/teammate-mcp.ts`
+- `/packages/dreamux/src/service/dispatcher-service/mcp-delegates.ts`
+- `/packages/dreamux/src/service/channel-service/mcp-delegates.ts`
+- `/packages/dreamux/src/service/team-collection/mcp-delegate.ts`
+- `/packages/dreamux/src/service/teammate-collection/mcp-delegate.ts`
 
 ## MCP Protocol Boundary
 
-The five scoped stdio entries (`channel-mcp`, `team-mcp`, `teammate-mcp`,
-`cron-mcp`, and `collaboration-space-mcp`) use the shared official-SDK runner in
-`/packages/dreamux/src/mcp/server.ts`. The runner owns transport, protocol
-negotiation, registration, schema validation, protocol errors, cancellation,
-and stdout framing. It serves exactly `2026-07-28`, `2025-11-25`, and
+There is one Agent-facing stdio entry, `/packages/dreamux/src/mcp/shim.ts`. It
+knows an admin socket and an opaque lease token and nothing else: it asks
+`mcp.describe` what to advertise, forwards every call to `mcp.toolcall`, and
+branches on no tool name. The official-SDK runner in
+`/packages/dreamux/src/mcp/server.ts` owns transport, protocol negotiation,
+registration, schema validation, protocol errors, cancellation, and stdout
+framing. It serves exactly `2026-07-28`, `2025-11-25`, and
 `2025-06-18`; the modern revision uses discovery and the two legacy revisions
 use initialization. Operational diagnostics stay on the supplied logger rather
 than the MCP wire.
 
-Each domain module supplies a deterministic, caller-bound tool catalog. It owns
-tool visibility, metadata, schemas, canonical admin-method mapping, scope that
-model input cannot override, public-error allowlists, and successful-result
-projection. The shared executor emits each ordinary successful object unchanged
+Each domain supplies an in-server delegate with a deterministic, caller-bound
+tool catalog, frozen for one runtime generation. The delegate owns tool
+visibility, metadata, schemas, the scope that model input cannot override,
+public-error allowlists, and successful-result projection. Nothing in the lease
+registry, the two transport Commands, the descriptor, or the shim knows which
+domains exist — a Channel delegate is one implementation of that contract, not a
+special case of it. The shared executor emits each ordinary successful object unchanged
 as `structuredContent` with exact `content: []`, validates it against the
 advertised output schema, and sanitizes unapproved handler failures. An
 execution-only selector on a bound tool definition may add exactly one text
@@ -128,20 +132,17 @@ narrow result-level signal is operation-local: submitted `team.create` /
 `team.send` and `teammate.spawn` / `teammate.send` receipts, plus
 `workflow_run` receipts with a non-empty `run_id`, carry one matching no-poll
 reminder text block. Idle, failed, read, unrelated, and ordinary mutation
-results carry no text. `/packages/dreamux/src/mcp/task-dispatch-reminder.ts`
-owns the three texts and their reusable selectors; it never mutates structured
-results.
+results carry no text.
+`/packages/dreamux/src/service/mcp/dispatch-reminders.ts` owns those texts and
+their reusable selectors; it never mutates structured results.
 
 Key source:
 
 - `/packages/dreamux/src/mcp/server.ts`
-- `/packages/dreamux/src/mcp/tool-catalog.ts`
-- `/packages/dreamux/src/mcp/channel-mcp.ts`
-- `/packages/dreamux/src/mcp/collaboration-space-mcp.ts`
-- `/packages/dreamux/src/mcp/cron-mcp.ts`
-- `/packages/dreamux/src/mcp/team-mcp.ts`
-- `/packages/dreamux/src/mcp/teammate-mcp.ts`
-- `/packages/dreamux/src/mcp/task-dispatch-reminder.ts`
+- `/packages/dreamux/src/mcp/shim.ts`
+- `/packages/dreamux/src/mcp/catalog.ts`
+- `/packages/dreamux/src/service/mcp/`
+- `/packages/dreamux/src/service/mcp/dispatch-reminders.ts`
 
 ## Admin Control Plane
 
@@ -149,16 +150,18 @@ The owner-only local `admin.sock` is Dreamux's target external control-plane
 entry point. Its current protocol is still the v0 one-request/one-response
 NDJSON shape, so it is not yet a completed stable external protocol.
 
-The product method namespaces are `teammate.*`, `team.*`, `workflow.*`, and
-`collaboration_space.*`. Scheduler methods remain `scheduler.cron.*`, and
-provider tool calls use `channel.invoke_tool`. No `mcp.*` aliases are
-registered, and dispatcher declarations remain config-owned rather than
-mutable through `dispatcher.add` or `dispatcher.remove`.
+The socket is an adapter, not an owner. One `CoreCommandRegistry` holds every
+Command definition, and both public adapters — `admin.sock` and an in-process
+Channel's `invoke` port — bind that same registry, so a Channel gets no smaller
+catalog and no private door. Each domain declares its own Commands beside the
+code that owns the fact.
 
-Dreamux-owned MCP shims call those canonical admin methods but retain ownership
-of model-facing schemas, caller-specific visibility, and scope projection. The
-admin registry independently enforces domain and caller safety; its errors use
-product/control-plane wording rather than describing MCP visibility.
+The current namespaces are `teammate.*`, `team.*`, `workflow.*`, `dispatcher.*`,
+and `scheduler.cron.*`, plus the two transport Commands `mcp.describe` and
+`mcp.toolcall`. There is no `collaboration_space.*` namespace and no
+`channel.invoke_tool`: a Channel's tools are reached through its own MCP
+delegate, and dispatcher declarations remain config-owned rather than mutable
+through `dispatcher.add` or `dispatcher.remove`.
 
 Admin callers may pass strictly validated `skill_sources` when calling
 `teammate.spawn` or `team.create`. These are additional runtime-neutral skill
@@ -173,13 +176,12 @@ forward this parameter.
 
 Key source:
 
-- `/packages/dreamux/src/admin/methods.ts`
-- `/packages/dreamux/src/admin/params.ts`
+- `/packages/dreamux/src/command/`
 - `/packages/dreamux/src/admin/socket.ts`
+- `/packages/dreamux/src/admin/protocol.ts`
 - `/packages/dreamux/src/agent-runtime/skill-sources.ts`
-- `/packages/dreamux/src/mcp/collaboration-space-mcp.ts`
-- `/packages/dreamux/src/mcp/team-mcp.ts`
-- `/packages/dreamux/src/mcp/teammate-mcp.ts`
+- `/packages/dreamux/src/service/team-collection/commands.ts`
+- `/packages/dreamux/src/service/teammate-collection/commands.ts`
 
 ## Channels And Feishu
 
@@ -197,26 +199,25 @@ mention gate; an unlisted `follow-user` chat retains the `dm_policy` sender
 path. `/introduce` remains sender-scoped and does not inherit that ordinary
 delivery authority.
 
-Dreamux core injects the generic `channel-mcp` shim and routes tool calls back
-to the live Channel session or provider sessionless handler. The provider's
-neutral descriptor carries standard MCP title, description, input schema,
-optional output schema, annotations, and optional icon metadata without
-importing the MCP SDK. Core validates catalogs and schemas before descriptor
-encoding, then forwards provider arguments and canonical results without
-interpreting their fields. The built-in Feishu catalog supplies an output
-schema for every tool: `reply` returns `{ message_ids }`, `react` returns
-`{ reaction_id }`, and both live and sessionless `list_chat_bots` return the
-same `{ chat_id, known, trusted }` value.
+Core gives each channel that publishes tools one ordinary MCP delegate and asks
+the provider's own capability to `describe` a catalog per caller, freezing it for
+one runtime generation. The provider's neutral descriptor carries standard MCP
+title, description, input schema, optional output schema, annotations, and
+optional icon metadata without importing the MCP SDK. Core validates catalogs
+and schemas, then forwards provider arguments and canonical results without
+interpreting their fields, and runs no egress gate of its own: it neither
+resolves a target out of a provider's tool arguments nor holds proof that a
+message belongs to one. Every call carries the scope Core baked into the lease —
+dispatcher id, channel id, and the caller — and the Channel owns its own access
+rules. There is no sessionless Feishu tool; a channel's MCP capability is taken
+from the built instance, which exists from creation rather than from connection.
 
-Core also supplies optional session-scoped collaboration capabilities through
-`ChannelRoutes`: synchronous ensure of an existing collaboration target,
-exact-route delivery directly to its current TeamLeader, and a dispatcher-local
-read-only core fact source. Providers cannot select repository/cwd/workspace
-mode or claim dispatcher/channel authority through these methods. Exact
-delivery never falls back to another target or the dispatcher agent, and the
-fact source is live-session-only and best-effort rather than a historical state
-surface. Every Channel session generation receives revocable strict-route and
-event-source leases; stop or failed start revokes them before session close.
+Everything a Channel reaches Core through is the `ChannelCorePort`: the shared
+Command invoker and one read-only, dispatcher-scoped event source. A Channel
+names a Command, hands it a payload, and gets one answer; both public adapters
+bind the same registry, so a Channel gets no smaller catalog and no private door.
+The event source is live-session-only and best-effort, not a historical state
+surface, and is revoked before session close on stop or failed start.
 
 Core's neutral conversation projection is injected into the dispatcher agent
 and team-scoped entity construction paths. It turns sanitized runtime
@@ -256,45 +257,36 @@ construction and injects it into the dispatcher agent, the dispatcher-scope
 `TeammateCollection`. Collections never self-build the store (PR #282
 owner-boundary fix). Detailed conversation history is not a Dreamux state
 store: `TeammateCollection.last()` reads identity, resolves the selected
-`AgentRuntimeProvider`, and delegates a bounded cold `readTranscript()` without
-materializing an entity or starting a runtime. `list` and `history` apply the
+`AgentRuntimeProvider`, and delegates a bounded cold `readRecentActivity()`
+without materializing an entity or starting a runtime. `list` and `history` apply the
 same dispatcher/team role predicate as targeted reads before projecting any
 physically discovered identity.
 
 Team creation takes `name_prefix` and returns a concrete `team_name` with a
-4–8 character random suffix. Core publishes a fully written
-`name-claim.json` in the Team namespace through an atomic no-clobber hard link
-before any Team or collaboration-target side effect; the claim survives restart
-and dissolve, so closed and not-yet-materialized concrete names are never
-reused. Generated TeamLeader, ordinary TeamMate, and Team-member names use the
+4–8 character random suffix. The Team's own `record.json` is the claim: publishing
+it is an exclusive create, and that create is the whole acceptance protocol.
+Before it the candidate name is free and a caller that loses the race chooses
+another; after it the record owns the name for good, so closed and
+not-yet-materialized concrete names are never reused. There is no separate claim
+file. Generated TeamLeader, ordinary TeamMate, and Team-member names use the
 same 4–8 character suffix contract. `AgentIdentityStore.allocateName()` checks
 the persisted dispatcher-global entity namespace before selection; identity
 creation uses an atomic no-clobber write. Agent naming adds no transient
 reservation queue or permanent claim file.
-Later Team lifecycle and routing operations are addressed by that returned
-`team_name`.
-Channel binding is a Team MCP capability. The Team MCP is caller-scoped:
+Later Team lifecycle operations are addressed by that returned `team_name`.
+Binding a conversation to a Team is not a Team capability at all: routing is the
+Channel's own decision, made with that Channel's tools, so Team MCP has no
+`bind_channel` and no `transfer_back`. The Team MCP is caller-scoped:
 
-- dispatchers see lifecycle/read tools plus
-  `send({ team_name, prompt, intent? })` to submit a turn to that Team's
-  TeamLeader,
-  `bind_channel({ team_name, channel_id?, meta })` and
-  `transfer_back({ channel_id?, meta })`
-- TeamLeaders see exactly `dissolve({ note })`, scoped
-  `bind_channel({ channel_id?, meta })`, and
-  `transfer_back({ channel_id?, meta })`. TeamLeader bind can claim only an
-  unowned target (or return the exact explicit binding idempotently); it cannot
-  replace another owner or consume a collaboration-managed route. Self-dissolve
-  derives both Team and leader generation from the MCP descriptor and maps to
-  the same `team.dissolve` admin method as Dispatcher
-  `dissolve({ team_name, note })`; it accepts no Team selector. There is no
-  `close` alias or provider-specific branch.
+- dispatchers see `create`, `send`, `list`, `status`, `history`, and
+  `dissolve({ team_name, note, force? })`;
+- TeamLeaders see exactly one tool, `dissolve({ note, force? })`, which derives
+  its Team from the MCP descriptor and accepts no Team selector. There is no
+  `close` alias and no provider-specific branch.
 
-`channel_id` defaults to the dispatcher's sole configured channel and is
-required only when the dispatcher has more than one configured channel.
-`meta` is provider-owned selector input; the active channel provider's schema
-and results define the selector shape. Peer Team send remains future work;
-TeamLeaders still use their scoped TeamMate MCP to send to members.
+Both dissolve forms answer `{ accepted, team_name, status: "submitted" }` and
+never report the outcome. Peer Team send remains future work; TeamLeaders still
+use their scoped TeamMate MCP to send to members.
 
 Each `TeamService` directly builds and holds its TeamLeader `TeammateService`
 through `/packages/dreamux/src/service/team-service/leader-agent.ts`, using the
@@ -348,49 +340,48 @@ bounds, transcript digest validation, bounded discovery accounting, exact
 positional reads, deterministic rendering, and lexical path containment — are
 single-sourced in `/packages/dreamux-utils/src/transcript.ts`.
 
-`TeamCollection` owns the single durable Team dissolve lifecycle. An accepted
-operation is stored on the Team record before its receipt, carries the first
-note, requester/generation, target handoffs, phase, public-safe error, attempt
-count, and next retry time, and projects one process-local handle with an opaque
-operation id, the accepted receipt, and a `logicalClosed` milestone.
-`Team.status` stays `starting | running | closed`; dissolve phase and worktree
-cleanup are separate facts. Active same-generation requests join the stored
-operation, while a stale TeamLeader generation cannot join it.
+A Team's dissolve belongs to that Team, and it is a submission rather than a
+persisted operation. `TeamService.dissolve` answers
+`{ accepted, team_name, status: "submitted" }` as soon as the Team owns the one
+background task that will stop it, close it, and reclaim its checkout; a second
+submission joins the first, and a refused one can be asked again. Nothing about
+the operation is written down, so a process that dies mid-dissolve simply leaves
+an open Team whose children reopen lazily.
 
-The same `TeamCollection` availability fence gates Dispatcher send, bound and
-strict inbound delivery, route publication, TeamLeader member/workflow
-mutations, Team scheduler mutations and final timer fire, and member-completion
-injection back into the leader. Reads use a generation-checked read lease and
-remain available while closing. Acceptance captures the TeamLeader plus every
-live member runtime that can write the shared worktree and requires each to
-provide the neutral `waitIdle()` capability. It closes workflow admission and
-stops the Team scheduler before returning, waits for all captured writers, and
-then repeats the non-destructive `WorktreeManager.assessCleanup()` preflight.
+The Team holds one work fence, and the fence *is* the operation: it goes up the
+moment a dissolve is submitted, before the first await, and refuses new work
+rather than queueing it. From that point every admitted caller operation is
+refused — Dispatcher and Channel send, TeamLeader member/Workflow mutation, Team
+scheduler mutation and fire, member-completion injection — and permanently so
+once the record says closed; reads stay available. A failure lowers the fence
+again and the Team stays open.
 
-`TeamService` owns resource shutdown and propagation of the one shared worktree
-identity to leader and members; `WorktreeManager` alone assesses and removes a
-managed worktree. Logical close durably commits routes/runtimes closed and
-`cleanup-pending` before physical deletion. Assessment checks only dirty and
-unmerged state; it does not enumerate refs or walk repository history.
-`cleanup: keep` and non-managed outcomes are terminally retained. Clean managed
-`delete-on-close` cleanup calls non-forced `git worktree remove <path>` and
-preserves the managed branch and its commits. Removal failures retain durable
-retry responsibility with bounded exponential backoff; branch/ref deletion is
-not part of Team dissolve.
-Dispatcher and TeamLeader projections both return the durable accepted receipt
-without awaiting `logicalClosed`. Terminal cleanup is observed through Team
-status/history and structured lifecycle logs, not another process-local handle
-promise. Dispatcher pre-acceptance work has a 9-second method-entry deadline
-under the normal 10-second MCP admin timeout; there is no post-accept result
-timer or lifecycle projection.
+Behind the receipt, `TeamClosing` runs one order. A Dispatcher-requested
+dissolve calls the non-destructive `WorktreeManager.assessCleanup()` first,
+while nothing has stopped, so a refusal costs the Team nothing; a TeamLeader
+cannot ask that about itself, so it stops its members first and then asks while
+still alive to be told. `force` overrides the refusal, never the question. Then
+Workflow admission closes, the scheduler stops, members and the leader stop and
+close, and the assessment repeats now that nothing is running — that second
+answer is the only one a destructive reclaim may act on. The single record write
+that commits `closed`, `closed_at`, the note, and the worktree fact is what makes
+the Team closed; the Team's cron store is discarded only after it, and a failure
+before it reopens admission instead.
 
-Startup restores active Team fences, materializes every live writer, rechecks
-idle, and resumes persisted dissolve/cleanup phases before publishing normal
-Team, collaboration, Channel, workflow, or scheduler work. Shutdown interrupts
-cancellable dissolve idle waits and retry timers before admitted-task drain,
-but drains an active physical cleanup attempt. Interruption settles only the
-process-local `logicalClosed` milestone with a typed recoverable result and
-leaves the durable phase and cleanup responsibility for restart.
+Assessment checks only dirty and unmerged state; it does not enumerate refs or
+walk repository history. `cleanup: keep` and non-managed outcomes are terminally
+retained. Clean managed `delete-on-close` cleanup calls non-forced
+`git worktree remove <path>` and preserves the managed branch and its commits;
+branch/ref deletion is not part of Team dissolve.
+
+Only the physical reclaim outlives the process. A checkout that could not be
+removed is committed as `cleanup-pending` with the caller's
+`worktree_cleanup_force` authorization, and startup scans closed records for that
+pair and finishes each one from the record alone — no Team is materialized, each
+reclaim is launched rather than awaited so a slow Git cannot hold up dispatcher
+start, and a failure leaves the same pending fact for the next start instead of a
+retry ledger. A host shutdown is not a dissolve: it releases the runtime
+authority this process took and writes nothing durable.
 
 Key source:
 
@@ -398,9 +389,10 @@ Key source:
 - `/packages/dreamux/src/service/teammate-collection/`
 - `/packages/dreamux/src/service/team-collection/`
 - `/packages/dreamux/src/service/team-service/`
+- `/packages/dreamux/src/service/team-service/closing.ts`
+- `/packages/dreamux/src/service/team-collection/worktree-cleanup.ts`
 - `/packages/dreamux/src/service/channel-service/`
-- `/packages/dreamux/src/service/channel-binding/`
-- `/packages/dreamux/src/mcp/team-mcp.ts`
+- `/packages/dreamux/src/service/team-collection/mcp-delegate.ts`
 
 ## Dynamic Workflows
 
@@ -475,121 +467,57 @@ Key source:
 - `/packages/dreamux/src/service/workflow-service/`
 - `/packages/dreamux/src/service/dispatcher-service/dispatcher-workflows.ts`
 - `/packages/dreamux/src/service/teammate-collection/index.ts`
-- `/packages/dreamux/src/mcp/teammate-mcp.ts`
+- `/packages/dreamux/src/service/teammate-collection/mcp-delegate.ts`
 - `/packages/dreamux-utils/src/supervised-child.ts`
 
 ## Collaboration Spaces
 
-`CollaborationSpaceService` is a dispatcher-local control-plane facade for
-externally created provider containers that Dreamux binds to worktree policy. It
-does not have an agent runtime, does not wrap `TeammateService`, and is not a
-Channel provider implementation. Space-level MCP/admin behavior stays in the
-facade; target accept/provision/close state transitions live in the contained
-`CollaborationTargetLifecycle`. That target worker uses the dispatcher's existing
-`ChannelService` plus single dispatcher-level `TeamCollection` to provision Teams
-for channel targets. Accepted background lifecycle work is tracked by
-`CollaborationSpaceService`; `DispatcherService` separately tracks direct
-inbound delivery/provisioning promises. Startup resumes durable `creating`,
-`failed`, and `closing` target records and releases stale managed claims left on
-inactive targets before any Channel session starts, so start-time strict
-operations cannot race pending-target repair. Stop/shutdown closes admission,
-stops Workflows, canonically materializes and closes every durable non-closed
-Team and ordinary TeamMate entity, and then drains accepted work before closing
-the rest of the service graph. Already accepted provisioning rechecks the
-shutdown fence before
-Team creation, TeamLeader readiness, and route claim side effects. If a Team
-create was already in flight when the fence rose, provisioning closes that new
-Team before its drained promise settles. A create failure after leader launch
-also closes that leader and commits the Team itself closed before propagating
-the failure. `TeamCollection` retains
-ownership of partially booted services that never reached its live cache, so
-shutdown can retry failed create-time cleanup. Team/member/leader stop sweeps
-attempt every canonically materialized entity and aggregate failures instead of
-failing fast after the first provider error.
+There is no Collaboration Space service in Core, and no Core state describing
+one. A Collaboration Space is a Channel product flow: a registered container
+whose child conversations are provisioned into Teams automatically. Only the
+Channel knows what a container is, so the Channel owns the policy, the
+provisioning, and the durable record of both.
 
-The dispatcher-only `collaboration_space` MCP exposes `bind`, `dissolve`,
-`status`, and `list`. Binding registers an existing external container and a
-worktree policy; `repo` is optional and omitted repo follows that dispatcher's
-default workspace policy. It does not call provider Channel MCP to create the
-external space. A dispatcher channel may also enable core-owned
-`collaborationSpace.defaultBinding` so unknown provider containers with neutral
-`container` membership auto-bind without an explicit MCP call.
-Collaboration-space dissolve releases Dreamux routing/provisioning ownership
-without deleting the external container
-or dissolving already provisioned Teams, and it prevents implicit auto-rebind of
-that known unbound space. Explicit Team dissolve and collaboration target close
-both join the TeamCollection-owned durable lifecycle; `TeamService` owns only
-the accepted operation's logical resource close.
+For Feishu that means a registered topic group. Its policy and its installed
+bindings live in the Channel's own routing document under the per-dispatcher
+state root, and its four Dispatcher-only tools — `bind_collaboration_space`,
+`unbind_collaboration_space`, `get_collaboration_space`, and
+`list_collaboration_spaces` — are ordinary provider tools in the caller-scoped
+Feishu catalog. Core sees only what any Channel does: `team.create` to make a
+Team, `team.submit` to reach one, and the Team's own `team_name` coming back.
 
-Binding is one process-writer-serialized store transition: the unbound check,
-container uniqueness, next generation, and complete policy write commit
-together. A generation never names two policies. Collaboration target records
-are the durable provisioning intent, while the channel binding remains the
-authoritative live route. Managed bindings carry an opaque target-generation
-`claim_id`; explicit Team binds clear it. The binding store is v3; v2 rows that
-already have `(channel_id, target_key)` are reused as explicit routes with
-`claim_id: null` only when no open collaboration target shares that route key.
-If such an overlap exists, startup/doctor fails loud because the old row could
-be either explicit or collaboration-managed. Older rows without route keys still
-fail loud. Provisioning, reconciliation, and explicit Team route mutation share a
-`(channel_id, target_key)` lock, so intent detach and route replacement cannot
-cross. Explicit bind commits the
-authoritative replacement before detaching collaboration intent, so a rejected
-bind leaves the managed claim intact. Reconciliation releases only the matching
-claim, preserves an explicit replacement even when it uses the same Team owner
-tuple, and reclaims a missing route only while the original Team is actually
-routable. Route publication also holds a TeamCollection route lease. Every Team
-close path raises the matching closing fence, detaches all matching collaboration
-intent, transfers every owned channel route, and only then dissolves the Team;
-a waiting bind or repair therefore cannot publish a route to the Team being
-closed. A target-owned close persists an opaque generation handoff, accepts or
-joins the Team dissolve under the target lock, releases that lock while waiting
-for Team-wide quiescence, and marks the target closed only after
-`logicalClosed`. The Team record can hold multiple target handoff ids; the
-route sweep reacquires each target lock and checks the exact handoff against the
-authoritative Team record, so mismatches detach normally. Public target views
-expose a fixed failure summary; raw downstream errors remain local diagnostics
-and are not returned through MCP/status views.
+Provisioning is process-local by design. It runs as an in-memory sequence, holds
+no saga, phase, outbox, or recovery cursor, and persists nothing until a binding
+is actually installed. Losing the process loses the unfinished operation: a
+restart recovers only the already-persisted Team records, Space policies, and
+completed bindings, and runs no resume scan. A Team that was created but never
+bound stays as an accepted orphan, and a first message that was not submitted
+before the crash is lost — a later message follows the still-persisted Space
+policy normally.
 
-Strict Channel ensure and exact delivery stay on this same owner graph. Ensure
-reuses `acceptAndProvisionTarget` and returns only after the active/bound target,
-running Team, ready leader, local workspace, and exact claimed route agree.
-Exact delivery validates the current Team/leader/claim under the existing target
-and Team route fences before calling `TeamService.deliverToLeader`. Neither path
-creates a new target owner, remote close surface, retained submission state, or
-dispatcher-agent turn. The dispatcher gives each session start a fresh strict
-route lease; revocation makes old closures return `dispatcher_unavailable`
-without reaching those owners. Failed-start rollback revokes first, closes and
-canonically stops every durable non-closed Team, then drains admission while
-leaving durable Team and target facts intact.
+Unbinding a Space releases the Channel's routing and provisioning ownership. It
+does not delete the external container and does not dissolve Teams that were
+already provisioned; dissolving one of those is an ordinary `team.dissolve`.
 
-`DispatcherService` also owns one in-process `DispatcherCoreEventBus` and the
-Channel source leases created from it. Team, identity, channel binding, and
-collaboration-space services remain the fact owners and publish only
-allowlisted post-write DTOs through a narrow capability. Binding route events
-are emitted after the channel-binding store returns a real atomic transition,
-and collaboration-space events are emitted after the space store returns its
-transition. Binding events intentionally use the same dispatcher-wide live
-broadcast as other core events; the endpoint snapshot carries the provider ref
-and opaque provider-owned metadata so the matching provider can filter and
-address the notification. Bound route events are the only core events that
-include the TeamLeader runtime id and runtime cwd. Channel sessions receive no
-raw bus or store, and sources are revoked before session close. The bus retains
-no state and provides no queue, eventual-delivery guarantee, or historical
-query.
+`DispatcherService` owns one in-process `DispatcherCoreEventBus` and the Channel
+event sources leased from it. Team, agent-identity, and turn owners publish only
+allowlisted post-write DTOs through a narrow capability; routing produces no core
+event, because routing is the Channel's own fact and Core has none to publish
+back. Delivery is a dispatcher-wide live broadcast with no queue,
+eventual-delivery guarantee, or historical query. Channel sessions receive no raw
+bus or store, and every source is revoked before session close.
 
-Scheduler ownership does not move into collaboration spaces. The dispatcher has
-its dispatcher scheduler, and each `TeamService` owns the TeamLeader scheduler it
-starts through the existing Team path.
+Scheduler ownership is unaffected: the dispatcher has its dispatcher scheduler,
+and each `TeamService` owns the TeamLeader scheduler it starts.
 
 Key source:
 
-- `/packages/dreamux/src/service/collaboration-space/`
+- `/packages/channel/feishu-channel/src/feishu-provisioning.ts`
+- `/packages/channel/feishu-channel/src/routing/document.ts`
+- `/packages/channel/feishu-channel/src/tools/space-tools.ts`
 - `/packages/dreamux/src/service/dispatcher-core-events/`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
-- `/packages/dreamux/src/mcp/collaboration-space-mcp.ts`
-- `/packages/dreamux/src/service/team-collection/`
-- `/packages/dreamux/src/service/team-service/`
+- `/packages/dreamux/src/service/legacy-state.ts`
 
 ## State, Cache, Run Files, And Logs
 

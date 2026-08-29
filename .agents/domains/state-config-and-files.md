@@ -123,13 +123,12 @@ symmetric by agent entity:
 state/<dispatcher-id>/
   access.json
   chat-bots.json
-  channel-bindings.json
   cron-jobs.json
+  feishu-routing.<channel-slug>.<digest>.json
   identity.json
   teammate/<name>/
     identity.json
   team/<team-name>/
-    name-claim.json
     identity.json
     record.json
     cron-jobs.json
@@ -142,13 +141,20 @@ sits structurally outside the `teammate/` collection. TeamLeader state lives at
 the Team root; Team member state lives under that Team's member collection.
 Every identity owns lifecycle/worktree/intent/role guidance plus the
 runtime-native `session_id` and nullable opaque `transcript_locator`; it owns no
-rolling conversation projection. `name-claim.json` is the Team namespace's
-permanent ownership record: a complete sibling temp file is published with an
-atomic no-clobber hard link before a Team or collaboration-target side effect,
-so readers never observe a partial claim. The claim is never removed, including
-after dissolve. There is no separate `status.json` recovery authority and no
-durable `runtime/<name>/` scratch under the dispatcher state root — runtime
-scratch is volatile and lives under `run/`.
+rolling conversation projection. A Team's `record.json` is its own name claim:
+publishing it is an exclusive create, and that create is the whole acceptance
+protocol. Before it the candidate name is free and a caller that loses the race
+simply chooses another; after it the record owns the name permanently, including
+after the Team closes. There is no separate claim file, no `status.json`
+recovery authority, and no durable `runtime/<name>/` scratch under the
+dispatcher state root — runtime scratch is volatile and lives under `run/`.
+
+`feishu-routing.<channel-slug>.<digest>.json` is the one file here that Core
+does not own. Core supplies the per-dispatcher state root; the Feishu Channel
+owns the filename, the schema, and the routing and Collaboration Space policy
+inside it. Core's own removed routing files — `channel-bindings.json` and
+`collaboration-spaces.json` at this root — are probed and failed loud, never
+read.
 
 Dreamux persists no per-Turn archive. A per-entity `turn.jsonl` left by an older
 release is inert residue: Dreamux never creates, stats, lists, opens, validates,
@@ -157,28 +163,22 @@ cannot block startup or any read/lifecycle operation. Detailed history belongs
 to the selected provider's native transcript. `last` performs a bounded cold
 provider query and stores no copy, index, or cursor in Dreamux state.
 
-Each Team `record.json` is fully server-owned. Its nullable `dissolve` object is
-the TeamCollection authority for one accepted operation: operation id,
-requester kind and TeamLeader generation when applicable, collaboration-target
-handoff ids, first accepted note/time, current phase, public-safe error,
-cleanup-attempt count, and next retry time. Valid phases are
-`waiting_for_team_idle`, `closing_resources`, `worktree_cleanup_pending`,
-`complete`, and `failed`. Do not edit, remove, or manufacture this object by
-hand; active records and pending cleanup are reconciled at Dispatcher startup.
+Each Team `record.json` is fully server-owned. It carries no dissolve operation:
+no operation id, no phase, no requester generation, no handoff ids, no attempt
+count, and no retry time. A dissolve is an ordinary submission answered
+`{ accepted, team_name, status: "submitted" }`, and the single record write that
+sets `closed` is the only durable step. A process that dies mid-dissolve leaves
+an open Team whose children reopen lazily; the dissolve can simply be asked
+again. Do not edit or manufacture the record by hand.
 
-Team `status` remains independently `starting | running | closed`. A closed Team
-may have dissolve phase `worktree_cleanup_pending`, which means routes and
-runtimes are durably closed while the server still owns physical managed
-worktree cleanup. The shared `cleanup-pending` state is written to Team,
-TeamLeader, and member identities before deletion; the single Team operation
-later propagates its terminal or retained result to every borrower.
-
-`collaboration-spaces.json` is also fully server-owned. A closing target may
-hold one exact `team_dissolve_operation_id`, one generation-specific
-`team_dissolve_handoff_id`, and its finalization intent. The corresponding Team
-operation holds a list of target handoff ids because multiple target consumers
-may join the same dissolve. These fields are lock-handoff correlation, not an
-independent target-side dissolve state machine.
+Team `status` is `starting | running | closed`. The one thing a close can leave
+behind is physical: a managed `delete-on-close` checkout that could not be
+reclaimed is committed on the closed record as `cleanup_state:
+"cleanup-pending"` with the caller's `worktree_cleanup_force` authorization. That
+pair is the entire recovery input — a later start reclaims it from the record
+alone, without materializing a Team, and a failure leaves the same pending fact
+for the next start instead of a retry ledger. The Agents that ran inside the
+directory hold no copy of the fact, so nothing downstream is notified.
 
 Feishu `access.json` is the deliberate mixed-ownership exception to the general
 server-state description. Its fixed path is
@@ -195,6 +195,8 @@ Source:
 - `/packages/dreamux/src/state/dispatcher-store.ts`
 - `/packages/dreamux/src/service/agent-entity/identity-store.ts`
 - `/packages/dreamux/src/service/team-collection/store.ts`
+- `/packages/dreamux/src/service/team-collection/worktree-cleanup.ts`
+- `/packages/channel/feishu-channel/src/routing/store.ts`
 - `/packages/channel/feishu-channel/src/chat-bots-store.ts`
 
 ## JSON Document Stores
@@ -219,7 +221,7 @@ Source:
 - `/packages/dreamux/src/platform/json-document-store.ts`
 - `/packages/dreamux/src/service/scheduler/store.ts`
 - `/packages/dreamux/src/service/agent-entity/identity-store.ts`
-- `/packages/dreamux/src/service/agent-entity/transcript-reader.ts`
+- `/packages/dreamux/src/service/agent-entity/activity-reader.ts`
 
 ## Run Files And Runtime Sockets
 

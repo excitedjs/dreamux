@@ -11,11 +11,11 @@ Current source owners:
 - `/packages/dreamux/skills/`
 - `/packages/dreamux/src/service/dispatcher-service/base-prompt.ts`
 - `/packages/dreamux/src/service/team-service/index.ts`
-- `/packages/dreamux/src/mcp/teammate-mcp.ts`
-- `/packages/dreamux/src/mcp/team-mcp.ts`
-- `/packages/dreamux/src/mcp/cron-mcp.ts`
-- `/packages/dreamux/src/admin/methods.ts`
+- `/packages/dreamux/src/service/teammate-collection/mcp-delegate.ts`
+- `/packages/dreamux/src/service/team-collection/mcp-delegate.ts`
+- `/packages/dreamux/src/service/scheduler/mcp-delegate.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
+- `/packages/channel/feishu-channel/src/tools/`
 
 ## Reader First
 
@@ -27,8 +27,9 @@ The same applies to TeamLeader skills and caller-specific MCP descriptions.
 Before adding a rule, verify the real tool projection in source:
 
 - Dispatcher-visible tools are not automatically visible to TeamLeaders.
-- TeamLeader-visible `team` MCP exposes only scoped `bind_channel` and
-  `transfer_back`; bind has no model-supplied Team name.
+- TeamLeader-visible `team` MCP exposes exactly one tool, a scoped `dissolve`
+  with no model-supplied Team name. Binding a conversation to a Team is a
+  Channel tool, and the TeamLeader's copy of it carries no team field at all.
 - Ordinary TeamMates and team members receive no bundled Dreamux skill by
   default.
 - Dispatchers and TeamLeaders both receive the shared `workflow` skill; its
@@ -141,10 +142,11 @@ Avoid internal architecture adjectives and implementation layouts in tool
 descriptions: "core-owned", "hidden tool", `.workspace/work/<name>`, and
 package/release milestone language are not useful operating instructions.
 
-For caller-specific surfaces, split descriptions by caller when needed. A
-TeamLeader-facing `transfer_back` description should say it is a routing-only
-state change with no channel-message side effect; it should not describe
-dispatcher routing or imply message delivery.
+For caller-specific surfaces, split descriptions by caller when needed. The same
+tool name may be registered twice with different authority — the Feishu
+`bind_channel` is, once for the Dispatcher and once for a TeamLeader — and each
+description should describe only what its own caller can reach, never the other
+caller's scope.
 
 Structured result names are also model-facing. If a field names a provider shape
 or an old concept, fix the projection rather than documenting around it.
@@ -158,9 +160,9 @@ or prompt guidance in structured fields.
 
 Known-tool input-schema failures are normal MCP tool results with `isError`.
 Unknown tools and malformed protocol requests are SDK-owned protocol errors.
-Domain adapters may surface only their explicit safe admin-method/error-code
-allowlists; other admin and provider failures use the fixed sanitized tool
-error while full detail stays in out-of-band logs.
+Each delegate may surface only its explicit safe Command/error-code allowlist;
+other Command and provider failures use the fixed sanitized tool error while full
+detail stays in out-of-band logs.
 
 The general no-polling and completion-delivery rule belongs in Dispatcher and
 TeamLeader role prompts. A bound Dreamux tool definition may select one
@@ -168,9 +170,9 @@ operation-local success text without changing its canonical structured result:
 submitted Team and TeamMate create/send receipts carry their matching reminder,
 and a `workflow_run` receipt with a non-empty `run_id` carries the workflow
 reminder. Idle, failed, read, unrelated, and ordinary mutation results carry no
-text. `/packages/dreamux/src/mcp/task-dispatch-reminder.ts` is the sole owner of
-those three texts and selectors; the selector is not public tool metadata,
-admin data, or a Channel provider contract.
+text. `/packages/dreamux/src/service/mcp/dispatch-reminders.ts` is the sole owner
+of those texts and selectors; the selector is not public tool metadata, Command
+data, or a Channel provider contract.
 
 ## Tests
 

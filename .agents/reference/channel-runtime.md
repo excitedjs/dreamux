@@ -159,218 +159,127 @@ Key source:
 
 ## Provider Tools And MCP
 
-The Feishu package owns its tool names and JSON schemas:
+The Feishu package owns its tool names and JSON schemas. The current surface is
+caller-scoped:
 
-- `reply`
-- `react`
-- `list_chat_bots`
+- messaging (both callers): `reply`, `react`, `list_chat_bots`
+- Dispatcher routing: `bind_channel`, `unbind_channel`, `list_bindings`
+- TeamLeader routing: `bind_channel`, `unbind_channel`, each with no team field
+- Dispatcher Collaboration Space: `bind_collaboration_space`,
+  `unbind_collaboration_space`, `get_collaboration_space`,
+  `list_collaboration_spaces`
+
+A name appearing twice with different authority is the authorization model, not
+a duplicate: Core asks the provider what this caller may see, freezes the answer
+for one runtime generation, and admits only names in it.
 
 Each provider descriptor carries a name, optional presentation metadata,
 mandatory input schema, optional output schema, and standard annotations. The
-neutral contract in `@excitedjs/dreamux-types` has no MCP SDK dependency.
-Descriptor assembly validates the complete catalog, unique names, JSON-safe
-shape, and SDK-compilable schemas before it encodes the child-process command.
-The `channel-mcp` CLI repeats the fail-loud validation and refuses a missing,
-malformed, empty, or invalid catalog.
+neutral contract in `@excitedjs/dreamux-types` has no MCP SDK dependency. Core
+validates the complete catalog — unique names, JSON-safe shape, SDK-compilable
+schemas — and a tool whose handler does not exist is never advertised.
 
-Dreamux core injects a generic `channel-mcp` stdio shim through the shared
-official-SDK server. The shim is a conduit: it serves provider-supplied
-`tools/list` metadata and forwards SDK-validated `tools/call` arguments to
-neutral admin methods, which route the call back to the live Channel session or
-sessionless provider handler. Core does not name a Feishu tool or inspect its
-result fields.
+The channel's MCP server is the same in-server delegate contract every internal
+domain implements; nothing in the lease registry, the transport Commands, the
+descriptor, or the shim knows a Channel exists. A call reaches the created
+instance's MCP capability, carrying the scope Core baked into the lease
+(`dispatcher_id`, `channel_id`, and the caller). Core names no Feishu tool,
+inspects no result field, and runs no egress gate of its own. There is no
+sessionless Feishu tool: the capability is taken from the built instance, which
+exists from creation rather than from connection.
 
 The built-in Feishu provider supplies closed input and output schemas for every
 tool. Successful results are canonical values: `reply` returns
 `{ message_ids: string[] }`, `react` returns `{ reaction_id: string }`, and
-`list_chat_bots` returns `{ chat_id, known, trusted }`. The live and sessionless
-paths produce the same `list_chat_bots` result shape. The shared server exposes
-the value unchanged as `structuredContent` with exact `content: []` and
+`list_chat_bots` returns `{ chat_id, known, trusted }`. The shared server
+exposes the value unchanged as `structuredContent` with exact `content: []` and
 validates it against the provider output schema.
 
 Key source:
 
-- `/packages/channel/feishu-channel/src/feishu-mcp-tools.ts`
 - `/packages/channel/feishu-channel/src/tools/registry.ts`
-- `/packages/channel/feishu-channel/src/provider.ts`
+- `/packages/channel/feishu-channel/src/tools/messaging-tools.ts`
+- `/packages/channel/feishu-channel/src/tools/routing-tools.ts`
+- `/packages/channel/feishu-channel/src/tools/space-tools.ts`
 - `/packages/dreamux-types/src/channel.ts`
 - `/packages/dreamux/src/mcp/server.ts`
-- `/packages/dreamux/src/mcp/channel-mcp.ts`
-- `/packages/dreamux/src/service/channel-service/mcp-descriptors.ts`
-- `/packages/dreamux/src/admin/methods.ts`
+- `/packages/dreamux/src/service/channel-service/mcp-delegate.ts`
+- `/packages/dreamux/src/service/mcp/`
 
-## Channel Targets And Binding
+## Channel Targets And Routing
 
-Channel providers normalize routing endpoints into `ChannelTarget` objects. The
-target carries provider-owned metadata; Dreamux core treats that metadata as an
-opaque selector and routes by the normalized target key.
+A target does not cross the seam. The neutral contract publishes no
+`ChannelTarget`: Core never sees a chat id, a thread id, or a target key, holds
+no binding table, and makes no routing decision.
 
-Team channel binding is Dreamux core state exposed through role-gated Team MCP
-projections:
+Feishu normalizes its own selectors into a package-local `FeishuTarget` — a p2p
+chat, an ordinary group, or one topic inside a topic group — and derives a
+stable `targetKey` from it. A p2p chat is deliberately not bindable: it is one
+person's conversation with the bot, and binding it would route somebody's DM
+into a shared Team without them being told.
 
-- dispatcher projection:
-  `send({ team_name, prompt, intent? })` to submit a turn to the TeamLeader,
-  `bind_channel({ team_name, channel_id?, meta })` and
-  `transfer_back({ channel_id?, meta })`
-- TeamLeader projection:
-  `dissolve({ note })`, `bind_channel({ channel_id?, meta })`, and
-  `transfer_back({ channel_id?, meta })`, all scoped to the descriptor-bound
-  current Team/leader. Self-dissolve maps to the existing core
-  `team.dissolve` method and accepts no Team selector; it is not a provider
-  tool. TeamLeader bind is create-only for unowned targets and refuses
-  collaboration-managed routes; dispatcher bind keeps replacement semantics.
+Routing is one small service over the Channel's own document. Every read is
+synchronous against the last committed document, and every write is a commit, so
+a caller told a route exists is being told what disk says. A topic resolves
+through a two-step chain — the exact topic row first, then its enclosing group
+row — and an ordinary group resolves only to itself. The plan is one of three
+answers: `bound` (with the row that answered, which may be the parent group),
+`provision` (the committed Collaboration Space policy snapshot to create a Team
+under), or `dispatcher` (`no_binding` or `not_bindable`).
 
-The `meta` object is provider-owned target selector input. Team peer send
-remains future work and is not part of channel binding.
-
-Dreamux core owns channel sessions and durable binding rows through the
-dispatcher-local `ChannelService`. Channel providers remain Team-agnostic: they
-normalize targets, expose provider tools, and report message ownership facts.
+Binding tools are the Channel's, not Team MCP's. Team MCP has no `bind_channel`
+and no `transfer_back`; rebinding is `bind_channel` with a different
+`team_name`, and the previous owner is reported back. The Dispatcher's copies
+take a `team_name` and may move any route; a TeamLeader's copies have no team
+field at all and reach only routes that are free or already its own.
 
 Key source:
 
+- `/packages/channel/feishu-channel/src/routing/`
+- `/packages/channel/feishu-channel/src/feishu-target-router.ts`
+- `/packages/channel/feishu-channel/src/tools/routing-tools.ts`
 - `/packages/dreamux/src/service/channel-service/`
-- `/packages/dreamux/src/service/channel-binding/`
-- `/packages/dreamux/src/mcp/team-mcp.ts`
-- `/packages/channel/feishu-channel/src/provider.ts`
+- `/packages/dreamux-types/src/channel.ts`
 
 ## Collaboration Spaces
 
-Dreamux core also exposes a dispatcher-only `collaboration_space` MCP namespace
-for externally created provider containers that should be bound to a worktree
-policy. This is not a provider Channel MCP surface. For Feishu, creating or
-finding the topic group remains a dispatcher-agent action through `lark-cli`;
-the core tool only records and releases Dreamux's provisioning binding.
+A Collaboration Space is a Channel product flow, not a Core entity. Core has no
+Collaboration Space service, no space store, and no `collaboration_space`
+Command namespace; the operator config no longer accepts a
+`collaborationSpace` block, and a leftover one is a loud config error.
 
-The current core surface is:
+For Feishu a Space is a registered topic group whose child topics are
+provisioned automatically. Its four Dispatcher-only tools —
+`bind_collaboration_space`, `unbind_collaboration_space`,
+`get_collaboration_space`, `list_collaboration_spaces` — register an existing
+external container with a creation policy (leader runtime, optional identity,
+optional repository) and read it back. They do not create the external
+container, and unbinding releases routing and provisioning ownership without
+deleting the container or dissolving Teams already provisioned under it.
 
-- `bind`: register an existing external container when needed and bind it to a
-  worktree policy, TeamLeader runtime, and optional default TeamLeader identity.
-  `repo` is optional: supplied repo creates managed worktrees, omitted repo
-  follows that dispatcher's default workspace policy;
-- `dissolve`: release the current collaboration-space routing/provisioning
-  binding. It does not delete the external container and does not dissolve
-  already provisioned Teams;
-- `status` / `list`: read compact public state. There is no first-version
-  `history` or recovery tool. Target failures are public-safe summaries; raw
-  provider/runtime/worktree errors remain local diagnostics.
+Policy and installed bindings share one document, because they are one
+consistency domain: a space policy is what entitles a binding to be installed,
+and a Team closing removes the bindings that named it. A policy `generation`
+advances when the policy is rebound with different creation facts; it cancels
+nothing — a creation already under way keeps the snapshot it captured, and only
+a creation that starts afterwards sees the new one.
 
-The Channel contract has optional provider-neutral collaboration-space fields:
-providers may attach `ChannelInboundEnvelope.container` on inbound deliveries
-and may call `ChannelRoutes.targetLifecycle` with `target_created` /
-`target_closed` events. `ChannelRoutes.deliver(input, envelope)` returns the
-neutral `InboundDeliveryResult`; the channel provider owns any platform
-acknowledgement or conversation presentation around this call. Core never
-directly acknowledges the platform.
+Provisioning is process-local by design. It runs as an in-memory sequence and
+persists nothing until the binding is actually installed: no saga, phase,
+outbox, or recovery cursor. Losing the process loses the unfinished operation,
+and a restart recovers only the already-persisted Team records, Space policies,
+and completed bindings, with no resume scan. A Team created but never bound
+stays as an accepted orphan; a first message not submitted before the crash is
+lost, and a later message follows the still-persisted policy normally. What
+Core sees is only `team.create` and `team.submit`.
 
-Core uses only `(channel_id, container_key, target_key)` plus the current
-binding generation; it must not parse Feishu `chat_id`, `thread_id`, chat mode,
-or provider-specific `target.meta` to infer collaboration-space membership.
-The store allocates the generation in the same atomic transition that validates
-the unbound state and commits the complete binding policy. Dispatcher state has
-one process-level writer authority; separate store objects share that fence.
+Key source:
 
-Dispatcher channel config may enable a core-owned automatic binding policy at
-`dispatchers[].channels[].collaborationSpace.defaultBinding.enabled`. When
-enabled, an inbound/lifecycle event with a neutral `container` for an unknown
-external space can create a safe derived collaboration-space record and bind it
-with the dispatcher's default agent runtime plus optional configured `repo` and
-`identity`. The provider still only supplies `container`/`target`; it does not
-create Dreamux spaces, Teams, worktrees, or bindings. A known unbound space
-created by `collaboration_space.dissolve` is not auto-bound again; explicit
-`bind` is required to reattach it.
-
-Collaboration target work has three entry points:
-
-- **Target lifecycle events.** When the provider calls
-  `ChannelRoutes.targetLifecycle` with `target_created` for a container with a
-  bound collaboration-space record, or a channel default binding policy can
-  create one, the collaboration target lifecycle path writes the durable claim
-  and returns; heavy worktree/Team provisioning runs asynchronously under the
-  `CollaborationSpaceService` lifecycle-task tracker. `DispatcherService`
-  resumes durable `creating` / `failed` / `closing` targets before starting any
-  channel session, releases stale managed claims for inactive targets, and
-  drains accepted lifecycle tasks during stop/shutdown. For unknown containers
-  without default binding, and for known unbound spaces, the create event is
-  ignored without claiming a target. For `target_closed`, the target lifecycle
-  path accepts the close event and asynchronously dissolves the Team and
-  releases the binding.
-- **First-inbound provisioning.** When a bindable target has no existing binding
-  and `envelope.container` is set on `deliver()`, `routeChannelInput` calls
-  `acceptAndProvisionTarget` synchronously before routing. This may use channel
-  default binding to register an unknown collaboration space. If provisioning
-  succeeds and the Team and TeamLeader are routable, the inbound is delivered
-  to the TeamLeader; if it fails, a failed `InboundDeliveryResult` is returned.
-  This path never falls back to the dispatcher agent after collaboration-space
-  provisioning has claimed the target. If a later inbound for the same
-  `(channel_id, target_key)` omits `envelope.container`, core still checks for
-  an existing durable collaboration-space target claim before falling back to
-  the dispatcher agent.
-- **Optional strict session operations.** A provider may feature-detect
-  `ChannelRoutes.ensureCollaborationTarget` and `deliverExact`.
-  `ensureCollaborationTarget` reuses `acceptAndProvisionTarget` but returns only
-  after the target is active and bound, the Team is running, the TeamLeader is
-  ready, local workspace preparation has completed, and the exact claimed route
-  still matches. It returns the existing Team name and accepts no repository,
-  cwd, or workspace-mode input; omitted-repo placement follows the dispatcher's
-  local `workspace.enabled` policy. `deliverExact` holds the target and Team
-  route fences, requires the authoritative owner to match
-  `expected_team_name`, and submits directly to the TeamLeader. It never walks
-  `binding_fallbacks` or invokes the dispatcher agent. Both methods use bounded
-  public rejection codes and participate in dispatcher admission and shutdown
-  drain. They add no remote close operation or retained submission state;
-  `sourceId` remains a live-runtime correlation/dedupe hint. Every
-  `ChannelSession.start` receives a fresh process-local lease for the two strict
-  closures. Stop and failed-start rollback revoke it before session close; an
-  old generation thereafter returns `dispatcher_unavailable` without entering
-  routing or materializing a runtime.
-
-Both paths bypass the dispatcher agent runtime but still go through
-`DispatcherService` and core stores. Direct inbound and strict promises are
-admitted and tracked by `DispatcherService`; session-lease revocation permanently
-rejects later strict callbacks from an old generation, while dispatcher drain
-waits for calls that crossed admission before sweeping materialized Team runtimes.
-Failed Channel start uses the same fence and sweep after closing its sessions,
-while retaining durable target and Team facts for the next generation.
-Dispatcher and Team cron command
-surfaces expose only `SchedulerCommands`; cron fires use the same owner
-admission, while scheduler lifecycle methods stay owner-only through the
-dispatcher container or TeamCollection's private lifecycle capability. Stop
-closes admission, closes channel sessions, aborts held scheduler fires, drains
-accepted work, then stops schedulers again before sweeping runtimes. The sweep
-retains partially booted Team services that failed before live-cache
-publication, and one runtime stop failure does not prevent sibling members or the
-TeamLeader from receiving a stop attempt. Accepted provisioning rechecks the
-shutdown fence before creating a Team, starting its leader, or claiming a route;
-a Team whose in-flight create crosses that fence is closed before the drain
-settles, and a late create failure stops any leader it already launched.
-Explicit Team transfer, dissolve, or route replacement shares a `(channel_id,
-target_key)` lock with collaboration provisioning and first detaches matching
-intent for transfer-back; explicit bind instead commits the replacement before
-detaching intent, so a rejected bind does not destroy the managed route. Route
-publication also holds a Team lifecycle lease. Every Team close raises the
-closing fence, detaches matching collaboration intent, transfers all routes
-owned by that Team, and only then logically closes it. Managed bindings carry an opaque
-`claim_id`, while explicit binds clear it; reconciliation therefore releases
-only the stale matching claim and preserves an explicit replacement even when it
-names the former Team. The binding store is v3; v2 rows that already have
-`(channel_id, target_key)` are reused as explicit routes with `claim_id: null`
-only when no open collaboration target shares that route key. If such an
-overlap exists, startup/doctor fails loud because the old row could be either
-explicit or collaboration-managed. Older rows without route keys still fail
-loud. A missing route is reclaimed only when the original Team is still
-routable. Detached targets fall back to the normal dispatcher path.
-When the space is dissolved, future deliveries also fall back unless the space
-is rebound.
-
-A collaboration target close persists a generation-specific handoff while
-holding its target lock, accepts or joins the TeamCollection-owned dissolve,
-then releases the lock while awaiting the accepted handle's `logicalClosed`
-milestone. Final target close reacquires the lock and requires the same closing
-record and handoff. The Team operation stores all joined target handoff ids;
-route reconciliation re-reads that authoritative set after acquiring each
-target lock and skips only an exact match. Thus target `closed` means Team routes
-and runtimes are logically closed, not merely that durable acceptance occurred.
+- `/packages/channel/feishu-channel/src/feishu-provisioning.ts`
+- `/packages/channel/feishu-channel/src/routing/document.ts`
+- `/packages/channel/feishu-channel/src/tools/space-tools.ts`
+- `/packages/dreamux/src/config/config.ts`
+- `/packages/dreamux/src/service/legacy-state.ts`
 
 ## Dispatcher-Scoped Core Events
 
@@ -380,59 +289,50 @@ publish after their normal write point:
 
 - `TeamStore` publishes Team status and concrete leader changes;
 - `AgentIdentityStore` publishes TeamLeader and TeamMate status changes;
-- `ChannelService` publishes route bind/unbind events after the binding store
-  returns a real transition.
-- `CollaborationSpaceService` publishes collaboration-space bind/unbind events
-  after the space store returns a real transition.
 - the conversation projection publishes display-only turn lifecycle and
   activity facts for the dispatcher agent and TeamLeaders.
 
-Channel sessions receive only a public `ChannelCoreEventSource`. It supports
-typed `on(...)` subscriptions and idempotent per-listener `unsubscribe()`;
-providers cannot emit, enumerate, or remove other listeners. The source covers
-allowlisted Team, agent, route-binding, collaboration-space-binding, and
-conversation-display facts for the current dispatcher only. The display union
-contains `turn.submitted`, `turn.message`, `turn.tool_call`, and `turn.settled`.
-It exposes one process-local `turn_id` for presentation correlation but no
-runtime-native Turn object or transcript. Binding events are dispatcher-wide
-live broadcasts, not
-channel-id scoped streams; the endpoint snapshot names the provider ref and
-provider-owned opaque `meta`, so only the matching provider should interpret
-it. Bound route events include the concrete TeamLeader name, TeamLeader runtime
-id, and runtime cwd; ordinary Team/agent events still carry no repository/path
-data. Conversation events may contain bounded, redacted user/assistant display
-text and bounded tool arguments/results. Other events contain no prompt or
-assistant text. No event contains native transcript paths, raw errors, platform
-user identity, cursor, acknowledgement, `claim_id`, or binding fallbacks.
+Routing produces no core event. A Channel already owns its routing records, so
+it describes its own state from them at the moment it changes them; Core
+publishing a binding fact back would mean Core holding one.
 
-The two binding kinds are action-discriminated public unions. A route-bound
-event requires its runtime-bearing current Team projection, a route-unbound
-event requires the previous Team owner and has no current Team, and
-collaboration-space policy is required only on bound events. `ChannelService`
-owns the only public route mutation paths and always classifies/publishes after
-the store write; stores retain pure transition primitives but callers cannot
-choose a silent service mutation.
+A Channel session receives one read-only `ChannelEventSource` with a single
+`subscribe(listener)` and an idempotent `unsubscribe()`. One subscription
+receives the whole `ChannelCoreEvent` union and demultiplexes inside the
+Channel, so adding an event changes only that catalog and its consumers. The
+union is Team state, TeamMate state, and the four turn facts `turn.submitted`,
+`turn.message`, `turn.tool_call`, and `turn.settled`. Workflow, scheduler,
+routing, and host-maintenance events are deliberately absent.
 
-Core installs the source before calling `ChannelSession.start`, so a session may
-subscribe before triggering a strict ensure. Stop and start-failure cleanup
-revoke the whole session source and strict-route lease before closing sessions;
-later subscription attempts fail and old subscription handles become no-ops.
-Events are
-live-session-only: the bus retains no history and provides no eventual-delivery
-or historical-query guarantee.
+Turn events expose one process-local `turn_id` for presentation correlation but
+no runtime-native Turn object or transcript. Conversation events may contain
+bounded, redacted user/assistant display text and bounded tool
+arguments/results; other events contain no prompt or assistant text. No event
+contains native transcript paths, raw errors, or platform user identity.
+
+Delivery is live and best-effort: Core invokes listeners in publication order
+without awaiting them, and a listener's exception or rejection never escapes
+into admission or settlement. There is no FIFO, backpressure, timeout,
+acknowledgement, retry, replay, snapshot, or final-delivery guarantee. A
+listener keeps its synchronous projection bounded; a reaction needing
+asynchronous persistence fences its in-memory authority synchronously and
+serializes the durable write on a Channel-owned mutation tail that
+`ChannelSession.close` awaits.
+
+Core installs the source during `initialize`, before `start` opens external
+input, which is what makes subscribe-before-admission provable. Stop and
+start-failure cleanup revoke the whole session source before closing the
+session; later subscription attempts fail and old handles become no-ops.
 
 Key source:
 
 - `/packages/dreamux-types/src/channel.ts`
-- `/packages/dreamux/src/service/binding-events.ts`
 - `/packages/dreamux/src/service/dispatcher-core-events/`
 - `/packages/dreamux/src/service/agent-entity/identity-store.ts`
 - `/packages/dreamux/src/service/team-collection/store.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
-- `/packages/dreamux/src/service/collaboration-space/index.ts`
 - `/packages/dreamux/src/channel/conversation-projection.ts`
 - `/packages/dreamux/src/service/teammate-service/turn-coordinator.ts`
-- `/packages/dreamux/src/service/dispatcher-service/collaboration-routing.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 
 ## Feishu COT Conversation Display
@@ -505,24 +405,21 @@ Key source:
 - `/packages/channel/feishu-channel/src/feishu-cot-io.ts`
 - `/packages/channel/feishu-transport/src/transport/cot.ts`
 
-The built-in Feishu provider implements first-inbound collaboration routing for
-real topic-mode groups. After the access gate accepts an inbound, the provider
-uses `message.thread_id` as the stable target key and verifies the enclosing
-chat through `im.v1.chat.get`. Only `chat_mode=topic` produces
-`ChannelContainer { container_type: "topic_group", container_key: chat_id }`
-and a bindable `ChannelTarget { target_type: "topic", target_key: thread_id }`.
+The built-in Feishu provider resolves first-inbound topic routing entirely
+inside the package. After the access gate accepts an inbound, the provider uses
+`message.thread_id` as the stable target key and verifies the enclosing chat
+through `im.v1.chat.get`. Only `chat_mode=topic` produces a topic target and a
+container chat id that a Collaboration Space policy could be registered on;
 `root_id` and `parent_id` remain diagnostic ancestry and never substitute for a
 missing `thread_id`.
 
-The topic target declares the enclosing group target through the neutral
-`binding_fallbacks` capability. Routing checks an exact topic binding first,
-then accepted collaboration provisioning or an existing exact claim, then the
-provider-declared group binding, and finally the Dispatcher. Core never derives
-the group target from a container key or Feishu metadata, and fallback targets
-are never collaboration provisioning inputs. This preserves pre-topic group
-bindings without letting them preempt bound collaboration spaces or explicit
-topic bindings. If a more-specific active binding exists but its Team is not
-open, routing does not cross that ownership boundary to a broader fallback.
+Resolution is the Channel's own two-step chain: the exact topic row first, then
+its enclosing group row, and an ordinary group resolves only to itself. If no row
+answers, a registered Space policy on the container turns the message into a
+provisioning run; otherwise the message reaches the Dispatcher Agent. This
+preserves pre-topic group bindings without letting them preempt an explicit
+topic binding. Core is told a `team_name` or nothing at all, and derives no part
+of this.
 
 Ordinary groups remain group targets even when Feishu exposes thread-style
 messages inside them. Missing group-information permission, API failure, and
@@ -547,23 +444,21 @@ Every non-empty inbound `thread_id` is independently included in the opaque
 display attrs rendered into the model-visible `<channel>` envelope. Ordinary
 group threads expose that fact without acquiring a topic container or topic
 routing semantics.
-For topic collaboration provisioning, Feishu also records the triggering inbound
-`message_id` in the normalized topic target `meta`. Core persists that opaque
-metadata in the initial `ProvisionedTargetRecord`, restores it through
-`targetFromRecord()`, and persists it into the resulting `ChannelBinding`. This
-preserves the reply anchor across the crash window between durable target claim
-and route write. Legacy records without the metadata restore an empty `meta`
-object; the Feishu notification path skips malformed topic endpoints with a
-warning instead of sending a topic notification to the group root. The provider
-does not claim topic-created or topic-closed lifecycle support; provisioning
-begins on first accepted topic inbound.
+Provisioning holds no durable record and needs no crash-window anchor. It is
+composed from two generic Core Commands — `team.create`, then `team.submit` —
+and Core is never told that a Space exists or that a topic is a child of a
+group. A run that fails before it invokes `team.submit` answers `unsubmitted`
+and the message it was carrying goes to the Dispatcher Agent like any other
+message this Channel could not hand to a Team: failing to provision is not a
+reason to drop what somebody wrote. The provider claims no topic-created or
+topic-closed lifecycle support; provisioning begins on first accepted topic
+inbound.
 
-The built-in Feishu session subscribes to `binding.route` and
-`binding.collaboration_space` from its dispatcher-wide core event source and
-ignores events whose endpoint provider is not `builtin:feishu`. Delivery is
-best-effort and live-session-only. Each notification runs independently, retries
-one failed attempt once, and has no ordering guarantee relative to another
-notification. Session close aborts in-flight notification work before closing
+Routing notification cards are rendered from this Channel's own records, at the
+moment this Channel changes them, and no Core event is involved — Core publishes
+no binding fact, because it holds none. Delivery is best-effort and
+live-session-only. Each notification runs independently, retries one failed
+attempt once, and has no ordering guarantee relative to another notification. Session close aborts in-flight notification work before closing
 the bot, so a hung card request cannot hold dispatcher shutdown.
 `FeishuTransport.sendCard` accepts a caller-owned `AbortSignal` and forwards it
 through the SDK client's cancellable HTTP request path. A live notification
@@ -572,22 +467,18 @@ retract a request already accepted by Feishu, so retry can duplicate a remotely
 accepted card. Route topic cards
 reply to the persisted triggering `message_id`; route group cards send to the
 group;
-collaboration-space cards always send a fresh top-level card to the container
+Collaboration Space cards always send a fresh top-level card to the container
 chat, which creates a new topic in a Feishu topic group. Cards use Feishu
-`plain_text` elements only and render display fields, Team facts, runtime cwd,
-and repository/workspace policy without rendering raw provider `meta`,
-`claim_id`, prompts, or raw errors.
+`plain_text` elements only and render display fields, Team facts, and the
+Space's own policy without rendering prompts or raw errors.
 
 Key source:
 
 - `/packages/dreamux-types/src/channel.ts`
-- `/packages/dreamux/src/config/collaboration-space-config.ts`
-- `/packages/dreamux/src/service/channel-binding/store.ts`
-- `/packages/dreamux/src/service/channel-binding/preflight.ts`
-- `/packages/dreamux/src/service/collaboration-space/`
-- `/packages/dreamux/src/mcp/collaboration-space-mcp.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
-- `/packages/dreamux/src/service/dispatcher-service/collaboration-routing.ts`
+- `/packages/channel/feishu-channel/src/routing/`
+- `/packages/channel/feishu-channel/src/feishu-provisioning.ts`
+- `/packages/channel/feishu-channel/src/feishu-inbound-anchor.ts`
 - `/packages/channel/feishu-transport/src/parse/content.ts`
 - `/packages/channel/feishu-transport/src/transport/feishu.ts`
 - `/packages/channel/feishu-channel/src/feishu-binding-notification-card.ts`

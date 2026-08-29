@@ -12,9 +12,9 @@
   `/packages/channel/feishu-channel/src/feishu-gate.ts`,
   `/packages/channel/feishu-channel/src/feishu-message.ts`,
   `/packages/channel/feishu-channel/src/feishu-channel.ts`,
-  `/packages/channel/feishu-channel/src/feishu-mcp-tools.ts`,
-  `/packages/dreamux/src/mcp/channel-mcp.ts`,
-  `/packages/dreamux/src/admin/methods.ts`,
+  `/packages/channel/feishu-channel/src/tools/`,
+  `/packages/dreamux/src/service/channel-service/mcp-delegate.ts`,
+  `/packages/dreamux/src/command/registry.ts`,
   `/packages/dreamux/src/platform/paths.ts`,
   `/packages/channel/feishu-channel/tests/feishu-introduce.test.ts`
 
@@ -169,12 +169,12 @@ the context pending.
 A model-facing Feishu MCP tool returns a chat's `known` and `trusted` peer bots
 as two separated arrays of `{ open_id, name? }`, for context recovery after
 compaction. The Feishu channel package owns the tool definition and handler in
-`/packages/channel/feishu-channel/src/feishu-mcp-tools.ts` and
-`/packages/channel/feishu-channel/src/provider.ts`. The generic `channel-mcp`
-stdio shim forwards the provider tool call over the 0600 admin socket, and the
-Dispatcher Service routes it to the channel handler, which reads
-`chat-bots-store` directly when no live session is required. Same transport
-shape as `reply` / `react`; no operator CLI surface.
+`/packages/channel/feishu-channel/src/tools/messaging-tools.ts` and
+`/packages/channel/feishu-channel/src/feishu-channel.ts`. The generic MCP shim
+forwards the call over the 0600 admin socket to the channel's own in-server
+delegate, which routes it to the built instance's MCP capability; the handler
+reads `chat-bots-store` for the answer. Same transport shape as `reply` /
+`react`; no operator CLI surface.
 
 ## Deferred follow-ups
 

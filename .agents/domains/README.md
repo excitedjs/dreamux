@@ -21,7 +21,7 @@ and invariants, not a substitute for reading the implementation.
 - [State, config, and files](state-config-and-files.md) — local config,
   state/run/cache/log layout, upgrade policy, JSON stores, workspaces, and logs.
 - [Scheduled work](scheduled-work.md) — per-conversational-agent cron,
-  `waitIdle`, scheduler ownership, and current prompt-agent scope.
+  immediate fire semantics, scheduler ownership, and current prompt-agent scope.
 - [Repository operations and release](repository-operations-and-release.md) —
   Rush/pnpm install path, package/bin surface, public-repo safeguards, lint
   gates, changelog responsibility, and npm release workflow.
