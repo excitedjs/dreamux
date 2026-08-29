@@ -125,8 +125,8 @@ export interface TeamLeaderCreationInput {
  * The Team-owned half of {@link TeamLeaderForTeamDeps}: what every leader a
  * Team creates or restores is built from, spelled once.
  */
-export function teamLeaderAgentBase(input: {
-  deps: TeamServiceDeps;
+export function teamLeaderAgentBase<Service>(input: {
+  deps: TeamServiceDeps<Service>;
   teamId: string;
   identities: AgentIdentityStore;
 }): Omit<TeamLeaderForTeamDeps, 'identity'> {

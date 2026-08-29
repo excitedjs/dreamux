@@ -26,7 +26,6 @@ import type {
   TeamLeaderLease,
 } from '../team-collection/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
-import type { TeamService } from './index.js';
 
 export interface TeamAvailability {
   admit<T>(task: () => Promise<T>): Promise<T>;
@@ -60,7 +59,18 @@ export interface TeamServiceCreateOutput<Service> {
   };
 }
 
-export interface TeamServiceDeps {
+/**
+ * What one Team is built from, stated without naming what a Team is.
+ *
+ * Three of these are callbacks the owning collection uses to reach back to the
+ * service it constructed — taking the lease, tracking it, evicting it. The
+ * service is a type parameter rather than the concrete class because this is
+ * the lower contract: it is what a Team's owner must supply, and it is consumed
+ * by the implementation, so naming that implementation here would make the
+ * dependency point upward. The owner binds `Service` at the composition root,
+ * where the concrete class is already in hand.
+ */
+export interface TeamServiceDeps<Service> {
   dispatcherId: string;
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
@@ -89,17 +99,17 @@ export interface TeamServiceDeps {
   availability: TeamAvailability;
   withTeamLeaderLease: <T>(
     lease: TeamLeaderLease,
-    task: (service: TeamService) => Promise<T>,
+    task: (service: Service) => Promise<T>,
   ) => Promise<T>;
   leaderMcp: (input: {
     teamId: string;
     leaderName: string;
   }) => TeammateAgentMcp;
-  trackMaterialized: (service: TeamService) => void;
+  trackMaterialized: (service: Service) => void;
   store: TeamStore;
   agentNameSuffixGenerator?: SuffixGenerator;
   coreEvents?: DispatcherCoreEventPublisher;
-  evict: (service: TeamService) => void;
+  evict: (service: Service) => void;
   log: DreamuxLogger;
   workflowLog: DreamuxLogger;
 }

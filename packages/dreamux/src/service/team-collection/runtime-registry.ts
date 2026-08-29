@@ -307,7 +307,9 @@ export class TeamRuntimeRegistry {
     if (scheduler?.service === expectedService) this.schedulers.delete(teamId);
   }
 
-  private depsBase(teamId: string): Omit<TeamServiceDeps, 'evict'> {
+  private depsBase(
+    teamId: string,
+  ): Omit<TeamServiceDeps<TeamService>, 'evict'> {
     const collection = this.opts.collection;
     return {
       dispatcherId: this.opts.dispatcherId,

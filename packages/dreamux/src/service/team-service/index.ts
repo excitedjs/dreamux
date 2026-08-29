@@ -95,7 +95,10 @@ export class TeamService {
   /** This Team's stop-and-close half. */
   private readonly closing: TeamClosing;
 
-  private constructor(private readonly deps: TeamServiceDeps, teamId: string) {
+  private constructor(
+    private readonly deps: TeamServiceDeps<TeamService>,
+    teamId: string,
+  ) {
     this.id = teamId;
     // Constructed before the identity stores below: their persistence hooks
     // publish through it.
@@ -218,7 +221,7 @@ export class TeamService {
    * failure throws.
    */
   static async createNew(
-    deps: TeamServiceDeps,
+    deps: TeamServiceDeps<TeamService>,
     input: TeamServiceCreateInput,
   ): Promise<TeamServiceCreateOutput<TeamService> | null> {
     const service = new TeamService(deps, input.teamId);
@@ -369,7 +372,7 @@ export class TeamService {
    * with a missing record is report it.
    */
   static async rebuild(
-    deps: TeamServiceDeps,
+    deps: TeamServiceDeps<TeamService>,
     record: TeamRecord,
   ): Promise<{
     service: TeamService;
