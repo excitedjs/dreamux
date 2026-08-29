@@ -3,7 +3,7 @@
 ## Current state
 
 - Goal: Reduce the public Agent Runtime and Channel contracts to minimal capability-neutral ports, with Channel bridging external interaction through Core Command invocation and Core event subscription.
-- State: `development`
+- State: `implementation`
 - Requirement: [Current requirement](/.agents/tasks/architecture/minimize-provider-boundaries/requirement.md)
 - Current solution input revision: `requirement.md` SHA-256 `f0dbdc9d62777ff2176045599c02c2734bd48d685b917bb26ce044b9851b4cc4`
 - Prior solution input revision: `requirement.md` SHA-256 `7c4b5c8f13103080426c841586c245a3fce00a141545709eba55db015cf0389c`; the operator corrected a misrecorded decision that had narrowed all Channel input to Team delivery. A Channel supplies `team_name` for TeamLeader delivery and omits it for the existing unmatched-input path to the Dispatcher Agent.
