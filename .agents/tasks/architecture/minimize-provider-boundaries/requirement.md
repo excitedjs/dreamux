@@ -176,11 +176,14 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   tools currently adapt overlapping subsets of these services, but are
   transports rather than the authority for the capability catalog.
 - Completion routing and Agent Runtime ownership are internal orchestration
-  capabilities. Server/dispatcher start-stop and status are host-maintenance
-  capabilities already invoked through `admin.sock`; they remain Commands in
-  the unified Core catalog even though a current Channel may never call them.
-  Daemon process bootstrap, configuration, onboarding, and diagnostics that are
-  not current admin Commands remain direct host control-plane capabilities.
+  capabilities. Server status plus Dispatcher list, status, and initial start
+  are host-maintenance capabilities already invoked through `admin.sock`; they
+  remain Commands in the unified Core catalog even though a current Channel may
+  never call them. Stopping or restarting one Dispatcher is not a product
+  capability. There is no `dispatcher.stop` Command or CLI verb; process-level
+  graceful shutdown remains owned by the daemon/server lifecycle. Daemon
+  process bootstrap, configuration, onboarding, and diagnostics that are not
+  current admin Commands remain direct host control-plane capabilities.
 - Turn admission currently has two equivalent boundary adapters, one for
   dispatcher delivery and one for Team delivery. Both normalize the shared
   internal `TurnAdmission` vocabulary to
@@ -1059,6 +1062,10 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 
 - This is an Architecture-domain task; the changed package does not determine
   task ownership.
+- `dispatcher.stop` is not a product capability and is removed from the shared
+  Command registry, admin-socket mapping, and CLI. `dispatcher.start` is only an
+  initial activation control, not one half of a stop/restart lifecycle. Daemon
+  shutdown still stops owned resources internally as part of process teardown.
 - The Agent Runtime provider contract must converge on an absolute minimum
   necessary set.
 - The live Agent Runtime execution base is `start`, flat text `submit`, and

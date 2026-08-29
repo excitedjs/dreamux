@@ -5,7 +5,8 @@
 - Goal: Reduce the public Agent Runtime and Channel contracts to minimal capability-neutral ports, with Channel bridging external interaction through Core Command invocation and Core event subscription.
 - State: `implementation`
 - Requirement: [Current requirement](/.agents/tasks/architecture/minimize-provider-boundaries/requirement.md)
-- Current solution input revision: `requirement.md` SHA-256 `f0dbdc9d62777ff2176045599c02c2734bd48d685b917bb26ce044b9851b4cc4`
+- Current solution input revision: `requirement.md` SHA-256 `4a6b889cd97899fa216c64af57912e98b8f32a0734fd5fa14e707d80d04ba4d4`
+- Prior solution input revision: `requirement.md` SHA-256 `f0dbdc9d62777ff2176045599c02c2734bd48d685b917bb26ce044b9851b4cc4`; the operator then removed the invented per-Dispatcher stop/restart capability while retaining initial activation and process-level graceful shutdown.
 - Prior solution input revision: `requirement.md` SHA-256 `7c4b5c8f13103080426c841586c245a3fce00a141545709eba55db015cf0389c`; the operator corrected a misrecorded decision that had narrowed all Channel input to Team delivery. A Channel supplies `team_name` for TeamLeader delivery and omits it for the existing unmatched-input path to the Dispatcher Agent.
 - Prior solution input revision: `requirement.md` SHA-256 `4cf3a6fe591caeac24925d8e72dec84b8d3a0a18f0632a53bd5b6c0707a85d31`; the operator then restored the previously discussed universal MCP delegate architecture: every tool call converges through generic MCP infrastructure and a runtime-bound delegate rather than flattening Team, TeamMate, Cron, or Channel tools into domain Commands.
 - Prior solution input revision: `requirement.md` SHA-256 `666386b915db3553fe5436ae6d7def7634917ebf8e708fea79828738907b1b36`; implementation audit then exposed that the canonical `team.submit` interface omitted the Channel attributes and reminder its own target narrative required, incorrectly deferring a known Core contract to Stage 5.
@@ -45,7 +46,8 @@
   [Codex proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/codex.md),
   [Claude proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/claude.md), and
   [Trae Seed 2.1 proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/trae-seed-2-1.md).
-- Current solution baseline: [Technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `aa91e17740863fb8638f7e23468646e415e38c6a6b802da9b175c6ba327032fa`. Requirement text, technical design, current source, and prior Decisions are evidence; the final product shape and explicit operator principles are authoritative. Existing load-bearing code has no automatic preservation right.
+- Current solution baseline: [Technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `40369754e08d5920125c059858261997b54163c1ca0b53df5d00c27305025742`. Requirement text, technical design, current source, and prior Decisions are evidence; the final product shape and explicit operator principles are authoritative. Existing load-bearing code has no automatic preservation right.
+- Prior final-solution revision: SHA-256 `aa91e17740863fb8638f7e23468646e415e38c6a6b802da9b175c6ba327032fa`; it still exposed `dispatcher.stop` and therefore implied a per-Dispatcher stop/restart lifecycle that the operator never designed.
 - Prior final-solution revision: SHA-256 `5c74dc37bf0681b2c8e722a3cab3cf1c7b240395a8007b73b6586c9c6b80a05e`; it incorrectly expanded the Team-route requirement into a ban on unmatched Channel delivery to the Dispatcher Agent and keyed local presentation only by Team/leader identity.
 - Prior final-solution revision: SHA-256 `54034bc0deefeefdff1310ad431bce69e512329a02c5fc42f64945f8130b7b4c`; it correctly modeled a Channel MCP lease but failed to generalize the same delegate boundary to Team, TeamMate, Cron, and other Agent-facing MCP servers, leaving their shims incorrectly mapped to domain Commands.
 - Prior final-solution revision: SHA-256 `e87f24cc1ca224407398f9b73212fb058d875a7e9f234cf6cf6dc09557b439da`; it locked `submitInput` but its `team.submit` interface still omitted the already-confirmed Channel attributes and reminder, contradicting the surrounding delivery contract.
@@ -309,6 +311,12 @@
   relocated, or replaced with an equivalent abstraction. Promise identity, one
   owner-local durable mutation path, terminal facts, and owned resources are the
   default primitives.
+- Stage 8 Dispatcher lifecycle correction: `dispatcher.stop` was an invented
+  public capability rather than an operator-designed product behavior. Remove
+  it from the Core Command registry, admin-socket mapping, CLI, help, and
+  maintenance guidance. `dispatcher.start` remains only for initial activation;
+  it does not imply a supported stop/restart cycle. Internal resource stopping
+  remains part of daemon/server graceful shutdown and failed-start rollback.
 - Implementation authority principle: existing design is not the target by
   default. The TeamLeader challenges why each mechanism exists and retains it
   only when it serves the confirmed final product. Deployed, load-bearing, or
@@ -577,6 +585,9 @@ architecture merely because it is possible.
   not a prescribed file-by-file patch; the TeamLeader reviews the completed diff
   against the ownership, simplification, and deletion constraints before
   accepting it.
+- Stage 8 Dispatcher lifecycle correction: Approved by the operator on
+  2026-08-29 after the independent capability audit exposed the unsupported
+  start-stop-start path.
 
 ## Delivery
 

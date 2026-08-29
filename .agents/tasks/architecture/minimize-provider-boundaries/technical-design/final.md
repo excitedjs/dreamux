@@ -692,7 +692,7 @@ The normalized registry is grouped by the entity that owns each action:
 | Namespace | Canonical Commands after this refactor |
 | --- | --- |
 | Server | `server.status` |
-| Dispatcher | `dispatcher.list`, `dispatcher.status`, `dispatcher.start`, `dispatcher.stop` |
+| Dispatcher | `dispatcher.list`, `dispatcher.status`, `dispatcher.start` |
 | Team | `team.create`, `team.submit`, `team.list`, `team.status`, `team.history`, `team.dissolve` |
 | TeamMate | `teammate.spawn`, `teammate.submit`, `teammate.close`, `teammate.list`, `teammate.status`, `teammate.history`, `teammate.last`, `teammate.capabilities` |
 | Workflow | `workflow.run`, `workflow.status`, `workflow.stop`, `workflow.list` |
@@ -708,6 +708,11 @@ the complete `collaboration_space.*` family with the deleted Core container.
 Agent-facing MCP tool names may remain human-oriented adapter vocabulary. They
 do not alias canonical Commands: one generic MCP tool-call Command resolves an
 in-memory delegate, and that delegate calls the owning object method directly.
+
+`dispatcher.stop` is also absent by product decision. Dreamux does not expose a
+per-Dispatcher pause or restart lifecycle. `dispatcher.start` performs initial
+activation, while process-level graceful shutdown remains an internal
+daemon/server responsibility rather than a Core Command.
 
 Feishu uses only `team.submit` and `team.create` in this implementation. That is
 a consumer scope statement, not a smaller registry or a permission boundary.
