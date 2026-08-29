@@ -244,6 +244,28 @@
   native config. Adding a Runtime with a different grammar must not require a
   Core naming change, and a more permissive Runtime must not inherit another
   Runtime's restrictions or model-visible namespace transformation.
+- Stage 8 type-boundary correction decision: before any broader Service
+  redesign, correct only the two confirmed lint-derived type seams.
+  `TeamServiceDeps` must be a lower, neutral contract and must not import the
+  concrete `TeamService` implementation that consumes it. The Codex runtime
+  dependency contract must remain internal to that adapter and must not appear
+  as a public package capability merely because moving its declaration kept
+  `runtime.ts` under the line limit. This correction must not change runtime,
+  Team, or TeamMate lifecycle behavior, add a compatibility export, or move
+  implementation logic merely to reduce a file's physical line count.
+- Stage 8 Service simplification review decision: after the two type-boundary
+  corrections are implemented, verified, and published, two fresh independent
+  read-only reviews -- one Codex Ultra and one Claude -- will reconstruct
+  `TeamService` and `TeammateService` from current source. They must enumerate
+  every mutable state, fence, ledger, phase, and state transition; identify its
+  real authority, producer, consumer, and product or persisted-data consequence;
+  and distinguish essential lifecycle ownership from defensive machinery.
+  `TeammateService` starts from the desired hypothesis that it is the minimal
+  mapping between a Core Agent entity and a neutral `AgentRuntimeProvider`, but
+  neither reviewer may accept that hypothesis without testing it against real
+  creation, admission, settlement, recovery, completion, and shutdown paths.
+  This is consultation only: no Service state machine or implementation is
+  changed until the operator reviews the evidence and approves a design.
 - Implementation authority principle: existing design is not the target by
   default. The TeamLeader challenges why each mechanism exists and retains it
   only when it serves the confirmed final product. Deployed, load-bearing, or
