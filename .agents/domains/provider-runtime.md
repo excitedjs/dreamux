@@ -74,7 +74,6 @@ Source:
 
 - `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/dreamux-types/src/channel.ts`
-- `/packages/dreamux-types/tests/root-exports.test.ts`
 - `/packages/dreamux-types/tests/no-host-types.test.ts`
 
 ## Config Contract
@@ -116,7 +115,8 @@ Source:
 Core launches every agent through `AgentRuntimeProvider.createRuntime(context)`.
 The context is neutral:
 
-- `identity.runtime_id` and optional `checkpoint_id`;
+- `identity.runtimeId` plus the provider's own prior `session` object or
+  `null`, persisted verbatim by Core, which reads only its `id`;
 - provider-parsed `config`;
 - launcher-supplied `cwd`;
 - `systemPrompt` with optional `replace` and `append` forms;
@@ -168,7 +168,7 @@ Source:
 - `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/agent-runtime/codex/src/turn-manager.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
-- `/packages/agent-runtime/claude-code/src/source-reservation.ts`
+- `/packages/agent-runtime/claude-code/src/runtime-submissions.ts`
 - `/packages/agent-runtime/claude-code/src/rpc.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
 
@@ -224,12 +224,15 @@ Source:
 - `/packages/agent-runtime/claude-code/src/stream.ts`
 - `/packages/agent-runtime/claude-code/tests/rpc.test.ts`
 
-Provider-native transcript formats, locator discovery, cursor envelopes, and
-typed errors stay inside each runtime package. Both built-ins reuse
-`/packages/dreamux-utils/src/transcript.ts` for provider-neutral digest checks,
-bounded scan accounting, exact positional reads, path containment, rendering,
-and output budgets; duplicating those security and determinism primitives in
-each provider is not an accepted boundary.
+Provider-native history formats, session discovery, cursor envelopes, and typed
+errors stay inside each runtime package's own `src/activity/`. Both built-ins
+reuse `/packages/dreamux-utils/src/activity-scan.ts` for provider-neutral
+digests, bounded scan accounting, exact positional reads, and path containment;
+duplicating those security and determinism primitives in each provider is not an
+accepted boundary. That module owns mechanism only and no record shape, and it
+does not bound Core's output — Core re-validates each returned page against its
+own record, cursor, and byte budgets in
+`/packages/dreamux/src/service/agent-entity/activity-reader.ts`.
 
 ## Codex Portable Output Schema
 
@@ -288,10 +291,7 @@ Source:
 - `/packages/agent-runtime/codex/src/rpc.ts`
 - `/packages/agent-runtime/codex/src/turn-manager.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
-- `/packages/agent-runtime/codex/tests/output-schema-codec.test.ts`
-- `/packages/agent-runtime/codex/tests/turn-manager.test.ts`
-- `/packages/agent-runtime/codex/tests/runtime-output-schema.test.ts`
-- `/packages/dreamux/tests/codex-live.test.ts`
+- `/packages/agent-runtime/codex/tests/codex-events.test.ts`
 
 ## Bundled Skills
 

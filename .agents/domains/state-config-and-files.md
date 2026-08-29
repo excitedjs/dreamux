@@ -139,9 +139,11 @@ state/<dispatcher-id>/
 The dispatcher root `identity.json` is the dispatcher agent's entity state and
 sits structurally outside the `teammate/` collection. TeamLeader state lives at
 the Team root; Team member state lives under that Team's member collection.
-Every identity owns lifecycle/worktree/intent/role guidance plus the
-runtime-native `session_id` and nullable opaque `transcript_locator`; it owns no
-rolling conversation projection. A Team's `record.json` is its own name claim:
+Every identity owns lifecycle/worktree/intent/role guidance plus the provider's
+own `session` object, persisted verbatim and read by Core only for its `id`; it
+owns no rolling conversation projection. `checkpoint`, `checkpoint_kind`,
+`session_ref`, `session_id`, and `transcript_locator` are removed fields that
+fail loud instead of migrating. A Team's `record.json` is its own name claim:
 publishing it is an exclusive create, and that create is the whole acceptance
 protocol. Before it the candidate name is free and a caller that loses the race
 simply chooses another; after it the record owns the name permanently, including

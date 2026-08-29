@@ -248,7 +248,7 @@ semi-resident agents. `spawn` creates one, `send` submits follow-up turns and
 reopens closed agents, and read tools (`history`, `list`, `status`, `last`) do
 not start a runtime.
 
-Agent entity state — identity, runtime state, transcript read coordination, and
+Agent entity state — identity, runtime state, activity read coordination, and
 the shared types/name validation — lives in the neutral
 `/packages/dreamux/src/service/agent-entity/` layer. It is path-based and
 role-agnostic: `DispatcherService` builds one shared `AgentIdentityStore` at
@@ -316,29 +316,40 @@ snapshotted into the object-owned latch, and delivery flows through the core
 `completion-router`, which delivers at-most-once per producer, completion
 token, and recipient while preserving provider order — never keyed by native
 ids, completion text, or slot heuristics. Providers report live assistant/tool
-activity through the submission's synchronous activity sink; transcripts remain
-cold history only. Conversation-bearing entities may feed that activity into the
-live, non-persistent conversation display projection. Dreamux persists no Turn
+activity through the submission's synchronous activity sink; native session
+history stays cold and is read only on demand. Conversation-bearing entities may
+feed that activity into the live, non-persistent conversation display
+projection. Dreamux persists no Turn
 archive or rolling conversation projection. Service receipts, Workflow records,
 completion routing, and identity state do not carry a Turn id for in-process
 correlation; the Channel display event surface carries one process-local
 `turn_id` solely to correlate a presentation with its lifecycle.
 
-The runtime checkpoint persists the provider-owned session id plus an optional
-opaque `transcript_locator`. Direct TeamMate `spawn` and `send` receipts expose
-that validated canonical native path as `transcript_path`; list, status,
-history, `last`, Workflow, Team, Channel, completion delivery, logs, and metrics
-do not. `last` returns provider-neutral bounded message/tool blocks, an opaque
+An agent identity persists the provider's own `session` object verbatim, or
+`null` for a fresh start; Core validates and reads its `id` and treats every
+other field as opaque JSON. There is no runtime checkpoint record: `checkpoint`,
+`checkpoint_kind`, `session_ref`, `session_id`, and `transcript_locator` are
+removed record fields, and a record still carrying one fails loud through
+`assertNoRemovedRecordFields` rather than being migrated. No surface exposes a
+native history path — spawn, send, list, status, and history receipts carry the
+entity's runtime status, whose only session-derived field is the opaque
+`session_id`. `last` is a cold read that never materializes the entity or starts
+a runtime; it returns provider-neutral bounded message/tool records, an opaque
 backward cursor, and truncation state. Existing per-entity `turn.jsonl` files
 are inert residue: Dreamux does not create, stat, list, open, validate, repair,
 migrate, warn about, or automatically delete them.
 
-The two built-in transcript readers keep native schemas, discovery rules,
-locator validation, cursor envelopes, and typed provider errors inside their
-runtime packages. Neutral byte/hash/safety mechanics — fixed source/output
-bounds, transcript digest validation, bounded discovery accounting, exact
-positional reads, deterministic rendering, and lexical path containment — are
-single-sourced in `/packages/dreamux-utils/src/transcript.ts`.
+The two built-in Activity readers keep native schemas, discovery rules, cursor
+envelopes, and typed provider errors inside their own runtime packages, under
+`/packages/agent-runtime/codex/src/activity/` and
+`/packages/agent-runtime/claude-code/src/activity/`. Neutral scan mechanics —
+digests, a bounded discovery budget, exact positional reads, and lexical path
+containment — are single-sourced in
+`/packages/dreamux-utils/src/activity-scan.ts`, which holds mechanism only and
+owns no record shape. Output bounding is not delegated: Core's own
+`readAgentActivity` re-validates every returned page against its record, cursor,
+text, and byte budgets, because a provider is not trusted to bound Core's
+output.
 
 A Team's dissolve belongs to that Team, and it is a submission rather than a
 persisted operation. `TeamService.dissolve` answers
