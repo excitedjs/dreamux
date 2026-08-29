@@ -22,7 +22,7 @@ import type {
 } from '../agent-entity/runtime-state.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
 import {
-  assertComposableMcpServerNames,
+  assertUniqueMcpServerNames,
   mcpServerDescriptor,
 } from '../mcp/descriptor.js';
 import type { WorktreeManager } from '../worktree/manager.js';
@@ -402,7 +402,7 @@ export class TeammateRuntimeOwner {
         }),
       );
     }
-    assertComposableMcpServerNames(servers);
+    assertUniqueMcpServerNames(servers);
     return servers;
   }
 

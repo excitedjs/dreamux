@@ -34,7 +34,6 @@ import type {
   ChannelSessionMcpCapability,
 } from '@excitedjs/dreamux-types';
 
-import { nativeSafeMcpNameSegment } from '../mcp/descriptor.js';
 import { runDelegateCall } from '../mcp/projection.js';
 import type {
   McpDelegateCall,
@@ -56,6 +55,9 @@ const IDENTITY_VERSION = '0.4.0';
  * uniqueness proof the composition boundary runs — nothing here can see the
  * rest of the set — it only keeps this domain from being the reason that proof
  * fails.
+ *
+ * Prefixing is also all this domain does to the id. The name that comes out is
+ * a logical one, and it reaches every runtime and every model unchanged.
  */
 const SERVER_NAME_PREFIX = 'channel-';
 
@@ -117,15 +119,12 @@ export interface ChannelMcpDelegateInput {
 export function createChannelMcpDelegate(
   input: ChannelMcpDelegateInput,
 ): McpServerDelegate {
-  // Two different facts, deliberately not one. The registration key is what a
-  // native runtime config can hold, so an arbitrary configured id is encoded
-  // into it rather than being restricted to what such a config accepts; the id
-  // itself stays readable in the server identity below. The encoding is
-  // injective and the prefix is constant, so two channels can never produce the
-  // same key — and config already keeps channel ids unique per dispatcher.
-  const serverName = `${SERVER_NAME_PREFIX}${nativeSafeMcpNameSegment(
-    input.channelId,
-  )}`;
+  // The configured id, carried verbatim behind a constant prefix. Nothing here
+  // rewrites it to suit a runtime's configuration format: a channel is named to
+  // the model the way its operator named it, and each runtime adapter quotes
+  // whatever it is handed. The prefix is constant and config already keeps
+  // channel ids unique per dispatcher, so two channels cannot collide either.
+  const serverName = `${SERVER_NAME_PREFIX}${input.channelId}`;
   // Fixed once, here, and only from registrations whose declared target has a
   // handler right now. Binding the handler *is* the availability proof, so the
   // advertised list and the dispatch table cannot disagree: a tool is in both
@@ -147,8 +146,8 @@ export function createChannelMcpDelegate(
     tools.push(registration.tool);
   }
   return {
-    // Namespaced and encoded by Core, from the configured channel id, which is
-    // Core's own fact. A provider never names the server it is exposed through.
+    // Namespaced by Core, from the configured channel id, which is Core's own
+    // fact. A provider never names the server it is exposed through.
     name: serverName,
     describe(): McpDelegateDescription {
       return {

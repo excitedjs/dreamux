@@ -94,12 +94,13 @@ export interface McpServerDelegate {
    * key the model's client shows next to every tool, so it is a product-facing
    * name owned by the delegate, not a generated id.
    *
-   * Owned, but not unconstrained: the composition boundary proves a runtime's
-   * whole set of names is unique and safe to write into every provider's native
-   * configuration, before that runtime is constructed. A delegate that derives
-   * its name from operator-supplied data is responsible for namespacing it and
-   * for encoding it — `nativeSafeMcpNameSegment` exists for exactly that — so
-   * that arbitrary data yields a usable name instead of constraining the data.
+   * A logical identity, and only that. The composition boundary proves one
+   * runtime's whole set of names is unique before that runtime is constructed;
+   * it does not constrain what a name may contain, because each runtime adapter
+   * quotes or escapes the name it is handed when it writes its own native
+   * configuration. A delegate that derives its name from operator-supplied data
+   * is responsible for namespacing it, so that two domains cannot collide — not
+   * for encoding it into some format's alphabet.
    *
    * A plain value, read once. Core takes it when the generation's catalog is
    * frozen and uses that string everywhere after, so an implementation must not
