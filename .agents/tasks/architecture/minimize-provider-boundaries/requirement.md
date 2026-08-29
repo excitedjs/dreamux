@@ -1066,6 +1066,13 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   Command registry, admin-socket mapping, and CLI. `dispatcher.start` is only an
   initial activation control, not one half of a stop/restart lifecycle. Daemon
   shutdown still stops owned resources internally as part of process teardown.
+- A Team owns its repository/worktree record. TeamLeader-created TeamMates are
+  CWD-only borrowers of the Team runtime directory: their identities use the
+  neutral `reuse-cwd`/keep representation and never copy the Team's managed
+  worktree identity or cleanup result. Closing one such TeamMate cannot clean
+  the Team worktree. Dispatcher-scoped TeamMates may still independently own a
+  managed delete-on-close worktree, whose metadata remains in their own
+  identities so `send` can reprepare it after close.
 - The Agent Runtime provider contract must converge on an absolute minimum
   necessary set.
 - The live Agent Runtime execution base is `start`, flat text `submit`, and

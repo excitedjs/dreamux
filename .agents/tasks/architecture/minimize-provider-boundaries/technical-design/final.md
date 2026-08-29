@@ -816,6 +816,14 @@ branch, slug, and cleanup controls. Core still injects mandatory TeamLeader
 instructions and skill sources; supplied values extend rather than remove those
 requirements.
 
+The Team record is the sole worktree owner. TeamLeader-created TeamMates receive
+the Team's runtime directory only as a CWD/reuse-cwd workspace with cleanup
+`keep`; their identities do not copy the Team's managed worktree metadata or
+later cleanup result. Individual member close therefore cannot delete the
+Team-owned checkout. This does not narrow Dispatcher-scoped TeamMates, which may
+own independent managed delete-on-close worktrees and retain the metadata needed
+to reprepare them on a later `send`.
+
 Feishu automatic provisioning supplies only the smaller repository policy it
 owns. The Channel maps its local `{path, base_ref}` policy into
 `{mode: "managed", path, base_ref, cleanup: "delete-on-close"}` before invoking
