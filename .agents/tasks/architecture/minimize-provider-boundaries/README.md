@@ -211,6 +211,11 @@
   This preserves the user-visible close transition after binding ownership
   moved out of Core. Typed stale-route cleanup during an inbound fallback stays
   silent so one failed delivery does not generate an unrelated notification.
+- Stage 6 audit decision: a successful dissolve result crosses its return
+  boundary only after child runtimes have exited and the Team's logical close
+  is durable. Its result therefore reports `status: "closed"`, not the obsolete
+  `"closing"` value from the former accept-and-return behavior. Physical
+  managed-worktree removal remains asynchronous after that return boundary.
   The Channel uses the removed rows it already owns; do not restore Core binding
   events, add persisted notification state, or make notification failure undo
   the committed route removal.
