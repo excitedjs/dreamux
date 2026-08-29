@@ -127,10 +127,11 @@ history and rationale; when you need current behavior, pair them with
   `AgentRuntimeCreateContext`.
 - [Admin control plane surface](proposals/admin-control-plane-surface.md)
   — draft requirement/spec for making admin.sock the target external control
-  plane. Its implemented namespace slice uses product method names, keeps
-  model-facing filtering in the MCP adapters, and permits additional runtime
-  skill roots only on admin TeamMate/TeamLeader creation; event and protocol
-  gaps remain later slices.
+  plane. Its namespace slice landed and was then superseded by the domain-owned
+  Command registry, which admin.sock and a Channel's in-process `invoke` both
+  adapt; model-facing filtering lives in each domain's MCP delegate, and
+  additional runtime skill roots stay off every model-facing surface. Event,
+  protocol-baseline, introspection, and authentication gaps remain later slices.
 - [TeamMate identity system prompt](proposals/teammate-identity-system-prompt.md)
   — draft requirement/spec for adding a minimal `identity` input to
   `teammate.spawn` and `team.create`, persisting it on TeamMate identity records,

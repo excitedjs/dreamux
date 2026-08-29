@@ -1,128 +1,84 @@
 # Reference: scheduled tasks
 
 Dreamux has an in-process scheduler for durable cron-style jobs owned by each
-dispatcher and non-closed Team. Its current prompt-agent execution covers
-contract/activity support, provider busy/idle reporting, durable storage,
-`prompt-agent` scheduled injection, and the conversational management surface
-(admin methods, the `dreamux cron` CLI, and the Cron MCP). `spawn-teammate` and
-deliver/egress jobs remain follow-up work and are fail-loud rejected for now.
-
-## Runtime Activity Contract
-
-The neutral Agent Runtime contract exposes one optional method,
-`waitIdle?(): Promise<void>`. Core feature-detects the method and treats a
-runtime that omits it as always idle, instead of reconstructing busy state from
-submit/settle events.
-
-- Codex activity is owned by `TurnManager`; a claimed `activeTurnSlot` counts as
-  busy even before the app-server returns a turn id.
-- Claude Code activity is owned by `ClaudeCodeRuntime`; only real queue entries
-  increment the count. Steer-folded channel input does not increment it.
-
-Key source:
-
-- `/packages/dreamux-types/src/agent-runtime.ts`
-- `/packages/agent-runtime/codex/src/turn-manager.ts`
-- `/packages/agent-runtime/codex/src/runtime.ts`
-- `/packages/agent-runtime/claude-code/src/runtime.ts`
+dispatcher and each non-closed Team. A job does exactly one thing: at its due
+time it injects its prompt into the conversational agent that owns the schedule
+— the dispatcher agent or that Team's TeamLeader. It spawns no agent, addresses
+no Channel, and observes no outcome.
 
 ## Persistence
 
-Scheduled jobs live in
-`~/.dreamux/state/<dispatcher-id>/cron-jobs.json`. The file is a single
-versioned JSON document backed by `JsonDocumentStore<TDoc>` and `CronJobStore`.
-Missing files mean "no jobs"; malformed or wrong-version files fail loud at
-serve preflight.
+Dispatcher jobs live in `~/.dreamux/state/<dispatcher-id>/cron-jobs.json`; a
+Team's jobs live in
+`~/.dreamux/state/<dispatcher-id>/team/<team-id>/cron-jobs.json`. Each file is
+one versioned JSON document backed by `JsonDocumentStore<TDoc>` and
+`CronJobStore`. A missing file means "no jobs"; a malformed or wrong-version
+file fails loud, and `dreamux doctor` reports it through
+`detectLegacyCronJobStore`.
 
-The v1 row stores:
+The v1 row stores `cron`, `tz`, `recurring`, `enabled`, `next_run_at`,
+`last_fired_at`, an optional `title`, and one `action`. The action union has a
+single member, `{ kind: 'prompt-agent', prompt, intent? }`.
 
-- `cron`, `tz`, `recurring`, `enabled`, `next_run_at`, `last_fired_at`.
-- `action.kind`, currently executed only for `prompt-agent`.
-- Optional neutral `deliver: { channel_id, target_key }`, parsed but not
-  accepted for new jobs until the neutral egress injection contract exists.
+`spawn-teammate` actions and a `deliver: { channel_id, target_key }` target were
+once declared and parsed with no execution behind them. They are removed: the
+raw-file parser refuses either one as `LegacyStateError` rather than accepting
+it as a domain object that later branches would have to skip. A store carrying
+one is not current state — the job must be deleted and recreated.
 
 Key source:
 
 - `/packages/dreamux/src/platform/json-document-store.ts`
 - `/packages/dreamux/src/service/scheduler/store.ts`
 - `/packages/dreamux/src/platform/paths.ts`
-- `/packages/dreamux/src/server.ts`
 
 ## Execution
 
 `SchedulerService` is owned by the CONTAINER — `DispatcherService` owns the
 dispatcher scheduler, each non-closed `TeamService` owns its Team scheduler —
-constructed there from a host-supplied config (cron-jobs store path, owner id,
-absent-runtime strategy) and wired into the container's conversational agent (the
-dispatcher agent / the team leader) via that agent's neutral `getRuntime()` /
-`scheduledInput()` seam. `TeammateService` itself carries no scheduler, so "only
-the dispatcher and each team leader have cron" is structural — only those two
-container types hold a `SchedulerService`, with no per-instance capability policy.
-The dispatcher scheduler starts after the dispatcher agent, channel sessions, and
-restart-notice injection have completed. Dispatcher shutdown closes channel
-sessions first, stops dispatcher and Team schedulers to abort held fires, drains
-accepted work, stops schedulers again to catch re-armed timers, then stops
-runtimes; Team schedulers are armed at dispatcher boot (without starting the
-TeamLeader runtime) and stopped/deleted with their team.
+and is constructed there with the container's own `CronJobStore`, its admission
+gate, and its scheduled-submit callback. `TeammateService` carries no scheduler,
+so "only the dispatcher and each TeamLeader have cron" is structural rather than
+a per-instance capability policy.
 
-For `prompt-agent` jobs the scheduler:
+`start()` reconciles every persisted job's durable state before arming any
+timer, so a mid-reconcile IO failure leaves the scheduler fully un-started.
+The dispatcher scheduler starts inside the dispatcher's input-source lifecycle,
+after Workflows and before external admission opens. A Team's scheduler starts
+with its `TeamService` and stops when the Team closes; the closed Team's store
+file is deleted after its closed record is durable.
 
-1. Collapses duplicate fires of the same job while one fire is held.
-2. Waits for the dispatcher agent runtime to become idle, with scheduler-owned
-   max-defer timeout/cancel guards.
-3. Calls `completionInput({ text, sourceId: "scheduled:<job-id>:<fire-seq>" })`;
-   the id is stable for one fire but differs across recurring fires of the same
-   job so runtime-side dedupe cannot collapse later occurrences.
-4. Keeps the structured turn origin `{ kind: "scheduled", job_id }` only on the
-   in-process entity Turn for lifecycle/delivery correlation. Dreamux persists no
-   per-Turn archive.
-5. Updates `last_fired_at`, recomputes `next_run_at`, and disables one-shot jobs.
+A due fire submits immediately through the owner's ordinary admission gate. No
+cancellation and no idle question cross that call: whether the runtime folds the
+input into a turn that is already running or starts a new one is the runtime's
+decision, made where it is already made. The scheduler then records
+`last_fired_at`, recomputes `next_run_at`, and disables a one-shot job. It never
+observes whether the resulting turn succeeded.
 
-It does not observe terminal success or failure of the agent turn. `deliver`
-jobs are not converted into prompt text; they are skipped until neutral egress
-delivery is implemented.
-
-The conversational management surface wraps the same `SchedulerService`:
-`admin/methods.ts` exposes the `scheduler.cron.*` admin methods, the `dreamux
-cron` CLI (`cli/commands/cron-mcp.ts`) drives them, and the Cron MCP
-(`mcp/cron-mcp.ts`) mirrors the native scheduling tool surface; the Cron MCP is
-injected into each conversational agent — the dispatcher agent and every
-TeamLeader — but not regular teammates/team members.
-
-The Cron MCP uses the shared official-SDK stdio server. Its caller-specific
-catalog supplies closed input schemas, canonical output schemas, standard tool
-annotations, and descriptor-bound dispatcher or Team scope. The adapter maps
-SDK-validated arguments to the existing `scheduler.cron.*` admin methods and
-projects explicit public job/result shapes; it does not own scheduling state or
-duplicate admin validation. Cron calls are ordinary MCP successes and therefore
-return those projected objects unchanged as `structuredContent` with exact
-`content: []`.
+`sourceId` is `scheduled:<job-id>:<fire-seq>` — stable for one fire, different
+across recurring fires of the same job, so runtime-side dedupe cannot collapse
+a later occurrence.
 
 Key source:
 
 - `/packages/dreamux/src/service/scheduler/service.ts`
-- `/packages/dreamux/src/service/scheduler/mcp-config.ts`
-- `/packages/dreamux/src/service/dispatcher-service/index.ts`
+- `/packages/dreamux/src/service/scheduler/types.ts`
+- `/packages/dreamux/src/service/dispatcher-service/input-source-lifecycle.ts`
 - `/packages/dreamux/src/service/team-service/index.ts`
-- `/packages/dreamux/src/admin/methods.ts`
-- `/packages/dreamux/src/mcp/server.ts`
-- `/packages/dreamux/src/mcp/tool-catalog.ts`
-- `/packages/dreamux/src/mcp/cron-mcp.ts`
 
-## Tests
+## Management surface
 
-The current regression coverage pins the load-bearing traps:
-
-- Codex false-idle window and `waitIdle` waiter flushing.
-- Claude steer-fold input not inflating the busy counter.
-- `JsonDocumentStore` and `CronJobStore` round-trip/fail-loud + persisted-job
-  preflight behavior.
-- Scheduler `prompt-agent` defer-until-idle injection, held-fire collapse,
-  stop-cancels-a-held-fire, the pre-submit stop race, and disabled/prompt-only
-  update semantics.
+`scheduler.cron.list` / `create` / `update` / `delete` are ordinary Core
+Commands declared by the scheduler's own `commands.ts`, so `admin.sock` and an
+in-process Channel `invoke` reach the same definitions. The scheduler's MCP
+delegate publishes `cron_create`, `cron_list`, `cron_update`, and `cron_delete`
+with descriptor-bound dispatcher or Team scope, and is injected into the
+dispatcher agent and every TeamLeader but not into ordinary TeamMates or Team
+members. The delegate owns no scheduling state and repeats no Command
+validation; neither surface accepts `deliver`, and neither reports it.
 
 Key source:
 
-- `/packages/agent-runtime/codex/tests/turn-manager.test.ts`
-- `/packages/dreamux/tests/claude-code-runtime.test.ts`
-- `/packages/dreamux/tests/scheduler.test.ts`
+- `/packages/dreamux/src/service/scheduler/commands.ts`
+- `/packages/dreamux/src/service/scheduler/mcp-delegate.ts`
+- `/packages/dreamux/src/service/dispatcher-service/mcp-delegates.ts`
