@@ -205,6 +205,15 @@
   currently bound to itself. Collaboration Space administration and the global
   binding listing remain Dispatcher-only. Do not restore a Core binding store
   or smuggle a caller-selected Team through the Channel seam.
+- Stage 5 audit decision: when `team.state` proves a Team closed, Feishu removes
+  every binding to that Team, notifies each removed target with the existing
+  binding-unbound presentation, and releases that target's COT route state.
+  This preserves the user-visible close transition after binding ownership
+  moved out of Core. Typed stale-route cleanup during an inbound fallback stays
+  silent so one failed delivery does not generate an unrelated notification.
+  The Channel uses the removed rows it already owns; do not restore Core binding
+  events, add persisted notification state, or make notification failure undo
+  the committed route removal.
 - Stage 5 audit decision: persisted Feishu routing facts become live only after
   their atomic file write succeeds. An update is prepared against an isolated
   next document, serialized with other writes, persisted, and then published as
