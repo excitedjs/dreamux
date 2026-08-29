@@ -295,11 +295,12 @@
   `TeammateCollection` already owns member creation and registration.
 - Stage 8 terminal-entity decision: Collections cache live objects only. Closed
   Teams and TeamMates remain persisted records and read paths project those
-  records without constructing Services. A closed Team is never rematerialized,
+  `TeamRecord` or Agent Identity records without constructing Services. Startup
+  never rebuilds a closed entity. A closed Team is never rematerialized,
   including for worktree cleanup; cleanup reads and patches its record directly.
-  A closed TeamMate may be loaded only by an explicit reopen mutation and is
-  published to the cache only after it becomes live. Historical usage must not
-  cause unbounded entity-object retention.
+  A closed TeamMate may be lazily constructed only by `send`, which reopens it
+  in the same operation, and is published to the cache only after it becomes
+  live. Historical usage must not cause unbounded entity-object retention.
 - Stage 8 deletion authority: the implementation author may remove existing
   defensive state, phases, checks, wrappers, errors, recovery branches,
   registries, ledgers, and helper objects whenever current source cannot prove

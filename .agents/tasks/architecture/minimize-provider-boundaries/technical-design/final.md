@@ -1330,11 +1330,13 @@ notifications after the fact; listeners do not drive the entity's internal
 close sequence and are never a persistence or replay mechanism.
 
 Terminal entities are not an in-memory cache category. Team and TeamMate reads
-project their persisted records without constructing Services. A closed Team is
+project `TeamRecord` and Agent Identity data directly without constructing
+Services, and process startup never rebuilds terminal objects. A closed Team is
 never materialized again; worktree cleanup operates directly on its stored
-record. A closed TeamMate is materialized only by a mutation that successfully
-reopens it, and enters the cache as a live entity rather than as a closed one.
-Consequently process memory is bounded by live entities, not historical usage.
+record. A closed TeamMate is materialized only by `send`, which lazily reopens
+it in the same operation, and enters the cache as a live entity rather than as
+a closed one. No other read, recovery, or mutation constructs it. Consequently
+process memory is bounded by live entities, not historical usage.
 
 Promise identity is the default concurrency primitive. Repeated async operations
 use the neutral `deduplicate` method decorator with exactly two modes:

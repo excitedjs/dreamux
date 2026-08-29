@@ -707,14 +707,16 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   resurrect a Team that the durable authority says does not exist.
 - Closed Teams and closed TeamMates exist only as persisted records. Collection
   caches contain live entity objects only; list, status, history, and other
-  reads load record projections without constructing `TeamService` or
-  `TeammateService`. A closed Team is never materialized again, including for
-  `cleanup-pending` worktree recovery: that maintenance reads and patches the
-  stored record directly. A send that explicitly reopens a closed TeamMate may
-  load its record for that mutation, but the Collection publishes a new live
-  entity only as part of the successful reopen; it never caches an object that
-  remains closed. This bounds live memory by active entities rather than the
-  lifetime number of historical records.
+  reads load `TeamRecord` or Agent Identity data into plain projections without
+  constructing `TeamService` or `TeammateService`. Process startup likewise
+  never rebuilds a closed entity. A closed Team is never materialized again,
+  including for `cleanup-pending` worktree recovery: that maintenance reads and
+  patches the stored record directly. Only `send` may lazily construct a closed
+  TeamMate, and it does so as part of reopening that TeamMate into a live entity;
+  no other read, recovery, or mutation creates it. The Collection publishes the
+  object only after that reopen succeeds and never caches an object that remains
+  closed. This bounds live memory by active entities rather than the lifetime
+  number of historical records.
 - The Team record and TeamLeader identity have different, deliberately narrow
   authority. The Team record owns Team existence, Team lifecycle, `leader_name`,
   and only the stable Team-owned creation inputs needed to ask `TeamMateService`
