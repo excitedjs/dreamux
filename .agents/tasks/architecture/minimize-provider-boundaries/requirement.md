@@ -386,6 +386,16 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   other domain Commands. This is where Agent-task `source`, reverse completion,
   caller identity, tool visibility, and model-understandable error projection
   belong. The shim contains transport/SDK mechanics only.
+- A Team-scoped `WorkflowService` receives only a narrow `createLocked`
+  capability backed by that Team's `TeammateCollection`. It neither constructs
+  nor owns `TeammateService` instances, and it does not hold a raw
+  `TeamService` or `TeammateCollection`. Each Workflow-created TeamMate is
+  published in the current Team's collection and returned as a
+  `LockedTeammate`; the Workflow owns that lock until terminal cleanup releases
+  it. This path must not bounce through `TeamCollection.withTeamLeaderLease` to
+  rediscover the same `TeamService`. Workflow admission and `stopAll()` own
+  shutdown convergence; per-spawn Team-generation revalidation is not a second
+  lifecycle mechanism.
 
 - A Channel may register a provider/config- and caller-specific MCP tool
   catalog. Channel MCP is injected only into Dispatcher and TeamLeader Agent

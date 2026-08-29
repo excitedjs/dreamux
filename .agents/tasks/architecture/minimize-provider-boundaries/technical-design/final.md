@@ -1314,8 +1314,13 @@ The service graph keeps the accepted symmetric Collection + Service model:
   operations. It does not own Dispatcher, Team, Workflow, Channel, or Provider-
   specific topology or policy.
 - `WorkflowService` owns Workflow records, journals, execution, recovery,
-  Workflow-specific leases, and terminal outcomes. It does not add Workflow-
-  only phases to a general TeamMate lifecycle.
+  Workflow-held `LockedTeammate` handles, and terminal outcomes. A Team-scoped
+  Workflow receives a narrow `createLocked` capability implemented by its
+  owning `TeamService` through that Team's `TeammateCollection`; it does not
+  construct or own `TeammateService` instances. It never re-enters
+  `TeamCollection.withTeamLeaderLease` to rediscover the same Team merely to
+  create a member. Workflow admission and `stopAll()` converge its work, and it
+  does not add Workflow-only phases to a general TeamMate lifecycle.
 
 Entity operations update their own durable facts through one owner-local record
 update capability, then publish terminal facts for Collection hooks. Events are

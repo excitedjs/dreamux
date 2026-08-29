@@ -57,6 +57,14 @@ cleanup state. Scheduler submits each due fire immediately through normal
 admission with no busy check or held-fire delay; Provider-native folding into the
 active turn is accepted behavior.
 
+Team-scoped Workflow member creation stays inside the owning Team aggregate.
+`WorkflowService` receives only a narrow `createLocked` capability; the
+`TeamService` implements it through its own `TeammateCollection`, which publishes
+and owns the resulting TeamMate while the Workflow holds the lock. Re-entering
+`TeamCollection.withTeamLeaderLease` for every Workflow member was rejected as a
+defensive entity-to-collection-to-entity loop. Workflow admission and
+`stopAll()` are the shutdown boundary.
+
 ### Collaboration Space provisioning and external routing
 
 Moving external-route authority to Channel is confirmed. Current Collaboration

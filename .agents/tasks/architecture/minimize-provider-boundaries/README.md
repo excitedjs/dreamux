@@ -285,6 +285,14 @@
   `deduplicate` decorator exposes only `type: 'active'` and `type: 'once'` as
   Promise-retention behavior. It adds no lifecycle validation, persistence,
   policy, or error surface.
+- Stage 8 Workflow ownership decision: a Team-scoped `WorkflowService` may
+  create members only through a narrow `createLocked` capability backed by its
+  owning Team's `TeammateCollection`. The Workflow holds only
+  `LockedTeammate` handles and releases them at terminal cleanup; it never owns
+  or constructs `TeammateService`. Delete the defensive
+  `TeamCollection.withTeamLeaderLease -> TeamService` round trip: Workflow
+  admission and `stopAll()` own convergence, while the current Team's
+  `TeammateCollection` already owns member creation and registration.
 - Stage 8 deletion authority: the implementation author may remove existing
   defensive state, phases, checks, wrappers, errors, recovery branches,
   registries, ledgers, and helper objects whenever current source cannot prove
