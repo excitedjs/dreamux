@@ -45,7 +45,7 @@
   [Codex proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/codex.md),
   [Claude proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/claude.md), and
   [Trae Seed 2.1 proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/trae-seed-2-1.md).
-- Current solution baseline: [Technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `9f8d5ccfdfbfebbd4955d18a2c7907e1f6dfae7acfc86e614496feadaea4705f`. Requirement text, technical design, current source, and prior Decisions are evidence; the final product shape and explicit operator principles are authoritative. Existing load-bearing code has no automatic preservation right.
+- Current solution baseline: [Technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `aa91e17740863fb8638f7e23468646e415e38c6a6b802da9b175c6ba327032fa`. Requirement text, technical design, current source, and prior Decisions are evidence; the final product shape and explicit operator principles are authoritative. Existing load-bearing code has no automatic preservation right.
 - Prior final-solution revision: SHA-256 `5c74dc37bf0681b2c8e722a3cab3cf1c7b240395a8007b73b6586c9c6b80a05e`; it incorrectly expanded the Team-route requirement into a ban on unmatched Channel delivery to the Dispatcher Agent and keyed local presentation only by Team/leader identity.
 - Prior final-solution revision: SHA-256 `54034bc0deefeefdff1310ad431bce69e512329a02c5fc42f64945f8130b7b4c`; it correctly modeled a Channel MCP lease but failed to generalize the same delegate boundary to Team, TeamMate, Cron, and other Agent-facing MCP servers, leaving their shims incorrectly mapped to domain Commands.
 - Prior final-solution revision: SHA-256 `e87f24cc1ca224407398f9b73212fb058d875a7e9f234cf6cf6dc09557b439da`; it locked `submitInput` but its `team.submit` interface still omitted the already-confirmed Channel attributes and reminder, contradicting the surrounding delivery contract.
@@ -266,6 +266,28 @@
   creation, admission, settlement, recovery, completion, and shutdown paths.
   This is consultation only: no Service state machine or implementation is
   changed until the operator reviews the evidence and approves a design.
+- Stage 8 Service ownership correction decision: the operator accepted the
+  symmetric Collection + Service model as the implementation target.
+  Collections own stores, factories, lookup/list, cached instances,
+  materialization deduplication, and exact-instance eviction after terminal
+  entity facts. Services own one entity's record or identity, operations,
+  Runtime-backed work, and close. `TeamService`, not `TeamCollection`, owns Team
+  dissolve; `TeammateService` owns one neutral Agent Runtime mapping; and
+  `WorkflowService` owns Workflow-specific records, execution, leases, recovery,
+  and terminal outcomes. Entity operations prefer Promise identity over phase
+  machines, update durable facts through one owner-local record mutation path,
+  and publish terminal events only after the durable fact exists. The shared
+  `deduplicate` decorator exposes only `type: 'active'` and `type: 'once'` as
+  Promise-retention behavior. It adds no lifecycle validation, persistence,
+  policy, or error surface.
+- Stage 8 deletion authority: the implementation author may remove existing
+  defensive state, phases, checks, wrappers, errors, recovery branches,
+  registries, ledgers, and helper objects whenever current source cannot prove
+  a real consumer and product or persisted-data consequence. Deployed code has
+  no preservation right, and unjustified machinery must not be renamed,
+  relocated, or replaced with an equivalent abstraction. Promise identity, one
+  owner-local durable mutation path, terminal facts, and owned resources are the
+  default primitives.
 - Implementation authority principle: existing design is not the target by
   default. The TeamLeader challenges why each mechanism exists and retains it
   only when it serves the confirmed final product. Deployed, load-bearing, or
@@ -529,6 +551,11 @@ architecture merely because it is possible.
   `implementation-plan.md`.
 - Review-fix boundary: No Reviewer finding may be implemented without a new
   explicit operator approval for that correction round.
+- Stage 8 Service ownership correction: Approved by the operator on 2026-08-29.
+  The implementation author receives the accepted principles and current source,
+  not a prescribed file-by-file patch; the TeamLeader reviews the completed diff
+  against the ownership, simplification, and deletion constraints before
+  accepting it.
 
 ## Delivery
 

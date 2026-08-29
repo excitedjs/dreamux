@@ -1236,23 +1236,25 @@ typed pre-admission shutdown rejection, never an ambiguous partial mutation.
 Delete `waitIdle`, idle capability checks, and idle-based scheduler/dissolve
 paths.
 
+`TeamService` owns dissolve as one entity operation. `TeamCollection` may find,
+create, cache, and rematerialize that Service, but it does not own or interpret a
+dissolve phase machine and does not proxy the entity's close methods. Concurrent
+dissolve calls join one Promise owned by the Service.
+
 Dispatcher-triggered non-force dissolve checks the managed worktree before
 stopping anything. Self-dissolve stops Workflow and TeamMate processes first,
-then checks while the TeamLeader remains only to admit the operation. Once
-accepted, both paths fence work, stop all runtimes, and perform a post-stop
-cleanliness recheck to catch races.
-
-If a non-force post-stop check is dirty, persist `blocked_after_stop`, abandon
-that dissolve operation, and reopen ordinary Team admission. Children remain
-stopped but retain their normal lazy-reopen semantics. This is necessary so the
-TeamLeader can inspect, commit, or clean the preserved work; otherwise `force`
-or out-of-band filesystem surgery would be the only exit. A later dissolve is a
-new operation and repeats all checks.
+then checks while the TeamLeader remains only to admit the operation. Both paths
+fence work, stop all runtimes, and perform a post-stop cleanliness recheck to
+catch races. A failed check leaves the Team open and returns an error; stopped
+children keep their ordinary lazy-reopen behavior. No separate blocked dissolve
+phase is required merely to describe that result.
 
 For a clean worktree, or explicit `force` on the exact owned managed worktree,
-Core durably accepts logical close after child processes exit. The command does
-not wait for physical worktree deletion. Cleanup runs in the background with an
-observable `cleanup_pending`/failed/completed state and retries safely.
+the Service commits the Team's durable closed fact after child processes exit,
+then publishes one terminal close event. The command does not wait for physical
+worktree deletion. Background cleanup reads and updates the worktree cleanup
+fact itself; that fact, rather than a parallel dissolve phase, is the recovery
+authority after a process restart.
 
 `force` may discard uncommitted, untracked, or unmerged changes only after
 resolving and containment-checking the exact Team-owned managed worktree. It
@@ -1269,6 +1271,57 @@ and ambiguous admission keep their generic semantics, including no retry after
 ambiguity. Scheduler validates its own lifecycle generation and the current
 durable job immediately before submission; this owner-local fence does not add
 an `AbortSignal` or scheduler-specific method to `TeammateService`.
+
+### 4.5 Service and Collection ownership
+
+The service graph keeps the accepted symmetric Collection + Service model:
+
+- `DispatcherService` is the per-Dispatcher composition and admission root. It
+  owns Dispatcher-scoped policy and collaborators, not Team or TeamMate entity
+  lifecycle state.
+- `TeamCollection` owns the Team store, factory, lookup/list surface, cached
+  instances, and materialization deduplication. It subscribes to a durable
+  `team.closed` fact and evicts only the exact instance that published it.
+- `TeamService` owns one Team record, TeamLeader, member collection,
+  Team-scoped Workflow and scheduler, Team domain operations, and Team close.
+- `TeammateCollection` owns identity storage, naming, factory, lookup/list,
+  cached instances, and materialization deduplication. It subscribes to a
+  durable `teammate.closed` fact and evicts only the exact instance that
+  published it.
+- `TeammateService` owns one Agent identity, its neutral Agent Runtime mapping,
+  single-entity submission/turn work, and its start, stop, close, and reopen
+  operations. It does not own Dispatcher, Team, Workflow, Channel, or Provider-
+  specific topology or policy.
+- `WorkflowService` owns Workflow records, journals, execution, recovery,
+  Workflow-specific leases, and terminal outcomes. It does not add Workflow-
+  only phases to a general TeamMate lifecycle.
+
+Entity operations update their own durable facts through one owner-local record
+update capability, then publish terminal facts for Collection hooks. Events are
+notifications after the fact; listeners do not drive the entity's internal
+close sequence and are never a persistence or replay mechanism.
+
+Promise identity is the default concurrency primitive. Repeated async operations
+use the neutral `deduplicate` method decorator with exactly two modes:
+
+- `type: 'active'` shares one Promise only while the operation is running;
+- `type: 'once'` shares the running Promise, retains the first successful
+  Promise for the instance lifetime, and permits a retry after rejection.
+
+The decorator does not define business idempotency, lifecycle phases,
+persistence, validation, or errors. A separate flag, phase, operation registry,
+milestone, or retry ledger survives only when a real consumer and product
+consequence cannot be represented by the operation Promise, a durable terminal
+fact, or the owned resource itself. The redesign must not add checks or public
+failure modes merely to make a lifecycle model appear complete.
+
+The implementation author has explicit deletion authority. Existing defensive
+machinery has no compatibility or preservation right: delete wrappers, phases,
+guards, error types, recovery branches, ledgers, and helper objects whose real
+producer, consumer, and product consequence cannot be demonstrated from current
+source. Do not relocate unjustified machinery under a cleaner name, retain it
+because it is deployed, or replace it with an equivalent abstraction. Preserve
+only required product behavior, persisted facts, and concurrency boundaries.
 
 ## 5. Change inventory
 
@@ -1533,7 +1586,7 @@ binding recreation, scheduler/dissolve behavior, and removed MCP/admin names.
 - Fail-loud state/config cutover requires operators to recreate bindings and
   automatic-provisioning configuration.
 - A failed non-force dissolve may leave children stopped before ordinary Team
-  admission reopens. The durable blocked state must be visible, and the next
+  admission reopens. They retain normal lazy-reopen behavior, and the next
   dissolve rechecks current worktree state.
 - A process crash after binding but before first submission can lose one
   external delivery if the platform does not redeliver. Solving that requires a
