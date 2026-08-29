@@ -804,27 +804,29 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   continue consuming tokens.
 - Dispatcher-triggered dissolve performs a non-destructive managed-worktree
   cleanliness preflight before stopping the Team when `force` is false. A dirty
-  or unmerged worktree rejects the request without partially dismantling the
-  Team. Once the preflight passes, Core stops Workflow, every TeamMate, and the
-  TeamLeader and converges their admissions and settlements. The command does
-  not wait for physical worktree deletion.
+  or unmerged worktree makes the submitted background operation refuse to close
+  the Team without partially dismantling it. Once the preflight passes, Core
+  stops Workflow, every TeamMate, and the TeamLeader and converges their
+  admissions and settlements.
 - TeamLeader self-dissolve first stops its Workflow and every TeamMate, then
   checks the managed worktree while the TeamLeader remains only long enough to
-  complete the dissolve admission. A dirty or unmerged worktree is the only
-  non-forced blocker. After a clean check, Core durably accepts the dissolve and
-  stops the TeamLeader runtime without waiting for the caller turn to finish.
-  The MCP caller will commonly observe its own TeamLeader process exit before a
-  normal tool result arrives. That interrupted response is expected fail-open
-  behavior: response delivery failure never rolls back, delays, or marks the
-  already-accepted dissolve as failed.
-- A successful dissolve returns as soon as the required cleanliness check has
-  passed, child Workflow/TeamMate processes have exited, and logical close is
-  durably accepted. Physical removal of the managed worktree is always a
-  background `cleanup-pending` operation because a large checkout can take a
-  long time. Cleanup completion, retry, or failure is observable through Team
-  state but never keeps the invoking turn or terminated Team processes alive.
-  For self-dissolve, this is a logical return boundary rather than a guaranteed
-  MCP response receipt because the caller runtime is itself being terminated.
+  submit the dissolve operation. A dirty or unmerged worktree is the only
+  non-forced blocker inside that background operation. The MCP submission
+  receipt returns before Core stops the TeamLeader runtime, so self-dissolve
+  does not depend on delivering a tool result from a process that has already
+  been terminated.
+- A successful dissolve invocation returns as soon as Core has validated the
+  caller and submitted one background dissolve operation to the Team. It does
+  not wait for worktree assessment, Workflow/TeamMate/TeamLeader stop, durable
+  logical close, or physical worktree removal. This submission boundary keeps
+  the MCP call below Agent Runtime tool timeouts and lets self-dissolve answer
+  before its own runtime is stopped. The receipt reports submission, not a
+  premature `closed` fact.
+- The background operation performs the required cleanliness checks, stops the
+  child processes, commits logical close, and then continues any
+  `cleanup-pending` physical removal. A later refusal or failure leaves the Team
+  open and is logged; it does not retroactively change the already-returned
+  submission receipt or require a durable dissolve-phase state machine.
 - The dissolve surface adds `force`. For an owned managed worktree, `force: true`
   explicitly authorizes discarding uncommitted, untracked, or unmerged local
   changes so the worktree checkout can be removed and cannot remain as permanent
@@ -943,10 +945,10 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   immediately stops active work; safety is provided by the mandatory stop fence,
   convergence guarantee, trigger-specific worktree check, and owned-worktree
   containment. Non-forced dirty/unmerged cleanup blocks, while `force: true`
-  discards local changes only in the owned managed worktree. The command returns
-  after child processes exit and durable logical-close acceptance; physical
-  worktree deletion continues asynchronously. Self-dissolve remains successful
-  when terminating the caller prevents the MCP response from being delivered.
+  discards local changes only in the owned managed worktree. The invocation
+  returns after submitting the background operation, before assessment, stop,
+  logical close, or physical deletion. Self-dissolve can therefore return its
+  submission receipt before Core terminates the caller runtime.
 - A scheduled fire submits at its due time even when another turn is active. It
   may fold into that turn and share its native completion boundary. Scheduler
   does not implement busy-only deferral or missed-fire behavior; proven

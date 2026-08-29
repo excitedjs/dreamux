@@ -47,13 +47,15 @@ worktree cleanliness before dismantling the Team; TeamLeader self-dissolve stops
 Workflow and TeamMates before its check, then stops the leader without waiting for
 the caller turn. Non-forced dirty/unmerged managed worktrees block cleanup, while
 an explicit `force` authorizes discarding local changes in that owned worktree.
-The command returns after child processes exit and logical close is durably
-accepted; potentially expensive physical worktree deletion runs in the background
-as observable cleanup state. A self-dissolving TeamLeader is expected to lose its
-own MCP response when Core terminates it; that response failure is fail-open and
-does not affect the accepted dissolve. Scheduler submits each due fire immediately
-through normal admission with no busy check or held-fire delay; Provider-native
-folding into the active turn is accepted behavior.
+The invocation returns immediately after Core validates the caller and submits
+the Team-owned background dissolve; it does not await assessment, child-process
+exit, logical close, or physical worktree deletion. Both Dispatcher and
+TeamLeader MCP callers use the same submission boundary after their lease-bound
+target authorization, so self-dissolve can answer before its own runtime is
+stopped. The background operation still owns stop, durable close, and observable
+cleanup state. Scheduler submits each due fire immediately through normal
+admission with no busy check or held-fire delay; Provider-native folding into the
+active turn is accepted behavior.
 
 ### Collaboration Space provisioning and external routing
 

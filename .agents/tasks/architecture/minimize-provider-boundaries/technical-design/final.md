@@ -1236,31 +1236,52 @@ typed pre-admission shutdown rejection, never an ambiguous partial mutation.
 Delete `waitIdle`, idle capability checks, and idle-based scheduler/dissolve
 paths.
 
-`TeamService` owns dissolve as one entity operation. `TeamCollection` may find,
-create, cache, and rematerialize that Service, but it does not own or interpret a
-dissolve phase machine and does not proxy the entity's close methods. Concurrent
-dissolve calls join one Promise owned by the Service.
+`TeamService` owns dissolve as one background entity operation.
+`TeamCollection` may find, create, cache, and rematerialize that Service, but it
+does not own or interpret a dissolve phase machine and does not proxy the
+entity's close methods. Repeated submissions never start the destructive work
+twice; whether they share an internal Promise or report an already-submitted
+receipt is an implementation detail rather than a product contract.
+
+The generic MCP shim remains caller-blind. It sends one `mcp.toolcall` carrying
+an opaque lease token, tool name, and arguments. Core's lease-bound Team delegate
+alone resolves authorization and target: Dispatcher callers name a Team, while
+TeamLeader callers use the Team and leader generation already bound into their
+lease. After that resolution, both paths call one TeamService dissolve-submission
+capability and receive the same immediate receipt. Caller kind remains a domain
+fact only because it changes the assessment/stop ordering below; it must not
+create two dissolve APIs, two admission mechanisms, or two return boundaries.
+
+The submission receipt is `{ accepted: true, status: "submitted" }`. It crosses
+the MCP/Command boundary immediately after Core has validated the caller and
+installed the Team-owned background operation. Neither surface awaits worktree
+assessment, runtime stop, durable close, or worktree deletion. The operation
+Promise remains owned and observed inside Core so an asynchronous failure is
+logged and cannot become an unhandled rejection.
 
 Dispatcher-triggered non-force dissolve checks the managed worktree before
 stopping anything. Self-dissolve stops Workflow and TeamMate processes first,
 then checks while the TeamLeader remains only to admit the operation. Both paths
 fence work, stop all runtimes, and perform a post-stop cleanliness recheck to
-catch races. A failed check leaves the Team open and returns an error; stopped
-children keep their ordinary lazy-reopen behavior. No separate blocked dissolve
-phase is required merely to describe that result.
+catch races. A failed check leaves the Team open and is logged after the
+submission receipt has returned; stopped children keep their ordinary
+lazy-reopen behavior. No separate blocked dissolve phase is required merely to
+describe that result.
 
 For a clean worktree, or explicit `force` on the exact owned managed worktree,
 the Service commits the Team's durable closed fact after child processes exit,
-then publishes one terminal close event. The command does not wait for physical
-worktree deletion. Background cleanup reads and updates the worktree cleanup
-fact itself; that fact, rather than a parallel dissolve phase, is the recovery
-authority after a process restart.
+then publishes one terminal close event. Background cleanup reads and updates
+the worktree cleanup fact itself; that fact, rather than a parallel dissolve
+phase, is the recovery authority after a process restart. A later refusal or
+failure leaves the Team open and is observable through Team state and logs; it
+does not revise the earlier submission receipt or create a persisted operation
+ledger.
 
 `force` may discard uncommitted, untracked, or unmerged changes only after
 resolving and containment-checking the exact Team-owned managed worktree. It
 never deletes a reused cwd, source repository, repository root, branch, or
-committed history. TeamLeader self-dissolve may lose its MCP response after
-durable acceptance; that is expected fail-open behavior.
+committed history. TeamLeader self-dissolve returns its submission receipt
+before the background operation stops the caller runtime.
 
 ### 4.4 Scheduler
 
@@ -1496,9 +1517,10 @@ compile breaks are resolved inside the same implementation change.
   tests prove Command fencing precedes convergence, settlement can still render,
   Channel-owned mutation tails settle before resource release, and no callback
   runs after final close.
-- Dissolve tests cover both callers, preflight, stop-before-cleanup, post-stop
-  dirty race, reopened blocked state, force containment, self-response loss,
-  durable logical close, and background cleanup retry.
+- Dissolve tests cover both callers receiving the same immediate submitted
+  receipt, one background execution under repeated submission, preflight,
+  stop-before-cleanup, post-stop dirty race, reopened blocked state, force
+  containment, durable logical close, and background cleanup retry.
 - Scheduler tests prove immediate submission while busy, allowed folding, and
   no held-fire/idle behavior.
 - Negative surface tests prove deleted methods, callbacks, events, Core

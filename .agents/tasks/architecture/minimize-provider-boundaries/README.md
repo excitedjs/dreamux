@@ -211,11 +211,16 @@
   This preserves the user-visible close transition after binding ownership
   moved out of Core. Typed stale-route cleanup during an inbound fallback stays
   silent so one failed delivery does not generate an unrelated notification.
-- Stage 6 audit decision: a successful dissolve result crosses its return
-  boundary only after child runtimes have exited and the Team's logical close
-  is durable. Its result therefore reports `status: "closed"`, not the obsolete
-  `"closing"` value from the former accept-and-return behavior. Physical
-  managed-worktree removal remains asynchronous after that return boundary.
+- Stage 8 ownership decision: the public dissolve result is a submission
+  receipt, not a logical-close receipt. After Core validates the caller and
+  installs one Team-owned background operation, MCP and Command surfaces return
+  immediately with `status: "submitted"`; they do not await worktree assessment,
+  runtime stop, durable close, or physical deletion. The generic shim remains
+  caller-blind. Core's lease-bound Team delegate alone resolves Dispatcher versus
+  TeamLeader authorization and target, then both paths enter the same TeamService
+  submission capability. Requester kind may change assessment/stop ordering but
+  may not create two return mechanisms. Repeated submissions must not duplicate
+  destructive work; Promise identity is not itself a product requirement.
   The Channel uses the removed rows it already owns; do not restore Core binding
   events, add persisted notification state, or make notification failure undo
   the committed route removal.
