@@ -5,7 +5,8 @@
 - Goal: Reduce the public Agent Runtime and Channel contracts to minimal capability-neutral ports, with Channel bridging external interaction through Core Command invocation and Core event subscription.
 - State: `implementation`
 - Requirement: [Current requirement](/.agents/tasks/architecture/minimize-provider-boundaries/requirement.md)
-- Current solution input revision: `requirement.md` SHA-256 `217db5fc35801ca54a6af2f9752f1557dd411af4b2dd8b96b0ef3be97adce414`
+- Current solution input revision: `requirement.md` SHA-256 `60319f3d72dc414772a687718923ceea4304dcc0ca82f8fdf0d98dd0ac4af5a3`
+- Prior solution input revision: `requirement.md` SHA-256 `217db5fc35801ca54a6af2f9752f1557dd411af4b2dd8b96b0ef3be97adce414`; the operator then required live member cleanup during Team dissolve while allowing cold Identity normalization without Service construction.
 - Prior solution input revision: `requirement.md` SHA-256 `4a6b889cd97899fa216c64af57912e98b8f32a0734fd5fa14e707d80d04ba4d4`; the operator then made Team-scoped TeamMates CWD-only borrowers and rejected copying Team worktree facts into their identities.
 - Prior solution input revision: `requirement.md` SHA-256 `f0dbdc9d62777ff2176045599c02c2734bd48d685b917bb26ce044b9851b4cc4`; the operator then removed the invented per-Dispatcher stop/restart capability while retaining initial activation and process-level graceful shutdown.
 - Prior solution input revision: `requirement.md` SHA-256 `7c4b5c8f13103080426c841586c245a3fce00a141545709eba55db015cf0389c`; the operator corrected a misrecorded decision that had narrowed all Channel input to Team delivery. A Channel supplies `team_name` for TeamLeader delivery and omits it for the existing unmatched-input path to the Dispatcher Agent.
@@ -47,7 +48,8 @@
   [Codex proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/codex.md),
   [Claude proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/claude.md), and
   [Trae Seed 2.1 proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/trae-seed-2-1.md).
-- Current solution baseline: [Technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `90917acb1b38072437fba3fff2f62b23e58670ebea4a9ddaf8b5a5ba17ebecfc`. Requirement text, technical design, current source, and prior Decisions are evidence; the final product shape and explicit operator principles are authoritative. Existing load-bearing code has no automatic preservation right.
+- Current solution baseline: [Technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `01d26442d6ce37660139f869bc1f3a9e42a60b5521bc4aa95f9e16941b37da6c`. Requirement text, technical design, current source, and prior Decisions are evidence; the final product shape and explicit operator principles are authoritative. Existing load-bearing code has no automatic preservation right.
+- Prior final-solution revision: SHA-256 `90917acb1b38072437fba3fff2f62b23e58670ebea4a9ddaf8b5a5ba17ebecfc`; it had not yet separated live-member runtime close from cold member Identity normalization during Team dissolve.
 - Prior final-solution revision: SHA-256 `40369754e08d5920125c059858261997b54163c1ca0b53df5d00c27305025742`; it had not yet made Team-scoped TeamMates CWD-only borrowers or rejected Team worktree cleanup projection into their identities.
 - Prior final-solution revision: SHA-256 `aa91e17740863fb8638f7e23468646e415e38c6a6b802da9b175c6ba327032fa`; it still exposed `dispatcher.stop` and therefore implied a per-Dispatcher stop/restart lifecycle that the operator never designed.
 - Prior final-solution revision: SHA-256 `5c74dc37bf0681b2c8e722a3cab3cf1c7b240395a8007b73b6586c9c6b80a05e`; it incorrectly expanded the Team-route requirement into a ban on unmatched Channel delivery to the Dispatcher Agent and keyed local presentation only by Team/leader identity.
@@ -325,6 +327,12 @@
   worktree metadata or cleanup result, and closing a member cannot clean the
   Team workspace. Dispatcher-scoped TeamMates retain independent managed
   worktree ownership and close/reopen behavior when explicitly requested.
+- Stage 8 Team member dissolve correction: Team dissolve closes every cached
+  live member through its `TeammateService` so its runtime and turns stop. The
+  Team-owned `TeammateCollection` writes dormant non-closed identities directly
+  to the same terminal timestamp and note without constructing Services;
+  already-closed identities remain unchanged. This bulk capability is private
+  to the Team and creates no Dispatcher-facing lifecycle surface.
 - Implementation authority principle: existing design is not the target by
   default. The TeamLeader challenges why each mechanism exists and retains it
   only when it serves the confirmed final product. Deployed, load-bearing, or
@@ -599,6 +607,9 @@ architecture merely because it is possible.
 - Stage 8 Team workspace ownership correction: Approved by the operator on
   2026-08-29 after the defensive-style audit exposed the redundant borrower
   projection.
+- Stage 8 Team member dissolve correction: Approved by the operator on
+  2026-08-29 after distinguishing live runtime cleanup from cold-record
+  normalization.
 
 ## Delivery
 

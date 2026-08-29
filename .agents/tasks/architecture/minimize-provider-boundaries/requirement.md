@@ -1073,6 +1073,13 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   the Team worktree. Dispatcher-scoped TeamMates may still independently own a
   managed delete-on-close worktree, whose metadata remains in their own
   identities so `send` can reprepare it after close.
+- Team dissolve must promptly close every materialized member through its
+  `TeammateService`, stopping its runtime and preventing background turns or
+  token use. A non-materialized member has no runtime in the current process;
+  its Team-scoped Collection writes the existing Identity directly to `closed`
+  with the dissolve timestamp and note instead of constructing a Service.
+  Already-closed records remain unchanged. This bulk operation is internal to
+  the Team-owned Collection and is not a Dispatcher-facing capability.
 - The Agent Runtime provider contract must converge on an absolute minimum
   necessary set.
 - The live Agent Runtime execution base is `start`, flat text `submit`, and

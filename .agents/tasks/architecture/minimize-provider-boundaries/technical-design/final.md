@@ -824,6 +824,14 @@ Team-owned checkout. This does not narrow Dispatcher-scoped TeamMates, which may
 own independent managed delete-on-close worktrees and retain the metadata needed
 to reprepare them on a later `send`.
 
+During Team dissolve, the Team closes only members that are actually live in
+the current process through `TeammateService`; that path stops their runtimes,
+settles owned work, and prevents continued token use. The Team-scoped
+`TeammateCollection` updates every other non-closed member Identity directly to
+the same closed timestamp and note. It never materializes a cold member merely
+to change its record, because a non-materialized member has no current-process
+runtime to stop. The bulk close capability remains private to the owning Team.
+
 Feishu automatic provisioning supplies only the smaller repository policy it
 owns. The Channel maps its local `{path, base_ref}` policy into
 `{mode: "managed", path, base_ref, cleanup: "delete-on-close"}` before invoking
