@@ -65,6 +65,13 @@ and owns the resulting TeamMate while the Workflow holds the lock. Re-entering
 defensive entity-to-collection-to-entity loop. Workflow admission and
 `stopAll()` are the shutdown boundary.
 
+Closed entities are store records, not dormant Services. Team and TeamMate read
+models must not materialize or cache terminal objects. Closed-Team worktree
+recovery reads and patches the persisted record directly; it never constructs a
+`TeamService` merely to reuse cleanup code. A closed TeamMate can re-enter the
+live cache only through an explicit successful reopen mutation. This keeps
+memory proportional to live entities rather than accumulated history.
+
 ### Collaboration Space provisioning and external routing
 
 Moving external-route authority to Channel is confirmed. Current Collaboration

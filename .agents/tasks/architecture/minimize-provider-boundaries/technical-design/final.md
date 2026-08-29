@@ -1237,11 +1237,13 @@ Delete `waitIdle`, idle capability checks, and idle-based scheduler/dissolve
 paths.
 
 `TeamService` owns dissolve as one background entity operation.
-`TeamCollection` may find, create, cache, and rematerialize that Service, but it
-does not own or interpret a dissolve phase machine and does not proxy the
-entity's close methods. Repeated submissions never start the destructive work
-twice; whether they share an internal Promise or report an already-submitted
-receipt is an implementation detail rather than a product contract.
+`TeamCollection` may find, create, cache, and rematerialize a non-closed
+Service, but it does not own or interpret a dissolve phase machine and does not
+proxy the entity's close methods. A closed Team remains a store record and is
+never rebuilt as `TeamService`, including for physical cleanup. Repeated
+submissions never start the destructive work twice; whether they share an
+internal Promise or report an already-submitted receipt is an implementation
+detail rather than a product contract.
 
 The generic MCP shim remains caller-blind. It sends one `mcp.toolcall` carrying
 an opaque lease token, tool name, and arguments. Core's lease-bound Team delegate
@@ -1301,12 +1303,12 @@ The service graph keeps the accepted symmetric Collection + Service model:
   owns Dispatcher-scoped policy and collaborators, not Team or TeamMate entity
   lifecycle state.
 - `TeamCollection` owns the Team store, factory, lookup/list surface, cached
-  instances, and materialization deduplication. It subscribes to a durable
+  live instances, and materialization deduplication. It subscribes to a durable
   `team.closed` fact and evicts only the exact instance that published it.
 - `TeamService` owns one Team record, TeamLeader, member collection,
   Team-scoped Workflow and scheduler, Team domain operations, and Team close.
 - `TeammateCollection` owns identity storage, naming, factory, lookup/list,
-  cached instances, and materialization deduplication. It subscribes to a
+  cached live instances, and materialization deduplication. It subscribes to a
   durable `teammate.closed` fact and evicts only the exact instance that
   published it.
 - `TeammateService` owns one Agent identity, its neutral Agent Runtime mapping,
@@ -1326,6 +1328,13 @@ Entity operations update their own durable facts through one owner-local record
 update capability, then publish terminal facts for Collection hooks. Events are
 notifications after the fact; listeners do not drive the entity's internal
 close sequence and are never a persistence or replay mechanism.
+
+Terminal entities are not an in-memory cache category. Team and TeamMate reads
+project their persisted records without constructing Services. A closed Team is
+never materialized again; worktree cleanup operates directly on its stored
+record. A closed TeamMate is materialized only by a mutation that successfully
+reopens it, and enters the cache as a live entity rather than as a closed one.
+Consequently process memory is bounded by live entities, not historical usage.
 
 Promise identity is the default concurrency primitive. Repeated async operations
 use the neutral `deduplicate` method decorator with exactly two modes:
