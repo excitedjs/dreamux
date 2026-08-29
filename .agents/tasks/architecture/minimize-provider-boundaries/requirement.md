@@ -676,13 +676,22 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   creation policy in Channel state; later unmatched child targets provision and
   bind ordinary Teams through generic `team.create` and `team.submit` Commands.
 - External target creation is a real Channel-owned input. A supporting Channel
-  owns policy, provider-specific identity, binding, and a durable provisioning
-  saga. It first persists a local provisioning record and stable request id,
-  invokes the ordinary public `team.create` Command, persists the resulting
-  `team_name` as its active binding once the Team is ready, and only then invokes
-  ordinary turn submission for the first message.
-- Retrying the same accepted provisioning request after a crash must not create
-  a second Team. The generic Team creation capability therefore exposes a
+  owns the policy, the provider-specific target identity, and the binding. The
+  automatic provisioning that composes them is volatile execution, not durable
+  product state: the Channel invokes the ordinary public `team.create` Command,
+  persists the resulting `team_name` as its active binding once the Team is
+  ready, and only then invokes ordinary turn submission for the first message.
+  It persists no provisioning record, phase, saga, outbox, recovery cursor, or
+  target-interruption marker, and it runs no restart-resume scan.
+- Losing the process loses the unfinished operation and nothing else. A restart
+  recovers exactly what was already persisted: the Team records Core owns, the
+  Channel's Collaboration Space policy, and its completed bindings. A Team that
+  was created but never bound stays as an accepted orphan Team — it is a real
+  Team, reachable by name, simply with no route to it. A first message that was
+  not submitted before the crash is lost, and a later message on that target
+  follows the still-persisted Space policy as an ordinary new provisioning.
+- A retried `team.create` for the same accepted request must not create a
+  second Team. The generic Team creation capability therefore exposes a
   transport-neutral request identity, which Core stores together with the
   canonical payload hash in the Team record itself. A valid, readable Team
   record is the sole proof that a Team exists, the sole durable owner of its
@@ -696,6 +705,9 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   After publication, the same request id and payload hash resolve to that Team,
   including after restart or closure, while the same id with a different hash
   fails with an idempotency conflict.
+- Idempotent `team.create` is a Core-side guarantee about one Command, not a
+  Channel-side resume mechanism: it is what makes a Channel's own retry safe,
+  and it does not authorize persisting the attempt that produced it.
 - Core reconstructs its process-local request-id index by scanning Team records.
   Missing, malformed, or unreadable Team records are treated as nonexistent for
   lookup, routing, and name allocation: they cannot receive a turn, do not
@@ -790,10 +802,11 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   worktrees permanently on disk. This fixed Feishu mapping does not narrow the
   generic Team MCP or `admin.sock` creation surfaces: both retain the complete
   canonical repository union and honor the caller's explicit cleanup policy.
-- A Channel resumes its own incomplete provisioning records after restart. This
-  preserves one-Team creation and ready-before-first-delivery without a Core
-  target/claim/generation model. Per-target serialization and generations remain
-  entirely Channel-private.
+- A Channel serializes its own concurrent work per target in memory, which is
+  what preserves one-Team creation and ready-before-first-delivery within a
+  process. Nothing about that serialization is durable, and no Core
+  target/claim/generation model replaces it: an operation interrupted by a
+  restart is simply gone.
 - Provisioning creates an ordinary Team plus one Channel-owned default binding;
   it does not create an exclusive ownership relation between the external target
   and the Team. The default binding can be removed independently. The Team may
@@ -1033,9 +1046,11 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - A binding-capable Channel persists and resolves its own provider-specific
   routing state without exposing external identifiers or matching rules to
   Core.
-- An automatic-provisioning Channel persists and recovers its own provisioning
-  saga, uses restart-durable idempotent `team.create`, binds only after Team readiness, and
-  submits the first message only after binding. Core contains no Collaboration
+- An automatic-provisioning Channel persists only its Space policy and its
+  completed bindings; it uses restart-durable idempotent `team.create`, binds
+  only after Team readiness, and submits the first message only after binding.
+  An interrupted provisioning leaves at most an accepted orphan Team and a lost
+  first message, and is never resumed. Core contains no Collaboration
   Space object, external target claim, or collaboration binding event.
 - Dispatcher can call Channel-owned `bind_channel`, `unbind_channel`, and
   `list_bindings` through the existing MCP proxy. Feishu also provides

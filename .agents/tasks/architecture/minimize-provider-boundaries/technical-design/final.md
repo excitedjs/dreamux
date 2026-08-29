@@ -102,7 +102,7 @@ adapters, deprecated aliases, dual-write periods, or automatic state migrations.
 | --- | --- |
 | Dreamux Core | Team and TeamMate state, runtime ownership, Command schemas and execution, admission and settlement, Team-create idempotency, event schemas and projection, state persistence, dissolve safety, MCP forwarding and caller context |
 | Agent Runtime Provider | Native process/session lifecycle, context restoration, schema adaptation, native activity discovery and normalization, optional live activity emission |
-| Channel Provider | External transport, message interpretation, Command selection, external-route bindings, target hierarchy, provisioning saga, Channel-owned configuration/state, external rendering, Channel MCP tools |
+| Channel Provider | External transport, message interpretation, Command selection, external-route bindings, target hierarchy, automatic provisioning, Channel-owned configuration/state, external rendering, Channel MCP tools |
 | `@excitedjs/dreamux-types` | Neutral contracts and catalog types only; no provider-specific paths, selectors, or runtime-native record formats |
 
 Core never branches on a provider id and never re-derives Channel-owned target
@@ -576,7 +576,7 @@ interface ChannelMcpCallContext {
 `createSession`, `initialize`, `start`, and `close` are direct same-process
 lifecycle calls, not Commands or events. `initialize` loads and validates
 Channel-owned state, stores the Core port, and attaches any event consumer. It
-must not open external input. `start` resumes Channel-owned provisioning sagas
+must not open external input. `start` restores Channel-owned durable state
 and then opens external I/O. This split makes subscribe-before-admission
 provable while leaving event consumption optional: a Channel that needs no
 events simply does not subscribe.
@@ -853,7 +853,7 @@ random candidate, which is correct because no accepted Team or externally valid
 route existed. After publication, the same id and hash return that Team across
 Core restart and Team closure; the same id with a different hash raises
 `IdempotencyConflictError`. A closed replay returns `closed`; a new provisioning
-generation uses a new request id.
+attempt uses a new request id.
 
 At startup Core scans Team records to reconstruct a process-local request-id
 index; that index is derived acceleration, never another persisted authority. A
@@ -1177,28 +1177,33 @@ Cross-domain views intentionally call Core Team reads through existing Agent MCP
 and `list_bindings` through each relevant Channel MCP. No one-call Core join is
 created.
 
-### 3.2 Provisioning saga
+### 3.2 Automatic provisioning
 
 When an unmatched Feishu child target belongs to a locally registered
-Collaboration Space policy, the Channel starts automatic provisioning. It
-persists `{generation, request_id, phase, space_policy_id, target_metadata,
-first_delivery_identity}` before invoking Core. It then:
+Collaboration Space policy, the Channel starts automatic provisioning. The
+operation is process-local execution, not durable state: it persists no
+provisioning row, request phase, outbox, recovery cursor, or target-interruption
+marker before, during, or after it. In memory it:
 
-1. calls `team.create` with the persisted request id;
-2. receives the stable ready Team name;
-3. atomically installs the default binding;
-4. calls `team.submit` for the first external message using the original stable
-   source identity;
-5. marks the saga complete.
+1. captures the current Space policy snapshot and serializes per target;
+2. calls `team.create` with a stable request id, so its own retry inside this
+   process cannot create a second Team;
+3. receives the stable ready Team name;
+4. atomically installs the default binding, which is durable;
+5. calls `team.submit` for the first external message using the original stable
+   source identity.
 
-Restart resumes the same idempotent step. Per-target serialization and stale
-generation rejection are entirely Channel-private. Core sees neither the target
-nor the binding generation.
+Losing the process loses the unfinished operation. A restart recovers only what
+was already persisted — Core's Team records, this Channel's Space policy, and
+its completed bindings — and runs no resume scan. A Team created before the
+crash but never bound stays as an accepted orphan Team: a real Team with no
+route to it, which no cleanup policy hunts down. A first message not yet
+submitted is lost, and the next message on that target simply provisions again
+under the still-persisted policy.
 
-The first message is never sent to Dispatcher before bind-ready and is not
-submitted twice by the saga. If a process crashes after the durable binding but
-before first submission, platform redelivery may be needed; this refactor does
-not introduce a retained external-message outbox.
+The first message is never sent to Dispatcher before bind-ready. Per-target
+serialization and policy snapshots are Channel-private and memory-only; Core
+sees neither the target nor a binding generation.
 
 The old Core Collaboration Space service, target claims, exact-delivery
 callbacks, policy configuration, and events are deleted. The Feishu MCP suite
@@ -1229,12 +1234,13 @@ keeps its current owner and is not treated as binding migration input.
    and attaching event subscriptions.
 3. Recover Core operations that require recovery while event pumps are attached;
    retain current lazy runtime activation for ordinary dormant agents.
-4. Call every Channel `start`; each Channel resumes provisioning sagas before
+4. Call every Channel `start`; each Channel loads its own durable state before
    opening external input.
 5. Open ordinary dispatcher, Workflow, scheduler, and external admission only
    after all configured Channels have started.
 
-Only idempotent Channel-owned saga recovery may invoke Commands before ordinary
+A Channel's `start` loads only its own durable state; there is no provisioning
+recovery to run, so nothing Channel-owned invokes a Command before ordinary
 admission opens. Startup failure unwinds created sessions and any late-starting
 runtimes in reverse order.
 
@@ -1427,7 +1433,7 @@ only required product behavior, persisted facts, and concurrency boundaries.
   in-process adapters, typed errors, and Team-record-owned creation identity;
 - six-event registry, fail-open scoped subscriptions, and lifecycle fencing;
 - Channel lifecycle port and optional MCP composition;
-- Feishu-owned direct binding and Collaboration Space policy/provisioning state,
+- Feishu-owned direct binding and Collaboration Space policy state,
   plus both MCP tool suites;
 - dissolve partial-state and background-cleanup state machine;
 - fail-loud legacy-state/config detection and operator instructions.
@@ -1524,9 +1530,10 @@ compile breaks are resolved inside the same implementation change.
   record acceptance point, and readiness; same-id replay, closed replay,
   different-payload conflict, exclusive atomic publication, request-index
   reconstruction, and name ownership only while a valid record exists.
-- Channel saga tests cover crash/restart at every persisted phase,
-  ready-before-bind, bind-before-first-submit, generation replacement, and no
-  target data in Core.
+- Channel automatic-provisioning tests cover ready-before-bind,
+  bind-before-first-submit, per-target serialization, a captured policy snapshot
+  that a later policy update does not rewrite, that nothing beyond policy and
+  completed bindings is persisted, and no target data in Core.
 - Binding tests cover exact topic then parent fallback, independent unbind,
   multiple bindings per Team, Team-close invalidation, defensive stale cleanup,
   Dispatcher-only binding tools, and no Core binding mirror/query.
@@ -1647,9 +1654,11 @@ binding recreation, scheduler/dissolve behavior, and removed MCP/admin names.
 - A failed non-force dissolve may leave children stopped before ordinary Team
   admission reopens. They retain normal lazy-reopen behavior, and the next
   dissolve rechecks current worktree state.
-- A process crash after binding but before first submission can lose one
-  external delivery if the platform does not redeliver. Solving that requires a
-  retained external-message outbox, intentionally outside this refactor.
+- Losing the process during automatic provisioning loses the unfinished
+  operation. It can leave an accepted orphan Team with no route to it, and it
+  can lose one external delivery if the platform does not redeliver. Both are
+  accepted: making them recoverable would require durable provisioning state and
+  a retained external-message outbox, intentionally outside this refactor.
 - Channel-provided automatic-provisioning identity is privileged text. It is
   retained only as the bounded equivalent of the existing policy field; prompt
   and arbitrary skill injection remain excluded.
