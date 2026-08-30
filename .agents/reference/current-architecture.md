@@ -381,8 +381,10 @@ before it reopens admission instead.
 
 Assessment checks only dirty and unmerged state; it does not enumerate refs or
 walk repository history. `cleanup: keep` and non-managed outcomes are terminally
-retained. Clean managed `delete-on-close` cleanup calls non-forced
-`git worktree remove <path>` and preserves the managed branch and its commits;
+retained. Managed `delete-on-close` cleanup calls `git worktree remove <path>`,
+non-forced unless the dissolve carried `force: true` — which authorizes
+`git worktree remove --force` and discards uncommitted, untracked, or unmerged
+work in that checkout. Neither form deletes the managed branch or its commits;
 branch/ref deletion is not part of Team dissolve.
 
 Only the physical reclaim outlives the process. A checkout that could not be

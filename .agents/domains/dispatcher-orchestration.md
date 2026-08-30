@@ -231,10 +231,13 @@ from the record alone: no Team is materialized, each reclaim is launched rather
 than awaited so a slow Git cannot hold up dispatcher start, and a failure leaves
 the same pending fact for the next start rather than a retry ledger.
 Dirty/unmerged work retains the worktree and requires user action; `cleanup:
-keep` and non-managed workspaces are terminally retained. Clean
-`delete-on-close` cleanup performs no ref or history scan and uses only
-non-forced `git worktree remove <path>`, preserving the managed branch and its
-commits. Branch/ref deletion is outside Team dissolve.
+keep` and non-managed workspaces are terminally retained. Cleanup performs no
+ref or history scan and removes a `delete-on-close` checkout with `git worktree
+remove <path>` — non-forced by default, so Git's own refusal is the final
+authority. `force: true` is that user action, not a bypass of it: it authorizes
+`git worktree remove --force` and discards the uncommitted, untracked, or
+unmerged work the refusal was protecting. Neither form touches the managed
+branch or its commits, and branch/ref deletion is outside Team dissolve.
 
 A host shutdown is not a dissolve. It gives back the runtime authority this
 process took — Workflows, then materialized members, then the leader — and
