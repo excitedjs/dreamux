@@ -178,6 +178,12 @@ history and rationale; when you need current behavior, pair them with
   no executable backstop; the ownership map lives outside the queryable KB; review
   bypassed at land-first merges) plus a prioritized, mostly-executable improvement
   backlog (topology map + ownership/boundary fitness functions + process gates).
+- [OpenCode Agent Runtime provider](proposals/opencode-agent-runtime.md)
+  — draft requirement/spec for evaluating OpenCode as a Dreamux Agent Runtime
+  provider via the neutral provider seam, targeting headless server/SDK
+  integration instead of TUI/PTY control, with conservative capability
+  declarations plus explicit obligations for checkpoint resume, idle
+  observation, last/context read surfaces, MCP, skills, and completion delivery.
 
 Move an active proposal out of `proposals/` once it is implemented,
 superseded, or abandoned; preserve the old text under `archive/` when the
