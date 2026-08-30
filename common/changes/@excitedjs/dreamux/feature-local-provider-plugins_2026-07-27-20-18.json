@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: External npm provider refs now materialize into Dreamux's private plugin store under ~/.dreamux/plugins instead of using ambient/global Node resolution. A plugin generation is selected only after full provider/config validation; background checks stage candidates for the next strict load. Rebuild: first startup/onboard/daemon install for each external provider package requires npm registry access.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

@@ -49,8 +49,8 @@ Design background:
   declared channel and routes inbound/egress by `(channel_id, target_key)`.
 - **Provider refs are explicit.** Wired builtin refs are `builtin:feishu`,
   `builtin:codex`, and `builtin:claude-code`. External `npm:` refs are loaded
-  through the same provider package loader when the package is installed and
-  implements the selected provider kind.
+  through the Dreamux-owned local plugin store and the same provider package
+  loader when the package implements the selected provider kind.
 - **One dispatcher is one trust domain.** A bot may receive multiple chats, but
   all accepted messages share one dispatcher runtime context. Do not bind
   unrelated private chats to the same dispatcher.
@@ -123,6 +123,7 @@ logs:
 | `~/.dreamux/cache/<id>/spill/` | Over-budget teammate completion spill files; rebuildable cache, only the path is inlined into a dispatcher turn | the server |
 | `~/.dreamux/cache/<id>/` | Per-dispatcher provider cache root; providers own subdirectories such as Feishu attachment cache | the server |
 | `~/.dreamux/cache/claude-code/` | Claude Code MCP config and skill adapters; rebuildable provider cache | the server |
+| `~/.dreamux/plugins/` | Rebuildable external `npm:` provider generations and metadata | the server |
 | `~/.dreamux/logs/codex-app-server/<id>.log` | Codex app-server stdout/stderr | the server |
 | `~/.dreamux/logs/channel/<id>.log` | Per-dispatcher channel logs | the server |
 | `~/.dreamux/logs/teammate-mcp/<id>.log` | TeamMate MCP shim diagnostics | the server |
@@ -247,11 +248,20 @@ does not own or attribute spontaneous turns initiated from the Remote Control UI
 in this release; avoid driving external UI turns and Dreamux turns concurrently.
 It does not use Codex app-server, Codex handshake, or Codex home diagnostics.
 
-Provider refs reserved for future external providers look like npm package refs
-or package export refs, for example `npm:@example/dreamux-provider` and
-`npm:@example/dreamux-provider#channel`. Dreamux does not install packages for
-you; if the package is already resolvable, config load imports it and validates
-the provider contract before starting dispatchers.
+External provider refs look like npm package refs or package export refs, for
+example `npm:@example/dreamux-provider` and
+`npm:@example/dreamux-provider#channel`. Dreamux installs external provider
+packages into `~/.dreamux/plugins/` on first materializing config load and
+imports a pinned immutable generation from that private store. A generation
+becomes selected only after the full provider factory, contract, and config
+validation succeeds. Background checks publish candidate generations for a later
+restart; they do not hot-reload the running server or replace the selected
+generation before validation. Ambient global packages, `NODE_PATH`, the process
+working directory, and Dreamux's own dependency tree do not satisfy `npm:`
+provider refs. Builtin refs still resolve to packages shipped with Dreamux and
+do not use the plugin store. Dry-run commands and `doctor` inspect selected
+generations only and never run npm; `doctor` still runs diagnostics for
+available declarations while reporting missing provider plugins explicitly.
 
 Edit and restart `dreamux serve` to apply dispatcher declaration changes.
 Channel ids must be unique within a dispatcher, and each dispatcher may declare

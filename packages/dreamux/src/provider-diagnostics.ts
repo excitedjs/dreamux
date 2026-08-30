@@ -5,10 +5,20 @@ import type {
   ProviderDiagnosticResult,
 } from '@excitedjs/dreamux-types';
 
-import type { AgentRuntimeProviderCatalog } from './agent-runtime/catalog.js';
+import {
+  UnsupportedAgentRuntimeProviderError,
+  type AgentRuntimeProviderCatalog,
+} from './agent-runtime/catalog.js';
 import { hostRuntimePaths } from './agent-runtime/host-paths.js';
-import type { ChannelProviderCatalog } from './channel/catalog.js';
+import {
+  UnsupportedChannelProviderError,
+  type ChannelProviderCatalog,
+} from './channel/catalog.js';
 import type { DispatcherConfig, DreamuxConfig } from './config/config.js';
+import type {
+  ProviderDeclaration as ProviderDiagnosticDeclaration,
+  ProviderDispatcherDeclaration as ProviderDiagnosticDispatcherDeclaration,
+} from './config/provider-inspection.js';
 import {
   dispatcherCacheDir,
   dispatcherDir,
@@ -44,47 +54,90 @@ interface ProviderBinCheckOptions {
   env: NodeJS.ProcessEnv;
   scope: ProviderDiagnosticScope;
 }
+interface ProviderDeclarationBinCheckOptions {
+  agents: ProviderDiagnosticDeclaration[];
+  dispatchers: ProviderDiagnosticDispatcherDeclaration[];
+  catalogs: ProviderDiagnosticCatalogs;
+  env: NodeJS.ProcessEnv;
+  scope: ProviderDiagnosticScope;
+}
+
+type DiagnosticProviderResolution<TProvider> =
+  | { kind: 'provider'; provider: TProvider }
+  | { kind: 'report'; report: ProviderDiagnosticResult };
 
 export async function runDispatcherProviderDiagnostics(
   options: ProviderDiagnosticRunOptions,
 ): Promise<ProviderDiagnosticReport[]> {
+  return await runProviderDeclarationDiagnostics({
+    ...options,
+    dispatcher: dispatcherDeclaration(options.dispatcher),
+  });
+}
+
+export async function runProviderDeclarationDiagnostics(options: {
+  dispatcher: ProviderDiagnosticDispatcherDeclaration;
+  catalogs: ProviderDiagnosticCatalogs;
+  runner: CommandRunner;
+  env: NodeJS.ProcessEnv;
+  scope: ProviderDiagnosticScope;
+}): Promise<ProviderDiagnosticReport[]> {
   const { dispatcher, catalogs, runner, env, scope } = options;
-  const runtimeProvider = catalogs.agentRuntime.resolve(
-    dispatcher.runtime.provider,
-  );
-  const runtimeDiagnostic = runtimeProvider.diagnostic;
-  const runtimeResult =
-    runtimeDiagnostic === undefined
-      ? providerDefaultDiagnostic('agentRuntime', dispatcher.runtime.provider)
-      : await runtimeDiagnostic.runDiagnostic(
-          {
-            runtime_id: dispatcher.id,
-            config: dispatcher.runtime.config,
+  const reports: ProviderDiagnosticReport[] = [];
+  if (dispatcher.runtime !== null) {
+    const runtime = dispatcher.runtime;
+    const runtimeProvider = resolveDiagnosticProvider(
+      () => catalogs.agentRuntime.resolve(runtime.provider),
+      (reason) =>
+        providerUnavailableDiagnostic(
+          'agentRuntime',
+          runtime.provider,
+          reason,
+        ),
+    );
+    const runtimeResult =
+      runtimeProvider.kind === 'report'
+        ? runtimeProvider.report
+        : await runRuntimeDiagnostic({
+            provider: runtimeProvider.provider,
+            dispatcher,
+            runtime,
             env,
             scope,
-            paths: hostRuntimePaths,
-          },
-          runner,
-        );
-  const reports: ProviderDiagnosticReport[] = [
-    {
+            runner,
+          });
+    reports.push({
       kind: 'agentRuntime',
-      id: dispatcher.agentRuntime,
-      provider: dispatcher.runtime.provider,
+      id: runtime.id,
+      provider: runtime.provider,
       scope,
       result: runtimeResult,
-    },
-  ];
+    });
+  }
 
   for (const channel of dispatcher.channels) {
-    const provider = catalogs.channel.resolve(channel.provider);
-    const diagnostic = provider.diagnostic;
+    const provider = resolveDiagnosticProvider(
+      () => catalogs.channel.resolve(channel.provider),
+      (reason) =>
+        providerUnavailableDiagnostic('channel', channel.provider, reason),
+    );
+    if (provider.kind === 'report') {
+      reports.push({
+        kind: 'channel',
+        id: channel.id,
+        provider: channel.provider,
+        scope,
+        result: provider.report,
+      });
+      continue;
+    }
+    const diagnostic = provider.provider.diagnostic;
     const result =
       diagnostic === undefined
         ? providerDefaultDiagnostic('channel', channel.provider)
         : await diagnostic.runDiagnostic(
             channelDiagnosticContext(
-              dispatcher,
+              dispatcher.id,
               channel.id,
               channel.provider,
               channel.config,
@@ -107,18 +160,29 @@ export async function runDispatcherProviderDiagnostics(
 export function providerBinChecksForConfig(
   options: ProviderBinCheckOptions,
 ): ProviderBinCheck[] {
+  return providerBinChecksForDeclarations({
+    ...options,
+    ...declarationsForConfig(options.config),
+  });
+}
+
+export function providerBinChecksForDeclarations(
+  options: ProviderDeclarationBinCheckOptions,
+): ProviderBinCheck[] {
   const checks = new Map<string, ProviderBinCheck>();
   const add = (check: ProviderBinCheck): void => {
     checks.set(`${check.name}\0${check.bin}\0${check.args.join('\0')}`, check);
   };
 
-  for (const [agentId, agent] of Object.entries(options.config.agents)) {
-    const diagnostic = options.catalogs.agentRuntime.resolve(
-      agent.provider,
-    ).diagnostic;
+  for (const agent of options.agents) {
+    const provider = resolveOptionalDiagnosticProvider(() =>
+      options.catalogs.agentRuntime.resolve(agent.provider),
+    );
+    if (provider === null) continue;
+    const diagnostic = provider.diagnostic;
     if (diagnostic === undefined) continue;
     for (const check of diagnostic.binChecks({
-      runtime_id: agentId,
+      runtime_id: agent.id,
       config: agent.config,
       env: options.env,
       scope: options.scope,
@@ -128,15 +192,17 @@ export function providerBinChecksForConfig(
     }
   }
 
-  for (const dispatcher of options.config.dispatchers) {
+  for (const dispatcher of options.dispatchers) {
     for (const channel of dispatcher.channels) {
-      const diagnostic = options.catalogs.channel.resolve(
-        channel.provider,
-      ).diagnostic;
+      const provider = resolveOptionalDiagnosticProvider(() =>
+        options.catalogs.channel.resolve(channel.provider),
+      );
+      if (provider === null) continue;
+      const diagnostic = provider.diagnostic;
       if (diagnostic === undefined) continue;
       for (const check of diagnostic.binChecks(
         channelDiagnosticContext(
-          dispatcher,
+          dispatcher.id,
           channel.id,
           channel.provider,
           channel.config,
@@ -152,8 +218,60 @@ export function providerBinChecksForConfig(
   return [...checks.values()];
 }
 
+async function runRuntimeDiagnostic(
+  options: {
+    dispatcher: ProviderDiagnosticDispatcherDeclaration;
+    runtime: ProviderDiagnosticDeclaration;
+    runner: CommandRunner;
+    env: NodeJS.ProcessEnv;
+    scope: ProviderDiagnosticScope;
+    provider: ReturnType<AgentRuntimeProviderCatalog['resolve']>;
+  },
+): Promise<ProviderDiagnosticResult> {
+  const { dispatcher, runtime, provider, env, scope, runner } = options;
+  const diagnostic = provider.diagnostic;
+  return diagnostic === undefined
+    ? providerDefaultDiagnostic('agentRuntime', runtime.provider)
+    : await diagnostic.runDiagnostic(
+        {
+          runtime_id: dispatcher.id,
+          config: runtime.config,
+          env,
+          scope,
+          paths: hostRuntimePaths,
+        },
+        runner,
+      );
+}
+
+function resolveDiagnosticProvider<TProvider>(
+  resolve: () => TProvider,
+  unavailable: (reason: string) => ProviderDiagnosticResult,
+): DiagnosticProviderResolution<TProvider> {
+  try {
+    return { kind: 'provider', provider: resolve() };
+  } catch (err) {
+    if (
+      err instanceof UnsupportedAgentRuntimeProviderError ||
+      err instanceof UnsupportedChannelProviderError
+    ) {
+      return { kind: 'report', report: unavailable(err.message) };
+    }
+    throw err;
+  }
+}
+
+function resolveOptionalDiagnosticProvider<TProvider>(
+  resolve: () => TProvider,
+): TProvider | null {
+  const resolved = resolveDiagnosticProvider(resolve, (reason) =>
+    providerUnavailableDiagnostic('provider', 'unknown', reason),
+  );
+  return resolved.kind === 'report' ? null : resolved.provider;
+}
+
 function channelDiagnosticContext(
-  dispatcher: DispatcherConfig,
+  dispatcherId: string,
   channelId: string,
   provider: string,
   config: Record<string, unknown>,
@@ -161,18 +279,49 @@ function channelDiagnosticContext(
   scope: ProviderDiagnosticScope,
 ): ChannelDiagnosticContext {
   return {
-    dispatcher_id: dispatcher.id,
+    dispatcher_id: dispatcherId,
     channel_id: channelId,
     provider,
     config,
     env,
     scope,
-    state_root: dispatcherDir(dispatcher.id),
-    cache_root: dispatcherCacheDir(dispatcher.id),
+    state_root: dispatcherDir(dispatcherId),
+    cache_root: dispatcherCacheDir(dispatcherId),
   };
 }
 
-/** Default passing result for a provider that declares no diagnostic surface. */
+function declarationsForConfig(config: DreamuxConfig): {
+  agents: ProviderDiagnosticDeclaration[];
+  dispatchers: ProviderDiagnosticDispatcherDeclaration[];
+} {
+  return {
+    agents: Object.entries(config.agents).map(([id, agent]) => ({
+      id,
+      provider: agent.provider,
+      config: agent.config,
+    })),
+    dispatchers: config.dispatchers.map(dispatcherDeclaration),
+  };
+}
+
+function dispatcherDeclaration(
+  dispatcher: DispatcherConfig,
+): ProviderDiagnosticDispatcherDeclaration {
+  return {
+    id: dispatcher.id,
+    runtime: {
+      id: dispatcher.agentRuntime,
+      provider: dispatcher.runtime.provider,
+      config: dispatcher.runtime.config,
+    },
+    channels: dispatcher.channels.map((channel) => ({
+      id: channel.id,
+      provider: channel.provider,
+      config: channel.config,
+    })),
+  };
+}
+
 function providerDefaultDiagnostic(
   kind: ProviderDiagnosticKind,
   provider: string,
@@ -181,5 +330,17 @@ function providerDefaultDiagnostic(
     ok: true,
     detail: `${kind} provider ${provider} reports no diagnostics`,
     errors: [],
+  };
+}
+
+function providerUnavailableDiagnostic(
+  kind: ProviderDiagnosticKind | 'provider',
+  provider: string,
+  reason: string,
+): ProviderDiagnosticResult {
+  return {
+    ok: false,
+    detail: `${kind} provider ${provider} is not runnable`,
+    errors: [reason],
   };
 }

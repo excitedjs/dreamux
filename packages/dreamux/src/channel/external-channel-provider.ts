@@ -26,6 +26,7 @@ import {
   type ProviderModule,
   type ProviderModuleImporter,
   type ProviderPackageLoaderSpec,
+  type NpmProviderModuleImporter,
 } from '../registry/provider-loader.js';
 import type { ChannelProvider } from '@excitedjs/dreamux-types';
 
@@ -67,6 +68,7 @@ export interface LoadChannelProvidersOptions {
   registry: ProviderRegistry;
   refs: Iterable<string>;
   importModule?: ExternalChannelModuleImporter;
+  importNpmModule?: NpmProviderModuleImporter;
 }
 
 const CHANNEL_LOADER_SPEC: ProviderPackageLoaderSpec<ChannelProvider> = {

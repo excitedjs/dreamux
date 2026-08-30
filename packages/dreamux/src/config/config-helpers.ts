@@ -15,7 +15,6 @@ import {
   ReservedExternalProviderError,
   UnknownBuiltinProviderError,
   formatProviderRef,
-  parseProviderRef,
   type ProviderDescriptor,
   type ProviderRegistry,
 } from '../registry/index.js';
@@ -54,48 +53,6 @@ export function resolveConfigProvider(
     }
     throw err;
   }
-}
-
-/**
- * Every well-formed `agents[].provider` ref the loader should resolve. Malformed
- * refs are dropped here; normal config validation reports them with context.
- */
-export function agentProviderRefs(raw: unknown): string[] {
-  if (!isPlainObject(raw)) return [];
-  return providerRefsFrom(raw['agents'], (agent) => agent['provider']);
-}
-
-export function channelProviderRefs(raw: unknown): string[] {
-  if (!isPlainObject(raw)) return [];
-  const dispatchers = raw['dispatchers'];
-  if (!Array.isArray(dispatchers)) return [];
-  const out: string[] = [];
-  for (const dispatcher of dispatchers) {
-    if (!isPlainObject(dispatcher)) continue;
-    out.push(
-      ...providerRefsFrom(dispatcher['channels'], (channel) => channel['provider']),
-    );
-  }
-  return out;
-}
-
-function providerRefsFrom(
-  entries: unknown,
-  pick: (entry: Record<string, unknown>) => unknown,
-): string[] {
-  if (!Array.isArray(entries)) return [];
-  const out: string[] = [];
-  for (const entry of entries) {
-    if (!isPlainObject(entry)) continue;
-    const provider = pick(entry);
-    if (typeof provider !== 'string') continue;
-    try {
-      out.push(parseProviderRef(provider).raw);
-    } catch {
-      // The normal config validation path reports malformed refs with context.
-    }
-  }
-  return out;
 }
 
 export function asAgentRuntimeProvider(

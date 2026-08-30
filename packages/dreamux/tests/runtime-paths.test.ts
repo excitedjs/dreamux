@@ -35,6 +35,11 @@ import {
   workflowRunRecordPath,
   dreamuxRoot,
   logsRoot,
+  pluginRoot,
+  providerPluginGenerationDir,
+  providerPluginGenerationRootBridgePath,
+  providerPluginMetadataPath,
+  providerPluginStagingDir,
   resetRuntimeConfig,
   restartIntentPath,
   runRoot,
@@ -74,6 +79,7 @@ describe('runtime paths', () => {
     expect(stateRoot()).toBe(join(dreamuxRoot(), 'state'));
     expect(runRoot()).toBe(join(dreamuxRoot(), 'run'));
     expect(logsRoot()).toBe(join(dreamuxRoot(), 'logs'));
+    expect(pluginRoot()).toBe(join(dreamuxRoot(), 'plugins'));
     // Volatile run files live under run/, not the durable state tree
     // (issue #182): the admin IPC endpoint and the one-shot restart marker.
     expect(adminSocketPath()).toBe(join(runRoot(), 'admin.sock'));
@@ -153,6 +159,25 @@ describe('runtime paths', () => {
       'dispatcher',
     );
     expect(hostRuntimePaths.cacheDir()).not.toBe(retiredStateRuntimeDir);
+  });
+
+  it('owns external provider plugin paths under ~/.dreamux/plugins', () => {
+    const packageName = '@example/provider';
+    const packageDir = join(pluginRoot(), 'QGV4YW1wbGUvcHJvdmlkZXI');
+    expect(packageDir).toBe(join(pluginRoot(), 'QGV4YW1wbGUvcHJvdmlkZXI'));
+    expect(providerPluginMetadataPath(packageName)).toBe(
+      join(packageDir, 'metadata.json'),
+    );
+    expect(providerPluginGenerationDir(packageName, '1.2.3')).toBe(
+      join(packageDir, 'versions', '1.2.3'),
+    );
+    const generation = providerPluginGenerationDir(packageName, '1.2.3');
+    expect(providerPluginGenerationRootBridgePath(generation)).toBe(
+      join(packageDir, 'versions', '1.2.3', 'dreamux-import.mjs'),
+    );
+    expect(providerPluginStagingDir(packageName, 'install-1')).toBe(
+      join(packageDir, 'staging', 'install-1'),
+    );
   });
 
   it('places logs under component log directories', () => {

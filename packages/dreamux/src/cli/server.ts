@@ -14,12 +14,10 @@
  *
  * Per-dispatcher channel secrets live in the dreamux JSON config.
  */
-
 import { mkdir } from 'node:fs/promises';
-
 import { Server } from '../server.js';
 import { loadConfig } from '../config/config.js';
-import { createBuiltinProviderRegistry } from '../registry/index.js';
+import { ProviderPluginStore } from '../registry/provider-plugin-store.js';
 import { createLogger } from '../platform/logger.js';
 import { errorInfo } from '../platform/error-info.js';
 import {
@@ -35,27 +33,11 @@ import {
   workflowLogPath,
 } from '../platform/paths.js';
 import { sweepRuntimeSocketDirs } from '../platform/runtime-sockets.js';
-
 async function main(): Promise<void> {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
     printHelp();
     return;
   }
-
-  // Seed a registry with the builtin provider DESCRIPTORS and hand it to
-  // loadConfig, which loads every referenced provider implementation — builtin
-  // AND npm, both kinds — through the single dynamic loader before parsing
-  // agents[]/channels[] (each entry's config is parsed through its provider's
-  // readConfig, so the implementation must be present first). `builtin:*` is
-  // just an alias the loader resolves to a package name; there is no separate
-  // static builtin-registration path. The populated registry then backs the
-  // Server's runtime + channel catalogs (Server builds them from it).
-  const providerRegistry = createBuiltinProviderRegistry();
-
-  // Load ~/.dreamux/config.json before anything else starts. Missing or invalid
-  // config is a setup error; `dreamux serve` must not silently create defaults.
-  const { config, configFile } = await loadConfig({ providerRegistry });
-
   await mkdir(stateRoot(), { recursive: true });
   await mkdir(logsRoot(), { recursive: true });
   await mkdir(channelLogDir(), { recursive: true });
@@ -66,8 +48,18 @@ async function main(): Promise<void> {
   // (tests) gets stderr-only defaults. Both stream to stderr too, so a
   // foreground `serve` stays visible.
   const logger = createLogger({ name: 'server', filePath: serverLogPath() });
+  const providerPluginStore = new ProviderPluginStore({ logger });
+  const {
+    config,
+    configFile,
+    providerRegistry,
+    providerPluginPackages,
+    providerPluginWarnings,
+  } = await loadConfig({
+    providerPluginStore,
+  });
+  for (const warning of providerPluginWarnings) logger.warn(warning);
   logger.info({ config_file: configFile }, 'loaded global config');
-
   const server = new Server({
     config,
     providerRegistry,
@@ -79,11 +71,17 @@ async function main(): Promise<void> {
     runtimeSocketSweep: () => sweepRuntimeSocketDirs(),
     legacyAdminLockPath: `${legacyAdminSocketPath()}.lock`,
   });
-  await server.start();
+  try {
+    await server.start();
+  } catch (err) {
+    await providerPluginStore.closeUpdater();
+    throw err;
+  }
+  providerPluginStore.startUpdater(providerPluginPackages);
   logger.info({ admin_socket: adminSocketPath() }, 'server up');
-
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'received signal');
+    await providerPluginStore.closeUpdater();
     await server.shutdown();
     process.exit(0);
   };
@@ -98,20 +96,16 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => requestShutdown('SIGTERM'));
   process.on('SIGINT', () => requestShutdown('SIGINT'));
 }
-
 function printHelp(): void {
   console.log(`dreamux serve — local dreamux server
-
 Usage:
   dreamux serve [--help]
-
 Global config:
   ~/.dreamux/config.json    Created by 'dreamux onboard'. Override with the
                             DREAMUX_CONFIG_DIR env var. Edit and restart to
                             apply. Holds named agents[], dispatcher
                             declarations (channels[] + agentRuntime), and
                             channel secrets.
-
 Runtime data:
   ~/.dreamux/run/           volatile run files: admin socket + lock, one-shot
                             restart marker, and runtime rendezvous sockets.
@@ -120,17 +114,15 @@ Runtime data:
                             files and TeamMate records.
   ~/.dreamux/logs/          server, channel, agent runtime, and MCP
                             shim logs.
-
 Environment overrides:
   DREAMUX_CONFIG_DIR        Overrides ~/.dreamux (where config.json lives)
-
 Dispatcher declarations:
   Edit ~/.dreamux/config.json dispatchers[] and restart dreamux serve.
-  Provider refs load through the registry before config validation.
-  Built-in refs are resolved through the same provider loading path as npm:<package>[#export].
+  Provider refs load through the registry before provider-owned config parsing.
+  npm:<package>[#export] refs use the local plugin-store load session; built-in
+  refs bypass the plugin store.
 `);
 }
-
 main().catch((err) => {
   console.error('[server] fatal:', err);
   process.exit(1);

@@ -37,8 +37,16 @@ Current file shape:
 
 Current load behavior:
 
-- Agent Runtime provider refs and Channel provider refs are loaded before config
-  validation.
+- Dreamux-owned config structure and cross-references are validated before any
+  plugin-store filesystem write, npm lookup, or provider import.
+- External `npm:` provider packages are prepared once per strict load session
+  across both provider kinds through the Dreamux-owned plugin store at
+  `~/.dreamux/plugins/`; builtin refs do not use that store.
+- A plugin metadata `selected_version` means a full provider factory,
+  provider-contract, and `readConfig` strict load succeeded. Background update
+  checks publish only `candidate_version`; a later strict load commits or
+  rejects that candidate and may fall back to the last selected generation for
+  non-interactive serve/daemon paths.
 - Dispatcher channel ids must be unique within one dispatcher.
 - A dispatcher may not declare the same channel provider ref twice.
 - Old Feishu/Codex-specific config shapes fail loud with rebuild guidance.
@@ -70,6 +78,7 @@ Current built-ins:
 Key source:
 
 - `/packages/dreamux/src/registry/`
+- `/packages/dreamux/src/registry/provider-plugin-store.ts`
 - `/packages/dreamux/src/agent-runtime/catalog.ts`
 - `/packages/dreamux/src/channel/catalog.ts`
 - `/packages/dreamux/src/registry/builtins.ts`

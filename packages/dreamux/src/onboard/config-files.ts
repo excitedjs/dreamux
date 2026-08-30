@@ -1,74 +1,45 @@
-import type { DreamuxConfig } from '../config/config.js';
-import {
-  defaultChannelCollaborationSpaceConfig,
-  type DispatcherConfig,
-  type DispatcherProviderConfig,
-  stringifyConfig,
-} from '../config/config.js';
+import { hostConfigFileShape, type HostConfig } from '../config/host-config.js';
 import { validateDispatcherId } from '../state/dispatcher-id.js';
 import type { OnboardAnswers } from '../onboard/types.js';
 
-export function buildDreamuxConfigJson(answers: OnboardAnswers): string {
-  return stringifyConfig(dreamuxConfigFromAnswers(answers));
-}
-
-export function dreamuxConfigFromAnswers(
+export function configFileShapeFromAnswers(
   answers: OnboardAnswers,
-  existing?: DreamuxConfig,
-): DreamuxConfig {
+  existing?: HostConfig,
+): Record<string, unknown> {
   validateDispatcherId(answers.dispatcherId);
-  const base: DreamuxConfig = existing ?? {
-    agents: {},
+  const base = existing ?? {
+    agents: [],
     dispatchers: [],
   };
+  const shape = hostConfigFileShape(base);
   const existingDispatcher = base.dispatchers.find(
     (dispatcher) => dispatcher.id === answers.dispatcherId,
   );
-  const dispatchers = base.dispatchers
-    .filter((dispatcher) => dispatcher.id !== answers.dispatcherId)
-    .map(cloneDispatcherConfig);
-  dispatchers.push(
-    dispatcherConfigFromAnswers(
-      answers,
-      existingDispatcher?.workspace ?? { enabled: true },
-    ),
-  );
-  // Runtime config lands only in agents[]. Onboard creates or updates the
-  // selected agent id, preserving provider-owned raw config so the file
-  // round-trips after provider parsers normalize defaults.
-  //
-  // Seed from the existing agents map FIRST, then overwrite/add the
-  // dispatcher-owned entries. agents[] is the global runtime-config map, so an
-  // entry referenced only by a TeamMate is valid even though no dispatcher names
-  // it; re-running onboard must not silently delete it.
-  const agents: DreamuxConfig['agents'] = {};
-  for (const [id, agent] of Object.entries(base.agents)) {
-    const rawConfig = cloneOptionalProviderConfig(agent.rawConfig);
-    agents[id] = {
-      provider: agent.provider,
-      config: cloneProviderConfig(agent.config),
-      ...(rawConfig === undefined ? {} : { rawConfig }),
-    };
+  const dispatchers = (shape['dispatchers'] as Record<string, unknown>[])
+    .filter((dispatcher) => dispatcher['id'] !== answers.dispatcherId);
+  dispatchers.push(dispatcherFileShapeFromAnswers(
+    answers,
+    existingDispatcher?.workspace ?? { enabled: true },
+  ));
+  const agentsById = new Map<string, Record<string, unknown>>();
+  for (const agent of shape['agents'] as Record<string, unknown>[]) {
+    agentsById.set(String(agent['id']), agent);
   }
-  for (const dispatcher of dispatchers) {
-    const rawConfig = cloneOptionalProviderConfig(dispatcher.runtime.rawConfig);
-    agents[dispatcher.agentRuntime] = {
-      provider: dispatcher.runtime.provider,
-      config: cloneProviderConfig(dispatcher.runtime.config),
-      ...(rawConfig === undefined ? {} : { rawConfig }),
-    };
-  }
-  const next: DreamuxConfig = {
-    agents,
+  agentsById.set(answers.agentRuntime.id, {
+    id: answers.agentRuntime.id,
+    provider: answers.agentRuntime.provider,
+    config: structuredClone(answers.agentRuntime.config),
+  });
+  return {
+    agents: [...agentsById.values()],
     dispatchers,
   };
-  return next;
 }
 
-function dispatcherConfigFromAnswers(
+function dispatcherFileShapeFromAnswers(
   answers: OnboardAnswers,
-  workspace: DispatcherConfig['workspace'],
-): DispatcherConfig {
+  workspace: { enabled: boolean },
+): Record<string, unknown> {
   return {
     id: answers.dispatcherId,
     cwd: answers.dispatcherCwd,
@@ -77,58 +48,8 @@ function dispatcherConfigFromAnswers(
     channels: answers.channels.map((channel) => ({
       id: channel.id,
       provider: channel.provider,
-      collaborationSpace: defaultChannelCollaborationSpaceConfig(),
-      config: cloneProviderConfig(channel.config),
-      rawConfig: cloneProviderConfig(channel.config),
+      config: structuredClone(channel.config),
     })),
     agentRuntime: answers.agentRuntime.id,
-    runtime: {
-      provider: answers.agentRuntime.provider,
-      config: cloneProviderConfig(answers.agentRuntime.config),
-      rawConfig: cloneProviderConfig(answers.agentRuntime.config),
-    },
   };
-}
-
-function cloneDispatcherConfig(dispatcher: DispatcherConfig): DispatcherConfig {
-  return {
-    id: dispatcher.id,
-    cwd: dispatcher.cwd,
-    enabled: dispatcher.enabled,
-    workspace: { enabled: dispatcher.workspace.enabled },
-    channels: dispatcher.channels.map((channel) => ({
-      id: channel.id,
-      provider: channel.provider,
-      collaborationSpace: cloneCollaborationSpaceConfig(channel.collaborationSpace),
-      config: cloneProviderConfig(channel.config),
-      ...(channel.rawConfig === undefined
-        ? {}
-        : { rawConfig: cloneProviderConfig(channel.rawConfig) }),
-    })),
-    agentRuntime: dispatcher.agentRuntime,
-    runtime: {
-      provider: dispatcher.runtime.provider,
-      config: cloneProviderConfig(dispatcher.runtime.config),
-      ...(dispatcher.runtime.rawConfig === undefined
-        ? {}
-        : { rawConfig: cloneProviderConfig(dispatcher.runtime.rawConfig) }),
-    },
-  };
-}
-
-function cloneCollaborationSpaceConfig(
-  config: DispatcherConfig['channels'][number]['collaborationSpace'],
-): DispatcherConfig['channels'][number]['collaborationSpace'] {
-  return structuredClone(config ?? defaultChannelCollaborationSpaceConfig());
-}
-
-function cloneProviderConfig(config: unknown): DispatcherProviderConfig {
-  return structuredClone(config) as DispatcherProviderConfig;
-}
-
-function cloneOptionalProviderConfig(
-  config: DispatcherProviderConfig | undefined,
-): DispatcherProviderConfig | undefined {
-  if (config === undefined) return undefined;
-  return cloneProviderConfig(config);
 }

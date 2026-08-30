@@ -3,9 +3,10 @@
 This is the current ownership map for Dreamux local files. It is a reference
 page, not a decision record. For rationale, follow the linked decisions.
 
-Path builders belong in `/packages/dreamux/src/platform/paths.ts`; volatile
-runtime socket allocation belongs in
-`/packages/dreamux/src/platform/runtime-sockets.ts`.
+Filesystem path builders belong in `/packages/dreamux/src/platform/paths.ts`;
+managed-service executable `PATH` composition belongs in
+`/packages/dreamux/src/platform/service-path.ts`; volatile runtime socket
+allocation belongs in `/packages/dreamux/src/platform/runtime-sockets.ts`.
 
 ## Operator Config
 
@@ -196,7 +197,7 @@ or launchd plist with an explicit `PATH` environment. The same effective PATH
 resolves bare provider/agent binaries during service installation.
 
 Order, built by `buildServicePath()` in
-`/packages/dreamux/src/platform/paths.ts` (the single source of truth):
+`/packages/dreamux/src/platform/service-path.ts` (the single source of truth):
 
 1. Stable Dreamux-owned dirs: selected Node bin dir, resolved provider bin dirs,
    dreamux bin dir.
@@ -216,8 +217,8 @@ Dreamux-supplied fallback.
 
 `withServicePath(env, input)` returns a copy of `env` with `PATH` set to
 `buildServicePath(input)`; it never mutates the caller's env or `process.env`.
-`env`/`homeDir`/`platform` are passed explicitly by callers — the path builders
-never read `process.env`.
+`env`/`homeDir`/`platform` are passed explicitly by callers — the service PATH
+helpers never read `process.env`.
 
 The callers (`runOnboard` in `onboard/run.ts` and `runDaemonInstall` in
 `daemon/install.ts`) resolve the *effective* values before persisting them into
@@ -238,9 +239,9 @@ dirs and delegates to `buildServicePath()`. Both share the single source.
 
 Key source:
 
-- `/packages/dreamux/src/platform/paths.ts` (`buildServicePath`,
+- `/packages/dreamux/src/platform/service-path.ts` (`buildServicePath`,
   `withServicePath`, `standardExecDirs`, `probeStandardExecDirs`, `userLocalBinDirs`,
-  `systemExecDirs`, `dedupeExecDirs`)
+  `systemExecDirs`)
 - `/packages/dreamux/src/onboard/service.ts` (`managedServicePath`,
   `managedServiceEnvironment`, `withUserLocalBinPath`,
   `resolveServiceExecutable`)
@@ -262,6 +263,42 @@ Key source:
 
 - `/packages/dreamux/src/onboard/service.ts`
 - `/packages/dreamux/src/onboard/ledger.ts`
+
+## Provider Plugins
+
+`~/.dreamux/plugins/` is Dreamux-owned, persistent, rebuildable installed
+content for external `npm:` provider refs. It is not dispatcher state, volatile
+run data, or provider-owned cache.
+
+Each package has one encoded path segment with `metadata.json`, immutable
+`versions/<version>/` generations, and non-importable `staging/<install>/`
+directories. Generations are imported only through their local
+`dreamux-import.mjs` bridge from the exact generation captured by the
+config-level load session. `metadata.json` remains version 1 and records
+`selected_version`, optional `candidate_version`, `last_check_completed_at`,
+and optional `last_check_error`; missing candidate/error fields from older v1
+documents default to null. A selected version is written only after a complete
+strict provider/config load succeeds. Background updates publish only
+candidates and never import provider code.
+
+`dreamux serve`, final `dreamux onboard`, and `dreamux daemon install` may
+materialize missing packages during strict load; their `--dry-run` modes perform
+installed-only no-write checks and fail explicitly for referenced missing npm
+providers. Pre-merge onboard preservation reads only the raw host envelope.
+`dreamux doctor` performs installed-only inspection, reports unavailable plugins
+plus the last update error, and still runs diagnostics for available
+declarations; `dreamux uninstall` removes the plugin root without loading
+providers, after canonical path checks protect
+HOME/cwd and operator Codex/Claude state from symlink-prefixed recursive
+deletion targets. Each install attempt cleans its own staging directory, and a
+later install prunes only package-local staging directories older than 24 hours;
+published generations are retained.
+
+Key source:
+
+- `/packages/dreamux/src/platform/paths.ts`
+- `/packages/dreamux/src/registry/provider-plugin-store.ts`
+- `/packages/dreamux/src/config/provider-plugin-loading.ts`
 
 ## Cache And Logs
 

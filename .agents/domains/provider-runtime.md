@@ -29,9 +29,19 @@ The host package, `@excitedjs/dreamux`, depends on the built-in provider
 packages so a default install keeps the built-in path. Provider packages depend
 on `@excitedjs/dreamux-types` and must not depend on `@excitedjs/dreamux`.
 
+External `npm:` refs are not ambient Node imports. Strict config loading routes
+them through one Dreamux-owned local plugin-store load session, captures one
+exact generation per package for the whole attempt, and imports runtime and
+channel providers from that immutable generation. Loading fails loud when no
+generation-local importer is available. Builtin refs bypass the plugin store and
+keep resolving to packages shipped with Dreamux.
+
 Source:
 
 - `/packages/dreamux/src/registry/builtins.ts`
+- `/packages/dreamux/src/registry/provider-loader.ts`
+- `/packages/dreamux/src/registry/provider-plugin-store.ts`
+- `/packages/dreamux/src/config/provider-plugin-loading.ts`
 - `/packages/dreamux/tests/package-boundary-guards.test.ts`
 - `/packages/dreamux/package.json`
 - `/packages/agent-runtime/codex/package.json`
@@ -104,8 +114,98 @@ Source:
 
 - `/packages/dreamux/src/config/config.ts`
 - `/packages/dreamux/src/config/config-helpers.ts`
+- `/packages/dreamux/src/config/provider-plugin-loading.ts`
 - `/packages/dreamux/src/agent-runtime/external-provider.ts`
 - `/packages/dreamux/src/channel/external-channel-provider.ts`
+
+## External NPM Plugin Store
+
+`npm:<package>[#export]` provider refs use `~/.dreamux/plugins/`, a
+Dreamux-owned persistent but rebuildable store. Each package has metadata, an
+immutable `versions/<version>/` generation, and non-importable staging dirs.
+The store prepares one package once per strict load session across Agent Runtime
+and Channel refs, verifies the installed package identity/version, writes
+`package-lock.json`, and imports through the exact generation captured by that
+session. The generation-local `dreamux-import.mjs` bridge ensures Node import
+conditions are resolved from inside that generation.
+
+The generic provider loader remains kind-neutral. It resolves builtin refs to
+bundled packages and uses the ordinary importer only for those builtin/test
+paths. For `npm:` refs it requires an explicit generation-local
+`importNpmModule`; without one, loading fails loud instead of falling back to an
+ambient package that happens to be resolvable from the Dreamux process.
+
+Metadata is owned by `JsonDocumentStore` with warn-and-rebuild corruption
+policy. Version-1 metadata records `selected_version`, optional
+`candidate_version`, `last_check_completed_at`, and optional
+`last_check_error`; older v1 documents without the candidate/error fields parse
+with null defaults. `selected_version` means a complete provider factory,
+contract, and provider `readConfig` strict load succeeded. A selected complete
+generation starts offline without querying npm.
+
+The running server starts one single-flight updater after `Server.start()`;
+persisted check timestamps enforce the four-hour interval across restarts. The
+updater resolves npm `latest`, publishes/reuses an immutable generation, and
+records only `candidate_version`; it never imports provider code or changes
+`selected_version`. Background lookup/install failures are logged, preserve
+selected and candidate generations, record the settled check time, and expose
+`last_check_error` through doctor. Aborting shutdown records neither time nor
+error.
+
+Strict materializing loads prefer a candidate, otherwise selected, otherwise
+perform first-use npm lookup/install. They commit candidates only after the
+whole provider/config attempt succeeds. If a candidate-backed serve or daemon
+load fails but every package still has a selected generation, config loading
+rejects that candidate pointer and retries once with a fresh selected-only
+registry/config snapshot, surfacing the rejection warning. First-use failures
+with no selected generation fail loud and retry immediately on the next explicit
+start; the four-hour gate constrains only the background updater.
+
+Inspection is a separate no-write API. It returns declaration-level
+available/unavailable plugin diagnostics and never fabricates provider
+implementations or a pseudo `DreamuxConfig`. Doctor imports selected
+generations only for available declarations and continues their diagnostics
+while reporting unavailable refs explicitly.
+
+Command modes:
+
+- `serve`, post-write `onboard`, and `daemon install` use strict materializing
+  load. First materialization blocks config loading and startup; serve/daemon
+  may apply the selected-only fallback for a rejected update candidate.
+- `onboard --dry-run` and `daemon install --dry-run` use installed-only
+  no-write loading. They do not materialize, run npm, or create plugin-store
+  files; a referenced missing `npm:` provider is reported as an explicit
+  dry-run diagnostic/error.
+- Pre-merge `onboard` reads only the host-owned raw envelope for preservation
+  and merge, so dry runs and reruns over a missing old `npm:` provider do not
+  mutate the plugin store or publish an unresolved `DreamuxConfig`.
+- `doctor` uses installed-only inspection and reports missing/unusable plugins
+  plus persisted update errors without synthesizing runnable providers; available
+  declarations still run provider diagnostics.
+- `uninstall` uses the config-owned raw inspection path in warning-only mode;
+  it never loads or installs providers and removes `~/.dreamux` plus any
+  external config directory as containment-aware targets. Recursive deletion
+  targets are checked through the platform canonical-path capability so
+  symlink-prefixed paths cannot physically overlap HOME/cwd protections or
+  operator Codex/Claude state.
+- Builtin refs perform zero plugin-store calls in every mode.
+
+Source:
+
+- `/packages/dreamux/src/registry/provider-plugin-store.ts`
+- `/packages/dreamux/src/registry/provider-loader.ts`
+- `/packages/dreamux/src/config/provider-plugin-loading.ts`
+- `/packages/dreamux/src/config/raw-envelope.ts`
+- `/packages/dreamux/src/config/raw-inspection.ts`
+- `/packages/dreamux/src/cli/server.ts`
+- `/packages/dreamux/src/cli/doctor.ts`
+- `/packages/dreamux/src/onboard/run.ts`
+- `/packages/dreamux/src/onboard/uninstall.ts`
+- `/packages/dreamux/src/daemon/install.ts`
+- `/packages/dreamux/tests/provider-plugin-store.test.ts`
+- `/packages/dreamux/tests/global-config.test.ts`
+- `/packages/dreamux/tests/doctor.test.ts`
+- `/packages/dreamux/tests/uninstall.test.ts`
 
 ## Runtime Create Context
 
