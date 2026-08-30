@@ -30,6 +30,24 @@ describe('buildCompletionTurnText', () => {
   });
 
   it.each([
+    ['failed', "TeamMate worker's task failed."],
+    ['stopped', "TeamMate worker's task was stopped."],
+  ] as const)(
+    'renders a %s completion with a null result (no native text) as an empty inline body',
+    async (status, line) => {
+      // turn-recording.ts always builds a failed/stopped PreparedCompletionFact
+      // with `result: null` — there was no native result to carry. This must
+      // stay inline (never spilled) and never crash on the missing text.
+      const text = await buildCompletionTurnText(
+        teammateCompletion(status, null),
+        temporarySpillDir(),
+      );
+
+      expect(text).toBe(`${line} Output below:\n\n`);
+    },
+  );
+
+  it.each([
     ['completed', 'Workflow report-1 has completed.'],
     ['failed', 'Workflow report-1 failed.'],
     ['stopped', 'Workflow report-1 was stopped.'],
@@ -61,7 +79,7 @@ describe('buildCompletionTurnText', () => {
 
 function teammateCompletion(
   status: PreparedCompletionFact['status'],
-  result: string,
+  result: string | null,
 ): PreparedCompletionFact {
   return {
     kind: 'teammate',

@@ -19,7 +19,6 @@ import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
 import type { ConversationProjection } from '../../channel/conversation-projection.js';
 import type {
   AgentEntityIdentity,
-  AgentEntityWorktreeIdentity,
 } from '../agent-entity/types.js';
 import {
   createTeammateService,
@@ -31,7 +30,7 @@ import {
 import type { TeammateService } from '../teammate-service/index.js';
 import type { TeammateAgentMcp } from '../teammate-service/types.js';
 import type { TeamRecord } from '../team-collection/types.js';
-import type { WorktreeManager } from '../worktree/manager.js';
+import { reuseCwdWorktree, type WorktreeManager } from '../worktree/manager.js';
 
 export interface TeamLeaderAgentDeps {
   dispatcherId: string;
@@ -115,7 +114,6 @@ export interface TeamLeaderCreationInput {
   sourceCwd: string;
   sourceRepo: string | null;
   runtimeCwd: string;
-  worktree: AgentEntityWorktreeIdentity;
   intent: string | null;
   identityPrompt: string | null;
   skillSources?: readonly AgentRuntimeSkillSource[];
@@ -125,8 +123,8 @@ export interface TeamLeaderCreationInput {
  * The Team-owned half of {@link TeamLeaderForTeamDeps}: what every leader a
  * Team creates or restores is built from, spelled once.
  */
-export function teamLeaderAgentBase<Service>(input: {
-  deps: TeamServiceDeps<Service>;
+export function teamLeaderAgentBase(input: {
+  deps: TeamServiceDeps;
   teamId: string;
   identities: AgentIdentityStore;
 }): Omit<TeamLeaderForTeamDeps, 'identity'> {
@@ -171,7 +169,9 @@ export async function createTeamLeaderAgentForTeam(
     sourceRepo: creation.sourceRepo,
     cwd: creation.runtimeCwd,
     runtimeCwd: creation.runtimeCwd,
-    worktree: creation.worktree,
+    // A leader runs in its Team's directory; the Team's record owns the
+    // checkout underneath it and every cleanup fact about it.
+    worktree: reuseCwdWorktree(creation.runtimeCwd),
     intent: creation.intent,
     identityPrompt: creation.identityPrompt,
     ...(creation.skillSources !== undefined
@@ -220,6 +220,29 @@ function teamLeaderSystemPrompt(
   ];
   if (identityPrompt !== null) append.push(identityPrompt);
   return { append };
+}
+
+/**
+ * Materialize an open Team's leader from the identity at its root.
+ *
+ * A Team *has* a leader — the durable identity — and separately holds an object
+ * currently speaking for it. When it is holding none, this reads the identity
+ * back and proves ownership with the same three facts every other restore uses.
+ * The record is taken exactly as stored, closed status included: nothing here
+ * rewrites an identity or starts a runtime, because materializing a leader is
+ * what a Team does before the ordinary path starts it, not instead of that.
+ */
+export async function leaderForOpenTeam(
+  deps: Omit<TeamLeaderForTeamDeps, 'identity'> & { record: TeamRecord },
+): Promise<TeammateService> {
+  const { record, ...rest } = deps;
+  const identity = await deps.identities.read();
+  if (identity === null || !alignedWithLeader(identity, record)) {
+    throw new Error(
+      `Team ${JSON.stringify(record.team_id)} has no aligned TeamLeader identity`,
+    );
+  }
+  return restoreTeamLeaderAgentForTeam({ ...rest, identity });
 }
 
 /**

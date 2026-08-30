@@ -11,6 +11,8 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
+import { ValidationError } from '../../command/errors.js';
+import { optionalString, type CommandPayload } from '../../command/payload.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { AgentNameRegistry } from '../agent-entity/identity-store.js';
 import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
@@ -49,9 +51,7 @@ export interface TeamCollectionOptions {
    * the recipient it knows rather than deriving one from the producing record.
    */
   dispatcherCompletionInitiator: () => Promise<CompletionInitiator | null>;
-  isShuttingDown: () => boolean;
   admitOperation?: <T>(task: () => Promise<T>) => Promise<T>;
-  trackAcceptedOperation?: <T>(task: () => Promise<T>) => Promise<T>;
   /**
    * Build one TeamLeader's Agent-facing MCP surface.
    *
@@ -79,53 +79,6 @@ export type TeamStatus = 'starting' | 'running' | 'closed';
 export type TeamDissolveRequesterKind =
   | 'dispatcher'
   | 'team_leader';
-
-/**
- * Where an accepted dissolve currently is.
- *
- * There is no idle phase. A dissolve is a destructive stop-and-reclaim: its
- * first runtime act is to fence admission and stop the runtimes, never to wait
- * for a turn to end on its own. `blocked_after_stop` is the one phase that
- * ends an operation without closing the Team — the post-stop recheck found
- * work worth keeping, so the operation is abandoned and ordinary admission
- * reopens over stopped children that reopen lazily like any other.
- */
-export type TeamDissolvePhase =
-  | 'stopping_runtimes'
-  | 'closing_resources'
-  | 'worktree_cleanup_pending'
-  | 'complete'
-  | 'failed'
-  | 'blocked_after_stop';
-
-export type TeamDissolvePublicError =
-  | 'worktree-dirty'
-  | 'worktree-unmerged'
-  | 'worktree-unique-commits'
-  | 'worktree-assessment-failed'
-  | 'resource-close-failed'
-  | 'worktree-cleanup-failed';
-
-/** Server-owned durable lifecycle fact for one accepted Team dissolve. */
-export interface TeamDissolveRecord {
-  operation_id: string;
-  requester_kind: TeamDissolveRequesterKind;
-  /** Descriptor-bound generation for TeamLeader self-dissolve. */
-  leader_name: string | null;
-  /**
-   * The caller's explicit authorization to discard uncommitted, untracked, or
-   * unmerged work in this Team's own managed worktree. It is recorded because
-   * a background cleanup that resumes after a restart must destroy exactly
-   * what the operator authorized, not what a later reader assumes.
-   */
-  force: boolean;
-  note: string;
-  accepted_at: number;
-  phase: TeamDissolvePhase;
-  last_error: TeamDissolvePublicError | null;
-  cleanup_attempts: number;
-  next_retry_at: number | null;
-}
 
 export interface TeamRecord {
   version: 1;
@@ -167,8 +120,17 @@ export interface TeamRecord {
    */
   create_request_id: string | null;
   create_payload_hash: string | null;
-  /** Missing on older additive records and normalized to null by TeamStore. */
-  dissolve: TeamDissolveRecord | null;
+  /**
+   * Authorization to discard uncommitted, untracked, or unmerged work while
+   * reclaiming this Team's own managed worktree.
+   *
+   * It exists for exactly as long as that physical reclamation is still owed: a
+   * cleanup that resumes after a restart must destroy what the caller
+   * authorized, not what a later reader assumes. It is written only alongside a
+   * `cleanup-pending` worktree and cleared the moment that state is terminal,
+   * so a Team with nothing left to reclaim always reads `false`.
+   */
+  worktree_cleanup_force: boolean;
 }
 
 /** One accepted `team.create` request, as stored in the Team record. */
@@ -226,51 +188,26 @@ export interface TeamDissolveInput {
   force?: boolean;
 }
 
-export type TeamDissolveRequester =
-  | { kind: 'dispatcher' }
-  | { kind: 'team_leader'; leaderName: string };
-
-export interface TeamDissolveRequest extends TeamDissolveInput {
-  requester: TeamDissolveRequester;
-}
-
 /**
- * What a settled dissolve reports.
+ * What a dissolve submission reports.
  *
- * `accepted` and `status` are not two stages of one answer. A caller reaches
- * this only after the operation reached durable logical close, so both are
- * true at once. Reclaiming the managed checkout continues behind the answer
- * and cannot change it; a dissolve that is refused or fails throws instead of
- * returning a receipt.
+ * Submitted, not settled: the caller is answered as soon as the Team owns the
+ * one background operation that will stop it, close it, and reclaim its
+ * checkout. Nothing that happens afterwards revises this receipt — a background
+ * refusal leaves the Team open and is logged, so a caller learns the outcome by
+ * reading the Team, not by waiting here.
  */
 export interface TeamDissolveReceipt {
   accepted: true;
   team_name: string;
-  status: 'closed';
+  status: 'submitted';
 }
 
-/** Internal handle. Every caller-facing surface projects only its receipt. */
-export interface AcceptedTeamDissolve {
-  operationId: string;
-  receipt: TeamDissolveReceipt;
-  /**
-   * Settles when this operation's logical close is durable: the post-stop
-   * worktree check passed, every child runtime has exited, and the Team
-   * record is closed. Reclaiming the checkout happens after it and is never
-   * awaited here. A caller that joins an operation somebody else accepted
-   * waits on that same milestone, and one that joins after it settled reads
-   * the settled result.
-   */
-  logicalClosed: Promise<TeamSummary>;
-}
-
-/** Input consumed by the Team resource-close half of an accepted dissolve. */
-export interface AcceptedTeamLogicalClose {
-  operationId: string;
-  teamId: string;
+/** What one Team is asked to dissolve itself with, once the caller is known. */
+export interface TeamDissolveCommand {
   note: string;
-  dissolve: TeamDissolveRecord;
-  worktree: AgentEntityWorktreeIdentity;
+  force: boolean;
+  requester: TeamDissolveRequesterKind;
 }
 
 /**
@@ -291,10 +228,7 @@ export interface TeamView {
   updated_at: number;
   closed_at: number | null;
   close_note: string | null;
-  dissolve_phase: TeamDissolvePhase | null;
-  dissolve_accepted_at: number | null;
   worktree_cleanup: AgentEntityWorktreeIdentity['cleanup_state'];
-  dissolve_error: TeamDissolvePublicError | null;
 }
 
 export interface TeamSummary {
@@ -319,10 +253,7 @@ export interface TeamListRow {
   created_at: number;
   updated_at: number;
   closed_at: number | null;
-  dissolve_phase: TeamDissolvePhase | null;
-  dissolve_accepted_at: number | null;
   worktree_cleanup: AgentEntityWorktreeIdentity['cleanup_state'];
-  dissolve_error: TeamDissolvePublicError | null;
 }
 
 /**
@@ -365,10 +296,7 @@ export interface TeamHistoryRow {
   closed_at: number | null;
   close_note: string | null;
   close_note_preview: string | null;
-  dissolve_phase: TeamDissolvePhase | null;
-  dissolve_accepted_at: number | null;
   worktree_cleanup: AgentEntityWorktreeIdentity['cleanup_state'];
-  dissolve_error: TeamDissolvePublicError | null;
 }
 
 export interface TeamHistoryResult {
@@ -385,9 +313,15 @@ export interface TeamCreateResult extends TeamSummary {
   error?: string;
 }
 
-export interface TeamLeaderLease {
-  teamId: string;
-  leaderName: string;
+/** Read an optional Team status filter, in this domain's own vocabulary. */
+export function optionalTeamStatus(
+  params: CommandPayload,
+  key: string,
+): TeamStatus | null {
+  const value = optionalString(params, key);
+  if (value === null) return null;
+  if (value === 'starting' || value === 'running' || value === 'closed') return value;
+  throw new ValidationError(`param '${key}' must be starting, running, or closed`);
 }
 
 export function validateTeamId(id: string): string {

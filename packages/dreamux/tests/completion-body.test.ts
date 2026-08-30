@@ -32,6 +32,15 @@ describe('resolveCompletionBody', () => {
     rmSync(spillDir, { recursive: true, force: true });
   });
 
+  it('inlines a null result (a FAILED/STOPPED completion fact) as empty text, never spilled', async () => {
+    // turn-recording.ts builds every failed/stopped PreparedCompletionFact with
+    // `result: null` (there is no native text to carry). This is the shape the
+    // null-token completion-delivery path actually feeds into.
+    const body = await resolveCompletionBody({ result: null }, spillDir);
+    expect(body).toEqual({ kind: 'inline', text: '' });
+    await expect(stat(spillDir)).rejects.toThrow();
+  });
+
   it('inlines a result within the budget', async () => {
     const body = await resolveCompletionBody(completion('short result'), spillDir);
     expect(body).toEqual({ kind: 'inline', text: 'short result' });

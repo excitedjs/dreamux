@@ -51,7 +51,14 @@ export interface TeammateServiceDeps {
   log: DreamuxLogger;
 }
 
-export type EntityPhase = 'active' | 'closing' | 'closedHeld' | 'retired';
+/**
+ * Where one entity is in its own lifecycle.
+ *
+ * Three states, because there are three: taking work, converging on closed, and
+ * durably closed. "Held closed by a Workflow" is not a fourth — it is `closed`
+ * plus a lock, and the lock already says so.
+ */
+export type EntityPhase = 'active' | 'closing' | 'closed';
 
 export interface TeammateClosedFact {
   readonly schema_version: 1;

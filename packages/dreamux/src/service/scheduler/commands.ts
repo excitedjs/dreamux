@@ -20,7 +20,6 @@ import {
   mustNonEmptyString,
   mustString,
   optionalBooleanField,
-  optionalNullableRecordField,
   optionalNullableStringField,
   optionalRecordField,
   optionalString,
@@ -31,7 +30,6 @@ import { DreamuxError, errorMessage } from '../../command/errors.js';
 import {
   BOOLEAN,
   NON_EMPTY_STRING,
-  NULLABLE_OBJECT,
   NULLABLE_STRING,
   OBJECT,
   STRING,
@@ -117,7 +115,6 @@ export function schedulerCommands(
         recurring: BOOLEAN,
         tz: STRING,
         action: OBJECT,
-        deliver: OBJECT,
       },
       ['cron', 'prompt'],
     ),
@@ -133,7 +130,6 @@ export function schedulerCommands(
           ...optionalBooleanField(params, 'recurring'),
           ...optionalStringField(params, 'tz'),
           ...optionalRecordField(params, 'action'),
-          ...optionalRecordField(params, 'deliver'),
         },
       };
     },
@@ -155,7 +151,6 @@ export function schedulerCommands(
         recurring: BOOLEAN,
         tz: STRING,
         action: OBJECT,
-        deliver: NULLABLE_OBJECT,
         enabled: BOOLEAN,
       },
       ['id'],
@@ -173,7 +168,6 @@ export function schedulerCommands(
           ...optionalBooleanField(params, 'recurring'),
           ...optionalStringField(params, 'tz'),
           ...optionalRecordField(params, 'action'),
-          ...optionalNullableRecordField(params, 'deliver'),
           ...optionalBooleanField(params, 'enabled'),
         },
       };

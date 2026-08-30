@@ -54,7 +54,7 @@ export function dispatcherAgentMcpDelegates(
 /**
  * One TeamLeader's servers.
  *
- * Every one of them is bound to this Team and this leader generation. Nothing
+ * Every one of them is bound to this one Team. Nothing
  * the model sends can widen that: the Team surface takes no `team_name`, the
  * TeamMate surface resolves this Team's own handle, and cron reaches this
  * Team's own scheduler.
@@ -70,10 +70,10 @@ export function teamLeaderMcpDelegates(
   };
   return [
     ...channelDelegates(input, caller, (task) =>
-      // A leader's channel call also takes its Team lease: the runtime-generation
-      // lease fences a replaced runtime, but only the Team lease serializes
-      // against an in-flight dissolve.
-      input.dispatcher.runForTeamLeader({ teamId, leaderName }, task),
+      // A leader's channel call also enters its Team's work fence: the
+      // runtime-generation lease fences a replaced runtime, but only the Team
+      // fence serializes against an in-flight dissolve.
+      input.dispatcher.runForTeamLeader(teamId, task),
     ),
     createTeamMcpDelegate({
       dispatcher: input.dispatcher,

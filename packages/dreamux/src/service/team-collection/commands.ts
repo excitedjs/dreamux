@@ -30,23 +30,26 @@ import {
   toDreamuxError,
 } from '../../command/errors.js';
 import {
-  REPO_REQUEST_SCHEMA,
+  normalizeSkillSources,
+  optionalParsedSkillSources,
+} from '../../agent-runtime/skill-sources.js';
+import {
   commandPayload,
   mustNonBlankString,
   mustNonEmptyString,
   mustRecord,
   mustString,
-  normalizeSkillSources,
   optionalBooleanField,
   optionalInteger,
   optionalNonBlankString,
-  optionalParsedSkillSources,
   optionalString,
-  optionalTeamStatus,
-  repoRequest,
-  repoWorktree,
   type CommandPayload,
 } from '../../command/payload.js';
+import {
+  REPO_REQUEST_SCHEMA,
+  repoRequest,
+  repoWorktree,
+} from '../worktree/repo-request.js';
 import {
   BOOLEAN,
   INTEGER,
@@ -69,7 +72,7 @@ import {
   teamCreatePayloadHash,
 } from './create-request.js';
 import { teamSubmitResult } from './projections.js';
-import { validateTeamId } from './types.js';
+import { optionalTeamStatus, validateTeamId } from './types.js';
 
 /**
  * The maximum length of a caller-chosen `source_id`. Core deduplicates with it

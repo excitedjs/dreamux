@@ -161,6 +161,7 @@ export class FeishuChannelSession {
     this.bindings = new FeishuBindingOperations({
       routing: this.routing,
       cot: this.cot,
+      invoke: (command, payload) => this.invoke(command, payload),
       notify: (target, card, anchorTeamName) =>
         this.notify(target, card, anchorTeamName),
     });

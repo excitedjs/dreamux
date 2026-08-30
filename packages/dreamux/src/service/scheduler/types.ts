@@ -2,11 +2,7 @@ import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import type { InboundDeliveryResult } from '../teammate-service/turn-recording.js';
 
-import type {
-  CronDeliverTarget,
-  CronJob,
-  CronJobStore,
-} from './store.js';
+import type { CronJob, CronJobStore } from './store.js';
 
 export interface CronCreateRequest {
   cron: string;
@@ -15,7 +11,6 @@ export interface CronCreateRequest {
   recurring?: boolean;
   tz?: string;
   action?: Record<string, unknown>;
-  deliver?: CronDeliverTarget;
 }
 
 export interface CronUpdateRequest {
@@ -26,7 +21,6 @@ export interface CronUpdateRequest {
   recurring?: boolean;
   tz?: string;
   action?: Record<string, unknown>;
-  deliver?: CronDeliverTarget | null;
   enabled?: boolean;
 }
 

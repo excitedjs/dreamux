@@ -255,22 +255,6 @@ async function defaultImportModule(
 }
 
 /**
- * Shared structural check: the loaded value is a provider object whose `ref`
- * matches the ref Dreamux asked the package to implement.
- */
-export function assertLoadedProviderObject(
-  value: unknown,
-  context: ProviderContractContext,
-): asserts value is { ref: string; descriptor?: unknown } {
-  if (!isRecord(value)) {
-    context.fail('factory must return a provider object');
-  }
-  if ((value as { ref?: unknown }).ref !== context.ref) {
-    context.fail(`provider.ref must be ${JSON.stringify(context.ref)}`);
-  }
-}
-
-/**
  * Shared structural check for `provider.descriptor`: present, correct kind,
  * seed id, and a ref matching the requested ref.
  */

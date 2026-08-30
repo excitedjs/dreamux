@@ -50,9 +50,6 @@ export function testDispatcherConfig(
         {
           id: options.channelId ?? 'primary',
           provider: options.channelProvider ?? BUILTIN_FEISHU_PROVIDER_REF,
-          collaborationSpace: {
-            defaultBinding: { enabled: false, repo: null, identity: null },
-          },
           config: defaultChannelConfig,
           // Mirror the feishu provider's getIdentity (`config.app_id`) so a store
           // built directly from this fixture seeds the same `channel_identity`
@@ -118,7 +115,6 @@ export interface TestFileDispatcher {
   feishu?: { app_id: string; app_secret: string };
   channelId?: string;
   channelProvider?: string;
-  collaborationSpace?: Record<string, unknown>;
   workspace?: Record<string, unknown>;
 }
 
@@ -151,9 +147,6 @@ export function testConfigFileObject(input: {
         {
           id: dispatcher.channelId ?? 'primary',
           provider: dispatcher.channelProvider ?? BUILTIN_FEISHU_PROVIDER_REF,
-          ...(dispatcher.collaborationSpace !== undefined
-            ? { collaborationSpace: dispatcher.collaborationSpace }
-            : {}),
           config: dispatcher.feishu ?? {
             app_id: `app-${dispatcher.id}`,
             app_secret: `secret-${dispatcher.id}`,

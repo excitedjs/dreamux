@@ -923,6 +923,50 @@ describe('dreamux onboard', () => {
     expect(config.dispatchers[0]?.runtime).toEqual(config.agents['flow']);
   });
 
+  /**
+   * `runOnboard()` writes a real config.json naming `builtin:feishu`, then
+   * reads it back through the exact same `loadConfig({ configDir })` call
+   * `dreamux onboard` / server startup uses in production — `runOnboard`
+   * takes no `providerRegistry` override, so this exercises the real
+   * channel-provider loader against the real `@excitedjs/feishu-channel`
+   * package, with no test seam routing around it.
+   *
+   * `createFeishuChannelProvider` returns a provider carrying no `ref` and no
+   * `descriptor` member, because the `ChannelProvider<TConfig>` contract in
+   * `@excitedjs/dreamux-types` (`packages/dreamux-types/src/channel.ts`)
+   * omits both by construction — "Registration identity is absent by
+   * construction" — Core keeps the sole authoritative descriptor, parsed from
+   * the configured ref, beside the implementation it registered. So
+   * `assertChannelProvider` validates capability shape only, the same way the
+   * sibling `assertExternalAgentRuntimeProvider`
+   * (`src/agent-runtime/external-provider.ts`) does. Round-tripping the
+   * config onboard just wrote is what proves that whole path holds.
+   */
+  it('onboard writes a real builtin:feishu channel that loadConfig should accept', async () => {
+    const runner = new FakeRunner();
+    const configDir = join(root, 'config');
+    const answers = testAnswers({
+      configDir,
+      dispatcherId: 'flow',
+      registerService: false,
+      channels: [feishuOnboardChannel('app-defect', 'secret-defect')],
+    });
+    writeGlobalCodexAuth(answers);
+
+    await runOnboard({
+      answers,
+      runner,
+      platform: 'linux',
+      homeDir: join(root, 'home'),
+      env: {},
+    });
+
+    // The config `runOnboard` just wrote round-trips through the same
+    // production `loadConfig()` call, loading the real ref-less Feishu
+    // provider through the real channel loader.
+    await expect(loadConfig({ configDir })).resolves.toBeDefined();
+  });
+
   it('fails non-interactive setup when required channel inputs are missing', async () => {
     const options: OnboardCliOptions = {
       yes: true,

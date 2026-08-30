@@ -76,19 +76,33 @@ export class CompletionDeliveryPolicy {
     }
   }
 
+  /** Deliver a Core-owned fact that no provider settlement produced. */
   async deliver(
     initiator: CompletionInitiator,
     completion: PreparedCompletionFact,
   ): Promise<void> {
-    await this.deliverPrepared(initiator, completion);
+    await this.deliverRuntime(initiator, null, completion);
   }
 
+  /**
+   * Deliver one settled turn, folding on the provider token when there is one.
+   *
+   * A native completion is a value several paths can report; the token is its
+   * identity, so the same settlement reaches a recipient once. A turn that
+   * failed or was stopped produced no such value — there is nothing to fold, and
+   * a fabricated identity would only make two distinct settlements look like
+   * one. Both forms queue on the same per-recipient tail, so a recipient reads
+   * its news in the order the turns settled.
+   */
   deliverRuntime(
     initiator: CompletionInitiator,
-    token: RuntimeCompletion,
+    token: RuntimeCompletion | null,
     completion: PreparedCompletionFact,
   ): Promise<void> {
     const recipientKey = initiator.recipientKey ?? initiator;
+    if (token === null) {
+      return this.enqueue(recipientKey, initiator, completion);
+    }
     let completions = this.producerCompletions.get(completion.source);
     if (completions === undefined) {
       completions = new WeakMap();
@@ -102,10 +116,19 @@ export class CompletionDeliveryPolicy {
     const existing = entry.recipients.get(recipientKey);
     if (existing !== undefined) return existing;
 
+    const delivery = this.enqueue(recipientKey, initiator, completion);
+    entry.recipients.set(recipientKey, delivery);
+    return delivery;
+  }
+
+  private enqueue(
+    recipientKey: object,
+    initiator: CompletionInitiator,
+    completion: PreparedCompletionFact,
+  ): Promise<void> {
     const previous = this.recipientTails.get(recipientKey) ?? Promise.resolve();
     const delivery = previous.catch(() => undefined).then(() =>
       this.deliverPrepared(initiator, completion));
-    entry.recipients.set(recipientKey, delivery);
     this.recipientTails.set(recipientKey, delivery);
     return delivery;
   }

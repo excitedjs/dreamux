@@ -23,14 +23,8 @@ import type { TeamMateSharedWorkspace } from '../teammate-collection/types.js';
 import type { TeamStore } from '../team-collection/store.js';
 import type {
   TeamCreateRequestIdentity,
-  TeamLeaderLease,
 } from '../team-collection/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
-
-export interface TeamAvailability {
-  admit<T>(task: () => Promise<T>): Promise<T>;
-  completionInitiator(delegate: CompletionInitiator): CompletionInitiator;
-}
 
 export interface TeamServiceCreateInput {
   teamId: string;
@@ -60,17 +54,15 @@ export interface TeamServiceCreateOutput<Service> {
 }
 
 /**
- * What one Team is built from, stated without naming what a Team is.
+ * What one Team is built from.
  *
- * Three of these are callbacks the owning collection uses to reach back to the
- * service it constructed — taking the lease, tracking it, evicting it. The
- * service is a type parameter rather than the concrete class because this is
- * the lower contract: it is what a Team's owner must supply, and it is consumed
- * by the implementation, so naming that implementation here would make the
- * dependency point upward. The owner binds `Service` at the composition root,
- * where the concrete class is already in hand.
+ * Collaborators and shared dispatcher facts only: nothing here reaches back
+ * into the collection that constructed the Team. A Team is handed what it
+ * needs, does its own work with it, and states what happened by publishing its
+ * own terminal fact — so its owner learns of its end without the Team ever
+ * calling upward into its owner's lifecycle.
  */
-export interface TeamServiceDeps<Service> {
+export interface TeamServiceDeps {
   dispatcherId: string;
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
@@ -88,28 +80,39 @@ export interface TeamServiceDeps<Service> {
   conversationProjection?: ConversationProjection;
   completionDelivery: CompletionDeliveryPolicy;
   /**
-   * Where a completion is delivered, resolved from ownership rather than from
-   * the producing record: this Team's own leader reports to the dispatcher
-   * Agent, and every TeamMate this Team owns reports to this Team's leader.
+   * Where this Team's own leader reports: the dispatcher Agent that owns the
+   * Team. Every TeamMate this Team owns reports to this Team's leader, which
+   * the Team answers for itself.
    */
   leaderCompletionInitiator: () => Promise<CompletionInitiator | null>;
-  teamMateCompletionInitiator: () => Promise<CompletionInitiator | null>;
-  isShuttingDown: () => boolean;
   admitOperation: <T>(task: () => Promise<T>) => Promise<T>;
-  availability: TeamAvailability;
-  withTeamLeaderLease: <T>(
-    lease: TeamLeaderLease,
-    task: (service: Service) => Promise<T>,
-  ) => Promise<T>;
   leaderMcp: (input: {
     teamId: string;
     leaderName: string;
   }) => TeammateAgentMcp;
-  trackMaterialized: (service: Service) => void;
   store: TeamStore;
   agentNameSuffixGenerator?: SuffixGenerator;
   coreEvents?: DispatcherCoreEventPublisher;
-  evict: (service: Service) => void;
   log: DreamuxLogger;
   workflowLog: DreamuxLogger;
+}
+
+/**
+ * One Team is over.
+ *
+ * Published once, after that Team's own record is durably `closed` — the only
+ * fact that makes it true. Its owner drops the exact instance that published
+ * it; nothing else is asked of a listener, and nothing a listener does can
+ * change what already happened.
+ */
+export interface TeamClosedFact {
+  readonly schema_version: 1;
+  readonly kind: 'team.closed';
+  readonly dispatcher_id: string;
+  readonly team_id: string;
+  readonly closed_at: number;
+}
+
+export interface TeamClosedSubscription {
+  unsubscribe(): void;
 }

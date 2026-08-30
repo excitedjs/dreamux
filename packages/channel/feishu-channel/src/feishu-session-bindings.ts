@@ -10,7 +10,10 @@
  * Card delivery is handed in rather than done here: it needs the session's
  * lifecycle fence and bounded-send policy, and this module needs neither.
  */
+import type { JsonValue } from '@excitedjs/dreamux-types';
 import { PublicInvokeFailure } from '@excitedjs/dreamux-utils';
+
+import { commandErrorCode } from './feishu-submit.js';
 
 import {
   bindingBoundCard,
@@ -38,6 +41,8 @@ import type {
 export interface FeishuBindingOperationsOptions {
   readonly routing: FeishuRouting;
   readonly cot: FeishuCotSessionSeam;
+  /** Ask Core a canonical Command, through the neutral in-process port. */
+  invoke(command: string, payload: JsonValue): Promise<JsonValue>;
   /**
    * Send a card into a target, best effort. `anchorTeamName` is the Team whose
    * next presentation may fall back to the sent message.
@@ -66,6 +71,7 @@ export class FeishuBindingOperations {
           'group, or a topic inside one.',
       );
     }
+    await this.requireRoutableTeam(input.teamName);
     const { previousTeamName } = await this.opts.routing.bind({
       target,
       teamName: input.teamName,
@@ -91,6 +97,40 @@ export class FeishuBindingOperations {
       input.teamName,
     );
     return { team_name: input.teamName, previous_team_name: previousTeamName };
+  }
+
+  /**
+   * Refuse to route a conversation to a Team that cannot answer in it.
+   *
+   * Where a message goes is this Channel's own decision, but whether a Team
+   * exists and is open is Core's fact, so it is asked rather than assumed —
+   * before the row is written and before the conversation is told, since a
+   * binding card naming a Team that is gone is worse than no binding at all.
+   * This is the only moment the question can be asked; a Team that dissolves
+   * afterwards still converges through the `team.closed` event.
+   *
+   * Only a definite answer refuses. Core proving the Team missing or closed is
+   * one, and so is a `closed` status; any other reply already proves a Team
+   * answered to that name, whatever else it says.
+   */
+  private async requireRoutableTeam(teamName: string): Promise<void> {
+    let answer: JsonValue;
+    try {
+      answer = await this.opts.invoke('team.status', { team_name: teamName });
+    } catch (error) {
+      const code = commandErrorCode(error);
+      if (code !== 'TEAM_NOT_FOUND' && code !== 'TEAM_CLOSED') throw error;
+      throw new PublicInvokeFailure(
+        `There is no Team named ${JSON.stringify(teamName)} to route this ` +
+          'conversation to. Bind an open Team, or create one first.',
+      );
+    }
+    if (teamStatusOf(answer) === 'closed') {
+      throw new PublicInvokeFailure(
+        `Team ${JSON.stringify(teamName)} is closed and can no longer ` +
+          'answer here. Bind an open Team instead.',
+      );
+    }
   }
 
   async unbindChannel(
@@ -193,6 +233,19 @@ export class FeishuBindingOperations {
       input.teamName,
     );
   }
+}
+
+/** Read the Team status out of a `team.status` answer, if it states one. */
+function teamStatusOf(answer: JsonValue): string | null {
+  if (answer === null || typeof answer !== 'object' || Array.isArray(answer)) {
+    return null;
+  }
+  const team = (answer as Record<string, unknown>)['team'];
+  if (team === null || typeof team !== 'object' || Array.isArray(team)) {
+    return null;
+  }
+  const status = (team as Record<string, unknown>)['status'];
+  return typeof status === 'string' ? status : null;
 }
 
 export function selectorTarget(

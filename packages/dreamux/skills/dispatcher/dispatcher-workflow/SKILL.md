@@ -1,6 +1,6 @@
 ---
 name: dispatcher-workflow
-description: MCP operation notes for Dispatcher orchestration. Load before using TeamMate, Team, channel, or cron tools, including spawning or messaging TeamMates, creating or routing Teams, replying through provider-exposed channel tools, and managing cron jobs.
+description: MCP operation notes for Dispatcher orchestration. Load before using TeamMate, Team, workflow, channel, or cron tools, including spawning or messaging TeamMates, creating or dissolving Teams, running workflows, replying or routing through channel tools, and managing cron jobs.
 ---
 
 # Dispatcher Workflow
@@ -14,71 +14,72 @@ daemon/service/config/log work, or missing-reply investigations.
   `get_capabilities` operate on this Dispatcher's TeamMates.
 - `spawn.name_prefix` is only a requested label; use the returned concrete
   `teammate.name` for every later `send`, `status`, `last`, or `close`.
-- `send` submits a follow-up and can reattach to a resumable closed TeamMate
-  from the recorded runtime session.
+- `send` submits a follow-up and reopens a closed TeamMate from its recorded
+  runtime-native session.
 - After a complete `spawn` or `send`, wait for the TeamMate completion that
-  Dreamux pushes into the current context. Use `status`, `last`, or `history`
+  Dreamux pushes into the current context. Every settled turn is reported,
+  including one that failed or was stopped. Use `status`, `last`, or `history`
   for explicit status checks, recovery, or suspected delivery failure.
-- `history` is compact recovery search. `last` reads recent settled turns by
-  concrete name without starting a runtime.
+- `history` is compact recovery search. `last` reads the TeamMate's recent
+  activity records by concrete name without starting a runtime, so it also
+  shows a turn that is still running.
 - Use `get_capabilities.agent_runtimes[].id` for `spawn.agent_runtime`.
 - `spawn.repo` is optional. Omitted creates a plain per-TeamMate work directory
   following the dispatcher's global workspace policy; `mode: managed` creates a
   git worktree; `mode: reuse-cwd` runs in an existing path.
 
+## Workflow MCP Notes
+
+- `workflow_run`, `workflow_status`, `workflow_stop`, and `workflow_list` are on
+  the same TeamMate server and operate on this Dispatcher's workflow runs.
+- Load the bundled `workflow` skill before writing a workflow script.
+- `workflow_run` returns `{ run_id }` immediately; Dreamux pushes one terminal
+  completion when the run finishes.
+
 ## Team MCP Notes
 
-- `create`, `send`, `list`, `status`, `history`, `dissolve`, `bind_channel`, and
-  `transfer_back` operate on dispatcher-owned Teams.
+- `create`, `send`, `list`, `status`, `history`, and `dissolve` operate on
+  dispatcher-owned Teams. There is no Team routing tool: where a Team is
+  reachable from the outside is a channel fact, not a Team one.
 - `create.name_prefix` is only a requested label. Use the returned concrete,
-  never-reused `team.team_name` for every later Team operation.
+  never-reused `team_name` for every later Team operation.
 - `create` starts a TeamLeader. `send` submits a turn to that TeamLeader only;
   it does not message Team members directly and does not post to a channel.
 - `create.prompt` is optional. Without it, the TeamLeader starts idle until a
-  bound-channel inbound or later `team.send`.
-- `bind_channel` and `transfer_back` are Team MCP tools. They take
-  `channel_id?` plus provider-defined `meta`; rely on the active tool schema and
-  tool result for the exact target selector and routing outcome.
-- Do not claim a channel target is bound to a Team unless `bind_channel` returns
-  success. Do not claim a channel target is released from Team routing unless
-  `transfer_back` returns success.
-- `dissolve` closes a recoverable Team and its agents. Include a clear `note`.
-
-## Collaboration Space MCP Notes
-
-- `bind`, `dissolve`, `status`, and `list` operate on dispatcher-owned
-  collaboration spaces.
-- Use `bind` only for an external collaboration space that already exists. If
-  the space is unknown to Dreamux, pass the provider-owned opaque `container`
-  selector; Dreamux core does not create the external space through a channel
-  provider.
-- `bind.repo` is optional. Omitted uses the same default workspace policy as
-  Team creation without an explicit repo; supplied repo creates managed
-  worktrees for future target Teams.
-- `bind.identity`, when supplied, becomes the default TeamLeader identity for
-  future Teams automatically created under that bound collaboration space.
-- Some channels may enable core-owned default collaboration-space binding; then
-  a neutral provider `container` can be auto-bound on first target inbound
-  without an explicit `collaboration_space.bind` call.
-- `dissolve` releases Dreamux routing/provisioning for the collaboration space.
-  It does not delete the external space and does not dissolve already-created
-  Teams; those Teams remain visible and can be closed with Team MCP.
-- Use `status` or `list` for inspection. There is no `history` tool for
-  collaboration spaces.
+  routed channel inbound or a later Team `send`.
+- `dissolve` is a submission. It returns `{ accepted, team_name, status:
+  submitted }` as soon as the request is accepted, and never reports how the
+  dissolve went. Include a clear `note`: it records why a recoverable Team was
+  stopped.
+- Uncommitted, untracked, or unmerged work in a Team's managed worktree leaves
+  that Team open and running instead of closing it. Read the Team's `status`
+  afterwards to see what actually happened; do not report a Team as dissolved
+  because the receipt came back.
+- `dissolve.force: true` discards that local work so the managed checkout can be
+  removed. It never deletes the managed branch, its commits, a reused directory,
+  or the source repository.
 
 ## Channel Notes
 
-- If a provider-exposed channel reply tool is available for the source message,
-  use it for meaningful progress, blockers, and final status. Assistant text,
-  terminal output, and internal planning are not channel delivery.
+- Channel tools come from the connected channel's own MCP server, and that
+  server is the authority on their names, arguments, and results. Read the
+  active tool schema rather than assuming a shape.
+- Routing a conversation to a Team is a channel operation, not a Team one. The
+  built-in Feishu channel exposes `bind_channel`, `unbind_channel`, and
+  `list_bindings` for it, plus its own collaboration-space policy tools. A
+  rebind reports the previous Team; there is no separate transfer tool.
+- A bind names an existing, open Team. Binding to a missing or closed Team is
+  refused and changes no routing.
+- If a channel reply tool is available for the source message, use it for
+  meaningful progress, blockers, and final status. Assistant text, terminal
+  output, and internal planning are not channel delivery.
 - At key task milestones, report progress promptly. Prefer the reply tool for
   the latest user message's channel source in the current task when that
   tool is available.
 - Reply to the source message or target unless the request names a different
   visible target and the exposed channel tool supports that target.
-- Treat channel attributes and `meta` selectors as provider-owned. Do not infer
-  provider-specific fields from Dreamux core guidance; use the exposed tool
-  schema and results.
+- Treat channel target selectors as channel-owned. Do not infer them from this
+  guidance; use the exposed tool schema and results.
 
 ## Cron Notes
 
@@ -86,6 +87,8 @@ daemon/service/config/log work, or missing-reply investigations.
   jobs for this Dispatcher.
 - Cron prompts wake this Dispatcher. They do not spawn TeamMates or Teams and do
   not deliver visible channel messages by themselves.
+- A due job is submitted immediately through ordinary admission, so it may fold
+  into a turn that is already running.
 - Prefer explicit titles and time zones. Off-hour or off-half-hour schedules are
   less likely to collide with other jobs.
 - Jobs fire on their configured schedules. Use `cron_update` to change a job's

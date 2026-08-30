@@ -49,10 +49,35 @@ export interface TeamMateSharedWorkspace {
   sourceRepo: string | null;
   runtimeCwd: string;
   worktree: AgentEntityWorktreeIdentity;
+  /**
+   * This preparation is what created the managed checkout.
+   *
+   * Whoever prepared it is the only one who may undo it: a checkout that was
+   * already there belongs to whatever put it there, and an attempt that fails
+   * must not reclaim it. The fact lives and dies with this in-memory result —
+   * once the owning record exists, that record is the authority on the
+   * checkout's fate, so persisting a second copy would only let the two drift.
+   */
+  createdCheckout: boolean;
+}
+
+/**
+ * A Team's runtime directory, lent to an Agent that runs inside it.
+ *
+ * There is no worktree identity here on purpose. The Team's own record is the
+ * single owner of the managed checkout it prepared and the single authority on
+ * what happened to it; an Agent that merely runs in that directory records a
+ * plain reuse-cwd workspace, so it can neither clean the Team's checkout on its
+ * own close nor hold a second, drifting copy of the Team's cleanup state.
+ */
+export interface TeamWorkspaceLoan {
+  sourceCwd: string;
+  sourceRepo: string | null;
+  runtimeCwd: string;
 }
 
 export type SpawnTeamMateRequest = SpawnTeamMateInput & {
-  sharedWorkspace?: TeamMateSharedWorkspace;
+  sharedWorkspace?: TeamWorkspaceLoan;
 };
 
 /**

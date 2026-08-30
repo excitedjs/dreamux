@@ -38,12 +38,12 @@ interface DispatcherStatusResult {
   last_error: string | null;
 }
 
-interface DispatcherLifecycleResult {
+interface DispatcherStartResult {
   dispatcher_id: string;
   status: string | null;
 }
 
-const LIFECYCLE_OUTPUT = objectSchema(
+const START_OUTPUT = objectSchema(
   { dispatcher_id: STRING, status: NULLABLE_STRING },
   ['dispatcher_id', 'status'],
 );
@@ -111,12 +111,12 @@ export function dispatcherCommands(
   const start: CoreCommandDefinition<
     'dispatcher.start',
     void,
-    DispatcherLifecycleResult
+    DispatcherStartResult
   > = {
     name: 'dispatcher.start',
     version: 1,
     input: NO_INPUT,
-    output: LIFECYCLE_OUTPUT,
+    output: START_OUTPUT,
     parse(payload) {
       commandPayload(payload);
     },
@@ -129,26 +129,5 @@ export function dispatcherCommands(
     },
   };
 
-  const stop: CoreCommandDefinition<
-    'dispatcher.stop',
-    void,
-    DispatcherLifecycleResult
-  > = {
-    name: 'dispatcher.stop',
-    version: 1,
-    input: NO_INPUT,
-    output: LIFECYCLE_OUTPUT,
-    parse(payload) {
-      commandPayload(payload);
-    },
-    // Stop deliberately does not require a configured row: a dispatcher removed
-    // from config while its service is live must still be stoppable.
-    async execute(context) {
-      const id = mustDispatcherId(context);
-      await host.dispatcher(id).stop();
-      return { dispatcher_id: id, status: 'stopped' };
-    },
-  };
-
-  return [list, status, start, stop] as unknown as readonly AnyCoreCommand[];
+  return [list, status, start] as unknown as readonly AnyCoreCommand[];
 }

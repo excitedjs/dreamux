@@ -27,12 +27,27 @@ interface TerminalIntent {
 
 /** One retryable, truthful terminal task shared by every stop source. */
 export class WorkflowRunTerminal {
+  /**
+   * Resolves once this run is durably over: terminal record written, terminal
+   * completion delivered, nothing left to retry.
+   *
+   * It is a fact the run states about itself, not an instruction. The owner
+   * that holds the run decides what being over means for its own bookkeeping;
+   * the run does not reach up and remove itself from a collection it is not
+   * allowed to know about.
+   */
+  readonly settled: Promise<void>;
+
   private task: Promise<void> | null = null;
   private intent: TerminalIntent | null = null;
   private beforeFinalize: Promise<void> | null = null;
-  private stopSignaled = false;
+  private announceSettled!: () => void;
 
-  constructor(private readonly deps: WorkflowRunTerminalDeps) {}
+  constructor(private readonly deps: WorkflowRunTerminalDeps) {
+    this.settled = new Promise<void>((resolve) => {
+      this.announceSettled = resolve;
+    });
+  }
 
   get requested(): WorkflowTerminalStatus | null {
     return this.intent?.status ?? null;
@@ -114,6 +129,9 @@ export class WorkflowRunTerminal {
         );
       })
       .then(() => this.deps.finalize(intent.status, intent.result, intent.error))
+      .then(() => {
+        this.announceSettled();
+      })
       .catch((error: unknown) => {
         if (this.task === task) this.task = null;
         throw error;
@@ -129,9 +147,8 @@ export class WorkflowRunTerminal {
     return true;
   }
 
+  /** Reached once: the caller reserved the stop intent before asking for it. */
   private signalStop(): void {
-    if (this.stopSignaled) return;
-    this.stopSignaled = true;
     this.deps.log.info({ run_id: this.deps.runId }, 'stopping workflow run');
     void this.deps.abortRunner().catch((error: unknown) => {
       this.deps.log.warn(

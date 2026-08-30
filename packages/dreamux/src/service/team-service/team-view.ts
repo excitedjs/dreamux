@@ -12,9 +12,6 @@ export function teamView(team: TeamRecord): TeamView {
     updated_at: team.updated_at,
     closed_at: team.closed_at,
     close_note: team.close_note,
-    dissolve_phase: team.dissolve?.phase ?? null,
-    dissolve_accepted_at: team.dissolve?.accepted_at ?? null,
     worktree_cleanup: team.worktree.cleanup_state,
-    dissolve_error: team.dissolve?.last_error ?? null,
   };
 }

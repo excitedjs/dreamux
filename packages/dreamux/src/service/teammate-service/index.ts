@@ -17,13 +17,13 @@ import {
   type AgentEntityRecordRow,
   type AgentEntityRuntimeStatus,
   type AgentEntitySendResult,
-  type AgentEntityWorktreeIdentity,
 } from '../agent-entity/types.js';
 import type {
   CompletionDeliveryResult,
   PreparedCompletionDelivery,
   PreparedCompletionFact,
 } from '../completion-router/index.js';
+import { deduplicate } from '../deduplicate.js';
 import { COMPLETION_SOURCE } from '../submission-sources.js';
 import type { WorktreeManager } from '../worktree/manager.js';
 import type { AdmissionLedger, AgentEntityLedgerKey } from './admission-ledger.js';
@@ -46,19 +46,6 @@ import type {
   WorkflowTeammateSubmitInput,
 } from './types.js';
 
-/** Close failed after the live runtime was already proven terminated. */
-export class TeammateClosePhaseError extends Error {
-  readonly runtime_terminated = true;
-
-  constructor(teammateName: string, cause: unknown) {
-    super(
-      `TeamMate ${JSON.stringify(teammateName)} close failed after runtime termination`,
-      { cause },
-    );
-    this.name = 'TeammateClosePhaseError';
-  }
-}
-
 /** One canonical TeamMate entity and the sole owner of its live lifecycle. */
 export class TeammateService {
   private state: AgentRuntimeStateStore;
@@ -80,15 +67,20 @@ export class TeammateService {
   private ordinaryMutations = 0;
   private readonly ordinaryIdleWaiters = new Set<() => void>();
   private lockToken: object | null = null;
-  private closeTask: Promise<AgentEntityCloseResult> | null = null;
   /**
-   * The in-flight host runtime release, and the admission fence it holds while
-   * it converges. Separate from {@link EntityPhase} on purpose: a host stop
-   * says nothing about this entity's lifecycle, so it must not move a state
-   * that means the entity is on its way to closed.
+   * The admission fence a host runtime release holds while it converges.
+   * Separate from {@link EntityPhase} on purpose: a host stop says nothing
+   * about this entity's lifecycle, so it must not move a state that means the
+   * entity is on its way to closed.
    */
-  private hostStopTask: Promise<void> | null = null;
-  private hostStopping = false;
+  /**
+   * The host stop converging what this entity already accepted.
+   *
+   * It fences the same way a lock does and for exactly its own span, so the
+   * operation is the fence: a second sweep joins it instead of starting a
+   * second release.
+   */
+  private hostStop: Promise<void> | null = null;
   private readonly closedListeners = new Set<
     (fact: TeammateClosedFact) => void | Promise<void>
   >();
@@ -124,7 +116,6 @@ export class TeammateService {
       this.state,
       options,
       {
-        current: () => this.current(),
         isActive: () => this.phase === 'active',
         markClosing: () => {
           this.phase = 'closing';
@@ -142,12 +133,15 @@ export class TeammateService {
     return this.state.current();
   }
 
+  /**
+   * This entity is over and its owner may drop it.
+   *
+   * A closed entity a Workflow still holds is deliberately not retired: its
+   * lock is what keeps the collection from materializing a second live instance
+   * for the same name while the holder still has the first one.
+   */
   isRetired(): boolean {
-    return this.phase === 'retired';
-  }
-
-  isLocked(): boolean {
-    return this.lockToken !== null;
+    return this.phase === 'closed' && this.lockToken === null;
   }
 
   onClosed(
@@ -254,7 +248,7 @@ export class TeammateService {
     // duplicate reservation on its way to failing.
     const text = renderSubmission(input);
     return this.admissions.admit(this.ledgerKey, input.sourceId, async () => {
-      await this.runtimeOwner.ensureStarted({ reopenClosed: true });
+      await this.runtimeOwner.ensureStarted();
       // Inside the admission closure, so a deduplicated repeat neither
       // rewrites the recovery subject nor submits a second turn.
       if (input.intent !== undefined && input.intent !== '') {
@@ -327,20 +321,20 @@ export class TeammateService {
    */
   stopForHost(): Promise<void> {
     if (this.phase !== 'active') return Promise.resolve();
-    if (this.hostStopTask !== null) return this.hostStopTask;
-    const task = this.releaseHostRuntime().finally(() => {
-      this.hostStopping = false;
-      if (this.hostStopTask === task) this.hostStopTask = null;
-    });
-    this.hostStopTask = task;
+    if (this.hostStop !== null) return this.hostStop;
+    const task = Promise.resolve()
+      .then(() => this.releaseHostRuntime())
+      .finally(() => {
+        this.hostStop = null;
+      });
+    this.hostStop = task;
     return task;
   }
 
   private async releaseHostRuntime(): Promise<void> {
-    this.hostStopping = true;
     // A lock is not consulted: an entity a Workflow still holds would
-    // otherwise keep a live native runtime past process exit, and the Workflow
-    // owner has already been stopped by the same sweep.
+    // otherwise keep a live native runtime past process exit, and the
+    // Workflow owner has already been stopped by the same sweep.
     await this.runtimeOwner.stopRuntime();
     await this.turns.drainAdmissions();
     await this.waitForOrdinaryMutations();
@@ -355,26 +349,6 @@ export class TeammateService {
       );
     }
     return this.closeAuthorized(input.note, null);
-  }
-
-  async applyWorktreeCleanup(
-    worktree: AgentEntityWorktreeIdentity,
-  ): Promise<void> {
-    if (this.phase === 'retired') {
-      // A Team's physical worktree cleanup follows logical entity close. The
-      // retired leader remains the Team's exact durable-state owner, so accept
-      // this idempotent owner projection without reopening runtime admission.
-      await this.state.update({ worktree });
-      return;
-    }
-    const leave = this.enterOrdinaryMutation('worktree cleanup');
-    try {
-      await this.state.update({
-        worktree,
-      });
-    } finally {
-      leave();
-    }
   }
 
   status(): AgentEntityRuntimeStatus {
@@ -428,7 +402,7 @@ export class TeammateService {
   async activate(): Promise<void> {
     const leave = this.enterOrdinaryMutation('activation');
     try {
-      await this.runtimeOwner.ensureStarted({ reopenClosed: true });
+      await this.runtimeOwner.ensureStarted();
     } finally {
       leave();
     }
@@ -440,7 +414,7 @@ export class TeammateService {
   ): Promise<TurnAdmission> {
     this.assertLockToken(token);
     if (this.phase !== 'active') return { status: 'stopped' };
-    await this.runtimeOwner.ensureStarted({ reopenClosed: true });
+    await this.runtimeOwner.ensureStarted();
     this.assertLockToken(token);
     if (this.phase !== 'active') return { status: 'stopped' };
     return this.submitAdmitted({ source: input.source, text: input.prompt });
@@ -486,13 +460,9 @@ export class TeammateService {
     token: object | null,
   ): Promise<AgentEntityCloseResult> {
     if (token !== null) this.assertLockToken(token);
-    if (this.phase === 'retired') {
+    if (this.phase === 'closed') {
       return Promise.resolve({ teammate: this.status() });
     }
-    if (this.phase === 'closedHeld') {
-      return Promise.resolve({ teammate: this.status() });
-    }
-    if (this.closeTask !== null) return this.closeTask;
     const identity = this.current();
     if (
       this.phase === 'active' &&
@@ -505,57 +475,49 @@ export class TeammateService {
           new Error('durable closed TeamMate has no closed_at'),
         );
       }
-      this.phase = token === null ? 'retired' : 'closedHeld';
+      this.phase = 'closed';
       if (token === null) this.queueClosedFact(closedAt);
       return Promise.resolve({ teammate: this.status() });
     }
     if (this.phase === 'active') this.phase = 'closing';
-    const task = this.transitionToClosed(closeNote, token);
-    this.closeTask = task;
-    void task.catch(() => {
-      if (this.closeTask === task) this.closeTask = null;
-    });
-    return task;
+    return this.transitionToClosed(closeNote, token);
   }
 
+  @deduplicate({ type: 'once' })
   private async transitionToClosed(
     closeNote: string,
     token: object | null,
   ): Promise<AgentEntityCloseResult> {
     await this.runtimeOwner.stopRuntime();
-    try {
-      await this.turns.drainAdmissions();
-      await this.waitForOrdinaryMutations();
-      await this.turns.settleAndDeliverRetained();
+    await this.turns.drainAdmissions();
+    await this.waitForOrdinaryMutations();
+    await this.turns.settleAndDeliverRetained();
 
-      const identity = this.current();
-      const shouldCleanup =
-        this.ownsWorktreeOnClose &&
-        identity.worktree.mode === 'managed' &&
-        identity.worktree.cleanup === 'delete-on-close';
-      const worktree = shouldCleanup
-        ? await this.mustWorktrees().cleanup(identity)
-        : identity.worktree;
-      const closedAt = Date.now();
-      const closed = await this.state.update({
-        status: 'closed',
-        closedAt,
-        closeNote,
-        worktree,
-      });
-      if (token === null) {
-        this.phase = 'retired';
-        this.queueClosedFact(closedAt);
-      } else {
-        this.assertLockToken(token);
-        this.phase = 'closedHeld';
-      }
-      return { teammate: toStatus(closed, null) };
-    } catch (error) {
-      throw error instanceof TeammateClosePhaseError
-        ? error
-        : new TeammateClosePhaseError(this.name, error);
+    const identity = this.current();
+    const shouldCleanup =
+      this.ownsWorktreeOnClose &&
+      identity.worktree.mode === 'managed' &&
+      identity.worktree.cleanup === 'delete-on-close';
+    const worktree = shouldCleanup
+      ? await this.mustWorktrees().cleanup(identity)
+      : identity.worktree;
+    const closedAt = Date.now();
+    const closed = await this.state.update({
+      status: 'closed',
+      closedAt,
+      closeNote,
+      worktree,
+    });
+    this.phase = 'closed';
+    // A held entity publishes its terminal fact at unlock instead: an owner
+    // that evicted it now would materialize a second live instance for the
+    // same name while the holder still has this one.
+    if (token === null) {
+      this.queueClosedFact(closedAt);
+    } else {
+      this.assertLockToken(token);
     }
+    return { teammate: toStatus(closed, null) };
   }
 
   private unlock(token: object): void {
@@ -566,8 +528,7 @@ export class TeammateService {
       );
     }
     this.lockToken = null;
-    if (this.phase === 'closedHeld') {
-      this.phase = 'retired';
+    if (this.phase === 'closed') {
       const closedAt = this.current().closed_at;
       if (closedAt === null) {
         throw new Error('closed-held TeamMate has no durable closed_at');
@@ -607,12 +568,10 @@ export class TeammateService {
   }
 
   private enterOrdinaryMutation(label: string): () => void {
-    // `hostStopping` fences the same way a lock does and for the same span:
-    // only while a host stop is converging what this entity already accepted.
     if (
       this.phase !== 'active' ||
       this.lockToken !== null ||
-      this.hostStopping
+      this.hostStop !== null
     ) {
       throw new Error(
         `TeamMate ${JSON.stringify(this.name)} cannot accept ${label}`,

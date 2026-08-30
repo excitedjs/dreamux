@@ -45,14 +45,17 @@ import {
   type AgentEntityRuntimeStatus,
   type AgentEntitySendResult,
   type AgentEntitySpawnResult,
-  type AgentEntityWorktreeIdentity,
 } from '../agent-entity/types.js';
 import type {
   CompletionDeliveryPolicy,
   CompletionInitiator,
 } from '../completion-router/index.js';
 import type { SuffixGenerator } from '../name-allocator.js';
-import { throwSettledFailures } from '../shutdown-errors.js';
+import { closeMembersForDissolve } from './dissolve-members.js';
+import {
+  collectShutdownFailure,
+  throwShutdownFailures,
+} from '../shutdown-errors.js';
 import { createTeammateService } from '../teammate-service/factory.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import type {
@@ -105,7 +108,6 @@ export interface TeammateCollectionOptions {
    * ownership already settled.
    */
   initiatorFor?: () => Promise<CompletionInitiator | null>;
-  isShuttingDown?: () => boolean;
   suffixGenerator?: SuffixGenerator;
   log: DreamuxLogger;
 }
@@ -114,6 +116,14 @@ export interface CreateLockedTeammateOptions {
   systemPromptAppend?: readonly string[];
   outputSchema?: JsonSchema;
 }
+
+/**
+ * What a lookup does with a durable record that is already closed.
+ *
+ * `refuse` everywhere but `send`: a closed record is history, and only the
+ * operation that reopens it may turn it back into an entity.
+ */
+type ClosedRecordPolicy = 'refuse' | 'reopen';
 
 interface FreshIdentityAllocation {
   readonly name: string;
@@ -131,6 +141,14 @@ export class TeammateCollection implements TeammateOps {
   private readonly entities = new Map<string, TeammateService>();
   private readonly subscriptions = new Map<string, TeammateClosedSubscription>();
   private readonly materializations = new Map<string, Promise<TeammateService>>();
+  /**
+   * TeamMates built for a `send` that has not reopened them yet.
+   *
+   * They are nobody's until that send succeeds, so they cannot live in
+   * {@link entities} — but a second send must still find the one already
+   * reopening rather than start a second runtime for the same Agent.
+   */
+  private readonly reopening = new Map<string, TeammateService>();
 
   constructor(private readonly opts: TeammateCollectionOptions) {
     this.dispatcherId = opts.dispatcherId;
@@ -140,7 +158,6 @@ export class TeammateCollection implements TeammateOps {
   }
 
   async spawn(input: SpawnTeamMateRequest): Promise<AgentEntitySpawnResult> {
-    this.assertAdmissionOpen();
     const entity = await this.createFreshEntity(input);
     try {
       const delivery = await this.resolveCompletionDelivery();
@@ -163,7 +180,6 @@ export class TeammateCollection implements TeammateOps {
     input: SpawnTeamMateRequest,
     options: CreateLockedTeammateOptions = {},
   ): Promise<LockedTeammate> {
-    this.assertAdmissionOpen();
     // No capability gate: every provider must honor the session-bound output
     // schema, so an unsupported-feature pre-check has nothing left to check.
     let handle: LockedTeammate | null = null;
@@ -176,35 +192,60 @@ export class TeammateCollection implements TeammateOps {
     return handle;
   }
 
+  /**
+   * Send to one TeamMate, reopening it if it was closed.
+   *
+   * The one operation that may bring a closed TeamMate back, and the reason a
+   * closed record is otherwise never constructed: it reopens the Agent in the
+   * same call, so what enters this collection is a live entity rather than a
+   * terminal one.
+   */
   send(input: SendTeamMateInput): Promise<AgentEntitySendResult> {
-    this.assertAdmissionOpen();
-    const entity = this.resolveEntity(input.name);
+    const entity = this.resolveEntity(input.name, 'reopen');
     return entity instanceof Promise
       ? entity.then((resolved) => this.sendResolved(resolved, input))
       : this.sendResolved(entity, input);
   }
 
-  private sendResolved(
+  private async sendResolved(
     entity: TeammateService,
     input: SendTeamMateInput,
   ): Promise<AgentEntitySendResult> {
-    return entity.send({
-      source: AGENT_TASK_SOURCE,
-      text: input.prompt,
-      ...(input.intent !== undefined ? { intent: input.intent } : {}),
-      resolveCompletionDelivery: () => this.resolveCompletionDelivery(),
-    });
+    try {
+      const result = await entity.send({
+        source: AGENT_TASK_SOURCE,
+        text: input.prompt,
+        ...(input.intent !== undefined ? { intent: input.intent } : {}),
+        resolveCompletionDelivery: () => this.resolveCompletionDelivery(),
+      });
+      // Cached only now: a reopen that failed leaves nothing behind, so a
+      // closed TeamMate never occupies the live collection as the closed thing
+      // it was.
+      this.publish(entity);
+      return result;
+    } finally {
+      if (this.reopening.get(entity.name) === entity) {
+        this.reopening.delete(entity.name);
+      }
+    }
   }
 
+  /**
+   * Close one TeamMate.
+   *
+   * A TeamMate that is already closed is answered from its record: closing what
+   * is already history constructs nothing.
+   */
   async close(input: CloseTeamMateInput): Promise<AgentEntityCloseResult> {
-    return (await this.mustEntity(input.name)).close({ note: input.note });
-  }
-
-  async applyWorktreeCleanup(
-    name: string,
-    worktree: AgentEntityWorktreeIdentity,
-  ): Promise<void> {
-    await (await this.mustEntity(name)).applyWorktreeCleanup(worktree);
+    const name = validateTeamMateName(input.name);
+    const note = requireLifecycleText(input.note, 'TeamMate close note');
+    if (this.liveEntity(name) === null) {
+      const identity = await this.mustIdentity(name);
+      if (identity.status === 'closed') {
+        return { teammate: toStatus(identity, null) };
+      }
+    }
+    return (await this.mustEntity(name)).close({ note });
   }
 
   async list(): Promise<AgentEntityRuntimeStatus[]> {
@@ -296,25 +337,57 @@ export class TeammateCollection implements TeammateOps {
     return [...this.entities.values()].filter((entity) => !entity.isRetired());
   }
 
+  /** Stop every member runtime this dissolving Team holds. Team-scoped only. */
+  async stopAllForDissolve(): Promise<void> {
+    const failures: unknown[] = [];
+    for (const member of await this.heldMembers()) {
+      await collectShutdownFailure(failures, () => member.stopForHost());
+    }
+    throwShutdownFailures(
+      failures,
+      `Team ${JSON.stringify(this.mustTeamScope())} member runtimes did not stop for dissolve`,
+    );
+  }
+
+  /** Close every member of this dissolving Team. Team-scoped only. */
+  async closeAllForDissolve(note: string): Promise<void> {
+    const teamId = this.mustTeamScope();
+    const held = await this.heldMembers();
+    return closeMembersForDissolve({
+      teamId,
+      note,
+      held,
+      roster: await this.rosterList(),
+      store: this.store,
+    });
+  }
+
   /**
-   * Construct/cache every durable non-closed entity for an aggregate owner.
-   * The caller remains responsible for invoking entity lifecycle capabilities;
-   * this Collection method performs only its canonical materialization role.
+   * Every member this process holds, once whatever was already building one has
+   * finished. A materialization that started before its Team fenced itself is
+   * still producing a live Agent, so a sweep that read only the cache would
+   * miss the one runtime it most needs to stop. Joining what is already in
+   * flight is the whole of it: the fence refuses everything not yet started.
    */
-  async materializeNonClosedEntities(): Promise<readonly TeammateService[]> {
-    const identities = (await this.rosterList()).filter(
-      (identity) => identity.status !== 'closed',
-    );
-    const results = await Promise.allSettled(
-      identities.map((identity) => this.mustEntity(identity.name)),
-    );
-    const entities = results.flatMap((result) =>
-      result.status === 'fulfilled' ? [result.value] : []);
-    throwSettledFailures(
-      results,
-      'one or more durable TeamMates could not be materialized',
-    );
-    return entities;
+  private async heldMembers(): Promise<readonly TeammateService[]> {
+    await Promise.allSettled([...this.materializations.values()]);
+    const held = new Map<string, TeammateService>();
+    for (const entity of this.materializedEntities()) {
+      held.set(entity.name, entity);
+    }
+    // A reopen owns a live Agent before the send that publishes it returns.
+    for (const entity of this.reopening.values()) {
+      if (!entity.isRetired()) held.set(entity.name, entity);
+    }
+    return [...held.values()];
+  }
+
+  /** The Team these members belong to; dissolve is not a dispatcher verb. */
+  private mustTeamScope(): string {
+    if (this.teamScope === null) {
+      throw new Error('bulk member dissolve is a Team capability');
+    }
+    return this.teamScope;
   }
 
   private async createFreshEntity(
@@ -409,10 +482,15 @@ export class TeammateCollection implements TeammateOps {
   }
 
   private publishEntity(identity: AgentEntityIdentity): TeammateService {
-    const entity = this.buildEntity(identity);
-    const subscription = this.subscribeEntity(entity);
-    this.entities.set(identity.name, entity);
-    this.subscriptions.set(identity.name, subscription);
+    return this.publish(this.buildEntity(identity));
+  }
+
+  /** Hold one live entity, once. */
+  private publish(entity: TeammateService): TeammateService {
+    const name = entity.name;
+    if (this.entities.get(name) === entity) return entity;
+    this.entities.set(name, entity);
+    this.subscriptions.set(name, this.subscribeEntity(entity));
     return entity;
   }
 
@@ -480,7 +558,10 @@ export class TeammateCollection implements TeammateOps {
     return null;
   }
 
-  private resolveEntity(name: string): TeammateService | Promise<TeammateService> {
+  private resolveEntity(
+    name: string,
+    closed: ClosedRecordPolicy = 'refuse',
+  ): TeammateService | Promise<TeammateService> {
     const teammateName = validateTeamMateName(name);
     const existing = this.liveEntity(teammateName);
     if (existing !== null) {
@@ -490,18 +571,40 @@ export class TeammateCollection implements TeammateOps {
     const inFlight = this.materializations.get(teammateName);
     if (inFlight !== undefined) return inFlight;
     return this.trackMaterialization(teammateName, () =>
-      this.materializeEntity(teammateName));
+      this.materializeEntity(teammateName, closed));
   }
 
   private mustEntity(name: string): Promise<TeammateService> {
     return Promise.resolve(this.resolveEntity(name));
   }
 
-  private async materializeEntity(name: string): Promise<TeammateService> {
+  /**
+   * Construct one TeamMate from its durable record.
+   *
+   * A closed record is that TeamMate's history, not the TeamMate: constructing
+   * one would put a terminal object in a collection that holds live entities,
+   * and bound this dispatcher's memory by how many Agents it ever had rather
+   * than by how many it has. Only `send` may ask for one, and what it gets is
+   * unpublished until the reopen succeeds.
+   */
+  private async materializeEntity(
+    name: string,
+    closed: ClosedRecordPolicy,
+  ): Promise<TeammateService> {
+    // Asked before the record is read, because a reopen in flight has already
+    // moved past what the record says.
+    const reopening = this.reopening.get(name);
+    if (reopening !== undefined) return reopening;
     const identity = await this.mustIdentity(name);
     const existing = this.liveEntity(name);
     if (existing !== null) return existing;
-    return this.publishEntity(identity);
+    if (identity.status !== 'closed') return this.publishEntity(identity);
+    if (closed === 'refuse') {
+      throw new Error(`TeamMate ${JSON.stringify(name)} is closed`);
+    }
+    const entity = this.buildEntity(identity);
+    this.reopening.set(name, entity);
+    return entity;
   }
 
   private trackMaterialization(
@@ -562,12 +665,6 @@ export class TeammateCollection implements TeammateOps {
     }
     return (completion, fact) =>
       policy.deliverRuntime(initiator, completion, fact);
-  }
-
-  private assertAdmissionOpen(): void {
-    if (this.opts.isShuttingDown?.()) {
-      throw new Error(`dispatcher '${this.dispatcherId}' is shutting down`);
-    }
   }
 
   private async closeAfterFailedCreation(entity: TeammateService): Promise<void> {

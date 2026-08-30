@@ -3,7 +3,7 @@
  *
  * A Workflow run belongs to the addressed dispatcher's own collection. There is
  * no caller-kind selector: a TeamLeader's Workflow surface is its own MCP
- * delegate, bound to its Team by the lease that admitted the call, so nothing a
+ * delegate, bound to the Team that delegate was built for, so nothing a
  * model sends can select a scope here. Run admission, concurrency, and record
  * semantics stay inside the workflow service.
  */

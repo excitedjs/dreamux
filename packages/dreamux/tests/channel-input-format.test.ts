@@ -1,3 +1,21 @@
+/**
+ * The Channel-ingress boundary, end to end: a Channel formats one inbound
+ * event into opaque attrs + body (its own business), and Core turns that into
+ * the one submission envelope every runtime reads.
+ *
+ * `renderChannelBlock` / `renderChannelInput` / `InboundTurnInput` — the
+ * dreamux-utils pre-renderers this file used to exercise — are gone: no
+ * runtime-neutral layer pre-renders XML any more. `FormatFeishuMessageResult`
+ * says so directly ("The channel no longer renders the final XML — each
+ * runtime wraps these into its own channel envelope"). The CURRENT owner of
+ * that wrap is `channelSubmission` + `renderSubmission`
+ * (`packages/dreamux/src/service/channel-submission.ts`,
+ * `.../teammate-service/submission.ts`); `submission-envelope.test.ts` covers
+ * that owner's contract in isolation, so this file's job is narrower: prove a
+ * REAL Feishu-shaped `formatFeishuMessageForRuntime` result survives that
+ * pipeline unchanged, plus the attachment-cache filesystem-security behavior
+ * that lives in the same formatter and touches neither deleted symbol.
+ */
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   chmodSync,
@@ -11,64 +29,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 
-import {
-  renderChannelBlock,
-  renderChannelInput,
-} from '@excitedjs/dreamux-utils';
-import type { InboundTurnInput } from '@excitedjs/dreamux-types';
 import { formatFeishuMessageForRuntime } from '@excitedjs/feishu-channel';
 import type { FeishuInboundEvent } from '@excitedjs/feishu-channel';
 
-describe('renderChannelBlock (native <channel> wrap, shared by both runtimes)', () => {
-  it('renders source + attrs + body in the native envelope', () => {
-    const out = renderChannelBlock(
-      'feishu',
-      [
-        ['chat_id', 'chat-1'],
-        ['sender_id', 'sender-1'],
-      ],
-      'hello world',
-    );
-    expect(out).toBe(
-      '<channel source="feishu" chat_id="chat-1" sender_id="sender-1">\nhello world\n</channel>',
-    );
-  });
+import { channelSubmission } from '../src/service/channel-submission.js';
+import { renderSubmission } from '../src/service/teammate-service/submission.js';
 
-  it('XML-escapes attribute values and drops unsafe attribute keys', () => {
-    const out = renderChannelBlock(
-      'feishu',
-      [
-        ['chat_id', 'a"b<c>&d'],
-        ['bad-key', 'dropped'],
-        ['1leading', 'dropped'],
-      ],
-      'body',
-    );
-    expect(out).toContain('chat_id="a&quot;b&lt;c&gt;&amp;d"');
-    expect(out).not.toContain('bad-key');
-    expect(out).not.toContain('1leading');
-  });
-});
-
-describe('renderChannelInput', () => {
-  it('wraps a structured channel input into the <channel> block', () => {
-    const input: InboundTurnInput = {
-      sourceId: 'm1',
-      source: 'feishu',
-      text: 'ignored fallback',
-      attrs: [['chat_id', 'chat-1']],
-      body: 'the message',
-    };
-    expect(renderChannelInput(input)).toBe(
-      '<channel source="feishu" chat_id="chat-1">\nthe message\n</channel>',
-    );
-  });
-
-  it('passes plain input (no attrs/body) through unchanged', () => {
-    const input: InboundTurnInput = { sourceId: 'm1', text: 'a trigger turn' };
-    expect(renderChannelInput(input)).toBe('a trigger turn');
-  });
-});
+/** The same attribute-value escaping `renderSubmission` applies — asserted independently in submission-envelope.test.ts. */
+function escapeXmlAttr(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+}
 
 function inboundEvent(overrides: Partial<FeishuInboundEvent> = {}): FeishuInboundEvent {
   return {
@@ -100,66 +74,71 @@ describe('formatFeishuMessageForRuntime (structured, no pre-rendered XML)', () =
       'sender_name',
       'create_time',
     ]);
-    // The channel layer no longer pre-renders any message wrapper — the runtime
-    // owns adding the <channel> envelope.
+    // The channel layer still renders no wrapper of its own: Core is the sole
+    // owner of the <channel ...> envelope.
     expect(result.body).not.toContain('<channel');
     expect(result.body).not.toContain('source="feishu"');
     expect(result.attrs.find(([k]) => k === 'chat_id')?.[1]).toBe('chat-1');
     expect(result.attrs.find(([k]) => k === 'thread_id')).toBeUndefined();
   });
 
-  it('renders a non-empty Feishu thread id into the model-visible channel attrs', async () => {
-    const result = await formatFeishuMessageForRuntime(inboundEvent({
-      threadId: 'topic-a',
-    }));
-    expect(result.attrs.map(([key]) => key)).toEqual([
-      'chat_id',
-      'chat_type',
-      'thread_id',
-      'message_id',
-      'sender_id',
-      'sender_name',
-      'create_time',
-    ]);
-
-    const wrapped = renderChannelInput({
-      sourceId: 'msg-1',
-      source: 'feishu',
-      text: result.body,
-      attrs: result.attrs,
-      body: result.body,
-    });
-    expect(wrapped).toContain(' thread_id="topic-a"');
-  });
-
   it('omits an empty Feishu thread id', async () => {
-    const result = await formatFeishuMessageForRuntime(inboundEvent({
-      threadId: '',
-    }));
+    const result = await formatFeishuMessageForRuntime(inboundEvent({ threadId: '' }));
     expect(result.attrs.find(([key]) => key === 'thread_id')).toBeUndefined();
   });
+});
 
-  it('keeps attachment refs and the group_bots block inside the rendered <channel>', async () => {
+describe('the Channel → Core submission pipeline: formatFeishuMessageForRuntime into channelSubmission + renderSubmission', () => {
+  it('carries every Feishu attr through as escaped start-tag attributes, keyed by CHANNEL_SOURCE', async () => {
+    const result = await formatFeishuMessageForRuntime(
+      inboundEvent({ threadId: 'topic-a' }),
+    );
+
+    const submission = channelSubmission({
+      sourceId: 'msg-1',
+      attrs: result.attrs,
+      text: result.body,
+    });
+    const rendered = renderSubmission(submission);
+
+    // Core's own provenance name, not whatever the Channel calls itself.
+    expect(rendered.startsWith('<channel ')).toBe(true);
+    expect(rendered).toContain(' chat_id="chat-1"');
+    expect(rendered).toContain(' thread_id="topic-a"');
+    expect(rendered.endsWith('</channel>')).toBe(true);
+  });
+
+  it('carries the Channel-formatted body through byte for byte, attachment refs and group_bots block included', async () => {
     // No resourceFetcher → the attachment is not downloaded and renders as a
     // text ref in the body; trustedBots adds a <group_bots> block. Both must
-    // survive into the wrapped channel block (no content regression).
+    // survive the envelope wrap with no content regression, since the body is
+    // passed through untouched (no entity rewriting, no CDATA, no reindent).
     const result = await formatFeishuMessageForRuntime(inboundEvent(), {
       trustedBots: [{ openId: 'bot-open-1', name: 'Helper' }],
     });
     expect(result.body).toContain('<attachment');
     expect(result.body).toContain('<group_bots');
 
-    const wrapped = renderChannelInput({
+    const submission = channelSubmission({
       sourceId: 'msg-1',
-      source: 'feishu',
-      text: result.body,
       attrs: result.attrs,
-      body: result.body,
+      text: result.body,
     });
-    expect(wrapped.startsWith('<channel source="feishu"')).toBe(true);
-    expect(wrapped).toContain('<attachment');
-    expect(wrapped).toContain('<group_bots');
-    expect(wrapped.endsWith('</channel>')).toBe(true);
+    const rendered = renderSubmission(submission);
+
+    // Every attr the Channel produced (its own concern — including the
+    // human-formatted `create_time`, tested in feishu-channel's own suite —
+    // survives escaped, in the Channel's own order) plus the untouched body.
+    const expectedAttrs = result.attrs
+      .map(([name, value]) => ` ${name}="${escapeXmlAttr(value)}"`)
+      .join('');
+    expect(rendered).toBe(`<channel${expectedAttrs}>${result.body}</channel>`);
+  });
+
+  it('bypasses admission dedup for an empty Feishu message id (no source_id key at all)', async () => {
+    const result = await formatFeishuMessageForRuntime(inboundEvent());
+    const submission = channelSubmission({ sourceId: '', attrs: result.attrs, text: result.body });
+    expect('sourceId' in submission).toBe(false);
   });
 });
 

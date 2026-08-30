@@ -5,7 +5,12 @@ import {
   AgentIdentityStore,
 } from '../agent-entity/identity-store.js';
 import { teamMateCollectionDir } from '../../platform/paths.js';
-import type { AgentEntityIdentityStatus } from '../agent-entity/types.js';
+import { toStatus } from '../agent-entity/read-helpers.js';
+import { teamView } from '../team-service/team-view.js';
+import type {
+  AgentEntityIdentity,
+  AgentEntityIdentityStatus,
+} from '../agent-entity/types.js';
 import {
   clampTeamHistoryLimit,
   decodeTeamCursor,
@@ -20,6 +25,7 @@ import type {
   TeamHistoryRow,
   TeamListRow,
   TeamRecord,
+  TeamSummary,
 } from './types.js';
 
 /** Store-only Team list/history projection; never materializes a runtime. */
@@ -60,6 +66,23 @@ export class TeamCollectionReadModel {
     };
   }
 
+  /**
+   * One Team's status, read from its records alone.
+   *
+   * How a closed Team is reported: it has no runtime left to ask, and
+   * constructing one to answer a read would resurrect an entity that is over.
+   * The leader's runtime state is `null` because nothing is running, not
+   * because nothing is known.
+   */
+  async summary(team: TeamRecord): Promise<TeamSummary> {
+    const leader = await this.leaderIdentity(team);
+    return {
+      team: teamView(team),
+      leader: leader === null ? null : toStatus(leader, null),
+      member_count: await this.memberCount(team),
+    };
+  }
+
   private async listRow(team: TeamRecord): Promise<TeamListRow> {
     return {
       team_name: team.team_id,
@@ -72,10 +95,7 @@ export class TeamCollectionReadModel {
       created_at: team.created_at,
       updated_at: team.updated_at,
       closed_at: team.closed_at,
-      dissolve_phase: team.dissolve?.phase ?? null,
-      dissolve_accepted_at: team.dissolve?.accepted_at ?? null,
       worktree_cleanup: team.worktree.cleanup_state,
-      dissolve_error: team.dissolve?.last_error ?? null,
     };
   }
 
@@ -96,10 +116,7 @@ export class TeamCollectionReadModel {
       close_note_preview: team.close_note === null
         ? null
         : previewTeamText(team.close_note),
-      dissolve_phase: team.dissolve?.phase ?? null,
-      dissolve_accepted_at: team.dissolve?.accepted_at ?? null,
       worktree_cleanup: team.worktree.cleanup_state,
-      dissolve_error: team.dissolve?.last_error ?? null,
     };
   }
 
@@ -111,17 +128,27 @@ export class TeamCollectionReadModel {
   private async leaderState(
     team: TeamRecord,
   ): Promise<AgentEntityIdentityStatus | null> {
+    return (await this.leaderIdentity(team))?.status ?? null;
+  }
+
+  /**
+   * The store decides what an unreadable leader means, and this read accepts
+   * that decision unchanged: a missing or corrupt record is the `null` the
+   * store already logged, while a record this version refuses to interpret —
+   * old state — is raised. Catching here would turn "this file says something
+   * Dreamux no longer accepts" into "there is no leader", which is the one
+   * answer that is never true.
+   */
+  private async leaderIdentity(
+    team: TeamRecord,
+  ): Promise<AgentEntityIdentity | null> {
     const leader = await new AgentIdentityStore({
       dir: this.opts.store.teamRoot(team.team_id),
       dispatcherId: this.opts.dispatcherId,
       expectedName: null,
       log: this.opts.log,
-    })
-      .read()
-      .catch(() => null);
-    return leader !== null && leader.name === team.leader_name
-      ? leader.status
-      : null;
+    }).read();
+    return leader !== null && leader.name === team.leader_name ? leader : null;
   }
 
   /** Directory occupancy is the roster fact; an unreadable member still counts. */

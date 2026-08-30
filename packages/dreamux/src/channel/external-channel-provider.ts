@@ -18,7 +18,6 @@ import {
   type ProviderRegistry,
 } from '../registry/index.js';
 import {
-  assertLoadedProviderObject,
   isRecord,
   loadProviderPackages,
   type ProviderContractContext,
@@ -102,7 +101,9 @@ function assertChannelProvider(
   value: unknown,
   context: ProviderContractContext,
 ): asserts value is ChannelProvider<unknown> {
-  assertLoadedProviderObject(value, context);
+  if (!isRecord(value)) {
+    context.fail('factory must return a provider object');
+  }
   const candidate = value as Partial<ChannelProvider<unknown>>;
   if (typeof candidate.createSession !== 'function') {
     context.fail('provider.createSession must be a function');

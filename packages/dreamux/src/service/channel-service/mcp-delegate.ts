@@ -109,8 +109,8 @@ export interface ChannelMcpDelegateInput {
    * How a call enters the dispatcher.
    *
    * The dispatcher scope admits the operation against shutdown; a TeamLeader
-   * scope additionally takes that Team's leader lease, so a channel call is
-   * serialized against a concurrent dissolve. Neither rule belongs in this file
+   * scope additionally enters that Team's own work fence, so a channel call is
+   * refused once that Team is dissolving. Neither rule belongs in this file
    * — it is handed the entry it should use.
    */
   dispatch: <T>(task: () => Promise<T>) => Promise<T>;

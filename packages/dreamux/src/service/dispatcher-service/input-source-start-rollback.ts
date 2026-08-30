@@ -40,7 +40,6 @@ export async function rollbackFailedInputSourceStart(input: {
   const failures: unknown[] = [];
   input.scheduler.stop();
   input.teams.stopSchedulers();
-  input.teams.interruptDissolvesForShutdown();
   const teamStopError = await stopTeamRuntimes({
     dispatcherId: input.dispatcherId,
     teams: input.teams,

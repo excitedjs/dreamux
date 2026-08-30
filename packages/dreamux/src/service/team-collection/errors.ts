@@ -20,26 +20,10 @@ export class TeamClosedError extends DreamuxError {
   }
 }
 
-/**
- * The TeamLeader generation the caller holds is no longer the current one.
- *
- * Deliberately NOT reported as a closed Team: the Team is still open, and
- * `TEAM_CLOSED` is a published, retryable fact a Channel acts on by dropping
- * its binding. A superseded lease is neither retryable nor a Team lifecycle
- * fact, so it carries its own code.
- */
-export class TeamGenerationChangedError extends DreamuxError {
-  constructor(message: string) {
-    super('TEAM_GENERATION_CHANGED', message);
-  }
-}
-
-/** The three facts that mean a Team cannot take work through this lease now. */
+/** Both facts that mean a Team cannot take work now. */
 export function isTeamUnavailable(error: unknown): boolean {
   return (
-    error instanceof TeamNotFoundError ||
-    error instanceof TeamClosedError ||
-    error instanceof TeamGenerationChangedError
+    error instanceof TeamNotFoundError || error instanceof TeamClosedError
   );
 }
 
@@ -56,8 +40,16 @@ export class IdempotencyConflictError extends DreamuxError {
   }
 }
 
+/**
+ * Why a submitted dissolve stopped short, for the operator log.
+ *
+ * A dissolve is answered with a receipt before any of this is known, so these
+ * two never reach a caller: they exist to say in the log whether the Team is
+ * still open because its checkout holds work somebody wants, or because the
+ * dissolve itself went wrong. Nothing advertises them as public failures.
+ */
 export class TeamDissolveBlockedError extends DreamuxError {
-  constructor(public readonly reason: WorktreeCleanupBlockedReason) {
+  constructor(reason: WorktreeCleanupBlockedReason) {
     super(
       'TEAM_DISSOLVE_BLOCKED',
       `Team dissolve is blocked because the managed worktree is ${reason}`,
@@ -71,16 +63,6 @@ export class TeamDissolveFailedError extends DreamuxError {
   }
 }
 
-/** Process-local suspension; the durable dissolve remains active for restart. */
-export class TeamDissolveInterruptedError extends DreamuxError {
-  constructor() {
-    super(
-      'TEAM_DISSOLVE_FAILED',
-      'Team dissolve was suspended for dispatcher shutdown',
-    );
-  }
-}
-
 export function teamErrorInfo(error: unknown): Record<string, unknown> {
   if (error instanceof Error) {
     return { type: error.name, message: error.message, stack: error.stack };
@@ -89,20 +71,17 @@ export function teamErrorInfo(error: unknown): Record<string, unknown> {
 }
 
 /**
- * Re-throw one failed dissolve as the failure its caller should read.
+ * Re-throw one refused dissolve submission as the failure its caller reads.
  *
- * Both caller-facing surfaces make the same two judgements, so they make them
- * here rather than each in its own words: a Team that cannot be dissolved
- * because it is already gone is, to the caller, the same fact as a missing one;
- * and the useful part of a blocked dissolve is the reason token itself, not the
- * internal sentence built around it.
+ * Only the submission can fail here — whether this Team can actually be taken
+ * apart is decided behind the receipt — so there is one judgement left, and
+ * both caller-facing surfaces make it here rather than each in its own words: a
+ * Team that cannot be dissolved because it is already gone is, to the caller,
+ * the same fact as a missing one.
  */
 export function throwPublicDissolveError(error: unknown): never {
   if (isTeamUnavailable(error)) {
     throw new TeamNotFoundError(errorMessage(error));
-  }
-  if (error instanceof TeamDissolveBlockedError) {
-    throw new DreamuxError('TEAM_DISSOLVE_BLOCKED', error.reason);
   }
   throw toDreamuxError(error);
 }

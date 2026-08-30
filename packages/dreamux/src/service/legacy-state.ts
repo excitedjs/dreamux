@@ -152,7 +152,7 @@ export function assertNoRemovedRecordFields(
   );
   if (present.length > 0) {
     throw new LegacyStateError(
-      `${label} carries fields removed in issue #199 (${present.join(', ')}). ` +
+      `${label} carries fields the current schema removed (${present.join(', ')}). ` +
         `Dreamux 0.x does not migrate old state — ${rebuild}`,
     );
   }

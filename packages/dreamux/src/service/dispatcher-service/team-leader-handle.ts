@@ -6,7 +6,6 @@ import type {
   SpawnTeamMateRequest,
   TeammateOps,
 } from '../teammate-collection/types.js';
-import type { TeamLeaderLease } from '../team-collection/types.js';
 import type { TeamService } from '../team-service/index.js';
 import type { WorkflowOps } from '../workflow-service/index.js';
 
@@ -29,20 +28,20 @@ export interface TeamLeaderHandle {
 }
 
 export function teamLeaderHandle(input: {
-  lease: TeamLeaderLease;
+  teamId: string;
   withMutationService: <T>(
-    lease: TeamLeaderLease,
+    teamId: string,
     task: (service: TeamService) => Promise<T>,
   ) => Promise<T>;
   withReadService: <T>(
-    lease: TeamLeaderLease,
+    teamId: string,
     task: (service: TeamService) => Promise<T>,
   ) => Promise<T>;
 }): TeamLeaderHandle {
   const mutate = async <T>(task: (service: TeamService) => Promise<T>) =>
-    input.withMutationService(input.lease, task);
+    input.withMutationService(input.teamId, task);
   const read = async <T>(task: (service: TeamService) => Promise<T>) =>
-    input.withReadService(input.lease, task);
+    input.withReadService(input.teamId, task);
   const finishOutsideLease = async <T>(
     task: (service: TeamService) => Promise<T>,
   ): Promise<T> => {

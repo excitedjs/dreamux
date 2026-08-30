@@ -38,7 +38,6 @@ interface RuntimeLaunchSpec {
 }
 
 interface TeammateRuntimeOwnerCallbacks {
-  current: () => AgentEntityIdentity;
   isActive: () => boolean;
   markClosing: () => void;
   activitySink: AgentRuntimeActivitySink;
@@ -79,11 +78,11 @@ export class TeammateRuntimeOwner {
       options.assertIdentityScope ?? assertIdentityBelongsToDispatcher;
   }
 
-  async ensureStarted(opts: { reopenClosed?: boolean } = {}): Promise<void> {
-    this.assertIdentityScope(this.callbacks.current(), this.dispatcherId);
+  async ensureStarted(): Promise<void> {
+    this.assertIdentityScope(this.state.current(), this.dispatcherId);
     if (this.starting !== null) return this.starting;
     if (this.runtime !== null) return;
-    const promise = this.startFromRecord(opts).finally(() => {
+    const promise = this.startFromRecord().finally(() => {
       if (this.starting === promise) this.starting = null;
     });
     this.starting = promise;
@@ -102,7 +101,7 @@ export class TeammateRuntimeOwner {
   mustRuntime(): AgentRuntime {
     if (this.runtime === null) {
       throw new Error(
-        `TeamMate ${JSON.stringify(this.callbacks.current().name)} is not running`,
+        `TeamMate ${JSON.stringify(this.state.current().name)} is not running`,
       );
     }
     return this.runtime;
@@ -117,7 +116,7 @@ export class TeammateRuntimeOwner {
   }
 
   sessionId(): string | null {
-    return this.callbacks.current().session?.id ?? null;
+    return this.state.current().session?.id ?? null;
   }
 
   /**
@@ -166,7 +165,7 @@ export class TeammateRuntimeOwner {
     if (failures.length > 1) {
       throw new AggregateError(
         failures,
-        `TeamMate ${JSON.stringify(this.callbacks.current().name)} could not prove runtime termination`,
+        `TeamMate ${JSON.stringify(this.state.current().name)} could not prove runtime termination`,
       );
     }
   }
@@ -198,14 +197,10 @@ export class TeammateRuntimeOwner {
     if (this.runtime === runtime) this.runtime = null;
   }
 
-  private async startFromRecord(opts: {
-    reopenClosed?: boolean;
-  }): Promise<void> {
-    let identity = this.callbacks.current();
+  /** Starting a closed Agent reopens it: that is what starting one means. */
+  private async startFromRecord(): Promise<void> {
+    let identity = this.state.current();
     if (identity.status === 'closed') {
-      if (opts.reopenClosed !== true) {
-        throw new Error(`TeamMate ${JSON.stringify(identity.name)} is closed`);
-      }
       if (
         identity.worktree.mode === 'managed' &&
         identity.worktree.cleanup_state === 'deleted'
@@ -306,7 +301,7 @@ export class TeammateRuntimeOwner {
     return (event) => {
       if (!lease.isCurrent()) {
         this.deps.log.debug(
-          { teammate: this.callbacks.current().name },
+          { teammate: this.state.current().name },
           'dropped Agent Runtime activity from a revoked runtime generation',
         );
         return;
@@ -316,7 +311,7 @@ export class TeammateRuntimeOwner {
   }
 
   private resolveLaunch(lease: AgentRuntimeGenerationLease): RuntimeLaunchSpec {
-    const identity = this.callbacks.current();
+    const identity = this.state.current();
     const agent: ResolvedAgentConfig = resolveAgent(
       this.deps.config,
       this.dispatcherId,
@@ -423,7 +418,7 @@ export class TeammateRuntimeOwner {
   private mustWorktrees(): WorktreeManager {
     if (this.deps.worktrees === undefined) {
       throw new Error(
-        `agent ${JSON.stringify(this.callbacks.current().name)} has no worktree manager`,
+        `agent ${JSON.stringify(this.state.current().name)} has no worktree manager`,
       );
     }
     return this.deps.worktrees;

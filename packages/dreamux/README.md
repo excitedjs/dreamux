@@ -66,16 +66,17 @@ Design background:
   forwarded to a channel automatically. The model must call provider-specific
   channel MCP tools such as `reply` or `react`, and those tools exist only when
   the Channel provider exposes the capability.
-- **Team binding is a Team MCP capability.** `bind_channel` and `transfer_back`
-  live on the Dreamux-owned Team MCP. The channel MCP shim never owns binding;
-  it only forwards provider-owned tools for the selected channel.
+- **Routing belongs to the Channel.** Which conversation reaches which Team is
+  decided and stored by the Channel provider that owns the conversation, and is
+  changed through that provider's own MCP tools. Dreamux Core has no binding
+  table and no Collaboration Space container; a Channel names a Team when it
+  submits, and Core takes it from there.
 - **TeamMate is server-hosted.** `spawn` starts a named, semi-resident TeamMate
   and returns its concrete name; `send` submits follow-up turns and reopens a
-  closed TeamMate when the runtime can resume it. Direct `spawn` and `send`
-  receipts include the current validated native `transcript_path`, or `null`
-  before a session exists. `last` reads bounded, pageable completed turns from
-  that provider-native transcript without starting a runtime; `history` remains
-  an identity/lifecycle recovery view.
+  closed TeamMate. `last` reads the provider's recent Activity Records — bounded
+  and pageable, including a turn that is still running — without starting a
+  runtime; `history` remains an identity/lifecycle recovery view. Native
+  session identifiers and transcript paths are never published.
 - **No webhook surface in the current contract.** Feishu inbound uses the SDK long-connection
   WebSocket path. Webhook-only verification/encryption fields are not part of
   the config schema.
@@ -352,8 +353,10 @@ The Channel provider contributes its provider-specific MCP server. For
 `builtin:feishu`, the stdio shim does not read Feishu secrets. It serves the
 provider's static `tools/list` metadata and forwards `tools/call` to the serve
 process over the admin socket, where the live channel session handles the tool.
-This MCP surface is not the binding surface; Team handoff stays on the Team MCP
-as `bind_channel` / `transfer_back`.
+This is also the binding surface: `builtin:feishu` exposes `bind_channel`,
+`unbind_channel`, and `list_bindings`, plus its own collaboration-space policy
+tools, because only that provider knows what a chat, a topic, and a parent
+group are.
 
 The model-facing channel tools are supplied by the active Channel provider. Use
 the provider's `tools/list` metadata as the current authority; the generic
@@ -371,17 +374,21 @@ MCP servers. Dispatcher-facing TeamMate tools are:
 - `list`, `status`, `history`, `last`, `get_capabilities`: inspect and recover
   TeamMate state by concrete name.
 
-`last` accepts `turns` (default 1, range 1 through 50), an opaque backward
-pagination `cursor`, and `include_tools`. It returns provider-neutral message
-and tool blocks under a fixed 262144-byte output budget. It exposes neither
-native IDs nor filesystem paths. Native `transcript_path` is intentionally
-limited to direct `spawn` and `send` receipts; treat that machine-local path as
-operator-private.
+`last` accepts `limit` (default 20, range 1 through 200), an opaque backward
+pagination `cursor`, and `include_tools`. It returns provider-neutral assistant
+messages and tool records oldest first, with `next_cursor` and `truncated`. Tool
+arguments and tool output are never exposed, and it publishes no native IDs or
+filesystem paths.
+
+The same server also carries the Workflow tools `workflow_run`,
+`workflow_status`, `workflow_stop`, and `workflow_list`.
 
 Dispatcher-facing Team tools are `create`, `send`, `list`, `status`, `history`,
-`dissolve`, `bind_channel`, and `transfer_back`. TeamLeader callers receive only
-`transfer_back`. Cron tools are `cron_create`, `cron_list`,
-`cron_update`, and `cron_delete`.
+and `dissolve`. A TeamLeader receives only `dissolve`, scoped to its own Team.
+`dissolve` answers with a submission receipt: the Team is stopped and closed
+behind it, and dirty or unmerged work in a managed worktree leaves the Team open
+instead. Cron tools are `cron_create`, `cron_list`, `cron_update`, and
+`cron_delete`.
 
 There is no dispatcher-facing `complete` tool. Completion ingest is a
 server/admin seam, so a dispatcher model cannot fake a TeamMate completion.
@@ -394,7 +401,7 @@ their own config and visible-reply tools.
 1. `dreamux onboard --dispatcher-id flow --dispatcher-cwd <WORKSPACE> --agent flow=builtin:codex --agent-config-json flow='{"bin":"codex"}' --channel primary=builtin:feishu --channel-config-json primary='{"app_id":"<APP_ID>","app_secret":"<APP_SECRET>"}'`
 2. `dreamux serve` starts dispatcher `flow`.
 3. Invite the bot to a Feishu group, send a mention that passes the access gate.
-4. The selected runtime assembles the inbound into a `<channel source="feishu" …>` block (the channel layer hands it neutral structured pieces; #164).
+4. Dreamux renders the inbound into a `<channel source="feishu" …>` block from the neutral pieces the Channel supplied, and hands the runtime final text.
 5. The runtime calls the Feishu channel MCP `reply` tool; the reply is delivered to Feishu.
 6. Send another accepted message from a different chat in the same trust
    domain; it enters the same dispatcher runtime context.

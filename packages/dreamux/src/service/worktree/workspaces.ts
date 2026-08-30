@@ -12,7 +12,7 @@ import type {
   TeamMateSharedWorkspace,
 } from '../teammate-collection/types.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
-import { WorktreeManager } from './manager.js';
+import { reuseCwdWorktree, WorktreeManager } from './manager.js';
 
 export async function resolveSpawnWorkspace(input: {
   config: DreamuxConfig;
@@ -21,8 +21,14 @@ export async function resolveSpawnWorkspace(input: {
   name: string;
   request: SpawnTeamMateRequest;
 }): Promise<TeamMateSharedWorkspace> {
-  if (input.request.sharedWorkspace !== undefined) {
-    return input.request.sharedWorkspace;
+  const loan = input.request.sharedWorkspace;
+  if (loan !== undefined) {
+    return {
+      ...loan,
+      worktree: reuseCwdWorktree(loan.runtimeCwd),
+      // Lent by its owner, so its owner keeps it.
+      createdCheckout: false,
+    };
   }
   if (
     input.request.worktree === undefined &&

@@ -57,6 +57,30 @@ export interface WorktreeCleanupOptions {
   force?: boolean;
 }
 
+/**
+ * The neutral "this Agent just runs in a directory" workspace fact.
+ *
+ * It owns nothing: there is no managed checkout behind it, so no close, cleanup,
+ * or recovery path has anything to reclaim. Every borrower of somebody else's
+ * directory — a Team member running in its Team's checkout, a default work dir —
+ * records exactly this.
+ */
+export function reuseCwdWorktree(
+  path: string,
+  cleanup: AgentEntityWorktreeIdentity['cleanup'] = 'keep',
+): AgentEntityWorktreeIdentity {
+  return {
+    mode: 'reuse-cwd',
+    slug: null,
+    path,
+    branch: null,
+    base_ref: null,
+    cleanup,
+    cleanup_state: 'not-managed',
+    cleanup_error: null,
+  };
+}
+
 export class WorktreeManager {
   async prepare(input: {
     dispatcherId: string;
@@ -79,16 +103,9 @@ export class WorktreeManager {
         sourceCwd,
         sourceRepo: await this.tryRepoRoot(sourceCwd),
         runtimeCwd: sourceCwd,
-        worktree: {
-          mode: 'reuse-cwd',
-          slug: null,
-          path: sourceCwd,
-          branch: null,
-          base_ref: null,
-          cleanup: input.request?.cleanup ?? 'keep',
-          cleanup_state: 'not-managed',
-          cleanup_error: null,
-        },
+        worktree: reuseCwdWorktree(sourceCwd, input.request?.cleanup ?? 'keep'),
+        // Borrowed, never created: the directory had to exist to be used.
+        createdCheckout: false,
       };
     }
 
@@ -152,6 +169,7 @@ export class WorktreeManager {
       sourceCwd,
       sourceRepo,
       runtimeCwd: path,
+      createdCheckout: !exists,
       worktree: {
         mode: 'managed',
         slug,
@@ -197,16 +215,9 @@ export class WorktreeManager {
       sourceCwd: path,
       sourceRepo: null,
       runtimeCwd: path,
-      worktree: {
-        mode: 'reuse-cwd',
-        slug: null,
-        path,
-        branch: null,
-        base_ref: null,
-        cleanup: 'keep',
-        cleanup_state: 'not-managed',
-        cleanup_error: null,
-      },
+      worktree: reuseCwdWorktree(path),
+      // A plain work directory, not a checkout: there is nothing to reclaim.
+      createdCheckout: false,
     };
   }
 

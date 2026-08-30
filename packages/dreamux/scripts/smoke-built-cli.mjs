@@ -17,7 +17,6 @@ const serviceModule = await import(
   pathToFileURL(join(packageRoot, 'dist', 'service', 'index.js')).href
 );
 const expectedServiceExports = [
-  'ChannelToolAuthorizationError',
   'DispatcherService',
   'Dispatchers',
   'TeamService',
@@ -79,17 +78,6 @@ function requireSuccessful(result, label) {
   }
 }
 
-function requireFailedWith(result, expected, label) {
-  if (
-    result.signal !== null ||
-    result.code === null ||
-    result.code === 0 ||
-    !result.stderr.includes(expected)
-  ) {
-    throw new Error(`${label} did not fail as expected: ${describeResult(result)}`);
-  }
-}
-
 const versionResult = await runCli(['--version']);
 requireSuccessful(versionResult, 'dreamux --version');
 const version = versionResult.stdout.trim();
@@ -99,43 +87,4 @@ if (version === '') {
   );
 }
 
-requireFailedWith(
-  await runCli(['channel-mcp', '--dispatcher', 'smoke']),
-  'channel-mcp requires --channel-tools-b64',
-  'channel-mcp missing catalog',
-);
-requireFailedWith(
-  await runCli([
-    'channel-mcp',
-    '--dispatcher',
-    'smoke',
-    '--channel-tools-b64',
-    '!!!!W10=',
-  ]),
-  '--channel-tools-b64 must be valid canonical base64',
-  'channel-mcp malformed base64 catalog',
-);
-requireFailedWith(
-  await runCli([
-    'channel-mcp',
-    '--dispatcher',
-    'smoke',
-    '--channel-tools-b64',
-    Buffer.from('not-json', 'utf8').toString('base64'),
-  ]),
-  '--channel-tools-b64 did not decode to valid JSON',
-  'channel-mcp non-JSON catalog',
-);
-requireFailedWith(
-  await runCli([
-    'channel-mcp',
-    '--dispatcher',
-    'smoke',
-    '--channel-tools-b64',
-    Buffer.from('[]', 'utf8').toString('base64'),
-  ]),
-  'channel tool catalog must not be empty',
-  'channel-mcp empty catalog',
-);
-
-console.log(`dreamux built package/service/CLI/MCP smoke ok: ${version}`);
+console.log(`dreamux built package/service/CLI smoke ok: ${version}`);

@@ -5,7 +5,6 @@ import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { errorInfo } from '../../platform/error-info.js';
 
 import {
-  type CronDeliverTarget,
   type CronJobStore,
   type CronJob,
   type CronJobAction,
@@ -212,13 +211,6 @@ export class SchedulerService {
       const job = await this.store.get(jobId);
       if (generation !== this.lifecycleGeneration) return;
       if (job === null || !job.enabled) return;
-      if (job.action.kind !== 'prompt-agent') {
-        this.log.warn(
-          { owner_id: this.ownerId, job_id: jobId },
-          'cron job skipped because action is not implemented',
-        );
-        return;
-      }
       await this.submitDue(job, generation);
     } catch (err) {
       this.log.error(
@@ -351,11 +343,6 @@ export class SchedulerService {
   private validatePersistedJob(job: CronJob): void {
     validateCron(job.cron, job.tz);
     validateAction(job.action);
-    if (job.deliver !== undefined) {
-      throw new Error(
-        `cron job '${job.id}' uses deliver, which is not implemented in this milestone`,
-      );
-    }
   }
 
   private normalizeCreate(input: CronCreateRequest): {
@@ -364,14 +351,12 @@ export class SchedulerService {
     tz: string;
     recurring: boolean;
     action: CronJobAction;
-    deliver?: CronDeliverTarget;
   } {
     const tz = input.tz ?? localTimeZone();
     const action = normalizeAction(input.prompt, input.action);
     assertTitle(input.title);
     validateCron(input.cron, tz);
     validateAction(action);
-    assertNoDeliver(input.deliver);
     assertMinimumInterval(input.cron, tz, input.recurring ?? true);
     return {
       ...(input.title !== undefined ? { title: input.title } : {}),
@@ -398,7 +383,6 @@ export class SchedulerService {
     assertTitle(input.title);
     validateCron(cron, tz);
     validateAction(action);
-    assertNoDeliver(input.deliver === null ? undefined : input.deliver);
     assertMinimumInterval(cron, tz, recurring);
     return {
       id: input.id,
@@ -407,7 +391,6 @@ export class SchedulerService {
       tz,
       recurring,
       action,
-      ...(input.deliver !== undefined ? { deliver: input.deliver } : {}),
       ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
     };
   }
@@ -430,9 +413,6 @@ function normalizeAction(
   if (prompt === '') throw new Error('cron prompt must be a non-empty string');
   if (raw === undefined) return { kind: 'prompt-agent', prompt };
   const kind = raw['kind'];
-  if (kind === 'spawn-teammate') {
-    throw new Error('cron spawn-teammate action is not implemented in this milestone');
-  }
   if (kind !== undefined && kind !== 'prompt-agent') {
     throw new Error("cron action.kind must be 'prompt-agent'");
   }
@@ -449,16 +429,7 @@ function normalizeAction(
 }
 
 function validateAction(action: CronJobAction): void {
-  if (action.kind === 'spawn-teammate') {
-    throw new Error('cron spawn-teammate action is not implemented in this milestone');
-  }
   if (action.prompt === '') throw new Error('cron action prompt must be non-empty');
-}
-
-function assertNoDeliver(deliver: CronDeliverTarget | undefined): void {
-  if (deliver !== undefined) {
-    throw new Error('cron deliver is not implemented in this milestone');
-  }
 }
 
 function assertTitle(title: string | null | undefined): void {

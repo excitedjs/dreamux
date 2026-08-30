@@ -126,8 +126,11 @@ export class AgentIdentityStore {
 
   /**
    * Read this entity's identity. A missing file yields null; a legacy/old-state
-   * file is rethrown (fail-loud); any other parse/IO error is logged and yields
-   * null, so one unreadable entity never sinks a whole collection scan.
+   * file is rethrown (fail-loud); any other parse error is logged and yields
+   * null, so one unreadable entity never sinks a whole collection scan. An IO
+   * error other than "not found" is rethrown: the file may say anything, and
+   * reporting "no identity" for a directory this process could not read would
+   * be a guess.
    */
   async read(): Promise<AgentEntityIdentity | null> {
     let raw: string;
@@ -391,9 +394,10 @@ async function listDirectoryNames(dir: string): Promise<string[]> {
  * whose name is not encoded in the path — the parsed `name` is then
  * authoritative.
  *
- * A record written before role was removed still carries a `role` key. It is
- * simply not read: this reader takes named fields only, so the stale key is an
- * unknown extra that the next ordinary write drops.
+ * Current shape only. A field this schema removed, or a required field that is
+ * missing or the wrong type, is not repaired into something plausible: the file
+ * says something this version does not accept, and saying so is the only honest
+ * answer a reader can give.
  */
 function readIdentity(
   dispatcherId: string,
@@ -424,6 +428,7 @@ function readIdentity(
       'transcript_locator',
       'display_name',
       'close_status',
+      'role',
     ],
     'close and respawn this teammate, or delete its identity directory to rebuild it.',
   );
@@ -433,25 +438,19 @@ function readIdentity(
     typeof value['name'] !== 'string' ||
     (expectedName !== null && value['name'] !== expectedName) ||
     typeof value['agent_runtime'] !== 'string' ||
-    typeof value['cwd'] !== 'string'
+    typeof value['cwd'] !== 'string' ||
+    typeof value['source_cwd'] !== 'string' ||
+    typeof value['runtime_cwd'] !== 'string' ||
+    typeof value['created_at'] !== 'number' ||
+    typeof value['updated_at'] !== 'number' ||
+    !Array.isArray(value['skill_sources'])
   ) {
     throw new Error(`invalid agent identity ${JSON.stringify(storedName)}`);
   }
   const name = value['name'] as string;
   const record = value as Record<string, unknown>;
-  const sourceCwd =
-    typeof record['source_cwd'] === 'string'
-      ? record['source_cwd']
-      : (record['cwd'] as string);
   const sourceRepo =
     typeof record['source_repo'] === 'string' ? record['source_repo'] : null;
-  const runtimeCwd =
-    typeof record['runtime_cwd'] === 'string'
-      ? record['runtime_cwd']
-      : (record['cwd'] as string);
-  const worktree = readWorktreeIdentity(record['worktree'], runtimeCwd);
-  const createdAt = typeof record['created_at'] === 'number' ? record['created_at'] : 0;
-  const updatedAt = typeof record['updated_at'] === 'number' ? record['updated_at'] : createdAt;
   return {
     version: 1,
     dispatcher_id: dispatcherId,
@@ -459,23 +458,23 @@ function readIdentity(
     team_id: typeof record['team_id'] === 'string' ? record['team_id'] : null,
     agent_runtime: record['agent_runtime'] as string,
     session: readSessionRef(record['session'], storedName),
-    source_cwd: sourceCwd,
+    source_cwd: record['source_cwd'] as string,
     source_repo: sourceRepo,
     cwd: record['cwd'] as string,
-    runtime_cwd: runtimeCwd,
-    worktree,
+    runtime_cwd: record['runtime_cwd'] as string,
+    worktree: readWorktreeIdentity(record['worktree'], storedName),
     intent: typeof record['intent'] === 'string' ? record['intent'] : null,
     identity_prompt:
       typeof record['identity_prompt'] === 'string'
         ? record['identity_prompt']
         : null,
     skill_sources: parseAgentRuntimeSkillSources(
-      record['skill_sources'] ?? [],
+      record['skill_sources'],
       `agent identity ${JSON.stringify(storedName)} skill_sources`,
     ),
-    created_at: createdAt,
-    updated_at: updatedAt,
-    status: readStatus(record['status']),
+    created_at: record['created_at'] as number,
+    updated_at: record['updated_at'] as number,
+    status: readStatus(record['status'], storedName),
     last_error: typeof record['last_error'] === 'string' ? record['last_error'] : null,
     closed_at: typeof record['closed_at'] === 'number' ? record['closed_at'] : null,
     close_note: typeof record['close_note'] === 'string' ? record['close_note'] : null,
@@ -490,41 +489,58 @@ const IDENTITY_STATUSES = new Set<AgentEntityIdentityStatus>([
   'stopped',
 ]);
 
-function readStatus(value: unknown): AgentEntityIdentityStatus {
-  return typeof value === 'string' && IDENTITY_STATUSES.has(value as AgentEntityIdentityStatus)
-    ? (value as AgentEntityIdentityStatus)
-    : 'stopped';
+function readStatus(
+  value: unknown,
+  storedName: string | null,
+): AgentEntityIdentityStatus {
+  if (
+    typeof value !== 'string' ||
+    !IDENTITY_STATUSES.has(value as AgentEntityIdentityStatus)
+  ) {
+    throw new Error(
+      `invalid agent identity ${JSON.stringify(storedName)} status`,
+    );
+  }
+  return value as AgentEntityIdentityStatus;
 }
 
+/**
+ * Read the workspace this Agent runs in.
+ *
+ * Nothing here is inferred. A missing or unrecognized workspace mode, path, or
+ * cleanup state would decide whether Dreamux may delete a checkout, so guessing
+ * one is the one repair this reader must never make.
+ */
 function readWorktreeIdentity(
   value: unknown,
-  runtimeCwd: string,
+  storedName: string | null,
 ): AgentEntityWorktreeIdentity {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return {
-      mode: 'reuse-cwd',
-      slug: null,
-      path: runtimeCwd,
-      branch: null,
-      base_ref: null,
-      cleanup: 'keep',
-      cleanup_state: 'not-managed',
-      cleanup_error: null,
-    };
+  const record =
+    typeof value === 'object' && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  const cleanupState =
+    record === null ? null : readWorktreeCleanupState(record['cleanup_state']);
+  if (
+    record === null ||
+    (record['mode'] !== 'managed' && record['mode'] !== 'reuse-cwd') ||
+    typeof record['path'] !== 'string' ||
+    (record['cleanup'] !== 'keep' && record['cleanup'] !== 'delete-on-close') ||
+    cleanupState === null
+  ) {
+    throw new Error(
+      `invalid agent identity ${JSON.stringify(storedName)} worktree`,
+    );
   }
-  const record = value as Record<string, unknown>;
-  const mode = record['mode'] === 'managed' ? 'managed' : 'reuse-cwd';
   return {
-    mode,
+    mode: record['mode'],
     slug: typeof record['slug'] === 'string' ? record['slug'] : null,
-    path: typeof record['path'] === 'string' ? record['path'] : runtimeCwd,
+    path: record['path'],
     branch: typeof record['branch'] === 'string' ? record['branch'] : null,
     base_ref:
       typeof record['base_ref'] === 'string' ? record['base_ref'] : null,
-    cleanup:
-      record['cleanup'] === 'delete-on-close' ? 'delete-on-close' : 'keep',
-    cleanup_state: readWorktreeCleanupState(record['cleanup_state']) ??
-      (mode === 'managed' ? 'managed-active' : 'not-managed'),
+    cleanup: record['cleanup'],
+    cleanup_state: cleanupState,
     cleanup_error:
       typeof record['cleanup_error'] === 'string'
         ? record['cleanup_error']

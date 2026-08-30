@@ -60,6 +60,17 @@ describe('global Codex home doctor', () => {
     }
   });
 
+  it('is a truly global home: two dispatcher ids resolve the identical Codex home path (no dispatcher-private CODEX_HOME)', () => {
+    // Dreamux 0.x does not create a per-dispatcher CODEX_HOME (project
+    // CLAUDE.md "Always-Binding Rules" / `packages/agent-runtime/codex/src/
+    // paths.ts` doc comment). `dispatcherCodexHome(id)` accepts an id only for
+    // call-site symmetry and ignores it entirely — this locks that fact down
+    // so a future change cannot silently make it per-dispatcher without a
+    // failing test surfacing the shift.
+    expect(dispatcherCodexHome('flow-a')).toBe(dispatcherCodexHome('flow-b'));
+    expect(dispatcherCodexHome('flow-a')).toBe(dispatcherCodexHome(''));
+  });
+
   it('reports every missing Codex home requirement', async () => {
     const result = await validateDispatcherCodexHome('flow', { env: {} });
 

@@ -14,18 +14,19 @@
  */
 import { randomUUID } from 'node:crypto';
 
+import { normalizeSkillSources } from '../../agent-runtime/skill-sources.js';
 import {
   mustNonBlankString,
   mustNonEmptyString,
-  normalizeSkillSources,
   optionalInteger,
   optionalNonBlankString,
   optionalString,
-  optionalTeamStatus,
-  repoRequest,
-  repoWorktree,
   type CommandPayload,
 } from '../../command/payload.js';
+import {
+  repoRequest,
+  repoWorktree,
+} from '../worktree/repo-request.js';
 import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
 import {
   DESTRUCTIVE_ANNOTATIONS,
@@ -55,6 +56,7 @@ import {
 } from './create-request.js';
 import { throwPublicDissolveError } from './errors.js';
 import { teamSubmitResult } from './projections.js';
+import { optionalTeamStatus } from './types.js';
 
 /** Who this delegate serves. Bound once, at runtime construction. */
 export type TeamMcpCaller =
@@ -74,7 +76,8 @@ const IDENTITY = { name: 'dreamux-team', version: '0.4.0' };
  *
  * `BAD_REQUEST` is this delegate's own argument validation — the model can fix
  * it. The rest are Team facts a caller can act on: a Team that is gone or
- * closed, a replayed creation request, and the reason a dissolve is blocked.
+ * closed, and a replayed creation request. A dissolve answers with a receipt,
+ * so nothing about how the dissolve itself goes can appear here.
  */
 const PUBLIC_CODES: Readonly<Record<string, readonly string[]>> = {
   create: ['BAD_REQUEST', 'IDEMPOTENCY_CONFLICT'],
@@ -82,7 +85,7 @@ const PUBLIC_CODES: Readonly<Record<string, readonly string[]>> = {
   list: ['BAD_REQUEST'],
   status: ['BAD_REQUEST'],
   history: ['BAD_REQUEST'],
-  dissolve: ['BAD_REQUEST', 'TEAM_NOT_FOUND', 'TEAM_DISSOLVE_BLOCKED'],
+  dissolve: ['BAD_REQUEST', 'TEAM_NOT_FOUND'],
 };
 
 export function createTeamMcpDelegate(input: {
@@ -273,9 +276,9 @@ async function dissolve(
     const dissolved =
       caller.kind === 'team_leader'
         ? await dispatcher.dissolveTeamForLeader({
-            // The lease is the caller's own, from the descriptor that launched
+            // The Team is the caller's own, from the descriptor that launched
             // this server — never a name the model supplied.
-            lease: { teamId: caller.teamId, leaderName: caller.leaderName },
+            teamId: caller.teamId,
             note,
             force,
           })
@@ -303,7 +306,7 @@ function teamToolDescriptors(
     return [
       tool(
         'dissolve',
-        'Dissolve this descriptor-bound Team. Its Workflow and TeamMates are stopped first, then the managed worktree is checked: uncommitted, untracked, or unmerged work blocks the dissolve so it can be inspected or committed. note is required and records why the Team stopped. force: true discards that local work so the managed checkout can be removed; it never deletes the branch, its commits, a reused directory, or the source repository. Expect this call to lose its response: this Team\'s own runtime is being stopped, and the dissolve is already accepted.',
+        'Submit a dissolve of this descriptor-bound Team. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }) and never reports how the dissolve went: the Team\'s Workflow, TeamMates, and this TeamLeader are stopped behind that receipt, so expect this call to lose its response. note is required and records why the Team stopped. Uncommitted, untracked, or unmerged work in the managed worktree leaves the Team open and running instead of closing it. force: true discards that local work so the managed checkout can be removed; it never deletes the branch, its commits, a reused directory, or the source repository.',
         {
           note: { type: 'string', minLength: 1, maxLength: 2000, pattern: '\\S' },
           force: { type: 'boolean' },
@@ -418,7 +421,7 @@ function teamToolDescriptors(
     ),
     tool(
       'dissolve',
-      'Close one Team (by team_name) and its agents. The managed worktree is checked before anything is stopped: uncommitted, untracked, or unmerged work refuses the request and leaves the Team running. note is required: it records why a recoverable Team was stopped. force: true discards that local work so the managed checkout can be removed; it never deletes the branch, its commits, a reused directory, or the source repository.',
+      'Submit a dissolve of one Team (by team_name) and its agents. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }); the Team is stopped and closed behind that receipt, so this call never reports the outcome. note is required: it records why a recoverable Team was stopped. Uncommitted, untracked, or unmerged work in the managed worktree leaves the Team open and running instead of closing it, so read the Team\'s status afterwards to see what happened. force: true discards that local work so the managed checkout can be removed; it never deletes the branch, its commits, a reused directory, or the source repository.',
       {
         team_name: { type: 'string', minLength: 1, maxLength: 64 },
         note: { type: 'string', minLength: 1, maxLength: 2000 },

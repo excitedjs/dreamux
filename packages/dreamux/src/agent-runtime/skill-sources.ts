@@ -2,6 +2,9 @@ import type { AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
 import { readdir, realpath } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 
+import { ValidationError, errorMessage } from '../command/errors.js';
+import type { CommandPayload } from '../command/payload.js';
+
 /** Parse the runtime-neutral skill-source shape at host-owned trust boundaries. */
 export function parseAgentRuntimeSkillSources(
   value: unknown,
@@ -127,4 +130,41 @@ async function canonicalSkillRoot(
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Parse supplied skill sources without touching the filesystem. Normalization
+ * against the bundled roots is an `execute`-time step; see
+ * {@link normalizeSkillSources}.
+ */
+export function optionalParsedSkillSources(
+  params: CommandPayload,
+): readonly AgentRuntimeSkillSource[] | null {
+  if (params['skill_sources'] === undefined) return null;
+  try {
+    return parseAgentRuntimeSkillSources(
+      params['skill_sources'],
+      "param 'skill_sources'",
+    );
+  } catch (err) {
+    throw new ValidationError(errorMessage(err));
+  }
+}
+
+/** Resolve parsed skill sources, adding the owner's mandatory roots. */
+export async function normalizeSkillSources(
+  parsed: readonly AgentRuntimeSkillSource[] | null,
+  options: { requiredSources?: readonly AgentRuntimeSkillSource[] } = {},
+): Promise<readonly AgentRuntimeSkillSource[] | null> {
+  if (parsed === null) return null;
+  try {
+    return await normalizeAgentRuntimeSkillSources(parsed, {
+      label: "param 'skill_sources'",
+      ...(options.requiredSources !== undefined
+        ? { requiredSources: options.requiredSources }
+        : {}),
+    });
+  } catch (err) {
+    throw new ValidationError(errorMessage(err));
+  }
 }

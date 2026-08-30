@@ -11,25 +11,21 @@ import { LegacyStateError } from '../legacy-state.js';
 const STORE_VERSION = 1;
 export const MIN_CRON_INTERVAL_MS = 60_000;
 
-export interface CronDeliverTarget {
-  channel_id: string;
-  target_key: string;
-}
-
 export interface CronPromptAgentAction {
   kind: 'prompt-agent';
   prompt: string;
   intent?: string;
 }
 
-export interface CronSpawnTeammateAction {
-  kind: 'spawn-teammate';
-  prompt: string;
-  intent?: string;
-  agent_runtime: string;
-}
-
-export type CronJobAction = CronPromptAgentAction | CronSpawnTeammateAction;
+/**
+ * What a cron job does when it fires, and the only thing it has ever done.
+ *
+ * A job injects its prompt into the Dispatcher or TeamLeader that owns the
+ * schedule. It does not spawn an agent and it does not address a Channel: those
+ * were declared shapes with no execution behind them, so the union is the one
+ * action Dreamux actually performs.
+ */
+export type CronJobAction = CronPromptAgentAction;
 
 export interface CronJob {
   id: string;
@@ -39,7 +35,6 @@ export interface CronJob {
   tz: string;
   recurring: boolean;
   action: CronJobAction;
-  deliver?: CronDeliverTarget;
   enabled: boolean;
   created_at: number;
   updated_at: number;
@@ -58,7 +53,6 @@ export interface CronJobCreateInput {
   tz: string;
   recurring: boolean;
   action: CronJobAction;
-  deliver?: CronDeliverTarget;
   nextRunAt: number | null;
 }
 
@@ -69,7 +63,6 @@ export interface CronJobUpdateInput {
   tz?: string;
   recurring?: boolean;
   action?: CronJobAction;
-  deliver?: CronDeliverTarget | null;
   enabled?: boolean;
   nextRunAt?: number | null;
 }
@@ -125,7 +118,6 @@ export class CronJobStore {
         tz: input.tz,
         recurring: input.recurring,
         action: input.action,
-        ...(input.deliver !== undefined ? { deliver: input.deliver } : {}),
         enabled: true,
         created_at: now,
         updated_at: now,
@@ -153,10 +145,6 @@ export class CronJobStore {
       if (input.tz !== undefined) next.tz = input.tz;
       if (input.recurring !== undefined) next.recurring = input.recurring;
       if (input.action !== undefined) next.action = input.action;
-      if (input.deliver !== undefined) {
-        if (input.deliver === null) delete next.deliver;
-        else next.deliver = input.deliver;
-      }
       if (input.enabled !== undefined) next.enabled = input.enabled;
       if (input.nextRunAt !== undefined) next.next_run_at = input.nextRunAt;
       file.jobs[index] = next;
@@ -259,7 +247,14 @@ function parseCronJob(raw: unknown, ctx: { path: string }): CronJob {
   const dispatcherId = requiredString(raw, 'dispatcher_id', ctx);
   const action = parseAction(raw['action'], ctx);
   const title = optionalString(raw, 'title', ctx);
-  const deliver = parseOptionalDeliver(raw['deliver'], ctx);
+  if (raw['deliver'] !== undefined) {
+    throw new LegacyStateError(
+      `cron job store ${ctx.path} job '${id}' carries the removed deliver ` +
+        'field. Cron jobs inject a prompt into their owning agent and address ' +
+        'no Channel. Delete the job or the store file and recreate the ' +
+        'schedule.',
+    );
+  }
   return {
     id,
     dispatcher_id: dispatcherId,
@@ -268,7 +263,6 @@ function parseCronJob(raw: unknown, ctx: { path: string }): CronJob {
     tz: requiredString(raw, 'tz', ctx),
     recurring: requiredBoolean(raw, 'recurring', ctx),
     action,
-    ...(deliver !== undefined ? { deliver } : {}),
     enabled: requiredBoolean(raw, 'enabled', ctx),
     created_at: requiredNumber(raw, 'created_at', ctx),
     updated_at: requiredNumber(raw, 'updated_at', ctx),
@@ -277,6 +271,12 @@ function parseCronJob(raw: unknown, ctx: { path: string }): CronJob {
   };
 }
 
+/**
+ * The raw file boundary is where a removed shape stops.
+ *
+ * `spawn-teammate` is refused here rather than downstream, so it can never
+ * become a domain object that some later branch has to keep apologising for.
+ */
 function parseAction(raw: unknown, ctx: { path: string }): CronJobAction {
   if (!isRecord(raw)) {
     throw new LegacyStateError(`cron job store ${ctx.path} has a non-object action`);
@@ -290,28 +290,13 @@ function parseAction(raw: unknown, ctx: { path: string }): CronJobAction {
     };
   }
   if (kind === 'spawn-teammate') {
-    return {
-      kind,
-      prompt: requiredString(raw, 'prompt', ctx),
-      agent_runtime: requiredString(raw, 'agent_runtime', ctx),
-      ...optionalStringRecord(raw, 'intent', ctx),
-    };
+    throw new LegacyStateError(
+      `cron job store ${ctx.path} carries a removed spawn-teammate action. ` +
+        'Cron only injects a prompt into its owning agent. Delete the job or ' +
+        'the store file and recreate the schedule.',
+    );
   }
   throw new LegacyStateError(`cron job store ${ctx.path} has unknown action kind '${kind}'`);
-}
-
-function parseOptionalDeliver(
-  raw: unknown,
-  ctx: { path: string },
-): CronDeliverTarget | undefined {
-  if (raw === undefined) return undefined;
-  if (!isRecord(raw)) {
-    throw new LegacyStateError(`cron job store ${ctx.path} has a non-object deliver`);
-  }
-  return {
-    channel_id: requiredString(raw, 'channel_id', ctx),
-    target_key: requiredString(raw, 'target_key', ctx),
-  };
 }
 
 function assertCronJobSemantics(
@@ -324,18 +309,6 @@ function assertCronJobSemantics(
       throw new LegacyStateError(
         `cron job store ${path} contains job '${job.id}' for dispatcher ` +
           `'${job.dispatcher_id}', expected '${dispatcherId}'`,
-      );
-    }
-    if (job.deliver !== undefined) {
-      throw new LegacyStateError(
-        `cron job store ${path} contains job '${job.id}' with deliver, ` +
-          'which is not implemented in this milestone',
-      );
-    }
-    if (job.action.kind === 'spawn-teammate') {
-      throw new LegacyStateError(
-        `cron job store ${path} contains job '${job.id}' with spawn-teammate, ` +
-          'which is not implemented in this milestone',
       );
     }
     assertValidCron(job, path);

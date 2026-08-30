@@ -1,8 +1,8 @@
 # Service Lifecycle And Reply Diagnosis
 
 This reference owns current serve/daemon lifecycle, missing-reply, stuck-turn,
-and Workflow run-state diagnosis, bundled-skill injection, runtime app-server
-readiness, and same-version restart cautions.
+Workflow run-state, and cron job-store diagnosis, bundled-skill injection,
+runtime app-server readiness, and same-version restart cautions.
 
 ## Server And Service
 
@@ -32,42 +32,36 @@ readiness, and same-version restart cautions.
   An untyped provider rejection is ambiguous. Runtime stop fences new admission
   synchronously and waits for already-started admission calls to settle before
   it reports completion.
+- Every settled turn is reported to the Agent that was waiting for it,
+  including one that failed or was stopped without a native provider result. A
+  missing completion is therefore a delivery problem, not evidence that the
+  turn ended badly.
 - Completion preparation and each prepared submission attempt have an internal
   deadline. Deadline expiry is admission-ambiguous and terminal: Dreamux logs
   and drops that delivery instead of retrying or blocking entity, Workflow,
   Team, or server teardown indefinitely.
 
-## Agent Identity And Native Transcripts
+## Agent Identity And Recent Activity
 
 - Every dispatcher root agent, TeamMate, TeamLeader, and Team member has a
   server-owned `identity.json` in its role-scoped entity directory. It owns
-  identity/lifecycle/worktree facts and the atomic native Runtime association:
-  `session_id` plus nullable `transcript_locator`. It does not own rolling
-  conversation previews or a Dreamux Turn archive.
+  identity/lifecycle/worktree facts and one nullable `session`: the provider's
+  own session object, persisted verbatim and read back only by that provider.
+  Dreamux reads `session.id` and nothing else. `identity.json` owns no
+  conversation preview and no Dreamux Turn archive.
 - Use `history`, list, and status for identity/lifecycle recovery. Use `last`
-  for completed conversation detail: it cold-reads the selected provider's
-  native transcript without starting or resuming the Runtime. `last` accepts
-  only `turns` (default 1, range 1 through 50), an opaque cursor, and
-  `include_tools`; it returns chronological provider-neutral message/tool
-  blocks under a fixed 262144-byte output budget.
-- Native transcript reads are bounded. Follow `next_cursor` for older pages.
-  `scan_unsupported` means the provider cannot safely inspect that native
-  representation within its fixed scan bound; it is not permission to perform
-  an unbounded Dreamux scan or create a cache/index.
-- Direct TeamMate `spawn` and `send` receipts include
-  `transcript_path: string | null`, independent of submission status. A known
-  validated session keeps its path on duplicate, failed, ambiguous, or stopped
-  submissions; `null` means no native transcript association has ever been
-  established. The path is machine-local and operator-private. It may briefly
-  name a file that the provider has not created or completely flushed yet.
-- `transcript_path` is not present in list, status, history, `last`, Workflow,
-  Team, Channel, completion, logs, metrics, or public errors. Do not publish it
-  to a broad Channel.
+  for what a TeamMate is doing or has just done: it reads the provider's recent
+  Activity Records without starting or resuming the Runtime, so it also shows a
+  turn that is still running. `last` accepts `limit` (default 20, range 1
+  through 200), an opaque `cursor`, and `include_tools`; it returns assistant
+  messages and tool records oldest first, with `next_cursor` and `truncated`.
+- Activity Records carry assistant message text and tool name plus lifecycle
+  status. Tool arguments and tool output are never exposed, and a provider's
+  raw native lines are never surfaced.
+- Activity reads are bounded. Follow `next_cursor` for older pages; that bound
+  is not permission to perform an unbounded scan or to build a cache or index.
 - `identity.json` is fully server-owned. Do not edit, copy over, synthesize, or
-  delete it as an operational repair. Existing files may contain the retired
-  `turn_count`, `last_seen_at`, `last_prompt_preview`, or
-  `last_assistant_preview` keys; Dreamux ignores those legacy extras and a
-  normal later rewrite may drop them.
+  delete it as an operational repair.
 - Dreamux never creates, opens, stats, lists, validates, repairs, migrates, or
   deletes a current-layout entity `turn.jsonl`. Any such file is inert legacy
   residue. Its contents, version, permissions, parseability, or absence cannot
@@ -101,36 +95,59 @@ readiness, and same-version restart cautions.
   replay and run resume are not supported. A restart is therefore not a way to
   continue a Workflow and must not be presented as one.
 
+## Cron Jobs
+
+- Dispatcher cron jobs live in
+  `~/.dreamux/state/<dispatcher-id>/cron-jobs.json`; a TeamLeader's live in
+  `~/.dreamux/state/<dispatcher-id>/team/<team-id>/cron-jobs.json`. Both are
+  fully server-owned. Do not edit, copy over, synthesize, or delete a job by
+  hand as an operational repair; use `cron_create`, `cron_update`, and
+  `cron_delete` in the owning scope.
+- A job's only action is `{ kind: "prompt-agent", prompt, intent? }`: it injects
+  its prompt into the Dispatcher or TeamLeader that owns the schedule. Cron
+  spawns no agent and addresses no Channel, and a job carries no delivery
+  target. A store file containing a `spawn-teammate` action or a `deliver`
+  field is not current state: it fails loud when read, and `dreamux doctor`
+  names the file. Delete that job or the store file and recreate the schedule.
+- A due job is submitted through ordinary admission, so it may fold into a turn
+  that is already running. Firing proves submission, not a visible reply.
+
 ## Team Dissolve And Cleanup State
 
 - Team state lives at
   `~/.dreamux/state/<dispatcher-id>/team/<team-id>/record.json` and is fully
-  server-owned. Its nullable `dissolve` object contains the accepted operation,
-  requester/generation, target handoff ids, first note/time, phase, public-safe
-  error, cleanup-attempt count, and next retry time. Do not edit, clear, copy, or
-  synthesize this object manually.
-- Current phases are `waiting_for_team_idle`, `closing_resources`,
-  `worktree_cleanup_pending`, `complete`, and `failed`. Team status is separate:
-  a Team can be durably `closed` while managed worktree cleanup remains pending.
-- `cleanup-pending` means Dreamux still owns retry responsibility. Inspect Team
-  status/history and sanitized structured logs for dispatcher, Team, operation,
-  phase, attempt, and public-safe error. Do not delete the Team record or managed
-  worktree to clear the visible state.
-- Dispatcher startup restores the Team availability fence and resumes active
-  dissolve/cleanup work before normal Team, collaboration, Channel, workflow,
-  or scheduler work is published. A same-version restart is a recovery action,
-  not proof that cleanup completed; verify the terminal Team view afterward.
-- Dirty or unmerged worktrees require an explicit operator decision and are
-  never force-removed. `cleanup: keep` and non-managed workspaces are terminally
-  retained. For a clean managed `delete-on-close` worktree, Dreamux runs only
-  non-forced `git worktree remove <path>`: it does not use ref reachability as
-  an eligibility check and it preserves the managed branch and its commits.
-  Operational removal failures retry in the background.
+  server-owned. Do not edit, clear, copy, or synthesize it manually.
+- Dissolve is a submission. The caller's receipt (`{ accepted, team_name,
+  status: submitted }`) proves only that the request was accepted; the stop and
+  the close run behind it and are never reported back to that caller. Read the
+  Team's status afterward to learn what actually happened.
+- The record's `status` and its `worktree.cleanup_state` are the only durable
+  dissolve facts. There is no persisted dissolve operation, phase, retry
+  counter, or generation. A dissolve interrupted before its closed record
+  simply did not happen: the Team is still open and can be asked again.
+- A Team can be durably `closed` while `worktree.cleanup_state` is still
+  `cleanup-pending`. That state, plus `worktree_cleanup_force`, is the whole
+  recovery input: dispatcher startup finishes the pending reclamation from the
+  record alone, without materializing the closed Team. Do not delete the Team
+  record or the managed worktree to clear the visible state.
+- Dirty or unmerged worktrees require an explicit operator decision. A default
+  dissolve is non-forced and never force-removes one: it leaves the Team open
+  and running rather than closing it. `force: true` on the dissolve is that
+  decision — it authorizes `git worktree remove --force` and discards the
+  uncommitted, untracked, or unmerged work in the managed checkout. `cleanup:
+  keep` and non-managed workspaces are terminally retained. For a managed
+  `delete-on-close` worktree, Dreamux runs `git worktree remove <path>`, forced
+  only under that authorization: it does not use ref reachability as an
+  eligibility check, and neither form deletes the managed branch or its
+  commits.
+- A Team's cron store file is deleted while its resources close, before the
+  closed record is committed. A dissolve that fails after that point leaves the
+  Team open with no scheduled jobs left to arm; that loss is intended. A
+  deletion that itself fails leaves the file in place and fails the dissolve.
 - Branch or ref deletion is a separate destructive capability that requires its
   own explicit design and authorization; Team dissolve never performs it.
-- `collaboration-spaces.json` is also fully server-owned. Its target-side
-  operation/handoff fields correlate one closing target generation with the
-  Team-owned operation; they are not safe manual repair switches.
+- Where a Team is reachable from the outside is Channel state, not Team state.
+  A dissolved Team's routes are invalidated by the Channel that owns them.
 
 ## Bundled-Skill Injection
 

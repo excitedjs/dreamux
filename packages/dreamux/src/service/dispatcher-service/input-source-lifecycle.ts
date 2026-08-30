@@ -170,10 +170,6 @@ export class DispatcherInputSourceLifecycle {
     this.cleanupPending = true;
   }
 
-  markCleanupComplete(): void {
-    this.cleanupPending = false;
-  }
-
   private async doPrepareChannels(): Promise<void> {
     this.assertAvailable();
     if (this.agent_ !== null && !this.agent_.isRetired()) {
@@ -267,7 +263,7 @@ export class DispatcherInputSourceLifecycle {
     this.assertAvailable();
     const sessions = this.preparedChannels ?? new Map<string, ChannelInstance>();
     try {
-      await this.opts.teams.recoverDissolves();
+      await this.opts.teams.recoverWorktreeCleanup();
       this.assertAvailable();
       await this.opts.workflows.recover();
       this.assertAvailable();

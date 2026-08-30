@@ -47,11 +47,15 @@ import { DispatcherCoreEventBus } from '../dispatcher-core-events/index.js';
 import type {
   TeamCreateInput,
   TeamDissolveInput,
-  TeamDissolveRequest,
+  TeamDissolveReceipt,
+  TeamDissolveRequesterKind,
   TeamHistoryQuery,
-  TeamLeaderLease,
 } from '../team-collection/types.js';
-import type { TurnAdmission } from '../teammate-service/turn-recording.js';
+import type { TeamService } from '../team-service/index.js';
+import {
+  asInboundDeliveryResult,
+  type TurnAdmission,
+} from '../teammate-service/turn-recording.js';
 import type {
   DispatcherRuntimeStatus,
   DispatcherServiceOptions,
@@ -59,7 +63,6 @@ import type {
   LiveDispatcherRuntimeStatus,
 } from './types.js';
 import { DispatcherWorkflows } from './dispatcher-workflows.js';
-import { asInboundDeliveryResult } from './runtime-helpers.js';
 import {
   dispatcherRuntimeStatus,
   dispatcherSummary,
@@ -100,7 +103,6 @@ export class DispatcherService {
   private readonly inputSources: DispatcherInputSourceLifecycle;
   private readonly scheduler_: SchedulerService;
   private restartIntent: RestartIntentConsumer | null = null;
-  private stopping = false;
   private stoppingTask: Promise<void> | null = null;
   private shuttingDown = false;
   private readonly admittedTasks: DispatcherTaskDrain;
@@ -201,7 +203,6 @@ export class DispatcherService {
       // These TeamMates are the dispatcher's own, so their completions go to
       // the dispatcher's Agent. Ownership decides the recipient.
       initiatorFor: () => Promise.resolve(this.mustAgent()),
-      isShuttingDown: () => this.shuttingDown || this.stopping,
       log: opts.log,
     });
     this.teammateOps = admittedTeammateOps({
@@ -221,9 +222,7 @@ export class DispatcherService {
       // A TeamLeader reports back to the dispatcher's own Agent; its Team's
       // TeamMates report to that leader, which the Team itself supplies.
       dispatcherCompletionInitiator: () => Promise.resolve(this.mustAgent()),
-      isShuttingDown: () => this.shuttingDown || this.stopping,
       admitOperation: (task) => this.admitOperation(task),
-      trackAcceptedOperation: (task) => this.admittedTasks.trackAccepted(task),
       leaderMcp: ({ teamId, leaderName }) => ({
         leases: opts.mcpLeases,
         adminSocketPath: adminSocket,
@@ -278,7 +277,7 @@ export class DispatcherService {
       teammates: this._teammates,
       admittedTasks: this.admittedTasks,
       workflows: this.workflowOwner,
-      isUnavailable: () => this.shuttingDown || this.stopping,
+      isUnavailable: () => this.shuttingDown || this.stoppingTask !== null,
       restartIntent: () => this.restartIntent,
     });
   }
@@ -301,31 +300,22 @@ export class DispatcherService {
 
   stop(): Promise<void> {
     if (this.stoppingTask !== null) return this.stoppingTask;
-    this.stopping = true;
     this.inputSources.closeChannelPortAdmission();
     this.admittedTasks.closeAdmission();
     this.workflowOwner.closeAdmission();
-    this.teams.interruptDissolvesForShutdown();
     this.scheduler_.stop();
     this.teams.stopSchedulers();
-    let cleanupComplete = false;
-    const task = this.doStop()
-      .then(
-        () => {
-          cleanupComplete = true;
-          this.inputSources.markCleanupComplete();
-        },
-        (error: unknown) => {
-          this.inputSources.markCleanupPending();
-          throw error;
-        },
-      )
+    // The fence is published before the work behind it starts: stopping reaches
+    // back into this aggregate, and a caller it reaches must see the stop
+    // already under way rather than begin a second one.
+    const task = Promise.resolve()
+      .then(() => this.doStop())
+      .catch((error: unknown) => {
+        this.inputSources.markCleanupPending();
+        throw error;
+      })
       .finally(() => {
-        this.stopping = false;
         this.stoppingTask = null;
-        if (!this.shuttingDown && cleanupComplete) {
-          this.admittedTasks.openAdmission();
-        }
       });
     this.stoppingTask = task;
     return task;
@@ -337,7 +327,6 @@ export class DispatcherService {
     this.inputSources.closeChannelPortAdmission();
     this.admittedTasks.closeAdmission();
     this.workflowOwner.closeAdmission();
-    this.teams.interruptDissolvesForShutdown();
     this.scheduler_.stop();
     this.teams.stopSchedulers();
   }
@@ -346,7 +335,6 @@ export class DispatcherService {
     try {
       this.scheduler_.stop();
       this.teams.stopSchedulers();
-      this.teams.interruptDissolvesForShutdown();
       await collectShutdownFailure(failures, () => this.workflowOwner.stopAll());
       const teamStopError = await stopTeamRuntimes({
         dispatcherId: this.id,
@@ -427,32 +415,24 @@ export class DispatcherService {
   }
 
   private assertNotShuttingDown(): void {
-    if (this.shuttingDown || this.stopping) {
+    if (this.shuttingDown || this.stoppingTask !== null) {
       throw new Error(`dispatcher '${this.id}' is shutting down`);
     }
   }
 
   /**
-   * Run one task on behalf of a named TeamLeader generation.
+   * Run one task on behalf of a named TeamLeader.
    *
    * This is the entry a TeamLeader's own MCP delegates dispatch through, and it
    * layers the two fences that matter for that caller: the dispatcher admission
-   * gate, and the Team's leader lease. The runtime-generation lease behind the
-   * MCP token already fences a *replaced runtime*, but only the Team lease
-   * serializes a leader's work against an in-flight dissolve — so a delegate
-   * that reaches a Team object takes it, and one that merely reaches the
-   * dispatcher does not.
+   * gate, and the named Team's own work fence. The runtime-generation lease
+   * behind the MCP token already fences a *replaced runtime*, but only the
+   * Team's fence refuses a leader's work once that Team is dissolving — so a
+   * delegate that reaches a Team object enters it, and one that merely reaches
+   * the dispatcher does not.
    */
-  runForTeamLeader<T>(
-    leader: { teamId: string; leaderName: string },
-    task: () => Promise<T>,
-  ): Promise<T> {
-    return this.admitOperation(() =>
-      this.teams.withTeamLeaderLease(
-        { teamId: leader.teamId, leaderName: leader.leaderName },
-        () => task(),
-      ),
-    );
+  runForTeamLeader<T>(teamId: string, task: () => Promise<T>): Promise<T> {
+    return this.admitOperation(() => this.teams.admit(teamId, () => task()));
   }
 
   workspace(): Promise<string> {
@@ -470,17 +450,17 @@ export class DispatcherService {
   team(teamId: string): Promise<TeamLeaderHandle> {
     return this.admitOperation(async () =>
       teamLeaderHandle({
-        lease: await this.teams.teamLeaderReadLease(teamId),
-        withMutationService: (lease, task) =>
-          this.admitOperation(() => this.teams.withTeamLeaderLease(lease, task)),
-        withReadService: (lease, task) =>
-          this.teams.withTeamLeaderReadLease(lease, task),
+        teamId: (await this.teams.open(teamId)).id,
+        withMutationService: (id, task) =>
+          this.admitOperation(() => this.teams.admit(id, task)),
+        withReadService: (id, task) => this.teams.read(id, task),
       }),
     );
   }
 
   teamScheduler(teamId: string) {
-    return this.admitOperation(() => this.teams.scheduler(teamId));
+    return this.admitOperation(async () =>
+      (await this.teams.open(teamId)).scheduler);
   }
 
   createTeam(input: {
@@ -505,8 +485,8 @@ export class DispatcherService {
     input: TeamSubmitRequest & { deliverCompletionToDispatcher: boolean },
   ): Promise<TurnAdmission> {
     const { teamId, deliverCompletionToDispatcher, ...submission } = input;
-    return this.admitOperation(() =>
-      this.teams.submitToLeader(teamId, {
+    return this.admitOperation(async () =>
+      (await this.teams.open(teamId)).submitToLeader({
         ...submission,
         ...(deliverCompletionToDispatcher
           ? { initiator: this.mustAgent() }
@@ -525,7 +505,7 @@ export class DispatcherService {
   }
 
   async getTeamStatus(teamId: string) {
-    return this.admitOperation(async () => (await this.teams.get(teamId)).status());
+    return this.admitOperation(() => this.teams.summary(teamId));
   }
 
   getTeamHistory(input: TeamHistoryQuery) {
@@ -533,44 +513,46 @@ export class DispatcherService {
   }
 
   /**
-   * Dissolve one Team, now.
+   * Submit one Team's dissolve.
    *
-   * Both entries durably accept, start the one runner, and then wait for it
-   * to reach logical close. Acceptance on its own is not an answer: the check
-   * that decides whether this workspace may be reclaimed only counts once
-   * every runtime has stopped, so a caller told the Team dissolved is told
-   * after that check passed, the children exited, and the record closed.
-   * Reclaiming the checkout is the one part left running behind the answer.
+   * Both entries submit the same operation to the same Team object; they differ
+   * only in how the target is established — a Dispatcher names any Team, a
+   * TeamLeader reaches only its own. Neither waits for the
+   * outcome: once the Team owns the operation the caller has its receipt, and a
+   * second submission joins the first instead of dismantling the Team twice.
    */
-  async dissolveTeam(input: TeamDissolveInput) {
-    return this.admitOperation(() =>
-      this.startDissolve({ ...input, requester: { kind: 'dispatcher' } }),
-    );
+  private submitDissolve(
+    resolve: () => Promise<TeamService>,
+    input: {
+      note: string;
+      force: boolean;
+      requester: TeamDissolveRequesterKind;
+    },
+  ): Promise<TeamDissolveReceipt> {
+    return this.admitOperation(async () => (await resolve()).dissolve(input));
   }
 
-  async dissolveTeamForLeader(input: {
-    lease: TeamLeaderLease;
+  dissolveTeam(input: TeamDissolveInput): Promise<TeamDissolveReceipt> {
+    return this.submitDissolve(() => this.teams.open(input.teamId), {
+      note: input.note,
+      force: input.force === true,
+      requester: 'dispatcher',
+    });
+  }
+
+  dissolveTeamForLeader(input: {
+    teamId: string;
     note: string;
     force?: boolean;
-  }) {
-    return this.admitOperation(() =>
-      this.startDissolve({
-        teamId: input.lease.teamId,
+  }): Promise<TeamDissolveReceipt> {
+    return this.submitDissolve(
+      () => this.teams.open(input.teamId),
+      {
         note: input.note,
-        ...(input.force !== undefined ? { force: input.force } : {}),
-        requester: {
-          kind: 'team_leader',
-          leaderName: input.lease.leaderName,
-        },
-      }),
+        force: input.force === true,
+        requester: 'team_leader',
+      },
     );
-  }
-
-  private async startDissolve(request: TeamDissolveRequest) {
-    const accepted = await this.teams.acceptDissolve(request);
-    this.teams.startAcceptedDissolve(accepted);
-    await accepted.logicalClosed;
-    return accepted.receipt;
   }
 
   /**

@@ -65,13 +65,13 @@ manually listed bot/app sender ID may pass authorization.
 ## Safe Current Access Editing
 
 A target Dispatcher only prepares and reports the requested policy or
-shared-authority patch. It must not stop and then continue to apply its own
-patch. Hand the operation to an independent operator for the full ownership
-window:
+shared-authority patch. It must not stop its own host process and then continue
+to apply its own patch. Hand the operation to an independent operator for the
+full ownership window:
 
 ```text
-dispatcher stop -> confirmed stop -> post-stop re-read -> exact atomic patch
--> current-shape validation -> dispatcher start
+daemon stop -> confirmed process exit -> post-stop re-read -> exact atomic patch
+-> current-shape validation -> daemon start
 ```
 
 Keep the Channel owner fully quiesced for the entire read-modify-write window.
@@ -81,9 +81,9 @@ exactly. Use an owner-only sibling temporary file, atomic replacement, and final
 mode `0600`. Validate JSON plus the complete V3 shape locally without printing
 values. Do not claim that `dreamux doctor` validates access state.
 
-If the file is absent after confirmed stop, treat that explicit `ENOENT` as
+If the file is absent after confirmed process exit, treat that explicit `ENOENT` as
 valid current state. Use the complete secure V3 default above as the in-memory
 baseline and apply only requested policy/shared-authority fields. Create a
 missing state directory at mode `0700`, then atomically create the first
-`access.json` through a sibling mode-`0600` temporary file. Start the Dispatcher
-only after validation.
+`access.json` through a sibling mode-`0600` temporary file. Start the daemon only
+after validation.

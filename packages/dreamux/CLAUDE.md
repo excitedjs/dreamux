@@ -33,13 +33,14 @@ Two settled shape rules govern where code lives:
 | `server.ts` | process entry + wiring only | builds registry/catalog/store/services, opens the admin socket, starts dispatchers; owns no teammate/channel/runtime orchestration |
 | `agent-runtime/` | the AgentRuntime seam, all neutral: `catalog.ts` (registry-backed `AgentRuntimeProviderCatalog` + builtin registration), `external-provider.ts` loader, `load-config.ts` (composes builtin agentRuntime + channel registration), `host-context.ts` / `host-paths.ts` (host adapters that bridge core's store/logger/path layout onto the neutral `@excitedjs/dreamux-types` create context), `index.ts` barrel. Contract types live in `@excitedjs/dreamux-types` — core imports them directly (no in-core `types.ts` / `turn.ts`) | one neutral abstraction for every agent role; core never names a concrete runtime |
 | `service/` | the Dispatcher Service module (issue #233 restructure): one service class per file/dir, with `index.ts` the package-internal barrel — see [`service/CLAUDE.md`](src/service/CLAUDE.md) | holds the dispatcher agent + orchestrates teammates |
-| `service/dispatcher-service/` | the per-dispatcher aggregate (`index.ts` = `DispatcherService`) + its agent-side parts: the dispatcher agent as a contained `TeammateService` (`agent.ts` factory), role MCP descriptor builders (`mcp-descriptors.ts`), dispatcher base prompt, runnable-channel guard, and compatibility error exports. Agent runtime lifecycle (start/resume/stop) lives in the shared `TeammateService`; `DispatcherService` keeps restart-notice injection, cross-service orchestration, MCP assembly, and completion routing. `service/dispatchers/` holds the process-level `Dispatchers` collection. The dispatcher-cwd policy (`ensureDispatcherWorkspace`, issue #182) lives at the `service/` root in `dispatcher-workspace.ts` — a cross-cutting helper shared by server preflight, the dispatcher service, `dreamux doctor`, and the `worktree/` layer | the dispatcher *has an* agent (Phase 5, #233); there is no separate `DispatcherRuntimeService` |
-| `service/channel-service/` | the dispatcher-local Channel service (`index.ts`) plus its private live `ChannelSessions` helper (`channel-sessions.ts`) and channel error types. It owns live channel sessions, channel-tool dispatch, target resolution, TeamLeader egress checks, and all channel binding reads/writes/summaries/transfer-back operations | channels and bindings are dispatcher-local core facts; providers stay Team-agnostic |
-| `service/agent-entity/` + `service/teammate-collection/` (+ `service/teammate-service/`, `service/completion-router/`) | Neutral agent entity identity/turn/runtime-state stores and shared types live in `agent-entity`; `TeammateCollection` owns only teammate/member collection behavior, factory paths, and router registration; `TeammateService` owns one agent entity runtime. `service/team-collection/` + `service/team-service/` hold `TeamCollection` / `TeamService`; `service/worktree/`, `service/channel-binding/`, `service/legacy-state.ts` are shared helpers at the module root | agent-centric teammates (no `task`): spawn/send/close + forward-only history (send reopens a closed teammate; no separate `resume` verb, #155) |
-| `channel/` | the bidirectional conversational ChannelProvider seam, all neutral: `catalog.ts` (`ChannelProviderCatalog`) and `external-channel-provider.ts` loader | the channel engine (session/bot/gate/message/tool-parsing/identity) lives in the provider package and never imports core; core is a blind channel-MCP conduit — the generic `channel.invoke_tool` admin method routed to the neutral `ChannelSession` / `ChannelProvider` seam — plus neutral routing/binding/auth |
+| `service/dispatcher-service/` | the per-dispatcher aggregate (`index.ts` = `DispatcherService`) + its agent-side parts: the dispatcher agent as a contained `TeammateService` (`agent.ts` factory), the role→MCP delegate decision (`mcp-delegates.ts`), dispatcher base prompt, and runnable-channel guard. Agent runtime lifecycle (start/resume/stop) lives in the shared `TeammateService`; `DispatcherService` keeps restart-notice injection, cross-service orchestration, MCP assembly, and completion routing. `service/dispatchers/` holds the process-level `Dispatchers` collection. The dispatcher-cwd policy (`ensureDispatcherWorkspace`, issue #182) lives at the `service/` root in `dispatcher-workspace.ts` — a cross-cutting helper shared by server preflight, the dispatcher service, `dreamux doctor`, and the `worktree/` layer | the dispatcher *has an* agent (Phase 5, #233); there is no separate `DispatcherRuntimeService` |
+| `service/channel-service/` | the dispatcher-local Channel service (`index.ts`) plus its Channel MCP delegates. It builds, holds, hands out, and closes live channel instances, and nothing else: no binding table, no route owner, no target resolution, no egress check | routing is Channel-owned; core neither stores a Channel's decision nor rebuilds it |
+| `service/agent-entity/` + `service/teammate-collection/` (+ `service/teammate-service/`, `service/completion-router/`) | Neutral agent entity identity/turn/runtime-state stores and shared types live in `agent-entity`; `TeammateCollection` owns only teammate/member collection behavior, factory paths, and router registration; `TeammateService` owns one agent entity runtime. `service/team-collection/` + `service/team-service/` hold `TeamCollection` / `TeamService`; `service/worktree/` and `service/legacy-state.ts` are shared helpers at the module root | agent-centric teammates (no `task`): spawn/send/close + forward-only history (send reopens a closed teammate; no separate `resume` verb, #155) |
+| `channel/` | the bidirectional conversational ChannelProvider seam, all neutral: `catalog.ts` (`ChannelProviderCatalog`), `external-channel-provider.ts` loader, `core-port.ts` (the in-process `invoke` + event port a Channel is given), and `conversation-projection.ts` (the display-only turn stream) | the channel engine (session/bot/gate/message/tool-parsing/identity) lives in the provider package and never imports core; core is a blind channel-MCP conduit — a runtime-bound delegate describes the provider's own tools and forwards validated calls to the neutral `ChannelSession` / `ChannelProvider` seam — and owns no routing, binding, or collaboration-space state |
 | `registry/` | provider registry/loader + provider-ref grammar | resolves `builtin:` / `npm:` refs; runnable catalogs currently cover `channel` and `agentRuntime` |
-| `mcp/` | the official-SDK stdio protocol owner (`/packages/dreamux/src/mcp/server.ts`), shared domain-adapter helpers (`/packages/dreamux/src/mcp/tool-catalog.ts`), and five scoped adapters under `/packages/dreamux/src/mcp/` (`channel-mcp`, `teammate-mcp`, `team-mcp`, `cron-mcp`, `collaboration-space-mcp`) — the generic `channel-mcp` adapter advertises provider-supplied metadata and forwards validated calls to `channel.invoke_tool`; channel binding (`bind_channel` / `transfer_back`) is a core Team capability on the Team MCP, #209 | one protocol implementation with domain-owned visibility, scope, admin mapping, result projection, and public-error policy |
-| `admin/` | admin Unix-socket server + protocol + methods | cross-process control; methods are thin and delegate to the Dispatcher Service |
+| `mcp/` | the official-SDK stdio protocol owner (`server.ts`), the single Agent-facing stdio shim (`shim.ts`), and transport-level catalog validation (`catalog.ts`). The shim knows an admin socket and an opaque lease token and nothing else: it asks `mcp.describe` what to advertise and forwards every call to `mcp.toolcall`, and branches on no tool name | one protocol implementation; each domain owns its tools through an in-server delegate, so adding or renaming a tool never touches the transport |
+| `command/` | the canonical Command registry, schema/validation/errors, and generic payload readers only | one definition per Command, adapted by both `admin.sock` and the in-process Channel `invoke`; what a domain payload field means stays in the module that owns the fact |
+| `admin/` | admin Unix-socket server + NDJSON protocol + client | cross-process transport for those Commands; it owns none of them |
 | `config/` | operator config schema / parse / validate (`config.ts`) | the only operator-editable config source |
 | `platform/` | runtime-neutral infrastructure: `paths.ts` (sole neutral path builder), `runtime-sockets` (volatile socket allocation), `logger`, `package-bin`, `atomic-write`, `fs-errors` | shared and runtime-agnostic; per-runtime path derivation lives in each provider package |
 | `state/` | server-owned dispatcher state: `dispatcher-store`, `dispatcher-id` | config-backed dispatcher projections and local state identifiers |
@@ -57,6 +58,8 @@ Two settled shape rules govern where code lives:
   Agent Runtime provider seam — not by hard-coding any one runtime.
 - Own teammate orchestration (scheduling, lifecycle, history, completion
   delivery) inside the Dispatcher Service.
+- Own the canonical Command catalog and expose it identically to `admin.sock`
+  and to an in-process Channel's `invoke` port.
 
 ## Boundaries
 
@@ -70,21 +73,20 @@ Two settled shape rules govern where code lives:
   belong to the channel layer; a runtime must never branch or reply-target on
   `chat_id` / `sender_id` / message ids. Reply targeting stays in the channel
   layer (the Feishu reply MCP tool takes `chat_id` as an explicit parameter).
-  What a runtime turn MAY carry, beyond neutral text + a dedupe id, is **opaque
-  display passthrough**: `InboundTurnInput.attrs` is an opaque key/value bag the
-  runtime renders verbatim into its model-visible channel block (the native
-  `<channel source="…" …>` envelope) but never interprets. Each runtime owns
-  assembling its own channel block from these neutral pieces (issue #164); the
-  channel layer no longer pre-renders the message XML. See
-  [`.agents/decisions/channel-input-runtime-assembly.md`](../../.agents/decisions/channel-input-runtime-assembly.md).
+  A Channel supplies opaque display attributes and faithful body text, and
+  `TeammateService` renders the one provenance envelope Core owns; the Agent
+  Runtime seam receives final text and nothing else, so no runtime sees a
+  source taxonomy, a channel identifier, or a rendering decision.
 - Direct Lark SDK / Feishu JSAPI calls belong in `@excitedjs/feishu-transport`;
   the built-in Feishu channel package (`@excitedjs/feishu-channel`) owns its
-  session, tool backing, static tool catalog, and reply/react wire mapping
-  end-to-end (the server does not carry `*FromMcp` handlers). Core keeps only the
-  generic, channel-agnostic MCP conduit: the `channel-mcp` stdio adapter uses
-  the shared official-SDK server to advertise provider-supplied metadata and
-  forward validated calls to the neutral `channel.invoke_tool` admin method,
-  which routes to the provider's `ChannelSession` / `ChannelProvider` seam.
+  session, tool backing, caller-scoped tool catalog, reply/react wire mapping,
+  and all of its routing: which conversation reaches which Team, its own
+  durable binding document, and its collaboration-space provisioning policy.
+  Core keeps only the generic, channel-agnostic MCP conduit: one stdio shim
+  advertises whatever a runtime-bound delegate describes and forwards every
+  validated call back to it, which routes to the provider's `ChannelSession` /
+  `ChannelProvider` seam. Core has no binding table and no Collaboration Space
+  container.
 - Do not reintroduce a `task` abstraction in the teammate layer; teammates are
   named, resumable agents.
 - Do not create dispatcher-private `CODEX_HOME` directories for the MVP.

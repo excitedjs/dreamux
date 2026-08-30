@@ -52,7 +52,6 @@ export interface WorkflowRunDeps {
   ): Promise<LockedTeammate>;
   createRunner: WorkflowRunnerFactory;
   deliverTerminal: (completion: WorkflowCompletionFact) => Promise<void>;
-  evict: (run: WorkflowRun) => void;
   log: DreamuxLogger;
   now?: () => number;
 }
@@ -127,11 +126,13 @@ export class WorkflowRun {
       abortRunner: () => this.runner.send({ type: 'abort' }),
       closeAdmission: (status) =>
         this.semaphore.close(new Error(`workflow ${status}`)),
-      finalize: (status, result, error) =>
-        this.finalize(status, result, error),
+      finalize: (status, result, error) => this.finalize(status, result, error),
       log: deps.log,
     });
   }
+
+  /** Resolves once this run is durably terminal; the owner reads it to evict. */
+  get settled(): Promise<void> { return this.terminal.settled; }
 
   snapshot(): WorkflowRunRecord {
     return structuredClone(this.record);
@@ -661,7 +662,6 @@ export class WorkflowRun {
         'workflow run terminal',
       );
     }
-    this.deps.evict(this);
   }
 
   private async joinMaterializations(): Promise<void> {

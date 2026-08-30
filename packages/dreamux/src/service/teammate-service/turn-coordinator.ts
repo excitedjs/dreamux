@@ -63,7 +63,6 @@ type ConversationProjectionEntryPoint =
 
 /** Entity-owned serialization for provider admission and in-process display work. */
 export class EntityTurnCoordinator {
-  private readonly pendingAdmissions = new Set<Promise<unknown>>();
   private admissionContinuationTail: Promise<void> = Promise.resolve();
   private readonly retainedTurns = new Set<EntityTurn>();
   private readonly turnsBySubmission = new WeakMap<RuntimeSubmission, EntityTurn>();
@@ -121,10 +120,19 @@ export class EntityTurnCoordinator {
     );
   }
 
+  /**
+   * Wait for every admission continuation this entity has accepted.
+   *
+   * Admissions run strictly in order, so the tail is the whole queue: awaiting
+   * it awaits everything enqueued before it, and the loop covers work enqueued
+   * while draining.
+   */
   async drainAdmissions(): Promise<void> {
-    while (this.pendingAdmissions.size > 0) {
-      await Promise.allSettled([...this.pendingAdmissions]);
-    }
+    let tail: Promise<void>;
+    do {
+      tail = this.admissionContinuationTail;
+      await tail;
+    } while (this.admissionContinuationTail !== tail);
   }
 
   async settleAndDeliverRetained(): Promise<void> {
@@ -170,10 +178,6 @@ export class EntityTurnCoordinator {
       () => undefined,
       () => undefined,
     );
-    this.pendingAdmissions.add(continuation);
-    void continuation.finally(() => {
-      this.pendingAdmissions.delete(continuation);
-    }).catch(() => undefined);
     return continuation;
   }
 

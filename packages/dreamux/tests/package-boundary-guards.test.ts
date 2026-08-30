@@ -182,3 +182,536 @@ describe('epic #209 package-boundary guards', () => {
     }
   });
 });
+
+describe('no package ships a dev-tool runtime dependency', () => {
+  it('no manifest\'s runtime "dependencies" names tsx or ts-node (bin launchers run compiled dist with plain node)', () => {
+    const offenders: string[] = [];
+    for (const project of projects) {
+      const deps = (readManifest(project.projectFolder).dependencies ??
+        {}) as Record<string, string>;
+      for (const name of Object.keys(deps)) {
+        if (/^(tsx|ts-node)$/.test(name)) {
+          offenders.push(`${project.packageName}: ${name}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe('dreamux-types stays declaration-only with no runtime dependency', () => {
+  const project = projects.find((p) => p.packageName === '@excitedjs/dreamux-types')!;
+  const manifest = readManifest(project.projectFolder);
+
+  it('has no runtime "dependencies" field at all', () => {
+    expect(manifest['dependencies']).toBeUndefined();
+  });
+
+  it('publishes only declaration files (no "import"/"default" export condition)', () => {
+    const exportsMap = manifest['exports'] as Record<string, unknown>;
+    const root = exportsMap['.'] as Record<string, unknown>;
+    expect(Object.keys(root)).toEqual(['types']);
+    expect(root['types']).toBe('./dist/index.d.ts');
+  });
+});
+
+describe('dreamux-utils depends on dreamux-types only, never on @excitedjs/dreamux core', () => {
+  it('runtime "dependencies" is exactly { "@excitedjs/dreamux-types": "workspace:*" }', () => {
+    const project = projects.find((p) => p.packageName === '@excitedjs/dreamux-utils')!;
+    const manifest = readManifest(project.projectFolder);
+    const deps = manifest['dependencies'] as Record<string, string>;
+    expect(deps).toEqual({ '@excitedjs/dreamux-types': 'workspace:*' });
+  });
+});
+
+describe('each package\'s public exports map is an intentional, pinned surface', () => {
+  // A new subpath export or a widened export condition is a deliberate,
+  // reviewed decision, not something that should be able to happen as a side
+  // effect of an unrelated change. Pinned to the CURRENT shape observed in
+  // every consumer package's package.json.
+  const expectedExportKeys: Record<string, string[]> = {
+    '@excitedjs/dreamux-types': ['.'],
+    '@excitedjs/dreamux-utils': ['.'],
+    '@excitedjs/agent-runtime-codex': ['.', './config'],
+    '@excitedjs/agent-runtime-claude-code': ['.', './config'],
+    '@excitedjs/feishu-channel': ['.'],
+    '@excitedjs/feishu-transport': ['.'],
+  };
+
+  it.each(Object.entries(expectedExportKeys))(
+    '%s exports exactly %j',
+    (packageName, expectedKeys) => {
+      const project = projects.find((p) => p.packageName === packageName)!;
+      const manifest = readManifest(project.projectFolder);
+      const exportsMap = (manifest['exports'] ?? {}) as Record<string, unknown>;
+      expect(Object.keys(exportsMap).sort()).toEqual([...expectedKeys].sort());
+    },
+  );
+});
+
+describe('each package\'s index.ts re-export set is an intentional, pinned surface', () => {
+  /**
+   * Extracts every name a package's barrel makes public: named identifiers
+   * from `export { a, type B, c as d } from '...'` blocks (the alias, i.e.
+   * the name actually exposed) plus bare `export const/function/class/enum`
+   * declarations. Comments are stripped first so a docstring mentioning a
+   * removed or historical name never inflates the surface.
+   *
+   * Deliberately does NOT resolve `export * from './module.js'` re-exports
+   * (dreamux-utils' barrel shape) — that would require compiling every
+   * transitive module. dreamux-utils is instead pinned by its re-exported
+   * MODULE list, one line down.
+   */
+  function namedExports(src: string): string[] {
+    const clean = src
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+    const names = new Set<string>();
+    const braceRe = /export\s+(?:type\s+)?\{([^}]*)\}/g;
+    for (let m = braceRe.exec(clean); m !== null; m = braceRe.exec(clean)) {
+      for (let part of m[1]!.split(',')) {
+        part = part.trim();
+        if (part === '') continue;
+        if (part.startsWith('type ')) part = part.slice(5).trim();
+        const asIdx = part.indexOf(' as ');
+        names.add(asIdx >= 0 ? part.slice(asIdx + 4).trim() : part);
+      }
+    }
+    const bareRe = /export\s+(?:const|function|class|enum)\s+([A-Za-z0-9_$]+)/g;
+    for (let m = bareRe.exec(clean); m !== null; m = bareRe.exec(clean)) {
+      names.add(m[1]!);
+    }
+    return [...names].sort();
+  }
+
+  it('dreamux-utils re-exports exactly this pinned set of internal modules (star-export barrel)', () => {
+    const src = readFileSync(
+      join(repoRoot, 'packages/dreamux-utils/src/index.ts'),
+      'utf8',
+    );
+    const modules = [...src.matchAll(/export \* from '(\.\/[a-z-]+\.js)';/g)].map(
+      (m) => m[1]!,
+    );
+    expect(modules.sort()).toEqual(
+      [
+        './activity-scan.js',
+        './completion-body.js',
+        './config-validate.js',
+        './fs.js',
+        './json-invoke.js',
+        './os.js',
+        './runtime-state-fence.js',
+        './socket-budget.js',
+        './supervised-child.js',
+        './unsupported-feature.js',
+      ].sort(),
+    );
+  });
+
+  it("dreamux-types index.ts exports exactly the pinned name set (the neutral contract's full public surface)", () => {
+    const src = readFileSync(
+      join(repoRoot, 'packages/dreamux-types/src/index.ts'),
+      'utf8',
+    );
+    expect(namedExports(src)).toEqual(
+      [
+        'AgentActivityError',
+        'AgentActivityPage',
+        'AgentActivityQuery',
+        'AgentActivityReadContext',
+        'AgentActivityRecord',
+        'AgentRuntime',
+        'AgentRuntimeActivitySink',
+        'AgentRuntimeBinCheck',
+        'AgentRuntimeConfigCapability',
+        'AgentRuntimeCreateContext',
+        'AgentRuntimeDiagnosticCapability',
+        'AgentRuntimeDiagnosticContext',
+        'AgentRuntimeDiagnosticResult',
+        'AgentRuntimeDiagnosticRunner',
+        'AgentRuntimeIdentity',
+        'AgentRuntimeLogger',
+        'AgentRuntimeMcpServer',
+        'AgentRuntimeOnboardCapability',
+        'AgentRuntimePathContext',
+        'AgentRuntimeProvider',
+        'AgentRuntimeProviderCapabilities',
+        'AgentRuntimeProviderConfigReadContext',
+        'AgentRuntimeProviderDescriptor',
+        'AgentRuntimeProviderFactory',
+        'AgentRuntimeSessionRef',
+        'AgentRuntimeSkillSource',
+        'AgentRuntimeStartOutcome',
+        'AgentRuntimeStateLeaseRevokedError',
+        'AgentRuntimeStateSink',
+        'AgentRuntimeStateUpdate',
+        'AgentRuntimeStatus',
+        'AgentRuntimeSubmissionInput',
+        'AgentRuntimeSystemPrompt',
+        'BuiltinProviderRef',
+        'ChannelBinCheck',
+        'ChannelCommandError',
+        'ChannelCommandRetryableErrorCode',
+        'ChannelConfigCapability',
+        'ChannelConfigContext',
+        'ChannelCoreEvent',
+        'ChannelCorePort',
+        'ChannelDiagnosticCapability',
+        'ChannelDiagnosticContext',
+        'ChannelDiagnosticResult',
+        'ChannelDiagnosticRunner',
+        'ChannelEventSource',
+        'ChannelEventSubscription',
+        'ChannelIdentityCapability',
+        'ChannelInstance',
+        'ChannelMcpCall',
+        'ChannelMcpCallContext',
+        'ChannelMcpCaller',
+        'ChannelMcpCapability',
+        'ChannelMcpToolAnnotations',
+        'ChannelMcpToolDescriptor',
+        'ChannelMcpToolIcon',
+        'ChannelMcpToolOutcome',
+        'ChannelMcpToolRegistration',
+        'ChannelOnboardCapability',
+        'ChannelProvider',
+        'ChannelProviderDescriptor',
+        'ChannelProviderFactory',
+        'ChannelSession',
+        'ChannelSessionCreateContext',
+        'ChannelSessionMcpCapability',
+        'CoreCommandContext',
+        'CoreCommandDefinition',
+        'CoreCommandRegistry',
+        'CoreCommandSource',
+        'DreamuxEnvironment',
+        'DreamuxLogger',
+        'JsonInvokeResult',
+        'JsonInvoker',
+        'JsonSchema',
+        'JsonValue',
+        'NpmProviderRef',
+        'ProviderBinCheck',
+        'ProviderDescriptor',
+        'ProviderDiagnosticResult',
+        'ProviderDiagnosticRunner',
+        'ProviderDiagnosticScope',
+        'ProviderFactory',
+        'ProviderFactoryContext',
+        'ProviderKind',
+        'ProviderOnboard',
+        'ProviderOnboardConfirmPrompt',
+        'ProviderOnboardContext',
+        'ProviderOnboardPromptHost',
+        'ProviderOnboardSecretPrompt',
+        'ProviderOnboardTextPrompt',
+        'ProviderRef',
+        'ProviderRefSource',
+        'RegisteredProvider',
+        'RuntimeActivity',
+        'RuntimeActivityEvent',
+        'RuntimeAdmission',
+        'RuntimeCompletion',
+        'RuntimeSubmission',
+        'RuntimeSubmissionSettlement',
+        'RuntimeToolAction',
+        'TeamContainedRole',
+        'TeamCreateCommand',
+        'TeamCreateRepoRequest',
+        'TeamCreateResult',
+        'TeamStateEvent',
+        'TeamStateTeammateSummary',
+        'TeamSubmitCommand',
+        'TeamSubmitResult',
+        'TeammateRole',
+        'TeammateStateEvent',
+        'TeammateStatus',
+        'TeammateTurnMessageEvent',
+        'TeammateTurnScope',
+        'TeammateTurnSettledEvent',
+        'TeammateTurnSubmittedEvent',
+        'TeammateTurnToolCallEvent',
+      ].sort(),
+    );
+  });
+
+  it('agent-runtime-codex index.ts exports exactly the pinned name set', () => {
+    const src = readFileSync(
+      join(repoRoot, 'packages/agent-runtime/codex/src/index.ts'),
+      'utf8',
+    );
+    expect(namedExports(src)).toEqual(
+      [
+        'ALLOWED_APPROVAL_POLICIES',
+        'ALLOWED_SANDBOX_MODES',
+        'BUILTIN_CODEX_PROVIDER_REF',
+        'CODEX_AGENT_RUNTIME_CAPABILITIES',
+        'CodexAgentRuntimeProviderOptions',
+        'CodexProcess',
+        'CodexProcessExit',
+        'CodexProcessExitHandler',
+        'CodexProcessOptions',
+        'CodexWsClient',
+        'CodexWsClientOptions',
+        'DEFAULT_APPROVAL_POLICY',
+        'DEFAULT_CODEX_BIN',
+        'DEFAULT_CODEX_TURN_TIMEOUT_MS',
+        'DEFAULT_INITIALIZE_TIMEOUT_MS',
+        'DEFAULT_SANDBOX_MODE',
+        'DISPATCHER_APP_SERVER_SOCKET_PATH_MAX_BYTES',
+        'DispatcherCodexConfig',
+        'DispatcherCodexHomeDoctor',
+        'DispatcherCodexHomeDoctorContext',
+        'DispatcherCodexHomeDoctorResult',
+        'MIN_CODEX_VERSION',
+        'NotificationHandler',
+        'ParsedCodexArgs',
+        'ServerNotification',
+        'ServerRequest',
+        'ThreadStartResponse',
+        'TurnStartResponse',
+        'assertDispatcherCodexHomeReady',
+        'codexAgentRuntimeDiagnostic',
+        'codexArgsFromConfig',
+        'codexArgsToCli',
+        'codexMcpServerArgs',
+        'codexRuntimeArgsForMcpServers',
+        'codexSystemPromptReplace',
+        'codexVersionSatisfies',
+        'createCodexAgentRuntimeProvider',
+        'default',
+        'defaultDispatcherCodexConfig',
+        'dispatcherCodexConfig',
+        'dispatcherCodexConfigPath',
+        'dispatcherCodexHome',
+        'dispatcherCodexHomeDoctorContext',
+        'formatDispatcherCodexHomeErrors',
+        'operatorCodexHome',
+        'parseCodexArgs',
+        'parseCodexVersion',
+        'performInitializeHandshake',
+        'readDispatcherCodexConfig',
+        'resolveCodexBinPath',
+        'validateDispatcherCodexHome',
+      ].sort(),
+    );
+  });
+
+  it('agent-runtime-claude-code index.ts exports exactly the pinned name set', () => {
+    const src = readFileSync(
+      join(repoRoot, 'packages/agent-runtime/claude-code/src/index.ts'),
+      'utf8',
+    );
+    expect(namedExports(src)).toEqual(
+      [
+        'ALLOWED_CLAUDE_CODE_PERMISSION_MODES',
+        'BUILTIN_CLAUDE_CODE_PROVIDER_REF',
+        'CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES',
+        'ClaudeCodeAgentRuntimeProviderOptions',
+        'ClaudeCodeMcpConfig',
+        'ClaudeCodeResidentArgsInput',
+        'ClaudeCodeRuntimeDeps',
+        'ClaudeCodeSession',
+        'ClaudeCodeSessionFactory',
+        'ClaudeCodeSessionSpec',
+        'ClaudeCodeStreamRpc',
+        'ClaudeCodeStreamRpcOptions',
+        'DEFAULT_CLAUDE_CODE_BIN',
+        'DEFAULT_CLAUDE_CODE_TURN_TIMEOUT_MS',
+        'DispatcherClaudeCodeConfig',
+        'JsonObject',
+        'LineBuffer',
+        'ParsedLine',
+        'ResultEnvelope',
+        'TurnAggregator',
+        'TurnOutcome',
+        'TurnSubmitOptions',
+        'assistantText',
+        'buildCanUseToolAllow',
+        'buildControlAck',
+        'buildRemoteControlEnable',
+        'buildUserMessage',
+        'claudeCodeAgentRuntimeDiagnostic',
+        'claudeCodeMcpConfig',
+        'claudeCodeResidentArgs',
+        'claudeCodeSkillAddDirArgs',
+        'createClaudeCodeAgentRuntimeProvider',
+        'createDefaultClaudeCodeSession',
+        'default',
+        'defaultDispatcherClaudeCodeConfig',
+        'dispatcherClaudeCodeConfig',
+        'parseLine',
+        'readDispatcherClaudeCodeConfig',
+        'stringifyClaudeCodeMcpConfig',
+      ].sort(),
+    );
+  });
+
+  it('feishu-channel index.ts exports exactly the pinned name set', () => {
+    const src = readFileSync(
+      join(repoRoot, 'packages/channel/feishu-channel/src/index.ts'),
+      'utf8',
+    );
+    expect(namedExports(src)).toEqual(
+      [
+        'BUILTIN_FEISHU_PROVIDER_REF',
+        'CHANNEL_REMINDER',
+        'ChannelLogger',
+        'ChatBotsListing',
+        'CreateBotOptions',
+        'CreateFeishuChannelProviderOptions',
+        'DREAMUX_ACTION_KEY',
+        'DREAMUX_PAIRING_CARD_ACTION',
+        'DREAMUX_PAIRING_TOKEN_KEY',
+        'DispatcherAccessState',
+        'FEISHU_ROUTING_DOCUMENT_VERSION',
+        'FEISHU_SKILL_FALLBACK_NOTE',
+        'FEISHU_TOOLS',
+        'FeishuBindingRecord',
+        'FeishuBindingView',
+        'FeishuBot',
+        'FeishuCardActionEvent',
+        'FeishuCardActionResponse',
+        'FeishuChannelConfig',
+        'FeishuChannelSession',
+        'FeishuChannelSessionOptions',
+        'FeishuInboundDelivery',
+        'FeishuInboundEvent',
+        'FeishuListChatBotsResult',
+        'FeishuRouting',
+        'FeishuRoutingDocument',
+        'FeishuRoutingPlan',
+        'FeishuRoutingStore',
+        'FeishuSpaceRecord',
+        'FeishuSubmission',
+        'FeishuSubmitOutcome',
+        'FeishuTarget',
+        'FeishuTargetKind',
+        'FeishuTeamSubmitter',
+        'FeishuToolContext',
+        'FeishuToolDef',
+        'FeishuToolResult',
+        'FeishuToolSession',
+        'FormatFeishuMessageOptions',
+        'FormatFeishuMessageResult',
+        'FormattedFeishuAttachment',
+        'PeerBot',
+        'TRUST_DOMAIN_WARNING',
+        'WireChatBot',
+        'buildPairingApprovalCard',
+        'buildPairingSuccessCard',
+        'channelOutboundToFeishuTarget',
+        'chatTarget',
+        'createFeishuBot',
+        'createFeishuChannelProvider',
+        'createFeishuSessionMcp',
+        'default',
+        'defaultDispatcherAccessState',
+        'describeTarget',
+        'dreamuxFeishuGate',
+        'feishuToolRegistrations',
+        'feishuToolsFor',
+        'findFeishuTool',
+        'formatFeishuCreateTime',
+        'formatFeishuMessageForRuntime',
+        'listChatBots',
+        'loadChatBots',
+        'loadDispatcherAccess',
+        'rawCardActionResponse',
+        'routingDocumentFilename',
+        'saveDispatcherAccess',
+        'targetKey',
+        'toWireChatBot',
+        'topicTarget',
+      ].sort(),
+    );
+  });
+
+  it('feishu-transport index.ts exports exactly the pinned name set', () => {
+    const src = readFileSync(
+      join(repoRoot, 'packages/channel/feishu-transport/src/index.ts'),
+      'utf8',
+    );
+    expect(namedExports(src)).toEqual(
+      [
+        'BOT_MEMBER_ADDED_EVENT_TYPE',
+        'CELL_MAX_BYTES',
+        'ChannelInbound',
+        'DOC_COMMENT_EVENT_TYPE',
+        'FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER',
+        'FEISHU_CARD_CONTENT_SAFE_BYTES',
+        'FEISHU_CARD_ELEMENT_HARD_CAP',
+        'FEISHU_CARD_REQUEST_LIMIT_BYTES',
+        'FEISHU_COT_APPEND_MAX_EVENTS',
+        'FEISHU_TRANSPORT_PACKAGE',
+        'FeishuAppOwnerIdentity',
+        'FeishuBotMemberAddedEvent',
+        'FeishuChatMode',
+        'FeishuCommentEvent',
+        'FeishuCotApiError',
+        'FeishuCotAppendInput',
+        'FeishuCotClient',
+        'FeishuCotClientOptions',
+        'FeishuCotCompleteInput',
+        'FeishuCotCompleteReason',
+        'FeishuCotCreateInput',
+        'FeishuCotCreateResult',
+        'FeishuCotEventInput',
+        'FeishuCreateGroupInput',
+        'FeishuCreateGroupResult',
+        'FeishuCredentials',
+        'FeishuDocComment',
+        'FeishuDocCommentReply',
+        'FeishuDocMeta',
+        'FeishuInviteMembersInput',
+        'FeishuInviteMembersResult',
+        'FeishuMessageReadItem',
+        'FeishuMessageReadMode',
+        'FeishuMessageReadRequest',
+        'FeishuMessageReadResponse',
+        'FeishuMessageReader',
+        'FeishuMessageResourceFetcher',
+        'FeishuMessageResourceRequest',
+        'FeishuMessageResourceResponse',
+        'FeishuMessageResourceType',
+        'FeishuSendOptions',
+        'FeishuSendResult',
+        'FeishuTransport',
+        'FeishuTransportOptions',
+        'FeishuWebSocketRegistration',
+        'InboundContentPart',
+        'InboundMessage',
+        'InboundResource',
+        'InboundResourceType',
+        'InboundRoutes',
+        'Mention',
+        'OutboundTarget',
+        'ParsedInbound',
+        'RenderedCard',
+        'RouteHandler',
+        'TransportLogger',
+        'applyMentions',
+        'asString',
+        'cardContentBytes',
+        'cardToContent',
+        'commentFromBatchQuery',
+        'createFeishuCotClient',
+        'createFeishuTransport',
+        'extractPostText',
+        'isBotMentioned',
+        'isBotSenderType',
+        'isRecord',
+        'mentionName',
+        'mergeInteractiveInbound',
+        'narrowMetaFromEvent',
+        'normalizeBotMemberAddedEvent',
+        'normalizeCommentEvent',
+        'parseInbound',
+        'renderMarkdownToCards',
+        'splitMarkdownByBytes',
+        'textMessageContent',
+        'toChannelInbound',
+      ].sort(),
+    );
+  });
+});

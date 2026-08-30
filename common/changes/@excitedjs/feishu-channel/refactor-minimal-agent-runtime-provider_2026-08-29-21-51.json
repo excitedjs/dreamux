@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/feishu-channel",
+      "comment": "BREAKING: Rebuild: recreate every Feishu binding and collaboration-space policy with this Channel's own MCP tools after upgrading; Core's previous binding state is not migrated. This Channel now owns routing end to end: a durable per-channel binding document under the dispatcher state dir, direct and hierarchical target resolution, stale-binding cleanup, and automatic collaboration-space provisioning composed from ordinary `team.create` and `team.submit` Commands. Its MCP catalog is caller-scoped and replaces the removed Core tools: `bind_channel`, `unbind_channel`, and `list_bindings` for the Dispatcher, self-scoped `bind_channel`/`unbind_channel` for a TeamLeader, and the four collaboration-space policy tools for the Dispatcher; there is no `transfer_back` (rebind with a different `team_name`). A bind is refused when the named Team is missing or closed, and it mutates no routing state. Inbound submissions now pass display attributes and faithful body text through `team.submit` and Core renders the channel envelope.",
+      "type": "major"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

@@ -16,20 +16,24 @@ import type { AnyCoreCommand } from '../../command/registry.js';
 import { mustDispatcher, type CoreCommandHost } from '../../command/host.js';
 import { ValidationError, toDreamuxError } from '../../command/errors.js';
 import {
-  REPO_REQUEST_SCHEMA,
+  normalizeSkillSources,
+  optionalParsedSkillSources,
+} from '../../agent-runtime/skill-sources.js';
+import {
   commandPayload,
-  historyQuery,
   mustNonEmptyString,
   mustString,
-  normalizeSkillSources,
   optionalBooleanField,
   optionalInteger,
   optionalNonBlankString,
-  optionalParsedSkillSources,
   optionalString,
+} from '../../command/payload.js';
+import { historyQuery } from '../agent-entity/history-query.js';
+import {
+  REPO_REQUEST_SCHEMA,
   repoRequest,
   repoWorktree,
-} from '../../command/payload.js';
+} from '../worktree/repo-request.js';
 import {
   BOOLEAN,
   INTEGER,

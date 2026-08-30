@@ -293,6 +293,39 @@ describe('managed service working directory ownership', () => {
       reason: 'managed service working directory',
     });
   });
+
+  /**
+   * `runDaemonInstall()` calls `loadConfig({ configDir: globalConfigDir() })`
+   * (`src/daemon/install.ts`) with no `providerRegistry` override — the exact
+   * production path `dreamux daemon install` uses, and the same one every
+   * other test in this describe block hits. It therefore loads the real
+   * `@excitedjs/feishu-channel` provider, which carries no `ref` and no
+   * `descriptor` member: the current `ChannelProvider<TConfig>` contract
+   * (`@excitedjs/dreamux-types`) omits both by design, since registration
+   * identity belongs to Core rather than to the loaded package. The channel
+   * loader accepts a provider on its capability shape alone, so an install
+   * against a config naming a real Feishu channel succeeds.
+   */
+  it('daemon install accepts the on-disk config it just read (builtin:feishu channel)', async () => {
+    const runner = new WorkingDirectoryOrderRunner(stateRoot());
+    const nodeProbe: ServiceNodeProbe = {
+      realpath: async (path) => path,
+      isExecutable: async () => false,
+    };
+
+    await expect(
+      runDaemonInstall({
+        runner,
+        platform: 'linux',
+        homeDir: join(root, 'home'),
+        nodeProbe,
+        env: {
+          ...process.env,
+          CODEX_HOST_CODEX_BIN: process.execPath,
+        },
+      }),
+    ).resolves.toBeDefined();
+  });
 });
 
 describe('daemon install (stable service Node, issue #83)', () => {

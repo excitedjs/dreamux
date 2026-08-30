@@ -12,18 +12,20 @@
  * they are the same caller's work, reaching the same handle's `workflows`.
  */
 import { ValidationError, errorMessage } from '../../command/errors.js';
+import { normalizeSkillSources } from '../../agent-runtime/skill-sources.js';
 import {
-  historyQuery,
   mustNonEmptyString,
-  normalizeSkillSources,
   optionalBooleanField,
   optionalInteger,
   optionalNonBlankString,
   optionalString,
-  repoRequest,
-  repoWorktree,
   type CommandPayload,
 } from '../../command/payload.js';
+import { historyQuery } from '../agent-entity/history-query.js';
+import {
+  repoRequest,
+  repoWorktree,
+} from '../worktree/repo-request.js';
 import {
   ACTIVITY_PUBLIC_ERRORS,
   mapAgentActivityCommandError,
@@ -63,17 +65,17 @@ const IDENTITY = { name: 'dreamux-teammate', version: '0.4.0' };
  *
  * The dispatcher scope keeps the real `DispatcherService` because its `spawn`
  * drives the collection directly; the Team scope keeps the handle because a
- * Team TeamMate is spawned into the Team's shared workspace, through the leased
- * `spawnTeamMate`.
+ * Team TeamMate is spawned into the Team's shared workspace, through the
+ * handle's own `spawnTeamMate`.
  */
 export type TeamMateMcpScope =
   | { readonly kind: 'dispatcher'; readonly dispatcher: DispatcherService }
   | {
       readonly kind: 'team_leader';
       /**
-       * Resolved per call, never captured. Each handle carries a fresh Team
-       * leader lease, and a lease held across calls would let a superseded
-       * generation keep operating on a Team it no longer leads.
+       * Resolved per call, never captured. A handle held across calls would
+       * keep answering for a Team object that has since closed, instead of
+       * reaching whichever Team currently holds that id.
        */
       readonly team: () => Promise<TeamLeaderHandle>;
     };

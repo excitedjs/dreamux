@@ -14,6 +14,18 @@
  * These helpers only build the *shapes*; they never encode "how many pushes
  * should happen". A suite proves fold/queue by wiring submissions to the same
  * or to different tokens, exactly as a provider would.
+ *
+ * `RuntimeCompletion` itself carries no `displaySubmission` member (see
+ * `packages/dreamux-types/src/agent-runtime.ts`): the current contract is
+ * `{ status: 'completed', resultText, truncated }` or
+ * `{ status: 'failed', error }` and nothing else. `completedCompletion` /
+ * `failedCompletion` below still accept a leading `submission` argument only
+ * because it is the natural argument every call site already has on hand (the
+ * `RuntimeSubmission` this token is settling) — it is discarded, not stored,
+ * so folding still has to be proven the one way the current contract allows:
+ * by handing the SAME token object to every submission's `settle`, which
+ * {@link foldSubmissions} does. Two `completedCompletion(...)` calls are always
+ * distinct tokens even with identical arguments, matching the queued case.
  */
 import type {
   RuntimeCompletion,
@@ -26,8 +38,7 @@ export interface ControllableRuntimeSubmission {
   /** Settle exactly once. Returns false on every later attempt. */
   settle(settlement: RuntimeSubmissionSettlement): boolean;
   /**
-   * Settle with a NEW completion token that displays through this submission.
-   * Use for a queued (non-folded) result.
+   * Settle with a NEW completion token. Use for a queued (non-folded) result.
    */
   complete(resultText?: string | null): RuntimeCompletion;
   /** Settle with a NEW failed completion token (a real native result boundary). */
@@ -72,35 +83,46 @@ export function controllableRuntimeSubmission(): ControllableRuntimeSubmission {
   };
 }
 
-/** A frozen `completed` token displayed through {@link displaySubmission}. */
+/**
+ * A frozen `completed` token.
+ *
+ * `_submission` is accepted and discarded: `RuntimeCompletion` has no
+ * `displaySubmission` field in the current contract, so nothing links this
+ * token back to the submission that produced it except the identity the
+ * caller wires by hand (see {@link foldSubmissions}).
+ */
 export function completedCompletion(
-  displaySubmission: RuntimeSubmission,
+  _submission: RuntimeSubmission,
   resultText: string | null = null,
   truncated = false,
 ): RuntimeCompletion {
   return Object.freeze({
     status: 'completed' as const,
-    displaySubmission,
     resultText,
     truncated,
   });
 }
 
-/** A frozen `failed` token: a real native result boundary that failed. */
+/**
+ * A frozen `failed` token: a real native result boundary that failed.
+ *
+ * `_submission` is accepted and discarded for the same reason as
+ * {@link completedCompletion}.
+ */
 export function failedCompletion(
-  displaySubmission: RuntimeSubmission,
+  _submission: RuntimeSubmission,
   error: Error,
 ): RuntimeCompletion {
   return Object.freeze({
     status: 'failed' as const,
-    displaySubmission,
     error,
   });
 }
 
 /**
- * Model a steer/fold: every submission settles with the SAME frozen token, whose
- * `displaySubmission` is the first (representative) submission.
+ * Model a steer/fold: every member submission settles with the SAME frozen
+ * completion object (`Object.is`-identical), built once from the first
+ * (representative) member.
  */
 export function foldSubmissions(
   members: readonly ControllableRuntimeSubmission[],
