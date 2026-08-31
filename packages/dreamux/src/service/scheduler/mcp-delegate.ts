@@ -18,6 +18,7 @@
  * renders it.
  */
 import type { CommandPayload } from '../../command/payload.js';
+import { MCP_IDENTITY_VERSION } from '../mcp/identity-version.js';
 import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
 import {
   DESTRUCTIVE_ANNOTATIONS,
@@ -46,7 +47,7 @@ import {
 
 export const CRON_MCP_SERVER_NAME = 'cron';
 
-const IDENTITY = { name: 'dreamux-cron', version: '0.4.0' };
+const IDENTITY = { name: 'dreamux-cron', version: MCP_IDENTITY_VERSION };
 
 /**
  * Build the cron delegate for one owner.

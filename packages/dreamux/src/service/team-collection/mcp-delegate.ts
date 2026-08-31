@@ -33,6 +33,7 @@ import {
   repoRequest,
   repoWorktree,
 } from '../worktree/repo-request.js';
+import { MCP_IDENTITY_VERSION } from '../mcp/identity-version.js';
 import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
 import {
   DESTRUCTIVE_ANNOTATIONS,
@@ -71,7 +72,7 @@ export type TeamMcpCaller =
 
 export const TEAM_MCP_SERVER_NAME = 'team';
 
-const IDENTITY = { name: 'dreamux-team', version: '0.4.0' };
+const IDENTITY = { name: 'dreamux-team', version: MCP_IDENTITY_VERSION };
 
 export function createTeamMcpDelegate(input: {
   dispatcher: DispatcherService;

@@ -39,6 +39,7 @@ import {
   TEAMMATE_DISPATCH_SUCCESS_REMINDER,
   WORKFLOW_RUN_SUCCESS_REMINDER,
 } from '../mcp/dispatch-reminders.js';
+import { MCP_IDENTITY_VERSION } from '../mcp/identity-version.js';
 import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
 import type {
   McpDelegateCall,
@@ -60,7 +61,7 @@ import type { TeamMateWorktreeRequest } from './types.js';
 
 export const TEAMMATE_MCP_SERVER_NAME = 'teammate';
 
-const IDENTITY = { name: 'dreamux-teammate', version: '0.4.0' };
+const IDENTITY = { name: 'dreamux-teammate', version: MCP_IDENTITY_VERSION };
 
 /**
  * What the two callers actually operate on.
