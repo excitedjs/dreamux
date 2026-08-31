@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-codex",
+      "comment": "Restore the legacy persisted session identity layout (plain `sessionId` string); #350 was unreleased, so no published behavior changes.",
+      "type": "none"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}
