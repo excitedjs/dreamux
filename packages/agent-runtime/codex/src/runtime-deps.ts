@@ -1,7 +1,6 @@
 import type {
   AgentRuntimeActivitySink,
   AgentRuntimePathContext,
-  AgentRuntimeSessionRef,
   AgentRuntimeSkillSource,
   AgentRuntimeStateSink,
   DreamuxLogger,
@@ -24,7 +23,7 @@ export interface CodexRuntimeDeps {
   cwd: string;
   systemPromptReplace?: string;
   systemPromptAppend?: readonly string[];
-  state: AgentRuntimeStateSink<AgentRuntimeSessionRef>;
+  state: AgentRuntimeStateSink;
   paths: AgentRuntimePathContext;
   /**
    * The session-bound output schema codec, compiled once at create time. It is

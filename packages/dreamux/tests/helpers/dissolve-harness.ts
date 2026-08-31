@@ -270,7 +270,7 @@ export async function bootDissolveTeam(): Promise<DissolveTeamHarness> {
     worktree: reuseCwdWorktree(teamRoot),
     intent: null,
     identityPrompt: null,
-    session: { id: 'provider-session-1' },
+    sessionId: 'provider-session-1',
     status: 'running',
   });
 

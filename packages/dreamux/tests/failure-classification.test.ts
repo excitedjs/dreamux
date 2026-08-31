@@ -137,7 +137,7 @@ describe('an Activity read reports what failed, and invents nothing', () => {
           dispatcher_id: 'd1',
           agent_runtime: 'r1',
           runtime_cwd: '/tmp',
-          session: { id: 'session-1' },
+          session_id: 'session-1',
         },
         query: {},
         log: capturingLogger(logs),

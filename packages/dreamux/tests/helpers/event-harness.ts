@@ -152,7 +152,7 @@ export function makeIdentity(
     name: 'fixture-agent',
     team_id: null,
     agent_runtime: 'fixture-runtime',
-    session: null,
+    session_id: null,
     source_cwd: '/workspace/repo',
     source_repo: null,
     cwd: '/workspace/repo',

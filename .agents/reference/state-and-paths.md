@@ -77,11 +77,15 @@ Important children:
 - `~/.dreamux/state/<dispatcher-id>/identity.json`: the dispatcher agent's
   authoritative identity/lifecycle/runtime-session recovery record at the
   dispatcher *root* (not under `teammate/`), so the `teammate.*` read
-  chokepoints never enumerate it. It carries the provider's own `session`
-  object verbatim — Core reads only its `id` — or `null` before a first start,
-  and it contains no rolling conversation projection. The removed `checkpoint`,
-  `session_id`, and `transcript_locator` fields make it fail loud rather than
-  migrate.
+  chokepoints never enumerate it. It carries the provider's own prior session id
+  as a nullable `session_id` string — opaque to Core, which stores it, checks it
+  for presence, and hands it back to the same provider without parsing it — or
+  `null` before a first start, and it contains no rolling conversation
+  projection. A removed `checkpoint` / `session_ref` field makes it fail loud
+  rather than migrate; `session_id`'s own `string | null` type check is the only
+  gate on the session, because an id this reader cannot find already degrades
+  correctly to "start a fresh session". A leftover `role` or
+  `transcript_locator` is inert residue no path reads, validates, or deletes.
 - `~/.dreamux/state/<dispatcher-id>/access.json`: dispatcher-local Feishu V3
   access state with mixed field ownership. `version` is Channel/schema-owned;
   `dm_policy` and `group.*` are operator policy; `allow_users` is shared between

@@ -2,7 +2,6 @@ import type {
   AgentRuntimeActivitySink,
   AgentRuntimeMcpServer,
   AgentRuntimePathContext,
-  AgentRuntimeSessionRef,
   AgentRuntimeSkillSource,
   AgentRuntimeStateSink,
   DreamuxLogger,
@@ -15,7 +14,7 @@ import type { ClaudeCodeSessionFactory } from './supervisor.js';
 export interface ClaudeCodeRuntimeDeps {
   config: DispatcherClaudeCodeConfig;
   cwd: string;
-  state: AgentRuntimeStateSink<AgentRuntimeSessionRef>;
+  state: AgentRuntimeStateSink;
   paths: AgentRuntimePathContext;
   mcpServers: readonly AgentRuntimeMcpServer[];
   sessionFactory: ClaudeCodeSessionFactory;

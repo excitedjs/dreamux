@@ -18,7 +18,6 @@ import type {
   AgentRuntimeProvider,
   AgentRuntimeProviderCapabilities,
   AgentRuntimeProviderFactory,
-  AgentRuntimeSessionRef,
 } from '@excitedjs/dreamux-types';
 
 function normalizedSystemPromptAppend(
@@ -60,12 +59,12 @@ export const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeProviderCapabil
  * session, and `createRuntime` builds a {@link ClaudeCodeRuntime} from the
  * neutral create context plus the host-supplied options.
  *
- * Claude Code resumes from its native session id alone, so its session identity
- * is the base {@link AgentRuntimeSessionRef}.
+ * Claude Code resumes from its native session id alone, which it publishes as
+ * the neutral opaque session id.
  */
 export function createClaudeCodeAgentRuntimeProvider(
   options: ClaudeCodeAgentRuntimeProviderOptions = {},
-): AgentRuntimeProvider<DispatcherClaudeCodeConfig, AgentRuntimeSessionRef> {
+): AgentRuntimeProvider<DispatcherClaudeCodeConfig> {
   const sessionFactory =
     options.sessionFactory ?? createDefaultClaudeCodeSession;
   const resolveBinPath = options.resolveBinPath ?? ((bin: string) => bin);
@@ -94,10 +93,7 @@ export function createClaudeCodeAgentRuntimeProvider(
     readRecentActivity: (query, context) =>
       readClaudeRecentActivity(query, context),
     async createRuntime(
-      context: AgentRuntimeCreateContext<
-        DispatcherClaudeCodeConfig,
-        AgentRuntimeSessionRef
-      >,
+      context: AgentRuntimeCreateContext<DispatcherClaudeCodeConfig>,
     ): Promise<AgentRuntime> {
       const systemPromptAppend = normalizedSystemPromptAppend(
         context.systemPrompt?.append,
@@ -150,8 +146,7 @@ export { dispatcherClaudeCodeConfig };
  * {@link createClaudeCodeAgentRuntimeProvider} exists for embedders and tests.
  */
 const claudeCodeAgentRuntimeProviderFactory: AgentRuntimeProviderFactory<
-  DispatcherClaudeCodeConfig,
-  AgentRuntimeSessionRef
+  DispatcherClaudeCodeConfig
 > = () => createClaudeCodeAgentRuntimeProvider();
 
 export default claudeCodeAgentRuntimeProviderFactory;

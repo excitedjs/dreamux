@@ -1,6 +1,5 @@
 import type {
   AgentActivityRecord,
-  AgentRuntimeSessionRef,
   AgentRuntimeSkillSource,
   AgentRuntimeStatus,
   JsonValue,
@@ -72,11 +71,11 @@ export interface AgentEntityIdentity {
   team_id: string | null;
   agent_runtime: string;
   /**
-   * The provider's own session object, persisted verbatim and returned only to
-   * the same provider. Core validates and reads `id` and nothing else; every
-   * other field is opaque JSON it must not interpret, index, or branch on.
+   * The provider's own prior session id, persisted verbatim and returned only
+   * to the same provider. Opaque to Core: it is stored, compared for presence,
+   * and handed back — never parsed, indexed, or branched on.
    */
-  session: AgentRuntimeSessionRef | null;
+  session_id: string | null;
   source_cwd: string;
   source_repo: string | null;
   cwd: string;

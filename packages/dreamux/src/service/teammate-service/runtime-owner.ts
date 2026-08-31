@@ -4,7 +4,6 @@ import type {
   AgentRuntimeCreateContext,
   AgentRuntimeMcpServer,
   AgentRuntimeProvider,
-  AgentRuntimeSessionRef,
   AgentRuntimeStartOutcome,
   AgentRuntimeStatus,
 } from '@excitedjs/dreamux-types';
@@ -30,11 +29,8 @@ import { reprepareDeletedManagedWorktree } from '../worktree/workspaces.js';
 import type { TeammateServiceDeps, TeammateServiceOptions } from './types.js';
 
 interface RuntimeLaunchSpec {
-  provider: AgentRuntimeProvider<unknown, AgentRuntimeSessionRef>;
-  context: Omit<
-    AgentRuntimeCreateContext<unknown, AgentRuntimeSessionRef>,
-    'injectEnv'
-  >;
+  provider: AgentRuntimeProvider<unknown>;
+  context: Omit<AgentRuntimeCreateContext<unknown>, 'injectEnv'>;
 }
 
 interface TeammateRuntimeOwnerCallbacks {
@@ -116,7 +112,7 @@ export class TeammateRuntimeOwner {
   }
 
   sessionId(): string | null {
-    return this.state.current().session?.id ?? null;
+    return this.state.current().session_id;
   }
 
   /**
@@ -323,7 +319,7 @@ export class TeammateRuntimeOwner {
       context: {
         identity: {
           runtimeId: this.options.runtimeId,
-          session: identity.session,
+          sessionId: identity.session_id,
         },
         config: agent.config,
         cwd: identity.cwd,

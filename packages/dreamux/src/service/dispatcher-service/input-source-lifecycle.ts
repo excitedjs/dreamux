@@ -363,7 +363,7 @@ export class DispatcherInputSourceLifecycle {
   }
 
   private shouldStartRuntimeForResumeNotice(): boolean {
-    const sessionId = this.agent_?.current().session?.id ?? null;
+    const sessionId = this.agent_?.current().session_id ?? null;
     return sessionId !== null &&
       this.opts.restartIntent()?.hasTarget(
         this.opts.dispatcherId,

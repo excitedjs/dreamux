@@ -98,7 +98,7 @@ async function bootTeam(): Promise<{
     worktree: reuseCwdWorktree(teamRoot),
     intent: null,
     identityPrompt: null,
-    session: { id: 'provider-session-1' },
+    sessionId: 'provider-session-1',
     status: 'running',
   });
 
@@ -190,7 +190,7 @@ describe('a Team whose dissolve never committed a closed record', () => {
     // provider session, same creation, never rewritten or restamped.
     expect(restored).not.toBe(original);
     expect(status.leader?.name).toBe(LEADER);
-    expect(restored?.current().session).toEqual({ id: 'provider-session-1' });
+    expect(restored?.current().session_id).toBe('provider-session-1');
     expect(restored?.current().created_at).toBe(original?.current().created_at);
   });
 

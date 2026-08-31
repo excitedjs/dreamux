@@ -1,18 +1,17 @@
 /**
- * AgentRuntime push-only state sink, system-prompt semantics, and generic
- * session-identity opacity (issue #209 minimize-provider-boundaries).
+ * AgentRuntime push-only state sink, system-prompt semantics, and opaque
+ * session-id identity (issue #209 minimize-provider-boundaries).
  *
  * Every runtime fact flows OUT through {@link AgentRuntimeStateSink}; nothing
  * is pulled back off the handle (see agent-runtime-handle-contract.test.ts for
  * the handle-shape half of that invariant). This file covers the sink itself,
  * the lease-revocation error it can reject with, the neutral system-prompt
- * shape, and generic session opacity.
+ * shape, and the opacity of the session id.
  */
 import { describe, expect, it } from 'vitest';
 
 import type {
   AgentRuntimeIdentity,
-  AgentRuntimeSessionRef,
   AgentRuntimeStateLeaseRevokedError,
   AgentRuntimeStateSink,
   AgentRuntimeStateUpdate,
@@ -35,28 +34,25 @@ function assertNever(value: never): never {
 
 describe('AgentRuntimeStateSink is push-only: publish(update) and nothing else', () => {
   it('the sink exposes no pull counterpart alongside publish', () => {
-    assertType<Equal<keyof AgentRuntimeStateSink<AgentRuntimeSessionRef>, 'publish'>>();
+    assertType<Equal<keyof AgentRuntimeStateSink, 'publish'>>();
   });
 
   it('AgentRuntimeStateUpdate is exactly status | session | session_lost', () => {
     assertType<
-      Equal<
-        AgentRuntimeStateUpdate<AgentRuntimeSessionRef>['kind'],
-        'status' | 'session' | 'session_lost'
-      >
+      Equal<AgentRuntimeStateUpdate['kind'], 'status' | 'session' | 'session_lost'>
     >();
   });
 
   it('a fake sink records every published update kind through an exhaustive switch', async () => {
     const received: string[] = [];
-    const sink: AgentRuntimeStateSink<AgentRuntimeSessionRef> = {
-      async publish(update: AgentRuntimeStateUpdate<AgentRuntimeSessionRef>): Promise<void> {
+    const sink: AgentRuntimeStateSink = {
+      async publish(update: AgentRuntimeStateUpdate): Promise<void> {
         switch (update.kind) {
           case 'status':
             received.push(`status:${update.status}`);
             return;
           case 'session':
-            received.push(`session:${update.session.id}`);
+            received.push(`session:${update.sessionId}`);
             return;
           case 'session_lost':
             received.push(`session_lost:${update.reason}`);
@@ -68,7 +64,7 @@ describe('AgentRuntimeStateSink is push-only: publish(update) and nothing else',
     };
 
     await sink.publish({ kind: 'status', status: 'ready' });
-    await sink.publish({ kind: 'session', session: { id: 'sess-1' } });
+    await sink.publish({ kind: 'session', sessionId: 'sess-1' });
     await sink.publish({ kind: 'session_lost', reason: 'native process exited' });
 
     expect(received).toEqual([
@@ -85,7 +81,7 @@ describe('AgentRuntimeStateSink is push-only: publish(update) and nothing else',
       return error;
     }
 
-    const sink: AgentRuntimeStateSink<AgentRuntimeSessionRef> = {
+    const sink: AgentRuntimeStateSink = {
       async publish(): Promise<void> {
         throw makeLeaseRevokedError();
       },
@@ -138,38 +134,38 @@ describe('AgentRuntimeSystemPrompt: replace and append are both optional and ind
   });
 });
 
-describe('AgentRuntimeIdentity<TSession> keeps provider session data opaque to Core', () => {
-  interface CustomSession extends AgentRuntimeSessionRef {
-    readonly id: string;
-    readonly nativeThreadId: string;
-    readonly extra: { readonly resumeToken: string };
-  }
-
-  it('a provider-extended session with additional JSON fields still satisfies the generic identity', () => {
-    const identity: AgentRuntimeIdentity<CustomSession> = {
+describe('AgentRuntimeIdentity carries the session as one opaque id and nothing more', () => {
+  it('a resumable identity is a runtime id plus the provider\'s own prior session id', () => {
+    const identity: AgentRuntimeIdentity = {
       runtimeId: 'runtime-42',
-      session: {
-        id: 'sess-42',
-        nativeThreadId: 'thread-7',
-        extra: { resumeToken: 'tok-9' },
-      },
+      sessionId: 'sess-42',
     };
 
-    expect(identity.session?.id).toBe('sess-42');
-    // Core reads only `id`; the provider-specific fields still round-trip
-    // opaquely through the same object because Core persists it whole.
-    expect(identity.session?.nativeThreadId).toBe('thread-7');
+    expect(identity.sessionId).toBe('sess-42');
   });
 
-  it('a fresh start carries session: null regardless of TSession shape', () => {
-    const identity: AgentRuntimeIdentity<CustomSession> = {
+  it('a fresh start carries sessionId: null', () => {
+    const identity: AgentRuntimeIdentity = {
       runtimeId: 'runtime-fresh',
-      session: null,
+      sessionId: null,
     };
-    expect(identity.session).toBeNull();
+    expect(identity.sessionId).toBeNull();
   });
 
-  it('`id` is the only field shared across every AgentRuntimeSessionRef-compatible session', () => {
-    assertType<Equal<keyof AgentRuntimeSessionRef, 'id'>>();
+  it('the identity is exactly runtimeId + sessionId — no third durable session fact', () => {
+    // The session is a string, not an object a provider could extend: there is
+    // nowhere to hang a second durable fact, so "Core does not interpret the
+    // session" holds literally rather than by convention.
+    assertType<Equal<keyof AgentRuntimeIdentity, 'runtimeId' | 'sessionId'>>();
+    assertType<Equal<AgentRuntimeIdentity['sessionId'], string | null>>();
+  });
+
+  it('the published session update carries the same plain id Core will persist', () => {
+    assertType<
+      Equal<
+        keyof Extract<AgentRuntimeStateUpdate, { kind: 'session' }>,
+        'kind' | 'sessionId'
+      >
+    >();
   });
 });

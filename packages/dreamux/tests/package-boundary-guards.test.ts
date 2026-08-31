@@ -339,7 +339,6 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         'AgentRuntimeProviderConfigReadContext',
         'AgentRuntimeProviderDescriptor',
         'AgentRuntimeProviderFactory',
-        'AgentRuntimeSessionRef',
         'AgentRuntimeSkillSource',
         'AgentRuntimeStartOutcome',
         'AgentRuntimeStateLeaseRevokedError',

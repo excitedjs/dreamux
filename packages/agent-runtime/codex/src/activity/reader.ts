@@ -2,7 +2,6 @@ import type {
   AgentActivityPage,
   AgentActivityQuery,
   AgentActivityReadContext,
-  AgentRuntimeSessionRef,
 } from '@excitedjs/dreamux-types';
 import { readBytesAt } from '@excitedjs/dreamux-utils';
 
@@ -66,7 +65,7 @@ interface ScanResult {
  * from the session id alone, and never depends on a persisted native path.
  */
 export async function readCodexRecentActivity(
-  query: AgentActivityQuery<AgentRuntimeSessionRef>,
+  query: AgentActivityQuery,
   context: AgentActivityReadContext<DispatcherCodexConfig>,
   testHooks: {
     afterLocate?: () => void | Promise<void>;
@@ -79,7 +78,7 @@ export async function readCodexRecentActivity(
   const discoveryBudget = createCodexScanBudget();
   const tail = await locateCodexRollout(
     null,
-    query.session.id,
+    query.sessionId,
     roots,
     discoveryBudget,
   );

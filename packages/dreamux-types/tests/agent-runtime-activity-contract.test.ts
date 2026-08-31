@@ -86,13 +86,10 @@ describe('AgentActivityRecord exposes no tool arguments, results, or native-line
 });
 
 describe('AgentActivityQuery is a bounded, provider-cursor-opaque request', () => {
-  it('accepts session/cursor/limit/includeTools with cursor and limit optional', () => {
-    interface Session {
-      readonly id: string;
-    }
-    const minimal: AgentActivityQuery<Session> = { session: { id: 'sess-1' } };
-    const full: AgentActivityQuery<Session> = {
-      session: { id: 'sess-1' },
+  it('accepts sessionId/cursor/limit/includeTools with cursor and limit optional', () => {
+    const minimal: AgentActivityQuery = { sessionId: 'sess-1' };
+    const full: AgentActivityQuery = {
+      sessionId: 'sess-1',
       cursor: 'opaque-cursor-token',
       limit: 50,
       includeTools: false,
@@ -100,6 +97,13 @@ describe('AgentActivityQuery is a bounded, provider-cursor-opaque request', () =
 
     expect(minimal.cursor).toBeUndefined();
     expect(full.includeTools).toBe(false);
+  });
+
+  it('the session is addressed by a plain opaque id, not a structured reference', () => {
+    // Core hands back exactly the string the provider published. A query cannot
+    // carry a second durable session fact, because there is no object to hang
+    // one on.
+    assertType<Equal<AgentActivityQuery['sessionId'], string>>();
   });
 });
 

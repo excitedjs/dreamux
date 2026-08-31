@@ -28,7 +28,6 @@ import { defaultDispatcherClaudeCodeConfig } from '../src/config.js';
 import type {
   AgentActivityReadContext,
   AgentActivityQuery,
-  AgentRuntimeSessionRef,
 } from '@excitedjs/dreamux-types';
 
 // ─── Native record builders ─────────────────────────────────────────────────
@@ -157,9 +156,9 @@ async function makeFixture(sessionId = randomUUID()): Promise<Fixture> {
 
 function query(
   fixture: Fixture,
-  overrides: Partial<AgentActivityQuery<AgentRuntimeSessionRef>> = {},
-): AgentActivityQuery<AgentRuntimeSessionRef> {
-  return { session: { id: fixture.sessionId }, ...overrides };
+  overrides: Partial<AgentActivityQuery> = {},
+): AgentActivityQuery {
+  return { sessionId: fixture.sessionId, ...overrides };
 }
 
 /** A full four-record conversation: text turn, then a tool-using turn. */

@@ -31,15 +31,30 @@ const log = {
 
 /**
  * Fail-loud coverage for every state shape the minimize-provider-boundaries
- * refactor removed (issue #199 / #233 and the operator's `role`/`team_member`
- * deletion, README.md line 436-441). Dreamux 0.x never migrates: a leftover
+ * refactor removed (issue #199 / #233). Dreamux 0.x never migrates: a leftover
  * from an older layout, or a persisted field/value/action this version no
  * longer accepts, must throw a NAMED incompatible-state error (LegacyStateError
  * or a doctor-formatted message the operator can act on) rather than being
- * silently skipped, coerced, migrated, or dual-written. The corresponding
- * ABSENCE checks (no importer/backfill/dual-write for the old shape) live in
- * the "no migration path" describe block below, as source-shape guards — the
- * one place absence-as-contract belongs per this node's TEST STYLE.
+ * silently skipped, coerced, migrated, or dual-written.
+ *
+ * "No longer accepts" is narrower than "no longer writes". A removed field is
+ * rejected only when accepting the record would LOSE something the reader cannot
+ * see — a checkpoint whose absence would silently discard delivery state. A
+ * leftover field this version simply never consults (`role`, derived from the
+ * owning directory; `transcript_locator`, replaced by the neutral Activity
+ * seam's opaque session id) is inert residue: gating an upgrade on it would cost
+ * the operator a rebuild to delete a key nothing reads.
+ *
+ * Session identity is the sharpest case, and it needs NO removed-field entry at
+ * all. `session_id`'s own type check (`string | null`) is the whole contract: an
+ * id this reader cannot find means "no prior session", so the Agent starts a
+ * fresh one — the only correct outcome for a record whose id sat under a
+ * different key. A present-but-unusable value is corruption, not an old layout,
+ * and fails loud there. All three directions are pinned below.
+ *
+ * The corresponding ABSENCE checks (no importer/backfill/dual-write for the old
+ * shape) live in the "no migration path" describe block below, as source-shape
+ * guards — the one place absence-as-contract belongs per this node's TEST STYLE.
  */
 describe('legacy dispatcher-root state detection (fail-loud, never migrated)', () => {
   let root: string;
@@ -139,7 +154,7 @@ describe('assertNoRemovedRecordFields (shared chokepoint)', () => {
       assertNoRemovedRecordFields(
         'agent record "x"',
         { name: 'x', agent_runtime: 'codex' },
-        ['role', 'checkpoint'],
+        ['session_ref', 'checkpoint'],
         'delete and rebuild',
       ),
     ).not.toThrow();
@@ -149,27 +164,43 @@ describe('assertNoRemovedRecordFields (shared chokepoint)', () => {
     expect(() =>
       assertNoRemovedRecordFields(
         'agent record "x"',
-        { name: 'x', role: 'team_member', checkpoint: { id: 'c1' } },
-        ['role', 'checkpoint', 'transcript_locator'],
+        { name: 'x', session_ref: { id: 's1' }, checkpoint: { id: 'c1' } },
+        ['session_ref', 'checkpoint', 'close_status'],
         'close and respawn this teammate, or delete its identity directory',
       ),
     ).toThrow(LegacyStateError);
     try {
       assertNoRemovedRecordFields(
         'agent record "x"',
-        { role: 'team_member', checkpoint: {} },
-        ['role', 'checkpoint', 'transcript_locator'],
+        { session_ref: {}, checkpoint: {} },
+        ['session_ref', 'checkpoint', 'close_status'],
         'rebuild-hint',
       );
       throw new Error('unreachable');
     } catch (err) {
       expect(err).toBeInstanceOf(LegacyStateError);
       const message = (err as Error).message;
-      expect(message).toContain('role');
+      expect(message).toContain('session_ref');
       expect(message).toContain('checkpoint');
-      expect(message).not.toContain('transcript_locator, ');
+      // Only the fields actually present are named: an absent entry from the
+      // caller's list never appears in the message.
+      expect(message).not.toContain('close_status');
       expect(message).toContain('rebuild-hint');
     }
+  });
+
+  it('a field the caller did not list is left alone, however legacy-looking', () => {
+    // The chokepoint rejects exactly the list its caller supplies. Nothing here
+    // recognizes a field by name pattern, so a leftover key a reader chose not
+    // to reject stays inert residue rather than becoming a hidden upgrade gate.
+    expect(() =>
+      assertNoRemovedRecordFields(
+        'agent record "x"',
+        { name: 'x', role: 'team_leader', transcript_locator: '/tmp/x.jsonl' },
+        ['session_ref', 'checkpoint'],
+        'delete and rebuild',
+      ),
+    ).not.toThrow();
   });
 });
 
@@ -199,7 +230,7 @@ describe('AgentIdentityStore.read() rejects a persisted identity carrying a remo
     name: 'reviewer',
     team_id: null,
     agent_runtime: 'codex',
-    session: null,
+    session_id: null,
     source_cwd: '/tmp/src',
     source_repo: null,
     cwd: '/tmp/run',
@@ -231,22 +262,83 @@ describe('AgentIdentityStore.read() rejects a persisted identity carrying a remo
     expect(identity?.name).toBe('reviewer');
   });
 
-  it('fails loud on a persisted `role: "team_member"` field (the retired vocabulary)', async () => {
+  it('reads a leftover nested `session` object as no prior session, not a failure', async () => {
+    // `session: { id }` only ever existed inside the unreleased provider-boundary
+    // refactor, so no released build wrote it. Rejecting it would have been a
+    // permanent gate for a shape that cannot reach a real upgrade — and it would
+    // have gated the ONE outcome that is already correct: an id this reader
+    // cannot find means "no prior session", so the Agent starts a fresh one.
+    // That is exactly what a record whose id was written under another key
+    // deserves. `session_id`'s own type check stays the only gate.
+    await writeFile(
+      join(dir, 'identity.json'),
+      JSON.stringify({
+        ...CURRENT_SHAPE,
+        session_id: undefined,
+        session: { id: 'provider-session-1' },
+      }),
+    );
+    const identity = await store().read();
+    expect(identity?.session_id).toBeNull();
+    expect(identity as unknown as Record<string, unknown>).not.toHaveProperty('session');
+  });
+
+  it('treats a present-but-unusable `session_id` as an unreadable record, never as "no session"', async () => {
+    // The type check is the contract, and the two outcomes must stay distinct.
+    // A leftover nested `session` yields a VALID identity whose session_id is
+    // null (above). A corrupt `session_id` is not an older layout, so it must
+    // never reach that same null through coercion: the record fails validation
+    // and is skipped as unreadable, exactly like a bad `version` or `cwd`.
+    for (const bad of [42, { id: 'x' }, '', []] as const) {
+      const warnings: string[] = [];
+      const store = new AgentIdentityStore({
+        dir,
+        dispatcherId: 'flow',
+        expectedName: 'reviewer',
+        log: {
+          ...log,
+          warn: (fields: unknown) =>
+            warnings.push(String((fields as { error?: string }).error)),
+        } as unknown as DreamuxLogger,
+      });
+      await writeFile(
+        join(dir, 'identity.json'),
+        JSON.stringify({ ...CURRENT_SHAPE, session_id: bad }),
+      );
+
+      const identity = await store.read();
+      expect(identity, `session_id ${JSON.stringify(bad)}`).toBeNull();
+      expect(warnings.join('\n')).toMatch(/session_id that is not a non-empty string/);
+    }
+  });
+
+  it('tolerates a leftover `role` field: role is derived from the directory, never read', async () => {
+    // A record's own role claim was never load-bearing — the owning Service,
+    // Collection, and directory decide it. Rejecting the leftover key would gate
+    // an upgrade on a fact this version does not read, so it stays inert
+    // residue: no path creates, validates, or deletes it.
     await writeFile(
       join(dir, 'identity.json'),
       JSON.stringify({ ...CURRENT_SHAPE, role: 'team_member' }),
     );
-    await expect(store().read()).rejects.toThrow(LegacyStateError);
-    await expect(store().read()).rejects.toThrow(/role/);
+    const identity = await store().read();
+    expect(identity?.name).toBe('reviewer');
+    expect(identity as unknown as Record<string, unknown>).not.toHaveProperty('role');
   });
 
-  it('fails loud on a persisted `transcript_locator` field', async () => {
+  it('tolerates a leftover `transcript_locator` field: the Activity read never uses it', async () => {
+    // The neutral Activity seam addresses a session by its opaque id, so a
+    // persisted native transcript path has no reader left. Same reasoning as
+    // `role`: inert residue, not an upgrade blocker.
     await writeFile(
       join(dir, 'identity.json'),
       JSON.stringify({ ...CURRENT_SHAPE, transcript_locator: '/tmp/session.jsonl' }),
     );
-    await expect(store().read()).rejects.toThrow(LegacyStateError);
-    await expect(store().read()).rejects.toThrow(/transcript_locator/);
+    const identity = await store().read();
+    expect(identity?.name).toBe('reviewer');
+    expect(identity as unknown as Record<string, unknown>).not.toHaveProperty(
+      'transcript_locator',
+    );
   });
 
   it('fails loud on a legacy `provider_ref` identity (pre-#148, before agent_runtime existed)', async () => {
@@ -268,7 +360,6 @@ describe('AgentIdentityStore.read() rejects a persisted identity carrying a remo
       'checkpoint',
       'checkpoint_kind',
       'session_ref',
-      'session_id',
       'display_name',
       'close_status',
     ] as const) {

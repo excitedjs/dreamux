@@ -18,7 +18,6 @@ import type {
 } from '../../src/types.js';
 import type {
   AgentRuntimePathContext,
-  AgentRuntimeSessionRef,
   AgentRuntimeStateSink,
   AgentRuntimeStateUpdate,
 } from '@excitedjs/dreamux-types';
@@ -331,9 +330,8 @@ export const FAKE_PATHS: AgentRuntimePathContext = {
 };
 
 /** A state sink that just records every published update, in call order. */
-export class RecordingStateSink<TSession extends AgentRuntimeSessionRef>
-  implements AgentRuntimeStateSink<TSession> {
-  readonly updates: AgentRuntimeStateUpdate<TSession>[] = [];
+export class RecordingStateSink implements AgentRuntimeStateSink {
+  readonly updates: AgentRuntimeStateUpdate[] = [];
   /**
    * A one-shot gate: the promise is created eagerly so a test can call
    * `releaseGate()` at any point after `gateNext()` regardless of whether the
@@ -342,20 +340,20 @@ export class RecordingStateSink<TSession extends AgentRuntimeSessionRef>
    * same `resolve` the matching publish() is awaiting.
    */
   private gate: {
-    match: (update: AgentRuntimeStateUpdate<TSession>) => boolean;
+    match: (update: AgentRuntimeStateUpdate) => boolean;
     resolve: () => void;
     promise: Promise<void>;
     consumed: boolean;
   } | null = null;
   /** One-shot rejection keyed by a predicate, analogous to the gate above. */
   private rejection: {
-    match: (update: AgentRuntimeStateUpdate<TSession>) => boolean;
+    match: (update: AgentRuntimeStateUpdate) => boolean;
     error: Error;
     consumed: boolean;
   } | null = null;
 
   /** Hold the NEXT publish matching `match` open until `releaseGate()`. */
-  gateNext(match: (update: AgentRuntimeStateUpdate<TSession>) => boolean): void {
+  gateNext(match: (update: AgentRuntimeStateUpdate) => boolean): void {
     let resolve!: () => void;
     const promise = new Promise<void>((r) => {
       resolve = r;
@@ -374,13 +372,13 @@ export class RecordingStateSink<TSession extends AgentRuntimeSessionRef>
 
   /** Make the first publish() call matching `match` reject with `error`. */
   rejectWhen(
-    match: (update: AgentRuntimeStateUpdate<TSession>) => boolean,
+    match: (update: AgentRuntimeStateUpdate) => boolean,
     error: Error,
   ): void {
     this.rejection = { match, error, consumed: false };
   }
 
-  async publish(update: AgentRuntimeStateUpdate<TSession>): Promise<void> {
+  async publish(update: AgentRuntimeStateUpdate): Promise<void> {
     if (
       this.rejection !== null &&
       !this.rejection.consumed &&
@@ -397,9 +395,7 @@ export class RecordingStateSink<TSession extends AgentRuntimeSessionRef>
   }
 }
 
-export function noopStateSink<
-  TSession extends AgentRuntimeSessionRef,
->(): AgentRuntimeStateSink<TSession> {
+export function noopStateSink(): AgentRuntimeStateSink {
   return { async publish() {} };
 }
 

@@ -68,7 +68,7 @@ export async function ensureDispatcherIdentity(
       name: DISPATCHER_AGENT_NAME,
       team_id: null,
       agent_runtime: input.agentRuntime,
-      session: null,
+      session_id: null,
       source_cwd: input.sourceCwd,
       source_repo: null,
       cwd: input.cwd,
@@ -108,7 +108,7 @@ export async function ensureDispatcherIdentity(
     ...(compatible
       ? {}
       : {
-          session: null,
+          session_id: null,
           status: 'stopped' as const,
           last_error: null,
           closed_at: null,

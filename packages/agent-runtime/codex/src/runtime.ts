@@ -22,7 +22,6 @@ import type {
   AgentRuntime,
   AgentRuntimeIdentity,
   AgentRuntimePathContext,
-  AgentRuntimeSessionRef,
   AgentRuntimeStartOutcome,
   AgentRuntimeStateSink,
   AgentRuntimeStateUpdate,
@@ -71,11 +70,11 @@ export class CodexRuntime implements AgentRuntime {
   private stopTask: Promise<void> | null = null;
   private restartAttempts = 0;
   private restartTimer: NodeJS.Timeout | null = null;
-  private readonly state: AgentRuntimeStateSink<AgentRuntimeSessionRef>;
+  private readonly state: AgentRuntimeStateSink;
   private readonly paths: AgentRuntimePathContext;
 
   constructor(
-    private readonly identity: AgentRuntimeIdentity<AgentRuntimeSessionRef>,
+    private readonly identity: AgentRuntimeIdentity,
     private readonly deps: CodexRuntimeDeps,
   ) {
     const logger = deps.logger;
@@ -88,7 +87,7 @@ export class CodexRuntime implements AgentRuntime {
             if (err !== undefined) console.error(prefix, msg, err);
             else console.error(prefix, msg);
           };
-    this.threadId = identity.session?.id ?? null;
+    this.threadId = identity.sessionId;
     this.state = deps.state;
     this.paths = deps.paths;
   }
@@ -277,7 +276,7 @@ export class CodexRuntime implements AgentRuntime {
     if (this.client === null) throw new Error('client not initialized');
     this.threadResumed = false;
     const threadInstructions = this.threadInstructionParams();
-    const existing = this.threadId ?? this.identity.session?.id ?? null;
+    const existing = this.threadId ?? this.identity.sessionId;
     if (existing === null) {
       const params: ThreadStartParams = {
         ...threadInstructions,
@@ -290,7 +289,7 @@ export class CodexRuntime implements AgentRuntime {
       const candidateThreadId = res.thread.id;
       await this.publish({
         kind: 'session',
-        session: { id: candidateThreadId },
+        sessionId: candidateThreadId,
       });
       this.assertGeneration(generation);
       this.threadId = candidateThreadId;
@@ -332,7 +331,7 @@ export class CodexRuntime implements AgentRuntime {
       });
       await this.publish({
         kind: 'session',
-        session: { id: replacementThreadId },
+        sessionId: replacementThreadId,
       });
       this.assertGeneration(generation);
       this.threadId = replacementThreadId;
@@ -342,7 +341,7 @@ export class CodexRuntime implements AgentRuntime {
     const resumedThreadId = resumed.thread.id;
     await this.publish({
       kind: 'session',
-      session: { id: resumedThreadId },
+      sessionId: resumedThreadId,
     });
     this.assertGeneration(generation);
     this.threadId = resumedThreadId;
@@ -620,7 +619,7 @@ export class CodexRuntime implements AgentRuntime {
    * can no longer be repaired from here.
    */
   private publish(
-    update: AgentRuntimeStateUpdate<AgentRuntimeSessionRef>,
+    update: AgentRuntimeStateUpdate,
   ): Promise<void> {
     return this.fence.publish(() => this.state.publish(update));
   }
@@ -637,7 +636,7 @@ export class CodexRuntime implements AgentRuntime {
    * failure does not change.
    */
   private async settleState(
-    update: AgentRuntimeStateUpdate<AgentRuntimeSessionRef>,
+    update: AgentRuntimeStateUpdate,
   ): Promise<void> {
     try {
       await this.publish(update);

@@ -269,16 +269,29 @@ describe('deleted Team MCP tool names stay absent (Feishu channel tools are a di
   });
 });
 
-describe('persisted Agent identity carries no removed field (role, checkpoint, transcript_locator, ...)', () => {
-  it('the identity-store removed-field rejection list still names every field the deleted-surfaces contract retired', () => {
+describe('persisted Agent identity rejects the removed session/checkpoint shapes', () => {
+  it('the identity-store removed-field rejection list still names every shape whose loss would be silent', () => {
     // Companion pin to the behavioral test below: this asserts the exact
     // removed-field list assertNoRemovedRecordFields enforces still covers the
-    // persisted-identity items this node is responsible for (role,
-    // transcript_locator, session_ref, session_id, checkpoint,
-    // checkpoint_kind). A shrinking list here would silently let a deleted
-    // field become readable again — but a string-contains pin alone would
-    // still pass if `read()` stopped INVOKING the check entirely, which is
-    // why the behavioral test exercises the real call path.
+    // persisted-identity items this node is responsible for. The list is
+    // deliberately narrower than "every field ever deleted": it names only the
+    // shapes whose acceptance would silently LOSE something a released build
+    // really wrote — a checkpoint, or `session_ref`, whose resumable session id
+    // sits one level below where the current reader looks for `session_id`.
+    //
+    // Two kinds of leftover deliberately do NOT appear here. A field this
+    // version never consults (`role`, derived from the owning directory;
+    // `transcript_locator`, replaced by the Activity seam's opaque id) loses
+    // nothing. And a shape no released build ever wrote (the nested
+    // `session: { id }` from the unreleased provider-boundary refactor) cannot
+    // reach a real upgrade, so gating on it would only add a permanent rebuild
+    // for a shape that does not exist in the wild; `session_id`'s own
+    // `string | null` type check already handles it by starting a fresh session.
+    //
+    // A shrinking list here would let a lossy shape become readable again — but a
+    // string-contains pin alone would still pass if `read()` stopped INVOKING
+    // the check entirely, which is why the behavioral test exercises the real
+    // call path.
     const src = readFileSync(
       join(dreamuxSrc, 'service/agent-entity/identity-store.ts'),
       'utf8',
@@ -287,11 +300,8 @@ describe('persisted Agent identity carries no removed field (role, checkpoint, t
       'checkpoint',
       'checkpoint_kind',
       'session_ref',
-      'session_id',
-      'transcript_locator',
       'display_name',
       'close_status',
-      'role',
     ]) {
       expect(src).toContain(`'${removedField}'`);
     }
@@ -315,7 +325,7 @@ describe('persisted Agent identity carries no removed field (role, checkpoint, t
     rmSync(identityDir, { recursive: true, force: true });
   });
 
-  it('AgentIdentityStore.read() fails loud with LegacyStateError on a persisted "role" field (behavioral, not just a shape pin)', async () => {
+  it('AgentIdentityStore.read() fails loud with LegacyStateError on a persisted "session_ref" field (behavioral, not just a shape pin)', async () => {
     await writeFile(
       join(identityDir, 'identity.json'),
       JSON.stringify({
@@ -329,9 +339,10 @@ describe('persisted Agent identity carries no removed field (role, checkpoint, t
         created_at: 1,
         updated_at: 1,
         skill_sources: [],
-        // The removed field under test: a pre-#148 record that still names a
-        // runtime "role" directly on the persisted identity.
-        role: 'leader',
+        // The removed field under test: a record that still stores the session
+        // as a structured reference, whose id sits one level below where the
+        // current reader looks for `session_id`.
+        session_ref: { id: 'provider-session-1' },
       }),
       'utf8',
     );
