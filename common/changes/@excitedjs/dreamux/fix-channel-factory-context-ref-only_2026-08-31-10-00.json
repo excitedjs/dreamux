@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Stop passing Core's internal provider descriptor to external channel factories. Both external provider loaders now type their factory context as the published ref-only `ProviderFactoryContext` from `@excitedjs/dreamux-types`, so Core's registration descriptor never reaches the implementation side and the two loaders are symmetric; the structurally identical local context aliases are gone. Internal contract cleanup only: the built-in Feishu channel factory takes no context argument, so no behavior, config, state, or path shape changed and no rebuild is required.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

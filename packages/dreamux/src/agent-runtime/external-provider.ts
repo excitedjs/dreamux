@@ -37,16 +37,8 @@ import type {
   AgentRuntimeProvider,
   AgentRuntimeProviderFactory,
   AgentRuntimeSessionRef,
+  ProviderFactoryContext,
 } from '@excitedjs/dreamux-types';
-
-/**
- * The context an external Agent Runtime factory receives. It carries only the
- * canonical ref Core resolved: the factory has no descriptor to echo back.
- */
-export interface ExternalAgentRuntimeProviderFactoryContext {
-  /** Canonical provider ref from config, for example `npm:some-runtime#provider`. */
-  ref: string;
-}
 
 export type ExternalAgentRuntimeProviderFactory =
   AgentRuntimeProviderFactory<unknown>;
@@ -86,7 +78,7 @@ export interface LoadAgentRuntimeProvidersOptions {
 
 const AGENT_RUNTIME_LOADER_SPEC: ProviderPackageLoaderSpec<
   AgentRuntimeProvider<unknown>,
-  ExternalAgentRuntimeProviderFactoryContext
+  ProviderFactoryContext
 > = {
   kind: 'agentRuntime',
   // Ref-only, by contract: Core's registration descriptor stays inside the

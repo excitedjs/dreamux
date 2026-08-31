@@ -8,44 +8,29 @@
  * the assertions here enforce the `ChannelProvider<unknown>` contract.
  *
  * A channel provider must expose a channel session factory and may expose the
- * optional config, onboard, and diagnostic capabilities. `builtin:feishu`
- * resolves to
+ * optional config, onboard, and diagnostic capabilities. Like the Agent Runtime
+ * contract, it asserts no registration identity: a provider has no `ref` or
+ * `descriptor` member to echo, and its factory receives only the published
+ * ref-only `ProviderFactoryContext`. `builtin:feishu` resolves to
  * `@excitedjs/feishu-channel` through the same loading path once the alias is
  * resolved; a missing built-in channel package fails loud with the named ref.
  */
-import {
-  type ProviderDescriptor,
-  type ProviderRegistry,
-} from '../registry/index.js';
+import { type ProviderRegistry } from '../registry/index.js';
 import {
   isRecord,
   loadProviderPackages,
   type ProviderContractContext,
-  type ProviderFactory,
   type ProviderModule,
   type ProviderModuleImporter,
   type ProviderPackageLoaderSpec,
 } from '../registry/provider-loader.js';
-import type { ChannelProvider } from '@excitedjs/dreamux-types';
+import type {
+  ChannelProvider,
+  ChannelProviderFactory,
+  ProviderFactoryContext,
+} from '@excitedjs/dreamux-types';
 
-/**
- * The context a channel factory export is called with.
- *
- * Core's seed descriptor travels with the ref because the channel loader
- * registers under it. The provider itself echoes nothing back: like the Agent
- * Runtime contract, it has no `ref`/`descriptor` member.
- */
-export interface ExternalChannelProviderFactoryContext {
-  /** Canonical provider ref from config, for example `builtin:feishu`. */
-  ref: string;
-  /** Descriptor the provider must expose back to Dreamux. */
-  descriptor: ProviderDescriptor;
-}
-
-export type ExternalChannelProviderFactory = ProviderFactory<
-  ChannelProvider<unknown>,
-  ExternalChannelProviderFactoryContext
->;
+export type ExternalChannelProviderFactory = ChannelProviderFactory<unknown>;
 
 export type ExternalChannelModule = ProviderModule;
 
@@ -80,10 +65,12 @@ export interface LoadChannelProvidersOptions {
 
 const CHANNEL_LOADER_SPEC: ProviderPackageLoaderSpec<
   ChannelProvider<unknown>,
-  ExternalChannelProviderFactoryContext
+  ProviderFactoryContext
 > = {
   kind: 'channel',
-  factoryContext: ({ ref, descriptor }) => ({ ref, descriptor }),
+  // Ref-only, by contract: Core's registration descriptor stays inside the
+  // loader skeleton, because a Channel provider has nothing to echo back.
+  factoryContext: ({ ref }) => ({ ref }),
   createLoadError: (ref, message, options) =>
     new ExternalChannelProviderLoadError(ref, message, options),
   createContractError: (ref, message) =>

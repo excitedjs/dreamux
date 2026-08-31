@@ -15,8 +15,9 @@
  *     concurrent observer never sees a half-closed live map, and logs
  *     per-channel close failures rather than losing them.
  *   - The external channel-provider loader proves registration works without
- *     provider-level `ref`/`descriptor` members, and that a descriptor
- *     kind/ref conflict fails loud *before* the module is even imported.
+ *     provider-level `ref`/`descriptor` members, that the factory context is
+ *     ref-only in the other direction too, and that a descriptor kind/ref
+ *     conflict fails loud *before* the module is even imported.
  *   - `channelMcpDelegates` is the one place a caller-specific tool catalog is
  *     composed; it is reached only from the Dispatcher-agent and TeamLeader
  *     delegate assemblies, never from the ordinary TeamMate one.
@@ -261,12 +262,12 @@ describe('external channel provider loader (registration and fail-loud ordering)
   it('registers a loaded provider that has no ref/descriptor member of its own', async () => {
     const fake = createFakeChannelProvider();
     const registry = new ProviderRegistry();
-    let receivedContext: { ref: string; descriptor: unknown } | null = null;
+    let receivedContext: { ref: string } | null = null;
     await loadChannelProviders({
       registry,
       refs: ['npm:@example/chan#create'],
       importModule: async () => ({
-        create: (context: { ref: string; descriptor: unknown }) => {
+        create: (context: { ref: string }) => {
           receivedContext = context;
           // The provider echoes nothing about its own registration back.
           expect('ref' in (fake.provider as object)).toBe(false);
@@ -280,6 +281,10 @@ describe('external channel provider loader (registration and fail-loud ordering)
     expect((receivedContext as unknown as { ref: string }).ref).toBe(
       'npm:@example/chan#create',
     );
+    // Ref-only, in the direction Core controls: the factory context is exactly
+    // the published `ProviderFactoryContext`, so Core's registration descriptor
+    // never travels to the implementation side.
+    expect(Object.keys(receivedContext as object)).toEqual(['ref']);
     const descriptor = registry.resolve('npm:@example/chan#create');
     expect(descriptor.kind).toBe('channel');
     expect(registry.getImplementation(descriptor.id)).toBe(fake.provider);
