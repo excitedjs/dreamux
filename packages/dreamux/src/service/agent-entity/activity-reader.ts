@@ -81,8 +81,8 @@ export async function readAgentActivity(
   const requestedRecords = validateLastLimit(input.query.limit);
   const cursor = validateActivityCursor(input.query.cursor);
   const includeTools = validateIncludeTools(input.query.includeTools);
-  const session = input.identity.session;
-  if (session === null) {
+  const sessionId = input.identity.session_id;
+  if (sessionId === null) {
     throw new AgentActivityReadError('session_unavailable');
   }
   const agent = resolveAgent(
@@ -95,7 +95,7 @@ export async function readAgentActivity(
   try {
     page = await provider.readRecentActivity(
       {
-        session,
+        sessionId,
         ...(cursor !== undefined ? { cursor } : {}),
         limit: requestedRecords,
         includeTools,

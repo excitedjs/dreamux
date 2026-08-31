@@ -99,7 +99,6 @@ import type {
   AgentActivityReadContext,
   AgentRuntimeCreateContext,
   AgentRuntimePathContext,
-  AgentRuntimeSessionRef,
   AgentRuntimeStateSink,
   AgentRuntimeStateUpdate,
   RuntimeSubmissionSettlement,
@@ -351,10 +350,10 @@ function runtimePaths(dir: string): AgentRuntimePathContext {
 }
 
 function recordingStateSink(): {
-  sink: AgentRuntimeStateSink<AgentRuntimeSessionRef>;
-  updates: AgentRuntimeStateUpdate<AgentRuntimeSessionRef>[];
+  sink: AgentRuntimeStateSink;
+  updates: AgentRuntimeStateUpdate[];
 } {
-  const updates: AgentRuntimeStateUpdate<AgentRuntimeSessionRef>[] = [];
+  const updates: AgentRuntimeStateUpdate[] = [];
   return {
     updates,
     sink: {
@@ -492,10 +491,10 @@ describe('codex live integration', () => {
       });
 
       function context(
-        session: AgentRuntimeSessionRef | null,
-      ): AgentRuntimeCreateContext<DispatcherCodexConfig, AgentRuntimeSessionRef> {
+        sessionId: string | null,
+      ): AgentRuntimeCreateContext<DispatcherCodexConfig> {
         return {
-          identity: { runtimeId: 'continuity-live', session },
+          identity: { runtimeId: 'continuity-live', sessionId },
           config: directCodexConfig(),
           cwd,
           mcpServers: [],
@@ -513,9 +512,9 @@ describe('codex live integration', () => {
         expect(freshOutcome).toEqual({ continuity: 'fresh' });
         const sessionUpdate = updates.find((update) => update.kind === 'session');
         expect(sessionUpdate).toBeDefined();
-        const session =
-          sessionUpdate!.kind === 'session' ? sessionUpdate!.session : null;
-        expect(session).not.toBeNull();
+        const sessionId =
+          sessionUpdate!.kind === 'session' ? sessionUpdate!.sessionId : null;
+        expect(sessionId).not.toBeNull();
 
         // One minimal real turn — codex only persists a resumable rollout
         // file once the thread has actual activity (see the case comment
@@ -530,7 +529,7 @@ describe('codex live integration', () => {
 
         const resumedRecording = recordingStateSink();
         const resumed = await provider.createRuntime({
-          ...context(session),
+          ...context(sessionId),
           state: resumedRecording.sink,
         });
         const resumedOutcome = await resumed.start();
@@ -575,7 +574,7 @@ describe('codex live integration', () => {
 
       const { sink } = recordingStateSink();
       const runtime = await provider.createRuntime({
-        identity: { runtimeId: 'schema-live', session: null },
+        identity: { runtimeId: 'schema-live', sessionId: null },
         config: directCodexConfig(),
         cwd,
         mcpServers: [],
@@ -640,7 +639,7 @@ describe('codex live integration', () => {
       const { sink, updates } = recordingStateSink();
 
       const runtime = await provider.createRuntime({
-        identity: { runtimeId: 'activity-live', session: null },
+        identity: { runtimeId: 'activity-live', sessionId: null },
         config,
         cwd,
         mcpServers: [],
@@ -654,14 +653,15 @@ describe('codex live integration', () => {
         await runtime.start();
         const sessionUpdate = updates.find((update) => update.kind === 'session');
         expect(sessionUpdate).toBeDefined();
-        const session = sessionUpdate!.kind === 'session' ? sessionUpdate!.session : null;
-        expect(session).not.toBeNull();
+        const sessionId =
+          sessionUpdate!.kind === 'session' ? sessionUpdate!.sessionId : null;
+        expect(sessionId).not.toBeNull();
 
         const activityContext: AgentActivityReadContext<DispatcherCodexConfig> = {
           config,
           cwd,
         };
-        const query: AgentActivityQuery<AgentRuntimeSessionRef> = { session: session! };
+        const query: AgentActivityQuery = { sessionId: sessionId! };
 
         const admission = await runtime.submit({
           text: [

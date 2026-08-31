@@ -45,10 +45,11 @@ runtime app-server readiness, and same-version restart cautions.
 
 - Every dispatcher root agent, TeamMate, TeamLeader, and Team member has a
   server-owned `identity.json` in its role-scoped entity directory. It owns
-  identity/lifecycle/worktree facts and one nullable `session`: the provider's
-  own session object, persisted verbatim and read back only by that provider.
-  Dreamux reads `session.id` and nothing else. `identity.json` owns no
-  conversation preview and no Dreamux Turn archive.
+  identity/lifecycle/worktree facts and one nullable `session_id` string: the
+  provider's own prior session id, persisted verbatim and handed back only to
+  that provider. Dreamux treats it as opaque — stored, checked for presence, and
+  returned, never parsed or interpreted. `identity.json` owns no conversation
+  preview and no Dreamux Turn archive.
 - Use `history`, list, and status for identity/lifecycle recovery. Use `last`
   for what a TeamMate is doing or has just done: it reads the provider's recent
   Activity Records without starting or resuming the Runtime, so it also shows a

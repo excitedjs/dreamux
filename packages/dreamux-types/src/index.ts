@@ -78,7 +78,6 @@ export type {
   AgentRuntimeProviderCapabilities,
   AgentRuntimeProviderConfigReadContext,
   AgentRuntimeProviderFactory,
-  AgentRuntimeSessionRef,
   AgentRuntimeSkillSource,
   AgentRuntimeStartOutcome,
   AgentRuntimeStateLeaseRevokedError,

@@ -36,7 +36,6 @@ import type {
   AgentRuntimeCreateContext,
   AgentRuntimeProvider,
   AgentRuntimeProviderFactory,
-  AgentRuntimeSessionRef,
   ProviderFactoryContext,
 } from '@excitedjs/dreamux-types';
 
@@ -135,7 +134,7 @@ function assertExternalAgentRuntimeProvider(
   }
   const createRuntime = candidate.createRuntime.bind(candidate);
   candidate.createRuntime = async (
-    runtimeContext: AgentRuntimeCreateContext<unknown, AgentRuntimeSessionRef>,
+    runtimeContext: AgentRuntimeCreateContext<unknown>,
   ) => {
     // `createRuntime` is async, so the handle can only be checked once it
     // settles; asserting the promise itself would check the wrong object.

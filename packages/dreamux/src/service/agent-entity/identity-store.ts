@@ -1,7 +1,6 @@
 import { readFile, readdir } from 'node:fs/promises';
 
 import type {
-  AgentRuntimeSessionRef,
   AgentRuntimeSkillSource,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
@@ -35,7 +34,7 @@ export interface AgentIdentityCreateInput {
   name: string;
   teamId?: string | null;
   agentRuntime: string;
-  session?: AgentRuntimeSessionRef | null;
+  sessionId?: string | null;
   sourceCwd: string;
   sourceRepo: string | null;
   cwd: string;
@@ -59,7 +58,7 @@ export interface AgentIdentityCreateInput {
 
 export interface AgentIdentityUpdateInput {
   agentRuntime?: string;
-  session?: AgentRuntimeSessionRef | null;
+  sessionId?: string | null;
   sourceCwd?: string;
   sourceRepo?: string | null;
   cwd?: string;
@@ -170,7 +169,7 @@ export class AgentIdentityStore {
       name: input.name,
       team_id: input.teamId ?? null,
       agent_runtime: input.agentRuntime,
-      session: input.session ?? null,
+      session_id: input.sessionId ?? null,
       source_cwd: input.sourceCwd,
       source_repo: input.sourceRepo,
       cwd: input.cwd,
@@ -210,7 +209,7 @@ export class AgentIdentityStore {
     const updated: AgentEntityIdentity = {
       ...identity,
       ...(input.agentRuntime !== undefined ? { agent_runtime: input.agentRuntime } : {}),
-      ...(input.session !== undefined ? { session: input.session } : {}),
+      ...(input.sessionId !== undefined ? { session_id: input.sessionId } : {}),
       ...(input.sourceCwd !== undefined ? { source_cwd: input.sourceCwd } : {}),
       ...(input.sourceRepo !== undefined ? { source_repo: input.sourceRepo } : {}),
       ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
@@ -424,11 +423,8 @@ function readIdentity(
       'checkpoint',
       'checkpoint_kind',
       'session_ref',
-      'session_id',
-      'transcript_locator',
       'display_name',
       'close_status',
-      'role',
     ],
     'close and respawn this teammate, or delete its identity directory to rebuild it.',
   );
@@ -457,7 +453,7 @@ function readIdentity(
     name,
     team_id: typeof record['team_id'] === 'string' ? record['team_id'] : null,
     agent_runtime: record['agent_runtime'] as string,
-    session: readSessionRef(record['session'], storedName),
+    session_id: readSessionId(record['session_id'], storedName),
     source_cwd: record['source_cwd'] as string,
     source_repo: sourceRepo,
     cwd: record['cwd'] as string,
@@ -574,26 +570,32 @@ function readWorktreeCleanupState(
 }
 
 /**
- * Read the provider-owned session object. Core validates only that it is a JSON
- * object carrying a non-empty string `id`; every other field is opaque and is
- * preserved verbatim for the provider that wrote it.
+ * Read the provider-owned session id. Core validates only that a present value
+ * is a non-empty string; its content is opaque and is handed back verbatim to
+ * the provider that wrote it. An empty string is rejected rather than coerced
+ * to `null`: it would silently downgrade a resume into a fresh start.
  */
-function readSessionRef(
+/**
+ * Read the persisted session id: the plain `string | null` this version stores.
+ *
+ * This type check is the whole contract, and it is deliberately the only gate.
+ * An absent or null value means "no prior session", which is the correct reading
+ * of every record that never had one AND of a record whose id was written under
+ * some other key — the Agent simply starts a fresh session, which is what a
+ * reader that cannot find an id must do anyway. A value that is present but not
+ * a usable id (a number, an object, an empty string) is a corrupt record rather
+ * than an older layout: it fails validation here, so `read()` reports the record
+ * as unreadable instead of coercing it into that same "no session" answer.
+ */
+function readSessionId(
   value: unknown,
   storedName: string | null,
-): AgentRuntimeSessionRef | null {
+): string | null {
   if (value === undefined || value === null) return null;
-  if (typeof value !== 'object' || Array.isArray(value)) {
+  if (typeof value !== 'string' || value === '') {
     throw new Error(
-      `agent identity ${JSON.stringify(storedName)} has a non-object session`,
+      `agent identity ${JSON.stringify(storedName)} has a session_id that is not a non-empty string`,
     );
   }
-  const record = value as Record<string, unknown>;
-  const id = record['id'];
-  if (typeof id !== 'string' || id === '') {
-    throw new Error(
-      `agent identity ${JSON.stringify(storedName)} has a session without a string id`,
-    );
-  }
-  return record as unknown as AgentRuntimeSessionRef;
+  return value;
 }

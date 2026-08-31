@@ -133,7 +133,7 @@ export class Dispatchers {
         dispatcher_id: row.dispatcher_id,
         channel_identity: row.channel_identity,
         status: identity?.status ?? 'stopped',
-        session_id: identity?.session?.id ?? null,
+        session_id: identity?.session_id ?? null,
         enabled: row.enabled === 1,
       };
     }));
@@ -146,7 +146,7 @@ export class Dispatchers {
     const identity = await this.rootIdentity(id).read();
     return {
       status: identity?.status ?? null,
-      sessionId: identity?.session?.id ?? null,
+      sessionId: identity?.session_id ?? null,
       lastError: identity?.last_error ?? null,
     };
   }

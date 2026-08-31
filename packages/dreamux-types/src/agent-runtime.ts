@@ -72,24 +72,18 @@ export interface AgentRuntimeProviderCapabilities {
 }
 
 /**
- * The shared base of every provider-owned session identity: `id` is the only
- * field Dreamux core validates and the only one it may read.
- */
-export interface AgentRuntimeSessionRef {
-  readonly id: string;
-}
-
-/**
  * The neutral, Core-supplied identity of one runtime instance.
  *
- * `session` is the provider's own prior session object, or `null` for a fresh
- * start. Core persists the complete JSON object atomically and returns it only
- * to the same provider; it never interprets, indexes, or branches on the
- * provider-specific fields an extended `TSession` adds.
+ * `sessionId` is the provider's own prior session id, or `null` for a fresh
+ * start. It is an opaque string Core persists atomically and returns only to
+ * the same provider; Core never parses it or derives anything from its shape.
+ * A session id is all a resumable runtime needs, so the seam carries a string
+ * rather than an extensible object: nothing downstream may attach a second
+ * durable fact to a session.
  */
-export interface AgentRuntimeIdentity<TSession extends AgentRuntimeSessionRef> {
+export interface AgentRuntimeIdentity {
   readonly runtimeId: string;
-  readonly session: TSession | null;
+  readonly sessionId: string | null;
 }
 
 export interface AgentRuntimePathContext {
@@ -131,13 +125,13 @@ export type AgentRuntimeStatus =
   | 'stopped';
 
 /** One authoritative runtime fact pushed into the Core-owned state sink. */
-export type AgentRuntimeStateUpdate<TSession extends AgentRuntimeSessionRef> =
+export type AgentRuntimeStateUpdate =
   | {
       readonly kind: 'status';
       readonly status: AgentRuntimeStatus;
       readonly lastError?: string;
     }
-  | { readonly kind: 'session'; readonly session: TSession }
+  | { readonly kind: 'session'; readonly sessionId: string }
   | { readonly kind: 'session_lost'; readonly reason: string };
 
 /**
@@ -153,8 +147,8 @@ export type AgentRuntimeStateUpdate<TSession extends AgentRuntimeSessionRef> =
  * with an {@link AgentRuntimeStateLeaseRevokedError} so the provider terminates
  * the stale writer. A persistence failure is a separate, fatal error.
  */
-export interface AgentRuntimeStateSink<TSession extends AgentRuntimeSessionRef> {
-  publish(update: AgentRuntimeStateUpdate<TSession>): Promise<void>;
+export interface AgentRuntimeStateSink {
+  publish(update: AgentRuntimeStateUpdate): Promise<void>;
 }
 
 /**
@@ -292,11 +286,8 @@ export interface AgentRuntimeSystemPrompt {
  * The neutral facts required to launch one Dreamux role. Immutable: prior
  * session identity reaches `start` only through this object.
  */
-export interface AgentRuntimeCreateContext<
-  TConfig,
-  TSession extends AgentRuntimeSessionRef,
-> {
-  readonly identity: AgentRuntimeIdentity<TSession>;
+export interface AgentRuntimeCreateContext<TConfig> {
+  readonly identity: AgentRuntimeIdentity;
   /** Provider-parsed config (the output of the provider's own config capability). */
   readonly config: TConfig;
   /**
@@ -342,7 +333,7 @@ export interface AgentRuntimeCreateContext<
   readonly injectEnv?: Readonly<Record<string, string>>;
   readonly paths: AgentRuntimePathContext;
   /** Leased, push-only state sink for this runtime generation. */
-  readonly state: AgentRuntimeStateSink<TSession>;
+  readonly state: AgentRuntimeStateSink;
   readonly activity?: AgentRuntimeActivitySink;
   readonly logger?: AgentRuntimeLogger;
 }
@@ -381,8 +372,8 @@ export interface AgentRuntime {
  * opaque and provider-owned; pagination walks a stable recent tail without
  * skipping or duplicating records as native history grows.
  */
-export interface AgentActivityQuery<TSession extends AgentRuntimeSessionRef> {
-  readonly session: TSession;
+export interface AgentActivityQuery {
+  readonly sessionId: string;
   readonly cursor?: string;
   readonly limit?: number;
   /** Tools are included by default and can only be hidden as a group. */
@@ -520,14 +511,10 @@ export interface AgentRuntimeDiagnosticCapability<TConfig> {
  * its {@link RegisteredProvider} wrapper, so this interface has no `ref` or
  * `descriptor` member and a live {@link AgentRuntime} echoes neither.
  *
- * Every provider defines its own JSON-serializable `TSession`. A provider that
- * resumes from an id alone uses {@link AgentRuntimeSessionRef}; one that needs
- * more native resume coordinates extends it.
+ * A provider resumes from its own opaque session id and nothing else; see
+ * {@link AgentRuntimeIdentity}.
  */
-export interface AgentRuntimeProvider<
-  TConfig,
-  TSession extends AgentRuntimeSessionRef = AgentRuntimeSessionRef,
-> {
+export interface AgentRuntimeProvider<TConfig> {
   getCapabilities(): AgentRuntimeProviderCapabilities;
   /**
    * Read the recent tail of one session's activity. Mandatory: it must work
@@ -538,11 +525,11 @@ export interface AgentRuntimeProvider<
    * count, text size, page size, cursor size, and public errors.
    */
   readRecentActivity(
-    query: AgentActivityQuery<TSession>,
+    query: AgentActivityQuery,
     context: AgentActivityReadContext<TConfig>,
   ): Promise<AgentActivityPage>;
   createRuntime(
-    context: AgentRuntimeCreateContext<TConfig, TSession>,
+    context: AgentRuntimeCreateContext<TConfig>,
   ): Promise<AgentRuntime>;
 
   readonly config?: AgentRuntimeConfigCapability<TConfig>;
@@ -554,10 +541,9 @@ export interface AgentRuntimeProvider<
  * The default (or `npm:pkg#export`-selected) factory export an Agent Runtime
  * package ships.
  */
-export type AgentRuntimeProviderFactory<
-  TConfig,
-  TSession extends AgentRuntimeSessionRef = AgentRuntimeSessionRef,
-> = ProviderFactory<AgentRuntimeProvider<TConfig, TSession>>;
+export type AgentRuntimeProviderFactory<TConfig> = ProviderFactory<
+  AgentRuntimeProvider<TConfig>
+>;
 
 /** Re-export so provider packages can take a logger in their own contexts. */
 export type { DreamuxLogger };

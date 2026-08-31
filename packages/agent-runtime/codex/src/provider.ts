@@ -28,7 +28,6 @@ import type {
   AgentRuntimeProvider,
   AgentRuntimeProviderCapabilities,
   AgentRuntimeProviderFactory,
-  AgentRuntimeSessionRef,
   AgentRuntimeSystemPrompt,
 } from '@excitedjs/dreamux-types';
 
@@ -89,12 +88,12 @@ export function codexSystemPromptAppend(
  * and `createRuntime` builds a {@link CodexRuntime} from the neutral create
  * context plus the host-supplied hooks.
  *
- * Codex resumes from its thread id alone, so its session identity is the base
- * {@link AgentRuntimeSessionRef}.
+ * Codex resumes from its thread id alone, which it publishes as the neutral
+ * opaque session id.
  */
 export function createCodexAgentRuntimeProvider(
   options: CodexAgentRuntimeProviderOptions = {},
-): AgentRuntimeProvider<DispatcherCodexConfig, AgentRuntimeSessionRef> {
+): AgentRuntimeProvider<DispatcherCodexConfig> {
   return {
     getCapabilities: () => CODEX_AGENT_RUNTIME_CAPABILITIES,
     diagnostic: codexAgentRuntimeDiagnostic,
@@ -116,10 +115,7 @@ export function createCodexAgentRuntimeProvider(
     readRecentActivity: (query, context) =>
       readCodexRecentActivity(query, context),
     async createRuntime(
-      context: AgentRuntimeCreateContext<
-        DispatcherCodexConfig,
-        AgentRuntimeSessionRef
-      >,
+      context: AgentRuntimeCreateContext<DispatcherCodexConfig>,
     ): Promise<AgentRuntime> {
       const codexConfig = context.config;
       const codexArgs = codexArgsFromConfig(codexConfig);
@@ -206,8 +202,7 @@ export function codexRuntimeArgsForMcpServers(
  * {@link createCodexAgentRuntimeProvider} exists for embedders and tests.
  */
 const codexAgentRuntimeProviderFactory: AgentRuntimeProviderFactory<
-  DispatcherCodexConfig,
-  AgentRuntimeSessionRef
+  DispatcherCodexConfig
 > = () => createCodexAgentRuntimeProvider();
 
 export default codexAgentRuntimeProviderFactory;

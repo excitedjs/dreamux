@@ -1,14 +1,8 @@
 import type {
-  AgentRuntimeSessionRef,
   AgentRuntimeStateSink,
   AgentRuntimeStateUpdate,
   AgentRuntimeStatus,
 } from '@excitedjs/dreamux-types';
-import {
-  canonicalJsonValue,
-  isPlainObject,
-  JsonValueError,
-} from '../../platform/json-value.js';
 import type { AgentIdentityStore } from './identity-store.js';
 import type { AgentIdentityUpdateInput } from './identity-store.js';
 import {
@@ -31,27 +25,21 @@ export class AgentRuntimeStateLeaseRevoked extends Error {
 }
 
 /**
- * The `Error` an invalid session ref rejects with. It is an ordinary
- * persistence failure from the provider's point of view: the contract requires
- * a JSON-serializable session, and Core will not persist a value it cannot
- * return unchanged.
+ * The `Error` an empty published session id rejects with. It is an ordinary
+ * persistence failure from the provider's point of view: an empty id is
+ * indistinguishable from "no session", so Core refuses to persist it rather
+ * than record a resume coordinate it cannot resume from.
  */
-export class AgentRuntimeSessionRefInvalid extends Error {
-  override readonly name = 'AgentRuntimeSessionRefInvalidError';
+export class AgentRuntimeSessionIdInvalid extends Error {
+  override readonly name = 'AgentRuntimeSessionIdInvalidError';
 
-  constructor(runtimeName: string, detail: string) {
+  constructor(runtimeName: string) {
     super(
-      `the session published by ${JSON.stringify(runtimeName)} is not JSON-serializable: ${detail}`,
+      `the session id published by ${JSON.stringify(runtimeName)} is empty; ` +
+        'an empty id cannot be told apart from having no session',
     );
   }
 }
-
-/** Core's independent bounds on a persisted session ref. */
-const SESSION_JSON_BOUNDS = {
-  maxDepth: 8,
-  maxEntries: 256,
-  maxBytes: 8192,
-} as const;
 
 /**
  * One runtime generation's push-only write authority.
@@ -61,7 +49,7 @@ const SESSION_JSON_BOUNDS = {
  */
 export interface AgentRuntimeGenerationLease {
   /** The leased state sink handed to this generation's create context. */
-  readonly state: AgentRuntimeStateSink<AgentRuntimeSessionRef>;
+  readonly state: AgentRuntimeStateSink;
   /** True while this generation still owns the entity. */
   isCurrent(): boolean;
 }
@@ -154,16 +142,16 @@ export class AgentRuntimeStateStore {
 
   private async publish(
     lease: number,
-    update: AgentRuntimeStateUpdate<AgentRuntimeSessionRef>,
+    update: AgentRuntimeStateUpdate,
   ): Promise<void> {
     if (lease !== this.currentLease) {
       throw new AgentRuntimeStateLeaseRevoked(this.identity.name);
     }
-    // Validate and copy before anything is queued: Core persists a session as
-    // opaque JSON and returns it to the provider verbatim, so a value
-    // `JSON.stringify` would silently reshape (functions, `undefined`) or choke
-    // on (cycles, BigInt) must be rejected rather than written.
-    const durable = canonicalStateUpdate(update, this.identity.name);
+    // Reject before anything is queued: a session id Core cannot resume from is
+    // a persistence failure the provider must see synchronously.
+    if (update.kind === 'session' && update.sessionId.length === 0) {
+      throw new AgentRuntimeSessionIdInvalid(this.identity.name);
+    }
     await this.enqueue(async () => {
       // Re-check inside the serialized tail: a lease can be revoked while this
       // write was queued behind an earlier one.
@@ -172,9 +160,9 @@ export class AgentRuntimeStateStore {
       }
       this.identity = await this.store.update(
         this.identity,
-        identityPatch(durable),
+        identityPatch(update),
       );
-      if (durable.kind === 'status') this.lastRuntimeStatus = durable.status;
+      if (update.kind === 'status') this.lastRuntimeStatus = update.status;
       return this.identity;
     });
   }
@@ -199,66 +187,18 @@ export class AgentRuntimeStateStore {
 }
 
 function identityPatch(
-  update: AgentRuntimeStateUpdate<AgentRuntimeSessionRef>,
+  update: AgentRuntimeStateUpdate,
 ): AgentIdentityUpdateInput {
   if (update.kind === 'session') {
-    return { session: update.session };
+    return { sessionId: update.sessionId };
   }
   if (update.kind === 'session_lost') {
-    // The session stays persisted: a provider that cannot restore it must fail
-    // its next start loudly rather than quietly continue from a fresh one.
+    // The session id stays persisted: a provider that cannot restore it must
+    // fail its next start loudly rather than quietly continue from a fresh one.
     return { status: 'degraded', lastError: update.reason };
   }
   return {
     status: runtimeStatusToIdentityStatus(update.status),
     ...(update.lastError !== undefined ? { lastError: update.lastError } : {}),
   };
-}
-
-/**
- * Return `update` with any published session replaced by a validated, frozen
- * deep copy. Only `id` is interpreted; the rest is opaque provider data that
- * Core must be able to persist and hand back unchanged.
- */
-function canonicalStateUpdate(
-  update: AgentRuntimeStateUpdate<AgentRuntimeSessionRef>,
-  runtimeName: string,
-): AgentRuntimeStateUpdate<AgentRuntimeSessionRef> {
-  if (update.kind !== 'session') return update;
-  return {
-    kind: 'session',
-    session: canonicalSessionRef(update.session, runtimeName),
-  };
-}
-
-function canonicalSessionRef(
-  session: AgentRuntimeSessionRef,
-  runtimeName: string,
-): AgentRuntimeSessionRef {
-  if (!isPlainObject(session)) {
-    throw new AgentRuntimeSessionRefInvalid(
-      runtimeName,
-      'session must be an object',
-    );
-  }
-  if (typeof session.id !== 'string' || session.id.length === 0) {
-    throw new AgentRuntimeSessionRefInvalid(
-      runtimeName,
-      'session.id must be a non-empty string',
-    );
-  }
-  try {
-    // The canonical value is a validated JSON object whose `id` was checked
-    // above; `AgentRuntimeSessionRef` is an interface, so it needs the explicit
-    // widening step rather than a direct structural assertion.
-    return canonicalJsonValue(
-      session,
-      SESSION_JSON_BOUNDS,
-    ) as unknown as AgentRuntimeSessionRef;
-  } catch (error) {
-    if (error instanceof JsonValueError) {
-      throw new AgentRuntimeSessionRefInvalid(runtimeName, error.message);
-    }
-    throw error;
-  }
 }

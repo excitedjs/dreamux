@@ -41,7 +41,6 @@ import type {
   AgentRuntimeCreateContext,
   AgentRuntimeMcpServer,
   AgentRuntimePathContext,
-  AgentRuntimeSessionRef,
   AgentRuntimeStateSink,
   AgentRuntimeStateUpdate,
   AgentRuntimeSystemPrompt,
@@ -161,10 +160,10 @@ function fireDefaultResult(
 
 class Harness {
   readonly sessions: FakeSession[] = [];
-  readonly stateCalls: AgentRuntimeStateUpdate<AgentRuntimeSessionRef>[] = [];
+  readonly stateCalls: AgentRuntimeStateUpdate[] = [];
   behavior: FakeSessionBehavior = {};
   /** Set per test to make the leased state sink reject a specific update kind. */
-  rejectStateKind: AgentRuntimeStateUpdate<AgentRuntimeSessionRef>['kind'] | null = null;
+  rejectStateKind: AgentRuntimeStateUpdate['kind'] | null = null;
   rejectStateWith: (() => Error) | null = null;
 
   readonly sessionFactory: ClaudeCodeSessionFactory = (spec) => {
@@ -179,7 +178,7 @@ class Harness {
     runtimeSocketDirs: () => ['/tmp/dreamux-claude-code-test/sockets'],
   };
 
-  readonly state: AgentRuntimeStateSink<AgentRuntimeSessionRef> = {
+  readonly state: AgentRuntimeStateSink = {
     publish: async (update) => {
       this.stateCalls.push(update);
       if (this.rejectStateKind !== null && update.kind === this.rejectStateKind) {
@@ -189,19 +188,18 @@ class Harness {
   };
 
   context(overrides: {
-    session?: AgentRuntimeSessionRef | null;
+    sessionId?: string | null;
     systemPrompt?: AgentRuntimeSystemPrompt;
     mcpServers?: readonly AgentRuntimeMcpServer[];
     outputSchema?: JsonSchema;
     generateSessionId?: () => string;
   } = {}): AgentRuntimeCreateContext<
-    ReturnType<typeof defaultDispatcherClaudeCodeConfig>,
-    AgentRuntimeSessionRef
+    ReturnType<typeof defaultDispatcherClaudeCodeConfig>
   > {
     return {
       identity: {
         runtimeId: 'dispatcher-under-test',
-        session: overrides.session ?? null,
+        sessionId: overrides.sessionId ?? null,
       },
       config: defaultDispatcherClaudeCodeConfig(),
       cwd: '/tmp/dreamux-claude-code-test/cwd',
@@ -291,7 +289,7 @@ describe('ClaudeCodeRuntime system prompt', () => {
     const h = new Harness();
     const runtime = await tracked(
       h.createRuntime({
-        session: { id: 'existing-native-session' },
+        sessionId: 'existing-native-session',
         systemPrompt: {
           append: ['operation-owned Workflow fragment', 'persisted TeamMate identity'],
         },
@@ -314,7 +312,7 @@ describe('ClaudeCodeRuntime resume/session continuity', () => {
   it('reports resumed continuity for a non-null create-context session, before any submit is admitted', async () => {
     const h = new Harness();
     const runtime = await tracked(
-      h.createRuntime({ session: { id: 'existing-native-session' } }),
+      h.createRuntime({ sessionId: 'existing-native-session' }),
     );
     const outcome = await runtime.start();
     expect(outcome.continuity).toBe('resumed');
@@ -323,7 +321,7 @@ describe('ClaudeCodeRuntime resume/session continuity', () => {
   it('reports fresh continuity for a null create-context session', async () => {
     const h = new Harness();
     const runtime = await tracked(
-      h.createRuntime({ session: null, generateSessionId: () => 'fresh-native-id' }),
+      h.createRuntime({ sessionId: null, generateSessionId: () => 'fresh-native-id' }),
     );
     const outcome = await runtime.start();
     expect(outcome.continuity).toBe('fresh');
@@ -337,7 +335,7 @@ describe('ClaudeCodeRuntime resume/session continuity', () => {
     h.behavior.failStart = (spec) =>
       spec.args.includes('--resume') ? new Error('native resume rejected') : null;
     const runtime = await tracked(
-      h.createRuntime({ session: { id: 'existing-native-session' } }),
+      h.createRuntime({ sessionId: 'existing-native-session' }),
     );
     await expect(runtime.start()).rejects.toThrow(/native resume rejected/);
     // No fallback fresh spawn was attempted: exactly the one failed attempt.

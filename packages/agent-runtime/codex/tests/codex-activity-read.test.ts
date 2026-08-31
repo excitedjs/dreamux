@@ -59,7 +59,7 @@ describe('readRecentActivity: actively growing session', () => {
     await appendAssistantMessage(session, 'second assistant message');
 
     const page = await provider.readRecentActivity(
-      { session: { id: session.sessionId } },
+      { sessionId: session.sessionId },
       readContext(session),
     );
 
@@ -75,7 +75,7 @@ describe('readRecentActivity: actively growing session', () => {
     await appendAssistantMessage(session, 'before growth');
 
     const firstPage = await provider.readRecentActivity(
-      { session: { id: session.sessionId } },
+      { sessionId: session.sessionId },
       readContext(session),
     );
     expect(firstPage.records.map((r) => (r.kind === 'assistant_message' ? r.text : null)))
@@ -83,7 +83,7 @@ describe('readRecentActivity: actively growing session', () => {
 
     await appendAssistantMessage(session, 'after growth');
     const secondPage = await provider.readRecentActivity(
-      { session: { id: session.sessionId } },
+      { sessionId: session.sessionId },
       readContext(session),
     );
     expect(secondPage.records.map((r) => (r.kind === 'assistant_message' ? r.text : null)))
@@ -99,7 +99,7 @@ describe('readRecentActivity: actively growing session', () => {
     await appendAssistantMessage(session, 'only message');
 
     const page = await provider.readRecentActivity(
-      { session: { id: session.sessionId } },
+      { sessionId: session.sessionId },
       readContext(session),
     );
     expect(page.records).toEqual([{ kind: 'assistant_message', text: 'only message' }]);
@@ -111,7 +111,7 @@ describe('readRecentActivity: actively growing session', () => {
     cleanupDirs.push(session.codexHome);
 
     const page = await provider.readRecentActivity(
-      { session: { id: sessionId } },
+      { sessionId },
       readContext(session),
     );
     expect(page.truncated).toBe(true);
@@ -124,7 +124,7 @@ describe('readRecentActivity: actively growing session', () => {
     await appendAssistantMessage(session, 'final answer');
 
     const page = await provider.readRecentActivity(
-      { session: { id: session.sessionId } },
+      { sessionId: session.sessionId },
       readContext(session),
     );
     expect(page.records.map((r) => r.kind)).toEqual([
@@ -143,7 +143,7 @@ describe('readRecentActivity: cursor pagination', () => {
     }
 
     const firstPage = await provider.readRecentActivity(
-      { session: { id: session.sessionId }, limit: 2 },
+      { sessionId: session.sessionId, limit: 2 },
       readContext(session),
     );
     expect(firstPage.records.map((r) => (r.kind === 'assistant_message' ? r.text : null)))
@@ -156,7 +156,7 @@ describe('readRecentActivity: cursor pagination', () => {
     await appendAssistantMessage(session, 'message-5');
 
     const secondPage = await provider.readRecentActivity(
-      { session: { id: session.sessionId }, limit: 2, cursor: firstPage.nextCursor },
+      { sessionId: session.sessionId, limit: 2, cursor: firstPage.nextCursor },
       readContext(session),
     );
     const firstTexts = firstPage.records.map((r) => (r.kind === 'assistant_message' ? r.text : null));
@@ -174,7 +174,7 @@ describe('readRecentActivity: cursor pagination', () => {
 
     await expect(
       provider.readRecentActivity(
-        { session: { id: session.sessionId }, cursor: 'not-a-real-cursor' },
+        { sessionId: session.sessionId, cursor: 'not-a-real-cursor' },
         readContext(session),
       ),
     ).rejects.toMatchObject({ name: 'AgentActivityError', reason: 'cursor_invalid' });
@@ -186,7 +186,7 @@ describe('readRecentActivity: cursor pagination', () => {
     await appendToolCall(session, { callId: 'c1', name: 'search', output: 'x' });
 
     const page = await provider.readRecentActivity(
-      { session: { id: session.sessionId }, limit: 1, includeTools: true },
+      { sessionId: session.sessionId, limit: 1, includeTools: true },
       readContext(session),
     );
     expect(page.nextCursor).toBeDefined();
@@ -194,7 +194,7 @@ describe('readRecentActivity: cursor pagination', () => {
     await expect(
       provider.readRecentActivity(
         {
-          session: { id: session.sessionId },
+          sessionId: session.sessionId,
           cursor: page.nextCursor,
           includeTools: false,
         },
@@ -210,7 +210,7 @@ describe('readRecentActivity: includeTools', () => {
     await appendToolCall(session, { callId: 'c1', name: 'search_files', output: 'result text' });
 
     const page = await provider.readRecentActivity(
-      { session: { id: session.sessionId } },
+      { sessionId: session.sessionId },
       readContext(session),
     );
     // A call and its output settle the SAME positioned record (started ->
@@ -227,7 +227,7 @@ describe('readRecentActivity: includeTools', () => {
     await appendAssistantMessage(session, 'after tools');
 
     const page = await provider.readRecentActivity(
-      { session: { id: session.sessionId }, includeTools: false },
+      { sessionId: session.sessionId, includeTools: false },
       readContext(session),
     );
     expect(page.records.every((r) => r.kind !== 'tool')).toBe(true);
@@ -241,7 +241,7 @@ describe('readRecentActivity: includeTools', () => {
     await appendToolCall(session, { callId: 'c2', name: 'search_files', output: 'ok' });
 
     const page = await provider.readRecentActivity(
-      { session: { id: session.sessionId } },
+      { sessionId: session.sessionId },
       readContext(session),
     );
     const statuses = page.records
@@ -257,7 +257,7 @@ describe('readRecentActivity: neutral error taxonomy and non-leakage', () => {
     const session = await makeSession();
     await expect(
       provider.readRecentActivity(
-        { session: { id: 'never-existed-session-id' } },
+        { sessionId: 'never-existed-session-id' },
         readContext(session),
       ),
     ).rejects.toMatchObject({ name: 'AgentActivityError', reason: 'session_unavailable' });
@@ -270,7 +270,7 @@ describe('readRecentActivity: neutral error taxonomy and non-leakage', () => {
 
     await expect(
       provider.readRecentActivity(
-        { session: { id: session.sessionId } },
+        { sessionId: session.sessionId },
         readContext(session),
       ),
     ).rejects.toMatchObject({ name: 'AgentActivityError', reason: 'activity_corrupt' });
@@ -285,7 +285,7 @@ describe('readRecentActivity: neutral error taxonomy and non-leakage', () => {
     });
 
     const page = await provider.readRecentActivity(
-      { session: { id: session.sessionId } },
+      { sessionId: session.sessionId },
       readContext(session),
     );
     const serialized = JSON.stringify(page);
@@ -302,7 +302,7 @@ describe('readRecentActivity: neutral error taxonomy and non-leakage', () => {
     let caught: unknown;
     try {
       await provider.readRecentActivity(
-        { session: { id: 'definitely-not-a-real-session' } },
+        { sessionId: 'definitely-not-a-real-session' },
         readContext(session),
       );
     } catch (error) {
@@ -322,7 +322,7 @@ describe('readRecentActivity: neutral error taxonomy and non-leakage', () => {
 
     await expect(
       provider.readRecentActivity(
-        { session: { id: sessionId } },
+        { sessionId },
         readContext(session),
       ),
     ).rejects.toMatchObject({ name: 'AgentActivityError', reason: 'provider_failure' });

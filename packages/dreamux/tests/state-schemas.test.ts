@@ -639,7 +639,7 @@ describe('AgentIdentityStore: persistence root is constructor-bound, never recor
         name: 'someone-else', // disagrees with expectedName='reviewer'
         team_id: null,
         agent_runtime: 'codex',
-        session: null,
+        session_id: null,
         source_cwd: '/tmp/src',
         source_repo: null,
         cwd: '/tmp/run',

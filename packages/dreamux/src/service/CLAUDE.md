@@ -152,13 +152,16 @@ Team's members are the same pair again, scoped to the Team.
   repo, and the result is persisted as a `reuse-cwd` worktree.
 - **State is a symmetric directory per agent entity.** Every agent is a
   directory holding `identity.json`: durable identity/lifecycle/worktree facts,
-  optional append-only `identity_prompt`, persisted admin skill sources, and
-  one nullable provider-owned `session` object Core stores verbatim and reads
-  only `id` from. It contains no per-Turn archive and no conversation
-  projection. Placement is by owner: `teammate/<name>/` for dispatcher-owned
-  TeamMates, `team/<team>/` for that Team's leader (beside `record.json`), and
-  `team/<team>/teammate/<name>/` for members. Roles are derived from the owning
-  Service, Collection, and directory — never persisted on the identity.
+  optional append-only `identity_prompt`, persisted admin skill sources, and one
+  nullable `session_id` string. The session id is the provider's own prior
+  session, persisted verbatim and returned only to the same provider — opaque to
+  Core, which stores it, compares it for presence, and hands it back, never
+  parsing, indexing, or branching on it. It contains no per-Turn archive and no
+  conversation projection. Placement is by owner: `teammate/<name>/` for
+  dispatcher-owned TeamMates, `team/<team>/` for that Team's leader (beside
+  `record.json`), and `team/<team>/teammate/<name>/` for members. Roles are
+  derived from the owning Service, Collection, and directory — never persisted on
+  the identity.
 - **Visibility is physical directory scoping plus one roster predicate.** A
   dispatcher-scope read lists only `teammate/<name>/`; a team-scope read lists
   only that Team's members, and the leader — which lives at the Team root — is
@@ -177,3 +180,15 @@ Team's members are the same pair again, scoped to the Team.
   Detection only — legacy paths are never read for migration, rewritten, or
   removed. A current-layout `turn.jsonl` left by an older Dreamux is inert
   residue that no path creates, opens, validates, or deletes.
+- **Reject a removed field only when accepting it would lose something.** The
+  rejected-field list is narrower than "every field ever deleted", because each
+  entry costs the operator a rebuild. A field earns rejection when a released
+  build wrote it AND accepting the record would silently discard a fact this
+  reader cannot see — `checkpoint`, or `session_ref`, whose resumable id sits one
+  level below where `session_id` is read. Two kinds of leftover do not qualify. A
+  field this version never consults (`role`, derived from the owning directory;
+  `transcript_locator`, replaced by the Activity seam's opaque id) is inert
+  residue. And a shape no released build ever wrote cannot reach a real upgrade,
+  so gating on it buys nothing: a field's own type check is the better gate,
+  because "no usable id found" already degrades correctly to "start a fresh
+  session", while a present-but-corrupt value still fails validation.

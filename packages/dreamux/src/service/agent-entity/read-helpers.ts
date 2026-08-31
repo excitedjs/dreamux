@@ -27,7 +27,7 @@ export function toStatus(
 ): AgentEntityRuntimeStatus {
   return {
     name: identity.name,
-    session_id: identity.session?.id ?? null,
+    session_id: identity.session_id,
     agent_runtime: identity.agent_runtime,
     repo: {
       mode: identity.worktree.mode,
@@ -67,7 +67,7 @@ export function toRecordRow(
       identity.close_note === null ? null : previewText(identity.close_note),
     cleanup_state: identity.worktree.cleanup_state,
     resume:
-      identity.closed_at === null || identity.session !== null
+      identity.closed_at === null || identity.session_id !== null
         ? { tool: 'send', name: identity.name }
         : null,
   };

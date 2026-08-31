@@ -302,7 +302,7 @@ async function buildTeammateHarness(
     worktree: reuseCwdWorktree(dir),
     intent: null,
     identityPrompt: null,
-    session: null,
+    sessionId: null,
     status: 'running',
   });
   if (options.closed === true) {

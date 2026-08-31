@@ -38,16 +38,15 @@ import type {
   AgentRuntimeCreateContext,
   AgentRuntimeIdentity,
   AgentRuntimeMcpServer,
-  AgentRuntimeSessionRef,
   RuntimeAdmission,
   RuntimeSubmission,
 } from '@excitedjs/dreamux-types';
 
 function identity(
-  session: AgentRuntimeSessionRef | null,
+  sessionId: string | null,
   runtimeId = 'agent-1',
-): AgentRuntimeIdentity<AgentRuntimeSessionRef> {
-  return { runtimeId, session };
+): AgentRuntimeIdentity {
+  return { runtimeId, sessionId };
 }
 
 function makeDeps(
@@ -93,7 +92,7 @@ describe('CodexRuntime start() continuity', () => {
 
   it('reports resumed continuity and calls thread/resume when a prior session exists', async () => {
     const { deps, client } = makeDeps();
-    const runtime = new CodexRuntime(identity({ id: 'thread-existing' }), deps);
+    const runtime = new CodexRuntime(identity('thread-existing'), deps);
 
     const outcome = await runtime.start();
 
@@ -109,7 +108,7 @@ describe('CodexRuntime start() continuity', () => {
       failResumeWith: new Error('native session gone'),
     });
     const { deps } = makeDeps({ client });
-    const runtime = new CodexRuntime(identity({ id: 'thread-lost' }), deps);
+    const runtime = new CodexRuntime(identity('thread-lost'), deps);
 
     await expect(runtime.start()).rejects.toThrow(/could not restore session/);
     // Never a silent fallback to a fresh thread on the FIRST start.
@@ -135,7 +134,7 @@ describe('CodexRuntime developerInstructions re-supply', () => {
 
   it('re-sends developerInstructions on thread/resume — Codex does not persist them', async () => {
     const { deps, client } = makeDeps({ systemPromptAppend: append });
-    const runtime = new CodexRuntime(identity({ id: 'thread-1' }), deps);
+    const runtime = new CodexRuntime(identity('thread-1'), deps);
     await runtime.start();
 
     const resume = client.requests.find((r) => r.method === 'thread/resume');
@@ -176,7 +175,7 @@ describe('CodexRuntime developerInstructions re-supply', () => {
     const processes = [process1, process2];
     let processIndex = 0;
 
-    const state = new RecordingStateSink<AgentRuntimeSessionRef>();
+    const state = new RecordingStateSink();
     const deps: CodexRuntimeDeps = {
       cwd: '/fake/cwd',
       state,
@@ -222,7 +221,7 @@ describe('CodexRuntime developerInstructions re-supply', () => {
 
 describe('CodexRuntime state sink ordering and durability', () => {
   it('publishes status/session/status in call-receipt order for a fresh start', async () => {
-    const state = new RecordingStateSink<AgentRuntimeSessionRef>();
+    const state = new RecordingStateSink();
     const { deps } = makeDeps({ state });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -238,7 +237,7 @@ describe('CodexRuntime state sink ordering and durability', () => {
   });
 
   it('does not resolve start() until the ready publish durably lands', async () => {
-    const state = new RecordingStateSink<AgentRuntimeSessionRef>();
+    const state = new RecordingStateSink();
     state.gateNext((u) => u.kind === 'status' && u.status === 'ready');
     const { deps } = makeDeps({ state });
     const runtime = new CodexRuntime(identity(null), deps);
@@ -259,7 +258,7 @@ describe('CodexRuntime state sink ordering and durability', () => {
   });
 
   it('rejects start() with the lease-revoked error shape when the state sink revokes the lease', async () => {
-    const state = new RecordingStateSink<AgentRuntimeSessionRef>();
+    const state = new RecordingStateSink();
     const revoked = Object.assign(new Error('lease revoked'), {
       name: 'AgentRuntimeStateLeaseRevokedError',
     });
@@ -543,7 +542,7 @@ describe('MCP server list passthrough encoding', () => {
       codexClientFactory: () => client as unknown as CodexWsClient,
     });
 
-    const context: AgentRuntimeCreateContext<ReturnType<typeof defaultDispatcherCodexConfig>, AgentRuntimeSessionRef> = {
+    const context: AgentRuntimeCreateContext<ReturnType<typeof defaultDispatcherCodexConfig>> = {
       identity: identity(null),
       config: defaultDispatcherCodexConfig(),
       cwd: '/fake/cwd',

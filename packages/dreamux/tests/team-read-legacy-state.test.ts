@@ -68,7 +68,7 @@ const CURRENT_LEADER = JSON.stringify({
   team_id: 'team-a',
   agent_runtime: 'codex',
   status: 'running',
-  session: null,
+  session_id: null,
   skill_sources: [],
   cwd: '/tmp',
   runtime_cwd: '/tmp',
@@ -88,11 +88,24 @@ const CURRENT_LEADER = JSON.stringify({
 });
 
 /**
- * A retired `role` field is the same kind of legacy leader state as
+ * A `session_ref` field is the same kind of legacy leader state as
  * `provider_ref`: `assertNoRemovedRecordFields` rejects it explicitly, because
- * the `team_member` value it used to carry does not exist any more — Core now
- * decides an Agent is a TeamLeader purely from where its identity lives
- * (the Team root), never from a persisted role label.
+ * the session id it carried sits one level below where the current reader looks
+ * for `session_id`. Accepting the record would resume nothing and quietly start
+ * a fresh session, so the loss has to surface here — where the read model must
+ * raise it rather than downgrade it to "no leader state" the way it does for an
+ * ordinary unreadable file.
+ */
+const REMOVED_FIELD_LEADER = JSON.stringify({
+  ...JSON.parse(CURRENT_LEADER),
+  session_ref: { id: 'provider-session-1' },
+});
+
+/**
+ * A leftover `role` field, by contrast, is inert residue. Core decides an Agent
+ * is a TeamLeader purely from where its identity lives (the Team root), so a
+ * stale role label is a key nothing reads — rejecting it would cost the operator
+ * a rebuild for no recovered fact.
  */
 const ROLE_FIELD_LEADER = JSON.stringify({
   ...JSON.parse(CURRENT_LEADER),
@@ -108,11 +121,19 @@ describe('Team read projections and old leader state', () => {
     await expect(reads.summary(record)).rejects.toBeInstanceOf(LegacyStateError);
   });
 
-  it('raises a leader record carrying the retired `role` field the same way', async () => {
-    const reads = await plantLeader(ROLE_FIELD_LEADER);
+  it('raises a leader record carrying a removed field the same way', async () => {
+    const reads = await plantLeader(REMOVED_FIELD_LEADER);
 
     await expect(reads.list()).rejects.toBeInstanceOf(LegacyStateError);
     await expect(reads.summary(record)).rejects.toBeInstanceOf(LegacyStateError);
+  });
+
+  it('projects a leader carrying a leftover `role` field normally', async () => {
+    const reads = await plantLeader(ROLE_FIELD_LEADER);
+
+    const [row] = await reads.list();
+    expect(row?.leader_state).toBe('running');
+    expect((await reads.summary(record)).leader?.status).toBe('running');
   });
 
   it('still reports an ordinary unreadable leader as no leader state', async () => {

@@ -3,7 +3,6 @@ import type {
   AgentActivityQuery,
   AgentActivityReadContext,
   AgentActivityRecord,
-  AgentRuntimeSessionRef,
 } from '@excitedjs/dreamux-types';
 import { readBytesAt } from '@excitedjs/dreamux-utils';
 
@@ -70,7 +69,7 @@ interface RewriteEvidence {
  * complete.
  */
 export async function readClaudeRecentActivity(
-  query: AgentActivityQuery<AgentRuntimeSessionRef>,
+  query: AgentActivityQuery,
   context: AgentActivityReadContext<DispatcherClaudeCodeConfig>,
   testHooks: {
     afterLocate?: () => void | Promise<void>;
@@ -78,7 +77,7 @@ export async function readClaudeRecentActivity(
   } = {},
 ): Promise<AgentActivityPage> {
   const limit = resolveLimit(query.limit);
-  const sessionId = query.session.id;
+  const sessionId = query.sessionId;
   const includeTools = query.includeTools ?? true;
   const env = effectiveEnvironment(context);
   const located = await locateClaudeHistory({

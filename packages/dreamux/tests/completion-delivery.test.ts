@@ -378,7 +378,7 @@ function fakeIdentity(overrides: Partial<AgentEntityIdentity> = {}): AgentEntity
     name: 'dispatcher',
     team_id: null,
     agent_runtime: 'fake-runtime',
-    session: null,
+    session_id: null,
     source_cwd: '/tmp/src',
     source_repo: null,
     cwd: '/tmp/cwd',

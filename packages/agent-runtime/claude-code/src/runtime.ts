@@ -26,7 +26,6 @@ import { RuntimeStateFence } from '@excitedjs/dreamux-utils';
 import type {
   AgentRuntime,
   AgentRuntimeIdentity,
-  AgentRuntimeSessionRef,
   AgentRuntimeStartOutcome,
   AgentRuntimeStatus,
   AgentRuntimeSubmissionInput,
@@ -79,10 +78,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private queuedTurnCount = 0;
 
   constructor(
-    identity: AgentRuntimeIdentity<AgentRuntimeSessionRef>,
+    identity: AgentRuntimeIdentity,
     private readonly deps: ClaudeCodeRuntimeDeps,
   ) {
-    const session = identity.session ?? null;
+    const priorSessionId = identity.sessionId;
     this.dispatcherId = identity.runtimeId;
     this.config = deps.config;
     this.bin = deps.resolveBinPath(this.config.bin);
@@ -102,9 +101,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       'claude-code',
       `${this.dispatcherId}.stderr.log`,
     );
-    this.threadId = session?.id ?? null;
-    this.resumeOnNextSpawn = session !== null;
-    this.resumed = session !== null;
+    this.threadId = priorSessionId;
+    this.resumeOnNextSpawn = priorSessionId !== null;
+    this.resumed = priorSessionId !== null;
     this.logger = deps.logger ?? consoleFallbackLogger(this.dispatcherId);
   }
 
@@ -476,7 +475,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       // what makes the session durable before start resolves.
       await this.fence.publish(() => this.deps.state.publish({
         kind: 'session',
-        session: { id: candidateSessionId },
+        sessionId: candidateSessionId,
       }));
       this.assertGeneration(generation);
       this.threadId = candidateSessionId;
