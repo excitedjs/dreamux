@@ -145,7 +145,7 @@ describe('FeishuProvisioning — happy-path ordering', () => {
     expect(h.submitCalls).toEqual([{ teamName: 'space-team-1', sourceId: 'msg-1' }]);
   });
 
-  it('generates a fresh request_id per attempt rather than a stable, replayable ledger id', async () => {
+  it('derives request_id from the inbound message id, so distinct messages get distinct ids', async () => {
     const h = await harness();
     const spaceRecord = await h.routing.bindSpace(space());
 
@@ -166,8 +166,57 @@ describe('FeishuProvisioning — happy-path ordering', () => {
     const requestIds = h.invokeCalls.map(
       (c) => (c.payload as Record<string, unknown>)['request_id'],
     );
-    expect(requestIds).toHaveLength(2);
-    expect(requestIds[0]).not.toBe(requestIds[1]);
+    // Bare message ids, not a composite: a Feishu message id is already
+    // globally unique, so nothing is prefixed onto it.
+    expect(requestIds).toEqual(['m1', 'm2']);
+  });
+
+  it('replays one request_id when the platform redelivers the same message, so Core can answer with the first Team', async () => {
+    const h = await harness();
+    const spaceRecord = await h.routing.bindSpace(space());
+    const target = topicTarget('oc_container', 'thread_1');
+
+    await h.provisioning.provisionForInbound({
+      space: spaceRecord,
+      target,
+      display: null,
+      submission: submission('redelivered'),
+    });
+    // The same message arriving again after the binding was lost — the run
+    // reaches team.create a second time and must present the same identity.
+    await h.routing.unbind(target);
+    h.createResult = { status: 'existing', team_name: 'space-team-1', leader_name: 'leader-1' };
+    await h.provisioning.provisionForInbound({
+      space: spaceRecord,
+      target,
+      display: null,
+      submission: submission('redelivered'),
+    });
+
+    const requestIds = h.invokeCalls.map(
+      (c) => (c.payload as Record<string, unknown>)['request_id'],
+    );
+    expect(requestIds).toEqual(['redelivered', 'redelivered']);
+  });
+
+  it('recovers a half-finished provisioning: an `existing` replay still installs the binding rather than duplicating the Team', async () => {
+    const h = await harness();
+    const spaceRecord = await h.routing.bindSpace(space());
+    const target = topicTarget('oc_container', 'thread_1');
+
+    // The earlier attempt created the Team but died before binding, so Core
+    // answers this replay with the Team it already published.
+    h.createResult = { status: 'existing', team_name: 'space-team-1', leader_name: 'leader-1' };
+    const outcome = await h.provisioning.provisionForInbound({
+      space: spaceRecord,
+      target,
+      display: null,
+      submission: submission('redelivered'),
+    });
+
+    expect(outcome).toEqual({ status: 'submitted', turnId: 'turn-1' });
+    expect(h.routing.bindingFor(target)?.team_name).toBe('space-team-1');
+    expect(h.invokeCalls.filter((c) => c.command === 'team.create')).toHaveLength(1);
   });
 });
 

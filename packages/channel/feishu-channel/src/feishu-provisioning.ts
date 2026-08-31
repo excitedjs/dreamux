@@ -22,8 +22,6 @@
  * operator who rebinds or removes the space meanwhile changes what the next
  * creation sees and nothing about one already under way.
  */
-import { randomUUID } from 'node:crypto';
-
 import type { DreamuxLogger, JsonValue } from '@excitedjs/dreamux-types';
 
 import type { FeishuRouting } from './routing/index.js';
@@ -147,9 +145,13 @@ export class FeishuProvisioning {
   private async run(input: ProvisioningRequest): Promise<FeishuSubmitOutcome> {
     const created = await this.createTeam(input);
     if (created.status === 'closed') {
-      // Core answers `closed` only when replaying a request id it already
-      // accepted. Nothing here replays one, so this is reported rather than
-      // retried around.
+      // Reachable now that the request id is the message id: it means this
+      // exact message was already provisioned once and its Team has since been
+      // closed. Core keeps that acceptance permanently, so there is nothing to
+      // retry around — the message is reported unsubmitted and falls back to
+      // the Dispatcher Agent. A *new* message to the same topic carries a new
+      // id and provisions a fresh Team, so a closed Team never strands a
+      // conversation.
       return {
         status: 'unsubmitted',
         message: `team.create replayed closed Team ${created.team_name}`,
@@ -198,9 +200,34 @@ export class FeishuProvisioning {
   ): Promise<TeamCreateResultShape> {
     const { space, target } = input;
     return (await this.opts.invoke('team.create', {
-      // Generated for this attempt only. Core deduplicates on it within the
-      // call, which is all a request that is never replayed can ask of it.
-      request_id: randomUUID(),
+      // The inbound Feishu message id, used bare: it is globally unique, so it
+      // needs no target prefix to stay distinct. Request identity is scoped to
+      // the message that triggered provisioning, not to the topic, and that
+      // choice is what the following behaviors follow from.
+      //
+      // The platform redelivering one message replays this same id, so Core's
+      // team.create idempotency answers with the Team the first attempt made
+      // instead of building a second one. If that first attempt died between
+      // `team.create` and the routing bind, the replay answers `existing` and
+      // this run goes on to install the binding — recovering the half-finished
+      // provisioning rather than duplicating it.
+      //
+      // A new message always mints a new id, which is the point. After a Team
+      // is dissolved, the next message to that same topic provisions a fresh
+      // Team normally. A thread-scoped id could not: Core keeps a request's
+      // acceptance record permanently, so it would replay `closed` forever and
+      // the topic could never be provisioned again.
+      //
+      // The cost of message scope is that a *different* message arriving after
+      // a partial failure creates a second Team. That window is knowingly left
+      // undefended: closing it needs durable per-target request state, which
+      // this design has already declined to keep.
+      //
+      // One nuance: a redelivered id whose policy snapshot changed in between
+      // hashes differently, so Core raises an idempotency conflict, the run
+      // reports `unsubmitted`, and the message falls back to the Dispatcher
+      // Agent. Loud, and acceptable.
+      request_id: input.submission.sourceId,
       name_prefix: teamNamePrefix(input.display ?? space.display),
       intent: targetIntent({
         display: input.display,
