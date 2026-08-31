@@ -228,7 +228,7 @@ export function createCommandHarness(options: HarnessOptions = {}): CommandHarne
     dispatcherRow: (id: string) => (id === row?.dispatcher_id ? row : null),
     dispatcherRuntimeStatus:
       options.dispatcherRuntimeStatus ??
-      (async () => ({ status: 'running', threadId: null, lastError: null })),
+      (async () => ({ status: 'running', sessionId: null, lastError: null })),
     dispatcher: (id: string) => {
       dispatcherLookups.push(id);
       return dispatcher;

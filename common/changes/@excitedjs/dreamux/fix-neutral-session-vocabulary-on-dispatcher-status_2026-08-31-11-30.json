@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Rename the Codex-native thread vocabulary on the Dispatcher status surfaces to the neutral session vocabulary Dreamux already uses everywhere else. The `dispatcher.status` output field `thread_id` is now `session_id`, and the Dispatcher rows in `dispatcher.list` and `server.status` carry `session_id` in place of `thread_id`. The value is unchanged — every one of these fields already read the persisted identity's `session.id` — so only the name a caller reads changes. A caller or script that reads `thread_id` off a Dispatcher row or a `dispatcher.status` result must read `session_id` instead. No persisted file, key, or filename changed: the identity schema has always stored `session`/`session_id`, and no rebuild is required.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

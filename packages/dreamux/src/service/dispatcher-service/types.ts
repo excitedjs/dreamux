@@ -35,18 +35,18 @@ export interface DispatcherSummary {
   dispatcher_id: string;
   channel_identity: string;
   status: AgentEntityIdentityStatus;
-  thread_id: string | null;
+  session_id: string | null;
   enabled: boolean;
 }
 
 export interface DispatcherRuntimeStatus {
   status: string | null;
-  threadId: string | null;
+  sessionId: string | null;
   lastError: string | null;
 }
 
 export interface LiveDispatcherRuntimeStatus {
   status: AgentRuntimeStatus;
-  threadId: string | null;
+  sessionId: string | null;
   lastError: string | null;
 }

@@ -32,7 +32,7 @@ interface DispatcherStatusResult {
   dispatcher_id: string;
   channel_identity: string;
   status: string;
-  thread_id: string | null;
+  session_id: string | null;
   last_error: string | null;
 }
 
@@ -75,10 +75,10 @@ export function dispatcherCommands(
         dispatcher_id: STRING,
         channel_identity: STRING,
         status: STRING,
-        thread_id: NULLABLE_STRING,
+        session_id: NULLABLE_STRING,
         last_error: NULLABLE_STRING,
       },
-      ['dispatcher_id', 'channel_identity', 'status', 'thread_id', 'last_error'],
+      ['dispatcher_id', 'channel_identity', 'status', 'session_id', 'last_error'],
     ),
     parse(payload) {
       commandPayload(payload);
@@ -91,7 +91,7 @@ export function dispatcherCommands(
         dispatcher_id: row.dispatcher_id,
         channel_identity: row.channel_identity,
         status: runtime.status ?? 'stopped',
-        thread_id: runtime.threadId,
+        session_id: runtime.sessionId,
         last_error: runtime.lastError,
       };
     },

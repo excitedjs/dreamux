@@ -42,10 +42,10 @@ Dispatcher, providers, config, and later doctor calls.
 ### 3. Prove the resumable managed instance
 
 Under the same managed environment, run the exact launcher `status`. Require a
-matching enabled/running Dispatcher row with a non-empty `thread_id`. Require
+matching enabled/running Dispatcher row with a non-empty `session_id`. Require
 the authoritative doctor result to name its Agent Runtime provider as
 `builtin:codex` or `builtin:claude-code`, whose owner contracts guarantee resume
-support; a non-empty thread alone is not proof for an external provider.
+support; a non-empty session alone is not proof for an external provider.
 
 Record the server `pid` and `uptimeSec`. Do not demand equality between the
 service PID and status PID: the service PID is the public CLI parent while

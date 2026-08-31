@@ -14,7 +14,7 @@ export function dispatcherRuntimeStatus(
   const identity = agent?.current() ?? null;
   return {
     status: runtimeStatus,
-    threadId: agent?.sessionId() ?? identity?.session?.id ?? null,
+    sessionId: agent?.sessionId() ?? identity?.session?.id ?? null,
     lastError: identity?.last_error ?? null,
   };
 }
@@ -27,7 +27,7 @@ export function liveDispatcherRuntimeStatus(
   const identity = agent?.current() ?? null;
   return {
     status: runtimeStatus,
-    threadId: agent?.sessionId() ?? identity?.session?.id ?? null,
+    sessionId: agent?.sessionId() ?? identity?.session?.id ?? null,
     lastError: identity?.last_error ?? null,
   };
 }
@@ -44,7 +44,7 @@ export function dispatcherSummary(
     status: runtimeStatus !== null
       ? runtimeStatusToIdentityStatus(runtimeStatus)
       : (identity?.status ?? 'stopped'),
-    thread_id: agent?.sessionId() ?? identity?.session?.id ?? null,
+    session_id: agent?.sessionId() ?? identity?.session?.id ?? null,
     enabled: row.enabled === 1,
   };
 }
