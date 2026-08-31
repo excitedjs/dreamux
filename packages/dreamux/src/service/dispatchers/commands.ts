@@ -16,7 +16,6 @@ import {
 import { commandPayload } from '../../command/payload.js';
 import {
   NO_INPUT,
-  NULL,
   NULLABLE_STRING,
   OBJECT,
   STRING,
@@ -34,7 +33,6 @@ interface DispatcherStatusResult {
   channel_identity: string;
   status: string;
   thread_id: string | null;
-  last_lost_thread_id: null;
   last_error: string | null;
 }
 
@@ -78,17 +76,9 @@ export function dispatcherCommands(
         channel_identity: STRING,
         status: STRING,
         thread_id: NULLABLE_STRING,
-        last_lost_thread_id: NULL,
         last_error: NULLABLE_STRING,
       },
-      [
-        'dispatcher_id',
-        'channel_identity',
-        'status',
-        'thread_id',
-        'last_lost_thread_id',
-        'last_error',
-      ],
+      ['dispatcher_id', 'channel_identity', 'status', 'thread_id', 'last_error'],
     ),
     parse(payload) {
       commandPayload(payload);
@@ -102,7 +92,6 @@ export function dispatcherCommands(
         channel_identity: row.channel_identity,
         status: runtime.status ?? 'stopped',
         thread_id: runtime.threadId,
-        last_lost_thread_id: null,
         last_error: runtime.lastError,
       };
     },
