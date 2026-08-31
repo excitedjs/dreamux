@@ -1,15 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { unlink } from 'node:fs/promises';
 
-import { Cron } from 'croner';
-
-import { errorMessage } from '../../platform/error-info.js';
 import { JsonDocumentStore } from '../../platform/json-document-store.js';
 import { isNotFound } from '../../platform/fs-errors.js';
 import { LegacyStateError } from '../legacy-state.js';
+import { validateCronSchedule } from './cron-validation.js';
 
 const STORE_VERSION = 1;
-export const MIN_CRON_INTERVAL_MS = 60_000;
 
 export interface CronPromptAgentAction {
   kind: 'prompt-agent';
@@ -316,33 +313,14 @@ function assertCronJobSemantics(
 }
 
 function assertValidCron(job: CronJob, path: string): void {
-  try {
-    if (job.cron.trim().split(/\s+/).length !== 5) {
-      throw new Error('cron must be a standard 5-field expression');
-    }
-    new Intl.DateTimeFormat('en-US', { timeZone: job.tz }).format(new Date());
-    const cron = new Cron(job.cron, {
-      timezone: job.tz,
-      mode: '5-part',
-      paused: true,
-    });
-    if (cron.nextRun(new Date()) === null) {
-      throw new Error('cron has no future run');
-    }
-    if (job.recurring) {
-      const runs = cron.nextRuns(2, new Date());
-      if (runs.length >= 2) {
-        const gap = runs[1]!.getTime() - runs[0]!.getTime();
-        if (gap < MIN_CRON_INTERVAL_MS) {
-          throw new Error('cron interval must be at least one minute');
-        }
-      }
-    }
-  } catch (err) {
+  // Same rules as the command path, different verdict: a schedule that is
+  // already on disk cannot be a caller's mistake, so a break here is corrupt
+  // state for an operator to resolve.
+  validateCronSchedule(job, (message) => {
     throw new LegacyStateError(
-      `cron job store ${path} contains invalid job '${job.id}': ${errorMessage(err)}`,
+      `cron job store ${path} contains invalid job '${job.id}': ${message}`,
     );
-  }
+  });
 }
 
 function cloneOptional(job: CronJob | null): CronJob | null {

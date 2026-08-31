@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Report the real package version as the MCP server identity. All four Dreamux-served MCP servers (dreamux-team, dreamux-teammate, dreamux-cron, and the Channel servers) hand-wrote `0.4.0` as their `serverInfo.version`, so every connecting agent was told a version Dreamux left behind many releases ago. The version now comes from one shared constant read out of the package manifest, so it tracks the package automatically instead of needing four edits per release. The value an agent sees changes from `0.4.0` to the installed package version; this is advertisement metadata only, and no tool, schema, or behavior depends on it. No config, state, or path shape changed and no rebuild is required.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

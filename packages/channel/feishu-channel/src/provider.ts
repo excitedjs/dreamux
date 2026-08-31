@@ -155,7 +155,20 @@ export function createFeishuChannelProvider(
     async createSession(
       context: ChannelSessionCreateContext<FeishuChannelConfig>,
     ): Promise<ChannelInstance> {
-      const stateDir = context.state_root ?? '.';
+      // No default, deliberately. `'.'` used to stand in here, which meant a
+      // host that forgot the state root got a Feishu session quietly writing
+      // its bindings and spaces into whatever directory the process happened
+      // to start in — durable state in an accidental place, discovered only
+      // when it went missing. The host owns this path; if it did not supply
+      // one, that is a wiring fault to state now, not to paper over.
+      const stateDir = context.state_root;
+      if (typeof stateDir !== 'string' || stateDir === '') {
+        throw new Error(
+          'Feishu channel requires an explicit state_root in its session ' +
+            'create context. It stores durable routing state and must never ' +
+            'fall back to the process working directory.',
+        );
+      }
       const cacheRoot = context.cache_root ?? stateDir;
       const log =
         context.logger ?? consoleFallbackLogger(context.dispatcher_id);

@@ -1,14 +1,15 @@
 /**
  * Approval handler for Codex server→client requests.
  *
- * Issue #2 §"信任模型" + §"实现陷阱":
+ * Issue #2, "trust model" and "implementation pitfalls":
  *   - MVP runs Codex with approval-policy=never (or auto-approve).
  *   - If a server-request still arrives (e.g. because policy was misconfigured
  *     or codex escalates anyway), fail loudly — never return null. Silent null
  *     is the trap that hangs the daemon.
  *
- * `onReject` is an observer hook for logs or metrics. Feishu user-visible
- * output is MCP reply-only, so this handler must not send channel messages.
+ * `onReject` is an observer hook for logs or metrics. A runtime package knows
+ * nothing about Channels, so this handler must not try to reach a user: the
+ * rejection travels back to codex, and Core decides what any Channel says.
  */
 
 import type { ServerRequest } from './types.js';
@@ -49,11 +50,11 @@ export function createFailFastApprovalHandler(
     }
     if (looksLikeApprovalRequest(req.method)) {
       throw new Error(
-        `当前版本不支持审批（${req.method}）。请配置 codex approval-policy=never 或将本 dispatcher 部署在 trusted-local 环境。`,
+        `approvals are not supported in this version (${req.method}). Configure codex approval-policy=never, or deploy this dispatcher in a trusted-local environment.`,
       );
     }
     throw new Error(
-      `dispatcher 收到未支持的 codex server-request：${req.method}（id=${req.id}）`,
+      `dispatcher received an unsupported codex server-request: ${req.method} (id=${req.id})`,
     );
   };
 }

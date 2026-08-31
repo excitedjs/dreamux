@@ -210,7 +210,7 @@ describe('result canonicalization — no registry-wide output byte cap', () => {
       dispatcher_id: `dispatcher-${i}`,
       channel_identity: `identity-${i}-${'x'.repeat(80)}`,
       status: 'running',
-      thread_id: null,
+      session_id: null,
       enabled: true,
     }));
     const approxBytes = JSON.stringify(bigSummary).length;

@@ -124,7 +124,7 @@ export class Dispatchers {
           status: live.status === null
             ? 'stopped'
             : runtimeStatusToIdentityStatus(live.status),
-          thread_id: live.threadId,
+          session_id: live.sessionId,
           enabled: row.enabled === 1,
         };
       }
@@ -133,7 +133,7 @@ export class Dispatchers {
         dispatcher_id: row.dispatcher_id,
         channel_identity: row.channel_identity,
         status: identity?.status ?? 'stopped',
-        thread_id: identity?.session?.id ?? null,
+        session_id: identity?.session?.id ?? null,
         enabled: row.enabled === 1,
       };
     }));
@@ -146,7 +146,7 @@ export class Dispatchers {
     const identity = await this.rootIdentity(id).read();
     return {
       status: identity?.status ?? null,
-      threadId: identity?.session?.id ?? null,
+      sessionId: identity?.session?.id ?? null,
       lastError: identity?.last_error ?? null,
     };
   }

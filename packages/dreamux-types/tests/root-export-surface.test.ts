@@ -8,13 +8,11 @@
  * asserts each name is re-exported from `index.ts`, so a newly added public
  * type cannot silently stay unreachable to an external provider package.
  *
- * `turn.ts` is the one documented exception: its header comment states its
- * shapes "no longer cross the Agent Runtime seam and are not part of the
- * package root export" (a Provider receives only already-rendered text). This
- * guard locks that as a deliberate, visible carve-out rather than an oversight
- * — it asserts every OTHER file's exports are reachable, and separately
- * asserts `turn.ts`'s exports stay unreachable, so either direction of change
- * has to touch this test file on purpose.
+ * There is no carve-out: every declared public type is reachable from the root.
+ * `turn.ts` used to be one — its inbound-turn shapes were declared but withheld
+ * from the root — but it had no consumer left once Channel rendering moved out
+ * of the runtime-neutral layer, so the module was deleted rather than kept as a
+ * documented exception.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -68,8 +66,6 @@ describe('src/index.ts re-exports every public contract type', () => {
   });
 
   for (const file of sourceFiles) {
-    if (file === 'turn.ts') continue; // covered by the dedicated carve-out test below.
-
     const text = readFileSync(join(srcRoot, file), 'utf8');
     const declared = declaredExportNames(text);
 
@@ -81,22 +77,11 @@ describe('src/index.ts re-exports every public contract type', () => {
   }
 });
 
-describe('turn.ts is the documented, deliberate root-export carve-out', () => {
-  it('InboundTurnInput / InboundAttachment are declared but NOT re-exported from the root', () => {
-    const turnText = readFileSync(join(srcRoot, 'turn.ts'), 'utf8');
-    const declared = declaredExportNames(turnText);
-
-    expect(declared).toEqual(['InboundAttachment', 'InboundTurnInput']);
-    for (const name of declared) {
+describe('the root export surface has no carve-out', () => {
+  it('the deleted inbound-turn shapes are gone from source and root alike', () => {
+    expect(sourceFiles).not.toContain('turn.ts');
+    for (const name of ['InboundAttachment', 'InboundTurnInput']) {
       expect(rootExports.has(name)).toBe(false);
     }
-  });
-
-  it('turn.ts documents WHY it is excluded, so the carve-out stays visible in source', () => {
-    const turnText = readFileSync(join(srcRoot, 'turn.ts'), 'utf8');
-    // The source comment wraps across a JSDoc continuation line (`\n * `), so
-    // the pattern tolerates that separator between the two halves of the
-    // phrase rather than requiring plain whitespace.
-    expect(turnText).toMatch(/not part of the package[\s*]+root export/);
   });
 });

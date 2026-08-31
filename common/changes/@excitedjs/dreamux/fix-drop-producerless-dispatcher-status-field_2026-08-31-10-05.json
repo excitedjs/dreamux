@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Remove the producer-less `last_lost_thread_id` field from the `dispatcher.status` result. Nothing has ever produced a value for it: it was declared as the literal `null`, schema-typed as NULL, listed as required, and hardcoded to `null` on every response, with no reader anywhere in Dreamux. Callers that ignored it are unaffected; a caller that required the key to be present must stop doing so. No config, state, or path shape changed and no rebuild is required.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

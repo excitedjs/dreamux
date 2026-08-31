@@ -40,8 +40,7 @@ import type {
   McpDelegateResult,
   McpServerDelegate,
 } from '../mcp/types.js';
-
-const IDENTITY_VERSION = '0.4.0';
+import { MCP_IDENTITY_VERSION } from '../mcp/identity-version.js';
 
 /**
  * The namespace every Channel MCP server is named in.
@@ -139,7 +138,7 @@ export function createChannelMcpDelegate(
       return {
         identity: {
           name: `dreamux-channel-${input.channelId}`,
-          version: IDENTITY_VERSION,
+          version: MCP_IDENTITY_VERSION,
         },
         tools,
       };

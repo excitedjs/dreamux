@@ -22,7 +22,6 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import { normalizeSkillSources } from '../../agent-runtime/skill-sources.js';
 import {
   mustNonBlankString,
   mustNonEmptyString,
@@ -34,6 +33,7 @@ import {
   repoRequest,
   repoWorktree,
 } from '../worktree/repo-request.js';
+import { MCP_IDENTITY_VERSION } from '../mcp/identity-version.js';
 import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
 import {
   DESTRUCTIVE_ANNOTATIONS,
@@ -57,10 +57,7 @@ import type {
 import { TEAM_DISPATCH_SUCCESS_REMINDER } from '../mcp/dispatch-reminders.js';
 import { AGENT_TASK_SOURCE } from '../submission-sources.js';
 import type { DispatcherService } from '../dispatcher-service/index.js';
-import {
-  TEAM_LEADER_REQUIRED_SKILL_SOURCES,
-  teamCreatePayloadHash,
-} from './create-request.js';
+import { teamCreatePayloadHash } from './create-request.js';
 import { teamHistoryQuery, teamNameParam } from './types.js';
 import { teamSubmitResult } from '../team-service/types.js';
 
@@ -75,7 +72,7 @@ export type TeamMcpCaller =
 
 export const TEAM_MCP_SERVER_NAME = 'team';
 
-const IDENTITY = { name: 'dreamux-team', version: '0.4.0' };
+const IDENTITY = { name: 'dreamux-team', version: MCP_IDENTITY_VERSION };
 
 export function createTeamMcpDelegate(input: {
   dispatcher: DispatcherService;
@@ -129,9 +126,6 @@ async function create(
   const identityPrompt = optionalNonBlankString(args, 'identity');
   const prompt = optionalString(args, 'prompt');
   const repo = repoWorktree(repoRequest(args, 'repo'));
-  const skillSources = await normalizeSkillSources(null, {
-    requiredSources: TEAM_LEADER_REQUIRED_SKILL_SOURCES,
-  });
   // A named repository request without an explicit path resolves to the
   // dispatcher's own workspace, exactly as the Command path does.
   const repoCwd = repo === null ? null : repo.cwd ?? (await dispatcher.workspace());
@@ -161,7 +155,6 @@ async function create(
       ...(repo !== null ? { worktree: repo.worktree } : {}),
       ...(prompt !== null ? { prompt } : {}),
       ...(identityPrompt !== null ? { identity: identityPrompt } : {}),
-      ...(skillSources !== null ? { skillSources } : {}),
     },
   });
   return { structured: result };

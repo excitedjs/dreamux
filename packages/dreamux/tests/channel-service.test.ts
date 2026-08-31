@@ -15,8 +15,9 @@
  *     concurrent observer never sees a half-closed live map, and logs
  *     per-channel close failures rather than losing them.
  *   - The external channel-provider loader proves registration works without
- *     provider-level `ref`/`descriptor` members, and that a descriptor
- *     kind/ref conflict fails loud *before* the module is even imported.
+ *     provider-level `ref`/`descriptor` members, that the factory context is
+ *     ref-only in the other direction too, and that a descriptor kind/ref
+ *     conflict fails loud *before* the module is even imported.
  *   - `channelMcpDelegates` is the one place a caller-specific tool catalog is
  *     composed; it is reached only from the Dispatcher-agent and TeamLeader
  *     delegate assemblies, never from the ordinary TeamMate one.
@@ -32,6 +33,7 @@ import type {
   ChannelMcpCallContext,
   ChannelMcpCaller,
   DreamuxLogger,
+  ProviderFactoryContext,
 } from '@excitedjs/dreamux-types';
 
 import type { DispatcherChannelConfig, DreamuxConfig } from '../src/config/config.js';
@@ -261,13 +263,16 @@ describe('external channel provider loader (registration and fail-loud ordering)
   it('registers a loaded provider that has no ref/descriptor member of its own', async () => {
     const fake = createFakeChannelProvider();
     const registry = new ProviderRegistry();
-    let receivedContext: { ref: string; descriptor: unknown } | null = null;
+    // Collected rather than held in a nullable: the factory runs inside the
+    // loader, so a `let x: T | null = null` stays narrowed to `null` for the
+    // typechecker and every read needs a cast that hides what is asserted.
+    const receivedContexts: ProviderFactoryContext[] = [];
     await loadChannelProviders({
       registry,
       refs: ['npm:@example/chan#create'],
       importModule: async () => ({
-        create: (context: { ref: string; descriptor: unknown }) => {
-          receivedContext = context;
+        create: (context: ProviderFactoryContext) => {
+          receivedContexts.push(context);
           // The provider echoes nothing about its own registration back.
           expect('ref' in (fake.provider as object)).toBe(false);
           expect('descriptor' in (fake.provider as object)).toBe(false);
@@ -276,10 +281,12 @@ describe('external channel provider loader (registration and fail-loud ordering)
       }),
     });
 
-    expect(receivedContext).not.toBeNull();
-    expect((receivedContext as unknown as { ref: string }).ref).toBe(
-      'npm:@example/chan#create',
-    );
+    expect(receivedContexts).toHaveLength(1);
+    expect(receivedContexts[0].ref).toBe('npm:@example/chan#create');
+    // Ref-only, in the direction Core controls: the factory context is exactly
+    // the published `ProviderFactoryContext`, so Core's registration descriptor
+    // never travels to the implementation side.
+    expect(Object.keys(receivedContexts[0])).toEqual(['ref']);
     const descriptor = registry.resolve('npm:@example/chan#create');
     expect(descriptor.kind).toBe('channel');
     expect(registry.getImplementation(descriptor.id)).toBe(fake.provider);

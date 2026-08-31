@@ -12,8 +12,8 @@ import {
   type CronJob,
   type CronJobAction,
   type CronJobUpdateInput,
-  MIN_CRON_INTERVAL_MS,
 } from './store.js';
+import { validateCronSchedule } from './cron-validation.js';
 import type {
   CronCreateRequest,
   CronUpdateRequest,
@@ -55,9 +55,12 @@ export class SchedulerService {
 
   async start(): Promise<void> {
     if (this.running) return;
+    // `assertCurrent` already validated every persisted job: it runs the same
+    // schedule rules this service would, and the store's own parser rejects an
+    // empty action prompt before a job is ever handed back. A third pass here
+    // could only re-derive the same verdict.
     await this.store.assertCurrent();
     const jobs = await this.store.list();
-    for (const job of jobs) this.validatePersistedJob(job);
     // Reconcile durable state for every job BEFORE arming any timer, so a
     // mid-reconcile store I/O failure leaves the scheduler fully un-started
     // (running stays false, no timers armed) rather than partially live.
@@ -343,11 +346,6 @@ export class SchedulerService {
     this.arm(updated);
   }
 
-  private validatePersistedJob(job: CronJob): void {
-    validateCron(job.cron, job.tz);
-    validateAction(job.action);
-  }
-
   private normalizeCreate(input: CronCreateRequest): {
     title?: string;
     cron: string;
@@ -359,9 +357,8 @@ export class SchedulerService {
     const action = asRequestValidation(() => {
       const normalized = normalizeAction(input.prompt, input.action);
       assertTitle(input.title);
-      validateCron(input.cron, tz);
+      validateCron(input.cron, tz, input.recurring ?? true);
       validateAction(normalized);
-      assertMinimumInterval(input.cron, tz, input.recurring ?? true);
       return normalized;
     });
     return {
@@ -388,9 +385,8 @@ export class SchedulerService {
             ? { ...current.action, prompt: input.prompt }
             : current.action;
       assertTitle(input.title);
-      validateCron(cron, tz);
+      validateCron(cron, tz, recurring);
       validateAction(normalized);
-      assertMinimumInterval(cron, tz, recurring);
       return normalized;
     });
     return {
@@ -476,28 +472,15 @@ function assertTitle(title: string | null | undefined): void {
   }
 }
 
-function validateCron(pattern: string, tz: string): void {
-  if (pattern.trim().split(/\s+/).length !== 5) {
-    throw new RuleViolation('cron must be a standard 5-field expression');
-  }
-  validateTimeZone(tz);
-  if (parseCron(pattern, tz).nextRun(new Date()) === null) {
-    throw new RuleViolation('cron has no future run');
-  }
-}
-
-function assertMinimumInterval(
-  pattern: string,
-  tz: string,
-  recurring: boolean,
-): void {
-  if (!recurring) return;
-  const runs = parseCron(pattern, tz).nextRuns(2, new Date());
-  if (runs.length < 2) return;
-  const gap = runs[1]!.getTime() - runs[0]!.getTime();
-  if (gap < MIN_CRON_INTERVAL_MS) {
-    throw new RuleViolation('cron interval must be at least one minute');
-  }
+/**
+ * Check a caller-supplied schedule. The rules live in the scheduler's one
+ * validator; this names the verdict for the command path — a break is the
+ * caller's mistake, so it is a {@link RuleViolation} they can act on.
+ */
+function validateCron(pattern: string, tz: string, recurring: boolean): void {
+  validateCronSchedule({ cron: pattern, tz, recurring }, (message) => {
+    throw new RuleViolation(message);
+  });
 }
 
 function nextRunAfter(pattern: string, tz: string, afterMs: number): number | null {
@@ -506,45 +489,16 @@ function nextRunAfter(pattern: string, tz: string, afterMs: number): number | nu
 }
 
 /**
- * Build the cron for a pattern that is still being validated.
- *
- * The library reports an unparseable pattern by throwing, so this one call is
- * where a throw *means* the pattern is invalid. Named on its own so that single
- * library call — and nothing else on the validation path — is read as a broken
- * rule; scheduling a job whose pattern already passed keeps using
- * {@link cronFor}, where a throw would be a real failure.
+ * Build the cron for a pattern that has already passed validation, so a throw
+ * here would be a real failure rather than a broken rule. Parsing a pattern
+ * that has *not* been validated yet belongs to `./cron-validation.ts`.
  */
-function parseCron(pattern: string, tz: string): Cron {
-  try {
-    return cronFor(pattern, tz);
-  } catch {
-    // A broken rule is stated in the scheduler's own words: the library's
-    // wording is its own vocabulary, and a caller reading it would be told
-    // about a parser it never chose instead of about the field it sent.
-    throw new RuleViolation(
-      `cron '${pattern}' is not a valid 5-field expression`,
-    );
-  }
-}
-
 function cronFor(pattern: string, tz: string): Cron {
   return new Cron(pattern, {
     timezone: tz,
     mode: '5-part',
     paused: true,
   });
-}
-
-function validateTimeZone(tz: string): void {
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: tz }).format(new Date());
-  } catch (error) {
-    // `Intl` reports an unknown zone as a `RangeError` and nothing else here
-    // does, so that one type is the rule signal; any other failure is the
-    // platform's, not the caller's.
-    if (!(error instanceof RangeError)) throw error;
-    throw new RuleViolation(`invalid timezone '${tz}'`);
-  }
 }
 
 function localTimeZone(): string {

@@ -2,9 +2,9 @@
 
 - **Status:** Accepted
 - **Date:** 2026-06-09
-- **Affects:** the runtime turn contract
-  [`/packages/dreamux-types/src/turn.ts`](/packages/dreamux-types/src/turn.ts)
-  (since #209 the contract lives in `@excitedjs/dreamux-types`, not core),
+- **Affects:** the runtime turn contract `turn.ts`
+  (since #209 the contract lived in `@excitedjs/dreamux-types`, not core; the
+  file was deleted in the #350 follow-up cleanup — see the note below),
   both builtins' `channelInput`, the Feishu channel message layer
   [`/packages/channel/feishu-channel/src/feishu-message.ts`](/packages/channel/feishu-channel/src/feishu-message.ts),
   and the no-leak boundary in
@@ -60,3 +60,27 @@ layer (passed as `source` data) — neither builtin nor `turn.ts` hardcodes it.
   render `attachments` differently without a contract change.
 - This is an in-process contract change only — no persisted file format, so no
   changelog/rebuild entry (the 0.x fail-loud policy does not apply).
+
+## Since This Was Recorded (2026-08-31)
+
+The vehicles named above are gone. `InboundTurnInput` / `InboundAttachment` and
+the shared `renderChannelInput` / `renderChannelBlock` pre-renderers were deleted
+in the #350 follow-up cleanup. What disappeared is the *structured* turn contract
+a runtime used to receive and destructure; the Agent Runtime seam now carries
+text alone.
+
+- **The routing/display split still binds, in its original form.** A Channel
+  still emits opaque `attrs` plus a faithful `body`, and routing ids —
+  `chat_id`, `sender_id`, `message_id` — still reach a model, rendered as
+  attribute text inside the provenance envelope exactly as this record decided.
+  What a runtime must never do is receive them as structured fields or branch,
+  route, or reply-target on them; reply targeting stays a channel-layer concern.
+- **The assembly locus moved.** Core, not each runtime, now renders the one
+  provenance envelope every runtime reads:
+  [`/packages/dreamux/src/service/channel-submission.ts`](/packages/dreamux/src/service/channel-submission.ts)
+  and
+  [`/packages/dreamux/src/service/teammate-service/submission.ts`](/packages/dreamux/src/service/teammate-service/submission.ts).
+  The current behavior is owned by
+  [`channel-routing-and-binding`](../domains/channel-routing-and-binding.md);
+  this record is kept for the *why* of the routing/display split, not as a
+  description of where the rendering happens today.

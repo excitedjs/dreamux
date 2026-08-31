@@ -8,8 +8,8 @@
  *   - no spawn lock / borrow lock (Dispatcher is the single owner)
  *   - lifecycle bound to CodexRuntime, not a CLI invocation
  *
- * Issue #2 §"实现陷阱": codex CLI is a node wrapper that spawns the rust
- * binary as a child; both land in the same process group. Reap must
+ * Issue #2 "implementation pitfalls": codex CLI is a node wrapper that spawns
+ * the rust binary as a child; both land in the same process group. Reap must
  * SIGKILL the whole group, not just the leader, or the rust process leaks.
  */
 

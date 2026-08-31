@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: creating a Feishu channel session without an explicit state root now fails instead of falling back to the process working directory. Previously an omitted `state_root` silently wrote the session's durable routing state — bindings, spaces, dispatcher access — into whatever directory the process happened to start in, a silent-data-corruption footgun that surfaced only later as state that had disappeared. `createSession` now throws immediately with a message naming the requirement. The published context type still marks `state_root` optional, so this is a runtime-behavior break rather than a type break. Dreamux hosts always inject a per-dispatcher state root and are unaffected; an embedder that relied on the implicit fallback must now provide `state_root` explicitly. No config, state, or path shape changed and no rebuild is required.",
+      "type": "major",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

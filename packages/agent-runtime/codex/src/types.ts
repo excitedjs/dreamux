@@ -4,7 +4,7 @@
  * The full schema lives in the codex repo (ts-rs generated); we hand-curate
  * the shapes we actually consume / send. This avoids vendoring the whole
  * codex-protocol package — at the cost of a CI drift gate that should be
- * added in a follow-up (see issue #2 §"Codex 协议处理").
+ * added in a follow-up (see issue #2 "Codex protocol handling").
  */
 
 export interface UserInputText {
