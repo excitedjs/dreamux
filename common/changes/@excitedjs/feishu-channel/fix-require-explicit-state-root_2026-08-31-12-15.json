@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Refuse to create a Feishu channel session without an explicit state root. The provider previously fell back to `.` when the host supplied no `state_root`, which meant a mis-wired host got a working session that wrote its durable routing state — bindings, spaces, dispatcher access — into whatever directory the process started in, with the mistake surfacing only later as state that had disappeared. A missing or empty state root now fails immediately with a message naming the requirement. No impact on the normal Dreamux path, which always injects a per-dispatcher state root; only an embedder that never supplied one is affected, and that case was already broken. No config, state, or path shape changed and no rebuild is required.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}
