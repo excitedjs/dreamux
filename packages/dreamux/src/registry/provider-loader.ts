@@ -254,34 +254,6 @@ async function defaultImportModule(
   return import(packageName) as Promise<ProviderModule>;
 }
 
-/**
- * Shared structural check for `provider.descriptor`: present, correct kind,
- * seed id, and a ref matching the requested ref.
- */
-export function assertProviderDescriptorShape(
-  descriptor: unknown,
-  expectedKind: ProviderKind,
-  context: ProviderContractContext,
-): asserts descriptor is ProviderDescriptor {
-  if (descriptor === undefined) {
-    context.fail('provider.descriptor is required');
-  }
-  const candidate = descriptor as Partial<ProviderDescriptor>;
-  if (candidate.kind !== expectedKind) {
-    context.fail(
-      `provider.descriptor.kind must be ${JSON.stringify(expectedKind)} (got ${JSON.stringify(candidate.kind)})`,
-    );
-  }
-  if (candidate.id !== context.descriptor.id) {
-    context.fail(
-      `provider.descriptor.id must be ${JSON.stringify(context.descriptor.id)}`,
-    );
-  }
-  if (candidate.ref?.raw !== context.ref) {
-    context.fail(`provider.descriptor.ref must be ${JSON.stringify(context.ref)}`);
-  }
-}
-
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
