@@ -1,7 +1,8 @@
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, writeFile } from 'node:fs/promises';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import ts from 'typescript';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { TeamClosing } from '../src/service/team-service/closing.js';
@@ -21,6 +22,14 @@ import {
   newWorktreeManager,
   teamLeaderDissolve,
 } from './helpers/dissolve-harness.js';
+import {
+  calledNames,
+  calleeName,
+  classMethod,
+  collect,
+  enclosingMemberName,
+  parseSource,
+} from './helpers/source-structure.js';
 
 /**
  * COVERAGE CELL D (team-dissolve): the submission contract dissolve makes to
@@ -162,7 +171,7 @@ describe('the preflight ordering TeamClosing owns per caller kind', () => {
 });
 
 describe('no idle-drain machinery in the dissolve path', () => {
-  it('no file in the dissolve path — TeamClosing, TeamService, member close, or worktree reclaim — ever references waitIdle', async () => {
+  it('no file in the dissolve path — TeamClosing, TeamService, member close, or worktree reclaim — ever calls an idle-drain', async () => {
     const targets = [
       new URL('../src/service/team-service/closing.ts', import.meta.url),
       new URL('../src/service/team-service/index.ts', import.meta.url),
@@ -170,43 +179,44 @@ describe('no idle-drain machinery in the dissolve path', () => {
       new URL('../src/service/team-collection/worktree-cleanup.ts', import.meta.url),
     ];
     for (const target of targets) {
-      const text = await readFile(target, 'utf8');
       // Dissolve is a stop-and-reclaim, never a drain: this absence is the
       // contract, not an incidental fact about the current implementation.
-      expect(text).not.toMatch(/\bwaitIdle\b/);
-      expect(text).not.toMatch(/\bisIdle\b/);
+      // Asserted over the parsed call graph of each file, so a mention in a
+      // comment or a doc string is correctly *not* a violation, and a renamed
+      // or reformatted call still is.
+      const called = calledNames(await parseSource(target));
+      expect(called).not.toContain('waitIdle');
+      expect(called).not.toContain('waitForIdle');
+      expect(called).not.toContain('isIdle');
     }
   });
 });
 
 describe('one submission capability: the Dispatcher-facing dissolve surface has no second path', () => {
-  it('dissolveTeam and dissolveTeamForLeader both route through the same private submitDissolve, which itself is the only call site that invokes .dissolve(', async () => {
-    const text = await readFile(
+  it('both dissolve entry points call submitDissolve, and submitDissolve is the only member that reaches a Team\'s own dissolve', async () => {
+    // Structural, not textual: `DispatcherService` needs a full config,
+    // registry, catalog and admin socket to construct, so the "exactly one
+    // admission path" claim is checked against the parsed class rather than a
+    // window of its source text.
+    const source = await parseSource(
       new URL('../src/service/dispatcher-service/index.ts', import.meta.url),
-      'utf8',
     );
 
-    const sliceBody = (marker: string): string => {
-      const start = text.indexOf(marker);
-      expect(start).toBeGreaterThan(-1);
-      // Each of these members is short; the next blank-line-preceded closing
-      // brace at column 2 ends it. A generous fixed window is simpler and
-      // just as precise for a body this short.
-      return text.slice(start, start + 400);
-    };
-
-    expect(sliceBody('dissolveTeam(input: TeamDissolveInput)')).toMatch(
-      /this\.submitDissolve\(/,
-    );
-    expect(sliceBody('dissolveTeamForLeader(input:')).toMatch(
-      /this\.submitDissolve\(/,
-    );
+    expect(calledNames(classMethod(source, 'dissolveTeam')))
+      .toContain('submitDissolve');
+    expect(calledNames(classMethod(source, 'dissolveTeamForLeader')))
+      .toContain('submitDissolve');
 
     // The one place that actually calls the Team's own `.dissolve(...)` is
     // `submitDissolve` itself — there is no second, parallel admission path
-    // that reaches a Team's dissolve without going through it.
-    const dissolveCallSites = text.match(/\)\.dissolve\(input\)/g) ?? [];
-    expect(dissolveCallSites).toHaveLength(1);
+    // that reaches a Team's dissolve without going through it. The scan starts
+    // from every `dissolve(...)` call in the file, not from the class's
+    // methods, so a call written in a bare function or an arrow property is
+    // caught too.
+    const dissolveCallers = collect(source, ts.isCallExpression)
+      .filter((call) => calleeName(call) === 'dissolve')
+      .map(enclosingMemberName);
+    expect(dissolveCallers).toEqual(['submitDissolve']);
   });
 });
 

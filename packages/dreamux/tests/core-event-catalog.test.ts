@@ -14,14 +14,20 @@
  * catalog.
  */
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import ts from 'typescript';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
+  AgentRuntimeActivitySink,
+  AgentRuntimeProvider,
   ChannelCoreEvent,
+  DreamuxLogger,
+  RuntimeActivityEvent,
+  RuntimeSubmission,
   TeamStateTeammateSummary,
+  TeammateRole,
 } from '@excitedjs/dreamux-types';
 
 import { DispatcherCoreEventBus } from '../src/service/dispatcher-core-events/index.js';
@@ -37,6 +43,12 @@ import {
   AgentEntityCollectionStore,
 } from '../src/service/agent-entity/identity-store.js';
 import { AgentRuntimeStateStore } from '../src/service/agent-entity/runtime-state.js';
+import { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
+import type { DreamuxConfig } from '../src/config/config.js';
+import { ProviderRegistry } from '../src/registry/registry.js';
+import { parseProviderRef } from '../src/registry/provider-ref.js';
+import { AdmissionLedger } from '../src/service/teammate-service/admission-ledger.js';
+import { TeammateRuntimeOwner } from '../src/service/teammate-service/runtime-owner.js';
 import {
   createCapturingLogger,
   createCapturingPublisher,
@@ -46,6 +58,12 @@ import {
   makeTempDir,
   removeTempDir,
 } from './helpers/event-harness.js';
+import {
+  calleeName,
+  classMethod,
+  collect,
+  parseSource,
+} from './helpers/source-structure.js';
 
 const DISPATCHER_ID = 'dispatcher-fixture';
 
@@ -554,26 +572,34 @@ describe('teammate.state covers every Agent entity kind, with role a runtime pro
   });
 
   it('the Dispatcher and its dispatcher-scoped TeamMates are wired to the real publisher with role read from team_id, not asserted', async () => {
-    // `DispatcherService` is too heavy to construct here (full config,
-    // registry, catalog, admin socket...), so this anchors to the actual
-    // `dispatcher-service/index.ts` source instead of re-deriving the event
-    // shape from a local fixture (which would only prove the test's own
-    // construction, not production behavior).
-    const dispatcherServiceSource = await readFile(
+    // `DispatcherService` needs a full config, registry, catalog and admin
+    // socket to construct, so this claim is checked against the parsed class
+    // rather than re-derived from a local fixture (which would only prove the
+    // test's own construction). It is structural, not textual: every assertion
+    // below reads a node of the real AST, so a reformat or a rename of an
+    // unrelated neighbour cannot make it pass or fail.
+    const source = await parseSource(
       new URL('../src/service/dispatcher-service/index.ts', import.meta.url),
-      'utf8',
     );
 
     // Both onPersisted wirings exist, and use exactly the two roles a
     // dispatcher-scoped Agent (the dispatcher root itself, or one of its
     // TeamMates) can ever be: never 'team_leader', which only a Team-scoped
     // identity can carry.
-    expect(dispatcherServiceSource).toContain(
-      "onPersisted: (identity) => this.publishAgentState(identity, 'dispatcher')",
-    );
-    expect(dispatcherServiceSource).toContain(
-      "onPersisted: (identity) => this.publishAgentState(identity, 'teammate')",
-    );
+    const publishedRoles = collect(source, ts.isPropertyAssignment)
+      .filter(
+        (property) =>
+          ts.isIdentifier(property.name) && property.name.text === 'onPersisted',
+      )
+      .flatMap((property) => collect(property.initializer, ts.isCallExpression))
+      .filter((call) => calleeName(call) === 'publishAgentState')
+      .map((call) => call.arguments[1])
+      .map((argument) =>
+        argument !== undefined && ts.isStringLiteralLike(argument)
+          ? argument.text
+          : '?',
+      );
+    expect(publishedRoles.sort()).toEqual(['dispatcher', 'teammate']);
 
     // The single publisher method both wirings funnel through: it builds
     // `teammate.state` reading `team_name` off the identity's own `team_id`
@@ -582,23 +608,60 @@ describe('teammate.state covers every Agent entity kind, with role a runtime pro
     // parameter is typed to exclude 'team_leader' entirely, which is the
     // compile-time half of "a Dispatcher/dispatcher TeamMate never reports as
     // a team_leader".
-    const methodStart = dispatcherServiceSource.indexOf('private publishAgentState(');
-    expect(methodStart).toBeGreaterThan(-1);
-    const methodBody = dispatcherServiceSource.slice(methodStart, methodStart + 600);
-    expect(methodBody).toContain("role: 'dispatcher' | 'teammate'");
-    expect(methodBody).toContain("kind: 'teammate.state'");
-    expect(methodBody).toContain('team_name: identity.team_id');
+    const publisher = classMethod(source, 'publishAgentState');
+    const roleParameter = publisher.parameters.find(
+      (parameter) =>
+        ts.isIdentifier(parameter.name) && parameter.name.text === 'role',
+    );
+    const roleType = roleParameter?.type;
+    expect(roleType !== undefined && ts.isUnionTypeNode(roleType)).toBe(true);
+    expect(
+      (roleType as ts.UnionTypeNode).types
+        .map((member) =>
+          ts.isLiteralTypeNode(member) && ts.isStringLiteralLike(member.literal)
+            ? member.literal.text
+            : '?',
+        )
+        .sort(),
+    ).toEqual(['dispatcher', 'teammate']);
+
+    const published = Object.fromEntries(
+      collect(publisher, ts.isPropertyAssignment)
+        .filter((property) => ts.isIdentifier(property.name))
+        .map((property) => [
+          (property.name as ts.Identifier).text,
+          property.initializer.getText(source),
+        ]),
+    );
+    expect(published['kind']).toBe("'teammate.state'");
+    expect(published['team_name']).toBe('identity.team_id');
   });
 
-  it('the TeammateRole vocabulary excludes the deleted team_member kind (issue #63 deleted surface)', async () => {
-    const teammateTypesSource = await readFile(
-      new URL('../../dreamux-types/src/teammate.ts', import.meta.url),
-      'utf8',
-    );
-    expect(teammateTypesSource).not.toContain('team_member');
-    expect(teammateTypesSource).toMatch(
-      /TeammateRole = 'dispatcher' \| 'teammate' \| 'team_leader'/,
-    );
+  it('the TeammateRole vocabulary is exactly the three live roles — the deleted team_member kind is not assignable (issue #63 deleted surface)', () => {
+    const live: TeammateRole[] = ['dispatcher', 'teammate', 'team_leader'];
+
+    // Compile-time exhaustiveness: the `never` assignment only type-checks
+    // while the union has no fourth member, so adding one fails the build
+    // rather than this assertion.
+    const name = (role: TeammateRole): string => {
+      switch (role) {
+        case 'dispatcher':
+          return 'dispatcher';
+        case 'teammate':
+          return 'teammate';
+        case 'team_leader':
+          return 'team_leader';
+        default: {
+          const unreachable: never = role;
+          return unreachable;
+        }
+      }
+    };
+    expect(live.map(name)).toEqual(['dispatcher', 'teammate', 'team_leader']);
+
+    // @ts-expect-error 'team_member' was deleted from the role vocabulary.
+    const deleted: TeammateRole = 'team_member';
+    expect(live).not.toContain(deleted);
   });
 });
 
@@ -824,24 +887,144 @@ describe('activity from a revoked runtime generation can never reach a replaceme
     }
   });
 
-  it('TeammateRuntimeOwner forwards activity to Core only after checking that same lease, fail-open on rejection', async () => {
-    // `generationActivitySink` is private and reachable only through a full
-    // provider-backed runtime start, which is out of this cell's scope; the
-    // ownership of the gate (checked before forwarding, never after) is
-    // exactly what a regression here would silently remove, so it is the
-    // absence/ordering this guard proves.
-    const source = await readFile(
-      new URL('../src/service/teammate-service/runtime-owner.ts', import.meta.url),
-      'utf8',
-    );
-    const sinkStart = source.indexOf('private generationActivitySink');
-    expect(sinkStart).toBeGreaterThan(-1);
-    const sinkBody = source.slice(sinkStart, source.indexOf('private resolveLaunch'));
-    const guardIndex = sinkBody.indexOf('lease.isCurrent()');
-    const logIndex = sinkBody.indexOf('dropped Agent Runtime activity from a revoked runtime generation');
-    const forwardIndex = sinkBody.indexOf('this.callbacks.activitySink(event)');
-    expect(guardIndex).toBeGreaterThan(-1);
-    expect(logIndex).toBeGreaterThan(guardIndex);
-    expect(forwardIndex).toBeGreaterThan(logIndex);
+  it('TeammateRuntimeOwner forwards activity to Core only while that lease is current, and drops it fail-open once revoked', async () => {
+    const dir = await makeTempDir('runtime-generation-sink');
+    try {
+      const h = await bootRuntimeOwner(dir);
+
+      // The sink the provider was handed is the only way live activity can
+      // reach Core; it is generation-scoped by construction.
+      await h.owner.ensureStarted();
+      const sink = h.providerActivitySink();
+      sink(activityEvent('first'));
+      expect(h.forwarded.map((event) => event.activity.id)).toEqual(['first']);
+
+      // A replacement runtime opens the next generation, revoking this one.
+      h.state.leaseRuntimeGeneration();
+      sink(activityEvent('after-revocation'));
+
+      // The gate is checked *before* forwarding: nothing from the revoked
+      // generation reaches Core's conversation stream, and the drop is only
+      // logged.
+      expect(h.forwarded.map((event) => event.activity.id)).toEqual(['first']);
+      expect(
+        h.debugMessages.some((message) =>
+          message.includes('revoked runtime generation'),
+        ),
+      ).toBe(true);
+      // Fail-open by contract: a stale write is never raised back at the
+      // provider that made it.
+      expect(() => sink(activityEvent('again'))).not.toThrow();
+
+      await h.owner.stopRuntime();
+    } finally {
+      await removeTempDir(dir);
+    }
   });
 });
+
+function activityEvent(id: string): RuntimeActivityEvent {
+  return {
+    submission: Object.freeze({
+      settled: new Promise<never>(() => undefined),
+    }) as RuntimeSubmission,
+    activity: {
+      kind: 'assistant.message',
+      id,
+      text: 'hello',
+      truncated: false,
+    },
+    occurredAt: Date.now(),
+  };
+}
+
+/**
+ * A real {@link TeammateRuntimeOwner} over a fake Agent Runtime provider.
+ *
+ * Only the provider is fake — the identity store, the runtime-state store, and
+ * the generation lease are the production classes, because the contract under
+ * test is exactly how the owner scopes activity to a lease those classes issue.
+ */
+async function bootRuntimeOwner(dir: string): Promise<{
+  owner: TeammateRuntimeOwner;
+  state: AgentRuntimeStateStore;
+  forwarded: RuntimeActivityEvent[];
+  debugMessages: string[];
+  providerActivitySink: () => AgentRuntimeActivitySink;
+}> {
+  const store = makeIdentityStore({ dir });
+  const identity = await store.create(
+    makeIdentityCreateInput({ name: 'scout', status: 'running' }),
+  );
+  const state = new AgentRuntimeStateStore(store, identity);
+
+  let captured: AgentRuntimeActivitySink | null = null;
+  const provider: AgentRuntimeProvider<unknown> = {
+    getCapabilities: () => ({ tags: [] }),
+    readRecentActivity: async () => ({ records: [], truncated: false }),
+    createRuntime: async (context) => {
+      captured = context.activity ?? null;
+      return {
+        start: async () => ({ continuity: 'fresh' as const }),
+        submit: () => {
+          throw new Error('this fixture never submits');
+        },
+        stop: async () => undefined,
+      };
+    },
+  };
+  const registry = new ProviderRegistry();
+  const descriptor = {
+    id: 'npm:@example/rt#create',
+    kind: 'agentRuntime' as const,
+    ref: parseProviderRef('npm:@example/rt#create'),
+  };
+  registry.register(descriptor);
+  registry.registerImplementation(descriptor.id, provider);
+
+  const debugMessages: string[] = [];
+  const log = {
+    error: () => {},
+    warn: () => {},
+    info: () => {},
+    trace: () => {},
+    debug: (_fields: unknown, message?: string) => {
+      debugMessages.push(message ?? '');
+    },
+  } as unknown as DreamuxLogger;
+
+  const forwarded: RuntimeActivityEvent[] = [];
+  const owner = new TeammateRuntimeOwner(
+    {
+      config: {
+        agents: { [identity.agent_runtime]: { provider: descriptor.id, config: {} } },
+        dispatchers: [],
+      } as unknown as DreamuxConfig,
+      agentRuntimeProviders: new AgentRuntimeProviderCatalog({ registry }),
+      identities: store,
+      admissions: new AdmissionLedger(),
+      log,
+    },
+    DISPATCHER_ID,
+    state,
+    { runtimeId: 'runtime-1', role: 'teammate', ownsWorktreeOnClose: false },
+    {
+      isActive: () => true,
+      markClosing: () => undefined,
+      activitySink: (event) => forwarded.push(event),
+    },
+  );
+
+  return {
+    owner,
+    state,
+    forwarded,
+    debugMessages,
+    providerActivitySink: () => {
+      if (captured === null) {
+        throw new Error('the provider was never handed an activity sink');
+      }
+      return captured;
+    },
+  };
+}

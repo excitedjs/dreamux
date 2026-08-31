@@ -623,6 +623,12 @@ architecture merely because it is possible.
   gating, with one in-flight lookup shared by concurrent messages. Scope is the
   Feishu transport implementation, focused tests, and its Rush change note;
   the separate empty-TeamLeader recovery defect is explicitly excluded.
+- Post-merge COT test-coverage correction: Approved by the operator on
+  2026-08-31 for a new PR branched from the merged `next` head. Scope is the
+  test-related portion of issue #352: restore direct behavior-level coverage
+  for the current Feishu COT adapter/session contracts and replace the accepted
+  source-text mirror assertions with behavior-level or proper static-boundary
+  coverage. The canonical-KB portion of #352 is not part of this correction.
 
 ## Delivery
 

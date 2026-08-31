@@ -21,7 +21,7 @@
  *     composed; it is reached only from the Dispatcher-agent and TeamLeader
  *     delegate assemblies, never from the ordinary TeamMate one.
  */
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -42,6 +42,11 @@ import {
 } from '../src/channel/external-channel-provider.js';
 import { channelMcpDelegates } from '../src/service/channel-service/mcp-delegates.js';
 import { ChannelService } from '../src/service/channel-service/index.js';
+import type { DispatcherService } from '../src/service/dispatcher-service/index.js';
+import {
+  dispatcherAgentMcpDelegates,
+  teamLeaderMcpDelegates,
+} from '../src/service/dispatcher-service/mcp-delegates.js';
 import { ProviderRegistry } from '../src/registry/registry.js';
 import { parseProviderRef } from '../src/registry/provider-ref.js';
 import { dispatcherCacheDir, dispatcherDir } from '../src/platform/paths.js';
@@ -50,6 +55,7 @@ import {
   fakeChannelToolRegistration,
   type FakeChannelProviderResult,
 } from './helpers/fake-channel-provider.js';
+import { moduleSpecifiers, parseSource } from './helpers/source-structure.js';
 
 function silentLogger(): DreamuxLogger {
   const noop = () => {};
@@ -404,21 +410,62 @@ describe('channelMcpDelegates (Channel MCP injection)', () => {
     expect(delegates).toHaveLength(0);
   });
 
-  it('is reached only from the Dispatcher-agent and TeamLeader delegate assemblies, never the ordinary TeamMate one', async () => {
+  it('puts a Channel MCP server into both role tool sets that exist — the Dispatcher Agent\'s and a TeamLeader\'s', async () => {
+    const { result } = mcpProviderWithCaller();
+    const catalog = catalogWith([{ ref: 'npm:@example/chan#create', provider: result.provider }]);
+    const channels = new ChannelService({
+      dispatcherId: 'flow',
+      config: dreamuxConfigWith('flow', [channelConfig('primary', 'npm:@example/chan#create')]),
+      channelProviders: catalog,
+      channelLoggerFactory: () => silentLogger(),
+    });
+    await channels.build();
+    // The role assemblies compose delegates lazily; none of them reaches the
+    // DispatcherService until a tool is actually called.
+    const input = {
+      dispatcherId: 'flow',
+      dispatcher: {} as unknown as DispatcherService,
+      channels,
+      channelProviders: catalog,
+    };
+
+    const dispatcherServers = dispatcherAgentMcpDelegates(input).map((d) => d.name);
+    const leaderServers = teamLeaderMcpDelegates({
+      ...input,
+      teamId: 'alpha',
+      leaderName: 'leader-alpha',
+    }).map((d) => d.name);
+
+    expect(dispatcherServers).toContain('channel-primary');
+    expect(leaderServers).toContain('channel-primary');
+    await channels.closeAll(silentLogger());
+  });
+
+  it('never reaches the ordinary TeamMate surface: that module has no dependency edge to it at all', async () => {
     // Architectural absence check: "ordinary TeamMates receive none" is proven
-    // by there being no call site at all in the TeamMate delegate assembly,
-    // not by a runtime flag a TeamMate-scoped call could theoretically flip.
-    const dispatcherAssembly = await readFile(
-      new URL('../src/service/dispatcher-service/mcp-delegates.ts', import.meta.url),
-      'utf8',
-    );
-    const teammateAssembly = await readFile(
+    // by there being no dependency edge at all from the TeamMate delegate to
+    // channel-service's caller-scoped MCP builder, not by a runtime flag a
+    // TeamMate-scoped call could theoretically flip. Read off the parsed
+    // import/export/dynamic-import graph, so a mention in prose is correctly
+    // not a violation and a renamed binding still is.
+    const teammateAssembly = await parseSource(
       new URL('../src/service/teammate-collection/mcp-delegate.ts', import.meta.url),
-      'utf8',
     );
-    expect(dispatcherAssembly).toMatch(/channelMcpDelegates\(/);
-    expect(dispatcherAssembly).toMatch(/dispatcherAgentMcpDelegates/);
-    expect(dispatcherAssembly).toMatch(/teamLeaderMcpDelegates/);
-    expect(teammateAssembly).not.toMatch(/channelMcpDelegates/);
+    const roleAssembly = await parseSource(
+      new URL('../src/service/dispatcher-service/mcp-delegates.ts', import.meta.url),
+    );
+
+    expect(moduleSpecifiers(teammateAssembly)).not.toContain(
+      '../channel-service/mcp-delegates.js',
+    );
+    expect(
+      moduleSpecifiers(teammateAssembly).some((specifier) =>
+        specifier.includes('channel-service'),
+      ),
+    ).toBe(false);
+    // And the one place that does depend on it is the role split itself.
+    expect(moduleSpecifiers(roleAssembly)).toContain(
+      '../channel-service/mcp-delegates.js',
+    );
   });
 });

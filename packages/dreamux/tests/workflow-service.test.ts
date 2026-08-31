@@ -18,6 +18,7 @@ import {
 } from '../src/platform/paths.js';
 import { WORKFLOW_AGENT_SYSTEM_PROMPT } from '../src/service/workflow-service/agent-policy.js';
 import { WorkflowService } from '../src/service/workflow-service/index.js';
+import type { WorkflowRunDeps } from '../src/service/workflow-service/run.js';
 import type { WorkflowRunRecord } from '../src/service/workflow-service/types.js';
 import type { LockedTeammate } from '../src/service/teammate-service/types.js';
 import {
@@ -34,6 +35,7 @@ import {
   waitUntil,
   type WorkflowRootState,
 } from './helpers/workflow-harness.js';
+import { moduleSpecifiers, parseDirectory } from './helpers/source-structure.js';
 
 let root: WorkflowRootState;
 
@@ -367,21 +369,21 @@ describe('owner-side exact-instance eviction', () => {
     });
   });
 
-  it('WorkflowRun itself never calls an eviction callback — eviction is the Collection/Service concern alone', async () => {
-    // Absence-is-the-contract: `WorkflowRunDeps` (run.ts) carries no evict/
-    // onSettled-shaped callback member, and nothing in the run's own
-    // orchestration files ever calls one — `run.ts`'s own doc comment states
-    // the boundary in prose ("the owner reads it to evict"), which this only
-    // checks for an actual call/field, not the word appearing in a comment.
-    // Only `WorkflowService` (index.ts) performs the exact-instance eviction.
-    const { readFile: read } = await import('node:fs/promises');
-    for (const file of ['run.ts', 'run-terminal.ts', 'run-support.ts', 'runner-process.ts']) {
-      const source = await read(
-        new URL(`../src/service/workflow-service/${file}`, import.meta.url),
-        'utf8',
-      );
-      expect(source).not.toMatch(/\bevict\w*\s*[(:]/i);
-    }
+  it('WorkflowRun is handed no eviction callback at all — eviction is the Service concern alone', () => {
+    // Absence-is-the-contract, checked where the contract actually lives: a run
+    // can only reach its owner through `WorkflowRunDeps`, so a callback that
+    // let it evict itself would have to be a member of that type. The
+    // `@ts-expect-error` lines fail the build the moment one is added, which is
+    // stronger than any text scan — and, unlike one, they cannot be tripped by
+    // the word appearing in a comment.
+    const deps = {} as WorkflowRunDeps;
+
+    // @ts-expect-error WorkflowRunDeps carries no eviction callback.
+    expect(deps.evict).toBeUndefined();
+    // @ts-expect-error WorkflowRunDeps carries no settlement callback either.
+    expect(deps.onSettled).toBeUndefined();
+    // @ts-expect-error nor a back-reference to the owning service.
+    expect(deps.service).toBeUndefined();
   });
 });
 
@@ -569,27 +571,68 @@ describe('team-scoped Workflow member creation: a narrow createLocked capability
     }
   });
 
-  it('never imports team-collection or team-service — the only path to Team ownership is the narrow capability it is handed', async () => {
-    const { readdir: list, readFile: read } = await import('node:fs/promises');
-    const dir = new URL('../src/service/workflow-service/', import.meta.url);
-    const entries = await list(dir);
-    for (const entry of entries) {
-      if (!entry.endsWith('.ts')) continue;
-      const source = await read(new URL(entry, dir), 'utf8');
-      expect(source).not.toMatch(/from ['"].*team-collection/);
-      expect(source).not.toMatch(/from ['"].*\/team-service/);
+  it('never depends on team-collection or team-service — the only path to Team ownership is the narrow capability it is handed', async () => {
+    // The whole static dependency edge set of every file in the module, read
+    // off the parsed import/export/dynamic-import nodes rather than matched in
+    // the file's text: a renamed binding, a re-export, or a lazy `import()`
+    // would all be a real edge, and a mention in prose is correctly not one.
+    const sources = await parseDirectory(
+      new URL('../src/service/workflow-service/', import.meta.url),
+    );
+    expect(sources.length).toBeGreaterThan(0);
+    for (const source of sources) {
+      for (const specifier of moduleSpecifiers(source)) {
+        expect(
+          specifier.includes('team-collection'),
+          `${source.fileName} must not depend on ${specifier}`,
+        ).toBe(false);
+        expect(
+          specifier.includes('/team-service'),
+          `${source.fileName} must not depend on ${specifier}`,
+        ).toBe(false);
+      }
     }
   });
 
   it('has no per-spawn Team-generation revalidation as a second lifecycle mechanism', async () => {
-    const { readdir: list, readFile: read } = await import('node:fs/promises');
-    const dir = new URL('../src/service/workflow-service/', import.meta.url);
-    const entries = await list(dir);
-    for (const entry of entries) {
-      if (!entry.endsWith('.ts')) continue;
-      const source = await read(new URL(entry, dir), 'utf8');
-      expect(source.toLowerCase()).not.toContain('generation');
+    // Three spawns through a capability surface that throws on any member
+    // other than `createLocked`. A Workflow that revalidated a Team generation
+    // — or any other Team lifecycle fact — per spawn would have to reach some
+    // other member of that dependency and would fail here, instead of quietly
+    // becoming a second lifecycle mechanism beside the lock it already holds.
+    const runnerFactory = fakeWorkflowRunnerFactory();
+    const delivery = fakeCompletionDelivery();
+    const rawFactory = fakeTeammateFactory(
+      (input) => controllableLockedTeammate(input.name).handle,
+    );
+    const service = new WorkflowService({
+      ...SCOPE,
+      teamId: 'team-1',
+      callerKind: 'team_leader',
+      teammates: onlyCreateLockedSurface(rawFactory),
+      completionDelivery: delivery.policy,
+      completionInitiator: () => fakeCompletionInitiator(),
+      log: silentLog(),
+      createRunner: runnerFactory.factory,
+      generateRunId: fixedRunIds('run-a'),
+    });
+    await service.start();
+    await service.run({ script: 'noop' });
+    const runner = runnerFactory.runners[0]!;
+
+    for (let index = 0; index < 3; index += 1) {
+      runner.emit({
+        type: 'agent_start',
+        index,
+        prompt: `step ${index}`,
+        options: {},
+      });
     }
+    await waitUntil(() => rawFactory.calls.length >= 3);
+
+    // Exactly one capability call per spawn, and no revalidation call between
+    // them: the lock a spawn already holds is the whole lifecycle mechanism.
+    expect(rawFactory.calls).toHaveLength(3);
   });
 });
 
