@@ -2,7 +2,7 @@
  * Codex app-server WebSocket JSON-RPC client.
  *
  * Adapted from claudemux's `plugins/claudemux/core/src/engines/codex/rpc.ts`
- * (excitedjs/dreamux#2 §"关键代码复用结论"). Two differences:
+ * (excitedjs/dreamux#2 "key code-reuse conclusions"). Two differences:
  *   - uses the public `ws` npm package instead of the vendored `#ws`;
  *   - replaces the `codex-protocol` import with the in-tree `./types.ts`.
  *
@@ -51,7 +51,7 @@ export class CodexWsClient {
     throw new Error(
       'codex sent a server-request but no handler is installed. ' +
         'Install one via setServerRequestHandler() before driving turns. ' +
-        'See issue #2 §"信任模型" — approval handlers must fail loudly, not return null.',
+        'See issue #2 "trust model" — approval handlers must fail loudly, not return null.',
     );
   };
   private nextId = 1;
@@ -112,7 +112,7 @@ export class CodexWsClient {
    * the response `error.message`.
    *
    * For dreamux MVP this should fail-fast on any approval request — see
-   * issue #2 §"信任模型" (approval-policy=never + fail-fast handler).
+   * issue #2 "trust model" (approval-policy=never + fail-fast handler).
    */
   setServerRequestHandler(handler: ServerRequestHandler): void {
     this.serverReqHandler = handler;

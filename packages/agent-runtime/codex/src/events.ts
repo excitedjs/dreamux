@@ -387,7 +387,7 @@ export async function runTurn(
 /**
  * Extract the final assistant message text from a collected turn.
  * Returns null if the turn had no assistant message — caller decides
- * what to surface to the user (see issue #2 §"开放问题 Q4").
+ * what to surface to the user (see issue #2 "open questions", Q4).
  */
 export function extractAssistantText(turn: CollectedTurn): string | null {
   const messages = turn.items.filter((it) => it.type === 'agentMessage');

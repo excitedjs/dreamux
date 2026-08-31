@@ -1,7 +1,7 @@
 /**
  * Parse `dispatchers.codex_args_json` into the CLI-arg array passed to
  * the codex app-server child, AND validate that the trusted-local
- * invariants from issue #2 §"信任模型" hold.
+ * invariants from issue #2 "trust model" hold.
  *
  * Canonical shape:
  *   {
@@ -22,8 +22,8 @@
  *   3. hardcoded fallbacks (`'never'`, `'workspace-write'`, `[]`)
  *
  * `approvalPolicy` not in the trusted-local allowlist fails-fast at startup
- * (issue #2 §"实现陷阱"): dispatcher refuses to come up if the policy may
- * request approval AND no approval handler is wired.
+ * (issue #2 "implementation pitfalls"): dispatcher refuses to come up if the
+ * policy may request approval AND no approval handler is wired.
  *
  * `sandboxMode` is similarly validated against the codex 0.134 enum so a
  * typo doesn't reach the daemon (where the only feedback is a fatal early
@@ -117,7 +117,7 @@ function validateCodexArgs(parsed: ParsedCodexArgs): ParsedCodexArgs {
     throw new Error(
       `dispatcher startup refused: approvalPolicy='${parsed.approvalPolicy}' may request approval, ` +
         `but the dreamux MVP only ships with a fail-fast approval handler ` +
-        `(issue #2 §"信任模型"). Configure approvalPolicy='never' or extend the trust model first.`,
+        `(issue #2 "trust model"). Configure approvalPolicy='never' or extend the trust model first.`,
     );
   }
   if (!ALLOWED_SANDBOX_MODES.has(parsed.sandboxMode)) {
