@@ -65,12 +65,16 @@ layer (passed as `source` data) — neither builtin nor `turn.ts` hardcodes it.
 
 The vehicles named above are gone. `InboundTurnInput` / `InboundAttachment` and
 the shared `renderChannelInput` / `renderChannelBlock` pre-renderers were deleted
-in the #350 follow-up cleanup, because no runtime-neutral layer pre-renders a
-turn any more.
+in the #350 follow-up cleanup. What disappeared is the *structured* turn contract
+a runtime used to receive and destructure; the Agent Runtime seam now carries
+text alone.
 
-- **The routing/display split still binds.** A Channel still emits opaque
-  `attrs` plus a faithful `body`, and no chat id, sender id, or message id
-  crosses into a runtime.
+- **The routing/display split still binds, in its original form.** A Channel
+  still emits opaque `attrs` plus a faithful `body`, and routing ids —
+  `chat_id`, `sender_id`, `message_id` — still reach a model, rendered as
+  attribute text inside the provenance envelope exactly as this record decided.
+  What a runtime must never do is receive them as structured fields or branch,
+  route, or reply-target on them; reply targeting stays a channel-layer concern.
 - **The assembly locus moved.** Core, not each runtime, now renders the one
   provenance envelope every runtime reads:
   [`/packages/dreamux/src/service/channel-submission.ts`](/packages/dreamux/src/service/channel-submission.ts)
