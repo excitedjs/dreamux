@@ -11,8 +11,14 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
-import { ValidationError } from '../../command/errors.js';
-import { optionalString, type CommandPayload } from '../../command/payload.js';
+import { ValidationError, throwCallerMistake } from '../../command/errors.js';
+import {
+  mustString,
+  optionalInteger,
+  optionalNonBlankString,
+  optionalString,
+  type CommandPayload,
+} from '../../command/payload.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { AgentNameRegistry } from '../agent-entity/identity-store.js';
 import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
@@ -26,6 +32,11 @@ import type {
 import type { SuffixGenerator } from '../name-allocator.js';
 import type { TeamMateWorktreeRequest } from '../teammate-collection/types.js';
 import type { WorktreeManager } from '../worktree/manager.js';
+import { RuleViolation } from '../../platform/errors.js';
+import {
+  clampTeamHistoryLimit,
+  decodeTeamCursor,
+} from './read-helpers.js';
 
 export interface TeamCollectionOptions {
   /** The dispatcher this collection belongs to (issue #233 ownership sinking). */
@@ -326,11 +337,73 @@ export function optionalTeamStatus(
 
 export function validateTeamId(id: string): string {
   if (!TEAM_ID_PATTERN.test(id)) {
-    throw new Error(
+    throw new RuleViolation(
       'Team id must be 1-64 ASCII letters, digits, dots, underscores, ' +
         `or dashes, starting with a letter or digit: ${id}`,
     );
   }
   assertNotReservedAgentName(id);
   return id;
+}
+
+/**
+ * Read a required `team_name`, in the Team's own word for it.
+ *
+ * The Team's own name rule decides it, on every surface that takes a name, and
+ * a name that breaks it is the caller's mistake rather than an unclassified
+ * failure raised deep in a lookup. {@link validateTeamId} speaks in its own
+ * words, so its sentence is kept and only its type is made the caller's.
+ */
+export function teamNameParam(params: CommandPayload, key: string): string {
+  return assertTeamName(mustString(params, key));
+}
+
+/** The same read where the field is optional; absent stays absent. */
+export function optionalTeamNameParam(
+  params: CommandPayload,
+  key: string,
+): string | null {
+  const value = optionalNonBlankString(params, key);
+  return value === null ? null : assertTeamName(value);
+}
+
+function assertTeamName(value: string): string {
+  try {
+    return validateTeamId(value);
+  } catch (error) {
+    throwCallerMistake(error);
+  }
+}
+
+/** The Team recovery search, as every surface asks it. */
+export function teamHistoryQuery(params: CommandPayload): TeamHistoryQuery {
+  // Validated here rather than deep in the record scan: a filter naming an
+  // impossible Team is the caller's mistake, not an unclassified failure.
+  const name = optionalTeamNameParam(params, 'team_name');
+  const status = optionalTeamStatus(params, 'status');
+  const repo = optionalString(params, 'repo');
+  const grep = optionalString(params, 'grep');
+  const since = optionalInteger(params, 'since');
+  const until = optionalInteger(params, 'until');
+  const limit = optionalInteger(params, 'limit');
+  const cursor = optionalString(params, 'cursor');
+  // The paging rules belong to the reader that applies them and are stated in
+  // its own words; asked here so a caller that sends an unusable page reads
+  // which rule it broke, instead of a failure the scan raises later.
+  try {
+    clampTeamHistoryLimit(limit ?? undefined);
+    if (cursor !== null) decodeTeamCursor(cursor);
+  } catch (error) {
+    throwCallerMistake(error);
+  }
+  return {
+    ...(name !== null ? { name } : {}),
+    ...(status !== null ? { status } : {}),
+    ...(repo !== null ? { repo } : {}),
+    ...(grep !== null ? { grep } : {}),
+    ...(since !== null ? { since } : {}),
+    ...(until !== null ? { until } : {}),
+    ...(limit !== null ? { limit } : {}),
+    ...(cursor !== null ? { cursor } : {}),
+  };
 }

@@ -8,15 +8,16 @@
  * model might have injected before re-applying the descriptor-bound scope,
  * because the target was a Command parameter. Here the target is not a
  * parameter at all, so there is nothing to strip and nothing to override.
+ *
+ * The request codecs are the scheduler's own and live in its `types.ts`, and the
+ * job projection lives beside the record it copies in `store.ts`; what stays
+ * here is this surface's advertised catalog and its tool names.
+ *
+ * Failures are thrown, not classified: a cron failure states its own reason and
+ * next step, and the admission boundary every delegate is reached through
+ * renders it.
  */
-import {
-  mustNonEmptyString,
-  mustString,
-  optionalBooleanField,
-  optionalNullableStringField,
-  optionalStringField,
-  type CommandPayload,
-} from '../../command/payload.js';
+import type { CommandPayload } from '../../command/payload.js';
 import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
 import {
   DESTRUCTIVE_ANNOTATIONS,
@@ -35,15 +36,17 @@ import type {
   McpDelegateResult,
   McpServerDelegate,
 } from '../mcp/types.js';
-import type { CronJob } from './store.js';
-import type { SchedulerCommands } from './types.js';
+import { cronJobResult, cronListResult } from './store.js';
+import {
+  cronCreateRequest,
+  cronJobIdParam,
+  cronUpdateRequest,
+  type SchedulerCommands,
+} from './types.js';
 
 export const CRON_MCP_SERVER_NAME = 'cron';
 
 const IDENTITY = { name: 'dreamux-cron', version: '0.4.0' };
-
-/** The only cron failure a model can act on is its own malformed request. */
-const PUBLIC_CODES = ['BAD_REQUEST'] as const;
 
 /**
  * Build the cron delegate for one owner.
@@ -61,8 +64,11 @@ export function createCronMcpDelegate(input: {
     describe(): McpDelegateDescription {
       return { identity: IDENTITY, tools };
     },
-    async call(call: McpDelegateCall): Promise<McpDelegateResult> {
-      return runDelegateTool([...PUBLIC_CODES], async () =>
+    call(call: McpDelegateCall): Promise<McpDelegateResult> {
+      // Resolving the owner is part of the call: a TeamLeader's scheduler lives
+      // with a Team that may already be gone, and that Team states the fact —
+      // missing or closed — in its own words.
+      return runDelegateTool(async () =>
         serve(await input.scheduler(), call),
       );
     },
@@ -76,49 +82,22 @@ async function serve(
   const args = call.arguments as CommandPayload;
   switch (call.name) {
     case 'cron_create':
-      return { structured: cronJobFields(await scheduler.create({
-        cron: mustString(args, 'cron'),
-        prompt: mustNonEmptyString(args, 'prompt'),
-        ...optionalStringField(args, 'title'),
-        ...optionalBooleanField(args, 'recurring'),
-        ...optionalStringField(args, 'tz'),
-      })) };
+      return {
+        structured: cronJobResult(await scheduler.create(cronCreateRequest(args))),
+      };
     case 'cron_update':
-      return { structured: cronJobFields(await scheduler.update({
-        id: mustString(args, 'id'),
-        ...optionalStringField(args, 'cron'),
-        ...optionalStringField(args, 'prompt'),
-        ...optionalNullableStringField(args, 'title'),
-        ...optionalBooleanField(args, 'recurring'),
-        ...optionalStringField(args, 'tz'),
-        ...optionalBooleanField(args, 'enabled'),
-      })) };
+      return {
+        structured: cronJobResult(await scheduler.update(cronUpdateRequest(args))),
+      };
     case 'cron_list':
-      return { structured: { jobs: (await scheduler.list()).jobs } };
+      return { structured: cronListResult(await scheduler.list()) };
     case 'cron_delete':
-      return { structured: await scheduler.delete(mustString(args, 'id')) };
+      return { structured: await scheduler.delete(cronJobIdParam(args)) };
     default:
       // Unreachable: Core admits a call only against this delegate's own frozen
       // catalog, so a name that is not one of the above never arrives here.
       throw new Error(`unknown cron tool '${call.name}'`);
   }
-}
-
-function cronJobFields(job: CronJob): Record<string, unknown> {
-  return {
-    id: job.id,
-    dispatcher_id: job.dispatcher_id,
-    ...(job.title !== undefined ? { title: job.title } : {}),
-    cron: job.cron,
-    tz: job.tz,
-    recurring: job.recurring,
-    action: job.action,
-    enabled: job.enabled,
-    created_at: job.created_at,
-    updated_at: job.updated_at,
-    next_run_at: job.next_run_at,
-    last_fired_at: job.last_fired_at,
-  };
 }
 
 function cronToolDescriptors(): McpToolDescriptor[] {

@@ -106,8 +106,24 @@ describe('adapter equivalence — one representative Command per namespace', () 
   });
 
   it('scheduler.cron.list: identical result via both adapters', async () => {
+    // A whole job, because both adapters now answer with the scheduler's own
+    // public projection of one: a partial stand-in would be a CronJob that is
+    // not one, and would prove nothing about either adapter.
+    const job = {
+      id: 'cron-1',
+      dispatcher_id: 'harness-d1',
+      cron: '17 3 * * *',
+      tz: 'UTC',
+      recurring: true,
+      action: { kind: 'prompt-agent', prompt: 'sweep' },
+      enabled: true,
+      created_at: 1,
+      updated_at: 2,
+      next_run_at: 3,
+      last_fired_at: null,
+    };
     const harness = createCommandHarness({
-      dispatcherOverrides: { scheduler: { list: async () => ({ jobs: [{ id: 'cron-1' }] }) } },
+      dispatcherOverrides: { scheduler: { list: async () => ({ jobs: [job] }) } },
     });
     admin = await startHarnessAdminSocket(harness);
     const lease = createHarnessChannelInvoker(harness);
@@ -117,7 +133,7 @@ describe('adapter equivalence — one representative Command per namespace', () 
 
     expect(viaAdmin.ok).toBe(true);
     expect((viaAdmin as { result: unknown }).result).toEqual(viaChannel);
-    expect((viaChannel as { jobs: unknown[] }).jobs).toEqual([{ id: 'cron-1' }]);
+    expect((viaChannel as { jobs: unknown[] }).jobs).toEqual([job]);
   });
 
   it('mcp.describe: identical result via both adapters, addressed by lease token rather than dispatcher_id', async () => {

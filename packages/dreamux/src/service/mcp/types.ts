@@ -61,11 +61,12 @@ export interface McpDelegateCall {
 /**
  * One settled tool call.
  *
- * `ok: false` is the delegate's own decision that this failure is safe and
- * useful for the model to read. Everything the delegate does not allowlist is
- * thrown instead, which fails the Command, is logged in full by Core, and
- * reaches the model as the fixed sanitized tool error. There is no third state:
- * a delegate never returns a private message.
+ * `ok: false` carries a message whose author already decided it is what the
+ * caller should read — an external Channel's own refusal, or the sentence the
+ * admission boundary rendered. A Core-owned delegate does not build one: it
+ * throws its failures, and the boundary every delegate is reached through turns
+ * them into this shape. There is no third state, and no message that is settled
+ * here but private.
  */
 export type McpDelegateResult =
   | {

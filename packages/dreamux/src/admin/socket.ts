@@ -24,7 +24,10 @@ import {
   DreamuxError,
   TransportError,
   ValidationError,
+  commandFailure,
+  type CommandFailure,
 } from '../command/errors.js';
+import { errorInfo } from '../platform/error-info.js';
 import type { AdminRequest, AdminResponse } from './protocol.js';
 
 export interface AdminSocketServer {
@@ -304,11 +307,7 @@ async function processLine(server: Server, sock: Socket, line: string): Promise<
     // A line that cannot be framed never reached a Command: this is the one
     // genuine transport failure this adapter owns.
     const error = new TransportError(err instanceof Error ? err.message : String(err));
-    write(sock, {
-      id: '?',
-      ok: false,
-      error: { code: error.code, message: error.message },
-    });
+    write(sock, { id: '?', ok: false, error: commandFailure(error) });
     return;
   }
 
@@ -317,14 +316,13 @@ async function processLine(server: Server, sock: Socket, line: string): Promise<
   try {
     ({ context, payload } = adminInvocation(req));
   } catch (err) {
-    const error =
-      err instanceof DreamuxError
-        ? err
-        : new ValidationError(err instanceof Error ? err.message : String(err));
+    // Envelope reading raises its own stated failures for everything a caller
+    // can fix. Anything else is this server's defect, not the caller's, and is
+    // reported as `INTERNAL` instead of being restated as a bad request.
     write(sock, {
       id: req.id,
       ok: false,
-      error: { code: error.code, message: error.message },
+      error: reportedFailure(server, req.method, err),
     });
     return;
   }
@@ -336,22 +334,36 @@ async function processLine(server: Server, sock: Socket, line: string): Promise<
     write(sock, { id: req.id, ok: true, result });
   } catch (err) {
     // A Dreamux failure already carries its own stable code; anything else is
-    // an unclassified implementation failure and is reported as such.
-    if (err instanceof DreamuxError) {
-      write(sock, {
-        id: req.id,
-        ok: false,
-        error: { code: err.code, message: err.message },
-      });
-      return;
-    }
-    const msg = err instanceof Error ? err.message : String(err);
+    // an unclassified implementation failure and is reported as `INTERNAL`
+    // under the message it already had.
     write(sock, {
       id: req.id,
       ok: false,
-      error: { code: 'INTERNAL', message: msg },
+      error: reportedFailure(server, req.method, err),
     });
   }
+}
+
+/**
+ * One failure on the wire, plus the ordinary log an operator reads.
+ *
+ * The envelope shape is decided once, in the Command layer, so this transport
+ * and the in-process Channel port answer identically. What this adds is the
+ * log: a failure Core never classified is written whole — stack included — to
+ * the server log, because the caller only ever receives its message.
+ */
+function reportedFailure(
+  server: Server,
+  method: string,
+  error: unknown,
+): CommandFailure {
+  if (!(error instanceof DreamuxError)) {
+    server.logger.error(
+      { method, err: errorInfo(error) },
+      'admin command failed',
+    );
+  }
+  return commandFailure(error);
 }
 
 /**

@@ -2,10 +2,20 @@ import { Buffer } from 'node:buffer';
 
 import type { AgentRuntimeStatus } from '@excitedjs/dreamux-types';
 
+import { RuleViolation, throwCallerMistake } from '../../command/errors.js';
+import {
+  mustString,
+  optionalBooleanField,
+  optionalInteger,
+  optionalNonBlankString,
+  optionalString,
+  type CommandPayload,
+} from '../../command/payload.js';
 import {
   validateTeamMateName,
   type AgentEntityHistoryQuery,
   type AgentEntityIdentity,
+  type AgentEntityLastQuery,
   type AgentEntityRecordRow,
   type AgentEntityRuntimeStatus,
 } from './types.js';
@@ -97,9 +107,41 @@ export function matchesRecordQuery(
 export function clampHistoryLimit(input: number | undefined): number {
   if (input === undefined) return 20;
   if (!Number.isInteger(input) || input < 1) {
-    throw new Error('history limit must be a positive integer');
+    throw new RuleViolation('history limit must be a positive integer');
   }
   return Math.min(input, 100);
+}
+
+/**
+ * Read an agent entity name parameter.
+ *
+ * The entity naming rule decides it, on every caller-facing surface, and a name
+ * that breaks it is the caller's mistake rather than an unclassified failure
+ * raised deep in a lookup or a record scan. The rule speaks in its own words, so
+ * its sentence is kept and only its type is made the caller's.
+ */
+export function agentEntityNameParam(
+  params: CommandPayload,
+  key: string,
+): string {
+  return assertEntityName(mustString(params, key));
+}
+
+/** The same read where the field is an optional filter; absent stays absent. */
+export function optionalAgentEntityNameParam(
+  params: CommandPayload,
+  key: string,
+): string | null {
+  const value = optionalNonBlankString(params, key);
+  return value === null ? null : assertEntityName(value);
+}
+
+function assertEntityName(value: string): string {
+  try {
+    return validateTeamMateName(value);
+  } catch (error) {
+    throwCallerMistake(error);
+  }
 }
 
 const LAST_LIMIT_DEFAULT = 20;
@@ -108,9 +150,38 @@ const LAST_LIMIT_MAX = 200;
 export function validateLastLimit(input: number | undefined): number {
   if (input === undefined) return LAST_LIMIT_DEFAULT;
   if (!Number.isInteger(input) || input < 1 || input > LAST_LIMIT_MAX) {
-    throw new Error(`last limit must be an integer in 1..${LAST_LIMIT_MAX}`);
+    throw new RuleViolation(
+      `last limit must be an integer in 1..${LAST_LIMIT_MAX}`,
+    );
   }
   return input;
+}
+
+/**
+ * One Activity read request, as every caller-facing surface asks it.
+ *
+ * The bound belongs to {@link validateLastLimit} and is stated in its own words;
+ * only its type becomes the caller's, so the sentence a caller reads cannot
+ * drift from the limit that produced it.
+ */
+export function agentEntityLastQuery(
+  params: CommandPayload,
+): AgentEntityLastQuery {
+  const limit = optionalInteger(params, 'limit');
+  try {
+    validateLastLimit(limit ?? undefined);
+  } catch (error) {
+    throwCallerMistake(error);
+  }
+  const cursor = optionalString(params, 'cursor');
+  const includeTools = optionalBooleanField(params, 'include_tools')[
+    'include_tools'
+  ];
+  return {
+    ...(limit !== null ? { limit } : {}),
+    ...(cursor !== null ? { cursor } : {}),
+    ...(includeTools !== undefined ? { includeTools } : {}),
+  };
 }
 
 export function encodeCursor(offset: number): string {
@@ -130,9 +201,9 @@ export function decodeCursor(cursor: string): number {
       return parsed['offset'];
     }
   } catch {
-    // Invalid cursors share one stable public error below.
+    // Every unreadable cursor is the same broken rule, stated once below.
   }
-  throw new Error('invalid history cursor');
+  throw new RuleViolation('invalid history cursor');
 }
 
 function recordRowMatchesText(row: AgentEntityRecordRow, grep: string): boolean {

@@ -143,7 +143,16 @@ export class Server {
    * and the MCP transport Commands resolve those tokens with nothing but the
    * token to go on.
    */
-  private readonly mcpLeases = new McpLeaseRegistry();
+  private readonly mcpLeases: McpLeaseRegistry;
+
+  /**
+   * The server log, for the adapters that answer a failure they do not own. A
+   * caller reads its message; the operator needs the whole value behind it, and
+   * this is the log that whole is written to.
+   */
+  get logger(): DreamuxLogger {
+    return this.log;
+  }
 
   constructor(opts: ServerOptions = {}) {
     this.opts = opts;
@@ -159,6 +168,9 @@ export class Server {
     }
     setRuntimeConfig(config);
     this.log = opts.logger ?? createLogger({ name: 'server' });
+    // Built after the logger it records unclassified tool failures through: an
+    // Agent reads only the message, so the whole value belongs in this log.
+    this.mcpLeases = new McpLeaseRegistry(this.log);
     const channelLoggerFactory =
       opts.channelLoggerFactory ??
       ((id: string) => createLogger({ name: `channel/${id}` }));

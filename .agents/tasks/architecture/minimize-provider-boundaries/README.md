@@ -5,7 +5,8 @@
 - Goal: Reduce the public Agent Runtime and Channel contracts to minimal capability-neutral ports, with Channel bridging external interaction through Core Command invocation and Core event subscription.
 - State: `implementation`
 - Requirement: [Current requirement](/.agents/tasks/architecture/minimize-provider-boundaries/requirement.md)
-- Current solution input revision: `requirement.md` SHA-256 `5e8b6ccb14666ddce48398744c5797fd6008b45979ed63f13edd2967185f628a`
+- Current solution input revision: `requirement.md` SHA-256 `e7683f475f83e1cecfbb78f280d899b611b443e648ea48a3ced09f2e26b8376d`
+- Prior solution input revision: `requirement.md` SHA-256 `5e8b6ccb14666ddce48398744c5797fd6008b45979ed63f13edd2967185f628a`; the operator then required failed or empty Feishu bot self-identity resolution to remain retryable on the next inbound message instead of becoming a process-lifetime negative cache.
 - Prior solution input revision: `requirement.md` SHA-256 `60319f3d72dc414772a687718923ceea4304dcc0ca82f8fdf0d98dd0ac4af5a3`; it still demanded a persisted Feishu provisioning saga with phases, an outbox, and a restart-resume recovery cursor, which the operator replaced with process-local execution over the Channel's persisted Collaboration Space policy and completed bindings.
 - Prior solution input revision: `requirement.md` SHA-256 `217db5fc35801ca54a6af2f9752f1557dd411af4b2dd8b96b0ef3be97adce414`; the operator then required live member cleanup during Team dissolve while allowing cold Identity normalization without Service construction.
 - Prior solution input revision: `requirement.md` SHA-256 `4a6b889cd97899fa216c64af57912e98b8f32a0734fd5fa14e707d80d04ba4d4`; the operator then made Team-scoped TeamMates CWD-only borrowers and rejected copying Team worktree facts into their identities.
@@ -45,13 +46,15 @@
 - Prior solution input revision: `requirement.md` SHA-256 `89e95d7fb3fd0dcf5585484becbd529a34d6d425e73aae500a31595210a5433c`; the operator subsequently namespaced the complete TeamMate turn-event family as `teammate.turn.*`.
 - Superseded solution input revision: `requirement.md` SHA-256 `28ecbb5363f0d0faa2a696a6bf0eb0670192c89e7c778241c37aafecc5a3fbdc`; third-round review temporarily reopened a binding-reconciliation concern whose independent-offline-Channel premise the operator rejected.
 - Independent review: [Consolidated findings](/.agents/tasks/architecture/minimize-provider-boundaries/review-findings.md)
+- Verification: [Current verification record](/.agents/tasks/architecture/minimize-provider-boundaries/verification.md)
 - Defensive-recovery review guide:
   [Durable-fact recovery principles](/.agents/tasks/architecture/minimize-provider-boundaries/durable-fact-recovery-principles.md).
 - Solution consultation:
   [Codex proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/codex.md),
   [Claude proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/claude.md), and
   [Trae Seed 2.1 proposal and cross-review](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/proposals/trae-seed-2-1.md).
-- Current solution baseline: [Technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `20760aaaaf90526685bfb2818c59df10bcdd6544416521aba1e715440f6015ca`. Requirement text, technical design, current source, and prior Decisions are evidence; the final product shape and explicit operator principles are authoritative. Existing load-bearing code has no automatic preservation right.
+- Current solution baseline: [Technical design](/.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md), SHA-256 `374dd8d96bd36df12ff60e42d7854e79ec24cf2d8bbf35aeec5655a2d8434900`. Requirement text, technical design, current source, and prior Decisions are evidence; the final product shape and explicit operator principles are authoritative. Existing load-bearing code has no automatic preservation right.
+- Prior final-solution revision: SHA-256 `20760aaaaf90526685bfb2818c59df10bcdd6544416521aba1e715440f6015ca`; it did not yet specify that Feishu bot self-identity failures remain unresolved and retry on the next inbound message before mention gating.
 - Prior final-solution revision: SHA-256 `01d26442d6ce37660139f869bc1f3a9e42a60b5521bc4aa95f9e16941b37da6c`; it still specified the persisted Feishu provisioning saga and let a Channel invoke Core Commands to resume it at startup, before automatic provisioning became process-local execution.
 - Prior final-solution revision: SHA-256 `90917acb1b38072437fba3fff2f62b23e58670ebea4a9ddaf8b5a5ba17ebecfc`; it had not yet separated live-member runtime close from cold member Identity normalization during Team dissolve.
 - Prior final-solution revision: SHA-256 `40369754e08d5920125c059858261997b54163c1ca0b53df5d00c27305025742`; it had not yet made Team-scoped TeamMates CWD-only borrowers or rejected Team worktree cleanup projection into their identities.
@@ -614,6 +617,12 @@ architecture merely because it is possible.
 - Stage 8 Team member dissolve correction: Approved by the operator on
   2026-08-29 after distinguishing live runtime cleanup from cold-record
   normalization.
+- Feishu bot self-identity recovery correction: Approved by the operator on
+  2026-08-31. A failed or empty bot-info lookup is not cached as resolved;
+  while unresolved, the next inbound chat message retries before mention
+  gating, with one in-flight lookup shared by concurrent messages. Scope is the
+  Feishu transport implementation, focused tests, and its Rush change note;
+  the separate empty-TeamLeader recovery defect is explicitly excluded.
 
 ## Delivery
 

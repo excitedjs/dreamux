@@ -163,8 +163,15 @@ describe('Collections own the store, the factory, and the materialization cache;
     expect(collectionSrc).toMatch(
       /private readonly entities = new Map<string, TeammateService>/,
     );
+    // The dedupe map resolves to `ResolvedTeamMate`, the union declared in this
+    // same file: a materialization answers with the live entity, or with the
+    // durable record that already settled it. Both halves are pinned, so the
+    // union cannot quietly stop covering the live entity it dedupes.
     expect(collectionSrc).toMatch(
-      /private readonly materializations = new Map<string, Promise<TeammateService>>/,
+      /type ResolvedTeamMate = TeammateService \| AgentEntityIdentity/,
+    );
+    expect(collectionSrc).toMatch(
+      /private readonly materializations = new Map<string, Promise<ResolvedTeamMate>>/,
     );
   });
 

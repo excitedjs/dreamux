@@ -240,6 +240,7 @@ export class DispatcherInputSourceLifecycle {
         dispatcherId: this.opts.dispatcherId,
         channelId,
         events: events.source,
+        log: this.opts.log,
       });
       this.channelPorts.push(lease);
       await instance.session.initialize(lease.port);

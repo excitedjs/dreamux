@@ -34,7 +34,6 @@ import type {
   ChannelSessionMcpCapability,
 } from '@excitedjs/dreamux-types';
 
-import { runDelegateCall } from '../mcp/projection.js';
 import type {
   McpDelegateCall,
   McpDelegateDescription,
@@ -72,19 +71,6 @@ type ChannelToolHandler = (
   call: ChannelMcpCall,
   context: ChannelMcpCallContext,
 ) => Promise<ChannelMcpToolOutcome>;
-
-/**
- * The only failures Core itself may show the model here.
- *
- * Both come from the Team lease a TeamLeader-scoped call is dispatched under:
- * the Team was dissolved or closed between the lease being minted and the call
- * arriving. They are Core's own typed domain facts, raised on the way in, and
- * they are all Core has to project — a Channel states its own refusals as
- * results, so no Channel failure passes through an error code here and Core
- * never decides which of them a model may read. Anything else stays unsurfaced:
- * Core logs it in full and the model sees the fixed sanitized error.
- */
-const PUBLIC_CODES = ['TEAM_NOT_FOUND', 'TEAM_CLOSED'] as const;
 
 export interface ChannelMcpDelegateInput {
   dispatcherId: string;
@@ -169,9 +155,12 @@ export function createChannelMcpDelegate(
             `'${call.name}'`,
         );
       }
-      return runDelegateCall([...PUBLIC_CODES], () =>
-        input.dispatch(() => invoke(input, handler, call)),
-      );
+      // Core's own typed facts on the way in — a Team dissolved between the
+      // lease being minted and this call arriving — state themselves and are
+      // rendered by the admission boundary, exactly like every other delegate's.
+      // A Channel's own refusals arrive as results and are passed through
+      // untouched: only the Channel can say what is wrong with its own chat.
+      return input.dispatch(() => invoke(input, handler, call));
     },
   };
 }

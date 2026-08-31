@@ -55,11 +55,15 @@
  */
 import { randomUUID } from 'node:crypto';
 
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+
 import {
   validateMcpToolCatalog,
   type ValidatedMcpTool,
 } from '../../mcp/catalog.js';
-import { DreamuxError } from '../../platform/errors.js';
+import { failureText } from '../../mcp/failure-text.js';
+import { errorInfo } from '../../platform/error-info.js';
+import { StatedFailure } from '../../platform/errors.js';
 import {
   canonicalJsonValue,
   JsonValueError,
@@ -84,11 +88,13 @@ import type {
  * not be able to probe for the difference, and to an operator reading the log
  * they mean the same thing — a child outlived the runtime it was launched for.
  */
-export class McpLeaseRevokedError extends DreamuxError {
+export class McpLeaseRevokedError extends StatedFailure {
   constructor() {
     super(
       'MCP_LEASE_REVOKED',
       'this MCP server is no longer authorized; its agent runtime generation ended',
+      'Nothing was started by this call. This server cannot be reached again; ' +
+        'use the tools of a server this agent generation still has.',
     );
   }
 }
@@ -144,6 +150,17 @@ export class McpLeaseRegistry {
   private readonly entries = new Map<string, McpLeaseEntry>();
 
   /**
+   * Where a failure nobody stated is written down as well as answered.
+   *
+   * The registry is the one place every tool call passes through, so it is also
+   * the one place that sees every such failure whole. The caller reads the
+   * message; the log keeps the stack. A registry built without a logger still
+   * answers correctly; it simply has nowhere to put the detail, which is the
+   * right shape for the tests and tools that construct one standalone.
+   */
+  constructor(private readonly log?: DreamuxLogger) {}
+
+  /**
    * Validate and freeze one delegate's catalog, bind it to one runtime
    * generation, and return its token.
    *
@@ -192,17 +209,40 @@ export class McpLeaseRegistry {
    * tools do, and the frozen catalog it compares against is the same object
    * `mcp.describe` serves, so the advertised set and the admitted set cannot
    * drift apart.
+   *
+   * It is also where every failure becomes an answer. Being the one way in
+   * makes it the one way out: a revoked token and a tool body that threw both
+   * leave here as a result the caller can read — the domain's own words when
+   * the domain stated them, and the failure's own code and message when it
+   * came from somewhere Core does not own. Nothing escapes as an exception, so
+   * no layer above has to guess what to say.
    */
   async invoke(
     token: string,
     call: McpDelegateCall,
   ): Promise<McpDelegateResult> {
-    const entry = this.entry(token);
-    const names = entry.catalog.tools.map((tool) => tool.name);
-    if (!names.includes(call.name)) {
-      return unknownToolResult(entry.name, call.name, names);
+    let server: string | null = null;
+    try {
+      const entry = this.entry(token);
+      server = entry.name;
+      const names = entry.catalog.tools.map((tool) => tool.name);
+      if (!names.includes(call.name)) {
+        return unknownToolResult(entry.name, call.name, names);
+      }
+      // The envelope a delegate publishes is its own; `mcp.toolcall` is where
+      // a malformed one is rejected, so nothing here inspects or rewrites it.
+      return await entry.delegate.call(call);
+    } catch (error) {
+      if (!(error instanceof StatedFailure)) {
+        // Ordinary logging, so an operator sees the whole value — stack
+        // included — that the caller only reads the message of.
+        this.log?.error(
+          { server, tool: call.name, err: errorInfo(error) },
+          'mcp tool call failed',
+        );
+      }
+      return { ok: false, message: failureText(error) };
     }
-    return entry.delegate.call(call);
   }
 
   /**

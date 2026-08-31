@@ -122,8 +122,21 @@ describe('CoreCommandRegistry is the single invoke() port both adapters bind to'
 });
 
 describe('ChannelCommandError and its narrow retryable-code vocabulary', () => {
-  it('the error shape is exactly code + message', () => {
-    assertType<Equal<keyof ChannelCommandError, 'code' | 'message'>>();
+  it('the error shape is exactly code + message + the optional stated action', () => {
+    assertType<
+      Equal<keyof ChannelCommandError, 'code' | 'message' | 'action'>
+    >();
+  });
+
+  it('action is optional, so a failure that stated none is still the same shape', () => {
+    const stated: ChannelCommandError = {
+      code: 'TEAM_NOT_FOUND',
+      message: 'Team "x" does not exist',
+      action: 'Use team.list for live Teams.',
+    };
+    const unstated: ChannelCommandError = { code: 'INTERNAL', message: 'nope' };
+    expect(stated.action).toBe('Use team.list for live Teams.');
+    expect(unstated.action).toBeUndefined();
   });
 
   it('ChannelCommandRetryableErrorCode is exactly TEAM_NOT_FOUND | TEAM_CLOSED', () => {

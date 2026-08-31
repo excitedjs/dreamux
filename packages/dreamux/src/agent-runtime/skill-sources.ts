@@ -2,25 +2,32 @@ import type { AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
 import { readdir, realpath } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 
-import { ValidationError, errorMessage } from '../command/errors.js';
+import { RuleViolation, throwCallerMistake } from '../command/errors.js';
 import type { CommandPayload } from '../command/payload.js';
 
-/** Parse the runtime-neutral skill-source shape at host-owned trust boundaries. */
+/**
+ * Parse the runtime-neutral skill-source shape at host-owned trust boundaries.
+ *
+ * Every rule here is stated in this module's own words, against the caller's own
+ * label — never against a filesystem or library message. The same parse runs
+ * over a caller's request and over a persisted record, and only the request
+ * reader turns a broken rule into the caller's mistake.
+ */
 export function parseAgentRuntimeSkillSources(
   value: unknown,
   label: string,
 ): AgentRuntimeSkillSource[] {
   if (!Array.isArray(value)) {
-    throw new Error(`${label} must be an array`);
+    throw new RuleViolation(`${label} must be an array`);
   }
   return value.map((entry, index) => {
     if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
-      throw new Error(`${label}[${index}] must be an object`);
+      throw new RuleViolation(`${label}[${index}] must be an object`);
     }
     const record = entry as Record<string, unknown>;
     const path = nonBlankString(record['path'], `${label}[${index}].path`);
     if (!isAbsolute(path)) {
-      throw new Error(`${label}[${index}].path must be an absolute path`);
+      throw new RuleViolation(`${label}[${index}].path must be an absolute path`);
     }
     return {
       name: nonBlankString(record['name'], `${label}[${index}].name`),
@@ -69,7 +76,7 @@ export async function normalizeAgentRuntimeSkillSources(
     for (const skillName of root.skillNames) {
       const previous = seenSkillNames.get(skillName);
       if (previous !== undefined) {
-        throw new Error(
+        throw new RuleViolation(
           `${itemLabel}.path contains skill ${JSON.stringify(skillName)} ` +
             `which conflicts with ${previous}`,
         );
@@ -86,7 +93,7 @@ export async function normalizeAgentRuntimeSkillSources(
 
 function nonBlankString(value: unknown, label: string): string {
   if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error(`${label} must be a non-empty string`);
+    throw new RuleViolation(`${label} must be a non-empty string`);
   }
   return value;
 }
@@ -97,15 +104,13 @@ async function canonicalSkillRoot(
   field: string,
 ): Promise<{ path: string; skillNames: string[] }> {
   if (!isAbsolute(source.path)) {
-    throw new Error(`${label}.${field} must be an absolute path`);
+    throw new RuleViolation(`${label}.${field} must be an absolute path`);
   }
   let canonicalPath: string;
   try {
     canonicalPath = await realpath(source.path);
-  } catch (err) {
-    throw new Error(
-      `${label}.${field} must be an existing readable directory: ${messageOf(err)}`,
-    );
+  } catch (error) {
+    throwUnreadableSkillRoot(error, label, field);
   }
   let skillNames: string[];
   try {
@@ -117,10 +122,8 @@ async function canonicalSkillRoot(
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
       .sort((a, b) => a.localeCompare(b));
-  } catch (err) {
-    throw new Error(
-      `${label}.${field} must be an existing readable directory: ${messageOf(err)}`,
-    );
+  } catch (error) {
+    throwUnreadableSkillRoot(error, label, field);
   }
   return {
     path: canonicalPath,
@@ -128,8 +131,35 @@ async function canonicalSkillRoot(
   };
 }
 
-function messageOf(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+/**
+ * The filesystem codes that mean the caller named the wrong path.
+ *
+ * Only these four are the caller's to fix: the path is absent, is not a
+ * directory, or is not readable by this process. Every other code — a descriptor
+ * limit, an I/O error, memory pressure — says something about the host, not
+ * about the argument, and is left alone so its own message survives.
+ */
+const CALLER_FIXABLE_SKILL_ROOT_CODES = new Set([
+  'ENOENT',
+  'ENOTDIR',
+  'EACCES',
+  'EPERM',
+]);
+
+function throwUnreadableSkillRoot(
+  error: unknown,
+  label: string,
+  field: string,
+): never {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  if (typeof code === 'string' && CALLER_FIXABLE_SKILL_ROOT_CODES.has(code)) {
+    // The system's own words about a path are not this caller's business: what
+    // the caller can act on is which field is wrong.
+    throw new RuleViolation(
+      `${label}.${field} must be an existing readable directory`,
+    );
+  }
+  throw error;
 }
 
 /**
@@ -147,7 +177,7 @@ export function optionalParsedSkillSources(
       "param 'skill_sources'",
     );
   } catch (err) {
-    throw new ValidationError(errorMessage(err));
+    throwCallerMistake(err);
   }
 }
 
@@ -165,6 +195,6 @@ export async function normalizeSkillSources(
         : {}),
     });
   } catch (err) {
-    throw new ValidationError(errorMessage(err));
+    throwCallerMistake(err);
   }
 }

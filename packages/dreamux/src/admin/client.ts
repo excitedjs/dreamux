@@ -30,6 +30,12 @@ export class AdminClientError extends Error {
   constructor(
     public readonly code: string,
     message: string,
+    /**
+     * The next step the failure stated for itself, when it stated one. Absent
+     * means the failure never authored one, so a caller renders the code and
+     * the message alone.
+     */
+    public readonly action?: string,
   ) {
     super(message);
     this.name = 'AdminClientError';
@@ -111,7 +117,14 @@ function sendOne(
       try {
         const response = JSON.parse(line) as AdminResponse;
         if (response.ok) settle(response.result, false);
-        else settle(new AdminClientError(response.error.code, response.error.message));
+        else
+          settle(
+            new AdminClientError(
+              response.error.code,
+              response.error.message,
+              response.error.action,
+            ),
+          );
       } catch (err) {
         // A reply that will not parse never delivered an answer, whatever it
         // was meant to say.
@@ -125,20 +138,15 @@ function sendOne(
     });
     sock.on('error', (err) => {
       if (settled) return;
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT' || code === 'ECONNREFUSED') {
-        settle(
-          new TransportError(
-            `cannot reach admin socket at ${socketPath} - is the server running?`,
-          ),
-        );
-      } else {
-        settle(
-          new TransportError(
-            `admin socket connection to ${socketPath} failed - ${errorMessage(err)}`,
-          ),
-        );
-      }
+      // One construction for every socket failure. An absent or refused socket
+      // used to be answered with advice instead of with what happened; Node
+      // already said what happened, and that sentence is the only concrete
+      // fact there is, so it is the one that travels.
+      settle(
+        new TransportError(
+          `admin socket connection to ${socketPath} failed - ${errorMessage(err)}`,
+        ),
+      );
     });
     sock.on('close', () => {
       settle(new TransportError('admin socket closed without a response'));

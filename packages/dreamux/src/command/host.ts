@@ -16,7 +16,7 @@ import { validateDispatcherId } from '../state/dispatcher-id.js';
 import type { CoreCommandContext } from '@excitedjs/dreamux-types';
 import { DispatcherNotFoundError } from '../service/dispatchers/errors.js';
 import type { McpLeaseRegistry } from '../service/mcp/leases.js';
-import { ValidationError, errorMessage } from './errors.js';
+import { ValidationError, throwCallerMistake } from './errors.js';
 
 export interface CoreCommandHost {
   /** Configured dispatchers plus their current runtime projection. */
@@ -58,7 +58,9 @@ export function mustDispatcherId(context: CoreCommandContext): string {
   try {
     return validateDispatcherId(id);
   } catch (err) {
-    throw new ValidationError(errorMessage(err));
+    // The id rule speaks in its own words; only its type becomes the caller's,
+    // and anything else raised here is not the caller's fault to begin with.
+    throwCallerMistake(err);
   }
 }
 

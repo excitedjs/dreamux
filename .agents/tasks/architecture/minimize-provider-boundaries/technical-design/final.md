@@ -1575,6 +1575,25 @@ compile breaks are resolved inside the same implementation change.
   the TeamMate owner, `AgentRuntime` names stay behind the Provider seam, and
   Channel/transport modules do not own Team or TeamMate policy.
 
+### Feishu bot self-identity recovery correction
+
+`@excitedjs/feishu-transport` remains the sole owner of the Feishu bot-info
+request and its process-local result. Startup performs the existing bounded
+`/open-apis/bot/v3/info` lookup. The transport assigns its cached self identity
+only when that lookup returns a non-empty `open_id`.
+
+Before dispatching each `im.message.receive_v1` route while self identity is
+unresolved, the transport repeats the same bounded lookup. One shared in-flight
+Promise coalesces concurrent messages. Success populates the existing `selfId`
+and `selfName` getters before the Channel handler applies mention gating;
+failure clears only the in-flight Promise and leaves the cache unresolved, so
+the next message retries. Other inbound event types do not trigger this lookup.
+
+The correction introduces no new public Channel capability and no negative
+cache, timer, background loop, persisted checkpoint, or Core knowledge of
+Feishu identity. Tests cover startup failure followed by a successful retry on
+the next message, successful caching, and concurrent single-flight behavior.
+
 ### Repository gates
 
 During implementation run, from the monorepo root:

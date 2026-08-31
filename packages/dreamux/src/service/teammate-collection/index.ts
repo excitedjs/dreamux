@@ -52,12 +52,13 @@ import type {
 } from '../completion-router/index.js';
 import type { SuffixGenerator } from '../name-allocator.js';
 import { closeMembersForDissolve } from './dissolve-members.js';
+import { teamMateNotFound } from './errors.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
 } from '../shutdown-errors.js';
 import { createTeammateService } from '../teammate-service/factory.js';
-import type { TeammateService } from '../teammate-service/index.js';
+import { TeammateService } from '../teammate-service/index.js';
 import type {
   LockedTeammate,
   TeammateClosedSubscription,
@@ -118,12 +119,12 @@ export interface CreateLockedTeammateOptions {
 }
 
 /**
- * What a lookup does with a durable record that is already closed.
- *
- * `refuse` everywhere but `send`: a closed record is history, and only the
- * operation that reopens it may turn it back into an entity.
+ * The live TeamMate, or the durable record that already settled it. A closed
+ * record is answered as itself rather than constructed: `close` is already done
+ * when it reads one, and `send` — the one verb that reopens — is the only
+ * caller that turns it back into an entity.
  */
-type ClosedRecordPolicy = 'refuse' | 'reopen';
+type ResolvedTeamMate = TeammateService | AgentEntityIdentity;
 
 interface FreshIdentityAllocation {
   readonly name: string;
@@ -140,7 +141,7 @@ export class TeammateCollection implements TeammateOps {
   private readonly worktrees: WorktreeManager;
   private readonly entities = new Map<string, TeammateService>();
   private readonly subscriptions = new Map<string, TeammateClosedSubscription>();
-  private readonly materializations = new Map<string, Promise<TeammateService>>();
+  private readonly materializations = new Map<string, Promise<ResolvedTeamMate>>();
   /**
    * TeamMates built for a `send` that has not reopened them yet.
    *
@@ -201,10 +202,24 @@ export class TeammateCollection implements TeammateOps {
    * terminal one.
    */
   send(input: SendTeamMateInput): Promise<AgentEntitySendResult> {
-    const entity = this.resolveEntity(input.name, 'reopen');
-    return entity instanceof Promise
-      ? entity.then((resolved) => this.sendResolved(resolved, input))
-      : this.sendResolved(entity, input);
+    const resolved = this.resolveEntity(input.name);
+    return resolved instanceof Promise
+      ? resolved.then((it) => this.sendResolved(this.reopenFrom(it), input))
+      : this.sendResolved(this.reopenFrom(resolved), input);
+  }
+
+  /**
+   * The entity this send acts on, built from a closed record when that is what
+   * the collection had. Registered before anything is awaited, so a second send
+   * finds the Agent already reopening rather than starting a second runtime.
+   */
+  private reopenFrom(resolved: ResolvedTeamMate): TeammateService {
+    if (resolved instanceof TeammateService) return resolved;
+    const reopening = this.reopening.get(resolved.name);
+    if (reopening !== undefined) return reopening;
+    const entity = this.buildEntity(resolved);
+    this.reopening.set(resolved.name, entity);
+    return entity;
   }
 
   private async sendResolved(
@@ -239,13 +254,13 @@ export class TeammateCollection implements TeammateOps {
   async close(input: CloseTeamMateInput): Promise<AgentEntityCloseResult> {
     const name = validateTeamMateName(input.name);
     const note = requireLifecycleText(input.note, 'TeamMate close note');
-    if (this.liveEntity(name) === null) {
-      const identity = await this.mustIdentity(name);
-      if (identity.status === 'closed') {
-        return { teammate: toStatus(identity, null) };
-      }
-    }
-    return (await this.mustEntity(name)).close({ note });
+    // One record read decides, so a close that lost the race to a concurrent
+    // one reads the committed record here and answers from it: closing what is
+    // already history constructs nothing.
+    const resolved = await this.resolveEntity(name);
+    return resolved instanceof TeammateService
+      ? resolved.close({ note })
+      : { teammate: toStatus(resolved, null) };
   }
 
   async list(): Promise<AgentEntityRuntimeStatus[]> {
@@ -560,8 +575,7 @@ export class TeammateCollection implements TeammateOps {
 
   private resolveEntity(
     name: string,
-    closed: ClosedRecordPolicy = 'refuse',
-  ): TeammateService | Promise<TeammateService> {
+  ): ResolvedTeamMate | Promise<ResolvedTeamMate> {
     const teammateName = validateTeamMateName(name);
     const existing = this.liveEntity(teammateName);
     if (existing !== null) {
@@ -571,26 +585,18 @@ export class TeammateCollection implements TeammateOps {
     const inFlight = this.materializations.get(teammateName);
     if (inFlight !== undefined) return inFlight;
     return this.trackMaterialization(teammateName, () =>
-      this.materializeEntity(teammateName, closed));
-  }
-
-  private mustEntity(name: string): Promise<TeammateService> {
-    return Promise.resolve(this.resolveEntity(name));
+      this.materializeEntity(teammateName));
   }
 
   /**
-   * Construct one TeamMate from its durable record.
+   * Resolve one TeamMate from its durable record.
    *
    * A closed record is that TeamMate's history, not the TeamMate: constructing
-   * one would put a terminal object in a collection that holds live entities,
-   * and bound this dispatcher's memory by how many Agents it ever had rather
-   * than by how many it has. Only `send` may ask for one, and what it gets is
-   * unpublished until the reopen succeeds.
+   * one would put a terminal object in a collection of live entities, and bound
+   * this dispatcher's memory by how many Agents it ever had. So it is handed
+   * back as the record it is, and only `send` builds from it.
    */
-  private async materializeEntity(
-    name: string,
-    closed: ClosedRecordPolicy,
-  ): Promise<TeammateService> {
+  private async materializeEntity(name: string): Promise<ResolvedTeamMate> {
     // Asked before the record is read, because a reopen in flight has already
     // moved past what the record says.
     const reopening = this.reopening.get(name);
@@ -598,20 +604,18 @@ export class TeammateCollection implements TeammateOps {
     const identity = await this.mustIdentity(name);
     const existing = this.liveEntity(name);
     if (existing !== null) return existing;
-    if (identity.status !== 'closed') return this.publishEntity(identity);
-    if (closed === 'refuse') {
-      throw new Error(`TeamMate ${JSON.stringify(name)} is closed`);
-    }
-    const entity = this.buildEntity(identity);
-    this.reopening.set(name, entity);
-    return entity;
+    return identity.status === 'closed'
+      ? identity
+      : this.publishEntity(identity);
   }
 
-  private trackMaterialization(
+  // Generic so the flight's starter keeps the narrower result it produced
+  // (spawn always builds an entity) while a joiner handles the union.
+  private trackMaterialization<T extends ResolvedTeamMate>(
     name: string,
-    materialize: () => Promise<TeammateService>,
-  ): Promise<TeammateService> {
-    let tracked: Promise<TeammateService>;
+    materialize: () => Promise<T>,
+  ): Promise<T> {
+    let tracked: Promise<T>;
     tracked = Promise.resolve()
       .then(materialize)
       .finally(() => {
@@ -626,7 +630,7 @@ export class TeammateCollection implements TeammateOps {
   private async mustIdentity(name: string): Promise<AgentEntityIdentity> {
     const identity = await this.store.entity(name).read();
     if (identity === null) {
-      throw new Error(`TeamMate ${JSON.stringify(name)} does not exist`);
+      throw teamMateNotFound(name);
     }
     this.assertInCollection(identity);
     return identity;
@@ -652,7 +656,7 @@ export class TeammateCollection implements TeammateOps {
       identity.dispatcher_id === this.dispatcherId &&
       identity.team_id === this.teamScope;
     if (!valid && throwOnMismatch) {
-      throw new Error(`TeamMate ${JSON.stringify(identity.name)} does not exist`);
+      throw teamMateNotFound(identity.name);
     }
     return valid;
   }

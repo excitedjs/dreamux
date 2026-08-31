@@ -1,5 +1,14 @@
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
+import {
+  mustNonEmptyString,
+  mustString,
+  optionalBooleanField,
+  optionalNullableStringField,
+  optionalStringField,
+  type CommandPayload,
+} from '../../command/payload.js';
+
 import type { InboundDeliveryResult } from '../teammate-service/turn-recording.js';
 
 import type { CronJob, CronJobStore } from './store.js';
@@ -50,4 +59,39 @@ export interface SchedulerCommands {
   create(input: CronCreateRequest): Promise<CronJob>;
   update(input: CronUpdateRequest): Promise<CronJob>;
   delete(id: string): Promise<{ id: string; deleted: boolean }>;
+}
+
+/**
+ * Read one cron creation request, as every surface asks it.
+ *
+ * `action` is deliberately absent: it is an operator-only field the Command
+ * surface adds on top of this, and no Agent-facing catalog advertises it. What
+ * a job actually does is derived from `prompt` by the scheduler.
+ */
+export function cronCreateRequest(params: CommandPayload): CronCreateRequest {
+  return {
+    cron: mustString(params, 'cron'),
+    prompt: mustNonEmptyString(params, 'prompt'),
+    ...optionalStringField(params, 'title'),
+    ...optionalBooleanField(params, 'recurring'),
+    ...optionalStringField(params, 'tz'),
+  };
+}
+
+/** Read one cron update request. `action` is Command-only, as on create. */
+export function cronUpdateRequest(params: CommandPayload): CronUpdateRequest {
+  return {
+    id: cronJobIdParam(params),
+    ...optionalStringField(params, 'cron'),
+    ...optionalStringField(params, 'prompt'),
+    ...optionalNullableStringField(params, 'title'),
+    ...optionalBooleanField(params, 'recurring'),
+    ...optionalStringField(params, 'tz'),
+    ...optionalBooleanField(params, 'enabled'),
+  };
+}
+
+/** Read the job id every per-job operation addresses. */
+export function cronJobIdParam(params: CommandPayload): string {
+  return mustString(params, 'id');
 }

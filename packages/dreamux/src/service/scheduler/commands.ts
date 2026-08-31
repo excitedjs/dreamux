@@ -4,8 +4,12 @@
  * A cron job belongs to exactly one owner — the Dispatcher Agent, or one Team's
  * TeamLeader — so every Command first resolves that owner's
  * {@link SchedulerCommands} surface and then delegates unchanged. Job validation
- * stays inside the scheduler service; these definitions own only the payload
- * contract and the owner selection.
+ * stays inside the scheduler service; these definitions own the declared payload
+ * schema, this surface's operator-only `action` field, and the owner selection.
+ * The request codecs live with the scheduler's types, the job projection with
+ * the store that produces the records, and the failures with the rules that
+ * raise them — each stating its own reason and next step. The cron MCP delegate
+ * reads the same helpers; neither adapter reads the other.
  */
 import type {
   CoreCommandContext,
@@ -17,16 +21,9 @@ import type { AnyCoreCommand } from '../../command/registry.js';
 import { mustDispatcher, type CoreCommandHost } from '../../command/host.js';
 import {
   commandPayload,
-  mustNonEmptyString,
-  mustString,
-  optionalBooleanField,
-  optionalNullableStringField,
   optionalRecordField,
-  optionalString,
-  optionalStringField,
   type CommandPayload,
 } from '../../command/payload.js';
-import { DreamuxError, errorMessage } from '../../command/errors.js';
 import {
   BOOLEAN,
   NON_EMPTY_STRING,
@@ -36,9 +33,16 @@ import {
   arrayOf,
   objectSchema,
 } from '../../command/schema.js';
-import { isTeamUnavailable } from '../team-collection/errors.js';
-import type { CronJob } from './store.js';
-import type { CronCreateRequest, CronUpdateRequest, SchedulerCommands } from './types.js';
+import { optionalTeamNameParam } from '../team-collection/types.js';
+import { cronJobResult, cronListResult, type CronJob } from './store.js';
+import {
+  cronCreateRequest,
+  cronJobIdParam,
+  cronUpdateRequest,
+  type CronCreateRequest,
+  type CronUpdateRequest,
+  type SchedulerCommands,
+} from './types.js';
 
 /** The scheduler owner a cron Command addresses. */
 interface CronOwnerInput {
@@ -51,7 +55,10 @@ const OWNER_PROPERTIES: Readonly<Record<string, JsonSchema>> = {
 };
 
 function cronOwnerInput(params: CommandPayload): CronOwnerInput {
-  return { teamId: optionalString(params, 'team_id') };
+  // Read through the Team's own name codec: a `team_id` the Team could never
+  // have is this caller's mistake, not an unclassified failure raised inside
+  // the lookup it would otherwise reach.
+  return { teamId: optionalTeamNameParam(params, 'team_id') };
 }
 
 async function schedulerFor(
@@ -60,17 +67,11 @@ async function schedulerFor(
   input: CronOwnerInput,
 ): Promise<SchedulerCommands> {
   const dispatcher = mustDispatcher(host, context);
-  if (input.teamId === null) return dispatcher.scheduler;
-  try {
-    return await dispatcher.teamScheduler(input.teamId);
-  } catch (err) {
-    // A cron caller addressing a Team it cannot schedule against gets one fact,
-    // whether the Team is missing or closed.
-    if (isTeamUnavailable(err)) {
-      throw new DreamuxError('TEAM_NOT_FOUND', errorMessage(err));
-    }
-    throw err;
-  }
+  const { teamId } = input;
+  if (teamId === null) return dispatcher.scheduler;
+  // Resolving a Team-scoped owner can fail with a fact the Team already states:
+  // gone and over stay two different answers, each keeping its own code.
+  return dispatcher.teamScheduler(teamId);
 }
 
 interface CronCreateInput extends CronOwnerInput {
@@ -99,7 +100,7 @@ export function schedulerCommands(
     output: objectSchema({ jobs: arrayOf(OBJECT) }, ['jobs']),
     parse: (payload) => cronOwnerInput(commandPayload(payload)),
     async execute(context, input) {
-      return (await schedulerFor(host, context, input)).list();
+      return cronListResult(await (await schedulerFor(host, context, input)).list());
     },
   };
 
@@ -124,17 +125,17 @@ export function schedulerCommands(
       return {
         ...cronOwnerInput(params),
         request: {
-          cron: mustString(params, 'cron'),
-          prompt: mustNonEmptyString(params, 'prompt'),
-          ...optionalStringField(params, 'title'),
-          ...optionalBooleanField(params, 'recurring'),
-          ...optionalStringField(params, 'tz'),
+          ...cronCreateRequest(params),
+          // Operator-only, and this surface's alone: no Agent-facing catalog
+          // advertises a raw action, so the shared codec does not read one.
           ...optionalRecordField(params, 'action'),
         },
       };
     },
     async execute(context, input) {
-      return (await schedulerFor(host, context, input)).create(input.request);
+      return cronJobResult(
+        await (await schedulerFor(host, context, input)).create(input.request),
+      );
     },
   };
 
@@ -161,19 +162,15 @@ export function schedulerCommands(
       return {
         ...cronOwnerInput(params),
         request: {
-          id: mustString(params, 'id'),
-          ...optionalStringField(params, 'cron'),
-          ...optionalStringField(params, 'prompt'),
-          ...optionalNullableStringField(params, 'title'),
-          ...optionalBooleanField(params, 'recurring'),
-          ...optionalStringField(params, 'tz'),
+          ...cronUpdateRequest(params),
           ...optionalRecordField(params, 'action'),
-          ...optionalBooleanField(params, 'enabled'),
         },
       };
     },
     async execute(context, input) {
-      return (await schedulerFor(host, context, input)).update(input.request);
+      return cronJobResult(
+        await (await schedulerFor(host, context, input)).update(input.request),
+      );
     },
   };
 
@@ -188,7 +185,7 @@ export function schedulerCommands(
     output: objectSchema({ id: STRING, deleted: BOOLEAN }, ['id', 'deleted']),
     parse(payload) {
       const params = commandPayload(payload);
-      return { ...cronOwnerInput(params), id: mustString(params, 'id') };
+      return { ...cronOwnerInput(params), id: cronJobIdParam(params) };
     },
     async execute(context, input) {
       return (await schedulerFor(host, context, input)).delete(input.id);

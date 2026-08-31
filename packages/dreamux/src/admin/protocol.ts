@@ -22,7 +22,13 @@ export interface AdminOkResponse {
 export interface AdminErrorResponse {
   id: string;
   ok: false;
-  error: { code: string; message: string };
+  /**
+   * `action` is present when the failure stated its own next step. It is
+   * additive: a reader that ignores it sees exactly the envelope it always saw,
+   * and a reader that renders a failure for an agent has the sentence the
+   * domain wrote instead of having to invent one per code.
+   */
+  error: { code: string; message: string; action?: string };
 }
 
 export type AdminResponse = AdminOkResponse | AdminErrorResponse;

@@ -20,6 +20,7 @@ import {
   workflowRunnerEntryPath,
   type WorkflowScopePathInput,
 } from '../../platform/paths.js';
+import { WorkflowRunNotFoundError } from './errors.js';
 import { validateWorkflowArgs } from './json-args.js';
 import { WorkflowJournal } from './journal.js';
 import { parseWorkflowMaxConcurrency } from './limits.js';
@@ -192,7 +193,9 @@ export class WorkflowService implements WorkflowOps {
     if (active !== undefined) return active.snapshot();
     const record = await this.store.get(runId);
     if (record === null) {
-      throw new Error(`workflow run ${JSON.stringify(runId)} does not exist`);
+      throw new WorkflowRunNotFoundError(
+        `workflow run ${JSON.stringify(runId)} does not exist`,
+      );
     }
     return record;
   }

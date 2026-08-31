@@ -9,8 +9,16 @@
  *
  * Every tool reaches {@link DispatcherService} directly. `team.create` /
  * `team.submit` / … remain the shared `admin.sock` and Channel-to-Core surface
- * and are untouched by this file; both surfaces call the same methods, and the
- * projections they share live here and in the Command module beside it.
+ * and are untouched by this file; both surfaces call the same methods, and what
+ * they share — reading a `team_name`, reading a history query, and the one
+ * submission receipt that is more than a copy — belongs to the Team and lives in
+ * its own `types.ts`. What stays here is this surface's: the caller binding, the
+ * Agent provenance, the advertised catalog, and the model-facing text a tool
+ * chooses to say.
+ *
+ * Failures are thrown, not classified: a Team failure states its own reason and
+ * next step, and the admission boundary every delegate is reached through
+ * renders it. Nothing here decides what a model may read about a failure.
  */
 import { randomUUID } from 'node:crypto';
 
@@ -18,7 +26,6 @@ import { normalizeSkillSources } from '../../agent-runtime/skill-sources.js';
 import {
   mustNonBlankString,
   mustNonEmptyString,
-  optionalInteger,
   optionalNonBlankString,
   optionalString,
   type CommandPayload,
@@ -54,9 +61,8 @@ import {
   TEAM_LEADER_REQUIRED_SKILL_SOURCES,
   teamCreatePayloadHash,
 } from './create-request.js';
-import { throwPublicDissolveError } from './errors.js';
-import { teamSubmitResult } from './projections.js';
-import { optionalTeamStatus } from './types.js';
+import { teamHistoryQuery, teamNameParam } from './types.js';
+import { teamSubmitResult } from '../team-service/types.js';
 
 /** Who this delegate serves. Bound once, at runtime construction. */
 export type TeamMcpCaller =
@@ -71,23 +77,6 @@ export const TEAM_MCP_SERVER_NAME = 'team';
 
 const IDENTITY = { name: 'dreamux-team', version: '0.4.0' };
 
-/**
- * Failures a Team tool may show the model, per tool.
- *
- * `BAD_REQUEST` is this delegate's own argument validation — the model can fix
- * it. The rest are Team facts a caller can act on: a Team that is gone or
- * closed, and a replayed creation request. A dissolve answers with a receipt,
- * so nothing about how the dissolve itself goes can appear here.
- */
-const PUBLIC_CODES: Readonly<Record<string, readonly string[]>> = {
-  create: ['BAD_REQUEST', 'IDEMPOTENCY_CONFLICT'],
-  send: ['BAD_REQUEST', 'TEAM_NOT_FOUND', 'TEAM_CLOSED'],
-  list: ['BAD_REQUEST'],
-  status: ['BAD_REQUEST'],
-  history: ['BAD_REQUEST'],
-  dissolve: ['BAD_REQUEST', 'TEAM_NOT_FOUND'],
-};
-
 export function createTeamMcpDelegate(input: {
   dispatcher: DispatcherService;
   caller: TeamMcpCaller;
@@ -98,10 +87,8 @@ export function createTeamMcpDelegate(input: {
     describe(): McpDelegateDescription {
       return { identity: IDENTITY, tools };
     },
-    async call(call: McpDelegateCall): Promise<McpDelegateResult> {
-      return runDelegateTool(PUBLIC_CODES[call.name] ?? ['BAD_REQUEST'], () =>
-        serve(input.dispatcher, input.caller, call),
-      );
+    call(call: McpDelegateCall): Promise<McpDelegateResult> {
+      return runDelegateTool(() => serve(input.dispatcher, input.caller, call));
     },
   };
 }
@@ -136,8 +123,8 @@ async function create(
   dispatcher: DispatcherService,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
-  const namePrefix = mustNonEmptyString(args, 'name_prefix');
-  const intent = mustNonEmptyString(args, 'intent');
+  const namePrefix = mustNonBlankString(args, 'name_prefix');
+  const intent = mustNonBlankString(args, 'intent');
   const agentRuntime = mustNonEmptyString(args, 'leader_agent_runtime');
   const identityPrompt = optionalNonBlankString(args, 'identity');
   const prompt = optionalString(args, 'prompt');
@@ -177,20 +164,14 @@ async function create(
       ...(skillSources !== null ? { skillSources } : {}),
     },
   });
-  return {
-    structured: {
-      status: result.status,
-      team_name: result.team_name,
-      leader_name: result.leader_name,
-    },
-  };
+  return { structured: result };
 }
 
 async function send(
   dispatcher: DispatcherService,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
-  const teamName = mustNonEmptyString(args, 'team_name');
+  const teamName = teamNameParam(args, 'team_name');
   const prompt = mustNonEmptyString(args, 'prompt');
   const intent = optionalNonBlankString(args, 'intent');
   const admission = await dispatcher.submitToTeamLeader({
@@ -223,15 +204,8 @@ async function status(
   dispatcher: DispatcherService,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
-  const summary = await dispatcher.getTeamStatus(
-    mustNonEmptyString(args, 'team_name'),
-  );
   return {
-    structured: {
-      team: summary.team,
-      leader: summary.leader ?? null,
-      member_count: summary.member_count,
-    },
+    structured: await dispatcher.getTeamStatus(teamNameParam(args, 'team_name')),
   };
 }
 
@@ -239,29 +213,8 @@ async function history(
   dispatcher: DispatcherService,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
-  const name = optionalString(args, 'team_name');
-  const teamStatus = optionalTeamStatus(args, 'status');
-  const repo = optionalString(args, 'repo');
-  const grep = optionalString(args, 'grep');
-  const since = optionalInteger(args, 'since');
-  const until = optionalInteger(args, 'until');
-  const limit = optionalInteger(args, 'limit');
-  const cursor = optionalString(args, 'cursor');
-  const result = await dispatcher.getTeamHistory({
-    ...(name !== null ? { name } : {}),
-    ...(teamStatus !== null ? { status: teamStatus } : {}),
-    ...(repo !== null ? { repo } : {}),
-    ...(grep !== null ? { grep } : {}),
-    ...(since !== null ? { since } : {}),
-    ...(until !== null ? { until } : {}),
-    ...(limit !== null ? { limit } : {}),
-    ...(cursor !== null ? { cursor } : {}),
-  });
   return {
-    structured: {
-      items: result.items,
-      next_cursor: result.next_cursor ?? null,
-    },
+    structured: await dispatcher.getTeamHistory(teamHistoryQuery(args)),
   };
 }
 
@@ -272,31 +225,21 @@ async function dissolve(
 ): Promise<McpToolSuccess> {
   const note = mustNonBlankString(args, 'note');
   const force = args['force'] === true;
-  try {
-    const dissolved =
-      caller.kind === 'team_leader'
-        ? await dispatcher.dissolveTeamForLeader({
-            // The Team is the caller's own, from the descriptor that launched
-            // this server — never a name the model supplied.
-            teamId: caller.teamId,
-            note,
-            force,
-          })
-        : await dispatcher.dissolveTeam({
-            teamId: mustNonEmptyString(args, 'team_name'),
-            note,
-            force,
-          });
-    return {
-      structured: {
-        accepted: dissolved.accepted,
-        team_name: dissolved.team_name,
-        status: dissolved.status,
-      },
-    };
-  } catch (error) {
-    throwPublicDissolveError(error);
-  }
+  const dissolved =
+    caller.kind === 'team_leader'
+      ? await dispatcher.dissolveTeamForLeader({
+          // The Team is the caller's own, from the descriptor that launched
+          // this server — never a name the model supplied.
+          teamId: caller.teamId,
+          note,
+          force,
+        })
+      : await dispatcher.dissolveTeam({
+          teamId: teamNameParam(args, 'team_name'),
+          note,
+          force,
+        });
+  return { structured: dissolved };
 }
 
 function teamToolDescriptors(

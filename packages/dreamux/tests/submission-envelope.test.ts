@@ -27,7 +27,7 @@ import {
   SCHEDULED_SOURCE,
   SYSTEM_SOURCE,
 } from '../src/service/submission-sources.js';
-import { teamSubmitResult } from '../src/service/team-collection/projections.js';
+import { teamSubmitResult } from '../src/service/team-service/types.js';
 import type { TeammateService } from '../src/service/teammate-service/index.js';
 import {
   isSafeTagName,

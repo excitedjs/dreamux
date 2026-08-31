@@ -1237,6 +1237,22 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
 - Product code remains unchanged until the requirement and technical solution
   are finalized and the operator explicitly grants development approval.
 
+### Feishu bot self-identity recovery
+
+- Feishu resolves its own bot `open_id` before applying the inbound group
+  mention gate. A successful result may be cached for the Channel process
+  lifetime.
+- A failed request or a response without `open_id` is not a resolved identity
+  and must not become a negative cache entry. While identity remains unresolved,
+  the next inbound chat message retries the lookup before that message reaches
+  the mention gate; a successful retry applies to that same message and all
+  later messages.
+- Concurrent inbound messages share one in-flight lookup. A failed retry leaves
+  identity unresolved so a later message can try again. The Channel remains
+  fail-closed for the current message when identity is still unavailable.
+- This is process-local transport state only. It adds no persisted state,
+  configuration, replay queue, or independent Channel recovery protocol.
+
 ## Open technical design decisions
 
 - The exact Provider-level `getCapabilities()` discovery schema, including tag

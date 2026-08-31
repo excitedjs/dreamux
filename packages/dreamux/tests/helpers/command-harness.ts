@@ -42,6 +42,7 @@ import type {
 } from '../../src/service/mcp/types.js';
 import type { DispatcherService } from '../../src/service/dispatcher-service/index.js';
 import type { DispatcherRow } from '../../src/state/dispatcher-store.js';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import type {
   DispatcherRuntimeStatus,
   DispatcherSummary,
@@ -267,18 +268,51 @@ export function createHarnessChannelInvoker(
   harness: CommandHarness,
   dispatcherId: string = HARNESS_DISPATCHER_ID,
   channelId: string = HARNESS_CHANNEL_ID,
+  logs: CapturedLog[] = [],
 ) {
   return createChannelCorePort({
     registry: harness.port,
     dispatcherId,
     channelId,
     events: fakeChannelEventSource(),
+    log: capturingLogger(logs),
   });
+}
+
+/** One log line an adapter recorded rather than said out loud. */
+export interface CapturedLog {
+  readonly fields: Record<string, unknown>;
+  readonly message: string;
+}
+
+/** A logger that keeps what it was told, for asserting what stayed private. */
+export function capturingLogger(sink: CapturedLog[]): DreamuxLogger {
+  const record =
+    () =>
+    (fields?: unknown, message?: unknown): void => {
+      if (typeof fields === 'string') {
+        sink.push({ fields: {}, message: fields });
+        return;
+      }
+      sink.push({
+        fields: (fields ?? {}) as Record<string, unknown>,
+        message: typeof message === 'string' ? message : '',
+      });
+    };
+  return {
+    error: record(),
+    warn: record(),
+    info: record(),
+    debug: record(),
+    trace: record(),
+  } as unknown as DreamuxLogger;
 }
 
 export interface HarnessAdminSocket {
   readonly socketPath: string;
   readonly server: AdminSocketServer;
+  /** Everything the socket adapter logged instead of putting on the wire. */
+  readonly logs: CapturedLog[];
   send(method: string, params?: Record<string, unknown>): Promise<AdminResponse>;
   /** Send a raw line, bypassing JSON construction — for framing-failure tests. */
   sendRaw(line: string): Promise<AdminResponse>;
@@ -296,7 +330,11 @@ export async function startHarnessAdminSocket(
 ): Promise<HarnessAdminSocket> {
   const dir = await mkdtemp(join(tmpdir(), 'dreamux-command-harness-'));
   const socketPath = join(dir, 'admin.sock');
-  const fakeServer = { commands: harness.port } as unknown as Server;
+  const logs: CapturedLog[] = [];
+  const fakeServer = {
+    commands: harness.port,
+    logger: capturingLogger(logs),
+  } as unknown as Server;
   const server = createAdminSocketServer(fakeServer, socketPath);
   await server.start();
 
@@ -337,6 +375,7 @@ export async function startHarnessAdminSocket(
   return {
     socketPath,
     server,
+    logs,
     send,
     sendRaw,
     async close() {

@@ -6,17 +6,17 @@
  * delegate, bound to the Team that delegate was built for, so nothing a
  * model sends can select a scope here. Run admission, concurrency, and record
  * semantics stay inside the workflow service.
+ *
+ * The run-request codec and the record projection live with the service's own
+ * types, and a failure states its own reason and next step where it is raised.
+ * The TeamMate MCP delegate that advertises the Workflow tools reads the same
+ * helpers; neither adapter reads the other.
  */
 import type { CoreCommandDefinition } from '@excitedjs/dreamux-types';
 
 import type { AnyCoreCommand } from '../../command/registry.js';
 import { mustDispatcher, type CoreCommandHost } from '../../command/host.js';
-import { ValidationError, errorMessage } from '../../command/errors.js';
-import {
-  commandPayload,
-  mustNonEmptyString,
-  optionalNonBlankString,
-} from '../../command/payload.js';
+import { commandPayload } from '../../command/payload.js';
 import {
   ANY,
   INTEGER,
@@ -25,13 +25,15 @@ import {
   STRING,
   objectSchema,
 } from '../../command/schema.js';
-import { parseWorkflowMaxConcurrency } from './limits.js';
-import type {
-  WorkflowListResult,
-  WorkflowRunAccepted,
-  WorkflowRunInput,
-  WorkflowRunRecord,
-  WorkflowStopResult,
+import {
+  workflowRunIdParam,
+  workflowRunInput,
+  workflowRunResult,
+  type WorkflowListResult,
+  type WorkflowRunAccepted,
+  type WorkflowRunInput,
+  type WorkflowRunRecord,
+  type WorkflowStopResult,
 } from './types.js';
 
 interface WorkflowRunCommandInput {
@@ -60,29 +62,7 @@ export function workflowCommands(
     }),
     output: objectSchema({ run_id: STRING }, ['run_id']),
     parse(payload) {
-      const params = commandPayload(payload);
-      const rawMaxConcurrency = params['max_concurrency'];
-      let maxConcurrency: number;
-      try {
-        maxConcurrency = parseWorkflowMaxConcurrency(rawMaxConcurrency);
-      } catch (error) {
-        throw new ValidationError(errorMessage(error));
-      }
-      const script = optionalNonBlankString(params, 'script');
-      const scriptPath = optionalNonBlankString(params, 'scriptPath');
-      if (script === null && scriptPath === null) {
-        throw new ValidationError('workflow.run requires either script or scriptPath');
-      }
-      return {
-        request: {
-          ...(script !== null ? { script } : {}),
-          ...(scriptPath !== null ? { scriptPath } : {}),
-          ...(Object.hasOwn(params, 'args') ? { args: params['args'] } : {}),
-          ...(rawMaxConcurrency !== undefined && rawMaxConcurrency !== null
-            ? { max_concurrency: maxConcurrency }
-            : {}),
-        },
-      };
+      return { request: workflowRunInput(commandPayload(payload)) };
     },
     async execute(context, input) {
       return mustDispatcher(host, context).workflows.run(input.request);
@@ -100,9 +80,11 @@ export function workflowCommands(
     output: OBJECT,
     parse: (payload) => runIdInput(payload),
     async execute(context, input) {
-      return mustDispatcher(host, context).workflows.status({
-        run_id: input.runId,
-      });
+      return workflowRunResult(
+        await mustDispatcher(host, context).workflows.status({
+          run_id: input.runId,
+        }),
+      );
     },
   };
 
@@ -134,7 +116,8 @@ export function workflowCommands(
     output: OBJECT,
     parse: () => ({}),
     async execute(context) {
-      return mustDispatcher(host, context).workflows.list();
+      const result = await mustDispatcher(host, context).workflows.list();
+      return { runs: result.runs.map(workflowRunResult) };
     },
   };
 
@@ -142,5 +125,5 @@ export function workflowCommands(
 }
 
 function runIdInput(payload: Parameters<typeof commandPayload>[0]): WorkflowRunIdInput {
-  return { runId: mustNonEmptyString(commandPayload(payload), 'run_id') };
+  return { runId: workflowRunIdParam(commandPayload(payload)) };
 }

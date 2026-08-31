@@ -2,7 +2,8 @@
  * The one Agent-facing MCP stdio shim.
  *
  * It replaces five scoped shims that each knew a dispatcher id, a caller kind,
- * a Team, a tool catalog, an admin-method map, and a public-error allowlist.
+ * a Team, a tool catalog, an admin-method map, and a list of which failures a
+ * model was allowed to read.
  * This one knows none of that, and structurally cannot: everything it is given
  * is an admin socket to reach and an opaque lease token to present.
  *
@@ -25,17 +26,24 @@
  * socket are not the object Core validated, and this is the last place to say
  * so before handing them to the SDK.
  *
- * Diagnostics go out of band to stderr. The authoritative detail for a failed
- * tool call is in the server log, because the delegate that failed runs there;
- * what reaches the model is the delegate's own approved message or the fixed
- * sanitized error.
+ * Diagnostics go out of band to stderr. What reaches the model for a failed
+ * tool call is the sentence the server already rendered. The two failures this
+ * process can see for itself — a server it could not reach, and a Command that
+ * rejected before any delegate ran — are rendered here by the same rule the
+ * server uses: a failure that crossed the wire with its own `action` was stated
+ * by its domain and is repeated with it; anything else is repeated under its
+ * own code and its own message.
  */
 import type { Readable, Writable } from 'node:stream';
 
 import type { JsonInvoker, JsonValue } from '@excitedjs/dreamux-types';
 
-import { adminJsonInvoker } from '../admin/client.js';
-import { TransportError } from '../platform/errors.js';
+import { AdminClientError, adminJsonInvoker } from '../admin/client.js';
+import {
+  codedFailureText,
+  statedFailureText,
+  unclassifiedFailureText,
+} from './failure-text.js';
 import { validateMcpToolCatalog } from './catalog.js';
 import {
   PublicToolError,
@@ -55,20 +63,6 @@ export interface DreamuxMcpShimOptions {
   transport?: RunMcpServerOptions['transport'];
   log?: (message: string) => void;
 }
-
-/**
- * The one public sentence for a conduit that never reached the server.
- *
- * A caller told only "the tool failed" retries a request that cannot succeed,
- * so the model is told the one actionable thing instead. It is projected here
- * rather than by any delegate because only this process can observe it: from
- * the server's side, a request that never arrived did not happen. The wording
- * carries no socket path or host detail — that is operator diagnosis, and it
- * stays in the stderr diagnostics.
- */
-const TRANSPORT_PUBLIC_MESSAGE =
-  'the Dreamux server is not reachable right now; ask the operator to check ' +
-  'that it is running, then retry';
 
 export async function runDreamuxMcp(opts: DreamuxMcpShimOptions): Promise<void> {
   if (opts.lease === '') {
@@ -128,15 +122,13 @@ async function describe(
 }
 
 /**
- * Forward one call and unwrap the delegate's envelope.
+ * Forward one call and unwrap the server's envelope.
  *
- * The envelope has exactly two shapes because the delegate had exactly two
- * choices: a result the model reads, or a message the delegate decided the
- * model may read. Everything else already failed the Command, so it arrives
- * here as a server-reported error that is deliberately *not* translated —
- * rethrowing it lets the shared executor log it and answer with the fixed
- * sanitized error, which is the only correct answer for a failure nobody
- * approved.
+ * The envelope has exactly two shapes because the server already settled the
+ * call: a result the model reads, or the sentence it rendered for a failure. A
+ * rejected invocation never reached that rendering, so this process renders it
+ * — the one place that can, because from the server's side a request that never
+ * arrived did not happen.
  */
 async function callTool(
   core: JsonInvoker,
@@ -153,10 +145,7 @@ async function callTool(
       arguments: args as Record<string, JsonValue>,
     });
   } catch (error) {
-    if (error instanceof TransportError) {
-      throw new PublicToolError(TRANSPORT_PUBLIC_MESSAGE);
-    }
-    throw error;
+    throw new PublicToolError(invocationFailureText(error));
   }
   const envelope = asRecord(result, `tool '${name}' result`);
   if (envelope['ok'] !== true) {
@@ -174,6 +163,29 @@ async function callTool(
     structured,
     ...(typeof text === 'string' && text !== '' ? { text } : {}),
   };
+}
+
+/**
+ * What a model reads when the invocation itself failed.
+ *
+ * The wire already carried the distinction: a Command failure that arrived with
+ * an `action` was stated by the domain that raised it, so all three of its
+ * parts are repeated. Everything else — a `{code, message}` without an action,
+ * or a transport failure this process observed itself — keeps the code and the
+ * message it already has. Core does not own those words and does not replace
+ * them.
+ */
+function invocationFailureText(error: unknown): string {
+  if (error instanceof AdminClientError) {
+    return error.action !== undefined
+      ? statedFailureText({
+          code: error.code,
+          message: error.message,
+          action: error.action,
+        })
+      : codedFailureText(error.code, error.message);
+  }
+  return unclassifiedFailureText(error);
 }
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {

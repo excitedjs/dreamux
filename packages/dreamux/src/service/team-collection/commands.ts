@@ -10,8 +10,12 @@
  * An Agent reaches the same Team through the Team MCP delegate beside this file,
  * which calls the same {@link DispatcherService} methods with its own arguments
  * and its own provenance — so there is no caller-kind selector here, and no tool
- * flattened into a Command. What the two surfaces genuinely share lives in
- * `projections.ts`.
+ * flattened into a Command. What the two surfaces genuinely share — reading a
+ * `team_name`, reading a history query, and the one submission receipt that is
+ * more than a copy — belongs to the Team and lives in its own `types.ts`; what
+ * stays here is this surface's: the declared payload schema, the caller context,
+ * and the `attrs` / `source_id` / bare-`text` fields only a Channel-facing
+ * caller sends.
  */
 import type {
   AgentRuntimeSkillSource,
@@ -24,11 +28,7 @@ import type {
 
 import type { AnyCoreCommand } from '../../command/registry.js';
 import { mustDispatcher, type CoreCommandHost } from '../../command/host.js';
-import {
-  ValidationError,
-  errorMessage,
-  toDreamuxError,
-} from '../../command/errors.js';
+import { ValidationError } from '../../command/errors.js';
 import {
   normalizeSkillSources,
   optionalParsedSkillSources,
@@ -38,9 +38,7 @@ import {
   mustNonBlankString,
   mustNonEmptyString,
   mustRecord,
-  mustString,
   optionalBooleanField,
-  optionalInteger,
   optionalNonBlankString,
   optionalString,
   type CommandPayload,
@@ -65,14 +63,21 @@ import {
 } from '../../command/schema.js';
 import { CHANNEL_SOURCE } from '../submission-sources.js';
 import { isSafeTagName } from '../teammate-service/submission.js';
-import { throwPublicDissolveError } from './errors.js';
 import {
   MAX_REQUEST_ID_LENGTH,
   TEAM_LEADER_REQUIRED_SKILL_SOURCES,
   teamCreatePayloadHash,
 } from './create-request.js';
-import { teamSubmitResult } from './projections.js';
-import { optionalTeamStatus, validateTeamId } from './types.js';
+import {
+  optionalTeamNameParam,
+  teamHistoryQuery,
+  teamNameParam,
+  type TeamDissolveReceipt,
+  type TeamHistoryQuery,
+  type TeamHistoryResult,
+  type TeamSummary,
+} from './types.js';
+import { teamSubmitResult } from '../team-service/types.js';
 
 /**
  * The maximum length of a caller-chosen `source_id`. Core deduplicates with it
@@ -97,16 +102,7 @@ interface TeamNameInput {
 }
 
 interface TeamHistoryInput {
-  query: {
-    name?: string;
-    status?: 'starting' | 'running' | 'closed';
-    repo?: string;
-    grep?: string;
-    since?: number;
-    until?: number;
-    limit?: number;
-    cursor?: string;
-  };
+  query: TeamHistoryQuery;
 }
 
 interface TeamDissolveInput {
@@ -154,8 +150,8 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       const repo = repoRequest(params, 'repo');
       const command: TeamCreateCommand = {
         request_id: mustNonBlankString(params, 'request_id'),
-        name_prefix: mustNonEmptyString(params, 'name_prefix'),
-        intent: mustNonEmptyString(params, 'intent'),
+        name_prefix: mustNonBlankString(params, 'name_prefix'),
+        intent: mustNonBlankString(params, 'intent'),
         leader: {
           agent_runtime: mustNonEmptyString(leader, 'agent_runtime'),
           ...(identity !== null ? { identity } : {}),
@@ -186,30 +182,27 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       // dispatcher's own workspace, exactly as the existing creation path does.
       const repoCwd =
         repo === null ? null : repo.cwd ?? (await dispatcher.workspace());
-      try {
-        return await dispatcher.createTeam({
-          requestId: command.request_id,
-          payloadHash: input.payloadHash,
-          options: {
-            namePrefix: command.name_prefix,
-            intent: command.intent,
-            leaderAgentRuntime: command.leader.agent_runtime,
-            ...(repoCwd !== null ? { repoCwd } : {}),
-            ...(repo !== null ? { worktree: repo.worktree } : {}),
-            ...(command.leader.prompt !== undefined
-              ? { prompt: command.leader.prompt }
-              : {}),
-            ...(command.leader.identity !== undefined
-              ? { identity: command.leader.identity }
-              : {}),
-            ...(skillSources !== null ? { skillSources } : {}),
-          },
-        });
-      } catch (err) {
-        // An idempotency conflict, a closed Team, and a missing Team all carry
-        // their own codes already; only an unclassified failure is INTERNAL.
-        throw toDreamuxError(err);
-      }
+      // No catch: an idempotency conflict, a closed Team, and a missing Team
+      // already state themselves, and anything else must reach the boundary
+      // that logs it with its stack, name, and cause intact.
+      return dispatcher.createTeam({
+        requestId: command.request_id,
+        payloadHash: input.payloadHash,
+        options: {
+          namePrefix: command.name_prefix,
+          intent: command.intent,
+          leaderAgentRuntime: command.leader.agent_runtime,
+          ...(repoCwd !== null ? { repoCwd } : {}),
+          ...(repo !== null ? { worktree: repo.worktree } : {}),
+          ...(command.leader.prompt !== undefined
+            ? { prompt: command.leader.prompt }
+            : {}),
+          ...(command.leader.identity !== undefined
+            ? { identity: command.leader.identity }
+            : {}),
+          ...(skillSources !== null ? { skillSources } : {}),
+        },
+      });
     },
   };
 
@@ -244,8 +237,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
     ),
     parse(payload) {
       const params = commandPayload(payload);
-      const teamName = optionalNonBlankString(params, 'team_name');
-      if (teamName !== null) assertTeamName(teamName);
+      const teamName = optionalTeamNameParam(params, 'team_name');
       const attrs = submissionAttrs(params);
       const reminder = optionalString(params, 'reminder');
       const intent = optionalNonBlankString(params, 'intent');
@@ -278,32 +270,28 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
           : {}),
         ...(command.intent !== undefined ? { intent: command.intent } : {}),
       };
-      try {
-        const admission =
-          command.team_name === undefined
-            ? await dispatcher.submitToAgent({
-                ...shared,
-                source: CHANNEL_SOURCE,
-              })
-            : await dispatcher.submitToTeamLeader({
-                ...shared,
-                teamId: command.team_name,
-                // Every `team.submit` is the Channel-facing surface, whether it
-                // arrived over a Channel adapter or `admin.sock`, so it reaches
-                // the model under one provenance name.
-                source: CHANNEL_SOURCE,
-                // No external submission advances the Dispatcher Agent. Who
-                // waits for a leader's completion is a property of the
-                // operation, not of the adapter that carried it: an Agent
-                // handing work to a Team says so explicitly on the Team MCP
-                // delegate, while an external caller — Channel or `admin.sock`
-                // — is answered by the TeamLeader on its own Channel.
-                deliverCompletionToDispatcher: false,
-              });
-        return teamSubmitResult(admission);
-      } catch (err) {
-        throw toDreamuxError(err);
-      }
+      const admission =
+        command.team_name === undefined
+          ? await dispatcher.submitToAgent({
+              ...shared,
+              source: CHANNEL_SOURCE,
+            })
+          : await dispatcher.submitToTeamLeader({
+              ...shared,
+              teamId: command.team_name,
+              // Every `team.submit` is the Channel-facing surface, whether it
+              // arrived over a Channel adapter or `admin.sock`, so it reaches
+              // the model under one provenance name.
+              source: CHANNEL_SOURCE,
+              // No external submission advances the Dispatcher Agent. Who
+              // waits for a leader's completion is a property of the
+              // operation, not of the adapter that carried it: an Agent
+              // handing work to a Team says so explicitly on the Team MCP
+              // delegate, while an external caller — Channel or `admin.sock`
+              // — is answered by the TeamLeader on its own Channel.
+              deliverCompletionToDispatcher: false,
+            });
+      return teamSubmitResult(admission);
     },
   };
 
@@ -321,7 +309,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
     },
   };
 
-  const status: CoreCommandDefinition<'team.status', TeamNameInput, unknown> = {
+  const status: CoreCommandDefinition<'team.status', TeamNameInput, TeamSummary> = {
     name: 'team.status',
     version: 1,
     input: objectSchema(
@@ -337,7 +325,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       ['team', 'leader', 'member_count'],
     ),
     parse(payload) {
-      return { teamName: mustString(commandPayload(payload), 'team_name') };
+      return { teamName: teamNameParam(commandPayload(payload), 'team_name') };
     },
     async execute(context, input) {
       const dispatcher = mustDispatcher(host, context);
@@ -345,7 +333,11 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
     },
   };
 
-  const history: CoreCommandDefinition<'team.history', TeamHistoryInput, unknown> = {
+  const history: CoreCommandDefinition<
+    'team.history',
+    TeamHistoryInput,
+    TeamHistoryResult
+  > = {
     name: 'team.history',
     version: 1,
     input: objectSchema({
@@ -363,27 +355,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       ['items', 'next_cursor'],
     ),
     parse(payload) {
-      const params = commandPayload(payload);
-      const name = optionalString(params, 'team_name');
-      const teamStatus = optionalTeamStatus(params, 'status');
-      const repo = optionalString(params, 'repo');
-      const grep = optionalString(params, 'grep');
-      const since = optionalInteger(params, 'since');
-      const until = optionalInteger(params, 'until');
-      const limit = optionalInteger(params, 'limit');
-      const cursor = optionalString(params, 'cursor');
-      return {
-        query: {
-          ...(name !== null ? { name } : {}),
-          ...(teamStatus !== null ? { status: teamStatus } : {}),
-          ...(repo !== null ? { repo } : {}),
-          ...(grep !== null ? { grep } : {}),
-          ...(since !== null ? { since } : {}),
-          ...(until !== null ? { until } : {}),
-          ...(limit !== null ? { limit } : {}),
-          ...(cursor !== null ? { cursor } : {}),
-        },
-      };
+      return { query: teamHistoryQuery(commandPayload(payload)) };
     },
     async execute(context, input) {
       const dispatcher = mustDispatcher(host, context);
@@ -391,7 +363,11 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
     },
   };
 
-  const dissolve: CoreCommandDefinition<'team.dissolve', TeamDissolveInput, unknown> = {
+  const dissolve: CoreCommandDefinition<
+    'team.dissolve',
+    TeamDissolveInput,
+    TeamDissolveReceipt
+  > = {
     name: 'team.dissolve',
     version: 1,
     input: objectSchema(
@@ -413,22 +389,18 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
     parse(payload) {
       const params = commandPayload(payload);
       return {
-        teamName: assertTeamName(mustString(params, 'team_name')),
+        teamName: teamNameParam(params, 'team_name'),
         note: mustNonBlankString(params, 'note'),
         ...optionalBooleanField(params, 'force'),
       };
     },
     async execute(context, input) {
       const dispatcher = mustDispatcher(host, context);
-      try {
-        return await dispatcher.dissolveTeam({
-          teamId: input.teamName,
-          note: input.note,
-          ...(input.force !== undefined ? { force: input.force } : {}),
-        });
-      } catch (err) {
-        throwPublicDissolveError(err);
-      }
+      return dispatcher.dissolveTeam({
+        teamId: input.teamName,
+        note: input.note,
+        ...(input.force !== undefined ? { force: input.force } : {}),
+      });
     },
   };
 
@@ -480,12 +452,4 @@ function submissionAttrs(
   return entries.length > 0
     ? (Object.fromEntries(entries) as Record<string, string>)
     : null;
-}
-
-function assertTeamName(value: string): string {
-  try {
-    return validateTeamId(value);
-  } catch (error) {
-    throw new ValidationError(errorMessage(error));
-  }
 }

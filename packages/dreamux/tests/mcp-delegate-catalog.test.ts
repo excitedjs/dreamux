@@ -52,7 +52,7 @@ import {
   repoInputSchema,
   toolMetadata,
 } from '../src/service/mcp/tool-metadata.js';
-import { DreamuxError } from '../src/platform/errors.js';
+import { InternalError, StatedFailure } from '../src/platform/errors.js';
 import { createCommandHarness } from './helpers/command-harness.js';
 
 const SRC_ROOT = join(fileURLToPath(new URL('../src/', import.meta.url)));
@@ -512,21 +512,23 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
     expect(result).toEqual({ ok: false, message: 'that chat is not bound to your Team' });
   });
 
-  it('projects the Team-lease TEAM_NOT_FOUND/TEAM_CLOSED failures to an ok:false result and rethrows everything else', async () => {
-    class FakeTeamNotFoundError extends DreamuxError {
+  it('raises a Team-lease failure for the admission boundary to render, and keeps no list of its own', async () => {
+    class FakeTeamNotFoundError extends StatedFailure {
       constructor() {
-        super('TEAM_NOT_FOUND', 'no such Team');
+        super('TEAM_NOT_FOUND', 'no such Team', 'Use team.list for live Teams.');
       }
     }
-    class FakeInternalError extends DreamuxError {
+    class FakeInternalError extends InternalError {
       constructor() {
-        super('INTERNAL', 'boom');
+        super('boom');
       }
     }
     // `dispatch` is where a TeamLeader-scoped call enters that Team's own work
     // fence (see mcp-delegates.ts: `runForTeamLeader`); a fenced call raises
     // its Team-lease failure from `dispatch` itself, before the handler ever
-    // runs. The delegate's projection layer must still convert it.
+    // runs. The delegate passes it on rather than classifying it: which
+    // failures a caller may read is decided at the one boundary every delegate
+    // is reached through, not per delegate.
     const delegateWithFencedDispatch = createChannelMcpDelegate({
       dispatcherId: 'd1',
       channelId: 'c1',
@@ -540,10 +542,9 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
         throw new FakeTeamNotFoundError();
       },
     });
-    await expect(delegateWithFencedDispatch.call({ name: 't', arguments: {} })).resolves.toEqual({
-      ok: false,
-      message: 'no such Team',
-    });
+    await expect(
+      delegateWithFencedDispatch.call({ name: 't', arguments: {} }),
+    ).rejects.toBeInstanceOf(FakeTeamNotFoundError);
 
     const delegateWithUnlistedFailure = createChannelMcpDelegate({
       dispatcherId: 'd1',
@@ -558,6 +559,7 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
         throw new FakeInternalError();
       },
     });
+    // Identical treatment, which is the point: the delegate does not sort them.
     await expect(
       delegateWithUnlistedFailure.call({ name: 't', arguments: {} }),
     ).rejects.toBeInstanceOf(FakeInternalError);

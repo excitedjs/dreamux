@@ -18,6 +18,7 @@ import {
   DreamuxError,
   InternalError,
   ServerShuttingDownError,
+  StatedFailure,
   TransportError,
   ValidationError,
 } from '../src/command/errors.js';
@@ -90,14 +91,40 @@ describe('the generic failure vocabulary', () => {
     }
   });
 
-  it('business errors extend DreamuxError DIRECTLY — no DomainError-shaped intermediate in between', () => {
+  it('business errors extend StatedFailure, and StatedFailure is the ONLY step to DreamuxError', () => {
+    // A business failure states its own reason and action, so it stands on the
+    // one documented intermediate — and on nothing else. Pinning both links is
+    // what "no undocumented authority for a failure's shape" means now that
+    // there is exactly one documented one.
     for (const ErrorClass of [
       TeamNotFoundError,
       TeamClosedError,
       IdempotencyConflictError,
       DispatcherNotFoundError,
     ]) {
-      expect(Object.getPrototypeOf(ErrorClass.prototype)).toBe(DreamuxError.prototype);
+      expect(Object.getPrototypeOf(ErrorClass.prototype)).toBe(
+        StatedFailure.prototype,
+      );
+    }
+    expect(Object.getPrototypeOf(StatedFailure.prototype)).toBe(
+      DreamuxError.prototype,
+    );
+  });
+
+  it('every stated failure is constructed with an action, and no other failure has one', () => {
+    for (const stated of [
+      new ValidationError('x'),
+      new ServerShuttingDownError(),
+      new TeamNotFoundError('x'),
+      new TeamClosedError('x'),
+      new IdempotencyConflictError('x'),
+      new DispatcherNotFoundError('x'),
+    ]) {
+      expect(stated).toBeInstanceOf(StatedFailure);
+      expect(stated.action).toBeTruthy();
+    }
+    for (const unstated of [new TransportError('x'), new InternalError('x')]) {
+      expect(unstated).not.toBeInstanceOf(StatedFailure);
     }
   });
 
@@ -133,11 +160,21 @@ describe('a known business error survives to the caller with its own code — th
         note: 'cleanup',
       });
       expect(viaAdmin.ok).toBe(false);
-      expect((viaAdmin as { error: { code: string } }).error.code).toBe('TEAM_NOT_FOUND');
+      // Not the code alone: the reason and the next step its own domain wrote
+      // travel with it, and both adapters carry all three.
+      expect((viaAdmin as { error: unknown }).error).toEqual({
+        code: 'TEAM_NOT_FOUND',
+        message: "no Team 'ghost'",
+        action: new TeamNotFoundError('x').action,
+      });
 
       await expect(
         lease.port.invoke.invoke('team.dissolve', { team_name: 'ghost', note: 'cleanup' }),
-      ).rejects.toMatchObject({ code: 'TEAM_NOT_FOUND' });
+      ).rejects.toMatchObject({
+        code: 'TEAM_NOT_FOUND',
+        message: "no Team 'ghost'",
+        action: new TeamNotFoundError('x').action,
+      });
     } finally {
       await admin.close();
     }
@@ -159,11 +196,18 @@ describe('a known business error survives to the caller with its own code — th
         team_name: 'alpha',
         text: 'hello',
       });
-      expect((viaAdmin as { error: { code: string } }).error.code).toBe('TEAM_CLOSED');
+      expect((viaAdmin as { error: unknown }).error).toEqual({
+        code: 'TEAM_CLOSED',
+        message: "Team 'alpha' is closed",
+        action: new TeamClosedError('x').action,
+      });
 
       await expect(
         lease.port.invoke.invoke('team.submit', { team_name: 'alpha', text: 'hello' }),
-      ).rejects.toMatchObject({ code: 'TEAM_CLOSED' });
+      ).rejects.toMatchObject({
+        code: 'TEAM_CLOSED',
+        message: "Team 'alpha' is closed",
+      });
     } finally {
       await admin.close();
     }
@@ -199,11 +243,12 @@ describe('a known business error survives to the caller with its own code — th
     }
   });
 
-  it('an unclassified thrown Error becomes INTERNAL — only a genuinely unknown failure does', async () => {
+  it('an unclassified thrown Error becomes INTERNAL, keeping the words it already had', async () => {
+    const raw = 'EACCES: permission denied, open /Users/ops/.dreamux/state/x';
     const harness = createCommandHarness({
       dispatcherOverrides: {
         createTeam: async () => {
-          throw new Error('some unrelated bug, not a DreamuxError');
+          throw new Error(raw);
         },
       },
     });
@@ -217,7 +262,12 @@ describe('a known business error survives to the caller with its own code — th
         intent: 'do the work',
         leader: { agent_runtime: 'codex' },
       });
-      expect((viaAdmin as { error: { code: string } }).error.code).toBe('INTERNAL');
+      // Core did not raise it and does not re-author it: the code is Core's,
+      // the sentence is the failure's, and no next step is invented.
+      expect((viaAdmin as { error: unknown }).error).toEqual({
+        code: 'INTERNAL',
+        message: raw,
+      });
 
       await expect(
         lease.port.invoke.invoke('team.create', {
@@ -226,10 +276,34 @@ describe('a known business error survives to the caller with its own code — th
           intent: 'do the work',
           leader: { agent_runtime: 'codex' },
         }),
-      ).rejects.toMatchObject({ code: 'INTERNAL' });
+      ).rejects.toMatchObject({ code: 'INTERNAL', message: raw });
     } finally {
       await admin.close();
     }
+  });
+
+  it('a Command never wraps an unclassified failure on its way out', async () => {
+    // The registry hands the boundary the value the domain threw, so a
+    // boundary that logs it still sees its real type and stack.
+    class StoreCorrupt extends Error {
+      override readonly name = 'StoreCorrupt';
+    }
+    const harness = createCommandHarness({
+      dispatcherOverrides: {
+        teammates: {
+          close: async () => {
+            throw new StoreCorrupt('identity.json is not readable');
+          },
+        },
+      },
+    });
+    await expect(
+      harness.registry.invoke(
+        { source: 'admin', dispatcher_id: 'harness-d1' } as never,
+        'teammate.close',
+        { name: 'mate-9z', note: 'done' } as never,
+      ),
+    ).rejects.toBeInstanceOf(StoreCorrupt);
   });
 });
 

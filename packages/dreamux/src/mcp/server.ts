@@ -35,6 +35,8 @@ import {
   StdioServerTransport,
 } from '@modelcontextprotocol/server/stdio';
 
+import { unclassifiedFailureText } from './failure-text.js';
+
 /**
  * The exact ordered set of official MCP revisions Dreamux serves. Modern
  * (`2026-07-28`) traffic is negotiated through `server/discover`; the two
@@ -49,19 +51,12 @@ export const DREAMUX_SUPPORTED_PROTOCOL_VERSIONS: readonly string[] = [
 ];
 
 /**
- * The fixed, model-safe text emitted for any tool failure the tool's owner did
- * not explicitly mark as a public error. It carries no error code, provider
- * message, or internal detail.
- */
-export const SANITIZED_TOOL_ERROR =
-  'The tool call could not be completed. See the Dreamux server logs for details.';
-
-/**
- * An owner-approved, model-facing tool execution error. A handler throws this
- * when it has mapped a specific failure to a safe public message. The shared
- * executor formats it as an `isError` tool result with that message and no
- * `structuredContent`. Any other thrown value is logged in full out of band and
- * becomes {@link SANITIZED_TOOL_ERROR}.
+ * A model-facing tool execution error, already rendered by whoever owns the
+ * failure. A handler throws this when the sentence it carries is the one the
+ * model should read. The shared executor formats it as an `isError` tool result
+ * with that message and no `structuredContent`. Any other thrown value is
+ * logged in full out of band and answered under the code it already carried,
+ * or `INTERNAL` when it carried none — the stack stays in the log.
  */
 export class PublicToolError extends Error {
   constructor(message: string) {
@@ -269,9 +264,9 @@ function buildMcpServer(
 /**
  * The single MCP-adapter-owned execution projector. It emits the handler's
  * canonical value as structured content, adds the text that handler chose to
- * carry, formats an explicitly public tool error as an `isError` result, and
- * turns every other failure into a fixed sanitized error after logging it out
- * of band. It never exposes a raw `Error.message` to the model.
+ * carry, reports a tool failure whose text was already authored for the model
+ * as an `isError` result, and reports every other failure under its own code
+ * and message after logging the whole value out of band.
  */
 async function executeTool(
   tool: McpToolDefinition,
@@ -291,9 +286,12 @@ async function executeTool(
     if (err instanceof PublicToolError) {
       return { content: [{ type: 'text', text: err.message }], isError: true };
     }
+    // The last boundary, and the same contract as every one below it: the
+    // whole value — stack included — goes to the diagnostics, and the model
+    // reads the code and the message that value already had.
     log(`tool '${tool.name}' failed: ${describeError(err)}`);
     return {
-      content: [{ type: 'text', text: SANITIZED_TOOL_ERROR }],
+      content: [{ type: 'text', text: unclassifiedFailureText(err) }],
       isError: true,
     };
   }

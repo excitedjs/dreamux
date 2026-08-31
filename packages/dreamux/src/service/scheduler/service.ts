@@ -3,6 +3,9 @@ import { Cron } from 'croner';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import { errorInfo } from '../../platform/error-info.js';
+import { RuleViolation } from '../../platform/errors.js';
+import { throwCallerMistake } from '../../command/errors.js';
+import { CronJobNotFoundError } from './errors.js';
 
 import {
   type CronJobStore,
@@ -353,11 +356,14 @@ export class SchedulerService {
     action: CronJobAction;
   } {
     const tz = input.tz ?? localTimeZone();
-    const action = normalizeAction(input.prompt, input.action);
-    assertTitle(input.title);
-    validateCron(input.cron, tz);
-    validateAction(action);
-    assertMinimumInterval(input.cron, tz, input.recurring ?? true);
+    const action = asRequestValidation(() => {
+      const normalized = normalizeAction(input.prompt, input.action);
+      assertTitle(input.title);
+      validateCron(input.cron, tz);
+      validateAction(normalized);
+      assertMinimumInterval(input.cron, tz, input.recurring ?? true);
+      return normalized;
+    });
     return {
       ...(input.title !== undefined ? { title: input.title } : {}),
       cron: input.cron,
@@ -374,16 +380,19 @@ export class SchedulerService {
     const cron = input.cron ?? current.cron;
     const tz = input.tz ?? current.tz;
     const recurring = input.recurring ?? current.recurring;
-    const action =
-      input.action !== undefined
-        ? normalizeAction(input.prompt ?? current.action.prompt, input.action)
-        : input.prompt !== undefined
-          ? { ...current.action, prompt: input.prompt }
-        : current.action;
-    assertTitle(input.title);
-    validateCron(cron, tz);
-    validateAction(action);
-    assertMinimumInterval(cron, tz, recurring);
+    const action = asRequestValidation(() => {
+      const normalized =
+        input.action !== undefined
+          ? normalizeAction(input.prompt ?? current.action.prompt, input.action)
+          : input.prompt !== undefined
+            ? { ...current.action, prompt: input.prompt }
+            : current.action;
+      assertTitle(input.title);
+      validateCron(cron, tz);
+      validateAction(normalized);
+      assertMinimumInterval(cron, tz, recurring);
+      return normalized;
+    });
     return {
       id: input.id,
       ...(input.title !== undefined ? { title: input.title } : {}),
@@ -397,7 +406,9 @@ export class SchedulerService {
 
   private async mustJob(id: string): Promise<CronJob> {
     const job = await this.store.get(id);
-    if (job === null) throw new Error(`cron job '${id}' does not exist`);
+    if (job === null) {
+      throw new CronJobNotFoundError(`cron job '${id}' does not exist`);
+    }
     return job;
   }
 
@@ -406,15 +417,37 @@ export class SchedulerService {
   }
 }
 
+/**
+ * Run one caller-request validation.
+ *
+ * The validators below are the scheduler's own rules and are used on two
+ * genuinely different paths: normalizing a request a caller just sent, and
+ * checking a job already persisted. Only the first is the caller's mistake, so
+ * only a broken rule — a `RuleViolation` and nothing else — is re-typed as one;
+ * a persisted job that fails the same rule stays a loud unclassified failure,
+ * because nothing the caller can send would fix it. Anything else raised while
+ * validating is an implementation failure and leaves untouched. The rules keep
+ * their own wording — a caller needs to read exactly which one it broke.
+ */
+function asRequestValidation<T>(validate: () => T): T {
+  try {
+    return validate();
+  } catch (error) {
+    throwCallerMistake(error);
+  }
+}
+
 function normalizeAction(
   prompt: string,
   raw: Record<string, unknown> | undefined,
 ): CronJobAction {
-  if (prompt === '') throw new Error('cron prompt must be a non-empty string');
+  if (prompt === '') {
+    throw new RuleViolation('cron prompt must be a non-empty string');
+  }
   if (raw === undefined) return { kind: 'prompt-agent', prompt };
   const kind = raw['kind'];
   if (kind !== undefined && kind !== 'prompt-agent') {
-    throw new Error("cron action.kind must be 'prompt-agent'");
+    throw new RuleViolation("cron action.kind must be 'prompt-agent'");
   }
   const actionPrompt =
     typeof raw['prompt'] === 'string' && raw['prompt'] !== ''
@@ -429,7 +462,9 @@ function normalizeAction(
 }
 
 function validateAction(action: CronJobAction): void {
-  if (action.prompt === '') throw new Error('cron action prompt must be non-empty');
+  if (action.prompt === '') {
+    throw new RuleViolation('cron action prompt must be non-empty');
+  }
 }
 
 function assertTitle(title: string | null | undefined): void {
@@ -437,17 +472,17 @@ function assertTitle(title: string | null | undefined): void {
   // (`optionalString` requires non-empty) on the next reload — fail loud on the
   // write path so a job can never become un-reloadable. `null` clears the title.
   if (typeof title === 'string' && title.length === 0) {
-    throw new Error('cron title must be a non-empty string');
+    throw new RuleViolation('cron title must be a non-empty string');
   }
 }
 
 function validateCron(pattern: string, tz: string): void {
   if (pattern.trim().split(/\s+/).length !== 5) {
-    throw new Error('cron must be a standard 5-field expression');
+    throw new RuleViolation('cron must be a standard 5-field expression');
   }
   validateTimeZone(tz);
-  if (cronFor(pattern, tz).nextRun(new Date()) === null) {
-    throw new Error('cron has no future run');
+  if (parseCron(pattern, tz).nextRun(new Date()) === null) {
+    throw new RuleViolation('cron has no future run');
   }
 }
 
@@ -457,17 +492,39 @@ function assertMinimumInterval(
   recurring: boolean,
 ): void {
   if (!recurring) return;
-  const runs = cronFor(pattern, tz).nextRuns(2, new Date());
+  const runs = parseCron(pattern, tz).nextRuns(2, new Date());
   if (runs.length < 2) return;
   const gap = runs[1]!.getTime() - runs[0]!.getTime();
   if (gap < MIN_CRON_INTERVAL_MS) {
-    throw new Error('cron interval must be at least one minute');
+    throw new RuleViolation('cron interval must be at least one minute');
   }
 }
 
 function nextRunAfter(pattern: string, tz: string, afterMs: number): number | null {
   const next = cronFor(pattern, tz).nextRun(new Date(afterMs));
   return next?.getTime() ?? null;
+}
+
+/**
+ * Build the cron for a pattern that is still being validated.
+ *
+ * The library reports an unparseable pattern by throwing, so this one call is
+ * where a throw *means* the pattern is invalid. Named on its own so that single
+ * library call — and nothing else on the validation path — is read as a broken
+ * rule; scheduling a job whose pattern already passed keeps using
+ * {@link cronFor}, where a throw would be a real failure.
+ */
+function parseCron(pattern: string, tz: string): Cron {
+  try {
+    return cronFor(pattern, tz);
+  } catch {
+    // A broken rule is stated in the scheduler's own words: the library's
+    // wording is its own vocabulary, and a caller reading it would be told
+    // about a parser it never chose instead of about the field it sent.
+    throw new RuleViolation(
+      `cron '${pattern}' is not a valid 5-field expression`,
+    );
+  }
 }
 
 function cronFor(pattern: string, tz: string): Cron {
@@ -481,8 +538,12 @@ function cronFor(pattern: string, tz: string): Cron {
 function validateTimeZone(tz: string): void {
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: tz }).format(new Date());
-  } catch {
-    throw new Error(`invalid timezone '${tz}'`);
+  } catch (error) {
+    // `Intl` reports an unknown zone as a `RangeError` and nothing else here
+    // does, so that one type is the rule signal; any other failure is the
+    // platform's, not the caller's.
+    if (!(error instanceof RangeError)) throw error;
+    throw new RuleViolation(`invalid timezone '${tz}'`);
   }
 }
 

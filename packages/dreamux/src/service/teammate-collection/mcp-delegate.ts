@@ -10,15 +10,21 @@
  *
  * Workflow tools live here because they are advertised on this same server:
  * they are the same caller's work, reaching the same handle's `workflows`.
+ *
+ * The input codecs and the two record projections belong to the owning domains
+ * and live with the types and records they read; what stays here is this
+ * surface's: the two scopes, the advertised catalog, and the model-facing text a
+ * tool chooses to say.
+ *
+ * Failures are thrown, not classified: each domain's failures state their own
+ * reason and next step, and the admission boundary every delegate is reached
+ * through renders them.
  */
-import { ValidationError, errorMessage } from '../../command/errors.js';
 import { normalizeSkillSources } from '../../agent-runtime/skill-sources.js';
 import {
+  mustNonBlankString,
   mustNonEmptyString,
-  optionalBooleanField,
-  optionalInteger,
   optionalNonBlankString,
-  optionalString,
   type CommandPayload,
 } from '../../command/payload.js';
 import { historyQuery } from '../agent-entity/history-query.js';
@@ -26,15 +32,8 @@ import {
   repoRequest,
   repoWorktree,
 } from '../worktree/repo-request.js';
-import {
-  ACTIVITY_PUBLIC_ERRORS,
-  mapAgentActivityCommandError,
-} from '../agent-entity/activity-errors.js';
-import { validateLastLimit } from '../agent-entity/read-helpers.js';
-import type {
-  AgentEntitySendResult,
-  AgentEntitySpawnResult,
-} from '../agent-entity/types.js';
+import { mapAgentActivityCommandError } from '../agent-entity/activity-errors.js';
+import type { AgentEntitySpawnResult } from '../agent-entity/types.js';
 import type { DispatcherService } from '../dispatcher-service/index.js';
 import type { TeamLeaderHandle } from '../dispatcher-service/team-leader-handle.js';
 import {
@@ -48,12 +47,16 @@ import type {
   McpDelegateResult,
   McpServerDelegate,
 } from '../mcp/types.js';
-import { parseWorkflowMaxConcurrency } from '../workflow-service/limits.js';
-import type {
-  WorkflowAgentRecord,
-  WorkflowRunRecord,
+import {
+  workflowRunIdParam,
+  workflowRunInput,
+  workflowRunResult,
 } from '../workflow-service/types.js';
 import { teammateToolDescriptors } from './mcp-tool-descriptors.js';
+import {
+  agentEntityLastQuery,
+  agentEntityNameParam,
+} from '../agent-entity/read-helpers.js';
 import type { TeamMateWorktreeRequest } from './types.js';
 
 export const TEAMMATE_MCP_SERVER_NAME = 'teammate';
@@ -80,18 +83,6 @@ export type TeamMateMcpScope =
       readonly team: () => Promise<TeamLeaderHandle>;
     };
 
-const ACTIVITY_CODES = ACTIVITY_PUBLIC_ERRORS.map((entry) => entry.code);
-
-/**
- * Failures a TeamMate or Workflow tool may show the model.
- *
- * `BAD_REQUEST` is this delegate's own argument validation. `last` additionally
- * surfaces the Activity read failures, whose public messages describe a neutral
- * state and never a path, native history layout, or scan mode.
- */
-const BASE_PUBLIC_CODES = ['BAD_REQUEST', 'TEAM_NOT_FOUND'] as const;
-const LAST_PUBLIC_CODES = [...BASE_PUBLIC_CODES, ...ACTIVITY_CODES];
-
 export function createTeamMateMcpDelegate(
   scope: TeamMateMcpScope,
 ): McpServerDelegate {
@@ -101,11 +92,8 @@ export function createTeamMateMcpDelegate(
     describe(): McpDelegateDescription {
       return { identity: IDENTITY, tools };
     },
-    async call(call: McpDelegateCall): Promise<McpDelegateResult> {
-      return runDelegateTool(
-        call.name === 'last' ? LAST_PUBLIC_CODES : [...BASE_PUBLIC_CODES],
-        () => serve(scope, call),
-      );
+    call(call: McpDelegateCall): Promise<McpDelegateResult> {
+      return runDelegateTool(() => serve(scope, call));
     },
   };
 }
@@ -170,9 +158,9 @@ async function spawn(
   scope: TeamMateMcpScope,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
-  const name = mustNonEmptyString(args, 'name_prefix');
+  const name = mustNonBlankString(args, 'name_prefix');
   const prompt = mustNonEmptyString(args, 'prompt');
-  const intent = mustNonEmptyString(args, 'intent');
+  const intent = mustNonBlankString(args, 'intent');
   const agentRuntime = optionalNonBlankString(args, 'agent_runtime');
   const identity = optionalNonBlankString(args, 'identity');
   const skillSources = await normalizeSkillSources(null);
@@ -213,23 +201,16 @@ async function send(
 ): Promise<McpToolSuccess> {
   const intent = optionalNonBlankString(args, 'intent');
   const result = await (await teammates(scope)).send({
-    name: mustNonEmptyString(args, 'name'),
+    name: agentEntityNameParam(args, 'name'),
     prompt: mustNonEmptyString(args, 'prompt'),
     ...(intent !== null ? { intent } : {}),
   });
   return submissionReceipt(result);
 }
 
-function submissionReceipt(
-  result: AgentEntitySpawnResult | AgentEntitySendResult,
-): McpToolSuccess {
-  const structured = {
-    teammate: result.teammate,
-    status: result.status,
-    ...(result.error !== undefined ? { error: result.error } : {}),
-  };
+function submissionReceipt(result: AgentEntitySpawnResult): McpToolSuccess {
   return {
-    structured,
+    structured: result,
     ...(result.status === 'submitted'
       ? { text: TEAMMATE_DISPATCH_SUCCESS_REMINDER }
       : {}),
@@ -241,22 +222,18 @@ async function close(
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
   const result = await (await teammates(scope)).close({
-    name: mustNonEmptyString(args, 'name'),
-    note: mustNonEmptyString(args, 'note'),
+    name: agentEntityNameParam(args, 'name'),
+    note: mustNonBlankString(args, 'note'),
   });
-  return { structured: { teammate: result.teammate } };
+  return { structured: result };
 }
 
 async function history(
   scope: TeamMateMcpScope,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
-  const result = await (await teammates(scope)).history(historyQuery(args));
   return {
-    structured: {
-      items: result.items,
-      next_cursor: result.next_cursor ?? null,
-    },
+    structured: await (await teammates(scope)).history(historyQuery(args)),
   };
 }
 
@@ -268,81 +245,41 @@ async function status(
   scope: TeamMateMcpScope,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
-  const teammate = await (await teammates(scope)).status(
-    mustNonEmptyString(args, 'name'),
-  );
-  return { structured: { teammate } };
+  return {
+    structured: {
+      teammate: await (await teammates(scope)).status(
+        agentEntityNameParam(args, 'name'),
+      ),
+    },
+  };
 }
 
 async function last(
   scope: TeamMateMcpScope,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
-  const limit = optionalInteger(args, 'limit');
+  const name = agentEntityNameParam(args, 'name');
+  const query = agentEntityLastQuery(args);
   try {
-    validateLastLimit(limit ?? undefined);
-  } catch {
-    throw new ValidationError('last limit must be an integer in 1..200');
-  }
-  const cursor = optionalString(args, 'cursor');
-  const includeTools = optionalBooleanField(args, 'include_tools')['include_tools'];
-  try {
-    const result = await (await teammates(scope)).last(mustNonEmptyString(args, 'name'), {
-      ...(limit !== null ? { limit } : {}),
-      ...(cursor !== null ? { cursor } : {}),
-      ...(includeTools !== undefined ? { includeTools } : {}),
-    });
-    return {
-      structured: {
-        teammate: result.teammate,
-        requested_records: result.requested_records,
-        returned_records: result.returned_records,
-        records: result.records,
-        next_cursor: result.next_cursor ?? null,
-        truncated: result.truncated,
-      },
-    };
+    return { structured: await (await teammates(scope)).last(name, query) };
   } catch (error) {
-    // The reader's internal reason vocabulary never leaves this call; what comes
-    // back is either one of the allowlisted public Activity codes or INTERNAL.
+    // The reader's internal reason vocabulary never leaves this call: a
+    // recognized reason becomes the Activity failure that states its own next
+    // step, and anything else passes through with the type and message it
+    // already had.
     return mapAgentActivityCommandError(error);
   }
 }
 
 async function capabilities(scope: TeamMateMcpScope): Promise<McpToolSuccess> {
-  const result = await (await teammates(scope)).getCapabilities();
-  return {
-    structured: {
-      verbs: result.verbs,
-      agent_runtimes: result.agent_runtimes,
-    },
-  };
+  return { structured: await (await teammates(scope)).getCapabilities() };
 }
 
 async function workflowRun(
   scope: TeamMateMcpScope,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
-  const script = optionalNonBlankString(args, 'script');
-  const scriptPath = optionalNonBlankString(args, 'scriptPath');
-  if (script === null && scriptPath === null) {
-    throw new ValidationError('workflow_run requires either script or scriptPath');
-  }
-  const rawMaxConcurrency = args['max_concurrency'];
-  let maxConcurrency: number;
-  try {
-    maxConcurrency = parseWorkflowMaxConcurrency(rawMaxConcurrency);
-  } catch (error) {
-    throw new ValidationError(errorMessage(error));
-  }
-  const accepted = await (await workflows(scope)).run({
-    ...(script !== null ? { script } : {}),
-    ...(scriptPath !== null ? { scriptPath } : {}),
-    ...(Object.hasOwn(args, 'args') ? { args: args['args'] } : {}),
-    ...(rawMaxConcurrency !== undefined && rawMaxConcurrency !== null
-      ? { max_concurrency: maxConcurrency }
-      : {}),
-  });
+  const accepted = await (await workflows(scope)).run(workflowRunInput(args));
   return {
     structured: { run_id: accepted.run_id },
     text: WORKFLOW_RUN_SUCCESS_REMINDER,
@@ -354,9 +291,9 @@ async function workflowStatus(
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
   const record = await (await workflows(scope)).status({
-    run_id: mustNonEmptyString(args, 'run_id'),
+    run_id: workflowRunIdParam(args),
   });
-  return { structured: workflowRecord(record) };
+  return { structured: workflowRunResult(record) };
 }
 
 async function workflowStop(
@@ -364,54 +301,12 @@ async function workflowStop(
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
   const result = await (await workflows(scope)).stop({
-    run_id: mustNonEmptyString(args, 'run_id'),
+    run_id: workflowRunIdParam(args),
   });
   return { structured: { run_id: result.run_id, status: result.status } };
 }
 
 async function workflowList(scope: TeamMateMcpScope): Promise<McpToolSuccess> {
   const result = await (await workflows(scope)).list();
-  return { structured: { runs: result.runs.map(workflowRecord) } };
-}
-
-/**
- * Project one workflow run record.
- *
- * Field-by-field rather than spread: the advertised output schema is closed, so
- * an additive internal field would otherwise fail output validation instead of
- * being quietly ignored.
- */
-function workflowRecord(record: WorkflowRunRecord): Record<string, unknown> {
-  return {
-    version: record.version,
-    run_id: record.run_id,
-    dispatcher_id: record.dispatcher_id,
-    team_id: record.team_id,
-    caller_kind: record.caller_kind,
-    script_hash: record.script_hash,
-    status: record.status,
-    max_concurrency: record.max_concurrency,
-    phase: record.phase,
-    last_log: record.last_log,
-    agents: record.agents.map(workflowAgent),
-    result: record.result ?? null,
-    error: record.error,
-    created_at: record.created_at,
-    updated_at: record.updated_at,
-    ended_at: record.ended_at,
-  };
-}
-
-function workflowAgent(agent: WorkflowAgentRecord): Record<string, unknown> {
-  return {
-    index: agent.index,
-    name: agent.name,
-    label: agent.label,
-    phase: agent.phase,
-    status: agent.status,
-    result: agent.result ?? null,
-    error: agent.error,
-    created_at: agent.created_at,
-    settled_at: agent.settled_at,
-  };
+  return { structured: { runs: result.runs.map(workflowRunResult) } };
 }

@@ -22,7 +22,6 @@ import { InMemoryTransport } from '@modelcontextprotocol/client';
 import { describe, expect, it } from 'vitest';
 
 import { AdminClientError } from '../src/admin/client.js';
-import { SANITIZED_TOOL_ERROR } from '../src/mcp/server.js';
 import { runDreamuxMcp } from '../src/mcp/shim.js';
 import { McpLeaseRegistry, McpLeaseRevokedError } from '../src/service/mcp/leases.js';
 import type {
@@ -126,9 +125,14 @@ describe('McpLeaseRegistry — admission edge', () => {
     registry.release([minted.token]);
 
     expect(() => registry.catalog(minted.token)).toThrow(McpLeaseRevokedError);
-    await expect(
-      registry.invoke(minted.token, { name: 'echo_tool', arguments: {} }),
-    ).rejects.toThrow(McpLeaseRevokedError);
+    // `invoke` is the boundary that answers a caller, so a revoked token is
+    // settled as the fact it is rather than thrown past it.
+    const revoked = await registry.invoke(minted.token, {
+      name: 'echo_tool',
+      arguments: {},
+    });
+    expect(revoked.ok).toBe(false);
+    expect(revoked.ok ? '' : revoked.message).toMatch(/^MCP_LEASE_REVOKED: /);
     expect(spy.calls).toHaveLength(1); // unchanged — the revoked call never dispatched
 
     // Releasing an already-released (or never-minted) token is a documented no-op.
@@ -268,7 +272,7 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
     }
   });
 
-  it('sanitizes an unclassified delegate failure instead of leaking it to the model', async () => {
+  it('carries an unclassified delegate failure to the model under its own message', async () => {
     const harness = createCommandHarness();
     const admin = await startHarnessAdminSocket(harness);
     try {
@@ -281,12 +285,13 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
       const connection = await connectMcpClient(serveShim({ lease: minted.token, adminSocketPath: admin.socketPath }));
       try {
         const result = await callTool(connection.client, 'echo_tool', { value: 'x' });
-        expect(result).toMatchObject({
-          isError: true,
-          content: [{ type: 'text', text: SANITIZED_TOOL_ERROR }],
-        });
+        expect(result.isError).toBe(true);
         const text = (result.content as { text?: string }[])[0]?.text ?? '';
-        expect(text).not.toContain('secret path');
+        // Core does not own this failure, so it reports the code it assigns and
+        // repeats the only concrete fact anybody has: the message itself.
+        expect(text).toBe(
+          'INTERNAL: internal stack trace with a secret path /Users/ops/.dreamux',
+        );
       } finally {
         await connection.close();
       }
@@ -295,7 +300,7 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
     }
   });
 
-  it('revokes mid-session: the next call fails before the delegate is dispatched again, and the model sees only the sanitized error', async () => {
+  it('revokes mid-session: the next call fails before the delegate is dispatched again, and the model reads the revocation as its own fact', async () => {
     const harness = createCommandHarness();
     const admin = await startHarnessAdminSocket(harness);
     try {
@@ -309,10 +314,10 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
         harness.mcpLeases.release([minted.token]);
 
         const result = await callTool(connection.client, 'echo_tool', { value: 'second' });
-        expect(result).toMatchObject({
-          isError: true,
-          content: [{ type: 'text', text: SANITIZED_TOOL_ERROR }],
-        });
+        expect(result.isError).toBe(true);
+        const text = (result.content as { text?: string }[])[0]?.text ?? '';
+        expect(text).toMatch(/^MCP_LEASE_REVOKED: /);
+        expect(text).toContain('agent runtime generation ended');
         // The revoked lease failed admission before the delegate ran again.
         expect(spy.calls).toHaveLength(1);
       } finally {
@@ -345,7 +350,7 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
     await expect(runDreamuxMcp({ lease: '' })).rejects.toThrow(/requires a lease token/);
   });
 
-  it('reports the fixed transport-unreachable message when the admin socket disappears mid-session', async () => {
+  it('reports the transport failure it observed when the admin socket disappears mid-session', async () => {
     const harness = createCommandHarness();
     const admin = await startHarnessAdminSocket(harness);
     const spy = spyDelegate();
@@ -357,7 +362,12 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
       const result = await callTool(connection.client, 'echo_tool', { value: 'x' });
       expect(result).toMatchObject({ isError: true });
       const text = (result.content as { text?: string }[])[0]?.text ?? '';
-      expect(text).toMatch(/not reachable right now/);
+      // The one failure this process observes for itself keeps its own code and
+      // the words Node wrote. An absent socket says ENOENT; restating that as
+      // advice would replace the only concrete fact there is.
+      expect(text).toMatch(/^TRANSPORT_ERROR: /);
+      expect(text).toContain(`connect ENOENT ${admin.socketPath}`);
+      expect(text).not.toMatch(/is the server running/);
       expect(spy.calls).toHaveLength(0); // the call never reached the delegate at all
     } finally {
       await connection.close();

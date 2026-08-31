@@ -1,6 +1,7 @@
 import type {
   AgentRuntimeSkillSource,
   DreamuxLogger,
+  TeamSubmitResult,
 } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
@@ -18,6 +19,7 @@ import type { AgentNameRegistry } from '../agent-entity/identity-store.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
 import type { SuffixGenerator } from '../name-allocator.js';
 import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
+import type { TurnAdmission } from '../teammate-service/turn-recording.js';
 import type { TeammateAgentMcp } from '../teammate-service/types.js';
 import type { TeamMateSharedWorkspace } from '../teammate-collection/types.js';
 import type { TeamStore } from '../team-collection/store.js';
@@ -115,4 +117,44 @@ export interface TeamClosedFact {
 
 export interface TeamClosedSubscription {
   unsubscribe(): void;
+}
+
+/**
+ * The canonical public receipt of one TeamLeader submission.
+ *
+ * The one submission projection that is not a copy: the provider seam's
+ * internal `skipped` is normalized to `stopped` here, and a duplicate is
+ * reported without a turn identity it never got. Both caller-facing surfaces
+ * read this, so the receipt cannot mean two things.
+ */
+export function teamSubmitResult(admission: TurnAdmission): TeamSubmitResult {
+  switch (admission.status) {
+    case 'submitted':
+      return { status: 'submitted', turn_id: admission.turn.id };
+    case 'duplicate':
+      // Core returned before runtime admission, so there is no second turn
+      // identity to report.
+      return { status: 'duplicate' };
+    case 'stopped':
+      return { status: 'stopped' };
+    // The provider seam's internal `skipped` is normalized at this boundary.
+    case 'skipped':
+      return {
+        status: 'stopped',
+        error: { code: 'TURN_SKIPPED', message: 'turn skipped' },
+      };
+    case 'failed':
+      return {
+        status: 'failed',
+        error: { code: 'TEAM_SUBMIT_FAILED', message: admission.error.message },
+      };
+    case 'ambiguous':
+      return {
+        status: 'ambiguous',
+        error: {
+          code: 'TEAM_SUBMIT_AMBIGUOUS',
+          message: admission.error.message,
+        },
+      };
+  }
 }

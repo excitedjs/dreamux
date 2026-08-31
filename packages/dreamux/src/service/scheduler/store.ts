@@ -427,3 +427,33 @@ function optionalNumberOrNull(
   }
   return value;
 }
+
+/**
+ * The canonical public value of one cron job.
+ *
+ * Field by field rather than handed out whole, and it lives beside the record
+ * it copies: both caller-facing surfaces declare a closed result schema, so a
+ * field added to the stored job must be a deliberate addition here instead of
+ * silently widening one wire and failing the other.
+ */
+export function cronJobResult(job: CronJob): CronJob {
+  return {
+    id: job.id,
+    dispatcher_id: job.dispatcher_id,
+    ...(job.title !== undefined ? { title: job.title } : {}),
+    cron: job.cron,
+    tz: job.tz,
+    recurring: job.recurring,
+    action: job.action,
+    enabled: job.enabled,
+    created_at: job.created_at,
+    updated_at: job.updated_at,
+    next_run_at: job.next_run_at,
+    last_fired_at: job.last_fired_at,
+  };
+}
+
+/** The canonical public value of one cron job list. */
+export function cronListResult(result: { jobs: CronJob[] }): { jobs: CronJob[] } {
+  return { jobs: result.jobs.map(cronJobResult) };
+}

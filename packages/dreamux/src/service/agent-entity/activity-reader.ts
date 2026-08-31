@@ -18,6 +18,7 @@ import {
   type AgentEntityIdentity,
   type AgentEntityLastQuery,
 } from './types.js';
+import { errorInfo } from '../../platform/error-info.js';
 import { validateLastLimit } from './read-helpers.js';
 
 /**
@@ -37,8 +38,15 @@ const ACTIVITY_ERROR_REASONS = new Set<AgentActivityError['reason']>([
   'provider_failure',
 ]);
 
+/**
+ * An Activity read that failed for a reason the provider seam names.
+ *
+ * Only the four recognized reasons reach this class. A failure nobody
+ * recognized is not translated into it: it keeps its own type and its own
+ * message, because Core did not diagnose it and has nothing truer to say.
+ */
 export class AgentActivityReadError extends Error {
-  constructor(readonly reason: AgentActivityError['reason'] | null) {
+  constructor(readonly reason: AgentActivityError['reason']) {
     super('Agent Runtime activity read failed');
     this.name = 'AgentActivityReadError';
   }
@@ -101,7 +109,7 @@ export async function readAgentActivity(
     );
     verifyActivityPage(page, requestedRecords);
   } catch (error) {
-    throw mapActivityReadError(error, input.log, input.identity.name);
+    throwActivityReadError(error, input.log, input.identity.name);
   }
   return {
     requestedRecords,
@@ -126,20 +134,32 @@ function toEntityRecord(record: AgentActivityRecord): AgentEntityActivityRecord 
       };
 }
 
-function mapActivityReadError(
+/**
+ * Report one failed Activity read, and decide nothing else about it.
+ *
+ * A reason the provider seam names is the one thing this layer can restate, so
+ * it becomes the named read failure its callers already map. Everything else —
+ * a provider bug, a library throw, a Core check that did not hold — leaves
+ * exactly as it arrived, so its own message is what a caller finally reads.
+ * The log gets the whole value either way; the stack is an operator fact and
+ * never travels with the answer.
+ */
+function throwActivityReadError(
   error: unknown,
   log: DreamuxLogger,
   teammateName: string,
-): AgentActivityReadError {
+): never {
   const reason = recognizedActivityErrorReason(error);
   log.error(
     {
       teammate: teammateName,
-      activity_reason: reason ?? 'internal',
+      ...(reason !== null ? { activity_reason: reason } : {}),
+      err: errorInfo(error),
     },
     'Agent Runtime activity read failed',
   );
-  return new AgentActivityReadError(reason);
+  if (reason === null) throw error;
+  throw new AgentActivityReadError(reason);
 }
 
 function recognizedActivityErrorReason(

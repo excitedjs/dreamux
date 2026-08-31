@@ -68,6 +68,15 @@ export interface CoreCommandRegistry {
 export interface ChannelCommandError {
   readonly code: string;
   readonly message: string;
+  /**
+   * The next step the failure stated for itself, when it stated one.
+   *
+   * Present exactly when the failure's own author wrote both halves of it — the
+   * reason and what to do about it — so a caller rendering this for an agent can
+   * repeat it as it stands. Absent means no next step was ever authored: a
+   * renderer carries the `code` and the `message` alone, and says nothing more.
+   */
+  readonly action?: string;
 }
 
 /**

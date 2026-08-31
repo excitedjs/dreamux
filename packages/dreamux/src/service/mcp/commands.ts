@@ -42,6 +42,7 @@ import {
   arrayOf,
   objectSchema,
 } from '../../command/schema.js';
+import { assertDelegateResult } from './projection.js';
 import type { McpDelegateResult } from './types.js';
 
 /**
@@ -132,7 +133,7 @@ export function mcpCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
         structured: ANY,
         /** Present on success when the operation chose to say something. */
         text: STRING,
-        /** Present on a delegate-approved public failure. */
+        /** Present on failure; the settled sentence for the caller to read. */
         message: STRING,
       },
       ['ok'],
@@ -150,13 +151,19 @@ export function mcpCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
       };
     },
     async execute(_context, input) {
-      // No try/catch: an unclassified failure must fail the Command so Core
-      // logs it in full and the shim can only report the sanitized error. A
-      // delegate that wants a model to read a failure says so in its result.
-      return host.mcpLeases.invoke(input.token, {
-        name: input.name,
-        arguments: input.arguments,
-      });
+      // No try/catch: the registry settles every tool call, rendering a stated
+      // failure with the next step its domain wrote and anything else under the
+      // code and message it already had. This Command carries that answer; it
+      // never decides what a caller may read. What it does own is the envelope:
+      // a delegate result that is neither published shape fails here, so no
+      // caller sees a malformed answer reported as a successful Command.
+      return assertDelegateResult(
+        await host.mcpLeases.invoke(input.token, {
+          name: input.name,
+          arguments: input.arguments,
+        }),
+        input.name,
+      );
     },
   };
 
