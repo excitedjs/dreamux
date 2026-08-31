@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Restore and strengthen test coverage without changing published package behavior.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}
