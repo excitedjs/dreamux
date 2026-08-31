@@ -7,8 +7,9 @@
  *     or codex escalates anyway), fail loudly — never return null. Silent null
  *     is the trap that hangs the daemon.
  *
- * `onReject` is an observer hook for logs or metrics. Feishu user-visible
- * output is MCP reply-only, so this handler must not send channel messages.
+ * `onReject` is an observer hook for logs or metrics. A runtime package knows
+ * nothing about Channels, so this handler must not try to reach a user: the
+ * rejection travels back to codex, and Core decides what any Channel says.
  */
 
 import type { ServerRequest } from './types.js';

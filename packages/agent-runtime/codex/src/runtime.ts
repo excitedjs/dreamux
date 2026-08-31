@@ -221,7 +221,7 @@ export class CodexRuntime implements AgentRuntime {
       onReject: async (req) => {
         this.log(
           'warn',
-          `rejected Codex approval request '${req.method}'; Feishu outbound is MCP reply-only`,
+          `rejected Codex approval request '${req.method}'; approvals are unsupported in Dreamux-managed runtimes`,
         );
       },
     });
