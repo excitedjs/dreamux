@@ -20,7 +20,6 @@
  * reason and next step, and the admission boundary every delegate is reached
  * through renders them.
  */
-import { normalizeSkillSources } from '../../agent-runtime/skill-sources.js';
 import {
   mustNonBlankString,
   mustNonEmptyString,
@@ -163,7 +162,6 @@ async function spawn(
   const intent = mustNonBlankString(args, 'intent');
   const agentRuntime = optionalNonBlankString(args, 'agent_runtime');
   const identity = optionalNonBlankString(args, 'identity');
-  const skillSources = await normalizeSkillSources(null);
   let result: AgentEntitySpawnResult;
   if (scope.kind === 'team_leader') {
     // A Team TeamMate always inherits the Team's shared workspace, which is why
@@ -174,7 +172,6 @@ async function spawn(
       intent,
       ...(agentRuntime !== null ? { agentRuntime } : {}),
       ...(identity !== null ? { identity } : {}),
-      ...(skillSources !== null ? { skillSources } : {}),
     });
   } else {
     const repo = repoWorktree(repoRequest(args, 'repo'));
@@ -188,7 +185,6 @@ async function spawn(
       ...(cwd !== null ? { cwd } : {}),
       ...(agentRuntime !== null ? { agentRuntime } : {}),
       ...(identity !== null ? { identity } : {}),
-      ...(skillSources !== null ? { skillSources } : {}),
       ...(worktree !== null ? { worktree } : {}),
     });
   }
