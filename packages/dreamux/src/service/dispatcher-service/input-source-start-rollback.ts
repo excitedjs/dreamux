@@ -1,10 +1,9 @@
 import type {
-  ChannelSession,
+  ChannelInstance,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 
 import type { ChannelService } from '../channel-service/index.js';
-import type { CollaborationSpaceService } from '../collaboration-space/index.js';
 import type { DispatcherCoreEventBus } from '../dispatcher-core-events/index.js';
 import type { SchedulerService } from '../scheduler/service.js';
 import type { TeamCollection } from '../team-collection/index.js';
@@ -18,68 +17,64 @@ import type { DispatcherTaskDrain } from './inbound-task-drain.js';
 import { closeAllBuilt } from './runtime-helpers.js';
 import { stopTeamRuntimes } from './team-runtime-stop.js';
 
-/** Roll back live resources through their existing dispatcher-owned boundaries. */
+/**
+ * Roll back live resources through their existing dispatcher-owned boundaries.
+ *
+ * A rollback gives back exactly what this start took: schedulers, Team and
+ * Agent runtimes, the sessions this run built, and the accepted work still in
+ * flight. It closes nothing. An Agent that existed durably before the start —
+ * and that a failed start never even ran — must come out of it unchanged.
+ */
 export async function rollbackFailedInputSourceStart(input: {
   dispatcherId: string;
-  sessions: Map<string, ChannelSession>;
+  sessions: Map<string, ChannelInstance>;
   channels: ChannelService;
   coreEvents: DispatcherCoreEventBus;
   scheduler: SchedulerService;
   teams: TeamCollection;
   teammates: TeammateCollection;
   admittedTasks: DispatcherTaskDrain;
-  collaborationSpaces: CollaborationSpaceService;
   agent: TeammateService | null;
   log: DreamuxLogger;
 }): Promise<void> {
   const failures: unknown[] = [];
   input.scheduler.stop();
   input.teams.stopSchedulers();
-  input.coreEvents.revokeSources();
-  input.teams.interruptDissolvesForShutdown();
   const teamStopError = await stopTeamRuntimes({
     dispatcherId: input.dispatcherId,
     teams: input.teams,
     log: input.log,
   });
   if (teamStopError !== null) failures.push(teamStopError);
-  await collectShutdownFailure(failures, async () => {
-    await input.teammates.materializeNonClosedEntities();
-  });
   for (const teammate of input.teammates.materializedEntities()) {
-    await collectShutdownFailure(failures, async () => {
-      await teammate.close({ note: 'Dispatcher start failed' });
-    });
+    await collectShutdownFailure(failures, () => teammate.stopForHost());
   }
   await collectShutdownFailure(failures, async () => {
-    await input.agent?.close({ note: 'Dispatcher start failed' });
+    await input.agent?.stopForHost();
   });
+  // Subscriptions outlive the runtime stop above on purpose: a runtime settling
+  // during rollback still produces facts worth delivering. They are revoked
+  // once, here, immediately before the sessions that hold them are closed.
+  input.coreEvents.revokeSources();
   await collectShutdownFailure(failures, () => closeAllBuilt(input.sessions));
   input.channels.clear();
-  await collectShutdownFailure(failures, () =>
-    input.collaborationSpaces.drainLifecycleTasks());
   await collectShutdownFailure(failures, () => input.admittedTasks.drain());
-  // An admitted task may publish durable state while the first sweep is
-  // closing it. Repeat the idempotent canonical convergence after the drain.
+  // An admitted task may start a runtime while the first sweep is releasing
+  // it. Repeat the idempotent convergence after the drain.
   const lateTeamStopError = await stopTeamRuntimes({
     dispatcherId: input.dispatcherId,
     teams: input.teams,
     log: input.log,
   });
   if (lateTeamStopError !== null) failures.push(lateTeamStopError);
-  await collectShutdownFailure(failures, async () => {
-    await input.teammates.materializeNonClosedEntities();
-  });
   for (const teammate of input.teammates.materializedEntities()) {
-    await collectShutdownFailure(failures, async () => {
-      await teammate.close({ note: 'Dispatcher start failed' });
-    });
+    await collectShutdownFailure(failures, () => teammate.stopForHost());
   }
   await collectShutdownFailure(failures, async () => {
-    await input.agent?.close({ note: 'Dispatcher start failed' });
+    await input.agent?.stopForHost();
   });
   throwShutdownFailures(
     failures,
-    `dispatcher ${JSON.stringify(input.dispatcherId)} start rollback could not prove resource closure`,
+    `dispatcher ${JSON.stringify(input.dispatcherId)} start rollback could not prove resource release`,
   );
 }

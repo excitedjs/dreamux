@@ -1,6 +1,7 @@
-import type { AgentRuntimeCapabilities } from '@excitedjs/dreamux-types';
-
-import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
+import type {
+  AgentRuntimeProviderCatalog,
+  AgentRuntimePublicCapabilities,
+} from '../../agent-runtime/index.js';
 import type {
   DreamuxConfig,
   ResolvedAgentConfig,
@@ -50,18 +51,25 @@ export function agentRuntimeCapability(
   agentRuntimeId: string,
   agent: ResolvedAgentConfig,
 ): AgentEntityRuntimeCapability {
-  let capabilities: AgentRuntimeCapabilities | null = null;
+  let capabilities: AgentRuntimePublicCapabilities | null = null;
   let unsupportedReason: string | null = null;
   try {
-    capabilities = providers.resolve(agent.provider).getCapabilities();
+    // The catalog's snapshot, not a fresh `getCapabilities()` call: Core
+    // validated and froze it once at registration, so this projection cannot
+    // observe a provider object that changed underneath it.
+    capabilities = providers.resolve(agent.provider).capabilities;
   } catch (error) {
     unsupportedReason = error instanceof Error ? error.message : String(error);
   }
+  // Recovery and structured output are mandatory provider behavior, so neither
+  // is projected here; only whether the provider resolved, plus the bounded
+  // facts it declared about itself.
   return {
     id: agentRuntimeId,
     spawn: { agent_runtime: agentRuntimeId },
     runtime_available: capabilities !== null,
-    resume: capabilities?.resume ?? { supported: false },
     unsupported_reason: unsupportedReason,
+    tags: capabilities?.tags ?? [],
+    public_config: capabilities?.publicConfig ?? null,
   };
 }

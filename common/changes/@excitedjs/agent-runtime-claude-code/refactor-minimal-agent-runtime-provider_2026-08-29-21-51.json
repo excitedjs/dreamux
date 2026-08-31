@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-claude-code",
+      "comment": "BREAKING: Review: confirm no external automation depends on the removed transcript reader, `waitIdle`, live `getContext`, or handle-level `getCapabilities`; there are no compatibility aliases. No rebuild is needed. Migrated to the replaced `AgentRuntimeProvider` contract: continuous recovery, session-bound structured output, leased state updates, and recent Activity Records over the active session replace the removed transcript reader, `waitIdle`, live `getContext`, and handle-level `getCapabilities`. Dreamux-owned system-prompt replace/append fragments are re-supplied on every runtime-context rebuild and mapped to `--append-system-prompt`; the runtime no longer renders a channel envelope or branches on an input source.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

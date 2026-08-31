@@ -3,9 +3,11 @@ import { Cron } from 'croner';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import { errorInfo } from '../../platform/error-info.js';
+import { RuleViolation } from '../../platform/errors.js';
+import { throwCallerMistake } from '../../command/errors.js';
+import { CronJobNotFoundError } from './errors.js';
 
 import {
-  type CronDeliverTarget,
   type CronJobStore,
   type CronJob,
   type CronJobAction,
@@ -21,7 +23,6 @@ import type {
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const MAX_JOBS_PER_OWNER = 128;
-const MAX_DEFER_MS = 60 * 60 * 1000;
 
 interface TimerSlot {
   dueAt: number;
@@ -35,9 +36,6 @@ export class SchedulerService {
   private readonly log: DreamuxLogger;
   private readonly now: () => number;
   private readonly timers = new Map<string, TimerSlot>();
-  private readonly heldFires = new Map<string, symbol>();
-  private readonly heldFireControllers = new Map<string, AbortController>();
-  private readonly stopWaiters = new Set<() => void>();
   private fireSeq = 0;
   private running = false;
   private lifecycleGeneration = 0;
@@ -77,11 +75,6 @@ export class SchedulerService {
     this.lifecycleGeneration += 1;
     for (const slot of this.timers.values()) clearTimeout(slot.timer);
     this.timers.clear();
-    this.abortHeldFires();
-    this.heldFires.clear();
-    const waiters = [...this.stopWaiters];
-    this.stopWaiters.clear();
-    for (const resolve of waiters) resolve();
   }
 
   async list(): Promise<{ jobs: CronJob[] }> {
@@ -143,8 +136,6 @@ export class SchedulerService {
 
   private async doDelete(id: string): Promise<{ id: string; deleted: boolean }> {
     this.clearTimer(id);
-    this.abortHeldFire(id);
-    this.heldFires.delete(id);
     const deleted = await this.store.delete(id);
     this.log.info(
       { owner_id: this.ownerId, job_id: id, deleted },
@@ -223,15 +214,7 @@ export class SchedulerService {
       const job = await this.store.get(jobId);
       if (generation !== this.lifecycleGeneration) return;
       if (job === null || !job.enabled) return;
-      if (job.action.kind !== 'prompt-agent') {
-        this.log.warn(
-          { owner_id: this.ownerId, job_id: jobId },
-          'cron job skipped because action is not implemented',
-        );
-        return;
-      }
-      if (this.heldFires.has(jobId)) return;
-      await this.deferUntilIdleAndSubmit(job, generation);
+      await this.submitDue(job, generation);
     } catch (err) {
       this.log.error(
         { owner_id: this.ownerId, job_id: jobId, err: errorInfo(err) },
@@ -243,9 +226,8 @@ export class SchedulerService {
 
   private async dispatchAdmitted(jobId: string): Promise<void> {
     // Capture synchronously. An owner can stop the scheduler after a timer has
-    // fired but before Dispatcher admission starts this async task. That stopped
-    // generation must never install a new long idle wait after stop() has
-    // already released the existing waiters.
+    // fired but before Dispatcher admission starts this async task; that
+    // stopped generation must not submit.
     const generation = this.lifecycleGeneration;
     await this.admit(() =>
       generation === this.lifecycleGeneration
@@ -276,145 +258,63 @@ export class SchedulerService {
     }
   }
 
-  private async deferUntilIdleAndSubmit(
-    job: CronJob,
-    generation: number,
-  ): Promise<void> {
+  /**
+   * Submit a due fire, now.
+   *
+   * A cron job is a scheduled instruction, not a polite request for a quiet
+   * moment: when it is due it goes through the same submission path a person
+   * would use, and the runtime folds or steers it into whatever is running.
+   * Nothing here asks whether the agent is busy, holds a fire for later, or
+   * keeps a second queue beside the one the runtime already owns.
+   *
+   * What it does check is its own side of the boundary, immediately before
+   * submitting: the lifecycle generation that a `stop()` invalidates, and the
+   * durable job as it stands right now. Both are the scheduler's own facts —
+   * neither reaches into the submission path to cancel anything.
+   */
+  private async submitDue(job: CronJob, generation: number): Promise<void> {
+    const current = await this.store.get(job.id);
     if (generation !== this.lifecycleGeneration) return;
-    const token = Symbol(job.id);
-    this.heldFires.set(job.id, token);
-    const signal = this.signalForHeldFire(job.id, token);
-    const writer = this.opts.getWriter();
-    if (writer === null) {
-      if (this.opts.absentRuntimeStrategy === 'miss') {
-        // Dispatcher-owned scheduler: a missing runtime means the start
-        // transaction failed or was torn down; do not resurrect it outside
-        // doStart().
-        this.clearHeldFire(job.id);
-        await this.armMissed(job, 'runtime unavailable');
-        return;
-      }
-      await this.submitHeld(job, token, signal, generation);
+    if (current === null || !current.enabled) return;
+    const result = await this.opts.submitScheduled({
+      jobId: current.id,
+      prompt: current.action.prompt,
+      sourceId: this.nextFireSourceId(current.id),
+    });
+    if (result.status !== 'submitted' && result.status !== 'ambiguous') {
+      await this.armMissed(current, `scheduled submission returned ${result.status}`);
       return;
     }
-    const idle = writer.waitIdle();
-    let maxDeferTimer: NodeJS.Timeout | null = null;
-    const maxDefer = new Promise<'timeout'>((resolve) => {
-      maxDeferTimer = setTimeout(() => resolve('timeout'), MAX_DEFER_MS);
-      maxDeferTimer.unref();
-    });
-    let resolveStopped: (() => void) | null = null;
-    const stopSignal = new Promise<'stopped'>((resolve) => {
-      resolveStopped = () => resolve('stopped');
-      this.stopWaiters.add(resolveStopped);
-    });
-    let wait: 'idle' | 'timeout' | 'stopped';
-    try {
-      wait = await Promise.race([
-        idle.then(() => 'idle' as const),
-        maxDefer,
-        stopSignal,
-      ]);
-    } catch (err) {
-      this.clearHeldFire(job.id);
-      throw err;
-    } finally {
-      if (maxDeferTimer !== null) clearTimeout(maxDeferTimer);
-      if (resolveStopped !== null) this.stopWaiters.delete(resolveStopped);
-    }
-    if (this.heldFires.get(job.id) !== token) return;
-    if (wait !== 'idle') {
-      // 'stopped' or 'timeout' — terminal for this fire, release the hold.
-      this.clearHeldFire(job.id);
-      if (wait === 'stopped') return;
-      await this.armMissed(job, 'max defer exceeded');
-      return;
-    }
-
-    await this.submitHeld(job, token, signal, generation);
-  }
-
-  private async submitHeld(
-    job: CronJob,
-    token: symbol,
-    signal: AbortSignal,
-    generation: number,
-  ): Promise<void> {
-    // Keep the held token across the submit so a stop() (which clears heldFires)
-    // aborts this in-flight fire instead of submitting into a stopping owner;
-    // release the hold in `finally` only if it is still ours.
-    try {
-      const current = await this.store.get(job.id);
-      if (generation !== this.lifecycleGeneration) return;
-      if (current === null || !current.enabled) return;
-      if (signal.aborted) return;
-      const result = await this.opts.submitScheduled({
-        jobId: current.id,
-        prompt: current.action.prompt,
-        sourceId: this.nextFireSourceId(current.id),
-        signal,
-      });
-      if (signal.aborted) return;
-      if (result.status !== 'submitted' && result.status !== 'ambiguous') {
-        await this.armMissed(current, `completionInput returned ${result.status}`);
-        return;
-      }
-      if (result.status === 'ambiguous') {
-        this.log.warn(
-          { owner_id: this.ownerId, job_id: current.id },
-          'cron submission was admission-ambiguous; recording the fire without retry',
-        );
-      }
-      const firedAt = this.now();
-      const nextRunAt = current.recurring
-        ? nextRunAfter(current.cron, current.tz, firedAt)
-        : null;
-      const enabled = current.recurring;
-      const updated = await this.store.setFired({
-        id: current.id,
-        firedAt,
-        nextRunAt,
-        enabled,
-      });
-      this.log.info(
-        { owner_id: this.ownerId, job_id: current.id, fired_at: firedAt },
-        'cron job fired',
+    if (result.status === 'ambiguous') {
+      this.log.warn(
+        { owner_id: this.ownerId, job_id: current.id },
+        'cron submission was admission-ambiguous; recording the fire without retry',
       );
-      if (updated !== null) this.arm(updated);
-    } finally {
-      if (this.heldFires.get(job.id) === token) {
-        this.clearHeldFire(job.id);
-      }
     }
-  }
-
-  private signalForHeldFire(jobId: string, token: symbol): AbortSignal {
-    if (this.heldFires.get(jobId) !== token) return AbortSignal.abort();
-    let controller = this.heldFireControllers.get(jobId);
-    if (controller === undefined) {
-      controller = new AbortController();
-      this.heldFireControllers.set(jobId, controller);
+    const firedAt = this.now();
+    const nextRunAt = current.recurring
+      ? nextRunAfter(current.cron, current.tz, firedAt)
+      : null;
+    const enabled = current.recurring;
+    const updated = await this.store.setFired({
+      id: current.id,
+      firedAt,
+      nextRunAt,
+      enabled,
+    });
+    this.log.info(
+      { owner_id: this.ownerId, job_id: current.id, fired_at: firedAt },
+      'cron job fired',
+    );
+    // The fire is recorded either way; only re-arming belongs to a scheduler
+    // that is still the current one.
+    if (
+      updated !== null &&
+      this.running &&
+      generation === this.lifecycleGeneration
+    ) {
+      this.arm(updated);
     }
-    return controller.signal;
-  }
-
-  private abortHeldFire(jobId: string): void {
-    const controller = this.heldFireControllers.get(jobId);
-    if (controller === undefined) return;
-    controller.abort();
-    this.heldFireControllers.delete(jobId);
-  }
-
-  private abortHeldFires(): void {
-    for (const controller of this.heldFireControllers.values()) {
-      controller.abort();
-    }
-    this.heldFireControllers.clear();
-  }
-
-  private clearHeldFire(jobId: string): void {
-    this.abortHeldFire(jobId);
-    this.heldFires.delete(jobId);
   }
 
   private async armMissed(job: CronJob, reason: string): Promise<void> {
@@ -446,11 +346,6 @@ export class SchedulerService {
   private validatePersistedJob(job: CronJob): void {
     validateCron(job.cron, job.tz);
     validateAction(job.action);
-    if (job.deliver !== undefined) {
-      throw new Error(
-        `cron job '${job.id}' uses deliver, which is not implemented in this milestone`,
-      );
-    }
   }
 
   private normalizeCreate(input: CronCreateRequest): {
@@ -459,15 +354,16 @@ export class SchedulerService {
     tz: string;
     recurring: boolean;
     action: CronJobAction;
-    deliver?: CronDeliverTarget;
   } {
     const tz = input.tz ?? localTimeZone();
-    const action = normalizeAction(input.prompt, input.action);
-    assertTitle(input.title);
-    validateCron(input.cron, tz);
-    validateAction(action);
-    assertNoDeliver(input.deliver);
-    assertMinimumInterval(input.cron, tz, input.recurring ?? true);
+    const action = asRequestValidation(() => {
+      const normalized = normalizeAction(input.prompt, input.action);
+      assertTitle(input.title);
+      validateCron(input.cron, tz);
+      validateAction(normalized);
+      assertMinimumInterval(input.cron, tz, input.recurring ?? true);
+      return normalized;
+    });
     return {
       ...(input.title !== undefined ? { title: input.title } : {}),
       cron: input.cron,
@@ -484,17 +380,19 @@ export class SchedulerService {
     const cron = input.cron ?? current.cron;
     const tz = input.tz ?? current.tz;
     const recurring = input.recurring ?? current.recurring;
-    const action =
-      input.action !== undefined
-        ? normalizeAction(input.prompt ?? current.action.prompt, input.action)
-        : input.prompt !== undefined
-          ? { ...current.action, prompt: input.prompt }
-        : current.action;
-    assertTitle(input.title);
-    validateCron(cron, tz);
-    validateAction(action);
-    assertNoDeliver(input.deliver === null ? undefined : input.deliver);
-    assertMinimumInterval(cron, tz, recurring);
+    const action = asRequestValidation(() => {
+      const normalized =
+        input.action !== undefined
+          ? normalizeAction(input.prompt ?? current.action.prompt, input.action)
+          : input.prompt !== undefined
+            ? { ...current.action, prompt: input.prompt }
+            : current.action;
+      assertTitle(input.title);
+      validateCron(cron, tz);
+      validateAction(normalized);
+      assertMinimumInterval(cron, tz, recurring);
+      return normalized;
+    });
     return {
       id: input.id,
       ...(input.title !== undefined ? { title: input.title } : {}),
@@ -502,14 +400,15 @@ export class SchedulerService {
       tz,
       recurring,
       action,
-      ...(input.deliver !== undefined ? { deliver: input.deliver } : {}),
       ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
     };
   }
 
   private async mustJob(id: string): Promise<CronJob> {
     const job = await this.store.get(id);
-    if (job === null) throw new Error(`cron job '${id}' does not exist`);
+    if (job === null) {
+      throw new CronJobNotFoundError(`cron job '${id}' does not exist`);
+    }
     return job;
   }
 
@@ -518,18 +417,37 @@ export class SchedulerService {
   }
 }
 
+/**
+ * Run one caller-request validation.
+ *
+ * The validators below are the scheduler's own rules and are used on two
+ * genuinely different paths: normalizing a request a caller just sent, and
+ * checking a job already persisted. Only the first is the caller's mistake, so
+ * only a broken rule — a `RuleViolation` and nothing else — is re-typed as one;
+ * a persisted job that fails the same rule stays a loud unclassified failure,
+ * because nothing the caller can send would fix it. Anything else raised while
+ * validating is an implementation failure and leaves untouched. The rules keep
+ * their own wording — a caller needs to read exactly which one it broke.
+ */
+function asRequestValidation<T>(validate: () => T): T {
+  try {
+    return validate();
+  } catch (error) {
+    throwCallerMistake(error);
+  }
+}
+
 function normalizeAction(
   prompt: string,
   raw: Record<string, unknown> | undefined,
 ): CronJobAction {
-  if (prompt === '') throw new Error('cron prompt must be a non-empty string');
+  if (prompt === '') {
+    throw new RuleViolation('cron prompt must be a non-empty string');
+  }
   if (raw === undefined) return { kind: 'prompt-agent', prompt };
   const kind = raw['kind'];
-  if (kind === 'spawn-teammate') {
-    throw new Error('cron spawn-teammate action is not implemented in this milestone');
-  }
   if (kind !== undefined && kind !== 'prompt-agent') {
-    throw new Error("cron action.kind must be 'prompt-agent'");
+    throw new RuleViolation("cron action.kind must be 'prompt-agent'");
   }
   const actionPrompt =
     typeof raw['prompt'] === 'string' && raw['prompt'] !== ''
@@ -544,15 +462,8 @@ function normalizeAction(
 }
 
 function validateAction(action: CronJobAction): void {
-  if (action.kind === 'spawn-teammate') {
-    throw new Error('cron spawn-teammate action is not implemented in this milestone');
-  }
-  if (action.prompt === '') throw new Error('cron action prompt must be non-empty');
-}
-
-function assertNoDeliver(deliver: CronDeliverTarget | undefined): void {
-  if (deliver !== undefined) {
-    throw new Error('cron deliver is not implemented in this milestone');
+  if (action.prompt === '') {
+    throw new RuleViolation('cron action prompt must be non-empty');
   }
 }
 
@@ -561,17 +472,17 @@ function assertTitle(title: string | null | undefined): void {
   // (`optionalString` requires non-empty) on the next reload — fail loud on the
   // write path so a job can never become un-reloadable. `null` clears the title.
   if (typeof title === 'string' && title.length === 0) {
-    throw new Error('cron title must be a non-empty string');
+    throw new RuleViolation('cron title must be a non-empty string');
   }
 }
 
 function validateCron(pattern: string, tz: string): void {
   if (pattern.trim().split(/\s+/).length !== 5) {
-    throw new Error('cron must be a standard 5-field expression');
+    throw new RuleViolation('cron must be a standard 5-field expression');
   }
   validateTimeZone(tz);
-  if (cronFor(pattern, tz).nextRun(new Date()) === null) {
-    throw new Error('cron has no future run');
+  if (parseCron(pattern, tz).nextRun(new Date()) === null) {
+    throw new RuleViolation('cron has no future run');
   }
 }
 
@@ -581,17 +492,39 @@ function assertMinimumInterval(
   recurring: boolean,
 ): void {
   if (!recurring) return;
-  const runs = cronFor(pattern, tz).nextRuns(2, new Date());
+  const runs = parseCron(pattern, tz).nextRuns(2, new Date());
   if (runs.length < 2) return;
   const gap = runs[1]!.getTime() - runs[0]!.getTime();
   if (gap < MIN_CRON_INTERVAL_MS) {
-    throw new Error('cron interval must be at least one minute');
+    throw new RuleViolation('cron interval must be at least one minute');
   }
 }
 
 function nextRunAfter(pattern: string, tz: string, afterMs: number): number | null {
   const next = cronFor(pattern, tz).nextRun(new Date(afterMs));
   return next?.getTime() ?? null;
+}
+
+/**
+ * Build the cron for a pattern that is still being validated.
+ *
+ * The library reports an unparseable pattern by throwing, so this one call is
+ * where a throw *means* the pattern is invalid. Named on its own so that single
+ * library call — and nothing else on the validation path — is read as a broken
+ * rule; scheduling a job whose pattern already passed keeps using
+ * {@link cronFor}, where a throw would be a real failure.
+ */
+function parseCron(pattern: string, tz: string): Cron {
+  try {
+    return cronFor(pattern, tz);
+  } catch {
+    // A broken rule is stated in the scheduler's own words: the library's
+    // wording is its own vocabulary, and a caller reading it would be told
+    // about a parser it never chose instead of about the field it sent.
+    throw new RuleViolation(
+      `cron '${pattern}' is not a valid 5-field expression`,
+    );
+  }
 }
 
 function cronFor(pattern: string, tz: string): Cron {
@@ -605,8 +538,12 @@ function cronFor(pattern: string, tz: string): Cron {
 function validateTimeZone(tz: string): void {
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: tz }).format(new Date());
-  } catch {
-    throw new Error(`invalid timezone '${tz}'`);
+  } catch (error) {
+    // `Intl` reports an unknown zone as a `RangeError` and nothing else here
+    // does, so that one type is the rule signal; any other failure is the
+    // platform's, not the caller's.
+    if (!(error instanceof RangeError)) throw error;
+    throw new RuleViolation(`invalid timezone '${tz}'`);
   }
 }
 

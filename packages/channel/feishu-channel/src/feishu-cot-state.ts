@@ -1,32 +1,31 @@
-/** Session-owned COT state declarations plus pure identity and ledger helpers. */
-import type {
-  ChannelBindingEndpointSnapshot,
-  ChannelBindingRouteEvent,
-  ChannelOrigin,
-  ChannelTeamStateEvent,
-  ChannelTarget,
-} from '@excitedjs/dreamux-types';
+/** Session-owned COT state plus its pure identity and ledger helpers. */
 import type { FeishuCotEventInput } from '@excitedjs/feishu-transport';
 
+import type {
+  DispatcherCotStateStore,
+  DispatcherTurnState,
+} from './feishu-cot-dispatcher-state.js';
 import type { FeishuCotRunStatus } from './feishu-cot-events.js';
-import { BUILTIN_FEISHU_PROVIDER_REF } from './provider-ref.js';
+import { sameTarget, targetKey, type FeishuTarget } from './routing/target.js';
 
 const IDENTITY_KEY_SEPARATOR = '\0';
 
-export const FEISHU_COT_DISPATCHER_CONVERSATIONS_MAX = 512;
-export const FEISHU_COT_DISPATCHER_TURNS_MAX = 512;
-export const FEISHU_COT_DISPATCHER_TURNS_PER_CHAT_MAX = 64;
 const FEISHU_COT_FENCED_LEADERS_MAX = 512;
-const FEISHU_COT_FENCED_ROUTES_MAX = 512;
+const FEISHU_COT_FENCED_TARGETS_MAX = 512;
 
+/**
+ * The visible Feishu message a chain-of-thought card hangs under.
+ *
+ * The anchor is now entirely the Channel's: it is captured from the inbound
+ * message this session is about to submit, or from a message this session just
+ * sent, and Core never carries it. `target` is kept beside the ids so a binding
+ * that moves away can retire exactly the anchors that pointed at it.
+ */
 export interface VisibleMessageAnchor {
   readonly chatId: string;
   readonly messageId: string;
-  readonly target: ChannelTarget;
-  readonly binding: ChannelBindingEndpointSnapshot | null;
+  readonly target: FeishuTarget;
 }
-
-export type VisibleMessageReceipt = Omit<VisibleMessageAnchor, 'binding'>;
 
 export interface CotOutboxState {
   readonly events: FeishuCotEventInput[];
@@ -49,7 +48,15 @@ export interface CotPresentation {
   closed: boolean;
 }
 
-interface CotStateBase {
+/**
+ * What every presented conversation has, whoever is answering it.
+ *
+ * The presentation machinery — outbox, generation fencing, open tool calls,
+ * the serialized platform tail — is identical for a Dispatcher turn and a
+ * TeamLeader's card. Only the correlation around it differs, so only that is
+ * stated separately below.
+ */
+export interface CotStateBase {
   generation: number;
   anchor: VisibleMessageAnchor | null;
   active: CotPresentation | null;
@@ -60,6 +67,14 @@ interface CotStateBase {
   inFlight: number;
 }
 
+/**
+ * One TeamLeader's presentation state.
+ *
+ * A leader keeps a standing anchor: later turns of the same conversation — a
+ * completion reported back, a cron fire — write under the message the operator
+ * is already watching. A Dispatcher turn does not, which is why it has its own
+ * state in `feishu-cot-dispatcher-state.ts`.
+ */
 export interface LeaderState extends CotStateBase {
   readonly kind: 'leader';
   readonly teamName: string;
@@ -68,25 +83,31 @@ export interface LeaderState extends CotStateBase {
   nextAnchor: VisibleMessageAnchor | null;
 }
 
-interface LeaderRouteFence {
+/** The state a presentation helper operates on, whichever it is. */
+export type CotState = LeaderState | DispatcherTurnState;
+
+interface LeaderTargetFence {
   readonly leaderKey: string;
-  readonly endpoint: ChannelBindingEndpointSnapshot;
+  readonly target: FeishuTarget;
 }
 
+/**
+ * What a leader may no longer present into.
+ *
+ * Two facts fence a card: the Team closed, and the route that produced the
+ * anchor was taken away. Both are now local — one arrives as `team.state`, the
+ * other is this Channel's own unbind — so the fence needs no Core event.
+ */
 export class LeaderLifecycleFence {
   private readonly leaders = new Set<string>();
-  private readonly routes = new Map<string, LeaderRouteFence>();
+  private readonly targets = new Map<string, LeaderTargetFence>();
 
-  blocksAnchor(
-    leaderKey: string,
-    anchor: Pick<VisibleMessageAnchor, 'binding'>,
-    channelId: string | undefined,
-  ): boolean {
+  blocksAnchor(leaderKey: string, anchor: VisibleMessageAnchor): boolean {
     if (this.leaders.has(leaderKey)) return true;
-    for (const route of this.routes.values()) {
+    for (const fenced of this.targets.values()) {
       if (
-        route.leaderKey === leaderKey &&
-        anchorMatchesEndpoint(anchor, route.endpoint, channelId)
+        fenced.leaderKey === leaderKey &&
+        sameTarget(fenced.target, anchor.target)
       ) {
         return true;
       }
@@ -95,14 +116,14 @@ export class LeaderLifecycleFence {
   }
 
   onTeamState(
-    event: ChannelTeamStateEvent,
+    event: { team_name: string; leader_name: string; status: string },
     leaders: Map<string, LeaderState>,
     interrupt: (key: string, state: LeaderState) => void,
   ): void {
     const eventKey = cotLeaderKey(event.team_name, event.leader_name);
     if (event.status !== 'closed') {
       this.leaders.delete(eventKey);
-      this.clearRoutesForLeader(eventKey);
+      this.clearTargetsForLeader(eventKey);
       return;
     }
     this.rememberLeader(eventKey);
@@ -113,42 +134,39 @@ export class LeaderLifecycleFence {
     }
   }
 
-  onBindingRoute(
-    event: ChannelBindingRouteEvent,
+  /** A binding this Channel just removed or moved to another Team. */
+  onRouteReleased(
+    input: { teamName: string; target: FeishuTarget },
     leaders: Map<string, LeaderState>,
-    channelId: string | undefined,
     interrupt: (key: string, state: LeaderState) => void,
   ): void {
-    if (!endpointBelongsToChannel(event.endpoint, channelId)) return;
-    const previous = event.previous_team;
-    if (previous !== null) {
-      const key = cotLeaderKey(previous.team_name, previous.leader_name);
-      this.rememberRoute(key, event.endpoint);
-      const state = leaders.get(key);
-      if (state !== undefined && [state.anchor, state.nextAnchor].some((anchor) =>
-        anchor !== null && anchorMatchesEndpoint(anchor, event.endpoint, channelId))) {
-        interrupt(key, state);
-      }
+    for (const [key, state] of leaders) {
+      if (state.teamName !== input.teamName) continue;
+      this.rememberTarget(key, input.target);
+      const anchored = [state.anchor, state.nextAnchor].some(
+        (anchor) => anchor !== null && sameTarget(anchor.target, input.target),
+      );
+      if (anchored) interrupt(key, state);
     }
-    if (event.action === 'bound') {
-      this.clearRoute(cotLeaderKey(
-        event.current_team.team_name,
-        event.current_team.leader_name,
-      ), event.endpoint);
+  }
+
+  /** A binding this Channel just installed re-opens presentation for it. */
+  onRouteClaimed(input: { teamName: string; target: FeishuTarget }): void {
+    for (const [key, fenced] of this.targets) {
+      if (
+        fenced.leaderKey.startsWith(
+          `${input.teamName}${IDENTITY_KEY_SEPARATOR}`,
+        ) &&
+        sameTarget(fenced.target, input.target)
+      ) {
+        this.targets.delete(key);
+      }
     }
   }
 
   clear(): void {
     this.leaders.clear();
-    this.routes.clear();
-  }
-
-  get leaderSize(): number {
-    return this.leaders.size;
-  }
-
-  get routeSize(): number {
-    return this.routes.size;
+    this.targets.clear();
   }
 
   private rememberLeader(key: string): void {
@@ -160,44 +178,21 @@ export class LeaderLifecycleFence {
     this.leaders.add(key);
   }
 
-  private rememberRoute(
-    leaderKey: string,
-    endpoint: ChannelBindingEndpointSnapshot,
-  ): void {
-    const key = routeFenceKey(leaderKey, endpoint);
-    if (this.routes.has(key)) return;
-    if (this.routes.size >= FEISHU_COT_FENCED_ROUTES_MAX) {
-      const oldest = this.routes.keys().next().value as string | undefined;
-      if (oldest !== undefined) this.routes.delete(oldest);
+  private rememberTarget(leaderKey: string, target: FeishuTarget): void {
+    const key = `${leaderKey}${IDENTITY_KEY_SEPARATOR}${targetKey(target)}`;
+    if (this.targets.has(key)) return;
+    if (this.targets.size >= FEISHU_COT_FENCED_TARGETS_MAX) {
+      const oldest = this.targets.keys().next().value as string | undefined;
+      if (oldest !== undefined) this.targets.delete(oldest);
     }
-    this.routes.set(key, { leaderKey, endpoint });
+    this.targets.set(key, { leaderKey, target });
   }
 
-  private clearRoute(
-    leaderKey: string,
-    endpoint: ChannelBindingEndpointSnapshot,
-  ): void {
-    this.routes.delete(routeFenceKey(leaderKey, endpoint));
-  }
-
-  private clearRoutesForLeader(leaderKey: string): void {
-    for (const [key, route] of this.routes) {
-      if (route.leaderKey === leaderKey) this.routes.delete(key);
+  private clearTargetsForLeader(leaderKey: string): void {
+    for (const [key, fenced] of this.targets) {
+      if (fenced.leaderKey === leaderKey) this.targets.delete(key);
     }
   }
-}
-
-function routeFenceKey(
-  leaderKey: string,
-  endpoint: ChannelBindingEndpointSnapshot,
-): string {
-  return [
-    leaderKey,
-    endpoint.provider,
-    endpoint.channel_id,
-    endpoint.endpoint_type,
-    endpoint.endpoint_key,
-  ].join(IDENTITY_KEY_SEPARATOR);
 }
 
 export function ensureLeaderState(
@@ -233,53 +228,32 @@ export function setLeaderFallbackAnchorIfAbsent(
   leaderName: string,
   anchor: VisibleMessageAnchor,
 ): void {
-  const update = prepareLeaderAnchorUpdate(
-    leaders,
-    teamName,
-    leaderName,
-    anchor,
-  );
-  if (update === null || update.state.anchor !== null) return;
-  update.state.anchor = update.anchor;
+  if (!validLeaderIdentity(teamName, leaderName)) return;
+  const prepared = prepareVisibleAnchor(anchor);
+  if (prepared === null) return;
+  const state = ensureLeaderState(leaders, teamName, leaderName);
+  if (state.anchor !== null) return;
+  state.anchor = prepared;
 }
 
 export function refreshLeaderNextAnchor(
   leaders: Map<string, LeaderState>,
   teamName: string,
   leaderName: string,
-  anchor: VisibleMessageReceipt,
+  anchor: VisibleMessageAnchor,
 ): void {
   if (!validLeaderIdentity(teamName, leaderName)) return;
   const state = leaders.get(cotLeaderKey(teamName, leaderName));
   if (state === undefined) return;
   const current = state.anchor ?? state.nextAnchor;
   if (current === null) return;
-  const prepared = prepareVisibleAnchor({
-    ...anchor,
-    binding: current.binding,
-  });
-  if (prepared === null) return;
-  if (
-    !sameConversationTarget(current.target, prepared.target)
-  ) {
-    return;
-  }
-  state.nextAnchor = prepared;
-}
-
-function prepareLeaderAnchorUpdate(
-  leaders: Map<string, LeaderState>,
-  teamName: string,
-  leaderName: string,
-  anchor: VisibleMessageAnchor,
-): { state: LeaderState; anchor: VisibleMessageAnchor } | null {
-  if (!validLeaderIdentity(teamName, leaderName)) return null;
   const prepared = prepareVisibleAnchor(anchor);
-  if (prepared === null) return null;
-  return {
-    state: ensureLeaderState(leaders, teamName, leaderName),
-    anchor: prepared,
-  };
+  if (prepared === null) return;
+  // A reply only migrates the anchor inside the same conversation. Replying
+  // somewhere else is an ordinary outbound message, not a new place for this
+  // leader's next card.
+  if (!sameTarget(current.target, prepared.target)) return;
+  state.nextAnchor = prepared;
 }
 
 function validLeaderIdentity(teamName: string, leaderName: string): boolean {
@@ -287,54 +261,27 @@ function validLeaderIdentity(teamName: string, leaderName: string): boolean {
     typeof leaderName === 'string' && leaderName !== '';
 }
 
-function prepareVisibleAnchor(
+export function prepareVisibleAnchor(
   anchor: VisibleMessageAnchor,
 ): VisibleMessageAnchor | null {
-  let target: ChannelTarget;
-  try {
-    if (
-      typeof anchor.chatId !== 'string' ||
-      anchor.chatId === '' ||
-      typeof anchor.messageId !== 'string' ||
-      anchor.messageId === '' ||
-      targetChatId(anchor.target) !== anchor.chatId
-    ) {
-      return null;
-    }
-    target = cloneTarget(anchor.target);
-  } catch {
+  if (
+    typeof anchor.chatId !== 'string' ||
+    anchor.chatId === '' ||
+    typeof anchor.messageId !== 'string' ||
+    anchor.messageId === '' ||
+    anchor.target.chatId !== anchor.chatId
+  ) {
     return null;
   }
   return {
-    ...anchor,
-    target,
-    binding: anchor.binding === null ? null : structuredClone(anchor.binding),
+    chatId: anchor.chatId,
+    messageId: anchor.messageId,
+    target: { ...anchor.target },
   };
 }
 
-function sameConversationTarget(
-  left: ChannelTarget,
-  right: ChannelTarget,
-): boolean {
-  const leftChatId = targetChatId(left);
-  return leftChatId !== null &&
-    leftChatId === targetChatId(right) &&
-    left.target_type === right.target_type &&
-    left.target_key === right.target_key;
-}
-
-export interface DispatcherTurnState extends CotStateBase {
-  readonly kind: 'dispatcher';
-  readonly conversationKey: string;
-  readonly agentName: string;
-  readonly chatId: string;
-  readonly turnId: string;
-  settled: boolean;
-}
-
-export type CotState = LeaderState | DispatcherTurnState;
-
 export function cotStateAdmitsTurn(state: CotState, turnId: string): boolean {
+  // A dispatcher state *is* one turn, so reaching it is already the proof.
   return state.kind === 'dispatcher' || state.admittedTurnId === turnId;
 }
 
@@ -347,137 +294,6 @@ export function releaseLeaderTurn(state: LeaderState, turnId: string): void {
 export function cotStateHasAnchor(state: CotState): boolean {
   return state.anchor !== null ||
     (state.kind === 'leader' && state.nextAnchor !== null);
-}
-
-interface DispatcherConversationState {
-  readonly agentName: string;
-  readonly chatId: string;
-  readonly turns: Map<string, DispatcherTurnState>;
-}
-
-export interface KeyedDispatcherTurn {
-  readonly key: string;
-  readonly state: DispatcherTurnState;
-}
-
-export type DispatcherTurnBeginResult =
-  | ({ readonly status: 'started' } & KeyedDispatcherTurn)
-  | { readonly status: 'duplicate' }
-  | {
-      readonly status: 'full';
-      readonly reason: 'conversations' | 'session_turns' | 'chat_turns';
-      readonly maximum: number;
-    };
-
-/** Session-local correlation owner for dispatcher conversations and turns. */
-export class DispatcherCotStateStore {
-  private readonly conversations =
-    new Map<string, DispatcherConversationState>();
-  private readonly turns = new Map<string, DispatcherTurnState>();
-
-  begin(
-    agentName: string,
-    turnId: string,
-    anchor: VisibleMessageAnchor,
-  ): DispatcherTurnBeginResult {
-    const key = cotDispatcherTurnKey(agentName, turnId);
-    if (this.turns.has(key)) return { status: 'duplicate' };
-    const conversationKey = cotDispatcherConversationKey(
-      agentName,
-      anchor.chatId,
-    );
-    let conversation = this.conversations.get(conversationKey);
-    if (this.turns.size >= FEISHU_COT_DISPATCHER_TURNS_MAX) {
-      return {
-        status: 'full',
-        reason: 'session_turns',
-        maximum: FEISHU_COT_DISPATCHER_TURNS_MAX,
-      };
-    }
-    if (
-      conversation === undefined &&
-      this.conversations.size >= FEISHU_COT_DISPATCHER_CONVERSATIONS_MAX
-    ) {
-      return {
-        status: 'full',
-        reason: 'conversations',
-        maximum: FEISHU_COT_DISPATCHER_CONVERSATIONS_MAX,
-      };
-    }
-    if (
-      conversation !== undefined &&
-      conversation.turns.size >= FEISHU_COT_DISPATCHER_TURNS_PER_CHAT_MAX
-    ) {
-      return {
-        status: 'full',
-        reason: 'chat_turns',
-        maximum: FEISHU_COT_DISPATCHER_TURNS_PER_CHAT_MAX,
-      };
-    }
-    if (conversation === undefined) {
-      conversation = { agentName, chatId: anchor.chatId, turns: new Map() };
-      this.conversations.set(conversationKey, conversation);
-    }
-    const state: DispatcherTurnState = {
-      kind: 'dispatcher',
-      conversationKey,
-      agentName,
-      chatId: anchor.chatId,
-      turnId,
-      settled: false,
-      generation: 1,
-      anchor,
-      active: null,
-      disabledGeneration: null,
-      openCalls: new Map(),
-      pendingTurns: new Map(),
-      tail: Promise.resolve(),
-      inFlight: 0,
-    };
-    conversation.turns.set(turnId, state);
-    this.turns.set(key, state);
-    return { status: 'started', key, state };
-  }
-
-  find(agentName: string, turnId: string): KeyedDispatcherTurn | null {
-    const key = cotDispatcherTurnKey(agentName, turnId);
-    const state = this.turns.get(key);
-    return state === undefined || state.settled ? null : { key, state };
-  }
-
-  settle(agentName: string, turnId: string): KeyedDispatcherTurn | null {
-    const key = cotDispatcherTurnKey(agentName, turnId);
-    const state = this.turns.get(key);
-    if (state === undefined || state.settled) return null;
-    state.settled = true;
-    return { key, state };
-  }
-
-  *all(): IterableIterator<KeyedDispatcherTurn> {
-    for (const conversation of this.conversations.values()) {
-      for (const state of conversation.turns.values()) {
-        yield {
-          key: cotDispatcherTurnKey(state.agentName, state.turnId),
-          state,
-        };
-      }
-    }
-  }
-
-  reap(key: string, state: DispatcherTurnState): void {
-    const conversation = this.conversations.get(state.conversationKey);
-    if (conversation?.turns.get(state.turnId) !== state) return;
-    conversation.turns.delete(state.turnId);
-    if (this.turns.get(key) === state) this.turns.delete(key);
-    if (conversation.turns.size === 0) {
-      this.conversations.delete(state.conversationKey);
-    }
-  }
-
-  clear(): void {
-    this.conversations.clear();
-    this.turns.clear();
-  }
 }
 
 export function reapCotState(
@@ -502,75 +318,8 @@ export function cotLeaderKey(teamName: string, leaderName: string): string {
   return `${teamName}${IDENTITY_KEY_SEPARATOR}${leaderName}`;
 }
 
-export function cotDispatcherConversationKey(
-  agentName: string,
-  chatId: string,
-): string {
-  return `${agentName}${IDENTITY_KEY_SEPARATOR}${chatId}`;
-}
-
-export function cotDispatcherTurnKey(agentName: string, turnId: string): string {
-  return `${agentName}${IDENTITY_KEY_SEPARATOR}${turnId}`;
-}
-
 export function cotOpenCallKey(turnId: string, callId: string): string {
   return `${turnId}${IDENTITY_KEY_SEPARATOR}${callId}`;
-}
-
-export function targetChatId(target: ChannelTarget): string | null {
-  const chatId = target.meta?.['chat_id'];
-  return typeof chatId === 'string' && chatId !== '' ? chatId : null;
-}
-
-export function cloneTarget(target: ChannelTarget): ChannelTarget {
-  return structuredClone(target);
-}
-
-export function visibleAnchorFromOrigin(
-  origin: ChannelOrigin,
-  channelId: string | undefined,
-): VisibleMessageAnchor | null {
-  const chatId = targetChatId(origin.target);
-  if (
-    channelId === undefined ||
-    origin.provider !== BUILTIN_FEISHU_PROVIDER_REF ||
-    origin.channel_id !== channelId ||
-    typeof origin.message_id !== 'string' ||
-    origin.message_id === '' ||
-    chatId === null
-  ) {
-    return null;
-  }
-  return {
-    chatId,
-    messageId: origin.message_id,
-    target: cloneTarget(origin.target),
-    binding: origin.binding === null ? null : structuredClone(origin.binding),
-  };
-}
-
-export function anchorMatchesEndpoint(
-  anchor: Pick<VisibleMessageAnchor, 'binding'>,
-  endpoint: ChannelBindingEndpointSnapshot,
-  channelId: string | undefined,
-): boolean {
-  const binding = anchor.binding;
-  return binding !== null && binding !== undefined &&
-    endpointBelongsToChannel(binding, channelId) &&
-    endpointBelongsToChannel(endpoint, channelId) &&
-    binding.provider === endpoint.provider &&
-    binding.channel_id === endpoint.channel_id &&
-    binding.endpoint_type === endpoint.endpoint_type &&
-    binding.endpoint_key === endpoint.endpoint_key;
-}
-
-function endpointBelongsToChannel(
-  endpoint: ChannelBindingEndpointSnapshot,
-  channelId: string | undefined,
-): boolean {
-  return channelId !== undefined &&
-    endpoint.provider === BUILTIN_FEISHU_PROVIDER_REF &&
-    endpoint.channel_id === channelId;
 }
 
 export function rememberOpenToolCall(

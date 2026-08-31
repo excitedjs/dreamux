@@ -40,13 +40,13 @@ verbatim through the move):
 
 | Path | Concern |
 |---|---|
-| `src/admin/` | Unix socket admin protocol + method handlers |
+| `src/admin/` | Unix socket admin transport: NDJSON protocol, server, and client. It owns no Command — `src/command/` holds the one registry both adapters bind |
 | `src/channel/` | Generic Channel provider catalog/loader; provider-specific implementations live in provider packages |
 | `src/cli/` | Entry-point CLIs: `dreamux.ts` (single public command tree), `server.ts` and `server-ctl.ts` as internal delegated modules |
 | `src/agent-runtime/` | Generic AgentRuntime provider catalog/loader, host create-context seams, and bundled skill source selection |
 | `src/config/` | Operator config loading, provider ref validation, and provider-owned raw config parsing |
-| `src/service/` | Dispatcher lifecycle, Team/TeamMate and Dynamic Workflow collections + services, Team binding/routing, and runtime/channel session orchestration |
-| `src/mcp/` | Official-SDK-backed shared stdio server and tool-catalog helpers plus scoped Team, TeamMate, cron, collaboration-space, and provider-tool Channel adapters |
+| `src/service/` | Dispatcher lifecycle, Team/TeamMate and Dynamic Workflow collections + services, domain Commands and MCP delegates, and runtime/channel session orchestration. Routing is Channel-owned and lives in the Channel package |
+| `src/mcp/` | The stdio protocol owner only: the official-SDK server, the single Agent-facing shim, and transport-level catalog validation. Every tool surface is an in-server delegate owned by its domain under `src/service/` |
 | `src/platform/` | Centralized paths, logging, runtime sockets, and process helpers |
 | `src/server.ts` | Top-level `Server` class wiring everything together |
 | `bin/dreamux` | Public CLI launcher (`dreamux serve`, `dreamux dispatcher ...`) |
@@ -54,13 +54,19 @@ verbatim through the move):
 | `tests/` | vitest: smoke, bin-launcher, dispatcher Codex home doctor, codex live integration |
 
 `/packages/dreamux/src/mcp/server.ts` is the sole MCP transport, negotiation,
-registration, protocol-error, and result-framing owner. Domain adapters build
-caller-bound definitions with `/packages/dreamux/src/mcp/tool-catalog.ts`; they
-do not parse JSON-RPC or construct wire envelopes.
-`/packages/dreamux/src/mcp/task-dispatch-reminder.ts` owns the three conditional
+registration, protocol-error, and result-framing owner, and
+`/packages/dreamux/src/mcp/shim.ts` is the single Agent-facing stdio client: it
+knows an admin socket and an opaque lease token, asks `mcp.describe` what to
+advertise, forwards every call to `mcp.toolcall`, and branches on no tool name.
+Domain delegates live with their domains under `/packages/dreamux/src/service/`
+and share the delegate infrastructure in
+`/packages/dreamux/src/service/mcp/` (leases, descriptor, projection, tool
+metadata, and the two transport Commands); they do not parse JSON-RPC or
+construct wire envelopes.
+`/packages/dreamux/src/service/mcp/dispatch-reminders.ts` owns the conditional
 Team, TeamMate, and workflow success texts and selects them from canonical
 submission receipts. It does not mutate structured results or expose reminder
-policy through tool metadata, admin DTOs, or Channel provider descriptors.
+policy through tool metadata, Command results, or Channel provider descriptors.
 
 ## Installation — the rush path only
 

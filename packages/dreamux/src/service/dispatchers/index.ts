@@ -3,14 +3,19 @@ import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
-import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import type {
+  CoreCommandRegistry,
+  DreamuxLogger,
+} from '@excitedjs/dreamux-types';
 import { AgentIdentityStore } from '../agent-entity/identity-store.js';
+import { dispatcherDir } from '../../platform/paths.js';
 import { DispatcherService } from '../dispatcher-service/index.js';
 import type {
   DispatcherRuntimeStatus,
   DispatcherServiceOptions,
   DispatcherSummary,
 } from '../dispatcher-service/types.js';
+import type { McpLeaseRegistry } from '../mcp/leases.js';
 import { runtimeStatusToIdentityStatus } from '../agent-entity/types.js';
 import { throwSettledFailures } from '../shutdown-errors.js';
 
@@ -19,6 +24,10 @@ export interface DispatchersOptions {
   dispatchers: DispatcherStore;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   channelProviders: ChannelProviderCatalog;
+  /** The process-wide Agent-facing MCP lease registry every dispatcher mints into. */
+  mcpLeases: McpLeaseRegistry;
+  /** The process-wide admitted Command port every Channel session invokes through. */
+  commands: CoreCommandRegistry;
   adminSocketPath?: string;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   workflowLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
@@ -38,6 +47,8 @@ export class Dispatchers {
   private readonly dispatcherStore: DispatcherStore;
   private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
   private readonly channelProviders: ChannelProviderCatalog;
+  private readonly mcpLeases: McpLeaseRegistry;
+  private readonly commands: CoreCommandRegistry;
   private readonly adminSocketPath: string | undefined;
   private readonly channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   private readonly workflowLoggerFactory:
@@ -45,13 +56,13 @@ export class Dispatchers {
     | undefined;
   private readonly log: DreamuxLogger;
   /**
-   * Read-only identity reader shared by {@link summarize} and {@link status}
-   * (issue #233 / PR #282 review). Built once so the read-model probes don't
-   * `new` a throwaway store per dispatcher row. This is a plain path-based
-   * reader, never a DispatcherService trigger — it does not prepare or start
-   * any aggregate.
+   * Read-only readers for each dispatcher's own root Agent identity, shared by
+   * {@link summarize} and {@link status} (issue #233 / PR #282 review). Each is
+   * bound to one dispatcher root here, at this composition boundary, and cached
+   * so the read-model probes don't rebuild one per row. A plain reader — never a
+   * DispatcherService trigger: it does not prepare or start any aggregate.
    */
-  private readonly identities: AgentIdentityStore;
+  private readonly rootIdentities = new Map<string, AgentIdentityStore>();
   private restartIntent: RestartIntentConsumer | null = null;
   private accepting = true;
 
@@ -60,11 +71,26 @@ export class Dispatchers {
     this.dispatcherStore = opts.dispatchers;
     this.agentRuntimeProviders = opts.agentRuntimeProviders;
     this.channelProviders = opts.channelProviders;
+    this.mcpLeases = opts.mcpLeases;
+    this.commands = opts.commands;
     this.adminSocketPath = opts.adminSocketPath;
     this.channelLoggerFactory = opts.channelLoggerFactory;
     this.workflowLoggerFactory = opts.workflowLoggerFactory;
     this.log = opts.log;
-    this.identities = new AgentIdentityStore(opts.log);
+  }
+
+  private rootIdentity(dispatcherId: string): AgentIdentityStore {
+    let store = this.rootIdentities.get(dispatcherId);
+    if (store === undefined) {
+      store = new AgentIdentityStore({
+        dir: dispatcherDir(dispatcherId),
+        dispatcherId,
+        expectedName: null,
+        log: this.log,
+      });
+      this.rootIdentities.set(dispatcherId, store);
+    }
+    return store;
   }
 
   get(id: string): DispatcherService {
@@ -102,12 +128,12 @@ export class Dispatchers {
           enabled: row.enabled === 1,
         };
       }
-      const identity = await this.identities.dispatcherIdentity(row.dispatcher_id);
+      const identity = await this.rootIdentity(row.dispatcher_id).read();
       return {
         dispatcher_id: row.dispatcher_id,
         channel_identity: row.channel_identity,
         status: identity?.status ?? 'stopped',
-        thread_id: identity?.session_id ?? null,
+        thread_id: identity?.session?.id ?? null,
         enabled: row.enabled === 1,
       };
     }));
@@ -117,10 +143,10 @@ export class Dispatchers {
     const service = this.services.get(id);
     const live = service?.liveRuntimeStatus() ?? null;
     if (live !== null) return live;
-    const identity = await this.identities.dispatcherIdentity(id);
+    const identity = await this.rootIdentity(id).read();
     return {
       status: identity?.status ?? null,
-      threadId: identity?.session_id ?? null,
+      threadId: identity?.session?.id ?? null,
       lastError: identity?.last_error ?? null,
     };
   }
@@ -146,6 +172,8 @@ export class Dispatchers {
       dispatchers: this.dispatcherStore,
       agentRuntimeProviders: this.agentRuntimeProviders,
       channelProviders: this.channelProviders,
+      mcpLeases: this.mcpLeases,
+      commands: this.commands,
       ...(this.adminSocketPath !== undefined
         ? { adminSocketPath: this.adminSocketPath }
         : {}),

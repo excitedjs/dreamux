@@ -8,6 +8,7 @@ import {
   buildConcreteName,
   generateNameSuffix,
   slugifyName,
+  type ConcreteNameKind,
 } from '../src/service/name-allocator.js';
 import {
   assertNotReservedAgentName,
@@ -15,11 +16,28 @@ import {
 } from '../src/service/agent-entity/types.js';
 
 /**
- * Unit coverage for the concrete-name allocator (issue #188): role prefixes,
- * suffix length, 64-char truncation, collision retry, and loud exhaustion.
+ * Unit coverage for the concrete-name allocator (issue #188, revised by the
+ * minimize-provider-boundaries refactor): role prefixes, suffix length, 64-char
+ * truncation, collision retry, and loud exhaustion.
+ *
+ * `ConcreteNameKind` is now `'team' | 'team-leader' | 'team-teammate' |
+ * 'dispatcher-teammate'` (src/service/name-allocator.ts). The old
+ * `'team_member'` / `'team_leader'` (underscore) kinds and the `tm-` prefix on
+ * a bare `'teammate'` kind belonged to the retired `role`/`team_member`
+ * vocabulary the minimize-provider-boundaries refactor deleted — see
+ * `.agents/tasks/architecture/minimize-provider-boundaries/README.md` line 154
+ * ("`team_member` is deleted from persisted types, internal vocabulary, and
+ * public surfaces"). This suite asserts the CURRENT kind set and prefix rules
+ * only; it must never reintroduce the deleted vocabulary.
  */
-describe('Team and TeamMate concrete-name allocation (#188)', () => {
+describe('Team and TeamMate concrete-name allocation', () => {
   const never = (): boolean => false;
+  const ALL_KINDS: readonly ConcreteNameKind[] = [
+    'team',
+    'team-leader',
+    'team-teammate',
+    'dispatcher-teammate',
+  ];
 
   it('slugifies an agent-supplied base into the name charset', () => {
     expect(slugifyName('Review The Auth Change')).toBe('review-the-auth-change');
@@ -34,23 +52,14 @@ describe('Team and TeamMate concrete-name allocation (#188)', () => {
   it('generates a 4-8 char lowercase base36 suffix', () => {
     for (let sample = 0; sample < 32; sample += 1) {
       const suffix = generateNameSuffix();
-      expect(suffix.length).toBeGreaterThanOrEqual(
-        NAME_SUFFIX_MIN_LENGTH,
-      );
-      expect(suffix.length).toBeLessThanOrEqual(
-        NAME_SUFFIX_MAX_LENGTH,
-      );
+      expect(suffix.length).toBeGreaterThanOrEqual(NAME_SUFFIX_MIN_LENGTH);
+      expect(suffix.length).toBeLessThanOrEqual(NAME_SUFFIX_MAX_LENGTH);
       expect(suffix).toMatch(/^[a-z0-9]+$/);
     }
   });
 
-  it('uses both 4- and 8-char endpoints for every generated name kind', () => {
-    for (const kind of [
-      'team',
-      'teammate',
-      'team_member',
-      'team_leader',
-    ] as const) {
+  it('uses both 4- and 8-char suffix endpoints for every current name kind', () => {
+    for (const kind of ALL_KINDS) {
       for (const suffix of ['a1b2', 'abcd1234']) {
         const name = allocateConcreteName({
           kind,
@@ -65,20 +74,24 @@ describe('Team and TeamMate concrete-name allocation (#188)', () => {
     }
   });
 
-  it('applies the role prefix and the requested-vs-team slug source', () => {
+  it('applies the current role prefix: none for team/dispatcher-teammate, tm-/tl- for the rest', () => {
+    // A dispatcher-scoped TeamMate carries no prefix at all.
     expect(
-      buildConcreteName({ kind: 'teammate', base: 'reviewer', suffix: 'abcd' }),
+      buildConcreteName({ kind: 'dispatcher-teammate', base: 'reviewer', suffix: 'abcd' }),
     ).toBe('reviewer-abcd');
+    // A Team's own name carries no prefix either.
     expect(
       buildConcreteName({ kind: 'team', base: 'reviewers', suffix: 'abcde' }),
     ).toBe('reviewers-abcde');
+    // A Team-scoped TeamMate is durably tagged `tm-` (the durable address, not
+    // a description of the retired `team_member` role vocabulary).
     expect(
-      buildConcreteName({ kind: 'team_member', base: 'builder', suffix: 'abcd1234' }),
+      buildConcreteName({ kind: 'team-teammate', base: 'builder', suffix: 'abcd1234' }),
     ).toBe('tm-builder-abcd1234');
-    // A TeamLeader names from the team slug, not the base.
+    // A TeamLeader names from the team slug (with `tl-`), not the base.
     expect(
       buildConcreteName({
-        kind: 'team_leader',
+        kind: 'team-leader',
         base: 'ignored',
         teamSlug: 'alpha',
         suffix: 'abcd1234',
@@ -86,11 +99,17 @@ describe('Team and TeamMate concrete-name allocation (#188)', () => {
     ).toBe('tl-alpha-abcd1234');
   });
 
+  it('a team-leader falls back to the base when no teamSlug is supplied', () => {
+    expect(
+      buildConcreteName({ kind: 'team-leader', base: 'fallback-base', suffix: 'abcd' }),
+    ).toBe('tl-fallback-base-abcd');
+  });
+
   it('truncates the slug at both suffix endpoints to the 64-char limit', () => {
     const longBase = 'x'.repeat(200);
     for (const suffix of ['a1b2', 'abcd1234']) {
       const name = buildConcreteName({
-        kind: 'team_member',
+        kind: 'team-teammate',
         base: longBase,
         suffix,
       });
@@ -101,10 +120,18 @@ describe('Team and TeamMate concrete-name allocation (#188)', () => {
     }
   });
 
+  it('truncates a prefix-free kind (team) at both suffix endpoints too', () => {
+    const longBase = 'y'.repeat(200);
+    for (const suffix of ['a1b2', 'abcd1234']) {
+      const name = buildConcreteName({ kind: 'team', base: longBase, suffix });
+      expect(name).toHaveLength(CONCRETE_NAME_MAX);
+      expect(TEAMMATE_NAME_PATTERN.test(name)).toBe(true);
+      expect(name.endsWith(`-${suffix}`)).toBe(true);
+    }
+  });
+
   it('every produced name matches the TeamMate name pattern', () => {
-    for (
-      const kind of ['team', 'teammate', 'team_member', 'team_leader'] as const
-    ) {
+    for (const kind of ALL_KINDS) {
       const name = allocateConcreteName({
         kind,
         base: 'My Review.Task',
@@ -120,7 +147,7 @@ describe('Team and TeamMate concrete-name allocation (#188)', () => {
     let i = 0;
     const taken = new Set(['reviewer-aaaaaaaa', 'reviewer-bbbbbbbb']);
     const name = allocateConcreteName({
-      kind: 'teammate',
+      kind: 'dispatcher-teammate',
       base: 'reviewer',
       exists: (candidate) => taken.has(candidate),
       generateSuffix: () => suffixes[i++]!,
@@ -131,17 +158,34 @@ describe('Team and TeamMate concrete-name allocation (#188)', () => {
   it('fails loudly when the attempt budget is exhausted (never reuses a name)', () => {
     expect(() =>
       allocateConcreteName({
-        kind: 'teammate',
+        kind: 'dispatcher-teammate',
         base: 'reviewer',
         exists: () => true, // every candidate already taken
         generateSuffix: () => 'aaaaaaaa',
         maxAttempts: 4,
       }),
-    ).toThrow(/could not allocate a unique teammate name after 4 attempts/);
+    ).toThrow(/could not allocate a unique dispatcher-teammate name after 4 attempts/);
   });
 
   it('reserves dispatcher as an ordinary agent or team name', () => {
     expect(() => assertNotReservedAgentName('dispatcher')).toThrow(/reserved/);
     expect(() => assertNotReservedAgentName('Dispatcher')).toThrow(/reserved/);
+  });
+
+  it('never produces the retired tm- prefix for a bare "teammate" or "team_member" kind', () => {
+    // The allocator's ConcreteNameKind type no longer has a member spelled
+    // 'teammate' or 'team_member' at all -- this is a runtime companion to
+    // that compile-time fact: an arbitrary unknown-kind string (as could arrive
+    // through an `as` cast at a call site) is not silently accepted as a valid
+    // Team-scoped-TeamMate/dispatcher-TeamMate/TeamLeader alias, it falls
+    // through to the neutral (no-prefix) branch instead of resurrecting `tm-`
+    // for a spelling that isn't `team-teammate`.
+    const name = buildConcreteName({
+      kind: 'team_member' as unknown as ConcreteNameKind,
+      base: 'builder',
+      suffix: 'abcd',
+    });
+    expect(name.startsWith('tm-')).toBe(false);
+    expect(name).toBe('builder-abcd');
   });
 });

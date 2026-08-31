@@ -6,8 +6,8 @@
 import { createHash } from 'node:crypto';
 
 import type {
-  ChannelTurnToolCallEvent,
   RuntimeToolAction,
+  TeammateTurnToolCallEvent,
 } from '@excitedjs/dreamux-types';
 import type { FeishuCotEventInput } from '@excitedjs/feishu-transport';
 
@@ -70,7 +70,7 @@ export function textMessageEvents(input: {
 }
 
 export function toolCallStartEvents(
-  event: ChannelTurnToolCallEvent,
+  event: TeammateTurnToolCallEvent,
   channelId?: string,
 ): FeishuCotEventInput[] {
   const toolCallId = opaqueDisplayId('call', event.call_id);
@@ -107,7 +107,7 @@ export function toolCallStartEvents(
 }
 
 export function toolCallResultEvents(
-  event: ChannelTurnToolCallEvent,
+  event: TeammateTurnToolCallEvent,
   channelId?: string,
 ): FeishuCotEventInput[] {
   const messageId = opaqueDisplayId('result', event.event_id);
@@ -262,7 +262,7 @@ const OWNED_TOOL_PRESENTATION: Readonly<Record<
 };
 
 function toolPresentation(
-  event: ChannelTurnToolCallEvent,
+  event: TeammateTurnToolCallEvent,
   channelId: string | undefined,
 ): ToolPresentation {
   const toolCallName = displayToolName(event.tool_name);
@@ -309,7 +309,13 @@ function ownedFeishuTool(
       leaf = toolName.slice(separator + 1);
     }
   }
-  if (server !== 'feishu' && (channelId === undefined || server !== channelId)) {
+  // Core names a Channel MCP server from the configured channel id, so accept
+  // both the bare id and the namespaced form it is injected under.
+  if (
+    server !== 'feishu' &&
+    (channelId === undefined ||
+      (server !== channelId && server !== `channel-${channelId}`))
+  ) {
     return null;
   }
   return leaf === 'reply' || leaf === 'react' || leaf === 'list_chat_bots'
@@ -318,7 +324,7 @@ function ownedFeishuTool(
 }
 
 function builtInToolPresentation(
-  event: ChannelTurnToolCallEvent,
+  event: TeammateTurnToolCallEvent,
 ): BuiltInToolPresentation | null {
   const tool = teammateTool(event.tool_name);
   if (

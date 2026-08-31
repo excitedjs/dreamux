@@ -26,7 +26,6 @@ import {
   adminSocketPath,
   channelLogDir,
   channelLogPath,
-  channelMcpLogDir,
   legacyAdminSocketPath,
   logsRoot,
   serverLogPath,
@@ -59,7 +58,6 @@ async function main(): Promise<void> {
   await mkdir(stateRoot(), { recursive: true });
   await mkdir(logsRoot(), { recursive: true });
   await mkdir(channelLogDir(), { recursive: true });
-  await mkdir(channelMcpLogDir(), { recursive: true });
   await mkdir(workflowLogDir(), { recursive: true });
 
   // The CLI is the only constructor of file-backed loggers; everything else

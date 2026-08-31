@@ -3,8 +3,8 @@
 This page is the stable contract for Dreamux scheduled prompt-agent work. It
 consolidates the cron, agent-activity, and JSON-store decisions.
 
-Read this before changing `SchedulerService`, `CronJobStore`, cron MCP,
-`waitIdle`, or dispatcher/TeamLeader scheduler ownership.
+Read this before changing `SchedulerService`, `CronJobStore`, the cron MCP
+delegate, or dispatcher/TeamLeader scheduler ownership.
 
 ## Ownership
 
@@ -33,10 +33,14 @@ Source:
 It writes atomically, serializes mutations through an internal queue, and fails
 loud on legacy/incompatible schema.
 
-Current persisted actions include `prompt-agent` and a reserved
-`spawn-teammate` shape. Current scheduler dispatch implements `prompt-agent`;
-non-`prompt-agent` actions are skipped with a warning until a later design lands
-their delivery semantics.
+A job's action union has one member: `{ kind: 'prompt-agent', prompt, intent? }`.
+The reserved `spawn-teammate` shape and the `deliver: { channel_id, target_key }`
+target were declared and parsed with nothing behind them, and are removed. The
+raw-file parser now refuses either as `LegacyStateError` rather than admitting a
+domain object that dispatch would have to skip, so there is no
+"accepted but not implemented" state and no skip branch. `dreamux doctor`
+reports such a store through `detectLegacyCronJobStore`; the fix is to delete
+the job or the store file and recreate the schedule.
 
 Source:
 
@@ -44,46 +48,33 @@ Source:
 - `/packages/dreamux/src/platform/json-document-store.ts`
 - `/packages/dreamux/src/service/scheduler/service.ts`
 
-## Runtime Activity
+## Fire Semantics
 
-`AgentRuntime.waitIdle?()` is the neutral activity hook. It resolves when no
-turn is in progress. For scheduler deferral, a runtime that omits it is treated
-as already idle.
+A due fire is submitted immediately through the owner's ordinary admission gate.
+No cancellation and no idle question cross that call: whether the runtime folds
+the input into a turn that is already running or starts a new one is the
+runtime's own decision, made where it is already made. There is no neutral
+activity hook, no defer-until-idle race, and no scheduler-owned defer window.
 
-The scheduler is the current consumer. For each fire, it races:
-
-- `runtime.waitIdle?.() ?? Promise.resolve()`;
-- scheduler maximum defer window;
-- scheduler stop signal.
-
-This is intentionally caller-owned timeout logic. The runtime owns no
-scheduler-specific timeout, cancellation, or subscription mechanism.
-
-Durable Team dissolve is a separate strict consumer of the same neutral hook.
-It rejects acceptance unless every process-live shared-worktree writer exposes
-`waitIdle()`, then waits for the captured TeamLeader and members before its
-second worktree assessment. That lifecycle rule does not change scheduler
-fallback semantics.
+`sourceId` is `scheduled:<job-id>:<fire-seq>` — stable for one fire, different
+across recurring fires of the same job, so runtime-side dedupe cannot collapse a
+later occurrence. The scheduler then records `last_fired_at`, recomputes
+`next_run_at`, and disables a one-shot job. It never observes whether the
+resulting turn succeeded.
 
 Source:
 
-- `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/dreamux/src/service/scheduler/service.ts`
-- `/packages/dreamux/src/service/team-collection/dissolve-runner.ts`
-- `/packages/agent-runtime/codex/src/runtime.ts`
-- `/packages/agent-runtime/claude-code/src/runtime.ts`
+- `/packages/dreamux/src/service/scheduler/types.ts`
 
-## Absent Runtime Policy
+## Owner Admission
 
-`SchedulerService` is generalized over an owner, but the missing-runtime policy
-differs by owner:
-
-- dispatcher scheduler: `absentRuntimeStrategy: 'miss'`. A missing dispatcher
-  runtime means the start transaction failed or was torn down; cron must not
-  resurrect it outside `DispatcherService.doStart()`.
-- TeamLeader scheduler: `absentRuntimeStrategy: 'submit'`. A missing TeamLeader
-  runtime is the normal lazy state after daemon restart or between
-  conversations; scheduled input goes through the TeamLeader lazy-start path.
+`SchedulerService` is generalized over an owner and takes that owner's
+admission gate plus its scheduled-submit callback. The dispatcher scheduler
+submits into the dispatcher agent; a Team's scheduler submits into its
+TeamLeader, whose lazy-start path is the normal state after a restart or between
+conversations. The scheduler holds no runtime and applies no per-owner
+missing-runtime policy of its own.
 
 Source:
 
@@ -93,33 +84,43 @@ Source:
 
 ## Startup And Teardown
 
-Dispatcher startup arms the dispatcher scheduler. Team schedulers are resident
-for non-closed Teams, but TeamLeader runtimes are not started just to arm cron.
-Closed Teams are not armed. Dissolving a Team stops its TeamLeader scheduler and
-deletes that Team's cron store file, so scheduled work cannot reattach to a
-later same-name Team with a fresh leader identity.
+The dispatcher scheduler is armed inside the dispatcher's input-source
+lifecycle, after Workflows and before external admission opens. `start()`
+reconciles every persisted job's durable state before arming any timer, so a
+mid-reconcile IO failure leaves the scheduler fully un-started. Team schedulers
+are resident for non-closed Teams, but TeamLeader runtimes are not started just
+to arm cron, and closed Teams are not armed.
+
+Dissolving a Team stops its scheduler with the rest of its resources and deletes
+that Team's cron store file **after** the closed record is durable, so a failed
+close leaves the still-open Team its jobs, and a successful one cannot let
+scheduled work reattach to a later same-name Team with a fresh leader identity.
 
 Source:
 
-- `/packages/dreamux/src/service/dispatcher-service/index.ts`
-- `/packages/dreamux/src/service/team-collection/index.ts`
+- `/packages/dreamux/src/service/dispatcher-service/input-source-lifecycle.ts`
 - `/packages/dreamux/src/service/team-service/index.ts`
+- `/packages/dreamux/src/service/team-service/closing.ts`
 - `/packages/dreamux/src/service/scheduler/store.ts`
 
 ## MCP Surface
 
-Cron tools are exposed through the `cron-mcp` shim to the agent roles that
-receive scheduled-work capabilities. Runtime launches can disable a runtime's
-native cron feature with the neutral `cron` feature name so Dreamux-owned cron
-remains the source of truth.
+`scheduler.cron.list` / `create` / `update` / `delete` are ordinary Core
+Commands declared by the scheduler's own `commands.ts`. The scheduler's MCP
+delegate publishes `cron_create`, `cron_list`, `cron_update`, and `cron_delete`
+with descriptor-bound dispatcher or Team scope, and the role→delegate decision
+gives it to the dispatcher agent and every TeamLeader but not to ordinary
+TeamMates or Team members. Neither surface accepts `deliver`, and neither
+reports it. Runtime launches can disable a runtime's native cron feature with
+the neutral `cron` feature name so Dreamux-owned cron remains the source of
+truth.
 
 Source:
 
-- `/packages/dreamux/src/mcp/cron-mcp.ts`
-- `/packages/dreamux/src/service/scheduler/mcp-config.ts`
+- `/packages/dreamux/src/service/scheduler/commands.ts`
+- `/packages/dreamux/src/service/scheduler/mcp-delegate.ts`
+- `/packages/dreamux/src/service/dispatcher-service/mcp-delegates.ts`
 - `/packages/dreamux/src/agent-runtime/host-context.ts`
-- `/packages/dreamux/src/service/dispatcher-service/agent.ts`
-- `/packages/dreamux/src/service/team-service/index.ts`
 
 ## Decision Trail
 

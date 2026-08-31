@@ -1,31 +1,37 @@
-import type { ChannelSession, DreamuxLogger } from '@excitedjs/dreamux-types';
+import type {
+  ChannelInstance,
+  CoreCommandRegistry,
+  DreamuxLogger,
+} from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
 import type { ConversationProjection } from '../../channel/conversation-projection.js';
+import {
+  createChannelCorePort,
+  type ChannelCorePortLease,
+} from '../../channel/core-port.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
+import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
 import type { ChannelService } from '../channel-service/index.js';
-import type { CollaborationSpaceService } from '../collaboration-space/index.js';
 import type { DispatcherCoreEventBus } from '../dispatcher-core-events/index.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import type { SchedulerService } from '../scheduler/service.js';
 import type { TeamCollection } from '../team-collection/index.js';
 import type { TeammateCollection } from '../teammate-collection/index.js';
 import type { TeammateService } from '../teammate-service/index.js';
+import type { TeammateAgentMcp } from '../teammate-service/types.js';
 import { collectShutdownFailure } from '../shutdown-errors.js';
 import type { DispatcherWorkflows } from './dispatcher-workflows.js';
 import { createDispatcherAgent } from './agent.js';
-import { handleCollaborationTargetLifecycle } from './collaboration-routing.js';
 import { ensureDispatcherRootIdentity } from './identity.js';
 import type { DispatcherTaskDrain } from './inbound-task-drain.js';
 import { rollbackFailedInputSourceStart } from './input-source-start-rollback.js';
-import { dispatcherMcpServerDescriptors } from './mcp-descriptors.js';
 import { closeAllBuilt } from './runtime-helpers.js';
 import { assertRunnableChannelShape } from './runnable-channel.js';
-import type { DispatcherScopedChannelRouting } from './scoped-channel-routing.js';
 import { injectRestartNoticeIfNeeded } from './restart-notice.js';
 
 interface DispatcherInputSourceLifecycleOptions {
@@ -35,12 +41,23 @@ interface DispatcherInputSourceLifecycleOptions {
   channelProviders: ChannelProviderCatalog;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   identities: AgentIdentityStore;
+  admissions: AdmissionLedger;
   conversationProjection: ConversationProjection;
   log: DreamuxLogger;
   channels: ChannelService;
-  adminSocketPath: string;
-  channelRoutes: DispatcherScopedChannelRouting;
-  collaborationSpaces: CollaborationSpaceService;
+  /**
+   * The dispatcher Agent's own MCP surface, built fresh per launch by the
+   * dispatcher that owns the objects behind it. A supplier rather than a value
+   * because the delegates close over live services this lifecycle is still
+   * constructing when it is itself constructed.
+   */
+  agentMcp: () => TeammateAgentMcp;
+  /**
+   * The Server-owned admitted Command port every Channel session invokes
+   * through. It is the same port the admin socket uses; a Channel never reaches
+   * the raw registry.
+   */
+  commands: CoreCommandRegistry;
   coreEvents: DispatcherCoreEventBus;
   scheduler: SchedulerService;
   teams: TeamCollection;
@@ -57,7 +74,13 @@ export class DispatcherInputSourceLifecycle {
   private workspaceCwd: string | null = null;
   private preparing: Promise<void> | null = null;
   private starting: Promise<void> | null = null;
-  private preparedChannels: Map<string, ChannelSession> | null = null;
+  private preparedChannels: Map<string, ChannelInstance> | null = null;
+  /**
+   * One Core port lease per initialized Channel session, held so shutdown can
+   * fence Channel Command admission synchronously — before any awaited teardown
+   * — rather than relying on each provider to stop calling.
+   */
+  private readonly channelPorts: ChannelCorePortLease[] = [];
   private started = false;
   private cleanupPending = false;
 
@@ -96,24 +119,55 @@ export class DispatcherInputSourceLifecycle {
 
   async closePreparedChannels(): Promise<void> {
     if (this.preparedChannels === null) return;
-    await closeAllBuilt(this.preparedChannels);
+    const sessions = this.preparedChannels;
     this.preparedChannels = null;
+    await this.discardPreparedChannels(sessions);
+  }
+
+  /**
+   * Fence Channel Command admission, synchronously and idempotently.
+   *
+   * Published before any awaited teardown so an initialized session cannot
+   * enter Core while shutdown is converging what it already accepted. Event
+   * subscriptions deliberately outlive this: a stopping runtime still settles,
+   * and those facts are worth delivering.
+   */
+  closeChannelPortAdmission(): void {
+    for (const lease of this.channelPorts) lease.closeAdmission();
+  }
+
+  /**
+   * Close instances that were built but will never be started, and tell the
+   * Channel service they are gone.
+   *
+   * All three halves are required: the service published these instances when
+   * it built them, so closing them without clearing would leave a torn-down
+   * channel still answering "yes, I can serve a session tool", and an
+   * initialized session holds a live subscription nothing else would revoke.
+   */
+  private async discardPreparedChannels(
+    sessions: Map<string, ChannelInstance>,
+  ): Promise<void> {
+    this.closeChannelPortAdmission();
+    this.channelPorts.length = 0;
+    this.opts.coreEvents.revokeSources();
+    try {
+      await closeAllBuilt(sessions);
+    } finally {
+      this.opts.channels.clear();
+    }
   }
 
   markStopped(): void {
     this.started = false;
+    // The leases belonged to the sessions this run initialized; a later start
+    // initializes new ones. Keeping the old objects would fence nothing and
+    // would grow with every restart.
+    this.channelPorts.length = 0;
   }
 
   markCleanupPending(): void {
     this.cleanupPending = true;
-  }
-
-  markCleanupComplete(): void {
-    this.cleanupPending = false;
-  }
-
-  dispatcherAgentRuntime(): string {
-    return this.dispatcherConfig().agentRuntime;
   }
 
   private async doPrepareChannels(): Promise<void> {
@@ -139,57 +193,89 @@ export class DispatcherInputSourceLifecycle {
       agentRuntime: dispatcherConfig.agentRuntime,
       cwd: workspaceCwd,
     });
-    const agent = createDispatcherAgent({
-      id: this.opts.dispatcherId,
-      config: this.opts.config,
-      agentRuntimeProviders: this.opts.agentRuntimeProviders,
-      identities: this.opts.identities,
-      conversationProjection: this.opts.conversationProjection,
-      log: this.opts.log,
-      mcpServers: dispatcherMcpServerDescriptors({
-        dispatcherId: this.opts.dispatcherId,
-        channels: this.opts.channels.configuredChannels(),
-        channelProviders: this.opts.channelProviders,
-        adminSocketPath: this.opts.adminSocketPath,
-      }),
-      identity,
-    });
+    // Channels are built first because the Agent's MCP surface is assembled from
+    // what they composed: a channel tool is advertised only if the instance that
+    // would serve it exists. Building is also the step that can fail, so nothing
+    // else is committed until it has.
     const sessions = await this.opts.channels.build();
     try {
+      const agent = createDispatcherAgent({
+        id: this.opts.dispatcherId,
+        config: this.opts.config,
+        agentRuntimeProviders: this.opts.agentRuntimeProviders,
+        identities: this.opts.identities,
+        admissions: this.opts.admissions,
+        conversationProjection: this.opts.conversationProjection,
+        log: this.opts.log,
+        mcp: this.opts.agentMcp(),
+        identity,
+      });
       this.assertAvailable();
+      await this.initializeChannelSessions(sessions);
       this.workspaceCwd = workspaceCwd;
       this.agent_ = agent;
       this.preparedChannels = sessions;
     } catch (error) {
-      await closeAllBuilt(sessions);
+      await this.discardPreparedChannels(sessions);
       throw error;
     }
   }
 
+  /**
+   * Hand every built session its Core port.
+   *
+   * This is the step that makes subscribe-before-admission provable: a session
+   * attaches its event consumer here, while its own external input is still
+   * closed, so nothing Core recovers or settles later can precede the
+   * subscription that observes it. The contract forbids opening external I/O
+   * from `initialize`, which is why the two are separate calls at all.
+   */
+  private async initializeChannelSessions(
+    sessions: Map<string, ChannelInstance>,
+  ): Promise<void> {
+    for (const [channelId, instance] of sessions) {
+      const events = this.opts.coreEvents.createSource(channelId);
+      const lease = createChannelCorePort({
+        registry: this.opts.commands,
+        dispatcherId: this.opts.dispatcherId,
+        channelId,
+        events: events.source,
+        log: this.opts.log,
+      });
+      this.channelPorts.push(lease);
+      await instance.session.initialize(lease.port);
+      this.assertAvailable();
+    }
+  }
+
+  /**
+   * Bring the dispatcher up in the one order the boundary requires.
+   *
+   * Sessions are constructed and initialized first, with external input still
+   * closed, so every subscription is attached before Core recovers anything.
+   * Recovery then runs against live event pumps. Channels open their external
+   * I/O next, and ordinary Workflow, scheduler, and cron admission opens only
+   * after all of them have started — a Channel that is still resuming its own
+   * sagas must not be asked to render an ordinary turn.
+   */
   private async doStart(): Promise<void> {
     this.assertAvailable();
-    await this.opts.collaborationSpaces.recoverTeamDissolves();
+    await this.prepareChannels();
     this.assertAvailable();
-    await this.opts.workflows.recover();
+    const sessions = this.preparedChannels ?? new Map<string, ChannelInstance>();
     try {
-      await this.prepareChannels();
-    } catch (error) {
-      this.opts.teams.stopSchedulers();
-      throw error;
-    }
-    this.assertAvailable();
-    const sessions = this.preparedChannels ?? new Map<string, ChannelSession>();
-    try {
-      await this.opts.workflows.start();
+      await this.opts.teams.recoverWorktreeCleanup();
+      this.assertAvailable();
+      await this.opts.workflows.recover();
       this.assertAvailable();
       if (this.shouldStartRuntimeForResumeNotice()) {
         await this.startAgentRuntime();
       }
       this.assertAvailable();
-      await this.opts.collaborationSpaces.resumePendingTargets();
-      this.assertAvailable();
       await this.startPreparedChannels(sessions);
       this.preparedChannels = null;
+      this.assertAvailable();
+      await this.opts.workflows.start();
       this.assertAvailable();
       await this.opts.scheduler.start();
       this.assertAvailable();
@@ -198,7 +284,7 @@ export class DispatcherInputSourceLifecycle {
       this.started = true;
     } catch (error) {
       this.opts.workflows.closeAdmission();
-      this.opts.channelRoutes.revokeSessionLeases();
+      this.closeChannelPortAdmission();
       this.opts.admittedTasks.closeAdmission();
       const rollbackFailures: unknown[] = [];
       await collectShutdownFailure(rollbackFailures, () =>
@@ -213,11 +299,11 @@ export class DispatcherInputSourceLifecycle {
           teams: this.opts.teams,
           teammates: this.opts.teammates,
           admittedTasks: this.opts.admittedTasks,
-          collaborationSpaces: this.opts.collaborationSpaces,
           agent: this.agent_,
           log: this.opts.log,
         }));
       this.preparedChannels = null;
+      this.channelPorts.length = 0;
       this.started = false;
       if (rollbackFailures.length === 0 && !this.opts.isUnavailable()) {
         this.opts.admittedTasks.openAdmission();
@@ -243,32 +329,22 @@ export class DispatcherInputSourceLifecycle {
     );
   }
 
+  /**
+   * Open external input, one already-initialized session at a time.
+   *
+   * `start` takes nothing: the session was given its Core port at initialize,
+   * and what it does with external traffic — routing, binding, presentation —
+   * is the Channel's own. A session is published as live only after its own
+   * start returns.
+   */
   private async startPreparedChannels(
-    sessions: Map<string, ChannelSession>,
+    sessions: Map<string, ChannelInstance>,
   ): Promise<void> {
-    const liveChannels = new Map<string, ChannelSession>();
-    for (const [channelId, session] of sessions) {
-      const coreEvents = this.opts.coreEvents.createSource(channelId);
-      const strictRoutes = this.opts.channelRoutes.createSessionLease(channelId);
-      await session.start({
-        deliver: (turn, envelope) =>
-          this.opts.channelRoutes.route(channelId, turn, envelope),
-        targetLifecycle: (event) =>
-          handleCollaborationTargetLifecycle({
-            dispatcherId: this.opts.dispatcherId,
-            dispatcherAgentRuntime: this.dispatcherAgentRuntime(),
-            channelId,
-            event,
-            channels: this.opts.channels,
-            collaborationSpaces: this.opts.collaborationSpaces,
-            log: this.opts.log,
-          }),
-        coreEvents: coreEvents.source,
-        ensureCollaborationTarget: strictRoutes.ensure,
-        deliverExact: strictRoutes.deliverExact,
-      });
+    const liveChannels = new Map<string, ChannelInstance>();
+    for (const [channelId, instance] of sessions) {
+      await instance.session.start();
       this.assertAvailable();
-      liveChannels.set(channelId, session);
+      liveChannels.set(channelId, instance);
       this.opts.channels.adopt(liveChannels);
     }
     if (sessions.size === 0) this.opts.channels.adopt(liveChannels);
@@ -287,7 +363,7 @@ export class DispatcherInputSourceLifecycle {
   }
 
   private shouldStartRuntimeForResumeNotice(): boolean {
-    const sessionId = this.agent_?.current().session_id ?? null;
+    const sessionId = this.agent_?.current().session?.id ?? null;
     return sessionId !== null &&
       this.opts.restartIntent()?.hasTarget(
         this.opts.dispatcherId,

@@ -8,39 +8,48 @@
  * — dynamic import, export selection, factory invocation, duplicate handling,
  * descriptor registration, and fail-loud formatting — to the shared skeleton.
  *
+ * The assertions below check only the neutral Agent Runtime contract. They
+ * deliberately assert no registration identity: a provider has no `ref` or
+ * `descriptor` member to echo, because Core keeps the sole authoritative
+ * descriptor beside the implementation it registered. Declared capabilities are
+ * validated by taking Core's one snapshot of them (`./capabilities.ts`), the
+ * same object the catalog later serves, rather than by inspecting a read that
+ * would be thrown away.
+ *
  * The `channel` kind reuses the same skeleton through a sibling loader; only the
  * contract assertions below are runtime-specific.
  */
+import { type ProviderRegistry } from '../registry/index.js';
 import {
-  type ProviderDescriptor,
-  type ProviderRegistry,
-} from '../registry/index.js';
-import {
-  assertLoadedProviderObject,
-  assertProviderDescriptorShape,
-  errMessage,
   isRecord,
   loadProviderPackages,
   type ProviderContractContext,
-  type ProviderFactory,
   type ProviderModule,
   type ProviderModuleImporter,
   type ProviderPackageLoaderSpec,
 } from '../registry/provider-loader.js';
+import {
+  agentRuntimeCapabilitySnapshot,
+  InvalidAgentRuntimeCapabilitiesError,
+} from './capabilities.js';
 import type {
-  AgentRuntimeCapabilities,
   AgentRuntimeCreateContext,
   AgentRuntimeProvider,
+  AgentRuntimeProviderFactory,
+  AgentRuntimeSessionRef,
 } from '@excitedjs/dreamux-types';
 
+/**
+ * The context an external Agent Runtime factory receives. It carries only the
+ * canonical ref Core resolved: the factory has no descriptor to echo back.
+ */
 export interface ExternalAgentRuntimeProviderFactoryContext {
   /** Canonical provider ref from config, for example `npm:some-runtime#provider`. */
   ref: string;
-  /** Descriptor the provider must expose back to Dreamux. */
-  descriptor: ProviderDescriptor;
 }
 
-export type ExternalAgentRuntimeProviderFactory = ProviderFactory<AgentRuntimeProvider>;
+export type ExternalAgentRuntimeProviderFactory =
+  AgentRuntimeProviderFactory<unknown>;
 
 export type ExternalAgentRuntimeModule = ProviderModule;
 
@@ -75,8 +84,14 @@ export interface LoadAgentRuntimeProvidersOptions {
   importModule?: ExternalAgentRuntimeModuleImporter;
 }
 
-const AGENT_RUNTIME_LOADER_SPEC: ProviderPackageLoaderSpec<AgentRuntimeProvider> = {
+const AGENT_RUNTIME_LOADER_SPEC: ProviderPackageLoaderSpec<
+  AgentRuntimeProvider<unknown>,
+  ExternalAgentRuntimeProviderFactoryContext
+> = {
   kind: 'agentRuntime',
+  // Ref-only, by contract: Core's registration descriptor stays inside the
+  // loader skeleton, because an Agent Runtime provider has nothing to echo back.
+  factoryContext: ({ ref }) => ({ ref }),
   createLoadError: (ref, message, options) =>
     new ExternalAgentRuntimeProviderLoadError(ref, message, options),
   createContractError: (ref, message) =>
@@ -93,39 +108,55 @@ export async function loadAgentRuntimeProviders(
 function assertExternalAgentRuntimeProvider(
   value: unknown,
   context: ProviderContractContext,
-): asserts value is AgentRuntimeProvider {
-  assertLoadedProviderObject(value, context);
-  const candidate = value as Partial<AgentRuntimeProvider>;
-  assertProviderDescriptorShape(candidate.descriptor, 'agentRuntime', context);
+): asserts value is AgentRuntimeProvider<unknown> {
+  if (!isRecord(value)) {
+    context.fail('factory must return a provider object');
+  }
+  const candidate = value as Partial<AgentRuntimeProvider<unknown>>;
   if (typeof candidate.getCapabilities !== 'function') {
     context.fail('provider.getCapabilities must be a function');
+  }
+  if (typeof candidate.readRecentActivity !== 'function') {
+    context.fail('provider.readRecentActivity must be a function');
   }
   if (typeof candidate.createRuntime !== 'function') {
     context.fail('provider.createRuntime must be a function');
   }
-  if (typeof candidate.readTranscript !== 'function') {
-    context.fail('provider.readTranscript must be a function');
-  }
-  if (candidate.readConfig !== undefined && typeof candidate.readConfig !== 'function') {
-    context.fail('provider.readConfig must be a function when present');
-  }
+  assertOptionalConfig(candidate.config, context);
   assertOptionalOnboard(candidate.onboard, context);
   assertOptionalDiagnostic(candidate.diagnostic, context);
-  let capabilities: AgentRuntimeCapabilities;
+  // Take Core's one capability snapshot here rather than validating a throwaway
+  // read: the catalog later reuses this exact snapshot, so a provider cannot
+  // pass the contract with one object and serve the public projection another.
   try {
-    capabilities = candidate.getCapabilities!();
+    // `candidate` is the object the registry will hold, so the snapshot is
+    // keyed by the same identity the catalog resolves later.
+    agentRuntimeCapabilitySnapshot(
+      candidate as AgentRuntimeProvider<unknown>,
+      context.ref,
+    );
   } catch (err) {
-    context.fail(`provider.getCapabilities threw: ${errMessage(err)}`);
+    if (err instanceof InvalidAgentRuntimeCapabilitiesError) {
+      context.fail(`provider.getCapabilities: ${err.detail}`);
+    }
+    throw err;
   }
-  assertCapabilities(capabilities, context);
   const createRuntime = candidate.createRuntime.bind(candidate);
-  candidate.createRuntime = (runtimeContext: AgentRuntimeCreateContext) => {
-    const runtime = createRuntime(runtimeContext);
+  candidate.createRuntime = async (
+    runtimeContext: AgentRuntimeCreateContext<unknown, AgentRuntimeSessionRef>,
+  ) => {
+    // `createRuntime` is async, so the handle can only be checked once it
+    // settles; asserting the promise itself would check the wrong object.
+    const runtime = await createRuntime(runtimeContext);
     assertRuntimeHandle(runtime, context);
     return runtime;
   };
 }
 
+/**
+ * The live handle is start/submit/stop and nothing else: state reaches Core
+ * through the leased sink it was created with, not through pull methods.
+ */
 function assertRuntimeHandle(
   value: unknown,
   context: ProviderContractContext,
@@ -133,25 +164,22 @@ function assertRuntimeHandle(
   if (!isRecord(value)) {
     context.fail('createRuntime must return a runtime object');
   }
-  const requiredMethods = [
-    'start',
-    'resume',
-    'stop',
-    'channelInput',
-    'completionInput',
-    'getStatus',
-    'getCheckpoint',
-    'wasCheckpointResumed',
-    'getContext',
-    'getCapabilities',
-  ];
-  for (const method of requiredMethods) {
+  for (const method of ['start', 'submit', 'stop']) {
     if (typeof value[method] !== 'function') {
       context.fail(`runtime.${method} must be a function`);
     }
   }
-  if (value['waitIdle'] !== undefined && typeof value['waitIdle'] !== 'function') {
-    context.fail('runtime.waitIdle must be a function when present');
+}
+
+function assertOptionalConfig(
+  value: unknown,
+  context: ProviderContractContext,
+): void {
+  if (value === undefined) return;
+  if (!isRecord(value) || typeof value['read'] !== 'function') {
+    context.fail(
+      'provider.config.read must be a function when config is present',
+    );
   }
 }
 
@@ -177,45 +205,6 @@ function assertOptionalDiagnostic(
   ) {
     context.fail(
       'provider.diagnostic must expose binChecks and runDiagnostic functions when present',
-    );
-  }
-}
-
-function assertCapabilities(
-  value: unknown,
-  context: ProviderContractContext,
-): asserts value is AgentRuntimeCapabilities {
-  if (!isRecord(value)) {
-    context.fail('capabilities must be an object');
-  }
-  const capabilities = value as Partial<AgentRuntimeCapabilities>;
-  assertResumeCapability(capabilities.resume, context);
-  if (capabilities.structuredOutput !== undefined) {
-    assertStructuredOutputCapability(capabilities.structuredOutput, context);
-  }
-}
-
-function assertResumeCapability(
-  value: unknown,
-  context: ProviderContractContext,
-): void {
-  if (!isRecord(value) || typeof value['supported'] !== 'boolean') {
-    context.fail('capabilities.resume.supported must be a boolean');
-  }
-}
-
-function assertStructuredOutputCapability(
-  value: unknown,
-  context: ProviderContractContext,
-): void {
-  if (!isRecord(value) || typeof value['supported'] !== 'boolean') {
-    context.fail('capabilities.structuredOutput.supported must be a boolean');
-    return;
-  }
-  const scope = (value as Record<string, unknown>)['scope'];
-  if (scope !== undefined && scope !== 'create-context' && scope !== 'per-turn') {
-    context.fail(
-      "capabilities.structuredOutput.scope must be 'create-context' or 'per-turn' when present",
     );
   }
 }

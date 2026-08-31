@@ -19,8 +19,8 @@ deliberately composed into both Dispatcher and TeamLeader runtimes:
   release-specific schemas or migration recipes.
 - `skills/team-leader/team-workflow` is injected only into TeamLeader runtimes.
   It covers team-scoped TeamMate MCP cautions, shared Team workspace
-  coordination, provider-visible bound-channel replies, TeamLeader cron
-  cautions, and the scoped `transfer_back` tool.
+  coordination, provider-visible channel replies, TeamLeader cron cautions, and
+  the Channel-owned routing tools a TeamLeader may reach for its own Team.
 - The shared `workflow` skill at `skills/shared/workflow` is injected into both
   Dispatcher and TeamLeader runtimes. It owns the Dynamic Workflow tool and
   deterministic runner contract.
@@ -70,32 +70,32 @@ later call. `send` is also the reattach path for a closed TeamMate when the
 runtime can resume it from the recorded session.
 
 Dispatcher `team` MCP tools are `create`, `send`, `list`, `status`, `history`,
-`dissolve`, `bind_channel`, and `transfer_back`. `create.name_prefix` is only a
-requested label; use the returned concrete, never-reused `team.team_name` for
-every later Team call. `bind_channel({ team_name, channel_id?, meta })` routes
-an existing channel target to a Team, and
-`transfer_back({ channel_id?, meta })` releases a bound target from Team
-routing. `meta` is provider-owned; the active channel provider's tool schema
-and results are the authority for the target selector.
+and `dissolve`. `create.name_prefix` is only a requested label; use the returned
+concrete, never-reused `team.team_name` for every later Team call. Routing a
+conversation to a Team is not here: it is a channel operation, and the connected
+channel's own MCP server owns those tools and their schemas.
 
-Dispatcher `dissolve({ team_name, note })` keeps its existing name and schema.
-Its 9-second pre-acceptance deadline starts at method entry, including the
-authoritative worktree preflight, and runs within the normal 10-second admin
-timeout. Successful Dispatcher and TeamLeader dissolve calls return the durable
-`status: "closing"` accepted receipt immediately. Logical close and worktree
-cleanup remain server-owned background work and are observed through Team read
-surfaces rather than the dissolve response.
+`dissolve({ team_name, note, force? })` is submitted, not awaited. It answers
+`{ accepted, team_name, status: "submitted" }` as soon as the Team owns the
+background work and never reports how the dissolve went; read the Team's status
+afterwards. Uncommitted, untracked, or unmerged work in a managed worktree
+leaves the Team open and running instead of closing it, and `force: true`
+discards exactly that local work — never the branch, its commits, a reused
+directory, or the source repository.
 
 Dispatcher `cron` MCP tools are `cron_create`, `cron_list`, `cron_update`, and
 `cron_delete`. Cron prompts are injected back into the
 Dispatcher; they are not a TeamMate spawn target or channel delivery mechanism by
 themselves.
 
-Dispatcher `collaboration_space` MCP tools are `bind`, `dissolve`, `status`,
-and `list`. They register and inspect already-created neutral channel
-containers, such as topic-group spaces, and route future targets in those spaces
-to provisioned Teams. They do not create the external provider space, delete it,
-or expose a `history` surface.
+Collaboration Space policy is a channel surface, not a Dreamux one. For the
+built-in Feishu channel the Dispatcher additionally sees `bind_channel`,
+`unbind_channel`, and `list_bindings` for one conversation, plus
+`bind_collaboration_space`, `unbind_collaboration_space`,
+`get_collaboration_space`, and `list_collaboration_spaces` for provisioning
+policy. A rebind reports the previous Team; there is no separate transfer tool.
+Those names and schemas belong to the channel package — read the active tool
+schema rather than assuming a shape.
 
 ## TeamLeader-Visible MCP
 
@@ -105,16 +105,17 @@ TeamLeader `spawn` does not accept a `repo` input because the Team workspace is
 already selected when the Team is created. Team-scoped TeamMates share that
 workspace, so concurrent editing needs an explicit non-conflict boundary.
 
-TeamLeader `team` MCP exposes exactly `dissolve({ note })`,
-`bind_channel({ channel_id?, meta })`, and
-`transfer_back({ channel_id?, meta })`. Self-dissolve always targets the
-descriptor-bound Team and leader generation, accepts no Team selector, and
-returns only the durable `status: "closing"` receipt so its own tool response can
-settle before runtime shutdown. Bind can claim only an unowned target (or repeat
-the exact explicit binding); another owner or an active collaboration-managed
-route is refused. TeamLeaders cannot create, send to, list, inspect, or select
-Teams through this projection. `transfer_back` remains a routing-only state
-change with no channel-message side effect.
+TeamLeader `team` MCP exposes exactly one tool, `dissolve({ note, force? })`.
+It always targets the descriptor-bound Team, accepts no Team selector, and
+returns the same submitted receipt — its own runtime is one of the things being
+stopped, so it should expect to lose that response. TeamLeaders cannot create,
+send to, list, inspect, or select Teams through this projection.
+
+A TeamLeader's channel routing tools come from the channel, and its copies carry
+no team field at all: the built-in Feishu channel lets it claim a free
+conversation for its own Team with `bind_channel` and release one with
+`unbind_channel`, and a conversation another Team answers in cannot be taken
+over — that is a Dispatcher move.
 
 TeamLeader `cron` MCP tools are `cron_create`, `cron_list`, `cron_update`, and
 `cron_delete`. Cron prompts are injected back into that

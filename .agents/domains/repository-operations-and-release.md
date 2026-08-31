@@ -43,9 +43,8 @@ The public operator package is `@excitedjs/dreamux`. It exposes one public bin:
 { "dreamux": "./bin/dreamux" }
 ```
 
-Runtime support shims such as `channel-mcp`, `team-mcp`, `teammate-mcp`, and
-`cron-mcp` are reached through Dreamux-managed MCP descriptors and internal CLI
-subcommands. They are not separate public npm bins.
+The single MCP shim is reached through Dreamux-managed MCP descriptors and an
+internal CLI subcommand. It is not a separate public npm bin.
 
 `dreamux changelog` reads the installed package's shipped Rush-generated
 `CHANGELOG.md` / `CHANGELOG.json`; both files must remain in the package

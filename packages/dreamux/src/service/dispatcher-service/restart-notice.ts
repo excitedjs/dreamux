@@ -2,6 +2,7 @@ import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import { errorInfo } from '../../platform/error-info.js';
+import { SYSTEM_SOURCE } from '../submission-sources.js';
 import type { TeammateService } from '../teammate-service/index.js';
 
 export async function injectRestartNoticeIfNeeded(input: {
@@ -11,11 +12,14 @@ export async function injectRestartNoticeIfNeeded(input: {
   now: number;
   log: DreamuxLogger;
 }): Promise<void> {
-  if (!input.agent.wasCheckpointResumed()) return;
+  // Only an actually-restored session gets the notice: a fresh start has no
+  // prior context the notice would explain, and `null` means no runtime started.
+  if (input.agent.startContinuity() !== 'resumed') return;
   const notice = input.restartIntent?.claim(input.dispatcherId, input.now) ?? null;
   if (notice === null) return;
   try {
-    const result = await input.agent.controlInput({
+    const result = await input.agent.submitInput({
+      source: SYSTEM_SOURCE,
       text: notice,
       sourceId: `restart-notice:${input.dispatcherId}`,
     });

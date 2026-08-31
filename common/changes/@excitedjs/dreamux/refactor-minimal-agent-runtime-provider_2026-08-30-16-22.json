@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Every agent-facing tool failure and every admin/Channel command failure now produces a result the caller can act on. A failure a domain knows about states its own stable code, the concrete fact, and the next step to take: a Team that is gone (TEAM_NOT_FOUND) or over (TEAM_CLOSED) — now two distinct answers on every surface, including a TeamLeader's own — a TeamMate that does not exist (TEAMMATE_NOT_FOUND), a cron job id that names nothing (CRON_JOB_NOT_FOUND), and an unknown workflow run (WORKFLOW_RUN_NOT_FOUND). A caller mistake is reported as BAD_REQUEST naming the rule it broke: a malformed cron expression, an unusable timezone, an invalid Team or TeamMate name, a blank name_prefix, intent, or close note, an unusable history limit, and an unreadable history cursor. These codes now reach admin.sock and Channel callers, where such failures previously reported INTERNAL, and the next step travels beside the code and message as a new optional `action` field on the admin error envelope and on a rejected in-process Channel command. Only a domain's own named rule becomes BAD_REQUEST: an unforeseen failure raised while validating a request, and any rule broken by persisted state, stay unclassified. An unclassified failure is no longer answered with fixed sanitized text and is no longer wrapped on its way out: it reaches the caller as INTERNAL carrying the message it already had, and is logged whole — stack included — by the boundary that observed it. A malformed MCP delegate result now fails `mcp.toolcall` instead of being reported as a successful one. Closing an already-closed TeamMate is reported as the success it is — including when a concurrent close commits while this one is reading — rather than as a failure. An admin socket that is absent or refusing is now reported as TRANSPORT_ERROR carrying the socket error Node itself reported, instead of the authored \"is the server running?\" advice that replaced it. No config, state, or path shape changed and no rebuild is required.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

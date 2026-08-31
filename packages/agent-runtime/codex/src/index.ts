@@ -13,15 +13,14 @@ export {
   dispatcherCodexConfig,
   CODEX_AGENT_RUNTIME_CAPABILITIES,
   type CodexAgentRuntimeProviderOptions,
-  type CodexProviderFactoryContext,
 } from './provider.js';
 
 export { resolveCodexBinPath } from './bin.js';
 
-export {
-  CodexRuntime,
-  type CodexRuntimeDeps,
-} from './runtime.js';
+// The concrete runtime class and the deps it is constructed from are both
+// implementation details: the package's public surface is the provider factory
+// and its options, and Core only ever holds the neutral `start`/`submit`/`stop`
+// handle `createRuntime` returns.
 
 export {
   CodexProcess,

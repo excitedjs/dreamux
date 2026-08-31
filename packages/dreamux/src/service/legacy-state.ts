@@ -2,7 +2,11 @@ import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { isNotFound } from '../platform/fs-errors.js';
-import { dispatcherTeamDir, dispatcherTeamMateDir } from '../platform/paths.js';
+import {
+  dispatcherDir,
+  dispatcherTeamDir,
+  dispatcherTeamMateDir,
+} from '../platform/paths.js';
 
 /**
  * Fail-loud detection of pre-#233 local state (issue #199 Slice 5, extended by
@@ -57,7 +61,18 @@ export class LegacyStateError extends Error {
 function removedStatePaths(dispatcherId: string): LegacyStateFinding[] {
   const teammate = dispatcherTeamMateDir(dispatcherId);
   const team = dispatcherTeamDir(dispatcherId);
+  const root = dispatcherDir(dispatcherId);
   return [
+    {
+      path: join(root, 'channel-bindings.json'),
+      what: 'Core channel-binding store, removed — a Channel now owns its ' +
+        'own routing state',
+    },
+    {
+      path: join(root, 'collaboration-spaces.json'),
+      what: 'Core Collaboration Space state, removed — the Channel that ' +
+        'offers the product flow owns its policy',
+    },
     {
       path: join(teammate, 'identities'),
       what: 'pre-#199 TeamMate identities directory, replaced by teammate/<name>/identity.json',
@@ -111,10 +126,11 @@ export function legacyDispatcherStateMessage(
 ): string {
   const lines = findings.map((finding) => `  - ${finding.path} (${finding.what})`);
   return (
-    `dispatcher ${dispatcherId} has pre-#199 local state this version no longer reads:\n` +
+    `dispatcher ${dispatcherId} has local state this version no longer reads:\n` +
     `${lines.join('\n')}\n` +
-    'Dreamux 0.x does not migrate old state. Delete the listed path(s); the current ' +
-    'per-entity identity and Team record layout rebuilds on the next run. The files are left untouched.'
+    'Dreamux 0.x does not migrate old state. Back up and delete the listed ' +
+    'path(s); what this version owns rebuilds on the next run, and what ' +
+    'moved is recreated through its new owner. The files are left untouched.'
   );
 }
 
@@ -136,7 +152,7 @@ export function assertNoRemovedRecordFields(
   );
   if (present.length > 0) {
     throw new LegacyStateError(
-      `${label} carries fields removed in issue #199 (${present.join(', ')}). ` +
+      `${label} carries fields the current schema removed (${present.join(', ')}). ` +
         `Dreamux 0.x does not migrate old state — ${rebuild}`,
     );
   }

@@ -4,18 +4,17 @@
  *
  * Owns the full onMessage flow: introduce/trusted-bot injection, the
  * two-lock access gate (LOCK-1 gate compute + LOCK-2 pair merge after send),
- * and the submitTurn delivery path. Primitive operations (reply, token
- * approval, introduce ack) live in `feishu-session-ops.ts`.
+ * and the delivery path. Access policy decides whether a message may be
+ * interpreted at all; routing then decides where the interpreted message goes,
+ * and the two stay separate — an allowed message with no route is not
+ * delivered anywhere. Primitive operations (reply, token approval, introduce
+ * ack) live in `feishu-session-ops.ts`.
  */
 
 import {
   isBotMentioned,
   isBotSenderType,
 } from '@excitedjs/feishu-transport';
-import type {
-  InboundDeliveryResult,
-  InboundTurnInput,
-} from '@excitedjs/dreamux-types';
 import type { FeishuInboundEvent } from './bot.js';
 import { formatFeishuMessageForRuntime } from './feishu-message.js';
 import { isFeishuOperationError } from './feishu-bounded-operation.js';
@@ -49,18 +48,18 @@ import {
   type PendingPairingEntry,
 } from './feishu-gate.js';
 import { buildPairingApprovalCard } from './feishu-pairing-card.js';
-import { BUILTIN_FEISHU_PROVIDER_REF } from './provider-ref.js';
 import {
-  CHANNEL_REMINDER,
   sendIntroduceAck,
   sendCard,
   sendReply,
   type SessionHandle,
 } from './feishu-session-ops.js';
-import type {
-  FeishuInboundEnvelope,
-  FeishuInboundSubmitter,
-} from './feishu-channel.js';
+import {
+  CHANNEL_REMINDER,
+  type FeishuSubmitOutcome,
+  type FeishuSubmission,
+} from './feishu-submit.js';
+import type { FeishuTarget } from './routing/target.js';
 
 const log = (h: SessionHandle) => h.opts.log;
 const FEISHU_USER_NAME_LOOKUP_TIMEOUT_MS = 2_000;
@@ -89,7 +88,6 @@ function pairingTokenLogFields(token: string): Record<string, unknown> {
 export async function onMessage(
   h: SessionHandle,
   event: FeishuInboundEvent,
-  submitter: FeishuInboundSubmitter,
 ): Promise<void> {
   // Classify once at the raw Channel boundary. Unknown chat/sender shapes must
   // not be projected into the public gate's `is_bot_sender: false` human
@@ -349,13 +347,12 @@ export async function onMessage(
   }
 
   // deliver
-  await deliverAcceptedMessage(h, event, submitter);
+  await deliverAcceptedMessage(h, event);
 }
 
 async function deliverAcceptedMessage(
   h: SessionHandle,
   acceptedEvent: FeishuInboundEvent,
-  submitter: FeishuInboundSubmitter,
 ): Promise<void> {
   const work = createFeishuInboundWork(h.sessionFence);
   try {
@@ -365,119 +362,138 @@ async function deliverAcceptedMessage(
       () => h.targetRouter.projectInbound(acceptedEvent, work.signal),
     );
     work.assertSessionActive();
-    const namedEvent = await enrichSenderName(h, acceptedEvent, work);
-    const event = await enrichFeishuInbound(
-      namedEvent,
-      h.bot,
-      work,
-      log(h),
-    );
+    const built = await buildSubmission(h, acceptedEvent, work, route.target);
     work.assertSessionActive();
-
-    const baseline =
-      event.chatType === 'group'
-        ? await pendingBaseline(h.opts.stateDir, event.chatId)
-        : null;
-    const injectBots =
-      baseline !== null && baseline.needsBaseline && baseline.trusted.length > 0;
-    const formatted = await formatFeishuMessageForRuntime(
-      event,
-      {
-        cacheDir: h.opts.attachmentCacheDir,
-        resourceFetcher: h.bot,
-        work,
-        ...(injectBots ? { trustedBots: baseline.trusted } : {}),
-      },
-    );
-    // Hand the runtime structured pieces, not pre-rendered XML. Append the
-    // standing channel-reminder on its own line at the very end — goes into
-    // `body` (rendered into the `<channel>` block) AND the neutral `text`
-    // fallback so the reminder always reaches the model.
-    const body = `${formatted.body}\n\n${CHANNEL_REMINDER}`;
-    const input: InboundTurnInput = {
-      sourceId: event.messageId,
-      source: 'feishu',
-      text: body,
-      attrs: formatted.attrs,
-      body,
-      attachments: formatted.attachments.map((attachment) => ({
-        kind: attachment.type,
-        ...(attachment.name !== undefined ? { name: attachment.name } : {}),
-        ...(attachment.path !== undefined ? { localPath: attachment.path } : {}),
-      })),
-    };
-    const envelope: FeishuInboundEnvelope = {
-      provider: BUILTIN_FEISHU_PROVIDER_REF,
-      chatId: event.chatId,
-      chatType: event.chatType === 'group' ? 'group' : 'p2p',
+    const outcome = await h.delivery.deliver({
       target: route.target,
-      ...(route.container !== undefined ? { container: route.container } : {}),
-      messageId: event.messageId,
-    };
-    work.assertSessionActive();
-    let delivery: InboundDeliveryResult;
-    try {
-      delivery = await submitter.submitTurn(input, envelope);
-    } catch (err) {
-      // A rejected provider call cannot prove whether the native admission
-      // boundary was crossed. Record terminal ambiguity; webhook replay must
-      // never duplicate a possibly accepted input.
-      const message = err instanceof Error ? err.message : String(err);
-      const stack = err instanceof Error ? err.stack : undefined;
-      log(h).error(
-        {
-          chat_id: event.chatId,
-          sender_id: event.senderId,
-          message_id: event.messageId,
-          err: { message, stack },
-        },
-        'feishu inbound admission was ambiguous; not replaying',
-      );
-      return;
-    }
-    if (!work.isSessionActive()) {
-      return;
-    }
-    if (delivery.status === 'submitted') {
-      log(h).info(
-        {
-          chat_id: event.chatId,
-          sender_id: event.senderId,
-          message_id: event.messageId,
-        },
-        'feishu inbound submitted',
-      );
-      if (injectBots && baseline !== null && formatted.groupBotsRendered) {
-        await clearBaselineIfCurrent(
-          h.opts.stateDir,
-          event.chatId,
-          baseline.generation,
-        );
-      }
-      return;
-    }
-    if (delivery.status === 'failed' || delivery.status === 'ambiguous') {
-      const message =
-        delivery.error instanceof Error
-          ? delivery.error.message
-          : String(delivery.error);
-      const stack =
-        delivery.error instanceof Error ? delivery.error.stack : undefined;
-      log(h).error(
-        {
-          chat_id: event.chatId,
-          message_id: event.messageId,
-          err: { message, stack },
-        },
-        delivery.status === 'ambiguous'
-          ? 'feishu inbound admission was ambiguous; not replaying'
-          : 'failed to submit feishu inbound',
-      );
+      containerChatId: route.containerChatId,
+      submission: built.submission,
+    });
+
+    if (!work.isSessionActive()) return;
+    reportDelivery(h, acceptedEvent, outcome);
+    if (outcome.status === 'submitted' && built.clearBaseline !== null) {
+      await built.clearBaseline();
     }
   } catch (error) {
     if (!isFeishuOperationError(error, 'aborted')) throw error;
   } finally {
     work.dispose();
+  }
+}
+
+/**
+ * Turn one accepted Feishu message into what Core is handed.
+ *
+ * Everything expensive lives here — sender lookup, attachment download,
+ * group-bot baseline — and none of it decides anything: the pieces are
+ * structured, never pre-rendered XML, because Core owns the provenance
+ * envelope and renders the standing reminder as its final sibling.
+ */
+async function buildSubmission(
+  h: SessionHandle,
+  acceptedEvent: FeishuInboundEvent,
+  work: FeishuInboundWorkContext,
+  target: FeishuTarget,
+): Promise<{
+  submission: FeishuSubmission;
+  clearBaseline: (() => Promise<void>) | null;
+}> {
+  const namedEvent = await enrichSenderName(h, acceptedEvent, work);
+  const event = await enrichFeishuInbound(namedEvent, h.bot, work, log(h));
+  work.assertSessionActive();
+  const pending = event.chatType === 'group'
+    ? await pendingBaseline(h.opts.stateDir, event.chatId)
+    : null;
+  const injectBots = pending !== null &&
+    pending.needsBaseline &&
+    pending.trusted.length > 0;
+  const formatted = await formatFeishuMessageForRuntime(event, {
+    cacheDir: h.opts.attachmentCacheDir,
+    resourceFetcher: h.bot,
+    work,
+    ...(injectBots ? { trustedBots: pending.trusted } : {}),
+  });
+  work.assertSessionActive();
+  const clearBaseline =
+    injectBots && pending !== null && formatted.groupBotsRendered
+      ? async (): Promise<void> => clearBaselineIfCurrent(
+          h.opts.stateDir,
+          event.chatId,
+          pending.generation,
+        )
+      : null;
+  return {
+    submission: {
+      attrs: Object.fromEntries(formatted.attrs),
+      text: formatted.body,
+      reminder: CHANNEL_REMINDER,
+      sourceId: event.messageId,
+      anchor: {
+        chatId: event.chatId,
+        messageId: event.messageId,
+        target,
+      },
+    },
+    clearBaseline,
+  };
+}
+
+/**
+ * What this Channel says about a message it accepted.
+ *
+ * Every accepted message is delivered to someone — a bound Team's TeamLeader,
+ * or the Dispatcher Agent — so what is reported here is only how Core
+ * answered, never whether the message found a recipient.
+ */
+function reportDelivery(
+  h: SessionHandle,
+  event: FeishuInboundEvent,
+  outcome: FeishuSubmitOutcome,
+): void {
+  const scope = {
+    dispatcher_id: h.opts.dispatcherId,
+    chat_id: event.chatId,
+    sender_id: event.senderId,
+    message_id: event.messageId,
+  };
+  switch (outcome.status) {
+    case 'submitted':
+      log(h).info(
+        { ...scope, turn_id: outcome.turnId },
+        'feishu inbound submitted',
+      );
+      return;
+    case 'duplicate':
+    case 'stopped':
+      log(h).info(
+        { ...scope, status: outcome.status },
+        'feishu inbound not admitted',
+      );
+      return;
+    case 'rejected':
+      log(h).warn(
+        { ...scope, code: outcome.code, err: { message: outcome.message } },
+        'feishu inbound was rejected before admission',
+      );
+      return;
+    case 'ambiguous':
+      log(h).error(
+        { ...scope, err: { message: outcome.error?.message ?? 'unknown' } },
+        'feishu inbound admission was ambiguous; not replaying',
+      );
+      return;
+    case 'failed':
+      log(h).error(
+        { ...scope, err: { message: outcome.error?.message ?? 'unknown' } },
+        'failed to submit feishu inbound',
+      );
+      return;
+    default:
+      log(h).error(
+        { ...scope, err: { message: outcome.message } },
+        'failed to submit feishu inbound',
+      );
   }
 }
 

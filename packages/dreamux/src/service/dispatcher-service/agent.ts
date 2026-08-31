@@ -1,7 +1,4 @@
-import type {
-  AgentRuntimeMcpServer,
-  DreamuxLogger,
-} from '@excitedjs/dreamux-types';
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import {
   DISABLE_FEATURE_CRON,
@@ -10,6 +7,7 @@ import {
 import type { ConversationProjection } from '../../channel/conversation-projection.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
+import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
 import {
   createTeammateService,
 } from '../teammate-service/factory.js';
@@ -19,6 +17,7 @@ import {
 } from '../agent-entity/runtime-profile.js';
 import type { TeammateService } from '../teammate-service/index.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
+import type { TeammateAgentMcp } from '../teammate-service/types.js';
 import {
   DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
   DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
@@ -33,9 +32,10 @@ export interface DispatcherAgentDeps {
   config: DreamuxConfig;
   agentRuntimeProviders: AgentRuntimeProviderCatalog;
   log: DreamuxLogger;
-  mcpServers: readonly AgentRuntimeMcpServer[];
+  mcp: TeammateAgentMcp;
   identity: AgentEntityIdentity;
   identities: AgentIdentityStore;
+  admissions: AdmissionLedger;
   conversationProjection: ConversationProjection;
 }
 
@@ -45,7 +45,7 @@ export interface DispatcherAgentDeps {
  * shared entity owns the runtime lifecycle (start/resume/stop), the
  * in-process Turn lifecycle and `completionInput` as a delivery target,
  * while `DispatcherService` keeps the dispatcher-only concerns (channel sessions,
- * restart-intent injection, MCP descriptor assembly).
+ * restart-intent injection, MCP delegate assembly).
  *
  * The agent's runtime is resolved through the same `identity.agent_runtime ->
  * agents[]` path used by TeamLeader and TeamMate. Its `identity.json` is the
@@ -58,13 +58,16 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
     config: deps.config,
     agentRuntimeProviders: deps.agentRuntimeProviders,
     identities: deps.identities,
+    admissions: deps.admissions,
     conversationProjection: deps.conversationProjection,
     // The dispatcher agent has no worktree — it neither spawns nor closes, so it
     // never reaches the worktree manager (issue #233 Phase 5).
     log: deps.log,
     options: {
-      mcpServers: deps.mcpServers,
+      mcp: deps.mcp,
       runtimeId: dispatcherRuntimeId(deps.id),
+      // This Agent is the Dispatcher Service's own; the role follows from that.
+      role: 'dispatcher',
       ownsWorktreeOnClose: false,
       loggerFields: {},
       assertIdentityScope: assertDispatcherRootAgent,
@@ -80,7 +83,7 @@ export function createDispatcherAgent(deps: DispatcherAgentDeps): TeammateServic
           source: 'dreamux-core',
         },
       ],
-      disableFeatures: [DISABLE_FEATURE_CRON],
+      disabledFeatures: [DISABLE_FEATURE_CRON],
       systemPrompt: {
         replace: DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
         append: [DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS],

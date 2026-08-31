@@ -3,13 +3,16 @@ import {
   type DreamuxConfig,
 } from '../../config/config.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
-import type { AgentIdentityStore } from '../agent-entity/identity-store.js';
+import type {
+  AgentEntityCollectionStore,
+  AgentIdentityStore,
+} from '../agent-entity/identity-store.js';
 import type {
   SpawnTeamMateRequest,
   TeamMateSharedWorkspace,
 } from '../teammate-collection/types.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
-import { WorktreeManager } from './manager.js';
+import { reuseCwdWorktree, WorktreeManager } from './manager.js';
 
 export async function resolveSpawnWorkspace(input: {
   config: DreamuxConfig;
@@ -18,8 +21,14 @@ export async function resolveSpawnWorkspace(input: {
   name: string;
   request: SpawnTeamMateRequest;
 }): Promise<TeamMateSharedWorkspace> {
-  if (input.request.sharedWorkspace !== undefined) {
-    return input.request.sharedWorkspace;
+  const loan = input.request.sharedWorkspace;
+  if (loan !== undefined) {
+    return {
+      ...loan,
+      worktree: reuseCwdWorktree(loan.runtimeCwd),
+      // Lent by its owner, so its owner keeps it.
+      createdCheckout: false,
+    };
   }
   if (
     input.request.worktree === undefined &&
@@ -58,7 +67,10 @@ export async function resolveSpawnWorkspace(input: {
 
 export async function reprepareDeletedManagedWorktree(input: {
   config: DreamuxConfig;
+  /** The entity's own bound identity store. */
   identities: AgentIdentityStore;
+  /** The collection this entity belongs to; absent for an owner-root Agent. */
+  peers?: AgentEntityCollectionStore;
   worktrees: WorktreeManager;
   identity: AgentEntityIdentity;
 }): Promise<AgentEntityIdentity> {
@@ -91,8 +103,7 @@ export async function reprepareDeletedManagedWorktree(input: {
     },
   });
   await assertManagedWorktreeAvailable({
-    identities: input.identities,
-    dispatcherId: input.identity.dispatcher_id,
+    ...(input.peers !== undefined ? { peers: input.peers } : {}),
     name: input.identity.name,
     worktree: workspace.worktree,
   });
@@ -105,14 +116,21 @@ export async function reprepareDeletedManagedWorktree(input: {
   });
 }
 
+/**
+ * Refuse a managed worktree path another Agent in the same collection owns.
+ *
+ * The peer set is the caller's own already-bound collection: an owner-root
+ * Agent (the dispatcher Agent, a TeamLeader) has no peer collection and never
+ * takes a managed worktree of its own, so an omitted `peers` means there is
+ * nothing to collide with.
+ */
 export async function assertManagedWorktreeAvailable(input: {
-  identities: AgentIdentityStore;
-  dispatcherId: string;
+  peers?: AgentEntityCollectionStore;
   name: string;
   worktree: AgentEntityIdentity['worktree'];
 }): Promise<void> {
-  if (input.worktree.mode !== 'managed') return;
-  const identities = await input.identities.list(input.dispatcherId);
+  if (input.worktree.mode !== 'managed' || input.peers === undefined) return;
+  const identities = await input.peers.list();
   const collision = identities.find(
     (identity) =>
       identity.name !== input.name &&

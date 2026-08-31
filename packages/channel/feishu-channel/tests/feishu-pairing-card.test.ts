@@ -1,456 +1,179 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+/**
+ * Owner-Only Pairing Approval Card (see package CLAUDE.md).
+ *
+ * These are pure rendering/response-shape contracts, not gate/session
+ * wiring — the gate's pairing-token state machine (who gets a token, TTL,
+ * quota) is covered in feishu-gate.test.ts. What is under test here is the
+ * card and callback-ACK *shape* the Feishu client actually receives, because
+ * that is where the token-leak red line lives: the pairing token must never
+ * become visible card/toast text, only the opaque button `value`, and a
+ * successful click must ACK through the official raw-card response shape
+ * rather than a bare card wrapper.
+ */
+import { describe, expect, it } from 'vitest';
 
-import type { InboundTurnInput } from '@excitedjs/dreamux-types';
-import {
-  defaultDispatcherAccessState,
-  FeishuChannelSession,
-  loadDispatcherAccess,
-  saveDispatcherAccess,
-  type FeishuCardActionResponse,
-  type FeishuInboundEnvelope,
-} from '../src/index.js';
 import {
   buildPairingApprovalCard,
+  buildPairingSuccessCard,
   DREAMUX_ACTION_KEY,
   DREAMUX_PAIRING_CARD_ACTION,
   DREAMUX_PAIRING_TOKEN_KEY,
+  rawCardActionResponse,
 } from '../src/feishu-pairing-card.js';
-import { PAIRING_TOKEN_REGEX, generatePairingToken } from '../src/feishu-gate.js';
-import {
-  createFakeFeishuBot,
-  type FakeFeishuBot,
-} from './helpers/fake-feishu-bot.js';
 
-function logger() {
-  return {
-    error: vi.fn(),
-    warn: vi.fn(),
-    info: vi.fn(),
-    debug: vi.fn(),
-    trace: vi.fn(),
-  };
+/** Recursively collect every string leaf in a card tree, card text included. */
+function stringLeaves(value: unknown, out: string[] = []): string[] {
+  if (typeof value === 'string') {
+    out.push(value);
+  } else if (Array.isArray(value)) {
+    for (const item of value) stringLeaves(item, out);
+  } else if (value !== null && typeof value === 'object') {
+    for (const v of Object.values(value)) stringLeaves(v, out);
+  }
+  return out;
 }
 
-function session(stateDir: string, bot: FakeFeishuBot): FeishuChannelSession {
-  return new FeishuChannelSession({
-    dispatcherId: 'flow',
-    appId: 'app',
-    appSecret: 'secret',
-    stateDir,
-    attachmentCacheDir: join(stateDir, 'attachments'),
-    log: logger(),
-    botFactory: () => bot,
-  });
-}
+describe('buildPairingApprovalCard — the token never becomes visible card text', () => {
+  const token = 'super-secret-pairing-token-should-not-leak';
 
-function inboundEvent(overrides: Partial<Parameters<FakeFeishuBot['inject']>[0]> = {}) {
-  return {
-    messageId: 'om_source',
-    chatId: 'oc_group',
-    chatType: 'group',
-    senderId: 'ou_requester',
-    senderType: 'user',
-    senderName: '',
-    messageType: 'text',
-    rawContent: JSON.stringify({ text: '<at id="fake-open-id-app"></at> hi' }),
-    parsedText: '@bot hi',
-    mentions: [
-      {
-        key: '@_user_1',
-        id: { open_id: 'fake-open-id-app' },
-        name: 'Bot',
-      },
-    ],
-    createTime: '1782660000000',
-    raw: {},
-    ...overrides,
-  };
-}
+  function card(): unknown {
+    return buildPairingApprovalCard({
+      token,
+      botDisplayName: 'Dreamux bot',
+      requesterOpenId: 'ou_requester_123',
+    });
+  }
 
-async function start(session: FeishuChannelSession): Promise<void> {
-  await session.start({
-    submitTurn: async (
-      _input: InboundTurnInput,
-      _envelope: FeishuInboundEnvelope,
-    ) => ({ status: 'submitted' }),
-  });
-}
-
-describe('Owner-only pairing approval card', () => {
-  let stateDir: string;
-
-  beforeEach(() => {
-    stateDir = mkdtempSync(join(tmpdir(), 'dreamux-feishu-card-'));
-  });
-
-  afterEach(() => {
-    rmSync(stateDir, { recursive: true, force: true });
-  });
-
-  it('sends an interactive approval card when the gate returns pair', async () => {
-    const bot = createFakeFeishuBot('app');
-    const s = session(stateDir, bot);
-    await start(s);
-
-    await bot.inject(inboundEvent());
-
-    expect(bot.sentMessages).toHaveLength(0);
-    expect(bot.sentCards).toHaveLength(1);
-    const card = bot.sentCards[0]?.card as {
-      elements: Array<{ actions?: Array<{ value?: Record<string, unknown> }> }>;
+  it('places the token only under the action button value, keyed by the documented constants', () => {
+    const rendered = card() as {
+      elements: Array<{
+        tag: string;
+        actions?: Array<{
+          value?: Record<string, string>;
+        }>;
+      }>;
     };
-    const buttonValue = card.elements.flatMap((e) => e.actions ?? [])[0]?.value;
-    expect(buttonValue?.[DREAMUX_ACTION_KEY]).toBe(DREAMUX_PAIRING_CARD_ACTION);
-    const token = buttonValue?.[DREAMUX_PAIRING_TOKEN_KEY];
-    expect(token).toMatch(PAIRING_TOKEN_REGEX);
-    const renderedCard = JSON.stringify(card);
-    expect(renderedCard).toContain('用户请求访问 Fake app');
-    expect(renderedCard).toContain('"en_us":"User requests access to Fake app"');
-    expect(renderedCard).toContain('申请人：<at id=\\"ou_requester\\"></at>');
-    expect(renderedCard).toContain('Requester: <at id=\\"ou_requester\\"></at>');
-    expect(renderedCard).toContain('仅 App Owner 可以点击批准');
-    expect(renderedCard).toContain('Only the App Owner can approve');
-    expect(renderedCard).toContain('"content":"批准授权"');
-    expect(renderedCard).toContain('"en_us":"Approve"');
-    expect(JSON.stringify(card)).not.toContain(`配对码`);
-    expect(JSON.stringify(card).replace(JSON.stringify(buttonValue), '')).not.toContain(
-      String(token),
+    const actionElement = rendered.elements.find((el) => el.tag === 'action');
+    expect(actionElement).toBeDefined();
+    const button = actionElement?.actions?.[0];
+    expect(button?.value).toEqual({
+      [DREAMUX_ACTION_KEY]: DREAMUX_PAIRING_CARD_ACTION,
+      [DREAMUX_PAIRING_TOKEN_KEY]: token,
+    });
+  });
+
+  it('never emits the raw token as a string anywhere outside the button value field', () => {
+    const rendered = card() as {
+      elements: Array<{
+        tag: string;
+        text?: unknown;
+        actions?: Array<{ text?: unknown; value?: Record<string, string> }>;
+      }>;
+    };
+    // Strip the one legitimate carrier (the button's `value` map) before
+    // scanning every remaining string leaf in the tree for a token leak.
+    const withoutTokenCarrier = rendered.elements.map((el) => {
+      if (el.tag !== 'action') return el;
+      return {
+        ...el,
+        actions: el.actions?.map(({ value: _value, ...rest }) => rest),
+      };
+    });
+    const leaves = stringLeaves(withoutTokenCarrier);
+    expect(leaves.some((leaf) => leaf.includes(token))).toBe(false);
+  });
+
+  it('uses a distinct Chinese/English pair via i18n_content rather than concatenating both languages', () => {
+    const rendered = card() as {
+      header: { title: { content: string; i18n_content: { en_us: string } } };
+      elements: Array<{
+        text?: { content: string; i18n_content?: { en_us: string } };
+      }>;
+    };
+    expect(rendered.header.title.content).toContain('用户请求访问');
+    expect(rendered.header.title.content).not.toContain('User requests');
+    expect(rendered.header.title.i18n_content.en_us).toContain(
+      'User requests access',
+    );
+    expect(rendered.header.title.i18n_content.en_us).not.toContain(
+      '用户请求访问',
     );
 
-    const access = await loadDispatcherAccess(stateDir);
-    expect(access.pending[String(token)]?.sender_id).toBe('ou_requester');
-  });
-
-  it('rejects non-Owner clicks with toast only and leaves pending intact', async () => {
-    const bot = createFakeFeishuBot('app');
-    bot.setAppOwner({ creatorOpenId: 'ou_owner' });
-    const token = generatePairingToken();
-    const s = session(stateDir, bot);
-    await saveDispatcherAccess(stateDir, {
-      ...defaultDispatcherAccessState(),
-      pending: {
-        [token]: {
-          kind: 'dm',
-          sender_id: 'ou_requester',
-          chat_id: 'oc_group',
-          created_at: Date.now(),
-          expires_at: Date.now() + 60_000,
-          replies: 1,
-        },
-      },
-    });
-    await start(s);
-
-    const result = await bot.injectCardAction({
-      operatorOpenId: 'ou_not_owner',
-      actionValue: {
-        [DREAMUX_ACTION_KEY]: DREAMUX_PAIRING_CARD_ACTION,
-        [DREAMUX_PAIRING_TOKEN_KEY]: token,
-      },
-      openChatId: 'oc_group',
-      openMessageId: 'om_card',
-      raw: {},
-    }) as FeishuCardActionResponse;
-
-    expect(result).toEqual({
-      toast: {
-        type: 'error',
-        content: '只有 App Owner 才有权限点击批准授权',
-      },
-    });
-    const access = await loadDispatcherAccess(stateDir);
-    expect(access.pending[token]).toBeDefined();
-    expect(access.allow_users).toEqual([]);
-  });
-
-  it('lets an Owner approve the pending token and replaces the card with a green success card', async () => {
-    const bot = createFakeFeishuBot('app');
-    bot.setAppOwner({ creatorOpenId: 'ou_owner' });
-    const token = generatePairingToken();
-    const s = session(stateDir, bot);
-    await saveDispatcherAccess(stateDir, {
-      ...defaultDispatcherAccessState(),
-      pending: {
-        [token]: {
-          kind: 'dm',
-          sender_id: 'ou_requester',
-          chat_id: 'oc_group',
-          created_at: Date.now(),
-          expires_at: Date.now() + 60_000,
-          replies: 1,
-        },
-      },
-    });
-    await start(s);
-
-    const result = await bot.injectCardAction({
-      operatorOpenId: 'ou_owner',
-      actionValue: {
-        [DREAMUX_ACTION_KEY]: DREAMUX_PAIRING_CARD_ACTION,
-        [DREAMUX_PAIRING_TOKEN_KEY]: token,
-      },
-      openChatId: 'oc_group',
-      openMessageId: 'om_card',
-      raw: {},
-    }) as FeishuCardActionResponse;
-
-    expect(result.toast?.type).toBe('success');
-    expect(result.card?.type).toBe('raw');
-    expect((result.card?.data as { header?: { template?: string } }).header?.template).toBe('green');
-    const renderedCard = JSON.stringify(result.card?.data);
-    expect(renderedCard).toContain('授权成功');
-    expect(renderedCard).toContain('"en_us":"Authorized"');
-    expect(renderedCard).toContain('Owner 校验通过');
-    expect(renderedCard).toContain('"en_us":"Owner verification passed');
-    expect(renderedCard).not.toContain(
-      'Owner 校验通过，访问权限已写入允许列表。\\n\\nOwner verification passed',
+    const body = rendered.elements.find((el) => el.text !== undefined);
+    expect(body?.text?.content).toContain('仅 App Owner 可以点击批准');
+    expect(body?.text?.i18n_content?.en_us).toContain(
+      'Only the App Owner can approve',
     );
-    expect(renderedCard).not.toContain(token);
-    expect(renderedCard).not.toContain('配对码');
-    const access = await loadDispatcherAccess(stateDir);
-    expect(access.allow_users).toEqual(['ou_requester']);
-    expect(access.pending[token]).toBeUndefined();
   });
 
-  it('returns an Owner lookup error toast when owner resolution fails', async () => {
-    const bot = createFakeFeishuBot('app');
-    vi.spyOn(bot, 'resolveAppOwner').mockRejectedValueOnce(new Error('permission denied'));
-    const token = generatePairingToken();
-    const s = session(stateDir, bot);
-    await saveDispatcherAccess(stateDir, {
-      ...defaultDispatcherAccessState(),
-      pending: {
-        [token]: {
-          kind: 'dm',
-          sender_id: 'ou_requester',
-          chat_id: 'oc_group',
-          created_at: Date.now(),
-          expires_at: Date.now() + 60_000,
-          replies: 1,
-        },
-      },
-    });
-    await start(s);
-
-    const result = await bot.injectCardAction({
-      operatorOpenId: 'ou_owner',
-      actionValue: {
-        [DREAMUX_ACTION_KEY]: DREAMUX_PAIRING_CARD_ACTION,
-        [DREAMUX_PAIRING_TOKEN_KEY]: token,
-      },
-      openChatId: 'oc_group',
-      openMessageId: 'om_card',
-      raw: {},
-    }) as FeishuCardActionResponse;
-
-    expect(result).toEqual({
-      toast: {
-        type: 'error',
-        content: 'Owner 校验失败，请稍后重试',
-      },
-    });
-    const access = await loadDispatcherAccess(stateDir);
-    expect(access.pending[token]).toBeDefined();
-    expect(access.allow_users).toEqual([]);
+  it('@-mentions the requester with the card Markdown <at> form', () => {
+    const rendered = card() as {
+      elements: Array<{ text?: { content: string } }>;
+    };
+    const body = rendered.elements.find((el) => el.text !== undefined);
+    expect(body?.text?.content).toContain(
+      '<at id="ou_requester_123"></at>',
+    );
   });
 
-  it('returns a warning toast when the hidden token is no longer pending', async () => {
-    const bot = createFakeFeishuBot('app');
-    bot.setAppOwner({ creatorOpenId: 'ou_owner' });
-    const token = generatePairingToken();
-    const s = session(stateDir, bot);
-    await start(s);
-
-    const result = await bot.injectCardAction({
-      operatorOpenId: 'ou_owner',
-      actionValue: {
-        [DREAMUX_ACTION_KEY]: DREAMUX_PAIRING_CARD_ACTION,
-        [DREAMUX_PAIRING_TOKEN_KEY]: token,
-      },
-      openChatId: 'oc_group',
-      openMessageId: 'om_card',
-      raw: {},
-    }) as FeishuCardActionResponse;
-
-    expect(result).toEqual({
-      toast: {
-        type: 'warning',
-        content: '授权请求不存在或已过期',
-      },
-    });
-    const access = await loadDispatcherAccess(stateDir);
-    expect(access.allow_users).toEqual([]);
-    expect(access.pending[token]).toBeUndefined();
+  it('strips markup-significant characters from a hostile requester open_id instead of forging the <at> tag', () => {
+    const hostile = buildPairingApprovalCard({
+      token,
+      botDisplayName: 'Dreamux bot',
+      requesterOpenId: 'ou"><script>x</script>',
+    }) as { elements: Array<{ text?: { content: string } }> };
+    const body = hostile.elements.find((el) => el.text !== undefined);
+    // The malicious characters are stripped from the id, not escaped —
+    // either way, no `<script>` tag survives, and the wrapping `<at ...>`
+    // stays exactly one legitimate tag.
+    expect(body?.text?.content).not.toContain('<script>');
+    expect(body?.text?.content.match(/<at id="/g)).toHaveLength(1);
   });
 
-  it('closes a duplicate approval with a success toast and success card', async () => {
-    const bot = createFakeFeishuBot('app');
-    bot.setAppOwner({ creatorOpenId: 'ou_owner' });
-    const token = generatePairingToken();
-    const s = session(stateDir, bot);
-    await saveDispatcherAccess(stateDir, {
-      ...defaultDispatcherAccessState(),
-      allow_users: ['ou_requester'],
-      pending: {
-        [token]: {
-          kind: 'dm',
-          sender_id: 'ou_requester',
-          chat_id: 'oc_group',
-          created_at: Date.now(),
-          expires_at: Date.now() + 60_000,
-          replies: 1,
-        },
-      },
-    });
-    await start(s);
+  it('renders under the blue (pending-decision) template, distinct from the green success card', () => {
+    const rendered = card() as { header: { template: string } };
+    expect(rendered.header.template).toBe('blue');
+  });
+});
 
-    const result = await bot.injectCardAction({
-      operatorOpenId: 'ou_owner',
-      actionValue: {
-        [DREAMUX_ACTION_KEY]: DREAMUX_PAIRING_CARD_ACTION,
-        [DREAMUX_PAIRING_TOKEN_KEY]: token,
-      },
-      openChatId: 'oc_group',
-      openMessageId: 'om_card',
-      raw: {},
-    }) as FeishuCardActionResponse;
+describe('buildPairingSuccessCard', () => {
+  it('renders green and carries no token-shaped field at all', () => {
+    const rendered = buildPairingSuccessCard({ duplicate: false }) as {
+      header: { template: string };
+    };
+    expect(rendered.header.template).toBe('green');
+    const leaves = stringLeaves(rendered);
+    // The success card input has no token; this also guards against a future
+    // change accidentally threading one through.
+    expect(leaves.every((leaf) => !leaf.toLowerCase().includes('token'))).toBe(
+      true,
+    );
+  });
 
-    expect(result.toast).toEqual({
+  it('distinguishes a fresh approval from a duplicate (already-allowed) approval in both languages', () => {
+    const fresh = buildPairingSuccessCard({ duplicate: false }) as {
+      elements: Array<{ text?: { content: string; i18n_content?: { en_us: string } } }>;
+    };
+    const dup = buildPairingSuccessCard({ duplicate: true }) as {
+      elements: Array<{ text?: { content: string; i18n_content?: { en_us: string } } }>;
+    };
+    const freshBody = fresh.elements.find((el) => el.text !== undefined)?.text;
+    const dupBody = dup.elements.find((el) => el.text !== undefined)?.text;
+    expect(freshBody?.content).not.toBe(dupBody?.content);
+    expect(freshBody?.i18n_content?.en_us).not.toBe(dupBody?.i18n_content?.en_us);
+  });
+});
+
+describe('rawCardActionResponse — official card-callback ACK shape', () => {
+  it('wraps the card under type "raw" alongside the toast, never a bare card', () => {
+    const card = { some: 'card' };
+    const response = rawCardActionResponse(card, {
       type: 'success',
-      content: '用户 ou_requester 已在允许列表，授权请求已关闭',
+      content: 'ok',
     });
-    expect(result.card?.type).toBe('raw');
-    expect((result.card?.data as { header?: { template?: string } }).header?.template).toBe('green');
-    expect(JSON.stringify(result.card?.data)).toContain('目标已经在允许列表');
-    const access = await loadDispatcherAccess(stateDir);
-    expect(access.allow_users).toEqual(['ou_requester']);
-    expect(access.pending[token]).toBeUndefined();
-  });
-
-  it('does not approve stale group-kind pending entries from the Owner card path', async () => {
-    const bot = createFakeFeishuBot('app');
-    bot.setAppOwner({ creatorOpenId: 'ou_owner' });
-    const token = generatePairingToken();
-    const s = session(stateDir, bot);
-    await saveDispatcherAccess(stateDir, {
-      ...defaultDispatcherAccessState(),
-      pending: {
-        [token]: {
-          kind: 'group',
-          sender_id: 'ou_requester',
-          chat_id: 'oc_group',
-          created_at: Date.now(),
-          expires_at: Date.now() + 60_000,
-          replies: 1,
-        },
-      },
+    expect(response).toEqual({
+      toast: { type: 'success', content: 'ok' },
+      card: { type: 'raw', data: card },
     });
-    await start(s);
-
-    const result = await bot.injectCardAction({
-      operatorOpenId: 'ou_owner',
-      actionValue: {
-        [DREAMUX_ACTION_KEY]: DREAMUX_PAIRING_CARD_ACTION,
-        [DREAMUX_PAIRING_TOKEN_KEY]: token,
-      },
-      openChatId: 'oc_group',
-      openMessageId: 'om_card',
-      raw: {},
-    }) as FeishuCardActionResponse;
-
-    expect(result).toEqual({
-      toast: {
-        type: 'error',
-        content: '授权请求类型已不再支持',
-      },
-    });
-    const access = await loadDispatcherAccess(stateDir);
-    expect(access.allow_users).toEqual([]);
-    expect(access.group.allow_chats).toEqual([]);
-    expect(access.pending[token]).toBeDefined();
-  });
-
-  it('references the existing approval card instead of resending it', async () => {
-    const bot = createFakeFeishuBot('app');
-    const s = session(stateDir, bot);
-    await start(s);
-
-    await bot.inject(inboundEvent({ messageId: 'om_first' }));
-    expect(bot.sentCards).toHaveLength(1);
-    const promptMessageId = bot.sentCards[0]?.messageIds[0];
-    expect(promptMessageId).toBeDefined();
-    const firstAccess = await loadDispatcherAccess(stateDir);
-    const token = Object.keys(firstAccess.pending)[0];
-    expect(token).toBeDefined();
-    if (token === undefined || promptMessageId === undefined) return;
-    expect(firstAccess.pending[token]?.replies).toBe(1);
-    expect(firstAccess.pending[token]?.prompt_message_id).toBe(promptMessageId);
-
-    await bot.inject(inboundEvent({ messageId: 'om_second' }));
-    expect(bot.sentCards).toHaveLength(1);
-    expect(bot.sentMessages).toHaveLength(1);
-    expect(bot.sentMessages[0]?.target.replyToMessageId).toBe(promptMessageId);
-    expect(bot.sentMessages[0]?.target.mentionUserIds).toEqual(['ou_requester']);
-    expect(bot.sentMessages[0]?.text).toContain('已有授权卡');
-    const secondAccess = await loadDispatcherAccess(stateDir);
-    expect(secondAccess.pending[token]?.replies).toBe(1);
-    expect(secondAccess.pending[token]?.prompt_message_id).toBe(promptMessageId);
-
-    await bot.inject(inboundEvent({ messageId: 'om_third' }));
-    expect(bot.sentCards).toHaveLength(1);
-    expect(bot.sentMessages).toHaveLength(2);
-    expect(bot.sentMessages[1]?.target.replyToMessageId).toBe(promptMessageId);
-    const thirdAccess = await loadDispatcherAccess(stateDir);
-    expect(thirdAccess.pending[token]?.replies).toBe(1);
-    expect(thirdAccess.pending[token]?.prompt_message_id).toBe(promptMessageId);
-  });
-
-  it('returns an error toast when approval cannot be persisted', async () => {
-    const bot = createFakeFeishuBot('app');
-    bot.setAppOwner({ creatorOpenId: 'ou_owner' });
-    const token = generatePairingToken();
-    const s = session(stateDir, bot);
-    await saveDispatcherAccess(stateDir, {
-      ...defaultDispatcherAccessState(),
-      pending: {
-        [token]: {
-          kind: 'dm',
-          sender_id: 'ou_requester',
-          chat_id: 'oc_group',
-          created_at: Date.now(),
-          expires_at: Date.now() + 60_000,
-          replies: 1,
-        },
-      },
-    });
-    await start(s);
-    chmodSync(stateDir, 0o500);
-    try {
-      const result = await bot.injectCardAction({
-        operatorOpenId: 'ou_owner',
-        actionValue: {
-          [DREAMUX_ACTION_KEY]: DREAMUX_PAIRING_CARD_ACTION,
-          [DREAMUX_PAIRING_TOKEN_KEY]: token,
-        },
-        openChatId: 'oc_group',
-        openMessageId: 'om_card',
-        raw: {},
-      }) as FeishuCardActionResponse;
-
-      expect(result).toEqual({
-        toast: {
-          type: 'error',
-          content: '授权写入失败，请重试',
-        },
-      });
-    } finally {
-      chmodSync(stateDir, 0o700);
-    }
-    const access = await loadDispatcherAccess(stateDir);
-    expect(access.allow_users).toEqual([]);
-    expect(access.pending[token]).toBeDefined();
   });
 });

@@ -464,5 +464,5 @@ successful `null`.
 ## Implementation Sources
 
 - `/packages/dreamux/src/service/workflow-service/`
-- `/packages/dreamux/src/mcp/teammate-mcp.ts`
+- `/packages/dreamux/src/service/teammate-collection/mcp-delegate.ts`
 - `/packages/dreamux/skills/shared/workflow/SKILL.md`

@@ -18,8 +18,8 @@ For current behavior, read the linked source code too.
 - [State and paths](reference/state-and-paths.md) — current config, workspace,
   state, run, cache, log, and external-home ownership.
 - [Channel runtime](reference/channel-runtime.md) — Channel provider sessions,
-  scoped collaboration operations, live core facts, target routing, and
-  binding.
+  the Command port and live core facts, and Channel-owned target routing,
+  binding, and Collaboration Space policy.
 - [Service topology](reference/service-topology.md) — source-anchored
   service-layer ownership and construction map.
 - [Model-facing writing](reference/model-facing-writing.md) — current
@@ -55,7 +55,7 @@ For current behavior, read the linked source code too.
 | modify TeamMate / Team lifecycle, read surfaces, or bundled dispatcher skills | [Dispatcher orchestration](domains/dispatcher-orchestration.md), [Dispatcher skill reference](reference/dispatcher-skill.md), [Model-facing writing](reference/model-facing-writing.md), [provider architecture realignment](decisions/provider-architecture-realignment.md), [service architecture refactor](decisions/service-architecture-refactor.md) |
 | modify agent-entity identity/turn/runtime-state stores or name validation | [Dispatcher orchestration](domains/dispatcher-orchestration.md), [State, config, and files](domains/state-config-and-files.md), source `packages/dreamux/src/service/agent-entity/` |
 | modify bundled skills, system prompts, MCP tool descriptions, MCP result field names, or tests that lock model-visible text | [Model-facing writing](reference/model-facing-writing.md), then source |
-| modify channel binding, channel target routing, or collaboration-space lifecycle | [Channel routing and binding](domains/channel-routing-and-binding.md), [Channel runtime](reference/channel-runtime.md), [NPM package split and channel targets](decisions/npm-package-split-and-channel-targets.md), source |
+| modify Channel-owned binding, target routing, or Collaboration Space policy | [Channel routing and binding](domains/channel-routing-and-binding.md), [Channel runtime](reference/channel-runtime.md), [NPM package split and channel targets](decisions/npm-package-split-and-channel-targets.md), source |
 | modify Feishu inbound, `/introduce`, trusted bot context, or reaction timing | [Channel runtime](reference/channel-runtime.md), [Feishu introduce](domains/feishu-introduce.md), [Feishu pairing access](domains/feishu-pairing-access.md), [non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md), source |
 | modify Feishu attachment download/cache behavior | [Feishu inbound attachments](decisions/feishu-inbound-attachments.md), [Channel runtime](reference/channel-runtime.md) |
 | modify onboard, daemon, uninstall, or public CLI names | [Repository operations and release](domains/repository-operations-and-release.md), [Global bin/onboard/serve](decisions/global-bin-onboard-serve.md), [CLI and package naming](decisions/cli-and-package-naming.md) |
@@ -127,10 +127,11 @@ history and rationale; when you need current behavior, pair them with
   `AgentRuntimeCreateContext`.
 - [Admin control plane surface](proposals/admin-control-plane-surface.md)
   — draft requirement/spec for making admin.sock the target external control
-  plane. Its implemented namespace slice uses product method names, keeps
-  model-facing filtering in the MCP adapters, and permits additional runtime
-  skill roots only on admin TeamMate/TeamLeader creation; event and protocol
-  gaps remain later slices.
+  plane. Its namespace slice landed and was then superseded by the domain-owned
+  Command registry, which admin.sock and a Channel's in-process `invoke` both
+  adapt; model-facing filtering lives in each domain's MCP delegate, and
+  additional runtime skill roots stay off every model-facing surface. Event,
+  protocol-baseline, introspection, and authentication gaps remain later slices.
 - [TeamMate identity system prompt](proposals/teammate-identity-system-prompt.md)
   — draft requirement/spec for adding a minimal `identity` input to
   `teammate.spawn` and `team.create`, persisting it on TeamMate identity records,
@@ -142,36 +143,43 @@ history and rationale; when you need current behavior, pair them with
   delivery back to the dispatcher at send time, and leaves Team peer messaging
   out of this slice.
 - [Collaboration space provisioning](proposals/collaboration-space-provisioning.md)
-  — draft requirement/spec for a provider-neutral collaboration-space MCP and
-  Channel container/target lifecycle capability where an externally created
-  space binds to a worktree policy, target creation deterministically provisions
-  a Team, and target closure dissolves that Team without routing through the
-  dispatcher agent runtime.
+  — draft requirement/spec for a Core-owned, provider-neutral collaboration-space
+  MCP and Channel container/target lifecycle. Superseded: a Collaboration Space
+  is now a Channel product flow. The Channel owns the policy, the provisioning,
+  and the durable record; Core keeps no space entity, no container/target
+  contract, and no space Commands. Read it for the product intent, not the
+  ownership.
 - [Feishu topic collaboration routing](proposals/feishu-topic-collaboration-routing.md)
-  — implementation specification for verifying `chat_mode=topic`, projecting
-  Feishu `thread_id` as a neutral collaboration target, preserving ordinary
-  group fail-safe routing, and authorizing TeamLeader replies against the exact
-  recorded topic target.
+  — implementation specification for verifying `chat_mode=topic` and preserving
+  ordinary group fail-safe routing. The topic-mode verification and fail-safe
+  behavior stand; the neutral-target projection it describes does not, because a
+  target no longer crosses the provider seam.
 - [Feishu binding notification cards](proposals/feishu-binding-notification-cards.md)
-  — live Feishu cards for collaboration-space, group, and topic binding state
-  transitions through the provider-neutral Channel core-event seam.
+  — live Feishu cards for Collaboration Space, group, and topic binding state
+  transitions. The cards shipped; the core-event seam they were rendered from did
+  not survive — the Channel now renders them from its own records when it changes
+  them, and Core publishes no binding fact.
 - [TeamLeader-scoped Team MCP transfer back](proposals/team-mcp-teamleader-transfer-back.md)
-  — retained implementation design for exposing only `transfer_back` from Team MCP to
-  TeamLeaders, keeping dispatcher Team lifecycle tools private, keeping explicit
-  provider target `meta`, moving channel binding ownership to a core
-  `ChannelService` over live sessions plus `ChannelBindingStore`; the later
-  dispatcher `team.send` slice is recorded separately above.
+  — implementation design for exposing `transfer_back` from Team MCP to
+  TeamLeaders over a core binding store. Superseded: routing is Channel-owned,
+  Team MCP has no binding tool, and there is no `transfer_back` — rebinding is
+  the Channel's own `bind_channel` with a different Team. The later dispatcher
+  `team.send` slice is recorded separately above.
 - [TeamLeader-scoped Team MCP channel binding](proposals/team-mcp-teamleader-bind-channel.md)
-  — active design for exposing a scoped `bind_channel` to TeamLeaders while
-  deriving the Team from descriptor-bound caller scope and validating the
-  current TeamLeader generation under the Team route-publication lease.
+  — design for exposing a scoped `bind_channel` to TeamLeaders from Team MCP.
+  Superseded in location, kept in spirit: a TeamLeader still binds only free or
+  already-own routes, but the tool is the Channel's, and its TeamLeader copy has
+  no team field at all rather than a derived one.
 - [Scoped Team dissolve and durable worktree cleanup](proposals/team-mcp-teamleader-dissolve.md)
-  — active design for exposing descriptor-bound `dissolve` to TeamLeaders,
-  persisting one shared Team close lifecycle, and retrying eligible managed
-  worktree deletion across bounded MCP responses and server restarts.
+  — design for exposing descriptor-bound `dissolve` to TeamLeaders. The scoped
+  tool landed. The durable close lifecycle it specifies did not survive: a
+  dissolve is an ordinary submission with no persisted operation, and the only
+  fact that outlives the process is a `cleanup-pending` worktree on the closed
+  record.
 - [Service large-file declaration and seam refactor](proposals/service-large-file-declaration-and-seam-refactor.md)
-  — active behavior-preserving refactor for owner-local service type contracts,
-  Dispatcher dissolve projection, and TeamLeader channel-tool lease coordination.
+  — behavior-preserving refactor for owner-local service type contracts. Its file
+  inventory is historical: the dissolve controller/lifecycle files and the
+  channel-tool coordinator it names have since been deleted rather than split.
 - [Post-#110 architecture sustainability](proposals/post-110-architecture-sustainability.md)
   — diagnostic of why agent-written code drifted from the intended architecture
   after the #110 pluginization inflection (load-bearing invariants are prose with

@@ -1,439 +1,473 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
+
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  assertNoRemovedRecordFields,
   detectLegacyDispatcherState,
   legacyDispatcherStateMessage,
+  LegacyStateError,
 } from '../src/service/legacy-state.js';
-import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
 import {
-  ChannelBindingStore,
-  detectLegacyChannelBindingStore,
-} from '../src/service/channel-binding/store.js';
-import { detectAmbiguousV2ChannelBindingRoutes } from '../src/service/channel-binding/preflight.js';
-import {
-  dispatcherAgentIdentityPath,
-  dispatcherChannelBindingsPath,
-  dispatcherCollaborationSpacesPath,
+  dispatcherDir,
   dispatcherTeamDir,
   dispatcherTeamMateDir,
   resetRuntimeConfig,
+  setRuntimeConfig,
 } from '../src/platform/paths.js';
-import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import { BUILT_IN_DEFAULTS } from '../src/config/config.js';
+import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
+import { CronJobStore } from '../src/service/scheduler/store.js';
 
-const DISPATCHER = 'flow';
-const silentLog: DreamuxLogger = {
-  error: () => {},
-  warn: () => {},
-  info: () => {},
-  debug: () => {},
-  trace: () => {},
-};
+const log = {
+  error: () => undefined,
+  warn: () => undefined,
+  info: () => undefined,
+  debug: () => undefined,
+} as unknown as DreamuxLogger;
 
-/** The #233 per-entity identity path for a dispatcher-owned teammate. */
-function teammateIdentityPath(name: string): string {
-  return dispatcherAgentIdentityPath({
-    dispatcherId: DISPATCHER,
-    name,
-    teamId: null,
-    role: 'teammate',
-  });
-}
-
-function writeRaw(path: string, raw: unknown): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(raw, null, 2)}\n`, { mode: 0o600 });
-}
-
-describe('issue #199 Slice 5 — pre-#199 local state fails loud', () => {
+/**
+ * Fail-loud coverage for every state shape the minimize-provider-boundaries
+ * refactor removed (issue #199 / #233 and the operator's `role`/`team_member`
+ * deletion, README.md line 436-441). Dreamux 0.x never migrates: a leftover
+ * from an older layout, or a persisted field/value/action this version no
+ * longer accepts, must throw a NAMED incompatible-state error (LegacyStateError
+ * or a doctor-formatted message the operator can act on) rather than being
+ * silently skipped, coerced, migrated, or dual-written. The corresponding
+ * ABSENCE checks (no importer/backfill/dual-write for the old shape) live in
+ * the "no migration path" describe block below, as source-shape guards — the
+ * one place absence-as-contract belongs per this node's TEST STYLE.
+ */
+describe('legacy dispatcher-root state detection (fail-loud, never migrated)', () => {
   let root: string;
-  let previousHome: string | undefined;
 
-  beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'dreamux-legacy-'));
-    previousHome = process.env['HOME'];
-    process.env['HOME'] = join(root, 'home');
-    process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
-    resetRuntimeConfig();
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'dreamux-legacy-state-'));
+    process.env['DREAMUX_ROOT'] = root;
+    setRuntimeConfig(BUILT_IN_DEFAULTS);
   });
 
-  afterEach(() => {
-    if (previousHome === undefined) delete process.env['HOME'];
-    else process.env['HOME'] = previousHome;
+  afterEach(async () => {
     delete process.env['DREAMUX_ROOT'];
     resetRuntimeConfig();
-    rmSync(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   });
 
-  describe('detectLegacyDispatcherState (removed state paths)', () => {
-    it('reports nothing when only the current layout is present', async () => {
-      writeRaw(teammateIdentityPath('solo'), { version: 1 });
-      expect(await detectLegacyDispatcherState(DISPATCHER)).toEqual([]);
-    });
-
-    it.each([
-      ['teammate/identities', () => join(dispatcherTeamMateDir(DISPATCHER), 'identities', 'x.json')],
-      ['teammate/sessions.jsonl', () => join(dispatcherTeamMateDir(DISPATCHER), 'sessions.jsonl')],
-      ['teammate/history', () => join(dispatcherTeamMateDir(DISPATCHER), 'history', 'x.jsonl')],
-      ['team/ledger', () => join(dispatcherTeamDir(DISPATCHER), 'ledger', 'x.jsonl')],
-      // #233: the flat Phase-1 leaves replaced by the per-entity directory layout.
-      ['teammate/records', () => join(dispatcherTeamMateDir(DISPATCHER), 'records', 'x.json')],
-      ['teammate/turns', () => join(dispatcherTeamMateDir(DISPATCHER), 'turns', 'x.jsonl')],
-      ['team/records', () => join(dispatcherTeamDir(DISPATCHER), 'records', 'x.json')],
-      ['team/channel-bindings.json', () => join(dispatcherTeamDir(DISPATCHER), 'channel-bindings.json')],
-    ])('detects the removed %s path', async (_label, makePath) => {
-      writeRaw(makePath(), { stale: true });
-      const findings = await detectLegacyDispatcherState(DISPATCHER);
-      expect(findings).toHaveLength(1);
-      // Message names the path and tells the operator to delete it (0.x rebuild).
-      const message = legacyDispatcherStateMessage(DISPATCHER, findings);
-      expect(message).toContain(findings[0]!.path);
-      expect(message).toMatch(/does not migrate old state/);
-      expect(message).toMatch(/Delete/);
-    });
-
-    it('aggregates multiple removed paths', async () => {
-      writeRaw(join(dispatcherTeamMateDir(DISPATCHER), 'sessions.jsonl'), {});
-      writeRaw(join(dispatcherTeamDir(DISPATCHER), 'ledger', 'team.jsonl'), {});
-      expect(await detectLegacyDispatcherState(DISPATCHER)).toHaveLength(2);
-    });
+  it('reports no findings for a fresh dispatcher directory', async () => {
+    await mkdir(dispatcherDir('flow'), { recursive: true });
+    expect(await detectLegacyDispatcherState('flow')).toEqual([]);
   });
 
-  describe('teammate record reader rejects pre-#199 fields', () => {
-    const base = {
-      version: 1,
-      dispatcher_id: DISPATCHER,
-      name: 'alice',
-      agent_runtime: 'codex',
-      cwd: '/tmp/work',
-    };
+  it('detects the removed Core channel-binding store at the dispatcher root', async () => {
+    await mkdir(dispatcherDir('flow'), { recursive: true });
+    await writeFile(join(dispatcherDir('flow'), 'channel-bindings.json'), '{}');
+    const findings = await detectLegacyDispatcherState('flow');
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.what).toMatch(/Core channel-binding store/);
+    const message = legacyDispatcherStateMessage('flow', findings);
+    expect(message).toMatch(/does not migrate old state/);
+    expect(message).toMatch(/channel-bindings\.json/);
+  });
 
-    it.each(['checkpoint', 'checkpoint_kind', 'session_ref', 'display_name', 'close_status'])(
-      'fails loud on the removed %s field',
-      async (field) => {
-        writeRaw(teammateIdentityPath('alice'), {
-          ...base,
-          [field]: 'legacy',
-        });
-        const store = new AgentIdentityStore(silentLog);
-        await expect(store.get(DISPATCHER, 'alice')).rejects.toThrow(
-          new RegExp(`removed in issue #199 \\(${field}\\)`),
-        );
-      },
+  it('detects the removed Core Collaboration Space state file', async () => {
+    await mkdir(dispatcherDir('flow'), { recursive: true });
+    await writeFile(
+      join(dispatcherDir('flow'), 'collaboration-spaces.json'),
+      '{}',
     );
-
-    it('reads a clean record without complaint', async () => {
-      writeRaw(teammateIdentityPath('alice'), base);
-      const store = new AgentIdentityStore(silentLog);
-      const identity = await store.get(DISPATCHER, 'alice');
-      expect(identity?.name).toBe('alice');
-      expect(identity?.skill_sources).toEqual([]);
-    });
-
-    it('fails loud (does NOT skip) on the list() path for a removed-field record', async () => {
-      // A clean record + a stale one: list() must not silently drop the stale
-      // record (which would hide it from teammate.list / teammate.history); it
-      // re-throws the legacy-state error.
-      writeRaw(teammateIdentityPath('alice'), base);
-      writeRaw(teammateIdentityPath('stale'), {
-        ...base,
-        name: 'stale',
-        checkpoint: null,
-      });
-      const store = new AgentIdentityStore(silentLog);
-      await expect(store.list(DISPATCHER)).rejects.toThrow(/removed in issue #199/);
-    });
-
-    it('still tolerates a genuinely unreadable (non-legacy) record in list()', async () => {
-      // Resilience is preserved for corrupt JSON: it warns + skips, only the
-      // good record is returned. Old-state detection must not over-reach into
-      // every read failure.
-      writeRaw(teammateIdentityPath('alice'), base);
-      const brokenPath = teammateIdentityPath('broken');
-      mkdirSync(dirname(brokenPath), { recursive: true });
-      writeFileSync(brokenPath, '{ not json', { mode: 0o600 });
-      const store = new AgentIdentityStore(silentLog);
-      const names = (await store.list(DISPATCHER)).map((identity) => identity.name);
-      expect(names).toEqual(['alice']);
-    });
+    const findings = await detectLegacyDispatcherState('flow');
+    expect(findings.map((f) => f.what)).toEqual([
+      expect.stringMatching(/Core Collaboration Space state, removed/),
+    ]);
   });
 
-  describe('channel-binding reader reuses compatible v2 stores (#209 binding store v3)', () => {
-    it('fails loud on a version 1 store without routing-key columns', async () => {
-      // The old store was version 1, keyed by (provider, chat_id) with no
-      // channel_id / target_key. 0.x does not migrate it.
-      writeRaw(dispatcherChannelBindingsPath(DISPATCHER), {
-        version: 1,
-        bindings: [
-          {
-            provider: 'builtin:feishu',
-            chat_id: 'chat-x',
-            chat_type: 'group',
-            team_name: 'gamma',
-            leader_name: 'lead-1',
-            active: true,
-            created_at: 1,
-            updated_at: 1,
-            deactivated_at: null,
-          },
-        ],
-      });
-      const store = new ChannelBindingStore();
-      await expect(store.list(DISPATCHER)).rejects.toThrow(
-        /not a compatible version .*delete .*channel-bindings\.json/s,
-      );
-    });
+  it('detects every pre-#233 flat TeamMate/Team leaf, leaving teammate/ and team/ themselves valid', async () => {
+    const teammate = dispatcherTeamMateDir('flow');
+    const team = dispatcherTeamDir('flow');
+    await mkdir(join(teammate, 'records'), { recursive: true });
+    await mkdir(join(teammate, 'turns'), { recursive: true });
+    await mkdir(join(teammate, 'history'), { recursive: true });
+    await mkdir(join(teammate, 'identities'), { recursive: true });
+    await writeFile(join(teammate, 'sessions.jsonl'), '');
+    await mkdir(join(team, 'records'), { recursive: true });
+    await mkdir(join(team, 'ledger'), { recursive: true });
+    await writeFile(join(team, 'channel-bindings.json'), '{}');
+    // A real, current-shape entity dir sits beside the legacy leaves. Its
+    // presence must not itself be flagged: only the specific removed leaf
+    // names are probed, never the `teammate/`/`team/` collection roots.
+    await mkdir(join(teammate, 'reviewer-abcd'), { recursive: true });
 
-    it('reuses a compatible v2 store as explicit bindings with claim_id null', async () => {
-      writeRaw(dispatcherChannelBindingsPath(DISPATCHER), {
-        version: 2,
-        bindings: [
-          {
-            channel_id: 'primary',
-            provider: 'builtin:feishu',
-            target_type: 'group',
-            target_key: 'chat-x',
-            display: null,
-            canonical_url: null,
-            meta: { chat_id: 'chat-x', chat_type: 'group' },
-            team_name: 'gamma',
-            leader_name: 'lead-1',
-            active: true,
-            created_at: 1,
-            updated_at: 1,
-            deactivated_at: null,
-          },
-        ],
-      });
-      const store = new ChannelBindingStore();
-      const bindings = await store.list(DISPATCHER);
-      expect(bindings).toHaveLength(1);
-      expect(bindings[0]).toMatchObject({
-        channel_id: 'primary',
-        target_key: 'chat-x',
-        team_name: 'gamma',
-        claim_id: null,
-      });
-    });
-
-    it('fails loud on a v2 row without routing-key columns', async () => {
-      writeRaw(dispatcherChannelBindingsPath(DISPATCHER), {
-        version: 2,
-        bindings: [
-          {
-            provider: 'builtin:feishu',
-            chat_id: 'chat-x',
-            chat_type: 'group',
-            team_name: 'gamma',
-            leader_name: 'lead-1',
-            active: true,
-            created_at: 1,
-            updated_at: 1,
-            deactivated_at: null,
-          },
-        ],
-      });
-      const store = new ChannelBindingStore();
-      await expect(store.list(DISPATCHER)).rejects.toThrow(
-        /missing channel_id \/ target_key .*delete .*channel-bindings\.json/s,
-      );
-    });
-
-    it('fails loud on a v3 row missing claim_id route provenance', async () => {
-      writeRaw(dispatcherChannelBindingsPath(DISPATCHER), {
-        version: 3,
-        bindings: [
-          {
-            channel_id: 'primary',
-            provider: 'builtin:feishu',
-            target_type: 'group',
-            target_key: 'chat-x',
-            display: null,
-            canonical_url: null,
-            meta: { chat_id: 'chat-x', chat_type: 'group' },
-            team_name: 'gamma',
-            leader_name: 'lead-1',
-            active: true,
-            created_at: 1,
-            updated_at: 1,
-            deactivated_at: null,
-          },
-        ],
-      });
-      const store = new ChannelBindingStore();
-      await expect(store.list(DISPATCHER)).rejects.toThrow(
-        /missing claim_id route provenance/,
-      );
-    });
-
-    it('accepts a current v3 binding keyed by (channel_id, target_key)', async () => {
-      writeRaw(dispatcherChannelBindingsPath(DISPATCHER), {
-        version: 3,
-        bindings: [
-          {
-            channel_id: 'primary',
-            provider: 'builtin:feishu',
-            target_type: 'group',
-            target_key: 'chat-x',
-            display: null,
-            canonical_url: null,
-            meta: { chat_id: 'chat-x', chat_type: 'group' },
-            team_name: 'gamma',
-            leader_name: 'lead-1',
-            claim_id: null,
-            active: true,
-            created_at: 1,
-            updated_at: 1,
-            deactivated_at: null,
-          },
-        ],
-      });
-      const store = new ChannelBindingStore();
-      const bindings = await store.list(DISPATCHER);
-      expect(bindings).toHaveLength(1);
-      expect(bindings[0]!.team_name).toBe('gamma');
-      expect(bindings[0]!.target_key).toBe('chat-x');
-      expect(bindings[0]!.channel_id).toBe('primary');
-    });
+    const findings = await detectLegacyDispatcherState('flow');
+    const paths = findings.map((f) => f.path).sort();
+    expect(paths).toEqual(
+      [
+        join(teammate, 'identities'),
+        join(teammate, 'records'),
+        join(teammate, 'turns'),
+        join(teammate, 'sessions.jsonl'),
+        join(teammate, 'history'),
+        join(team, 'records'),
+        join(team, 'channel-bindings.json'),
+        join(team, 'ledger'),
+      ].sort(),
+    );
+    expect(paths).not.toContain(join(teammate, 'reviewer-abcd'));
   });
 
-  // The serve/doctor boot probes surface incompatible binding state at startup
-  // rather than lazily on first inbound. Pin both layers directly:
-  // `detectLegacyChannelBindingStore` validates row syntax, while
-  // `detectAmbiguousV2ChannelBindingRoutes` checks whether reusable v2 rows
-  // overlap open collaboration target state and are therefore provenance-ambiguous.
-  describe('channel-binding serve/doctor boot probes (#209)', () => {
-    it('returns the rebuild message for an incompatible version 1 store', async () => {
-      writeRaw(dispatcherChannelBindingsPath(DISPATCHER), {
-        version: 1,
-        bindings: [{ provider: 'builtin:feishu', chat_id: 'chat-x' }],
-      });
-      const message = await detectLegacyChannelBindingStore(DISPATCHER);
-      expect(message).toMatch(
-        /not a compatible version .*delete .*channel-bindings\.json/s,
+  it('propagates a real access error (ENOTDIR) instead of treating it as "not present"', async () => {
+    // A non-ENOENT access failure is a real operational problem the operator
+    // must see; detection must not swallow it as "no legacy state" the way
+    // `pathExists` (the best-effort probe used elsewhere) deliberately does.
+    // Forcing ENOTDIR is portable (no chmod/root needed): make the `teammate/`
+    // collection root itself a plain FILE, so probing any leaf underneath it
+    // (e.g. `teammate/records`) fails with ENOTDIR, not ENOENT.
+    await mkdir(dispatcherDir('flow'), { recursive: true });
+    const teammate = dispatcherTeamMateDir('flow');
+    await writeFile(teammate, 'not a directory');
+    await expect(detectLegacyDispatcherState('flow')).rejects.toMatchObject({
+      code: 'ENOTDIR',
+    });
+  });
+});
+
+describe('assertNoRemovedRecordFields (shared chokepoint)', () => {
+  it('passes a record that carries none of the removed fields', () => {
+    expect(() =>
+      assertNoRemovedRecordFields(
+        'agent record "x"',
+        { name: 'x', agent_runtime: 'codex' },
+        ['role', 'checkpoint'],
+        'delete and rebuild',
+      ),
+    ).not.toThrow();
+  });
+
+  it('names every present removed field in one loud LegacyStateError', () => {
+    expect(() =>
+      assertNoRemovedRecordFields(
+        'agent record "x"',
+        { name: 'x', role: 'team_member', checkpoint: { id: 'c1' } },
+        ['role', 'checkpoint', 'transcript_locator'],
+        'close and respawn this teammate, or delete its identity directory',
+      ),
+    ).toThrow(LegacyStateError);
+    try {
+      assertNoRemovedRecordFields(
+        'agent record "x"',
+        { role: 'team_member', checkpoint: {} },
+        ['role', 'checkpoint', 'transcript_locator'],
+        'rebuild-hint',
       );
-    });
+      throw new Error('unreachable');
+    } catch (err) {
+      expect(err).toBeInstanceOf(LegacyStateError);
+      const message = (err as Error).message;
+      expect(message).toContain('role');
+      expect(message).toContain('checkpoint');
+      expect(message).not.toContain('transcript_locator, ');
+      expect(message).toContain('rebuild-hint');
+    }
+  });
+});
 
-    it('returns null for a compatible v2 store', async () => {
-      writeRaw(dispatcherChannelBindingsPath(DISPATCHER), {
-        version: 2,
-        bindings: [
-          {
-            channel_id: 'primary',
-            provider: 'builtin:feishu',
-            target_type: 'group',
-            target_key: 'chat-x',
-            display: null,
-            canonical_url: null,
-            meta: { chat_id: 'chat-x', chat_type: 'group' },
-            team_name: 'gamma',
-            leader_name: 'lead-1',
-            active: true,
-            created_at: 1,
-            updated_at: 1,
-            deactivated_at: null,
-          },
-        ],
-      });
-      await expect(
-        detectLegacyChannelBindingStore(DISPATCHER),
-      ).resolves.toBeNull();
-      await expect(
-        detectAmbiguousV2ChannelBindingRoutes(DISPATCHER),
-      ).resolves.toBeNull();
-    });
+describe('AgentIdentityStore.read() rejects a persisted identity carrying a removed field', () => {
+  let dir: string;
 
-    it('fails loud when a v2 route overlaps open collaboration target state', async () => {
-      writeRaw(dispatcherChannelBindingsPath(DISPATCHER), {
-        version: 2,
-        bindings: [
-          {
-            channel_id: 'primary',
-            provider: 'builtin:feishu',
-            target_type: 'group',
-            target_key: 'chat-x',
-            display: null,
-            canonical_url: null,
-            meta: { chat_id: 'chat-x', chat_type: 'group' },
-            team_name: 'gamma',
-            leader_name: 'lead-1',
-            active: true,
-            created_at: 1,
-            updated_at: 1,
-            deactivated_at: null,
-          },
-        ],
-      });
-      writeRaw(dispatcherCollaborationSpacesPath(DISPATCHER), {
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'dreamux-identity-legacy-'));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  function store(): AgentIdentityStore {
+    return new AgentIdentityStore({
+      dir,
+      dispatcherId: 'flow',
+      expectedName: 'reviewer',
+      log,
+    });
+  }
+
+  const CURRENT_SHAPE = {
+    version: 1,
+    dispatcher_id: 'flow',
+    name: 'reviewer',
+    team_id: null,
+    agent_runtime: 'codex',
+    session: null,
+    source_cwd: '/tmp/src',
+    source_repo: null,
+    cwd: '/tmp/run',
+    runtime_cwd: '/tmp/run',
+    worktree: {
+      mode: 'reuse-cwd',
+      slug: null,
+      path: '/tmp/run',
+      branch: null,
+      base_ref: null,
+      cleanup: 'keep',
+      cleanup_state: 'not-managed',
+      cleanup_error: null,
+    },
+    intent: null,
+    identity_prompt: null,
+    skill_sources: [],
+    created_at: 1,
+    updated_at: 1,
+    status: 'running',
+    last_error: null,
+    closed_at: null,
+    close_note: null,
+  };
+
+  it('accepts the current shape as a control (proves the fixture itself is valid)', async () => {
+    await writeFile(join(dir, 'identity.json'), JSON.stringify(CURRENT_SHAPE));
+    const identity = await store().read();
+    expect(identity?.name).toBe('reviewer');
+  });
+
+  it('fails loud on a persisted `role: "team_member"` field (the retired vocabulary)', async () => {
+    await writeFile(
+      join(dir, 'identity.json'),
+      JSON.stringify({ ...CURRENT_SHAPE, role: 'team_member' }),
+    );
+    await expect(store().read()).rejects.toThrow(LegacyStateError);
+    await expect(store().read()).rejects.toThrow(/role/);
+  });
+
+  it('fails loud on a persisted `transcript_locator` field', async () => {
+    await writeFile(
+      join(dir, 'identity.json'),
+      JSON.stringify({ ...CURRENT_SHAPE, transcript_locator: '/tmp/session.jsonl' }),
+    );
+    await expect(store().read()).rejects.toThrow(LegacyStateError);
+    await expect(store().read()).rejects.toThrow(/transcript_locator/);
+  });
+
+  it('fails loud on a legacy `provider_ref` identity (pre-#148, before agent_runtime existed)', async () => {
+    await writeFile(
+      join(dir, 'identity.json'),
+      JSON.stringify({
         version: 1,
-        spaces: [],
-        targets: [
-          {
-            version: 1,
-            dispatcher_id: DISPATCHER,
-            space_name: 'space-a',
-            channel_id: 'primary',
-            provider: 'builtin:feishu',
-            container_key: 'container-a',
-            binding_generation: 1,
-            target_key: 'chat-x',
-            target_type: 'group',
-            target_display: null,
-            team_name: 'gamma',
-            leader_name: 'lead-1',
-            worktree_slug: 'space-a-chat-x',
-            lifecycle_status: 'active',
-            phase: 'bound',
-            claim_event_id: null,
-            close_event_id: null,
-            last_error: null,
-            created_at: 1,
-            updated_at: 1,
-            closed_at: null,
-            detached_at: null,
-          },
-        ],
-      });
-      await expect(
-        detectAmbiguousV2ChannelBindingRoutes(DISPATCHER),
-      ).resolves.toMatch(
-        /version 2 .*open collaboration target route.*delete .*channel-bindings\.json/s,
+        dispatcher_id: 'flow',
+        name: 'reviewer',
+        provider_ref: 'builtin:codex',
+      }),
+    );
+    await expect(store().read()).rejects.toThrow(LegacyStateError);
+    await expect(store().read()).rejects.toThrow(/legacy provider_ref format/);
+  });
+
+  it('fails loud on other removed fields: checkpoint, session_ref, display_name, close_status', async () => {
+    for (const field of [
+      'checkpoint',
+      'checkpoint_kind',
+      'session_ref',
+      'session_id',
+      'display_name',
+      'close_status',
+    ] as const) {
+      await writeFile(
+        join(dir, 'identity.json'),
+        JSON.stringify({ ...CURRENT_SHAPE, [field]: 'x' }),
       );
-    });
+      await expect(store().read(), `field ${field}`).rejects.toThrow(LegacyStateError);
+    }
+  });
+});
 
-    it('returns null when the store is absent (fresh dispatcher)', async () => {
-      await expect(
-        detectLegacyChannelBindingStore(DISPATCHER),
-      ).resolves.toBeNull();
-    });
+describe('CronJobStore rejects the removed cron deliver/spawn-teammate shapes', () => {
+  let dir: string;
+  let path: string;
 
-    it('returns null for a current v3 store', async () => {
-      writeRaw(dispatcherChannelBindingsPath(DISPATCHER), {
-        version: 3,
-        bindings: [
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'dreamux-cron-legacy-'));
+    path = join(dir, 'cron-jobs.json');
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  function store(): CronJobStore {
+    return new CronJobStore({ cronJobsPath: path, dispatcherId: 'flow' });
+  }
+
+  it('accepts a current prompt-agent job as a control', async () => {
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        jobs: [
           {
-            channel_id: 'primary',
-            provider: 'builtin:feishu',
-            target_type: 'group',
-            target_key: 'chat-x',
-            display: null,
-            canonical_url: null,
-            meta: { chat_id: 'chat-x', chat_type: 'group' },
-            team_name: 'gamma',
-            leader_name: 'lead-1',
-            claim_id: null,
-            active: true,
+            id: 'job-1',
+            dispatcher_id: 'flow',
+            cron: '0 9 * * *',
+            tz: 'UTC',
+            recurring: true,
+            action: { kind: 'prompt-agent', prompt: 'stand up' },
+            enabled: true,
             created_at: 1,
             updated_at: 1,
-            deactivated_at: null,
+            next_run_at: null,
+            last_fired_at: null,
           },
         ],
-      });
-      await expect(
-        detectLegacyChannelBindingStore(DISPATCHER),
-      ).resolves.toBeNull();
-    });
+      }),
+    );
+    const jobs = await store().list();
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]!.action).toEqual({ kind: 'prompt-agent', prompt: 'stand up' });
+  });
+
+  it('fails loud on a job carrying the removed `deliver` field', async () => {
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        jobs: [
+          {
+            id: 'job-1',
+            dispatcher_id: 'flow',
+            cron: '0 9 * * *',
+            tz: 'UTC',
+            recurring: true,
+            action: { kind: 'prompt-agent', prompt: 'stand up' },
+            deliver: { channel_id: 'primary', target: 'chat-1' },
+            enabled: true,
+            created_at: 1,
+            updated_at: 1,
+            next_run_at: null,
+            last_fired_at: null,
+          },
+        ],
+      }),
+    );
+    await expect(store().list()).rejects.toThrow(/removed deliver field/);
+  });
+
+  it('fails loud on the removed `spawn-teammate` action kind', async () => {
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        jobs: [
+          {
+            id: 'job-1',
+            dispatcher_id: 'flow',
+            cron: '0 9 * * *',
+            tz: 'UTC',
+            recurring: true,
+            action: { kind: 'spawn-teammate', name: 'reviewer' },
+            enabled: true,
+            created_at: 1,
+            updated_at: 1,
+            next_run_at: null,
+            last_fired_at: null,
+          },
+        ],
+      }),
+    );
+    await expect(store().list()).rejects.toThrow(/removed spawn-teammate action/);
+  });
+
+  it('assertCurrent() surfaces the same fail-loud verdict used by the startup doctor path', async () => {
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        jobs: [
+          {
+            id: 'job-1',
+            dispatcher_id: 'flow',
+            cron: '0 9 * * *',
+            tz: 'UTC',
+            recurring: true,
+            action: { kind: 'spawn-teammate', name: 'reviewer' },
+            enabled: true,
+            created_at: 1,
+            updated_at: 1,
+            next_run_at: null,
+            last_fired_at: null,
+          },
+        ],
+      }),
+    );
+    await expect(store().assertCurrent()).rejects.toThrow(LegacyStateError);
+  });
+});
+
+/**
+ * ABSENCE-as-contract: prove there is no reader anywhere in `src/` that still
+ * knows how to interpret the removed shapes (no migration, no lazy backfill,
+ * no dual-write, no compatibility alias). This is a source-shape guard,
+ * appropriate per this node's brief only because the fact being asserted IS an
+ * absence — a behavioral test cannot observe "no code path exists".
+ */
+describe('no migration path exists for any removed state shape (source-shape guard)', () => {
+  it('no src file reads channel-bindings.json or collaboration-spaces.json for anything but fail-loud detection', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const packageRoot = new URL('..', import.meta.url).pathname;
+    const out = execFileSync(
+      'grep',
+      [
+        '-rl',
+        '--include=*.ts',
+        '-e',
+        'channel-bindings.json',
+        '-e',
+        'collaboration-spaces.json',
+        join(packageRoot, 'src'),
+      ],
+      { encoding: 'utf8' },
+    ).trim();
+    const hits = out === '' ? [] : out.split('\n').map((p) => p.trim());
+    // Only the fail-loud detector itself is allowed to name these leaf files.
+    expect(hits.every((p) => p.endsWith('src/service/legacy-state.ts'))).toBe(true);
+    expect(hits.length).toBeGreaterThan(0);
+  });
+
+  it('no src file spells the retired `team_member` role vocabulary', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const packageRoot = new URL('..', import.meta.url).pathname;
+    let out = '';
+    try {
+      out = execFileSync(
+        'grep',
+        ['-rl', '--include=*.ts', 'team_member', join(packageRoot, 'src')],
+        { encoding: 'utf8' },
+      ).trim();
+    } catch (err) {
+      // grep exits 1 with no output when there are zero matches — that is the
+      // success case this test wants, not a real command failure.
+      if ((err as { status?: number }).status !== 1) throw err;
+    }
+    expect(out).toBe('');
+  });
+
+  it('no src file re-derives Core binding/target_key/binding_fallbacks state', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const packageRoot = new URL('..', import.meta.url).pathname;
+    let out = '';
+    try {
+      out = execFileSync(
+        'grep',
+        [
+          '-rlE',
+          '--include=*.ts',
+          'binding_fallbacks|target_key|resolveInboundBinding',
+          join(packageRoot, 'src'),
+        ],
+        { encoding: 'utf8' },
+      ).trim();
+    } catch (err) {
+      if ((err as { status?: number }).status !== 1) throw err;
+    }
+    expect(out).toBe('');
   });
 });

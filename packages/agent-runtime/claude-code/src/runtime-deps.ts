@@ -1,10 +1,11 @@
 import type {
+  AgentRuntimeActivitySink,
   AgentRuntimeMcpServer,
   AgentRuntimePathContext,
+  AgentRuntimeSessionRef,
   AgentRuntimeSkillSource,
-  AgentRuntimeStateCallbacks,
+  AgentRuntimeStateSink,
   DreamuxLogger,
-  RuntimeActivitySink,
 } from '@excitedjs/dreamux-types';
 
 import type { DispatcherClaudeCodeConfig } from './config.js';
@@ -14,7 +15,7 @@ import type { ClaudeCodeSessionFactory } from './supervisor.js';
 export interface ClaudeCodeRuntimeDeps {
   config: DispatcherClaudeCodeConfig;
   cwd: string;
-  state: AgentRuntimeStateCallbacks;
+  state: AgentRuntimeStateSink<AgentRuntimeSessionRef>;
   paths: AgentRuntimePathContext;
   mcpServers: readonly AgentRuntimeMcpServer[];
   sessionFactory: ClaudeCodeSessionFactory;
@@ -23,16 +24,12 @@ export interface ClaudeCodeRuntimeDeps {
   systemPromptAppend?: readonly string[];
   skillSources?: readonly AgentRuntimeSkillSource[];
   disableFeatures?: readonly string[];
+  /**
+   * The session-bound output schema, applied at spawn via `--json-schema`. It is
+   * fixed for the life of this runtime; no submission can change it.
+   */
   outputSchema?: Record<string, unknown>;
   generateSessionId?: () => string;
-  resolveTranscriptPath?: (input: {
-    sessionId: string;
-    cwd: string;
-    locator: string | null;
-    env: NodeJS.ProcessEnv;
-    resume: boolean;
-  }) => Promise<string>;
-  sourceIdDedupeWindow?: number;
   logger?: DreamuxLogger;
-  activitySink: RuntimeActivitySink;
+  activitySink: AgentRuntimeActivitySink;
 }

@@ -1,10 +1,10 @@
 import { resultTextFromTurnOutcome } from './runtime-session.js';
 import type { ClaudeCodeSession } from './supervisor.js';
-import type { ClaudeProtocolEvent, TurnOutcome, TurnSubmitOptions } from './types.js';
+import type { ClaudeProtocolEvent, TurnOutcome } from './types.js';
 import type {
   JsonValue,
   RuntimeActivity,
-  RuntimeActivitySink,
+  AgentRuntimeActivitySink,
   RuntimeCompletion,
   RuntimeSubmission,
   RuntimeSubmissionSettlement,
@@ -29,13 +29,12 @@ export interface ActiveTurn {
   rejectSession: (error: Error) => void;
   steerQueue: Promise<void>;
   generation: number;
-  submitOptions?: TurnSubmitOptions;
 }
 
 export interface ProtocolEventContext {
   threadId: string | null;
   outputSchemaEnabled: boolean;
-  activitySink: RuntimeActivitySink;
+  activitySink: AgentRuntimeActivitySink;
   log: (level: 'info' | 'warn' | 'error', message: string, error?: unknown) => void;
 }
 
@@ -117,15 +116,13 @@ function completeStartedGroup(
   if (outcome.isError) {
     completion = Object.freeze({
       status: 'failed',
-      displaySubmission: representative.submission,
       error: new Error(outcome.errors.join('; ') || outcome.subtype || 'claude turn failed'),
     });
   } else {
     try {
       completion = Object.freeze({
         status: 'completed',
-        displaySubmission: representative.submission,
-        resultText: resultTextFromTurnOutcome(
+          resultText: resultTextFromTurnOutcome(
           outcome,
           context.threadId,
           context.outputSchemaEnabled,
@@ -135,8 +132,7 @@ function completeStartedGroup(
     } catch (error) {
       completion = Object.freeze({
         status: 'failed',
-        displaySubmission: representative.submission,
-        error: asError(error),
+          error: asError(error),
       });
     }
   }

@@ -47,11 +47,15 @@ helpers, provider loaders, or runtime implementations.
 
 Agent Runtime providers implement `AgentRuntimeProvider` and return one
 `AgentRuntime` instance per launched agent. The runtime interface is
-single-instance: start, resume, stop, channel/plain-text input, status,
-checkpoint, last/context reads, capabilities, and optional `waitIdle()`.
-Dispatcher orchestration verbs such as `spawn`, `send`, `close`, `list`, and
-Team operations belong to Dreamux core services and MCP surfaces, never to the
-runtime instance.
+single-instance and has exactly three methods: `start`, `submit`, and `stop`.
+Nothing is pulled from the handle — every runtime fact flows out through the
+leased state and activity sinks Core supplied when it created the instance — so
+there is no status, checkpoint, capability, or liveness method to call on it and
+no idle question to ask it. Everything that is a read rather than a live handle
+hangs off the provider instead: config reading, onboarding, bin checks,
+diagnostics, and the bounded `readRecentActivity` tail. Dispatcher orchestration
+verbs such as `spawn`, `send`, `close`, `list`, and Team operations belong to
+Dreamux core services and MCP surfaces, never to the runtime instance.
 
 An accepted input returns one `RuntimeSubmission` handle whose settlement
 resolves to a provider-owned immutable `RuntimeCompletion` created at the real
@@ -70,7 +74,6 @@ Source:
 
 - `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/dreamux-types/src/channel.ts`
-- `/packages/dreamux-types/tests/root-exports.test.ts`
 - `/packages/dreamux-types/tests/no-host-types.test.ts`
 
 ## Config Contract
@@ -112,7 +115,8 @@ Source:
 Core launches every agent through `AgentRuntimeProvider.createRuntime(context)`.
 The context is neutral:
 
-- `identity.runtime_id` and optional `checkpoint_id`;
+- `identity.runtimeId` plus the provider's own prior `session` object or
+  `null`, persisted verbatim by Core, which reads only its `id`;
 - provider-parsed `config`;
 - launcher-supplied `cwd`;
 - `systemPrompt` with optional `replace` and `append` forms;
@@ -164,7 +168,7 @@ Source:
 - `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/agent-runtime/codex/src/turn-manager.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
-- `/packages/agent-runtime/claude-code/src/source-reservation.ts`
+- `/packages/agent-runtime/claude-code/src/runtime-submissions.ts`
 - `/packages/agent-runtime/claude-code/src/rpc.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
 
@@ -220,12 +224,15 @@ Source:
 - `/packages/agent-runtime/claude-code/src/stream.ts`
 - `/packages/agent-runtime/claude-code/tests/rpc.test.ts`
 
-Provider-native transcript formats, locator discovery, cursor envelopes, and
-typed errors stay inside each runtime package. Both built-ins reuse
-`/packages/dreamux-utils/src/transcript.ts` for provider-neutral digest checks,
-bounded scan accounting, exact positional reads, path containment, rendering,
-and output budgets; duplicating those security and determinism primitives in
-each provider is not an accepted boundary.
+Provider-native history formats, session discovery, cursor envelopes, and typed
+errors stay inside each runtime package's own `src/activity/`. Both built-ins
+reuse `/packages/dreamux-utils/src/activity-scan.ts` for provider-neutral
+digests, bounded scan accounting, exact positional reads, and path containment;
+duplicating those security and determinism primitives in each provider is not an
+accepted boundary. That module owns mechanism only and no record shape, and it
+does not bound Core's output — Core re-validates each returned page against its
+own record, cursor, and byte budgets in
+`/packages/dreamux/src/service/agent-entity/activity-reader.ts`.
 
 ## Codex Portable Output Schema
 
@@ -284,10 +291,7 @@ Source:
 - `/packages/agent-runtime/codex/src/rpc.ts`
 - `/packages/agent-runtime/codex/src/turn-manager.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
-- `/packages/agent-runtime/codex/tests/output-schema-codec.test.ts`
-- `/packages/agent-runtime/codex/tests/turn-manager.test.ts`
-- `/packages/agent-runtime/codex/tests/runtime-output-schema.test.ts`
-- `/packages/dreamux/tests/codex-live.test.ts`
+- `/packages/agent-runtime/codex/tests/codex-events.test.ts`
 
 ## Bundled Skills
 
@@ -344,27 +348,38 @@ Source:
 - `/packages/dreamux/src/service/dispatcher-service/agent.ts`
 - `/packages/agent-runtime/codex/tests/system-prompt.test.ts`
 
-## Activity And Scheduling
+## Activity Reads And Scheduling
 
-`AgentRuntime.waitIdle?()` is the optional neutral activity hook. General core
-consumers may treat an omitted hook as already idle. Durable Team dissolve is
-the strict exception: every process-live TeamLeader or member writer must expose
-`waitIdle()` before acceptance, because its shared worktree cannot otherwise be
-proven quiescent. It is not a lifecycle status or a capability flag.
+There is no neutral idle capability, and nothing in core asks a runtime whether
+it is busy. Activity crosses the seam in two forms only, and neither is a
+liveness signal: the provider pushes `RuntimeActivity` events into the activity
+sink Core leased it, and `readRecentActivity` answers a bounded cold read of a
+session's recent tail. The cold read never materializes an entity or starts a
+runtime, so a closed teammate stays readable, and it is required to produce
+records for a turn that is still in progress.
 
-The scheduler races `waitIdle()` against its own maximum defer window before
-injecting scheduled prompt input. Team dissolve waits for every captured live
-writer without a normal-operation timeout and races that wait only against its
-typed shutdown interruption. Restart notices do not use `waitIdle`; their
-startup skip latch is about real inbound that raced during startup, not turn
-activity.
+Scheduling asks no question either. A due cron fire is submitted immediately
+through its owner's ordinary admission gate; whether the runtime folds that
+input into a turn already running or starts a new one is the runtime's own
+decision, made where it is already made. There is no defer window and no
+scheduler-owned race.
+
+Stopping is a fence plus a convergence, not a wait for quiet. `AgentRuntime.stop()`
+fences new input synchronously, terminates the owned runtime, and does not
+resolve while an already-started `submit` could still return a newly accepted
+submission. Core's own stop paths then converge what was already admitted —
+drain admissions, wait out ordinary mutations, and settle and deliver retained
+turns — so an accepted turn states its facts while the subscriptions carrying
+them are still attached. Team dissolve is a stop-and-reclaim built on exactly
+that, never a drain: it refuses new work rather than queueing it.
 
 Source:
 
 - `/packages/dreamux-types/src/agent-runtime.ts`
+- `/packages/dreamux/src/service/agent-entity/activity-reader.ts`
 - `/packages/dreamux/src/service/scheduler/service.ts`
-- `/packages/dreamux/src/service/team-collection/dissolve-runner.ts`
-- `/packages/dreamux/src/service/team-service/index.ts`
+- `/packages/dreamux/src/service/teammate-service/index.ts`
+- `/packages/dreamux/src/service/team-service/closing.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
 

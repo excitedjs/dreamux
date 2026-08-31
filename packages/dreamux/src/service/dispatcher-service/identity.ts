@@ -15,6 +15,7 @@ export interface DispatcherIdentityEnsureInput {
 }
 
 export interface DispatcherRootIdentityInput {
+  /** The dispatcher root Agent's own bound identity store. */
   identities: AgentIdentityStore;
   dispatcherId: string;
   agentRuntime: string;
@@ -58,18 +59,16 @@ export async function ensureDispatcherIdentity(
   identities: AgentIdentityStore,
   input: DispatcherIdentityEnsureInput,
 ): Promise<AgentEntityIdentity> {
-  const existing = await identities.dispatcherIdentity(input.dispatcherId);
+  const existing = await identities.read();
   const now = Date.now();
   if (existing === null) {
     const identity: AgentEntityIdentity = {
       version: 1,
       dispatcher_id: input.dispatcherId,
       name: DISPATCHER_AGENT_NAME,
-      role: 'dispatcher',
       team_id: null,
       agent_runtime: input.agentRuntime,
-      session_id: null,
-      transcript_locator: null,
+      session: null,
       source_cwd: input.sourceCwd,
       source_repo: null,
       cwd: input.cwd,
@@ -96,7 +95,6 @@ export async function ensureDispatcherIdentity(
   const updated: AgentEntityIdentity = {
     ...existing,
     name: DISPATCHER_AGENT_NAME,
-    role: 'dispatcher',
     team_id: null,
     agent_runtime: input.agentRuntime,
     source_cwd: input.sourceCwd,
@@ -110,8 +108,7 @@ export async function ensureDispatcherIdentity(
     ...(compatible
       ? {}
       : {
-          session_id: null,
-          transcript_locator: null,
+          session: null,
           status: 'stopped' as const,
           last_error: null,
           closed_at: null,

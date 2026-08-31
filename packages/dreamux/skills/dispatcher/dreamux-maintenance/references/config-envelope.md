@@ -27,15 +27,11 @@ The complete current host envelope has independently optional `agents` and
 - required non-empty `agentRuntime` matching an `agents[].id`.
 
 Each `channels[]` entry contains a unique-per-Dispatcher non-empty `id`, a
-non-empty Channel provider ref, optional provider-owned `config`, and optional
-`collaborationSpace.defaultBinding`. One provider ref may appear only once in
-one Dispatcher. `defaultBinding` accepts:
-
-- optional boolean `enabled`, default `false`;
-- optional or null `repo`; when present, `repo.cwd` is required and non-empty,
-  while `repo.baseRef` may be omitted, null, or any string, including empty or
-  whitespace;
-- optional or null `identity`; a string value must be non-empty.
+non-empty Channel provider ref, and optional provider-owned `config`, and
+nothing else. One provider ref may appear only once in one Dispatcher.
+Automatic collaboration-space provisioning is Channel-owned policy, not host
+config: the Channel that offers the flow owns it, so it is set through that
+Channel's own surface rather than in this envelope.
 
 External `npm:` provider configs are opaque. Use the provider's schema as the
 authority; do not infer fields from a built-in provider.

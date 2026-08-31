@@ -10,7 +10,7 @@
  */
 import type {
   AgentRuntimeBinCheck,
-  AgentRuntimeDiagnostic,
+  AgentRuntimeDiagnosticCapability,
   AgentRuntimeDiagnosticContext,
   AgentRuntimeDiagnosticRunner,
   AgentRuntimeDiagnosticResult,
@@ -51,7 +51,7 @@ async function checkCodexVersion(
   );
 }
 
-export const codexAgentRuntimeDiagnostic: AgentRuntimeDiagnostic<DispatcherCodexConfig> =
+export const codexAgentRuntimeDiagnostic: AgentRuntimeDiagnosticCapability<DispatcherCodexConfig> =
   {
     binChecks(context): AgentRuntimeBinCheck[] {
       return [

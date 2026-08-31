@@ -5,10 +5,14 @@ import type { TransportDiagnostics } from './diagnostics.js'
 /**
  * Who this app is, as Feishu reports it.
  *
- * Both lookups are startup-time identity resolution with the same bounded
- * retry, and both degrade to a diagnostic rather than failing the transport:
- * without the bot open_id, mention-gated groups drop every message, and without
- * the app owner the channel simply cannot run owner-only flows.
+ * Both lookups run at startup with the same bounded retry, and both degrade to
+ * a diagnostic rather than failing the transport: without the bot open_id,
+ * mention-gated groups drop every message, and without the app owner the
+ * channel simply cannot run owner-only flows.
+ *
+ * Bot identity additionally stays recoverable after a failed startup: only a
+ * non-empty `open_id` is cached, so `createSelfIdentityCache` can retry ahead
+ * of the next inbound chat message.
  */
 
 // application/v6 owner.type: enterprise-member owner for a custom app.
@@ -51,8 +55,9 @@ export async function resolveBotInfo(
         }
       }
       diag.diagnostic(
-        'bot info response carried no open_id — groups that ' +
-          'require an @-mention will drop every message until the channel restarts',
+        'bot info response carried no open_id — the next inbound chat message ' +
+          'retries the lookup; until one succeeds, groups that require an ' +
+          '@-mention drop every message',
       )
       return undefined
     } catch (err) {
@@ -62,14 +67,71 @@ export async function resolveBotInfo(
       }
       diag.diagnostic(
         `could not resolve the bot open_id after ${BOT_INFO_ATTEMPTS} ` +
-          'attempts — groups that require an @-mention will drop every message ' +
-          'until the channel restarts:',
+          'attempts — the next inbound chat message retries the lookup; until ' +
+          'one succeeds, groups that require an @-mention drop every message:',
         err,
       )
       return undefined
     }
   }
   return undefined
+}
+
+/**
+ * Process-local self identity for the running app.
+ *
+ * Only a lookup that returned a non-empty `open_id` is cached; a failed or
+ * empty lookup is not an answer, so identity stays unresolved and the next
+ * inbound chat message retries it. Concurrent messages share the one in-flight
+ * lookup. There is no negative cache, timer, background loop, or persisted
+ * state — the cache holds a success or nothing.
+ */
+export interface FeishuSelfIdentityCache {
+  /** The cached identity, or `undefined` while it is still unresolved. */
+  readonly resolved: FeishuBotInfo | undefined
+  /** Take an identity supplied by an embedding WebSocket registration. */
+  accept(info: { openId?: string; appName?: string } | undefined): void
+  /** Resolve while unresolved, sharing one in-flight bot-info lookup. */
+  ensureResolved(): Promise<void>
+}
+
+export function createSelfIdentityCache(
+  client: lark.Client,
+  diag: TransportDiagnostics,
+): FeishuSelfIdentityCache {
+  let resolved: FeishuBotInfo | undefined
+  let inFlight: Promise<void> | undefined
+
+  return {
+    get resolved(): FeishuBotInfo | undefined {
+      return resolved
+    },
+
+    accept(info: { openId?: string; appName?: string } | undefined): void {
+      if (info?.openId === undefined || info.openId === '') return
+      resolved = {
+        openId: info.openId,
+        ...(info.appName !== undefined && info.appName !== ''
+          ? { appName: info.appName }
+          : {}),
+      }
+    },
+
+    ensureResolved(): Promise<void> {
+      if (resolved !== undefined) return Promise.resolve()
+      inFlight ??= resolveBotInfo(client, diag)
+        .then((info) => {
+          if (info?.openId !== undefined && info.openId !== '') resolved = info
+        })
+        // `resolveBotInfo` already reports its own failures; a lookup must
+        // never turn into a rejected inbound dispatch.
+        .catch(() => undefined)
+        .finally(() => {
+          inFlight = undefined
+        })
+      return inFlight
+    },
+  }
 }
 
 export async function resolveAppOwner(

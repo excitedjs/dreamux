@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux-utils",
+      "comment": "BREAKING: Review: confirm no caller still reads a provider transcript or renders a turn through this package. No rebuild is needed. The `transcript` and `turn-render` modules are removed with their exports; such a caller must use the provider's own Activity Records instead. New shared helpers are exported for bounded activity scanning, the runtime state lease fence, and JSON invocation (`PublicInvokeFailure`, `settleJsonInvoke`).",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-utils",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

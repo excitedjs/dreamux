@@ -31,6 +31,18 @@ describe('parseProviderRef — builtin', () => {
     expect(() => parseProviderRef('builtin:Feishu')).toThrow(InvalidProviderRefError);
     expect(() => parseProviderRef('builtin:-bad')).toThrow(InvalidProviderRefError);
   });
+
+  it('rejects a builtin id starting with a digit (must start with a letter)', () => {
+    expect(() => parseProviderRef('builtin:1feishu')).toThrow(InvalidProviderRefError);
+  });
+
+  it('accepts a builtin id with internal digits and dashes', () => {
+    expect(parseProviderRef('builtin:a1-b2')).toEqual({
+      source: 'builtin',
+      id: 'a1-b2',
+      raw: 'builtin:a1-b2',
+    });
+  });
 });
 
 describe('parseProviderRef — npm (reserved syntax)', () => {
@@ -76,6 +88,14 @@ describe('parseProviderRef — npm (reserved syntax)', () => {
     expect(() => parseProviderRef('npm:pkg#not-an-identifier')).toThrow(
       InvalidProviderRefError,
     );
+  });
+
+  it('rejects an uppercase package name (npm packages are lowercase)', () => {
+    expect(() => parseProviderRef('npm:UpperCase')).toThrow(InvalidProviderRefError);
+  });
+
+  it('rejects a scope with no package name segment', () => {
+    expect(() => parseProviderRef('npm:@scope/')).toThrow(InvalidProviderRefError);
   });
 });
 

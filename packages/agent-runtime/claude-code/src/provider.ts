@@ -10,18 +10,15 @@ import {
   createDefaultClaudeCodeSession,
   type ClaudeCodeSessionFactory,
 } from './supervisor.js';
-import { BUILTIN_CLAUDE_CODE_PROVIDER_REF } from './provider-ref.js';
 import { claudeCodeAgentRuntimeDiagnostic } from './diagnostic.js';
-import { readClaudeTranscript } from './transcript/reader.js';
+import { readClaudeRecentActivity } from './activity/reader.js';
 import type {
-  AgentRuntimeCapabilities,
   AgentRuntime,
   AgentRuntimeCreateContext,
   AgentRuntimeProvider,
-  AgentRuntimeProviderDescriptor,
+  AgentRuntimeProviderCapabilities,
   AgentRuntimeProviderFactory,
-  ProviderDescriptor,
-  ProviderFactoryContext,
+  AgentRuntimeSessionRef,
 } from '@excitedjs/dreamux-types';
 
 function normalizedSystemPromptAppend(
@@ -32,77 +29,47 @@ function normalizedSystemPromptAppend(
 }
 
 /**
- * Construction options for the built-in Claude Code provider. Env injection now
+ * Construction options for the built-in Claude Code provider. Env injection
  * arrives on the NEUTRAL create context (`context.injectEnv`), not as a factory
- * hook. What remains here is the `descriptor` and the test/host seams (the
- * resident-session factory, an optional host bin resolver) that let core and
- * tests wire behavior without changing the provider.
+ * hook, and registration identity is Core's: the provider carries no
+ * descriptor. What remains here are the test/host seams (the resident-session
+ * factory, an optional host bin resolver) that let core and tests wire behavior
+ * without changing the provider.
  */
 export interface ClaudeCodeAgentRuntimeProviderOptions {
-  /**
-   * The registry descriptor for `builtin:claude-code`. Defaults to a minimal
-   * one. Accepted wide (`ProviderDescriptor`) so a host that resolved it from
-   * its registry need not pre-narrow the kind; the factory validates it is an
-   * `agentRuntime` descriptor.
-   */
-  descriptor?: ProviderDescriptor;
   /** Optional host-level bin resolver (default: identity on the config bin). */
   resolveBinPath?: (bin: string) => string;
   /** Override the resident-session factory (tests inject a fake). */
   sessionFactory?: ClaudeCodeSessionFactory;
   /** Override native session UUID generation for deterministic tests. */
   generateSessionId?: ClaudeCodeRuntimeDeps['generateSessionId'];
-  /** Override native transcript path resolution for deterministic tests. */
-  resolveTranscriptPath?: ClaudeCodeRuntimeDeps['resolveTranscriptPath'];
-}
-
-export const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeCapabilities = {
-  resume: { supported: true },
-  structuredOutput: { supported: true, scope: 'create-context' },
-};
-
-const DEFAULT_CLAUDE_CODE_DESCRIPTOR: AgentRuntimeProviderDescriptor = {
-  id: 'claude-code',
-  kind: 'agentRuntime',
-  ref: {
-    source: 'builtin',
-    id: 'claude-code',
-    raw: BUILTIN_CLAUDE_CODE_PROVIDER_REF,
-  },
-};
-
-/** Validate + narrow a seed descriptor to the Agent Runtime kind. */
-function asAgentRuntimeDescriptor(
-  descriptor: ProviderDescriptor,
-): AgentRuntimeProviderDescriptor {
-  if (descriptor.kind !== 'agentRuntime') {
-    throw new Error(
-      `@excitedjs/agent-runtime-claude-code: descriptor.kind must be ` +
-        `'agentRuntime' (got ${JSON.stringify(descriptor.kind)})`,
-    );
-  }
-  return { ...descriptor, kind: descriptor.kind };
 }
 
 /**
+ * Provider-static selection metadata. Recovery, session-bound structured
+ * output, and recent Activity reads are mandatory provider behavior, so none of
+ * them is advertised here.
+ */
+export const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeProviderCapabilities =
+  { tags: [] };
+
+/**
  * Create the built-in Claude Code `AgentRuntimeProvider`. It implements the
- * neutral `@excitedjs/dreamux-types` contract: `readConfig` parses Claude Code
- * runtime config, `getCapabilities` reports resume support, and `createRuntime`
- * builds a {@link ClaudeCodeRuntime} from the neutral create context plus the
- * host-supplied options.
+ * neutral `@excitedjs/dreamux-types` contract: `config.read` parses Claude Code
+ * runtime config, `readRecentActivity` serves neutral Activity Records for any
+ * session, and `createRuntime` builds a {@link ClaudeCodeRuntime} from the
+ * neutral create context plus the host-supplied options.
+ *
+ * Claude Code resumes from its native session id alone, so its session identity
+ * is the base {@link AgentRuntimeSessionRef}.
  */
 export function createClaudeCodeAgentRuntimeProvider(
   options: ClaudeCodeAgentRuntimeProviderOptions = {},
-): AgentRuntimeProvider<DispatcherClaudeCodeConfig> {
+): AgentRuntimeProvider<DispatcherClaudeCodeConfig, AgentRuntimeSessionRef> {
   const sessionFactory =
     options.sessionFactory ?? createDefaultClaudeCodeSession;
   const resolveBinPath = options.resolveBinPath ?? ((bin: string) => bin);
   return {
-    ref: BUILTIN_CLAUDE_CODE_PROVIDER_REF,
-    descriptor:
-      options.descriptor === undefined
-        ? DEFAULT_CLAUDE_CODE_DESCRIPTOR
-        : asAgentRuntimeDescriptor(options.descriptor),
     getCapabilities: () => CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES,
     diagnostic: claudeCodeAgentRuntimeDiagnostic,
     onboard: {
@@ -115,27 +82,23 @@ export function createClaudeCodeAgentRuntimeProvider(
         return { bin };
       },
     },
-    readConfig(rawConfig, context) {
-      return readDispatcherClaudeCodeConfig(
-        rawConfig,
-        context.file,
-        context.prefix,
-      );
+    config: {
+      read(rawConfig, context) {
+        return readDispatcherClaudeCodeConfig(
+          rawConfig,
+          context.file,
+          context.prefix,
+        );
+      },
     },
-    readTranscript: readClaudeTranscript,
-    createRuntime(
-      context: AgentRuntimeCreateContext<DispatcherClaudeCodeConfig>,
-    ): AgentRuntime {
-      if (context.state === undefined) {
-        throw new Error(
-          'claude-code runtime requires a state sink in the create context',
-        );
-      }
-      if (context.paths === undefined) {
-        throw new Error(
-          'claude-code runtime requires a path context in the create context',
-        );
-      }
+    readRecentActivity: (query, context) =>
+      readClaudeRecentActivity(query, context),
+    async createRuntime(
+      context: AgentRuntimeCreateContext<
+        DispatcherClaudeCodeConfig,
+        AgentRuntimeSessionRef
+      >,
+    ): Promise<AgentRuntime> {
       const systemPromptAppend = normalizedSystemPromptAppend(
         context.systemPrompt?.append,
       );
@@ -143,7 +106,7 @@ export function createClaudeCodeAgentRuntimeProvider(
         config: context.config,
         cwd: context.cwd,
         state: context.state,
-        activitySink: context.activitySink,
+        activitySink: context.activity ?? (() => undefined),
         paths: context.paths,
         mcpServers: context.mcpServers,
         sessionFactory,
@@ -154,15 +117,12 @@ export function createClaudeCodeAgentRuntimeProvider(
         ...(context.skillSources !== undefined
           ? { skillSources: context.skillSources }
           : {}),
-        ...(context.disableFeatures !== undefined
-          ? { disableFeatures: context.disableFeatures }
-          : {}),
+        // Neutral seam name in, provider-native name out: `disableFeatures` is
+        // this package's own internal wording and stops at the adapter.
+        disableFeatures: context.disabledFeatures,
         outputSchema: context.outputSchema,
         ...(options.generateSessionId !== undefined
           ? { generateSessionId: options.generateSessionId }
-          : {}),
-        ...(options.resolveTranscriptPath !== undefined
-          ? { resolveTranscriptPath: options.resolveTranscriptPath }
           : {}),
         ...(systemPromptAppend !== undefined
           ? { systemPromptAppend }
@@ -178,33 +138,20 @@ export function createClaudeCodeAgentRuntimeProvider(
 export { dispatcherClaudeCodeConfig };
 
 /**
- * The context Dreamux core's generic provider package-loader passes to this
- * package's factory export. A back-compat alias of the public
- * {@link ProviderFactoryContext}, narrowed to the Agent Runtime descriptor kind
- * so the factory assigns `descriptor` without a cast.
- */
-export type ClaudeCodeProviderFactoryContext =
-  ProviderFactoryContext<AgentRuntimeProviderDescriptor>;
-
-/**
  * Default export — the factory Dreamux core's generic provider-loader selects
  * for the `builtin:claude-code` ref (it imports this package and calls the
- * default export with `{ ref, descriptor }`). It returns a provider that runs on
- * package defaults: the real resident-session factory, an identity bin resolver,
- * and `process.env` base env.
+ * default export with `{ ref }`). It returns a provider on package defaults:
+ * the real resident-session factory and an identity bin resolver.
  *
- * The Dreamux host does NOT use this bare path in production: its launcher still
- * drives the host-shaped create context, so it constructs the provider through
- * its own core-owned adapter (`@excitedjs/dreamux`
- * `builtin/claude-code/provider.ts`) to map that context onto the neutral one
- * AND inject its host contracts (the durable state sink, the per-dispatcher
- * path context, and any role-gated skill sources; MCP shims receive an explicit
- * dreamux bin path). This default export keeps the package a
- * first-class, loadable `AgentRuntimeProvider` for the generic loader and for
- * external embedders.
+ * This is the production path. Core drives the loaded provider through the
+ * neutral facade alone — it holds no adapter for this package — and supplies
+ * every host contract (state lease, path context, skill sources, MCP servers)
+ * through the neutral create context. The options argument of
+ * {@link createClaudeCodeAgentRuntimeProvider} exists for embedders and tests.
  */
-const claudeCodeAgentRuntimeProviderFactory: AgentRuntimeProviderFactory<DispatcherClaudeCodeConfig> =
-  (context) =>
-    createClaudeCodeAgentRuntimeProvider({ descriptor: context.descriptor });
+const claudeCodeAgentRuntimeProviderFactory: AgentRuntimeProviderFactory<
+  DispatcherClaudeCodeConfig,
+  AgentRuntimeSessionRef
+> = () => createClaudeCodeAgentRuntimeProvider();
 
 export default claudeCodeAgentRuntimeProviderFactory;

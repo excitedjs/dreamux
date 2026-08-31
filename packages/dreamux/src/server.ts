@@ -22,6 +22,7 @@ import {
   adminSocketPath,
   dispatcherCronJobsPath,
   dispatcherTeamCronJobsPath,
+  dispatcherTeamDir,
   setRuntimeConfig,
 } from './platform/paths.js';
 import { createLogger } from './platform/logger.js';
@@ -32,7 +33,10 @@ import {
   createAdminSocketServer,
   type AdminSocketServer,
 } from './admin/socket.js';
-import { AdminError } from './admin/protocol.js';
+import { createCoreCommandRegistry } from './command/catalog.js';
+import type { CoreCommandHost } from './command/host.js';
+import { McpLeaseRegistry } from './service/mcp/leases.js';
+import { CoreCommandPort } from './command/port.js';
 import { RestartIntentConsumer } from './daemon/restart-intent.js';
 import {
   Dispatchers,
@@ -43,8 +47,6 @@ import {
   detectLegacyDispatcherState,
   legacyDispatcherStateMessage,
 } from './service/legacy-state.js';
-import { detectAmbiguousV2ChannelBindingRoutes } from './service/channel-binding/preflight.js';
-import { detectLegacyChannelBindingStore } from './service/channel-binding/store.js';
 import { detectLegacyCronJobStore } from './service/scheduler/store.js';
 import { TeamStore } from './service/team-collection/store.js';
 import {
@@ -120,15 +122,37 @@ export interface Repos {
 export class Server {
   readonly repos: Repos;
   readonly dispatchers: Dispatchers;
+  /**
+   * The admitted Command port every adapter resolves against. The process owns
+   * the composition; the definitions themselves are owned by their domains, and
+   * the unadmitted registry is deliberately not reachable from here.
+   */
+  readonly commands: CoreCommandPort;
   private admin: AdminSocketServer | null = null;
   private shutdownTask: Promise<void> | null = null;
-  private acceptingAdminRequests = true;
-  private readonly adminRequests = new Set<Promise<unknown>>();
   private readonly opts: ServerOptions;
   private readonly log: DreamuxLogger;
   private readonly providerRegistry: ProviderRegistry;
   private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
   private readonly channelProviders: ChannelProviderCatalog;
+  /**
+   * The one Agent-facing MCP lease registry for this process.
+   *
+   * It sits here rather than inside a dispatcher because both ends need it and
+   * they meet nowhere lower: dispatchers mint tokens when they launch runtimes,
+   * and the MCP transport Commands resolve those tokens with nothing but the
+   * token to go on.
+   */
+  private readonly mcpLeases: McpLeaseRegistry;
+
+  /**
+   * The server log, for the adapters that answer a failure they do not own. A
+   * caller reads its message; the operator needs the whole value behind it, and
+   * this is the log that whole is written to.
+   */
+  get logger(): DreamuxLogger {
+    return this.log;
+  }
 
   constructor(opts: ServerOptions = {}) {
     this.opts = opts;
@@ -144,6 +168,9 @@ export class Server {
     }
     setRuntimeConfig(config);
     this.log = opts.logger ?? createLogger({ name: 'server' });
+    // Built after the logger it records unclassified tool failures through: an
+    // Agent reads only the message, so the whole value belongs in this log.
+    this.mcpLeases = new McpLeaseRegistry(this.log);
     const channelLoggerFactory =
       opts.channelLoggerFactory ??
       ((id: string) => createLogger({ name: `channel/${id}` }));
@@ -156,11 +183,20 @@ export class Server {
     this.repos = {
       dispatchers: new DispatcherStore(config),
     };
+    // The Command port is composed before the dispatchers because they hold it:
+    // a Channel session invokes Commands through the same admitted port the
+    // admin socket does. The host below resolves its targets lazily, so the
+    // aggregate it reaches is the one this collection builds on demand.
+    this.commands = new CoreCommandPort(
+      createCoreCommandRegistry(this.commandHost()),
+    );
     this.dispatchers = new Dispatchers({
       config,
       dispatchers: this.repos.dispatchers,
       agentRuntimeProviders: this.agentRuntimeProviders,
       channelProviders: this.channelProviders,
+      mcpLeases: this.mcpLeases,
+      commands: this.commands,
       adminSocketPath: opts.adminSocketPath ?? adminSocketPath(),
       channelLoggerFactory,
       ...(opts.workflowLoggerFactory !== undefined
@@ -168,6 +204,20 @@ export class Server {
         : {}),
       log: this.log,
     });
+  }
+
+  /**
+   * The narrow process port Commands resolve their targets through. It is the
+   * only thing a domain-owned Command module sees of this class.
+   */
+  private commandHost(): CoreCommandHost {
+    return {
+      summarize: () => this.summarize(),
+      dispatcherRow: (id) => this.repos.dispatchers.get(id),
+      dispatcherRuntimeStatus: (id) => this.dispatchers.status(id),
+      dispatcher: (id) => this.getDispatcher(id),
+      mcpLeases: this.mcpLeases,
+    };
   }
 
   /** Bring up admin socket + all enabled dispatchers. */
@@ -281,17 +331,6 @@ export class Server {
       if (findings.length > 0) {
         messages.push(legacyDispatcherStateMessage(row.dispatcher_id, findings));
       }
-      // Issue #209 binding store v3: incompatible channel-binding state fails
-      // loud at boot with rebuild guidance, not lazily on first inbound.
-      const bindingLegacy = await detectLegacyChannelBindingStore(row.dispatcher_id);
-      if (bindingLegacy !== null) {
-        messages.push(bindingLegacy);
-      } else {
-        const ambiguousBinding = await detectAmbiguousV2ChannelBindingRoutes(
-          row.dispatcher_id,
-        );
-        if (ambiguousBinding !== null) messages.push(ambiguousBinding);
-      }
       messages.push(...(await detectLegacyCronStores(row.dispatcher_id)));
     }
     if (messages.length > 0) {
@@ -309,26 +348,6 @@ export class Server {
     return this.dispatchers.get(id);
   }
 
-  admitAdminRequest<T>(task: () => Promise<T> | T): Promise<T> {
-    if (!this.acceptingAdminRequests) {
-      throw new AdminError(
-        'SERVER_SHUTTING_DOWN',
-        'dreamux server is shutting down',
-      );
-    }
-    let promise: Promise<T>;
-    try {
-      promise = Promise.resolve(task());
-    } catch (error) {
-      promise = Promise.reject(error);
-    }
-    this.adminRequests.add(promise);
-    void promise.finally(() => {
-      this.adminRequests.delete(promise);
-    }).catch(() => {});
-    return promise;
-  }
-
   /** Graceful shutdown — drain dispatchers and close the admin socket. */
   async shutdown(): Promise<void> {
     if (this.shutdownTask !== null) return this.shutdownTask;
@@ -341,22 +360,16 @@ export class Server {
   private async doShutdown(): Promise<void> {
     this.log.info('shutting down');
     const failures: unknown[] = [];
-    this.acceptingAdminRequests = false;
+    this.commands.closeAdmission();
     this.dispatchers.beginShutdown();
     await collectShutdownFailure(failures, () => this.dispatchers.shutdown());
-    await collectShutdownFailure(failures, () => this.drainAdminRequests());
+    await collectShutdownFailure(failures, () => this.commands.drain());
     await collectShutdownFailure(failures, async () => {
       if (this.admin === null) return;
       await this.admin.close();
       this.admin = null;
     });
     throwShutdownFailures(failures, 'server shutdown failed');
-  }
-
-  private async drainAdminRequests(): Promise<void> {
-    while (this.adminRequests.size > 0) {
-      await Promise.allSettled([...this.adminRequests]);
-    }
   }
 }
 
@@ -367,7 +380,11 @@ async function detectLegacyCronStores(dispatcherId: string): Promise<string[]> {
     dispatcherId,
   );
   if (dispatcherCron !== null) messages.push(dispatcherCron);
-  for (const team of await new TeamStore().list(dispatcherId)) {
+  const teams = new TeamStore({
+    root: dispatcherTeamDir(dispatcherId),
+    dispatcherId,
+  });
+  for (const team of await teams.list()) {
     if (team.status === 'closed') continue;
     const teamCron = await detectLegacyCronJobStore(
       dispatcherTeamCronJobsPath(dispatcherId, team.team_id),

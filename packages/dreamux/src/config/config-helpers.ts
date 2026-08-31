@@ -1,10 +1,7 @@
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
-import type {
-  AgentRuntimeProvider,
-  ChannelProvider,
-} from '@excitedjs/dreamux-types';
+import type { ChannelProvider } from '@excitedjs/dreamux-types';
 import {
   describeType,
   isPlainObject,
@@ -98,33 +95,13 @@ function providerRefsFrom(
   return out;
 }
 
-export function asAgentRuntimeProvider(
+export function asChannelProvider(
   value: unknown,
-): AgentRuntimeProvider | null {
+): ChannelProvider<unknown> | null {
   if (typeof value !== 'object' || value === null) return null;
-  const candidate = value as Partial<AgentRuntimeProvider>;
-  if (
-    typeof candidate.ref !== 'string' ||
-    candidate.descriptor === undefined ||
-    typeof candidate.getCapabilities !== 'function' ||
-    typeof candidate.createRuntime !== 'function'
-  ) {
-    return null;
-  }
-  return value as AgentRuntimeProvider;
-}
-
-export function asChannelProvider(value: unknown): ChannelProvider | null {
-  if (typeof value !== 'object' || value === null) return null;
-  const candidate = value as Partial<ChannelProvider>;
-  if (
-    typeof candidate.ref !== 'string' ||
-    candidate.descriptor === undefined ||
-    typeof candidate.createSession !== 'function'
-  ) {
-    return null;
-  }
-  return value as ChannelProvider;
+  const candidate = value as Partial<ChannelProvider<unknown>>;
+  if (typeof candidate.createSession !== 'function') return null;
+  return value as ChannelProvider<unknown>;
 }
 
 export function readOptionalBoolean(

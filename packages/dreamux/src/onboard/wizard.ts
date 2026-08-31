@@ -21,7 +21,10 @@ import type {
   ProviderOnboardTextPrompt,
 } from '@excitedjs/dreamux-types';
 
-import { AgentRuntimeProviderCatalog } from '../agent-runtime/catalog.js';
+import {
+  AgentRuntimeProviderCatalog,
+  type RegisteredAgentRuntimeProvider,
+} from '../agent-runtime/catalog.js';
 import { loadAgentRuntimeProviders } from '../agent-runtime/external-provider.js';
 import { ChannelProviderCatalog } from '../channel/catalog.js';
 import { loadChannelProviders } from '../channel/external-channel-provider.js';
@@ -170,6 +173,7 @@ export async function answersFromOptions(
       channelSelections.map((selection) =>
         onboardChannel(
           channelCatalog.resolve(selection.provider),
+          registry.resolve(selection.provider).id,
           selection,
           channelConfigJson.get(selection.id),
           promptHost,
@@ -248,7 +252,7 @@ async function loadSelectedProviders(
 }
 
 async function onboardAgentRuntime(
-  provider: AgentRuntimeProvider,
+  provider: RegisteredAgentRuntimeProvider,
   selection: ProviderSelection,
   explicitConfig: Record<string, unknown> | undefined,
   prompts: ProviderOnboardPromptHost,
@@ -258,7 +262,7 @@ async function onboardAgentRuntime(
     id: selection.id,
     provider: selection.provider,
     config: await collectProviderConfig(
-      provider.onboard,
+      provider.implementation.onboard,
       {
         providerRef: selection.provider,
         providerId: provider.descriptor.id,
@@ -272,7 +276,8 @@ async function onboardAgentRuntime(
 }
 
 async function onboardChannel(
-  provider: ChannelProvider,
+  provider: ChannelProvider<unknown>,
+  providerId: string,
   selection: ProviderSelection,
   explicitConfig: Record<string, unknown> | undefined,
   prompts: ProviderOnboardPromptHost,
@@ -285,7 +290,7 @@ async function onboardChannel(
       provider.onboard,
       {
         providerRef: selection.provider,
-        providerId: provider.descriptor.id,
+        providerId,
         env: process.env,
         interactive,
       },
@@ -296,7 +301,9 @@ async function onboardChannel(
 }
 
 async function collectProviderConfig(
-  onboard: AgentRuntimeProvider['onboard'] | ChannelProvider['onboard'],
+  onboard:
+    | AgentRuntimeProvider<unknown>['onboard']
+    | ChannelProvider<unknown>['onboard'],
   context: ProviderOnboardContext,
   explicitConfig: Record<string, unknown> | undefined,
   prompts: ProviderOnboardPromptHost,

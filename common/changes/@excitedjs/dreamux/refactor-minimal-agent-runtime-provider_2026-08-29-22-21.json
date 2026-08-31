@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "BREAKING: Rebuild: if a cron store carries a removed shape, delete that job \u2014 or the whole `cron-jobs.json` under `~/.dreamux/state/<dispatcher-id>/` or `~/.dreamux/state/<dispatcher-id>/team/<team-id>/` \u2014 and recreate the schedule with `cron_create`. Cron jobs only inject a prompt into their owning Dispatcher or TeamLeader, so the declared but never executed `action.kind: spawn-teammate` and `deliver` target are removed rather than parsed and refused: a store file containing either now fails loud when it is read, and `dreamux doctor` names the file. The `scheduler.cron.create` and `scheduler.cron.update` Commands no longer accept `deliver`, and the cron MCP job output no longer reports it. Team `list`, `status`, and `history` also stop reporting a leader whose identity file is old state as if it had no state; that record now raises the same fail-loud error every other read path gives it.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

@@ -1,30 +1,70 @@
 /**
- * Live integration test against a real codex app-server.
+ * Live integration test against a real codex app-server — the issue #63
+ * non-blocking-inbound gate, restored on the CURRENT provider-seam contracts
+ * (Stage 9 architecture refactor, node `live-codex-gate`).
  *
- * CI installs `@openai/codex@latest` before this test runs. Local developer
- * machines use whatever `codex` is on PATH. This test exists to catch the
- * two compat bugs fixed in PR #5 plus the serve-foundation shape:
- *   - dropped `--approval-policy` flag (now `-c approval_policy=...`)
- *   - LSP-style `initialize` / `initialized` handshake required before
- *     any business RPC
- *   - app-server listen socket must not live under `/tmp`
- *   - app-server startup must use a network-enabled sandbox/profile
+ * This is a from-scratch rebuild, not a port. The `next`-branch original
+ * (`git show next:packages/dreamux/tests/codex-live.test.ts`) targeted
+ * contracts this refactor deleted outright:
+ *   - `AgentRuntimeStateCallbacks` / `RuntimeTurnOutcome` / `completionInput`
+ *     -> `AgentRuntimeStateSink` / `RuntimeSubmissionSettlement` / `submit`.
+ *   - `CodexRuntime` was directly importable from `@excitedjs/agent-runtime-codex`;
+ *     it is now a package-internal implementation detail. Every direct-runtime
+ *     case here goes through the neutral seam instead:
+ *     `createCodexAgentRuntimeProvider(options).createRuntime(context)`.
+ *   - `dispatcherMcpServerDescriptors()` (`mcp-descriptors.ts`) built one
+ *     dedicated Feishu MCP server per runtime by hand. That file is gone: MCP
+ *     server composition is now automatic (`TeammateRuntimeOwner`, one
+ *     generic `dreamux mcp --admin-socket <path>` shim per delegate, see
+ *     `/packages/dreamux/src/service/mcp/descriptor.ts`), so a live test that
+ *     wants real Feishu tools reachable from Codex just starts the real
+ *     `Server` and lets production wiring mint the MCP servers — there is no
+ *     surface left to construct by hand.
+ *   - The issue #63 reaction TRI-STATE (`RECEIVED_REACTION_EMOJI` /
+ *     `IN_PROGRESS_REACTION_EMOJI`, add-then-cancel ordering) is a DELETED
+ *     surface, not a renamed one: `.agents/reference/current-architecture.md`
+ *     states plainly "Automatic received/in-progress reactions are removed;
+ *     the explicit model-facing `react` tool remains", and
+ *     `.agents/domains/non-blocking-dispatcher-inbound.md`'s own Tests section
+ *     requires proving "no automatic reaction is added on inbound, submission,
+ *     or settlement". This file asserts exactly that negative instead of a
+ *     tri-state that no longer exists — see `fakeBot.reactions` in the folding
+ *     test below.
+ *
+ * FEASIBILITY GATE (checked against current source before writing anything
+ * here — see the task's mandatory pre-check):
+ *   - `ServerOptions` (`/packages/dreamux/src/server.ts`) still accepts
+ *     `agentRuntimeProviderCatalog`, `channelProviderCatalog`, `config`,
+ *     `adminSocketPath`, `logger`, `runtimeSocketSweep`, `legacyAdminLockPath`
+ *     — confirmed by reading the file.
+ *   - `@excitedjs/agent-runtime-codex`'s `createCodexAgentRuntimeProvider`
+ *     still accepts `codexClientFactory` / `codexHomeDoctor` and omits
+ *     `codexProcessFactory` by default, so a test can record the WS traffic
+ *     while still spawning the REAL `codex` binary — confirmed in
+ *     `provider.ts`.
+ *   - `@excitedjs/feishu-channel`'s `createFeishuChannelProvider` still
+ *     accepts `botFactory`, and `saveDispatcherAccess` still exists — both
+ *     confirmed in `provider.ts` / `feishu-gate-io.ts`.
+ *   Every required seam still exists under test-only code; nothing here
+ *   required a `src/**` change. What changed is HOW those seams are reached
+ *   (through the provider registry/catalog, not ad-hoc construction), and
+ *   that is reflected in `./helpers/live-catalogs.ts`.
  *
  * **Default behavior**: missing/unparseable `codex --version` fails loudly.
  * The whole point is to verify compatibility; a silent skip in CI defeats it.
  *
  * **Escape hatch**: set `DREAMUX_SKIP_LIVE_CODEX=1` to explicitly opt out
- * (e.g. dev machines without codex, or pre-merge sandboxes). The skip
- * emits a loud `console.warn` so it's visible in test output.
+ * (e.g. dev machines without codex, or pre-merge sandboxes). The skip emits a
+ * loud `console.warn` so it's visible in test output.
  *
- * The real-model gates need a usable Codex model login, not just the app-server
- * binary. They run by default outside CI. CI loud-skips them unless
- * `DREAMUX_RUN_LIVE_MODEL_GATE=1` is set, because public CI cannot assume an
- * operator's interactive Codex auth is available.
+ * The real-model gates need a usable Codex model login, not just the
+ * app-server binary. They run by default outside CI. CI loud-skips them
+ * unless `DREAMUX_RUN_LIVE_MODEL_GATE=1` is set, because public CI cannot
+ * assume an operator's interactive Codex auth is available.
  */
 
 import { describe, it, expect } from 'vitest';
-// eslint-disable-next-line no-restricted-imports -- live-Codex probe: a one-shot `execSync` reads the operator's interactive Codex auth/login state to decide whether the live model-gate case can run at all; it is setup, not the code under test, and must complete before the suite proceeds (issue #85 test-scope carve-out).
+// eslint-disable-next-line no-restricted-imports -- live-Codex probe: a one-shot `execSync` reads `codex --version` / the operator's interactive Codex auth state to decide whether a live case can run at all; it is setup, not the code under test, and must complete before the suite proceeds (issue #85 test-scope carve-out, matching the restored next-branch original).
 import { execSync } from 'node:child_process';
 import {
   copyFileSync,
@@ -39,38 +79,42 @@ import { join } from 'node:path';
 
 import {
   CodexProcess,
-  CodexRuntime,
-} from '@excitedjs/agent-runtime-codex';
-import { CodexWsClient, type CodexWsClientOptions } from '@excitedjs/agent-runtime-codex';
-import { performInitializeHandshake } from '@excitedjs/agent-runtime-codex';
-import {
+  CodexWsClient,
+  type CodexWsClientOptions,
+  performInitializeHandshake,
   codexArgsToCli,
-  codexMcpServerArgs,
   parseCodexArgs,
+  createCodexAgentRuntimeProvider,
+  defaultDispatcherCodexConfig,
+  type DispatcherCodexConfig,
+  type ServerNotification,
+  type ThreadStartResponse,
 } from '@excitedjs/agent-runtime-codex';
-import { Server } from '../src/server.js';
 import {
+  saveDispatcherAccess,
   type FeishuInboundEvent,
 } from '@excitedjs/feishu-channel';
-import { feishuChannelCatalog } from './helpers/fake-channel.js';
-import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
-import { codexAgentRuntimeCatalog } from './helpers/fake-agent-runtime.js';
-import { saveDispatcherAccess } from '@excitedjs/feishu-channel';
-import { dispatcherDir } from '../src/platform/paths.js';
-import type { DreamuxConfig } from '../src/config/config.js';
 import type {
+  AgentActivityQuery,
+  AgentActivityReadContext,
+  AgentRuntimeCreateContext,
   AgentRuntimePathContext,
-  AgentRuntimeStateCallbacks,
+  AgentRuntimeSessionRef,
+  AgentRuntimeStateSink,
+  AgentRuntimeStateUpdate,
   RuntimeSubmissionSettlement,
 } from '@excitedjs/dreamux-types';
-import type {
-  ServerNotification,
-  ThreadStartResponse,
-} from '@excitedjs/agent-runtime-codex';
-import { testDispatcherConfig } from './helpers/config.js';
-import { ChannelProviderCatalog } from '../src/channel/catalog.js';
-import { dispatcherMcpServerDescriptors } from '../src/service/dispatcher-service/mcp-descriptors.js';
-import { adminSocketPath } from '../src/platform/paths.js';
+
+import { Server } from '../src/server.js';
+import { dispatcherDir } from '../src/platform/paths.js';
+import { dreamuxBinPath } from '../src/platform/package-bin.js';
+import type { DreamuxConfig } from '../src/config/config.js';
+import { testDispatcherConfig, testDreamuxConfig } from './helpers/config.js';
+import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
+import {
+  codexAgentRuntimeCatalog,
+  feishuChannelCatalog,
+} from './helpers/live-catalogs.js';
 
 export const SKIP_ENV = 'DREAMUX_SKIP_LIVE_CODEX';
 export const MODEL_GATE_ENV = 'DREAMUX_RUN_LIVE_MODEL_GATE';
@@ -84,9 +128,7 @@ export type Detection =
  * actually executing `codex`. `versionFetcher` is what would normally call
  * `codex --version`; returning `null` (or throwing) means codex is missing.
  */
-export function classifyDetection(
-  rawOutput: string | null,
-): Detection {
+export function classifyDetection(rawOutput: string | null): Detection {
   if (rawOutput === null) {
     return { state: 'missing', reason: 'codex CLI did not respond to --version' };
   }
@@ -98,9 +140,7 @@ export function classifyDetection(
 function detectCodex(): Detection {
   let out: string;
   try {
-    out = execSync('codex --version', {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
+    out = execSync('codex --version', { stdio: ['ignore', 'pipe', 'pipe'] })
       .toString()
       .trim();
   } catch (err) {
@@ -123,10 +163,7 @@ function versionAtLeast(version: string, min: string): boolean {
 }
 
 interface McpServerStatusListResponse {
-  data: Array<{
-    name: string;
-    tools?: Record<string, { name: string }>;
-  }>;
+  data: Array<{ name: string; tools?: Record<string, { name: string }> }>;
 }
 
 interface RecordedRequest {
@@ -154,10 +191,7 @@ class RecordingCodexWsClient extends CodexWsClient {
     });
   }
 
-  override async request<R = unknown>(
-    method: string,
-    params: unknown,
-  ): Promise<R> {
+  override async request<R = unknown>(method: string, params: unknown): Promise<R> {
     const record: RecordedRequest = {
       method,
       params,
@@ -180,11 +214,7 @@ class RecordingCodexWsClient extends CodexWsClient {
   }
 }
 
-function fakeInbound(
-  chatId: string,
-  text: string,
-  messageId: string,
-): FeishuInboundEvent {
+function fakeInbound(chatId: string, text: string, messageId: string): FeishuInboundEvent {
   return {
     messageId,
     chatId,
@@ -196,11 +226,7 @@ function fakeInbound(
     rawContent: JSON.stringify({ text }),
     parsedText: text,
     mentions: [
-      {
-        key: '@_user_1',
-        id: { open_id: 'fake-open-id-app-live' },
-        name: 'Dispatcher',
-      },
+      { key: '@_user_1', id: { open_id: 'fake-open-id-app-live' }, name: 'Dispatcher' },
     ],
     createTime: String(Date.now()),
     raw: { event: { message: { chat_id: chatId, message_id: messageId } } },
@@ -212,32 +238,17 @@ function liveConfig(dispatcherCwd: string, codexHomeEnv: string): DreamuxConfig 
     id: 'live',
     cwd: dispatcherCwd,
     enabled: true,
-    feishu: {
-      app_id: 'app-live',
-      app_secret: 'secret-server-only',
-    },
+    feishu: { app_id: 'app-live', app_secret: 'secret-server-only' },
     codex: {
       bin: 'codex',
       approval_policy: 'never',
       sandbox_mode: 'danger-full-access',
       extra_args: [],
-      extra_env: {
-        HOME: codexHomeEnv,
-      },
-      // A longer handshake margin for the real codex app-server, now a
-      // dispatcher-local field rather than a global default.
+      extra_env: { HOME: codexHomeEnv },
       initialize_timeout_ms: 15000,
     },
   });
-  return {
-    agents: {
-      [dispatcher.agentRuntime]: {
-        provider: dispatcher.runtime.provider,
-        config: dispatcher.runtime.config,
-      },
-    },
-    dispatchers: [dispatcher],
-  };
+  return testDreamuxConfig([dispatcher]);
 }
 
 function createIsolatedCodexHome(dir: string): string {
@@ -279,13 +290,8 @@ async function waitFor(
   throw new Error(`waitFor timed out: ${label}`);
 }
 
-function notifications(
-  client: RecordingCodexWsClient,
-  method: string,
-): RecordedNotification[] {
-  return client.notifications.filter(
-    (entry) => entry.notification.method === method,
-  );
+function notifications(client: RecordingCodexWsClient, method: string): RecordedNotification[] {
+  return client.notifications.filter((entry) => entry.notification.method === method);
 }
 
 function hasCommandExecutionStarted(client: RecordingCodexWsClient): boolean {
@@ -314,11 +320,6 @@ function notificationDebugSummary(client: RecordingCodexWsClient): string {
         if (item !== null && typeof item === 'object') {
           itemType = (item as Record<string, unknown>)['type'];
         }
-        const error = record['error'];
-        if (error !== null && typeof error === 'object') {
-          const message = (error as Record<string, unknown>)['message'];
-          if (typeof message === 'string') detail = `:${message}`;
-        }
         const status = record['status'];
         if (typeof status === 'string') detail = `:${status}`;
         const errorText = record['error'];
@@ -333,6 +334,55 @@ function turnStartRequests(client: RecordingCodexWsClient): RecordedRequest[] {
   return client.requests.filter((request) => request.method === 'turn/start');
 }
 
+// ── Direct-provider harness (no Server, no Feishu) ─────────────────────────
+//
+// Item 3's "start continuity" and "structured-output binding at create time"
+// cases need only the neutral AgentRuntimeProvider seam, not a whole
+// dispatcher. Building the AgentRuntimeCreateContext by hand here is the
+// BEHAVIORAL boundary these facts actually live on now that `CodexRuntime`
+// itself is package-internal (see the file banner).
+
+function runtimePaths(dir: string): AgentRuntimePathContext {
+  return {
+    cacheDir: () => join(dir, 'cache'),
+    logsDir: () => join(dir, 'logs'),
+    runtimeSocketDirs: () => [dir],
+  };
+}
+
+function recordingStateSink(): {
+  sink: AgentRuntimeStateSink<AgentRuntimeSessionRef>;
+  updates: AgentRuntimeStateUpdate<AgentRuntimeSessionRef>[];
+} {
+  const updates: AgentRuntimeStateUpdate<AgentRuntimeSessionRef>[] = [];
+  return {
+    updates,
+    sink: {
+      async publish(update): Promise<void> {
+        updates.push(update);
+      },
+    },
+  };
+}
+
+/**
+ * CODEX_HOME travels through the ambient `process.env` (codex's own
+ * resolution — see `agent-runtime/codex/src/runtime-support.ts`: "the child
+ * inherits the operator's ambient CODEX_HOME"), not through `extra_env`. Every
+ * direct-provider case below sets `process.env.CODEX_HOME` around `start()`
+ * itself; this only builds the rest of the dispatcher-codex config.
+ */
+function directCodexConfig(): DispatcherCodexConfig {
+  return {
+    ...defaultDispatcherCodexConfig(),
+    bin: 'codex',
+    approval_policy: 'never',
+    sandbox_mode: 'danger-full-access',
+    extra_env: {},
+    initialize_timeout_ms: 15_000,
+  };
+}
+
 describe('codex live integration', () => {
   const skipRequested = process.env[SKIP_ENV] === '1';
   const detection = detectCodex();
@@ -340,7 +390,6 @@ describe('codex live integration', () => {
     process.env[MODEL_GATE_ENV] === '1' || process.env['CI'] !== 'true';
 
   if (skipRequested) {
-    // Opt-in skip — loud so it can't be missed in CI / local output.
     console.warn(
       `[codex-live] SKIPPED via ${SKIP_ENV}=1. ` +
         `Detected codex: state=${detection.state}` +
@@ -364,12 +413,11 @@ describe('codex live integration', () => {
     return;
   }
 
-  // From here on we know codex is on PATH and reports a parseable version.
   if (!runModelGate) {
     console.warn(
       `[codex-live] live model gates SKIPPED in CI. ` +
         `Set ${MODEL_GATE_ENV}=1 in an environment with usable Codex model auth ` +
-        `to verify structured output and model/tool folding paths.`,
+        `to verify structured output, activity, and the issue #63 folding gate.`,
     );
   }
 
@@ -382,9 +430,7 @@ describe('codex live integration', () => {
 
       // Use the same parser the runtime uses — exercises the
       // `-c approval_policy=never` codepath end-to-end.
-      const extraArgs = codexArgsToCli(
-        parseCodexArgs('{"sandboxMode":"danger-full-access"}'),
-      );
+      const extraArgs = codexArgsToCli(parseCodexArgs('{"sandboxMode":"danger-full-access"}'));
 
       const proc = new CodexProcess({
         socketPath,
@@ -401,19 +447,13 @@ describe('codex live integration', () => {
         try {
           await client.ready();
           const init = await performInitializeHandshake(client);
-          // userAgent shape is daemon-driven (older lines echoed the
-          // client name into a long descriptor) — don't assert content
-          // beyond non-empty string.
           expect(typeof init.userAgent).toBe('string');
           expect(init.userAgent.length).toBeGreaterThan(0);
           expect(init.platformOs).toBeDefined();
 
           // The real test: a business RPC after handshake must not get
           // "Not initialized". Response shape is the daemon's concern.
-          const ts = await client.request<ThreadStartResponse>(
-            'thread/start',
-            {},
-          );
+          const ts = await client.request<ThreadStartResponse>('thread/start', {});
           expect(typeof ts.thread.id).toBe('string');
           expect(ts.thread.id.length).toBeGreaterThan(0);
         } finally {
@@ -427,233 +467,149 @@ describe('codex live integration', () => {
     30_000,
   );
 
-  it(
-    `spawns codex ${detection.version} with the official Feishu MCP server`,
+  // Empirically NOT a structural-only case (verified against real codex
+  // 0.147.0 while writing this file): `thread/start` returns a rollout
+  // `path` up front, but codex does not actually create that file on disk
+  // until the thread has real turn activity — resuming a thread that was
+  // started but never submitted anything fails with "no rollout found for
+  // thread id ...". So proving `resumed` continuity needs one real,
+  // model-gated turn between `start()` and `stop()`, same as the other
+  // model-gated cases below.
+  (runModelGate ? it : it.skip)(
+    `reports fresh continuity via the AgentRuntimeProvider seam, then resumes the same thread through real codex ${detection.version}`,
     async () => {
-      if (!versionAtLeast(detection.version, '0.136.0')) {
-        throw new Error(
-          `dreamux's Feishu MCP injection gate requires codex >= 0.136.0; detected ${detection.version}`,
-        );
-      }
-
-      const dir = mkdtempSync(join(homedir(), '.dreamux-e2e-'));
-      const socketPath = join(dir, 'codex.sock');
+      const operatorHome = homedir();
+      const previousCodexHome = process.env['CODEX_HOME'];
+      const dir = mkdtempSync(join(operatorHome, '.dreamux-continuity-live-'));
+      const isolatedCodexHome = createIsolatedCodexHome(dir);
       const cwd = join(dir, 'cwd');
-      const dispatcher = testDispatcherConfig({
-        id: 'live',
-        cwd,
-        feishu: {
-          app_id: 'app-live',
-          app_secret: 'secret-server-only',
+      process.env['CODEX_HOME'] = isolatedCodexHome;
+
+      const provider = createCodexAgentRuntimeProvider({
+        codexHomeDoctor: () => {
+          /* real Codex auth is supplied through the isolated CODEX_HOME */
         },
       });
-      const channelProviders = feishuChannelCatalog(() =>
-        createFakeFeishuBot('app-live'),
-      );
-      const extraArgs = [
-        ...codexArgsToCli(
-          parseCodexArgs('{"sandboxMode":"danger-full-access"}'),
-        ),
-        ...codexMcpServerArgs(dispatcherMcpServerDescriptors({
-          dispatcherId: dispatcher.id,
-          channels: dispatcher.channels,
-          channelProviders: channelProviders as ChannelProviderCatalog,
-          adminSocketPath: adminSocketPath(),
-        })),
-      ];
 
-      const proc = new CodexProcess({
-        socketPath,
-        cwd,
-        stdoutLogPath: join(dir, 'stdout.log'),
-        stderrLogPath: join(dir, 'stderr.log'),
-        extraArgs,
-        readyTimeoutMs: 15_000,
-      });
+      function context(
+        session: AgentRuntimeSessionRef | null,
+      ): AgentRuntimeCreateContext<DispatcherCodexConfig, AgentRuntimeSessionRef> {
+        return {
+          identity: { runtimeId: 'continuity-live', session },
+          config: directCodexConfig(),
+          cwd,
+          mcpServers: [],
+          skillSources: [],
+          disabledFeatures: [],
+          paths: runtimePaths(dir),
+          state: recordingStateSink().sink,
+        };
+      }
 
       try {
-        await proc.start();
-        const client = new CodexWsClient({ socketPath });
-        try {
-          await client.ready();
-          await performInitializeHandshake(client);
-          const status = await client.request<McpServerStatusListResponse>(
-            'mcpServerStatus/list',
-            {},
-          );
-          const feishu = status.data.find((server) => server.name === 'feishu');
-          expect(feishu).toBeDefined();
-          expect(feishu?.tools?.['reply']?.name).toBe('reply');
-          expect(feishu?.tools?.['react']?.name).toBe('react');
-          expect(feishu?.tools?.['list_chat_bots']?.name).toBe('list_chat_bots');
-        } finally {
-          client.close();
+        const { sink, updates } = recordingStateSink();
+        const fresh = await provider.createRuntime({ ...context(null), state: sink });
+        const freshOutcome = await fresh.start();
+        expect(freshOutcome).toEqual({ continuity: 'fresh' });
+        const sessionUpdate = updates.find((update) => update.kind === 'session');
+        expect(sessionUpdate).toBeDefined();
+        const session =
+          sessionUpdate!.kind === 'session' ? sessionUpdate!.session : null;
+        expect(session).not.toBeNull();
+
+        // One minimal real turn — codex only persists a resumable rollout
+        // file once the thread has actual activity (see the case comment
+        // above), so `resumed` continuity cannot be proven without it.
+        const admission = await fresh.submit({ text: 'Reply with exactly the word ok.' });
+        expect(admission.status).toBe('submitted');
+        if (admission.status === 'submitted') {
+          const settlement = await admission.submission.settled;
+          expect(settlement.kind).toBe('completion');
         }
+        await fresh.stop();
+
+        const resumedRecording = recordingStateSink();
+        const resumed = await provider.createRuntime({
+          ...context(session),
+          state: resumedRecording.sink,
+        });
+        const resumedOutcome = await resumed.start();
+        expect(resumedOutcome).toEqual({ continuity: 'resumed' });
+        await resumed.stop();
       } finally {
-        await proc.reap();
+        if (previousCodexHome === undefined) delete process.env['CODEX_HOME'];
+        else process.env['CODEX_HOME'] = previousCodexHome;
         rmSync(dir, { recursive: true, force: true });
       }
     },
-    60_000,
+    120_000,
   );
 
   (runModelGate ? it : it.skip)(
-    `runs the portable optional-field schema through real codex ${detection.version}`,
+    `binds an output schema at create time and returns matching structured JSON through real codex ${detection.version}`,
     async () => {
       const operatorHome = homedir();
       const previousCodexHome = process.env['CODEX_HOME'];
       const dir = mkdtempSync(join(operatorHome, '.dreamux-codex-schema-live-'));
       const isolatedCodexHome = createIsolatedCodexHome(dir);
       const cwd = join(dir, 'cwd');
-      const socketPath = join(dir, 'codex.sock');
-      let settlement: RuntimeSubmissionSettlement | undefined;
-      let client: RecordingCodexWsClient | null = null;
-      const paths: AgentRuntimePathContext = {
-        cacheDir: () => join(dir, 'cache'),
-        logsDir: () => join(dir, 'logs'),
-        runtimeSocketDirs: () => [dir],
-      };
-      const state: AgentRuntimeStateCallbacks = {
-        async setStatus(): Promise<void> {},
-        async setCheckpoint(): Promise<void> {},
-      };
       process.env['CODEX_HOME'] = isolatedCodexHome;
 
-      const runtime = new CodexRuntime(
-        { runtime_id: 'schema-live', checkpoint: null },
-        {
-          cwd,
-          state,
-          paths,
-          allocateSocketPath: () => socketPath,
-          codexBinPath: 'codex',
-          resolveExtraArgs: () => codexArgsToCli(
-            parseCodexArgs('{"sandboxMode":"danger-full-access"}'),
-          ),
-          codexClientFactory: (path) => {
-            client = new RecordingCodexWsClient({ socketPath: path });
-            return client;
-          },
-          codexHomeDoctor: () => {
-            /* real Codex auth is supplied through the isolated CODEX_HOME */
-          },
-          // The live activity sink is required and installed before start; this
-          // gate asserts settlement, not activity, so it only has to exist.
-          activitySink: () => {},
+      const provider = createCodexAgentRuntimeProvider({
+        codexHomeDoctor: () => {
+          /* real Codex auth is supplied through the isolated CODEX_HOME */
         },
-      );
+      });
+
+      const outputSchema = {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['portable'] },
+          score: { type: 'integer', minimum: 7, maximum: 7 },
+          nullableFlag: { type: ['boolean', 'null'] },
+          optionalNote: { type: 'string', enum: ['present'] },
+        },
+        required: ['kind', 'score', 'nullableFlag'],
+        additionalProperties: false,
+      };
+
+      const { sink } = recordingStateSink();
+      const runtime = await provider.createRuntime({
+        identity: { runtimeId: 'schema-live', session: null },
+        config: directCodexConfig(),
+        cwd,
+        mcpServers: [],
+        skillSources: [],
+        disabledFeatures: [],
+        outputSchema,
+        paths: runtimePaths(dir),
+        state: sink,
+      });
 
       try {
         await runtime.start();
-        const outputSchema = {
-          type: 'object',
-          properties: {
-            kind: {
-              type: 'string',
-              enum: ['portable'],
-            },
-            score: {
-              type: 'integer',
-              minimum: 7,
-              maximum: 7,
-            },
-            nullableFlag: {
-              type: ['boolean', 'null'],
-            },
-            optionalNote: {
-              type: 'string',
-              enum: ['present'],
-            },
-          },
-          required: ['kind', 'score', 'nullableFlag'],
-          additionalProperties: false,
-        };
-        const admission = await runtime.completionInput({
-          sourceId: 'portable-output-schema-live',
+        const admission = await runtime.submit({
           text: [
             'Return the requested structured result.',
             'Use kind "portable", score 7, nullableFlag null, and optionalNote null.',
           ].join(' '),
-          outputSchema,
         });
-        expect(admission).toMatchObject({ status: 'submitted' });
+        expect(admission.status).toBe('submitted');
         if (admission.status !== 'submitted') {
           throw new Error(`portable structured-output turn was ${admission.status}`);
         }
-        void admission.submission.settled.then((next) => {
-          settlement = next;
-        });
-        try {
-          await waitFor(
-            () => settlement !== undefined,
-            120_000,
-            'portable structured-output submission settled',
-          );
-        } catch (err) {
-          const liveClient = client!;
-          const suffix = notificationDebugSummary(liveClient);
-          const turnStart = turnStartRequests(liveClient)[0];
+        const settlement: RuntimeSubmissionSettlement = await admission.submission.settled;
+        if (settlement.kind !== 'completion' || settlement.completion.status !== 'completed') {
           throw new Error(
-            `${err instanceof Error ? err.message : String(err)}; ` +
-              `turn/start error=${turnStart?.error ?? 'none'}; ` +
-              `recent notifications: ${suffix}`,
+            `portable structured-output turn did not complete: ${JSON.stringify(settlement)}`,
           );
         }
-
-        // A real native result must arrive as a completion token. `stopped`
-        // and `{ kind: 'failed' }` are internal terminal states that carry no
-        // token at all, so they are failures of this gate, not results.
-        const completion =
-          settlement?.kind === 'completion' ? settlement.completion : null;
-        if (completion === null || completion.status !== 'completed') {
-          const liveClient = client!;
-          const label =
-            settlement === undefined
-              ? 'missing'
-              : settlement.kind === 'completion'
-                ? `completion:${settlement.completion.status}`
-                : settlement.kind;
-          const detail =
-            completion !== null && completion.status === 'failed'
-              ? completion.error.message
-              : settlement?.kind === 'failed'
-                ? settlement.error.message
-                : 'no settlement error';
-          throw new Error(
-            `portable structured-output submission ${label}: ` +
-              `${detail}; ` +
-              `recent notifications: ${notificationDebugSummary(liveClient)}`,
-          );
-        }
-        // One send, one native result: the token displays through exactly the
-        // submission that produced it.
-        expect(completion.displaySubmission).toBe(admission.submission);
-        expect(completion).toMatchObject({
-          status: 'completed',
-          resultText: expect.any(String) as string,
-        });
-        const resultText = completion.resultText;
+        const resultText = settlement.completion.resultText;
         expect(resultText).not.toBeNull();
         expect(JSON.parse(resultText ?? '')).toEqual({
           kind: 'portable',
           score: 7,
           nullableFlag: null,
-        });
-
-        const liveClient = client!;
-        const request = turnStartRequests(liveClient)[0];
-        const params = request?.params as {
-          outputSchema?: Record<string, unknown>;
-        };
-        expect(params.outputSchema).toMatchObject({
-          required: ['kind', 'nullableFlag', 'optionalNote', 'score'],
-          properties: {
-            kind: { enum: ['portable'] },
-            score: { minimum: 7, maximum: 7 },
-            nullableFlag: { type: ['boolean', 'null'] },
-            optionalNote: { type: ['string', 'null'] },
-          },
-          additionalProperties: false,
         });
       } finally {
         await runtime.stop();
@@ -666,7 +622,108 @@ describe('codex live integration', () => {
   );
 
   (runModelGate ? it : it.skip)(
-    `folds mid-turn Feishu inbound without automatic reactions`,
+    `observes readRecentActivity growing while a real submitted turn is still in flight`,
+    async () => {
+      const operatorHome = homedir();
+      const previousCodexHome = process.env['CODEX_HOME'];
+      const dir = mkdtempSync(join(operatorHome, '.dreamux-codex-activity-live-'));
+      const isolatedCodexHome = createIsolatedCodexHome(dir);
+      const cwd = join(dir, 'cwd');
+      process.env['CODEX_HOME'] = isolatedCodexHome;
+
+      const provider = createCodexAgentRuntimeProvider({
+        codexHomeDoctor: () => {
+          /* real Codex auth is supplied through the isolated CODEX_HOME */
+        },
+      });
+      const config = directCodexConfig();
+      const { sink, updates } = recordingStateSink();
+
+      const runtime = await provider.createRuntime({
+        identity: { runtimeId: 'activity-live', session: null },
+        config,
+        cwd,
+        mcpServers: [],
+        skillSources: [],
+        disabledFeatures: [],
+        paths: runtimePaths(dir),
+        state: sink,
+      });
+
+      try {
+        await runtime.start();
+        const sessionUpdate = updates.find((update) => update.kind === 'session');
+        expect(sessionUpdate).toBeDefined();
+        const session = sessionUpdate!.kind === 'session' ? sessionUpdate!.session : null;
+        expect(session).not.toBeNull();
+
+        const activityContext: AgentActivityReadContext<DispatcherCodexConfig> = {
+          config,
+          cwd,
+        };
+        const query: AgentActivityQuery<AgentRuntimeSessionRef> = { session: session! };
+
+        const admission = await runtime.submit({
+          text: [
+            'First call exec_command with cmd "sleep 3; echo activity-live-done" and wait for it.',
+            'After it returns, reply with exactly the word done.',
+          ].join(' '),
+        });
+        expect(admission.status).toBe('submitted');
+        if (admission.status !== 'submitted') {
+          throw new Error(`activity-live turn was ${admission.status}`);
+        }
+
+        // The session's real rollout file is being appended to by the live
+        // codex process right now; poll until the provider's OWN recent-
+        // activity reader (not our WS recording) observes at least one record
+        // for it, proving readRecentActivity works against an actively
+        // growing session rather than only a finished one.
+        //
+        // Right after `submit()` returns there is a real window where the
+        // rollout file does not exist on disk yet — codex only creates it once
+        // the thread has actual turn activity (see the neighboring continuity
+        // case's comment) — during which `readRecentActivity` rejects with the
+        // neutral `session_unavailable` reason rather than returning an empty
+        // page. That is documented, correct provider behavior
+        // (`AgentActivityError.reason`, `@excitedjs/dreamux-types`), so this
+        // poll treats it exactly like "zero records so far" and keeps
+        // retrying; any other rejection is a real failure and propagates.
+        let midTurnCount = 0;
+        const deadline = Date.now() + 60_000;
+        while (Date.now() < deadline && midTurnCount === 0) {
+          try {
+            const page = await provider.readRecentActivity(query, activityContext);
+            midTurnCount = page.records.length;
+          } catch (err) {
+            const isSessionUnavailable =
+              err !== null &&
+              typeof err === 'object' &&
+              (err as { name?: unknown }).name === 'AgentActivityError' &&
+              (err as { reason?: unknown }).reason === 'session_unavailable';
+            if (!isSessionUnavailable) throw err;
+          }
+          if (midTurnCount === 0) await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        expect(midTurnCount).toBeGreaterThan(0);
+
+        const settlement = await admission.submission.settled;
+        expect(settlement.kind).toBe('completion');
+
+        const finalPage = await provider.readRecentActivity(query, activityContext);
+        expect(finalPage.records.length).toBeGreaterThanOrEqual(midTurnCount);
+      } finally {
+        await runtime.stop();
+        if (previousCodexHome === undefined) delete process.env['CODEX_HOME'];
+        else process.env['CODEX_HOME'] = previousCodexHome;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    180_000,
+  );
+
+  (runModelGate ? it : it.skip)(
+    `folds a mid-turn Feishu inbound into the active native turn via the real Server + Dispatcher wiring, and adds no automatic reaction`,
     async () => {
       if (!versionAtLeast(detection.version, '0.136.0')) {
         throw new Error(
@@ -677,6 +734,23 @@ describe('codex live integration', () => {
       const operatorHome = homedir();
       const previousHome = process.env['HOME'];
       const previousCodexHome = process.env['CODEX_HOME'];
+      // `mcpServerDescriptor()` resolves the launcher codex spawns for every
+      // Agent-facing MCP server through `dreamuxBinPath(process.env)`, which
+      // prefers an ambient `DREAMUX_BIN` override over the package's own
+      // `bin/dreamux`. A developer machine's shell profile commonly exports
+      // `DREAMUX_BIN` pointing at a separately, globally installed `dreamux`
+      // CLI (for everyday operator use) — a DIFFERENT, independently
+      // versioned build than this worktree's own `packages/dreamux/bin/dreamux`.
+      // If that global build predates the current MCP subcommand shape, codex
+      // spawns it, its CLI parser rejects `mcp --admin-socket ...` outright,
+      // and codex reports every server's handshake as
+      // "connection closed: initialize response" — indistinguishable from a
+      // real regression unless this is pinned. Isolating it here, like every
+      // other ambient path this test overrides, is what makes this a live
+      // gate on THIS worktree's own build rather than on whatever happens to
+      // be on the operator's PATH/env.
+      const previousDreamuxBin = process.env['DREAMUX_BIN'];
+      process.env['DREAMUX_BIN'] = dreamuxBinPath({});
       const dir = mkdtempSync(join(operatorHome, '.dreamux-issue63-live-'));
       const runtimeHome = join(dir, 'home');
       const isolatedCodexHome = createIsolatedCodexHome(dir);
@@ -688,7 +762,7 @@ describe('codex live integration', () => {
 
       mkdirSync(dispatcherCwd, { recursive: true });
       process.env['HOME'] = runtimeHome;
-    process.env['DREAMUX_ROOT'] = runtimeHome;
+      process.env['DREAMUX_ROOT'] = runtimeHome;
       process.env['CODEX_HOME'] = isolatedCodexHome;
       // Onboard the live sender onto the global allow-user list so the folded
       // group messages are delivered (empty `allow_users` authorizes nobody
@@ -709,9 +783,9 @@ describe('codex live integration', () => {
           config: liveConfig(dispatcherCwd, operatorHome),
           adminSocketPath: adminSocket,
           channelProviderCatalog: feishuChannelCatalog(() => bot),
-          // Codex seams live on the provider implementation now; injected via the
-          // AgentRuntime catalog. No process factory is given, so the real codex
-          // process is spawned (this is the live-codex path).
+          // Codex seams live on the provider implementation now; injected via
+          // the AgentRuntime catalog. No process factory is given, so the
+          // real codex process is spawned (this is the live-codex path).
           agentRuntimeProviderCatalog: codexAgentRuntimeCatalog({
             codexClientFactory: (socketPath) => {
               client = new RecordingCodexWsClient({ socketPath });
@@ -744,6 +818,42 @@ describe('codex live integration', () => {
           10_000,
           'first turn/start accepted',
         );
+
+        // The Feishu MCP surface (reply/react/list_chat_bots) is composed
+        // automatically now (no dispatcherMcpServerDescriptors() left to call
+        // by hand); confirm the real codex app-server actually reached it
+        // through the generic `dreamux mcp` shim before relying on the model
+        // calling `reply` later in this same test. The server's advertised
+        // name is the Channel MCP delegate's own namespacing
+        // (`channel-<configured channel id>`, see `SERVER_NAME_PREFIX` in
+        // `service/channel-service/mcp-delegate.ts`) — there is no longer a
+        // literal `feishu` server name, since the delegate is generic over
+        // any Channel provider and namespaces by the operator's own channel
+        // id, not the provider's identity.
+        //
+        // codex connects each Agent-facing MCP server lazily rather than at
+        // spawn: `mcpServerStatus/list` can legitimately report a known
+        // server with an empty `tools: {}` for tens of seconds after the
+        // first turn is accepted, right up until codex actually needs a
+        // tool. Poll generously until the tool map is populated rather than
+        // asserting on an early snapshot.
+        let feishu: McpServerStatusListResponse['data'][number] | undefined;
+        {
+          const deadline = Date.now() + 60_000;
+          while (Date.now() < deadline) {
+            const status = await liveClient.request<McpServerStatusListResponse>(
+              'mcpServerStatus/list',
+              {},
+            );
+            feishu = status.data.find((entry) => entry.name === 'channel-primary');
+            if (feishu !== undefined && Object.keys(feishu.tools ?? {}).length > 0) break;
+            await new Promise((resolve) => setTimeout(resolve, 200));
+          }
+        }
+        expect(feishu).toBeDefined();
+        expect(feishu?.tools?.['reply']?.name).toBe('reply');
+        expect(feishu?.tools?.['list_chat_bots']?.name).toBe('list_chat_bots');
+
         try {
           await waitFor(
             () => hasCommandExecutionStarted(liveClient),
@@ -759,32 +869,33 @@ describe('codex live integration', () => {
         expect(notifications(liveClient, 'turn/completed')).toHaveLength(0);
 
         await bot.inject(
-          fakeInbound(
-            'chat-live',
-            `Please handle this folded marker now: ${marker}`,
-            markerMessageId,
-          ),
+          fakeInbound('chat-live', `Please handle this folded marker now: ${marker}`, markerMessageId),
         );
         const markerTurnStart = turnStartRequests(liveClient)[1];
         expect(markerTurnStart).toBeDefined();
         expect(markerTurnStart!.ackedAt).not.toBeNull();
+        // Folding proof: a second accepted `turn/start` does not itself
+        // complete or start a parallel turn — see
+        // `.agents/domains/non-blocking-dispatcher-inbound.md` "Codex Contract".
         expect(notifications(liveClient, 'turn/completed')).toHaveLength(0);
 
-        await waitFor(
-          () => bot.sentMessages.some((message) => message.text.includes(marker)),
-          120_000,
-          'model replied through Feishu MCP with folded marker',
-        );
+        try {
+          await waitFor(
+            () => bot.sentMessages.some((message) => message.text.includes(marker)),
+            120_000,
+            'model replied through Feishu MCP with folded marker',
+          );
+        } catch (err) {
+          const suffix = notificationDebugSummary(liveClient);
+          throw new Error(
+            `${err instanceof Error ? err.message : String(err)}; recent notifications: ${suffix}`,
+          );
+        }
 
-        const markerReply = bot.sentMessages.find((message) =>
-          message.text.includes(marker),
-        );
+        const markerReply = bot.sentMessages.find((message) => message.text.includes(marker));
         expect(markerReply).toMatchObject({
           chatId: 'chat-live',
-          target: {
-            chatId: 'chat-live',
-            replyToMessageId: markerMessageId,
-          },
+          target: { chatId: 'chat-live', replyToMessageId: markerMessageId },
         });
 
         await waitFor(
@@ -796,39 +907,40 @@ describe('codex live integration', () => {
         expect(turnStartRequests(liveClient)).toHaveLength(2);
         expect(notifications(liveClient, 'turn/completed')).toHaveLength(1);
 
+        // The issue #63 automatic reaction tri-state is a deleted surface
+        // (see file banner): assert its replacement contract instead — no
+        // reaction is ever added automatically across the whole delivery.
+        // The model was never instructed to call the deliberate `react`
+        // tool in this prompt, so an empty array also proves that surface
+        // stayed silent unless a model explicitly asks for it.
         expect(bot.reactions).toEqual([]);
-        expect(bot.reactionOps).toEqual([]);
       } finally {
         await server?.shutdown();
         if (previousHome === undefined) delete process.env['HOME'];
         else process.env['HOME'] = previousHome;
-    delete process.env['DREAMUX_ROOT'];
+        delete process.env['DREAMUX_ROOT'];
         if (previousCodexHome === undefined) delete process.env['CODEX_HOME'];
         else process.env['CODEX_HOME'] = previousCodexHome;
+        if (previousDreamuxBin === undefined) delete process.env['DREAMUX_BIN'];
+        else process.env['DREAMUX_BIN'] = previousDreamuxBin;
         rmSync(dir, { recursive: true, force: true });
       }
     },
-    180_000,
+    // Longer than the other live cases: this one waits out codex's own lazy
+    // per-server MCP connect (up to 60s), the setup turn's exec_command, and
+    // the folded-turn reply, in sequence rather than in parallel.
+    240_000,
   );
 });
 
 // Unit coverage of the classification logic itself — these run regardless of
 // whether codex is installed, and prove that detection behaves as the live
-// test above relies on.
+// tests above rely on.
 describe('codex detection logic', () => {
   it('classifies parseable versions as ok', () => {
-    expect(classifyDetection('codex-cli 0.135.0')).toEqual({
-      state: 'ok',
-      version: '0.135.0',
-    });
-    expect(classifyDetection('codex-cli 0.136.0')).toEqual({
-      state: 'ok',
-      version: '0.136.0',
-    });
-    expect(classifyDetection('codex-cli 1.0.0')).toEqual({
-      state: 'ok',
-      version: '1.0.0',
-    });
+    expect(classifyDetection('codex-cli 0.135.0')).toEqual({ state: 'ok', version: '0.135.0' });
+    expect(classifyDetection('codex-cli 0.136.0')).toEqual({ state: 'ok', version: '0.136.0' });
+    expect(classifyDetection('codex-cli 1.0.0')).toEqual({ state: 'ok', version: '1.0.0' });
   });
 
   it('classifies missing/unparseable inputs as missing', () => {

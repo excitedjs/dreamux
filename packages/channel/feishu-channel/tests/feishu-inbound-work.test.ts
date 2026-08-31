@@ -76,4 +76,70 @@ describe('Feishu inbound work fencing', () => {
     )).rejects.toBeInstanceOf(Error);
     expect(calls).toBe(0);
   });
+
+  /**
+   * Input-lifecycle unit slice: `runFeishuBoundedOperation` settles the
+   * caller's promise exactly once (deadline wins the race), and a value that
+   * only resolves afterward is never silently dropped nor allowed to become
+   * a second settlement — it is routed through `onLateValue` so the caller
+   * can dispose of it (e.g. release a stream) instead of leaking it.
+   */
+  it('disposes a value that resolves after the deadline through onLateValue, exactly once', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-22T00:00:00.000Z'));
+    const controller = new AbortController();
+    const work = createFeishuInboundWork(session(controller), { timeoutMs: 10 });
+    works.push(work);
+
+    let releaseOperation: (value: string) => void = () => undefined;
+    const operation = new Promise<string>((resolve) => {
+      releaseOperation = resolve;
+    });
+    const lateValues: string[] = [];
+
+    const outcome = runFeishuInboundWork(
+      work,
+      () => operation,
+      work.deadlineAt,
+      (value) => {
+        lateValues.push(value);
+      },
+    );
+    const assertion = expect(outcome).rejects.toBeInstanceOf(Error);
+
+    // The deadline fires first and settles the caller's promise with a
+    // rejection...
+    await vi.advanceTimersByTimeAsync(10);
+    await assertion;
+
+    // ...and only afterward does the slow operation resolve. Its value must
+    // reach onLateValue rather than resolving (or re-rejecting) the already
+    // settled outer promise a second time.
+    releaseOperation('arrived-too-late');
+    await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve();
+
+    expect(lateValues).toEqual(['arrived-too-late']);
+  });
+
+  it('never calls onLateValue when the operation settles before the deadline', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-22T00:00:00.000Z'));
+    const controller = new AbortController();
+    const work = createFeishuInboundWork(session(controller), { timeoutMs: 1_000 });
+    works.push(work);
+    const lateValues: string[] = [];
+
+    const outcome = runFeishuInboundWork(
+      work,
+      async () => 'on-time',
+      work.deadlineAt,
+      (value) => {
+        lateValues.push(value);
+      },
+    );
+
+    await expect(outcome).resolves.toBe('on-time');
+    expect(lateValues).toEqual([]);
+  });
 });

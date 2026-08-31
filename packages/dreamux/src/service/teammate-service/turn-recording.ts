@@ -6,10 +6,7 @@ import type {
   RuntimeSubmission,
 } from '@excitedjs/dreamux-types';
 
-import type {
-  AgentEntitySubmissionResult,
-  AgentEntityTurnOrigin,
-} from '../agent-entity/types.js';
+import type { AgentEntitySubmissionResult } from '../agent-entity/types.js';
 import type { PreparedCompletionFact } from '../completion-router/index.js';
 
 export type TurnOutcome =
@@ -17,15 +14,29 @@ export type TurnOutcome =
   | { status: 'failed'; error: Error }
   | { status: 'stopped' };
 
+/**
+ * Report one settled turn to whoever is waiting for it.
+ *
+ * The fact is what the recipient reads. The provider token is only the identity
+ * of the settlement that produced it, used to fold the same completion reported
+ * through several paths into one delivery; a turn that ended without a native
+ * result has no such identity and passes `null` rather than a fabricated one.
+ */
 export type TurnCompletionDelivery = (
-  completion: RuntimeCompletion,
+  completion: RuntimeCompletion | null,
   fact: PreparedCompletionFact,
 ) => Promise<void>;
 
 export interface Turn {
   readonly id: string;
   readonly runtime: RuntimeSubmission;
-  readonly origin: AgentEntityTurnOrigin | null;
+  /**
+   * The open provenance name this turn was submitted under — the same value the
+   * model envelope was rendered with, kept so display consumers can report it
+   * without Core re-deriving where the turn came from.
+   */
+  readonly source: string;
+  /** The source's original body, never the assembled envelope. */
   readonly prompt: string | null;
   readonly intent: string | null;
   readonly submittedAt: number;
@@ -38,6 +49,47 @@ export type TurnAdmission =
   | { status: 'duplicate' | 'stopped' | 'skipped' }
   | { status: 'failed' | 'ambiguous'; error: Error };
 
+/**
+ * What an inbound delivery reports back to whoever handed Core the message.
+ *
+ * It is a projection of {@link TurnAdmission}, not a second authority: the
+ * admission decides, this states the decision. It stays inside Core because
+ * inbound turns no longer cross the provider seam — a Channel hands Core a
+ * message and reads the answer through the Command port.
+ */
+export type InboundDeliveryResult =
+  | { status: 'duplicate' }
+  | { status: 'stopped' }
+  | { status: 'submitted' }
+  | { status: 'failed'; error: Error }
+  | { status: 'ambiguous'; error: Error };
+
+/**
+ * State an admission's decision in the shape an inbound caller reads.
+ *
+ * One converter, next to both types, because there is only one mapping: a
+ * second copy beside a consumer would be a second place for `skipped` to stop
+ * meaning `stopped`.
+ */
+export function asInboundDeliveryResult(
+  result: TurnAdmission,
+): InboundDeliveryResult {
+  switch (result.status) {
+    case 'submitted':
+      return { status: 'submitted' };
+    case 'duplicate':
+      return { status: 'duplicate' };
+    case 'stopped':
+      return { status: 'stopped' };
+    case 'failed':
+      return { status: 'failed', error: result.error };
+    case 'ambiguous':
+      return { status: 'ambiguous', error: result.error };
+    case 'skipped':
+      return { status: 'stopped' };
+  }
+}
+
 export class EntityTurn implements Turn {
   readonly id = randomUUID();
   readonly settled: Promise<TurnOutcome>;
@@ -48,37 +100,33 @@ export class EntityTurn implements Turn {
 
   constructor(
     readonly runtime: RuntimeSubmission,
-    readonly origin: AgentEntityTurnOrigin | null,
+    readonly source: string,
     readonly prompt: string | null,
     readonly intent: string | null,
     readonly submittedAt: number,
-    private readonly sourceName: string,
+    private readonly producerName: string,
     private readonly deliveryClosure: TurnCompletionDelivery | null,
   ) {
     this.settled = runtime.settled.then((settlement): TurnOutcome => {
       if (settlement.kind === 'completion') {
         this.selectedCompletion = settlement.completion;
-        const outcome = settlement.completion.status === 'completed'
-          ? {
-              status: 'completed' as const,
-              resultText: settlement.completion.resultText,
-              truncated: settlement.completion.truncated,
-            }
-          : { status: 'failed' as const, error: settlement.completion.error };
-        this.selectedOutcome = outcome;
-        this.startDeliveryIfReady();
-        return outcome;
+        return this.settle(
+          settlement.completion.status === 'completed'
+            ? {
+                status: 'completed',
+                resultText: settlement.completion.resultText,
+                truncated: settlement.completion.truncated,
+              }
+            : { status: 'failed', error: settlement.completion.error },
+        );
       }
-      const outcome = settlement.kind === 'failed'
-        ? { status: 'failed' as const, error: settlement.error }
-        : { status: 'stopped' as const };
-      this.selectedOutcome = outcome;
-      return outcome;
-    }, (error: unknown): TurnOutcome => {
-      const outcome = { status: 'failed' as const, error: asError(error) };
-      this.selectedOutcome = outcome;
-      return outcome;
-    });
+      return this.settle(
+        settlement.kind === 'failed'
+          ? { status: 'failed', error: settlement.error }
+          : { status: 'stopped' },
+      );
+    }, (error: unknown): TurnOutcome =>
+      this.settle({ status: 'failed', error: asError(error) }));
   }
 
   get delivery(): Promise<void> {
@@ -95,20 +143,37 @@ export class EntityTurn implements Turn {
     await (this.deliveryTask ?? Promise.resolve());
   }
 
+  /** Record the one outcome this turn ever has, then report it. */
+  private settle(outcome: TurnOutcome): TurnOutcome {
+    this.selectedOutcome = outcome;
+    this.startDeliveryIfReady();
+    return outcome;
+  }
+
+  /**
+   * Every settled turn is reported, whatever ended it.
+   *
+   * The waiting Agent asked for the work, not for a native result: a turn that
+   * failed or was stopped is exactly the news it cannot infer on its own, so it
+   * is delivered from the outcome this turn already selected. Only a provider
+   * completion carries a token, and that token is passed through solely as the
+   * settlement's identity for folding.
+   */
   private startDeliveryIfReady(): void {
     if (
       this.deliveryTask !== null ||
       this.deliveryClosure === null ||
-      this.selectedCompletion === null
+      this.selectedOutcome === null
     ) {
       return;
     }
+    const outcome = this.selectedOutcome;
     const completion = this.selectedCompletion;
     const fact: PreparedCompletionFact = {
       kind: 'teammate',
-      source: this.sourceName,
-      status: completion.status,
-      result: completion.status === 'completed' ? completion.resultText : null,
+      source: this.producerName,
+      status: outcome.status,
+      result: outcome.status === 'completed' ? outcome.resultText : null,
     };
     this.deliveryTask = Promise.resolve().then(() =>
       this.deliveryClosure!(completion, fact));

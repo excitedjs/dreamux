@@ -33,7 +33,7 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
     });
   });
 
-  it('settles a close-induced stopped submission without any delivery', async () => {
+  it('delivers a close-induced stopped settlement with no native token', async () => {
     const runtime = controllableRuntimeSubmission();
     const delivery = deliveryMock();
     const turn = makeTurn(runtime.submission, delivery);
@@ -52,10 +52,18 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
     await expect(turn.settled).resolves.toEqual({ status: 'stopped' });
     await turn.delivery;
     expect(turn.isSettled()).toBe(true);
-    expect(delivery).not.toHaveBeenCalled();
+    // The waiting Agent asked for the work; that it was stopped is news only
+    // this turn has. There is no native token to fold on, so none is invented.
+    expect(delivery).toHaveBeenCalledTimes(1);
+    expect(delivery).toHaveBeenCalledWith(null, {
+      kind: 'teammate',
+      source: 'reviewer',
+      status: 'stopped',
+      result: null,
+    });
   });
 
-  it('settles an internal runtime failure without any delivery', async () => {
+  it('delivers an internal runtime failure with no native token', async () => {
     const runtime = controllableRuntimeSubmission();
     const delivery = deliveryMock();
     const turn = makeTurn(runtime.submission, delivery);
@@ -68,14 +76,20 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
     if (settled.status !== 'failed') throw new Error('expected failed outcome');
     expect(settled.error).toBe(runtimeError);
     await turn.delivery;
-    expect(delivery).not.toHaveBeenCalled();
+    expect(delivery).toHaveBeenCalledTimes(1);
+    expect(delivery).toHaveBeenCalledWith(null, {
+      kind: 'teammate',
+      source: 'reviewer',
+      status: 'failed',
+      result: null,
+    });
   });
 
-  it('settles a rejected submission promise without any delivery', async () => {
+  it('delivers a rejected submission promise with no native token', async () => {
     const rejection = new Error('settled promise rejected');
     // The helper only models the documented settlement values; a provider that
-    // rejects `settled` outright is still not a native result, so it must not
-    // produce a completion token or a push.
+    // rejects `settled` outright is still not a native result, so the delivery
+    // carries the failure fact and no completion token.
     const submission: RuntimeSubmission = Object.freeze({
       settled: Promise.reject(rejection),
     });
@@ -87,7 +101,13 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
     if (settled.status !== 'failed') throw new Error('expected failed outcome');
     expect(settled.error).toBe(rejection);
     await turn.delivery;
-    expect(delivery).not.toHaveBeenCalled();
+    expect(delivery).toHaveBeenCalledTimes(1);
+    expect(delivery).toHaveBeenCalledWith(null, {
+      kind: 'teammate',
+      source: 'reviewer',
+      status: 'failed',
+      result: null,
+    });
   });
 
   it('makes an early delivery read await and retain delivery rejection', async () => {
@@ -98,7 +118,7 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
       markInvoked = resolve;
     });
     const delivery = vi.fn(
-      (_completion: RuntimeCompletion, _fact: PreparedCompletionFact) =>
+      (_completion: RuntimeCompletion | null, _fact: PreparedCompletionFact) =>
         new Promise<void>((_resolve, reject) => {
           rejectDelivery = reject;
           markInvoked();
@@ -206,7 +226,7 @@ function makeTurn(
 function deliveryMock() {
   return vi.fn(
     async (
-      _completion: RuntimeCompletion,
+      _completion: RuntimeCompletion | null,
       _fact: PreparedCompletionFact,
     ): Promise<void> => undefined,
   );

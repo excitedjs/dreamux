@@ -1,10 +1,11 @@
 /**
  * `@excitedjs/feishu-channel` — the built-in Feishu `ChannelProvider` for
  * Dreamux (alias `builtin:feishu`). Owns Feishu channel session logic, inbound
- * normalization, access/trust behavior, attachment handling, and MCP tool
- * backing on top of `@excitedjs/feishu-transport`. Depends on
- * `@excitedjs/dreamux-types` + `@excitedjs/feishu-transport` only; never imports
- * `@excitedjs/dreamux` core.
+ * normalization, access/trust behavior, attachment handling, its own external
+ * routing and Collaboration Space policy, and MCP tool backing on top of
+ * `@excitedjs/feishu-transport`. Depends on `@excitedjs/dreamux-types` +
+ * `@excitedjs/dreamux-utils` + `@excitedjs/feishu-transport` only; never
+ * imports `@excitedjs/dreamux` core.
  */
 
 export {
@@ -16,32 +17,57 @@ export {
 
 export {
   FeishuChannelSession,
-  FeishuChannelCapabilityError,
   toWireChatBot,
   type FeishuChannelSessionOptions,
-  type FeishuInboundSubmitter,
-  type FeishuInboundEnvelope,
-  type FeishuMcpListChatBotsResult,
+  type FeishuListChatBotsResult,
   type WireChatBot,
   type ChannelLogger,
 } from './feishu-channel.js';
 
+export { createFeishuSessionMcp } from './feishu-session-mcp.js';
+
 export {
-  feishuMcpTools,
-  parseFeishuMcpToolInput,
-  buildToolCatalog,
+  CHANNEL_REMINDER,
+  type FeishuInboundDelivery,
+  type FeishuSubmission,
+  type FeishuSubmitOutcome,
+  type FeishuTeamSubmitter,
+} from './feishu-submit.js';
+
+export {
   FEISHU_TOOLS,
-  type FeishuMcpToolName,
-  type FeishuMcpToolInput,
-  type FeishuMcpReplyInput,
-  type FeishuMcpReactInput,
-  type FeishuMcpListChatBotsInput,
-  type FeishuToolName,
+  feishuToolRegistrations,
+  feishuToolsFor,
+  findFeishuTool,
+  type FeishuToolContext,
   type FeishuToolDef,
   type FeishuToolResult,
-  type FeishuToolResultEnvelope,
-  type FeishuToolContext,
-} from './feishu-mcp-tools.js';
+  type FeishuToolSession,
+} from './tools/registry.js';
+
+export {
+  FeishuRouting,
+  type FeishuBindingView,
+  type FeishuRoutingPlan,
+} from './routing/index.js';
+export {
+  FeishuRoutingStore,
+  routingDocumentFilename,
+} from './routing/store.js';
+export {
+  FEISHU_ROUTING_DOCUMENT_VERSION,
+  type FeishuBindingRecord,
+  type FeishuRoutingDocument,
+  type FeishuSpaceRecord,
+} from './routing/document.js';
+export {
+  chatTarget,
+  describeTarget,
+  targetKey,
+  topicTarget,
+  type FeishuTarget,
+  type FeishuTargetKind,
+} from './routing/target.js';
 
 export {
   createFeishuBot,

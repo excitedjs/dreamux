@@ -1,8 +1,10 @@
 /**
- * NDJSON Unix-socket protocol for admin commands (issue #2 §"管理接口").
+ * NDJSON Unix-socket transport framing for Core Commands (issue #2 §"管理接口").
  *
  * One line in / one line out. Permissions on the socket are 0600 (only the
- * owner). Method names use dotted lowercase; error codes use SCREAMING_SNAKE_CASE.
+ * owner). `method` is a Core Command name and `params` its payload; the
+ * envelope carries no meaning of its own. Command names use dotted lowercase;
+ * error codes use SCREAMING_SNAKE_CASE.
  */
 
 export interface AdminRequest {
@@ -20,14 +22,13 @@ export interface AdminOkResponse {
 export interface AdminErrorResponse {
   id: string;
   ok: false;
-  error: { code: string; message: string };
+  /**
+   * `action` is present when the failure stated its own next step. It is
+   * additive: a reader that ignores it sees exactly the envelope it always saw,
+   * and a reader that renders a failure for an agent has the sentence the
+   * domain wrote instead of having to invent one per code.
+   */
+  error: { code: string; message: string; action?: string };
 }
 
 export type AdminResponse = AdminOkResponse | AdminErrorResponse;
-
-export class AdminError extends Error {
-  constructor(public readonly code: string, message: string) {
-    super(message);
-    this.name = 'AdminError';
-  }
-}

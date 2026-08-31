@@ -40,6 +40,7 @@ import { AsyncMutex } from './lib/mutex.js';
 import type { FeishuChannelSessionOptions } from './feishu-channel.js';
 import type { PeerBot } from './chat-bots-store.js';
 import type { FeishuTargetRouter } from './feishu-target-router.js';
+import type { FeishuInboundDelivery } from './feishu-submit.js';
 import { FeishuOperationError } from './feishu-bounded-operation.js';
 import {
   alwaysActiveSessionFence,
@@ -49,15 +50,6 @@ import {
 // ─────────────────────────────────────────────────────────────────────────
 // In-memory state & constants (mirror the class fields)
 // ─────────────────────────────────────────────────────────────────────────
-
-/**
- * Appended to every delivered inbound's content as a standing guardrail: a
- * channel message must be answered with the channel reply tool, not a plain
- * assistant message. Placed at the very end of the body the runtime wraps into
- * its `<channel>` block.
- */
-export const CHANNEL_REMINDER =
-  '<channel-reminder>Reply through the channel reply tool, never as plain assistant text.</channel-reminder>';
 
 export interface PairingApprovalResult {
   status: 'ok' | 'not_found' | 'error';
@@ -73,24 +65,32 @@ export interface SessionHandle {
   botDisplayName: string;
   targetRouter: FeishuTargetRouter;
   sessionFence: FeishuSessionFence;
+  /**
+   * Where an accepted message goes. The inbound helper reaches routing,
+   * provisioning, and submission only through this one capability, so it never
+   * learns what a binding or a space policy is.
+   */
+  delivery: FeishuInboundDelivery;
 }
 
 /** Build a package-private handle from a session's internal fields. */
-export function sessionHandle(
-  opts: FeishuChannelSessionOptions,
-  bot: FeishuBot,
-  accessMutex: AsyncMutex,
-  botDisplayName: string,
-  targetRouter: FeishuTargetRouter,
-  sessionFence: FeishuSessionFence = alwaysActiveSessionFence(),
-): SessionHandle {
+export function sessionHandle(input: {
+  opts: FeishuChannelSessionOptions;
+  bot: FeishuBot;
+  accessMutex: AsyncMutex;
+  botDisplayName: string;
+  targetRouter: FeishuTargetRouter;
+  delivery: FeishuInboundDelivery;
+  sessionFence?: FeishuSessionFence;
+}): SessionHandle {
   return {
-    opts,
-    bot,
-    accessMutex,
-    botDisplayName,
-    targetRouter,
-    sessionFence,
+    opts: input.opts,
+    bot: input.bot,
+    accessMutex: input.accessMutex,
+    botDisplayName: input.botDisplayName,
+    targetRouter: input.targetRouter,
+    delivery: input.delivery,
+    sessionFence: input.sessionFence ?? alwaysActiveSessionFence(),
   };
 }
 

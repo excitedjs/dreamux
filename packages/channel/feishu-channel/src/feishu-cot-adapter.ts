@@ -2,13 +2,12 @@
 import { randomUUID } from 'node:crypto';
 
 import type {
-  ChannelBindingRouteEvent,
-  ChannelTeamStateEvent,
-  ChannelTurnMessageEvent,
-  ChannelTurnSettledEvent,
-  ChannelTurnSubmittedEvent,
-  ChannelTurnToolCallEvent,
   DreamuxLogger,
+  TeamStateEvent,
+  TeammateTurnMessageEvent,
+  TeammateTurnSettledEvent,
+  TeammateTurnSubmittedEvent,
+  TeammateTurnToolCallEvent,
 } from '@excitedjs/dreamux-types';
 import type {
   FeishuCotClient,
@@ -19,15 +18,22 @@ import {
   cotLogScope,
   type CotLogScope,
 } from './feishu-cot-diagnostics.js';
-import { admitDispatcherTurn } from './feishu-cot-dispatcher-admission.js';
 import {
   runFinishedEvent,
   runStartedEvent,
   textMessageEvents,
-  toolCallResultEvents,
-  toolCallStartEvents,
   type FeishuCotRunStatus,
 } from './feishu-cot-events.js';
+import {
+  acceptAssistantMessage,
+  acceptToolCallActivity,
+  type CotActivitySink,
+} from './feishu-cot-activity.js';
+import { admitDispatcherTurn } from './feishu-cot-dispatcher-admission.js';
+import {
+  DispatcherCotStateStore,
+  type KeyedDispatcherTurn,
+} from './feishu-cot-dispatcher-state.js';
 import { FeishuCotIo, type FeishuCotIoHandle } from './feishu-cot-io.js';
 import {
   admitCotOutboxEvents,
@@ -37,31 +43,43 @@ import {
   createCotOutbox,
   takeCotAppendBatch,
 } from './feishu-cot-outbox.js';
+import type { FeishuTarget } from './routing/target.js';
 import {
   cotLeaderKey,
-  cotOpenCallKey,
   cotStateAdmitsTurn,
   cotStateHasAnchor,
   ensureLeaderState,
+  prepareVisibleAnchor,
   reapCotState,
   releaseLeaderTurn,
   refreshLeaderNextAnchor,
-  rememberOpenToolCall,
   setLeaderFallbackAnchorIfAbsent,
-  visibleAnchorFromOrigin,
   type CotPresentation,
   type CotState,
-  DispatcherCotStateStore,
   LeaderLifecycleFence,
   type LeaderState,
   type VisibleMessageAnchor,
-  type VisibleMessageReceipt,
 } from './feishu-cot-state.js';
 
 const FEISHU_COT_OPEN_TOOL_CALLS_MAX = 512;
 const FEISHU_COT_PENDING_TURNS_MAX = 512;
 const FEISHU_COT_CLOSE_DRAIN_MS = 5_000;
 const FEISHU_COT_RECEIVED_TEXT = '已收到消息，开始处理。';
+
+/**
+ * Turns this Channel did not submit but still presents.
+ *
+ * `turn_source` is an open published name and Core decides nothing by it, so
+ * which provenances a conversation shows is this Channel's own presentation
+ * policy. It shows work that continues the conversation on the Team's own
+ * initiative — a finished task reported back, and a due cron fire — because
+ * those are what the people watching the card are waiting for. Anything else
+ * arrived out of band and is not narrated into a chat that did not ask for it.
+ */
+const FEISHU_COT_CONTINUATION_SOURCES: ReadonlySet<string> = new Set([
+  'task-notification',
+  'cron',
+]);
 
 export interface FeishuCotAdapterOptions {
   readonly dispatcherId: string;
@@ -72,11 +90,12 @@ export interface FeishuCotAdapterOptions {
 
 export class FeishuCotAdapter {
   private readonly leaders = new Map<string, LeaderState>();
-  private readonly leaderFence = new LeaderLifecycleFence();
   private readonly dispatcher = new DispatcherCotStateStore();
+  private readonly leaderFence = new LeaderLifecycleFence();
   private readonly pending = new Set<Promise<void>>();
   private readonly controller = new AbortController();
   private readonly io: FeishuCotIo;
+  private readonly activity: CotActivitySink;
   private closed = false;
 
   constructor(private readonly opts: FeishuCotAdapterOptions) {
@@ -85,6 +104,20 @@ export class FeishuCotAdapter {
       cotClient: opts.cotClient,
       signal: this.controller.signal,
     });
+    this.activity = {
+      channelId: opts.channelId,
+      openToolCallsMax: FEISHU_COT_OPEN_TOOL_CALLS_MAX,
+      acceptOpening: (key, state, turnId, events) =>
+        this.acceptOpeningActivityForState(key, state, turnId, events),
+      admitOutbox: (state, presentation, events) =>
+        this.admitOutbox(state, presentation, events),
+      scheduleFlush: (key, state, presentation) =>
+        this.scheduleFlush(key, state, presentation),
+      debug: (scope, fields, what) => {
+        this.opts.log.debug({ ...scope, ...fields }, what);
+      },
+      logScope: (state) => this.logScope(state),
+    };
   }
 
   setFallbackAnchorIfAbsent(
@@ -94,109 +127,134 @@ export class FeishuCotAdapter {
   ): void {
     if (this.closed) return;
     const key = cotLeaderKey(teamName, leaderName);
-    if (this.leaderFence.blocksAnchor(key, anchor, this.opts.channelId)) return;
+    if (this.leaderFence.blocksAnchor(key, anchor)) return;
     setLeaderFallbackAnchorIfAbsent(this.leaders, teamName, leaderName, anchor);
   }
 
   refreshNextAnchor(
     teamName: string,
     leaderName: string,
-    anchor: VisibleMessageReceipt,
+    anchor: VisibleMessageAnchor,
   ): void {
     if (this.closed) return;
     refreshLeaderNextAnchor(this.leaders, teamName, leaderName, anchor);
   }
 
-  onTurnSubmitted(event: ChannelTurnSubmittedEvent): void {
+  /**
+   * The Channel's own inbound message became this exact turn.
+   *
+   * This is the whole correlation: the session recorded the visible message it
+   * was about to submit, Core answered with a `turn_id`, and the submitted
+   * event carrying that `turn_id` says who received it. Core carries no
+   * origin, no presentation id, and no anchor. Both recipients are presented,
+   * because both are recipients: a bound conversation reaches its TeamLeader,
+   * an unbound one reaches the Dispatcher Agent.
+   */
+  onAnchoredSubmission(input: {
+    readonly event: TeammateTurnSubmittedEvent;
+    readonly anchor: VisibleMessageAnchor;
+  }): void {
     if (this.closed) return;
+    const anchor = prepareVisibleAnchor(input.anchor);
+    if (anchor === null) return;
+    const { event } = input;
     if (event.role === 'dispatcher') {
-      const started = admitDispatcherTurn(this.dispatcher, event, this.opts);
-      if (started === null) return;
-      this.acceptOpeningActivityForState(
-        started.key,
-        started.state,
-        event.turn_id,
-        textMessageEvents({
-          sourceId: `receipt:${event.turn_id}`,
-          role: 'assistant',
-          content: FEISHU_COT_RECEIVED_TEXT,
-        }),
-      );
+      this.openDispatcherTurn(event.teammate_name, event.turn_id, anchor);
       return;
     }
-    if (event.role !== 'team_leader') return;
-    const origin = event.channel_origin;
-    const key = cotLeaderKey(event.team_name, event.agent_name);
-    if (origin === undefined) {
-      if (event.turn_source !== 'completion' && event.turn_source !== 'scheduled') {
-        return;
-      }
-      const state = this.leaders.get(key);
-      if (
-        state === undefined ||
-        (state.anchor === null && state.nextAnchor === null) ||
-        state.disabledGeneration === state.generation
-      ) {
-        return;
-      }
-      if (state.pendingTurns.size >= FEISHU_COT_PENDING_TURNS_MAX) {
-        this.opts.log.warn(
-          { ...this.logScope(state), reason: 'pending_turns_full' },
-          'Feishu COT pending turn map is full; dropping newest turn',
-        );
-        return;
-      }
-      state.pendingTurns.set(event.turn_id, { generation: state.generation });
-      state.admittedTurnId = event.turn_id;
-      return;
-    }
-    const anchor = visibleAnchorFromOrigin(origin, this.opts.channelId);
-    if (
-      anchor !== null &&
-      this.leaderFence.blocksAnchor(key, anchor, this.opts.channelId)
-    ) {
-      return;
-    }
-    const state = ensureLeaderState(this.leaders, event.team_name, event.agent_name);
-    if (anchor === null) {
-      this.advanceAnchor(key, state, null, null, 'interrupted');
-      this.opts.log.debug(
-        { ...this.logScope(state), reason: 'origin_not_presentable' },
-        'Feishu COT cleared its visible-message anchor',
-      );
-      return;
-    }
+    if (event.role !== 'team_leader' || event.team_name === null) return;
+    const key = cotLeaderKey(event.team_name, event.teammate_name);
+    if (this.leaderFence.blocksAnchor(key, anchor)) return;
+    const state = ensureLeaderState(
+      this.leaders,
+      event.team_name,
+      event.teammate_name,
+    );
     this.advanceAnchor(key, state, anchor, event.turn_id, 'done');
+    this.openReceipt(key, state, event.turn_id);
+  }
+
+  private openDispatcherTurn(
+    agentName: string,
+    turnId: string,
+    anchor: VisibleMessageAnchor,
+  ): void {
+    const started = admitDispatcherTurn(
+      this.dispatcher,
+      { agentName, turnId, anchor },
+      this.opts,
+    );
+    if (started === null) return;
+    this.openReceipt(started.key, started.state, turnId);
+  }
+
+  /** The one line a card opens with, so the operator sees it was received. */
+  private openReceipt(key: string, state: CotState, turnId: string): void {
     this.acceptOpeningActivityForState(
       key,
       state,
-      event.turn_id,
+      turnId,
       textMessageEvents({
-        sourceId: `receipt:${event.turn_id}`,
+        sourceId: `receipt:${turnId}`,
         role: 'assistant',
         content: FEISHU_COT_RECEIVED_TEXT,
       }),
     );
   }
 
-  onTurnMessage(event: ChannelTurnMessageEvent): void {
+  /**
+   * A turn this Channel did not submit.
+   *
+   * A completion or a cron fire continues the same conversation the operator
+   * is already watching, so it is admitted onto the leader's existing anchor —
+   * but only after its own user message arrives, so an empty card is never
+   * opened for work that produced nothing to show.
+   */
+  onTurnSubmitted(event: TeammateTurnSubmittedEvent): void {
     if (this.closed) return;
-    if (event.role === 'dispatcher') {
-      this.onDispatcherTurnMessage(event);
+    if (event.role !== 'team_leader' || event.team_name === null) return;
+    if (!FEISHU_COT_CONTINUATION_SOURCES.has(event.turn_source)) return;
+    const key = cotLeaderKey(event.team_name, event.teammate_name);
+    const state = this.leaders.get(key);
+    if (
+      state === undefined ||
+      !cotStateHasAnchor(state) ||
+      state.disabledGeneration === state.generation
+    ) {
       return;
     }
-    if (event.role !== 'team_leader') return;
-    const key = cotLeaderKey(event.team_name, event.agent_name);
-    const state = this.leaders.get(key);
-    if (state === undefined) return;
+    if (state.pendingTurns.size >= FEISHU_COT_PENDING_TURNS_MAX) {
+      this.opts.log.warn(
+        { ...this.logScope(state), reason: 'pending_turns_full' },
+        'Feishu COT pending turn map is full; dropping newest turn',
+      );
+      return;
+    }
+    state.pendingTurns.set(event.turn_id, { generation: state.generation });
+    state.admittedTurnId = event.turn_id;
+  }
+
+  onTurnMessage(event: TeammateTurnMessageEvent): void {
+    if (this.closed) return;
+    if (event.role === 'dispatcher') {
+      // The visible message is the user's own; a Dispatcher card narrates the
+      // answer to it, never a copy of it.
+      if (event.message_role === 'user') return;
+      const found = this.dispatcher.find(event.teammate_name, event.turn_id);
+      if (found === null) return;
+      acceptAssistantMessage(this.activity, found.key, found.state, event);
+      return;
+    }
+    const state = this.leaderFor(event);
+    if (state === null) return;
     if (event.message_role === 'user') {
-      const pending = state.pendingTurns.get(event.turn_id);
+      const pending = state.state.pendingTurns.get(event.turn_id);
       if (pending === undefined) return;
-      state.pendingTurns.delete(event.turn_id);
+      state.state.pendingTurns.delete(event.turn_id);
       if (
-        pending.generation !== state.generation ||
-        (state.anchor === null && state.nextAnchor === null) ||
-        state.disabledGeneration === state.generation
+        pending.generation !== state.state.generation ||
+        !cotStateHasAnchor(state.state) ||
+        state.state.disabledGeneration === state.state.generation
       ) {
         return;
       }
@@ -206,164 +264,76 @@ export class FeishuCotAdapter {
         content: event.content,
       });
       if (events.length === 0) return;
-      this.acceptOpeningActivityForState(key, state, event.turn_id, events);
-      return;
-    }
-    this.onAssistantMessageForState(key, state, event);
-  }
-
-  onTurnToolCall(event: ChannelTurnToolCallEvent): void {
-    if (this.closed) return;
-    if (event.role === 'dispatcher') {
-      const found = this.dispatcher.find(event.agent_name, event.turn_id);
-      if (found === null) return;
-      this.onTurnToolCallForState(found.key, found.state, event);
-      return;
-    }
-    if (event.role !== 'team_leader') return;
-    const key = cotLeaderKey(event.team_name, event.agent_name);
-    const state = this.leaders.get(key);
-    if (state === undefined) return;
-    this.onTurnToolCallForState(key, state, event);
-  }
-
-  private onTurnToolCallForState(
-    key: string,
-    state: CotState,
-    event: ChannelTurnToolCallEvent,
-  ): void {
-    if (!cotStateAdmitsTurn(state, event.turn_id)) return;
-    if (!cotStateHasAnchor(state) ||
-        state.disabledGeneration === state.generation) return;
-    if (event.status === 'started') {
-      const events = toolCallStartEvents(event, this.opts.channelId);
-      if (events.length === 0) return;
-      const accepted = this.acceptOpeningActivityForState(
-        key,
-        state,
+      this.acceptOpeningActivityForState(
+        state.key,
+        state.state,
         event.turn_id,
         events,
       );
-      if (accepted) {
-        rememberOpenToolCall(
-          state.openCalls,
-          state.generation,
-          cotOpenCallKey(event.turn_id, event.call_id),
-          FEISHU_COT_OPEN_TOOL_CALLS_MAX,
-        );
-      }
       return;
     }
-    const callKey = cotOpenCallKey(event.turn_id, event.call_id);
-    const opened = state.openCalls.get(callKey);
-    if (opened === undefined) return;
-    if (opened.generation !== state.generation) {
-      state.openCalls.delete(callKey);
-      return;
-    }
-    const presentation = state.active;
-    if (
-      presentation === null ||
-      presentation.generation !== state.generation ||
-      presentation.closed ||
-      presentation.terminalIntent !== null
-    ) {
-      state.openCalls.delete(callKey);
-      return;
-    }
-    const events = toolCallResultEvents(event, this.opts.channelId);
-    state.openCalls.delete(callKey);
-    if (events.length === 0) return;
-    if (this.admitOutbox(state, presentation, events) &&
-        presentation.phase === 'writing') {
-      this.scheduleFlush(key, state, presentation);
-    }
+    acceptAssistantMessage(this.activity, state.key, state.state, event);
   }
 
-  onTurnSettled(event: ChannelTurnSettledEvent): void {
+  onTurnToolCall(event: TeammateTurnToolCallEvent): void {
     if (this.closed) return;
     if (event.role === 'dispatcher') {
-      const found = this.dispatcher.settle(event.agent_name, event.turn_id);
+      const found = this.dispatcher.find(event.teammate_name, event.turn_id);
       if (found === null) return;
-      found.state.openCalls.clear();
-      found.state.pendingTurns.clear();
-      this.detach(
-        found.key,
-        found.state,
-        event.status === 'completed' ? 'done' : 'interrupted',
-      );
-      this.reapState(found.key, found.state);
+      acceptToolCallActivity(this.activity, found.key, found.state, event);
       return;
     }
-    if (event.role !== 'team_leader') return;
-    const key = cotLeaderKey(event.team_name, event.agent_name);
-    const state = this.leaders.get(key);
-    if (state === undefined) return;
-    releaseLeaderTurn(state, event.turn_id);
-    if (state.active?.turnId !== event.turn_id) return;
+    const state = this.leaderFor(event);
+    if (state === null) return;
+    acceptToolCallActivity(this.activity, state.key, state.state, event);
+  }
+
+  onTurnSettled(event: TeammateTurnSettledEvent): void {
+    if (this.closed) return;
+    if (event.role === 'dispatcher') {
+      const settled = this.dispatcher.settle(
+        event.teammate_name,
+        event.turn_id,
+      );
+      if (settled === null) return;
+      settled.state.openCalls.clear();
+      settled.state.pendingTurns.clear();
+      this.detach(
+        settled.key,
+        settled.state,
+        event.status === 'completed' ? 'done' : 'interrupted',
+      );
+      this.reapState(settled.key, settled.state);
+      return;
+    }
+    const found = this.leaderFor(event);
+    if (found === null) return;
+    releaseLeaderTurn(found.state, event.turn_id);
+    if (found.state.active?.turnId !== event.turn_id) return;
     this.detach(
-      key,
-      state,
+      found.key,
+      found.state,
       event.status === 'completed' ? 'done' : 'interrupted',
     );
   }
 
-  private onDispatcherTurnMessage(
-    event: ChannelTurnMessageEvent & { readonly role: 'dispatcher' },
-  ): void {
-    if (event.message_role === 'user') return;
-    const found = this.dispatcher.find(event.agent_name, event.turn_id);
-    if (found === null) return;
-    this.onAssistantMessageForState(found.key, found.state, event);
-  }
-
-  private onAssistantMessageForState(
-    key: string,
-    state: CotState,
-    event: ChannelTurnMessageEvent,
-  ): void {
-    if (!cotStateAdmitsTurn(state, event.turn_id)) return;
-    if (!cotStateHasAnchor(state) ||
-        state.disabledGeneration === state.generation) return;
-    const events = textMessageEvents({
-      sourceId: event.event_id,
-      role: 'assistant',
-      content: event.content,
-    });
-    if (events.length === 0) {
-      this.opts.log.debug(
-        {
-          ...this.logScope(state),
-          activity: 'assistant',
-          reason: 'empty_after_projection',
-        },
-        'Feishu COT dropped activity with no safe display content',
-      );
-      return;
-    }
-    this.acceptOpeningActivityForState(key, state, event.turn_id, events);
-  }
-
-  onTeamState(event: ChannelTeamStateEvent): void {
+  onTeamState(event: TeamStateEvent): void {
     if (this.closed) return;
     this.leaderFence.onTeamState(event, this.leaders, (key, state) =>
       this.advanceAnchor(key, state, null, null, 'interrupted'));
   }
 
-  onBindingRoute(event: ChannelBindingRouteEvent): void {
+  /** This Channel removed or moved a binding away from a Team. */
+  onRouteReleased(input: { teamName: string; target: FeishuTarget }): void {
     if (this.closed) return;
-    this.leaderFence.onBindingRoute(
-      event,
-      this.leaders,
-      this.opts.channelId,
-      (key, state) => this.advanceAnchor(
-        key,
-        state,
-        null,
-        null,
-        'interrupted',
-      ),
-    );
+    this.leaderFence.onRouteReleased(input, this.leaders, (key, state) =>
+      this.advanceAnchor(key, state, null, null, 'interrupted'));
+  }
+
+  /** This Channel installed a binding, so the Team may present there again. */
+  onRouteClaimed(input: { teamName: string; target: FeishuTarget }): void {
+    if (this.closed) return;
+    this.leaderFence.onRouteClaimed(input);
   }
 
   async close(): Promise<void> {
@@ -379,10 +349,7 @@ export class FeishuCotAdapter {
       state.pendingTurns.clear();
       this.detach(key, state, 'interrupted');
     }
-    for (const { key, state } of this.dispatcher.all()) {
-      state.generation += 1;
-      state.anchor = null;
-      state.disabledGeneration = null;
+    for (const { key, state } of [...this.dispatcherTurns()]) {
       state.openCalls.clear();
       state.pendingTurns.clear();
       this.detach(key, state, 'interrupted');
@@ -400,8 +367,23 @@ export class FeishuCotAdapter {
     }
     this.controller.abort();
     this.leaders.clear();
-    this.leaderFence.clear();
     this.dispatcher.clear();
+    this.leaderFence.clear();
+  }
+
+  private dispatcherTurns(): readonly KeyedDispatcherTurn[] {
+    return [...this.dispatcher.all()];
+  }
+
+  private leaderFor(event: {
+    role: string;
+    team_name: string | null;
+    teammate_name: string;
+  }): { key: string; state: LeaderState } | null {
+    if (event.role !== 'team_leader' || event.team_name === null) return null;
+    const key = cotLeaderKey(event.team_name, event.teammate_name);
+    const state = this.leaders.get(key);
+    return state === undefined ? null : { key, state };
   }
 
   private advanceAnchor(
@@ -478,7 +460,7 @@ export class FeishuCotAdapter {
       )) {
         return false;
       }
-      if (state.kind === 'leader' && nextAnchor !== null) {
+      if (nextAnchor !== null && state.kind === 'leader') {
         state.anchor = nextAnchor;
         state.nextAnchor = null;
       }

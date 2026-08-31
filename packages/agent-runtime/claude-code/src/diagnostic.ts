@@ -8,7 +8,7 @@
  */
 import type {
   AgentRuntimeBinCheck,
-  AgentRuntimeDiagnostic,
+  AgentRuntimeDiagnosticCapability,
   AgentRuntimeDiagnosticContext,
   AgentRuntimeDiagnosticResult,
 } from '@excitedjs/dreamux-types';
@@ -27,7 +27,7 @@ function claudeBinCheckName(scope: ClaudeDiagnosticContext['scope']): string {
     : 'claude-code binary';
 }
 
-export const claudeCodeAgentRuntimeDiagnostic: AgentRuntimeDiagnostic<DispatcherClaudeCodeConfig> =
+export const claudeCodeAgentRuntimeDiagnostic: AgentRuntimeDiagnosticCapability<DispatcherClaudeCodeConfig> =
   {
     binChecks(context): AgentRuntimeBinCheck[] {
       return [

@@ -9,6 +9,15 @@
  * and no runtime dependencies. See
  * `.agents/decisions/npm-package-split-and-channel-targets.md`.
  *
+ * Scope: neutral contracts and catalog types only. No provider-specific paths,
+ * selectors, or runtime-native record formats cross this boundary, and no
+ * module here encodes a provider id or an exposure policy.
+ *
+ * Module layout follows domain ownership: `agent-runtime.ts` is the Provider /
+ * native execution seam, `channel.ts` is the bridge lifecycle plus the two
+ * generic Core ports, `command.ts` is the generic Command port, and `team.ts` /
+ * `teammate.ts` hold the Core domain facts each of those entities owns.
+ *
  * Root-export policy (issue #209): the root aggregates every public contract
  * type so an external provider author can name any of them directly. A type
  * being reached only *contextually* today — through a property of one of these
@@ -16,11 +25,11 @@
  * the package is type-only, so re-exporting a public type costs nothing at
  * runtime and keeps the surface honest (a provider author can name a shape they
  * legitimately depend on). The `exports` map publishes only this root, so this
- * list IS the public API. `tests/root-exports.test.ts` locks the surface to the
- * full set of public types in the source modules so future slices grow it
- * deliberately, not by accident.
+ * list IS the public API.
  */
 export type { DreamuxLogger } from './logger.js';
+export type { JsonSchema, JsonValue } from './json.js';
+export type { JsonInvokeResult, JsonInvoker } from './invoke.js';
 export type {
   AgentRuntimeProviderDescriptor,
   BuiltinProviderRef,
@@ -43,114 +52,104 @@ export type {
   ProviderOnboardTextPrompt,
   ProviderRef,
   ProviderRefSource,
+  RegisteredProvider,
 } from './provider.js';
 export type {
-  InboundAttachment,
-  InboundDeliveryResult,
-  InboundTurnInput,
-} from './turn.js';
-export type {
+  AgentActivityError,
+  AgentActivityPage,
+  AgentActivityQuery,
+  AgentActivityReadContext,
+  AgentActivityRecord,
   AgentRuntime,
+  AgentRuntimeActivitySink,
   AgentRuntimeBinCheck,
-  AgentRuntimeCapabilities,
-  AgentRuntimeContextSnapshot,
+  AgentRuntimeConfigCapability,
   AgentRuntimeCreateContext,
-  AgentRuntimeDiagnostic,
+  AgentRuntimeDiagnosticCapability,
   AgentRuntimeDiagnosticContext,
   AgentRuntimeDiagnosticRunner,
   AgentRuntimeDiagnosticResult,
   AgentRuntimeIdentity,
+  AgentRuntimeLogger,
   AgentRuntimeMcpServer,
+  AgentRuntimeOnboardCapability,
   AgentRuntimePathContext,
   AgentRuntimeProvider,
+  AgentRuntimeProviderCapabilities,
   AgentRuntimeProviderConfigReadContext,
   AgentRuntimeProviderFactory,
-  AgentRuntimeResumeCapability,
-  AgentRuntimeResumeCheckpoint,
+  AgentRuntimeSessionRef,
   AgentRuntimeSkillSource,
-  AgentRuntimeStateCallbacks,
+  AgentRuntimeStartOutcome,
+  AgentRuntimeStateLeaseRevokedError,
+  AgentRuntimeStateSink,
+  AgentRuntimeStateUpdate,
   AgentRuntimeStatus,
-  AgentRuntimeStructuredOutputCapability,
+  AgentRuntimeSubmissionInput,
   AgentRuntimeSystemPrompt,
-  AgentRuntimeTextInput,
-  AgentRuntimeTranscriptBlock,
-  AgentRuntimeTranscriptContext,
-  AgentRuntimeTranscriptError,
-  AgentRuntimeTranscriptPage,
-  AgentRuntimeTranscriptQuery,
-  AgentRuntimeTranscriptTurn,
-  JsonValue,
-  RuntimeAdmission,
   RuntimeActivity,
   RuntimeActivityEvent,
-  RuntimeActivitySink,
+  RuntimeAdmission,
   RuntimeCompletion,
   RuntimeSubmission,
   RuntimeSubmissionSettlement,
   RuntimeToolAction,
-  UnsupportedAgentRuntimeFeatureError,
 } from './agent-runtime.js';
 export type {
-  ChannelBindingCollaborationSpaceBoundEvent,
-  ChannelBindingCollaborationSpaceEvent,
-  ChannelBindingCollaborationSpacePolicySnapshot,
-  ChannelBindingCollaborationSpaceUnboundEvent,
-  ChannelBindingEndpointSnapshot,
-  ChannelBindingRouteBoundEvent,
-  ChannelBindingRouteEvent,
-  ChannelBindingRouteOwnerSnapshot,
-  ChannelBindingRouteTeamSnapshot,
-  ChannelBindingRouteUnboundEvent,
-} from './channel-binding.js';
+  ChannelCommandError,
+  ChannelCommandRetryableErrorCode,
+  CoreCommandContext,
+  CoreCommandDefinition,
+  CoreCommandRegistry,
+  CoreCommandSource,
+} from './command.js';
+export type {
+  TeamCreateCommand,
+  TeamCreateRepoRequest,
+  TeamCreateResult,
+  TeamStateEvent,
+  TeamStateTeammateSummary,
+  TeamSubmitCommand,
+  TeamSubmitResult,
+} from './team.js';
+export type {
+  TeamContainedRole,
+  TeammateRole,
+  TeammateStateEvent,
+  TeammateStatus,
+  TeammateTurnMessageEvent,
+  TeammateTurnScope,
+  TeammateTurnSettledEvent,
+  TeammateTurnSubmittedEvent,
+  TeammateTurnToolCallEvent,
+} from './teammate.js';
 export type {
   ChannelBinCheck,
-  ChannelAgentStateEvent,
-  ChannelCollaborationTargetEnsureInput,
-  ChannelCollaborationTargetEnsureResult,
+  ChannelConfigCapability,
   ChannelConfigContext,
-  ChannelContainer,
+  ChannelCorePort,
   ChannelCoreEvent,
-  ChannelCoreEventKind,
-  ChannelCoreEventListener,
-  ChannelCoreEventOfKind,
-  ChannelCoreEventSource,
-  ChannelCoreEventSubscription,
-  ChannelDiagnostic,
+  ChannelDiagnosticCapability,
   ChannelDiagnosticContext,
   ChannelDiagnosticRunner,
   ChannelDiagnosticResult,
-  ChannelConversationScope,
-  ChannelExactDeliveryInput,
-  ChannelExactDeliveryResult,
-  ChannelInboundEnvelope,
-  ChannelMessageTargetCheck,
-  ChannelOrigin,
+  ChannelEventSource,
+  ChannelEventSubscription,
+  ChannelIdentityCapability,
+  ChannelInstance,
+  ChannelMcpCall,
+  ChannelMcpCallContext,
+  ChannelMcpCaller,
+  ChannelMcpCapability,
+  ChannelMcpToolAnnotations,
+  ChannelMcpToolDescriptor,
+  ChannelMcpToolIcon,
+  ChannelMcpToolOutcome,
+  ChannelMcpToolRegistration,
+  ChannelOnboardCapability,
   ChannelProvider,
   ChannelProviderFactory,
-  ChannelReactInput,
-  ChannelReplyInput,
-  ChannelRoutes,
-  ChannelScopedOperationFailureCode,
-  ChannelScopedOperationRejection,
-  ChannelSender,
   ChannelSession,
   ChannelSessionCreateContext,
-  ChannelSessionlessToolContext,
-  ChannelTarget,
-  ChannelTargetLifecycleEvent,
-  ChannelTargetLifecycleKind,
-  ChannelTeamAgentRole,
-  ChannelTeamStateEvent,
-  ChannelToolAnnotations,
-  ChannelToolCall,
-  ChannelToolCallerContext,
-  ChannelToolContext,
-  ChannelToolDescriptor,
-  ChannelToolIcon,
-  ChannelTurnMessageEvent,
-  ChannelTurnSettledEvent,
-  ChannelTurnSource,
-  ChannelTurnSubmittedEvent,
-  ChannelTurnToolCallEvent,
-  DreamuxManagedRepoRequest,
+  ChannelSessionMcpCapability,
 } from './channel.js';

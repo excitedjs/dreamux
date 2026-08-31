@@ -39,7 +39,7 @@ const ECHO_TOOL: McpToolDefinition = {
     idempotentHint: true,
     openWorldHint: false,
   },
-  handler: async (args) => ({ echoed: args['value'] }),
+  handler: async (args) => ({ structured: { echoed: args['value'] } }),
 };
 
 function serve(
@@ -204,7 +204,7 @@ describe('shared MCP protocol conformance', () => {
     const invalidOutputTool: McpToolDefinition = {
       ...ECHO_TOOL,
       name: 'invalid_output',
-      handler: async () => ({ echoed: 42 }),
+      handler: async () => ({ structured: { echoed: 42 } }),
     };
     const connection = await connectMcpClient((transport) =>
       serve(transport, [invalidOutputTool]),
@@ -227,11 +227,17 @@ describe('shared MCP protocol conformance', () => {
     }
   });
 
-  it('emits only selector-owned success text beside unchanged structured content', async () => {
+  it('emits only handler-owned text beside unchanged structured content', async () => {
+    // The handler is the sole owner of whether a call says anything beyond its
+    // structured value (see McpToolOutcome in src/mcp/server.ts) — there is no
+    // separate selector hook the runner consults after the fact.
     const successTextTool: McpToolDefinition = {
       ...ECHO_TOOL,
       name: 'echo_with_success_text',
-      successText: () => 'Operation-specific success text.',
+      handler: async (args) => ({
+        structured: { echoed: args['value'] },
+        text: 'Operation-specific success text.',
+      }),
     };
     const connection = await connectMcpClient((transport) =>
       serve(transport, [successTextTool]),
@@ -278,7 +284,7 @@ describe('shared MCP protocol conformance', () => {
         accepted = true;
         started.resolve();
         await release.promise;
-        return { echoed: args['value'] };
+        return { structured: { echoed: args['value'] } };
       },
     };
     const connection = await connectMcpClient((transport) => serve(transport, [tool]));

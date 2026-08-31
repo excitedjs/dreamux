@@ -1,9 +1,18 @@
-import type {
-  ChannelBindingEndpointSnapshot,
-  ChannelContainer,
-  ChannelTarget,
-  DreamuxLogger,
-} from '@excitedjs/dreamux-types';
+/**
+ * Where a Feishu message actually arrived, in Feishu's own terms.
+ *
+ * The router answers one question for inbound — which target is this, and does
+ * it sit inside a container that may be a Collaboration Space — and keeps two
+ * small session-local ledgers so outbound work can address a place it has
+ * actually seen. Nothing here leaves the package: Core is told a `team_name`
+ * and nothing about chats, threads, or topic mode.
+ *
+ * Topic detection needs one platform lookup, so it is cached per chat, bounded,
+ * and fails open: a chat whose mode cannot be established is treated as an
+ * ordinary group, which routes the message to the group binding rather than
+ * inventing a topic that may not exist.
+ */
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import type { FeishuChatMode } from '@excitedjs/feishu-transport';
 
 import type { ChannelOutboundTarget, FeishuInboundEvent } from './bot.js';
@@ -12,16 +21,28 @@ import {
   isFeishuOperationError,
   runFeishuBoundedOperation,
 } from './feishu-bounded-operation.js';
+import {
+  chatTarget,
+  targetKey,
+  topicTarget,
+  type FeishuTarget,
+} from './routing/target.js';
 
 const FEISHU_CHAT_MODE_LOOKUP_TIMEOUT_MS = 2_000;
+/** Session-local ledgers are display/addressing aids, never authority. */
+const FEISHU_OBSERVED_MESSAGES_MAX = 4_096;
 
 interface FeishuChatModeReader {
   getChatMode?(chatId: string): Promise<FeishuChatMode | undefined>;
 }
 
 export interface FeishuInboundRoute {
-  target: ChannelTarget;
-  container?: ChannelContainer;
+  readonly target: FeishuTarget;
+  /**
+   * The chat a Collaboration Space policy could be registered on. Only a topic
+   * has one: an ordinary group is a target, not a container of targets.
+   */
+  readonly containerChatId: string | null;
 }
 
 interface FeishuTargetRouterOptions {
@@ -29,18 +50,15 @@ interface FeishuTargetRouterOptions {
   log: DreamuxLogger;
 }
 
-/**
- * Provider-owned routing capability for Feishu inbound and outbound selectors.
- * It is the single normalization point for targets carried to core and targets
- * recorded for later TeamLeader egress authorization.
- */
 export class FeishuTargetRouter {
   private readonly resolvedChatModes = new Map<string, FeishuChatMode>();
   private readonly pendingChatModes = new Map<
     string,
     Promise<FeishuChatMode | undefined>
   >();
-  private readonly messageTargets = new Map<string, ChannelTarget>();
+  private readonly messageTargets = new Map<string, FeishuTarget>();
+  /** The newest message seen in a target, so a topic can be replied into. */
+  private readonly targetAnchors = new Map<string, string>();
 
   constructor(private readonly opts: FeishuTargetRouterOptions) {}
 
@@ -51,6 +69,7 @@ export class FeishuTargetRouter {
     assertRoutingActive(signal);
     let route: FeishuInboundRoute = {
       target: chatTarget(event.chatId, event.chatType),
+      containerChatId: null,
     };
     if (
       event.chatType === 'group' &&
@@ -60,61 +79,45 @@ export class FeishuTargetRouter {
       const mode = await this.chatMode(event.chatId, signal);
       assertRoutingActive(signal);
       if (mode === 'topic') {
-        route = topicRoute(event);
+        route = {
+          target: topicTarget(event.chatId, event.threadId),
+          containerChatId: event.chatId,
+        };
       }
     }
     assertRoutingActive(signal);
-    this.messageTargets.set(event.messageId, route.target);
+    this.observe(event.messageId, route.target);
     return route;
   }
 
-  resolveTarget(meta: unknown): ChannelTarget {
-    const selector = asRecord(meta);
-    const messageId = optionalString(selector, 'message_id');
-    if (messageId !== undefined) {
-      const recorded = this.messageTargets.get(messageId);
-      if (recorded !== undefined) {
-        assertRecordedSelectorMatches(selector, recorded);
-        return recorded;
-      }
+  /** Record a message this session sent or received against its target. */
+  observe(messageId: string, target: FeishuTarget): void {
+    if (messageId === '') return;
+    if (this.messageTargets.size >= FEISHU_OBSERVED_MESSAGES_MAX) {
+      const oldest = this.messageTargets.keys().next();
+      if (!oldest.done) this.messageTargets.delete(oldest.value);
     }
-
-    const chatId = requiredString(selector, 'chat_id');
-    const threadId = optionalString(selector, 'thread_id');
-    if (threadId !== undefined) {
-      throw new Error(
-        'feishu resolveTarget requires an observed message_id for topic replies',
-      );
-    }
-    return chatTarget(chatId, selector['chat_type'] === 'p2p' ? 'p2p' : 'group');
+    this.messageTargets.set(messageId, target);
+    this.targetAnchors.set(targetKey(target), messageId);
   }
 
-  bindingNotificationTarget(
-    endpoint: ChannelBindingEndpointSnapshot,
-  ): ChannelOutboundTarget | null {
-    const chatId = optionalString(endpoint.meta, 'chat_id') ??
-      (endpoint.endpoint_type === 'group' ||
-          endpoint.endpoint_type === 'topic_group'
-        ? endpoint.endpoint_key
-        : undefined);
-    if (chatId === undefined || chatId === '') return null;
-    if (endpoint.endpoint_type !== 'topic') {
-      return { conversationId: chatId };
-    }
-    const messageId = optionalString(endpoint.meta, 'message_id');
-    return messageId === undefined
-      ? null
-      : { conversationId: chatId, replyTo: messageId };
+  targetForMessage(messageId: string): FeishuTarget | undefined {
+    return this.messageTargets.get(messageId);
   }
 
-  messageBelongsToTarget(messageId: string, target: ChannelTarget): boolean {
-    const recorded = this.messageTargets.get(messageId);
-    return recorded !== undefined && targetsMatch(recorded, target);
-  }
-
-  messageBelongsToChat(messageId: string, chatId: string): boolean {
-    const recorded = this.messageTargets.get(messageId);
-    return recorded !== undefined && targetChatId(recorded) === chatId;
+  /**
+   * Where a Channel-authored notification about a target should be sent.
+   *
+   * A topic is only addressable by replying under a message already in it, so
+   * a topic this session has never seen falls back to its parent chat rather
+   * than being dropped: the operator who just bound it is in that chat.
+   */
+  notificationTarget(target: FeishuTarget): ChannelOutboundTarget {
+    if (target.kind !== 'topic') return { conversationId: target.chatId };
+    const anchor = this.targetAnchors.get(targetKey(target));
+    return anchor === undefined
+      ? { conversationId: target.chatId }
+      : { conversationId: target.chatId, replyTo: anchor };
   }
 
   private async chatMode(
@@ -146,13 +149,12 @@ export class FeishuTargetRouter {
     }
   }
 
-  private async lookupChatMode(chatId: string): Promise<FeishuChatMode | undefined> {
+  private async lookupChatMode(
+    chatId: string,
+  ): Promise<FeishuChatMode | undefined> {
     const getChatMode = this.opts.chatModes.getChatMode;
     if (getChatMode === undefined) {
-      this.opts.log.warn(
-        { chat_id: chatId, reason: 'chat_mode_lookup_unavailable' },
-        'could not verify Feishu topic-group mode; treating inbound as an ordinary group',
-      );
+      this.warnUnknownMode(chatId, 'chat_mode_lookup_unavailable');
       return undefined;
     }
     try {
@@ -160,24 +162,30 @@ export class FeishuTargetRouter {
         getChatMode.call(this.opts.chatModes, chatId),
       );
       if (mode !== undefined) return mode;
-      this.opts.log.warn(
-        { chat_id: chatId, reason: 'missing_or_unknown_chat_mode' },
-        'could not verify Feishu topic-group mode; treating inbound as an ordinary group',
-      );
+      this.warnUnknownMode(chatId, 'missing_or_unknown_chat_mode');
       return undefined;
     } catch (err) {
-      this.opts.log.warn(
-        {
-          chat_id: chatId,
-          reason: isFeishuOperationError(err, 'deadline')
-            ? 'chat_mode_lookup_timed_out'
-            : 'chat_mode_lookup_failed',
-          err: safeError(err),
-        },
-        'could not verify Feishu topic-group mode; treating inbound as an ordinary group',
+      this.warnUnknownMode(
+        chatId,
+        isFeishuOperationError(err, 'deadline')
+          ? 'chat_mode_lookup_timed_out'
+          : 'chat_mode_lookup_failed',
+        safeError(err),
       );
       return undefined;
     }
+  }
+
+  private warnUnknownMode(
+    chatId: string,
+    reason: string,
+    err?: { name?: string; message: string },
+  ): void {
+    this.opts.log.warn(
+      { chat_id: chatId, reason, ...(err !== undefined ? { err } : {}) },
+      'could not verify Feishu topic-group mode; ' +
+        'treating inbound as an ordinary group',
+    );
   }
 }
 
@@ -194,138 +202,6 @@ function withChatModeTimeout(
     operation: () => promise,
     deadlineAt: Date.now() + FEISHU_CHAT_MODE_LOOKUP_TIMEOUT_MS,
   });
-}
-
-function topicRoute(event: FeishuInboundEvent): FeishuInboundRoute {
-  const threadId = event.threadId;
-  if (threadId === undefined || threadId === '') {
-    throw new Error('topicRoute requires a non-empty thread id');
-  }
-  return {
-    target: topicTarget({
-      chatId: event.chatId,
-      threadId,
-      messageId: event.messageId,
-      ...(event.rootId !== undefined ? { rootId: event.rootId } : {}),
-      ...(event.parentId !== undefined ? { parentId: event.parentId } : {}),
-    }),
-    container: {
-      container_type: 'topic_group',
-      container_key: event.chatId,
-      meta: { chat_id: event.chatId, chat_mode: 'topic' },
-    },
-  };
-}
-
-function topicTarget(input: {
-  chatId: string;
-  threadId: string;
-  messageId: string;
-  rootId?: string;
-  parentId?: string;
-}): ChannelTarget {
-  return {
-    target_type: 'topic',
-    target_key: input.threadId,
-    bindable: true,
-    meta: {
-      chat_id: input.chatId,
-      chat_type: 'group',
-      chat_mode: 'topic',
-      thread_id: input.threadId,
-      message_id: input.messageId,
-      ...(input.rootId !== undefined ? { root_id: input.rootId } : {}),
-      ...(input.parentId !== undefined ? { parent_id: input.parentId } : {}),
-    },
-    binding_fallbacks: [chatTarget(input.chatId, 'group')],
-  };
-}
-
-function chatTarget(chatId: string, rawType: string): ChannelTarget {
-  const chatType = rawType === 'p2p' ? 'p2p' : 'group';
-  return {
-    target_type: chatType,
-    target_key: chatId,
-    bindable: chatType === 'group',
-    meta: { chat_id: chatId, chat_type: chatType },
-  };
-}
-
-function targetsMatch(left: ChannelTarget, right: ChannelTarget): boolean {
-  return left.target_type === right.target_type &&
-    left.target_key === right.target_key &&
-    targetChatId(left) === targetChatId(right);
-}
-
-function targetChatId(target: ChannelTarget): string | undefined {
-  const chatId = target.meta?.['chat_id'];
-  return typeof chatId === 'string' && chatId !== '' ? chatId : undefined;
-}
-
-function assertRecordedSelectorMatches(
-  selector: Record<string, unknown>,
-  recorded: ChannelTarget,
-): void {
-  assertOptionalSelector(selector, 'chat_id', targetChatId(recorded));
-  assertOptionalSelector(
-    selector,
-    'thread_id',
-    stringMeta(recorded, 'thread_id'),
-  );
-  assertOptionalSelector(
-    selector,
-    'chat_type',
-    stringMeta(recorded, 'chat_type'),
-  );
-  assertOptionalSelector(
-    selector,
-    'chat_mode',
-    stringMeta(recorded, 'chat_mode'),
-  );
-}
-
-function assertOptionalSelector(
-  selector: Record<string, unknown>,
-  key: string,
-  expected: string | undefined,
-): void {
-  if (!(key in selector)) return;
-  const value = selector[key];
-  if (typeof value !== 'string' || value === '' || value !== expected) {
-    throw new Error(
-      `feishu resolveTarget ${JSON.stringify(key)} conflicts with the recorded message target`,
-    );
-  }
-}
-
-function stringMeta(target: ChannelTarget, key: string): string | undefined {
-  const value = target.meta?.[key];
-  return typeof value === 'string' && value !== '' ? value : undefined;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function requiredString(
-  selector: Readonly<Record<string, unknown>>,
-  key: string,
-): string {
-  const value = optionalString(selector, key);
-  if (value === undefined) {
-    throw new Error(`feishu resolveTarget requires a non-empty ${key}`);
-  }
-  return value;
-}
-
-function optionalString(
-  selector: Readonly<Record<string, unknown>>,
-  key: string,
-): string | undefined {
-  const value = selector[key];
-  return typeof value === 'string' && value !== '' ? value : undefined;
 }
 
 function safeError(err: unknown): { name?: string; message: string } {

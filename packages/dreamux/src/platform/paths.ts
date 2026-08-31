@@ -15,8 +15,6 @@
  *       <dispatcher-id>/      (issue #233 symmetric layout)
  *         access.json
  *         chat-bots.json
- *         channel-bindings.json
- *         collaboration-spaces.json
  *         teammate/<name>/    dispatcher-owned teammate identity
  *         team/<team>/        one dir per team: leader identity,
  *                             record.json, teammate/<name>/ members
@@ -265,27 +263,12 @@ export function channelLogPath(id: string): string {
   return join(channelLogDir(), `${dispatcherPathSegment(id)}.log`);
 }
 
-export function channelMcpLogDir(): string {
-  return join(logsRoot(), 'channel-mcp');
-}
-
-/**
- * Per-dispatcher channel MCP stdio shim log. The shim's stdout is the JSON-RPC
- * transport, so its diagnostics persist here (and to stderr) — never stdout.
- */
-export function channelMcpLogPath(id: string): string {
-  return join(channelMcpLogDir(), `${dispatcherPathSegment(id)}.log`);
-}
-
-export function teammateMcpLogDir(): string {
-  return join(logsRoot(), 'teammate-mcp');
-}
-
-/**
- * Per-dispatcher TeamMate scheduling MCP stdio shim diagnostics. */
-export function teammateMcpLogPath(id: string): string {
-  return join(teammateMcpLogDir(), `${dispatcherPathSegment(id)}.log`);
-}
+// There is deliberately no per-server MCP shim log path. An MCP shim is now
+// launched with a socket path and an opaque lease token and nothing else, so it
+// cannot name a dispatcher to open a log for — and it no longer needs to: the
+// delegate that decides and fails runs inside the server, so the authoritative
+// diagnostics are already in the server log. Shim-local transport failures go
+// to stderr, which the runtime that spawned it already captures.
 
 export function workflowLogDir(): string {
   return join(logsRoot(), 'workflow');
@@ -296,70 +279,89 @@ export function workflowLogPath(id: string): string {
   return join(workflowLogDir(), `${dispatcherPathSegment(id)}.log`);
 }
 
-export function cronMcpLogDir(): string {
-  return join(logsRoot(), 'cron-mcp');
-}
-
-/** Per-dispatcher scheduled-tasks MCP stdio shim diagnostics. */
-export function cronMcpLogPath(id: string): string {
-  return join(cronMcpLogDir(), `${dispatcherPathSegment(id)}.log`);
+/**
+ * The `teammate/` agent-collection root inside an already-resolved owner root
+ * (issue #233 symmetric layout). Both a dispatcher root and a Team root carry
+ * one, which is why this takes the root rather than a dispatcher id.
+ *
+ * Listing the collection is a blind `readdir` of this directory, so it must
+ * hold ONLY entity directories — the owner's own Agent pair, its Team record,
+ * and its channel bindings all live beside it, never inside it.
+ */
+export function teamMateCollectionDir(ownerRoot: string): string {
+  return join(ownerRoot, 'teammate');
 }
 
 /**
- * Per-dispatcher agent-collection root (issue #233 symmetric layout): the
- * `teammate/` directory whose immediate children are one directory per
- * dispatcher-owned teammate. Listing the collection is a blind `readdir` of this
- * dir, so it must hold ONLY entity directories — the dispatcher agent's own
- * pair and channel bindings live elsewhere.
+ * The `team/` collection root inside a dispatcher root (issue #233): its
+ * immediate children are one directory per Team. Like `teammate/` it holds ONLY
+ * entity directories (channel bindings moved to the dispatcher root).
  */
+export function teamCollectionDir(dispatcherRoot: string): string {
+  return join(dispatcherRoot, 'team');
+}
+
+/**
+ * One entity directory inside a collection root: the collection appends the
+ * concrete entity name and nothing else. This is the ONLY place a name becomes
+ * a path segment, and the name is always the caller's own key for the entity —
+ * never a field read back out of a persisted record.
+ */
+export function collectionEntityDir(
+  collectionRoot: string,
+  name: string,
+): string {
+  return join(collectionRoot, teamMateNameSegment(name));
+}
+
+/** Per-dispatcher `teammate/` collection root, for the dispatcher composition root. */
 export function dispatcherTeamMateDir(id: string): string {
-  return join(dispatcherDir(id), 'teammate');
+  return teamMateCollectionDir(dispatcherDir(id));
 }
 
-/**
- * Per-dispatcher Team Mode collection root (issue #233): the `team/` directory
- * whose immediate children are one directory per team. Like `teammate/` it holds
- * ONLY entity directories (channel bindings moved to the dispatcher root).
- */
+/** Per-dispatcher `team/` collection root, for the dispatcher composition root. */
 export function dispatcherTeamDir(id: string): string {
-  return join(dispatcherDir(id), 'team');
+  return teamCollectionDir(dispatcherDir(id));
 }
 
 /**
- * One team's root directory (issue #233 symmetric layout). Holds the team
- * leader's `identity.json` at its root, the team `record.json`,
- * and a `teammate/` sub-collection of the team's members.
+ * One Team's root directory (issue #233 symmetric layout). Holds the
+ * TeamLeader's `identity.json` at its root, the Team `record.json`, and a
+ * `teammate/` sub-collection of the Team's TeamMates.
  */
 export function dispatcherTeamScopeDir(id: string, teamId: string): string {
-  return join(dispatcherTeamDir(id), teamMateNameSegment(teamId));
+  return collectionEntityDir(dispatcherTeamDir(id), teamId);
 }
 
-/** A team's `record.json` — members, bound channel, leader name, … (issue #233). */
+/**
+ * A team's `record.json` — leader name, workspace, status, accepted creation
+ * request, … (issue #233).
+ *
+ * This file is the Team: exclusive publication of it is the single acceptance
+ * point, and it is the only thing that occupies its concrete name. There is no
+ * sidecar claim, ledger, or tombstone beside it.
+ */
 export function dispatcherTeamRecordPath(id: string, teamId: string): string {
   return join(dispatcherTeamScopeDir(id, teamId), 'record.json');
 }
 
-/**
- * A Team concrete-name claim. The claim is created before any Team or
- * collaboration-target side effect and is never removed, so a concrete name
- * cannot be reused after failure, shutdown, dissolve, or process restart.
- */
-export function dispatcherTeamNameClaimPath(id: string, teamId: string): string {
-  return join(dispatcherTeamScopeDir(id, teamId), 'name-claim.json');
+/** `<team-root>/cron-jobs.json`, for the Team that already holds its own root. */
+export function teamCronJobsPath(teamRoot: string): string {
+  return join(teamRoot, 'cron-jobs.json');
 }
 
 /** Per-TeamLeader cron jobs; path isolation keeps the job schema dispatcher-scoped. */
 export function dispatcherTeamCronJobsPath(id: string, teamId: string): string {
-  return join(dispatcherTeamScopeDir(id, teamId), 'cron-jobs.json');
+  return teamCronJobsPath(dispatcherTeamScopeDir(id, teamId));
 }
 
 /**
- * The `teammate/` sub-collection inside one team's scope — the team's members,
- * one directory each. Distinct from {@link dispatcherTeamMateDir} (dispatcher
- * scope); both are blind-scan collections of per-name entity directories.
+ * The `teammate/` sub-collection inside one Team's scope — the Team's
+ * TeamMates, one directory each. Distinct from {@link dispatcherTeamMateDir}
+ * (dispatcher scope); both are blind-scan collections of entity directories.
  */
 export function dispatcherTeamTeamMateDir(id: string, teamId: string): string {
-  return join(dispatcherTeamScopeDir(id, teamId), 'teammate');
+  return teamMateCollectionDir(dispatcherTeamScopeDir(id, teamId));
 }
 
 export interface WorkflowScopePathInput {
@@ -401,61 +403,17 @@ export function workflowRunJournalPath(input: WorkflowRunPathInput): string {
   return join(workflowRunDir(input), 'journal.jsonl');
 }
 
-export type AgentEntityRole =
-  | 'dispatcher'
-  | 'teammate'
-  | 'team_leader'
-  | 'team_member';
-
 /**
- * The on-disk directory for one agent entity (issue #233 symmetric layout). The
- * `dispatcher` agent's pair sits at the dispatcher ROOT (not under `teammate/`),
- * so it is structurally outside the teammate/team blind-scan collections — the
- * `teammate.*` read chokepoints never enumerate it (issue #233 Phase 5). A
- * `team_leader` lives at its team root; a `team_member` under that team's
- * `teammate/<name>/`; an ordinary `teammate` under the dispatcher's
- * `teammate/<name>/`. Every entity directory holds `identity.json`.
+ * `<entity-dir>/identity.json` — durable identity and runtime association.
+ *
+ * The entity directory arrives already resolved from the owner that
+ * materialized the Agent: the dispatcher root for the dispatcher's own Agent,
+ * a Team root for that Team's leader, and a `teammate/<name>/` child of either
+ * collection root for an ordinary TeamMate. Nothing here inspects the record —
+ * identity contents never take part in choosing where they are stored.
  */
-export function dispatcherAgentEntityDir(input: {
-  dispatcherId: string;
-  name: string;
-  teamId: string | null;
-  role: AgentEntityRole;
-}): string {
-  if (input.role === 'dispatcher') {
-    return dispatcherDir(input.dispatcherId);
-  }
-  if (input.role === 'team_leader' && input.teamId !== null) {
-    return dispatcherTeamScopeDir(input.dispatcherId, input.teamId);
-  }
-  if (input.role === 'team_member' && input.teamId !== null) {
-    return join(
-      dispatcherTeamTeamMateDir(input.dispatcherId, input.teamId),
-      teamMateNameSegment(input.name),
-    );
-  }
-  return join(
-    dispatcherTeamMateDir(input.dispatcherId),
-    teamMateNameSegment(input.name),
-  );
-}
-
-/** `<entity-dir>/identity.json` — durable identity and runtime association. */
-export function dispatcherAgentIdentityPath(input: {
-  dispatcherId: string;
-  name: string;
-  teamId: string | null;
-  role: AgentEntityRole;
-}): string {
-  return join(dispatcherAgentEntityDir(input), 'identity.json');
-}
-
-export function dispatcherChannelBindingsPath(id: string): string {
-  return join(dispatcherDir(id), 'channel-bindings.json');
-}
-
-export function dispatcherCollaborationSpacesPath(id: string): string {
-  return join(dispatcherDir(id), 'collaboration-spaces.json');
+export function agentIdentityPath(entityDir: string): string {
+  return join(entityDir, 'identity.json');
 }
 
 export function dispatcherCronJobsPath(id: string): string {

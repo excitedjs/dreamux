@@ -5,10 +5,11 @@
  * (`../registry/provider-loader.ts`). It mirrors the `agentRuntime` loader: the
  * shared skeleton owns dynamic import, export selection, factory invocation,
  * duplicate handling, descriptor registration, and fail-loud formatting, while
- * the assertions here enforce the `ChannelProvider` contract.
+ * the assertions here enforce the `ChannelProvider<unknown>` contract.
  *
- * A channel provider must expose a `channel` descriptor, an optional config
- * reader, and a channel session factory. `builtin:feishu` resolves to
+ * A channel provider must expose a channel session factory and may expose the
+ * optional config, onboard, and diagnostic capabilities. `builtin:feishu`
+ * resolves to
  * `@excitedjs/feishu-channel` through the same loading path once the alias is
  * resolved; a missing built-in channel package fails loud with the named ref.
  */
@@ -17,8 +18,6 @@ import {
   type ProviderRegistry,
 } from '../registry/index.js';
 import {
-  assertLoadedProviderObject,
-  assertProviderDescriptorShape,
   isRecord,
   loadProviderPackages,
   type ProviderContractContext,
@@ -29,6 +28,13 @@ import {
 } from '../registry/provider-loader.js';
 import type { ChannelProvider } from '@excitedjs/dreamux-types';
 
+/**
+ * The context a channel factory export is called with.
+ *
+ * Core's seed descriptor travels with the ref because the channel loader
+ * registers under it. The provider itself echoes nothing back: like the Agent
+ * Runtime contract, it has no `ref`/`descriptor` member.
+ */
 export interface ExternalChannelProviderFactoryContext {
   /** Canonical provider ref from config, for example `builtin:feishu`. */
   ref: string;
@@ -36,7 +42,10 @@ export interface ExternalChannelProviderFactoryContext {
   descriptor: ProviderDescriptor;
 }
 
-export type ExternalChannelProviderFactory = ProviderFactory<ChannelProvider>;
+export type ExternalChannelProviderFactory = ProviderFactory<
+  ChannelProvider<unknown>,
+  ExternalChannelProviderFactoryContext
+>;
 
 export type ExternalChannelModule = ProviderModule;
 
@@ -69,8 +78,12 @@ export interface LoadChannelProvidersOptions {
   importModule?: ExternalChannelModuleImporter;
 }
 
-const CHANNEL_LOADER_SPEC: ProviderPackageLoaderSpec<ChannelProvider> = {
+const CHANNEL_LOADER_SPEC: ProviderPackageLoaderSpec<
+  ChannelProvider<unknown>,
+  ExternalChannelProviderFactoryContext
+> = {
   kind: 'channel',
+  factoryContext: ({ ref, descriptor }) => ({ ref, descriptor }),
   createLoadError: (ref, message, options) =>
     new ExternalChannelProviderLoadError(ref, message, options),
   createContractError: (ref, message) =>
@@ -87,18 +100,29 @@ export async function loadChannelProviders(
 function assertChannelProvider(
   value: unknown,
   context: ProviderContractContext,
-): asserts value is ChannelProvider {
-  assertLoadedProviderObject(value, context);
-  const candidate = value as Partial<ChannelProvider>;
-  assertProviderDescriptorShape(candidate.descriptor, 'channel', context);
-  if (candidate.readConfig !== undefined && typeof candidate.readConfig !== 'function') {
-    context.fail('provider.readConfig must be a function when present');
+): asserts value is ChannelProvider<unknown> {
+  if (!isRecord(value)) {
+    context.fail('factory must return a provider object');
   }
+  const candidate = value as Partial<ChannelProvider<unknown>>;
   if (typeof candidate.createSession !== 'function') {
     context.fail('provider.createSession must be a function');
   }
+  assertOptionalConfig(candidate.config, context);
   assertOptionalOnboard(candidate.onboard, context);
   assertOptionalDiagnostic(candidate.diagnostic, context);
+}
+
+function assertOptionalConfig(
+  value: unknown,
+  context: ProviderContractContext,
+): void {
+  if (value === undefined) return;
+  if (!isRecord(value) || typeof value['read'] !== 'function') {
+    context.fail(
+      'provider.config.read must be a function when config is present',
+    );
+  }
 }
 
 function assertOptionalOnboard(

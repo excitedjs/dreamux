@@ -5,19 +5,14 @@ import {
   type CollectedTurn,
   type TurnCollector,
 } from './events.js';
-import { compileCodexOutputSchema, type CodexOutputSchemaCodec } from './output-schema-codec.js';
+import type { CodexOutputSchemaCodec } from './output-schema-codec.js';
 import type { CodexWsClient } from './rpc.js';
 import type { ThreadItem } from './types.js';
-import {
-  DEFAULT_MESSAGE_ID_DEDUPE_WINDOW,
-  unsupportedFeatureError,
-} from '@excitedjs/dreamux-utils';
 import type {
-  AgentRuntimeTextInput,
-  InboundTurnInput,
+  AgentRuntimeActivitySink,
+  AgentRuntimeSubmissionInput,
   JsonValue,
   RuntimeActivity,
-  RuntimeActivitySink,
   RuntimeAdmission,
   RuntimeCompletion,
   RuntimeSubmission,
@@ -33,7 +28,6 @@ interface SubmissionDeferred {
 interface NativeTurnRecord {
   representative: RuntimeSubmission | null;
   members: SubmissionDeferred[];
-  codec: CodexOutputSchemaCodec | null;
   completion: RuntimeCompletion | null;
   terminal: CollectedTurn | Error | null;
   releaseAfterAdmissions: Set<number> | null;
@@ -44,19 +38,18 @@ export interface TurnManagerOptions {
   getThreadId(): string | null;
   client: CodexWsClient;
   turnCwd?: string | null;
-  messageIdDedupeWindow?: number;
-  activitySink: RuntimeActivitySink;
+  /**
+   * The session-bound output schema codec, compiled once when the runtime was
+   * created. It is fixed for the life of the session: no submission can change
+   * or negotiate it.
+   */
+  codec: CodexOutputSchemaCodec | null;
+  activitySink: AgentRuntimeActivitySink;
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
   onTurnCompleted?: (turn: CollectedTurn) => void;
 }
 
 export class TurnManager {
-  private readonly seenMessageIds = new Set<string>();
-  private readonly seenMessageIdOrder: string[] = [];
-  private readonly seenTextInputIds = new Set<string>();
-  private readonly seenTextInputIdOrder: string[] = [];
-  private readonly pendingMessageIds = new Map<string, Promise<RuntimeAdmission>>();
-  private readonly pendingTextInputIds = new Map<string, Promise<RuntimeAdmission>>();
   private readonly pendingAdmissions = new Set<Promise<RuntimeAdmission>>();
   private readonly inFlightNativeAdmissions = new Set<number>();
   private nextNativeAdmission = 0;
@@ -69,10 +62,7 @@ export class TurnManager {
   private collectorThreadId: string | null = null;
   private decisionTail: Promise<void> = Promise.resolve();
   private stopped = false;
-  private idlePromise: Promise<void> | null = null;
-  private idleResolve: (() => void) | null = null;
   private readonly log: NonNullable<TurnManagerOptions['log']>;
-  private readonly messageIdDedupeWindow: number;
 
   constructor(private readonly opts: TurnManagerOptions) {
     this.log = opts.log ?? ((level, message, error) => {
@@ -80,46 +70,16 @@ export class TurnManager {
       if (error === undefined) console.error(prefix, message);
       else console.error(prefix, message, error);
     });
-    this.messageIdDedupeWindow = Math.max(0, opts.messageIdDedupeWindow ?? DEFAULT_MESSAGE_ID_DEDUPE_WINDOW);
   }
 
-  isBusy(): boolean {
-    return this.pendingAdmissions.size > 0 || [...this.nativeTurns.values()].some((record) => record.completion === null);
-  }
-
-  waitIdle(): Promise<void> {
-    if (!this.isBusy()) return Promise.resolve();
-    this.idlePromise ??= new Promise((resolve) => { this.idleResolve = resolve; });
-    return this.idlePromise;
-  }
-
-  enqueue(input: InboundTurnInput): Promise<RuntimeAdmission> {
-    return this.trackAdmission(this.reserveSource(
-      input.sourceId,
-      this.seenMessageIds,
-      this.seenMessageIdOrder,
-      this.pendingMessageIds,
-      () => this.enqueueDecision(
-        () => this.submit(input.text, null, `message ${input.sourceId || '<none>'}`),
-      ),
-    ));
-  }
-
-  submitTextInput(input: AgentRuntimeTextInput): Promise<RuntimeAdmission> {
-    return this.trackAdmission(this.reserveSource(
-      input.sourceId,
-      this.seenTextInputIds,
-      this.seenTextInputIdOrder,
-      this.pendingTextInputIds,
-      async () => {
-        let codec: CodexOutputSchemaCodec | null = null;
-        if (input.outputSchema !== undefined) {
-          try { codec = compileCodexOutputSchema(input.outputSchema); }
-          catch (error) { return { status: 'failed', error: asError(error) }; }
-        }
-        return this.enqueueDecision(() => this.submit(input.text, codec, 'text input'));
-      },
-    ));
+  /**
+   * Admit one already-rendered submission. The manager holds no source ledger:
+   * deduplication is Core's, ahead of this call.
+   */
+  submitInput(input: AgentRuntimeSubmissionInput): Promise<RuntimeAdmission> {
+    return this.trackAdmission(
+      this.enqueueDecision(() => this.submit(input.text, 'submission')),
+    );
   }
 
   async stop(): Promise<void> {
@@ -138,12 +98,10 @@ export class TurnManager {
     this.terminalOrder.length = 0;
     this.pendingActivity.clear();
     this.unboundObservedTurnIds.clear();
-    this.resolveIdleWaitersIfIdle();
   }
 
   private async submit(
     text: string,
-    codec: CodexOutputSchemaCodec | null,
     description: string,
   ): Promise<RuntimeAdmission> {
     if (this.stopped) return { status: 'stopped' };
@@ -152,8 +110,6 @@ export class TurnManager {
     if (threadId === null) return { status: 'failed', error: new Error('input submitted without thread_id') };
     const deferred = createRuntimeSubmission();
     this.ensureCollector(threadId);
-    const incompatible = this.incompatibleCodecError(codec);
-    if (incompatible !== null) return { status: 'failed', error: incompatible };
     const admissionId = this.nextNativeAdmission++;
     this.inFlightNativeAdmissions.add(admissionId);
     let response: Awaited<ReturnType<typeof submitTurnStart>>;
@@ -163,7 +119,7 @@ export class TurnManager {
         threadId,
         text,
         this.opts.turnCwd ?? null,
-        codec?.wireSchema,
+        this.opts.codec?.wireSchema,
       );
     } catch (error) {
       const normalized = asError(error);
@@ -177,7 +133,7 @@ export class TurnManager {
     if (this.stopped && (observed === undefined || observed.terminal === null)) {
       deferred.settle({ kind: 'stopped' });
     } else {
-      this.bindSubmission(response.turn.id, deferred, codec);
+      this.bindSubmission(response.turn.id, deferred);
     }
     this.inFlightNativeAdmissions.delete(admissionId);
     this.releaseCompletedRecords(admissionId);
@@ -189,18 +145,6 @@ export class TurnManager {
     const task = this.decisionTail.then(operation, operation);
     this.decisionTail = task.then(() => undefined, () => undefined);
     return task;
-  }
-
-  private incompatibleCodecError(candidate: CodexOutputSchemaCodec | null): Error | null {
-    for (const record of this.nativeTurns.values()) {
-      if (record.completion !== null || record.terminal !== null) continue;
-      if (sameCodec(record.codec, candidate)) continue;
-      return unsupportedFeatureError(
-        'outputSchema',
-        'codex cannot submit an incompatible outputSchema while a native turn is active',
-      );
-    }
-    return null;
   }
 
   private ensureCollector(threadId: string): void {
@@ -217,17 +161,15 @@ export class TurnManager {
     });
   }
 
-  private bindSubmission(turnId: string, deferred: SubmissionDeferred, codec: CodexOutputSchemaCodec | null): void {
+  private bindSubmission(turnId: string, deferred: SubmissionDeferred): void {
     this.unboundObservedTurnIds.delete(turnId);
     const record = this.nativeTurns.get(turnId) ?? {
       representative: null,
       members: [],
-      codec,
       completion: null,
       terminal: null,
       releaseAfterAdmissions: null,
     };
-    if (record.representative === null && record.members.length === 0) record.codec = codec;
     record.representative ??= deferred.submission;
     if (record.completion === null) record.members.push(deferred);
     this.nativeTurns.set(turnId, record);
@@ -244,7 +186,7 @@ export class TurnManager {
   private observeTerminal(turnId: string, terminal: CollectedTurn | Error): void {
     this.unboundObservedTurnIds.delete(turnId);
     const record = this.nativeTurns.get(turnId) ?? {
-      representative: null, members: [], codec: null, completion: null, terminal: null,
+      representative: null, members: [], completion: null, terminal: null,
       releaseAfterAdmissions: null,
     };
     if (record.terminal !== null || record.completion !== null) return;
@@ -280,24 +222,23 @@ export class TurnManager {
     if (record.representative === null) return;
     let completion: RuntimeCompletion;
     if (terminal instanceof Error) {
-      completion = Object.freeze({ status: 'failed', displaySubmission: record.representative, error: terminal });
+      completion = Object.freeze({ status: 'failed', error: terminal });
     } else {
+      const codec = this.opts.codec;
       let completedTurn = terminal;
-      try { if (record.codec !== null) completedTurn = restoreCollectedTurn(terminal, record.codec); }
+      try { if (codec !== null) completedTurn = restoreCollectedTurn(terminal, codec); }
       catch (error) {
-        completion = Object.freeze({ status: 'failed', displaySubmission: record.representative, error: asError(error) });
+        completion = Object.freeze({ status: 'failed', error: asError(error) });
         record.completion = completion;
         for (const member of record.members) member.settle({ kind: 'completion', completion });
         record.members.length = 0;
         record.terminal = null;
         this.releaseRecordIfReady(turnId, record);
-        this.resolveIdleWaitersIfIdle();
         return;
       }
       this.opts.onTurnCompleted?.(completedTurn);
       completion = Object.freeze({
         status: 'completed',
-        displaySubmission: record.representative,
         resultText: extractAssistantText(completedTurn),
         truncated: false,
       });
@@ -307,7 +248,6 @@ export class TurnManager {
     record.members.length = 0;
     record.terminal = null;
     this.releaseRecordIfReady(turnId, record);
-    this.resolveIdleWaitersIfIdle();
   }
 
   private failProtocol(error: Error): void {
@@ -318,7 +258,6 @@ export class TurnManager {
       if (record.completion !== null) continue;
       this.failRecord(turnId, record, this.protocolFailure);
     }
-    this.resolveIdleWaitersIfIdle();
   }
 
   private failRecord(turnId: string, record: NativeTurnRecord, error: Error): void {
@@ -384,54 +323,14 @@ export class TurnManager {
     }
   }
 
-  private reserveSource(
-    sourceId: string | undefined,
-    committed: Set<string>,
-    order: string[],
-    pending: Map<string, Promise<RuntimeAdmission>>,
-    operation: () => Promise<RuntimeAdmission>,
-  ): Promise<RuntimeAdmission> {
-    if (sourceId === undefined || sourceId === '') return operation();
-    if (committed.has(sourceId)) return Promise.resolve({ status: 'duplicate' });
-    const existing = pending.get(sourceId);
-    if (existing !== undefined) return existing;
-    const task = Promise.resolve().then(operation).catch((error: unknown): RuntimeAdmission => ({ status: 'ambiguous', error: asError(error) }));
-    pending.set(sourceId, task);
-    void task.then((admission) => {
-      if (admission.status === 'submitted' || admission.status === 'ambiguous') {
-        committed.add(sourceId);
-        order.push(sourceId);
-        while (order.length > this.messageIdDedupeWindow) {
-          const evicted = order.shift();
-          if (evicted !== undefined) committed.delete(evicted);
-        }
-      }
-      if (pending.get(sourceId) === task) pending.delete(sourceId);
-    });
-    return task;
-  }
-
   private trackAdmission(admission: Promise<RuntimeAdmission>): Promise<RuntimeAdmission> {
     this.pendingAdmissions.add(admission);
     void admission.finally(() => {
       this.pendingAdmissions.delete(admission);
       this.drainTerminalOrder();
-      this.resolveIdleWaitersIfIdle();
     }).catch(() => undefined);
     return admission;
   }
-
-  private resolveIdleWaitersIfIdle(): void {
-    if (this.isBusy()) return;
-    const resolve = this.idleResolve;
-    this.idlePromise = null;
-    this.idleResolve = null;
-    resolve?.();
-  }
-}
-
-function sameCodec(left: CodexOutputSchemaCodec | null, right: CodexOutputSchemaCodec | null): boolean {
-  return left === null ? right === null : right !== null && left.fingerprint === right.fingerprint;
 }
 
 function createRuntimeSubmission(): SubmissionDeferred {

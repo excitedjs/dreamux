@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 
+import { RuleViolation } from '../../platform/errors.js';
 import type { TeamHistoryQuery, TeamHistoryRow } from './types.js';
 import { validateTeamId } from './types.js';
 
@@ -28,7 +29,7 @@ export function matchesTeamHistoryQuery(
 export function clampTeamHistoryLimit(input: number | undefined): number {
   if (input === undefined) return 20;
   if (!Number.isInteger(input) || input < 1) {
-    throw new Error('history limit must be a positive integer');
+    throw new RuleViolation('history limit must be a positive integer');
   }
   return Math.min(input, 100);
 }
@@ -50,8 +51,9 @@ export function decodeTeamCursor(cursor: string): number {
       return parsed.offset;
     }
   } catch {
+    // Every unreadable cursor is the same broken rule, stated once below.
   }
-  throw new Error('invalid history cursor');
+  throw new RuleViolation('invalid history cursor');
 }
 
 export function previewTeamText(text: string): string {

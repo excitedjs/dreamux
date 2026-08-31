@@ -20,9 +20,9 @@ It declares:
 - `dispatchers[]`: dispatcher id, explicit `cwd`, dispatcher-local
   `workspace.enabled`, configured `channels[]`, and `agentRuntime`.
 - `dispatchers[].channels[]`: dispatcher-local channel id, Channel provider ref,
-  provider-owned channel config, and optional core-owned
-  `collaborationSpace.defaultBinding` policy for automatic collaboration-space
-  binding.
+  and provider-owned channel config. Core owns no routing or Collaboration Space
+  policy here. A leftover `collaborationSpace` block is a loud config error: the
+  Channel that offers the product flow owns that policy, in its own state.
 
 Legacy top-level `workspace.enabled` is not accepted. Set
 `dispatchers[].workspace.enabled` on each dispatcher instead; omitted dispatcher
@@ -35,7 +35,6 @@ The operator fix path is to run `dreamux onboard` or rebuild the config by hand.
 Key source:
 
 - `/packages/dreamux/src/config/config.ts`
-- `/packages/dreamux/src/config/collaboration-space-config.ts`
 - `/packages/dreamux/src/config/config-helpers.ts`
 - `/packages/dreamux/src/cli/commands/onboard.ts`
 - `/packages/dreamux/src/onboard/run.ts`
@@ -78,9 +77,11 @@ Important children:
 - `~/.dreamux/state/<dispatcher-id>/identity.json`: the dispatcher agent's
   authoritative identity/lifecycle/runtime-session recovery record at the
   dispatcher *root* (not under `teammate/`), so the `teammate.*` read
-  chokepoints never enumerate it. It may contain the provider-owned native
-  session id plus nullable opaque `transcript_locator`; it contains no rolling
-  conversation projection.
+  chokepoints never enumerate it. It carries the provider's own `session`
+  object verbatim — Core reads only its `id` — or `null` before a first start,
+  and it contains no rolling conversation projection. The removed `checkpoint`,
+  `session_id`, and `transcript_locator` fields make it fail loud rather than
+  migrate.
 - `~/.dreamux/state/<dispatcher-id>/access.json`: dispatcher-local Feishu V3
   access state with mixed field ownership. `version` is Channel/schema-owned;
   `dm_policy` and `group.*` are operator policy; `allow_users` is shared between
@@ -90,24 +91,35 @@ Important children:
   bot store owned by the Feishu Channel provider.
 - `~/.dreamux/state/<dispatcher-id>/cron-jobs.json`: durable scheduled-task
   definitions owned by the scheduler service.
-- `~/.dreamux/state/<dispatcher-id>/collaboration-spaces.json`: dispatcher-local
-  collaboration-space bindings and target provisioning records, including the
-  target-owned Team-dissolve operation/handoff correlation used while a target
-  is closing. This is fully server-owned Dreamux core state, not Channel
-  provider or operator state.
+- `~/.dreamux/state/<dispatcher-id>/feishu-routing.<channel-slug>.<digest>.json`:
+  one Feishu Channel session's own routing authority, owned end to end by
+  `@excitedjs/feishu-channel`. Core supplies the per-dispatcher state root and
+  nothing else — the filename (a slug of the configured channel id plus a
+  12-hex digest of that id, so two configured channels can never collide), the
+  schema, and what counts as a valid document are the Channel's. It holds
+  `bindings[]`, the target routes actually installed, each naming its Team and
+  whether it came from an explicit bind or from Space provisioning, and
+  `spaces[]`, the registered Collaboration Space policies with their creation
+  facts and a policy `generation`. Work in flight is deliberately absent:
+  automatic provisioning is process-local, so an unfinished one is lost with the
+  process and its target simply arrives unmatched afterwards. There is no
+  migration path — an incompatible document fails loud, and the operator
+  recreates the rows through the Channel's own `bind_channel` /
+  `bind_collaboration_space` tools.
 - `~/.dreamux/state/<dispatcher-id>/teammate/`: dispatcher-owned TeamMate
   entity directories. Each `identity.json` owns identity, lifecycle, worktree,
   intent, role guidance, and the provider-native session association. It may
   include `identity_prompt`; old records without it read as `null`.
 - `~/.dreamux/state/<dispatcher-id>/team/<team-id>/record.json`: fully
-  server-owned Team state. Its nullable `dissolve` fact is owned by
-  `TeamCollection` and records the accepted operation, caller/generation,
-  target handoff ids, first note/time, lifecycle phase, public-safe error,
-  cleanup attempt count, and next retry time. Do not edit, clear, or synthesize
-  this object manually; active and cleanup-pending phases are startup recovery
-  responsibility.
+  server-owned Team state — identity, the TeamLeader creation inputs, the
+  workspace, `status`, `closed_at` / `close_note`, the accepted `team.create`
+  request identity and payload hash, the one shared worktree identity, and
+  `worktree_cleanup_force`. It holds no dissolve operation: no phase, no
+  requester generation, no target handoff ids, no attempt count, and no retry
+  time. Do not edit or synthesize it manually.
 - `~/.dreamux/state/<dispatcher-id>/team/`: the remaining Team durable agent,
-  cron, workflow, and permanent name-claim records.
+  cron, and workflow records. A Team's `record.json` is also its permanent name
+  claim; there is no separate claim file.
 - `~/.dreamux/state/<dispatcher-id>/workflow/<run-id>/`: dispatcher-scope
   Dynamic Workflow `record.json` and append-only `journal.jsonl`.
 - `~/.dreamux/state/<dispatcher-id>/team/<team-id>/workflow/<run-id>/`:
@@ -119,12 +131,29 @@ terminal journal fact when present and otherwise converts a leftover `running`
 record to `stopped`. Journals are server-written JSONL and are not replayed by
 the current runtime.
 
-Team `status` remains `starting | running | closed`; the nullable dissolve phase
-is a separate fact. At logical close, a managed worktree can be
-`cleanup-pending` while routes and runtimes are already durably closed. The Team,
-TeamLeader, and Team members receive the same shared cleanup state before
-physical cleanup, and terminal or retry results are propagated from the one
-Team-owned operation.
+Team `status` is `starting | running | closed`. A dissolve is an ordinary
+submission rather than a persisted operation: the caller is answered
+`{ accepted, team_name, status: "submitted" }` as soon as the Team owns the
+background work, and the single record write that sets `closed` is the only
+thing written down. Nothing before that write is durable, so a process that dies
+mid-dissolve leaves an open Team whose children reopen lazily and whose dissolve
+can simply be asked again.
+
+One fact does outlive the process, and it is physical. A managed
+`delete-on-close` checkout that could not be reclaimed at close is committed on
+the closed record as `cleanup_state: "cleanup-pending"`, together with the
+`worktree_cleanup_force` authorization the caller gave for exactly that reclaim.
+Startup finds closed records carrying that pair and finishes the work from the
+record alone — no Team is materialized for it — launching each reclaim rather
+than awaiting it. A failure writes no second fact: the same pending state stands
+for the next start, which is why there is no retry ledger. The authorization is
+cleared with the pending work it authorized.
+
+`channel-bindings.json` and `collaboration-spaces.json` at the dispatcher root
+are removed Core state, not current files. Dreamux probes for them and fails
+loud rather than reading them: a Channel now owns its own routing state, and the
+Channel that offers the product flow owns its Space policy. The operator deletes
+the named file and rebinds through that Channel's own tools.
 
 TeamMate, team-member, and TeamLeader identities persist admin-supplied
 `skill_sources` so runtime relaunch and process restart preserve authorized
@@ -160,12 +189,15 @@ Key source:
 - `/packages/dreamux/src/platform/paths.ts`
 - `/packages/dreamux/src/state/dispatcher-store.ts`
 - `/packages/dreamux/src/service/agent-entity/identity-store.ts`
-- `/packages/dreamux/src/service/agent-entity/transcript-reader.ts`
+- `/packages/dreamux/src/service/agent-entity/activity-reader.ts`
 - `/packages/dreamux/src/service/team-collection/store.ts`
-- `/packages/dreamux/src/service/collaboration-space/store.ts`
+- `/packages/dreamux/src/service/team-collection/worktree-cleanup.ts`
+- `/packages/dreamux/src/service/legacy-state.ts`
 - `/packages/dreamux/src/service/scheduler/store.ts`
 - `/packages/dreamux/src/service/workflow-service/store.ts`
 - `/packages/dreamux/src/service/workflow-service/journal.ts`
+- `/packages/channel/feishu-channel/src/routing/store.ts`
+- `/packages/channel/feishu-channel/src/routing/document.ts`
 - `/packages/channel/feishu-channel/src/chat-bots-store.ts`
 
 ## Run Files
@@ -270,11 +302,16 @@ Key source:
 - `spill/`: over-budget TeamMate completion payloads.
 - `feishu-attachments/`: bounded inbound Feishu attachment downloads.
 
-`~/.dreamux/logs/` is server-owned log output, split by component. Codex
-app-server logs use `~/.dreamux/logs/codex-app-server/<dispatcher>.log`; Dynamic
-Workflow lifecycle logs use `~/.dreamux/logs/workflow/<dispatcher>.log`; scoped
-MCP process diagnostics use component directories such as `channel-mcp/`,
-`team-mcp/`, and `teammate-mcp/`. MCP stdout is reserved for official stdio
+`~/.dreamux/logs/` is server-owned log output, split by component: the server
+log `dreamux-server.log`, per-dispatcher Channel diagnostics under `channel/`,
+and Dynamic Workflow lifecycle logs under `workflow/`. A runtime composes its own
+subpaths under the same root — Codex app-server logs use
+`~/.dreamux/logs/codex-app-server/<dispatcher>.log`. There is deliberately no
+per-server MCP log: a shim is launched with a socket path and an opaque lease
+token and cannot name a dispatcher to open a log for, and the delegate that
+decides and fails runs inside the server, so the authoritative diagnostics are
+already in the server log. Shim-local transport failures go to stderr, which the
+runtime that spawned it captures. MCP stdout is reserved for official stdio
 protocol frames. Transport, schema, handler, and shutdown diagnostics go only
 to those component loggers or stderr and are not persisted as MCP state.
 Successful MCP envelopes are transient wire data rather than state: ordinary

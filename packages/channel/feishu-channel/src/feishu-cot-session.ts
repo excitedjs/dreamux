@@ -1,16 +1,16 @@
 /** Fail-open wiring between a live Feishu session and its COT adapter. */
 import type {
-  ChannelCoreEventSource,
-  ChannelCoreEventSubscription,
-  ChannelTarget,
-  ChannelToolCallerContext,
+  ChannelCoreEvent,
+  ChannelMcpCaller,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 import type { FeishuCotClient } from '@excitedjs/feishu-transport';
 
 import { FeishuCotAdapter } from './feishu-cot-adapter.js';
 import { cotErrorCategory } from './feishu-cot-diagnostics.js';
+import { FeishuSubmittedTurns } from './feishu-inbound-anchor.js';
 import type { VisibleMessageAnchor } from './feishu-cot-state.js';
+import type { FeishuTarget } from './routing/target.js';
 
 interface FeishuCotSessionContext {
   readonly dispatcherId: string;
@@ -23,6 +23,8 @@ export class FeishuCotSessionSeam {
   private adapter: FeishuCotAdapter | undefined;
   private isCurrent: (() => boolean) | undefined;
   private readonly context: FeishuCotSessionContext;
+
+  private readonly submitted = new FeishuSubmittedTurns();
 
   constructor(private readonly opts: {
     readonly dispatcherId: string;
@@ -37,10 +39,7 @@ export class FeishuCotSessionSeam {
     };
   }
 
-  start(
-    coreEvents: ChannelCoreEventSource | undefined,
-    isCurrent: () => boolean,
-  ): ChannelCoreEventSubscription[] {
+  start(isCurrent: () => boolean): void {
     if (this.adapter !== undefined) {
       throw new Error('Feishu COT session seam is already started');
     }
@@ -51,7 +50,58 @@ export class FeishuCotSessionSeam {
       cotClient: this.opts.cotClient,
     });
     this.isCurrent = isCurrent;
-    return subscribeCotActivity(this.context, coreEvents, isCurrent);
+  }
+
+  /**
+   * One subscription, demultiplexed here.
+   *
+   * Every submitted turn is recorded before it is presented, whoever submitted
+   * it: the recording is a key-value fact, not a presentation decision, and
+   * only a session holding the matching `turn_id` can turn it into one.
+   */
+  handle(event: ChannelCoreEvent): void {
+    const adapter = this.adapter;
+    const isCurrent = this.isCurrent;
+    if (adapter === undefined || isCurrent === undefined) return;
+    if (!isCurrent()) return;
+    this.guard('listener failed; display only', () => {
+      switch (event.kind) {
+        case 'teammate.turn.submitted':
+          this.submitted.record(event);
+          adapter.onTurnSubmitted(event);
+          return;
+        case 'teammate.turn.settled':
+          adapter.onTurnSettled(event);
+          return;
+        case 'teammate.turn.message':
+          adapter.onTurnMessage(event);
+          return;
+        case 'teammate.turn.tool_call':
+          adapter.onTurnToolCall(event);
+          return;
+        case 'team.state':
+          adapter.onTeamState(event);
+          return;
+        default:
+          return;
+      }
+    });
+  }
+
+  /**
+   * Bind this session's visible message to the turn its own submit created.
+   *
+   * `turnId` came back from that Command, so claiming the matching submitted
+   * event is the proof of ownership — no other session can hold it, and the
+   * event states the recipient instead of this Channel guessing at one.
+   */
+  attachInboundAnchor(turnId: string, anchor: VisibleMessageAnchor): void {
+    const event = this.submitted.claim(turnId);
+    if (event === null) return;
+    this.withAdapter(
+      'inbound anchor attach failed; display only',
+      (adapter) => adapter.onAnchoredSubmission({ event, anchor }),
+    );
   }
 
   setBindingFallbackAnchor(
@@ -59,51 +109,50 @@ export class FeishuCotSessionSeam {
     leaderName: string,
     anchor: VisibleMessageAnchor,
   ): void {
-    guard(
-      this.context,
+    this.withAdapter(
       'binding fallback anchor failed; notification unchanged',
-      () => {
-        const adapter = this.adapter;
-        const isCurrent = this.isCurrent;
-        if (adapter === undefined || isCurrent === undefined || !isCurrent()) {
-          return;
-        }
-        adapter.setFallbackAnchorIfAbsent(teamName, leaderName, anchor);
-      },
+      (adapter) => adapter.setFallbackAnchorIfAbsent(
+        teamName,
+        leaderName,
+        anchor,
+      ),
     );
   }
 
   refreshReplyNextAnchor(input: {
-    caller: ChannelToolCallerContext | undefined;
-    chatId: string;
-    messageId: string;
-    resolveTarget: () => ChannelTarget;
-    isCurrent: () => boolean;
+    caller: ChannelMcpCaller;
+    anchor: VisibleMessageAnchor;
   }): void {
+    if (input.caller.kind !== 'team_leader') return;
     const caller = input.caller;
-    if (caller?.kind !== 'team_leader') return;
-    guard(this.context, 'reply anchor refresh failed; Reply unchanged', () => {
-      const adapter = this.adapter;
-      const isCurrent = this.isCurrent;
-      if (
-        adapter === undefined ||
-        isCurrent === undefined ||
-        !isCurrent() ||
-        !input.isCurrent()
-      ) {
-        return;
-      }
-      adapter.refreshNextAnchor(caller.team_name, caller.leader_name, {
-        chatId: input.chatId,
-        messageId: input.messageId,
-        target: input.resolveTarget(),
-      });
-    });
+    this.withAdapter(
+      'reply anchor refresh failed; Reply unchanged',
+      (adapter) => adapter.refreshNextAnchor(
+        caller.team_name,
+        caller.leader_name,
+        input.anchor,
+      ),
+    );
+  }
+
+  onRouteReleased(input: { teamName: string; target: FeishuTarget }): void {
+    this.withAdapter(
+      'route release failed; display only',
+      (adapter) => adapter.onRouteReleased(input),
+    );
+  }
+
+  onRouteClaimed(input: { teamName: string; target: FeishuTarget }): void {
+    this.withAdapter(
+      'route claim failed; display only',
+      (adapter) => adapter.onRouteClaimed(input),
+    );
   }
 
   async close(): Promise<void> {
     const adapter = this.adapter;
     this.isCurrent = undefined;
+    this.submitted.clear();
     if (adapter === undefined) return;
     this.adapter = undefined;
     try {
@@ -112,43 +161,24 @@ export class FeishuCotSessionSeam {
       logCotSeamFailure(this.context, 'adapter close failed', err);
     }
   }
-}
 
-/** Core listeners are synchronous local projections and never await Feishu. */
-function subscribeCotActivity(
-  context: FeishuCotSessionContext,
-  coreEvents: ChannelCoreEventSource | undefined,
-  isCurrent: () => boolean,
-): ChannelCoreEventSubscription[] {
-  if (coreEvents === undefined) return [];
-  const forward =
-    <T>(handle: (adapter: FeishuCotAdapter, event: T) => void) =>
-    (event: T): void => {
-      const adapter = context.adapter();
-      if (adapter === undefined || !isCurrent()) return;
-      guard(context, 'listener failed; display only', () =>
-        handle(adapter, event));
-    };
-  return [
-    coreEvents.on('turn.submitted', forward((a, e) => a.onTurnSubmitted(e))),
-    coreEvents.on('turn.settled', forward((a, e) => a.onTurnSettled(e))),
-    coreEvents.on('turn.message', forward((a, e) => a.onTurnMessage(e))),
-    coreEvents.on('turn.tool_call', forward((a, e) => a.onTurnToolCall(e))),
-    coreEvents.on('team.state', forward((a, e) => a.onTeamState(e))),
-    coreEvents.on('binding.route', forward((a, e) => a.onBindingRoute(e))),
-  ];
-}
+  private withAdapter(
+    what: string,
+    run: (adapter: FeishuCotAdapter) => void,
+  ): void {
+    const adapter = this.adapter;
+    const isCurrent = this.isCurrent;
+    if (adapter === undefined || isCurrent === undefined) return;
+    if (!isCurrent()) return;
+    this.guard(what, () => run(adapter));
+  }
 
-function guard<T>(
-  context: FeishuCotSessionContext,
-  what: string,
-  run: () => T,
-): T | undefined {
-  try {
-    return run();
-  } catch (err) {
-    logCotSeamFailure(context, what, err);
-    return undefined;
+  private guard(what: string, run: () => void): void {
+    try {
+      run();
+    } catch (err) {
+      logCotSeamFailure(this.context, what, err);
+    }
   }
 }
 

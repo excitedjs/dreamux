@@ -1,3 +1,5 @@
+import { RuleViolation } from '../platform/errors.js';
+
 export const DISPATCHER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 export const DISPATCHER_ID_RULE =
@@ -5,7 +7,7 @@ export const DISPATCHER_ID_RULE =
 
 export function validateDispatcherId(id: string, label = 'dispatcher id'): string {
   if (!DISPATCHER_ID_PATTERN.test(id)) {
-    throw new Error(`${label} must be ${DISPATCHER_ID_RULE}: ${id}`);
+    throw new RuleViolation(`${label} must be ${DISPATCHER_ID_RULE}: ${id}`);
   }
   return id;
 }

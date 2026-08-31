@@ -1,7 +1,10 @@
+import type { JsonSchema } from '@excitedjs/dreamux-types';
+
 export interface WorkflowAgentOptions {
   label?: string;
   phase?: string;
-  schema?: Record<string, unknown>;
+  /** Carried verbatim to the runtime; the child sends it as JSON. */
+  schema?: JsonSchema;
   agentType?: string;
   intent?: string;
   identity?: string;

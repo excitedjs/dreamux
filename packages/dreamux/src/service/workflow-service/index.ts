@@ -7,6 +7,7 @@ import {
   type CompletionDeliveryPolicy,
   type CompletionInitiator,
 } from '../completion-router/index.js';
+import { deduplicate } from '../deduplicate.js';
 import { throwSettledFailures } from '../shutdown-errors.js';
 import type {
   CreateLockedTeammateOptions,
@@ -19,6 +20,7 @@ import {
   workflowRunnerEntryPath,
   type WorkflowScopePathInput,
 } from '../../platform/paths.js';
+import { WorkflowRunNotFoundError } from './errors.js';
 import { validateWorkflowArgs } from './json-args.js';
 import { WorkflowJournal } from './journal.js';
 import { parseWorkflowMaxConcurrency } from './limits.js';
@@ -73,8 +75,6 @@ export class WorkflowService implements WorkflowOps {
   private readonly store: WorkflowRunStore;
   private readonly runs = new Map<string, WorkflowRun>();
   private readonly runCreations = new Set<Promise<WorkflowRunAccepted>>();
-  private initializeTask: Promise<void> | null = null;
-  private initialized = false;
   private accepting = false;
 
   constructor(private readonly opts: WorkflowServiceOptions) {
@@ -163,12 +163,14 @@ export class WorkflowService implements WorkflowOps {
       createRunner,
       deliverTerminal: (fact) =>
         this.opts.completionDelivery.deliver(initiator, fact),
-      evict: (terminal) => this.evict(runId, terminal),
       log: this.opts.log,
       ...(this.opts.now !== undefined ? { now: this.opts.now } : {}),
     });
     await run.initialize();
     this.runs.set(runId, run);
+    void run.settled.then(() => {
+      this.evict(runId, run);
+    });
     if (!this.accepting) run.closeAdmission();
     this.opts.log.info(
       {
@@ -191,7 +193,9 @@ export class WorkflowService implements WorkflowOps {
     if (active !== undefined) return active.snapshot();
     const record = await this.store.get(runId);
     if (record === null) {
-      throw new Error(`workflow run ${JSON.stringify(runId)} does not exist`);
+      throw new WorkflowRunNotFoundError(
+        `workflow run ${JSON.stringify(runId)} does not exist`,
+      );
     }
     return record;
   }
@@ -231,14 +235,16 @@ export class WorkflowService implements WorkflowOps {
     throwSettledFailures(results, 'multiple workflow runs failed to stop');
   }
 
-  private initialize(): Promise<void> {
-    if (this.initialized) return Promise.resolve();
-    this.initializeTask ??= this.recoverRunningRecords().then(() => {
-      this.initialized = true;
-    }).finally(() => {
-      this.initializeTask = null;
-    });
-    return this.initializeTask;
+  /**
+   * Reconcile the durable records once, before this scope answers anything.
+   *
+   * Every public operation enters through it, so recovery happens exactly once
+   * per scope; a failed attempt is released, so the next caller retries rather
+   * than inheriting a broken view.
+   */
+  @deduplicate({ type: 'once' })
+  private async initialize(): Promise<void> {
+    await this.recoverRunningRecords();
   }
 
   private async recoverRunningRecords(): Promise<void> {
@@ -324,6 +330,13 @@ export class WorkflowService implements WorkflowOps {
     }
   }
 
+  /**
+   * Drop the exact instance that reported itself over.
+   *
+   * The identity check is the whole safety property: by the time a run is
+   * durably terminal the id may already name a different run, and a run that
+   * ended must never evict its successor.
+   */
   private evict(runId: string, expected: WorkflowRun): void {
     if (this.runs.get(runId) === expected) this.runs.delete(runId);
   }

@@ -1,3 +1,12 @@
+/**
+ * The dispatcher's live Core-fact bus.
+ *
+ * Dispatcher-scoped, in-process distribution only. Authoritative state stays
+ * with the Team, identity, and turn owners; this bus retains nothing, replays
+ * nothing, and guarantees no eventual delivery. It is the single delivery
+ * owner: every published fact is sealed here before any listener sees it, and
+ * every per-session source is a lease this bus can revoke.
+ */
 import { EventEmitter } from 'node:events';
 
 import type {
@@ -6,9 +15,10 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import {
-  createScopedChannelCoreEventSource,
-  type ScopedChannelCoreEventSourceLease,
+  createScopedChannelEventSource,
+  type ScopedChannelEventSourceLease,
 } from './scoped-source.js';
+import { sealChannelCoreEvent } from './seal.js';
 
 const CORE_EVENT = Symbol('dispatcher-core-event');
 
@@ -17,14 +27,9 @@ export interface DispatcherCoreEventPublisher {
   hasSources?(): boolean;
 }
 
-/**
- * Dispatcher-scoped, in-process fact distribution only. Authoritative state
- * remains in the existing Team, identity, and turn owners; this bus retains no
- * events and offers no eventual-delivery guarantee.
- */
 export class DispatcherCoreEventBus extends EventEmitter {
   readonly publisher: DispatcherCoreEventPublisher;
-  private readonly sources = new Set<ScopedChannelCoreEventSourceLease>();
+  private readonly sources = new Set<ScopedChannelEventSourceLease>();
 
   constructor(private readonly opts: {
     dispatcherId: string;
@@ -43,8 +48,8 @@ export class DispatcherCoreEventBus extends EventEmitter {
     });
   }
 
-  createSource(channelId: string): ScopedChannelCoreEventSourceLease {
-    const source = createScopedChannelCoreEventSource({
+  createSource(channelId: string): ScopedChannelEventSourceLease {
+    const source = createScopedChannelEventSource({
       dispatcherId: this.opts.dispatcherId,
       channelId,
       log: this.opts.log,
@@ -70,25 +75,43 @@ export class DispatcherCoreEventBus extends EventEmitter {
     this.sources.clear();
   }
 
+  /**
+   * Publishing never fails a producer.
+   *
+   * Every caller is inside a Core operation whose durable work has already
+   * succeeded, so a scope mismatch, a rejected envelope, and a listener defect
+   * are all logged and dropped rather than raised into that operation.
+   */
   private publish(dispatcherId: string, event: ChannelCoreEvent): void {
-    if (dispatcherId !== this.opts.dispatcherId) {
-      this.opts.log.error(
-        {
-          dispatcher_id: this.opts.dispatcherId,
-          source_dispatcher_id: dispatcherId,
-          event_kind: event.kind,
-        },
-        'dispatcher core event scope mismatch',
-      );
-      return;
-    }
     try {
-      this.emit(CORE_EVENT, Object.freeze(event));
+      if (dispatcherId !== this.opts.dispatcherId) {
+        this.opts.log.error(
+          {
+            dispatcher_id: this.opts.dispatcherId,
+            source_dispatcher_id: dispatcherId,
+            event_kind: event?.kind,
+          },
+          'dispatcher core event scope mismatch',
+        );
+        return;
+      }
+      const sealed = sealChannelCoreEvent(event);
+      if (sealed === null) {
+        this.opts.log.error(
+          {
+            dispatcher_id: this.opts.dispatcherId,
+            event_kind: event?.kind,
+          },
+          'dispatcher core event is not a publishable catalog event',
+        );
+        return;
+      }
+      this.emit(CORE_EVENT, sealed);
     } catch (error) {
       this.opts.log.warn(
         {
           dispatcher_id: this.opts.dispatcherId,
-          event_kind: event.kind,
+          event_kind: event?.kind,
           error: error instanceof Error ? error.message : String(error),
         },
         'dispatcher core event delivery failed',
@@ -97,4 +120,4 @@ export class DispatcherCoreEventBus extends EventEmitter {
   }
 }
 
-export type { ScopedChannelCoreEventSourceLease };
+export type { ScopedChannelEventSourceLease };
