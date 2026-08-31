@@ -9,7 +9,9 @@
  *
  * "Visible after redaction remain unchanged" is tested directly: content with
  * no secret/path shape must survive byte-for-byte, not be narrowed to any
- * smaller presentation.
+ * smaller presentation. Path handling is held to the stricter reading of that
+ * rule — a path is *renamed* to the form the operator's own shell prints, and a
+ * path that only resembles this host's home is left entirely alone.
  */
 import { describe, expect, it } from 'vitest';
 
@@ -25,6 +27,7 @@ import {
   CONVERSATION_TOOL_ARGUMENTS_MAX,
   CONVERSATION_TOOL_RESULT_MAX,
   createConversationProjection,
+  redactText,
   type ProjectedAgent,
 } from '../src/channel/conversation-projection.js';
 import {
@@ -159,7 +162,7 @@ describe('conversation projection: secret redaction', () => {
     expect(content).toContain('<redacted-private-key>');
   });
 
-  it('replaces the entity workspace cwd with $WORKSPACE', () => {
+  it('relativizes an entity workspace path to a repo-relative one', () => {
     const { publisher, projection, agent } = harness();
     projection.projectSubmitted(agent, {
       id: 'turn-1',
@@ -169,33 +172,70 @@ describe('conversation projection: secret redaction', () => {
     });
     const content = submittedMessageContent(publisher);
     expect(content).not.toContain(CWD);
-    expect(content).toBe('file at $WORKSPACE/secrets/env.local was read');
+    expect(content).toBe('file at secrets/env.local was read');
   });
 
-  it('replaces a POSIX home-directory path with $HOME_PATH', () => {
-    const { publisher, projection, agent } = harness();
-    projection.projectSubmitted(agent, {
-      id: 'turn-1',
-      submittedAt: Date.now(),
-      prompt: 'key stored at /home/alice/.ssh/id_rsa for signing',
-      source: 'feishu',
-    });
-    const content = submittedMessageContent(publisher);
-    expect(content).not.toContain('/home/alice');
-    expect(content).toContain('$HOME_PATH');
+  it('renders the bare workspace itself as a dot', () => {
+    expect(redactText(`ran in ${CWD} today`, CWD, []).value).toBe('ran in . today');
   });
 
-  it('replaces a Windows home-directory path with $HOME_PATH', () => {
-    const { publisher, projection, agent } = harness();
-    projection.projectSubmitted(agent, {
-      id: 'turn-1',
-      submittedAt: Date.now(),
-      prompt: 'backup at C:\\Users\\alice\\secrets.txt now',
-      source: 'feishu',
-    });
-    const content = submittedMessageContent(publisher);
-    expect(content).not.toContain('C:\\Users\\alice');
-    expect(content).toContain('$HOME_PATH');
+  it('renames this host home to ~, keeping the rest of the path legible', () => {
+    expect(redactText('key at /home/me/.ssh/id_rsa now', '', ['/home/me']).value)
+      .toBe('key at ~/.ssh/id_rsa now');
+  });
+
+  it('renames a Windows home the same way', () => {
+    const home = 'C:\\Users\\me';
+    expect(redactText(`backup at ${home}\\notes.txt now`, '', [home]).value)
+      .toBe('backup at ~\\notes.txt now');
+  });
+
+  it('renames the bare home with no path after it', () => {
+    expect(redactText('cd /home/me and stop', '', ['/home/me']).value)
+      .toBe('cd ~ and stop');
+  });
+
+  /**
+   * The whole reason this is prefix scanning rather than a `/home/<name>/…`
+   * regex: another account's directory is not this operator's home, and blanking
+   * it costs the reader the one fact they needed.
+   */
+  it('leaves a path that merely starts with the same characters alone', () => {
+    const value = 'compare /home/meredith/notes.txt against it';
+    expect(redactText(value, '', ['/home/me']).value).toBe(value);
+  });
+
+  it('leaves a home-shaped fragment that is not rooted alone', () => {
+    const value = 'the string not/home/me/x is not a path here';
+    expect(redactText(value, '', ['/home/me']).value).toBe(value);
+  });
+
+  it('does not treat a foreign home-shaped path as this host home', () => {
+    const value = 'their build ran in /home/someoneelse/repo';
+    expect(redactText(value, '', ['/home/me']).value).toBe(value);
+  });
+
+  it('prefers the longest matching home prefix', () => {
+    expect(
+      redactText('at /home/me/nested/file.ts', '', ['/home/me/nested', '/home/me']).value,
+    ).toBe('at ~/file.ts');
+  });
+
+  /**
+   * A workspace normally sits under the home. Relativizing it first is what
+   * keeps the shorter, more useful form instead of `~/...`-prefixing everything.
+   */
+  it('relativizes the workspace before renaming the home it sits under', () => {
+    const home = '/home/me';
+    const cwd = `${home}/work/repo`;
+    expect(
+      redactText(`edited ${cwd}/src/a.ts and ${home}/.config/x`, cwd, [home]).value,
+    ).toBe('edited src/a.ts and ~/.config/x');
+  });
+
+  it('reports redacted:false when a path rule found nothing to rename', () => {
+    expect(redactText('nothing to rename here', '/workspace/repo', ['/home/me']).redacted)
+      .toBe(false);
   });
 
   it('marks redacted:true only when a rule actually fired, false for ordinary text', () => {

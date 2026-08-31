@@ -18,6 +18,7 @@ import {
   type DreamuxConfig,
 } from './config/config.js';
 import { DispatcherStore } from './state/dispatcher-store.js';
+import { resolveHomePathPrefixes } from './platform/home-paths.js';
 import {
   adminSocketPath,
   dispatcherCronJobsPath,
@@ -222,6 +223,12 @@ export class Server {
 
   /** Bring up admin socket + all enabled dispatchers. */
   async start(): Promise<void> {
+    // The published-conversation projection renames this host's home out of the
+    // text it publishes, and the canonical name of that home costs a `realpath`.
+    // Resolve it once here so no projected event pays for it, and so the
+    // projection itself stays synchronous.
+    await resolveHomePathPrefixes();
+
     this.dispatchers.setRestartIntent(
       await RestartIntentConsumer.load({
         now: Date.now(),

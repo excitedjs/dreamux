@@ -13,6 +13,7 @@ import type {
 
 import type { DispatcherCoreEventPublisher } from '../service/dispatcher-core-events/index.js';
 import type { AgentEntityIdentity } from '../service/agent-entity/types.js';
+import { homePathPrefixes } from '../platform/home-paths.js';
 
 export const ASSISTANT_TEXT_MAX = 160_000;
 export const CONVERSATION_MESSAGE_MAX = 100_000;
@@ -23,10 +24,20 @@ export const CONVERSATION_ACTIVITY_FACTS_MAX = 512;
 const INLINE_SECRET_RE = /(["']?\b(?:secret|password|passwd|token|authorization|cookie|credential|api[_-]?key|private[_-]?key|client[_-]?secret)\b["']?)(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|`[^`]*`|[^\s,;]+)/giu;
 const BEARER_RE = /\bBearer\s+[A-Za-z0-9._~+/-]+=*/giu;
 const PRIVATE_KEY_RE = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/giu;
-const POSIX_HOME_PATH_RE = /(?:\/home\/[^/\s"'`]+|\/Users\/[^/\s"'`]+|\/root)(?:\/[^\s"'`]*)?/gu;
-const WINDOWS_HOME_PATH_RE = /\b[A-Za-z]:\\Users\\[^\\\s"'`]+(?:\\[^\s"'`]*)?/giu;
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu;
 const COMMON_ACCESS_KEY_RE = /\b(?:AKIA|ASIA|AKLT)[A-Z0-9]{12,}\b/gu;
+
+/**
+ * What may sit inside a path without ending it.
+ *
+ * A prefix only counts as a path when the characters around it agree that it is
+ * one: `~/work` is this operator's home, `/home/alicexyz` is somebody else's
+ * directory that merely starts with the same letters, and `not/home/alice` is a
+ * fragment of a longer path that was never rooted here. Letters, digits, and
+ * the separators/punctuation that appear inside real path segments continue a
+ * token; anything else — whitespace, a quote, a colon, a comma — ends it.
+ */
+const PATH_TOKEN_CHARACTER_RE = /[\p{L}\p{N}_.~\\/-]/u;
 
 interface SanitizedText { value: string; truncated: boolean; redacted: boolean }
 interface ProjectableTurn {
@@ -281,15 +292,85 @@ function sanitizeText(value: string, cwd: string, max: number): SanitizedText {
   };
 }
 
-function redactText(value: string, cwd: string): { value: string; redacted: boolean } {
-  let redacted = value;
-  if (cwd !== '') redacted = redacted.split(cwd).join('$WORKSPACE');
+/**
+ * Rewrite what a projected conversation must not publish verbatim.
+ *
+ * Two different jobs share this function. Secrets are *destroyed* — a token has
+ * no legible form worth keeping. Paths are only *renamed*: an operator reading
+ * a card still needs to know which file was touched, so the workspace becomes
+ * `.` and this host's home becomes `~`, exactly the way the operator's own shell
+ * prints them. Order matters: the workspace usually sits under the home, so
+ * relativizing it first keeps the shorter, more useful form.
+ *
+ * `homePathPrefixes` is a parameter so a test can state the home it means
+ * instead of depending on the machine it runs on.
+ */
+export function redactText(
+  value: string,
+  cwd: string,
+  homePaths: readonly string[] = homePathPrefixes(),
+): { value: string; redacted: boolean } {
+  let redacted = replacePathPrefix(value, cwd, '.', '', true);
   redacted = redacted.replace(PRIVATE_KEY_RE, '<redacted-private-key>');
-  redacted = redacted.replace(POSIX_HOME_PATH_RE, '$HOME_PATH');
-  redacted = redacted.replace(WINDOWS_HOME_PATH_RE, '$HOME_PATH');
+  for (const homePath of homePaths) {
+    redacted = replacePathPrefix(redacted, homePath, '~', '~', false);
+  }
   redacted = redacted.replace(BEARER_RE, 'Bearer <redacted>');
   redacted = redacted.replace(JWT_RE, '<redacted-jwt>');
   redacted = redacted.replace(COMMON_ACCESS_KEY_RE, '<redacted-access-key>');
   redacted = redacted.replace(INLINE_SECRET_RE, (_match, key: string, separator: string) => `${key}${separator}<redacted>`);
   return { value: redacted, redacted: redacted !== value };
+}
+
+/**
+ * Replace every occurrence of `rawPrefix` that is actually the head of a path.
+ *
+ * Scanning for a known prefix is what makes this honest where a regex is not: a
+ * pattern like `/home/<name>/...` matches any string of that *shape*, including
+ * a directory on some other machine quoted in a log, and blanking those costs
+ * legibility for no privacy gain. Only the prefixes this host really uses are
+ * offered here, and each hit must still be bounded on both sides — preceded by
+ * a non-path character and followed by a separator or the end of a token.
+ *
+ * A hit with a path continuing after it (`<prefix>/rest`) takes
+ * `nestedReplacement`, and `stripNestedSeparator` drops the separator with it so
+ * a workspace turns into `./rest` rather than `.//rest`. A hit that ends there
+ * takes `exactReplacement`.
+ */
+function replacePathPrefix(
+  value: string,
+  rawPrefix: string,
+  exactReplacement: string,
+  nestedReplacement: string,
+  stripNestedSeparator: boolean,
+): string {
+  const prefix = rawPrefix.replace(/[\\/]+$/u, '');
+  if (prefix === '') return value;
+
+  let cursor = 0;
+  let searchFrom = 0;
+  let result = '';
+  while (searchFrom < value.length) {
+    const matchAt = value.indexOf(prefix, searchFrom);
+    if (matchAt < 0) break;
+
+    const previous = matchAt === 0 ? undefined : value[matchAt - 1];
+    const suffixAt = matchAt + prefix.length;
+    const next = value[suffixAt];
+    const nested = next === '/' || next === '\\';
+    const ends = next === undefined || isPathTokenBoundary(next);
+    if (isPathTokenBoundary(previous) && (nested || ends)) {
+      result += value.slice(cursor, matchAt);
+      result += nested ? nestedReplacement : exactReplacement;
+      cursor = suffixAt + (nested && stripNestedSeparator ? 1 : 0);
+      searchFrom = cursor;
+      continue;
+    }
+    searchFrom = suffixAt;
+  }
+  return cursor === 0 ? value : result + value.slice(cursor);
+}
+
+function isPathTokenBoundary(character: string | undefined): boolean {
+  return character === undefined || !PATH_TOKEN_CHARACTER_RE.test(character);
 }
