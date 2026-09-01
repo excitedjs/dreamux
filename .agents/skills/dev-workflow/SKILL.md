@@ -10,7 +10,7 @@ a TeamMate; delegate a role identity, task inputs, and an explicit output bounda
 
 Treat `next` as the integration trunk. Drive every development task toward a
 reviewed, CI-green GitHub PR merged into `next`, as owned by
-[`/.agents/reference/release-process.md`](/.agents/reference/release-process.md).
+[`/.agents/domains/repository-operations-and-release.md`](/.agents/domains/repository-operations-and-release.md).
 
 Treat the operator's description as an initial requirement, not as proof about
 the current implementation and not as permission to edit code. Verify code facts,

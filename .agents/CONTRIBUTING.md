@@ -1,7 +1,12 @@
 # Contributing to the dreamux knowledge base
 
-This file is for *writers* of `.agents/` content. Readers should start at
+This file is for *writers* of `.agents/` content. Readers start at
 [`root.md`](root.md).
+
+Nothing in this KB is absolutely authoritative. Every page is description plus
+rationale — evidence of what is and why — and any of it may be changed to fit
+the current product scenario, knowingly: name what you are changing, why the
+recorded reason no longer holds, and update the page in the same change.
 
 ## Knowledge-delta protocol
 
@@ -11,8 +16,8 @@ Before finishing any non-trivial change, ask:
 > a Codex / Feishu protocol contract, a state/config format, or a
 > cross-process invariant?
 
-If **yes**: update the KB in the same PR. A correct system with a stale KB is
-worse than a buggy system whose KB tells you exactly where to look.
+If **yes**: update the owning page in the same PR. A correct system with a
+stale KB is worse than a buggy system whose KB tells you exactly where to look.
 
 Also ask:
 
@@ -20,91 +25,78 @@ Also ask:
 > layers (container → collection → service → entity)? If so, should it be
 > a named capability on an interface instead?
 
-Current callback seams in the codebase:
-
-- `initiatorFor` — `DispatcherService` → Team/Teammate construction
-  (delivery-target resolution before an initiating action captures its closure)
-- `leaderChannelDescriptors` — `DispatcherService` → `TeamCollection` → `TeamService` → `buildLeader()` (channel MCP descriptor provisioning)
-- `getRuntime` + `submitScheduled` — container → `SchedulerService` (runtime access and scheduled input submission)
-
-Each is acceptable because it back-references a capability the caller owns but the
-callee cannot import without a cycle. But a new three-layer callback is a smell:
-prefer extracting a named interface or capability object that the callee can
-depend on directly.
+A new three-layer callback is a smell: prefer extracting a named interface or
+capability object that the callee can depend on directly.
 
 If **no** (bug fix inside one function, an obvious refactor, a TODO): don't
 write a KB entry just to look diligent. The KB earns its keep by being terse.
 
-## How to write
-
-- **English.** All KB content is English regardless of conversation language.
-  (Repo-level rule, see [`/CLAUDE.md`](../CLAUDE.md).)
-- **Current facts need source links.** Reference docs point at the files that
-  implement the behavior they describe.
-- **Short and owned.** Each fact has one owner file. Other files link to it
-  instead of restating it.
-- **Links.** Use relative links inside `.agents/` when linking to other KB
-  files. Use repo-root-absolute links (start with `/`) when linking from KB
-  files to source files, package files, or always-loaded repo files such as
-  `/CLAUDE.md`.
-- **Status matters.** Historical material stays preserved, but it must say that
-  it is historical, superseded, or archived.
-
-## Document Kinds
+## Document kinds
 
 | Kind | When to use | Naming |
 |---|---|---|
-| `product/README.md` | User-visible behavior stated independently of implementation — the baseline refactors diff against so behavior changes are made knowingly. Entries change only as explicit requirement decisions. | fixed filename |
-| `reference/<thing>.md` | Current behavior for a repo piece or operational mental model. Use for "what exists now". | kebab-case, no number |
-| `decisions/<slug>.md` | A choice that was debated and settled. Use for "why was this chosen". | kebab-case, no sequence number |
-| `domains/<area>.md` | A current cross-cutting runtime contract that spans several reference pages. | kebab-case |
-| `glossary.md` | Top-level terminology index for overloaded Dreamux terms. Keep it short and link source/reference docs for behavior. | fixed filename |
-| `proposals/<slug>.md` | Active design proposal only. Once implemented, superseded, or abandoned, move it to `archive/` or promote the settled result to a decision/reference page. | kebab-case |
-| `archive/<kind>/<slug>.md` | Preserved historical material that should not be a default reading path. | keep original slug |
-| `research/<slug>.md` | Frozen investigation snapshot; must end with a disposition section (Promoted / Deferred / Out of scope). | kebab-case |
-| `rules/<slug>.md` | A process rule that applies to KB authors themselves. | kebab-case |
+| `product/` | User-visible behavior stated independently of implementation — the baseline refactors diff against so behavior changes are made knowingly. Entries change only as explicit requirement decisions. | `README.md` catalog + companion pages |
+| `domains/<area>.md` | The current shape of one area: ownership, contracts, invariants, traps. This is the single current-state tree — there is no separate `reference/` kind. | kebab-case |
+| `tasks/<domain>/<slug>/` | One requirement's full derivation: lineage, rulings, design churn, delivery. Deliberately dense and messy — it is the evidence layer, not a reading path. Settled rulings from before the task system live here as backfilled records. | see `skills/dev-workflow/references/task-records.md` |
+| `research/<slug>.md` | Frozen investigation snapshot; must end with a disposition section (Promoted / Deferred / Out of scope). Never updated in body — evidence, preserved in its original language. | kebab-case |
+| `proposals/<slug>.md` | Genuinely active design work only. Once implemented, superseded, or abandoned, move it to `archive/` in the same change — an annotated graveyard is not "active". | kebab-case |
+| `archive/<kind>/<slug>.md` | Preserved historical material off the default reading path. Keep the original slug, add a dated banner, add an index row with a current pointer. | keep original slug |
+| `glossary.md` | Short definitions for overloaded Dreamux terms; each entry links its owner page. | fixed filename |
 
-## Regression Traps
+There is no `decisions/` kind. The "why" of a settled choice lives in its task
+record (backfilled ones included); a domain page states the current fact and
+ends with a one-line History pointer to the owning task-domain index. Do not
+grow per-ruling trail lists on domain pages — they accrete.
 
-A `## Regression Trap` (or `## Locked Scope`) section on a domain or reference
-page records a direction that was tried and rejected: the trigger, the concrete
-historical mistake, and the rejected direction with its reason. Several pages
-already carry them (see `domains/non-blocking-dispatcher-inbound.md` for the
-model). The creation rule: **when the operator corrects a class of error — not
-just an instance — the owning page gains a trap section in the same change.**
-A trap is a warning with a reason, not a prohibition: if you believe the
-recorded reason no longer holds, raise it with the operator instead of
-silently walking the rejected path again.
+## One owner per fact — split by what travels with the diff
 
-## Decision Record Template
+Each fact has one owner file; other files link to it instead of restating it.
+The split between a KB page and a directory `CLAUDE.md` is decided by **what
+gets opened alongside the code diff**, not by abstraction level:
 
-```markdown
-# <decision title>
+- load-bearing invariants a coder must know while editing a directory live in
+  that directory's `CLAUDE.md` — it rides the same diff and review;
+- cross-package maps, topology, product behavior, and traps live in the KB;
+  the KB links down to directory invariants rather than copying them.
 
-- **Status:** Accepted | In progress | Superseded by [link]
-- **Date:** YYYY-MM-DD
-- **Decided by:** operator ruling | engineering judgment (so a later reader
-  knows whether re-arguing it wastes the operator's time or is fair game)
-- **Affects:** packages / surfaces / invariants
-- **PR / Issue:** link
+The #356 revert is the standing proof: it updated `service/CLAUDE.md` in the
+same diff as the source and missed two KB copies of the same fact, which then
+taught the next agent a shipped bug. Copies rot; owners travel.
 
-## Context
+## Conventions
 
-The forces that made this a decision worth recording.
+- **English.** All KB content is written in English (repo rule). This is a
+  writing convention, not a mechanical check; frozen `research/` evidence keeps
+  its original language.
+- **Current facts need source links.** Domain pages point at the files that
+  implement the behavior they describe; `check.sh` verifies every cited
+  `/packages/...` path resolves.
+- **Regression Trap.** When the operator corrects a *class* of error — not
+  just an instance — the owning page gains a `## Regression Trap` (or
+  `## Locked Scope`) section in the same change: the trigger, the concrete
+  historical mistake, and the rejected direction with its reason. A trap is a
+  warning with a reason, not a prohibition; if the reason no longer holds,
+  raise it with the operator. Delete a trap when the mechanism it guards is
+  deleted or redesigned — traps are bounded, not a chronicle.
+- **Since this was recorded.** Historical text (backfilled records, frozen
+  snapshots) is never edited in place. Corrections go into a dated
+  `## Since this was recorded` section beneath the preserved body.
+- **Backfill provenance.** Content moved from a dissolved structure carries a
+  banner naming the move date and origin; original dates and statuses stay
+  verbatim.
+- **Links.** Relative links inside `.agents/`; repo-root-absolute links
+  (starting with `/`) from KB files to source files or always-loaded repo
+  files. Task trees use absolute `/.agents/tasks/...` links (the task
+  scaffold's convention).
+- **Status matters.** Historical material must say that it is historical.
 
-## Decision
+## Regression Trap: a green check.sh does not mean the facts are right
 
-What was chosen. One sentence if possible.
-
-## Consequences
-
-Costs, constraints, foot-guns, and enforcement / guards (tests, lint, review
-checklist).
-
-## Alternatives Considered
-
-Only when a future reader is likely to ask "why not X?" Keep it short.
-```
+`check.sh` validates structure — links resolve, nothing is orphaned, cited
+source paths exist. It does not read meaning. Two reproduced instances: a KB
+page contradicted a load-bearing removed-surfaces test while CI stayed green,
+and index annotations described fully implemented work as "draft". When you
+change behavior, grep the KB for the facts you changed; nothing else will.
 
 ## Validation
 
@@ -114,5 +106,5 @@ Before committing KB changes, run:
 .agents/scripts/check.sh
 ```
 
-It validates links, archive reachability, and decision index completeness.
-Failures are noisy on purpose; CI will reject anything the script rejects.
+It validates links, reachability from `root.md`, and domains-page source-path
+liveness. Failures are noisy on purpose; CI rejects anything it rejects.

@@ -6,9 +6,8 @@
 #      directory that exists
 #   2. every .md file under .agents/ is reachable from .agents/root.md
 #      (link graph; flags orphans)
-#   3. every decision record is listed in .agents/decisions/README.md
-#   4. every /packages/... file path cited by service-topology.md exists
-#   5. current reference docs contain no Han text (repo English rule)
+#   3. every /packages/... file path cited by a domains/ page exists
+#      (fails loudly when the domains tree itself is missing)
 #
 # Exits 0 on success, non-zero with a noisy list of failures otherwise.
 # Run before committing KB changes, and from CI.
@@ -170,60 +169,32 @@ link_graph_errors="${link_graph_result%% *}"
 kb_file_count="${link_graph_result#* }"
 errors=$((errors + link_graph_errors))
 
-# ---------- 3) decision index completeness ----------
-decision_index="$KB_ROOT/decisions/README.md"
-decision_index_entries="$(
-  awk '
-    /^## Alphabetical Index$/ { in_index = 1; next }
-    /^## / && in_index { exit }
-    in_index { print }
-  ' "$decision_index"
-)"
-while IFS= read -r f; do
-  slug="$(basename "$f" .md)"
-  [ "$slug" = "README" ] && continue
-  expected="- [$slug]($slug.md)"
-  if ! printf '%s\n' "$decision_index_entries" | grep -Fxq -- "$expected"; then
-    echo "decision missing from alphabetical index: .agents/decisions/$slug.md" >&2
-    errors=$((errors + 1))
-  fi
-done < <(find "$KB_ROOT/decisions" -maxdepth 1 -type f -name '*.md' | sort)
-
-# ---------- 4) service topology source path liveness ----------
-service_topology="$KB_ROOT/reference/service-topology.md"
-if [ -f "$service_topology" ]; then
-  while IFS= read -r cited; do
-    path="${cited%%#*}"
+# ---------- 3) domains source path liveness ----------
+# Every /packages/... path cited by a current-shape page must exist. This is
+# the one mechanical check that catches a page describing deleted source.
+domains_dir="$KB_ROOT/domains"
+if [ ! -d "$domains_dir" ]; then
+  echo "domains tree missing: $domains_dir (path-liveness check has no target)" >&2
+  errors=$((errors + 1))
+else
+  while IFS= read -r line; do
+    page="${line%%|*}"
+    path="${line#*|}"
+    path="${path%%#*}"
     case "$path" in
       *:[0-9]*) path="${path%:*}" ;;
     esac
     full="$REPO_ROOT$path"
     if [ ! -e "$full" ]; then
-      echo "missing service topology source path: reference/service-topology.md -> $path" >&2
+      echo "missing source path: domains/$page -> $path" >&2
       errors=$((errors + 1))
     fi
   done < <(
-    perl -ne 'while (m{(/packages/[^`)\s#]+)}g) { print "$1\n" }' "$service_topology" \
-      | sort -u
+    for f in "$domains_dir"/*.md; do
+      perl -sne 'while (m{(/packages/[^`)\s#]+)}g) { print "$name|$1\n" }' -- -name="$(basename "$f")" "$f"
+    done | sort -u
   )
 fi
-
-# ---------- 5) current reference docs contain no Han text ----------
-while IFS= read -r violation; do
-  echo "non-English Han text in current reference: $violation" >&2
-  errors=$((errors + 1))
-done < <(
-  perl -Mutf8 -CS -e '
-    for my $file (@ARGV) {
-      open my $fh, q{<:encoding(UTF-8)}, $file or die $!;
-      my $line = 0;
-      while (<$fh>) {
-        ++$line;
-        print qq{$file:$line\n} if /\p{Han}/;
-      }
-    }
-  ' "$KB_ROOT"/reference/*.md
-)
 
 if [ "$errors" -gt 0 ]; then
   echo "" >&2

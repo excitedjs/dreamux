@@ -25,7 +25,7 @@ factory options. The package owns only Codex-engine mechanics and its own
 The host resolves `builtin:codex` to this package and wraps it with a
 core-owned adapter that maps its private dispatcher objects onto the neutral
 contract; see
-`.agents/decisions/npm-package-split-and-channel-targets.md`.
+`.agents/tasks/architecture/npm-package-split/requirement.md (npm-package-split-and-channel-targets)`.
 
 ## Logger
 

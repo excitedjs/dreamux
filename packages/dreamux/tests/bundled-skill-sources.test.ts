@@ -61,7 +61,7 @@ describe('bundled Dreamux skill roots', () => {
   it('documents role-specific plus shared workflow injection and name protection', () => {
     const documents = [
       readFileSync(join(REPO_ROOT, 'packages/dreamux/README.md'), 'utf8'),
-      readFileSync(join(REPO_ROOT, '.agents/reference/dispatcher-skill.md'), 'utf8'),
+      readFileSync(join(REPO_ROOT, '.agents/domains/dispatcher-skill.md'), 'utf8'),
     ];
 
     for (const document of documents) {

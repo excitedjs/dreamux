@@ -1,6 +1,6 @@
 /**
  * Architecture guard: Core stays behind the neutral `AgentRuntimeProvider` /
- * `ChannelProvider` seam (minimize-provider-boundaries decision record §1-2).
+ * `ChannelProvider` seam (minimize-provider-boundaries task design record, `.agents/tasks/architecture/minimize-provider-boundaries/technical-design/final.md` §1-2).
  *
  * These are the "polymorphism" invariants a text-shape scan can legitimately
  * enforce (absence IS the contract, per the repo's CLAUDE.md layering rule):

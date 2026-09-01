@@ -86,7 +86,7 @@ A provider implements the full contract against this package only — see
 ## Build / test
 
 Built and tested through the monorepo (rush) path — the only supported install
-path (see [the install-model decision](../../.agents/decisions/install-model.md)).
+path (see [the install-model decision](../../.agents/tasks/architecture/npm-package-split/requirement.md#install-model)).
 From the repo root:
 
 ```sh
@@ -96,4 +96,4 @@ node common/scripts/install-run-rush.js test
 ```
 
 The design record is
-[`.agents/decisions/npm-package-split-and-channel-targets.md`](../../.agents/decisions/npm-package-split-and-channel-targets.md).
+[`.agents/tasks/architecture/npm-package-split/requirement.md`](../../.agents/tasks/architecture/npm-package-split/requirement.md#npm-package-split-and-channel-targets).

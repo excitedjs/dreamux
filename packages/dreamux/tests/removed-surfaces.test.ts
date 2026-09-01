@@ -183,7 +183,7 @@ describe('the Core Collaboration Space domain is fully absent', () => {
   // Scoped to Core (packages/dreamux/src) only: Feishu now legitimately OWNS
   // its own "Collaboration Space" concept end to end (bind_collaboration_space
   // / get_collaboration_space / list_collaboration_spaces are current, kept
-  // Feishu channel tools — see minimize-provider-boundaries §7 "Feishu
+  // Feishu channel tools — see the minimize-provider-boundaries task design record §7 "Feishu
   // Collaboration Space tests ... absence of Core Collaboration Space state,
   // Commands, events, or types"). What must be gone is CORE's own copy of
   // this domain, not the word itself repo-wide.

@@ -25,7 +25,7 @@ import {
  * `'team_member'` / `'team_leader'` (underscore) kinds and the `tm-` prefix on
  * a bare `'teammate'` kind belonged to the retired `role`/`team_member`
  * vocabulary the minimize-provider-boundaries refactor deleted — see
- * `.agents/tasks/architecture/minimize-provider-boundaries/README.md` line 154
+ * `.agents/tasks/architecture/minimize-provider-boundaries/README.md` (failure-ledger vocabulary item)
  * ("`team_member` is deleted from persisted types, internal vocabulary, and
  * public surfaces"). This suite asserts the CURRENT kind set and prefix rules
  * only; it must never reintroduce the deleted vocabulary.

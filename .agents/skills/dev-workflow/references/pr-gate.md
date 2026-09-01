@@ -9,7 +9,7 @@ task README says `State: done`.
 The TeamLeader reviews the final working diff, uses the real author identity,
 commits with the required co-author trailer, pushes the task branch, and opens or
 updates one public GitHub PR. Target `next`, as owned by
-[`/.agents/reference/release-process.md`](/.agents/reference/release-process.md).
+[`/.agents/domains/repository-operations-and-release.md`](/.agents/domains/repository-operations-and-release.md).
 If the repository default branch differs from `next`, stop and ask rather than
 following the drift.
 

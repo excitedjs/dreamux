@@ -4,7 +4,7 @@
  * A provider reference is the public, explicit identifier the operator writes
  * in config to select a Channel or Agent Runtime provider. The grammar is
  * recorded in
- * `.agents/decisions/provider-references-and-capability-registry.md`:
+ * `.agents/tasks/architecture/providerization-epic/requirement.md (provider-references-and-capability-registry)`:
  *
  *   builtin:<id>
  *   npm:<package-spec>

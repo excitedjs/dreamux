@@ -24,17 +24,18 @@ workflow stage. Do not turn a documentation correction into retroactive approval
 Keep one owner for each fact and link to it elsewhere:
 
 - `.agents/tasks/**` owns this requirement's lineage, current state, approved
-  requirement and solution, and delivery evidence.
-- `.agents/decisions/**` owns durable settled choices and why they were chosen.
-  Capture the durable requirement outcome needed to understand the choice, the
-  accepted decision points, rejected alternatives, consequences, and a task link;
-  do not copy the full requirement or a chronological work log. Use a stable topic
-  slug and update `.agents/decisions/README.md`.
-- `.agents/domains/**` owns current cross-cutting flows, ownership boundaries,
-  invariants, traps, source pointers, and decision links. Update only affected
-  domain pages.
-- `.agents/reference/**` owns current behavior, repository structure, and
-  operational mental models. Update only the single affected owner.
+  requirement and solution, operator rulings, rejected alternatives, and
+  delivery evidence. The task record **is** the decision record — there is no
+  separate decisions tree.
+- `.agents/product/**` owns user-visible behavior. Any entry this task touched
+  is updated here as an explicit requirement outcome.
+- `.agents/domains/**` owns the current shape: ownership boundaries,
+  contracts, invariants, Regression Traps, and source pointers. Update only the
+  affected owner pages; when the operator corrected a class of error, the
+  owning page gains a trap section in this closeout.
+- Directory `CLAUDE.md` files own the load-bearing invariants a coder needs
+  while editing that directory; they normally changed with the implementation
+  diff already — verify rather than duplicate.
 - `.agents/glossary.md` owns overloaded terms.
 - `.agents/root.md` owns only routing and repository-wide entry points.
 

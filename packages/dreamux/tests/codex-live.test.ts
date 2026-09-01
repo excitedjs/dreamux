@@ -22,7 +22,7 @@
  *     surface left to construct by hand.
  *   - The issue #63 reaction TRI-STATE (`RECEIVED_REACTION_EMOJI` /
  *     `IN_PROGRESS_REACTION_EMOJI`, add-then-cancel ordering) is a DELETED
- *     surface, not a renamed one: `.agents/reference/current-architecture.md`
+ *     surface, not a renamed one: `.agents/domains/current-architecture.md`
  *     states plainly "Automatic received/in-progress reactions are removed;
  *     the explicit model-facing `react` tool remains", and
  *     `.agents/domains/non-blocking-dispatcher-inbound.md`'s own Tests section

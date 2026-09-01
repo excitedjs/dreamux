@@ -127,7 +127,7 @@ Feishu's reply-to-message API rather than a send-to-thread endpoint.
 > core-owned adapter that uses the richer host-shaped session API. The neutral
 > `ChannelSession.start(routes)` path is real and contract-tested, but is not the
 > production wiring today. See
-> [`.agents/decisions/npm-package-split-and-channel-targets.md`](../../../.agents/decisions/npm-package-split-and-channel-targets.md).
+> [`.agents/tasks/architecture/npm-package-split/requirement.md`](../../../.agents/tasks/architecture/npm-package-split/requirement.md#npm-package-split-and-channel-targets).
 
 ## Build / test
 

@@ -7,7 +7,7 @@
  *
  * This package emits declarations only: there is no runtime JS contract surface
  * and no runtime dependencies. See
- * `.agents/decisions/npm-package-split-and-channel-targets.md`.
+ * `.agents/tasks/architecture/npm-package-split/requirement.md (npm-package-split-and-channel-targets)`.
  *
  * Scope: neutral contracts and catalog types only. No provider-specific paths,
  * selectors, or runtime-native record formats cross this boundary, and no

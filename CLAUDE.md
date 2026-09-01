@@ -93,10 +93,10 @@ not an optional nicety.
   [`.agents/product/README.md`](.agents/product/README.md).
 - Operator engineering taste:
   [`.agents/skills/engineering-whitepaper/SKILL.md`](.agents/skills/engineering-whitepaper/SKILL.md).
-- Current architecture entry point: [`.agents/reference/current-architecture.md`](.agents/reference/current-architecture.md).
-- Repository/package layout: [`.agents/reference/repo-structure.md`](.agents/reference/repo-structure.md).
-- State/cache/run/log paths: [`.agents/reference/state-and-paths.md`](.agents/reference/state-and-paths.md).
-- Channel/Feishu runtime: [`.agents/reference/channel-runtime.md`](.agents/reference/channel-runtime.md).
+- Current architecture entry point: [`.agents/domains/current-architecture.md`](.agents/domains/current-architecture.md).
+- Repository/package layout: [`.agents/domains/current-architecture.md`](.agents/domains/current-architecture.md) (package map) and [`.agents/domains/repository-operations-and-release.md`](.agents/domains/repository-operations-and-release.md).
+- State/cache/run/log paths: [`.agents/domains/state-config-and-files.md`](.agents/domains/state-config-and-files.md).
+- Channel/Feishu runtime: [`.agents/domains/channel.md`](.agents/domains/channel.md).
 - Task routing and KB index: [`.agents/root.md`](.agents/root.md).
 - KB writing rules: [`.agents/CONTRIBUTING.md`](.agents/CONTRIBUTING.md).
 
@@ -139,14 +139,16 @@ Do not use per-package `npm install`; workspace dependencies use `workspace:*`.
   `/packages/agent-runtime/codex/src/paths.ts`).
 - **No legacy architecture rollback:** do not reintroduce `runtime_dir`,
   SQLite-backed dispatcher state, `~/.codex-host/`, legacy global CLI aliases,
-  or workspace `.codex/skills` installation unless a new decision record
-  explicitly supersedes the current architecture.
+  or workspace `.codex/skills` installation unless a new operator ruling,
+  recorded in a task record, explicitly supersedes the current architecture.
 - **Codex protocol bumps:** update the
   `@excitedjs/agent-runtime-codex` package first. Core must stay behind the
   neutral `AgentRuntimeProvider` interface.
-- **Teammate reverse delivery:** Codex completion delivery depends on codex
-  0.137+ `thread/inject_items`; older versions fail loudly instead of silently
-  dropping completion.
+- **Codex minimum version:** Dreamux requires codex 0.137+ (`thread/start`,
+  `thread/resume`, `turn/start`, and thread-level instruction overrides);
+  older versions fail loudly at the provider's version gate
+  (`packages/agent-runtime/codex/src/version.ts`) instead of misbehaving
+  silently. Completion delivery rides the ordinary provider submit path.
 - **Live Codex tests:** tests that require a real Codex install fail loudly when
   Codex is missing. Use `DREAMUX_SKIP_LIVE_CODEX=1` only when the environment
   intentionally lacks Codex.
