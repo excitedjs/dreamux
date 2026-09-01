@@ -21,7 +21,8 @@ Design background:
 | Current architecture map | [`.agents/domains/current-architecture.md`](.agents/domains/current-architecture.md) |
 | Monorepo layout reference | [`.agents/domains/current-architecture.md`](.agents/domains/current-architecture.md) |
 | State/cache/run/log ownership | [`.agents/domains/state-config-and-files.md`](.agents/domains/state-config-and-files.md) |
-| Channel and Feishu runtime | [`.agents/domains/channel.md`](.agents/domains/channel.md) |
+| Channel mechanism | [`.agents/domains/channel/index.md`](.agents/domains/channel/index.md) |
+| Built-in Feishu Channel | [`.agents/domains/channel/feishu-channel.md`](.agents/domains/channel/feishu-channel.md) |
 | Provider architecture and package split | [`.agents/tasks/architecture/providerization-epic/requirement.md`](.agents/tasks/architecture/providerization-epic/requirement.md), [`.agents/tasks/architecture/npm-package-split/requirement.md`](.agents/tasks/architecture/npm-package-split/requirement.md) |
 | Issue #110 closure boundary | [`.agents/archive/decisions/issue-110-epic-closure.md`](.agents/archive/decisions/issue-110-epic-closure.md) |
 | Architecture, decisions, knowledge-delta protocol | [`.agents/root.md`](.agents/root.md) |

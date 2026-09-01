@@ -1,6 +1,6 @@
 # Feishu topic collaboration routing
 
-> **Archived 2026-09-01.** Topic-mode verification and fail-safe routing stand; the neutral-target projection does not (targets no longer cross the provider seam). Current owner: [/.agents/domains/channel.md](/.agents/domains/channel.md).
+> **Archived 2026-09-01.** Topic-mode verification and fail-safe routing stand; the neutral-target projection does not (targets no longer cross the provider seam). Current owner: [/.agents/domains/channel/feishu-channel.md](/.agents/domains/channel/feishu-channel.md).
 
 - **Status:** In review
 - **Date:** 2026-07-15

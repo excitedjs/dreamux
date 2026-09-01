@@ -19,7 +19,7 @@
  * `@excitedjs/feishu-channel`'s `bot.ts` — deliberately NOT a port of the
  * `next`-branch double, which predates issue #63's reaction-lifecycle
  * removal: `removeReaction` no longer exists on `FeishuBot` at all (see
- * `.agents/domains/channel.md` "Automatic received/in-progress
+ * `.agents/domains/channel/feishu-channel.md` "Automatic received/in-progress
  * reactions are removed; the explicit model-facing `react` tool remains").
  * `reactions` here only records the deliberate `addReaction` calls a model
  * makes through the `react` MCP tool — there is no automatic tri-state left

@@ -91,7 +91,7 @@ text alone.
   and
   [`/packages/dreamux/src/service/teammate-service/submission.ts`](/packages/dreamux/src/service/teammate-service/submission.ts).
   The current behavior is owned by
-  [`channel-routing-and-binding`](/.agents/domains/channel.md);
+  [`channel`](/.agents/domains/channel/index.md);
   this record is kept for the *why* of the routing/display split, not as a
   description of where the rendering happens today.
 

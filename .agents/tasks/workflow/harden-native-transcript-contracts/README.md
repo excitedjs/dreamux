@@ -60,7 +60,7 @@
     coverage.
 - Knowledge closeout: Complete.
   - Updated [State, config, and files](/.agents/domains/state-config-and-files.md)
-    and [Channel routing and binding](/.agents/domains/channel.md)
+    and [Channel](/.agents/domains/channel/index.md)
     to remove stale current-source pointers.
   - Decision update: N/A — this follow-up enforces and repairs the already
     accepted native-transcript contract without changing ownership or public

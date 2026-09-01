@@ -96,7 +96,8 @@ not an optional nicety.
 - Current architecture entry point: [`.agents/domains/current-architecture.md`](.agents/domains/current-architecture.md).
 - Repository/package layout: [`.agents/domains/current-architecture.md`](.agents/domains/current-architecture.md) (package map) and [`.agents/domains/repository-operations-and-release.md`](.agents/domains/repository-operations-and-release.md).
 - State/cache/run/log paths: [`.agents/domains/state-config-and-files.md`](.agents/domains/state-config-and-files.md).
-- Channel/Feishu runtime: [`.agents/domains/channel.md`](.agents/domains/channel.md).
+- Channel mechanism: [`.agents/domains/channel/index.md`](.agents/domains/channel/index.md).
+- Built-in Feishu Channel: [`.agents/domains/channel/feishu-channel.md`](.agents/domains/channel/feishu-channel.md).
 - Task routing and KB index: [`.agents/root.md`](.agents/root.md).
 - KB writing rules: [`.agents/CONTRIBUTING.md`](.agents/CONTRIBUTING.md).
 

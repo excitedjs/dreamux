@@ -324,7 +324,7 @@ Updated current knowledge owners:
 - [Dispatcher orchestration](/.agents/domains/dispatcher-orchestration.md)
 - [State, config, and files](/.agents/domains/state-config-and-files.md)
 - [State and paths](/.agents/domains/state-config-and-files.md)
-- [Channel runtime](/.agents/domains/channel.md)
+- [Channel](/.agents/domains/channel/index.md)
 - [Entity-owned TeamMate lifecycle and object Turns](/.agents/tasks/architecture/service-topology-foundations/requirement.md#entity-owned-teammate-lifecycle-and-object-turns)
 - [Provider architecture realignment](/.agents/tasks/architecture/providerization-epic/requirement.md#provider-architecture-realignment)
 - bundled maintenance

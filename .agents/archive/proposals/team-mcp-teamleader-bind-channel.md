@@ -1,6 +1,6 @@
 # Proposal: TeamLeader-scoped Team MCP channel binding
 
-> **Archived 2026-09-01.** Superseded in location, kept in spirit: the tool is the Channel's, and the TeamLeader copy carries no team field. Current owner: [/.agents/domains/channel.md](/.agents/domains/channel.md).
+> **Archived 2026-09-01.** Superseded in location, kept in spirit: the tool is the Channel's, and the TeamLeader copy carries no team field. Current owner: [/.agents/domains/channel/feishu-channel.md](/.agents/domains/channel/feishu-channel.md).
 
 - **Status:** Accepted for implementation after heterogeneous review
 - **Date:** 2026-07-21

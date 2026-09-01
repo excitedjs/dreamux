@@ -36,7 +36,7 @@ write a KB entry just to look diligent. The KB earns its keep by being terse.
 | Kind | When to use | Naming |
 |---|---|---|
 | `product/` | User-visible behavior stated independently of implementation — the baseline refactors diff against so behavior changes are made knowingly. Entries change only as explicit requirement decisions. | `README.md` catalog + companion pages |
-| `domains/<area>.md` | The current shape of one area: ownership, contracts, invariants, traps. This is the single current-state tree — there is no separate `reference/` kind. | kebab-case |
+| `domains/<area>.md` or `domains/<area>/index.md` with focused companion pages | The current shape of one area: ownership, contracts, invariants, traps. Use a directory when the domain mechanism and a concrete built-in implementation have distinct owners. This is the single current-state tree — there is no separate `reference/` kind. | kebab-case |
 | `tasks/<domain>/<slug>/` | One requirement's full derivation: lineage, rulings, design churn, delivery. Deliberately dense and messy — it is the evidence layer, not a reading path. Settled rulings from before the task system live here as backfilled records. | see `skills/dev-workflow/references/task-records.md` |
 | `research/<slug>.md` | Frozen investigation snapshot; must end with a disposition section (Promoted / Deferred / Out of scope). Never updated in body — evidence, preserved in its original language. | kebab-case |
 | `proposals/<slug>.md` | Genuinely active design work only. Once implemented, superseded, or abandoned, move it to `archive/` in the same change — an annotated graveyard is not "active". | kebab-case |

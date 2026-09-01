@@ -63,7 +63,7 @@ load through the same path):
   one `invoke(command, payload)` port, subscribes to a dispatcher-scoped
   read-only event source, and may publish its own MCP tools. Message parsing,
   routing, binding, targets, Collaboration Spaces, and presentation are all
-  Channel-internal. Owner: [Channel](channel.md).
+  Channel-internal. Owner: [Channel](channel/index.md).
 
 Key source: `/packages/dreamux/src/registry/`,
 `/packages/dreamux/src/agent-runtime/catalog.ts`,
@@ -124,7 +124,8 @@ presentation, and its tool surface. A Collaboration Space is a Channel product
 flow (provision a Team per managed chat/topic via ordinary `team.create`);
 provisioning is process-local and volatile by design. Core sees `team.create`,
 `team.submit`, and the `team_name` coming back — it holds no binding table and
-publishes no routing event. Owner: [Channel](channel.md); access state:
+publishes no routing event. Owners: [Channel](channel/index.md),
+[Built-in Feishu Channel](channel/feishu-channel.md); access state:
 [Feishu pairing access](feishu-pairing-access.md); inbound gating:
 [Non-blocking dispatcher inbound](non-blocking-dispatcher-inbound.md).
 
