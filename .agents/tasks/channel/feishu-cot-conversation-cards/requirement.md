@@ -85,17 +85,14 @@ home as `~`.
    anchor again. A native-ended fact closes an existing open card but never opens a
    new one; when no card is open, Feishu ignores it.
 
-9. **One narrow suppression.** Outside the accepted synchronous-admission loss
-   window, the only hidden body is the exact user input that entered through this
-   Feishu Channel and is already visible at its anchor. The
-   fixed receipt still opens the card, and every later assistant, tool, push, and
-   native-end event from the same native turn remains visible. This policy does
-   not require a new request-correlation field: Feishu already knows the intended
-   recipient from its routing decision, including when it deliberately executes
-   the proven-no-admission Dispatcher fallback. Suppression is best effort across
-   the synchronous admission window: Feishu does not add a correlation contract,
-   buffer, or reorder facts merely to prevent that body or early runtime activity
-   from appearing on the predecessor card before admission success is observed.
+9. **No body suppression.** Once the recipient has an anchor, every projected
+   input displays, including the body of the Feishu message this Channel itself
+   submitted. The Channel keeps no per-turn suppression state. Such a mark can
+   only be written after Core has already published that body synchronously
+   inside the admitting call, so it never took effect, and the duplicate it aimed
+   to hide is the same fact the accepted synchronous-admission loss already
+   allows. Removing it requires no correlation contract, buffer, or reordering,
+   which remain rejected.
 
 10. **Role parity.** Dispatcher and TeamLeader use the same state shape and the
    same anchor replacement, card open, append, interrupt, and close transitions.
@@ -177,6 +174,12 @@ home as `~`.
 - No early native-end group buffer and no request-correlation contract added to
   `team.submit` for presentation ownership.
 - No persisted anchor/card store, restart recovery, replay, or backfill.
+- No per-turn body-suppression ledger in the Channel.
+- No provider-side deduplication flag for native turn ends. A synthesized end is
+  reported only when the reporting call actually settled something, so no second
+  report exists to suppress.
+- No process-global cache for host home prefixes. The resolved prefixes are an
+  input passed to the conversation projection.
 
 ## Acceptance criteria
 
@@ -202,10 +205,9 @@ home as `~`.
   A successful Dispatcher admission moves the same anchor; ambiguous outcomes do
   not fallback or change the presentation.
 - After the successful anchor transition, a Feishu inbound displays the fixed
-  receipt without a duplicate copy of its user body; duplication during the
-  synchronous pre-result admission window is an accepted best-effort loss. Task,
-  task-notification, cron, system, and an unknown future source all display without
-  a whitelist.
+  receipt. Its user body is an ordinary input and displays wherever it lands; the
+  Channel holds no state to hide it. Task, task-notification, cron, system, and an
+  unknown future source all display without a whitelist.
 - One folded native turn containing any number of logical submissions emits one
   native-ended fact and closes the recipient's current open card once, if any. If
   no card is open, the fact is ignored. Intermediate or final logical settlements
@@ -223,6 +225,13 @@ home as `~`.
   `.` and `~` respectively, including paths followed by sentence punctuation and
   paths embedded in `file://` URLs. A missing home environment does not cause the
   process working directory to be displayed as `~`.
+- On the Claude side a synthesized end is reported only when that call settled a
+  submission that was still open, so an ordinary success reports exactly one end
+  without any deduplication state, and each terminal `result` reports its own end
+  by construction.
+- The conversation projection receives this host's home prefixes as a constructor
+  input. No module-level cache, no test reset hook, and no start-order dependency
+  decides whether a projected path is renamed.
 - Focused tests cover both providers' one-ended-per-native-turn contract, Feishu
   single-card state, post-admission anchor replacement, fallback-to-Dispatcher,
   bind-card initialization, no-anchor suppression, default-show policy, narrow

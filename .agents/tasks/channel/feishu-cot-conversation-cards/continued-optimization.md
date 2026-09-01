@@ -4,10 +4,9 @@ Simplification findings raised against the corrective implementation after it
 landed on the draft pull request. They are recorded here so they survive the
 review conversation; the operator rules on them one at a time.
 
-Nothing on this page is approved for implementation. Each entry carries its own
-status, and an entry only becomes work when the operator says so and the single
-implementation developer picks it up — the TeamLeader does not write product
-code for this task.
+Each entry carries its own status. All three below were approved by the operator
+on 2026-09-02 and are implemented by the Codex developer seat recorded in the
+task README; the TeamLeader does not write product code for this task.
 
 ## Where the complexity actually moved
 
@@ -31,8 +30,8 @@ which shares this pull request but is a separate subject from card lifecycle.
 
 ## 1. Claude native-turn end: narrow the synthesis rather than deduplicate it
 
-- **Status:** Recorded 2026-09-02. The operator accepts the synthesis; the
-  deduplication is the part under review. Not implemented.
+- **Status:** Approved 2026-09-02. The operator accepts the synthesis and ruled
+  the deduplication out. In implementation.
 - **Files:** [`/packages/agent-runtime/claude-code/src/runtime.ts`](/packages/agent-runtime/claude-code/src/runtime.ts),
   [`/packages/agent-runtime/claude-code/src/runtime-submissions.ts`](/packages/agent-runtime/claude-code/src/runtime-submissions.ts)
 
@@ -95,14 +94,14 @@ Estimated net reduction on the Claude side: 30 to 40 lines.
 - `endNativeTurn` wraps the sink call in `try`/`catch`. Inside this repository
   the consumer already catches everything, so nothing can propagate; the guard
   only pays for itself because the sink is a public provider contract that an
-  out-of-tree Core could break. Keep or drop on preference.
+  out-of-tree Core could break. Retained by the 2026-09-02 adjudication.
 - `failUnattributedResult` defends against Claude violating its own command
   lifecycle. It is pure defense, but it fails loudly rather than silently, so
-  it is worth keeping.
+  it is retained by the 2026-09-02 adjudication.
 
 ## 2. Channel-body suppression state
 
-- **Status:** Under review 2026-09-02. Not yet ruled on.
+- **Status:** Approved 2026-09-02 for complete removal. In implementation.
 - **File:** [`/packages/channel/feishu-channel/src/feishu-cot-state.ts`](/packages/channel/feishu-channel/src/feishu-cot-state.ts)
 
 `suppressedUserTurns` is a per-recipient set with a 64-entry cap and an
@@ -115,18 +114,23 @@ mostly inert.
 
 ## 3. Readable local-path projection
 
-- **Status:** Under review 2026-09-02. Capability itself already adjudicated as
-  original scope and staying; the review point is its implementation cost and
-  its process-level state.
+- **Status:** Approved 2026-09-02. The capability stays; the process-global cache
+  is removed in favour of a constructor input, and all three confirmed defects
+  are repaired. In implementation.
 - **Files:** [`/packages/dreamux/src/platform/home-paths.ts`](/packages/dreamux/src/platform/home-paths.ts),
   [`/packages/dreamux/src/channel/conversation-projection.ts`](/packages/dreamux/src/channel/conversation-projection.ts)
 
 `home-paths.ts` holds a module-level mutable cache resolved once from
 `Server.start()`, plus a reset hook for tests. Callers that run before that
 resolution silently fall back to the lexical home. Three implementation defects
-in this area are already adjudicated for repair — home resolution,
-punctuation-adjacent prefixes, and `file://` prefix recognition — and remain
-open as of the head of the draft pull request.
+in this area are adjudicated for repair — home resolution, punctuation-adjacent
+prefixes, and `file://` prefix recognition. Two share one root cause:
+`PATH_TOKEN_CHARACTER_RE` counts both `.` and `/` as characters that continue a
+path token, so a prefix preceded by the `/` of a `file://` URL and a prefix
+followed by a sentence-ending `.` both fail their boundary test. The third is
+specified by the requirement rather than reproduced from the current source: a
+host whose home cannot be resolved must not fall back to the process working
+directory.
 
 ## Related
 

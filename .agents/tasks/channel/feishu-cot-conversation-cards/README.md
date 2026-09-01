@@ -30,9 +30,11 @@
 - Continued optimization (simplification findings raised after the draft pull
   request, none approved for implementation):
   [continued-optimization.md](/.agents/tasks/channel/feishu-cot-conversation-cards/continued-optimization.md).
-- Next action: Complete independent implementation review and knowledge
-  closeout, then update draft pull request
-  [#357](https://github.com/excitedjs/dreamux/pull/357) and mark it ready.
+- Next action: The Codex developer implements the 2026-09-02 simplification
+  adjudication; then the TeamLeader pre-reviews it, completes knowledge closeout
+  and the task record, pushes to draft pull request
+  [#357](https://github.com/excitedjs/dreamux/pull/357), and requests the
+  independent Devbox re-review.
 - Related tasks: Builds on
   [adopt-completion-token-routing](/.agents/tasks/completion-routing/adopt-completion-token-routing/README.md)
   (the submission activity sink this task consumes). The parked
@@ -93,6 +95,23 @@
   finding is rejected because the task record had omitted that requirement. Fix
   the confirmed implementation defects in home resolution, punctuation-adjacent
   prefixes, and `file://` prefix recognition without removing the capability.
+- Simplification adjudication (operator, 2026-09-02): delete every construct the
+  review proved unnecessary, and repair every confirmed local-path projection
+  defect. Concretely: report a synthesized Claude native-turn end only when that
+  call actually settled an open submission, and delete the per-window
+  deduplication flag and its command-start reset with it; delete the Channel's
+  per-turn body-suppression ledger entirely, because it can never take effect and
+  the duplicate it targets is already an accepted loss; pass this host's home
+  prefixes into the conversation projection instead of caching them in a
+  process-global, and delete the cache, its test reset hook, and the start-order
+  dependency; fix all three confirmed path defects — home resolution, prefixes
+  adjacent to ordinary prose punctuation, and prefixes inside `file://` URLs. The
+  provider-contract guard around the native-turn sink and the fail-loud
+  unattributed-result path are deliberately retained.
+- Developer seat (operator, 2026-09-02): the simplification round is implemented
+  by a Codex developer TeamMate, replacing the previous single Claude developer
+  seat for this round. The TeamLeader still writes no product code, and owns the
+  task record, knowledge closeout, commits, pushes, and review requests.
 - Review adjudication (operator, 2026-09-02): fix and push the confirmed Claude
   native-turn granularity defect before continuing. A Claude native turn is one
   terminal `result`, not the whole resident execution window. Sequential results
@@ -104,8 +123,10 @@
 
 - Corrective implementation was completed by the single Claude developer on
   2026-09-01 and passed TeamLeader pre-review checks.
-- The single Claude developer is the sole product-code writer. The TeamLeader
-  must not edit product code.
+- Exactly one developer TeamMate writes product code at a time. The 2026-09-01
+  corrective round was written by a Claude developer; the 2026-09-02
+  simplification round is written by a Codex developer. The TeamLeader must not
+  edit product code in either round.
 - Independent implementation review and knowledge closeout are pending.
 - Existing proposal files, the withdrawn previous solution, public review text,
   and the generated Feishu design document are not implementation authorities.
