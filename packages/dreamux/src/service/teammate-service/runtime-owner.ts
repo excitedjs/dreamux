@@ -3,6 +3,7 @@ import type {
   AgentRuntimeActivitySink,
   AgentRuntimeCreateContext,
   AgentRuntimeMcpServer,
+  AgentRuntimeNativeTurnSink,
   AgentRuntimeProvider,
   AgentRuntimeStartOutcome,
   AgentRuntimeStatus,
@@ -37,6 +38,7 @@ interface TeammateRuntimeOwnerCallbacks {
   isActive: () => boolean;
   markClosing: () => void;
   activitySink: AgentRuntimeActivitySink;
+  nativeTurnSink: AgentRuntimeNativeTurnSink;
 }
 
 /** Raw runtime authority retained exclusively inside one TeamMate entity. */
@@ -306,6 +308,29 @@ export class TeammateRuntimeOwner {
     };
   }
 
+  /**
+   * The same generation fence for native turn ends.
+   *
+   * A replaced runtime must not finish its successor's displayed turn, so the
+   * end is dropped when its generation is gone — the same fail-open rule the
+   * activity sink follows, for the same reason: this is display, not
+   * settlement.
+   */
+  private generationNativeTurnSink(
+    lease: AgentRuntimeGenerationLease,
+  ): AgentRuntimeNativeTurnSink {
+    return (end) => {
+      if (!lease.isCurrent()) {
+        this.deps.log.debug(
+          { teammate: this.state.current().name },
+          'dropped Agent Runtime native turn end from a revoked runtime generation',
+        );
+        return;
+      }
+      this.callbacks.nativeTurnSink(end);
+    };
+  }
+
   private resolveLaunch(lease: AgentRuntimeGenerationLease): RuntimeLaunchSpec {
     const identity = this.state.current();
     const agent: ResolvedAgentConfig = resolveAgent(
@@ -329,6 +354,7 @@ export class TeammateRuntimeOwner {
           ? { outputSchema: this.options.outputSchema }
           : {}),
         activity: this.generationActivitySink(lease),
+        nativeTurn: this.generationNativeTurnSink(lease),
         ...(this.options.systemPrompt !== undefined
           ? { systemPrompt: this.options.systemPrompt }
           : {}),

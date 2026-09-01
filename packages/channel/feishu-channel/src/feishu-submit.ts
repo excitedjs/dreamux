@@ -6,7 +6,10 @@
  * standing reminder, and a stable source id, and it renders the provenance
  * envelope itself. Nothing about Feishu crosses.
  */
-import type { ChannelCommandError } from '@excitedjs/dreamux-types';
+import type {
+  ChannelCommandError,
+  TeamSubmitResult,
+} from '@excitedjs/dreamux-types';
 
 import type { VisibleMessageAnchor } from './feishu-cot-state.js';
 import type { FeishuTarget } from './routing/target.js';
@@ -70,6 +73,25 @@ export interface FeishuTeamSubmitter {
     teamName: string,
     submission: FeishuSubmission,
   ): Promise<FeishuSubmitOutcome>;
+}
+
+/**
+ * Read Core's answer to `team.submit` as one of this Channel's outcomes.
+ *
+ * The mapping is the whole of what a submission result means here: only
+ * `submitted` carries a turn to anchor a card on, and every other status is
+ * either a proven non-admission or a fact that proves nothing.
+ */
+export function submitOutcome(result: TeamSubmitResult): FeishuSubmitOutcome {
+  switch (result.status) {
+    case 'submitted':
+      return { status: 'submitted', turnId: result.turn_id ?? null };
+    case 'duplicate':
+    case 'stopped':
+      return { status: result.status };
+    default:
+      return { status: result.status, error: result.error ?? null };
+  }
 }
 
 /** Read a rejected Command's code without assuming an error class. */

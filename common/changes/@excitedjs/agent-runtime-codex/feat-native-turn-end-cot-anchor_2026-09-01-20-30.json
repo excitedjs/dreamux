@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-codex",
+      "comment": "BREAKING: Review: The Codex runtime now reports the end of each runtime-native turn through the optional neutral `nativeTurn` sink, exactly once per turn, driven by Codex's one `turn/completed` regardless of how many Dreamux submissions that turn folded. A failed finalize or a codec restore reports `failed`, and a stopped turn reports `interrupted`. The report is display-only and fail-open: a throwing sink never affects submission settlement. No rebuild is needed.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex"
+}

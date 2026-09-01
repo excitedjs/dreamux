@@ -50,6 +50,7 @@ import { FeishuBindingOperations } from './feishu-session-bindings.js';
 import {
   commandErrorCode,
   errorMessage,
+  submitOutcome,
   type FeishuSubmission,
   type FeishuSubmitOutcome,
 } from './feishu-submit.js';
@@ -489,6 +490,14 @@ export class FeishuChannelSession {
 
   // ── Outbound primitives ────────────────────────────────────────────────
 
+  /**
+   * A Reply is an outbound message, and only that.
+   *
+   * It is not Channel user input, so its success receipt never creates,
+   * replaces, or retires a recipient's anchor and never touches an open card.
+   * What it does leave behind is an address: this session now owns a message
+   * id, so a later reply to it resolves to the right target.
+   */
   private async sendReply(
     input: {
       chatId: string;
@@ -505,12 +514,10 @@ export class FeishuChannelSession {
         ? {
             onMessageCreated: ({ messageId }: { messageId: string }) => {
               if (lifecycle?.fence.isCurrent() !== true) return;
-              const target = this.outboundTarget(input.chatId, input.messageId);
-              this.targetRouter.observe(messageId, target);
-              this.cot.refreshReplyNextAnchor({
-                caller,
-                anchor: { chatId: input.chatId, messageId, target },
-              });
+              this.targetRouter.observe(
+                messageId,
+                this.outboundTarget(input.chatId, input.messageId),
+              );
             },
           }
         : {}),
@@ -674,18 +681,6 @@ export class FeishuChannelSession {
     } finally {
       lifecycle.inFlight.delete(task);
     }
-  }
-}
-
-function submitOutcome(result: TeamSubmitResult): FeishuSubmitOutcome {
-  switch (result.status) {
-    case 'submitted':
-      return { status: 'submitted', turnId: result.turn_id ?? null };
-    case 'duplicate':
-    case 'stopped':
-      return { status: result.status };
-    default:
-      return { status: result.status, error: result.error ?? null };
   }
 }
 

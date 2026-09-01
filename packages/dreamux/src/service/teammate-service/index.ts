@@ -121,6 +121,7 @@ export class TeammateService {
           this.phase = 'closing';
         },
         activitySink: this.turns.activitySink,
+        nativeTurnSink: this.turns.nativeTurnSink,
       },
     );
   }

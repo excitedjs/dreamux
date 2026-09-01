@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux-types",
+      "comment": "BREAKING: Review: Agent Runtime providers gain an optional native-turn seam and Channel consumers gain a seventh core event. `AgentRuntimeCreateContext.nativeTurn` is an optional, display-only `AgentRuntimeNativeTurnSink` a provider calls exactly once per runtime-native turn with a `RuntimeNativeTurnEnd`; `ChannelCoreEvent` adds the actor-scoped `TeammateNativeTurnEndedEvent`, which names the owning Dispatcher or TeamLeader and a status, and deliberately carries no logical turn id, submission member set, or presentation identity. A Channel that switches exhaustively over `ChannelCoreEvent['kind']` must handle the new kind; a provider that omits `nativeTurn` keeps working and simply publishes no native-turn end. No rebuild is needed.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types"
+}

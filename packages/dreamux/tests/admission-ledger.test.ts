@@ -510,6 +510,7 @@ describe('TeammateService.submitInput: the conversation projection records the s
       },
       projectActivity() {},
       projectSettled() {},
+      projectNativeTurnEnd() {},
     };
     const h = await harness({ conversationProjection });
 
@@ -538,6 +539,7 @@ describe('TeammateService.submitInput: the conversation projection records the s
       },
       projectActivity() {},
       projectSettled() {},
+      projectNativeTurnEnd() {},
     };
     const h = await harness({ conversationProjection });
 

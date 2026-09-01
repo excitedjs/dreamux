@@ -45,6 +45,7 @@ import type {
   AgentRuntimeStateUpdate,
   AgentRuntimeSystemPrompt,
   JsonSchema,
+  RuntimeNativeTurnEnd,
 } from '@excitedjs/dreamux-types';
 
 // ─── Fake resident session ──────────────────────────────────────────────────
@@ -161,6 +162,8 @@ function fireDefaultResult(
 class Harness {
   readonly sessions: FakeSession[] = [];
   readonly stateCalls: AgentRuntimeStateUpdate[] = [];
+  /** Every native turn end this runtime reported, in order. */
+  readonly nativeEnds: RuntimeNativeTurnEnd[] = [];
   behavior: FakeSessionBehavior = {};
   /** Set per test to make the leased state sink reject a specific update kind. */
   rejectStateKind: AgentRuntimeStateUpdate['kind'] | null = null;
@@ -214,6 +217,7 @@ class Harness {
         : {}),
       paths: this.paths,
       state: this.state,
+      nativeTurn: (end) => this.nativeEnds.push(end),
     };
   }
 
@@ -460,6 +464,88 @@ describe('ClaudeCodeRuntime settlement', () => {
     if (admission.status !== 'submitted') throw new Error('expected submitted');
     await runtime.stop();
     await expect(admission.submission.settled).resolves.toEqual({ kind: 'stopped' });
+  });
+});
+
+// ─── Native turn end ────────────────────────────────────────────────────────
+
+/**
+ * The provider-neutral fact Core turns into `teammate.native_turn.ended`.
+ *
+ * A native turn is what claude ran, not what Dreamux asked for: several
+ * submissions steered into one live turn share its single `result`, and so
+ * share its single end. The runtime is the only layer that can see that
+ * boundary, which is why the fact is emitted here rather than derived from
+ * settlements upstream.
+ */
+describe('ClaudeCodeRuntime native turn end', () => {
+  it('reports one completed end per native turn, not one per submission', async () => {
+    const h = new Harness();
+    const runtime = await tracked(h.createRuntime());
+    await runtime.start();
+
+    const first = await runtime.submit({ text: 'one' });
+    if (first.status !== 'submitted') throw new Error('expected submitted');
+    await first.submission.settled;
+    await drain();
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed']);
+
+    // A second turn is a second native turn, so a second end — the count
+    // tracks native turns, and nothing else.
+    const second = await runtime.submit({ text: 'two' });
+    if (second.status !== 'submitted') throw new Error('expected submitted');
+    await second.submission.settled;
+    await drain();
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed', 'completed']);
+  });
+
+  it('reports interrupted, exactly once, when stop() ends a turn the runtime never saw finish', async () => {
+    const h = new Harness();
+    h.behavior.stallSubmit = true;
+    const runtime = await tracked(h.createRuntime());
+    await runtime.start();
+    const admission = await runtime.submit({ text: 'hangs' });
+    if (admission.status !== 'submitted') throw new Error('expected submitted');
+
+    await runtime.stop();
+    await expect(admission.submission.settled).resolves.toEqual({ kind: 'stopped' });
+    // A second stop() is idempotent and must not re-report the same end.
+    await runtime.stop();
+
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['interrupted']);
+  });
+
+  it('reports failed when the native result carries an error', async () => {
+    const h = new Harness();
+    h.behavior.onSubmit = (spec, _prompt, commandUuid) => {
+      fireDefaultResult(spec, commandUuid!, {
+        isError: true,
+        errors: ['native failure'],
+        text: '',
+      });
+    };
+    const runtime = await tracked(h.createRuntime());
+    await runtime.start();
+    const admission = await runtime.submit({ text: 'hello' });
+    if (admission.status !== 'submitted') throw new Error('expected submitted');
+    await admission.submission.settled;
+    await drain();
+
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['failed']);
+  });
+
+  it('carries only a status and a timestamp: no submission, turn id, or presentation', async () => {
+    const h = new Harness();
+    const runtime = await tracked(h.createRuntime());
+    await runtime.start();
+    const admission = await runtime.submit({ text: 'hello' });
+    if (admission.status !== 'submitted') throw new Error('expected submitted');
+    await admission.submission.settled;
+    await drain();
+
+    expect(h.nativeEnds).toHaveLength(1);
+    expect(Object.keys(h.nativeEnds[0]!).sort()).toEqual(['occurredAt', 'status']);
+    expect(Object.isFrozen(h.nativeEnds[0])).toBe(true);
   });
 });
 

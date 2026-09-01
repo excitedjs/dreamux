@@ -102,3 +102,28 @@ export type TeammateTurnToolCallEvent = TeammateTurnScope & {
   readonly result_truncated: boolean;
   readonly redacted: boolean;
 };
+
+/**
+ * One runtime-native turn ended for this TeamMate.
+ *
+ * Deliberately actor-scoped rather than turn-scoped. A provider folds any
+ * number of Dreamux submissions into one native turn, so no single logical
+ * `turn_id` owns the end — and inventing one would make a presentation pick an
+ * arbitrary member. The honest fact is "this Agent's runtime stopped
+ * producing", published once per native turn, which is exactly what a live
+ * progress surface needs to finish whatever it currently shows for that Agent.
+ *
+ * It is not a lifecycle fact: `teammate.turn.settled` remains the
+ * per-submission settlement, and neither event replaces the other.
+ */
+export interface TeammateNativeTurnEndedEvent {
+  readonly schema_version: 1;
+  readonly kind: 'teammate.native_turn.ended';
+  readonly occurred_at: number;
+  readonly teammate_name: string;
+  /** Runtime projection supplied by the owning Service; never persisted. */
+  readonly role: TeammateRole;
+  /** `null` for a Dispatcher, which never belongs to a Team. */
+  readonly team_name: string | null;
+  readonly status: 'completed' | 'failed' | 'interrupted';
+}

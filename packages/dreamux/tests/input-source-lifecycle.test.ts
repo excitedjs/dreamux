@@ -341,7 +341,7 @@ function turnScope() {
   };
 }
 
-function allSixEvents(): ChannelCoreEvent[] {
+function allCatalogEvents(): ChannelCoreEvent[] {
   return [
     teamStateEvent(),
     teammateStateEvent(),
@@ -376,6 +376,15 @@ function allSixEvents(): ChannelCoreEvent[] {
       arguments_truncated: false,
       result_truncated: false,
       redacted: false,
+    },
+    {
+      schema_version: 1 as const,
+      occurred_at: Date.now(),
+      teammate_name: 'flow',
+      role: 'dispatcher' as const,
+      team_name: null,
+      kind: 'teammate.native_turn.ended',
+      status: 'completed',
     },
   ];
 }
@@ -442,11 +451,11 @@ describe('DispatcherInputSourceLifecycle: startup ordering', () => {
     ]);
   });
 
-  it('delivers each of the six catalog event kinds to a subscribed Channel', async () => {
+  it('delivers each of the seven catalog event kinds to a subscribed Channel', async () => {
     harness = await buildHarness();
     await harness.lifecycle.prepareChannels();
 
-    for (const event of allSixEvents()) {
+    for (const event of allCatalogEvents()) {
       harness.coreEvents.publisher.publish('flow', event);
     }
 
@@ -458,6 +467,7 @@ describe('DispatcherInputSourceLifecycle: startup ordering', () => {
       'teammate.turn.settled',
       'teammate.turn.message',
       'teammate.turn.tool_call',
+      'teammate.native_turn.ended',
     ]);
   });
 

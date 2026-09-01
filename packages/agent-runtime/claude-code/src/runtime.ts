@@ -17,6 +17,7 @@ import { ClaudeSteerAdmissionError } from './rpc.js';
 import type { ClaudeCodeRuntimeDeps } from './runtime-deps.js';
 import {
   createRuntimeSubmission,
+  endNativeTurn,
   handleProtocolEvent,
   type ActiveTurn,
 } from './runtime-submissions.js';
@@ -280,6 +281,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       rejectSession,
       steerQueue: Promise.resolve(),
       generation: this.generation,
+      nativeTurnEnded: false,
     };
     this.activeTurn = turn;
     void this.runActiveTurnOnQueue(text, turn).then(
@@ -386,6 +388,8 @@ export class ClaudeCodeRuntime implements AgentRuntime {
         ? { kind: 'stopped' }
         : { kind: 'failed', error: asError(err) });
     }
+    // A turn that never reached its terminal `result` still ended natively.
+    this.endNativeTurn(turn, this.stopped ? 'interrupted' : 'failed');
     if (this.stopped) return;
     // Surface the failure as durable runtime state rather than swallowing it.
     this.setStatus('degraded', err);
@@ -395,6 +399,22 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     for (const deferred of turn.submissions.values()) {
       deferred.settle({ kind: 'stopped' });
     }
+    // Reached from stop, the fatal fence, and a turn that resolved without a
+    // terminal `result`. Each is a native turn that ended without completing;
+    // a turn whose `result` already reported the end ignores this.
+    this.endNativeTurn(turn, 'interrupted');
+  }
+
+  private endNativeTurn(
+    turn: ActiveTurn,
+    status: 'failed' | 'interrupted',
+  ): void {
+    endNativeTurn(
+      turn,
+      status,
+      this.deps.nativeTurnSink,
+      (level, message, error) => this.log(level, message, error),
+    );
   }
 
   private recordQueuedTurnStart(): void {
@@ -523,6 +543,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       threadId: this.threadId,
       outputSchemaEnabled: this.deps.outputSchema !== undefined,
       activitySink: this.deps.activitySink,
+      nativeTurnSink: this.deps.nativeTurnSink,
       log: (level, message, error) => this.log(level, message, error),
     });
   }

@@ -4,6 +4,7 @@ import type {
   DreamuxLogger,
   JsonValue,
   RuntimeActivityEvent,
+  RuntimeNativeTurnEnd,
   TeammateRole,
   TeammateTurnMessageEvent,
   TeammateTurnSettledEvent,
@@ -83,6 +84,14 @@ export interface ConversationProjection {
     turn: ProjectableTurn;
     settlement: ConversationTurnSettlement;
   }): void;
+  /**
+   * One runtime-native turn ended for this Agent.
+   *
+   * Takes no turn: a provider folds any number of submissions into one native
+   * turn, so the only identity this fact honestly carries is the Agent whose
+   * runtime produced it.
+   */
+  projectNativeTurnEnd(agent: ProjectedAgent, end: RuntimeNativeTurnEnd): void;
 }
 
 export function createConversationProjection(input: {
@@ -154,6 +163,17 @@ export function createConversationProjection(input: {
         settledEvent(scope, settlement, identity.cwd),
       );
     },
+    projectNativeTurnEnd(agent, end) {
+      const identity = agent.identity;
+      const scope = actorScope(agent);
+      if (scope === null || input.coreEvents.hasSources?.() === false) return;
+      input.coreEvents.publish(identity.dispatcher_id, {
+        ...scope,
+        kind: 'teammate.native_turn.ended',
+        occurred_at: end.occurredAt,
+        status: end.status,
+      });
+    },
   };
 }
 
@@ -166,6 +186,18 @@ export function createConversationProjection(input: {
  * value it now shares with Team-scoped TeamMates.
  */
 function eventScope(agent: ProjectedAgent, turnId: string) {
+  const scope = actorScope(agent);
+  return scope === null ? null : { ...scope, turn_id: turnId };
+}
+
+/**
+ * The same conversation selection, without a turn.
+ *
+ * A native turn end names no logical turn, so it needs the actor half of the
+ * scope on its own. Keeping one implementation means a conversation that does
+ * not project turns cannot start projecting native ends.
+ */
+function actorScope(agent: ProjectedAgent) {
   const { identity, role } = agent;
   if (role !== 'dispatcher' && identity.team_id !== null) {
     return {
@@ -173,7 +205,6 @@ function eventScope(agent: ProjectedAgent, turnId: string) {
       team_name: identity.team_id,
       teammate_name: identity.name,
       role,
-      turn_id: turnId,
     };
   }
   if (role === 'dispatcher' && identity.team_id === null) {
@@ -182,7 +213,6 @@ function eventScope(agent: ProjectedAgent, turnId: string) {
       team_name: null,
       teammate_name: identity.name,
       role,
-      turn_id: turnId,
     };
   }
   return null;

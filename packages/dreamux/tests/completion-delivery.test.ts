@@ -368,6 +368,10 @@ class RecordingProjection implements ConversationProjection {
   projectSettled(input: { agent: ProjectedAgent }): void {
     this.settledRoles.push(input.agent.role);
   }
+
+  projectNativeTurnEnd(): void {
+    // Not exercised by this suite.
+  }
 }
 
 function fakeIdentity(overrides: Partial<AgentEntityIdentity> = {}): AgentEntityIdentity {

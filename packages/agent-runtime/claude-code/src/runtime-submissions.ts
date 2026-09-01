@@ -5,7 +5,9 @@ import type {
   JsonValue,
   RuntimeActivity,
   AgentRuntimeActivitySink,
+  AgentRuntimeNativeTurnSink,
   RuntimeCompletion,
+  RuntimeNativeTurnEnd,
   RuntimeSubmission,
   RuntimeSubmissionSettlement,
   RuntimeToolAction,
@@ -29,13 +31,46 @@ export interface ActiveTurn {
   rejectSession: (error: Error) => void;
   steerQueue: Promise<void>;
   generation: number;
+  /**
+   * Whether this native turn already reported its one end.
+   *
+   * A turn is ended by exactly one thing — the terminal `result`, a failed run,
+   * or a stop — but more than one of those can be observed for the same turn
+   * (a `result` that lands and is then followed by a generation assertion
+   * throwing). The flag is what makes "one end per native turn" true rather
+   * than merely usual.
+   */
+  nativeTurnEnded: boolean;
 }
 
 export interface ProtocolEventContext {
   threadId: string | null;
   outputSchemaEnabled: boolean;
   activitySink: AgentRuntimeActivitySink;
+  nativeTurnSink: AgentRuntimeNativeTurnSink;
   log: (level: 'info' | 'warn' | 'error', message: string, error?: unknown) => void;
+}
+
+/**
+ * Report this native turn's one end, at most once.
+ *
+ * The sink is display-only, so a throwing consumer is logged and the turn
+ * proceeds; the flag is still set, because a second attempt would be the same
+ * end reported twice, not a retry.
+ */
+export function endNativeTurn(
+  active: ActiveTurn,
+  status: RuntimeNativeTurnEnd['status'],
+  sink: AgentRuntimeNativeTurnSink,
+  log: (level: 'info' | 'warn' | 'error', message: string, error?: unknown) => void,
+): void {
+  if (active.nativeTurnEnded) return;
+  active.nativeTurnEnded = true;
+  try {
+    sink(Object.freeze({ status, occurredAt: Date.now() }));
+  } catch (error) {
+    log('warn', 'claude native turn end projection failed', error);
+  }
 }
 
 export function createRuntimeSubmission(): SubmissionDeferred {
@@ -139,6 +174,14 @@ function completeStartedGroup(
   for (const uuid of commandUuids) {
     active.submissions.get(uuid)?.settle({ kind: 'completion', completion });
   }
+  // The `result` is claude's one native terminal, so the native turn ends here
+  // regardless of how many commands were folded into it.
+  endNativeTurn(
+    active,
+    completion.status === 'completed' ? 'completed' : 'failed',
+    context.nativeTurnSink,
+    context.log,
+  );
 }
 
 function failUnattributedResult(
@@ -154,6 +197,7 @@ function failUnattributedResult(
   for (const deferred of active.submissions.values()) {
     deferred.settle({ kind: 'failed', error });
   }
+  endNativeTurn(active, 'failed', context.nativeTurnSink, context.log);
 }
 
 function emitStreamActivity(

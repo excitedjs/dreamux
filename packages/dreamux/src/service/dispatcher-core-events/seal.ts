@@ -31,6 +31,7 @@ const KINDS: ReadonlySet<string> = new Set([
   'teammate.turn.settled',
   'teammate.turn.message',
   'teammate.turn.tool_call',
+  'teammate.native_turn.ended',
 ]);
 
 export function sealChannelCoreEvent(

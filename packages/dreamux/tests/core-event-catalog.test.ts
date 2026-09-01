@@ -1,7 +1,7 @@
 /**
  * Coverage cell C (event half), Stage 9 node "core-events".
  *
- * Covers the six-kind Core event catalog, the dispatcher-scoped live bus's
+ * Covers the seven-kind Core event catalog, the dispatcher-scoped live bus's
  * best-effort delivery and subscription-lifecycle guarantees
  * (`service/dispatcher-core-events/`), the `teammate.state` role catalog and
  * `team.state` redundant-aggregate republication rule
@@ -123,6 +123,18 @@ function catalogFixtures(): Record<ChannelCoreEvent['kind'], ChannelCoreEvent> {
       result_truncated: false,
       redacted: false,
     },
+    // The one actor-scoped turn fact: a provider folds any number of logical
+    // submissions into one native turn, so this event deliberately carries no
+    // `turn_id` — only who the runtime belongs to and how it stopped.
+    'teammate.native_turn.ended': {
+      schema_version: 1,
+      kind: 'teammate.native_turn.ended',
+      occurred_at: Date.now(),
+      teammate_name: 'alpha-leader',
+      role: 'team_leader',
+      team_name: 'alpha',
+      status: 'completed',
+    },
   };
 }
 
@@ -160,7 +172,7 @@ function makeTeamRecordInput(
   };
 }
 
-describe('the published Core event catalog is exactly six kinds', () => {
+describe('the published Core event catalog is exactly seven kinds', () => {
   it('accepts a schema-valid fixture of every catalog kind', () => {
     const fixtures = catalogFixtures();
     for (const [kind, event] of Object.entries(fixtures)) {
@@ -223,7 +235,7 @@ describe('DispatcherCoreEventBus: live, best-effort delivery', () => {
     return { bus, warnCalls, errorCalls };
   }
 
-  it('drops and logs an event outside the six-kind catalog instead of delivering it', () => {
+  it('drops and logs an event outside the seven-kind catalog instead of delivering it', () => {
     const { bus, errorCalls } = makeBus();
     const source = bus.createSource('channel-a');
     const received: ChannelCoreEvent[] = [];

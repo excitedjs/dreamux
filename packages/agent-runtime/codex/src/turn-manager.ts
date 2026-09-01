@@ -10,11 +10,13 @@ import type { CodexWsClient } from './rpc.js';
 import type { ThreadItem } from './types.js';
 import type {
   AgentRuntimeActivitySink,
+  AgentRuntimeNativeTurnSink,
   AgentRuntimeSubmissionInput,
   JsonValue,
   RuntimeActivity,
   RuntimeAdmission,
   RuntimeCompletion,
+  RuntimeNativeTurnEnd,
   RuntimeSubmission,
   RuntimeSubmissionSettlement,
   RuntimeToolAction,
@@ -31,6 +33,15 @@ interface NativeTurnRecord {
   completion: RuntimeCompletion | null;
   terminal: CollectedTurn | Error | null;
   releaseAfterAdmissions: Set<number> | null;
+  /**
+   * Whether this native turn already reported its one end.
+   *
+   * A record is reachable from several terminal paths — a collected terminal,
+   * a protocol failure, and stop — and more than one can run for the same turn
+   * id. The flag is what makes the one-end-per-native-turn contract hold rather
+   * than depend on which path happened to win.
+   */
+  nativeTurnEnded: boolean;
 }
 
 export interface TurnManagerOptions {
@@ -45,6 +56,7 @@ export interface TurnManagerOptions {
    */
   codec: CodexOutputSchemaCodec | null;
   activitySink: AgentRuntimeActivitySink;
+  nativeTurnSink: AgentRuntimeNativeTurnSink;
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
   onTurnCompleted?: (turn: CollectedTurn) => void;
 }
@@ -91,6 +103,8 @@ export class TurnManager {
     for (const record of this.nativeTurns.values()) {
       if (record.completion !== null) continue;
       for (const member of record.members) member.settle({ kind: 'stopped' });
+      // A native turn torn down before its own terminal still ended.
+      this.endNativeTurn(record, 'interrupted');
     }
     for (const [turnId, record] of this.nativeTurns) {
       if (record.completion === null) this.nativeTurns.delete(turnId);
@@ -169,6 +183,7 @@ export class TurnManager {
       completion: null,
       terminal: null,
       releaseAfterAdmissions: null,
+      nativeTurnEnded: false,
     };
     record.representative ??= deferred.submission;
     if (record.completion === null) record.members.push(deferred);
@@ -187,7 +202,7 @@ export class TurnManager {
     this.unboundObservedTurnIds.delete(turnId);
     const record = this.nativeTurns.get(turnId) ?? {
       representative: null, members: [], completion: null, terminal: null,
-      releaseAfterAdmissions: null,
+      releaseAfterAdmissions: null, nativeTurnEnded: false,
     };
     if (record.terminal !== null || record.completion !== null) return;
     record.terminal = terminal;
@@ -233,6 +248,7 @@ export class TurnManager {
         for (const member of record.members) member.settle({ kind: 'completion', completion });
         record.members.length = 0;
         record.terminal = null;
+        this.endNativeTurn(record, 'failed');
         this.releaseRecordIfReady(turnId, record);
         return;
       }
@@ -247,6 +263,12 @@ export class TurnManager {
     for (const member of record.members) member.settle({ kind: 'completion', completion });
     record.members.length = 0;
     record.terminal = null;
+    // `turn/completed` is codex's one native terminal, so this is where the
+    // native turn ends whatever it folded.
+    this.endNativeTurn(
+      record,
+      completion.status === 'completed' ? 'completed' : 'failed',
+    );
     this.releaseRecordIfReady(turnId, record);
   }
 
@@ -263,6 +285,7 @@ export class TurnManager {
   private failRecord(turnId: string, record: NativeTurnRecord, error: Error): void {
     for (const member of record.members) member.settle({ kind: 'failed', error });
     record.members.length = 0;
+    this.endNativeTurn(record, 'failed');
     this.nativeTurns.delete(turnId);
     this.pendingActivity.delete(turnId);
     this.unboundObservedTurnIds.delete(turnId);
@@ -320,6 +343,27 @@ export class TurnManager {
       this.opts.activitySink(Object.freeze({ submission: record.representative, activity: Object.freeze(activity), occurredAt }));
     } catch (error) {
       this.log('warn', 'codex activity projection failed', error);
+    }
+  }
+
+  /**
+   * Report this native turn's one end, at most once.
+   *
+   * A record that never bound a submission belongs to no Dreamux entity, so
+   * there is no conversation for its end to land in and nothing is emitted.
+   * The sink is display-only, so a throwing consumer is logged and the turn
+   * proceeds.
+   */
+  private endNativeTurn(
+    record: NativeTurnRecord,
+    status: RuntimeNativeTurnEnd['status'],
+  ): void {
+    if (record.nativeTurnEnded || record.representative === null) return;
+    record.nativeTurnEnded = true;
+    try {
+      this.opts.nativeTurnSink(Object.freeze({ status, occurredAt: Date.now() }));
+    } catch (error) {
+      this.log('warn', 'codex native turn end projection failed', error);
     }
   }
 
