@@ -160,9 +160,22 @@ or prompt guidance in structured fields.
 
 Known-tool input-schema failures are normal MCP tool results with `isError`.
 Unknown tools and malformed protocol requests are SDK-owned protocol errors.
-Each delegate may surface only its explicit safe Command/error-code allowlist;
-other Command and provider failures use the fixed sanitized tool error while full
-detail stays in out-of-band logs.
+
+Every tool failure is model-visible and actionable; the failure's own class
+decides its shape, with no code list, no allowlist, and no policy table
+(owner: `/packages/dreamux/src/mcp/failure-text.ts`):
+
+- a domain-authored failure (`StatedFailure`: a stable code, the domain's own
+  reason, and the next step it knows) renders all three parts as written;
+- any other thrown error keeps the code it already has — `INTERNAL` when it
+  has none — and carries its own message verbatim. Core does not own that
+  failure, so Core does not re-author it: the Node, filesystem, provider, or
+  library text is the only concrete fact at the scene, and replacing it with a
+  Core-authored sentence deletes the information. Stacks go to logs only;
+  messages always go up.
+
+Do not introduce correlation/failure ids, uniform sanitize templates,
+per-operation visibility allowlists, or Core-invented recovery advice.
 
 The general no-polling and completion-delivery rule belongs in Dispatcher and
 TeamLeader role prompts. A bound Dreamux tool definition may select one

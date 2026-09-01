@@ -13,6 +13,7 @@ decision trail behind those current contracts.
 
 Read these first for today's system shape:
 
+- [minimize-provider-boundaries](minimize-provider-boundaries.md)
 - [provider-architecture-realignment](provider-architecture-realignment.md)
 - [npm-package-split-and-channel-targets](npm-package-split-and-channel-targets.md)
 - [channel-scoped-collaboration-and-core-events](channel-scoped-collaboration-and-core-events.md)
@@ -30,7 +31,7 @@ Read these first for today's system shape:
 | Theme | Records |
 |---|---|
 | Repository shape | [rush-pnpm-monorepo](rush-pnpm-monorepo.md), [install-model](install-model.md), [lean-development-task-and-github-solution-review](lean-development-task-and-github-solution-review.md), [capability-domain-task-routing](capability-domain-task-routing.md) |
-| Runtime architecture | [provider-architecture-realignment](provider-architecture-realignment.md), [npm-package-split-and-channel-targets](npm-package-split-and-channel-targets.md), [entity-owned-teammate-lifecycle-and-object-turns](entity-owned-teammate-lifecycle-and-object-turns.md), [channel-scoped-collaboration-and-core-events](channel-scoped-collaboration-and-core-events.md), [feishu-cot-conversation-display](feishu-cot-conversation-display.md), [feishu-binding-notification-events](feishu-binding-notification-events.md), [feishu-allow-chats-trust-semantics](feishu-allow-chats-trust-semantics.md), [agents-config-normalization](agents-config-normalization.md), [dispatcher-local-aggregate](dispatcher-local-aggregate.md), [runtime-run-root](runtime-run-root.md), [issue-110-epic-closure](issue-110-epic-closure.md), [provider-references-and-capability-registry](provider-references-and-capability-registry.md), [agent-runtime-provider](agent-runtime-provider.md), [agent-activity-capability](agent-activity-capability.md), [channel-provider](channel-provider.md), [server-hosted-teammate](server-hosted-teammate.md), [providerized-config-state-compatibility](providerized-config-state-compatibility.md), [global-config-dir](global-config-dir.md), [logging](logging.md), [feishu-inbound-attachments](feishu-inbound-attachments.md), [feishu-pairing-access-v3](feishu-pairing-access-v3.md), [channel-input-runtime-assembly](channel-input-runtime-assembly.md), [service-architecture-refactor](service-architecture-refactor.md), [cron-per-conversational-agent](cron-per-conversational-agent.md), [dispatcher-lazy-start-isomorphic](dispatcher-lazy-start-isomorphic.md) |
+| Runtime architecture | [minimize-provider-boundaries](minimize-provider-boundaries.md), [provider-architecture-realignment](provider-architecture-realignment.md), [npm-package-split-and-channel-targets](npm-package-split-and-channel-targets.md), [entity-owned-teammate-lifecycle-and-object-turns](entity-owned-teammate-lifecycle-and-object-turns.md), [channel-scoped-collaboration-and-core-events](channel-scoped-collaboration-and-core-events.md), [feishu-cot-conversation-display](feishu-cot-conversation-display.md), [feishu-binding-notification-events](feishu-binding-notification-events.md), [feishu-allow-chats-trust-semantics](feishu-allow-chats-trust-semantics.md), [agents-config-normalization](agents-config-normalization.md), [dispatcher-local-aggregate](dispatcher-local-aggregate.md), [runtime-run-root](runtime-run-root.md), [issue-110-epic-closure](issue-110-epic-closure.md), [provider-references-and-capability-registry](provider-references-and-capability-registry.md), [agent-runtime-provider](agent-runtime-provider.md), [agent-activity-capability](agent-activity-capability.md), [channel-provider](channel-provider.md), [server-hosted-teammate](server-hosted-teammate.md), [providerized-config-state-compatibility](providerized-config-state-compatibility.md), [global-config-dir](global-config-dir.md), [logging](logging.md), [feishu-inbound-attachments](feishu-inbound-attachments.md), [feishu-pairing-access-v3](feishu-pairing-access-v3.md), [channel-input-runtime-assembly](channel-input-runtime-assembly.md), [service-architecture-refactor](service-architecture-refactor.md), [cron-per-conversational-agent](cron-per-conversational-agent.md), [dispatcher-lazy-start-isomorphic](dispatcher-lazy-start-isomorphic.md) |
 | Persistence | [entity-owned-teammate-lifecycle-and-object-turns](entity-owned-teammate-lifecycle-and-object-turns.md), [json-document-store](json-document-store.md), [runtime-run-root](runtime-run-root.md), [providerized-config-state-compatibility](providerized-config-state-compatibility.md) |
 | Public surface | [cli-and-package-naming](cli-and-package-naming.md), [dispatcher-tm-boundary](dispatcher-tm-boundary.md), [dispatcher-tm-packaging](dispatcher-tm-packaging.md), [global-bin-onboard-serve](global-bin-onboard-serve.md), [global-config-dir](global-config-dir.md) |
 | Release and safeguards | [npm-release-oidc](npm-release-oidc.md), [anti-leak-guardrail](anti-leak-guardrail.md), [no-sync-io-lint-gate](no-sync-io-lint-gate.md) |
@@ -40,6 +41,9 @@ Read these first for today's system shape:
 These records are intentionally kept in `decisions/` because they are ADRs, but
 they are not the first place to learn current behavior:
 
+- [agent-runtime-provider](agent-runtime-provider.md) — providerization
+  direction stands; its contract shape is superseded by
+  minimize-provider-boundaries.
 - [channel-provider](channel-provider.md) — historical channel-provider
   boundary, superseded by the package split and channel-target decisions.
 - [dispatcher-tm-boundary](dispatcher-tm-boundary.md) — superseded by
@@ -81,6 +85,7 @@ instead of this decision index.
 - [json-document-store](json-document-store.md)
 - [lean-development-task-and-github-solution-review](lean-development-task-and-github-solution-review.md)
 - [logging](logging.md)
+- [minimize-provider-boundaries](minimize-provider-boundaries.md)
 - [no-sync-io-lint-gate](no-sync-io-lint-gate.md)
 - [npm-package-split-and-channel-targets](npm-package-split-and-channel-targets.md)
 - [npm-release-oidc](npm-release-oidc.md)

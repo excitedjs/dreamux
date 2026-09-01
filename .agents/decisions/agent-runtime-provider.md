@@ -1,6 +1,11 @@
 # Agent Runtime providers
 
-- **Status:** Accepted
+- **Status:** Superseded in contract shape by
+  [minimize-provider-boundaries](minimize-provider-boundaries.md); the
+  providerization direction and builtin-provider decision stand, but the
+  provider contract this record describes (factory `ref`/`descriptor` echo,
+  capability flags such as `resume.supported`, multi-method submission) no
+  longer exists — the current minimal seam is owned by the superseding record.
 - **Date:** 2026-06-06
 - **Affects:** dispatcher runtime, Codex integration, Claude Code integration,
   MCP injection, TeamMate completion delivery
