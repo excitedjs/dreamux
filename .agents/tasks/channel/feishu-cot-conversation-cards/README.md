@@ -27,6 +27,9 @@
   [#360](https://github.com/excitedjs/dreamux/issues/360).
 - Blockers: None.
 - Accepted decision record: [accepted-decision.md](/.agents/tasks/channel/feishu-cot-conversation-cards/accepted-decision.md) (backfilled 2026-09-01).
+- Continued optimization (simplification findings raised after the draft pull
+  request, none approved for implementation):
+  [continued-optimization.md](/.agents/tasks/channel/feishu-cot-conversation-cards/continued-optimization.md).
 - Next action: Complete independent implementation review and knowledge
   closeout, then update draft pull request
   [#357](https://github.com/excitedjs/dreamux/pull/357) and mark it ready.
@@ -112,6 +115,11 @@
 
 ## Follow-ups
 
+- Simplification findings raised during operator review of the draft pull
+  request are recorded in
+  [continued-optimization.md](/.agents/tasks/channel/feishu-cot-conversation-cards/continued-optimization.md).
+  They are recorded only; each still needs an operator ruling before it becomes
+  work.
 - Split `/packages/dreamux/src/service/dispatcher-service/collaboration-routing.ts`
   before further edits; it is at the 700-line lint cap.
 - No per-target or per-logical-turn presentation split is permitted by the
