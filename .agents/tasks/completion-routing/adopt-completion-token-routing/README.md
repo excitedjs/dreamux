@@ -9,7 +9,8 @@
 - Verification: [Verification](/.agents/tasks/completion-routing/adopt-completion-token-routing/verification.md)
 - Solution review Issue: Not created — the operator approved the recorded final solution directly and waived further consultation (simplest path).
 - Blockers: None.
-- Next action: Wait for CI on PR #344, then merge with operator authority.
+- Accepted decision record: [accepted-decision.md](/.agents/tasks/completion-routing/adopt-completion-token-routing/accepted-decision.md) (backfilled 2026-09-01).
+- Next action: None. (Closed 2026-09-01: PR #344 merged; this line previously predated the merge.)
 - Deleted test inventory (step 2, to be fully re-covered before PR): claude-code `rpc/runtime-activity/session/stream/transcript.test.ts`; codex `turn-manager.test.ts`; core `agent-runtime-provider`, `claude-code-live`, `claude-code-runtime`, `codex-completion`, `codex-live`, `core-event-owner-publishers`, `dispatcher-collaboration-space`, `entity-turn`, `external-runtime-parity`, `team-collection-read-path`, `team-scheduler`, `teammate-service`, `workflow-service` tests plus `helpers/fake-runtime`, `helpers/fake-team-runtime`, `helpers/runtime-turn`, `fixtures/external-runtime-provider`; types `fixtures.test.ts`, `root-exports.test.ts`, `fixtures/external-provider.ts`. Retained consumer suites (`team-dissolve-*`, `team-mcp-dissolve-boundary`, `collaboration-space-repo-close`, and all untouched files) compile again once the shared helpers are restored; the re-coverage stage must restore every deleted contract without weakening it.
 - Related tasks: None.
 

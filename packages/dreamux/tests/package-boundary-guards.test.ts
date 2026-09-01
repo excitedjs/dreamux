@@ -1,6 +1,6 @@
 /**
  * Epic #209 package-boundary validation guards (decision record
- * `.agents/decisions/npm-package-split-and-channel-targets.md` §Validation
+ * `.agents/tasks/architecture/npm-package-split/requirement.md` (npm-package-split record) §Validation
  * Guards). These are repo-wide regression catchers for package-split invariants
  * that are otherwise only "currently true" by inspection:
  *

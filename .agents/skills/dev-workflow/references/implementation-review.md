@@ -66,5 +66,23 @@ concrete reason for each finding it rejects. Prefer accepting confirmed, in-scop
 architecture, ownership, boundary, and simplification findings. Reviewer output never
 replaces the TeamLeader's verdict or an operator decision.
 
+Adjudication produces an observable artifact before anything is dispatched: a
+per-finding table in the task record (finding → accept / reject / defer → one-line
+reason → whether it conflicts with an operator ruling). Filter before presenting:
+reject findings that need a compound trigger or whose minimal fix adds defensive
+machinery (see `engineering-whitepaper`), and reject any finding that contradicts a
+recorded operator ruling, citing the ruling. When several reviewers converge on one
+conclusion, verify the premise they share before escalating it — convergence proves
+a shared premise, not a true one.
+
+**Operator ratification gate.** After every review round, present the adjudication
+to the operator one finding at a time and obtain an explicit ruling per item before
+dispatching any correction. An operator approval covers only the items enumerated
+in that exchange; it never carries forward as standing authority over later rounds'
+findings, and a new blocking finding from any reviewer — internal or external PR
+review — is a scope change that needs its own ruling before a writer starts. If a
+correction was dispatched without ratification, stop the writer, list what was
+dispatched, and resume item by item.
+
 A run that reports partial coverage has not passed this gate. Rerun the missing
 coverage or record the residual risk in the task before continuing.

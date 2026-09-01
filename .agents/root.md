@@ -3,220 +3,100 @@
 This is the on-demand knowledge base for the `excitedjs/dreamux` repo.
 Always-loaded operating rules live in [`/CLAUDE.md`](../CLAUDE.md).
 
-Use this KB for current reference, architecture intent, and decision history.
-For current behavior, read the linked source code too.
+The knowledge layers, in trust order:
+
+1. [`/CLAUDE.md`](../CLAUDE.md) — big principles and pointers, always loaded.
+2. [`product/`](product/README.md) — what the system promises its users,
+   stated independently of implementation.
+3. [`domains/`](domains/README.md) — how it is currently built: ownership,
+   contracts, invariants, traps. One tree; there is no separate reference/.
+4. [`tasks/`](tasks/README.md) — the full derivation record per requirement:
+   rulings, design churn, evidence. Dense and messy by design; go here to know
+   *why*, via each domain page's History pointer.
+
+Nothing here is absolutely authoritative: every page is description plus
+rationale, and anything may be changed to fit the current product scenario —
+knowingly. A change to user-visible behavior is a requirement decision for the
+operator. Routes fire more than once: re-run the table below at every stage
+boundary of a long task and after every context compaction, not just at kickoff.
 
 ## Start Here
 
-- [Current architecture](reference/current-architecture.md) — compact current
-  system map with source-code pointers.
-- [Domain knowledge](domains/README.md) — module-oriented stable contracts for
-  provider runtime, channels, orchestration, state/files, scheduled work, and
-  repository operations.
-- [Repository structure](reference/repo-structure.md) — package layout,
-  install/build/test path, Rush change files, and public package/bin surface.
-- [State and paths](reference/state-and-paths.md) — current config, workspace,
-  state, run, cache, log, and external-home ownership.
-- [Channel runtime](reference/channel-runtime.md) — Channel provider sessions,
-  the Command port and live core facts, and Channel-owned target routing,
-  binding, and Collaboration Space policy.
-- [Service topology](reference/service-topology.md) — source-anchored
-  service-layer ownership and construction map.
-- [Model-facing writing](reference/model-facing-writing.md) — current
-  checklist for bundled skills, prompts, MCP descriptions, structured MCP
-  results, and tests that lock model-visible text.
-- [Dynamic Workflow usage](reference/dynamic-workflow-usage.md) — user guide
-  for the beta Dynamic Workflow multi-agent orchestration capability, with
-  real review/audit/fix workflow examples.
-- [Development tasks](tasks/README.md) — README-indexed requirement
-  lineage and current development-task state.
-- [Glossary](glossary.md) — short definitions for overloaded Dreamux terms.
-- [Decision index](decisions/README.md) — ADRs, with current-trail and
-  historical-background sections.
-- [KB contributing guide](CONTRIBUTING.md) — document kinds, link rules, and
+- [Product behavior catalog](product/README.md) — the baseline refactors diff
+  against; also owns the [Dynamic Workflow usage guide](product/dynamic-workflow-usage.md).
+- [Engineering whitepaper](skills/engineering-whitepaper/SKILL.md) — the
+  operator's standing taste: entropy reduction, anti-defensive engineering,
+  minimal mechanism, collaboration rhythm.
+- [Current architecture](domains/current-architecture.md) — the map: package
+  layout and per-area summaries with owner links.
+- [Domain pages](domains/README.md) — the current-shape tree.
+- [Development tasks](tasks/README.md) — README-indexed requirement lineage
+  and task state.
+- [Glossary](glossary.md) — overloaded Dreamux terms, each linking its owner.
+- [KB contributing guide](CONTRIBUTING.md) — document kinds, conventions,
   validation.
 
 ## Task Routes
 
 | You're about to ... | Read first |
 |---|---|
-| answer "how is Dreamux shaped now?" | [Current architecture](reference/current-architecture.md), then source |
-| add/change a package or move source between packages | [Repository structure](reference/repo-structure.md) |
-| install/build/test the repo or debug workspace install issues | [Repository operations and release](domains/repository-operations-and-release.md), [Repository structure](reference/repo-structure.md), [install model](decisions/install-model.md) |
-| add or verify Rush change files | [Repository structure: Rush change files](reference/repo-structure.md#rush-change-files) |
-| modify config loading, `agents[]`, `dispatchers[]`, provider refs, or config compatibility | [Provider runtime](domains/provider-runtime.md), [State, config, and files](domains/state-config-and-files.md), [agents config normalization](decisions/agents-config-normalization.md), [providerized config compatibility](decisions/providerized-config-state-compatibility.md) |
-| modify any config/persisted-state shape, validation, default, ownership, or meaning | [State, config, and files](domains/state-config-and-files.md), [Model-facing writing](reference/model-facing-writing.md), and update the single owning reference under `packages/dreamux/skills/dispatcher/dreamux-maintenance/` plus its root route when needed |
-| modify bundled maintenance routing or the generic managed-daemon self-upgrade SOP | [Dispatcher skill reference](reference/dispatcher-skill.md), [Model-facing writing](reference/model-facing-writing.md), [Repository operations and release](domains/repository-operations-and-release.md), and the archived [maintenance progressive-disclosure specification](archive/proposals/dreamux-maintenance-progressive-disclosure.md) |
-| modify state/cache/run/log paths | [State, config, and files](domains/state-config-and-files.md), [State and paths](reference/state-and-paths.md), [runtime run root](decisions/runtime-run-root.md) |
-| modify provider loading, Agent Runtime providers, Channel providers, or capabilities | [Provider runtime](domains/provider-runtime.md), [Channel routing and binding](domains/channel-routing-and-binding.md), [Current architecture](reference/current-architecture.md), [provider refs and registry](decisions/provider-references-and-capability-registry.md), [NPM package split and channel targets](decisions/npm-package-split-and-channel-targets.md) |
-| modify dispatcher runtime lifecycle or MCP injection | [Dispatcher orchestration](domains/dispatcher-orchestration.md), [Current architecture](reference/current-architecture.md), [dispatcher local aggregate](decisions/dispatcher-local-aggregate.md), [service architecture refactor](decisions/service-architecture-refactor.md), source |
-| modify scheduled tasks / cron jobs | [Scheduled tasks](reference/scheduled-tasks.md), [Agent activity capability](decisions/agent-activity-capability.md), [Json document store](decisions/json-document-store.md), source |
-| refactor/move a service class or change who-owns-what | [Service topology](reference/service-topology.md) FIRST, then source |
-| modify TeamMate / Team lifecycle, read surfaces, or bundled dispatcher skills | [Dispatcher orchestration](domains/dispatcher-orchestration.md), [Dispatcher skill reference](reference/dispatcher-skill.md), [Model-facing writing](reference/model-facing-writing.md), [provider architecture realignment](decisions/provider-architecture-realignment.md), [service architecture refactor](decisions/service-architecture-refactor.md) |
+| answer "how is Dreamux shaped now?" | [Current architecture](domains/current-architecture.md), then source |
+| start any refactor, or judge whether something can be removed | [Product behavior catalog](product/README.md), [Engineering whitepaper](skills/engineering-whitepaper/SKILL.md) |
+| run a multi-stage architecture refactor | [Large-refactor mode](skills/dev-workflow/references/large-refactor-mode.md), [Product behavior catalog](product/README.md) |
+| change the repository through a feature, refactor, or bug fix | [Development workflow skill](skills/dev-workflow/SKILL.md), [Development tasks](tasks/README.md) |
+| add/change a package or move source between packages | [Current architecture](domains/current-architecture.md) (package map), [Repository operations](domains/repository-operations-and-release.md) |
+| install/build/test, add Rush change files, or release | [Repository operations and release](domains/repository-operations-and-release.md) |
+| modify config loading, `agents[]`, `dispatchers[]`, or provider refs | [Provider runtime](domains/provider-runtime.md), [State, config, and files](domains/state-config-and-files.md) |
+| modify any config/persisted-state shape, validation, default, ownership, or meaning | [State, config, and files](domains/state-config-and-files.md), [Model-facing writing](domains/model-facing-writing.md), and update the single owning reference under `packages/dreamux/skills/dispatcher/dreamux-maintenance/` plus its root route when needed |
+| modify bundled maintenance routing or the managed-daemon self-upgrade SOP | [Dispatcher skills](domains/dispatcher-skill.md), [Model-facing writing](domains/model-facing-writing.md), and the archived [maintenance progressive-disclosure specification](archive/proposals/dreamux-maintenance-progressive-disclosure.md) |
+| modify provider loading, Agent Runtime providers, or Channel providers | [Provider runtime](domains/provider-runtime.md), [Channel](domains/channel.md), [Current architecture](domains/current-architecture.md) |
+| modify dispatcher runtime lifecycle, MCP injection, or Team/TeamMate lifecycle | [Dispatcher orchestration](domains/dispatcher-orchestration.md), [Service topology](domains/service-topology.md), source |
+| refactor/move a service class or change who-owns-what | [Service topology](domains/service-topology.md) FIRST, then source |
 | modify agent-entity identity/turn/runtime-state stores or name validation | [Dispatcher orchestration](domains/dispatcher-orchestration.md), [State, config, and files](domains/state-config-and-files.md), source `packages/dreamux/src/service/agent-entity/` |
-| modify bundled skills, system prompts, MCP tool descriptions, MCP result field names, or tests that lock model-visible text | [Model-facing writing](reference/model-facing-writing.md), then source |
-| modify Channel-owned binding, target routing, or Collaboration Space policy | [Channel routing and binding](domains/channel-routing-and-binding.md), [Channel runtime](reference/channel-runtime.md), [NPM package split and channel targets](decisions/npm-package-split-and-channel-targets.md), source |
-| modify Feishu inbound, `/introduce`, trusted bot context, or reaction timing | [Channel runtime](reference/channel-runtime.md), [Feishu introduce](domains/feishu-introduce.md), [Feishu pairing access](domains/feishu-pairing-access.md), [non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md), source |
-| modify Feishu attachment download/cache behavior | [Feishu inbound attachments](decisions/feishu-inbound-attachments.md), [Channel runtime](reference/channel-runtime.md) |
-| modify onboard, daemon, uninstall, or public CLI names | [Repository operations and release](domains/repository-operations-and-release.md), [Global bin/onboard/serve](decisions/global-bin-onboard-serve.md), [CLI and package naming](decisions/cli-and-package-naming.md) |
-| change the Dreamux repository through a feature, refactor, or bug fix | [Development workflow skill](skills/dev-workflow/SKILL.md), [Development tasks](tasks/README.md), [Repository operations and release](domains/repository-operations-and-release.md) |
-| modify the anti-leak guardrail, `.gitleaks.toml`, `.npmrc`, CI, or hooks | [Repository operations and release](domains/repository-operations-and-release.md), [Anti-leak guardrail](decisions/anti-leak-guardrail.md) |
-| modify npm publishing or release workflows | [Repository operations and release](domains/repository-operations-and-release.md), [NPM release OIDC](decisions/npm-release-oidc.md) |
-| inspect historical hardening backlog | [Archived Post-MVP hardening](archive/proposals/post-mvp-hardening.md) |
+| modify scheduled tasks / cron | [Scheduled work](domains/scheduled-work.md), source |
+| modify bundled skills, system prompts, MCP descriptions, or tests locking model-visible text | [Model-facing writing](domains/model-facing-writing.md), [Dispatcher skills](domains/dispatcher-skill.md), then source |
+| modify Channel routing, binding, targets, or Collaboration Space policy | [Channel](domains/channel.md), source |
+| modify Feishu inbound, `/introduce`, pairing/access, or reaction timing | [Feishu pairing access](domains/feishu-pairing-access.md), [Non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md), [Channel](domains/channel.md), source |
+| touch codex busy/idle, `turn-manager.ts`, or inbound submission gating | [Non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md) — read its Regression Trap before anything else |
+| modify Dynamic Workflow behavior or its usage guide | [Current architecture](domains/current-architecture.md#dynamic-workflows), [Dynamic Workflow usage](product/dynamic-workflow-usage.md) |
+| modify the anti-leak guardrail, `.gitleaks.toml`, `.npmrc`, CI, or hooks | [Repository operations and release](domains/repository-operations-and-release.md) |
+| ask why an area is shaped this way | that domain page's History pointer, then the owning task record under [tasks/](tasks/README.md) |
 | write or move KB content | [KB contributing guide](CONTRIBUTING.md) |
-
-## Document Kinds
-
-- `reference/` — current behavior and operational mental models. Prefer this
-  for "what exists now".
-- `decisions/` — accepted, superseded, or historical ADRs. Prefer this for
-  "why was this chosen".
-- `domains/` — current cross-cutting runtime contracts that span multiple
-  reference pages, such as Feishu gate, trust, and inbound timing contracts.
-- `proposals/` — active design proposals only.
-- `archive/` — preserved historical material. It is intentionally reachable but
-  not part of the default task path.
-
-## Current Reference
-
-- [Current architecture](reference/current-architecture.md)
-- [Repository structure](reference/repo-structure.md)
-- [State and paths](reference/state-and-paths.md)
-- [Channel runtime](reference/channel-runtime.md)
-- [Service topology](reference/service-topology.md)
-- [Model-facing writing](reference/model-facing-writing.md)
-- [Dispatcher skill and TeamMate workflow](reference/dispatcher-skill.md)
-- [Scheduled tasks](reference/scheduled-tasks.md)
-- [Release process](reference/release-process.md)
-  — operator-facing 4-stage SOP (PR → next → alpha → beta → promote-next →
-  main → stable publish), the strict main-is-ancestor-of-next topology
-  invariant, the GITHUB_TOKEN anti-loop workaround + sync-next repair
-  commitment built into the release workflow, and a failure-mode recovery
-  table for each release gate.
-- [Glossary](glossary.md)
-
-## Decisions
-
-Start with [decisions/README.md](decisions/README.md). Decision files preserve
-history and rationale; when you need current behavior, pair them with
-[Current architecture](reference/current-architecture.md) and source.
 
 ## Domains
 
+- [Current architecture](domains/current-architecture.md) — the map.
 - [Provider runtime](domains/provider-runtime.md)
-- [Channel routing and binding](domains/channel-routing-and-binding.md)
+- [Channel](domains/channel.md)
+- [Feishu pairing access](domains/feishu-pairing-access.md)
+- [Non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md)
 - [Dispatcher orchestration](domains/dispatcher-orchestration.md)
+- [Service topology](domains/service-topology.md)
+- [Dispatcher skills](domains/dispatcher-skill.md)
 - [State, config, and files](domains/state-config-and-files.md)
 - [Scheduled work](domains/scheduled-work.md)
 - [Repository operations and release](domains/repository-operations-and-release.md)
-- [Feishu introduce](domains/feishu-introduce.md)
-- [Feishu pairing access](domains/feishu-pairing-access.md)
-- [Non-blocking dispatcher inbound](domains/non-blocking-dispatcher-inbound.md)
+- [Model-facing writing](domains/model-facing-writing.md)
+
+## Research
+
+- [Post-#110 architecture sustainability](research/post-110-architecture-sustainability.md)
+  — frozen diagnosis of why agent-written code drifted after the pluginization
+  inflection; its live backlog is tracked in
+  [harness-gaps](tasks/architecture/harness-gaps/README.md).
 
 ## Active Proposals
-- [MCP protocol conformance](proposals/mcp-protocol-conformance.md)
-  — proposed replacement of five hand-written stdio JSON-RPC shims with one
-  official-SDK-backed, dual-era MCP server capability, validated structured
-  tool results, strict protocol/tool error separation, and provider-neutral
-  Channel tool metadata.
-- [AgentRuntime input surface cleanup](proposals/agent-runtime-input-surface-cleanup.md)
-  — draft technical design for narrowing the provider-facing runtime input
-  surface: plain text `completionInput` for non-channel turns, `channelInput`
-  only for channel-originated XML rendering, provider-owned skill layout
-  materialization, and removal of Dreamux structural `role` from
-  `AgentRuntimeCreateContext`.
-- [Admin control plane surface](proposals/admin-control-plane-surface.md)
-  — draft requirement/spec for making admin.sock the target external control
-  plane. Its namespace slice landed and was then superseded by the domain-owned
-  Command registry, which admin.sock and a Channel's in-process `invoke` both
-  adapt; model-facing filtering lives in each domain's MCP delegate, and
-  additional runtime skill roots stay off every model-facing surface. Event,
-  protocol-baseline, introspection, and authentication gaps remain later slices.
-- [TeamMate identity system prompt](proposals/teammate-identity-system-prompt.md)
-  — draft requirement/spec for adding a minimal `identity` input to
-  `teammate.spawn` and `team.create`, persisting it on TeamMate identity records,
-  and rendering it as provider-neutral system-prompt append guidance rather than
-  first-turn prompt text.
-- [Dispatcher Team MCP send to TeamLeader](proposals/team-mcp-dispatcher-send.md)
-  — retained implementation design for the dispatcher-only Team MCP `send` tool
-  that submits turns to an existing Team's TeamLeader, registers completion
-  delivery back to the dispatcher at send time, and leaves Team peer messaging
-  out of this slice.
-- [Collaboration space provisioning](proposals/collaboration-space-provisioning.md)
-  — draft requirement/spec for a Core-owned, provider-neutral collaboration-space
-  MCP and Channel container/target lifecycle. Superseded: a Collaboration Space
-  is now a Channel product flow. The Channel owns the policy, the provisioning,
-  and the durable record; Core keeps no space entity, no container/target
-  contract, and no space Commands. Read it for the product intent, not the
-  ownership.
-- [Feishu topic collaboration routing](proposals/feishu-topic-collaboration-routing.md)
-  — implementation specification for verifying `chat_mode=topic` and preserving
-  ordinary group fail-safe routing. The topic-mode verification and fail-safe
-  behavior stand; the neutral-target projection it describes does not, because a
-  target no longer crosses the provider seam.
-- [Feishu binding notification cards](proposals/feishu-binding-notification-cards.md)
-  — live Feishu cards for Collaboration Space, group, and topic binding state
-  transitions. The cards shipped; the core-event seam they were rendered from did
-  not survive — the Channel now renders them from its own records when it changes
-  them, and Core publishes no binding fact.
-- [TeamLeader-scoped Team MCP transfer back](proposals/team-mcp-teamleader-transfer-back.md)
-  — implementation design for exposing `transfer_back` from Team MCP to
-  TeamLeaders over a core binding store. Superseded: routing is Channel-owned,
-  Team MCP has no binding tool, and there is no `transfer_back` — rebinding is
-  the Channel's own `bind_channel` with a different Team. The later dispatcher
-  `team.send` slice is recorded separately above.
-- [TeamLeader-scoped Team MCP channel binding](proposals/team-mcp-teamleader-bind-channel.md)
-  — design for exposing a scoped `bind_channel` to TeamLeaders from Team MCP.
-  Superseded in location, kept in spirit: a TeamLeader still binds only free or
-  already-own routes, but the tool is the Channel's, and its TeamLeader copy has
-  no team field at all rather than a derived one.
-- [Scoped Team dissolve and durable worktree cleanup](proposals/team-mcp-teamleader-dissolve.md)
-  — design for exposing descriptor-bound `dissolve` to TeamLeaders. The scoped
-  tool landed. The durable close lifecycle it specifies did not survive: a
-  dissolve is an ordinary submission with no persisted operation, and the only
-  fact that outlives the process is a `cleanup-pending` worktree on the closed
-  record.
-- [Service large-file declaration and seam refactor](proposals/service-large-file-declaration-and-seam-refactor.md)
-  — behavior-preserving refactor for owner-local service type contracts. Its file
-  inventory is historical: the dissolve controller/lifecycle files and the
-  channel-tool coordinator it names have since been deleted rather than split.
-- [Post-#110 architecture sustainability](proposals/post-110-architecture-sustainability.md)
-  — diagnostic of why agent-written code drifted from the intended architecture
-  after the #110 pluginization inflection (load-bearing invariants are prose with
-  no executable backstop; the ownership map lives outside the queryable KB; review
-  bypassed at land-first merges) plus a prioritized, mostly-executable improvement
-  backlog (topology map + ownership/boundary fitness functions + process gates).
 
-Move an active proposal out of `proposals/` once it is implemented,
-superseded, or abandoned; preserve the old text under `archive/` when the
-history still matters.
+- [Admin control plane surface](proposals/admin-control-plane-surface.md)
+  — issue #295: the remaining control-plane slices (events, protocol baseline,
+  introspection, inventory, authentication). The only active proposal; every
+  implemented or superseded one lives in
+  [archive/proposals](archive/proposals/README.md).
 
 ## Archive
 
-- [Remove cron run-now](archive/proposals/remove-cron-run-now-mcp.md)
-  — implemented removal of the self-waiting manual cron fire capability
-  (`cron_run_now` MCP tool and `scheduler.cron.run_now` admin method) and its
-  full call chain; current behavior is documented in
-  [Scheduled work](domains/scheduled-work.md) and
-  [Service topology](reference/service-topology.md#schedulerservice--schedulercommands).
-- [Workflow top-level scripts and JSON args](archive/proposals/workflow-top-level-json-args.md)
-  — implemented issue #323; current behavior is documented in
-  [Dynamic Workflow usage](reference/dynamic-workflow-usage.md) and
-  [Current architecture](reference/current-architecture.md#dynamic-workflows).
-- [Codex portable output schema adapter](archive/proposals/codex-portable-output-schema.md)
-  — implemented private Codex schema compilation, result restoration, and
-  active-turn compatibility; current behavior is documented in
-  [Provider Runtime](domains/provider-runtime.md#codex-portable-output-schema).
-- [Workflow ultracode dialect parity](archive/proposals/workflow-ultracode-dialect-parity.md)
-  — implemented issue #318 requests 1-4; current behavior is documented in
-  [Dynamic Workflow usage](reference/dynamic-workflow-usage.md) and
-  [Current architecture](reference/current-architecture.md).
-- [AgentRuntime lifecycle contracts](archive/proposals/agent-runtime-lifecycle-contracts.md)
-  — superseded ID/callback design exploration; current behavior is owned by
-  [Entity-owned TeamMate lifecycle and object Turns](decisions/entity-owned-teammate-lifecycle-and-object-turns.md)
-  and [Provider Runtime](domains/provider-runtime.md).
-- [Archive index](archive/README.md)
-- [Archived proposals](archive/proposals/README.md)
+- [Archive index](archive/README.md) — archived proposals, dissolved decision
+  records, and extracted historical notes. Reachable, not a default path.
 
 ## Validation
 

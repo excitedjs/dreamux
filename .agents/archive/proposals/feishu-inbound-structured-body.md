@@ -1,8 +1,8 @@
 # Feishu inbound structured body
 
 - **Status:** Implemented; current behavior is in
-  [Channel runtime](../../reference/channel-runtime.md) and
-  [Feishu inbound attachments](../../decisions/feishu-inbound-attachments.md)
+  [Channel runtime](/.agents/domains/channel.md) and
+  [Feishu inbound attachments](/.agents/tasks/channel/feishu-access-foundations/requirement.md#feishu-inbound-attachments)
 - **Date:** 2026-07-23
 - **Affects:** `@excitedjs/feishu-transport`, `@excitedjs/feishu-channel`,
   model-visible Feishu inbound turns

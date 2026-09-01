@@ -14,3 +14,9 @@ When a proposal is implemented, superseded, or abandoned:
 ## Contents
 
 - [Archived proposals](proposals/README.md)
+
+- [Archived decision records](decisions/README.md) — the dissolved
+  `decisions/` tree: records that were already historical or superseded in
+  fact, kept verbatim with status banners.
+- [Archived notes](notes/issue-63-implementation-plan.md) — extracted
+  historical material that no longer belongs on a current-shape page.

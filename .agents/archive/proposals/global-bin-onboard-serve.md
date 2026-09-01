@@ -3,8 +3,8 @@
 - **Status:** Superseded by accepted decision
 - **Date:** 2026-06-02
 - **Issue:** [issue #18](https://github.com/excitedjs/dreamux/issues/18)
-- **Decision:** [global-bin-onboard-serve](../../decisions/global-bin-onboard-serve.md),
-  amended by [dispatcher-tm-packaging](../../decisions/dispatcher-tm-packaging.md)
+- **Decision:** [global-bin-onboard-serve](/.agents/archive/decisions/global-bin-onboard-serve.md),
+  amended by [dispatcher-tm-packaging](/.agents/archive/decisions/dispatcher-tm-packaging.md)
 
 This proposal is retained only as the issue #18 design entry point. The
 binding behavior now lives in the accepted decision:

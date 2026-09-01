@@ -3,7 +3,7 @@
 ## Current state
 
 - Goal: Reduce the public Agent Runtime and Channel contracts to minimal capability-neutral ports, with Channel bridging external interaction through Core Command invocation and Core event subscription.
-- State: `implementation`
+- State: `done`
 - Requirement: [Current requirement](/.agents/tasks/architecture/minimize-provider-boundaries/requirement.md)
 - Current solution input revision: `requirement.md` SHA-256 `e7683f475f83e1cecfbb78f280d899b611b443e648ea48a3ced09f2e26b8376d`
 - Prior solution input revision: `requirement.md` SHA-256 `5e8b6ccb14666ddce48398744c5797fd6008b45979ed63f13edd2967185f628a`; the operator then required failed or empty Feishu bot self-identity resolution to remain retryable on the next inbound message instead of becoming a process-lifetime negative cache.
@@ -626,5 +626,29 @@ architecture merely because it is possible.
 
 ## Delivery
 
-- Pull request / CI / merge: Not started.
-- Knowledge closeout: Pending.
+- Pull request / CI / merge: implementation merged into `next` as PR #350
+  (squash `2ed5f5ea`); provider-boundary residue cleanup merged as PR #353
+  (`e17650d1`); legacy persisted session-identity layout restored as PR #356
+  (`3d907d52`).
+- Knowledge closeout: Completed 2026-09-01, performed directly by Claude on
+  explicit operator instruction (deliberately not delegated to the original
+  TeamLeader). Knowledge owners updated:
+  - `.agents/decisions/minimize-provider-boundaries.md` — new decision record
+    (also resolves the "decision record §N" citations in the architecture
+    guard tests via its numbered-section map);
+  - `.agents/decisions/agent-runtime-provider.md` — annotated as superseded in
+    contract shape;
+  - `.agents/reference/model-facing-writing.md` — MCP failure contract
+    corrected to the shipped `StatedFailure` / native-message-passthrough
+    behavior (the prior allowlist/sanitized-error text contradicted merged
+    source);
+  - `.agents/product/README.md` — product behavior catalog seeded from this
+    task's operator rulings;
+  - `.agents/skills/engineering-whitepaper/SKILL.md` — durable operator taste
+    extracted from this task's rulings (generalization of
+    `durable-fact-recovery-principles.md` and the failure ledger);
+  - `.agents/domains/**` — N/A beyond in-task updates: the affected behavior
+    contracts (`channel-routing-and-binding.md`, `state-config-and-files.md`,
+    `channel-runtime.md`, `service-topology.md`) were already aligned during
+    the task itself;
+  - `.agents/glossary.md` — N/A, no new overloaded term.

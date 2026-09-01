@@ -2,15 +2,15 @@
 
 - **Status:** Archived implementation blueprint (synthesized from two independent
   heterogeneous technical reviews, 2026-06-24); current behavior is documented
-  in [Scheduled tasks](../../reference/scheduled-tasks.md)
+  in [Scheduled tasks](/.agents/domains/scheduled-work.md)
 - **Companion to:** [scheduled-tasks proposal](scheduled-tasks.md),
-  [agent-activity-capability decision](../../decisions/agent-activity-capability.md),
-  [json-document-store decision](../../decisions/json-document-store.md)
+  [agent-activity-capability decision](/.agents/archive/decisions/agent-activity-capability.md),
+  [json-document-store decision](/.agents/tasks/architecture/service-topology-foundations/requirement.md#json-document-store)
 - **Verdict:** GO, subject to three mandatory prerequisites (§9)
 
 > Input-surface note: the scheduled injection verb sections below were written
 > before
-> [AgentRuntime input surface cleanup](../../proposals/agent-runtime-input-surface-cleanup.md).
+> [AgentRuntime input surface cleanup](agent-runtime-input-surface-cleanup.md).
 > Keep the wait-idle and scheduler-state design, but replace
 > `systemInput(reason: "scheduled")` with plain text `completionInput` when
 > implementing against the updated AgentRuntime contract.
@@ -234,7 +234,7 @@ await runtime.completionInput({ text: job.prompt, sourceId });
 user's live turn on Codex (R2). The former conclusion to use
 `systemInput({reason:'scheduled'})` is superseded. Use the plain text
 `completionInput({ text, sourceId })` seam from
-[AgentRuntime input surface cleanup](../../proposals/agent-runtime-input-surface-cleanup.md).
+[AgentRuntime input surface cleanup](agent-runtime-input-surface-cleanup.md).
 - Tag the scheduled turn's record with a structured `origin: { kind:'scheduled',
   job_id }` in `turn.jsonl` (cf. teammate `turnOrigin`,
   `teammate-service/index.ts:549`) — the structured turn↔job association (G3), never
@@ -276,7 +276,7 @@ deferred-injection mechanism. That was wrong: `injectRestartNoticeIfNeeded`
 started / resumed — the process is fresh, there is no in-progress turn, the agent
 is idle by definition, so `waitIdle` would be a no-op. The restart notice's
 delivery seam is now governed by
-[AgentRuntime input surface cleanup](../../proposals/agent-runtime-input-surface-cleanup.md),
+[AgentRuntime input surface cleanup](agent-runtime-input-surface-cleanup.md),
 but it still does not become a scheduler wait-idle consumer. The scheduler is
 the **sole** consumer of `waitIdle`; it inlines
 `await Promise.race([runtime.waitIdle?.() ?? Promise.resolve(), maxDefer])` —

@@ -2,7 +2,7 @@
 
 - **Status:** Historical issue #110 proposal; implemented Phase 1 boundaries
   are refined by
-  [provider-architecture-realignment](../../decisions/provider-architecture-realignment.md)
+  [provider-architecture-realignment](/.agents/tasks/architecture/providerization-epic/requirement.md#provider-architecture-realignment)
 - **Date:** 2026-06-06
 - **Affects:** plugin mechanism, Capability Registry, dispatcher config,
   Channel providers, Agent Runtime providers, MCP injection, server-hosted
@@ -18,7 +18,7 @@ The original MVP runtime was intentionally narrow: one dispatcher owned one
 Feishu channel, one Codex app-server child, one Codex thread, and one
 dispatcher-scoped Feishu MCP shim. The current providerized runtime boundary is
 documented in [Provider runtime](../../domains/provider-runtime.md) and
-[Channel routing and binding](../../domains/channel-routing-and-binding.md).
+[Channel routing and binding](/.agents/domains/channel.md).
 
 Issue #110 changes the target architecture. Dreamux needs a full extension
 surface that covers:
@@ -33,7 +33,7 @@ surface that covers:
 Issue #135 later narrows the current provider seam: Feishu is a built-in
 bidirectional channel rather than a runnable ChannelProvider, and the registry
 is an Agent Runtime provider view. Read
-[provider-architecture-realignment](../../decisions/provider-architecture-realignment.md)
+[provider-architecture-realignment](/.agents/tasks/architecture/providerization-epic/requirement.md#provider-architecture-realignment)
 before treating this proposal as current implementation guidance.
 
 The architecture must preserve public safety and the issue #98 compatibility
@@ -250,8 +250,8 @@ Restart recovery must preserve the distinction from issue #98:
 
 The proposal is made concrete by these issue #110 decisions:
 
-- [provider references and Capability Registry](../../decisions/provider-references-and-capability-registry.md)
-- [Agent Runtime providers](../../decisions/agent-runtime-provider.md)
-- [Channel providers](../../decisions/channel-provider.md)
-- [server-hosted TeamMate](../../decisions/server-hosted-teammate.md)
-- [providerized config and state compatibility](../../decisions/providerized-config-state-compatibility.md)
+- [provider references and Capability Registry](/.agents/tasks/architecture/providerization-epic/requirement.md#provider-references-and-capability-registry)
+- [Agent Runtime providers](/.agents/archive/decisions/agent-runtime-provider.md)
+- [Channel providers](/.agents/archive/decisions/channel-provider.md)
+- [server-hosted TeamMate](/.agents/archive/decisions/server-hosted-teammate.md)
+- [providerized config and state compatibility](/.agents/tasks/architecture/providerization-epic/requirement.md#providerized-config-state-compatibility)

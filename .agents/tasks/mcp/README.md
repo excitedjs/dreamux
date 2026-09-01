@@ -15,3 +15,4 @@
 - [Scheduler](/.agents/tasks/mcp/scheduler/README.md): Scheduler-backed MCP tools and their control-plane contracts.
 
 ## Tasks
+- [MCP Protocol Conformance Rulings](/.agents/tasks/mcp/protocol-conformance/README.md) — `done`: Preserve the settled rulings behind the official-SDK MCP server replacement.

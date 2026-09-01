@@ -7,8 +7,9 @@
  * actually seen. Nothing here leaves the package: Core is told a `team_name`
  * and nothing about chats, threads, or topic mode.
  *
- * Topic detection needs one platform lookup, so it is cached per chat, bounded,
- * and fails open: a chat whose mode cannot be established is treated as an
+ * Topic detection needs one platform lookup, so successful resolutions are
+ * cached per chat for the session (failures and unknown modes are not cached,
+ * so the next accepted inbound retries) and it fails open: a chat whose mode cannot be established is treated as an
  * ordinary group, which routes the message to the group binding rather than
  * inventing a topic that may not exist.
  */

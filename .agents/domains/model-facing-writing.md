@@ -1,0 +1,229 @@
+# Reference: model-facing writing
+
+Model-facing text is any text that can shape what an agent believes it can do.
+In Dreamux that includes bundled skills, system prompts, MCP tool descriptions,
+MCP error text, structured MCP result field names, README current guidance, and
+current KB reference pages. Treat tests that assert this text as part of the
+product contract too.
+
+Current source owners:
+
+- `/packages/dreamux/skills/`
+- `/packages/dreamux/src/service/dispatcher-service/base-prompt.ts`
+- `/packages/dreamux/src/service/team-service/index.ts`
+- `/packages/dreamux/src/service/teammate-collection/mcp-delegate.ts`
+- `/packages/dreamux/src/service/team-collection/mcp-delegate.ts`
+- `/packages/dreamux/src/service/scheduler/mcp-delegate.ts`
+- `/packages/dreamux/src/service/channel-service/index.ts`
+- `/packages/channel/feishu-channel/src/tools/`
+
+## Reader First
+
+Role-gated injection already chooses the reader. A Dispatcher-only skill should
+not spend body text explaining that only Dispatchers should read it; it should
+tell the current Dispatcher when to load it and how to use the visible tools.
+The same applies to TeamLeader skills and caller-specific MCP descriptions.
+
+Before adding a rule, verify the real tool projection in source:
+
+- Dispatcher-visible tools are not automatically visible to TeamLeaders.
+- TeamLeader-visible `team` MCP exposes exactly one tool, a scoped `dissolve`
+  with no model-supplied Team name. Binding a conversation to a Team is a
+  Channel tool, and the TeamLeader's copy of it carries no team field at all.
+- Ordinary TeamMates and team members receive no bundled Dreamux skill by
+  default.
+- Dispatchers and TeamLeaders both receive the shared `workflow` skill; its
+  four tools remain caller-scoped by the existing TeamMate MCP projection.
+- Channel reply tools exist only when the active Channel provider exposes them.
+
+Do not invent a communication path. If there is no tool or runtime delivery
+mechanism for "ask the Dispatcher" or "send a report to the Dispatcher", do not
+write those phrases.
+
+## Current Contract, Not History
+
+Write product behavior in present-tense positive terms. Avoid migration and
+roadmap prose in model-facing text:
+
+- avoid "legacy fallback", "old symlink", "removed verb", "this milestone", and
+  "there is no separate tool" wording;
+- describe the current surface the model should use;
+- put package-surface removals, upgrade notes, and historical comparisons in
+  Rush change files or clearly historical decision records.
+
+`dreamux-maintenance` is also the current configuration/state companion. Its
+concise root routes each task to one directly linked reference; schemas and
+workflows have one owner instead of being copied into the root. Every change to
+a Dreamux config or persisted-state shape, validation, default, ownership, or
+meaning updates that owning reference and, when its scope changes, the root
+route in the same change. The root and non-upgrade references may name the one
+accepted schema/version and current safe edit workflow, but they must not teach
+upgrade detection, old formats, migrations, rebuild recipes, or state deletion
+as an upgrade technique. Fully server-owned state is named as non-editable;
+mixed state names the field ownership boundary exactly.
+
+The one exception is `references/self-upgrade.md`: an explicit, low-freedom
+managed-daemon transition SOP. It resolves and validates exact staged old and
+target artifacts, then reads the staged target changelog and root-routed owner
+references for concrete work. It owns sequencing, private recovery ownership,
+restart-resume, verification, and reporting, but no historical schema or
+release-specific migration body. Other references do not link deeper.
+
+Examples:
+
+- Prefer: "Cron jobs inject prompts back into this agent."
+- Avoid: "This milestone supports only internal prompt-agent jobs."
+- Prefer: "`send` can reattach to a resumable closed TeamMate from the recorded
+  runtime session."
+- Avoid: "There is no separate resume tool."
+
+## Provider Neutrality
+
+Core Dreamux text must keep channel provider data opaque. Generic skills,
+prompts, MCP descriptions, and current reference docs can say that `meta` is
+provider-defined and that the active provider's tool schema/result is authority.
+They must not use Feishu `chat_id`, `list_chat_bots`, or group-chat examples as
+the generic Dreamux contract.
+
+Provider-specific examples belong in provider docs or explicitly labeled
+examples, such as a "Built-In Feishu Example" README section. Core structured MCP
+results should also avoid provider field names; expose normalized target facts
+such as `target_key`, `target_type`, `channel_id`, and `provider` instead of
+projecting provider selectors like `chat_id` as top-level fields.
+
+## Prompt Shape
+
+System prompts should route to the right skills and state durable role
+boundaries. They should not become tool manuals or repo-development policies.
+
+Dispatcher replacement prompts replace the runtime's model-selected base
+instructions. For Codex, the current source of truth is the model catalog entry
+(`models-manager/models.json`) and the selected model entry's
+`base_instructions` / `model_messages`, not older per-version prompt markdown
+files. Dreamux should track the selected Codex model's non-coding contract
+(currently GPT-5.5 when that is selected or default): personality/tone, simple
+terminal requests, planning-tool use, review-answer shape, progress updates,
+safe handling of unexpected local changes, destructive-command caution, and
+concise final-answer behavior. Remove code-editing and frontend-production
+guidance unless the Dispatcher role itself needs it.
+
+Dispatcher prompt content should still be compact and role-specific:
+
+- identify the Dreamux Dispatcher role;
+- load `dispatcher-workflow` before TeamMate, Team, channel, or cron MCP work;
+- load `dreamux-maintenance` before Dreamux host/server diagnosis;
+- state that repository implementation, debugging, and review work should be
+  delegated to TeamMate/Team MCP by default;
+- forbid reading or editing repository code files under the dispatcher working
+  directory unless the user explicitly asks the Dispatcher to do that local
+  inspection or edit;
+- treat MCP tool results as authority for Dreamux state;
+- use provider-exposed reply tools for visible channel delivery when available;
+- keep provider `meta` opaque and protect secrets/private identifiers.
+
+Append prompts layer onto an already-capable runtime prompt, so they should be
+short role deltas rather than a full reintroduction.
+
+Do not copy repository contributor guidance into product prompts. `AGENTS.md`,
+`apply_patch`, PR review rituals, citation-marker cleanup, frontend-production
+style rules, and Dreamux open-source publication rules belong to repo work, not
+to every Dispatcher user.
+
+## MCP Descriptions And Results
+
+MCP descriptions are model-facing. Keep them short and operational:
+
+- what the tool does;
+- which identifier the caller must use;
+- what result or side effect is authoritative;
+- important non-obvious cautions, such as shared-workspace write coordination.
+
+Avoid internal architecture adjectives and implementation layouts in tool
+descriptions: "core-owned", "hidden tool", `.workspace/work/<name>`, and
+package/release milestone language are not useful operating instructions.
+
+For caller-specific surfaces, split descriptions by caller when needed. The same
+tool name may be registered twice with different authority — the Feishu
+`bind_channel` is, once for the Dispatcher and once for a TeamLeader — and each
+description should describe only what its own caller can reach, never the other
+caller's scope.
+
+Structured result names are also model-facing. If a field names a provider shape
+or an old concept, fix the projection rather than documenting around it.
+
+Every externally supplied value rendered into user- or model-visible rich text
+(Team and space names, runtime ids, paths, target display names) is escaped;
+none of them may construct a Markdown link, mention, tag, or card action.
+
+Every Dreamux-owned tool keeps its canonical successful-result projector beside
+its output schema. Successful objects appear unchanged in `structuredContent`
+with exact `content: []` for ordinary calls. Keep top-level output objects closed
+unless a named JSON-valued extension field is intentionally open. Do not return
+duplicate JSON text, generic forwarding acknowledgements, nested JSON strings,
+or prompt guidance in structured fields.
+
+Known-tool input-schema failures are normal MCP tool results with `isError`.
+Unknown tools and malformed protocol requests are SDK-owned protocol errors.
+
+Every tool failure is model-visible and actionable; the failure's own class
+decides its shape, with no code list, no allowlist, and no policy table
+(owner: `/packages/dreamux/src/mcp/failure-text.ts`):
+
+- a domain-authored failure (`StatedFailure`: a stable code, the domain's own
+  reason, and the next step it knows) renders all three parts as written;
+- any other thrown error keeps the code it already has — `INTERNAL` when it
+  has none — and carries its own message verbatim. Core does not own that
+  failure, so Core does not re-author it: the Node, filesystem, provider, or
+  library text is the only concrete fact at the scene, and replacing it with a
+  Core-authored sentence deletes the information. Stacks go to logs only;
+  messages always go up.
+
+Do not introduce correlation/failure ids, uniform sanitize templates,
+per-operation visibility allowlists, or Core-invented recovery advice.
+
+The general no-polling and completion-delivery rule belongs in Dispatcher and
+TeamLeader role prompts. A bound Dreamux tool definition may select one
+operation-local success text without changing its canonical structured result:
+submitted Team and TeamMate create/send receipts carry their matching reminder,
+and a `workflow_run` receipt with a non-empty `run_id` carries the workflow
+reminder. Idle, failed, read, unrelated, and ordinary mutation results carry no
+text. `/packages/dreamux/src/service/mcp/dispatch-reminders.ts` is the sole owner
+of those texts and selectors; the selector is not public tool metadata, Command
+data, or a Channel provider contract.
+
+## Tests
+
+Tests should protect contracts, not prose preferences. Prefer:
+
+- role-to-skill mapping assertions;
+- schema/field whitelists;
+- tool-surface visibility assertions;
+- negative gates for banned coupling or history text, such as `Feishu`,
+  `chat_id`, `legacy`, `.codex/skills`, `tm spawn`, `apply_patch`, `AGENTS.md`,
+  `this milestone`, or invented Dispatcher communication phrases.
+
+Provider-neutral skills keep Feishu-specific text banned. The Dispatcher-only
+`dreamux-maintenance` skill is the explicit exception for directly routed,
+built-in Feishu credential and access references. Tests reject transition and
+history text in the root and non-upgrade references, while separately locking
+the generic self-upgrade SOP and its no-release-specific-history boundary.
+
+Use exact positive strings only for stable public names and command surfaces,
+such as skill names, MCP tool names, CLI commands, and daemon subcommands.
+Avoid exact-sentence `toContain` assertions for skill prose, prompt prose, or MCP
+descriptions. Those tests make incidental wording harder to fix than behavior.
+
+## Review Checklist
+
+Before landing model-facing changes:
+
+- list every touched model-facing surface, including tests;
+- verify each capability claim against source, not against older docs;
+- check the text from the current reader's role and visible tool projection;
+- remove provider-specific examples from core guidance;
+- remove migration/history/meta prose from runtime-facing text;
+- make progress-report guidance conditional on an available provider reply tool;
+- run the focused text/contract tests, the relevant source tests, `.agents`
+  validation, skill validation, `rush test`, and `rush lint`.
+
+History: [/.agents/tasks/architecture/README.md](/.agents/tasks/architecture/README.md).

@@ -10,7 +10,7 @@ a TeamMate; delegate a role identity, task inputs, and an explicit output bounda
 
 Treat `next` as the integration trunk. Drive every development task toward a
 reviewed, CI-green GitHub PR merged into `next`, as owned by
-[`/.agents/reference/release-process.md`](/.agents/reference/release-process.md).
+[`/.agents/domains/repository-operations-and-release.md`](/.agents/domains/repository-operations-and-release.md).
 
 Treat the operator's description as an initial requirement, not as proof about
 the current implementation and not as permission to edit code. Verify code facts,
@@ -103,6 +103,20 @@ prototype or add temporary diagnostic code. An initial request such as "fix X" o
     current Team. Never dissolve automatically. On confirmation, apply the worktree
     safety checks and lifecycle rules in
     [team-dissolution.md](references/team-dissolution.md).
+
+## Taste and large refactors
+
+Load [`engineering-whitepaper`](/.agents/skills/engineering-whitepaper/SKILL.md)
+before designing, adjudicating, or reviewing any non-trivial change, and point
+every developer, solution, and reviewer seat at it through its identity block.
+It records the operator's standing taste — anti-defensive engineering, minimal
+mechanism, recovery semantics, and collaboration rhythm — so those judgments do
+not need to be re-litigated per task.
+
+When a task is a multi-stage architecture refactor, additionally follow
+[large-refactor-mode.md](references/large-refactor-mode.md): authority order at
+kickoff, greenfield comparison, the operator rulings ledger, stage-boundary
+knowledge re-supply, structural pre-review accounts, and reporting cadence.
 
 ## TeamLeader ownership
 

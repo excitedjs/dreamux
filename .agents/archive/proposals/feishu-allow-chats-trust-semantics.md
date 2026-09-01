@@ -412,7 +412,7 @@ The same change updates:
 
 - [Feishu pairing access](../../domains/feishu-pairing-access.md) as the normative
   V3 schema/branch table and in-place semantic warning;
-- [Feishu introduce](../../domains/feishu-introduce.md) for the intentional
+- [Feishu introduce](/.agents/domains/feishu-pairing-access.md) for the intentional
   ordinary-delivery/trust-mutation split;
 - Feishu channel source comments, package guardrail, and public README;
 - a new accepted decision that refines/supersedes only the ordinary

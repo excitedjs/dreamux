@@ -18,12 +18,12 @@ Design background:
 | Looking for | Read |
 |---|---|
 | The package itself (install, run, configure, config reference, testing) | [`packages/dreamux/README.md`](packages/dreamux/README.md) |
-| Current architecture map | [`.agents/reference/current-architecture.md`](.agents/reference/current-architecture.md) |
-| Monorepo layout reference | [`.agents/reference/repo-structure.md`](.agents/reference/repo-structure.md) |
-| State/cache/run/log ownership | [`.agents/reference/state-and-paths.md`](.agents/reference/state-and-paths.md) |
-| Channel and Feishu runtime | [`.agents/reference/channel-runtime.md`](.agents/reference/channel-runtime.md) |
-| Provider architecture and package split | [`.agents/decisions/provider-architecture-realignment.md`](.agents/decisions/provider-architecture-realignment.md), [`.agents/decisions/npm-package-split-and-channel-targets.md`](.agents/decisions/npm-package-split-and-channel-targets.md) |
-| Issue #110 closure boundary | [`.agents/decisions/issue-110-epic-closure.md`](.agents/decisions/issue-110-epic-closure.md) |
+| Current architecture map | [`.agents/domains/current-architecture.md`](.agents/domains/current-architecture.md) |
+| Monorepo layout reference | [`.agents/domains/current-architecture.md`](.agents/domains/current-architecture.md) |
+| State/cache/run/log ownership | [`.agents/domains/state-config-and-files.md`](.agents/domains/state-config-and-files.md) |
+| Channel and Feishu runtime | [`.agents/domains/channel.md`](.agents/domains/channel.md) |
+| Provider architecture and package split | [`.agents/tasks/architecture/providerization-epic/requirement.md`](.agents/tasks/architecture/providerization-epic/requirement.md), [`.agents/tasks/architecture/npm-package-split/requirement.md`](.agents/tasks/architecture/npm-package-split/requirement.md) |
+| Issue #110 closure boundary | [`.agents/archive/decisions/issue-110-epic-closure.md`](.agents/archive/decisions/issue-110-epic-closure.md) |
 | Architecture, decisions, knowledge-delta protocol | [`.agents/root.md`](.agents/root.md) |
 | Historical proposals | [`.agents/archive/README.md`](.agents/archive/README.md) |
 | Always-loaded agent operating rules | [`CLAUDE.md`](CLAUDE.md) (`AGENTS.md` is a symlink) |

@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "comment": "Documentation-only: update knowledge-base citation paths in the package README after the .agents reorganization; no package behavior or version change.",
+      "type": "none",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel"
+}

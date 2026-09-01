@@ -29,7 +29,7 @@ common/autoinstallers/*/node_modules/
 # The only committed lockfile is common/config/rush/pnpm-lock.yaml (the source
 # of truth for the whole workspace). The per-package npm path is retired — no
 # per-package package-lock.json is committed. See
-# .agents/decisions/0006-install-model.md.
+# .agents/tasks/architecture/npm-package-split/requirement.md#install-model.
 
 # .agents/wip/ is local scratch (design notes, plans) — never committed.
 # It is orphan-checked by .agents/scripts/check.sh and must stay out of the KB.

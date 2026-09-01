@@ -1,8 +1,8 @@
 # Workflow Top-Level Scripts And JSON Args
 
 - **Status:** Implemented historical proposal; current behavior is documented in
-  [Dynamic Workflow usage](../../reference/dynamic-workflow-usage.md) and
-  [Current architecture](../../reference/current-architecture.md#dynamic-workflows)
+  [Dynamic Workflow usage](/.agents/product/dynamic-workflow-usage.md) and
+  [Current architecture](/.agents/domains/current-architecture.md#dynamic-workflows)
 - **Date:** 2026-08-11
 - **Affects:** Dynamic Workflow script dialect, `workflow_run` MCP schema,
   Workflow runner/compiler, bundled workflow skill, current Workflow references
