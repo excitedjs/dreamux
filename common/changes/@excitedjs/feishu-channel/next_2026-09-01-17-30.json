@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add the `ask_user_question` MCP tool: the model sends a Feishu decision card (1-4 single-select questions, each option carrying a description and an optional preview) and the tool returns as soon as the card is sent. The answer is not awaited \u2014 a click settles the round server-side and the result arrives as an ordinary inbound message, so a user may take as long as they like. A round closes itself before Feishu stops accepting clicks on the card and tells the model no answer came.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

@@ -79,10 +79,11 @@ Source:
 
 ### Provider tools and MCP
 
-The Feishu package owns its tool names and JSON schemas. Twelve definitions are
-registered, and the served surface is caller-scoped:
+The Feishu package owns its tool names and JSON schemas. Thirteen definitions
+are registered, and the served surface is caller-scoped:
 
-- messaging (both callers): `reply`, `react`, `list_chat_bots`
+- messaging (both callers): `reply`, `react`, `list_chat_bots`,
+  `ask_user_question`
 - Dispatcher routing: `bind_channel`, `unbind_channel`, `list_bindings`
 - TeamLeader routing: `bind_channel`, `unbind_channel`, each with no team field
 - Dispatcher Collaboration Space: `bind_collaboration_space`,
@@ -119,10 +120,57 @@ Successful results are canonical values: `reply` returns
 the value unchanged as `structuredContent` with exact `content: []` and validates
 it against the provider output schema.
 
+#### `ask_user_question`
+
+The arguments deliberately mirror Claude Code's own AskUserQuestion, down to the
+field descriptions, so a model reads the two as one tool: 1-4 `questions`, each
+with a `header` chip, a `question`, and 2-4 `options` of `label` +
+`description` + optional `preview`. Two things differ, and both are forced.
+A `chat_id` is required, because a chat tool needs a destination and
+AskUserQuestion has no such concept. There is no `multiSelect`: the operator
+ruled multi-select out of this channel, so every question takes exactly one
+answer.
+
+The third difference is the one that shapes the design: **the tool does not
+return the answer.** It returns `{ request_id, status: 'asked', next }` as soon
+as the card is sent, and `next` instructs the model to end its turn. A click
+settles the round server-side and the answer reaches Core as an ordinary
+inbound submission, on the path a typed reply takes. Blocking the tool call was
+the alternative and it loses the case that matters — a person who answers after
+lunch — because the MCP client, not Dreamux, bounds how long a tool call may
+run.
+
+The card carries no client state, and that is deliberate rather than incidental.
+Feishu has no radio component: `select_static` is its only native single-select
+and its options hold a label and nothing else, so an option's description would
+vanish the moment the dropdown closed. Each option is therefore an
+`interactive_container`, which holds no state at all — so "which option is
+selected" exists only in the session's registry, every click is a callback, and
+the selection is visible solely because the whole card is repainted from the
+server's answer map. There is no `form`, because a form batches its inputs until
+submit and would cost each question the ability to settle on its own.
+
+Anyone in the chat may answer the card, and that is a decision rather than an
+oversight: asked whether a non-asker clicking should be gated, the operator
+ruled "不需要限制，所有人都可以点". The answer carries the clicker's open_id as
+`sender_id`, so who answered is never lost — but no authorization check stands
+between a group member and the card.
+
+A round closes itself after `ASK_USER_CARD_TTL_MS`, which is under the 15
+minutes after which Feishu stops accepting clicks on a card. Past that cutoff
+the card still looks live but every click is dropped, so an unanswered round
+repaints the card as closed and tells the model no answer came and to stand
+still until the user's next message. Rounds live in memory: a session teardown
+abandons them, and a later click reports the round as gone rather than
+answering nothing.
+
 Source:
 
 - `/packages/channel/feishu-channel/src/tools/registry.ts`
 - `/packages/channel/feishu-channel/src/tools/messaging-tools.ts`
+- `/packages/channel/feishu-channel/src/tools/ask-user-question.ts`
+- `/packages/channel/feishu-channel/src/feishu-ask-user.ts`
+- `/packages/channel/feishu-channel/src/feishu-ask-user-card.ts`
 - `/packages/channel/feishu-channel/src/tools/routing-tools.ts`
 - `/packages/channel/feishu-channel/src/tools/space-tools.ts`
 - `/packages/dreamux-types/src/channel.ts`

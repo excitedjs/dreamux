@@ -102,6 +102,27 @@ export class FeishuTargetRouter {
     this.targetAnchors.set(targetKey(target), messageId);
   }
 
+  /**
+   * The target an outbound message is addressed to.
+   *
+   * Threading under a message means speaking wherever that message lives, so a
+   * reply inherits the observed target — but only when it is in the chat the
+   * caller named, because a stale message id must not redirect a message into
+   * another conversation. Everything else names the chat itself.
+   */
+  outboundTarget(
+    chatId: string,
+    replyToMessageId: string | undefined,
+  ): FeishuTarget {
+    const observed =
+      replyToMessageId === undefined
+        ? undefined
+        : this.targetForMessage(replyToMessageId);
+    return observed !== undefined && observed.chatId === chatId
+      ? observed
+      : chatTarget(chatId, 'group');
+  }
+
   targetForMessage(messageId: string): FeishuTarget | undefined {
     return this.messageTargets.get(messageId);
   }

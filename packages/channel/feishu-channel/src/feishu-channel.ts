@@ -44,6 +44,7 @@ import {
   isFeishuOperationError,
   runFeishuBoundedOperation,
 } from './feishu-bounded-operation.js';
+import { createAskUserRegistry } from './feishu-ask-user.js';
 import { FeishuCotSessionSeam } from './feishu-cot-session.js';
 import { FeishuProvisioning } from './feishu-provisioning.js';
 import { FeishuBindingOperations } from './feishu-session-bindings.js';
@@ -56,6 +57,8 @@ import {
 } from './feishu-submit.js';
 import {
   handleCardAction as sessionHandleCardAction,
+  askUserQuestion as sessionAskUserQuestion,
+  expireAskUserQuestion as sessionExpireAskUser,
   sendCard as sessionSendCard,
   sendReply as sessionSendReply,
   addReaction as sessionAddReaction,
@@ -67,7 +70,6 @@ import { FeishuTargetRouter } from './feishu-target-router.js';
 import { FeishuRouting } from './routing/index.js';
 import { FeishuRoutingStore } from './routing/store.js';
 import {
-  chatTarget,
   describeTarget,
   type FeishuTarget,
 } from './routing/target.js';
@@ -125,6 +127,11 @@ export class FeishuChannelSession {
   private readonly provisioning: FeishuProvisioning;
   private readonly _accessMutex = new AsyncMutex();
   private readonly inactiveFence = alwaysActiveSessionFence();
+  private readonly askUser = createAskUserRegistry({
+    onExpire: (expiry) => {
+      void sessionExpireAskUser(this.handle, expiry).catch(() => undefined);
+    },
+  });
   private lifecycle: FeishuSessionLifecycle | undefined;
   private subscription: ChannelEventSubscription | undefined;
   private invoker: JsonInvoker | undefined;
@@ -252,6 +259,7 @@ export class FeishuChannelSession {
     lifecycle.controller.abort();
     this.subscription?.unsubscribe();
     this.subscription = undefined;
+    this.askUser.abandonAll();
     // Interrupt every live card before the bot goes away. The adapter fences
     // itself first and drains within a bounded window, so a slow Feishu can
     // never hold session shutdown open.
@@ -475,6 +483,7 @@ export class FeishuChannelSession {
           ...(chatId !== undefined ? { chatId } : {}),
         }),
       listKnownChatBots: async (chatId) => this.readChatBots(chatId),
+      askUserQuestion: async (input) => sessionAskUserQuestion(this.handle, input),
       bindChannel: (input) => this.bindings.bindChannel(input),
       unbindChannel: (input, requireOwner) =>
         this.bindings.unbindChannel(input, requireOwner),
@@ -514,26 +523,13 @@ export class FeishuChannelSession {
               if (lifecycle?.fence.isCurrent() !== true) return;
               this.targetRouter.observe(
                 messageId,
-                this.outboundTarget(input.chatId, input.messageId),
+                this.targetRouter.outboundTarget(input.chatId, input.messageId),
               );
             },
           }
         : {}),
     });
     return { message_ids: result.messageIds };
-  }
-
-  /** Where a reply landed, in this Channel's own terms. */
-  private outboundTarget(
-    chatId: string,
-    replyToMessageId: string | undefined,
-  ): FeishuTarget {
-    const observed = replyToMessageId === undefined
-      ? undefined
-      : this.targetRouter.targetForMessage(replyToMessageId);
-    return observed !== undefined && observed.chatId === chatId
-      ? observed
-      : chatTarget(chatId, 'group');
   }
 
   private async addReaction(input: {
@@ -664,6 +660,7 @@ export class FeishuChannelSession {
       targetRouter: this.targetRouter,
       sessionFence: fence,
       delivery: this,
+      askUser: this.askUser,
     });
   }
 

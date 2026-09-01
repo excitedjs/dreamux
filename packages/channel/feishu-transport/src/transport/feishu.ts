@@ -291,6 +291,8 @@ export interface FeishuTransport {
     getChatMode?(chatId: string): Promise<FeishuChatMode | undefined>
     addReaction(messageId: string, emoji: string): Promise<string>
     editText(messageId: string, text: string): Promise<void>
+    /** Repaint an already-sent card in place, by message id. */
+    editCard(messageId: string, card: unknown): Promise<void>
     fetchDocComment(fileToken: string, fileType: string, commentId: string): Promise<FeishuDocComment | null>
     fetchDocMeta(fileToken: string, fileType: string): Promise<FeishuDocMeta | null>
     fetchMessageResource(request: FeishuMessageResourceRequest): Promise<FeishuMessageResourceResponse>
@@ -511,6 +513,15 @@ export function createFeishuTransport(
         data: { reaction_type: { emoji_type: emoji } },
       })
       return res.data?.reaction_id ?? ''
+    },
+
+    async editCard(messageId: string, card: unknown): Promise<void> {
+      const cardContent = JSON.stringify(card)
+      assertCardContentFits(cardContent)
+      await client.im.message.patch({
+        path: { message_id: messageId },
+        data: { content: cardContent },
+      })
     },
 
     async editText(messageId: string, text: string): Promise<void> {
