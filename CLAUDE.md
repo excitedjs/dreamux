@@ -10,6 +10,20 @@ KB entry.
 
 ## Architecture Discipline
 
+**Entropy reduction is this repository's highest standing rule.** The system's
+history is a small number of features and countless refactors, and the motive
+of every refactor is lowering complexity. Entropy means what a maintainer must
+hold to reason about the system — concepts, entities, mechanisms, persisted
+facts, states, special cases, cross-layer hops. It is **not** line count or
+duplication count. Judge every change by three questions: does explaining the
+affected area now take fewer concepts? does the next feature or provider need
+to know less? what exactly was removed, and is every addition paid for by a
+requirement someone actually stated? Two fakes are banned by name:
+"deduplicating" through a new indirection layer while both original sides
+survive (that adds a mechanism, it removes nothing), and deleting
+user-visible capability and calling it simplification (that is a requirement
+change and the operator's decision).
+
 Refactoring is never "done" — it is always on the road. Treat the architecture
 as a living thing every task must leave at least as clean as it found it.
 
@@ -35,6 +49,25 @@ as a living thing every task must leave at least as clean as it found it.
 - **Leave the cleanup trail.** When a task reveals a boundary that should move,
   either fix it or record it (`.agents/`, an issue, or the knowledge-delta
   update) — never silently pile another layer of glue on top.
+- **No defense without a named failure scenario.** Do not add validation, caps,
+  retries, fallbacks, recovery paths, allowlists, or new entities without
+  naming the concrete real scenario that reaches them. Defensive code found in
+  review is deleted, not corrected. The full taste with cases:
+  [`engineering-whitepaper`](.agents/skills/engineering-whitepaper/SKILL.md).
+- **Change anything — knowingly.** No knowledge or design is absolutely
+  authoritative; existing code, decisions, and docs are evidence of how the
+  system got here, and any of them may be changed to fit the current product
+  scenario. What is prohibited is the unknowing change: name what you are
+  changing, why its original rationale no longer holds, and update its record
+  in the same change. A change to user-visible behavior is a requirement
+  decision for the operator — diff refactors against
+  [`.agents/product/README.md`](.agents/product/README.md).
+- **Operator rulings are quoted, never stretched.** Restate an operator ruling
+  verbatim or narrower — a named entry point is not a category, and a ruling on
+  one object does not extrapolate to its neighbors. Anything recorded as a
+  confirmed operator decision must carry the operator's actual words;
+  inferences are labeled and confirmed before implementation or review cites
+  them.
 - **Do not weaken a load-bearing test to make a change pass.** Some tests encode
   a locked contract (e.g. the issue #63 non-blocking-inbound live gate). If a
   change makes such a test fail, the change is usually wrong — fix the change,
@@ -56,6 +89,10 @@ not an optional nicety.
 
 ## Current Source Of Truth
 
+- Product behavior catalog (user-visible behavior refactors must diff against):
+  [`.agents/product/README.md`](.agents/product/README.md).
+- Operator engineering taste:
+  [`.agents/skills/engineering-whitepaper/SKILL.md`](.agents/skills/engineering-whitepaper/SKILL.md).
 - Current architecture entry point: [`.agents/reference/current-architecture.md`](.agents/reference/current-architecture.md).
 - Repository/package layout: [`.agents/reference/repo-structure.md`](.agents/reference/repo-structure.md).
 - State/cache/run/log paths: [`.agents/reference/state-and-paths.md`](.agents/reference/state-and-paths.md).
@@ -73,8 +110,12 @@ KB explains intent and history; code is the current behavior.
 ```bash
 node common/scripts/install-run-rush.js update
 node common/scripts/install-run-rush.js build
+node common/scripts/install-run-rush.js lint
 node common/scripts/install-run-rush.js test
 ```
+
+A stage or change is not "green" until build, lint, and test all pass; `rush
+lint` is a first-class gate, not an afterthought.
 
 Do not use per-package `npm install`; workspace dependencies use `workspace:*`.
 
@@ -170,5 +211,5 @@ when a package leaves 0.x.
   `user.email` / `user.name` explicitly for the commit.
 - Commit messages: short subject, wrapped body, explain why, reference issues or
   PRs when relevant.
-- Co-author trailer for this agent:
-  `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>`.
+- Co-author trailer: credit the actual model doing the work, for example
+  `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.

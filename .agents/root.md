@@ -6,8 +6,19 @@ Always-loaded operating rules live in [`/CLAUDE.md`](../CLAUDE.md).
 Use this KB for current reference, architecture intent, and decision history.
 For current behavior, read the linked source code too.
 
+Every page here is description plus rationale — evidence of what is and why,
+never a prohibition on change. Anything may be changed to fit the current
+product scenario, knowingly: read the recorded reason, decide whether it still
+holds, and update the page in the same change. A change to user-visible
+behavior is a requirement decision for the operator.
+
 ## Start Here
 
+- [Product behavior catalog](product/README.md) — user-visible behavior stated
+  independently of implementation; the baseline refactors diff against.
+- [Engineering whitepaper](skills/engineering-whitepaper/SKILL.md) — the
+  operator's standing taste: entropy reduction, anti-defensive engineering,
+  minimal mechanism, collaboration rhythm.
 - [Current architecture](reference/current-architecture.md) — compact current
   system map with source-code pointers.
 - [Domain knowledge](domains/README.md) — module-oriented stable contracts for
@@ -41,6 +52,8 @@ For current behavior, read the linked source code too.
 | You're about to ... | Read first |
 |---|---|
 | answer "how is Dreamux shaped now?" | [Current architecture](reference/current-architecture.md), then source |
+| start any refactor, or judge whether something can be removed | [Product behavior catalog](product/README.md), [Engineering whitepaper](skills/engineering-whitepaper/SKILL.md) |
+| run a multi-stage architecture refactor | [Large-refactor mode](skills/dev-workflow/references/large-refactor-mode.md), [Product behavior catalog](product/README.md) |
 | add/change a package or move source between packages | [Repository structure](reference/repo-structure.md) |
 | install/build/test the repo or debug workspace install issues | [Repository operations and release](domains/repository-operations-and-release.md), [Repository structure](reference/repo-structure.md), [install model](decisions/install-model.md) |
 | add or verify Rush change files | [Repository structure: Rush change files](reference/repo-structure.md#rush-change-files) |
@@ -67,6 +80,8 @@ For current behavior, read the linked source code too.
 
 ## Document Kinds
 
+- `product/` — user-visible behavior independent of implementation; the
+  knowing-change baseline for refactors.
 - `reference/` — current behavior and operational mental models. Prefer this
   for "what exists now".
 - `decisions/` — accepted, superseded, or historical ADRs. Prefer this for

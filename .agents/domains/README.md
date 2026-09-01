@@ -7,6 +7,13 @@ For why a design was chosen, follow each page's decision trail.
 Before changing code, verify the linked source files. These pages are navigation
 and invariants, not a substitute for reading the implementation.
 
+These pages describe what is and why — they are evidence, not preservation
+orders. A refactor may overturn anything here to fit the current product
+scenario, knowingly: name what changes, why the recorded rationale no longer
+holds, and update the page in the same change. User-visible behavior changes
+are operator decisions
+(see [the product behavior catalog](../product/README.md)).
+
 ## Core Domains
 
 - [Provider runtime](provider-runtime.md) — provider refs, package boundaries,

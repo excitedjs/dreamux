@@ -54,6 +54,7 @@ write a KB entry just to look diligent. The KB earns its keep by being terse.
 
 | Kind | When to use | Naming |
 |---|---|---|
+| `product/README.md` | User-visible behavior stated independently of implementation — the baseline refactors diff against so behavior changes are made knowingly. Entries change only as explicit requirement decisions. | fixed filename |
 | `reference/<thing>.md` | Current behavior for a repo piece or operational mental model. Use for "what exists now". | kebab-case, no number |
 | `decisions/<slug>.md` | A choice that was debated and settled. Use for "why was this chosen". | kebab-case, no sequence number |
 | `domains/<area>.md` | A current cross-cutting runtime contract that spans several reference pages. | kebab-case |
@@ -63,6 +64,18 @@ write a KB entry just to look diligent. The KB earns its keep by being terse.
 | `research/<slug>.md` | Frozen investigation snapshot; must end with a disposition section (Promoted / Deferred / Out of scope). | kebab-case |
 | `rules/<slug>.md` | A process rule that applies to KB authors themselves. | kebab-case |
 
+## Regression Traps
+
+A `## Regression Trap` (or `## Locked Scope`) section on a domain or reference
+page records a direction that was tried and rejected: the trigger, the concrete
+historical mistake, and the rejected direction with its reason. Several pages
+already carry them (see `domains/non-blocking-dispatcher-inbound.md` for the
+model). The creation rule: **when the operator corrects a class of error — not
+just an instance — the owning page gains a trap section in the same change.**
+A trap is a warning with a reason, not a prohibition: if you believe the
+recorded reason no longer holds, raise it with the operator instead of
+silently walking the rejected path again.
+
 ## Decision Record Template
 
 ```markdown
@@ -70,6 +83,8 @@ write a KB entry just to look diligent. The KB earns its keep by being terse.
 
 - **Status:** Accepted | In progress | Superseded by [link]
 - **Date:** YYYY-MM-DD
+- **Decided by:** operator ruling | engineering judgment (so a later reader
+  knows whether re-arguing it wastes the operator's time or is fair game)
 - **Affects:** packages / surfaces / invariants
 - **PR / Issue:** link
 
