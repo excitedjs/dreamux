@@ -71,7 +71,7 @@ function makeHarness(
     rejectSession: () => undefined,
     steerQueue: Promise.resolve(),
     generation: 0,
-    nativeTurnEnded: false,
+    currentNativeTurnEnded: false,
   };
   const activityEvents: RuntimeActivityEvent[] = [];
   const nativeEnds: RuntimeNativeTurnEnd[] = [];
@@ -101,6 +101,10 @@ function makeHarness(
 
 function started(commandUuid: string): ClaudeProtocolEvent {
   return { kind: 'command_lifecycle', commandUuid, state: 'started' };
+}
+
+function completed(commandUuid: string): ClaudeProtocolEvent {
+  return { kind: 'command_lifecycle', commandUuid, state: 'completed' };
 }
 
 function resultEvent(o: TurnOutcome): ClaudeProtocolEvent {
@@ -333,7 +337,7 @@ describe('handleProtocolEvent live activity', () => {
       rejectSession: () => undefined,
       steerQueue: Promise.resolve(),
       generation: 0,
-      nativeTurnEnded: false,
+      currentNativeTurnEnded: false,
     };
     const log = vi.fn();
     const throwingSink = vi.fn(() => {
@@ -376,10 +380,13 @@ describe('handleProtocolEvent live activity', () => {
 /**
  * One native turn, one ended fact.
  *
- * Claude Code's terminal `result` is the whole of a native turn's end, however
- * many Dreamux commands were folded into it. The fact carries a status and a
- * timestamp and nothing else — no command uuid, no submission, no turn id —
- * because a folded turn has no single logical owner to name.
+ * A native turn is one terminal `result`, however many Dreamux commands were
+ * folded into it. The resident execution window it belongs to is not the unit:
+ * a command steered into a running window can be answered by a `result` of its
+ * own, and each such boundary is its own native turn with its own end. The fact
+ * carries a status and a timestamp and nothing else — no command uuid, no
+ * submission, no turn id — because a folded turn has no single logical owner to
+ * name.
  */
 describe('handleProtocolEvent native turn end', () => {
   it('emits exactly one ended fact for a turn that folded three commands into one result', () => {
@@ -420,12 +427,53 @@ describe('handleProtocolEvent native turn end', () => {
     expect(h.nativeEnds.map((end) => end.status)).toEqual(['failed']);
   });
 
-  it('never emits a second end for the same turn, even when a second result arrives', () => {
+  it('emits one end per result boundary when a steered command runs after the first one was answered', async () => {
+    const h = makeHarness(['cmd-1', 'cmd-2']);
+    // The already legal protocol sequence for a steer that did not fold: the
+    // initial command is answered and drains, then the held-back command starts
+    // and is answered by a result of its own — two native turns in the one
+    // resident execution window.
+    h.fire(started('cmd-1'));
+    h.fire(resultEvent(outcome({ text: 'first answer' })));
+    h.fire(completed('cmd-1'));
+    h.fire(started('cmd-2'));
+    h.fire(resultEvent(outcome({ text: 'second answer' })));
+    h.fire(completed('cmd-2'));
+
+    expect(h.nativeEnds.map((end) => end.status)).toEqual([
+      'completed',
+      'completed',
+    ]);
+    // Each boundary answered its own command, so neither submission waited on
+    // the other's result.
+    const [s1, s2] = await Promise.all([h.settled('cmd-1'), h.settled('cmd-2')]);
+    expect(s1).toMatchObject({
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'first answer' },
+    });
+    expect(s2).toMatchObject({
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'second answer' },
+    });
+  });
+
+  it('reports the second boundary honestly when the steered turn fails after a completed one', () => {
+    const h = makeHarness(['cmd-1', 'cmd-2']);
+    h.fire(started('cmd-1'));
+    h.fire(resultEvent(outcome({ text: 'first answer' })));
+    h.fire(started('cmd-2'));
+    h.fire(resultEvent(outcome({ isError: true, errors: ['boom'], text: '' })));
+
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed', 'failed']);
+  });
+
+  it('never emits a second end for the same boundary, even when a second result arrives with no command running', () => {
     const h = makeHarness(['cmd-1', 'cmd-2']);
     h.fire(started('cmd-1'));
     h.fire(resultEvent(outcome({ text: 'first' })));
-    // A conflicting second result: it fails the remaining submission, but the
-    // native turn already ended and an end is not a per-result event.
+    // A conflicting second result: no command started after the first boundary,
+    // so nothing was running that this could be the end of. It fails the
+    // remaining submission, and reports no second end.
     h.fire(resultEvent(outcome({ text: 'second' })));
 
     expect(h.nativeEnds).toHaveLength(1);
@@ -447,7 +495,7 @@ describe('handleProtocolEvent native turn end', () => {
       rejectSession: () => undefined,
       steerQueue: Promise.resolve(),
       generation: 0,
-      nativeTurnEnded: false,
+      currentNativeTurnEnded: false,
     };
     const log = vi.fn();
     const throwingSink = vi.fn(() => {

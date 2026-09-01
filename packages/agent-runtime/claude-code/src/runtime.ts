@@ -281,7 +281,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       rejectSession,
       steerQueue: Promise.resolve(),
       generation: this.generation,
-      nativeTurnEnded: false,
+      currentNativeTurnEnded: false,
     };
     this.activeTurn = turn;
     void this.runActiveTurnOnQueue(text, turn).then(
@@ -388,7 +388,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
         ? { kind: 'stopped' }
         : { kind: 'failed', error: asError(err) });
     }
-    // A turn that never reached its terminal `result` still ended natively.
+    // A native turn that never reached a terminal `result` still ended. If the
+    // window's last `result` already reported an end and nothing started after
+    // it, there is no running turn left and this adds nothing.
     this.endNativeTurn(turn, this.stopped ? 'interrupted' : 'failed');
     if (this.stopped) return;
     // Surface the failure as durable runtime state rather than swallowing it.
@@ -399,9 +401,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     for (const deferred of turn.submissions.values()) {
       deferred.settle({ kind: 'stopped' });
     }
-    // Reached from stop, the fatal fence, and a turn that resolved without a
-    // terminal `result`. Each is a native turn that ended without completing;
-    // a turn whose `result` already reported the end ignores this.
+    // Reached from stop, the fatal fence, and a window that resolved with a
+    // native turn still running. Each is a native turn that ended without
+    // completing; one whose `result` already reported its end ignores this.
     this.endNativeTurn(turn, 'interrupted');
   }
 

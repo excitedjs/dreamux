@@ -12,7 +12,8 @@
   pre-anchor events are absent only because no card placement exists; all
   anchor/card state is session-memory-only and is intentionally lost when that
   session restarts; one native turn emits one ended fact and closes the recipient's
-  current card without logical-turn membership.
+  current card without logical-turn membership. Projected text keeps local paths
+  readable by rendering this host's workspace and home prefixes as `.` and `~`.
 - State: `review`
 - Requirement: [Current requirement](/.agents/tasks/channel/feishu-cot-conversation-cards/requirement.md)
 - Technical design: owned by the single Claude implementation developer. The
@@ -45,9 +46,12 @@
   `packages/dreamux`, `packages/agent-runtime/claude-code`,
   `packages/agent-runtime/codex`, `packages/channel/feishu-channel`, affected
   tests, current architecture knowledge, and Rush change files. Transport,
-  configuration, persistence, path, dependency, and service changes are out of
-  scope unless current-source evidence shows they are strictly required by the
-  locked requirement; any such expansion requires an operator decision.
+  configuration, persistence, dependency, and service changes are out of scope
+  unless current-source evidence shows they are strictly required by the locked
+  requirement; any such expansion requires an operator decision. The original
+  approved scope explicitly includes readable local-path projection in Dreamux
+  conversation facts: workspace and current-host home prefixes render as `.` and
+  `~` rather than being blanked or replaced by opaque placeholders.
 - Explicit non-goals: reply interaction enhancements, workflow cards,
   collaboration-space resources, channel scope changes, and any web/platform
   surface.
@@ -81,6 +85,17 @@
   only closes an existing card and is ignored when no card is open. A visible bind
   card may initialize a TeamLeader only when no standing anchor exists; it never
   replaces an existing anchor.
+- Review adjudication (operator, 2026-09-02): the local-path projection change is
+  an original requirement and remains in this pull request. The prior scope-drift
+  finding is rejected because the task record had omitted that requirement. Fix
+  the confirmed implementation defects in home resolution, punctuation-adjacent
+  prefixes, and `file://` prefix recognition without removing the capability.
+- Review adjudication (operator, 2026-09-02): fix and push the confirmed Claude
+  native-turn granularity defect before continuing. A Claude native turn is one
+  terminal `result`, not the whole resident execution window. Sequential results
+  in one resident window each emit one ended fact; submissions folded into one
+  result share that result's single fact. The correction adds no presentation
+  identity, logical membership, buffering, or Channel state.
 
 ## Delivery
 

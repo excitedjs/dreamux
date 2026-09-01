@@ -18,6 +18,14 @@ export interface SubmissionDeferred {
   settle: (settlement: RuntimeSubmissionSettlement) => boolean;
 }
 
+/**
+ * One resident execution window: the commands claude is serving together.
+ *
+ * It is not one native turn. A window is opened by an initial command and can
+ * legally produce several sequential `result` boundaries — one native turn each
+ * — as commands steered or queued into it run after the earlier ones were
+ * answered.
+ */
 export interface ActiveTurn {
   initialCommandUuid: string;
   submissions: Map<string, SubmissionDeferred>;
@@ -32,15 +40,21 @@ export interface ActiveTurn {
   steerQueue: Promise<void>;
   generation: number;
   /**
-   * Whether this native turn already reported its one end.
+   * Whether the native turn currently running in this window reported its end.
    *
-   * A turn is ended by exactly one thing — the terminal `result`, a failed run,
-   * or a stop — but more than one of those can be observed for the same turn
-   * (a `result` that lands and is then followed by a generation assertion
-   * throwing). The flag is what makes "one end per native turn" true rather
-   * than merely usual.
+   * A native turn is ended by exactly one thing — its terminal `result`, a
+   * failed run, or a stop — but more than one of those can be observed for the
+   * same turn (a `result` that lands and is then followed by a generation
+   * assertion throwing), and the flag is what makes "one end per native turn"
+   * true rather than merely usual.
+   *
+   * It is cleared again when a command starts after an end, because that start
+   * is claude opening the window's next native turn: the steered or queued
+   * command it had held back is now running and will be answered by a `result`
+   * of its own. A window that ends without another command starting stays
+   * ended, so its stop or failure adds nothing.
    */
-  nativeTurnEnded: boolean;
+  currentNativeTurnEnded: boolean;
 }
 
 export interface ProtocolEventContext {
@@ -52,9 +66,9 @@ export interface ProtocolEventContext {
 }
 
 /**
- * Report this native turn's one end, at most once.
+ * Report the end of the native turn currently running, at most once.
  *
- * The sink is display-only, so a throwing consumer is logged and the turn
+ * The sink is display-only, so a throwing consumer is logged and the window
  * proceeds; the flag is still set, because a second attempt would be the same
  * end reported twice, not a retry.
  */
@@ -64,8 +78,8 @@ export function endNativeTurn(
   sink: AgentRuntimeNativeTurnSink,
   log: (level: 'info' | 'warn' | 'error', message: string, error?: unknown) => void,
 ): void {
-  if (active.nativeTurnEnded) return;
-  active.nativeTurnEnded = true;
+  if (active.currentNativeTurnEnded) return;
+  active.currentNativeTurnEnded = true;
   try {
     sink(Object.freeze({ status, occurredAt: Date.now() }));
   } catch (error) {
@@ -105,6 +119,11 @@ export function handleProtocolEvent(
       !active.started.includes(event.commandUuid)
     ) {
       active.started.push(event.commandUuid);
+      // A command of this window running is a native turn in progress. When the
+      // window already reported one end, this start is the next turn opening —
+      // the steered or queued command claude held back — so the window becomes
+      // endable again and its own `result` will report its own end.
+      active.currentNativeTurnEnded = false;
     }
     return;
   }
@@ -174,8 +193,10 @@ function completeStartedGroup(
   for (const uuid of commandUuids) {
     active.submissions.get(uuid)?.settle({ kind: 'completion', completion });
   }
-  // The `result` is claude's one native terminal, so the native turn ends here
-  // regardless of how many commands were folded into it.
+  // The `result` is claude's native terminal, so the native turn it answers
+  // ends here regardless of how many commands were folded into it. A window
+  // that goes on to run another command opens another native turn and reaches
+  // this again with its own `result`.
   endNativeTurn(
     active,
     completion.status === 'completed' ? 'completed' : 'failed',

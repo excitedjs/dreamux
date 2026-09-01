@@ -7,7 +7,9 @@ equivalent card for the Dispatcher. The card follows the recipient's latest
 visible-message anchor, displays every supported input and runtime activity by
 default, suppresses only the duplicate body of the Feishu input that is already
 visible in chat, and closes when the runtime reports the end of its one native
-turn.
+turn. Projected operator paths remain readable without exposing the host's raw
+workspace or home prefix: the current workspace is shown as `.` and the current
+home as `~`.
 
 ## Locked product model
 
@@ -110,10 +112,12 @@ turn.
 ## Native turn terminality
 
 12. **One runtime event per native turn.** Each Agent Runtime emits exactly one
-    provider-neutral ended fact for one runtime-native turn: Claude Code's one
-    terminal `result`, or Codex's one `turn/completed`. The fact is emitted once
-    regardless of how many Dreamux inputs or logical submissions the provider
-    folded into that native turn.
+    provider-neutral ended fact for each runtime-native turn. Every Claude Code
+    terminal `result` is one native turn, and every Codex `turn/completed` is one
+    native turn. One resident Claude Code execution window may legally produce
+    several sequential `result` boundaries; each boundary emits its own ended
+    fact. Several Dreamux inputs or logical submissions folded into the same
+    single `result` still emit only that result's one ended fact.
 
 13. **No logical membership contract.** The native-ended fact does not enumerate
     `RuntimeSubmission` members, logical `turn_id` values, presentation ids,
@@ -149,8 +153,17 @@ turn.
     retained; no automatic received/in-progress reaction ledger is reintroduced.
 17. The existing official Lark COT transport surface and compatible SDK version
     are retained without regression. No transport, configuration, persisted-state,
-    path, workflow-card, Collaboration Space, web, or platform expansion is part
-    of this correction.
+    workflow-card, Collaboration Space, web, or unrelated platform expansion is
+    part of this correction.
+18. **Readable local-path projection is original scope.** In projected assistant
+    text, tool arguments, and tool results, the current workspace prefix is shown
+    as `.` and the current host home prefix as `~`, preserving the useful suffix
+    instead of blanking the path or replacing it with an opaque placeholder. A
+    foreign-machine home-shaped path is not treated as this host's home. Prefix
+    recognition must remain correct next to ordinary prose punctuation and inside
+    `file://` URLs. If the current host home cannot be resolved, projection does
+    not invent one by treating the process working directory as home; workspace
+    renaming remains available independently.
 
 ## Explicitly rejected designs
 
@@ -206,6 +219,10 @@ turn.
   when no card is open.
 - A Reply never creates, replaces, defers, or otherwise mutates an anchor and
   never closes, moves, or opens a COT card.
+- Projected text renames the current workspace and current host home prefixes to
+  `.` and `~` respectively, including paths followed by sentence punctuation and
+  paths embedded in `file://` URLs. A missing home environment does not cause the
+  process working directory to be displayed as `~`.
 - Focused tests cover both providers' one-ended-per-native-turn contract, Feishu
   single-card state, post-admission anchor replacement, fallback-to-Dispatcher,
   bind-card initialization, no-anchor suppression, default-show policy, narrow
