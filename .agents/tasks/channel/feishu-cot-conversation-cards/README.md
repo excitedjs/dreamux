@@ -27,7 +27,8 @@
 - Blockers: None.
 - Accepted decision record: [accepted-decision.md](/.agents/tasks/channel/feishu-cot-conversation-cards/accepted-decision.md) (backfilled 2026-09-01).
 - Next action: Complete independent implementation review and knowledge
-  closeout, then prepare the pull request.
+  closeout, then update draft pull request
+  [#357](https://github.com/excitedjs/dreamux/pull/357) and mark it ready.
 - Related tasks: Builds on
   [adopt-completion-token-routing](/.agents/tasks/completion-routing/adopt-completion-token-routing/README.md)
   (the submission activity sink this task consumes). The parked
@@ -90,7 +91,9 @@
 - Independent implementation review and knowledge closeout are pending.
 - Existing proposal files, the withdrawn previous solution, public review text,
   and the generated Feishu design document are not implementation authorities.
-- Pull request / CI / merge: Not started.
+- Pull request / CI / merge: Draft pull request
+  [#357](https://github.com/excitedjs/dreamux/pull/357) targets `next` while
+  independent review and knowledge closeout continue; CI and merge are pending.
 
 ## Follow-ups
 
