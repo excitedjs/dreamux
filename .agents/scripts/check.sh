@@ -6,7 +6,8 @@
 #      directory that exists
 #   2. every .md file under .agents/ is reachable from .agents/root.md
 #      (link graph; flags orphans)
-#   3. every /packages/... file path cited by a domains/ page exists
+#   3. every /packages/... file path cited by a domains/ page exists, including
+#      pages in nested domain directories
 #      (fails loudly when the domains tree itself is missing)
 #   4. every .agents/ path cited by tracked files OUTSIDE .agents/ resolves
 #      (comments, READMEs, tests; generated changelogs are exempt)
@@ -192,9 +193,13 @@ else
       errors=$((errors + 1))
     fi
   done < <(
-    for f in "$domains_dir"/*.md; do
-      perl -sne 'while (m{(/packages/[^`)\s#]+)}g) { print "$name|$1\n" }' -- -name="$(basename "$f")" "$f"
-    done | sort -u
+    find "$domains_dir" -type f -name '*.md' -print \
+      | sort \
+      | while IFS= read -r f; do
+          page="${f#"$domains_dir/"}"
+          perl -sne 'while (m{(/packages/[^`)\s#]+)}g) { print "$name|$1\n" }' -- -name="$page" "$f"
+        done \
+      | sort -u
   )
 fi
 
@@ -218,9 +223,9 @@ done < <(
     | sort -u \
     | while IFS= read -r line; do
         cited="${line##*-> }"
-        case "$cited" in
-          .agents/wip*) continue ;;
-        esac
+        if [ "${cited#'.agents/wip'}" != "$cited" ]; then
+          continue
+        fi
         if [ ! -e "$REPO_ROOT/$cited" ]; then
           printf '%s\n' "$line"
         fi

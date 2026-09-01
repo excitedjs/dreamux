@@ -1,11 +1,12 @@
 # Domains
 
-The single current-shape tree: how Dreamux is built today, one page per area —
-ownership, contracts, invariants, and Regression Traps, with source pointers
-`check.sh` keeps alive. These pages describe what is and why; they are
-evidence, never preservation orders. A refactor may overturn anything here to
-fit the current product scenario, knowingly: name what changes, why the
-recorded rationale no longer holds, and update the page in the same change.
+The single current-shape tree: how Dreamux is built today, one owner page per
+area or focused sub-area — ownership, contracts, invariants, and Regression
+Traps, with source pointers `check.sh` keeps alive. These pages describe what is
+and why; they are evidence, never preservation orders. A refactor may overturn
+anything here to fit the current product scenario, knowingly: name what changes,
+why the recorded rationale no longer holds, and update the page in the same
+change.
 User-visible behavior changes are operator decisions — diff against
 [the product behavior catalog](../product/README.md).
 
@@ -18,8 +19,10 @@ where the full derivation and rulings live.
   package layout, per-area summaries with owner links.
 - [Provider runtime](provider-runtime.md) — the Agent Runtime seam, config
   contract, prompts, bundled-skill injection, activity reads.
-- [Channel](channel.md) — the Channel seam, sessions, routing, binding,
-  targets, Collaboration Spaces, Feishu inbound fidelity, COT display.
+- [Channel](channel/index.md) — the provider-neutral Channel seam, sessions,
+  Core ports, routing ownership, MCP delegation, and Core events.
+  - [Built-in Feishu Channel](channel/feishu-channel.md) — Feishu targets,
+    routing, binding, Collaboration Spaces, inbound fidelity, and COT display.
 - [Feishu pairing access](feishu-pairing-access.md) — V3 access state,
   pairing, `/introduce`, trust policies.
 - [Non-blocking dispatcher inbound](non-blocking-dispatcher-inbound.md) — the

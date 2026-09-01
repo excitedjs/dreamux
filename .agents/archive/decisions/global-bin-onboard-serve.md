@@ -10,7 +10,7 @@
 Runtime state, socket path, channel MCP transport, and workspace-skill uninstall
 ownership details in this record are superseded by
 [State, config, and files](/.agents/domains/state-config-and-files.md),
-[Channel routing and binding](/.agents/domains/channel.md), and
+[Channel](/.agents/domains/channel/index.md), and
 [Provider runtime](/.agents/domains/provider-runtime.md). The single-bin, onboard,
 and foreground `serve` decisions still stand.
 Dispatcher `tm` packaging and dispatcher-skill install location are superseded

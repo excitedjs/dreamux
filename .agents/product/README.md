@@ -30,7 +30,7 @@ the same change that touches it.
   (Decision: [minimize-provider-boundaries](/.agents/tasks/architecture/minimize-provider-boundaries/README.md).)
 - **Unbound input reaches the Dispatcher Agent.** A conversation with no
   binding is not an error and not dead air — the Dispatcher Agent is its
-  recipient. (Domain: [channel](/.agents/domains/channel.md).)
+  recipient. (Domain: [channel](/.agents/domains/channel/index.md).)
 - **Unbinding leaves the Team alive; teams without bindings are normal.** An
   unbind deletes only the route. A Team with no binding is an everyday state
   needing no orphan governance; a later message on that conversation simply

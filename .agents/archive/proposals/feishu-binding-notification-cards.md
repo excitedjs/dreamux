@@ -1,6 +1,6 @@
 # Feishu binding notification cards
 
-> **Archived 2026-09-01.** The cards shipped; the core-event seam they rode did not survive #350 — the Channel renders them from its own records. Current owners: [/.agents/product/README.md](/.agents/product/README.md), [/.agents/domains/channel.md](/.agents/domains/channel.md).
+> **Archived 2026-09-01.** The cards shipped; the core-event seam they rode did not survive #350 — the Channel renders them from its own records. Current owners: [/.agents/product/README.md](/.agents/product/README.md), [/.agents/domains/channel/feishu-channel.md](/.agents/domains/channel/feishu-channel.md).
 
 - **Status:** Accepted
 - **Date:** 2026-07-24

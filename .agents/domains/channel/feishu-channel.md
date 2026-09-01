@@ -1,78 +1,50 @@
-# Channel
+# Built-in Feishu Channel
 
-What: how a Channel provider reaches Dreamux core, and how the built-in Feishu
-provider owns targets, routing, Collaboration Spaces, inbound content, and
-conversation display.
+What: how `builtin:feishu` implements the neutral
+[Channel mechanism](index.md): Feishu targets, routing, Collaboration Spaces,
+inbound content, access, tools, and conversation display.
 
-Read this before changing Channel provider contracts, the Channel MCP delegate,
-Channel-owned routing or Collaboration Space state, inbound recipient
-selection, or the Core event source a Channel subscribes to.
+Read this before changing the built-in Feishu provider, transport, routing or
+Collaboration Space state, inbound normalization, or Feishu presentation.
 
 ## Ownership
 
-A Channel provider owns platform I/O, inbound normalization, target resolution,
-provider-specific tools, message ownership facts, and **routing**: which
-conversation reaches which Team, and what a Collaboration Space is. Dreamux core
-owns Channel session lifetime, the Command port a Channel invokes, the scoped
-Core event source it subscribes to, and generic MCP forwarding. Core holds no
-binding table, no target model, and no Collaboration Space container.
-
-The built-in Feishu provider lives outside the host package:
+The built-in provider lives outside the host package:
 
 - package: `@excitedjs/feishu-channel`
 - provider ref: `builtin:feishu`
 - source: `/packages/channel/feishu-channel/`
 
-Core loads it through the same registry/catalog shape as an external Channel
-provider. The Feishu package depends on `@excitedjs/dreamux-types` and
+The Feishu package depends on `@excitedjs/dreamux-types` and
 `@excitedjs/feishu-transport`; it must not import `@excitedjs/dreamux`. The
 transport package is the sole owner of the Lark SDK and raw Feishu platform I/O:
 it parses events and exposes narrow request wrappers, while the channel package
 decides when those calls are allowed.
 
-Routing state is Channel-owned durable state. Core supplies a per-dispatcher
-state root and nothing else — the filename, the schema, and what counts as a
-valid document belong to the Channel.
+`@excitedjs/feishu-channel` owns Feishu policy and behavior: target resolution,
+access decisions, inbound normalization, tools, routing state, Collaboration
+Spaces, and presentation. Its routing document is the provider-owned durable
+state supplied through Core's per-dispatcher state root.
 
 Source:
 
-- `/packages/dreamux-types/src/channel.ts`
-- `/packages/dreamux/src/channel/catalog.ts`
-- `/packages/dreamux/src/channel/external-channel-provider.ts`
-- `/packages/dreamux/src/registry/`
 - `/packages/channel/feishu-channel/src/provider.ts`
 - `/packages/channel/feishu-transport/src/transport/feishu.ts`
 - `/packages/dreamux/tests/package-boundary-guards.test.ts`
 
 ## Contracts
 
-### Channel sessions
+### Session
 
-Each live dispatcher builds one `ChannelInstance` per configured channel and
-holds it by dispatcher-local `channel_id`. The first configured channel is the
-primary/default egress channel. `ChannelService` builds, holds, hands out, and
-closes those instances and nothing else.
-
-`ChannelSession` is the direct, same-process lifecycle: `initialize(port)` loads
-and validates Channel-owned state and attaches event consumers but must not open
-external input, `start()` opens external I/O, and `close()` stops it and awaits
-the Channel-owned mutation tail. That split is what makes
-subscribe-before-admission provable.
-
-For Feishu, the session owns long-connection event handling through `FeishuBot`,
+The Feishu session owns long-connection event handling through `FeishuBot`,
 access and mention gating, `/introduce` trust changes, known/trusted peer-bot
 state, inbound formatting and attachment normalization, channel-owned
 conversation display state, and the Feishu MCP tool backing.
-
-Everything a Channel reaches Core through is the `ChannelCorePort`: the shared
-Command invoker and one read-only, dispatcher-scoped event source. A Channel
-names a Command, hands it a payload, and gets one answer; both public adapters
-bind the same registry, so a Channel gets no smaller catalog and no private door.
+It implements the lifecycle and uses the `ChannelCorePort` described by the
+[neutral Channel contract](index.md#instances-and-sessions).
 
 Source:
 
-- `/packages/dreamux/src/service/dispatcher-service/index.ts`
-- `/packages/dreamux/src/service/channel-service/index.ts`
 - `/packages/channel/feishu-channel/src/feishu-channel.ts`
 - `/packages/channel/feishu-channel/src/bot.ts`
 - `/packages/channel/feishu-transport/`
@@ -90,27 +62,9 @@ registered, and the served surface is caller-scoped:
   `list_collaboration_spaces`
 
 A name appearing twice with different authority is the authorization model, not
-a duplicate: Core asks the provider's `ChannelMcpCapability` to `describe` a
-catalog per caller, freezes the answer for one runtime generation, and admits
-only names in it. Core asks only when constructing a Dispatcher or TeamLeader
-runtime, and resolving a call re-uses the caller, so the served definition is
-identical to the advertised one rather than one definition branching on who
-called it.
-
-Each provider descriptor carries a name, optional presentation metadata,
-mandatory input schema, optional output schema, standard annotations, and
-optional icon metadata. The neutral contract in `@excitedjs/dreamux-types` has no
-MCP SDK dependency. Core validates the complete catalog — unique names,
-JSON-safe shape, SDK-compilable schemas — and a tool whose handler does not exist
-is never advertised rather than advertised and then failed at invocation.
-
-The channel's MCP server is the same in-server delegate contract every internal
-domain implements; nothing in the lease registry, the transport Commands, the
-descriptor, or the shim knows a Channel exists. A call reaches the created
-instance's MCP capability, carrying the scope Core baked into the lease. Core
-names no Feishu tool, inspects no result field, and runs no egress gate of its
-own. There is no sessionless Feishu tool: the capability is taken from the built
-instance, which exists from creation rather than from connection.
+a duplicate. The provider returns the caller-scoped definitions through the
+[neutral MCP capability](index.md#provider-tools-and-mcp); it does not expose one
+definition that branches on caller identity.
 
 The built-in provider supplies closed input and output schemas for every tool.
 Successful results are canonical values: `reply` returns
@@ -125,17 +79,12 @@ Source:
 - `/packages/channel/feishu-channel/src/tools/messaging-tools.ts`
 - `/packages/channel/feishu-channel/src/tools/routing-tools.ts`
 - `/packages/channel/feishu-channel/src/tools/space-tools.ts`
-- `/packages/dreamux-types/src/channel.ts`
-- `/packages/dreamux/src/mcp/server.ts`
-- `/packages/dreamux/src/service/channel-service/mcp-delegate.ts`
-- `/packages/dreamux/src/service/channel-service/mcp-delegates.ts`
-- `/packages/dreamux/src/service/mcp/`
 
 ### Targets and chat-mode discovery
 
-A target does not cross the seam. The neutral contract publishes no
-`ChannelTarget`: Core never sees a chat id, a thread id, a target key, or a
-bindable flag, holds no binding table, and makes no routing decision.
+Feishu targets remain behind the
+[neutral Channel seam](index.md#targets-routing-and-inbound-submission); Core
+never sees them.
 
 Feishu normalizes its own selectors into a package-local `FeishuTarget` with
 three kinds, because Feishu has three: `p2p` (a direct chat), `group` (an
@@ -181,7 +130,6 @@ Source:
 - `/packages/channel/feishu-channel/src/routing/target.ts`
 - `/packages/channel/feishu-channel/src/feishu-target-router.ts`
 - `/packages/channel/feishu-channel/src/feishu-session-inbound.ts`
-- `/packages/dreamux-types/src/channel.ts`
 
 ### Inbound routing
 
@@ -192,20 +140,17 @@ three answers: `bound` (with the row that answered, which may be the parent
 group), `provision` (the committed Collaboration Space policy snapshot to create
 a Team under), or `dispatcher` (`no_binding` or `not_bindable`).
 
-Core makes no routing decision. The Channel resolves its own target, consults its
-own bindings, and states the recipient in the Command:
+The Feishu Channel resolves its target, consults its bindings, and states the
+recipient through the neutral submission contract:
 
 - a resolved `team_name` reaches that Team's TeamLeader;
 - omitting it reaches the Dispatcher Agent, which is the recipient for a
   conversation no binding or Collaboration Space claims.
 
-Omission *is* the Channel's decision. Both forms are the one generic
-`team.submit` Command, carrying opaque display attributes, faithful body text, an
-optional standing reminder, and a stable `source_id` that Core deduplicates a
-repeat on; Core renders the provenance envelope itself. Nothing about chats,
-threads, or topic mode crosses. The returned `turn_id` names the exact turn the
-call created, which is what lets a Channel claim the matching submitted event as
-its own.
+Nothing about chats, threads, or topic mode crosses the seam. The returned
+`turn_id` names the exact turn the call created, which lets Feishu claim the
+matching submitted event as its own. The complete neutral contract is in
+[Channel](index.md#targets-routing-and-inbound-submission).
 
 Source:
 
@@ -528,75 +473,11 @@ Source:
 - `/packages/channel/feishu-channel/src/feishu-target-router.ts`
 - `/packages/channel/feishu-transport/src/transport/feishu.ts`
 
-### Dispatcher-scoped core events
-
-Each `DispatcherService` owns one in-process `DispatcherCoreEventBus`. It is a
-best-effort distribution helper, not a fact owner or store. Existing owners
-publish after their normal write point: `TeamStore` publishes Team status and
-concrete leader changes; `AgentIdentityStore` publishes TeamLeader and TeamMate
-status changes; the conversation projection publishes display-only turn lifecycle
-and activity facts for the dispatcher agent and TeamLeaders. Routing produces no
-core event — a Channel already owns its routing records, so it describes its own
-state from them at the moment it changes them, and Core publishing a binding fact
-back would mean Core holding one. Workflow, scheduler, and host-maintenance events
-are deliberately absent.
-
-The published catalog is an explicit set of six kinds: `team.state`,
-`teammate.state`, `teammate.turn.submitted`, `teammate.turn.settled`,
-`teammate.turn.message`, and `teammate.turn.tool_call`. Sealing is the one place
-a fact becomes deliverable: an event outside the set, an event whose
-`schema_version` is not `1`, or one without a finite `occurred_at` is dropped and
-logged rather than thrown, because producers publish synchronously from inside
-operations whose durable work has already succeeded. A sealed event is deeply
-frozen, so nothing can rewrite it after it has been broadcast.
-
-A Channel session receives one read-only `ChannelEventSource` with a single
-`subscribe(listener)` and an idempotent `unsubscribe()`. One subscription receives
-the whole `ChannelCoreEvent` union and demultiplexes inside the Channel, so adding
-an event changes only that catalog and its consumers.
-
-Turn events expose one process-local `turn_id` for presentation correlation but no
-runtime-native Turn object or transcript. Conversation events may contain bounded,
-redacted user/assistant display text and bounded tool arguments/results; other
-events contain no prompt or assistant text. No event contains native transcript
-paths, raw errors, or platform user identity.
-
-Delivery is live and best-effort: Core invokes listeners in publication order
-without awaiting them, and a listener's exception or rejection never escapes into
-admission or settlement. There is no FIFO, backpressure, timeout, acknowledgement,
-retry, replay, snapshot, or final-delivery guarantee. A listener keeps its
-synchronous projection bounded; a reaction needing asynchronous persistence fences
-its in-memory authority synchronously and serializes the durable write on a
-Channel-owned mutation tail that `ChannelSession.close` awaits. The bus does not
-become a new state owner, and providers never receive core service/store instances
-or raw `EventEmitter` management methods.
-
-Core installs the source during `initialize`, before `start` opens external input,
-which is what makes subscribe-before-admission provable. Stop and start-failure
-cleanup revoke the whole session source before closing the session; later
-subscription attempts fail and old handles become no-ops.
-
-Source:
-
-- `/packages/dreamux-types/src/channel.ts`
-- `/packages/dreamux/src/service/dispatcher-core-events/`
-- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
-- `/packages/dreamux/src/service/team-collection/store.ts`
-- `/packages/dreamux/src/service/channel-service/index.ts`
-- `/packages/dreamux/src/channel/conversation-projection.ts`
-- `/packages/dreamux/src/service/teammate-service/turn-coordinator.ts`
-- `/packages/dreamux/src/service/dispatcher-service/index.ts`
-
 ### Feishu conversation display
 
-The neutral conversation projection is a capability of the dispatcher agent and
-team-scoped entities, not a Feishu role filter in core. TeamLeaders and Team
-members publish the event surface; team-less dispatcher-spawned TeamMates do not
-participate. Its scope is either a team-less dispatcher or a named
-TeamLeader/Team member; an origin-less dispatcher turn is rejected by one core
-predicate before submitted, activity, or settled facts can enter the bus.
-
-The Feishu session subscribes through `feishu-cot-adapter`. It owns card
+The Feishu session consumes the
+[dispatcher-scoped Core event source](index.md#dispatcher-scoped-core-events)
+through `feishu-cot-adapter`. It owns card
 anchoring, event-to-card projection, bounded outbox batching, serialized I/O, and
 diagnostics. An inbound card is pinned to that turn's message. For a TeamLeader,
 each successfully created Reply message is observed synchronously and fail-open;
@@ -624,12 +505,9 @@ machine. Leader message and tool activity must also match the state's single
 admitted `turn_id`, preventing a fence-rejected or superseded turn from opening or
 appending to another endpoint's card.
 
-Every admitted EntityTurn that enters conversation projection publishes exactly
-one terminal display fact from its own submission settlement, including
-`completed`, `failed`, and `stopped`; non-participating turns publish no display
-events. Completed assistant text and live activity are redacted and bounded in
-core. The early-activity buffer and projected activity-id set each retain at most
-512 facts per submission and drop newest with one warning. Feishu retains at most
+The Core projection's early-activity buffer and projected activity-id set each
+retain at most 512 facts per submission and drop newest with one warning. Feishu
+retains at most
 512 dispatcher conversations, 512 dispatcher turns per session, and 64 turns per
 chat, again refusing newest work without partial index state. Card I/O has a
 20-second operation deadline so settled draining state is eventually reaped.
@@ -661,30 +539,20 @@ members of a listed group under either non-block policy after the one global
 mention gate. Those rules, the pairing-token gate, Owner-only approval card
 semantics, and the `/introduce` authority split are owned elsewhere:
 
-- [Feishu pairing access](feishu-pairing-access.md)
-- [Feishu introduce](feishu-pairing-access.md)
-- [Non-blocking dispatcher inbound](non-blocking-dispatcher-inbound.md)
+- [Feishu pairing access](../feishu-pairing-access.md)
+- [Feishu introduce](../feishu-pairing-access.md)
+- [Non-blocking dispatcher inbound](../non-blocking-dispatcher-inbound.md)
 
 ## Invariants
 
-- A target never crosses the seam: Core is told a `team_name` or nothing at all.
 - A `p2p` target is never bindable.
-- Assistant text alone is never a channel delivery contract. A runtime that
-  should answer visibly in the source channel must call a provider-owned channel
-  tool; tool failures return as MCP errors and are logged, and core holds no
-  durable outbound retry queue.
-- Core state must not grow a persisted conversation-display presentation, a
-  reaction ledger, or an inbound message queue. Inbound de-duplication and
-  presentation state are process-local provider facts unless a Feishu domain page
-  says otherwise.
-- Core must not implement a Feishu-specific tool handler, and must not re-derive
-  a Channel routing fact out of Channel data — that is what its removed egress
-  gate was.
 - Every routing ownership precondition is enforced inside the commit that
   persists it, and no external call is in flight while the commit tail is held.
 - Nothing durable exists for provisioning work in flight.
-- Adding a `ChannelCoreEvent` kind means adding it to the sealed catalog; an
-  unlisted kind is dropped and logged, never delivered and never thrown.
+- Chat-mode lookup failures and unknown modes are not cached; later accepted
+  inbound retries.
+- Automatic received/in-progress reactions remain absent; the explicit `react`
+  tool is the only reaction surface.
 
 ## Regression Traps
 

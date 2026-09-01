@@ -1,6 +1,6 @@
 # Collaboration space provisioning
 
-> **Archived 2026-09-01.** Superseded in ownership: a Collaboration Space is a Channel product flow; Core keeps no space entity, contract, or Commands. Read for product intent. Current owners: [/.agents/product/README.md](/.agents/product/README.md), [/.agents/domains/channel.md](/.agents/domains/channel.md).
+> **Archived 2026-09-01.** Superseded in ownership: a Collaboration Space is a Channel product flow; Core keeps no space entity, contract, or Commands. Read for product intent. Current owners: [/.agents/product/README.md](/.agents/product/README.md), [/.agents/domains/channel/feishu-channel.md](/.agents/domains/channel/feishu-channel.md).
 
 - **Status:** Implementation draft in PR #287
 - **Source baseline:** `origin/next` at `6417434`

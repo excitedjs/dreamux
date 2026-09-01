@@ -1,7 +1,7 @@
 # Feishu sender-name reliability and minimal attachment markup
 
 - **Status:** Implemented; current behavior is in
-  [Channel runtime](/.agents/domains/channel.md) and
+  [Built-in Feishu Channel](/.agents/domains/channel/feishu-channel.md) and
   [Feishu inbound attachments](/.agents/tasks/channel/feishu-access-foundations/requirement.md#feishu-inbound-attachments)
 - **Date:** 2026-07-23
 - **Affects:** `@excitedjs/feishu-transport`,
