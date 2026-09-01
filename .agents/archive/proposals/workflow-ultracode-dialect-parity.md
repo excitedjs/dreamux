@@ -1,8 +1,8 @@
 # Workflow ultracode dialect parity
 
 - **Status:** Implemented historical proposal; current behavior is documented in
-  [Dynamic Workflow usage](../../reference/dynamic-workflow-usage.md) and
-  [Current architecture](../../reference/current-architecture.md)
+  [Dynamic Workflow usage](/.agents/product/dynamic-workflow-usage.md) and
+  [Current architecture](/.agents/domains/current-architecture.md)
 - **Date:** 2026-08-08
 - **Issue:** [#318](https://github.com/excitedjs/dreamux/issues/318)
 - **Affects:** Dynamic Workflow script compilation, runner semantics,

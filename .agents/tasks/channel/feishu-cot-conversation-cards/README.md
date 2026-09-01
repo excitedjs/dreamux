@@ -20,6 +20,7 @@
 - Solution review Issue: Not created — the operator approved the recorded final
   solution directly and waived further consultation (simplest path).
 - Blockers: None.
+- Accepted decision record: [accepted-decision.md](/.agents/tasks/channel/feishu-cot-conversation-cards/accepted-decision.md) (backfilled 2026-09-01).
 - Next action: Prepare the pull request after operator approval. Do not push or
   open the pull request before that approval.
 - Related tasks: Builds on
@@ -59,7 +60,7 @@
   [verification.md](/.agents/tasks/channel/feishu-cot-conversation-cards/verification.md).
 - Knowledge closeout: Complete — the durable capability and supersessions are
   recorded in
-  [Feishu COT conversation display](/.agents/decisions/feishu-cot-conversation-display.md),
+  [Feishu COT conversation display](/.agents/tasks/channel/feishu-cot-conversation-cards/accepted-decision.md),
   and the Channel, routing, architecture, and non-blocking-inbound current-state
   pages are aligned.
 - Pull request / CI / merge: Pending operator approval; no push or merge has

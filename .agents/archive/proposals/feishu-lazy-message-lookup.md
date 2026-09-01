@@ -1,7 +1,7 @@
 # Feishu lazy message identity hints
 
 - **Status:** Implemented; current behavior is documented in
-  [Channel runtime](../../reference/channel-runtime.md)
+  [Channel runtime](/.agents/domains/channel.md)
 - **Date:** 2026-07-23
 - **Affects:** `@excitedjs/feishu-transport`, `@excitedjs/feishu-channel`,
   Feishu model-facing inbound content

@@ -1,9 +1,9 @@
 # Concrete Entity Name Suffix Length
 
 Status: Implemented by PR #305. Current behavior is documented in
-[Current architecture](../../reference/current-architecture.md),
+[Current architecture](/.agents/domains/current-architecture.md),
 [Dispatcher orchestration](../../domains/dispatcher-orchestration.md), and
-[Service topology](../../reference/service-topology.md).
+[Service topology](/.agents/domains/service-topology.md).
 
 ## Intent
 

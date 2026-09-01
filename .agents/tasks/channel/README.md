@@ -16,5 +16,7 @@
 ## Child Scopes
 
 ## Tasks
+- [Channel Input Assembly Record](/.agents/tasks/channel/channel-input-assembly/README.md) — `done`: Preserve the channel-input runtime assembly decision (routing/display split), whose vehicles were later deleted by the #350 cleanup.
+- [Feishu Access Foundation Records](/.agents/tasks/channel/feishu-access-foundations/README.md) — `done`: Preserve the Feishu access decisions: pairing access V3, allow_chats trust semantics, and inbound attachments.
 
 - [Feishu conversation-of-thought cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md) — `done`: Render dispatcher and TeamLeader conversations as conversation-anchored Feishu COT cards through a neutral, display-only core projection.

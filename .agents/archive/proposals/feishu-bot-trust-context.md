@@ -23,7 +23,7 @@ guidance; start with the linked domain and reference docs instead.
 
 #68 shipped the typed event-route seam, the `/introduce` hard contract, and the
 `known` / `trusted` peer-bot store (see
-[`domains/feishu-introduce.md`](../../domains/feishu-introduce.md)). Two Phase 4
+[`domains/feishu-introduce.md`](/.agents/domains/feishu-pairing-access.md)). Two Phase 4
 items from #62 were deferred — one-shot discovery context and a list-known-bots
 capability — and a separate channel-behavior tweak (reaction ordering) is folded
 into the same focused change.

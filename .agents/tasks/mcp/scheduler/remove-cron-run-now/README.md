@@ -32,4 +32,4 @@
   README, bundled workflow skills, dispatcher and service-topology references;
   superseded scheduler proposals are archived. Capability-domain task routing is
   recorded in
-  [Capability-domain task routing](/.agents/decisions/capability-domain-task-routing.md).
+  [Capability-domain task routing](/.agents/tasks/architecture/task-system/requirement.md#capability-domain-task-routing).

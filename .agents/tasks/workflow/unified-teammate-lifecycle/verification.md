@@ -317,16 +317,16 @@ contract.
 
 Updated current knowledge owners:
 
-- [Current architecture](/.agents/reference/current-architecture.md)
-- [Repo structure](/.agents/reference/repo-structure.md)
-- [Service topology](/.agents/reference/service-topology.md)
+- [Current architecture](/.agents/domains/current-architecture.md)
+- [Repo structure](/.agents/domains/current-architecture.md)
+- [Service topology](/.agents/domains/service-topology.md)
 - [Provider runtime](/.agents/domains/provider-runtime.md)
 - [Dispatcher orchestration](/.agents/domains/dispatcher-orchestration.md)
 - [State, config, and files](/.agents/domains/state-config-and-files.md)
-- [State and paths](/.agents/reference/state-and-paths.md)
-- [Channel runtime](/.agents/reference/channel-runtime.md)
-- [Entity-owned TeamMate lifecycle and object Turns](/.agents/decisions/entity-owned-teammate-lifecycle-and-object-turns.md)
-- [Provider architecture realignment](/.agents/decisions/provider-architecture-realignment.md)
+- [State and paths](/.agents/domains/state-config-and-files.md)
+- [Channel runtime](/.agents/domains/channel.md)
+- [Entity-owned TeamMate lifecycle and object Turns](/.agents/tasks/architecture/service-topology-foundations/requirement.md#entity-owned-teammate-lifecycle-and-object-turns)
+- [Provider architecture realignment](/.agents/tasks/architecture/providerization-epic/requirement.md#provider-architecture-realignment)
 - bundled maintenance
   `packages/dreamux/skills/dispatcher/dreamux-maintenance/references/service-lifecycle.md`
 
@@ -653,14 +653,14 @@ Repo-wide searches confirmed:
 ## Knowledge Closeout
 
 - Added accepted decision:
-  [Entity-owned TeamMate lifecycle and object Turns](/.agents/decisions/entity-owned-teammate-lifecycle-and-object-turns.md).
+  [Entity-owned TeamMate lifecycle and object Turns](/.agents/tasks/architecture/service-topology-foundations/requirement.md#entity-owned-teammate-lifecycle-and-object-turns).
 - Updated current owners:
-  - [Current architecture](/.agents/reference/current-architecture.md)
-  - [Service topology](/.agents/reference/service-topology.md)
+  - [Current architecture](/.agents/domains/current-architecture.md)
+  - [Service topology](/.agents/domains/service-topology.md)
   - [Provider runtime](/.agents/domains/provider-runtime.md)
   - [Dispatcher orchestration](/.agents/domains/dispatcher-orchestration.md)
   - [State, config, and files](/.agents/domains/state-config-and-files.md)
-  - [State and paths](/.agents/reference/state-and-paths.md)
+  - [State and paths](/.agents/domains/state-config-and-files.md)
   - bundled maintenance
     `packages/dreamux/skills/dispatcher/dreamux-maintenance/references/service-lifecycle.md`
 - Marked the old completion-router portion of
