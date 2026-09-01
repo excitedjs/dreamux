@@ -43,6 +43,16 @@ goal, whether an existing owner already provides the capability, what behavior m
 change, what must remain stable, and how success will be observed. Do not accept
 "cleaner", "more elegant", or "more general" as a sufficient refactor goal.
 
+Before defining or redefining any user-visible capability's contract, write its
+user story into the requirement: who uses it, in what scenario, expecting to see
+what. Then check the current implementation against that story — the
+implementation's behavior is not a contract basis, because it may never have
+implemented the story. Diff the requirement against
+[the product behavior catalog](/.agents/product/README.md) and list every entry
+the task will touch; a touched entry is a requirement decision, not an
+implementation detail. For multi-stage architecture refactors, also apply
+[large-refactor-mode.md](large-refactor-mode.md) from this point on.
+
 ## Persist during the conversation
 
 Continuously update `requirement.md` as decisions change. Do not wait until the end

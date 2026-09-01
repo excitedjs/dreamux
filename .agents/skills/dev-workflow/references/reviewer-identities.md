@@ -17,8 +17,11 @@ static, or unit checks.
 Report findings caused by or exposed in the current work. Cite the current code a
 finding rests on — for behavior that is missing, the place that should contain it —
 and state its concrete consequence. Apply the repository's public-safety rules to
-anything you propose. The TeamLeader adjudicates and records every finding you
-return.
+anything you propose. Read `.agents/skills/engineering-whitepaper/SKILL.md` first
+and judge with its taste: a finding that asks for defensive machinery must name a
+real reachable failure scenario, and a blocker must state a concrete trigger chain
+and product consequence — otherwise report it as an improvement, not a blocker.
+The TeamLeader adjudicates and records every finding you return.
 ```
 
 ## Requirement fidelity and completeness
