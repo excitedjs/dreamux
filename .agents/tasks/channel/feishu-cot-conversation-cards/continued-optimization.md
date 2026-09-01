@@ -5,8 +5,8 @@ landed on the draft pull request. They are recorded here so they survive the
 review conversation; the operator rules on them one at a time.
 
 Each entry carries its own status. All three below were approved by the operator
-on 2026-09-02 and are implemented by the Codex developer seat recorded in the
-task README; the TeamLeader does not write product code for this task.
+on 2026-09-02 and delivered by the Codex developer seat recorded in the task
+README; the TeamLeader does not write product code for this task.
 
 ## Where the complexity actually moved
 
@@ -30,8 +30,7 @@ which shares this pull request but is a separate subject from card lifecycle.
 
 ## 1. Claude native-turn end: narrow the synthesis rather than deduplicate it
 
-- **Status:** Approved 2026-09-02. The operator accepts the synthesis and ruled
-  the deduplication out. In implementation.
+- **Status:** Delivered 2026-09-02.
 - **Files:** [`/packages/agent-runtime/claude-code/src/runtime.ts`](/packages/agent-runtime/claude-code/src/runtime.ts),
   [`/packages/agent-runtime/claude-code/src/runtime-submissions.ts`](/packages/agent-runtime/claude-code/src/runtime-submissions.ts)
 
@@ -101,7 +100,7 @@ Estimated net reduction on the Claude side: 30 to 40 lines.
 
 ## 2. Channel-body suppression state
 
-- **Status:** Approved 2026-09-02 for complete removal. In implementation.
+- **Status:** Delivered 2026-09-02 — removed completely.
 - **File:** [`/packages/channel/feishu-channel/src/feishu-cot-state.ts`](/packages/channel/feishu-channel/src/feishu-cot-state.ts)
 
 `suppressedUserTurns` is a per-recipient set with a 64-entry cap and an
@@ -114,9 +113,8 @@ mostly inert.
 
 ## 3. Readable local-path projection
 
-- **Status:** Approved 2026-09-02. The capability stays; the process-global cache
-  is removed in favour of a constructor input, and all three confirmed defects
-  are repaired. In implementation.
+- **Status:** Delivered 2026-09-02 — the capability stays, the process-global
+  cache is gone, and all three defects are repaired.
 - **Files:** [`/packages/dreamux/src/platform/home-paths.ts`](/packages/dreamux/src/platform/home-paths.ts),
   [`/packages/dreamux/src/channel/conversation-projection.ts`](/packages/dreamux/src/channel/conversation-projection.ts)
 
@@ -137,3 +135,28 @@ directory.
 - Task README: [README.md](README.md)
 - Locked requirement: [requirement.md](requirement.md)
 - Verification and accepted best-effort losses: [verification.md](verification.md)
+
+## Pre-review findings from the delivery itself
+
+Recorded because the reasoning is easy to lose and easy to repeat.
+
+1. **A wider token class is not a boundary fix.** The first repair made `.` and
+   `/` stop counting as path characters outright. That fixed `file://` and
+   sentence-final periods and simultaneously made `<prefix>.<suffix>` read as the
+   prefix itself: `<home>.bak/notes.md` became `~.bak/notes.md`, and the far more
+   common `<workspace>.git/config` became `..git/config`. The rule has to be
+   positional, not lexical — a period ends a path only when what follows it is
+   itself a boundary, and a leading slash only counts when it is exactly the
+   `://` of a scheme.
+2. **Ordering already provides longest-prefix ownership; a second mechanism only
+   suppresses correct results.** The second repair added an explicit shadowing
+   rule so a workspace-shaped position could not also be claimed by the home
+   prefix. Because `redactText` runs the workspace pass first and rewrites every
+   position it claims, the only positions still carrying the workspace string are
+   the ones the workspace declined — exactly the ones the home must handle. The
+   shadowing rule therefore suppressed those renames and published the
+   operator's raw home path for `<workspace>.git/config`, a regression against
+   the branch it started from. It was removed.
+
+Both were caught by probing the compiled build rather than by reading the diff,
+and both are now pinned by tests listed in [verification.md](verification.md).

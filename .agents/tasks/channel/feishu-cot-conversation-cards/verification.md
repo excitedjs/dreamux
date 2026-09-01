@@ -5,7 +5,10 @@
 - The change stays within `dreamux-types`, Dreamux core, the built-in Claude
   and Codex runtime providers, the Feishu Channel, affected tests, and Rush
   change metadata. It does not change Feishu transport, configuration,
-  persistence, dependency, path, or service surfaces.
+  persistence, or dependency surfaces. It does change how projected text renders
+  host paths, and it adds one resolved value to the dispatcher composition; no
+  path *contract* — none of the host-owned builders in `platform/paths.ts` —
+  changed.
 - The runtime and core expose one provider-neutral native-turn-ended fact per
   Dreamux-owned native turn. The fact carries only the actor and terminal
   status; it does not expose folded logical submissions, presentation targets,
@@ -18,8 +21,9 @@
   an anchorless TeamLeader; Dispatcher presentation starts with its first
   successfully admitted Channel inbound.
 - With an anchor, ordinary supported facts append to the open card or open a
-  new card when none is open. There is no source whitelist. The exact inbound
-  body already visible at the anchor is suppressed on a best-effort basis.
+  new card when none is open. There is no source whitelist and no body
+  suppression: the body of the message this Channel submitted displays like any
+  other input.
 - Card create or append failure abandons only that card attempt and leaves the
   standing anchor eligible for the next opening activity. Native-turn-ended
   closes only an already-open card and is ignored when no card is open.
@@ -29,18 +33,21 @@
 
 ## Focused coverage
 
-- Claude and Codex runtime suites cover exactly-once native-turn-ended emission
-  for completion, failure, interruption, folding, teardown, duplicate terminal
-  input, and fail-open sink errors.
+- Claude and Codex runtime suites cover native-turn-ended emission for
+  completion, failure, interruption, folding, teardown, and fail-open sink
+  errors. One terminal `result` reports one end; a resident Claude execution
+  window that answers several commands in sequence reports one end per result;
+  a synthesized end is reported only by the call that actually settled a
+  still-open submission, so an ordinary success reports exactly one end.
 - Dreamux type and core suites cover the neutral event shape, closed event
   catalog, actor-only projection, runtime-generation fencing, and unchanged
   admission/completion behavior.
 - Feishu adapter tests run the same anchor and card lifecycle contract for
   TeamLeader and Dispatcher, including global recipient identity across target
   changes, post-admission anchor replacement, default source display, narrow
-  body suppression, no-anchor suppression, memory-only reset, bind-card
+  no-anchor suppression, memory-only reset, bind-card
   initialization, route and Team lifecycle fences, and logical-settlement
-  non-terminal behavior.
+  non-terminal behavior. A user body displays like any other projected input.
 - Feishu delivery tests exercise the real session seam for accepted Team
   delivery, the single proven-no-admission Dispatcher fallback, rejection and
   ambiguous outcomes, and Reply's presentation no-op contract.
@@ -49,7 +56,40 @@
   with an anchor but no open card and leaving the next ordinary activity able
   to open a card.
 
+## Path projection coverage
+
+`packages/dreamux/tests/cot-projection-privacy.test.ts` pins the boundary rules
+that decide when a known prefix is really the head of a path:
+
+- a home prefix inside a `file://` URL renames; a doubled filesystem separator
+  such as `/mnt/backup//<home>/x` does not, because only an exact `://` counts
+  as a scheme boundary;
+- a trailing period is prose punctuation only when what follows it is itself a
+  boundary, so `see <home>.` renames while `<home>.bak/notes.md` stays verbatim;
+- a workspace-adjacent sibling the workspace prefix declines still renames
+  through the containing home prefix — `<workspace>.git/config` reads
+  `~/work/repo.git/config`, never the raw home path and never `..git/config`;
+- a longer name that merely starts with the same characters (`<home>xyz`,
+  `<home>-old`, another account's directory) is untouched;
+- with no resolvable host home, workspace renaming still works and nothing is
+  renamed to `~`.
+
+Ordering, not a second ownership rule, is what makes the longest prefix win: the
+workspace pass runs first and rewrites the positions it claims, so the home pass
+only ever sees positions the workspace declined. An earlier attempt to add an
+explicit shadowing rule was rejected in pre-review because it suppressed correct
+home renames at exactly those positions and published the operator's raw home
+path instead.
+
 ## TeamLeader pre-review checks
+
+The 2026-09-02 simplification round repeated the whole set below after each of
+its two correction cycles, and the TeamLeader additionally probed the compiled
+projection directly for the path-boundary cases rather than reading the diff for
+them. Both cycles were opened by a TeamLeader finding, not by a failing check —
+a full green suite is not evidence that a boundary rule is right.
+
+### 2026-09-01 corrective round
 
 - `node common/scripts/install-run-rush.js build` — passed.
 - `node common/scripts/install-run-rush.js lint` — passed.
@@ -68,7 +108,8 @@
 - A fact synchronously projected before steer or queue success returns may be
   appended to the predecessor card or discarded when no anchor exists. The
   Channel does not buffer, reorder, or add a private/public correlation
-  contract for this window.
+  contract for this window. This is also why no body suppression exists: the
+  body of this Channel's own inbound is exactly such a fact.
 - An exceptionally early native-turn-ended fact may be ignored before the
   post-admission receipt card opens, leaving that card open until a later
   anchor replacement or session close.

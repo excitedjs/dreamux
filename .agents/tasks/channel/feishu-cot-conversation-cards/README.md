@@ -30,11 +30,9 @@
 - Continued optimization (simplification findings raised after the draft pull
   request, none approved for implementation):
   [continued-optimization.md](/.agents/tasks/channel/feishu-cot-conversation-cards/continued-optimization.md).
-- Next action: The Codex developer implements the 2026-09-02 simplification
-  adjudication; then the TeamLeader pre-reviews it, completes knowledge closeout
-  and the task record, pushes to draft pull request
-  [#357](https://github.com/excitedjs/dreamux/pull/357), and requests the
-  independent Devbox re-review.
+- Next action: Independent Devbox re-review of draft pull request
+  [#357](https://github.com/excitedjs/dreamux/pull/357), then operator decision
+  on marking it ready and merging.
 - Related tasks: Builds on
   [adopt-completion-token-routing](/.agents/tasks/completion-routing/adopt-completion-token-routing/README.md)
   (the submission activity sink this task consumes). The parked
@@ -127,7 +125,17 @@
   corrective round was written by a Claude developer; the 2026-09-02
   simplification round is written by a Codex developer. The TeamLeader must not
   edit product code in either round.
-- Independent implementation review and knowledge closeout are pending.
+- The 2026-09-02 simplification round was implemented by the Codex developer and
+  passed TeamLeader pre-review after two correction cycles, both opened by a
+  TeamLeader finding rather than a failing check: a token-class widening that
+  made `<prefix>.<suffix>` read as the prefix, and a shadowing rule that
+  published the operator's raw home path. Both are recorded in
+  [continued-optimization.md](/.agents/tasks/channel/feishu-cot-conversation-cards/continued-optimization.md).
+- Knowledge closeout is complete: the accepted decision record carries an
+  amendment for the corrected card lifecycle, and
+  [verification.md](/.agents/tasks/channel/feishu-cot-conversation-cards/verification.md)
+  states the current scope, coverage, and accepted losses.
+- Independent implementation review is pending.
 - Existing proposal files, the withdrawn previous solution, public review text,
   and the generated Feishu design document are not implementation authorities.
 - Pull request / CI / merge: Draft pull request
