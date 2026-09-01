@@ -33,7 +33,9 @@ Source:
 It writes atomically, serializes mutations through an internal queue, and fails
 loud on legacy/incompatible schema.
 
-A job's action union has one member: `{ kind: 'prompt-agent', prompt, intent? }`.
+The v1 row stores `cron`, `tz`, `recurring`, `enabled`, `next_run_at`,
+`last_fired_at`, an optional `title`, and one `action`. The action union has one
+member: `{ kind: 'prompt-agent', prompt, intent? }`.
 The reserved `spawn-teammate` shape and the `deliver: { channel_id, target_key }`
 target were declared and parsed with nothing behind them, and are removed. The
 raw-file parser now refuses either as `LegacyStateError` rather than admitting a
@@ -70,7 +72,9 @@ Source:
 ## Owner Admission
 
 `SchedulerService` is generalized over an owner and takes that owner's
-admission gate plus its scheduled-submit callback. The dispatcher scheduler
+admission gate plus its scheduled-submit callback. `TeammateService` carries no
+scheduler, so "only the dispatcher and each TeamLeader have cron" is structural
+rather than a per-instance capability policy. The dispatcher scheduler
 submits into the dispatcher agent; a Team's scheduler submits into its
 TeamLeader, whose lazy-start path is the normal state after a restart or between
 conversations. The scheduler holds no runtime and applies no per-owner
@@ -122,8 +126,5 @@ Source:
 - `/packages/dreamux/src/service/dispatcher-service/mcp-delegates.ts`
 - `/packages/dreamux/src/agent-runtime/host-context.ts`
 
-## Decision Trail
-
-- [Cron per conversational agent](../decisions/cron-per-conversational-agent.md)
-- [Agent activity capability](../decisions/agent-activity-capability.md)
-- [Json document store](../decisions/json-document-store.md)
+History: [/.agents/tasks/mcp/README.md](/.agents/tasks/mcp/README.md) — the
+cron rulings live in the scheduler task records.

@@ -124,27 +124,29 @@ them — matching construction to data scope is the point:
 When adding a new store, ask: *who owns the data this store reads/writes?*
 Match the construction pattern to the data scope, not to the nearest class.
 
-### Source vs. Intent in This Document
+### Honest Layering
 
-Code is current behavior. This KB distinguishes three layers:
+Moving declarations only counts as layering when the resulting dependency pair
+is honest. Three rejection criteria, learned from a drafted-and-overtaken
+split plan:
 
-- **Current source facts** — what the code does today (e.g. "`AgentIdentityStore`
-  constructor takes `DreamuxLogger`").
-- **Architectural intent** — the target shape the code is moving toward or
-  holding (e.g. "the identity store is shared from the composition root,
-  not self-built by each collection").
-- **Known debt / review heuristics** — things that work but should not be
-  copied (e.g. "do not hand-slice infrastructure capabilities at call sites;
-  inject the stable object or use a named factory").
+- a types module that names the concrete service it serves and must
+  type-import the service's `index.ts` while `index.ts` imports it back is a
+  circle wearing a `types.ts` costume;
+- a relocation that reverses an existing lower-level contract edge (the
+  consumer already imports the request contract from the module you would move
+  it out of) inverts ownership rather than clarifying it;
+- type erasure prevents a runtime cycle but does not make the source-level
+  dependency pair an honest layer — "it compiles" proves nothing here.
 
-When code and this document disagree, read the source first — then update the
-document if the code moved intentionally, or fix the code if it drifted.
-
-## Update Rules
+When a file trips the max-lines gate, find the responsibility that wants its
+own owner or record a micro-refactor candidate; do not relocate declarations
+to manufacture headroom.
 
 When moving a service class, changing who constructs it, or changing ownership
-scope, update this file in the same change and keep every cited
-package source path resolvable. `.agents/scripts/check.sh` validates
-the cited file paths so this page cannot drift into dead anchors silently. It
-does not validate prose, so a row whose object was deleted must be removed
-rather than repointed at a surviving file.
+scope, update this page in the same change. `.agents/scripts/check.sh`
+validates every cited package source path on the domains pages, so rows cannot
+drift into dead anchors silently; it does not validate prose, so a row whose
+object was deleted must be removed rather than repointed at a surviving file.
+
+History: [/.agents/tasks/architecture/README.md](/.agents/tasks/architecture/README.md).

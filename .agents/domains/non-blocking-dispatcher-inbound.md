@@ -3,7 +3,7 @@
 - **Status:** Implemented runtime contract for issue #63. Its non-blocking
   inbound gate remains binding; its automatic reaction progress surface is
   superseded by
-  [Feishu COT conversation display](../decisions/feishu-cot-conversation-display.md).
+  [Feishu COT conversation display](/.agents/tasks/channel/feishu-cot-conversation-cards/accepted-decision.md).
 - **Source:** https://github.com/excitedjs/dreamux/issues/63
 - **Affects:** `/packages/agent-runtime/codex/src/turn-manager.ts`,
   `/packages/agent-runtime/codex/src/events.ts`,
@@ -12,9 +12,8 @@
   `/packages/channel/feishu-channel/src/feishu-cot-adapter.ts`,
   `/packages/dreamux/src/service/dispatcher-service/index.ts`,
   `/packages/dreamux/src/channel/conversation-projection.ts`,
-  `/packages/dreamux/tests/fake-codex.ts`,
   `/packages/dreamux/tests/codex-live.test.ts`,
-  `/packages/agent-runtime/codex/tests/turn-manager.test.ts`
+  `/packages/agent-runtime/codex/tests/codex-runtime.test.ts`
 
 ## Regression Trap (read before touching codex busy/idle or `turn-manager.ts`)
 
@@ -80,30 +79,6 @@ accepted message. The Codex runtime may still keep internal turn ids for
 completion collection, interrupts, and teardown bookkeeping; those ids are not
 the inbound routing authority.
 
-## Pre-Issue #63 Artifact
-
-Before issue #63, the dispatcher inbound path was a process-local serialized
-turn worker:
-
-```mermaid
-flowchart LR
-  Feishu["accepted Feishu inbound"] --> Queue["TurnManager queue"]
-  Queue --> RunTurn["runTurn"]
-  RunTurn --> Start["turn/start"]
-  Start --> Wait["await turn/completed"]
-  Wait --> Queue
-```
-
-`TurnManager.drainLoop()` awaits `processBatch()`, and `processBatch()` awaits
-`runTurn()`. `runTurn()` submits `turn/start` and resolves only after
-`turn/completed`. A long Codex turn therefore blocks later accepted Feishu
-messages from reaching Codex.
-
-The channel added one received reaction after the old Codex runtime
-`enqueueInbound()` path returned true. Issue #63 first replaced this historical
-path with a three-state channel-owned reaction flow. That progress surface is
-also historical: COT cards now present automatic conversation progress.
-
 ## Runtime Model
 
 ```mermaid
@@ -120,57 +95,6 @@ flowchart LR
 Every accepted, deduped inbound message submits exactly one `turn/start`.
 dreamux never waits for `turn/completed` before accepting or submitting the next
 inbound.
-
-## Code Changes
-
-`/packages/agent-runtime/codex/src/turn-manager.ts`
-
-- Remove same-chat coalescing and the completion-gated `drainLoop()` /
-  `processBatch()` queue as the inbound submission gate.
-- Keep process-local `message_id` dedupe.
-- Replace `enqueue(input): boolean` with an async per-message submission path:
-  accepted, deduped input is formatted as one prompt/envelope and submitted via
-  `turn/start` immediately.
-- Return a delivery result to the runtime/server so the channel can switch the
-  reaction to in-progress at the `turn/start` acceptance point.
-- Do not use active turn ids as inbound routing state. Do not call `turn/steer`
-  for normal inbound.
-
-`/packages/dreamux/src/service/dispatcher-service/index.ts`
-
-- Keep the Dispatcher Service as the neutral runtime/channel bridge.
-- Forward each Channel provider delivery request to the selected Agent Runtime
-  and return the real `InboundDeliveryResult`, including duplicate, submitted,
-  and failed information.
-- Do not introduce a dispatcher-level mutex, production observer, or
-  active/idle branch.
-- Inject the neutral conversation projection into the dispatcher agent. This
-  observation path does not delay or alter delivery.
-
-`/packages/agent-runtime/codex/src/events.ts`
-
-- Split the current `runTurn()` shape so production inbound can call a
-  `submitTurnStart()`-style helper that sends `turn/start` and resolves on the
-  RPC acceptance ack.
-- The old `runTurn()` shape (`turn/start` plus await `turn/completed`) must not
-  remain on the Feishu inbound path. It can remain only as a test/diagnostic
-  helper if still useful.
-- Do not add a `turn/steer` helper for normal Feishu inbound.
-
-`/packages/channel/feishu-channel/src/feishu-channel.ts`
-
-- Do not add, replace, or clean up automatic reactions during inbound delivery.
-- Subscribe the session COT adapter to the neutral conversation event source.
-  Dispatcher events render only when their frozen `channel_origin` belongs to
-  this session; foreign and origin-less dispatcher streams are strict no-ops.
-- Keep `reply` and the deliberate model-facing `react` tool independent of the
-  automatic progress surface.
-
-`/packages/channel/feishu-channel/src/feishu-message.ts`
-
-- Keep the existing discrete `<feishu_message>` envelope and routing metadata
-  (`chat_id`, `message_id`, `sender_id`, `sender_name`, `create_time`) so the
-  model can reply to the correct source message after interleaving.
 
 ## Conversation Display Contract
 
@@ -212,3 +136,9 @@ Feishu inbound during that mid-turn window, and prove:
 This live gate remains the load-bearing proof. COT rendering tests complement it
 but do not replace it; static review and fake tests alone are not enough for
 issue #63.
+
+The pre-issue-#63 queueing shape and the original imperative change plan are
+preserved in
+[the archived implementation plan](/.agents/archive/notes/issue-63-implementation-plan.md).
+
+History: [/.agents/tasks/architecture/README.md](/.agents/tasks/architecture/README.md).

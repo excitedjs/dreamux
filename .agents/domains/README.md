@@ -1,40 +1,40 @@
-# Domain Knowledge
+# Domains
 
-Domain pages are stable, module-oriented reading paths for current Dreamux
-contracts. They summarize settled design that used to be scattered across ADRs.
-For why a design was chosen, follow each page's decision trail.
+The single current-shape tree: how Dreamux is built today, one page per area —
+ownership, contracts, invariants, and Regression Traps, with source pointers
+`check.sh` keeps alive. These pages describe what is and why; they are
+evidence, never preservation orders. A refactor may overturn anything here to
+fit the current product scenario, knowingly: name what changes, why the
+recorded rationale no longer holds, and update the page in the same change.
+User-visible behavior changes are operator decisions — diff against
+[the product behavior catalog](../product/README.md).
 
-Before changing code, verify the linked source files. These pages are navigation
-and invariants, not a substitute for reading the implementation.
+Load-bearing invariants a coder needs while editing a directory live in that
+directory's `CLAUDE.md` (they travel with the code diff); these pages link down
+rather than copying. Each page ends with a History pointer into the task tree,
+where the full derivation and rulings live.
 
-These pages describe what is and why — they are evidence, not preservation
-orders. A refactor may overturn anything here to fit the current product
-scenario, knowingly: name what changes, why the recorded rationale no longer
-holds, and update the page in the same change. User-visible behavior changes
-are operator decisions
-(see [the product behavior catalog](../product/README.md)).
-
-## Core Domains
-
-- [Provider runtime](provider-runtime.md) — provider refs, package boundaries,
-  named `agents[]`, runtime create context, skills, prompts, diagnostics, and
-  provider-neutral core.
-- [Channel routing and binding](channel-routing-and-binding.md) — Channel
-  providers, provider tools, target normalization, Team MCP binding, routing,
-  and TeamLeader egress authorization.
-- [Dispatcher orchestration](dispatcher-orchestration.md) — Dispatchers,
-  DispatcherService, Team/TeamMate collections, `TeammateService`,
-  object-owned completion delivery, MCP projections, and workspaces.
-- [State, config, and files](state-config-and-files.md) — local config,
-  state/run/cache/log layout, upgrade policy, JSON stores, workspaces, and logs.
-- [Scheduled work](scheduled-work.md) — per-conversational-agent cron,
-  immediate fire semantics, scheduler ownership, and current prompt-agent scope.
+- [Current architecture](current-architecture.md) — the map: process model,
+  package layout, per-area summaries with owner links.
+- [Provider runtime](provider-runtime.md) — the Agent Runtime seam, config
+  contract, prompts, bundled-skill injection, activity reads.
+- [Channel](channel.md) — the Channel seam, sessions, routing, binding,
+  targets, Collaboration Spaces, Feishu inbound fidelity, COT display.
+- [Feishu pairing access](feishu-pairing-access.md) — V3 access state,
+  pairing, `/introduce`, trust policies.
+- [Non-blocking dispatcher inbound](non-blocking-dispatcher-inbound.md) — the
+  issue #63 gate; read its Regression Trap before touching codex busy/idle.
+- [Dispatcher orchestration](dispatcher-orchestration.md) — dispatchers,
+  collections and services, Team/TeamMate lifecycle, completion routing,
+  workspaces, MCP boundaries.
+- [Service topology](service-topology.md) — the source-anchored ownership map
+  for service-layer objects; read FIRST before moving any service class.
+- [Dispatcher skills](dispatcher-skill.md) — bundled skill injection and the
+  role-visible MCP tool surfaces.
+- [State, config, and files](state-config-and-files.md) — config, durable
+  state, run/cache/log ownership, upgrade policy.
+- [Scheduled work](scheduled-work.md) — cron stores, fire semantics, owners.
 - [Repository operations and release](repository-operations-and-release.md) —
-  Rush/pnpm install path, package/bin surface, public-repo safeguards, lint
-  gates, changelog responsibility, and npm release workflow.
-
-## Feishu Domains
-
-- [Feishu introduce](feishu-introduce.md)
-- [Feishu pairing access](feishu-pairing-access.md)
-- [Non-blocking dispatcher inbound](non-blocking-dispatcher-inbound.md)
+  install/build/test, change files, guardrails, the release SOP.
+- [Model-facing writing](model-facing-writing.md) — the contract for text a
+  model can see: skills, prompts, MCP descriptions, results, failures.

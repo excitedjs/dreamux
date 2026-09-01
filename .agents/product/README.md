@@ -27,10 +27,10 @@ the same change that touches it.
   target to a Team stores `(channel instance, opaque provider meta) → team`.
   The target may not exist yet and is never verified against the external
   platform; a wrong meta simply never matches. Bindings are Channel-owned.
-  (Decision: [minimize-provider-boundaries](/.agents/decisions/minimize-provider-boundaries.md).)
+  (Decision: [minimize-provider-boundaries](/.agents/tasks/architecture/minimize-provider-boundaries/README.md).)
 - **Unbound input reaches the Dispatcher Agent.** A conversation with no
   binding is not an error and not dead air — the Dispatcher Agent is its
-  recipient. (Domain: [channel-routing-and-binding](/.agents/domains/channel-routing-and-binding.md).)
+  recipient. (Domain: [channel](/.agents/domains/channel.md).)
 - **Unbinding leaves the Team alive; teams without bindings are normal.** An
   unbind deletes only the route. A Team with no binding is an everyday state
   needing no orphan governance; a later message on that conversation simply
@@ -40,6 +40,15 @@ the same change that touches it.
   Team via ordinary `team.create` for a chat or topic it manages; provisioning
   progress is volatile, and a crash may leave an accepted orphan Team rather
   than a persisted saga.
+- **Binding changes are confirmed with a card, and the card names real paths.**
+  When a chat, topic, or space binding changes, the built-in Feishu channel
+  posts a confirmation card: space-bound shows the space name, TeamLeader
+  runtime, and repo policy; route-bound shows the binding kind, Team name,
+  TeamLeader name, runtime, and runtime cwd; unbinding is a one-liner. The
+  absolute repo cwd and runtime working directory are **deliberately**
+  disclosed to the bound conversation's members — an explicit operator ruling
+  that narrowed the earlier disclosure allowlist. Delivery is best-effort with
+  one retry; a failed card never affects the binding change it reports.
 
 ## Team lifecycle
 
@@ -54,11 +63,17 @@ the same change that touches it.
   background. `force` is the explicit authorization to discard local changes.
   A TeamLeader dissolving its own Team usually never receives the tool
   response; that connection loss is the expected surface, and delivery failure
-  never rolls the dissolve back.
+  never rolls the dissolve back. Automatic cleanup removes only the worktree
+  itself: it **never deletes the managed branch, its commits, a reused
+  directory, or the source repository** — a user's committed work survives
+  every dissolve.
 - **A failed dissolve leaves a Team that still exists.** Whatever committed
   before the failure stays committed (closed members stay closed, deleted cron
   stores stay deleted); the next ordinary use rebuilds from disk, and the next
   dissolve retries the same close operations. No rollback product exists.
+- **`identity` shapes only the agent it is given to.** The `identity` passed
+  to `team.create` guides the created TeamLeader alone; members do not inherit
+  it — each member's identity comes from its own `teammate.spawn`.
 - **Closed entities are records.** A closed Team or TeamMate is never
   materialized into a live object by startup, queries, or cleanup; the one door
   back is an explicit `send` that reopens a member.
@@ -76,7 +91,7 @@ the same change that touches it.
   display loss is acceptable, turn failure is not. The current Feishu COT card
   presentation is a deliberately tuned surface; changes to it are their own
   requirement, never a refactor side effect.
-  (Decision: [feishu-cot-conversation-display](/.agents/decisions/feishu-cot-conversation-display.md).)
+  (Decision: [feishu-cot-conversation-display](/.agents/tasks/channel/feishu-cot-conversation-cards/accepted-decision.md).)
 
 ## Failures the model sees
 
@@ -86,7 +101,7 @@ the same change that touches it.
   verbatim — the errno, path, or provider text is the only concrete fact at the
   scene. There is no sanitized black-hole error and no "see server logs"
   response. Stacks go to logs; messages go up.
-  (Owner: [model-facing-writing](/.agents/reference/model-facing-writing.md).)
+  (Owner: [model-facing-writing](/.agents/domains/model-facing-writing.md).)
 - **Business rejections are results, not exceptions.** "This chat cannot be
   bound" reaches the model as an explicit error result it can act on, not as an
   internal fault.

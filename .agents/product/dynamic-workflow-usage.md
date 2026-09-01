@@ -383,10 +383,10 @@ Lists runs in the current dispatcher or TeamLeader caller scope.
 workflow_stop({ run_id: 'run-abc123' })
 ```
 
-Reserves the stopped outcome and returns immediately. In-flight agent turns
-settle before the stopped terminal completion is delivered. Immediately after
-the call, `workflow_status` may briefly remain `running`; this does not mean the
-stop failed.
+Requests the stopped outcome and resolves only after the run is durably
+terminal: in-flight agent turns settle, the terminal fact is persisted and
+delivered, and the returned status is already final
+(`/packages/dreamux/src/service/workflow-service/run-terminal.ts`).
 
 ---
 
@@ -418,9 +418,12 @@ one agent for overlapping edits.
   through 16**.
 - An individual turn timeout is controlled by the selected runtime.
 
-These are the canonical user-facing Workflow limits. The
-[current architecture](current-architecture.md#dynamic-workflows) describes
-where they are enforced without duplicating their numeric values.
+The bundled `workflow` skill
+(`/packages/dreamux/skills/shared/workflow/SKILL.md`) is the owner of these
+user-facing numbers; this page restates them for operators and must follow the
+skill when they change. The
+[current architecture](/.agents/domains/current-architecture.md#dynamic-workflows)
+describes where they are enforced without duplicating the values.
 
 ### 5.4 Structured Output Support
 

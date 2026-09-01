@@ -1,13 +1,12 @@
 # Provider Runtime
 
-This page is the stable contract for Dreamux provider loading and Agent Runtime
-launch. It consolidates settled design from the provider, package-split, config,
-runtime-activity, skill-injection, and CLI/onboard decisions.
+What: how Dreamux loads providers and launches an Agent Runtime for one role,
+and exactly what crosses the neutral seam — provider refs and package
+boundaries, operator config, the runtime create context (prompt, skills,
+disabled features), the logical-turn and admission contract, activity reads,
+and diagnostics.
 
-Read this before changing provider loading, `agents[]`, runtime config,
-runtime diagnostics, bundled skill injection, or runtime prompt plumbing.
-
-## Current Shape
+## Ownership
 
 Dreamux has two live provider seams:
 
@@ -29,17 +28,6 @@ The host package, `@excitedjs/dreamux`, depends on the built-in provider
 packages so a default install keeps the built-in path. Provider packages depend
 on `@excitedjs/dreamux-types` and must not depend on `@excitedjs/dreamux`.
 
-Source:
-
-- `/packages/dreamux/src/registry/builtins.ts`
-- `/packages/dreamux/tests/package-boundary-guards.test.ts`
-- `/packages/dreamux/package.json`
-- `/packages/agent-runtime/codex/package.json`
-- `/packages/agent-runtime/claude-code/package.json`
-- `/packages/channel/feishu-channel/package.json`
-
-## Public Type Boundary
-
 `@excitedjs/dreamux-types` is the provider-authoring contract. It exports
 declarations only: provider descriptors, Agent Runtime contracts, Channel
 contracts, turn shapes, and diagnostics. It does not export host stores, path
@@ -50,35 +38,42 @@ Agent Runtime providers implement `AgentRuntimeProvider` and return one
 single-instance and has exactly three methods: `start`, `submit`, and `stop`.
 Nothing is pulled from the handle — every runtime fact flows out through the
 leased state and activity sinks Core supplied when it created the instance — so
-there is no status, checkpoint, capability, or liveness method to call on it and
-no idle question to ask it. Everything that is a read rather than a live handle
-hangs off the provider instead: config reading, onboarding, bin checks,
+there is no status, checkpoint, capability, or liveness method to call on it.
+Everything that is a read rather than a live handle hangs off the provider
+instead: config reading, onboarding, bin checks,
 diagnostics, and the bounded `readRecentActivity` tail. Dispatcher orchestration
 verbs such as `spawn`, `send`, `close`, `list`, and Team operations belong to
 Dreamux core services and MCP surfaces, never to the runtime instance.
 
-An accepted input returns one `RuntimeSubmission` handle whose settlement
-resolves to a provider-owned immutable `RuntimeCompletion` created at the real
-native result boundary. A provider fold or steer into the active logical turn
-settles with the exact same completion object; a queued input settles with a
-distinct completion in native order. Provider-native ids may exist inside the provider package,
-but they do not cross the neutral boundary for host correlation.
-
-`RuntimeAdmission.failed` is reserved for provider-proven pre-admission failure.
-`ambiguous` means the native boundary may have been crossed and therefore cannot
-be retried automatically. `AgentRuntime.stop()` fences new input synchronously
-and does not resolve until every already-started input admission has settled and
-can no longer return a newly accepted Turn.
+Providers also own provider-specific diagnostics and onboarding; Core owns the
+host envelope around them — config location, dispatcher id and cwd, selected
+provider refs, service installation, and the file ledger. Provider diagnostics
+declare binary checks and run non-binary checks through a neutral runner, so
+`dreamux doctor`, `dreamux onboard`, and `dreamux daemon install` derive
+provider binary checks from provider capabilities instead of branching on
+built-in refs.
 
 Source:
 
+- `/packages/dreamux/src/registry/builtins.ts`
+- `/packages/dreamux/src/cli/doctor.ts`
+- `/packages/dreamux/src/onboard/`
+- `/packages/dreamux/tests/package-boundary-guards.test.ts`
+- `/packages/dreamux/package.json`
+- `/packages/dreamux-types/src/provider.ts`
 - `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/dreamux-types/src/channel.ts`
 - `/packages/dreamux-types/tests/no-host-types.test.ts`
+- `/packages/agent-runtime/codex/package.json`
+- `/packages/agent-runtime/claude-code/package.json`
+- `/packages/channel/feishu-channel/package.json`
 
-## Config Contract
+## Contracts
 
-The operator config lives at `~/.dreamux/config.json`.
+### Operator Config
+
+The operator config is JSON at the path reported by `dreamux config path`:
+normally `~/.dreamux/config.json`, relocatable with `DREAMUX_CONFIG_DIR`.
 
 Current schema:
 
@@ -99,6 +94,9 @@ inline `dispatchers[].runtime`, missing `agentRuntime`, duplicate
 channel provider refs within one dispatcher. It does not silently migrate old
 shapes.
 
+Off Windows the config file must be mode `0600`. Any other mode is a loud load
+failure that names the offending mode; the file is never repaired in place.
+
 Channel providers may self-report an opaque `identity` for display/status. Core
 stores the string but never interprets provider config fields such as a Feishu
 app id.
@@ -110,22 +108,23 @@ Source:
 - `/packages/dreamux/src/agent-runtime/external-provider.ts`
 - `/packages/dreamux/src/channel/external-channel-provider.ts`
 
-## Runtime Create Context
+### Runtime Create Context
 
 Core launches every agent through `AgentRuntimeProvider.createRuntime(context)`.
-The context is neutral:
+The context is neutral and immutable — prior session identity reaches `start`
+only through it:
 
-- `identity.runtimeId` plus the provider's own prior `session` object or
-  `null`, persisted verbatim by Core, which reads only its `id`;
+- `identity.runtimeId` plus `identity.sessionId`, the provider's own prior
+  session id or `null`; the runtime publishes each new session id back through
+  its leased state sink;
 - provider-parsed `config`;
 - launcher-supplied `cwd`;
 - `systemPrompt` with optional `replace` and `append` forms;
-- exactly the MCP server descriptors core selected for this role;
+- exactly the MCP server descriptors core selected for this role — already
+  fully resolved, so an empty array means "no MCP servers";
 - effective `skillSources`, composed by core from required role roots and any
-  authorized custom roots. Core stores custom roots as canonical absolute
-  directories and guarantees each path is a skill root whose direct children are
-  skill directories;
-- optional feature-disable names such as `cron`;
+  authorized custom roots;
+- `disabledFeatures`, the neutral feature names to disable;
 - neutral logger, path, state, and environment injection seams.
 
 Core should not call provider-specific factories, classes, or package imports
@@ -139,14 +138,184 @@ Source:
 - `/packages/dreamux/src/service/teammate-service/factory.ts`
 - `/packages/dreamux/tests/package-boundary-guards.test.ts`
 
-## Logical Turn And Admission Contract
+### System Prompt
+
+`systemPrompt` is the single provider-facing prompt surface. It carries two
+canonical forms:
+
+- `replace`: full role instructions for runtimes that replace their native base
+  prompt;
+- `append`: ordered focused role-guidance fragments added on top of the native
+  base prompt. Fragment order is significant.
+
+An adapter selects at most one form: `replace` when present and supported;
+otherwise `append` when present; otherwise, when only an unsupported `replace`
+is present, prompt customization is left unchanged. Replacement support is an
+adapter implementation fact, not an `AgentRuntimeCapabilities` field or an
+MCP-discoverable feature.
+
+Dispatcher launches supply both forms as alternate representations of the same
+role guidance, so a replace-native runtime must not also inject the dispatcher
+append text. Codex maps `replace` to `baseInstructions`, which means the
+dispatcher replacement prompt must itself carry the non-coding parts of Codex's
+model-selected base prompt that would otherwise be lost: personality and tone,
+simple terminal-request handling, planning-tool guidance, review-answer shape,
+progress updates, unexpected-local-change and destructive-command cautions, and
+concise final-answer behavior — while leaving code-editing and frontend
+guidance out of the Dispatcher role. The comparison source when refreshing it is
+the current Codex model catalog entry (`models-manager/models.json`, the
+selected model's `base_instructions` / `model_messages`), not an older
+per-version prompt markdown file. Append-native runtimes keep their native base
+prompt, so their dispatcher append guidance stays a short role delta.
+
+Identity guidance is append-only and additive rather than an alternate
+representation. Every TeamLeader receives one default fragment identifying it as
+the TeamLeader for that Team; TeamLeader, TeamMate, and team-member identity
+guidance is rendered from the persisted `TeamMateIdentity.identity_prompt` and
+re-supplied as `systemPrompt.append` fragments on every launch that rebuilds the
+create context — initial create/spawn, close/reopen, process restart, Team
+rebuild, and runtime resume.
+
+Prompt policy stays outside the generic `TeammateService` runtime container.
+`TeamService` supplies the TeamLeader default and identity fragments; owned
+operations may supply host-private fragments through their collection creation
+options, which is how Dynamic Workflow injects its workflow-role contract
+without widening the public Agent Runtime ABI. `TeammateCollection` is the
+single TeamMate/member entity-construction boundary: it composes
+operation-owned fragments first and the persisted caller-provided identity
+fragment second, then supplies the ordered result. `outputSchema` remains a
+separate neutral turn field, not prompt text.
+
+Adapters apply the selected append form natively. Claude Code folds append
+fragments into `--append-system-prompt` before the resident session is created,
+wrapping each fragment in its own `<system-reminder>` block. Codex renders each
+fragment inside its own `<developer-reminder>` block and supplies the joined
+result as `developerInstructions` on `thread/start`, `thread/resume`, and the
+resume fallback start. Both escape XML text content inside each wrapper so one
+fragment cannot create or modify sibling blocks.
+
+Dreamux-owned turns that are not channel messages use plain text input; the
+provider receives no `CompletionEnvelope`, no source discriminator, and no
+rendering instruction.
+
+Source:
+
+- `/packages/dreamux-types/src/agent-runtime.ts`
+- `/packages/dreamux/src/service/dispatcher-service/base-prompt.ts`
+- `/packages/dreamux/src/service/dispatcher-service/agent.ts`
+- `/packages/dreamux/src/service/team-service/leader-agent.ts`
+- `/packages/dreamux/src/service/teammate-collection/index.ts`
+- `/packages/agent-runtime/codex/src/runtime.ts`
+- `/packages/agent-runtime/codex/src/runtime-support.ts`
+- `/packages/agent-runtime/codex/tests/system-prompt.test.ts`
+- `/packages/agent-runtime/claude-code/src/provider.ts`
+- `/packages/agent-runtime/claude-code/src/args.ts`
+
+### Bundled Skills And Injection
+
+Dreamux ships bundled skills under `/packages/dreamux/skills/`. Which skill
+covers what — and the tool surfaces those skills describe — is owned by
+[bundled Dreamux skills](dispatcher-skill.md); this page owns the role gate and
+how a root reaches an engine.
+
+Current role gate, by root rather than by skill:
+
+- Dispatcher roles receive `skills/dispatcher/` (holding `dispatcher-workflow`
+  and `dreamux-maintenance`) plus the shared root.
+- TeamLeader roles receive `skills/team-leader/` (holding `team-workflow`) plus
+  the shared root.
+- Both roles therefore receive the shared `workflow` root; ordinary TeamMate and
+  team-member roles receive no bundled Dreamux skill.
+
+Core emits those role roots, never per-skill selector paths, so root scanning
+cannot expose a sibling role's skills.
+
+The admin creation surface may add runtime-neutral custom roots for a TeamMate,
+team member, or TeamLeader. Core persists only those additions on the agent
+identity and recomposes them on every launch, and TeamLeader launch always
+prepends both required bundled roots ahead of the persisted additions.
+Normalization canonicalizes each custom root to an existing readable absolute
+realpath, collapses duplicate roots, and rejects a root whose direct-child skill
+name collides with another root's. For TeamLeader creation, required-source
+normalization includes both the role-specific and shared roots, reserving the
+bundled `team-workflow` and `workflow` names so custom roots cannot shadow
+either required skill. This capability is not part of MCP tool schemas or
+model-facing runtime discovery.
+
+Runtime packages own engine-specific application:
+
+- Codex dedupes the supplied roots and calls `skills/extraRoots/set` after
+  initialize and before thread start/resume.
+- Claude Code materializes a runtime-owned add-dir root containing a
+  `.claude/skills/<name>` entry per skill under each supplied root, then passes
+  that materialized root through `--add-dir`.
+
+`dreamux onboard` and dispatcher startup do not install bundled skills into a
+workspace. They are package-shipped runtime injection sources only.
+
+Source:
+
+- `/packages/dreamux/src/platform/paths.ts`
+- `/packages/dreamux/src/agent-runtime/skill-sources.ts`
+- `/packages/dreamux/src/service/dispatcher-service/agent.ts`
+- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
+- `/packages/dreamux/src/service/team-collection/create-request.ts`
+- `/packages/dreamux/src/service/team-collection/commands.ts`
+- `/packages/dreamux/src/service/team-service/leader-agent.ts`
+- `/packages/dreamux/src/service/teammate-collection/index.ts`
+- `/packages/agent-runtime/codex/src/skill-roots.ts`
+- `/packages/agent-runtime/claude-code/src/args.ts`
+- `/packages/agent-runtime/claude-code/src/runtime.ts`
+
+### Disabled Runtime Features
+
+The create context carries a required neutral
+`disabledFeatures: readonly string[]`. Core emits only neutral feature-group
+names; each runtime maps the names it understands and ignores the rest.
+
+Current names:
+
+- `userInterrupt`, emitted for every agent at the shared `createTeammateService`
+  construction boundary. It disables the model-facing "ask the user a question"
+  tool, which in a channel-only environment would wedge a turn waiting for an
+  out-of-band answer. Claude Code maps it to the `AskUserQuestion` disallowed
+  tool; Codex needs no code because its `request_user_input` tool exists only
+  behind the `experimental_request_user_input` config feature, which Dreamux's
+  authored launch config never sets. The guarantee is at the
+  Dreamux-authored-args level on both runtimes: operator `extra_args` is a raw
+  passthrough escape hatch Dreamux does not police, so an operator who
+  deliberately re-enables the tool owns that choice. The gap is symmetric, not
+  Codex-specific.
+- `cron`, emitted only for dispatcher and TeamLeader launches, matching the
+  roles that receive Dreamux's cron MCP. Claude Code maps it to native cron tool
+  disallow args; Codex ignores it because Dreamux cron is an MCP descriptor, not
+  a Codex-native feature.
+
+Claude Code merges all requested features' tools into a single
+`--disallowedTools` flag.
+
+Source:
+
+- `/packages/dreamux-types/src/agent-runtime.ts`
+- `/packages/dreamux/src/agent-runtime/host-context.ts`
+- `/packages/dreamux/src/service/dispatcher-service/agent.ts`
+- `/packages/dreamux/src/service/team-service/leader-agent.ts`
+- `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
+- `/packages/agent-runtime/claude-code/src/args.ts`
+
+### Logical Turn And Admission
 
 The runtime object is the provider-owned authority for native submission and
 termination; Dreamux core never reconstructs runtime activity from callbacks or
 native identifiers.
 
-- One accepted input returns one `RuntimeSubmission`; one real native result
-  produces one `RuntimeCompletion` that settles every submission it covers.
+- One accepted input returns one `RuntimeSubmission` handle whose settlement
+  resolves to a provider-owned immutable `RuntimeCompletion` created at the real
+  native result boundary; one real native result settles every submission it
+  covers.
+- A provider fold or steer into the active logical turn settles with the exact
+  same completion object; a queued input settles with a distinct completion in
+  native order.
 - Native aliases folded into the logical input must converge before the shared
   completion settles.
 - The provider owns its private source-deduplication reservation. Concurrent use
@@ -156,8 +325,13 @@ native identifiers.
 - Resident runtimes bound committed source ids with a FIFO window; pending
   reservations remain separate single-flight state and are never evicted before
   native admission resolves.
-- `stop()` initiates provider teardown before waiting on startup, restart, or
-  submission work that teardown is expected to reject.
+- `RuntimeAdmission.failed` is reserved for provider-proven pre-admission
+  failure. `ambiguous` means the native boundary may have been crossed and
+  therefore cannot be retried automatically.
+- `stop()` fences new input synchronously, initiates provider teardown before
+  waiting on startup, restart, or submission work that teardown is expected to
+  reject, and does not resolve until every already-started input admission has
+  settled and can no longer return a newly accepted Turn.
 
 Codex keeps app-server `turn.id` values inside its package. Claude Code keeps its
 command UUIDs inside its stream-json adapter. Neither identifier is Dreamux
@@ -234,7 +408,7 @@ does not bound Core's output — Core re-validates each returned page against it
 own record, cursor, and byte budgets in
 `/packages/dreamux/src/service/agent-entity/activity-reader.ts`.
 
-## Codex Portable Output Schema
+### Codex Portable Output Schema
 
 Dreamux core passes the neutral `AgentRuntimeTextInput.outputSchema` unchanged.
 `@excitedjs/agent-runtime-codex` privately compiles it for Codex strict
@@ -293,70 +467,14 @@ Source:
 - `/packages/agent-runtime/codex/src/runtime.ts`
 - `/packages/agent-runtime/codex/tests/codex-events.test.ts`
 
-## Bundled Skills
+### Activity Reads And Scheduling
 
-Dreamux ships bundled skills under `/packages/dreamux/skills/`, but it does not
-install them into dispatcher workspaces during `onboard` or runtime startup.
-Core passes effective skill roots through `AgentRuntimeCreateContext`.
-
-Current role gate:
-
-- Dispatcher roles receive the dispatcher workflow and maintenance root.
-- TeamLeader roles receive the Team workflow root.
-- Ordinary TeamMate and team-member roles receive no bundled Dreamux skills.
-
-The admin creation surface may add runtime-neutral custom roots for a
-TeamMate, team member, or TeamLeader. Core persists only those additions on the
-agent identity and recomposes them on every launch. TeamLeader composition
-always retains the required bundled Team workflow root. This capability is not
-part of MCP tool schemas or model-facing runtime discovery.
-
-Runtime packages own engine-specific application:
-
-- Codex sends the role-specific root through `skills/extraRoots/set`.
-- Claude Code materializes a runtime-owned `.claude/skills/<name>` add-dir root
-  and passes it with `--add-dir`.
-
-Source:
-
-- `/packages/dreamux/src/platform/paths.ts`
-- `/packages/dreamux/src/service/dispatcher-service/agent.ts`
-- `/packages/dreamux/src/service/agent-entity/identity-store.ts`
-- `/packages/dreamux/src/service/teammate-collection/index.ts`
-- `/packages/dreamux/src/service/team-service/index.ts`
-- `/packages/agent-runtime/codex/src/skill-roots.ts`
-- `/packages/agent-runtime/claude-code/src/args.ts`
-- `/packages/agent-runtime/claude-code/src/runtime.ts`
-
-## Prompt Contract
-
-The Agent Runtime prompt surface is `systemPrompt`. Core may supply both:
-
-- `replace`: full role instructions for runtimes that replace their base prompt;
-- `append`: ordered focused role guidance for runtimes that append to their
-  native prompt.
-
-Runtime adapters choose their supported native mechanism. Replacement support is
-an adapter implementation fact, not a new capability bit. Dispatcher launches
-provide both forms for the same role guidance; a replacement-native runtime must
-not also append the same dispatcher guidance.
-
-Source:
-
-- `/packages/dreamux-types/src/agent-runtime.ts`
-- `/packages/dreamux/src/service/dispatcher-service/base-prompt.ts`
-- `/packages/dreamux/src/service/dispatcher-service/agent.ts`
-- `/packages/agent-runtime/codex/tests/system-prompt.test.ts`
-
-## Activity Reads And Scheduling
-
-There is no neutral idle capability, and nothing in core asks a runtime whether
-it is busy. Activity crosses the seam in two forms only, and neither is a
-liveness signal: the provider pushes `RuntimeActivity` events into the activity
-sink Core leased it, and `readRecentActivity` answers a bounded cold read of a
-session's recent tail. The cold read never materializes an entity or starts a
-runtime, so a closed teammate stays readable, and it is required to produce
-records for a turn that is still in progress.
+Activity crosses the seam in two forms only, and neither is a liveness signal:
+the provider pushes `RuntimeActivity` events into the activity sink Core leased
+it, and `readRecentActivity` answers a bounded cold read of a session's recent
+tail. The cold read never materializes an entity or starts a runtime, so a
+closed teammate stays readable, and it is required to produce records for a turn
+that is still in progress.
 
 Scheduling asks no question either. A due cron fire is submitted immediately
 through its owner's ordinary admission gate; whether the runtime folds that
@@ -364,14 +482,12 @@ input into a turn already running or starts a new one is the runtime's own
 decision, made where it is already made. There is no defer window and no
 scheduler-owned race.
 
-Stopping is a fence plus a convergence, not a wait for quiet. `AgentRuntime.stop()`
-fences new input synchronously, terminates the owned runtime, and does not
-resolve while an already-started `submit` could still return a newly accepted
-submission. Core's own stop paths then converge what was already admitted —
-drain admissions, wait out ordinary mutations, and settle and deliver retained
-turns — so an accepted turn states its facts while the subscriptions carrying
-them are still attached. Team dissolve is a stop-and-reclaim built on exactly
-that, never a drain: it refuses new work rather than queueing it.
+Stopping is a fence plus a convergence, not a wait for quiet. Core's own stop
+paths converge what was already admitted — drain admissions, wait out ordinary
+mutations, and settle and deliver retained turns — so an accepted turn states
+its facts while the subscriptions carrying them are still attached. Team
+dissolve is a stop-and-reclaim built on exactly that, never a drain: it refuses
+new work rather than queueing it.
 
 Source:
 
@@ -383,33 +499,35 @@ Source:
 - `/packages/agent-runtime/codex/src/runtime.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
 
-## Diagnostics And Onboarding
+## Invariants
 
-Providers own provider-specific diagnostics and onboarding. Core owns the host
-envelope: config location, dispatcher id/cwd, selected provider refs, service
-installation, and file ledger.
+- **The dependency direction is one-way.** A provider package must not depend on
+  `@excitedjs/dreamux`, and Core must not import a provider implementation or
+  call a provider-specific factory. Both directions are guarded by
+  `/packages/dreamux/tests/package-boundary-guards.test.ts` and
+  `/packages/dreamux-types/tests/no-host-types.test.ts`.
+- **There is no neutral idle capability.** Nothing in Core asks a runtime
+  whether it is busy, and no seam read may be reinterpreted as one.
+- **Core is the sole authority for prompt state.** The whole `systemPrompt`
+  bundle is reconstructed from durable Dreamux state and re-supplied on every
+  runtime-context creation. A provider must never persist it or become its
+  authority, so any future append source that cannot be rebuilt from existing
+  Dreamux state has to be persisted by Core before it is handed to an adapter.
+- **An append fragment is load-bearing input, not decoration.** Dispatcher
+  `replace` / `append` are two representations of one guidance and an adapter
+  applies at most one; identity guidance has no `replace` twin, so an adapter
+  that cannot apply the selected append form must fail loud rather than launch
+  the agent without it. Codex's version gate exists for exactly this reason:
+  doctor surfaces an unsupported build instead of letting prompt customization
+  degrade silently at runtime
+  (`/packages/agent-runtime/codex/src/version.ts`).
+- **Codex does not persist `developerInstructions` for the life of a thread.**
+  `resolveThread` computes the instruction params once and sends them on
+  `thread/start`, on `thread/resume`, and on the mid-life fresh-thread fallback
+  alike; dropping the resume re-send would silently lose every append fragment
+  on reconnect. Treat the re-send as load-bearing when evaluating a Codex
+  protocol bump (`/packages/agent-runtime/codex/src/runtime.ts`).
+- **Provider-native identifiers do not cross the neutral boundary.** They may
+  exist inside a provider package, but Core never correlates on them.
 
-Provider diagnostics declare binary checks and run non-binary checks through a
-neutral runner. `dreamux doctor`, `dreamux onboard`, and `dreamux daemon
-install` derive provider binary checks from the provider capabilities instead
-of branching on built-in refs.
-
-Source:
-
-- `/packages/dreamux-types/src/provider.ts`
-- `/packages/dreamux-types/src/agent-runtime.ts`
-- `/packages/dreamux-types/src/channel.ts`
-- `/packages/dreamux/src/cli/doctor.ts`
-- `/packages/dreamux/src/onboard/`
-
-## Decision Trail
-
-- [Provider architecture realignment](../decisions/provider-architecture-realignment.md)
-- [NPM package split and channel targets](../decisions/npm-package-split-and-channel-targets.md)
-- [Named agents config normalization](../decisions/agents-config-normalization.md)
-- [Agent Runtime providers](../decisions/agent-runtime-provider.md)
-- [Entity-owned TeamMate lifecycle and object Turns](../decisions/entity-owned-teammate-lifecycle-and-object-turns.md)
-- [Provider references and Capability Registry](../decisions/provider-references-and-capability-registry.md)
-- [Agent activity capability](../decisions/agent-activity-capability.md)
-- [Channel provider](../decisions/channel-provider.md)
-- [Providerized config and state compatibility](../decisions/providerized-config-state-compatibility.md)
+History: [/.agents/tasks/architecture/README.md](/.agents/tasks/architecture/README.md)

@@ -38,28 +38,15 @@ model-visible wording, also follow
 
 ## Injection Strategy
 
-Bundled skills are injected at runtime by role. Dispatcher and TeamLeader launch
-sites pass their role-specific root plus the shared root through the Agent
-Runtime create context as `skillSources`; the runtime package applies those
-roots to its engine:
-
-- Codex dedupes the supplied roots and calls `skills/extraRoots/set` after
-  initialize and before thread start/resume. The package layout deliberately
-  gives Dispatcher and TeamLeader skills different role roots while composing
-  the shared root into both.
-- Claude Code materializes runtime-owned `.claude/skills/<name>` add-dir roots
-  and passes them through `--add-dir`.
-
-Admin-supplied custom skill roots use the same neutral create-context shape, but
-core first normalizes them into canonical absolute readable directories and
-collapses duplicate roots while rejecting duplicate direct-child skill names.
-For TeamLeader creation, required-source normalization includes both the
-role-specific and shared roots. It therefore reserves the bundled
-`team-workflow` and `workflow` names so custom roots cannot shadow either
-required skill.
-
-`dreamux onboard` and dispatcher startup do not install bundled skills into a
-workspace. Bundled skills are package-shipped runtime injection sources.
+Bundled skills are injected at runtime by role; the full mechanism (Codex
+`skills/extraRoots/set`, Claude Code materialized `--add-dir` roots, custom
+root normalization) is owned by
+[Provider runtime](provider-runtime.md#bundled-skills). Two facts locked here:
+Dispatcher and TeamLeader launch sites pass their role-specific root plus the
+shared root, so both roles receive the shared `workflow` skill. For TeamLeader
+creation, required-source normalization includes both the role-specific and
+shared roots; it therefore reserves the bundled `team-workflow` and `workflow`
+names so custom roots cannot shadow either required skill.
 
 ## Dispatcher-Visible MCP
 
@@ -111,6 +98,13 @@ returns the same submitted receipt — its own runtime is one of the things bein
 stopped, so it should expect to lose that response. TeamLeaders cannot create,
 send to, list, inspect, or select Teams through this projection.
 
+The bundled `team-workflow` skill tells a TeamLeader to check uncommitted,
+untracked, and unmerged work before dissolving, and to ask the user through the
+visible reply path when the workspace is not clean. That prompt check is
+guidance, not authority: the non-destructive assessment inside the worktree
+manager is what actually refuses an unsafe close. Keep the two layers distinct
+when editing either.
+
 A TeamLeader's channel routing tools come from the channel, and its copies carry
 no team field at all: the built-in Feishu channel lets it claim a free
 conversation for its own Team with `bind_channel` and release one with
@@ -120,3 +114,5 @@ over — that is a Dispatcher move.
 TeamLeader `cron` MCP tools are `cron_create`, `cron_list`, `cron_update`, and
 `cron_delete`. Cron prompts are injected back into that
 TeamLeader.
+
+History: [/.agents/tasks/architecture/README.md](/.agents/tasks/architecture/README.md).

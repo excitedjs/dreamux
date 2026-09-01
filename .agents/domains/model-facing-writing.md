@@ -151,6 +151,10 @@ caller's scope.
 Structured result names are also model-facing. If a field names a provider shape
 or an old concept, fix the projection rather than documenting around it.
 
+Every externally supplied value rendered into user- or model-visible rich text
+(Team and space names, runtime ids, paths, target display names) is escaped;
+none of them may construct a Markdown link, mention, tag, or card action.
+
 Every Dreamux-owned tool keeps its canonical successful-result projector beside
 its output schema. Successful objects appear unchanged in `structuredContent`
 with exact `content: []` for ordinary calls. Keep top-level output objects closed
@@ -221,3 +225,5 @@ Before landing model-facing changes:
 - make progress-report guidance conditional on an available provider reply tool;
 - run the focused text/contract tests, the relevant source tests, `.agents`
   validation, skill validation, `rush test`, and `rush lint`.
+
+History: [/.agents/tasks/architecture/README.md](/.agents/tasks/architecture/README.md).
