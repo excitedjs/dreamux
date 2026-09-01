@@ -36,8 +36,9 @@ provider-specific complexity to its owner:
   metadata (`ref`, descriptor) belongs to Core's registry and is never echoed
   back by the provider. Structured output is mandatory; live activity
   reporting is optional (absent activity only means no live display). History
-  reads use a neutral `readTurns` shape backed by each runtime's own storage —
-  Core keeps no turn journal copy.
+  reads use the neutral `readRecentActivity` shape backed by each runtime's
+  own storage — Core keeps no turn journal copy. The provider also keeps
+  `getCapabilities()` as its public configuration surface.
 - **Channel seam.** A Channel provider implements lifecycle interfaces, calls
   Core through one `invoke(command, payload)` port, subscribes to Core facts
   through `onMessage(event, payload)`, and may register its own MCP tools.
@@ -71,7 +72,7 @@ provider-specific complexity to its owner:
 ## Consequences
 
 - A new Agent Runtime implements a factory and three handle methods plus
-  neutral `readTurns`; a new Channel implements lifecycle, `invoke`,
+  neutral `readRecentActivity`; a new Channel implements lifecycle, `invoke`,
   `onMessage`, and optional MCP tools. Neither requires Core changes.
 - Core stays free of provider-native syntax and per-provider branches;
   architecture tests assert the seam (`core-provider-neutrality.test.ts`,
