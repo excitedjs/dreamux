@@ -25,6 +25,8 @@ export interface DispatcherServiceOptions {
    * validation, and shutdown fence rather than getting a second surface.
    */
   commands: CoreCommandRegistry;
+  /** Host home prefixes resolved by Server before this aggregate is built. */
+  homePathPrefixes: readonly string[];
   adminSocketPath?: string;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   workflowLoggerFactory?: (dispatcherId: string) => DreamuxLogger;

@@ -248,6 +248,7 @@ async function buildHarness(options: {
   const conversationProjection = createConversationProjection({
     coreEvents: coreEvents.publisher,
     log: silentLogger(),
+    homePathPrefixes: [],
   });
   const agentRuntimeProviders = new AgentRuntimeProviderCatalog({
     registry: new ProviderRegistry(),

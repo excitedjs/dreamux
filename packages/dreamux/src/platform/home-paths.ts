@@ -12,43 +12,33 @@
  * target, so both are offered and the longest match wins.
  */
 import { homedir } from 'node:os';
+import { isAbsolute } from 'node:path';
 
 import { canonicalPath } from './paths.js';
 
-let resolvedHomePathPrefixes: readonly string[] | null = null;
-
 /**
- * This host's home prefixes, longest first.
+ * Resolve this host's home prefixes, longest first.
  *
- * The canonical name costs a `realpath`, so it is resolved once by
- * {@link resolveHomePathPrefixes} during server start rather than on any hot
- * path. Until then only the lexical name is known: a caller under-rewrites
- * rather than claiming a home this process has not confirmed.
- */
-export function homePathPrefixes(): readonly string[] {
-  return resolvedHomePathPrefixes ?? orderedPathPrefixes([lexicalHomePath()]);
-}
-
-/**
- * Resolve the canonical home once, off the hot path. Idempotent, and never
- * throws: an unresolvable home leaves the lexical name standing alone.
+ * The canonical name costs a `realpath`, so Server calls this once before it
+ * constructs any conversation projection. The result is a value, not global
+ * state. Resolution never throws: a missing home returns no prefixes, while a
+ * canonicalization failure leaves the valid lexical name standing alone.
  */
 export async function resolveHomePathPrefixes(): Promise<readonly string[]> {
   const lexical = lexicalHomePath();
-  const canonical =
-    lexical === '' ? '' : normalizePathPrefix(await canonicalPath(lexical));
-  resolvedHomePathPrefixes = orderedPathPrefixes([lexical, canonical]);
-  return resolvedHomePathPrefixes;
-}
-
-/** Test hook: forget the resolved home so the next resolve reads the environment. */
-export function resetHomePathPrefixes(): void {
-  resolvedHomePathPrefixes = null;
+  if (lexical === '') return [];
+  try {
+    const canonical = normalizePathPrefix(await canonicalPath(lexical));
+    return orderedPathPrefixes([lexical, canonical]);
+  } catch {
+    return orderedPathPrefixes([lexical]);
+  }
 }
 
 function lexicalHomePath(): string {
   try {
-    return normalizePathPrefix(homedir());
+    const home = normalizePathPrefix(homedir());
+    return isAbsolute(home) ? home : '';
   } catch {
     return '';
   }

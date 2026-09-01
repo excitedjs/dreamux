@@ -39,22 +39,6 @@ export interface ActiveTurn {
   rejectSession: (error: Error) => void;
   steerQueue: Promise<void>;
   generation: number;
-  /**
-   * Whether the native turn currently running in this window reported its end.
-   *
-   * A native turn is ended by exactly one thing — its terminal `result`, a
-   * failed run, or a stop — but more than one of those can be observed for the
-   * same turn (a `result` that lands and is then followed by a generation
-   * assertion throwing), and the flag is what makes "one end per native turn"
-   * true rather than merely usual.
-   *
-   * It is cleared again when a command starts after an end, because that start
-   * is claude opening the window's next native turn: the steered or queued
-   * command it had held back is now running and will be answered by a `result`
-   * of its own. A window that ends without another command starting stays
-   * ended, so its stop or failure adds nothing.
-   */
-  currentNativeTurnEnded: boolean;
 }
 
 export interface ProtocolEventContext {
@@ -66,20 +50,16 @@ export interface ProtocolEventContext {
 }
 
 /**
- * Report the end of the native turn currently running, at most once.
+ * Report the end of one native turn.
  *
  * The sink is display-only, so a throwing consumer is logged and the window
- * proceeds; the flag is still set, because a second attempt would be the same
- * end reported twice, not a retry.
+ * proceeds.
  */
 export function endNativeTurn(
-  active: ActiveTurn,
   status: RuntimeNativeTurnEnd['status'],
   sink: AgentRuntimeNativeTurnSink,
   log: (level: 'info' | 'warn' | 'error', message: string, error?: unknown) => void,
 ): void {
-  if (active.currentNativeTurnEnded) return;
-  active.currentNativeTurnEnded = true;
   try {
     sink(Object.freeze({ status, occurredAt: Date.now() }));
   } catch (error) {
@@ -119,11 +99,6 @@ export function handleProtocolEvent(
       !active.started.includes(event.commandUuid)
     ) {
       active.started.push(event.commandUuid);
-      // A command of this window running is a native turn in progress. When the
-      // window already reported one end, this start is the next turn opening —
-      // the steered or queued command claude held back — so the window becomes
-      // endable again and its own `result` will report its own end.
-      active.currentNativeTurnEnded = false;
     }
     return;
   }
@@ -190,19 +165,18 @@ function completeStartedGroup(
       });
     }
   }
-  for (const uuid of commandUuids) {
-    active.submissions.get(uuid)?.settle({ kind: 'completion', completion });
-  }
   // The `result` is claude's native terminal, so the native turn it answers
   // ends here regardless of how many commands were folded into it. A window
   // that goes on to run another command opens another native turn and reaches
   // this again with its own `result`.
   endNativeTurn(
-    active,
     completion.status === 'completed' ? 'completed' : 'failed',
     context.nativeTurnSink,
     context.log,
   );
+  for (const uuid of commandUuids) {
+    active.submissions.get(uuid)?.settle({ kind: 'completion', completion });
+  }
 }
 
 function failUnattributedResult(
@@ -215,10 +189,10 @@ function failUnattributedResult(
       : 'claude result cannot be attributed without command started lifecycle',
   );
   context.log('error', error.message, error);
+  endNativeTurn('failed', context.nativeTurnSink, context.log);
   for (const deferred of active.submissions.values()) {
     deferred.settle({ kind: 'failed', error });
   }
-  endNativeTurn(active, 'failed', context.nativeTurnSink, context.log);
 }
 
 function emitStreamActivity(

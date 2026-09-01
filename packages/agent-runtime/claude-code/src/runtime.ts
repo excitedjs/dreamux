@@ -281,7 +281,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       rejectSession,
       steerQueue: Promise.resolve(),
       generation: this.generation,
-      currentNativeTurnEnded: false,
     };
     this.activeTurn = turn;
     void this.runActiveTurnOnQueue(text, turn).then(
@@ -383,36 +382,36 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // torn down) is a `stopped` settlement; otherwise it is a genuine `failed`.
     // Fire before the stopped early-return so an interrupted teammate turn is
     // never lost.
+    let settled = false;
     for (const deferred of turn.submissions.values()) {
-      deferred.settle(this.stopped
+      if (deferred.settle(this.stopped
         ? { kind: 'stopped' }
-        : { kind: 'failed', error: asError(err) });
+        : { kind: 'failed', error: asError(err) })) settled = true;
     }
-    // A native turn that never reached a terminal `result` still ended. If the
-    // window's last `result` already reported an end and nothing started after
-    // it, there is no running turn left and this adds nothing.
-    this.endNativeTurn(turn, this.stopped ? 'interrupted' : 'failed');
+    // A native turn that never reached a terminal `result` still ended, but a
+    // failure observed after its result settles nothing and reports no second
+    // end.
+    if (settled) this.endNativeTurn(this.stopped ? 'interrupted' : 'failed');
     if (this.stopped) return;
     // Surface the failure as durable runtime state rather than swallowing it.
     this.setStatus('degraded', err);
   }
 
   private stopUnsettled(turn: ActiveTurn): void {
+    let stopped = false;
     for (const deferred of turn.submissions.values()) {
-      deferred.settle({ kind: 'stopped' });
+      if (deferred.settle({ kind: 'stopped' })) stopped = true;
     }
-    // Reached from stop, the fatal fence, and a window that resolved with a
-    // native turn still running. Each is a native turn that ended without
-    // completing; one whose `result` already reported its end ignores this.
-    this.endNativeTurn(turn, 'interrupted');
+    // Reached from stop, the fatal fence, and a window that resolved without a
+    // terminal result. Only the call that actually stopped an open submission
+    // reports the synthesized end.
+    if (stopped) this.endNativeTurn('interrupted');
   }
 
   private endNativeTurn(
-    turn: ActiveTurn,
     status: 'failed' | 'interrupted',
   ): void {
     endNativeTurn(
-      turn,
       status,
       this.deps.nativeTurnSink,
       (level, message, error) => this.log(level, message, error),

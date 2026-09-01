@@ -361,6 +361,7 @@ describe('DispatcherCoreEventBus: live, best-effort delivery', () => {
     const projection = createConversationProjection({
       coreEvents: bus.publisher,
       log: createCapturingLogger().logger,
+      homePathPrefixes: [],
     });
     const identity = makeIdentity({ team_id: 'alpha', name: 'scout' });
     const agent: ProjectedAgent = { identity, role: 'teammate' };
@@ -734,6 +735,7 @@ describe('turn events correlate only by turn_id', () => {
     const projection = createConversationProjection({
       coreEvents: publisher,
       log: createCapturingLogger().logger,
+      homePathPrefixes: [],
     });
     const identity = makeIdentity({ team_id: 'alpha', name: 'scout' });
     const agent: ProjectedAgent = { identity, role: 'teammate' };
@@ -762,6 +764,7 @@ describe('turn events correlate only by turn_id', () => {
     const projection = createConversationProjection({
       coreEvents: publisher,
       log: createCapturingLogger().logger,
+      homePathPrefixes: [],
     });
     const identity = makeIdentity({ team_id: 'alpha', name: 'scout' });
     const agent: ProjectedAgent = { identity, role: 'teammate' };
@@ -787,6 +790,7 @@ describe('turn events correlate only by turn_id', () => {
     const projection = createConversationProjection({
       coreEvents: publisher,
       log: createCapturingLogger().logger,
+      homePathPrefixes: [],
     });
     const identity = makeIdentity({ team_id: null, name: 'scout' });
     const agent: ProjectedAgent = { identity, role: 'teammate' };
@@ -802,6 +806,7 @@ describe('turn events correlate only by turn_id', () => {
     const projection = createConversationProjection({
       coreEvents: publisher,
       log: createCapturingLogger().logger,
+      homePathPrefixes: [],
     });
     const identity = makeIdentity({ team_id: 'alpha', name: 'scout' });
     const agent: ProjectedAgent = { identity, role: 'teammate' };

@@ -22,17 +22,6 @@ const FEISHU_COT_FENCED_LEADERS_MAX = 512;
 const FEISHU_COT_FENCED_TARGETS_MAX = 512;
 
 /**
- * How many of this Channel's own inbound turns may hold a body-suppression mark.
- *
- * The mark is best effort. Core publishes the user message synchronously inside
- * `team.submit`, while the anchor moves only after that call reports admission,
- * so the message this Channel already made visible has usually gone past before
- * its mark exists and the mark is never consumed. The bound is what keeps those
- * unconsumed marks from accumulating.
- */
-const FEISHU_COT_SUPPRESSED_TURNS_MAX = 64;
-
-/**
  * The visible Feishu message a chain-of-thought card hangs under.
  *
  * The anchor is entirely the Channel's: it is captured from the inbound message
@@ -86,16 +75,6 @@ export interface CotState {
   anchor: VisibleMessageAnchor | null;
   active: CotPresentation | null;
   readonly openCalls: Map<string, { readonly generation: number }>;
-  /**
-   * Turns whose user body this Channel itself put on screen.
-   *
-   * The one thing a card hides is a copy of the Feishu message already visible
-   * at its own anchor. Everything else a recipient receives — a task, a
-   * notification, a cron fire, a system or restart notice, an unknown future
-   * source — is shown, so this is a set of proven-duplicate turns rather than a
-   * source whitelist.
-   */
-  readonly suppressedUserTurns: Set<string>;
   tail: Promise<void>;
   inFlight: number;
 }
@@ -273,7 +252,6 @@ export function ensureCotState(
     anchor: null,
     active: null,
     openCalls: new Map(),
-    suppressedUserTurns: new Set(),
     tail: Promise.resolve(),
     inFlight: 0,
   };
@@ -298,26 +276,6 @@ export function prepareVisibleAnchor(
     messageId: anchor.messageId,
     target: { ...anchor.target },
   };
-}
-
-/** Mark one turn as carrying a body this Channel already made visible. */
-export function suppressChannelBody(state: CotState, turnId: string): void {
-  if (typeof turnId !== 'string' || turnId === '') return;
-  const marks = state.suppressedUserTurns;
-  marks.delete(turnId);
-  if (marks.size >= FEISHU_COT_SUPPRESSED_TURNS_MAX) {
-    const oldest = marks.values().next();
-    if (!oldest.done) marks.delete(oldest.value);
-  }
-  marks.add(turnId);
-}
-
-/** Consume the mark, if this turn carries one. Marks are one-shot. */
-export function takeChannelBodySuppression(
-  state: CotState,
-  turnId: string,
-): boolean {
-  return state.suppressedUserTurns.delete(turnId);
 }
 
 export function cotStateHasAnchor(state: CotState): boolean {

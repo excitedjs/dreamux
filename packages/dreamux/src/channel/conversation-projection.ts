@@ -14,7 +14,6 @@ import type {
 
 import type { DispatcherCoreEventPublisher } from '../service/dispatcher-core-events/index.js';
 import type { AgentEntityIdentity } from '../service/agent-entity/types.js';
-import { homePathPrefixes } from '../platform/home-paths.js';
 
 export const ASSISTANT_TEXT_MAX = 160_000;
 export const CONVERSATION_MESSAGE_MAX = 100_000;
@@ -37,6 +36,9 @@ const COMMON_ACCESS_KEY_RE = /\b(?:AKIA|ASIA|AKLT)[A-Z0-9]{12,}\b/gu;
  * fragment of a longer path that was never rooted here. Letters, digits, and
  * the separators/punctuation that appear inside real path segments continue a
  * token; anything else — whitespace, a quote, a colon, a comma — ends it.
+ * Two narrower exceptions are handled at a match: a period closes prose only
+ * when what follows is already a boundary, and a preceding slash starts a path
+ * only when it completes a URL scheme's `://`.
  */
 const PATH_TOKEN_CHARACTER_RE = /[\p{L}\p{N}_.~\\/-]/u;
 
@@ -97,6 +99,7 @@ export interface ConversationProjection {
 export function createConversationProjection(input: {
   coreEvents: DispatcherCoreEventPublisher;
   log: DreamuxLogger;
+  homePathPrefixes: readonly string[];
 }): ConversationProjection {
   const activityFacts = new WeakMap<object, Set<string>>();
   const activityFactsWarned = new WeakSet<object>();
@@ -111,7 +114,15 @@ export function createConversationProjection(input: {
       );
       input.coreEvents.publish(
         identity.dispatcher_id,
-        messageEvent(scope, randomUUID(), turn.submittedAt, 'user', turn.prompt, identity.cwd),
+        messageEvent(
+          scope,
+          randomUUID(),
+          turn.submittedAt,
+          'user',
+          turn.prompt,
+          identity.cwd,
+          input.homePathPrefixes,
+        ),
       );
     },
     projectActivity(agent, turn, event) {
@@ -149,9 +160,10 @@ export function createConversationProjection(input: {
             'assistant',
             event.activity.text,
             identity.cwd,
+            input.homePathPrefixes,
             event.activity.truncated,
           )
-        : toolEvent(scope, event, identity.cwd);
+        : toolEvent(scope, event, identity.cwd, input.homePathPrefixes);
       input.coreEvents.publish(identity.dispatcher_id, projected);
     },
     projectSettled({ agent, turn, settlement }) {
@@ -160,7 +172,7 @@ export function createConversationProjection(input: {
       if (scope === null || input.coreEvents.hasSources?.() === false) return;
       input.coreEvents.publish(
         identity.dispatcher_id,
-        settledEvent(scope, settlement, identity.cwd),
+        settledEvent(scope, settlement, identity.cwd, input.homePathPrefixes),
       );
     },
     projectNativeTurnEnd(agent, end) {
@@ -244,9 +256,10 @@ function settledEvent(
   scope: NonNullable<ReturnType<typeof eventScope>>,
   settlement: ConversationTurnSettlement,
   cwd: string,
+  homePathPrefixes: readonly string[],
 ): TeammateTurnSettledEvent {
   const assistant = settlement.status === 'completed' && settlement.resultText !== null
-    ? sanitizeText(settlement.resultText, cwd, ASSISTANT_TEXT_MAX)
+    ? sanitizeText(settlement.resultText, cwd, homePathPrefixes, ASSISTANT_TEXT_MAX)
     : null;
   return {
     ...scope,
@@ -267,9 +280,10 @@ function messageEvent(
   role: 'user' | 'assistant',
   text: string,
   cwd: string,
+  homePathPrefixes: readonly string[],
   sourceTruncated = false,
 ): TeammateTurnMessageEvent {
-  const content = sanitizeText(text, cwd, CONVERSATION_MESSAGE_MAX);
+  const content = sanitizeText(text, cwd, homePathPrefixes, CONVERSATION_MESSAGE_MAX);
   return {
     ...scope,
     kind: 'teammate.turn.message',
@@ -286,11 +300,22 @@ function toolEvent(
   scope: NonNullable<ReturnType<typeof eventScope>>,
   event: RuntimeActivityEvent,
   cwd: string,
+  homePathPrefixes: readonly string[],
 ): TeammateTurnToolCallEvent {
   if (event.activity.kind !== 'tool.call') throw new Error('expected tool activity');
-  const args = sanitizeJson(event.activity.arguments, cwd, CONVERSATION_TOOL_ARGUMENTS_MAX);
+  const args = sanitizeJson(
+    event.activity.arguments,
+    cwd,
+    homePathPrefixes,
+    CONVERSATION_TOOL_ARGUMENTS_MAX,
+  );
   const nativeResult = event.activity.error ?? event.activity.result;
-  const result = sanitizeJson(nativeResult, cwd, CONVERSATION_TOOL_RESULT_MAX);
+  const result = sanitizeJson(
+    nativeResult,
+    cwd,
+    homePathPrefixes,
+    CONVERSATION_TOOL_RESULT_MAX,
+  );
   return {
     ...scope,
     kind: 'teammate.turn.tool_call',
@@ -308,13 +333,28 @@ function toolEvent(
   };
 }
 
-function sanitizeJson(value: JsonValue | string | null, cwd: string, max: number): SanitizedText | null {
+function sanitizeJson(
+  value: JsonValue | string | null,
+  cwd: string,
+  homePathPrefixes: readonly string[],
+  max: number,
+): SanitizedText | null {
   if (value === null) return null;
-  return sanitizeText(typeof value === 'string' ? value : JSON.stringify(value), cwd, max);
+  return sanitizeText(
+    typeof value === 'string' ? value : JSON.stringify(value),
+    cwd,
+    homePathPrefixes,
+    max,
+  );
 }
 
-function sanitizeText(value: string, cwd: string, max: number): SanitizedText {
-  const safe = redactText(value, cwd);
+function sanitizeText(
+  value: string,
+  cwd: string,
+  homePathPrefixes: readonly string[],
+  max: number,
+): SanitizedText {
+  const safe = redactText(value, cwd, homePathPrefixes);
   return {
     value: safe.value.length > max ? safe.value.slice(0, max) : safe.value,
     truncated: safe.value.length > max,
@@ -332,13 +372,13 @@ function sanitizeText(value: string, cwd: string, max: number): SanitizedText {
  * prints them. Order matters: the workspace usually sits under the home, so
  * relativizing it first keeps the shorter, more useful form.
  *
- * `homePathPrefixes` is a parameter so a test can state the home it means
- * instead of depending on the machine it runs on.
+ * `homePathPrefixes` is explicit so this pure projection never depends on
+ * process-global resolution state.
  */
 export function redactText(
   value: string,
   cwd: string,
-  homePaths: readonly string[] = homePathPrefixes(),
+  homePaths: readonly string[],
 ): { value: string; redacted: boolean } {
   let redacted = replacePathPrefix(value, cwd, '.', '', true);
   redacted = redacted.replace(PRIVATE_KEY_RE, '<redacted-private-key>');
@@ -384,12 +424,11 @@ function replacePathPrefix(
     const matchAt = value.indexOf(prefix, searchFrom);
     if (matchAt < 0) break;
 
-    const previous = matchAt === 0 ? undefined : value[matchAt - 1];
     const suffixAt = matchAt + prefix.length;
     const next = value[suffixAt];
     const nested = next === '/' || next === '\\';
-    const ends = next === undefined || isPathTokenBoundary(next);
-    if (isPathTokenBoundary(previous) && (nested || ends)) {
+    const ends = isPathPrefixEnd(value, suffixAt);
+    if (isPathPrefixBoundary(value, matchAt) && (nested || ends)) {
       result += value.slice(cursor, matchAt);
       result += nested ? nestedReplacement : exactReplacement;
       cursor = suffixAt + (nested && stripNestedSeparator ? 1 : 0);
@@ -399,6 +438,19 @@ function replacePathPrefix(
     searchFrom = suffixAt;
   }
   return cursor === 0 ? value : result + value.slice(cursor);
+}
+
+function isPathPrefixBoundary(value: string, matchAt: number): boolean {
+  if (matchAt === 0 || isPathTokenBoundary(value[matchAt - 1])) return true;
+  return matchAt >= 3 && value.slice(matchAt - 3, matchAt) === '://';
+}
+
+function isPathPrefixEnd(value: string, suffixAt: number): boolean {
+  const next = value[suffixAt];
+  if (next === undefined) return true;
+  return next === '.'
+    ? isPathTokenBoundary(value[suffixAt + 1])
+    : isPathTokenBoundary(next);
 }
 
 function isPathTokenBoundary(character: string | undefined): boolean {

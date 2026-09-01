@@ -71,7 +71,6 @@ function makeHarness(
     rejectSession: () => undefined,
     steerQueue: Promise.resolve(),
     generation: 0,
-    currentNativeTurnEnded: false,
   };
   const activityEvents: RuntimeActivityEvent[] = [];
   const nativeEnds: RuntimeNativeTurnEnd[] = [];
@@ -337,7 +336,6 @@ describe('handleProtocolEvent live activity', () => {
       rejectSession: () => undefined,
       steerQueue: Promise.resolve(),
       generation: 0,
-      currentNativeTurnEnded: false,
     };
     const log = vi.fn();
     const throwingSink = vi.fn(() => {
@@ -467,17 +465,44 @@ describe('handleProtocolEvent native turn end', () => {
     expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed', 'failed']);
   });
 
-  it('never emits a second end for the same boundary, even when a second result arrives with no command running', () => {
+  it('reports every terminal result, including a conflicting unattributed result', () => {
     const h = makeHarness(['cmd-1', 'cmd-2']);
     h.fire(started('cmd-1'));
     h.fire(resultEvent(outcome({ text: 'first' })));
-    // A conflicting second result: no command started after the first boundary,
-    // so nothing was running that this could be the end of. It fails the
-    // remaining submission, and reports no second end.
+    // A conflicting second result fails loudly because no command started after
+    // the first boundary. It is still a terminal result and therefore reports
+    // its own failed native-turn end.
     h.fire(resultEvent(outcome({ text: 'second' })));
 
-    expect(h.nativeEnds).toHaveLength(1);
-    expect(h.nativeEnds[0]!.status).toBe('completed');
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed', 'failed']);
+  });
+
+  it('reports the native result before settling its submissions', () => {
+    const order: string[] = [];
+    const deferred = createRuntimeSubmission();
+    const settle = deferred.settle;
+    deferred.settle = (settlement) => {
+      order.push('settle');
+      return settle(settlement);
+    };
+    const active = makeHarness(['cmd-1']).active;
+    active.submissions.set('cmd-1', deferred);
+    handleProtocolEvent(active, started('cmd-1'), {
+      threadId: 'thread-1',
+      outputSchemaEnabled: false,
+      activitySink: () => undefined,
+      nativeTurnSink: () => order.push('end'),
+      log: () => undefined,
+    });
+    handleProtocolEvent(active, resultEvent(outcome()), {
+      threadId: 'thread-1',
+      outputSchemaEnabled: false,
+      activitySink: () => undefined,
+      nativeTurnSink: () => order.push('end'),
+      log: () => undefined,
+    });
+
+    expect(order).toEqual(['end', 'settle']);
   });
 
   it('does not fail the turn when the native turn sink throws: it logs and settles anyway', async () => {
@@ -495,7 +520,6 @@ describe('handleProtocolEvent native turn end', () => {
       rejectSession: () => undefined,
       steerQueue: Promise.resolve(),
       generation: 0,
-      currentNativeTurnEnded: false,
     };
     const log = vi.fn();
     const throwingSink = vi.fn(() => {

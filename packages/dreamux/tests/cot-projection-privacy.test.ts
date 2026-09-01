@@ -41,7 +41,11 @@ const CWD = '/workspace/repo';
 function harness(overrides: { hasSources?: boolean } = {}) {
   const publisher = createCapturingPublisher(overrides.hasSources ?? true);
   const { logger, warnCalls } = createCapturingLogger();
-  const projection = createConversationProjection({ coreEvents: publisher, log: logger });
+  const projection = createConversationProjection({
+    coreEvents: publisher,
+    log: logger,
+    homePathPrefixes: [],
+  });
   const identity = makeIdentity({ team_id: 'alpha', name: 'scout', cwd: CWD });
   const agent: ProjectedAgent = { identity, role: 'teammate' };
   return { publisher, warnCalls, projection, agent };
@@ -195,13 +199,67 @@ describe('conversation projection: secret redaction', () => {
       .toBe('cd ~ and stop');
   });
 
+  it('renames a home prefix at the head of a file URL', () => {
+    expect(redactText('open file:///home/me/x', '', ['/home/me']).value)
+      .toBe('open file://~/x');
+  });
+
+  it('renames a bare home before ordinary closing punctuation', () => {
+    const value =
+      'paths /home/me. /home/me, /home/me; /home/me: (/home/me) [/home/me] "/home/me"';
+    expect(redactText(value, '', ['/home/me']).value).toBe(
+      'paths ~. ~, ~; ~: (~) [~] "~"',
+    );
+  });
+
+  it('treats a trailing period as prose punctuation for home and workspace paths', () => {
+    const home = '/data00/home/dyzhu';
+    const cwd = `${home}/work/repo`;
+    expect(
+      redactText(`see ${home}. edit ${cwd}/a.ts.`, cwd, [home]).value,
+    ).toBe('see ~. edit a.ts.');
+  });
+
+  it('distinguishes dot-suffixed home siblings from workspace-adjacent siblings', () => {
+    const home = '/data00/home/dyzhu';
+    const cwd = `${home}/work/repo`;
+    const value = [
+      `${home}.bak/notes.md`,
+      `${home}.git/config`,
+      `${cwd}.bak/notes.md`,
+      `${cwd}.git/config`,
+    ].join(' ');
+    expect(redactText(value, cwd, [home]).value).toBe([
+      `${home}.bak/notes.md`,
+      `${home}.git/config`,
+      '~/work/repo.bak/notes.md',
+      '~/work/repo.git/config',
+    ].join(' '));
+  });
+
+  it('renames workspace-adjacent siblings through the containing home prefix', () => {
+    const home = '/data00/home/dyzhu';
+    const cwd = `${home}/work/repo`;
+    expect(
+      redactText(`${cwd}.git/config ${cwd}-old/x`, cwd, [home]).value,
+    ).toBe('~/work/repo.git/config ~/work/repo-old/x');
+  });
+
+  it('does not treat a doubled filesystem separator as a URL scheme boundary', () => {
+    const home = '/data00/home/dyzhu';
+    const cwd = `${home}/work/repo`;
+    const value = `/mnt/backup/${home}/x /mnt/backup/${cwd}/x`;
+    expect(redactText(value, cwd, [home]).value).toBe(value);
+  });
+
   /**
    * The whole reason this is prefix scanning rather than a `/home/<name>/…`
    * regex: another account's directory is not this operator's home, and blanking
    * it costs the reader the one fact they needed.
    */
   it('leaves a path that merely starts with the same characters alone', () => {
-    const value = 'compare /home/meredith/notes.txt against it';
+    const value =
+      'compare /home/mexyz and /home/me-old/notes.txt with /home/meredith/notes.txt';
     expect(redactText(value, '', ['/home/me']).value).toBe(value);
   });
 
@@ -231,6 +289,13 @@ describe('conversation projection: secret redaction', () => {
     expect(
       redactText(`edited ${cwd}/src/a.ts and ${home}/.config/x`, cwd, [home]).value,
     ).toBe('edited src/a.ts and ~/.config/x');
+  });
+
+  it('keeps workspace renaming when no host home prefix was resolved', () => {
+    const cwd = '/workspace/repo';
+    expect(
+      redactText(`work in ${cwd}; leave /home/me/x alone`, cwd, []).value,
+    ).toBe('work in .; leave /home/me/x alone');
   });
 
   it('reports redacted:false when a path rule found nothing to rename', () => {

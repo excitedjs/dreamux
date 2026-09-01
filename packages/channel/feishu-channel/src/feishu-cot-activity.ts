@@ -23,7 +23,6 @@ import {
   cotOpenCallKey,
   cotStateHasAnchor,
   rememberOpenToolCall,
-  takeChannelBodySuppression,
   type CotPresentation,
   type CotState,
 } from './feishu-cot-state.js';
@@ -116,10 +115,7 @@ export function acceptToolCallActivity(
  * One projected conversation message, whichever side wrote it.
  *
  * A user message is shown like everything else — a task's brief, a cron fire's
- * instruction, a system notice — with exactly one exception: the body this
- * Channel itself submitted, which the operator can already read at the very
- * message the card hangs under. That one is marked when it is submitted, and
- * the mark is consumed here.
+ * instruction, a system notice, or an assistant message.
  */
 export function acceptConversationMessage(
   sink: CotActivitySink,
@@ -127,10 +123,6 @@ export function acceptConversationMessage(
   state: CotState,
   event: TeammateTurnMessageEvent,
 ): void {
-  if (event.message_role === 'user' &&
-      takeChannelBodySuppression(state, event.turn_id)) {
-    return;
-  }
   if (!presentable(state)) return;
   const events = textMessageEvents({
     sourceId: event.event_id,

@@ -122,7 +122,7 @@ export interface Repos {
 
 export class Server {
   readonly repos: Repos;
-  readonly dispatchers: Dispatchers;
+  private dispatchers_: Dispatchers | null = null;
   /**
    * The admitted Command port every adapter resolves against. The process owns
    * the composition; the definitions themselves are owned by their domains, and
@@ -136,6 +136,7 @@ export class Server {
   private readonly providerRegistry: ProviderRegistry;
   private readonly agentRuntimeProviders: AgentRuntimeProviderCatalog;
   private readonly channelProviders: ChannelProviderCatalog;
+  private readonly channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   /**
    * The one Agent-facing MCP lease registry for this process.
    *
@@ -155,6 +156,14 @@ export class Server {
     return this.log;
   }
 
+  /** The process dispatcher collection, available after start has resolved host paths. */
+  get dispatchers(): Dispatchers {
+    if (this.dispatchers_ === null) {
+      throw new Error('dreamux server has not started');
+    }
+    return this.dispatchers_;
+  }
+
   constructor(opts: ServerOptions = {}) {
     this.opts = opts;
     this.providerRegistry =
@@ -172,7 +181,7 @@ export class Server {
     // Built after the logger it records unclassified tool failures through: an
     // Agent reads only the message, so the whole value belongs in this log.
     this.mcpLeases = new McpLeaseRegistry(this.log);
-    const channelLoggerFactory =
+    this.channelLoggerFactory =
       opts.channelLoggerFactory ??
       ((id: string) => createLogger({ name: `channel/${id}` }));
     this.agentRuntimeProviders =
@@ -191,20 +200,6 @@ export class Server {
     this.commands = new CoreCommandPort(
       createCoreCommandRegistry(this.commandHost()),
     );
-    this.dispatchers = new Dispatchers({
-      config,
-      dispatchers: this.repos.dispatchers,
-      agentRuntimeProviders: this.agentRuntimeProviders,
-      channelProviders: this.channelProviders,
-      mcpLeases: this.mcpLeases,
-      commands: this.commands,
-      adminSocketPath: opts.adminSocketPath ?? adminSocketPath(),
-      channelLoggerFactory,
-      ...(opts.workflowLoggerFactory !== undefined
-        ? { workflowLoggerFactory: opts.workflowLoggerFactory }
-        : {}),
-      log: this.log,
-    });
   }
 
   /**
@@ -227,7 +222,22 @@ export class Server {
     // text it publishes, and the canonical name of that home costs a `realpath`.
     // Resolve it once here so no projected event pays for it, and so the
     // projection itself stays synchronous.
-    await resolveHomePathPrefixes();
+    const homePathPrefixes = await resolveHomePathPrefixes();
+    this.dispatchers_ = new Dispatchers({
+      config: this.opts.config ?? BUILT_IN_DEFAULTS,
+      dispatchers: this.repos.dispatchers,
+      agentRuntimeProviders: this.agentRuntimeProviders,
+      channelProviders: this.channelProviders,
+      mcpLeases: this.mcpLeases,
+      commands: this.commands,
+      homePathPrefixes,
+      adminSocketPath: this.opts.adminSocketPath ?? adminSocketPath(),
+      channelLoggerFactory: this.channelLoggerFactory,
+      ...(this.opts.workflowLoggerFactory !== undefined
+        ? { workflowLoggerFactory: this.opts.workflowLoggerFactory }
+        : {}),
+      log: this.log,
+    });
 
     this.dispatchers.setRestartIntent(
       await RestartIntentConsumer.load({
@@ -368,8 +378,11 @@ export class Server {
     this.log.info('shutting down');
     const failures: unknown[] = [];
     this.commands.closeAdmission();
-    this.dispatchers.beginShutdown();
-    await collectShutdownFailure(failures, () => this.dispatchers.shutdown());
+    const dispatchers = this.dispatchers_;
+    if (dispatchers !== null) {
+      dispatchers.beginShutdown();
+      await collectShutdownFailure(failures, () => dispatchers.shutdown());
+    }
     await collectShutdownFailure(failures, () => this.commands.drain());
     await collectShutdownFailure(failures, async () => {
       if (this.admin === null) return;

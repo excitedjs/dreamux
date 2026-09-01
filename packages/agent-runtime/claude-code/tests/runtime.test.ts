@@ -650,6 +650,24 @@ describe('ClaudeCodeRuntime native turn end', () => {
     expect(h.nativeEnds.map((end) => end.status)).toEqual(['interrupted']);
   });
 
+  it('reports failed when the runtime rejects with a still-open submission', async () => {
+    const h = new Harness();
+    h.behavior.onSubmit = () => {
+      throw new Error('protocol connection lost');
+    };
+    const runtime = await tracked(h.createRuntime());
+    await runtime.start();
+    const admission = await runtime.submit({ text: 'hello' });
+    if (admission.status !== 'submitted') throw new Error('expected submitted');
+
+    await expect(admission.submission.settled).resolves.toMatchObject({
+      kind: 'failed',
+      error: expect.objectContaining({ message: 'protocol connection lost' }),
+    });
+    await drain();
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['failed']);
+  });
+
   it('reports failed when the native result carries an error', async () => {
     const h = new Harness();
     h.behavior.onSubmit = (spec, _prompt, commandUuid) => {

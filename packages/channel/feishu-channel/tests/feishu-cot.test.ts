@@ -13,8 +13,7 @@
  *    assertions as a TeamLeader,
  *  - bind-card initialization for a TeamLeader that has no standing anchor, and
  *    no equivalent for the Dispatcher,
- *  - no-anchor suppression, the default-show policy, and the one narrow
- *    Channel-body suppression,
+ *  - no-anchor suppression and the default-show policy for every message role,
  *  - the native turn end as the only terminal, and never as a reason to open a
  *    card,
  *  - a standing anchor outliving a failed card, so the next opening activity
@@ -249,7 +248,7 @@ function harness(): Harness {
 describe.each([LEADER, DISPATCHER])(
   '$label COT — one recipient, one anchor, one open card',
   (recipient) => {
-    it('opens one card under the inbound message, with the fixed receipt and without the body already visible there', async () => {
+    it('opens one card under the inbound message and displays every projected message', async () => {
       const { adapter, cot } = harness();
 
       adapter.onAnchoredSubmission({
@@ -267,8 +266,11 @@ describe.each([LEADER, DISPATCHER])(
       const card = cot.cards[0]!;
       expect(card.chatId).toBe('oc_home');
       expect(card.originMessageId).toBe('om_user_1');
-      // The receipt opens the card; the duplicate body is the one thing hidden.
-      expect(cotTexts(card)).toEqual([RECEIPT, 'working on it']);
+      expect(cotTexts(card)).toEqual([
+        RECEIPT,
+        'the body the operator can already read',
+        'working on it',
+      ]);
 
       await adapter.close();
     });
@@ -640,55 +642,26 @@ describe('Feishu COT — anchor initialization', () => {
   });
 });
 
-describe('Feishu COT — the narrow Channel-body suppression', () => {
-  it('hides only the exact turn whose body this Channel made visible', async () => {
+describe('Feishu COT — user-body display', () => {
+  it('displays a user body like any other projected input', async () => {
     const { adapter, cot } = harness();
     adapter.onAnchoredSubmission({
       event: submitted(LEADER, 'turn-channel'),
       anchor: anchorAt('oc_team', 'om_1'),
     });
     adapter.onTurnMessage(
-      message(LEADER, 'turn-channel', 'user', 'duplicate of the visible message'),
+      message(LEADER, 'turn-channel', 'user', 'the projected user body'),
     );
-    // A different turn's user body is not a duplicate of anything on screen.
-    adapter.onTurnMessage(message(LEADER, 'turn-other', 'user', 'a task brief'));
+    adapter.onTurnMessage(
+      message(LEADER, 'turn-channel', 'assistant', 'the projected answer'),
+    );
     await settle();
 
-    expect(cotTexts(cot.cards[0]!)).toEqual([RECEIPT, 'a task brief']);
-    await adapter.close();
-  });
-
-  it('is one-shot: a repeated user message on the same turn is shown', async () => {
-    const { adapter, cot } = harness();
-    adapter.onAnchoredSubmission({
-      event: submitted(LEADER, 'turn-channel'),
-      anchor: anchorAt('oc_team', 'om_1'),
-    });
-    adapter.onTurnMessage(message(LEADER, 'turn-channel', 'user', 'the visible body'));
-    adapter.onTurnMessage(message(LEADER, 'turn-channel', 'user', 'a later steer'));
-    await settle();
-
-    expect(cotTexts(cot.cards[0]!)).toEqual([RECEIPT, 'a later steer']);
-    await adapter.close();
-  });
-
-  it('suppresses the body but never the rest of the turn', async () => {
-    const { adapter, cot } = harness();
-    adapter.onAnchoredSubmission({
-      event: submitted(LEADER, 'turn-1'),
-      anchor: anchorAt('oc_team', 'om_1'),
-    });
-    adapter.onTurnMessage(message(LEADER, 'turn-1', 'user', 'hidden body'));
-    adapter.onTurnToolCall(toolCall(LEADER, 'turn-1', 'call-1', 'started'));
-    adapter.onTurnToolCall(toolCall(LEADER, 'turn-1', 'call-1', 'completed'));
-    adapter.onTurnMessage(message(LEADER, 'turn-1', 'assistant', 'the answer'));
-    adapter.onNativeTurnEnded(nativeEnd(LEADER, 'completed'));
-    await settle();
-
-    const card = cot.cards[0]!;
-    expect(cotTexts(card)).toEqual([RECEIPT, 'the answer']);
-    expect(cotToolNames(card)).toEqual(['Read']);
-    expect(cotRunStatus(card)).toBe('done');
+    expect(cotTexts(cot.cards[0]!)).toEqual([
+      RECEIPT,
+      'the projected user body',
+      'the projected answer',
+    ]);
     await adapter.close();
   });
 });
@@ -891,9 +864,8 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
       seam.handle(message(LEADER, 'turn-channel', 'user', 'the visible body'));
       await settle();
 
-      // Another producer submits to the same recipient. This session never
-      // claimed that turn, so nothing about it is a duplicate of anything on
-      // screen — and no source whitelist stands between it and the card.
+      // Another producer submits to the same recipient, and no source whitelist
+      // stands between either input and the card.
       seam.handle(submitted(LEADER, 'turn-other', source));
       seam.handle(message(LEADER, 'turn-other', 'user', `${source} input`));
       seam.handle(message(LEADER, 'turn-other', 'assistant', `${source} answer`));
@@ -901,6 +873,7 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
 
       expect(cotTexts(cot.cards[0]!)).toEqual([
         RECEIPT,
+        'the visible body',
         `${source} input`,
         `${source} answer`,
       ]);

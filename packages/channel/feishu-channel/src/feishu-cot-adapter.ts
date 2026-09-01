@@ -10,9 +10,7 @@
  *   settlement or a native turn end. A rejected, failed, or ambiguous admission
  *   changes nothing.
  * - Everything Core projects for that recipient is shown, once it has an
- *   anchor: assistants, tools, and every input whatever its source name. The
- *   only hidden body is the Feishu message already visible at the anchor, and
- *   only when the mark exists before the body arrives.
+ *   anchor: assistants, tools, and every input whatever its source name.
  * - The runtime's one native turn end closes the card. Logical settlement
  *   (`teammate.turn.settled`) is a per-submission lifecycle fact and closes
  *   nothing, because a provider folds any number of submissions into one turn.
@@ -67,7 +65,6 @@ import {
   ensureCotState,
   prepareVisibleAnchor,
   reapCotState,
-  suppressChannelBody,
   LeaderLifecycleFence,
   type CotPresentation,
   type CotRecipientIdentity,
@@ -153,12 +150,8 @@ export class FeishuCotAdapter {
    * no presentation id, and no anchor. Only a proven admission reaches here, so
    * a rejected, failed, or ambiguous attempt moves no anchor and opens no card.
    *
-   * The recipient is read from the event, which is also what makes the narrow
-   * body suppression exact: this Channel knows the message it just made visible
-   * and the turn it became, including when its own routing deliberately fell
-   * back to the Dispatcher. The mark is best effort — Core usually publishes
-   * that body before the admitting call returns, and this Channel neither
-   * buffers nor reorders facts to catch it.
+   * The recipient is read from the event, including when this Channel's routing
+   * deliberately fell back to the Dispatcher.
    */
   onAnchoredSubmission(input: {
     readonly event: TeammateTurnSubmittedEvent;
@@ -177,11 +170,6 @@ export class FeishuCotAdapter {
       return;
     }
     const state = ensureCotState(this.states, identity);
-    // The body belongs to the anchor this call is establishing, so the card
-    // must not repeat it. Best effort: Core normally publishes it before the
-    // submit that produced this call returned, and nothing is buffered or
-    // reordered to catch that.
-    suppressChannelBody(state, input.event.turn_id);
     this.advanceAnchor(key, state, anchor, 'done');
     this.openReceipt(key, state);
   }
@@ -261,7 +249,6 @@ export class FeishuCotAdapter {
       state.generation += 1;
       state.anchor = null;
       state.openCalls.clear();
-      state.suppressedUserTurns.clear();
       this.detach(key, state, 'interrupted');
     }
     if (this.pending.size > 0) {
@@ -313,7 +300,6 @@ export class FeishuCotAdapter {
     state.anchor = anchor;
     if (anchor === null) {
       state.openCalls.clear();
-      state.suppressedUserTurns.clear();
     }
     this.reapState(key, state);
   }

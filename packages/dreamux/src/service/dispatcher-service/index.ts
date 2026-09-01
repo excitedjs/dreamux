@@ -162,6 +162,7 @@ export class DispatcherService {
     const conversationProjection = createConversationProjection({
       coreEvents: this.coreEvents.publisher,
       log: opts.log,
+      homePathPrefixes: opts.homePathPrefixes,
     });
 
     this.channels = new ChannelService({
