@@ -106,5 +106,7 @@ Before committing KB changes, run:
 .agents/scripts/check.sh
 ```
 
-It validates links, reachability from `root.md`, and domains-page source-path
-liveness. Failures are noisy on purpose; CI rejects anything it rejects.
+It validates links, reachability from `root.md`, domains-page source-path
+liveness, and that every `.agents/` path cited by tracked files outside the KB
+(comments, READMEs, tests) still resolves. Failures are noisy on purpose; CI
+rejects anything it rejects.

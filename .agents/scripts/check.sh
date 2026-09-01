@@ -8,6 +8,8 @@
 #      (link graph; flags orphans)
 #   3. every /packages/... file path cited by a domains/ page exists
 #      (fails loudly when the domains tree itself is missing)
+#   4. every .agents/ path cited by tracked files OUTSIDE .agents/ resolves
+#      (comments, READMEs, tests; generated changelogs are exempt)
 #
 # Exits 0 on success, non-zero with a noisy list of failures otherwise.
 # Run before committing KB changes, and from CI.
@@ -195,6 +197,35 @@ else
     done | sort -u
   )
 fi
+
+# ---------- 4) inbound references from outside .agents/ resolve ----------
+# Tracked files elsewhere in the repo cite .agents/ paths in comments, READMEs,
+# and tests; check 1 never sees them. Generated changelogs keep historical
+# paths and are exempt, and .agents/wip/ is an intentionally untracked scratch
+# reference in .gitignore.
+while IFS= read -r violation; do
+  echo "stale .agents reference: $violation" >&2
+  errors=$((errors + 1))
+done < <(
+  git -C "$REPO_ROOT" ls-files \
+    | grep -v '^\.agents/' \
+    | grep -v 'CHANGELOG\.\(json\|md\)$' \
+    | while IFS= read -r tracked; do
+        [ -f "$REPO_ROOT/$tracked" ] || continue
+        perl -sne 'while (m{(\.agents/[A-Za-z0-9._/-]*[A-Za-z0-9_-])}g) { print "$src -> $1\n" }' \
+          -- -src="$tracked" "$REPO_ROOT/$tracked"
+      done \
+    | sort -u \
+    | while IFS= read -r line; do
+        cited="${line##*-> }"
+        case "$cited" in
+          .agents/wip*) continue ;;
+        esac
+        if [ ! -e "$REPO_ROOT/$cited" ]; then
+          printf '%s\n' "$line"
+        fi
+      done
+)
 
 if [ "$errors" -gt 0 ]; then
   echo "" >&2
