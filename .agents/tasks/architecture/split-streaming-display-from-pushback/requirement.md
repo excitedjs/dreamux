@@ -247,3 +247,27 @@ Two facts to design around, both already verified:
   The public submit surface is unchanged, and `submitInput`'s "no
   caller-selected mode" claim becomes true of the public surface instead of
   false everywhere.
+
+- **Ruled 2026-09-02, the input fact is published after admission, and there is
+  no terminal event.** The operator's question was
+  「那你 submitted 不能改成已经明确发给 agent runtime 之后才抛出来吗？」, then
+  「如果 Codex 正在推流事件的话，他的 submit 怎么可能会失败？」. Both hold, and
+  they supersede the earlier terminal-fact ruling by removing its scenario
+  rather than overruling it:
+
+  - A submission that is never admitted publishes no input, so no card opens and
+    there is nothing to fail. The earlier ruling
+    「那几个情况应该直接把卡片置成失败」 was about an orphan card that this
+    ordering cannot produce.
+  - Streaming and failure are mutually exclusive: if codex is emitting items for
+    a turn, `turn/start` was accepted.
+  - Publishing after costs no ordering, which an earlier revision claimed it
+    did. `observeItem` buffers activity for an unbound turn into
+    `pendingActivity` whenever an admission is in flight
+    (`turn-manager.ts:320-333`), and `bindSubmission` releases it only after
+    `await submitTurnStart(...)` returns (`:146-149`, `:191`). Activity for a
+    turn therefore cannot reach Core before that turn's own submit resolves.
+
+  Consequence: `pendingActivity` is **load-bearing for this ordering guarantee**
+  and must not be deleted. Earlier revisions listed it as removable display
+  residue.
