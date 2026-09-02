@@ -150,12 +150,52 @@ export function repoInputSchema(): Record<string, unknown> {
     type: 'object',
     additionalProperties: false,
     properties: {
-      mode: { type: 'string', enum: ['reuse-cwd', 'managed'] },
-      path: { type: 'string', minLength: 1, maxLength: 4096 },
-      base_ref: { type: 'string', minLength: 1, maxLength: 256 },
-      branch: { type: 'string', minLength: 1, maxLength: 256 },
-      slug: { type: 'string', minLength: 1, maxLength: 64 },
-      cleanup: { type: 'string', enum: ['keep', 'delete-on-close'] },
+      mode: {
+        type: 'string',
+        enum: ['reuse-cwd', 'managed'],
+        description:
+          'reuse-cwd runs in an existing directory; managed creates a git ' +
+          'worktree from a source repository.',
+      },
+      path: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 4096,
+        description:
+          'reuse-cwd: the directory to run in. managed: the source ' +
+          'repository; defaults to this agent\'s workspace.',
+      },
+      base_ref: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 256,
+        description:
+          'managed: the ref a newly created branch starts from; default ' +
+          'HEAD; ignored when branch already exists.',
+      },
+      branch: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 256,
+        description:
+          'managed: the branch to create or check out; default ' +
+          'dreamux/<slug>.',
+      },
+      slug: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 64,
+        description:
+          'managed: label for the worktree directory and the default branch ' +
+          'name; defaults to the TeamMate\'s or Team\'s name.',
+      },
+      cleanup: {
+        type: 'string',
+        enum: ['keep', 'delete-on-close'],
+        description:
+          'managed: keep leaves the worktree after close; delete-on-close ' +
+          'removes it when the agent closes and the tree is clean.',
+      },
     },
     required: ['mode'],
   };

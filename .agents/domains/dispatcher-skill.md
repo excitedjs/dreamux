@@ -6,8 +6,11 @@ parent directories do not expose another role's skills; a shared root is
 deliberately composed into both Dispatcher and TeamLeader runtimes:
 
 - `skills/dispatcher/dispatcher-workflow` is injected only into Dispatcher
-  runtimes. It covers provider-visible replies and dispatcher-visible
-  TeamMate/Team/cron MCP cautions.
+  runtimes. It is an optional, on-demand skill about collaborating with
+  TeamMates: choosing between doing the work directly, an engine-native
+  subagent, a TeamMate, or a Team; writing the prompt that hands work down;
+  asking a delegate why before overriding a surprising action; and continuing
+  one collaboration instead of starting another.
 - `skills/dispatcher/dreamux-maintenance` is injected only into Dispatcher
   runtimes. Its concise root owns authorization, common diagnosis, reporting,
   and a seven-row routing table. One-level references separately own service
@@ -19,9 +22,11 @@ deliberately composed into both Dispatcher and TeamLeader runtimes:
   doctor passes, then perform notification restart. It carries no
   release-specific schema or migration body.
 - `skills/team-leader/team-workflow` is injected only into TeamLeader runtimes.
-  It covers team-scoped TeamMate MCP cautions, shared Team workspace
-  coordination, provider-visible channel replies, TeamLeader cron cautions, and
-  the Channel-owned routing tools a TeamLeader may reach for its own Team.
+  It is the same optional, on-demand collaboration skill from the TeamLeader's
+  vantage: a TeamMate against an engine-native subagent; writing a hand-down
+  prompt for members who share one Team workspace; asking a TeamMate why before
+  overriding a surprising action; and continuing one collaboration instead of
+  starting another.
 - The shared `workflow` skill at `skills/shared/workflow` is injected into both
   Dispatcher and TeamLeader runtimes. It owns the Dynamic Workflow tool and
   deterministic runner contract.
@@ -50,6 +55,9 @@ shared roots; it therefore reserves the bundled `team-workflow` and `workflow`
 names so custom roots cannot shadow either required skill.
 
 ## Dispatcher-Visible MCP
+
+Every input property of the Dispatcher's `teammate`, `team`, and `cron` tools
+carries a description.
 
 Dispatcher `teammate` MCP tools are `spawn`, `send`, `close`, `list`, `status`,
 `history`, `last`, and `get_capabilities`. `spawn.name_prefix` is only a
@@ -87,6 +95,9 @@ schema rather than assuming a shape.
 
 ## TeamLeader-Visible MCP
 
+Every input property of the TeamLeader's `teammate`, `team`, and `cron` tools
+carries a description.
+
 TeamLeader `teammate` MCP tools are `spawn`, `send`, `close`, `list`, `status`,
 `history`, `last`, and `get_capabilities`, scoped to the Team's members.
 TeamLeader `spawn` does not accept a `repo` input because the Team workspace is
@@ -99,9 +110,9 @@ returns the same submitted receipt — its own runtime is one of the things bein
 stopped, so it should expect to lose that response. TeamLeaders cannot create,
 send to, list, inspect, or select Teams through this projection.
 
-The bundled `team-workflow` skill tells a TeamLeader to check uncommitted,
+The TeamLeader `dissolve` description tells a TeamLeader to check uncommitted,
 untracked, and unmerged work before dissolving, and to ask the user through the
-visible reply path when the workspace is not clean. That prompt check is
+visible reply path when the workspace is not clean. That description check is
 guidance, not authority: the non-destructive assessment inside the worktree
 manager is what actually refuses an unsafe close. Keep the two layers distinct
 when editing either.

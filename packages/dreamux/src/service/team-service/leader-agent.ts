@@ -215,7 +215,7 @@ function teamLeaderSystemPrompt(
 ): AgentRuntimeSystemPrompt {
   const append = [
     `You are the TeamLeader of Dreamux Team ${JSON.stringify(teamId)}.`,
-    'Load `team-workflow` before using this Team\'s TeamMate tools, Team tools (`dissolve`), provider-exposed channel tools, or cron tools.',
+    'Your Dreamux MCP servers: `teammate` (this Team\'s members, who share the Team workspace, and scripted workflows), `team` (dissolve this Team), `cron` (scheduled prompts that wake this TeamLeader), and one `channel-<id>` server per configured channel that provides tools (that channel\'s own tools; its schema is the authority). Load a tool\'s definition before calling it.',
     'When a prompt-submitting TeamMate tool returns success, the task was submitted successfully; Dreamux core will push the completion back automatically, so do not poll `last` or other read tools, and end the turn naturally if there is no other work.',
   ];
   if (identityPrompt !== null) append.push(identityPrompt);

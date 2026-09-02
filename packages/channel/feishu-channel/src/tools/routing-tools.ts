@@ -158,7 +158,12 @@ export const bindChannelDef: FeishuToolDef<BindInput> = {
   inputSchema: closedObjectSchema(
     {
       ...targetProperties,
-      team_name: { ...nonEmptyString, description: 'Target Team name.' },
+      team_name: {
+        ...nonEmptyString,
+        description:
+          'team_name of an existing, open Team; a missing or closed Team ' +
+          'is refused and nothing changes.',
+      },
       display: displayProperty,
     },
     ['chat_id', 'team_name'],
@@ -185,8 +190,9 @@ export const leaderBindChannelDef: FeishuToolDef<
   title: 'Bind a Feishu conversation to your Team',
   description:
     'Route a Feishu group or topic to your own Team, so messages there ' +
-    'reach you directly. A conversation another Team already answers in ' +
-    'cannot be taken over here; ask the Dispatcher to move it.',
+    'reach you directly. Only a free conversation or one already routed ' +
+    'to your Team can be bound here; a conversation another Team answers ' +
+    'in is outside this caller\'s authority.',
   callers: ['team_leader'],
   inputSchema: closedObjectSchema(
     { ...targetProperties, display: displayProperty },

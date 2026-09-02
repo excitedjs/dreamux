@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "comment": "The Dispatcher and TeamLeader prompts no longer ask the model to load `dispatcher-workflow` or `team-workflow` before using a tool; each prompt now maps the MCP servers that role has — `teammate`, `team`, `cron`, and one `channel-<id>` server per configured channel that provides tools — and says to load a tool's definition before calling it. Both skills still ship under the same names and roots, and each now holds TeamMate-collaboration methodology the model loads on demand: TeamMate versus engine-native subagent, how to write the hand-down prompt, and asking a delegate why before correcting it. Every Dreamux MCP tool input property now carries a description, and the tool descriptions carry the cautions the skills used to carry, so a tool the model has just loaded tells it everything it needs to call that tool.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}
