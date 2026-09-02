@@ -53,24 +53,30 @@ TeammateService.submitAdmitted                        (teammate-service/index.ts
   │  renderSubmission(input) ──▶ text = XML envelope
   │  AdmissionLedger.admit(key, sourceId)             dedupe happens HERE, in Core
   ▼
-runtime.submit({ text })                   (:259)     the seam: text and nothing else
+EntityTurnCoordinator.submitRuntimeTurn(() => runtime.submit({ text }))   (:259)
+  │  the coordinator invokes the closure — the call order is this way round,
+  │  which two earlier revisions of this diagram had reversed
+  ▼
+runtime.submit({ text })                              the seam: text and nothing else
   │
   ▼
-provider admission ──▶ RuntimeSubmission
-  │
-  ▼
-EntityTurnCoordinator.submitRuntimeTurn ──▶ EntityTurn
+provider admission ──▶ RuntimeSubmission ──▶ EntityTurn
   │
   ▼
 RuntimeSubmission.settled  ──▶  TurnOutcome           completed | failed | stopped
   │
   ▼
-EntityTurn.ensureDelivery()                           (turn-recording.ts:165)
-  │
+EntityTurn.ensureDelivery()                           (turn-recording.ts:143)
+  │  awaits the delivery closure startDeliveryIfReady built
   │  ── no initiator ──▶ nothing is delivered anywhere. END.
   ▼
-CompletionDeliveryPolicy.deliverPrepared              (completion-router:136)
+CompletionDeliveryPolicy.deliverRuntime ──▶ enqueue ──▶ deliverPrepared
+  │  folds on the provider token, one FIFO tail per recipient  (:97, :124, :136)
   │  prepareCompletion once, then submit up to 3 times
+  │
+  │  ── inside a Team, TeamLeaderCompletionTargets calls TeamService.admit
+  │     first, which refuses once a dissolve is in flight and reports
+  │     `unsupported` — so a dissolving Team never wakes its leader
   ▼
 initiator.prepareCompletion(fact).submit()            (teammate-service/index.ts:273)
   │
@@ -134,10 +140,11 @@ EntityTurnCoordinator            RuntimeActivity      RuntimeNativeTurnEnd
           teammate.native_turn.ended
                         │
                         ▼
-        DispatcherCoreEvents.publish ──▶ sealChannelCoreEvent   (7-kind allowlist)
-                        │                 an unlisted kind is DROPPED here,
-                        │                 silently — the set is ReadonlySet<string>
-                        ▼                 and is not checked against the union
+        DispatcherCoreEventBus.publish ──▶ sealChannelCoreEvent  (7-kind allowlist)
+                        │                 an unlisted kind is DROPPED here and
+                        │                 logged at error — but the set is
+                        ▼                 ReadonlySet<string>, so nothing fails
+                        │                 at compile time and no test crosses it
         bus emit ──▶ scoped source ──▶ FeishuChannel.onCoreEvent
                         │
                         ▼
@@ -212,7 +219,7 @@ runtime-owner.generationActivitySink
 ConversationProjection.projectActivity(agent, activity)
   │  redactText() + size bounds
   ▼
-ChannelCoreEvent  teammate.activity                 ◀── 1 kind, replacing 4
+ChannelCoreEvent  teammate.activity                 ◀── assistant half only
   │
   ▼
 publish ──▶ seal (4-kind allowlist) ──▶ bus ──▶ scoped source
@@ -265,11 +272,23 @@ exists as a parallel private method the type system does not relate to the
 first. A flag makes an existing mode visible rather than adding a new one, and
 the docstring is corrected with it.
 
-No translating adapter is written. `prepareCompletion` returns a handle whose
-`submit` is the `submitInput` call itself; the ordinary-mutation fence's throw
-propagates and the router's own `settleWithinDeadline` catches it, giving the
-same dropped-without-retry outcome under a different log line. The operator
-ruled that difference away: 「日志这种东西根本不重要」.
+**The result mapping moves, it does not disappear.** An earlier revision claimed
+no adapter was written; both reviewers refuted it. `submitInput` returns
+`Promise<TurnAdmission>` and `PreparedCompletionDelivery.submit` must return
+`Promise<CompletionDeliveryResult>` (`completion-router/index.ts:25-33`), so
+deleting `turnAdmissionToCompletionDelivery` does not compile. It is
+coordinator-private today and its only caller is the `submitCompletion` this
+change deletes, so it **moves to the prepared handle**. What is genuinely not
+written is a second try/catch preserving the old `unsupported` reason string:
+the fence's throw propagates and the router's own `settleWithinDeadline`
+catches it, giving the same dropped-without-retry outcome under a different log
+line. The operator ruled that difference away: 「日志这种东西根本不重要」.
+
+**A no-wake miss needs new code, not just a mapping.** `mustRuntime()` throws
+when the runtime is null (`runtime-owner.ts:99-103`), so "no runtime under
+no-wake returns `stopped`" is a branch this design adds rather than one it
+reuses. It returns before the publish site, so such a call emits neither an
+input nor a terminal — consistent, and previously unstated.
 
 **The result vocabulary survives the merge unchanged.** Verified:
 `turnAdmissionToCompletionDelivery` (`turn-coordinator.ts:340-356`) maps
@@ -303,10 +322,24 @@ still live while that happens. The leader's own completion recipient, when one
 is set, is the Dispatcher agent (`dispatcher-service/index.ts:493`), which a
 dissolve never stops.
 
-The window is real — `stopForHost` leaves `phase === 'active'` with no runtime
-by its own contract, and `closeResources` moves the phase only later
-(`closing.ts:251-266`) — but reaching it takes one of the two exceptional paths
-this document already names elsewhere:
+**A second fence closes the Team-scoped path entirely.** Found while answering
+an operator question about dissolve cost. `TeamService.admit` throws
+`TeamClosedError` as soon as `dissolveTask` is set — which `dissolve()` does
+before running any of the work behind its receipt
+(`team-service/index.ts:451-459`, `:475-477`). Every completion produced inside
+a Team goes through `TeamLeaderCompletionTargets`, which calls that `admit` in
+both `prepareCompletion` and `submit` and translates the refusal into
+`unsupported` (`completion-targets.ts:36-60`). So during a Team dissolve a
+member's completion is refused at the Team boundary and never reaches the
+leader's runtime check at all. This is also why a dissolve does not wake the
+leader N times to read N "was stopped" notices — a token cost the operator asked
+about, and which does not occur.
+
+So the **Team-scoped** justification for the no-wake mode is gone. What remains
+is host shutdown: `stopForHost` leaves `phase === 'active'` with no runtime by
+its own contract, and there is no Team fence in front of a dispatcher-scoped
+TeamMate reporting to the dispatcher agent. That is the scenario the mode is
+actually paid for, plus the two exceptional paths below:
 
 - `settleWithinDeadline` abandons a `submit()` that is still pending at 30s, and
   that call resolves afterwards.
@@ -360,12 +393,32 @@ Four constraints pin it, and each rules out a nearby alternative:
 
 ### A non-`submitted` outcome terminates the card at the same site
 
-A `stopped`, `skipped` or pre-admission `failed` result creates no `EntityTurn`
-and guarantees no runtime native end, so an input published before admission
-would otherwise leave a card open until some unrelated later native turn closed
-it. The operator's requirement is 「那几个情况应该直接把卡片置成失败」. The
-outcome is known synchronously at the same call site, so the same site publishes
-the terminal — one more fact on `teammate.input`, not a new mechanism.
+A `stopped`, `skipped`, **`ambiguous`** or pre-admission `failed` result creates
+no `EntityTurn` and guarantees no runtime native end, so an input published
+before admission would otherwise leave a card open until some unrelated later
+native turn closed it. The operator's requirement is
+「那几个情况应该直接把卡片置成失败」. `ambiguous` was missing from earlier
+revisions: `submitObserved` returns it when `operation()` throws
+(`turn-coordinator.ts:175-183`), with the same absence of a turn and a native
+end.
+
+**This part is not yet specified, and it is the design's largest remaining
+hole.** An earlier revision said "the outcome is known synchronously at the same
+call site". It is not: `runtime.submit` returns a Promise and the coordinator
+resolves the admission in an async continuation
+(`turn-coordinator.ts:168-190`). Since the input is published *before*
+`runtime.submit` and the outcome arrives after, the terminal is necessarily a
+**second event about the same input** — one kind with two shapes, which the
+Feishu switch in the diagram above does not yet reflect. Three things need
+deciding before implementation, and they are an operator/design decision rather
+than a detail:
+
+- which field on `teammate.input` carries the outcome, and how a consumer tells
+  an opening fact from a terminal one;
+- whether the terminal repeats the `sourceId` so a Channel can correlate it with
+  the input it already filtered;
+- whether a terminal still fails the card for an input the Channel filtered out
+  as its own.
 
 **The write fence needs nothing.** `enterOrdinaryMutation` runs *before*
 `submitAdmitted` (`teammate-service/index.ts:230`) and throws when the entity is
@@ -474,9 +527,13 @@ forgotten, and a durable negative result serves that motive too.
 ### Merged
 
 **1. `seal.ts` gets an exhaustive kind catalog.** The allowlist is the reason a
-kind can be added to `ChannelCoreEvent` and silently dropped at the bus. This
-change adds two kinds and removes four, so it walks straight through that hole.
-The fix is a type, not a test:
+kind can be added to `ChannelCoreEvent` and dropped at the bus. The drop is not
+silent — `DispatcherCoreEventBus` writes `dispatcher core event is not a
+publishable catalog event` at `error`
+(`dispatcher-core-events/index.ts:98-107`), a correction from an earlier
+revision — but a runtime error log is not a gate: nothing fails at compile time
+and no test crosses the path. This change adds two kinds and removes four, so it
+walks straight through that hole. The fix is a type, not a test:
 
 ```ts
 // Exhaustive by construction: adding a kind to ChannelCoreEvent fails to
@@ -520,6 +577,12 @@ nothing. `satisfies Record<Kind, true>` also errors and is acceptable; a bare
   returns (`completion-router/index.ts:197-207`). The conclusion is right and
   the stated mechanism is invented. The method is deleted by the merge, so what
   survives is the corrected statement on `submitInput`.
+- `team-service/completion-targets.ts:20-26` repeats the same invented
+  mechanism — "reports the delivery as unsupported, so the completion router
+  falls back instead of reviving a Team being torn down". The behaviour it
+  describes is real and important (this is the fence that keeps a dissolving
+  Team from waking its leader), but the router does not fall back; it drops.
+  Found on the third review.
 
 ## Recorded, not changed
 
@@ -571,9 +634,14 @@ state fix. `markClosing` (`index.ts:120-121`) is the entity handing
 can express a *runtime* fact — "start threw, `stop()` threw too, termination is
 unproven" — by moving the *entity's* lifecycle.
 
-`TeammateRuntimeOwner` is the only class named `*Owner` in `service/`, but three
-other halves have the same shape — a class extracted from one Service, talking
-to it through an options object — and none of them mutates its parent's state:
+`TeammateRuntimeOwner` is the only class named `*Owner` in `service/`. The
+claim that it is the *only* extracted half mutating its parent was **refuted on
+review** and is withdrawn: `TeamClosing`'s `closeLeaderForDissolve` callback
+sets `this.leader_ = null` and its `commit` sets `this.record = updated`
+(`team-service/index.ts:189-204`, `:664-675`), and `WorkflowRunTerminal.finalize`
+reaches `Object.assign(this.record, ...)` (`workflow-service/run.ts:123-130`,
+`:620-621`). Upward mutation is an established pattern here. What distinguishes
+`markClosing` is not that it writes but *how*:
 
 | Extracted half | Upward channel | Shape |
 |---|---|---|
@@ -586,11 +654,14 @@ This change edits that last row itself: `runtime-owner` gains the projection
 call and the actor stamp, so its upward channel grows. The row is updated in the
 same change rather than left describing the pre-change shape.
 
-`TeamClosing` is the precedent that matters: an extracted half **is** allowed to
-write back, through a single named entry point whose rationale is stated.
-`markClosing` is the same need without that discipline. Moving the fact to its
-owner would take one meaning off the enum and delete one cross-layer write,
-against one predicate added on the layer that owns the fact. Not done here.
+Every other upward write is a **named domain operation** whose rationale is
+stated at the seam — "Closing never writes the record itself: one owner, one
+path, so what this half decides and what the entity answers from can never
+drift apart". `markClosing` is a bare setter for one value of a lifecycle enum,
+with no stated reason, used to express a fact that is not about the lifecycle at
+all. Moving that fact to its owner would take one meaning off the enum and
+delete one cross-layer write, against one predicate added on the layer that
+owns it. Not done here.
 
 ### The 700-line cap is shaping this module
 
@@ -707,29 +778,40 @@ The first draft's numbered order was refuted by review: steps called projection
 entry points that a later step created, and one step could not compile. Corrected
 order:
 
-1. **`dreamux-types` + `seal.ts` together.** Add the `turn.ended` activity kind,
-   `occurredAt` on `RuntimeActivity`, and the `teammate.input` /
-   `teammate.activity` events; convert `KINDS` to the exhaustive catalog; update
-   the two tests that assert an exact kind list
-   (`core-event-catalog.test.ts:176`, `input-source-lifecycle.test.ts:468`) to
-   the transitional set. Old surfaces stay alive.
-2. **`conversation-projection`: add `projectInput` and the new
-   `projectActivity`** alongside the existing four. Additive only.
-3. **Merge the completion path.** Add `start: false` to `submitInput`; route
-   `prepareCompletion`'s handle through it; delete `submitPreparedCompletion`
-   and the coordinator's `submitCompletion`. **The dissolve-window test lands
-   with this step, not after it.**
-4. **Core: publish `teammate.input`** in `submitAdmitted`, inside the operation
-   closure, with the fail-open guard and the non-`submitted` terminal.
-5. **`runtime-owner`: stamp the actor, carry the guard, call the projection.**
-6. **Both runtimes: emit native turn ends through the activity sink.** After
-   step 2, because before it the old `projectActivity` routes any non-message
-   kind into `toolEvent`, which throws on `turn.ended` and logs a warning per
-   end.
+Reviewed a third time and corrected again: the previous order broke the build at
+three separate points. Each step below must leave `rush build` green on its own.
+
+1. **`dreamux-types` + `seal.ts` together.** Add the `teammate.input` /
+   `teammate.activity` events and convert `KINDS` to the exhaustive catalog.
+   **Add `turn.ended` and `occurredAt` to `RuntimeActivity` as optional**, not
+   required: both runtimes construct `RuntimeActivity` without them
+   (`claude-code/src/runtime-submissions.ts:229-277`,
+   `codex/src/turn-manager.ts:387-409`) and their changes land later, so a
+   required field breaks compilation here. Update the two tests asserting an
+   exact kind list (`core-event-catalog.test.ts:176`,
+   `input-source-lifecycle.test.ts:468`) to the transitional set.
+2. **`conversation-projection`: add `projectInput`, and a *distinctly named*
+   activity entry** — `projectActivity` already exists
+   (`conversation-projection.ts:79-99`) and routes any non-message kind into
+   `toolEvent`. The new one lands beside it under its own name; the old name is
+   freed in the deletion step. Not additive under the same name.
+3. **Both runtimes: populate `occurredAt` and emit native turn ends through the
+   activity sink.** After step 2, because the old `projectActivity` throws on
+   `turn.ended`. This is what makes the fields from step 1 always present.
+4. **Merge the completion path.** Add the no-wake mode; move
+   `turnAdmissionToCompletionDelivery` to the prepared handle **in the same
+   commit** that deletes `submitCompletion`, or the return types break; add the
+   null-runtime-under-no-wake branch; delete `submitPreparedCompletion`. **The
+   entity-level no-wake test lands with this step, not after it.**
+5. **Core: publish `teammate.input`** in `submitAdmitted`, inside the operation
+   closure, with the fail-open guard. The terminal fact lands here too, once its
+   shape is ruled on.
+6. **`runtime-owner`: stamp the actor, carry the guard, call the projection.**
 7. **Feishu: three-case switch**, re-keyed anchor.
 8. **Delete.** The second sink, `turnsBySubmission`, the early buffer, the old
-   entry points, the four old kinds, the retained `EntityTurn` fields, codex's
-   `pendingActivity`, and the transitional test assertions.
+   entry points and the freed name, the four old kinds, the retained `EntityTurn`
+   fields, codex's `pendingActivity`, and the transitional test assertions.
+   Tighten the step-1 optional fields to required.
 9. **Knowledge delta:** `provider-runtime.md`, `channel.md`, and the
    `dreamux-maintenance` reference if any published contract it names moves.
 
