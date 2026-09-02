@@ -196,3 +196,12 @@ Two facts to design around, both already verified:
   requirement decision — an interrupting steer is a capability the operator is
   declining, not a refactor — so it is recorded here rather than smuggled in as
   cleanup.
+
+- **Ruled 2026-09-02, cleanups found on the way ride along.** The operator's
+  words: 「我的风格就是一边做需求一边重构，能合并的都合并到一起吧，省得以后忘掉」.
+  This authorizes folding cleanup found while reading this change's blast radius
+  into this change rather than filing it. It is not authorization to redesign
+  code the change does not otherwise touch: the stated motive is that a deferred
+  finding gets forgotten, and a recorded negative result serves that motive as
+  well as a merged fix. So each finding is either merged here or written down
+  with the reason it does not reduce — nothing is left only in a chat log.
