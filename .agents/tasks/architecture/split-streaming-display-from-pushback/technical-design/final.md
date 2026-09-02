@@ -555,12 +555,11 @@ narrower than stated.**
 - *"only meaningful to a runtime that is already live."* The real difference,
   and the only one: `submitAdmitted` calls `runtimeOwner.ensureStarted()`, which
   boots a dormant recipient; `submitPreparedCompletion` calls
-  `existingRuntimeAfterStart()`, which does not. But `prepareCompletion` **already
-  asks that question** and answers it with
-  `unsupportedPreparedCompletion('teammate runtime not running')`. So the second
-  check's unique coverage is exactly one window: the recipient was live at
-  prepare and lost its runtime before submit — a window that spans the router's
-  retry loop and nothing else.
+  `existingRuntimeAfterStart()`, which does not. `prepareCompletion` asks the
+  same question first, so a recipient already stopped when the router starts is
+  refused there. What the second check adds is every recipient whose runtime is
+  gone while the entity is still writable — most importantly the Team-dissolve
+  window documented below, which is wide, not a race.
 
 The third apparent difference, the `CompletionDeliveryResult` vocabulary, is a
 translation that already exists (`turnAdmissionToCompletionDelivery`, called by
@@ -575,7 +574,7 @@ through, so two publish sites are the structural floor." **That claim depends on
 this split.** If the paths merge, the floor is one publish site, fence sites go
 from four to three, and the coordinator loses `submitCompletion`.
 
-### The fork, unruled
+### The fork — one branch survives
 
 - **Thread a flag** (`submitInput({ …, start: false })` or equivalent). Behavior
   is preserved exactly; `submitPreparedCompletion`, `submitCompletion`, and one
@@ -585,11 +584,25 @@ from four to three, and the coordinator loses `submitCompletion`.
   the mode exists today as a parallel private method the type system does not
   relate to the first. A flag makes an existing mode visible rather than adding
   one.
-- **Plain merge**, no flag. Liveness stays answered once, at prepare. Behavior
-  changes only inside the prepare→submit window: a recipient that dies there
-  would be restarted to receive the answer instead of the answer being dropped.
-  That is a requirement decision about whether an arriving answer may wake an
-  agent, and it is the operator's call, not a refactor.
+- ~~**Plain merge**, no flag.~~ **Dead.** The operator named the scenario from
+  memory (「如果一个团队已经进入解散状态的话，Teammate 这个时候刚好回推了，他不
+  应该把已经 close 掉的 TeamLeader 拉起来」) and the source confirms it exactly.
+  `TeamClosing.stopForDissolve` calls `leader.stopForHost()`
+  (`closing.ts:216-227`), which by its own contract "says nothing about this
+  entity's lifecycle" and leaves `phase === 'active'`. Only later, after
+  `assessWorktree()` has done real filesystem work, does `closeResources()`
+  reach `closeLeaderForDissolve` and move the phase (`closing.ts:251-266`).
+
+  So a dissolve has a real window in which the TeamLeader is **writable but has
+  no runtime**. The ordinary-mutation fence does not catch it — `phase` is still
+  `active`. Only `existingRuntimeAfterStart()` returning null does. A completion
+  arriving in that window and routed through `ensureStarted()` would spawn a
+  fresh TeamLeader runtime after the dissolve deliberately stopped everything
+  and immediately before the worktree is reclaimed.
+
+  This is the named failure scenario the never-wake guard is paid for. It is
+  **not** the narrow prepare→submit window described above; that framing
+  understated it, and the dissolve window is much wider.
 
 Prepare/submit staying split (fence sites 3 and 4 in the earlier count) is
 **not** in question either way: preparation renders and may spill the body to
