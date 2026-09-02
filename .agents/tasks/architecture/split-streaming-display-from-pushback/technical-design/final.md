@@ -1096,6 +1096,23 @@ cannot be chunked the way `TEXT_MESSAGE_CONTENT` is. `truncateUtf8` at 512 bytes
 keeps `checkedEvent` from throwing mid-flush and leaving a card that never ends;
 a test drives a 100_000-character reason through the whole adapter to pin it.
 
+
+**Probed again after implementation: the client does not render
+`RUN_ERROR.message`.** A card finished with `RUN_ERROR` carrying
+`message: "the agent runtime is not running"` shows, fully expanded, the
+appended text message and then the client's own fixed 任务失败 line, under a
+任务失败 title. The supplied message appears nowhere. Two consequences:
+
+- **The text message printed before the terminal is load-bearing, not
+  belt-and-braces.** It is the only thing that puts ruling 9's error text on the
+  card. `finishCard` must keep printing it.
+- **Carrying the reason in `message` buys nothing observable**, and the byte
+  bound plus its 100_000-character test exist only to protect that field. The
+  scenario they defend against — a long reason overflowing one event's 4 KiB
+  content — exists only because the reason is sent. Sending a stable short
+  message instead removes the field's only failure mode along with the code that
+  guards it.
+
 ### 4. `TeammateRuntimeOwner`'s upward channel shrinks instead of growing
 
 The design expected the owner to gain a projection dependency. It already held
