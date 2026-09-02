@@ -118,6 +118,17 @@ a full green suite is not evidence that a boundary rule is right.
 - Feishu transport failures may leave acknowledged platform state imperfect;
   presentation remains fail-open and memory-only rather than adding durable
   recovery or replay.
+- A card whose create or append is still in flight when the session closes may be
+  abandoned unfinished. A single COT operation may run up to
+  `FEISHU_COT_OPERATION_TIMEOUT_MS` (20s) while `close()` drains for
+  `FEISHU_COT_CLOSE_DRAIN_MS` (5s) before aborting, so a slow request is cut off
+  rather than completed and the card stays visually running with nothing in
+  session memory that remembers it. This is structural rather than exceptional,
+  because the drain budget is shorter than one operation's own deadline.
+  Presentation stays fail-open and memory-only rather than adding durable
+  close-out or replay; bounding it properly would mean letting the closing
+  writes finish outside the aborted controller, which is a design change this
+  task does not carry.
 - An Agent Runtime provider that does not implement the optional `nativeTurn`
   sink publishes no native-turn end, so a COT card for that provider opens and
   never closes until an anchor replacement or session close. Both built-in
