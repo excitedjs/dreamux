@@ -23,6 +23,7 @@ import type {
   ChannelMcpToolRegistration,
 } from '@excitedjs/dreamux-types';
 
+import { askUserQuestionDef } from './ask-user-question.js';
 import {
   listChatBotsDef,
   reactDef,
@@ -47,6 +48,7 @@ export const FEISHU_TOOLS: readonly FeishuToolDef[] = [
   replyDef,
   reactDef,
   listChatBotsDef,
+  askUserQuestionDef,
   bindChannelDef,
   unbindChannelDef,
   leaderBindChannelDef,

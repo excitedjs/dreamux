@@ -40,7 +40,13 @@ import { AsyncMutex } from './lib/mutex.js';
 import type { FeishuChannelSessionOptions } from './feishu-channel.js';
 import type { PeerBot } from './chat-bots-store.js';
 import type { FeishuTargetRouter } from './feishu-target-router.js';
-import type { FeishuInboundDelivery } from './feishu-submit.js';
+import { CHANNEL_REMINDER, type FeishuInboundDelivery } from './feishu-submit.js';
+import type {
+  AskUserExpiry,
+  AskUserRegistry,
+  AskUserSettlement,
+} from './feishu-ask-user.js';
+import type { AskUserQuestionSpec } from './feishu-ask-user-card.js';
 import { FeishuOperationError } from './feishu-bounded-operation.js';
 import {
   alwaysActiveSessionFence,
@@ -71,6 +77,8 @@ export interface SessionHandle {
    * learns what a binding or a space policy is.
    */
   delivery: FeishuInboundDelivery;
+  /** Open ask-user rounds; a question outlives the tool call that asked it. */
+  askUser: AskUserRegistry;
 }
 
 /** Build a package-private handle from a session's internal fields. */
@@ -81,6 +89,7 @@ export function sessionHandle(input: {
   botDisplayName: string;
   targetRouter: FeishuTargetRouter;
   delivery: FeishuInboundDelivery;
+  askUser: AskUserRegistry;
   sessionFence?: FeishuSessionFence;
 }): SessionHandle {
   return {
@@ -90,6 +99,7 @@ export function sessionHandle(input: {
     botDisplayName: input.botDisplayName,
     targetRouter: input.targetRouter,
     delivery: input.delivery,
+    askUser: input.askUser,
     sessionFence: input.sessionFence ?? alwaysActiveSessionFence(),
   };
 }
@@ -359,10 +369,161 @@ export async function approvePairingByToken(
   });
 }
 
+/**
+ * Hand a settled ask-user round to Core as an ordinary inbound submission.
+ *
+ * The answer travels the path a typed reply travels, so nothing downstream has
+ * to learn that a card produced it. A delivery that fails is logged and
+ * dropped, exactly as the inbound path treats a message Core would not take:
+ * re-delivering risks a second turn for one answer, and the user can say it
+ * again.
+ */
+async function deliverAskUserSettlement(
+  h: SessionHandle,
+  settlement: AskUserSettlement,
+): Promise<void> {
+  const { target } = settlement;
+  try {
+    const outcome = await h.delivery.deliver({
+      target,
+      containerChatId: target.kind === 'topic' ? target.chatId : null,
+      submission: {
+        attrs: {
+          chat_id: target.chatId,
+          ...(target.threadId !== undefined
+            ? { thread_id: target.threadId }
+            : {}),
+          ...(settlement.cardMessageId !== undefined
+            ? { message_id: settlement.cardMessageId }
+            : {}),
+          // Anyone in the chat may answer the card — an operator ruling, not a
+          // gap ("不需要限制，所有人都可以点"), so there is no check on who
+          // clicked. Carrying the clicker keeps the fact the model would
+          // otherwise lose.
+          ...(settlement.operatorOpenId !== undefined
+            ? { sender_id: settlement.operatorOpenId }
+            : {}),
+          ask_user_request_id: settlement.requestId,
+        },
+        text: settlement.text,
+        reminder: CHANNEL_REMINDER,
+        sourceId: settlement.sourceId,
+        anchor: {
+          chatId: target.chatId,
+          // The question card, never `sourceId`: this id is handed to Feishu as
+          // a COT presentation's origin, and a synthetic one would be sent to
+          // the API as if it were real. Empty when the card id is unknown,
+          // which the COT layer already treats as "no anchor".
+          messageId: settlement.cardMessageId ?? '',
+          target,
+        },
+      },
+    });
+    log(h).info(
+      {
+        dispatcher_id: h.opts.dispatcherId,
+        chat_id: target.chatId,
+        ask_user_request_id: settlement.requestId,
+        ask_user_outcome: settlement.outcome,
+        status: outcome.status,
+      },
+      '[ask-user] answer delivered',
+    );
+  } catch (err) {
+    log(h).error(
+      {
+        dispatcher_id: h.opts.dispatcherId,
+        chat_id: target.chatId,
+        ask_user_request_id: settlement.requestId,
+        err: errInfo(err),
+      },
+      '[ask-user] answer delivery failed',
+    );
+  }
+}
+
+/**
+ * Send a question card and return the round's id.
+ *
+ * Nothing is awaited beyond the send. The click that answers arrives on the
+ * card-action route, and the answer reaches Core as an inbound submission, so
+ * the tool that called this is long finished by the time the user decides.
+ *
+ * `messageId` is the message the question came out of, and the target follows
+ * it the way an ordinary reply does — into that message's topic, under the
+ * anchor the router holds for it. Without one the target names the chat, and
+ * in a topic group the card opens a topic of its own, which is right for a
+ * question that belongs to no particular message and wrong for one that does.
+ *
+ * The round is put in play only once the card is really sent, so a send that
+ * throws leaves no question behind and fails where the model can see it.
+ */
+export async function askUserQuestion(
+  h: SessionHandle,
+  input: {
+    chatId: string;
+    questions: readonly AskUserQuestionSpec[];
+    messageId?: string;
+  },
+): Promise<{ request_id: string }> {
+  const target = h.targetRouter.outboundTarget(input.chatId, input.messageId);
+  const opened = h.askUser.open({ questions: input.questions, target });
+  const sent = await sendCard(h, {
+    target: h.targetRouter.notificationTarget(target),
+    card: opened.card,
+    mode: 'inbound',
+  });
+  opened.activate(sent.messageIds[0]);
+  return { request_id: opened.requestId };
+}
+
+/**
+ * Close out a round that ran out of time.
+ *
+ * Both halves are best-effort and independent: the model is told there is no
+ * answer, and the card is repainted so the user is not left looking at a
+ * question that silently stopped working. A failed repaint must not cost the
+ * model its notification, which is why the patch is awaited separately.
+ */
+export async function expireAskUserQuestion(
+  h: SessionHandle,
+  expiry: AskUserExpiry,
+): Promise<void> {
+  await deliverAskUserSettlement(h, expiry.settlement);
+  const { messageId } = expiry;
+  if (messageId === undefined) return;
+  try {
+    await h.bot.editCard(messageId, expiry.card);
+  } catch (err) {
+    log(h).warn(
+      {
+        dispatcher_id: h.opts.dispatcherId,
+        message_id: messageId,
+        ask_user_request_id: expiry.settlement.requestId,
+        err: errInfo(err),
+      },
+      '[ask-user] expired card repaint failed',
+    );
+  }
+}
+
 export async function handleCardAction(
   h: SessionHandle,
   event: FeishuCardActionEvent,
 ): Promise<FeishuCardActionResponse | Record<string, never>> {
+  const applied = h.askUser.apply(event);
+  if (applied.kind !== 'ignored') {
+    if (applied.kind === 'settled') {
+      // Detached deliberately. Feishu gives a card callback a few seconds
+      // before it gives up and the click looks dead, and handing the answer to
+      // Core means waking an agent — long enough to lose that window. Delivery
+      // logs its own failure at error level and has nothing to report back
+      // here anyway.
+      void deliverAskUserSettlement(h, applied.settlement);
+    }
+    return applied.response;
+  }
+
   const action = String(event.actionValue[DREAMUX_ACTION_KEY] ?? '');
   if (action !== DREAMUX_PAIRING_CARD_ACTION) return {};
 
