@@ -271,6 +271,15 @@ propagates and the router's own `settleWithinDeadline` catches it, giving the
 same dropped-without-retry outcome under a different log line. The operator
 ruled that difference away: 「日志这种东西根本不重要」.
 
+**The result vocabulary survives the merge unchanged.** Verified:
+`turnAdmissionToCompletionDelivery` (`turn-coordinator.ts:340-356`) maps
+`stopped` to `{ status: 'unsupported', reason: 'runtime stopped' }`. So
+`start: false` against a recipient with no runtime returns `stopped`, which the
+existing translation turns into exactly the `unsupported` the router reads
+today. Only the `reason` string differs from
+`'teammate runtime not running'` — log wording, which the operator ruled out as
+a reason to keep code.
+
 `prepareCompletion`'s own liveness check becomes redundant with the submit-time
 one but **stays**: it is what stops Core rendering a completion body — and
 possibly spilling a large one to disk — for a recipient that is already gone.
