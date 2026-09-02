@@ -152,8 +152,15 @@ home as `~`.
     remains a per-logical-submission lifecycle fact and never closes, reopens,
     re-anchors, or partitions a COT card. A native completed end closes the current
     card as completed; failed or interrupted native ends close it as interrupted.
-    Channel-user anchor replacement is the only independent reason to close one
-    card and open its successor while the same native turn is still running.
+    Two independent reasons close one card and open its successor while the same
+    native turn is still running. The first is Channel-user anchor replacement.
+    The second was added with the operator's agreement by
+    [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md)
+    (rulings 4, 8 and 9, recorded there): an input that reaches no runtime makes
+    Core publish its own `turn.ended` with `status: 'failed'`, which ends the one
+    open card even when a native turn is still producing. That turn's remaining
+    activity opens the successor card at the same anchor under item 8, so a
+    reader sees a failed card followed by one that finishes normally.
 
 ## Accepted best-effort losses
 
@@ -167,6 +174,13 @@ home as `~`.
   subsequent anchor replacement or session close.
 - A tool-call result that crosses an anchor replacement may be omitted. This task
   does not add cross-card tool-call recovery or migration.
+- The same loss follows any card ending, not only an anchor replacement.
+  `finishCard` clears the recipient's open-call state unconditionally, so when
+  Core's synthesized failed end (item 14) closes a card while a native turn is
+  still running, that turn's outstanding tool call loses its pairing: the result
+  arrives, finds no recorded start, and is neither displayed nor allowed to open
+  a successor card. Assistant text from the same turn still opens the successor,
+  so what is lost is the one tool row, not the card.
 
 ## Existing COT behavior retained or completed
 

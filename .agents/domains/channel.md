@@ -204,8 +204,9 @@ Omission *is* the Channel's decision. Both forms are the one generic
 optional standing reminder, and a stable `source_id` that Core deduplicates a
 repeat on; Core renders the provenance envelope itself. Nothing about chats,
 threads, or topic mode crosses. The returned `turn_id` names the exact turn the
-call created, which is what lets a Channel claim the matching submitted event as
-its own.
+call created. A Channel recognizes its own submission by the `source_id` it
+sent, which Core echoes on `teammate.input`; there is no per-submission turn
+event left to claim.
 
 Source:
 
@@ -574,7 +575,8 @@ A Channel session receives one read-only `ChannelEventSource` with a single
 the whole `ChannelCoreEvent` union and demultiplexes inside the Channel, so adding
 an event changes only that catalog and its consumers.
 
-Turn events expose one process-local `turn_id` for presentation correlation but no
+No event carries a turn identity: presentation correlation is the `source_id` a
+caller supplied, echoed back on its own input, and nothing exposes a
 runtime-native Turn object or transcript. Conversation events may contain bounded,
 redacted user/assistant display text and bounded tool arguments/results; other
 events contain no prompt or assistant text. No event contains native transcript
@@ -614,7 +616,7 @@ team-scoped entities, not a Feishu role filter in core. TeamLeaders and Team
 members publish the event surface; team-less dispatcher-spawned TeamMates do not
 participate. Its scope is either a team-less dispatcher or a named
 TeamLeader/Team member; an origin-less dispatcher turn is rejected by one core
-predicate before submitted, activity, or settled facts can enter the bus.
+predicate before any input or activity fact can enter the bus.
 
 The Feishu session subscribes through `feishu-cot-adapter`. It owns card
 anchoring, event-to-card projection, bounded outbox batching, serialized I/O, and
