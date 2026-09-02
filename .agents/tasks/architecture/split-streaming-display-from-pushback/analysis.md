@@ -375,6 +375,81 @@ What genuinely shrinks:
   and a pending duplicate shares one admission, so either way exactly one
   `input` is published.
 
+### The concrete change list
+
+File by file, what a reviewer would see in the diff. Verified against the
+current source; where a reviewer's omission list was wrong, that is noted.
+
+**1. `packages/dreamux-types/src/agent-runtime.ts`**
+- `RuntimeActivity` gains `{ kind: 'turn.ended'; status }`, absorbing
+  `RuntimeNativeTurnEnd`.
+- `RuntimeActivityEvent` goes; it exists only to carry `submission`. The sink
+  takes a `RuntimeActivity` directly.
+- `AgentRuntimeNativeTurnSink`, `RuntimeNativeTurnEnd`, and the `nativeTurn`
+  slot on `AgentRuntimeCreateContext` go.
+- `AgentRuntimeSubmissionInput` is **not touched**.
+
+**2. Both runtimes**
+- The four Claude Code and four codex native-end report sites stay — they are
+  where the fact is known — but they emit through the one activity sink instead
+  of a second sink.
+- codex: `NativeTurnRecord.nativeTurnEnded` goes (redundant, confirmed by both
+  reviews). `pendingActivity` goes — it is the early-arrival buffer inside the
+  provider. `representative` stops being used to attribute activity.
+  `unboundObservedTurnIds` and `dropOrphanActivityIfIdle` **stay**, reduced to
+  the `collector.releaseTurn` memory release they also serve.
+- Claude Code: `{ priority: 'now' }` and its three explaining comments go, per
+  the operator's ruling.
+
+**3. `runtime-owner.ts`**
+- `generationActivitySink` keeps the generation fence, and now also stamps the
+  Agent and calls the projection directly. `generationNativeTurnSink` goes.
+- This is where actor attribution belongs: the owner already maps a generation
+  to an entity and already holds the identity.
+
+**4. `turn-coordinator.ts` — every line COT added comes out**
+- `turnsBySubmission`, `earlyActivity`, `EARLY_ACTIVITY_EVENTS_MAX`,
+  `warnEarlyActivityFull`, `projectDisplay`, `projectActorDisplay`,
+  `warnProjectionFailure`, `activitySink`, `nativeTurnSink`, and the
+  `conversationProjection` / `role` options.
+- The file returns to its pre-#347 shape: turn admission serialization only.
+
+**5. `teammate-service/index.ts`**
+- In `submitAdmitted`, one line before `runtime.submit({ text })`: publish the
+  `input` activity from `input.text`, `input.source`, `input.sourceId` and the
+  Agent identity.
+- `submitRuntimeTurn` stops being handed `source`, `sourceId` and `prompt`.
+
+**6. `turn-recording.ts`**
+- `EntityTurn` loses `source`, `sourceId` and `prompt`.
+- **`EntityTurn.id` stays.** A reviewer listed it as losing its last reader;
+  that is wrong — `teamSubmitResult` returns it as `turn_id` on a submitted
+  receipt (`team-service/types.ts:133`), which is caller-facing, not display.
+
+**7. `conversation-projection.ts`**
+- `projectSubmitted`, `projectSettled`, `projectNativeTurnEnd` and
+  `projectActivity` collapse to one `projectActivity(agent, activity)`.
+- `ProjectableTurn` goes with them.
+- The activity-fact dedupe and `CONVERSATION_ACTIVITY_FACTS_MAX` go.
+- Redaction and every size bound stay exactly as they are.
+
+**8. `dreamux-types/src/teammate.ts` and `dispatcher-core-events/seal.ts`**
+- Five kinds out: `teammate.turn.submitted`, `.settled`, `.message`,
+  `.tool_call`, `teammate.native_turn.ended`. One in: `teammate.activity`.
+- The sealed catalog goes from seven kinds to three.
+
+**9. Feishu**
+- `feishu-cot-session.ts`: the five-case switch becomes one.
+- `feishu-cot-adapter.ts`: the open-call key and own-body suppression stop
+  keying on `turn_id` and key on the Agent plus the `sourceId` comparison the
+  Channel already performs.
+- `feishu-inbound-anchor.ts`: the comparison is unchanged; only where the id
+  arrives from changes.
+
+**10. Knowledge delta, same change**
+- `.agents/domains/provider-runtime.md` and `.agents/domains/channel.md` both
+  describe the current two-sink, seven-kind shape.
+
 ### Still open
 
 - **Whether `teammate.turn.settled` may simply go.** See above. flowx is a
