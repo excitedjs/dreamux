@@ -27,7 +27,16 @@ const TRUNCATION_MARKER = '…（已截断）';
 const COT_EVENT_ENCODING_RESERVE_BYTES = 128;
 const COT_REQUEST_ENCODING_RESERVE_BYTES = 512;
 
-export type FeishuCotRunStatus = 'done' | 'interrupted';
+/**
+ * How a card ends: the same three words the runtime uses for a turn end,
+ * because a card's terminal *is* the end of what it was showing. The lifecycle
+ * paths that end a card with no runtime saying so — a retired anchor, a session
+ * close — are exactly `interrupted`. Wire spelling is this module's business.
+ */
+export type FeishuCotTerminal = Extract<
+  TeammateActivity,
+  { kind: 'turn.ended' }
+>['status'];
 
 export function runStartedEvent(presentationId: string): FeishuCotEventInput {
   return checkedEvent({
@@ -36,14 +45,40 @@ export function runStartedEvent(presentationId: string): FeishuCotEventInput {
   });
 }
 
-export function runFinishedEvent(
+/**
+ * The one event that ends a card, across two event types: AG-UI puts a failure
+ * in `RUN_ERROR` rather than among the values of `RUN_FINISHED.status`, and the
+ * Feishu client agrees. Probed live 2026-09-02 — `RUN_FINISHED` renders 已完成
+ * for `failed` exactly as it does for a deliberately nonsense status, and only
+ * `RUN_ERROR` renders 任务失败. The platform accepted all of them, so only the
+ * rendered card is evidence.
+ *
+ * `RUN_ERROR` carries the fixed `message`/`code` the probe verified, not the
+ * turn's own reason: that reason is already a text message on this card just
+ * above the terminal, so repeating it would show the same text twice.
+ */
+export function runTerminalEvent(
   presentationId: string,
-  status: FeishuCotRunStatus,
+  terminal: FeishuCotTerminal,
 ): FeishuCotEventInput {
-  return checkedEvent({
-    eventType: 'RUN_FINISHED',
-    content: { threadId: presentationId, runId: presentationId, status },
-  });
+  const run = { threadId: presentationId, runId: presentationId };
+  switch (terminal) {
+    case 'completed':
+      return checkedEvent({
+        eventType: 'RUN_FINISHED',
+        content: { ...run, status: 'done' },
+      });
+    case 'interrupted':
+      return checkedEvent({
+        eventType: 'RUN_FINISHED',
+        content: { ...run, status: 'interrupted' },
+      });
+    case 'failed':
+      return checkedEvent({
+        eventType: 'RUN_ERROR',
+        content: { ...run, message: '任务失败', code: 'run_failed' },
+      });
+  }
 }
 
 export function textMessageEvents(input: {

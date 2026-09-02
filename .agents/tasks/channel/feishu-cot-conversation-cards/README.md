@@ -22,8 +22,11 @@
   echo) and the optional `nativeTurn` provider sink are deleted. Display is keyed
   on the Agent: Core publishes `teammate.input`, carrying the same `source_id`,
   and `teammate.activity`, whose `turn.ended` member is the card's only terminal.
-  Read every mechanism named below under one of those old names through that
-  mapping.
+  That terminal is also no longer two-valued: a `failed` end ends the card with
+  AG-UI's `RUN_ERROR` event, which is what renders 任务失败, so requirement item
+  14's "failed or interrupted native ends close it as interrupted" no longer
+  holds. Read every mechanism named below under one of those old names through
+  that mapping.
 - State: `in-progress`
 - Requirement: [Current requirement](/.agents/tasks/channel/feishu-cot-conversation-cards/requirement.md)
 - Technical design: owned by the single Claude implementation developer. The

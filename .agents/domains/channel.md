@@ -662,11 +662,16 @@ nowhere to place one, not because its source or kind was filtered.
 A card's one terminal is a `turn.ended` activity. There is no per-submission
 lifecycle fact at this boundary at all: a provider folds any number of
 submissions into one native turn, so settlement could never say whether the card
-an operator is watching has finished. A `completed` end closes the current card
-as done; `failed` and `interrupted` close it as interrupted, printing the end's
-reason on the card first when it carries one. The Channel's own COT vocabulary
-has no third terminal value, so an operator reads *that it failed* from the
-printed reason rather than from the wire status. The fact closes an already open card and
+an operator is watching has finished. The end's three statuses are the
+card's three terminals, and they are spelled across two AG-UI events, not one:
+`completed` and `interrupted` are `RUN_FINISHED` statuses (`done` and
+`interrupted`), while `failed` is a separate `RUN_ERROR` event, which is where
+AG-UI puts a failure terminal. The reason is printed on the card first when the
+end carries one. A `RUN_FINISHED` carrying `failed` was probed live and renders
+as *completed* in the Feishu client — identically to a deliberately nonsense
+status — so the distinction is real and only `RUN_ERROR` states it. `RUN_ERROR`
+carries a fixed message and code rather than the end's reason, which the card
+already shows. The fact closes an already open card and
 never opens one, so it is ignored when no card is open — a repeated end is
 therefore harmless. A create or append the platform refuses abandons only that
 presentation: the standing anchor survives it, and the next opening activity may

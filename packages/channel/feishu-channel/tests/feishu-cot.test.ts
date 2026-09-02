@@ -42,8 +42,8 @@ import { FeishuCotSessionSeam } from '../src/feishu-cot-session.js';
 import type { VisibleMessageAnchor } from '../src/feishu-cot-state.js';
 import { chatTarget, topicTarget } from '../src/routing/target.js';
 import {
-  cotRunFinishedCount,
-  cotRunStatus,
+  cotTerminalCount,
+  cotTerminal,
   cotTexts,
   cotToolNames,
   cotToolResultCount,
@@ -307,7 +307,7 @@ describe.each([LEADER, DISPATCHER])(
         'om_3',
       ]);
       // Every superseded card was interrupted; exactly one is still open.
-      expect(cot.cards.map(cotRunStatus)).toEqual([
+      expect(cot.cards.map(cotTerminal)).toEqual([
         'interrupted',
         'interrupted',
         null,
@@ -331,13 +331,13 @@ describe.each([LEADER, DISPATCHER])(
 
       expect(cot.cards).toHaveLength(2);
       const [first, second] = cot.cards as [typeof cot.cards[0], typeof cot.cards[0]];
-      expect(cotRunStatus(first)).toBe('interrupted');
+      expect(cotTerminal(first)).toBe('interrupted');
       expectOpeningTexts(first, ['first thought']);
       // The still-running native turn keeps producing, into the card the
       // operator is now looking at.
       expect(second.originMessageId).toBe('om_second');
       expectOpeningTexts(second, ['still the same native turn']);
-      expect(cotRunStatus(second)).toBeNull();
+      expect(cotTerminal(second)).toBeNull();
 
       await adapter.close();
     });
@@ -355,13 +355,13 @@ describe.each([LEADER, DISPATCHER])(
       await settle();
 
       const card = cot.cards[0]!;
-      expect(cotRunStatus(card)).toBe('done');
-      expect(cotRunFinishedCount(card)).toBe(1);
+      expect(cotTerminal(card)).toBe('done');
+      expect(cotTerminalCount(card)).toBe(1);
       // A second end is not a second terminal, and opens nothing.
       adapter.onActivity(nativeEnd(recipient, 'completed'));
       await settle();
       expect(cot.cards).toHaveLength(1);
-      expect(cotRunFinishedCount(card)).toBe(1);
+      expect(cotTerminalCount(card)).toBe(1);
 
       await adapter.close();
     });
@@ -372,7 +372,7 @@ describe.each([LEADER, DISPATCHER])(
       adapter.onActivity(nativeEnd(recipient, 'completed'));
       await settle();
       expect(cot.cards).toHaveLength(1);
-      expect(cotRunStatus(cot.cards[0]!)).toBe('done');
+      expect(cotTerminal(cot.cards[0]!)).toBe('done');
 
       // The anchor still stands, but nothing is open. A terminal has nothing to
       // finish, so it produces no card at all — not even one opened to close.
@@ -391,20 +391,38 @@ describe.each([LEADER, DISPATCHER])(
       await adapter.close();
     });
 
-    it.each(['failed', 'interrupted'] as const)(
-      'closes the card as interrupted on a %s native turn end',
-      async (status) => {
-        const { adapter, cot } = harness();
-        submitInbound(adapter, recipient, 'turn-1', anchorAt('oc_home', 'om_1'));
-        await settle();
+    it('closes the card as interrupted on an interrupted native turn end', async () => {
+      const { adapter, cot } = harness();
+      submitInbound(adapter, recipient, 'turn-1', anchorAt('oc_home', 'om_1'));
+      await settle();
 
-        adapter.onActivity(nativeEnd(recipient, status));
-        await settle();
+      adapter.onActivity(nativeEnd(recipient, 'interrupted'));
+      await settle();
 
-        expect(cotRunStatus(cot.cards[0]!)).toBe('interrupted');
-        await adapter.close();
-      },
-    );
+      expect(cotTerminal(cot.cards[0]!)).toBe('interrupted');
+      await adapter.close();
+    });
+
+    it('ends the card as a failure on a failed native turn end', async () => {
+      const { adapter, cot } = harness();
+      submitInbound(adapter, recipient, 'turn-1', anchorAt('oc_home', 'om_1'));
+      await settle();
+
+      adapter.onActivity(nativeEnd(recipient, 'failed'));
+      await settle();
+
+      // AG-UI puts the failure terminal in its own event: a `RUN_FINISHED`
+      // carrying `failed` renders as completed in the Feishu client, exactly
+      // like a nonsense status, so a failed turn must not use one.
+      const card = cot.cards[0]!;
+      expect(cotTerminal(card)).toBe('error');
+      expect(card.events.at(-1)?.eventType).toBe('RUN_ERROR');
+      expect(cotTerminalCount(card)).toBe(1);
+
+      // Already ended: the session close that follows adds no second terminal.
+      await adapter.close();
+      expect(cotTerminalCount(card)).toBe(1);
+    });
 
     it('shows a tool row and its result on the open card', async () => {
       const { adapter, cot } = harness();
@@ -443,7 +461,7 @@ describe.each([LEADER, DISPATCHER])(
       await adapter.close();
     });
 
-    it('prints an end reason on the card before closing it as interrupted', async () => {
+    it('prints an end reason on the card before ending it as a failure', async () => {
       const { adapter, cot } = harness();
       submitInbound(adapter, recipient, 'turn-1', anchorAt('oc_home', 'om_1'));
       // An input Core admitted but no runtime accepted ends its own card and
@@ -454,7 +472,7 @@ describe.each([LEADER, DISPATCHER])(
       await settle();
 
       const card = cot.cards[0]!;
-      expect(cotRunStatus(card)).toBe('interrupted');
+      expect(cotTerminal(card)).toBe('error');
       expectOpeningTexts(card, ['the agent runtime is not running']);
 
       await adapter.close();
@@ -466,7 +484,7 @@ describe.each([LEADER, DISPATCHER])(
       await settle();
 
       await adapter.close();
-      expect(cotRunStatus(cot.cards[0]!)).toBe('interrupted');
+      expect(cotTerminal(cot.cards[0]!)).toBe('interrupted');
 
       // A restarted session is a new adapter with an empty memory: there is no
       // restore, replay, or backfill, so the same recipient starts anchorless.
@@ -512,8 +530,8 @@ describe('Feishu COT — the two recipients are independent presentations', () =
     // One recipient's native turn ending closes only that recipient's card.
     adapter.onActivity(nativeEnd(LEADER, 'completed'));
     await settle();
-    expect(cotRunStatus(cot.cards[0]!)).toBe('done');
-    expect(cotRunStatus(cot.cards[1]!)).toBeNull();
+    expect(cotTerminal(cot.cards[0]!)).toBe('done');
+    expect(cotTerminal(cot.cards[1]!)).toBeNull();
 
     await adapter.close();
   });
@@ -632,7 +650,7 @@ describe('Feishu COT — stale lifecycle callbacks', () => {
 
     adapter.onTeamState(teamState('alpha', 'alpha-leader', 'closed'));
     await settle();
-    expect(cotRunStatus(cot.cards[0]!)).toBe('interrupted');
+    expect(cotTerminal(cot.cards[0]!)).toBe('interrupted');
 
     // Fenced: later facts, and even a fresh anchor, present nothing.
     adapter.onActivity(message(LEADER, 'too late'));
@@ -653,7 +671,7 @@ describe('Feishu COT — stale lifecycle callbacks', () => {
     await settle();
 
     expect(cot.cards).toHaveLength(1);
-    expect(cotRunStatus(cot.cards[0]!)).toBeNull();
+    expect(cotTerminal(cot.cards[0]!)).toBeNull();
     expectOpeningTexts(cot.cards[0]!, ['still going']);
 
     await adapter.close();
@@ -667,7 +685,7 @@ describe('Feishu COT — stale lifecycle callbacks', () => {
 
     adapter.onRouteReleased({ teamName: 'alpha', target });
     await settle();
-    expect(cotRunStatus(cot.cards[0]!)).toBe('interrupted');
+    expect(cotTerminal(cot.cards[0]!)).toBe('interrupted');
 
     // While unbound, that target may not anchor this Team again.
     submitInbound(adapter, LEADER, 'turn-2', anchorAt('oc_team', 'om_2', target));
@@ -832,11 +850,11 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
 
     seam.handle(message(LEADER, 'still working'));
     await settle();
-    expect(cotRunStatus(cot.cards[0]!)).toBeNull();
+    expect(cotTerminal(cot.cards[0]!)).toBeNull();
 
     seam.handle(nativeEnd(LEADER, 'completed'));
     await settle();
-    expect(cotRunStatus(cot.cards[0]!)).toBe('done');
+    expect(cotTerminal(cot.cards[0]!)).toBe('done');
 
     await seam.close();
   });
@@ -890,7 +908,7 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
     expect(cot.cards).toHaveLength(1);
 
     await seam.close();
-    expect(cotRunStatus(cot.cards[0]!)).toBe('interrupted');
+    expect(cotTerminal(cot.cards[0]!)).toBe('interrupted');
     submitThroughSeam(seam, LEADER, 'turn-3', anchorAt('oc_team', 'om_3'));
     seam.handle(message(LEADER, 'after close'));
     await settle();

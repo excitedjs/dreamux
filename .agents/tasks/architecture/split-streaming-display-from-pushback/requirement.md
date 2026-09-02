@@ -283,15 +283,21 @@ recorded in `technical-design/final.md` § As built, items 2 and 3.
   an answer is lost; what it costs is that the alternative — silence — would
   have to be written as a special case in the one publish path.
 
-- **The wire terminal waits on a probe.** The operator chose 「先探平台再定」
-  over accepting `interrupted` as final. The neutral fact already carries
-  `status: 'failed'`; only the Feishu wire is undecided, because
-  `FeishuCotRunStatus` is `'done' | 'interrupted'` and nothing in this repo
-  records which values the platform's AG-UI `RUN_FINISHED` accepts. So the
-  merged implementation keeps `interrupted`, and a live probe settles whether a
-  failed status is accepted. If it is, the change is one value in
-  `feishu-cot-events.ts`. Guessing without the probe risks the platform
-  rejecting the whole append batch, which breaks the card outright.
+- **The wire terminal was settled by a probe, and the probe overturned the
+  premise.** The operator chose 「先探平台再定」 over accepting `interrupted` as
+  final. The neutral fact already carried `status: 'failed'`; only the Feishu
+  wire was undecided, because nothing in this repo — and nothing in any public
+  Feishu doc — records what the platform's AG-UI terminal vocabulary is. The
+  probe found two things the pre-probe reasoning had wrong. The platform
+  accepts a deliberately nonsense `RUN_FINISHED` status with `code: 0`, so the
+  named risk (a rejected append batch breaking the card) does not exist and
+  acceptance is not evidence of anything; only the rendered card is. And the
+  failure terminal is not a `RUN_FINISHED` status at all — AG-UI puts it in a
+  separate `RUN_ERROR` event, which renders 任务失败 where `RUN_FINISHED` with
+  `failed` renders 已完成, identically to the nonsense status. As built, the
+  card terminal is three-valued: `RUN_FINISHED done`, `RUN_FINISHED
+  interrupted`, and `RUN_ERROR` for a failed end. Full record in
+  `technical-design/final.md` § As built, item 3.
 
 - **`rush typecheck:tests` joins the green line.** The operator chose
   「加进绿线」. `CLAUDE.md`'s Build And Test section now lists four commands, with

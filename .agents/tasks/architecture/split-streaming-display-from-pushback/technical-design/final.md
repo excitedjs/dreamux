@@ -994,7 +994,7 @@ The window is narrow: `prepareCompletion`'s own liveness check refuses first in
 the common case, so this fires only when the runtime disappears between prepare
 and submit. Pinned by a test so a decision to revert it is a one-line change.
 
-### 3. Ruling 4's 「置成失败」 is `failed` in the neutral fact, `interrupted` on the wire
+### 3. Ruling 4's 「置成失败」 is `failed` in the neutral fact and `RUN_ERROR` on the wire
 
 `failedAdmissionReason` gives all four non-`submitted` admissions the same
 verdict — `status: 'failed'` on the published `turn.ended` — because that is
@@ -1002,67 +1002,62 @@ what the ruling says, and a ruling is quoted, never stretched. Only the reason
 differs between the four, so only the reason is returned; the status is a
 constant of the rule, not data.
 
-The Feishu wire cannot say it.
-`FeishuCotRunStatus` is `'done' | 'interrupted'`, and the platform's AG-UI
-`RUN_FINISHED` status vocabulary is not documented anywhere in this repo. The
-COT `complete` endpoint accepts `'error'`, but that is the card-abandonment path
-for transport failures and conflates "our card broke" with "the submission
-failed". Guessing a third `RUN_FINISHED` status risks the platform rejecting the
-whole append batch, which breaks the card outright.
+This item first shipped claiming the Feishu wire could not say it, on the
+reasoning that `FeishuCotRunStatus` was `'done' | 'interrupted'` and that
+guessing a third `RUN_FINISHED` status risked the platform rejecting the whole
+append batch. **Both halves of that were wrong**, and the operator's ruling
+「先探平台再定」 is what found it out. `message_cot` is absent from every public
+Feishu doc — the `llms.txt` index, the messaging, AI, aily, card, bot and MCP
+module docs, and web search — so there was no document to check, only a probe.
 
-As built, ruling 4's stated failure mode — a published input leaving a card open
-forever — is fully prevented: the card **ends**, and ruling 9's error text is
-printed on it first. The wire terminal is `interrupted`. If the platform does
-accept a failed status, this is a one-value change in `feishu-cot-events.ts`.
+Four cards were created, finished with a different terminal each, and read in
+the client:
 
-**Probed live on 2026-09-02, and the API cannot settle it.** The operator ruled
-「先探平台再定」, so three COT cards were created and finished with
-`RUN_FINISHED` carrying `failed`, `interrupted`, and a deliberately nonsense
-status. **All three returned `code: 0`**, and all three read back through
-`GET /open-apis/im/v1/messages/:id` with the identical generic body
-(`"Completed"`), which is the COT summary text rather than a projection of the
-run status. Two conclusions follow:
+| terminal sent | renders as |
+|---|---|
+| `RUN_FINISHED` with `status: 'failed'` | 已完成 |
+| `RUN_FINISHED` with `status: 'interrupted'` | 已中断 |
+| `RUN_FINISHED` with a deliberately nonsense status | 已完成 |
+| `RUN_ERROR` | **任务失败** |
 
-- The platform does **not** validate this enum at the API level, so acceptance
-  is not evidence that a value is recognised. The risk this section named —
-  guessing a status and having the platform reject the whole append batch,
-  breaking the card — **does not exist**. The worst case of a wrong value is a
-  terminal that renders as something else.
-- Nothing readable through the API distinguishes the three, so the remaining
-  evidence is the rendered card, which only a human in the chat can compare.
+- **`code: 0` is not evidence.** The platform accepted every one of them,
+  including the nonsense status, so it does not validate this enum at the API
+  level and the rejection risk this item named does not exist. Only the rendered
+  card answers, which is why the API-level part of the probe settled nothing.
+- **The failure terminal exists and is a different event, not a status value.**
+  AG-UI puts it in `RUN_ERROR`. This layer had been looking for it among the
+  values of `RUN_FINISHED.status`, where it is not.
 
-The decision is therefore a visual comparison, not an API question. The
-operator made it, reading the three cards: `failed` rendered **已完成**
-(completed), `interrupted` rendered **已中断**, and the nonsense status
-rendered **已完成**.
+As built, the wire terminal is three-valued across two event types.
+`FeishuCotRunStatus` is gone; the presentation's terminal intent is
+`FeishuCotTerminal`, which is the neutral `turn.ended` status itself
+(`Extract<TeammateActivity, { kind: 'turn.ended' }>['status']`). One vocabulary
+now runs from the runtime to the card: `finishCard` passes `end.status` through
+with no mapping, and the lifecycle paths that end a card with no runtime saying
+so — a retired anchor, a session close — keep passing `'interrupted'`, because a
+retired anchor is not a failure.
 
-**Settled: `interrupted` stays, and the reason is now stronger than the one
-this section originally gave.** `failed` is not a value the platform
-recognises — it is indistinguishable from nonsense, and both fall back to
-*completed*. Sending it would make a submission that never reached a runtime
-claim on the card that it finished normally, which is worse than the
-imprecision of `interrupted`. `FeishuCotRunStatus` stays `'done' |
-'interrupted'`, and the neutral fact keeps `status: 'failed'` because that is
-what ruling 4 says and Core is not the layer that lost the distinction.
+`runFinishedEvent` is replaced by one `runTerminalEvent(presentationId,
+terminal)` with an exhaustive switch: `completed` → `RUN_FINISHED done`,
+`interrupted` → `RUN_FINISHED interrupted`, `failed` → `RUN_ERROR`. Exporting a
+`runErrorEvent` beside the old function was the alternative and was rejected: it
+would put "a failure is a different event type" — AG-UI spelling, which is this
+module's whole job — into the adapter's flush loop. A fourth `turn.ended` status
+would now fail to compile at that switch rather than silently render as
+interrupted.
 
-**A recognised failure terminal does exist, and it is a different event.** The
-AG-UI standard puts the failure terminal in a separate `RUN_ERROR` event rather
-than a status value, so that was probed too: a card finished with `RUN_ERROR`
-renders **任务失败** (task failed). That is the terminal ruling 4 asks for, and
-this layer was looking for it in the wrong place — in the values of
-`RUN_FINISHED.status`, where it does not exist.
-
-So the wire terminal is three-valued, not two: `RUN_FINISHED` with `done`,
-`RUN_FINISHED` with `interrupted`, and `RUN_ERROR`. A `turn.ended` carrying
-`status: 'failed'` maps to the third. Implementing that is a small change in
-`feishu-cot-events.ts` and the adapter's terminal intent, and it makes ruling
-4 reach the card it was always about.
-
-Documentation was not available to answer any of this: `message_cot` is absent
-from every public Feishu doc — the `llms.txt` index, the messaging, AI, aily,
-card, bot and MCP module docs, and web search. The vocabulary can only be
-probed, and `code: 0` is not a probe result, because the platform accepts a
-deliberately nonsense status too. Only the rendered card answers.
+`RUN_ERROR` carries the fixed `message`/`code` the probe verified rather than
+the turn's failure reason. Three reasons: the reason is already printed as a
+text message on the card immediately before the terminal, so ruling 9 does not
+depend on it and repeating it would show the same text twice wherever the
+platform renders the field; carrying it would turn `terminalIntent` from a
+scalar into an object across four `detach` call sites; and a terminal event
+cannot be chunked the way `TEXT_MESSAGE_CONTENT` is, so a reason of any length
+would need its own truncation path against `checkedEvent`'s 4 KiB throw. The
+fields are present rather than omitted because the probe's
+`{ threadId, runId, message, code }` is the only shape verified to render
+任务失败, and "the platform does not validate the status enum" is not "the
+platform requires no fields" — AG-UI marks `message` required in any case.
 
 ### 4. `TeammateRuntimeOwner`'s upward channel shrinks instead of growing
 

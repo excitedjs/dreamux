@@ -6,7 +6,9 @@
 - State: `implemented` — built on branch `refactor/split-display-from-pushback`;
   `rush build`, `rush lint`, `rush typecheck:tests`, and `rush test` all green,
   and the issue #63 live gate (`tests/codex-live.test.ts`, 8/8) passes against a
-  real codex 0.151.0 rather than being skipped.
+  real codex 0.151.0 rather than being skipped. The card terminal is
+  three-valued as of the 2026-09-02 probe: `RUN_FINISHED done`,
+  `RUN_FINISHED interrupted`, and `RUN_ERROR` for a failed end.
 - Requirement: [Current requirement](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md)
 - Review record:
   [review-corrections.md](/.agents/tasks/architecture/split-streaming-display-from-pushback/review-corrections.md)
@@ -41,12 +43,13 @@
      "stays invisible" and "needs its own ruling". Kept because the alternative
      is a special case; pinned by a test, so reverting is one line. See
      `final.md` § As built, item 2.
-  2. **Ruling 4's 「置成失败」 reaches the neutral fact but not the Feishu wire.**
-     All four non-`submitted` admissions publish `turn.ended` with
-     `status: 'failed'`. `FeishuCotRunStatus` is `done | interrupted` and the
-     platform's accepted `RUN_FINISHED` statuses are undocumented here, so the
-     card ends as `interrupted` carrying the error text rather than under a
-     guessed third status. See item 3.
+  2. **Ruling 4's 「置成失败」 now reaches the card.** All four non-`submitted`
+     admissions publish `turn.ended` with `status: 'failed'`, and a failed end
+     ends the Feishu card with AG-UI's `RUN_ERROR` event, which the client
+     renders as 任务失败. The earlier reading — that the wire had no failure
+     terminal — was wrong: it was being looked for among the values of
+     `RUN_FINISHED.status`, where AG-UI does not put it. Settled by the
+     2026-09-02 live probe; see item 3.
 
   Recorded and deliberately not done:
   - `isSynthetic` is producer-less in `src/` exactly like `priority` was, but
@@ -63,6 +66,13 @@
     dropped an unlisted kind; it is now derived from an exhaustive
     `Record<ChannelCoreEvent['kind'], true>`, so a missing entry fails to
     compile.
+  - `feishu-cot-events.ts` is at 696 of its 700-line lint cap after the
+    three-valued terminal landed. The seam that would relieve it is real — the
+    tool *presentation* catalog (icons, titles, per-tool result shapes) is a
+    different concern from AG-UI event construction and byte budgeting — but
+    moving ~250 lines of a well-tested presentation layer is not this task's
+    scope. Recorded rather than done: the next change to this file should split
+    it, not shave comments.
   - `rush typecheck:tests` is not part of `rush build`, `rush lint`, or
     `rush test`, so two test files stayed green while compiling against deleted
     types. Both are rewritten, and that command belongs in the green bar for any

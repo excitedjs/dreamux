@@ -13,7 +13,7 @@
  */
 import type { FeishuCotEventInput } from '@excitedjs/feishu-transport';
 
-import type { FeishuCotRunStatus } from './feishu-cot-events.js';
+import type { FeishuCotTerminal } from './feishu-cot-events.js';
 import { sameTarget, targetKey, type FeishuTarget } from './routing/target.js';
 
 const IDENTITY_KEY_SEPARATOR = '\0';
@@ -50,7 +50,7 @@ export interface CotPresentation {
   cotId: string | null;
   messageId: string | null;
   readonly outbox: CotOutboxState;
-  terminalIntent: FeishuCotRunStatus | null;
+  terminalIntent: FeishuCotTerminal | null;
   flushQueued: boolean;
   closed: boolean;
 }

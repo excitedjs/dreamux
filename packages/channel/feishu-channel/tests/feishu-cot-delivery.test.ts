@@ -36,7 +36,7 @@ import { FEISHU_COT_OPENING_LABELS } from '../src/feishu-cot-adapter.js';
 import { chatTarget } from '../src/routing/target.js';
 import { createFakeFeishuBot, type FakeFeishuBot } from './helpers/fake-feishu-bot.js';
 import {
-  cotRunStatus,
+  cotTerminal,
   cotTexts,
   createFakeCotClient,
   type FakeCotCard,
@@ -263,10 +263,10 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
 
     port.emit(assistantMessage('turn-1', 'dispatcher', 'the answer'));
     port.emit(nativeEnd('dispatcher'));
-    await waitFor(() => cotRunStatus(cot.cards[0]!) !== null);
+    await waitFor(() => cotTerminal(cot.cards[0]!) !== null);
 
     expectOpeningTexts(cot.cards[0]!, ['the answer']);
-    expect(cotRunStatus(cot.cards[0]!)).toBe('done');
+    expect(cotTerminal(cot.cards[0]!)).toBe('done');
 
     port.emit(inputEvent('dispatcher', 'task body', 'task-source', 'task'));
     await waitFor(() => cot.cards.length === 2);
@@ -316,14 +316,14 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       },
     });
     await waitFor(() => cot.cards.length === 2);
-    await waitFor(() => cotRunStatus(cot.cards[0]!) === 'interrupted');
+    await waitFor(() => cotTerminal(cot.cards[0]!) === 'interrupted');
 
     expect(cot.cards).toHaveLength(2);
     expect(cot.cards.map((card) => card.originMessageId)).toEqual([
       'message-one',
       'message-two',
     ]);
-    expect(cot.cards.map(cotRunStatus)).toEqual(['interrupted', null]);
+    expect(cot.cards.map(cotTerminal)).toEqual(['interrupted', null]);
     expectOpeningTexts(cot.cards[0]!, ['first answer']);
     expectOpeningTexts(cot.cards[1]!, []);
 
@@ -363,12 +363,12 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
     const outcome = await session.submit(null, submission);
     expect(outcome).toEqual({ status: 'duplicate' });
     await waitFor(() => cot.cards.length === 2);
-    await waitFor(() => cotRunStatus(cot.cards[0]!) === 'interrupted');
+    await waitFor(() => cotTerminal(cot.cards[0]!) === 'interrupted');
     expect(cot.cards.map((card) => card.originMessageId)).toEqual([
       'message-repeat',
       'message-repeat',
     ]);
-    expect(cot.cards.map(cotRunStatus)).toEqual(['interrupted', null]);
+    expect(cot.cards.map(cotTerminal)).toEqual(['interrupted', null]);
     expectOpeningTexts(cot.cards[1]!, []);
 
     port.emit(assistantMessage('turn-original', 'dispatcher', 'after repeat'));
@@ -424,7 +424,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       'om_user_1',
       'om_user_1',
     ]);
-    expect(cot.cards.map(cotRunStatus)).toEqual(['interrupted', null]);
+    expect(cot.cards.map(cotTerminal)).toEqual(['interrupted', null]);
     port.emit(assistantMessage('turn-fallback', 'dispatcher', 'dispatcher answered'));
     await waitFor(() => cotTexts(cot.cards[1]!).length === 2);
     expectOpeningTexts(cot.cards[1]!, ['dispatcher answered']);
@@ -467,11 +467,11 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
 
       expect(outcome.status).toBe(failure);
       await waitFor(() => cot.cards.length === 1);
-      await waitFor(() => cotRunStatus(cot.cards[0]!) === 'interrupted');
+      await waitFor(() => cotTerminal(cot.cards[0]!) === 'interrupted');
       port.emit(assistantMessage('turn-later', 'leader', 'must stay anchorless'));
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(cot.cards).toHaveLength(1);
-      expect(cotRunStatus(cot.cards[0]!)).toBe('interrupted');
+      expect(cotTerminal(cot.cards[0]!)).toBe('interrupted');
 
       await session.close();
     },
@@ -502,7 +502,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
     await waitFor(() => cot.cards.length === 1);
     await waitFor(() => cotTexts(cot.cards[0]!).length === 1);
     expect(cot.cards[0]!.originMessageId).toBe('message-ambiguous');
-    expect(cotRunStatus(cot.cards[0]!)).toBeNull();
+    expect(cotTerminal(cot.cards[0]!)).toBeNull();
     expectOpeningTexts(cot.cards[0]!, []);
 
     await session.close();
@@ -528,7 +528,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
     expect(outcome.status).toBe('error');
     await waitFor(() => cot.cards.length === 1);
     expect(cot.cards[0]!.originMessageId).toBe('om_user_1');
-    expect(cotRunStatus(cot.cards[0]!)).toBeNull();
+    expect(cotTerminal(cot.cards[0]!)).toBeNull();
 
     await session.close();
   });
@@ -574,10 +574,10 @@ describe('FeishuChannelSession COT — a Reply never touches the anchor', () => 
     // operator's original message.
     expect(cot.cards).toHaveLength(1);
     expect(cot.cards[0]!.originMessageId).toBe('om_user_1');
-    expect(cotRunStatus(cot.cards[0]!)).toBeNull();
+    expect(cotTerminal(cot.cards[0]!)).toBeNull();
 
     port.emit(nativeEnd('leader'));
-    await waitFor(() => cotRunStatus(cot.cards[0]!) !== null);
+    await waitFor(() => cotTerminal(cot.cards[0]!) !== null);
     expect(cot.cards).toHaveLength(1);
 
     await session.close();

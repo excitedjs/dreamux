@@ -38,10 +38,10 @@ import {
   type CotLogScope,
 } from './feishu-cot-diagnostics.js';
 import {
-  runFinishedEvent,
+  runTerminalEvent,
   runStartedEvent,
   textMessageEvents,
-  type FeishuCotRunStatus,
+  type FeishuCotTerminal,
 } from './feishu-cot-events.js';
 import {
   acceptAssistantMessage,
@@ -283,7 +283,7 @@ export class FeishuCotAdapter {
       });
     }
     state.openCalls.clear();
-    this.detach(key, state, end.status === 'completed' ? 'done' : 'interrupted');
+    this.detach(key, state, end.status);
     this.reapState(key, state);
   }
 
@@ -372,7 +372,7 @@ export class FeishuCotAdapter {
   private detach(
     key: string,
     state: CotState,
-    reason: FeishuCotRunStatus,
+    terminal: FeishuCotTerminal,
   ): void {
     const presentation = state.active;
     state.active = null;
@@ -383,7 +383,7 @@ export class FeishuCotAdapter {
     ) {
       return;
     }
-    presentation.terminalIntent = reason;
+    presentation.terminalIntent = terminal;
     if (presentation.phase === 'writing') {
       this.scheduleFlush(key, state, presentation);
     }
@@ -549,7 +549,7 @@ export class FeishuCotAdapter {
       let finishing = false;
       if (!cotOutboxHasEvents(presentation.outbox) &&
           presentation.terminalIntent !== null) {
-        const terminal = runFinishedEvent(
+        const terminal = runTerminalEvent(
           presentation.id,
           presentation.terminalIntent,
         );
@@ -575,7 +575,7 @@ export class FeishuCotAdapter {
           {
             ...this.logScope(state),
             presentation_id: presentation.id,
-            status: presentation.terminalIntent,
+            terminal: presentation.terminalIntent,
             dropped_events: presentation.outbox.droppedEvents,
           },
           'Feishu COT finished',
