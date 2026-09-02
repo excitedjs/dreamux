@@ -966,8 +966,8 @@ The design's placement predates rulings 4 and 9 and preserved the hole ruling 8
 names. As built, `submitAdmitted` publishes at the top of the admission-ledger
 closure and then obliges everything below it to end what it opened:
 
-- a non-`submitted` admission ends the card with the reason
-  (`asDisplayTurnEnd`, beside the two sibling admission mappers in
+- a non-`submitted` admission ends the card as `failed` with the reason
+  (`failedAdmissionReason`, beside the two sibling admission mappers in
   `turn-recording.ts`);
 - a **throw** — `ensureStarted()` on a dormant agent whose binary is gone,
   `updateIntent` failing — ends the card with the error message and rethrows.
