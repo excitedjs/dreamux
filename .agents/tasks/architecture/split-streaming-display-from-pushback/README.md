@@ -27,11 +27,14 @@
 - Blockers: None. The requirement states three questions to answer before a
   solution is proposed; answering them is the next work, not a blocker.
 - Next action: Operator ruling on the technical design, then development
-  approval. The design has been through two review rounds; what is still open is
-  listed in `final.md` (the activity-fact dedupe, which needs a probe, and the
-  embedded-versus-reshaped activity payload). `priority` is no longer open — the operator ruled it
-  deleted — and neither is `teammate.turn.settled`, which the operator ruled
-  deleted outright, accepting the flowx cost.
+  approval. `final.md` was rewritten 2026-09-02 after a long source walkthrough
+  with the operator; its central change is that the completion path merges into
+  `submitInput({ start: false })`, which takes the design from two input publish
+  sites to one. What is still open is listed there (the activity-fact dedupe,
+  which needs a probe, and the embedded-versus-reshaped activity payload), plus
+  sign-off on the merge itself. `priority` is no longer open — the operator
+  ruled it deleted — and neither is `teammate.turn.settled`, which the operator
+  ruled deleted outright, accepting the flowx cost.
 - Related tasks:
   [feishu-cot-conversation-cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md)
   (the display surface this separates from, and whose locked product model stays
