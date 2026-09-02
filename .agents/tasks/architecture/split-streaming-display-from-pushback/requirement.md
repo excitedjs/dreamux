@@ -268,3 +268,33 @@ Two facts to design around, both already verified:
   a race-avoidance choice; and the earlier ruling
   「那几个情况应该直接把卡片置成失败」 is implemented as a `turn.ended` fact
   carrying the failure text, not as a second shape on the input event.
+
+## Rulings on the implementation's three open questions (2026-09-02)
+
+Answered on a question card after the implementation landed. The first two are
+recorded in `technical-design/final.md` § As built, items 2 and 3.
+
+- **A dropped completion push-back stays visible.** The operator chose 「保持可见」
+  over reverting it. As built, a push-back whose recipient's runtime is gone
+  shows the delivered body on the recipient's card followed by a failed end.
+  The design document had said this half "stays invisible exactly as it is
+  today" and that changing it "needs its own ruling"; this is that ruling. What
+  it buys is the diagnosis motive behind ruling 8 applied to the one case where
+  an answer is lost; what it costs is that the alternative — silence — would
+  have to be written as a special case in the one publish path.
+
+- **The wire terminal waits on a probe.** The operator chose 「先探平台再定」
+  over accepting `interrupted` as final. The neutral fact already carries
+  `status: 'failed'`; only the Feishu wire is undecided, because
+  `FeishuCotRunStatus` is `'done' | 'interrupted'` and nothing in this repo
+  records which values the platform's AG-UI `RUN_FINISHED` accepts. So the
+  merged implementation keeps `interrupted`, and a live probe settles whether a
+  failed status is accepted. If it is, the change is one value in
+  `feishu-cot-events.ts`. Guessing without the probe risks the platform
+  rejecting the whole append batch, which breaks the card outright.
+
+- **`rush typecheck:tests` joins the green line.** The operator chose
+  「加进绿线」. `CLAUDE.md`'s Build And Test section now lists four commands, with
+  the reason stated: `tsconfig.json` excludes `tests/` and vitest runs through
+  esbuild, which erases types, so a test file compiling against a deleted type
+  stays green under the other three. This change found two of them.

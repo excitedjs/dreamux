@@ -112,10 +112,15 @@ node common/scripts/install-run-rush.js update
 node common/scripts/install-run-rush.js build
 node common/scripts/install-run-rush.js lint
 node common/scripts/install-run-rush.js test
+node common/scripts/install-run-rush.js typecheck:tests
 ```
 
-A stage or change is not "green" until build, lint, and test all pass; `rush
-lint` is a first-class gate, not an afterthought.
+A stage or change is not "green" until build, lint, test, and `typecheck:tests`
+all pass. `rush lint` is a first-class gate, not an afterthought, and so is
+`typecheck:tests`: `tsconfig.json` excludes `tests/` and vitest runs through
+esbuild, which erases types, so a test file compiling against a type the change
+deleted stays green under the other three. It is the only gate that catches
+that.
 
 Do not use per-package `npm install`; workspace dependencies use `workspace:*`.
 
