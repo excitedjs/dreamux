@@ -1015,6 +1015,26 @@ forever — is fully prevented: the card **ends**, and ruling 9's error text is
 printed on it first. The wire terminal is `interrupted`. If the platform does
 accept a failed status, this is a one-value change in `feishu-cot-events.ts`.
 
+**Probed live on 2026-09-02, and the API cannot settle it.** The operator ruled
+「先探平台再定」, so three COT cards were created and finished with
+`RUN_FINISHED` carrying `failed`, `interrupted`, and a deliberately nonsense
+status. **All three returned `code: 0`**, and all three read back through
+`GET /open-apis/im/v1/messages/:id` with the identical generic body
+(`"Completed"`), which is the COT summary text rather than a projection of the
+run status. Two conclusions follow:
+
+- The platform does **not** validate this enum at the API level, so acceptance
+  is not evidence that a value is recognised. The risk this section named —
+  guessing a status and having the platform reject the whole append batch,
+  breaking the card — **does not exist**. The worst case of a wrong value is a
+  terminal that renders as something else.
+- Nothing readable through the API distinguishes the three, so the remaining
+  evidence is the rendered card, which only a human in the chat can compare.
+
+The decision is therefore a visual comparison, not an API question, and the
+cards to compare exist. If `failed` renders no differently from the nonsense
+status, it is not a recognised value and `interrupted` stays.
+
 ### 4. `TeammateRuntimeOwner`'s upward channel shrinks instead of growing
 
 The design expected the owner to gain a projection dependency. It already held
