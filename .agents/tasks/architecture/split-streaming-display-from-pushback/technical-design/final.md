@@ -22,7 +22,8 @@ All recorded verbatim in `requirement.md`.
 | `priority` is deleted | The claude steer envelope loses the field |
 | `teammate.turn.settled` is deleted outright, flowx handles its own side | One of the four removed kinds needs no further gate |
 | Cleanup found in this change's blast radius rides along | The "Folded-in cleanups" section exists |
-| A stopped / skipped / failed submission sets the card to failed | The terminal fact at the publish site |
+| The input fact fires at the submit site, so a failed submission is visible with its input | §"Placement inside `submitAdmitted` is exact" |
+| A stopped / skipped / failed submission sets the card to failed, and the error text is printed on the card | Carried by `turn.ended`, not by a second input shape |
 | Log wording is not a reason to keep code | The completion path needs no translating adapter |
 | Not ruled: the completion-path merge | §"One publish site" — the design's chosen shape, awaiting sign-off |
 
@@ -203,7 +204,11 @@ TeammateService.submitAdmitted                      (teammate-service/index.ts:2
   │       fail-open guard here                             from the ORIGINAL body
   ▼
 runtime.submit({ text })
-        ◀── seam unchanged: still { text } only
+  │     ◀── seam unchanged: still { text } only
+  │  the admission settles in an async continuation (turn-coordinator.ts:168-190)
+  └─ outcome ≠ submitted ─▶ projectActivity(agent, {turn.ended, outcome, reason})
+       stopped | skipped |        ◀── the ONE activity fact Core itself produces:
+       ambiguous | failed              it ends a card no runtime will ever end
 
 
 runtime stream
@@ -379,11 +384,17 @@ Four constraints pin it, and each rules out a nearby alternative:
   it: `submitRuntimeTurn` can return `stopped` without ever calling
   `operation()` (`turn-coordinator.ts:125`), and publishing outside would
   announce an input that never reached a runtime.
-- **Before `runtime.submit`**, not after. An earlier draft claimed the ordering
-  was natural; it is not — codex subscribes before `turn/start` resolves.
-  Publishing first removes the race by construction. Verified: between the two
+- **Before `runtime.submit`**, not after — ruled by the operator, and the
+  ordering argument is not why. Publishing first does remove the activity race
+  by construction, and verification confirms the span is safe: between the two
   points there is only a synchronous active check, `capture`, and the call
-  itself, with no `await`.
+  itself, with no `await`. But publishing *after* would have been ordered too,
+  because codex buffers activity for an unbound turn into `pendingActivity`
+  while an admission is in flight (`turn-manager.ts:320-333`) and releases it
+  only once `await submitTurnStart(...)` has returned (`:146-149`, `:191`). The
+  deciding reason is diagnosis: 「提交的当下就触发 submitted 事件。这样更有利于我去
+  排查一些错误」 — a submission that fails must appear on the card **with the
+  text that failed**, which publishing after admission would delete.
 - **With a fail-open guard.** `projectDisplay` / `projectActorDisplay` /
   `warnProjectionFailure` are what make display fail-open today
   (`turn-coordinator.ts:239`) and they are deleted from the coordinator. This is
@@ -391,50 +402,61 @@ Four constraints pin it, and each rules out a nearby alternative:
   an uncaught throw would reject the admission and run `releaseUncommitted` —
   display affecting admission, which the requirement forbids outright.
 
-### A non-`submitted` outcome terminates the card at the same site
+### A non-`submitted` outcome ends the card through `turn.ended`
 
 A `stopped`, `skipped`, **`ambiguous`** or pre-admission `failed` result creates
-no `EntityTurn` and guarantees no runtime native end, so an input published
-before admission would otherwise leave a card open until some unrelated later
-native turn closed it. The operator's requirement is
-「那几个情况应该直接把卡片置成失败」. `ambiguous` was missing from earlier
-revisions: `submitObserved` returns it when `operation()` throws
+no `EntityTurn` and guarantees no runtime native end, so an input published at
+the submit site would otherwise leave a card open until some unrelated later
+native turn closed it. `ambiguous` was missing from earlier revisions:
+`submitObserved` returns it when `operation()` throws
 (`turn-coordinator.ts:175-183`), with the same absence of a turn and a native
 end.
 
-**This part is not yet specified, and it is the design's largest remaining
-hole.** An earlier revision said "the outcome is known synchronously at the same
-call site". It is not: `runtime.submit` returns a Promise and the coordinator
-resolves the admission in an async continuation
-(`turn-coordinator.ts:168-190`). Since the input is published *before*
-`runtime.submit` and the outcome arrives after, the terminal is necessarily a
-**second event about the same input** — one kind with two shapes, which the
-Feishu switch in the diagram above does not yet reflect. Three things need
-deciding before implementation, and they are an operator/design decision rather
-than a detail:
+**Ruled 2026-09-02: the card is ended by the same `ended` fact a real turn ends
+with, and that fact carries the error text.** The operator's words are
+「那些错误场景已经被 ended 的事件给包住了，错误信息给我打印在卡片上」. This closes
+what earlier revisions called the design's largest hole — they proposed a second
+*shape* on `teammate.input` and left three questions open about discriminants
+and `sourceId` correlation. There is no second shape and no second kind. An
+input opens the card, `turn.ended` closes it, and the only variable is what the
+end says.
 
-- which field on `teammate.input` carries the outcome, and how a consumer tells
-  an opening fact from a terminal one;
-- whether the terminal repeats the `sourceId` so a Channel can correlate it with
-  the input it already filtered;
-- whether a terminal still fails the card for an input the Channel filtered out
-  as its own.
+Concretely:
+
+- `turn.ended` carries its outcome plus an optional reason string. A runtime end
+  supplies `completed | failed | interrupted` and no reason; the end Core emits
+  supplies the admission outcome and the failure text.
+- **Core produces exactly one kind of `turn.ended`:** the one that ends an input
+  it published which never reached a runtime. Every other `teammate.activity`
+  fact is the runtime's own.
+- The reason string is sanitised on the same path as every other display text —
+  `redactText()` plus the size bounds — because a runtime error can carry a
+  local path.
+- It is emitted where the outcome is known, which is **not** the publish site.
+  `runtime.submit` returns a Promise and the coordinator resolves the admission
+  in an async continuation (`turn-coordinator.ts:168-190`). The input is
+  published synchronously at the submit site; the end follows from that
+  continuation. Two events about one input is the shape the ruled ordering
+  requires, and reusing `ended` is what keeps it from also being a second kind.
 
 **The write fence needs nothing.** `enterOrdinaryMutation` runs *before*
 `submitAdmitted` (`teammate-service/index.ts:230`) and throws when the entity is
 closing, closed, lock-held, or host-stopping. The throw never reaches the
 publish site, so no `teammate.input` is published and no card is opened — there
-is nothing to terminate. The terminal above is required only for an outcome the
-runtime returns *after* the input was published. Adding a card path for the
+is nothing to end. The Core-emitted `ended` above is required only for an
+outcome that arrives *after* the input was published. Adding a card path for the
 fence would be defence with no failure scenario.
 
 ### Two published kinds, and the boundary is the producer
 
 - **`teammate.input`** — published by **Core**, at admission. Carries `text`,
   `source` and `sourceId`.
-- **`teammate.activity`** — published by a **runtime**, through the one sink.
-  Carries `assistant.message`, `tool.call` or `turn.ended`, and never a source
-  identity.
+- **`teammate.activity`** — the runtime's vocabulary, carried through the one
+  sink: `assistant.message`, `tool.call` or `turn.ended`, and never a source
+  identity. Normally the runtime produces it. Core produces it in exactly one
+  case, the `turn.ended` that ends an input which never reached a runtime — so
+  that "an input is always followed by an end" holds for every input Core
+  published, and the Channel keeps one close path instead of two.
 
 Folding them into one kind with a four-valued discriminant was an earlier
 version. It buys a smaller kind count and pays for it by hiding a real layer
@@ -701,7 +723,7 @@ learns the answer arrived; nothing in the display line says a hand-off was lost.
 
 This change makes **part** of that divergence legible rather than fixing it,
 and the boundary matters. A drop that happens *after* the input was published
-gets a terminal fact at the publish site, so the card fails. A drop that happens
+gets an `ended` fact carrying the reason, so the card fails and says why. A drop that happens
 *before* publication — `prepareCompletion` answering `unsupported`, the
 ordinary-mutation fence throwing, either deadline firing — publishes nothing and
 stays invisible exactly as it is today. Making that half user-visible is a
@@ -804,8 +826,9 @@ three separate points. Each step below must leave `rush build` green on its own.
    null-runtime-under-no-wake branch; delete `submitPreparedCompletion`. **The
    entity-level no-wake test lands with this step, not after it.**
 5. **Core: publish `teammate.input`** in `submitAdmitted`, inside the operation
-   closure, with the fail-open guard. The terminal fact lands here too, once its
-   shape is ruled on.
+   closure, before `runtime.submit`, with the fail-open guard. The Core-emitted
+   `turn.ended` lands in the same step, from the admission continuation, for a
+   `stopped` / `skipped` / `ambiguous` / `failed` outcome.
 6. **`runtime-owner`: stamp the actor, carry the guard, call the projection.**
 7. **Feishu: three-case switch**, re-keyed anchor.
 8. **Delete.** The second sink, `turnsBySubmission`, the early buffer, the old
@@ -832,7 +855,10 @@ early buffer, the old entry points, the old kinds and the `EntityTurn` fields.
   That is the behaviour an incorrectly-placed publish site would delete, and the
   one regression a card-shaped test would not obviously catch.
 - **A submission that is stopped, skipped, or fails before admission must leave
-  no open card.** This is the gap an earlier draft claimed was already handled.
+  no open card, and the card must show why.** This is the gap an earlier draft
+  claimed was already handled. Both halves are asserted: the card ends, and the
+  reason text reaches it through the same redaction path as any other display
+  text.
 - **A Workflow submission must still appear on the card.** It reaches
   `submitAdmitted` without passing `submitInput`.
 - A live probe on both runtimes, since the 2026-09-02 probe is what settled the
@@ -869,7 +895,10 @@ early buffer, the old entry points, the old kinds and the `EntityTurn` fields.
   dissolve-window test being mandatory in the same step.
 - **A stale native turn can close a fresh card.** Not introduced here —
   `teammate.native_turn.ended` is already actor-scoped and carries no turn id —
-  but the actor-keyed shape makes it easier to hit and it should be tested.
+  but the actor-keyed shape makes it easier to hit and it should be tested. The
+  Core-emitted `turn.ended` inherits the same property: a failed submission
+  ends *the actor's* card, which is the right card whenever the failure is why
+  nothing is running, and the wrong one if another turn is live.
 - **`teammate.state` is a published surface with no in-repo reader.** An
   out-of-tree Channel provider could consume it. flowx ports these PRs and is
   the other stakeholder.

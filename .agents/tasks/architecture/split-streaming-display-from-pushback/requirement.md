@@ -248,26 +248,23 @@ Two facts to design around, both already verified:
   caller-selected mode" claim becomes true of the public surface instead of
   false everywhere.
 
-- **Ruled 2026-09-02, the input fact is published after admission, and there is
-  no terminal event.** The operator's question was
-  「那你 submitted 不能改成已经明确发给 agent runtime 之后才抛出来吗？」, then
-  「如果 Codex 正在推流事件的话，他的 submit 怎么可能会失败？」. Both hold, and
-  they supersede the earlier terminal-fact ruling by removing its scenario
-  rather than overruling it:
+- **Ruled 2026-09-02, the input fact is published at the submit site, and the
+  error scenarios ride the `ended` fact.** The operator's words:
+  「提交的当下就触发 submitted 事件。这样更有利于我去排查一些错误」 and
+  「那些错误场景已经被 ended 的事件给包住了，错误信息给我打印在卡片上」.
 
-  - A submission that is never admitted publishes no input, so no card opens and
-    there is nothing to fail. The earlier ruling
-    「那几个情况应该直接把卡片置成失败」 was about an orphan card that this
-    ordering cannot produce.
-  - Streaming and failure are mutually exclusive: if codex is emitting items for
-    a turn, `turn/start` was accepted.
-  - Publishing after costs no ordering, which an earlier revision claimed it
-    did. `observeItem` buffers activity for an unbound turn into
-    `pendingActivity` whenever an admission is in flight
-    (`turn-manager.ts:320-333`), and `bindSubmission` releases it only after
-    `await submitTurnStart(...)` returns (`:146-149`, `:191`). Activity for a
-    turn therefore cannot reach Core before that turn's own submit resolves.
+  This closes the same-day exploration of the opposite order. The operator asked
+  「那你 submitted 不能改成已经明确发给 agent runtime 之后才抛出来吗？」 and then
+  「如果 Codex 正在推流事件的话，他的 submit 怎么可能会失败？」 — both hold on
+  their own terms, and publishing after admission would have cost no ordering
+  (`observeItem` buffers activity for an unbound turn into `pendingActivity`
+  while an admission is in flight, `turn-manager.ts:320-333`, and
+  `bindSubmission` releases it only after `await submitTurnStart(...)` returns,
+  `:146-149`, `:191`). The operator ruled for the submit site anyway, on a
+  reason the ordering argument does not cover: a submission that fails must be
+  visible **with its input**, because that is what makes an error diagnosable.
 
-  Consequence: `pendingActivity` is **load-bearing for this ordering guarantee**
-  and must not be deleted. Earlier revisions listed it as removable display
-  residue.
+  Consequences: publishing before `runtime.submit` is a requirement, not merely
+  a race-avoidance choice; and the earlier ruling
+  「那几个情况应该直接把卡片置成失败」 is implemented as a `turn.ended` fact
+  carrying the failure text, not as a second shape on the input event.
