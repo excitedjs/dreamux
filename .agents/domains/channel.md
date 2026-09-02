@@ -541,9 +541,14 @@ state from them at the moment it changes them, and Core publishing a binding fac
 back would mean Core holding one. Workflow, scheduler, and host-maintenance events
 are deliberately absent.
 
-The published catalog is an explicit set of six kinds: `team.state`,
+The published catalog is an explicit set of seven kinds: `team.state`,
 `teammate.state`, `teammate.turn.submitted`, `teammate.turn.settled`,
-`teammate.turn.message`, and `teammate.turn.tool_call`. Sealing is the one place
+`teammate.turn.message`, `teammate.turn.tool_call`, and
+`teammate.native_turn.ended`. The last is actor-scoped rather than turn-scoped:
+it names the Dispatcher or TeamLeader whose runtime stopped producing and a
+terminal status, and carries no logical `turn_id`, member set, or presentation
+identity, because a provider folds any number of Dreamux submissions into one
+runtime-native turn. Sealing is the one place
 a fact becomes deliverable: an event outside the set, an event whose
 `schema_version` is not `1`, or one without a finite `occurred_at` is dropped and
 logged rather than thrown, because producers publish synchronously from inside
@@ -598,41 +603,69 @@ predicate before submitted, activity, or settled facts can enter the bus.
 
 The Feishu session subscribes through `feishu-cot-adapter`. It owns card
 anchoring, event-to-card projection, bounded outbox batching, serialized I/O, and
-diagnostics. An inbound card is pinned to that turn's message. For a TeamLeader,
-each successfully created Reply message is observed synchronously and fail-open;
-its same-target receipt may anchor the next card, while the team-group binding
-notification is the fallback before any inbound exists. A receipt cannot recreate
-missing leader state or cross the current conversation target: the chat, target
-type, and target key must all match, so topic groups also stay within the same
-topic thread. A delayed notification commits its fallback only if the endpoint
-still routes to the same Team and leader.
+diagnostics. Presentation is keyed by *recipient*: every TeamLeader, and the
+Dispatcher Agent, owns one standing anchor and at most one open card, whichever
+Feishu chat, DM, group, or topic supplied that anchor. A target is an attribute
+of the anchor, not a state key or a card partition, so a conversation that moves
+between chats moves its one card rather than growing a second. None of it is
+durable — closing or restarting the session loses every anchor and open-card
+reference by design, with no restore, replay, or backfill.
 
-Late submitted and fallback anchors consult two bounded fences: a leader-wide
-fence set by Team close and endpoint-scoped route fences set by unbind or
-replacement, each retaining at most 512 entries. Team starting/running clears both
-kinds for that leader, while a matching re-bind clears its endpoint route fence.
-Re-anchor, unbind, replacement, Team close, and session close therefore fence late
-callbacks without disabling another live endpoint. Fence matching and route-driven
+Only a Channel user message that Core reports as admitted moves an anchor. On
+that success Feishu closes the recipient's open card, replaces the standing
+anchor, and opens the successor under the new message with a fixed receipt,
+without waiting for a settlement or a native turn end; a rejected, failed, or
+ambiguous admission changes nothing. A Reply is outbound only: its receipt never
+creates, replaces, defers, or retires an anchor and never opens, moves, or closes
+a card. A visible Team bind card may initialize a TeamLeader that has no standing
+anchor and never replaces one, while the Dispatcher has no installation or
+restart anchor and stays anchorless until its first Channel user message.
+
+Anchors consult two bounded fences: a leader-wide fence set by Team close and
+endpoint-scoped route fences set by unbind or replacement, each retaining at most
+512 entries. Team starting/running clears both kinds for that leader, while a
+matching re-bind clears its endpoint route fence. Fence matching and route-driven
 interruption use the anchor's authoritative binding endpoint, not its visible
-target fallbacks. TeamLeaders keep one active presentation and settle it only on a
-matching `turn_id`. Dispatcher presentation state is keyed by agent, chat, and
-turn, so concurrent chats and interleaved turns cannot steal or close each other's
-cards; a foreign `channel_origin` is a strict no-op. These next/fallback anchor
-mechanics are TeamLeader-only and do not apply to dispatchers. Feishu ignores
-Team-member events explicitly; it never routes them through the leader state
-machine. Leader message and tool activity must also match the state's single
-admitted `turn_id`, preventing a fence-rejected or superseded turn from opening or
-appending to another endpoint's card.
+target fallbacks. Fencing is the whole of the TeamLeader's extra lifecycle
+policy; the Dispatcher, having no Team, is never fenced. Feishu ignores
+Team-member events explicitly and never routes them through a recipient's state.
+
+Once a recipient has an anchor, everything Core projects for it displays:
+assistant text, tool calls and results, and every input whatever its source name,
+including `task`, `task-notification`, `cron`, `system`, a restart notice
+delivered inside a live session, and the body of the message this Channel itself
+submitted. There is no source whitelist and no body-suppression ledger. A fact
+that arrives before the recipient has an anchor produces no card because there is
+nowhere to place one, not because its source or kind was filtered.
+
+A card's one terminal is `teammate.native_turn.ended`. `teammate.turn.settled` is
+a per-logical-submission lifecycle fact and closes, reopens, or re-anchors
+nothing: a provider folds any number of submissions into one native turn, so
+settlement says nothing about whether the card an operator is watching has
+finished. A `completed` end closes the current card as done; `failed` and
+`interrupted` close it as interrupted. The fact closes an already open card and
+never opens one, so it is ignored when no card is open — a repeated end is
+therefore harmless. A create or append the platform refuses abandons only that
+presentation: the standing anchor survives it, and the next opening activity may
+open a card there again.
+
+Facts Core publishes synchronously inside the admitting call are best effort and
+may land on the predecessor card or, with no anchor yet, nowhere. That window,
+the exceptionally early native end, and a tool result crossing an anchor
+replacement are operator-adjudicated accepted losses, recorded with their
+reasoning in the
+[task verification record](/.agents/tasks/channel/feishu-cot-conversation-cards/verification.md).
 
 Every admitted EntityTurn that enters conversation projection publishes exactly
 one terminal display fact from its own submission settlement, including
 `completed`, `failed`, and `stopped`; non-participating turns publish no display
 events. Completed assistant text and live activity are redacted and bounded in
-core. The early-activity buffer and projected activity-id set each retain at most
-512 facts per submission and drop newest with one warning. Feishu retains at most
-512 dispatcher conversations, 512 dispatcher turns per session, and 64 turns per
-chat, again refusing newest work without partial index state. Card I/O has a
-20-second operation deadline so settled draining state is eventually reaped.
+core, and operator paths are renamed rather than blanked — the workspace reads
+`.` and this host's home reads `~`, from prefixes `Server.start()` resolves once
+and injects into each conversation projection as a value. The early-activity
+buffer and projected activity-id set each retain at most 512 facts per submission
+and drop newest with one warning. Card I/O has a 20-second operation deadline so
+settled draining state is eventually reaped.
 
 The whole path is display-only and fail-open. Projection publisher, sanitizer,
 identity, and logger failures cannot change runtime admission, settlement,
@@ -645,6 +678,7 @@ Source:
 
 - `/packages/dreamux/src/channel/conversation-projection.ts`
 - `/packages/dreamux/src/service/teammate-service/turn-coordinator.ts`
+- `/packages/dreamux/src/platform/home-paths.ts`
 - `/packages/channel/feishu-channel/src/feishu-cot-adapter.ts`
 - `/packages/channel/feishu-channel/src/feishu-cot-state.ts`
 - `/packages/channel/feishu-channel/src/feishu-cot-session.ts`

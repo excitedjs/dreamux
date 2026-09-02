@@ -118,12 +118,29 @@ a full green suite is not evidence that a boundary rule is right.
 - Feishu transport failures may leave acknowledged platform state imperfect;
   presentation remains fail-open and memory-only rather than adding durable
   recovery or replay.
+- An Agent Runtime provider that does not implement the optional `nativeTurn`
+  sink publishes no native-turn end, so a COT card for that provider opens and
+  never closes until an anchor replacement or session close. Both built-in
+  providers implement it. Core deliberately derives no fallback from
+  `teammate.turn.settled`, because a settlement is per logical submission and a
+  native turn is not; the alternative would reintroduce the repeated closing this
+  task removed. The seam stays optional so its absence cannot break a provider —
+  the cost falls on presentation only, which is the same fail-open rule the rest
+  of this path follows.
 
 ## Remaining gates
 
-- Independent implementation review: in progress after the rebase.
-- Knowledge closeout and `.agents/scripts/check.sh`: pending review
-  adjudication.
+- Implementation: complete. The 2026-09-01 corrective round and the 2026-09-02
+  simplification round both passed TeamLeader pre-review.
+- Knowledge closeout and `.agents/scripts/check.sh`: complete. The accepted
+  decision record carries the corrected-lifecycle amendment, and
+  [`domains/channel.md`](/.agents/domains/channel.md) and
+  [`domains/provider-runtime.md`](/.agents/domains/provider-runtime.md) state the
+  recipient-keyed card model and the leased native-turn seam.
+- Commit, push, and CI: done. Pushed to `fix/feishu-cot-mid-turn-card` for draft
+  pull request [#357](https://github.com/excitedjs/dreamux/pull/357); CI is 8/8
+  green on that head.
+- Independent implementation review: in progress.
 - Real Codex live validation: not rerun in this environment; the explicit skip
   is recorded above.
-- Commit, push, pull request, CI, and merge: not started.
+- Marking the pull request ready and merging: pending operator decision.

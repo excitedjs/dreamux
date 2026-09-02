@@ -476,6 +476,33 @@ tail. The cold read never materializes an entity or starts a runtime, so a
 closed teammate stays readable, and it is required to produce records for a turn
 that is still in progress.
 
+A third leased sink states one fact rather than a stream. `AgentRuntimeCreateContext.nativeTurn`
+is an optional `AgentRuntimeNativeTurnSink` a provider calls once per
+runtime-native turn with a `RuntimeNativeTurnEnd` — the runtime stopped
+producing, with a completed, failed or interrupted status. It deliberately
+carries no submission, logical turn id, or member set: a provider folds any
+number of Dreamux submissions into one native turn, so the only identity it can
+honestly claim is the runtime's own, and Core attributes it to the entity that
+owns that runtime. Like the activity sink it is generation-fenced, synchronous,
+display-only and fail-open — a write from a revoked generation is dropped, and a
+throwing consumer never affects settlement.
+
+One native turn is one provider-native terminal: one Claude Code `result`, one
+Codex `turn/completed`. A resident Claude Code execution window may legally
+answer several commands in sequence and so reports one end per `result`. Where a
+turn ends with no native terminal at all — a stop, a protocol loss, a rejected
+run — the provider synthesizes an end, but only from the call that actually
+settled a still-open submission. That guard is what makes an ordinary success
+report exactly one end, and it is why no provider-side deduplication state
+exists.
+
+The sink is optional because its absence must not break a provider, but the
+consequence is real and is not a Core fallback: a provider that never calls it
+publishes no `teammate.native_turn.ended`, and a presentation whose only terminal
+is that fact — the Feishu COT card — will open and never close. Core does not
+derive one from settlement, because settlement is per submission and a native
+turn is not. A provider that wants its work presented live should call it.
+
 Scheduling asks no question either. A due cron fire is submitted immediately
 through its owner's ordinary admission gate; whether the runtime folds that
 input into a turn already running or starts a new one is the runtime's own
