@@ -97,15 +97,28 @@ home as `~`.
    anchor again. A native-ended fact closes an existing open card but never opens a
    new one; when no card is open, Feishu ignores it.
 
-9. **The Channel's own body is hidden.** The one thing a card does not repeat is
-   the Feishu message already visible at its own anchor. Everything else displays.
+9. **The Channel's own body is hidden, identified by the id the Channel already
+   sent.** The one thing a card does not repeat is the Feishu message already
+   visible at its own anchor. Everything else displays.
 
-   The Channel identifies that body from what it already holds — it knows the
-   recipient it submitted to and the text it submitted — and hides it once. It may
-   not buffer, reorder, or add a field to any event or request to do so, and it
-   must not hide another producer's body: a turn this Channel did not submit
-   displays normally. Whatever the Channel remembers about a submission in flight
-   is bounded and released.
+   `source_id` is an existing `team.submit` parameter that Core already uses for
+   admission deduplication, and the Feishu Channel sets it to the visible message
+   it is submitting. Core echoes it back on `teammate.turn.submitted`, which it
+   publishes immediately before the user body in the same block, so the Channel
+   recognizes its own submission, learns the `turn_id` it produced, and hides that
+   turn's user body exactly once. A turn whose `source_id` this Channel did not
+   send displays its body normally.
+
+   The identification is an exact id match, not a heuristic. Matching the body
+   text was considered and rejected: the projected body is the submitted text
+   modulo sanitization, so a message containing a path or a secret would compare
+   unequal and the mechanism would silently stop working on exactly the messages
+   that matter most.
+
+   The 2026-09-01 rejection of a "request-correlation contract" stands for what it
+   named — a new field on the *request*, invented for presentation ownership. This
+   adds no request field and no presentation identity: it returns a caller-supplied
+   id on the fact that id produced, so the caller can recognize its own turn.
 
 10. **Role parity.** Dispatcher and TeamLeader use the same state shape and the
    same anchor replacement, card open, append, interrupt, and close transitions.
@@ -187,9 +200,10 @@ home as `~`.
 - No early native-end group buffer and no request-correlation contract added to
   `team.submit` for presentation ownership.
 - No persisted anchor/card store, restart recovery, replay, or backfill.
-- No suppression that depends on buffering, reordering, or a new field on any
-  event or request. The Channel identifies its own body from state it already
-  holds.
+- No suppression that depends on buffering, reordering, or matching body text.
+  The Channel identifies its own turn by the `source_id` it supplied.
+- No new `team.submit` request field, and no presentation identity anywhere in
+  Core.
 - No admission-gated anchor. Waiting for Core to answer before moving the
   Channel's own anchor is what created the predecessor-card losses.
 - No provider-side deduplication flag for native turn ends. A synthesized end is
@@ -223,7 +237,9 @@ home as `~`.
   not fallback or change the presentation.
 - A Feishu inbound displays the fixed receipt under its own message and does not
   repeat its user body. Because the anchor moves when the Channel submits, neither
-  the body nor a spurious card can land on the predecessor anchor. Task,
+  the body nor a spurious card can land on the predecessor anchor, and because the
+  submitted fact names the Channel's own `source_id`, the body is identified
+  exactly rather than guessed. Task,
   task-notification, cron, system, and an unknown future source all display
   without a whitelist.
 - One folded native turn containing any number of logical submissions emits one

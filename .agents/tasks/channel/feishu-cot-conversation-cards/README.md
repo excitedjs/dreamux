@@ -131,8 +131,14 @@
   a correlation id back on a Core event. "B，我说的话也不一定全都是权威". This
   knowingly supersedes his own 2026-09-01 admission-gated-anchor ruling: that rule
   is what forced every synchronously published fact onto the predecessor card, and
-  removing it deletes the cause instead of compensating for it. No event or
-  request contract changes.
+  removing it deletes the cause instead of compensating for it.
+- Design adjudication (operator, 2026-09-02): identify the Channel's own body by
+  the `source_id` it already supplied, echoed back on `teammate.turn.submitted` —
+  not by comparing body text. "你是做了纯文本匹配？我感觉这样更恶心啊。那你还是走
+  那个带 source_id 的机制吧". Anchor timing stays as adjudicated above: the
+  Channel takes the anchor when it submits, so placement never depends on a
+  display-only projection that is allowed to fail open. The echoed id is used
+  only to recognize the Channel's own turn.
 
 ## Delivery
 
