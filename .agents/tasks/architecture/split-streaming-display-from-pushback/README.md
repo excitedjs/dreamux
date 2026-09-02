@@ -5,6 +5,10 @@
 - Goal: Separate the conversation-display surface every channel-facing TeamLeader and Dispatcher needs from the submission push-back mechanism it is currently built on, so a display consumer no longer requires a Dreamux submission to exist.
 - State: `intake`
 - Requirement: [Current requirement](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md)
+- Review record:
+  [review-corrections.md](/.agents/tasks/architecture/split-streaming-display-from-pushback/review-corrections.md)
+  — what two independent reviewers changed in the design on 2026-09-02, what
+  they corrected as fact, and what held under challenge.
 - Analysis: [analysis.md](/.agents/tasks/architecture/split-streaming-display-from-pushback/analysis.md)
   — question 1 answered (what Core could delete if display did not exist), 1b
   answered (what COT changed in the push-back mechanism: no behaviour, four
@@ -19,8 +23,10 @@
 - Solution review Issue: Not created.
 - Blockers: None. The requirement states three questions to answer before a
   solution is proposed; answering them is the next work, not a blocker.
-- Next action: Bring the question-2 design to the operator for a ruling before
-  any implementation. Two items in it are explicitly open: whether the unused
+- Next action: Bring the reviewed question-2 design to the operator for a ruling
+  before any implementation. The design was revised after review: the `input`
+  fact is published by Core immediately before it submits, and the provider seam
+  is not touched. Two items in it are explicitly open: whether the unused
   `teammate.turn.settled` core event may simply go, and whether the claude steer
   envelope's `priority` field is inert.
 - Related tasks:

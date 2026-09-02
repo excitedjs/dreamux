@@ -26,8 +26,10 @@ line is why the cost of display can be stated exactly.
   threaded from `Server.start()` through `Dispatchers` into `DispatcherService`.
   Their only consumer is the redaction above.
 - **In `turn-coordinator`**: `activitySink`, `nativeTurnSink`, the early-activity
-  buffer with its cap and warning, `projectDisplay` / `projectActorDisplay`, and
-  the per-submission activity-fact dedupe.
+  buffer with its cap and warning, and `projectDisplay` / `projectActorDisplay`.
+- **In `conversation-projection`**: the per-submission activity-fact dedupe
+  (`conversation-projection.ts:106` — an earlier revision of this document put
+  it in `turn-coordinator`, which was wrong).
 - **In `runtime-owner`**: `generationActivitySink` and `generationNativeTurnSink`,
   the generation fences that keep a revoked runtime from writing display.
 - **In the provider contract**: `AgentRuntimeActivitySink`,
@@ -50,8 +52,15 @@ line is why the cost of display can be stated exactly.
   store, on a different path from the push sink. Display could disappear entirely
   and `last` would still work — so the runtime must keep *recording* activity;
   only pushing it stops.
-- **`team.state` and `teammate.state`.** Lifecycle facts. The Channel needs them
-  for bindings, fences and Team close regardless of any card.
+- **`team.state`.** A lifecycle fact the Feishu Channel reads for bindings,
+  fences and Team close regardless of any card.
+- **`teammate.state`** is *not* in the same position, and an earlier revision of
+  this document was wrong to pair them. It is produced
+  (`dispatcher-service/index.ts:574`, `team-service/roster-projection.ts:52`)
+  and sealed, but **no Channel in this repository reads it**. That does not make
+  it display cost and does not make it deletable — it is a published surface an
+  out-of-tree Channel provider may consume — but it is not evidence for
+  anything either, and it should not be cited as a non-display consumer.
 - **`RuntimeSubmission.settled`, completion routing, and delivery.** Correctness,
   not presentation. A turn must settle and its completion must be delivered
   whether or not anyone is watching.
@@ -90,7 +99,13 @@ display cost.
   before #347. #357 starts *reading* the boolean `settle()` already returned, to
   decide whether to report a synthesized end; it does not change when, or
   whether, anything settles.
-- **Completion delivery and stop.** Untouched.
+- **Completion delivery.** Untouched.
+- **Stop was touched**, and an earlier revision of this document wrongly said it
+  was not. #357 added interrupted native-end reporting inside codex's `stop()`
+  (`turn-manager.ts:97`) and changed Claude Code's stop/failure settlement helper
+  to branch on the boolean `settle()` returns (`runtime.ts:381`). Neither changes
+  *what* settles or *when* — the reporting is display — but both are edits to the
+  stop path, and calling that untouched overstated the case.
 
 ### Shape: four additive changes, all inside push-back files
 
@@ -129,11 +144,16 @@ Attribution by actor, the settled direction, removes the reason for all three.
 
 ### Volume, for scale
 
-Core and runtimes, non-test: #347 +1269/−134, #357 +1031/−32, #364 +25/−3 —
-but most of #347's Core figure is `conversation-projection.ts` (+323), a new
-display-only file, and most of #357's is the same file's rework (+203). The
-Feishu side is where the bulk is and where simplification has already happened:
-#347 +2665/−300, #357 +356/−672, #364 +216/−152.
+Counted over non-test source only — `packages/dreamux/src`,
+`packages/dreamux-types/src`, and both runtime `src` trees: #347 +1058/−134,
+#357 +534/−48, #364 +25/−3. (An earlier revision quoted larger numbers taken
+from a `git show --stat` total line, which includes the test files the
+accompanying filter had removed from the listing but not from the sum.)
+
+Most of #347's figure is `conversation-projection.ts` (+323), a new
+display-only file, and much of #357's is that same file's rework. The Feishu
+side is where the bulk sits and where simplification has already happened once:
+#347 +2665/−300, then #357 +356/−672.
 
 ## 2. What display would be if designed from scratch
 
@@ -141,42 +161,93 @@ Designed against [runtime-input-semantics.md](runtime-input-semantics.md) and
 the settled direction in [requirement.md](requirement.md#settled-design-direction),
 not against the current implementation.
 
+**Revised 2026-09-02 after independent review.** The first version had the
+runtime carry and echo a caller-supplied `sourceId`. Two reviewers
+independently refuted it, and both refutations were re-checked against the
+source before this rewrite. The correction is recorded in
+[review-corrections.md](review-corrections.md); the design below is the
+corrected one.
+
 ### The unit of display is the Agent, not the submission
 
-This is the whole answer; everything else follows.
+This is the whole answer; everything else follows. It survived review intact.
 
 Today a display fact must belong to a Dreamux submission. That is why activity
 is keyed by `RuntimeSubmission`, why a folded native turn has to pick a
-representative member, and why a fact owned by no submission has nowhere to go.
-None of it is a display requirement — it is the push-back mechanism's identity
+representative, and why a fact owned by no submission has nowhere to go. None
+of it is a display requirement — it is the push-back mechanism's identity
 borrowed for a job it was not cut for.
 
-What a display consumer actually matches on is already the Agent. The Feishu COT
-recipient identity is `{ kind: 'leader', teamName } | { kind: 'dispatcher' }` —
-no turn, no submission. So attributing every activity to the Agent whose runtime
-produced it is not a new correlation; it is the one the consumer was using all
-along, stated directly instead of routed through a submission.
+What a display consumer actually matches on is already the Agent.
+`cotRecipientOf` matches on role, team name and TeamMate name only; `turn_id`
+is used on the Feishu side for the open-call key and for hiding the Channel's
+own body, and both of those have replacements. So attributing every activity to
+the Agent whose runtime produced it is not a new correlation; it is the one the
+consumer was using all along, stated directly instead of routed through a
+submission.
 
-### The input fact is emitted at admission, in both runtimes
+### Core emits the input fact, immediately before it submits
 
-The discriminating question is when a runtime can state "this input entered me".
-Checked in the source, not assumed:
+This is the part review changed, and it is now the better half of the design.
 
-- **Codex has no other option.** Every submission — first turn or steer — goes
-  through `turn/start` (`TurnManager.submit`), and the collector's item stream
-  carries no user-message item: `observeItem` handles `commandExecution`,
-  `fileChange`, `mcpToolCall`, `dynamicToolCall` and assistant text, and nothing
-  else. There is no input to observe coming back. The only moment codex knows
-  the text was accepted is when `turn/start` responds.
-- **Claude could observe it, and should not.** Its stream-json does echo `user`
-  frames, but tool results arrive as `user` frames too — that is where
-  `activityForBlock` reads them from. Separating a real input echo from a tool
-  result would be new provider-shape reasoning inside the provider for no gain.
-  `writeSteer` already knows the text and the command id at write time.
+**The runtime cannot supply the text.** `TeammateService.submitAdmitted` hands
+the runtime `renderSubmission(input)` — the assembled XML envelope — and keeps
+the original body separately as `prompt`
+(`teammate-service/index.ts:246`, `:259`). The source says why in place: "The
+turn records the source's own body. The envelope is delivery formatting, and
+repeating it in the conversation projection would show the model's provenance
+markup back to a human reader." A runtime echoing its own `text` would put
+`<cron …>` and `<reminder>` markup on the card for every producer except the
+Feishu inbound that gets hidden.
 
-So: **each runtime emits one `input` activity at the point it admits the text.**
-Uniform across providers, no protocol-specific observation, and naturally
-ordered ahead of everything that input causes.
+**The runtime must not carry the identity either.** #350 records the operator
+moving "stable source identity and duplicate admission from the Agent Runtime
+seam to the Core admission owner", and `AgentRuntimeSubmissionInput`'s own
+docstring states the seam "carries no discriminator, no source enum, **no
+source identity**, and no rendering instruction … Stable source identity,
+origin, intent, and display correlation stay on Core's own turn/admission
+state". Putting `sourceId` back on that seam would reverse a recorded ruling,
+and the direction this task recorded on 2026-09-02 does not carry operator
+words authorising that — only the choice of `source_id` over text matching.
+
+**Core has everything and needs nothing new.** Inside `submitAdmitted`, Core
+holds the original `input.text`, the `sourceId`, the `source` (channel, cron,
+task push, restart notice), and the Agent identity. It emits the `input`
+activity there, *immediately before* calling `runtime.submit({ text })`.
+
+Every deletion the first version claimed still happens: no `sourceId` retained
+on `EntityTurn`, no return trip on a core event, no `turnsBySubmission`. The
+provider seam is not touched at all.
+
+Two further things fall out of emitting before the submit call rather than
+after it:
+
+- **Ordering becomes structural instead of buffered.** Review showed the first
+  version's "naturally ordered" claim was false: codex subscribes to
+  notifications before `turn/start` resolves and explicitly supports an item or
+  terminal arriving first — that race is what `pendingActivity` currently
+  buffers. Emitting the input before the runtime is called removes the race by
+  construction, because the runtime has not been asked to do anything yet.
+  Nothing has to be re-ordered and no buffer replaces the one being deleted.
+- **The fact means what it says.** `input` states "Core admitted this and is
+  submitting it", not "the model received it". A submission that then fails
+  admission at the provider is a fact the card already handles by going to
+  failed — the operator ruled on exactly that case on 2026-09-02.
+
+### What a runtime still owes
+
+Only what it observes: assistant messages, tool calls, and the end of a native
+turn. No identity, no input echo, no ordering guarantee.
+
+One correction to the record while here: Claude Code's per-command id is
+generated in `ClaudeCodeRuntime.acceptInput` (`runtime.ts:247`) and passed down;
+the `randomUUID()` in `writeSteer` is only a default parameter value. And the
+claim that codex's stream "carries no user-message item" is narrower than it
+was stated: `itemActivity` projects only assistant messages and recognised tool
+items, and `ThreadItem.type` is an open string the collector does not filter
+(`events.ts:159`, `types.ts:84`). What the source proves is that such an item
+would not be projected today — not that the protocol never sends one. The
+design does not depend on the stronger claim, because Core owns the input fact.
 
 ### The shape
 
@@ -184,29 +255,20 @@ One sink. Four neutral kinds. No submission on the event.
 
 ```
 RuntimeActivity =
-  | { kind: 'input';            text; sourceId: string | null }
+  | { kind: 'input';             text; source; sourceId: string | null }
   | { kind: 'assistant.message'; text }
   | { kind: 'tool.call';         callId; toolName; action; status; ... }
   | { kind: 'turn.ended';        status: 'completed' | 'failed' | 'interrupted' }
 ```
 
-Every event carries `occurredAt`. None carries a submission, a turn id, or an
-Agent name — the runtime does not know its Dreamux identity. `runtime-owner`
-already wraps the sink with a generation fence and already holds the identity,
-so it stamps the actor there, where the knowledge is.
+`input` is published by Core; the other three originate in a runtime and are
+stamped with the Agent by `runtime-owner`, which already holds the identity and
+already wraps the sink with a generation fence. Every event carries
+`occurredAt`. None carries a submission or a turn id.
 
-`AgentRuntimeSubmissionInput` becomes `{ text: string; sourceId?: string | null }`.
-The runtime echoes it on the `input` fact and does nothing else with it. No id
-is invented: `sourceId` already exists at the Core command layer as the
-admission-ledger key, and this hands the same value down instead of retaining
-it on the turn to echo it back out.
-
-The Channel's test is a **comparison, not a presence check**. Presence does not
-mean "from a Channel" — `TeammateService.controlInput` forwards a `sourceId`
-too. What the Channel does is match the echoed id against ids *it itself
-submitted*, which is exactly what `beginInboundSubmission` records against its
-anchor today. This is the mechanism the operator chose over text matching, and
-it keeps working unchanged; only the return path shortens.
+`source` rides along because a display consumer wants it and only Core can
+supply it: a future web timeline needs to say whether an input was a cron fire
+or a task push, and the runtime cannot know.
 
 ### What it deletes
 
@@ -216,19 +278,25 @@ it keeps working unchanged; only the return path shortens.
 | the early-activity buffer, its 512 cap and its warning | a fact could arrive before the submission was recorded |
 | `AgentRuntimeNativeTurnSink`, `nativeTurnSink`, `generationNativeTurnSink`, the `nativeTurn` create-context slot | a fact could belong to no submission at all |
 | `teammate.native_turn.ended` — the bespoke actor-scoped core event | the only way to publish an actor-scoped fact through a submission-scoped surface |
-| codex's `NativeTurnRecord.nativeTurnEnded` flag | its docstring claims several terminal paths can reach one record. Read against the source they cannot: `finalize` returns on `record.completion !== null` and sets `completion` before reporting; `failProtocol` skips records with a `completion` and `failRecord` deletes the record from `nativeTurns`; `stop` skips records with a `completion` and deletes the rest. Every reporting path either blocks the others or removes the record. The flag guards a double report the existing guards already prevent — confirm this reading when implementing, do not take the row on trust |
-| `sourceId` retained on `EntityTurn` | the return trip that a caller-supplied id removes |
-| `teammate.turn.submitted`, `teammate.turn.settled` | `input` replaces the first. The second is an orphan of COT's own making — see below |
-| `projectSubmitted`, `projectSettled`, `projectNativeTurnEnd`, `projectActorDisplay` | four entry points collapse to one `projectActivity(agent, activity)` |
+| codex's `NativeTurnRecord.nativeTurnEnded` flag | its docstring claims several terminal paths can reach one record. Both reviews traced every path and found they cannot: `finalize` writes `completion` before reporting and returns on it thereafter; `failProtocol` skips records with a `completion`; `failRecord` and `stop` report and then synchronously delete. Redundant against the current call graph |
+| the per-submission activity-fact dedupe (`conversation-projection.ts:106`) | **delete, do not re-key.** Both runtimes generate an activity id at emit time and no producer repeats one; the test that asserts the dedupe names no repeater. Under the whitepaper's first rule a defence with no named scenario is deleted, and re-keying it by actor would silently keep the mechanism alive |
+| `sourceId` retained on `EntityTurn`, and `source` and `prompt` with it | the return trip, now that Core publishes the fact where it already has all three |
+| `teammate.turn.submitted`, `teammate.turn.settled` | `input` replaces the first. The second is an orphan of long standing — see below |
+| `projectSubmitted`, `projectSettled`, `projectNativeTurnEnd`, `projectActorDisplay`, and the coordinator's `conversationProjection` / `identity` / `role` options | four entry points and their plumbing collapse to one `projectActivity(agent, activity)` |
 | representative attribution in codex | nothing needs a member chosen to own a folded turn's facts |
 
-Seven core event kinds become three: `team.state`, `teammate.state`, and one
-`teammate.activity`.
+**A candidate this design should claim and did not:** codex's `pendingActivity`
+is the same early-arrival buffer, inside the provider, for the same reason. It
+should go with the rest. But `unboundObservedTurnIds` and
+`dropOrphanActivityIfIdle` are not purely display — they also drive
+`collector.releaseTurn` memory release under `retainAfterTerminal: true`. That
+half needs a home, not a deletion.
 
-### `teammate.turn.settled` is an orphan COT created and then abandoned
+### `teammate.turn.settled` is an orphan, twice over
 
 Worth stating separately, because it is the clearest single instance of the
-pattern this task exists to end.
+pattern this task exists to end — and it has now happened to the same kind
+twice.
 
 It is **not** a pre-existing push-back fact that display borrowed. The push-back
 mechanism's own settlement is `RuntimeSubmission.settled` → `EntityTurn.settled`
@@ -236,9 +304,15 @@ mechanism's own settlement is `RuntimeSubmission.settled` → `EntityTurn.settle
 completion reaches its caller. The *event* is a different object with a
 different life:
 
-- **#347 invented it** as `turn.settled`, and consumed it:
+- **#299 (`819c02c6`) invented it** as `turn.settled`, published from
+  `agent-entity/turns-store.ts`.
+- **#338** removed it.
+- **#347 brought it back** and consumed it:
   `coreEvents.on('turn.settled', forward((a, e) => a.onTurnSettled(e)))`, with a
-  `settled` flag in the COT state machine that terminated a card.
+  `settled` flag in the COT state machine that terminated a card. (An earlier
+  revision of this document said #347 invented it; it did not, it reintroduced
+  it. The kind has now been introduced and abandoned twice, which strengthens
+  the point rather than weakening it.)
 - **#350** renamed it to `teammate.turn.settled`. Still consumed.
 - **#357 removed the consumption.** A provider folds any number of submissions
   into one native turn, so a per-submission settlement says nothing about
@@ -254,37 +328,67 @@ the publication outlived the assumption because nothing ties the two together.
 
 ### What it costs
 
-- One new neutral kind (`input`) and one renamed one (`turn.ended`, absorbing
-  `teammate.native_turn.ended`).
-- One optional field on `AgentRuntimeSubmissionInput`, and each runtime echoing
-  it — claude passes it where it currently generates `commandUuid`; codex
-  carries it alongside the `turn/start` call.
+- One new neutral kind (`input`, published by Core) and one renamed one
+  (`turn.ended`, absorbing `teammate.native_turn.ended`).
+- Nothing on the provider seam. `AgentRuntimeSubmissionInput` stays
+  `{ text: string }`.
 - The Channel's own-body suppression moves from matching a returned `source_id`
-  to matching the `sourceId` on an `input` activity. Same comparison, one fewer
-  hop.
+  to matching the `sourceId` on an `input` activity. The test is a **comparison
+  against ids the Channel itself submitted**, not a presence check — a cron fire
+  and a restart notice carry a `sourceId` too. Same comparison as today, one
+  fewer hop.
 
 Nothing here adds a mechanism that does not replace one.
 
+### What the entropy reduction actually is
+
+Not "seven core event kinds become three" — an earlier revision claimed that and
+it overstates. A Channel still discriminates four sub-kinds inside
+`teammate.activity`, and the whitepaper is explicit that collapsing N methods
+into one method with an N-valued discriminant is not a boundary reduction.
+
+What genuinely shrinks:
+
+- **One scope shape.** Every activity names an Agent. No turn scope, no
+  representative, no `turn_id`.
+- **One sink and one projection entry point**, instead of two sinks and four.
+- **One publisher of the input fact**, which is the layer that already owns the
+  body, the identity and the source.
+- **No buffered ordering.** The race is removed by construction rather than
+  compensated for.
+- **Two kinds leave** — `submitted` folds into `input`, `settled` goes.
+
 ### What it does not change
 
-- The neutral seam. Provider wire shapes still stop at the provider package;
-  the four kinds are Dreamux's vocabulary, not claude's or codex's.
+- The neutral seam. Provider wire shapes still stop at the provider package,
+  and this revision touches `AgentRuntimeSubmissionInput` not at all.
 - The locked COT product model — one recipient, one anchor, at most one open
   card, closed by the runtime's own native end. `turn.ended` is the same fact
-  under a different name, so the card closes on the same event it does today.
+  under a different name.
 - Redaction and bounding. They move with the projection, unchanged, and still
   apply to every kind including `input`.
 - Fail-open. Display still never affects admission, settlement, delivery or
-  shutdown; the generation fence stays.
+  shutdown; the generation fence stays, and stop/shutdown ordering is unchanged
+  (`revokeRuntimeGeneration` runs after `runtime.stop()` returns, so an
+  `interrupted` end still passes the fence).
+- `AdmissionLedger`. A deduplicated repeat returns before the runtime is called
+  and a pending duplicate shares one admission, so either way exactly one
+  `input` is published.
 
-### Open, for the operator
+### Still open
 
-- ~~`priority` on the claude steer envelope.~~ **Ruled: delete it.** See
-  [requirement.md](requirement.md#decisions-and-unknowns). No probe is needed —
-  the ruling covers the case where the field works as well as the case where it
-  is inert.
-- **Whether `teammate.turn.settled` may simply go.** COT created it in #347 and
-  orphaned it in #357; this repository still produces it and no Channel reads
-  it. Deleting an unused published surface is still a surface change — and
-  flowx is a semantic superset that ports these PRs, so the question belongs to
-  that side too.
+- **Whether `teammate.turn.settled` may simply go.** See above. flowx is a
+  semantic superset that ports these PRs, so removing a published kind is a
+  question for that side too.
+- **What `input` carries as an id.** The Feishu side mints an
+  `opaqueDisplayId`; the shape above does not say where that comes from.
+- **One encoding for absence.** Pick either optional or nullable for `sourceId`,
+  not both.
+- **The cold-read vocabulary.** `AgentActivityRecord` (the `last` window) and
+  `RuntimeActivity` (the push path) remain two vocabularies for the same
+  subject. The operator's framing was "one `Activity` namespace". This design
+  answers the push half only; either the cold read is explicitly out of scope or
+  the two should converge, and that is a decision, not an omission to fix
+  quietly.
+- **Knowledge delta.** `provider-runtime.md` and `channel.md` both describe the
+  current two-sink, seven-kind shape and must move in the same change.
