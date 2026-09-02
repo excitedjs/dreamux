@@ -128,8 +128,8 @@ with a `header` chip, a `question`, and 2-4 `options` of `label` +
 `description`. Three fields differ. A `chat_id` is required, because a chat
 tool needs a destination and AskUserQuestion has no such concept. There is no
 `multiSelect`: the operator ruled multi-select out of this channel, so every
-question takes exactly one answer. And there is no `preview`: it shipped first
-as a column beside the options, and the operator removed it on sight —
+question takes exactly one answer. And there is no `preview`: it was first
+drawn as a column beside the options, and the operator removed it on sight —
 "这个 preview 有点复杂了，给他去掉，他也会影响卡片的布局". A per-option preview
 cannot be drawn without a second column, and that column reshaped the layout of
 every question carrying one, so the field went with the column.

@@ -7,9 +7,10 @@
  * `chat_id` is required, because a chat tool needs a destination and
  * AskUserQuestion has no such concept; `multiSelect` is absent, because the
  * operator ruled multi-select out of this channel; and so is `preview`, which
- * the operator dropped after seeing what it cost the card — "这个 preview 有点
- * 复杂了，给他去掉，他也会影响卡片的布局". Rendering it meant a second column
- * beside the options, which reshaped every question that used it.
+ * the operator dropped after seeing what it cost the card —
+ * "这个 preview 有点复杂了，给他去掉，他也会影响卡片的布局". Rendering it meant
+ * a second column beside the options, which reshaped every question that used
+ * it.
  *
  * The other difference is in the answer, not the arguments. AskUserQuestion
  * returns what the user chose; this returns as soon as the card is sent, and
