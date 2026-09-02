@@ -222,9 +222,11 @@ requirement change.
 - `submitPreparedCompletion` bypasses both **on purpose**, and its docstring
   gives the reason: an ordinary input materializes or reopens its target, while
   a completion pushback is only meaningful to an already-live runtime — a
-  stopped recipient must report `unsupported` so the router can fall back rather
-  than silently waking an agent nobody asked to wake. That is a real difference,
-  so merging the two paths to get one publish site would be the wrong fix.
+  stopped recipient reports `unsupported` rather than silently waking an agent
+  nobody asked to wake. That is a real difference, so merging the two paths to
+  get one publish site would be the wrong fix. (The source docstring adds "so
+  the completion router can fall back"; that clause is false and is corrected
+  below — the router drops. The conclusion it supports still holds.)
 - **Two docstrings in this file contradict each other**, and that contradiction
   is what made the second site easy to miss. `submitInput` is titled "The one
   admitted-input operation" and lists "a completion pushback" among the
@@ -398,7 +400,7 @@ missing key in `Record<Kind, true>` is `error TS2741`, while
 nothing. `satisfies Record<Kind, true>` also errors and is acceptable; a bare
 `ReadonlySet<Kind>` is not.
 
-**2. Two docstrings that are wrong rather than merely stale.**
+**2. Three docstrings that are wrong rather than merely stale.**
 
 - `teammate-service/index.ts:68-82` carries two stacked `/** */` blocks on
   `hostStop`. TypeScript associates only the last, so the first is dead text
@@ -409,6 +411,15 @@ nothing. `satisfies Record<Kind, true>` also errors and is acceptable; a bare
   contradict each other, and that contradiction is what hid the second
   `runtime.submit` site from the first draft of this design. Fix both to say
   which path a completion actually takes.
+- `submitPreparedCompletion`'s docstring says a stopped recipient reports
+  `unsupported` "so the completion router can fall back". **There is no
+  fallback.** `CompletionDeliveryPolicy` is handed exactly one recipient — the
+  `initiator` its caller passed — and never chooses among targets; on
+  `unsupported` it writes `dropping completion: delivery unsupported` and
+  returns (`completion-router/index.ts:197-207`). The docstring's conclusion is
+  right and its stated mechanism is invented. Rewrite it to say the completion
+  is dropped, and that dropping is preferred to waking an agent nobody asked to
+  wake.
 
 ### Investigated, does not reduce
 
@@ -469,6 +480,39 @@ reads at runtime.
   `major`.
 - No state, config, cache or path format changes, so the notes carry `Review:`
   and say explicitly that no rebuild is needed. They must not carry `Rebuild:`.
+
+## Known gap this change does not close: a dropped completion is invisible
+
+Not a defect introduced here, and not fixed here — recorded because it is the
+sharpest case of the two lines this task separates diverging, and because the
+design cites the push-back path's outcomes.
+
+`CompletionDeliveryPolicy.deliverPrepared` has one success path and seven
+non-success paths, and **all seven end in a dropped completion with only a
+`log.warn`**:
+
+| Outcome | Behavior |
+|---|---|
+| `accepted` | delivered |
+| preparation timed out (30s default) | warn, drop |
+| preparation threw | warn, drop |
+| submit timed out | warn, drop |
+| submit threw | warn, drop |
+| `unsupported` | warn, drop |
+| `ambiguous` | warn, drop — deliberately not retried |
+| `failed` | retried up to `MAX_DELIVERY_ATTEMPTS` (3), then warn, drop |
+
+Only `failed` is retried. Dropping the rest is defensible on its own terms: a
+retried `ambiguous` admission could double-submit, and there is no second
+recipient to try. The gap is visibility, not policy. The recipient is a single
+`initiator` object, so "unreachable" has no alternative; and the human watching
+the COT card sees the TeamMate's turn end normally while the asking Agent never
+learns the answer arrived. Nothing in the display line says a hand-off was lost.
+
+This change makes that divergence *legible* rather than fixing it: after the
+split, the display line carries the TeamMate's own facts and the push-back line
+carries delivery, so the two can be reasoned about separately. Making a dropped
+completion user-visible is a product decision and needs its own ruling.
 
 ## Unresolved: the activity-fact dedupe
 
