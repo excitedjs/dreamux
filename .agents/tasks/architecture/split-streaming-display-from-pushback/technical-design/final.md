@@ -537,6 +537,64 @@ is that nothing bounds a provider start here. Pre-existing, out of scope for
 this change, and recorded so the deadline is not mistaken for coverage it does
 not provide.
 
+## Open, and it reshapes this design: should the completion path merge into `submitInput`?
+
+Raised by the operator 2026-09-02 (「submitPreparedCompletion 这个玩意完全是我预期外的，
+他为什么不去调用 submitInput 呢？」). Not ruled. Recorded here rather than in a
+chat log because the answer changes this design's most awkward property.
+
+`submitPreparedCompletion`'s docstring gives two reasons it is not routed
+through `submitInput`. Checked against source, **one is false and the other is
+narrower than stated.**
+
+- *"reserves no duplicate key."* Free, not earned. `admission-ledger.ts:74`:
+  `if (sourceId === undefined || sourceId === '') return operation();` — an
+  omitted source id bypasses the ledger entirely, and a completion has no source
+  id. Any call through `submitInput` without a `sourceId` already reserves
+  nothing. This reason does not survive.
+- *"only meaningful to a runtime that is already live."* The real difference,
+  and the only one: `submitAdmitted` calls `runtimeOwner.ensureStarted()`, which
+  boots a dormant recipient; `submitPreparedCompletion` calls
+  `existingRuntimeAfterStart()`, which does not. But `prepareCompletion` **already
+  asks that question** and answers it with
+  `unsupportedPreparedCompletion('teammate runtime not running')`. So the second
+  check's unique coverage is exactly one window: the recipient was live at
+  prepare and lost its runtime before submit — a window that spans the router's
+  retry loop and nothing else.
+
+The third apparent difference, the `CompletionDeliveryResult` vocabulary, is a
+translation that already exists (`turnAdmissionToCompletionDelivery`, called by
+the coordinator's `submitCompletion`). On the happy path the two are identical:
+`ensureStarted()` on a live runtime is `if (this.runtime !== null) return;`
+after a scope assertion (`runtime-owner.ts:79-88`).
+
+### Why it matters here
+
+This design's most awkward claim is "there is no single point both paths pass
+through, so two publish sites are the structural floor." **That claim depends on
+this split.** If the paths merge, the floor is one publish site, fence sites go
+from four to three, and the coordinator loses `submitCompletion`.
+
+### The fork, unruled
+
+- **Thread a flag** (`submitInput({ …, start: false })` or equivalent). Behavior
+  is preserved exactly; `submitPreparedCompletion`, `submitCompletion`, and one
+  publish site are deleted. The cost is stated plainly: `submitInput`'s docstring
+  says "There is no per-source wrapper and no caller-selected mode, because there
+  is no per-source behavior left to select." That claim is **already false** —
+  the mode exists today as a parallel private method the type system does not
+  relate to the first. A flag makes an existing mode visible rather than adding
+  one.
+- **Plain merge**, no flag. Liveness stays answered once, at prepare. Behavior
+  changes only inside the prepare→submit window: a recipient that dies there
+  would be restarted to receive the answer instead of the answer being dropped.
+  That is a requirement decision about whether an arriving answer may wake an
+  agent, and it is the operator's call, not a refactor.
+
+Prepare/submit staying split (fence sites 3 and 4 in the earlier count) is
+**not** in question either way: preparation renders and may spill the body to
+disk and is deliberately done once, while submit is the retried unit.
+
 ## Unresolved: the activity-fact dedupe
 
 The two reviews disagree, and the disagreement is not settled.
