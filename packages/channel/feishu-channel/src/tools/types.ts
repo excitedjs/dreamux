@@ -73,6 +73,7 @@ export interface FeishuToolSession {
   askUserQuestion(input: {
     chatId: string;
     questions: readonly AskUserQuestionSpec[];
+    messageId?: string;
   }): Promise<{ request_id: string }>;
   /**
    * `requireOwner` is the Team a route must already belong to, if any Team

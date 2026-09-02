@@ -22,7 +22,6 @@ import {
   DREAMUX_ASK_ACTIONS,
   DREAMUX_ASK_CANCEL_ACTION,
   DREAMUX_ASK_OPTION_KEY,
-  DREAMUX_ASK_OTHER_ACTION,
   DREAMUX_ASK_PICK_ACTION,
   DREAMUX_ASK_QUESTION_KEY,
   DREAMUX_ASK_REQUEST_KEY,
@@ -76,6 +75,12 @@ export interface AskUserOpenInput {
 export interface AskUserOpened {
   readonly requestId: string;
   readonly card: unknown;
+  /**
+   * Put the round in play, carrying the id of the card that now shows it —
+   * absent only when the send reported none. Nothing can answer a round before
+   * this runs, and nothing has to undo one when the send never lands.
+   */
+  activate(messageId: string | undefined): void;
 }
 
 /**
@@ -126,9 +131,14 @@ export type AskUserApplyResult =
     };
 
 export interface AskUserRegistry {
+  /**
+   * Build a round and the card that asks it. The round is neither answerable
+   * nor on the clock until `activate`, because a round this registry holds is
+   * a card somebody can look at. Registering it here instead would let a send
+   * that threw leave a question behind with no card, and its TTL would later
+   * report an unanswered question to a model whose user was never asked one.
+   */
   open(input: AskUserOpenInput): AskUserOpened;
-  /** Record the sent card's id, so an expiring round can repaint it. */
-  attachMessage(requestId: string, messageId: string): void;
   apply(event: FeishuCardActionEvent): AskUserApplyResult;
   /** Drop every open round; their cards report the round as gone on next click. */
   abandonAll(): void;
@@ -295,27 +305,28 @@ export function createAskUserRegistry(
         target: input.target,
         answers: new Map(),
       };
-      rounds.set(requestId, round);
-      round.timer = timers.set(() => {
-        // Already settled by a click? Then this timer lost the race and the
-        // round is gone; `closeRound` on a stale round would report a second
-        // settlement for one question.
-        if (rounds.get(requestId) !== round) return;
-        const settlement = closeRound(round, 'expired');
-        options.onExpire?.({
-          settlement,
-          ...(round.messageId !== undefined
-            ? { messageId: round.messageId }
-            : {}),
-          card: buildAskUserClosedCard('expired'),
-        });
-      }, ttlMs);
-      return { requestId, card: buildAskUserCard(round) };
-    },
-
-    attachMessage(requestId, messageId): void {
-      const round = rounds.get(requestId);
-      if (round !== undefined) round.messageId = messageId;
+      return {
+        requestId,
+        card: buildAskUserCard(round),
+        activate(messageId): void {
+          if (messageId !== undefined) round.messageId = messageId;
+          rounds.set(requestId, round);
+          round.timer = timers.set(() => {
+            // Already settled by a click? Then this timer lost the race and
+            // the round is gone; `closeRound` on a stale round would report a
+            // second settlement for one question.
+            if (rounds.get(requestId) !== round) return;
+            const settlement = closeRound(round, 'expired');
+            options.onExpire?.({
+              settlement,
+              ...(round.messageId !== undefined
+                ? { messageId: round.messageId }
+                : {}),
+              card: buildAskUserClosedCard('expired'),
+            });
+          }, ttlMs);
+        },
+      };
     },
 
     apply(event): AskUserApplyResult {
@@ -334,6 +345,16 @@ export function createAskUserRegistry(
       }
 
       if (action === DREAMUX_ASK_SUBMIT_ACTION) {
+        // 提交 sits directly under the questions, so it is also the button
+        // pressed before anything has been chosen. Settling on that click
+        // would spend the round's one settlement telling the model every
+        // question was left unanswered, which is worse than saying nothing.
+        if (round.answers.size === 0) {
+          return {
+            kind: 'response',
+            response: toast('warning', '先选一个再提交，或者点「不用问了」。'),
+          };
+        }
         return settle(round, 'submitted', event);
       }
       if (action === DREAMUX_ASK_CANCEL_ACTION) {
@@ -362,17 +383,15 @@ export function createAskUserRegistry(
         return { kind: 'response', response: repaint(round, option.label) };
       }
 
-      if (action === DREAMUX_ASK_OTHER_ACTION) {
-        const text = (event.inputValue ?? '').trim();
-        if (text === '') {
-          round.answers.delete(questionIndex);
-          return { kind: 'response', response: repaint(round, '已清空') };
-        }
-        round.answers.set(questionIndex, { kind: 'other', text });
-        return { kind: 'response', response: repaint(round, `Other：${text}`) };
+      // Free text is the last action the guard at the top admitted, so it is
+      // what is left once pick, submit and cancel have been handled.
+      const text = (event.inputValue ?? '').trim();
+      if (text === '') {
+        round.answers.delete(questionIndex);
+        return { kind: 'response', response: repaint(round, '已清空') };
       }
-
-      return { kind: 'ignored' };
+      round.answers.set(questionIndex, { kind: 'other', text });
+      return { kind: 'response', response: repaint(round, `Other：${text}`) };
     },
 
     abandonAll(): void {

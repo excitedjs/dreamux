@@ -125,17 +125,27 @@ it against the provider output schema.
 The arguments deliberately mirror Claude Code's own AskUserQuestion, down to the
 field descriptions, so a model reads the two as one tool: 1-4 `questions`, each
 with a `header` chip, a `question`, and 2-4 `options` of `label` +
-`description`. Three fields differ. A `chat_id` is required, because a chat
-tool needs a destination and AskUserQuestion has no such concept. There is no
-`multiSelect`: the operator ruled multi-select out of this channel, so every
-question takes exactly one answer. And there is no `preview`: it was first
-drawn as a column beside the options, and the operator removed it on sight —
-"这个 preview 有点复杂了，给他去掉，他也会影响卡片的布局". A per-option preview
-cannot be drawn without a second column, and that column reshaped the layout of
-every question carrying one, so the field went with the column.
+`description`. Four fields differ, and two of them are the chat. A `chat_id` is
+required, because a chat tool needs a destination and AskUserQuestion has no
+such concept; a `message_id` is optional, and when the model names the message
+its question came out of, the card is addressed the way a reply is — into that
+message's topic, under the anchor the target router already holds for it. With
+no message named, the card is addressed at the chat, which in a topic group
+opens a topic of its own: right for a question belonging to no particular
+message, wrong for one that does. A message id from another chat is ignored
+rather than obeyed, the same rule `reply` follows, so a stale id cannot
+redirect a question into a conversation it was not meant for.
 
-The third difference is the one that shapes the design: **the tool does not
-return the answer.** It returns `{ request_id, status: 'asked', next }` as soon
+The other two fields are gone. There is no `multiSelect`: the operator ruled
+multi-select out of this channel, so every question takes exactly one answer.
+And there is no `preview`: it was first drawn as a column beside the options,
+and the operator removed it on sight — "这个 preview 有点复杂了，给他去掉，
+他也会影响卡片的布局". A per-option preview cannot be drawn without a second
+column, and that column reshaped the layout of every question carrying one, so
+the field went with the column.
+
+The difference that shapes the design is not an argument at all: **the tool does
+not return the answer.** It returns `{ request_id, status: 'asked', next }` as soon
 as the card is sent, and `next` instructs the model to end its turn. A click
 settles the round server-side and the answer reaches Core as an ordinary
 inbound submission, on the path a typed reply takes. Blocking the tool call was
@@ -158,6 +168,18 @@ oversight: asked whether a non-asker clicking should be gated, the operator
 ruled "不需要限制，所有人都可以点". The answer carries the clicker's open_id as
 `sender_id`, so who answered is never lost — but no authorization check stands
 between a group member and the card.
+
+A round exists only once its card does. The registry builds the round and the
+card together but puts neither in play until the send lands, so a send that
+throws leaves nothing waiting — rather than a question with no card, whose TTL
+would later report an unanswered question to a model whose user was never asked
+one.
+
+提交 with nothing chosen is refused with a toast instead of settling. The button
+sits directly under the questions, so it is also the one pressed by accident,
+and a round settles exactly once: spending that settlement to tell the model
+every question was left unanswered is worse than saying nothing. A partial
+answer still submits, and the questions nobody answered are reported as such.
 
 A round closes itself after `ASK_USER_CARD_TTL_MS`, which is under the 15
 minutes after which Feishu stops accepting clicks on a card. Past that cutoff

@@ -449,26 +449,31 @@ async function deliverAskUserSettlement(
  * card-action route, and the answer reaches Core as an inbound submission, so
  * the tool that called this is long finished by the time the user decides.
  *
- * With no message to thread under, the target names the chat itself — all the
- * tool is given, a question being addressed to a conversation rather than to
- * one message in it.
+ * `messageId` is the message the question came out of, and the target follows
+ * it the way an ordinary reply does — into that message's topic, under the
+ * anchor the router holds for it. Without one the target names the chat, and
+ * in a topic group the card opens a topic of its own, which is right for a
+ * question that belongs to no particular message and wrong for one that does.
+ *
+ * The round is put in play only once the card is really sent, so a send that
+ * throws leaves no question behind and fails where the model can see it.
  */
 export async function askUserQuestion(
   h: SessionHandle,
   input: {
     chatId: string;
     questions: readonly AskUserQuestionSpec[];
+    messageId?: string;
   },
 ): Promise<{ request_id: string }> {
-  const target = h.targetRouter.outboundTarget(input.chatId, undefined);
+  const target = h.targetRouter.outboundTarget(input.chatId, input.messageId);
   const opened = h.askUser.open({ questions: input.questions, target });
   const sent = await sendCard(h, {
     target: h.targetRouter.notificationTarget(target),
     card: opened.card,
     mode: 'inbound',
   });
-  const messageId = sent.messageIds[0];
-  if (messageId !== undefined) h.askUser.attachMessage(opened.requestId, messageId);
+  opened.activate(sent.messageIds[0]);
   return { request_id: opened.requestId };
 }
 
@@ -509,7 +514,12 @@ export async function handleCardAction(
   const applied = h.askUser.apply(event);
   if (applied.kind !== 'ignored') {
     if (applied.kind === 'settled') {
-      await deliverAskUserSettlement(h, applied.settlement);
+      // Detached deliberately. Feishu gives a card callback a few seconds
+      // before it gives up and the click looks dead, and handing the answer to
+      // Core means waking an agent — long enough to lose that window. Delivery
+      // logs its own failure at error level and has nothing to report back
+      // here anyway.
+      void deliverAskUserSettlement(h, applied.settlement);
     }
     return applied.response;
   }

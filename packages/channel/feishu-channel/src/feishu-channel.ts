@@ -129,7 +129,7 @@ export class FeishuChannelSession {
   private readonly inactiveFence = alwaysActiveSessionFence();
   private readonly askUser = createAskUserRegistry({
     onExpire: (expiry) => {
-      void sessionExpireAskUser(this.handle, expiry).catch(() => undefined);
+      void sessionExpireAskUser(this.handle, expiry);
     },
   });
   private lifecycle: FeishuSessionLifecycle | undefined;

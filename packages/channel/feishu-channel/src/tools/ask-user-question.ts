@@ -3,11 +3,13 @@
  *
  * The arguments are AskUserQuestion's, near enough to be read as the same tool:
  * `questions`, each with a `header` chip, a `question`, and 2-4 `options` of
- * `label` + `description`. Three fields differ, none of them by choice here: a
- * `chat_id` is required, because a chat tool needs a destination and
- * AskUserQuestion has no such concept; `multiSelect` is absent, because the
- * operator ruled multi-select out of this channel; and so is `preview`, which
- * the operator dropped after seeing what it cost the card —
+ * `label` + `description`. Four fields differ. Two are the chat: `chat_id` is
+ * required and `message_id` is offered, because a card has to be addressed at
+ * a conversation and, when the question came out of something someone said, at
+ * the message it came out of. AskUserQuestion, answered inside the client that
+ * called it, needs neither. The other two are gone: `multiSelect`, because the
+ * operator ruled multi-select out of this channel, and `preview`, which the
+ * operator dropped after seeing what it cost the card —
  * "这个 preview 有点复杂了，给他去掉，他也会影响卡片的布局". Rendering it meant
  * a second column beside the options, which reshaped every question that used
  * it.
@@ -25,6 +27,7 @@ import {
   asRecord,
   closedObjectSchema,
   nonEmptyString,
+  optionalString,
   requireString,
 } from './schema.js';
 import type { FeishuToolDef } from './types.js';
@@ -92,6 +95,7 @@ const questionSchema = closedObjectSchema(
 interface AskUserQuestionInput {
   chatId: string;
   questions: readonly AskUserQuestionSpec[];
+  messageId?: string;
 }
 
 function parseOption(raw: unknown, where: string): AskUserOption {
@@ -161,6 +165,12 @@ export const askUserQuestionDef: FeishuToolDef<AskUserQuestionInput> = {
           'Feishu chat id from the inbound <channel source="feishu"> block. ' +
           'The card is sent to this conversation.',
       },
+      message_id: {
+        ...nonEmptyString,
+        description:
+          'Optional id of the message this question came out of. The card is ' +
+          'sent under it, in the same topic, exactly as a reply would be.',
+      },
       questions: {
         type: 'array',
         minItems: MIN_QUESTIONS,
@@ -192,15 +202,18 @@ export const askUserQuestionDef: FeishuToolDef<AskUserQuestionInput> = {
         `questions must have ${MIN_QUESTIONS}-${MAX_QUESTIONS} questions`,
       );
     }
+    const messageId = optionalString(obj, 'message_id');
     return {
       chatId: requireString(obj, 'chat_id'),
       questions: questions.map(parseQuestion),
+      ...(messageId !== null ? { messageId } : {}),
     };
   },
   async handle(ctx, input) {
     const result = await ctx.session.askUserQuestion({
       chatId: input.chatId,
       questions: input.questions,
+      ...(input.messageId !== undefined ? { messageId: input.messageId } : {}),
     });
     return {
       request_id: result.request_id,

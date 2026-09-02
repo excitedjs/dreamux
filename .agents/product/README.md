@@ -36,6 +36,17 @@ the same change that touches it.
   needing no orphan governance; a later message on that conversation simply
   creates or selects another Team. Dissolving a Team cancels all bindings that
   point at it.
+- **A question the agent cannot answer becomes a card, and the turn ends.**
+  When an agent is blocked on a decision only the user can make, the built-in
+  Feishu channel posts an interactive question card — 1-4 single-select
+  questions, each with an "Other" text box — and the agent stops and waits: the
+  tool returns as soon as the card is sent, never the answer. Anyone in the chat
+  may answer, an explicit operator ruling rather than a gap, and the answer
+  arrives as an ordinary inbound message carrying who clicked. Dismissing the
+  card tells the agent to stop asking and talk it through instead; a card nobody
+  answers closes itself before Feishu stops accepting clicks and tells the agent
+  to stand still rather than wait forever.
+  (Domain: [channel](/.agents/domains/channel.md).)
 - **A collaboration space is a Channel product flow.** The Channel provisions a
   Team via ordinary `team.create` for a chat or topic it manages; provisioning
   progress is volatile, and a crash may leave an accepted orphan Team rather

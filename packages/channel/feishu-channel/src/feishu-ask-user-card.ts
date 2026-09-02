@@ -299,7 +299,11 @@ export function buildAskUserCard(view: AskUserRequestView): unknown {
 export function buildAskUserSubmittedCard(view: AskUserRequestView): unknown {
   return {
     schema: '2.0',
-    config: { update_multi: true, width_mode: 'default' },
+    config: {
+      update_multi: true,
+      width_mode: 'default',
+      summary: { content: '已收到你的回答' },
+    },
     header: {
       title: { tag: 'plain_text', content: '已收到你的回答' },
       template: 'green',

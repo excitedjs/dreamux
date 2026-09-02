@@ -22,6 +22,7 @@ import {
   ASK_USER_CARD_TTL_MS,
   createAskUserRegistry,
   type AskUserExpiry,
+  type AskUserRegistry,
   type AskUserTimers,
 } from '../src/feishu-ask-user.js';
 import {
@@ -35,12 +36,13 @@ import {
   type AskUserQuestionSpec,
 } from '../src/feishu-ask-user-card.js';
 import { DREAMUX_ACTION_KEY } from '../src/feishu-pairing-card.js';
+import { FeishuTargetRouter } from '../src/feishu-target-router.js';
 import {
   ASK_USER_NEXT_INSTRUCTION,
   askUserQuestionDef,
 } from '../src/tools/ask-user-question.js';
 import type { FeishuToolContext, FeishuToolSession } from '../src/tools/types.js';
-import { chatTarget } from '../src/routing/target.js';
+import { chatTarget, topicTarget } from '../src/routing/target.js';
 
 const QUESTIONS: readonly AskUserQuestionSpec[] = [
   {
@@ -103,10 +105,40 @@ function manualTimers(): AskUserTimers & { fire(): void } {
   };
 }
 
+/**
+ * Open a round and put it in play, which is what a successful send does. A
+ * round nobody activated is answerable by nobody, so every test that clicks
+ * one has to go through here.
+ */
+function openRound(
+  registry: AskUserRegistry,
+  messageId: string | undefined = undefined,
+): string {
+  const opened = registry.open({ questions: QUESTIONS, target });
+  opened.activate(messageId);
+  return opened.requestId;
+}
+
+/** Answer a question, so a submit has something to submit. */
+function pickOption(
+  registry: AskUserRegistry,
+  requestId: string,
+  questionIndex: number,
+  optionIndex: number,
+): void {
+  registry.apply(
+    event(DREAMUX_ASK_PICK_ACTION, {
+      [DREAMUX_ASK_REQUEST_KEY]: requestId,
+      [DREAMUX_ASK_QUESTION_KEY]: questionIndex,
+      [DREAMUX_ASK_OPTION_KEY]: optionIndex,
+    }),
+  );
+}
+
 describe('ask-user registry', () => {
   it('records a pick server-side and repaints the card as selected', () => {
     const registry = createAskUserRegistry({ timers: manualTimers() });
-    const { requestId } = registry.open({ questions: QUESTIONS, target });
+    const requestId = openRound(registry);
 
     const applied = registry.apply(
       event(DREAMUX_ASK_PICK_ACTION, {
@@ -127,7 +159,7 @@ describe('ask-user registry', () => {
 
   it('lets free text answer a question, and replace a picked option', () => {
     const registry = createAskUserRegistry({ timers: manualTimers() });
-    const { requestId } = registry.open({ questions: QUESTIONS, target });
+    const requestId = openRound(registry);
     registry.apply(
       event(DREAMUX_ASK_PICK_ACTION, {
         [DREAMUX_ASK_REQUEST_KEY]: requestId,
@@ -159,7 +191,7 @@ describe('ask-user registry', () => {
 
   it('clearing the free-text box takes the answer back', () => {
     const registry = createAskUserRegistry({ timers: manualTimers() });
-    const { requestId } = registry.open({ questions: QUESTIONS, target });
+    const requestId = openRound(registry);
     registry.apply(
       event(
         DREAMUX_ASK_OTHER_ACTION,
@@ -174,6 +206,9 @@ describe('ask-user registry', () => {
         '   ',
       ),
     );
+    // The second question keeps the submit alive; a round with no answer at
+    // all is refused, which is a different test.
+    pickOption(registry, requestId, 1, 0);
 
     const settled = registry.apply(
       event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
@@ -184,7 +219,7 @@ describe('ask-user registry', () => {
 
   it('cancel tells the model to stop asking, not that a button was pressed', () => {
     const registry = createAskUserRegistry({ timers: manualTimers() });
-    const { requestId } = registry.open({ questions: QUESTIONS, target });
+    const requestId = openRound(registry);
 
     const settled = registry.apply(
       event(DREAMUX_ASK_CANCEL_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
@@ -196,7 +231,8 @@ describe('ask-user registry', () => {
 
   it('settles a round exactly once, so a double click cannot deliver twice', () => {
     const registry = createAskUserRegistry({ timers: manualTimers() });
-    const { requestId } = registry.open({ questions: QUESTIONS, target });
+    const requestId = openRound(registry);
+    pickOption(registry, requestId, 0, 0);
     const first = registry.apply(
       event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
     );
@@ -212,7 +248,7 @@ describe('ask-user registry', () => {
 
   it('answers a click on a round it no longer has instead of going silent', () => {
     const registry = createAskUserRegistry({ timers: manualTimers() });
-    registry.open({ questions: QUESTIONS, target });
+    openRound(registry);
     registry.abandonAll();
 
     const applied = registry.apply(
@@ -222,6 +258,56 @@ describe('ask-user registry', () => {
     expect(applied.response.toast?.type).toBe('error');
   });
 
+  it('leaves nothing behind when the card never reached the chat', () => {
+    const timers = manualTimers();
+    const expired: AskUserExpiry[] = [];
+    const registry = createAskUserRegistry({
+      timers,
+      onExpire: (expiry) => expired.push(expiry),
+    });
+    // The send threw, so `activate` was never reached.
+    const opened = registry.open({ questions: QUESTIONS, target });
+
+    const applied = registry.apply(
+      event(DREAMUX_ASK_SUBMIT_ACTION, {
+        [DREAMUX_ASK_REQUEST_KEY]: opened.requestId,
+      }),
+    );
+    expect(applied.kind).toBe('response');
+    // And no clock is running: a round with no card must never tell the model
+    // that a question it never asked went unanswered.
+    timers.fire();
+    expect(expired).toHaveLength(0);
+  });
+
+  it('refuses a submit with nothing chosen instead of spending the round', () => {
+    const registry = createAskUserRegistry({ timers: manualTimers() });
+    const requestId = openRound(registry);
+
+    const empty = registry.apply(
+      event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
+    );
+    expect(empty.kind).toBe('response');
+    if (empty.kind !== 'response') return;
+    expect(empty.response.toast?.type).toBe('warning');
+
+    // The round survived the misfire, so the next click still answers it.
+    registry.apply(
+      event(DREAMUX_ASK_PICK_ACTION, {
+        [DREAMUX_ASK_REQUEST_KEY]: requestId,
+        [DREAMUX_ASK_QUESTION_KEY]: 0,
+        [DREAMUX_ASK_OPTION_KEY]: 1,
+      }),
+    );
+    const settled = registry.apply(
+      event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
+    );
+    if (settled.kind !== 'settled') throw new Error('expected settled');
+    // One question answered, one not: still a submit, and still worth sending.
+    expect(settled.settlement.text).toContain('Move to SQLite');
+    expect(settled.settlement.text).toContain('(left unanswered)');
+  });
+
   it('leaves other cards alone', () => {
     const registry = createAskUserRegistry({ timers: manualTimers() });
     expect(registry.apply(event('approve_pairing', {})).kind).toBe('ignored');
@@ -229,7 +315,8 @@ describe('ask-user registry', () => {
 
   it('anchors the answer on the real card, never on the dedup id', () => {
     const registry = createAskUserRegistry({ timers: manualTimers() });
-    const { requestId } = registry.open({ questions: QUESTIONS, target });
+    const requestId = openRound(registry);
+    pickOption(registry, requestId, 0, 0);
 
     const settled = registry.apply(
       event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
@@ -254,8 +341,7 @@ describe('ask-user registry', () => {
       timers,
       onExpire: (expiry) => expired.push(expiry),
     });
-    const { requestId } = registry.open({ questions: QUESTIONS, target });
-    registry.attachMessage(requestId, 'om_sent');
+    const requestId = openRound(registry, 'om_sent');
 
     timers.fire();
     // No click means no event to read the card id from — only what the send
@@ -271,8 +357,7 @@ describe('ask-user registry', () => {
       timers,
       onExpire: (expiry) => expired.push(expiry),
     });
-    const { requestId } = registry.open({ questions: QUESTIONS, target });
-    registry.attachMessage(requestId, 'om_card');
+    const requestId = openRound(registry, 'om_card');
 
     timers.fire();
 
@@ -292,7 +377,8 @@ describe('ask-user registry', () => {
       timers,
       onExpire: (expiry) => expired.push(expiry),
     });
-    const { requestId } = registry.open({ questions: QUESTIONS, target });
+    const requestId = openRound(registry);
+    pickOption(registry, requestId, 0, 0);
     registry.apply(
       event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
     );
@@ -360,6 +446,38 @@ describe('ask_user_question tool', () => {
     expect(Object.keys(option)).toEqual(['label', 'description']);
   });
 
+  it('sends the card under the message the question came out of', async () => {
+    const askUserQuestion = vi.fn().mockResolvedValue({ request_id: 'r1' });
+    await askUserQuestionDef.handle(
+      context({ askUserQuestion }),
+      askUserQuestionDef.parse({ ...validArgs, message_id: 'om_asked' }),
+    );
+
+    expect(askUserQuestion.mock.calls[0]?.[0]).toMatchObject({
+      chatId: 'oc_test',
+      messageId: 'om_asked',
+    });
+  });
+
+  it('leaves the message id out when the model named none', () => {
+    // Not an empty string: the target router reads "no message to thread
+    // under" from the field's absence, and would look up '' as an id.
+    expect(askUserQuestionDef.parse(validArgs)).not.toHaveProperty('messageId');
+  });
+
+  it('needs a chat, offers a message, and asks for nothing else', () => {
+    const schema = askUserQuestionDef.inputSchema as {
+      properties: Record<string, unknown>;
+      required: readonly string[];
+    };
+    expect(Object.keys(schema.properties)).toEqual([
+      'chat_id',
+      'message_id',
+      'questions',
+    ]);
+    expect(schema.required).toEqual(['chat_id', 'questions']);
+  });
+
   it('rejects a header too long to fit the chip', () => {
     expect(() =>
       askUserQuestionDef.parse({
@@ -390,5 +508,54 @@ describe('ask_user_question tool', () => {
         questions: Array.from({ length: 5 }, () => validArgs.questions[0]),
       }),
     ).toThrow(/1-4 questions/);
+  });
+});
+
+/**
+ * Where `message_id` sends the card. The rule is the one `reply` already
+ * follows — the card belongs wherever the message it answers lives — so this
+ * covers the router, not a second routing path for questions.
+ */
+describe('addressing the question card', () => {
+  const silent = {
+    error: () => undefined,
+    warn: () => undefined,
+    info: () => undefined,
+    debug: () => undefined,
+    trace: () => undefined,
+  };
+
+  function router(): FeishuTargetRouter {
+    return new FeishuTargetRouter({ chatModes: {}, log: silent });
+  }
+
+  it('follows the named message into its topic', () => {
+    const r = router();
+    r.observe('om_asked', topicTarget('oc_room', 'omt_thread'));
+
+    expect(r.outboundTarget('oc_room', 'om_asked')).toEqual(
+      topicTarget('oc_room', 'omt_thread'),
+    );
+  });
+
+  it('addresses the chat itself when no message is named', () => {
+    const r = router();
+    r.observe('om_asked', topicTarget('oc_room', 'omt_thread'));
+
+    // A question that belongs to no message opens a topic of its own.
+    expect(r.outboundTarget('oc_room', undefined)).toEqual(
+      chatTarget('oc_room', 'group'),
+    );
+  });
+
+  it('ignores a message from another chat rather than redirecting the card', () => {
+    const r = router();
+    r.observe('om_elsewhere', topicTarget('oc_other', 'omt_thread'));
+
+    // Deliberate: a stale or copied id must not send a question meant for one
+    // conversation into another. The named chat wins.
+    expect(r.outboundTarget('oc_room', 'om_elsewhere')).toEqual(
+      chatTarget('oc_room', 'group'),
+    );
   });
 });
