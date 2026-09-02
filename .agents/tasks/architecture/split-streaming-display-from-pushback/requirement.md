@@ -63,8 +63,11 @@ Recorded here so a proposal is measured against it rather than re-deriving it.
   `AgentRuntimeSubmissionInput` is `{ text: string }` today; a caller-supplied id
   on it, echoed by the runtime on the input fact, deletes the return path
   entirely. Claude Code already generates exactly such an id internally
-  (`commandUuid` in `writeSteer`); this supplies it instead. Codex maps from its
-  `turn/start` response id, which it already holds.
+  (`commandUuid` in `writeSteer`); this supplies it instead. Codex needs it
+  supplied: every codex submission goes through `turn/start`, and several of
+  those calls can return the *same* `response.turn.id` — that id names the
+  folded native turn, not the input — so codex holds no per-input identity to
+  map from.
 
 ## The three questions this task answers
 
