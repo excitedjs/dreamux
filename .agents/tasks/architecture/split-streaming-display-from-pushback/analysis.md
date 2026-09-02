@@ -218,12 +218,39 @@ it keeps working unchanged; only the return path shortens.
 | `teammate.native_turn.ended` — the bespoke actor-scoped core event | the only way to publish an actor-scoped fact through a submission-scoped surface |
 | codex's `NativeTurnRecord.nativeTurnEnded` flag | its docstring claims several terminal paths can reach one record. Read against the source they cannot: `finalize` returns on `record.completion !== null` and sets `completion` before reporting; `failProtocol` skips records with a `completion` and `failRecord` deletes the record from `nativeTurns`; `stop` skips records with a `completion` and deletes the rest. Every reporting path either blocks the others or removes the record. The flag guards a double report the existing guards already prevent — confirm this reading when implementing, do not take the row on trust |
 | `sourceId` retained on `EntityTurn` | the return trip that a caller-supplied id removes |
-| `teammate.turn.submitted`, `teammate.turn.settled` | `input` replaces the first. The second is produced (`conversation-projection.ts`) and its redaction is asserted in tests, but **no Channel consumes it**: `feishu-cot-session.ts` records that it is deliberately not handled, because a per-submission settlement does not mean the work the operator is watching finished |
+| `teammate.turn.submitted`, `teammate.turn.settled` | `input` replaces the first. The second is an orphan of COT's own making — see below |
 | `projectSubmitted`, `projectSettled`, `projectNativeTurnEnd`, `projectActorDisplay` | four entry points collapse to one `projectActivity(agent, activity)` |
 | representative attribution in codex | nothing needs a member chosen to own a folded turn's facts |
 
 Seven core event kinds become three: `team.state`, `teammate.state`, and one
 `teammate.activity`.
+
+### `teammate.turn.settled` is an orphan COT created and then abandoned
+
+Worth stating separately, because it is the clearest single instance of the
+pattern this task exists to end.
+
+It is **not** a pre-existing push-back fact that display borrowed. The push-back
+mechanism's own settlement is `RuntimeSubmission.settled` → `EntityTurn.settled`
+→ completion delivery, and that path is very much consumed — it is how a
+completion reaches its caller. The *event* is a different object with a
+different life:
+
+- **#347 invented it** as `turn.settled`, and consumed it:
+  `coreEvents.on('turn.settled', forward((a, e) => a.onTurnSettled(e)))`, with a
+  `settled` flag in the COT state machine that terminated a card.
+- **#350** renamed it to `teammate.turn.settled`. Still consumed.
+- **#357 removed the consumption.** A provider folds any number of submissions
+  into one native turn, so a per-submission settlement says nothing about
+  whether the card the operator is watching has finished.
+  `teammate.native_turn.ended` became the card's one terminal, and
+  `feishu-cot-session.ts` records the absence deliberately.
+
+So the kind is still produced by `conversation-projection.ts`, still in the
+sealed catalog, still has its redaction asserted in tests — and no Channel
+reads it. It exists because display had no home of its own: the fact was
+published as a core event, the assumption behind it turned out to be wrong, and
+the publication outlived the assumption because nothing ties the two together.
 
 ### What it costs
 
@@ -255,7 +282,8 @@ Nothing here adds a mechanism that does not replace one.
 - **`priority` on the claude steer envelope.** Dreamux writes it; the official
   documentation describes no such field. If it is inert it is one more deletion,
   but confirming costs a probe and is not required by this design.
-- **Whether `teammate.turn.settled` may simply go.** It is a published core
-  event kind that this repository produces but no Channel reads. Deleting an
-  unused published surface is still a surface change — and flowx is a semantic
-  superset that ports these PRs, so the question belongs to that side too.
+- **Whether `teammate.turn.settled` may simply go.** COT created it in #347 and
+  orphaned it in #357; this repository still produces it and no Channel reads
+  it. Deleting an unused published surface is still a surface change — and
+  flowx is a semantic superset that ports these PRs, so the question belongs to
+  that side too.
