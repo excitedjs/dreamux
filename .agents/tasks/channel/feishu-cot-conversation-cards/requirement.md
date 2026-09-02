@@ -85,14 +85,24 @@ home as `~`.
    anchor again. A native-ended fact closes an existing open card but never opens a
    new one; when no card is open, Feishu ignores it.
 
-9. **No body suppression.** Once the recipient has an anchor, every projected
-   input displays, including the body of the Feishu message this Channel itself
-   submitted. The Channel keeps no per-turn suppression state. Such a mark can
-   only be written after Core has already published that body synchronously
-   inside the admitting call, so it never took effect, and the duplicate it aimed
-   to hide is the same fact the accepted synchronous-admission loss already
-   allows. Removing it requires no correlation contract, buffer, or reordering,
-   which remain rejected.
+9. **The Channel's own body is hidden, and the anchor moves before it arrives.**
+   The one thing a card does not repeat is the Feishu message already visible at
+   its own anchor. Everything else displays.
+
+   Making that true requires no buffering, reordering, or new request contract,
+   because the correlation already crosses the seam: `source_id` is an existing
+   `team.submit` parameter that Core already uses for deduplication, and the
+   Channel sets it to the visible message it is about to submit. Core publishes
+   `teammate.turn.submitted` immediately before the user body, in the same
+   synchronous block, so echoing `source_id` back on that event lets the Channel
+   recognize its own submission and establish the anchor before the body arrives.
+   The 2026-09-01 rejection of a "request-correlation contract" stands for what it
+   named — a new field on the request, invented for presentation ownership. This
+   is the reverse direction: an existing request field returned on the fact it
+   produced, so the submitting Channel can identify its own turn.
+
+   A submission this Channel did not make carries a `source_id` it does not
+   recognize, and is presented normally.
 
 10. **Role parity.** Dispatcher and TeamLeader use the same state shape and the
    same anchor replacement, card open, append, interrupt, and close transitions.
@@ -174,7 +184,9 @@ home as `~`.
 - No early native-end group buffer and no request-correlation contract added to
   `team.submit` for presentation ownership.
 - No persisted anchor/card store, restart recovery, replay, or backfill.
-- No per-turn body-suppression ledger in the Channel.
+- No suppression that depends on buffering, reordering, or a new `team.submit`
+  request field. Recognizing the Channel's own submission from the `source_id` it
+  already sent is not such a design.
 - No provider-side deduplication flag for native turn ends. A synthesized end is
   reported only when the reporting call actually settled something, so no second
   report exists to suppress.
@@ -204,10 +216,11 @@ home as `~`.
   or closed Team route produces no Team turn and submits once to the Dispatcher.
   A successful Dispatcher admission moves the same anchor; ambiguous outcomes do
   not fallback or change the presentation.
-- After the successful anchor transition, a Feishu inbound displays the fixed
-  receipt. Its user body is an ordinary input and displays wherever it lands; the
-  Channel holds no state to hide it. Task, task-notification, cron, system, and an
-  unknown future source all display without a whitelist.
+- A Feishu inbound displays the fixed receipt under its own message and does not
+  repeat its user body. The anchor is established when the submitted fact naming
+  this Channel's `source_id` arrives, which precedes the body, so neither the body
+  nor a spurious card lands on the predecessor anchor. Task, task-notification,
+  cron, system, and an unknown future source all display without a whitelist.
 - One folded native turn containing any number of logical submissions emits one
   native-ended fact and closes the recipient's current open card once, if any. If
   no card is open, the fact is ignored. Intermediate or final logical settlements
