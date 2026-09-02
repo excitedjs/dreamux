@@ -75,11 +75,11 @@ import {
 const FEISHU_COT_OPEN_TOOL_CALLS_MAX = 512;
 const FEISHU_COT_CLOSE_DRAIN_MS = 5_000;
 export const FEISHU_COT_OPENING_LABELS = [
-  '✳ Vibing...',
-  '✳ Shipping...',
-  '✳ Reticulating...',
-  '✳ Manifesting...',
-  '✳ Baking...',
+  '❋ Vibing...',
+  '❋ Shipping...',
+  '❋ Reticulating...',
+  '❋ Manifesting...',
+  '❋ Baking...',
 ] as const;
 
 export interface FeishuCotAdapterOptions {
