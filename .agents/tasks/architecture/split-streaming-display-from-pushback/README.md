@@ -46,10 +46,13 @@
   2. **Ruling 4's 「置成失败」 now reaches the card.** All four non-`submitted`
      admissions publish `turn.ended` with `status: 'failed'`, and a failed end
      ends the Feishu card with AG-UI's `RUN_ERROR` event, which the client
-     renders as 任务失败. The earlier reading — that the wire had no failure
-     terminal — was wrong: it was being looked for among the values of
+     renders as 任务失败, carrying the reason in that event's documented
+     `message`. The earlier reading — that the wire had no failure terminal —
+     was wrong: it was being looked for among the values of
      `RUN_FINISHED.status`, where AG-UI does not put it. Settled by the
-     2026-09-02 live probe; see item 3.
+     2026-09-02 live probe and then by the reference the operator pointed at,
+     **COT Message Brief** on `open.larkoffice.com`, which the public
+     `open.feishu.cn` docs do not carry; see item 3.
 
   Recorded and deliberately not done:
   - `isSynthetic` is producer-less in `src/` exactly like `priority` was, but
@@ -66,13 +69,11 @@
     dropped an unlisted kind; it is now derived from an exhaustive
     `Record<ChannelCoreEvent['kind'], true>`, so a missing entry fails to
     compile.
-  - `feishu-cot-events.ts` is at 696 of its 700-line lint cap after the
-    three-valued terminal landed. The seam that would relieve it is real — the
-    tool *presentation* catalog (icons, titles, per-tool result shapes) is a
-    different concern from AG-UI event construction and byte budgeting — but
-    moving ~250 lines of a well-tested presentation layer is not this task's
-    scope. Recorded rather than done: the next change to this file should split
-    it, not shave comments.
+  - `feishu-cot-events.ts` hit its 700-line lint cap, and the recorded seam was
+    taken rather than shaved: `feishu-cot-presentation.ts` now owns what a card
+    *shows* for a tool call and the byte bounding those strings share, while
+    `feishu-cot-events.ts` keeps AG-UI event construction and wire budgets and
+    imports from it. 427 and 317 lines, no behaviour change (item 13).
   - `rush typecheck:tests` is not part of `rush build`, `rush lint`, or
     `rush test`, so two test files stayed green while compiling against deleted
     types. Both are rewritten, and that command belongs in the green bar for any

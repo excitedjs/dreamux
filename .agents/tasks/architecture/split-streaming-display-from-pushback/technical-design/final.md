@@ -1006,9 +1006,14 @@ This item first shipped claiming the Feishu wire could not say it, on the
 reasoning that `FeishuCotRunStatus` was `'done' | 'interrupted'` and that
 guessing a third `RUN_FINISHED` status risked the platform rejecting the whole
 append batch. **Both halves of that were wrong**, and the operator's ruling
-「先探平台再定」 is what found it out. `message_cot` is absent from every public
-Feishu doc — the `llms.txt` index, the messaging, AI, aily, card, bot and MCP
-module docs, and web search — so there was no document to check, only a probe.
+「先探平台再定」 is what found it out. The reference exists, but not where it was
+looked for: `message_cot` is absent from every `open.feishu.cn` doc — the
+`llms.txt` index, the messaging, AI, aily, card, bot and MCP module docs, and
+web search — and lives on the enterprise docs host `open.larkoffice.com` as
+**COT Message Brief**
+(`/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message_cot/cot-message-brief`),
+which the operator pointed at once the probe had run. Probe and reference agree,
+and the reference carries the field-level detail a probe cannot show.
 
 Four cards were created, finished with a different terminal each, and read in
 the client:
@@ -1028,17 +1033,39 @@ the client:
   AG-UI puts it in `RUN_ERROR`. This layer had been looking for it among the
   values of `RUN_FINISHED.status`, where it is not.
 
+The reference then explains the rendering and fixes the shape:
+
+- `RUN_FINISHED.status` is documented as exactly three values — `done`,
+  `paused`, `interrupted`. `failed` is not one of them, which is why it rendered
+  已完成: the client ignores a status it does not know rather than rejecting it,
+  exactly as it did for the nonsense status.
+- `RUN_ERROR` is event 3, "Run failed", and its documented content is
+  `{ message, code }` and nothing else — no `threadId`, no `runId`. The probe
+  sent both and the platform tolerated them; the code sends the documented shape.
+- The event vocabulary is a numbered enum (`1 RUN_STARTED`, `2 RUN_FINISHED`,
+  `3 RUN_ERROR`, `10-13 TEXT_MESSAGE_*`, `20-24 TOOL_CALL_*`, …) and both the
+  name and the number are accepted in `event_type`. This layer sends names.
+- Field names are camelCase (`messageId`, `toolCallId`, `threadId`), which is
+  what this layer already sends. The `complete` endpoint's
+  `reason` is `done | error | timeout`, which `FeishuCotCompleteReason` already
+  spells exactly, so that type needed no change.
+- `paused` is a documented status this Channel never produces: a card here is
+  open or ended, never held. The omission is deliberate and is noted beside the
+  type so the next reader knows the enum is three-valued.
+
 As built, the wire terminal is three-valued across two event types.
 `FeishuCotRunStatus` is gone; the presentation's terminal intent is
-`FeishuCotTerminal`, which is the neutral `turn.ended` status itself
+`FeishuCotTerminalIntent`, which is `{ terminal, reason }` — the two fields of
+the neutral `turn.ended`, with `FeishuCotTerminal` being that fact's own status
 (`Extract<TeammateActivity, { kind: 'turn.ended' }>['status']`). One vocabulary
-now runs from the runtime to the card: `finishCard` passes `end.status` through
-with no mapping, and the lifecycle paths that end a card with no runtime saying
-so — a retired anchor, a session close — keep passing `'interrupted'`, because a
-retired anchor is not a failure.
+now runs from the runtime to the card: `finishCard` passes `end.status` and
+`end.reason` through with no mapping, and the lifecycle paths that end a card
+with no runtime saying so — a retired anchor, a session close — pass
+`('interrupted', null)`, because a retired anchor has no reason and is not a
+failure.
 
-`runFinishedEvent` is replaced by one `runTerminalEvent(presentationId,
-terminal)` with an exhaustive switch: `completed` → `RUN_FINISHED done`,
+`runFinishedEvent` is replaced by one `runTerminalEvent(presentationId, intent)`
+with an exhaustive switch: `completed` → `RUN_FINISHED done`,
 `interrupted` → `RUN_FINISHED interrupted`, `failed` → `RUN_ERROR`. Exporting a
 `runErrorEvent` beside the old function was the alternative and was rejected: it
 would put "a failure is a different event type" — AG-UI spelling, which is this
@@ -1046,18 +1073,28 @@ module's whole job — into the adapter's flush loop. A fourth `turn.ended` stat
 would now fail to compile at that switch rather than silently render as
 interrupted.
 
-`RUN_ERROR` carries the fixed `message`/`code` the probe verified rather than
-the turn's failure reason. Three reasons: the reason is already printed as a
-text message on the card immediately before the terminal, so ruling 9 does not
-depend on it and repeating it would show the same text twice wherever the
-platform renders the field; carrying it would turn `terminalIntent` from a
-scalar into an object across four `detach` call sites; and a terminal event
-cannot be chunked the way `TEXT_MESSAGE_CONTENT` is, so a reason of any length
-would need its own truncation path against `checkedEvent`'s 4 KiB throw. The
-fields are present rather than omitted because the probe's
-`{ threadId, runId, message, code }` is the only shape verified to render
-任务失败, and "the platform does not validate the status enum" is not "the
-platform requires no fields" — AG-UI marks `message` required in any case.
+`RUN_ERROR` carries the documented `{ message, code }`, and `message` is the
+failing turn's own reason. That is where the reference puts a reason, so the
+terminal intent is no longer a bare status: `terminalIntent` is
+`{ terminal, reason }`, which is exactly the two fields of the neutral
+`turn.ended`, and `detach` takes both at all four call sites — the three
+lifecycle paths pass `('interrupted', null)` because a retired anchor has no
+reason and is not a failure. A native end that fails with no reason still needs
+a `message`, so the terminal falls back to 任务失败; `code` is the fixed
+category `RUN_FAILED`, never the reason again.
+
+The reason is *also* still printed as a text message just above the terminal.
+Whether the client renders `RUN_ERROR.message` is unknown — the probe only shows
+that the card reads 任务失败 — so printing it is what actually satisfies ruling
+9 「错误信息给我打印在卡片上」, and the terminal's copy is what the reference
+asks for. Wherever both render, an operator sees the same sentence twice; that
+is cheaper than a terminal whose only documented content field is left blank.
+
+The reason is bounded on the way in: Core bounds it at 100_000 characters, an
+order of magnitude over one COT event's 4 KiB content cap, and a terminal event
+cannot be chunked the way `TEXT_MESSAGE_CONTENT` is. `truncateUtf8` at 512 bytes
+keeps `checkedEvent` from throwing mid-flush and leaving a card that never ends;
+a test drives a 100_000-character reason through the whole adapter to pin it.
 
 ### 4. `TeammateRuntimeOwner`'s upward channel shrinks instead of growing
 
@@ -1137,3 +1174,16 @@ other input — but it keeps its own `enterOrdinaryMutation('completion input')`
 because it must *translate* the refusal — a closing entity answers a push-back
 with `unsupported`, where an ordinary submission throws. Sharing `submitInput`'s
 fence would throw at the completion router. The table row is corrected in place.
+
+### 13. The 700-line cap split `feishu-cot-events.ts`, as recorded
+
+The three-valued terminal left that file at 696 of its 700-line lint cap, and
+this follow-up needed ~20 more. The recorded seam is the one that was taken:
+`feishu-cot-presentation.ts` now owns what a card *shows* for a tool call — the
+tool-name catalog, the owned/built-in/teammate presentations, detail
+normalization — plus the byte bounding those strings share (`truncateUtf8`,
+`truncateEscaped`, `escapedBytes`, `TRUNCATION_MARKER`). `feishu-cot-events.ts`
+keeps event construction and wire budgets and imports from it, one direction
+only. 427 and 317 lines, no behaviour change, no other file touched: the split
+is by concern, not by line count, which is why the cap could force it without
+distorting it.

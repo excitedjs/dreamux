@@ -665,13 +665,26 @@ submissions into one native turn, so settlement could never say whether the card
 an operator is watching has finished. The end's three statuses are the
 card's three terminals, and they are spelled across two AG-UI events, not one:
 `completed` and `interrupted` are `RUN_FINISHED` statuses (`done` and
-`interrupted`), while `failed` is a separate `RUN_ERROR` event, which is where
-AG-UI puts a failure terminal. The reason is printed on the card first when the
-end carries one. A `RUN_FINISHED` carrying `failed` was probed live and renders
-as *completed* in the Feishu client — identically to a deliberately nonsense
-status — so the distinction is real and only `RUN_ERROR` states it. `RUN_ERROR`
-carries a fixed message and code rather than the end's reason, which the card
-already shows. The fact closes an already open card and
+`interrupted`), while `failed` is the separate `RUN_ERROR` event. `RUN_FINISHED`
+takes exactly `done | paused | interrupted` — a `RUN_FINISHED` carrying `failed`
+was probed live and renders as *completed*, identically to a deliberately
+nonsense status, because the client ignores a status it does not know rather
+than rejecting the batch. `paused` is documented but never produced here: a card
+is open or ended, never held. `RUN_ERROR` carries the documented
+`{ message, code }` and nothing else, `message` being the end's own reason
+bounded to fit one event and `code` a fixed category. That reason is *also*
+printed on the card as ordinary text just before the terminal, which is what
+makes it visible — whether the client renders `RUN_ERROR.message` is unknown.
+
+The reference for all of this is **COT Message Brief** on the enterprise docs
+host, `open.larkoffice.com`
+(`/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message_cot/cot-message-brief`);
+the public `open.feishu.cn` documentation carries no `message_cot` reference at
+all, so a reader who checks only the public host will conclude, wrongly, that
+this surface is undocumented. It gives the event vocabulary as a numbered enum
+(`1 RUN_STARTED`, `2 RUN_FINISHED`, `3 RUN_ERROR`, `10-13 TEXT_MESSAGE_*`,
+`20-24 TOOL_CALL_*`, …), accepts either the name or the number in `event_type`,
+and spells fields in camelCase — which is what this Channel sends. The fact closes an already open card and
 never opens one, so it is ignored when no card is open — a repeated end is
 therefore harmless. A create or append the platform refuses abandons only that
 presentation: the standing anchor survives it, and the next opening activity may

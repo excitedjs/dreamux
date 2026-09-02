@@ -286,8 +286,9 @@ recorded in `technical-design/final.md` § As built, items 2 and 3.
 - **The wire terminal was settled by a probe, and the probe overturned the
   premise.** The operator chose 「先探平台再定」 over accepting `interrupted` as
   final. The neutral fact already carried `status: 'failed'`; only the Feishu
-  wire was undecided, because nothing in this repo — and nothing in any public
-  Feishu doc — records what the platform's AG-UI terminal vocabulary is. The
+  wire was undecided, because nothing in this repo — and nothing on the public
+  `open.feishu.cn` docs host — records what the platform's AG-UI terminal
+  vocabulary is. The
   probe found two things the pre-probe reasoning had wrong. The platform
   accepts a deliberately nonsense `RUN_FINISHED` status with `code: 0`, so the
   named risk (a rejected append batch breaking the card) does not exist and
@@ -296,7 +297,11 @@ recorded in `technical-design/final.md` § As built, items 2 and 3.
   separate `RUN_ERROR` event, which renders 任务失败 where `RUN_FINISHED` with
   `failed` renders 已完成, identically to the nonsense status. As built, the
   card terminal is three-valued: `RUN_FINISHED done`, `RUN_FINISHED
-  interrupted`, and `RUN_ERROR` for a failed end. Full record in
+  interrupted`, and `RUN_ERROR` for a failed end. The operator then pointed at
+  the reference itself — **COT Message Brief**, on the enterprise docs host
+  `open.larkoffice.com` — which confirms the probe and fixes the field shape the
+  probe could not show: `RUN_FINISHED.status` is `done | paused | interrupted`,
+  and `RUN_ERROR` carries `{ message, code }`. Full record in
   `technical-design/final.md` § As built, item 3.
 
 - **`rush typecheck:tests` joins the green line.** The operator chose
