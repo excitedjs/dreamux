@@ -37,7 +37,11 @@
 
 ## Delivery
 
-- Pull request / CI / merge: Question 3 (anti-leak infrastructure) is
-  implemented and ships separately from the display split — it depends on none
-  of the design above. The split itself is not started.
+- Pull request / CI / merge: Question 3 (anti-leak infrastructure) ships in
+  [PR #367](https://github.com/excitedjs/dreamux/pull/367), all checks green,
+  awaiting review. It depends on none of the design above. The display split
+  itself is not started and needs an operator ruling first.
+  Two things PR #367 cannot verify before merge, named in its body: the
+  `release.yml` step is only exercised by the next real release (watch the
+  "Install gitleaks" step and the version-bump commit passing the hook).
 - Knowledge closeout: Pending.
