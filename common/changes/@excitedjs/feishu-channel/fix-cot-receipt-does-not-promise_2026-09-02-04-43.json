@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "comment": "Open a Feishu COT card with one of five flavour labels chosen independently per card, replacing the fixed line that said processing had started. That line was written before Core was called, so it asserted an admission the Channel could not yet know; an ambiguous submission may never reach the runtime. The opening line now states nothing about admission or progress. Cards are append-only, so the label is picked once when the card opens and does not animate. This is an intentional operator-visible presentation change to a deliberately tuned surface.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel"
+}

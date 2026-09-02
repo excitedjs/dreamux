@@ -36,7 +36,10 @@ import type {
   TeammateTurnToolCallEvent,
 } from '@excitedjs/dreamux-types';
 
-import { FeishuCotAdapter } from '../src/feishu-cot-adapter.js';
+import {
+  FeishuCotAdapter,
+  FEISHU_COT_OPENING_LABELS,
+} from '../src/feishu-cot-adapter.js';
 import { FeishuCotSessionSeam } from '../src/feishu-cot-session.js';
 import type { VisibleMessageAnchor } from '../src/feishu-cot-state.js';
 import { chatTarget, topicTarget } from '../src/routing/target.js';
@@ -47,11 +50,18 @@ import {
   cotToolNames,
   cotToolResultCount,
   createFakeCotClient,
+  type FakeCotCard,
   type FakeCotClient,
 } from './helpers/fake-feishu-cot.js';
 
-/** The fixed line every card opens with; it is the receipt, not the body. */
-const RECEIPT = '已收到消息，开始处理。';
+function expectOpeningTexts(
+  card: FakeCotCard,
+  expectedAfterOpening: readonly string[],
+): void {
+  const texts = cotTexts(card);
+  expect(FEISHU_COT_OPENING_LABELS).toContain(texts[0]);
+  expect(texts.slice(1)).toEqual(expectedAfterOpening);
+}
 
 const silentLog: DreamuxLogger = {
   error: () => undefined,
@@ -287,10 +297,7 @@ describe.each([LEADER, DISPATCHER])(
       const card = cot.cards[0]!;
       expect(card.chatId).toBe('oc_home');
       expect(card.originMessageId).toBe('om_user_1');
-      expect(cotTexts(card)).toEqual([
-        RECEIPT,
-        'working on it',
-      ]);
+      expectOpeningTexts(card, ['working on it']);
 
       await adapter.close();
     });
@@ -345,11 +352,11 @@ describe.each([LEADER, DISPATCHER])(
       expect(cot.cards).toHaveLength(2);
       const [first, second] = cot.cards as [typeof cot.cards[0], typeof cot.cards[0]];
       expect(cotRunStatus(first)).toBe('interrupted');
-      expect(cotTexts(first)).toEqual([RECEIPT, 'first thought']);
+      expectOpeningTexts(first, ['first thought']);
       // The still-running native turn keeps producing, into the card the
       // operator is now looking at.
       expect(second.originMessageId).toBe('om_second');
-      expect(cotTexts(second)).toEqual([RECEIPT, 'still the same native turn']);
+      expectOpeningTexts(second, ['still the same native turn']);
       expect(cotRunStatus(second)).toBeNull();
 
       await adapter.close();
@@ -451,7 +458,7 @@ describe.each([LEADER, DISPATCHER])(
       submitInbound(adapter, recipient, 'turn-1', anchorAt('oc_home', 'om_1'));
       adapter.onTurnMessage(message(recipient, 'turn-1', 'assistant', 'now visible'));
       await settle();
-      expect(cotTexts(cot.cards[0]!)).toEqual([RECEIPT, 'now visible']);
+      expectOpeningTexts(cot.cards[0]!, ['now visible']);
 
       await adapter.close();
     });
@@ -470,7 +477,7 @@ describe.each([LEADER, DISPATCHER])(
 
       const card = cot.cards[0]!;
       expect(cotRunStatus(card)).toBeNull();
-      expect(cotTexts(card)).toEqual([RECEIPT, 'after settlement']);
+      expectOpeningTexts(card, ['after settlement']);
 
       await adapter.close();
     });
@@ -521,8 +528,8 @@ describe('Feishu COT — the two recipients are independent presentations', () =
     await settle();
 
     expect(cot.cards).toHaveLength(2);
-    expect(cotTexts(cot.cards[0]!)).toEqual([RECEIPT, 'leader says']);
-    expect(cotTexts(cot.cards[1]!)).toEqual([RECEIPT, 'dispatcher says']);
+    expectOpeningTexts(cot.cards[0]!, ['leader says']);
+    expectOpeningTexts(cot.cards[1]!, ['dispatcher says']);
 
     // One recipient's native turn ending closes only that recipient's card.
     adapter.onNativeTurnEnded(nativeEnd(LEADER, 'completed'));
@@ -635,8 +642,7 @@ describe('Feishu COT — narrow Channel-body suppression', () => {
     );
     await settle();
 
-    expect(cotTexts(cot.cards[0]!)).toEqual([
-      RECEIPT,
+    expectOpeningTexts(cot.cards[0]!, [
       'another producer body',
       'the projected answer',
     ]);
@@ -674,7 +680,7 @@ describe('Feishu COT — stale lifecycle callbacks', () => {
 
     expect(cot.cards).toHaveLength(1);
     expect(cotRunStatus(cot.cards[0]!)).toBeNull();
-    expect(cotTexts(cot.cards[0]!)).toEqual([RECEIPT, 'still going']);
+    expectOpeningTexts(cot.cards[0]!, ['still going']);
 
     await adapter.close();
   });
@@ -839,8 +845,7 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
       seam.handle(message(LEADER, 'turn-other', 'assistant', `${source} answer`));
       await settle();
 
-      expect(cotTexts(cot.cards[0]!)).toEqual([
-        RECEIPT,
+      expectOpeningTexts(cot.cards[0]!, [
         `${source} input`,
         `${source} answer`,
       ]);
@@ -876,7 +881,7 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
     lease?.release();
     await settle();
     expect(cot.cards).toHaveLength(1);
-    expect(cotTexts(cot.cards[0]!)).toEqual([RECEIPT, 'another producer body']);
+    expectOpeningTexts(cot.cards[0]!, ['another producer body']);
 
     await seam.close();
   });
@@ -891,7 +896,7 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
     seam.handle(nativeEnd(LEADER, 'completed'));
     await settle();
 
-    expect(cotTexts(cot.cards[0]!)).toEqual([RECEIPT]);
+    expectOpeningTexts(cot.cards[0]!, []);
     await seam.close();
   });
 

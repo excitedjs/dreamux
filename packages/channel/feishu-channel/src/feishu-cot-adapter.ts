@@ -74,7 +74,13 @@ import {
 
 const FEISHU_COT_OPEN_TOOL_CALLS_MAX = 512;
 const FEISHU_COT_CLOSE_DRAIN_MS = 5_000;
-const FEISHU_COT_RECEIVED_TEXT = '已收到消息，开始处理。';
+export const FEISHU_COT_OPENING_LABELS = [
+  '✳ Vibing...',
+  '✳ Shipping...',
+  '✳ Reticulating...',
+  '✳ Manifesting...',
+  '✳ Baking...',
+] as const;
 
 export interface FeishuCotAdapterOptions {
   readonly dispatcherId: string;
@@ -209,15 +215,18 @@ export class FeishuCotAdapter {
     );
   }
 
-  /** The one line a card opens with, so the operator sees it was received. */
+  /** Pick one independent flavour label when this append-only card opens. */
   private openReceipt(key: string, state: CotState): void {
+    const label = FEISHU_COT_OPENING_LABELS[
+      Math.floor(Math.random() * FEISHU_COT_OPENING_LABELS.length)
+    ]!;
     this.acceptOpeningActivityForState(
       key,
       state,
       textMessageEvents({
         sourceId: `receipt:${randomUUID()}`,
         role: 'assistant',
-        content: FEISHU_COT_RECEIVED_TEXT,
+        content: label,
       }),
     );
   }
