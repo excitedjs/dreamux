@@ -363,6 +363,88 @@ Three things review added to the file list that the first draft missed:
   against the union, so a new kind missing from it is dropped silently and no
   channel test crosses that path. It belongs in the first step, not the last.
 
+## Folded-in cleanups
+
+Authorized by the 2026-09-02 ruling recorded in `requirement.md`
+(「能合并的都合并到一起吧，省得以后忘掉」). Scoped to what this change already
+writes to. Each item is either merged here or recorded below with the reason it
+does not reduce — the ruling's stated motive is that a deferred finding is
+forgotten, and a durable negative result serves that motive too.
+
+### Merged
+
+**1. `seal.ts` gets an exhaustive kind catalog.** The allowlist is the reason a
+kind can be added to `ChannelCoreEvent` and silently dropped at the bus. This
+change adds two kinds and removes four, so it walks straight through that hole.
+The fix is a type, not a test:
+
+```ts
+// Exhaustive by construction: adding a kind to ChannelCoreEvent fails to
+// compile here until it is listed, so a kind can no longer be published and
+// silently dropped.
+const KIND_CATALOG: Record<ChannelCoreEvent['kind'], true> = {
+  'team.state': true,
+  'teammate.state': true,
+  'teammate.input': true,
+  'teammate.activity': true,
+};
+const KINDS: ReadonlySet<string> = new Set(Object.keys(KIND_CATALOG));
+```
+
+The annotated-literal form is required and is not interchangeable with the
+obvious alternative. Verified with the repo's own tsc 5.9.3 under `--strict`: a
+missing key in `Record<Kind, true>` is `error TS2741`, while
+`const KINDS: ReadonlySet<Kind> = new Set([...])` with a key missing reports
+nothing. `satisfies Record<Kind, true>` also errors and is acceptable; a bare
+`ReadonlySet<Kind>` is not.
+
+**2. Two docstrings that are wrong rather than merely stale.**
+
+- `teammate-service/index.ts:68-82` carries two stacked `/** */` blocks on
+  `hostStop`. TypeScript associates only the last, so the first is dead text
+  that still reads as authoritative. Delete it.
+- `submitInput`'s docstring lists "a completion pushback" among the inputs that
+  "reserve the duplicate key", while `submitPreparedCompletion`'s says it is
+  "deliberately not routed through `submitInput`" and it reserves no key. They
+  contradict each other, and that contradiction is what hid the second
+  `runtime.submit` site from the first draft of this design. Fix both to say
+  which path a completion actually takes.
+
+### Investigated, does not reduce
+
+**`phase` stays a three-valued enum.** It looks like the repo's own named
+anti-pattern — `service/CLAUDE.md`: "The operation is the fence… Do not add a
+boolean beside a task, or a phase enum beside either" — and `hostStop` sits
+directly beside it in the correct nullable-promise form. Both obvious collapses
+lose information:
+
+- *Make `closing` a `Promise | null` like `hostStop`.* Fails on three counts.
+  `closeAuthorized` sets it as a task fence, but `runtime-owner.ts:277` also
+  sets it with no task behind it — start threw and `runtime.stop()` threw too,
+  so termination is unproven and the entity is quarantined. And when
+  `transitionToClosed` rejects, `@deduplicate({ type: 'once' })` releases the
+  promise so the close stays retryable, while the entity must stay fenced. A
+  nullable promise carries none of those three; a promise that resets on
+  rejection would reopen a failed close.
+- *Derive `'closed'` from the durable `identity.status`.* Fails because they are
+  different facts. A reopen constructs a **new** `TeammateService`
+  (`teammate-collection/index.ts:216`), so a fresh instance is `phase: 'active'`
+  over a record still saying `status: 'closed'` until the runtime publishes its
+  own status. That mismatch is not duplication — it is exactly what the branch
+  at `index.ts:470` (`phase === 'active' && identity.status === 'closed' &&
+  hasNoRuntimeAuthority()`) exists to read.
+
+So the enum is carrying three distinct facts and is paid for. Recorded here so
+the next reader does not re-derive it.
+
+### Not folded in under this ruling
+
+Deleting the unread `teammate.turn.settled` kind is already part of this
+change's own scope, but it is **not** promoted to a cleanup by this ruling: the
+open question is whether the flowx superset repo still reads it, and the ruling
+speaks to merging cleanup, not to a cross-repo reader contract. It stays gated
+on that check.
+
 ## Unresolved: the activity-fact dedupe
 
 The two reviews disagree, and the disagreement is not settled.
