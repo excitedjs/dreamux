@@ -14,7 +14,7 @@
   session restarts; one native turn emits one ended fact and closes the recipient's
   current card without logical-turn membership. Projected text keeps local paths
   readable by rendering this host's workspace and home prefixes as `.` and `~`.
-- State: `review`
+- State: `done`
 - Requirement: [Current requirement](/.agents/tasks/channel/feishu-cot-conversation-cards/requirement.md)
 - Technical design: owned by the single Claude implementation developer. The
   developer receives only the locked requirement and must derive the design
@@ -30,9 +30,9 @@
 - Continued optimization (simplification findings raised after the draft pull
   request, none approved for implementation):
   [continued-optimization.md](/.agents/tasks/channel/feishu-cot-conversation-cards/continued-optimization.md).
-- Next action: Independent Devbox re-review of draft pull request
-  [#357](https://github.com/excitedjs/dreamux/pull/357), then operator decision
-  on marking it ready and merging.
+- Next action: None. Pull request
+  [#357](https://github.com/excitedjs/dreamux/pull/357) carries the corrective
+  and simplification rounds and is approved and merged into `next`.
 - Related tasks: Builds on
   [adopt-completion-token-routing](/.agents/tasks/completion-routing/adopt-completion-token-routing/README.md)
   (the submission activity sink this task consumes). The parked
@@ -135,12 +135,15 @@
   amendment for the corrected card lifecycle, and
   [verification.md](/.agents/tasks/channel/feishu-cot-conversation-cards/verification.md)
   states the current scope, coverage, and accepted losses.
-- Independent implementation review is pending.
+- Independent implementation review: approved by the Devbox seat after three
+  rounds. Every finding it raised was resolved or recorded; the one it left open
+  by operator adjudication — the close-drain window — is written into
+  [verification.md](/.agents/tasks/channel/feishu-cot-conversation-cards/verification.md)'s
+  accepted losses rather than left in a review thread.
 - Existing proposal files, the withdrawn previous solution, public review text,
   and the generated Feishu design document are not implementation authorities.
-- Pull request / CI / merge: Draft pull request
-  [#357](https://github.com/excitedjs/dreamux/pull/357) targets `next` while
-  independent review and knowledge closeout continue; CI and merge are pending.
+- Pull request / CI / merge: [#357](https://github.com/excitedjs/dreamux/pull/357)
+  merged into `next` with CI green on its final head.
 
 ## Follow-ups
 

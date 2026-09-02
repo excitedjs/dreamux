@@ -151,7 +151,8 @@ a full green suite is not evidence that a boundary rule is right.
 - Commit, push, and CI: done. Pushed to `fix/feishu-cot-mid-turn-card` for draft
   pull request [#357](https://github.com/excitedjs/dreamux/pull/357); CI is 8/8
   green on that head.
-- Independent implementation review: in progress.
+- Independent implementation review: approved.
 - Real Codex live validation: not rerun in this environment; the explicit skip
   is recorded above.
-- Marking the pull request ready and merging: pending operator decision.
+- Marking the pull request ready and merging: authorized by the operator and
+  carried out by the TeamLeader.
