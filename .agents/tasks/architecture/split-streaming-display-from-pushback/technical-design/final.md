@@ -514,6 +514,29 @@ split, the display line carries the TeamMate's own facts and the push-back line
 carries delivery, so the two can be reasoned about separately. Making a dropped
 completion user-visible is a product decision and needs its own ruling.
 
+**The router's deadline bounds the router, not the entity.** Worth stating
+because it is easy to read the 30-second `settleWithinDeadline` as a general
+safety net, and it is not. `prepareCompletion` holds
+`enterOrdinaryMutation('completion preparation')` across
+`await runtimeOwner.existingRuntimeAfterStart()`, which is
+`await this.starting` (`runtime-owner.ts:90-93`). If a provider start never
+settles, that await never returns, so the `finally { leave() }` never runs and
+the fence stays held. `settleWithinDeadline` does not help: on timeout it
+abandons its own await and returns, and its own comment says the operation "may
+reject much later" — the underlying promise keeps running.
+
+`close()` does not rescue it either. `transitionToClosed` calls
+`runtimeOwner.stopRuntime()` first, and that joins the same promise
+(`await this.starting?.catch(...)`, `runtime-owner.ts:149`) rather than
+cancelling it, so it blocks on the identical await before ever reaching
+`waitForOrdinaryMutations()`.
+
+So a hung provider start is unbounded in this path, and the held fence is a
+second way for it to surface rather than an independent defect. The root cause
+is that nothing bounds a provider start here. Pre-existing, out of scope for
+this change, and recorded so the deadline is not mistaken for coverage it does
+not provide.
+
 ## Unresolved: the activity-fact dedupe
 
 The two reviews disagree, and the disagreement is not settled.
