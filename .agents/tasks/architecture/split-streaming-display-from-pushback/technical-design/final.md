@@ -212,6 +212,28 @@ only `submitAdmitted` would have deleted that silently. Found on review; the
 design now names both sites, and this is behaviour preservation, not a
 requirement change.
 
+**Why two sites and not one, and why `submitAdmitted` rather than
+`submitInput`.** Three facts, all in `teammate-service/index.ts`:
+
+- `submitInput` is *not* the only door to `submitAdmitted`. The locked Workflow
+  path calls `submitAdmitted` directly (`:422`), because the ordinary-mutation
+  fence `submitInput` applies would refuse it. Publishing at `submitInput` would
+  silently drop Workflow submissions from display.
+- `submitPreparedCompletion` bypasses both **on purpose**, and its docstring
+  gives the reason: an ordinary input materializes or reopens its target, while
+  a completion pushback is only meaningful to an already-live runtime — a
+  stopped recipient must report `unsupported` so the router can fall back rather
+  than silently waking an agent nobody asked to wake. That is a real difference,
+  so merging the two paths to get one publish site would be the wrong fix.
+- **Two docstrings in this file contradict each other**, and that contradiction
+  is what made the second site easy to miss. `submitInput` is titled "The one
+  admitted-input operation" and lists "a completion pushback" among the
+  submissions that "reserve the duplicate key"; `submitPreparedCompletion` says
+  "Deliberately not routed through `submitInput`" and reserves no key. The
+  completion path is correct and the `submitInput` docstring is wrong. **Fix the
+  docstring in this change** — a comment that misstates the call graph is how the
+  next person repeats this mistake.
+
 **The fail-open guard moves with the call.** `projectDisplay` /
 `projectActorDisplay` / `warnProjectionFailure` are what make display fail-open
 today (`turn-coordinator.ts:239`). They are deleted from the coordinator, so the
