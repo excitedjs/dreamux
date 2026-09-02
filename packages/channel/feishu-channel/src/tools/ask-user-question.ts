@@ -3,10 +3,13 @@
  *
  * The arguments are AskUserQuestion's, near enough to be read as the same tool:
  * `questions`, each with a `header` chip, a `question`, and 2-4 `options` of
- * `label` + `description` + optional `preview`. Two things differ, and both are
- * forced rather than chosen: a `chat_id`, because a chat tool needs a
- * destination and AskUserQuestion has no such concept, and no `multiSelect`,
- * because the operator ruled multi-select out of this channel.
+ * `label` + `description`. Three fields differ, none of them by choice here: a
+ * `chat_id` is required, because a chat tool needs a destination and
+ * AskUserQuestion has no such concept; `multiSelect` is absent, because the
+ * operator ruled multi-select out of this channel; and so is `preview`, which
+ * the operator dropped after seeing what it cost the card — "这个 preview 有点
+ * 复杂了，给他去掉，他也会影响卡片的布局". Rendering it meant a second column
+ * beside the options, which reshaped every question that used it.
  *
  * The other difference is in the answer, not the arguments. AskUserQuestion
  * returns what the user chose; this returns as soon as the card is sent, and
@@ -52,14 +55,6 @@ const optionSchema = closedObjectSchema(
         'Explanation of what this option means or what will happen if chosen. ' +
         'Useful for providing context about trade-offs or implications.',
     },
-    preview: {
-      ...nonEmptyString,
-      description:
-        'Optional preview content shown beside the options while this option ' +
-        'is the selected one. Use for mockups, code snippets, or visual ' +
-        'comparisons that help users compare options. Rendered as a monospace ' +
-        'block.',
-    },
   },
   ['label', 'description'],
 );
@@ -100,14 +95,9 @@ interface AskUserQuestionInput {
 
 function parseOption(raw: unknown, where: string): AskUserOption {
   const obj = asRecord(raw, where);
-  const preview = obj['preview'];
-  if (preview !== undefined && typeof preview !== 'string') {
-    throw new PublicInvokeFailure(`${where}.preview must be a string`);
-  }
   return {
     label: requireString(obj, 'label'),
     description: requireString(obj, 'description'),
-    ...(typeof preview === 'string' && preview !== '' ? { preview } : {}),
   };
 }
 
@@ -160,12 +150,7 @@ export const askUserQuestionDef: FeishuToolDef<AskUserQuestionInput> = {
     "Reserve this for decisions where the user's answer changes what you do " +
     'next — not for choices with a conventional default or facts you can ' +
     'verify in the codebase yourself. In those cases pick the obvious option, ' +
-    'mention it in your response, and proceed.\n\n' +
-    'Preview feature: use the optional `preview` field on options when ' +
-    'presenting concrete artifacts that users need to visually compare — ' +
-    'ASCII mockups of UI layouts, code snippets showing different ' +
-    'implementations, diagram variations, configuration examples. The preview ' +
-    'of the selected option is shown beside the options in a monospace block.',
+    'mention it in your response, and proceed.',
   callers: ['dispatcher', 'team_leader'],
   inputSchema: closedObjectSchema(
     {

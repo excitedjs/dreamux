@@ -125,11 +125,14 @@ it against the provider output schema.
 The arguments deliberately mirror Claude Code's own AskUserQuestion, down to the
 field descriptions, so a model reads the two as one tool: 1-4 `questions`, each
 with a `header` chip, a `question`, and 2-4 `options` of `label` +
-`description` + optional `preview`. Two things differ, and both are forced.
-A `chat_id` is required, because a chat tool needs a destination and
-AskUserQuestion has no such concept. There is no `multiSelect`: the operator
-ruled multi-select out of this channel, so every question takes exactly one
-answer.
+`description`. Three fields differ. A `chat_id` is required, because a chat
+tool needs a destination and AskUserQuestion has no such concept. There is no
+`multiSelect`: the operator ruled multi-select out of this channel, so every
+question takes exactly one answer. And there is no `preview`: it shipped first
+as a column beside the options, and the operator removed it on sight —
+"这个 preview 有点复杂了，给他去掉，他也会影响卡片的布局". A per-option preview
+cannot be drawn without a second column, and that column reshaped the layout of
+every question carrying one, so the field went with the column.
 
 The third difference is the one that shapes the design: **the tool does not
 return the answer.** It returns `{ request_id, status: 'asked', next }` as soon

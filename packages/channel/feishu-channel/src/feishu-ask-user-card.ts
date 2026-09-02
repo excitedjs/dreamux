@@ -39,7 +39,6 @@ export const DREAMUX_ASK_ACTIONS: ReadonlySet<string> = new Set([
 export interface AskUserOption {
   readonly label: string;
   readonly description: string;
-  readonly preview?: string;
 }
 
 export interface AskUserQuestionSpec {
@@ -158,42 +157,6 @@ function otherInput(
   };
 }
 
-/**
- * The preview column tracks the focused option, which is the selected one, or
- * the first when nothing is chosen yet — the same focus-follows-selection
- * behavior the tool's own preview field describes. The column is drawn whenever
- * any option declares a preview, so choosing one never reflows the card.
- */
-function previewColumn(
-  question: AskUserQuestionSpec,
-  answer: AskUserAnswer | undefined,
-): Record<string, unknown> | undefined {
-  if (!question.options.some((option) => option.preview !== undefined)) {
-    return undefined;
-  }
-  const focused = answer?.kind === 'option' ? answer.index : 0;
-  const option = question.options[focused];
-  const elements: Record<string, unknown>[] =
-    option?.preview === undefined
-      ? []
-      : [
-          markdown(`<font color='grey'>preview · ${option.label}</font>`, {
-            text_size: 'notation',
-          }),
-          markdown(`\`\`\`\n${option.preview}\n\`\`\``, {
-            text_size: 'notation',
-          }),
-        ];
-  return {
-    tag: 'column',
-    width: 'weighted',
-    weight: 2,
-    vertical_align: 'top',
-    vertical_spacing: '4px',
-    elements,
-  };
-}
-
 function questionPanel(
   view: AskUserRequestView,
   questionIndex: number,
@@ -201,36 +164,16 @@ function questionPanel(
   expanded: boolean,
 ): Record<string, unknown> {
   const answer = view.answers.get(questionIndex);
-  const options = question.options.map((option, optionIndex) =>
-    optionCard(
-      view.requestId,
-      questionIndex,
-      optionIndex,
-      option,
-      answer?.kind === 'option' && answer.index === optionIndex,
-    ),
+  const elements: Record<string, unknown>[] = question.options.map(
+    (option, optionIndex) =>
+      optionCard(
+        view.requestId,
+        questionIndex,
+        optionIndex,
+        option,
+        answer?.kind === 'option' && answer.index === optionIndex,
+      ),
   );
-  const preview = previewColumn(question, answer);
-  const elements: Record<string, unknown>[] =
-    preview === undefined
-      ? [...options]
-      : [
-          {
-            tag: 'column_set',
-            flex_mode: 'none',
-            horizontal_spacing: '12px',
-            columns: [
-              {
-                tag: 'column',
-                width: 'weighted',
-                weight: 3,
-                vertical_spacing: '8px',
-                elements: options,
-              },
-              preview,
-            ],
-          },
-        ];
   elements.push(otherInput(view.requestId, questionIndex, answer));
   // The panel's own padding is 0 so options reach the card edge, which also
   // removes the gap under the header; the first element restores it.

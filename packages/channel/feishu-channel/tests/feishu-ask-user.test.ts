@@ -47,7 +47,7 @@ const QUESTIONS: readonly AskUserQuestionSpec[] = [
     header: '存储方案',
     question: 'Where does session state live?',
     options: [
-      { label: 'Keep JSON', description: 'Smallest change', preview: 'state/' },
+      { label: 'Keep JSON', description: 'Smallest change' },
       { label: 'Move to SQLite', description: 'Better concurrency' },
     ],
   },
@@ -345,13 +345,19 @@ describe('ask_user_question tool', () => {
     expect(ASK_USER_NEXT_INSTRUCTION).toContain('end your turn');
   });
 
-  it('has no multi-select field to accept', () => {
-    const properties = (
+  it('offers neither a multi-select nor a preview to fill in', () => {
+    const question = (
       askUserQuestionDef.inputSchema as {
-        properties: { questions: { items: { properties: object } } };
+        properties: {
+          questions: { items: { properties: Record<string, unknown> } };
+        };
       }
     ).properties.questions.items.properties;
-    expect(Object.keys(properties)).toEqual(['header', 'question', 'options']);
+    expect(Object.keys(question)).toEqual(['header', 'question', 'options']);
+    const option = (
+      question['options'] as { items: { properties: Record<string, unknown> } }
+    ).items.properties;
+    expect(Object.keys(option)).toEqual(['label', 'description']);
   });
 
   it('rejects a header too long to fit the chip', () => {
