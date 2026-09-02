@@ -341,7 +341,9 @@ private registry URLs, internal hostnames, real Feishu ids, or tokens.
   for the same thing.
 - The release `version` job commits the version bump **through this hook**, with
   no `--no-verify`, so it installs gitleaks first. Release automation is not
-  exempt from the red line.
+  exempt from the red line. It is also the only workflow job that commits at
+  all — `grep -n "git commit" .github/workflows/*.yml` returns exactly that one
+  site — so it is the only one that needs the binary.
 
 **Running the full-history scan locally is red in a clone that has the internal
 sibling repository as a remote.** `gitleaks git .` walks every reachable commit,

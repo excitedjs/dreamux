@@ -46,14 +46,21 @@ mode="${1:---staged}"
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
 
+# `core.quotePath=false` is not cosmetic. With git's default, a path holding any
+# non-ASCII byte is reported C-quoted (`"\346\226\207.md"`), the lookup below
+# then finds nothing, and the file is skipped in silence — a scanner that
+# quietly ignores a file is the exact failure this gate exists to remove.
+#
+# Both modes read the indexed blob rather than the working tree. That is what
+# gets committed, it is what a CI checkout produces, and it gives one code path
+# that cannot trip over a tracked symlink pointing at a directory — of which
+# this repository has several.
 case "$mode" in
   --staged)
-    files=$(git diff --cached --name-only --diff-filter=ACMR)
-    read_file() { git show ":$1" 2>/dev/null || true; }
+    files=$(git -c core.quotePath=false diff --cached --name-only --diff-filter=ACMR)
     ;;
   --tree)
-    files=$(git ls-files)
-    read_file() { if [ -f "$1" ]; then cat "$1"; fi; }
+    files=$(git -c core.quotePath=false ls-files)
     ;;
   *)
     echo "usage: $0 [--staged|--tree]" >&2
@@ -69,7 +76,7 @@ set -f # paths are literal; do not glob-expand them
 for f in $files; do
   [ -n "$f" ] || continue
   is_pattern_definition "$f" && continue
-  hits=$(read_file "$f" \
+  hits=$(git show ":$f" \
     | grep -aoE "$FORBIDDEN_RE" \
     | grep -vxE "$ALLOWED_RE" \
     | sort -u || true)
