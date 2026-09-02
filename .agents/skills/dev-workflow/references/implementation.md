@@ -6,7 +6,7 @@ Enter this phase only after valid development approval is recorded in the task
 README. Set `State: implementation` and preserve the approved requirement, final
 solution, scope, and verification links.
 
-For the one-file fast path, have the TeamLeader implement directly as previously
+For the minimal-change fast path, have the TeamLeader implement directly as previously
 approved and do not start a TeamMate. When the entire implementation surface is
 `.agents/**`, the TeamLeader also implements directly as the sole repository writer.
 For every other path, load and follow `team-workflow`, then directly start exactly
@@ -72,5 +72,5 @@ README. The TeamLeader, not the developer, owns these writes. Pass only a concis
 note that compile, static, and unit checks passed; reviewers do not repeat those
 checks.
 
-Continue with one direct TeamMate review for the approved one-file fast path, or
+Continue with one direct TeamMate review for the approved minimal-change fast path, or
 the workflow review for every other path.

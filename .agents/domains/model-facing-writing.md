@@ -63,11 +63,12 @@ as an upgrade technique. Fully server-owned state is named as non-editable;
 mixed state names the field ownership boundary exactly.
 
 The one exception is `references/self-upgrade.md`: an explicit, low-freedom
-managed-daemon transition SOP. It resolves and validates exact staged old and
-target artifacts, then reads the staged target changelog and root-routed owner
-references for concrete work. It owns sequencing, private recovery ownership,
-restart-resume, verification, and reporting, but no historical schema or
-release-specific migration body. Other references do not link deeper.
+managed-daemon transition SOP. It installs the requested target, reads the
+installed changelog, applies config migrations through root-routed owners,
+repairs until doctor passes, and performs notification restart. It owns that
+sequence and resumed Channel reporting, but no historical schema,
+release-specific migration body, or separate recovery system. Other references
+do not link deeper.
 
 Examples:
 

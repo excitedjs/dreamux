@@ -17,14 +17,14 @@ description: "Dreamux host operation notes. Load when diagnosing or operating dr
   target Dispatcher and exact operation. Load the routed owner before planning
   a file or field change.
 - Run the self-upgrade procedure only for explicit upgrade intent. Its
-  self-resuming branch has additional preconditions and private recovery
-  ownership; ordinary restart permission is not upgrade permission.
+  supported path installs the target, handles its changelog and config
+  migrations, repairs doctor failures, and only then performs notification
+  restart. Ordinary restart permission is not upgrade permission.
 
 ## Secret Safety
 
 - Never print or relay an unredacted config, `app_secret`, `extra_env`, token,
-  captured service environment, private recovery path, or complete provider
-  config to a broad Channel.
+  captured service environment, or complete provider config to a broad Channel.
 - Report sanitized field names and outcomes. Keep private paths, ids,
   credentials, environment values, and incident details on an operator-private
   surface.
@@ -43,16 +43,16 @@ description: "Dreamux host operation notes. Load when diagnosing or operating dr
 4. Inspect Dreamux-owned status, doctor output, admin behavior, and narrowly
    relevant logs without exposing secrets. Treat logs as diagnostics, not
    durable state.
-5. Before mutation, restate the exact authority, owner, recovery path, and
-   verification step. Stop when any required identity or private recovery
-   condition is unproven.
+5. Before mutation, restate the exact authority, owner, verification step, and
+   any recovery path the routed owner requires. Stop when a required identity or
+   owner-required condition is unproven.
 
 ## Task Routing
 
 | Task | Read when | Reference |
 |---|---|---|
 | Service lifecycle, Workflow run state, cron jobs, Team dissolve, and reply diagnosis | Diagnosing `dreamux serve`, daemon startup, doctor/status results, Dispatcher health, missing replies, stuck turns, Workflow run records or journals, cron job stores, restart behavior, active or cleanup-pending Team dissolve, current state/run/log paths, bundled-skill injection, or runtime app-server readiness. | [Service lifecycle](references/service-lifecycle.md) |
-| Managed Dreamux self-upgrade | The operator explicitly requests a Dreamux upgrade, or an injected restart notice requires post-restart recovery and verification. | [Self-upgrade](references/self-upgrade.md) |
+| Managed Dreamux self-upgrade | The operator explicitly requests a Dreamux upgrade, or an injected restart notice requires the resumed upgrade report. | [Self-upgrade](references/self-upgrade.md) |
 | Host config envelope | Inspecting or safely editing the current `config.json` envelope, path authority, Dispatcher/agent/channel wiring, or an opaque external provider config. | [Config envelope](references/config-envelope.md) |
 | Built-in Codex config | Inspecting or changing the current `builtin:codex` Agent Runtime provider config. | [Built-in Codex](references/builtin-codex.md) |
 | Built-in Claude Code config | Inspecting or changing the current `builtin:claude-code` Agent Runtime provider config. | [Built-in Claude Code](references/builtin-claude-code.md) |
@@ -66,5 +66,5 @@ description: "Dreamux host operation notes. Load when diagnosing or operating dr
 - Use the provider reply tool when visible Channel delivery is required.
   Assistant text alone is not Channel delivery.
 - Preserve logs unless the operator explicitly requests bounded cleanup.
-- For an upgrade, follow the outcome-specific original-Channel and recovery
-  reporting contract in the self-upgrade reference.
+- For an upgrade, follow the four-step flow and original-Channel reporting
+  contract in the self-upgrade reference.

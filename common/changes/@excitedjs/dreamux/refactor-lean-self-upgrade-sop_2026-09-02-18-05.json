@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Simplify the bundled managed-daemon self-upgrade guide to install the target, handle its changelog and config migrations, repair doctor failures, and perform notification restart.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

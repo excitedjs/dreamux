@@ -163,9 +163,9 @@ Do not use per-package `npm install`; workspace dependencies use `workspace:*`.
   accepted schema/version but must not contain upgrade detection, historical
   formats, migrations, `Rebuild:` recipes, or delete/recreate instructions.
   The self-upgrade reference is the narrow generic exception: it reads concrete
-  transition work from a validated staged target's changelog and owning
-  references instead of embedding release-specific history. Put historical
-  details in change notes, public docs, loader errors, and decision trails.
+  transition work from the installed target's changelog and owning references
+  instead of embedding release-specific history. Put historical details in
+  change notes, public docs, loader errors, and decision trails.
 
 ## Knowledge Delta
 

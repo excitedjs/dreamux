@@ -1,8 +1,8 @@
 # Workflow Implementation Review
 
 Use this review only after the TeamLeader pre-review passes. Route the approved
-one-file fast path to one direct TeamMate review; route every other implementation
-path to the workflow review.
+minimal-change fast path to one direct TeamMate review; route every other
+implementation path to the workflow review.
 
 ## Establish the review input
 
@@ -19,10 +19,10 @@ prompt, and do not ask review agents to repeat those checks. They read the curre
 shared workspace, the linked artifacts, and the applicable repository guidance
 directly.
 
-## Review the one-file fast path once
+## Review the minimal-change fast path once
 
 Load and follow `team-workflow`, then start exactly one separate read-only TeamMate
-with the common identity and the one-file fast-path seat block from
+with the common identity and the minimal-change fast-path seat block from
 [reviewer-identities.md](reviewer-identities.md). The TeamLeader authored this
 implementation, so this reviewer must be a different agent.
 
@@ -36,7 +36,7 @@ For every other implementation path, load and follow the shared `workflow` skill
 run one `workflow_run` carrying the code-review method it owns in
 [code-review.md](/packages/dreamux/skills/shared/workflow/references/code-review.md).
 Run it at the `xhigh` gear: the TeamLeader pre-review has already removed the shallow
-defects and the one-file fast path already absorbs trivial changes, so the depth the
+defects and the minimal-change fast path already absorbs trivial changes, so the depth the
 higher gear buys is what this last gate before merge into `next` is for.
 
 That method is the review. Dreamux tunes it with exactly two deltas; its stages,
