@@ -126,6 +126,13 @@
   the Channel establishes its anchor before the body it already displayed
   arrives. This also removes the predecessor-card duplicate that the 2026-09-01
   adjudication had accepted as a loss.
+- Design adjudication (operator, 2026-09-02): take the simpler of the two shapes
+  offered — the Channel moves its own anchor when it submits, instead of echoing
+  a correlation id back on a Core event. "B，我说的话也不一定全都是权威". This
+  knowingly supersedes his own 2026-09-01 admission-gated-anchor ruling: that rule
+  is what forced every synchronously published fact onto the predecessor card, and
+  removing it deletes the cause instead of compensating for it. No event or
+  request contract changes.
 
 ## Delivery
 

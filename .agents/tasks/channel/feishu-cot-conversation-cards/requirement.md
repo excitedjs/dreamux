@@ -21,15 +21,27 @@ home as `~`.
    card partition. Anchor and card state exist only in the live Feishu Channel
    session's memory.
 
-2. **Inbound anchor changes follow successful admission.** A Feishu inbound
-   message becomes the selected recipient's current standing anchor only after
-   Core has successfully accepted it by steering the live native turn or queueing
-   a new one. It is never stored as a deferred future anchor after that success.
-   Feishu then closes the recipient's open card, if any, replaces the standing
-   anchor, and opens the new card under the new message with the fixed receipt. A
-   rejected, failed, or ambiguous admission does not change the presentation. A
-   subsequent successfully admitted inbound repeats the same transition; it never
-   waits for a logical settlement or native turn end.
+2. **The Channel establishes its own anchor when it submits.** An anchor is the
+   Channel's own state: Core neither carries nor validates one. So a Feishu
+   inbound becomes the selected recipient's standing anchor at the moment the
+   Channel submits it, not after Core answers. Feishu closes the recipient's open
+   card as interrupted, replaces the standing anchor, and opens the new card under
+   the new message with the fixed receipt.
+
+   This supersedes the 2026-09-01 adjudication that the anchor may switch only
+   after steer-or-queue admission succeeds. That rule was adopted to keep a
+   rejected submission from moving the presentation, and it bought that at the
+   price of every fact Core published synchronously inside the admitting call —
+   the user body and any early activity — landing on the predecessor anchor,
+   which is what produced both the duplicated body and the spurious
+   immediately-interrupted card. Establishing the anchor first removes the
+   ordering problem entirely rather than compensating for it, and it needs no
+   change to any event or request contract.
+
+   A submission Core proves it did not admit — rejected, failed, or the
+   proven-no-admission fallback — retires the anchor it optimistically took, so a
+   recipient is never left presenting under a message that produced no turn. An
+   ambiguous outcome proves nothing and changes nothing.
 
 3. **Reply never affects the anchor.** A Reply is not Channel user input. Its
    success receipt never creates, replaces, defers, or otherwise changes a
@@ -85,24 +97,15 @@ home as `~`.
    anchor again. A native-ended fact closes an existing open card but never opens a
    new one; when no card is open, Feishu ignores it.
 
-9. **The Channel's own body is hidden, and the anchor moves before it arrives.**
-   The one thing a card does not repeat is the Feishu message already visible at
-   its own anchor. Everything else displays.
+9. **The Channel's own body is hidden.** The one thing a card does not repeat is
+   the Feishu message already visible at its own anchor. Everything else displays.
 
-   Making that true requires no buffering, reordering, or new request contract,
-   because the correlation already crosses the seam: `source_id` is an existing
-   `team.submit` parameter that Core already uses for deduplication, and the
-   Channel sets it to the visible message it is about to submit. Core publishes
-   `teammate.turn.submitted` immediately before the user body, in the same
-   synchronous block, so echoing `source_id` back on that event lets the Channel
-   recognize its own submission and establish the anchor before the body arrives.
-   The 2026-09-01 rejection of a "request-correlation contract" stands for what it
-   named — a new field on the request, invented for presentation ownership. This
-   is the reverse direction: an existing request field returned on the fact it
-   produced, so the submitting Channel can identify its own turn.
-
-   A submission this Channel did not make carries a `source_id` it does not
-   recognize, and is presented normally.
+   The Channel identifies that body from what it already holds — it knows the
+   recipient it submitted to and the text it submitted — and hides it once. It may
+   not buffer, reorder, or add a field to any event or request to do so, and it
+   must not hide another producer's body: a turn this Channel did not submit
+   displays normally. Whatever the Channel remembers about a submission in flight
+   is bounded and released.
 
 10. **Role parity.** Dispatcher and TeamLeader use the same state shape and the
    same anchor replacement, card open, append, interrupt, and close transitions.
@@ -184,9 +187,11 @@ home as `~`.
 - No early native-end group buffer and no request-correlation contract added to
   `team.submit` for presentation ownership.
 - No persisted anchor/card store, restart recovery, replay, or backfill.
-- No suppression that depends on buffering, reordering, or a new `team.submit`
-  request field. Recognizing the Channel's own submission from the `source_id` it
-  already sent is not such a design.
+- No suppression that depends on buffering, reordering, or a new field on any
+  event or request. The Channel identifies its own body from state it already
+  holds.
+- No admission-gated anchor. Waiting for Core to answer before moving the
+  Channel's own anchor is what created the predecessor-card losses.
 - No provider-side deduplication flag for native turn ends. A synthesized end is
   reported only when the reporting call actually settled something, so no second
   report exists to suppress.
@@ -217,10 +222,10 @@ home as `~`.
   A successful Dispatcher admission moves the same anchor; ambiguous outcomes do
   not fallback or change the presentation.
 - A Feishu inbound displays the fixed receipt under its own message and does not
-  repeat its user body. The anchor is established when the submitted fact naming
-  this Channel's `source_id` arrives, which precedes the body, so neither the body
-  nor a spurious card lands on the predecessor anchor. Task, task-notification,
-  cron, system, and an unknown future source all display without a whitelist.
+  repeat its user body. Because the anchor moves when the Channel submits, neither
+  the body nor a spurious card can land on the predecessor anchor. Task,
+  task-notification, cron, system, and an unknown future source all display
+  without a whitelist.
 - One folded native turn containing any number of logical submissions emits one
   native-ended fact and closes the recipient's current open card once, if any. If
   no card is open, the fact is ignored. Intermediate or final logical settlements
