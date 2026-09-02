@@ -705,7 +705,7 @@ describe('TeammateService.prepareCompletion: a push-back never wakes its recipie
     expect(activities).toEqual([{
       kind: 'turn.ended',
       occurredAt: expect.any(Number),
-      status: 'interrupted',
+      status: 'failed',
       reason: 'the agent runtime is not running',
     }]);
   });

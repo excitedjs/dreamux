@@ -528,7 +528,7 @@ diff description. Summary of the shape:
 | Projection entry points | 4 | 2 (`projectInput`, `projectActivity`) |
 | `runtime.submit` call sites | 2 | 1 |
 | Input publish sites | 1 (implicit, via `attachSubmission`) | 1 (explicit, in `submitAdmitted`) |
-| `enterOrdinaryMutation` call sites | 4 | 3 |
+| `enterOrdinaryMutation` call sites | 4 | 4 — `completion input` survives (see § As built 12) |
 | Coordinator submit entries | 2 (`submitRuntimeTurn`, `submitCompletion`) | 1 |
 | Feishu COT switch | 5 cases | 3 cases |
 | Display key | `RuntimeSubmission` | the Agent |
@@ -994,8 +994,15 @@ The window is narrow: `prepareCompletion`'s own liveness check refuses first in
 the common case, so this fires only when the runtime disappears between prepare
 and submit. Pinned by a test so a decision to revert it is a one-line change.
 
-### 3. Ruling 4's 「置成失败」 is a printed reason, not a failed wire status
+### 3. Ruling 4's 「置成失败」 is `failed` in the neutral fact, `interrupted` on the wire
 
+`failedAdmissionReason` gives all four non-`submitted` admissions the same
+verdict — `status: 'failed'` on the published `turn.ended` — because that is
+what the ruling says, and a ruling is quoted, never stretched. Only the reason
+differs between the four, so only the reason is returned; the status is a
+constant of the rule, not data.
+
+The Feishu wire cannot say it.
 `FeishuCotRunStatus` is `'done' | 'interrupted'`, and the platform's AG-UI
 `RUN_FINISHED` status vocabulary is not documented anywhere in this repo. The
 COT `complete` endpoint accepts `'error'`, but that is the card-abandonment path
@@ -1056,3 +1063,33 @@ removed with the field.
 ruling is quoted, never stretched — so `isSynthetic` was left alone. Recorded
 here so it is not forgotten: it is a candidate for the same treatment if the
 operator wants it, and its stream-json envelope behavior is still tested.
+
+### 10. The workflow lock path publishes no input when the *start* fails
+
+`submitLocked` calls `ensureStarted()` itself before delegating to
+`submitAdmitted`, so on that one path a provider start failure throws before the
+input is announced — the hole item 1 closed for every other path. The redundant
+start is not removable: it exists so the lock token and the `active` phase are
+re-asserted *after* the await, which is the point of a locked submission.
+Closing the hole means announcing the input before that re-check, which would
+publish an input a revoked lock then refuses. Recorded, not fixed.
+
+### 11. Tests are typechecked by `rush typecheck:tests`, which is not part of `rush build`
+
+`tsconfig.json` excludes `tests/`, and vitest runs through esbuild, which erases
+types. Two test files therefore stayed green while compiling against types this
+change deleted: `dreamux-types/tests/team-teammate-contract.test.ts` asserted the
+shapes of five removed events, and `dreamux/tests/helpers/workflow-harness.ts`
+built a `Turn` with the five fields the push-back split removed from it. Both are
+rewritten. `rush typecheck:tests` exists precisely for this and belongs in the
+green bar for any change that moves a type.
+
+### 12. `enterOrdinaryMutation` stays at four call sites
+
+The inventory table predicted 4 → 3 on the assumption that the completion path
+would fold into the ordinary one. It did fold — `submitPreparedCompletion`
+became `submitCompletionInput`, which goes through `submitAdmitted` like any
+other input — but it keeps its own `enterOrdinaryMutation('completion input')`
+because it must *translate* the refusal — a closing entity answers a push-back
+with `unsupported`, where an ordinary submission throws. Sharing `submitInput`'s
+fence would throw at the completion router. The table row is corrected in place.

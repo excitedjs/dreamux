@@ -35,7 +35,7 @@ import { TeammateRuntimeOwner } from './runtime-owner.js';
 import { renderSubmission, type TeammateSubmitInput } from './submission.js';
 import {
   asCompletionDeliveryResult,
-  asDisplayTurnEnd,
+  failedAdmissionReason,
   toSubmissionResult,
   type TurnAdmission,
   type TurnCompletionDelivery,
@@ -269,11 +269,11 @@ export class TeammateService {
         // runtime ever reports a native end. Every other outcome would leave
         // the surface this input just opened waiting forever, so Core ends it
         // itself and says why.
-        const ended = asDisplayTurnEnd(admission);
-        if (ended !== null) this.projectTurnEnd(ended);
+        const failure = failedAdmissionReason(admission);
+        if (failure !== null) this.projectFailedEnd(failure);
         return admission;
       } catch (error) {
-        this.projectTurnEnd({ status: 'failed', reason: asError(error).message });
+        this.projectFailedEnd(asError(error).message);
         throw error;
       }
     });
@@ -319,14 +319,12 @@ export class TeammateService {
     });
   }
 
-  private projectTurnEnd(
-    end: { status: 'failed' | 'interrupted'; reason: string },
-  ): void {
+  private projectFailedEnd(reason: string): void {
     this.deps.conversationProjection?.projectActivity(this.projectedAgent(), {
       kind: 'turn.ended',
       occurredAt: Date.now(),
-      status: end.status,
-      reason: end.reason,
+      status: 'failed',
+      reason,
     });
   }
 

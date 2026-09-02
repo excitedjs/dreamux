@@ -603,7 +603,8 @@ Source:
 - `/packages/dreamux/src/service/team-collection/store.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
 - `/packages/dreamux/src/channel/conversation-projection.ts`
-- `/packages/dreamux/src/service/teammate-service/turn-coordinator.ts`
+- `/packages/dreamux/src/service/teammate-service/index.ts`
+- `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 
 ### Feishu conversation display
@@ -696,7 +697,8 @@ surface remain.
 Source:
 
 - `/packages/dreamux/src/channel/conversation-projection.ts`
-- `/packages/dreamux/src/service/teammate-service/turn-coordinator.ts`
+- `/packages/dreamux/src/service/teammate-service/index.ts`
+- `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
 - `/packages/dreamux/src/platform/home-paths.ts`
 - `/packages/channel/feishu-channel/src/feishu-cot-adapter.ts`
 - `/packages/channel/feishu-channel/src/feishu-cot-state.ts`

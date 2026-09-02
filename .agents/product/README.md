@@ -92,6 +92,15 @@ the same change that touches it.
   presentation is a deliberately tuned surface; changes to it are their own
   requirement, never a refactor side effect.
   (Decision: [feishu-cot-conversation-display](/.agents/tasks/channel/feishu-cot-conversation-cards/accepted-decision.md).)
+- **A displayed input is announced when it is submitted, and always ends.** The
+  input appears with the text that was submitted, before any runtime has
+  accepted it, so a submission that fails is visible together with what failed.
+  Anything no runtime accepted — a stopped, skipped, ambiguous, or failed
+  admission, including a completion push-back to an agent whose runtime is
+  already gone — ends its own display carrying the failure reason, instead of
+  leaving a surface open forever. A dropped push-back used to be silent.
+  (Requirement: operator rulings 4, 8 and 9 in
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).)
 
 ## Failures the model sees
 

@@ -448,3 +448,48 @@ describe('conversation projection: truncation at and above the bound', () => {
     expect(toolEvent.kind === 'tool.call' && toolEvent.result_truncated).toBe(true);
   });
 });
+
+describe('conversation projection: the turn.ended reason', () => {
+  function endedActivity(reason: string | null): RuntimeActivity {
+    return { kind: 'turn.ended', occurredAt: Date.now(), status: 'failed', reason };
+  }
+
+  it('redacts and relativizes the reason, which carries a raw provider error message', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(
+      agent,
+      endedActivity(`spawn ${CWD}/bin/agent failed: authorization: tok3nAbcDef123`),
+    );
+    const ended = activityOf(publisher);
+    expect(ended.kind === 'turn.ended' && ended.reason).toBe(
+      'spawn bin/agent failed: authorization: <redacted>',
+    );
+    expect(ended.kind === 'turn.ended' && ended.redacted).toBe(true);
+    expect(ended.kind === 'turn.ended' && ended.reason_truncated).toBe(false);
+  });
+
+  it('keeps an ordinary reason byte-identical and reports redacted:false', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, endedActivity('the agent runtime is not running'));
+    const ended = activityOf(publisher);
+    expect(ended.kind === 'turn.ended' && ended.reason).toBe('the agent runtime is not running');
+    expect(ended.kind === 'turn.ended' && ended.redacted).toBe(false);
+  });
+
+  it('bounds the reason by CONVERSATION_MESSAGE_MAX, as a provider message has no length the runtime owes us', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, endedActivity('e'.repeat(CONVERSATION_MESSAGE_MAX + 1)));
+    const ended = activityOf(publisher);
+    expect(ended.kind === 'turn.ended' && ended.reason?.length).toBe(CONVERSATION_MESSAGE_MAX);
+    expect(ended.kind === 'turn.ended' && ended.reason_truncated).toBe(true);
+  });
+
+  it('carries a null reason through as null, not an empty string', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, endedActivity(null));
+    const ended = activityOf(publisher);
+    expect(ended.kind === 'turn.ended' && ended.reason).toBeNull();
+    expect(ended.kind === 'turn.ended' && ended.reason_truncated).toBe(false);
+    expect(ended.kind === 'turn.ended' && ended.redacted).toBe(false);
+  });
+});

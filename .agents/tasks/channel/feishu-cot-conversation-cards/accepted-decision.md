@@ -153,6 +153,10 @@ What replaced what:
   re-anchors anything. Core publishes a new actor-scoped
   `teammate.native_turn.ended` fact, sourced from an optional provider seam
   (`AgentRuntimeCreateContext.nativeTurn`), and that is a card's only terminal.
+  (Superseded 2026-09-02: the fact is now the `turn.ended` member of
+  `teammate.activity`, produced by the one activity sink; the second sink and
+  the `teammate.native_turn.ended` kind are deleted. See
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).)
   One Claude Code terminal `result` and one Codex `turn/completed` are each one
   native turn; several Dreamux submissions folded into one of them share its
   single end. A provider synthesizes an end for a stop, failure, or protocol

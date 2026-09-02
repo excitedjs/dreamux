@@ -140,7 +140,10 @@ a full green suite is not evidence that a boundary rule is right.
   recipient anchorless rather than restoring the previous anchor: that card is
   already closed, so restoring its anchor would only make the next activity open
   a fresh card under an older message.
-- An Agent Runtime provider that does not implement the optional `nativeTurn`
+- (Superseded 2026-09-02: the optional `nativeTurn` sink is deleted; the end
+  arrives as a `turn.ended` member of the single activity sink. See
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).)
+  An Agent Runtime provider that does not implement the optional `nativeTurn`
   sink publishes no native-turn end, so a COT card for that provider opens and
   never closes until an anchor replacement or session close. Both built-in
   providers implement it. Core deliberately derives no fallback from

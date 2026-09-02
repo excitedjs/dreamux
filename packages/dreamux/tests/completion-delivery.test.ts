@@ -35,14 +35,11 @@ import type {
   AgentRuntimeSkillSource,
   ChannelCoreEvent,
   DreamuxLogger,
-  RuntimeAdmission,
-  TeammateRole,
 } from '@excitedjs/dreamux-types';
 
 import {
   createConversationProjection,
   type ConversationProjection,
-  type ProjectedAgent,
 } from '../src/channel/conversation-projection.js';
 import type { AgentEntityIdentity } from '../src/service/agent-entity/types.js';
 import {
@@ -58,7 +55,6 @@ import {
   renderSubmission,
   type TeammateSubmitInput,
 } from '../src/service/teammate-service/submission.js';
-import { EntityTurnCoordinator } from '../src/service/teammate-service/turn-coordinator.js';
 import type { TurnCompletionDelivery } from '../src/service/teammate-service/turn-recording.js';
 import {
   completedCompletion,
@@ -402,14 +398,6 @@ function noopLog(warn?: (...args: unknown[]) => void): DreamuxLogger {
   return log as DreamuxLogger;
 }
 
-/** Poll microtasks until `predicate` is true or attempts are exhausted. */
-async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (predicate()) return;
-    await Promise.resolve();
-  }
-  throw new Error('condition was not reached');
-}
 
 describe('nothing on the completion path can gate presentation on role (failure-ledger #13)', () => {
   it('EntityTurnCoordinator holds no display code at all, so it cannot hold a role gate', () => {

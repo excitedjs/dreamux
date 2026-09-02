@@ -221,28 +221,27 @@ export function asCompletionDeliveryResult(
 }
 
 /**
- * How an admission that produced no turn ends the display surface its input
- * opened.
+ * Why an admission that produced no turn fails the display surface its input
+ * opened; `null` when a turn exists and the runtime will end it.
  *
  * Only a `submitted` admission produces a turn, and only a live turn's runtime
  * ever reports a native end — so every other outcome would leave that surface
- * open forever. The third stated mapping of the one decision, for the same
- * reason as the other two.
+ * open forever. All four are the same verdict, `failed`: nothing answered the
+ * input. Only the reason differs, so only the reason is returned. The third
+ * stated mapping of the one decision, for the same reason as the other two.
  */
-export function asDisplayTurnEnd(
-  result: TurnAdmission,
-): { status: 'failed' | 'interrupted'; reason: string } | null {
+export function failedAdmissionReason(result: TurnAdmission): string | null {
   switch (result.status) {
     case 'submitted':
     case 'duplicate':
       return null;
     case 'stopped':
-      return { status: 'interrupted', reason: 'the agent runtime is not running' };
+      return 'the agent runtime is not running';
     case 'skipped':
-      return { status: 'interrupted', reason: 'the agent runtime skipped this input' };
+      return 'the agent runtime skipped this input';
     case 'failed':
     case 'ambiguous':
-      return { status: 'failed', reason: result.error.message };
+      return result.error.message;
   }
 }
 
