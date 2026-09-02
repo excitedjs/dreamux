@@ -445,7 +445,35 @@ lose information:
   at `index.ts:470` (`phase === 'active' && identity.status === 'closed' &&
   hasNoRuntimeAuthority()`) exists to read.
 
-So the enum is carrying three distinct facts and is paid for. Recorded here so
+So the enum is carrying three distinct facts and is paid for.
+
+**Why the "no phase enum beside a task" rule does not bite here.** It is worth
+being exact, because the rule did retire this shape elsewhere in the codebase.
+The rule targets a state that *mirrors* a running operation — a promise already
+answers "is it running", so the mirror is redundant and can drift. `phase` is
+not that: `closing` **outlives** its task (a rejected `transitionToClosed` is
+released by `@deduplicate` so the close stays retryable, while the entity must
+stay fenced), and one of its producers has **no task at all**. Not redundant, so
+not the banned shape.
+
+**But one reduction is available, and it is a layering fix rather than a state
+fix.** `markClosing` (`index.ts:120-121`) is the entity handing
+`TeammateRuntimeOwner` a writer to its own lifecycle enum, so that the runtime
+owner can express a *runtime* fact — "start threw, `stop()` threw too,
+termination is unproven" — by moving the *entity's* lifecycle. It is the enum's
+only producer that is not a close. If the runtime owner held that fact itself
+and the fence consulted it, `phase` would lose a producer and `closing` would
+mean exactly one thing: a close was attempted. Net: one meaning off the enum and
+one cross-layer write deleted, against one predicate added on the layer that
+owns the fact.
+
+That does not delete `phase`. Three consumers ask three different questions of
+it and each needs a different answer: "may this entity accept work"
+(`enterOrdinaryMutation`, `lock`, `stopForHost`, `submitLocked`, both `isActive`
+callbacks), "is this instance finished so the collection may drop it"
+(`isRetired`, and the two `closeAuthorized` branches), and "is a close underway"
+(`unlock`'s refusal, and `effectiveIdentityStatus:378`, which projects a
+runtime-less closing entity as `stopped` in the read model). Recorded here so
 the next reader does not re-derive it.
 
 ### Ruled separately: `teammate.turn.settled` goes
@@ -576,9 +604,14 @@ from four to three, and the coordinator loses `submitCompletion`.
 
 ### The fork — one branch survives
 
-- **Thread a flag** (`submitInput({ …, start: false })` or equivalent). Behavior
-  is preserved exactly; `submitPreparedCompletion`, `submitCompletion`, and one
-  publish site are deleted. The cost is stated plainly: `submitInput`'s docstring
+- **Thread a flag** (`submitInput({ …, start: false })` or equivalent).
+  `submitPreparedCompletion`, `submitCompletion`, and one publish site are
+  deleted. `prepareCompletion` then returns a handle whose `submit` is the
+  `submitInput` call itself, with **no translating adapter**: the fence's throw
+  propagates and the router's own `settleWithinDeadline` catches it, giving the
+  same dropped-without-retry outcome under a different log line. The operator
+  ruled that difference away — 「日志这种东西根本不重要」 — so the three-line
+  adapter earlier proposed to preserve the `unsupported` wording is not written. The cost is stated plainly: `submitInput`'s docstring
   says "There is no per-source wrapper and no caller-selected mode, because there
   is no per-source behavior left to select." That claim is **already false** —
   the mode exists today as a parallel private method the type system does not
