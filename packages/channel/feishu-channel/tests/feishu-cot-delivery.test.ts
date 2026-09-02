@@ -119,6 +119,8 @@ function teamClosedError(): Error & { code: string } {
 function submittedEvent(
   turnId: string,
   recipient: 'dispatcher' | 'leader',
+  sourceId: string | null = null,
+  turnSource = 'feishu',
 ): TeammateTurnSubmittedEvent {
   return {
     schema_version: 1,
@@ -128,7 +130,8 @@ function submittedEvent(
     role: recipient === 'dispatcher' ? 'dispatcher' : 'team_leader',
     team_name: recipient === 'dispatcher' ? null : 'alpha',
     turn_id: turnId,
-    turn_source: 'feishu',
+    turn_source: turnSource,
+    source_id: sourceId,
   };
 }
 
@@ -151,6 +154,24 @@ function assistantMessage(
     content_truncated: false,
     redacted: false,
   };
+}
+
+function userMessage(
+  turnId: string,
+  recipient: 'dispatcher' | 'leader',
+  content: string,
+): TeammateTurnMessageEvent {
+  return {
+    ...assistantMessage(turnId, recipient, content),
+    event_id: `user-event-${turnId}`,
+    message_role: 'user',
+  };
+}
+
+function sourceIdOf(payload: JsonValue): string {
+  const sourceId = (payload as Record<string, unknown>)['source_id'];
+  if (typeof sourceId !== 'string') throw new Error('missing fixture source_id');
+  return sourceId;
 }
 
 function nativeEnd(
@@ -204,11 +225,12 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
   it('opens the card under the message that produced the turn, and closes it on the native end', async () => {
     const { session, cot, port } = await harness('chan-cot-anchor', async (
       command,
-      _payload,
+      payload,
       emit,
     ) => {
       if (command !== 'team.submit') throw new Error(`unexpected ${command}`);
-      emit(submittedEvent('turn-1', 'dispatcher'));
+      emit(submittedEvent('turn-1', 'dispatcher', sourceIdOf(payload)));
+      emit(userMessage('turn-1', 'dispatcher', 'hello'));
       return { status: 'submitted', turn_id: 'turn-1' };
     });
 
@@ -224,9 +246,11 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       },
     });
     await waitFor(() => cot.cards.length === 1);
+    await waitFor(() => cotTexts(cot.cards[0]!).length === 1);
 
     expect(cot.cards[0]!.chatId).toBe('oc_dm');
     expect(cot.cards[0]!.originMessageId).toBe('om_user_1');
+    expect(cotTexts(cot.cards[0]!)).toEqual([RECEIPT]);
 
     port.emit(assistantMessage('turn-1', 'dispatcher', 'the answer'));
     port.emit(nativeEnd('dispatcher'));
@@ -234,6 +258,117 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
 
     expect(cotTexts(cot.cards[0]!)).toEqual([RECEIPT, 'the answer']);
     expect(cotRunStatus(cot.cards[0]!)).toBe('done');
+
+    port.emit(submittedEvent('turn-task', 'dispatcher', 'task-source', 'task'));
+    port.emit(userMessage('turn-task', 'dispatcher', 'task body'));
+    await waitFor(() => cot.cards.length === 2);
+    expect(cotTexts(cot.cards[1]!)).toEqual(['task body']);
+
+    await session.close();
+  });
+
+  it('interrupts one predecessor and opens exactly one successor for a second inbound', async () => {
+    let submissionIndex = 0;
+    const { session, cot, port } = await harness('chan-cot-successor', async (
+      command,
+      payload,
+      emit,
+    ) => {
+      if (command !== 'team.submit') throw new Error(`unexpected ${command}`);
+      submissionIndex += 1;
+      const turnId = `turn-${submissionIndex}`;
+      emit(submittedEvent(turnId, 'dispatcher', sourceIdOf(payload)));
+      emit(userMessage(turnId, 'dispatcher', `body ${submissionIndex}`));
+      return { status: 'submitted', turn_id: turnId };
+    });
+
+    await session.submit(null, {
+      attrs: {},
+      text: 'body 1',
+      reminder: '',
+      sourceId: 'message-one',
+      anchor: {
+        chatId: 'chat-dm',
+        messageId: 'message-one',
+        target: chatTarget('chat-dm', 'p2p'),
+      },
+    });
+    await waitFor(() => cot.cards.length === 1);
+    port.emit(assistantMessage('turn-1', 'dispatcher', 'first answer'));
+    await waitFor(() => cotTexts(cot.cards[0]!).length === 2);
+
+    await session.submit(null, {
+      attrs: {},
+      text: 'body 2',
+      reminder: '',
+      sourceId: 'message-two',
+      anchor: {
+        chatId: 'chat-dm',
+        messageId: 'message-two',
+        target: chatTarget('chat-dm', 'p2p'),
+      },
+    });
+    await waitFor(() => cot.cards.length === 2);
+    await waitFor(() => cotRunStatus(cot.cards[0]!) === 'interrupted');
+
+    expect(cot.cards).toHaveLength(2);
+    expect(cot.cards.map((card) => card.originMessageId)).toEqual([
+      'message-one',
+      'message-two',
+    ]);
+    expect(cot.cards.map(cotRunStatus)).toEqual(['interrupted', null]);
+    expect(cotTexts(cot.cards[0]!)).toEqual([RECEIPT, 'first answer']);
+    expect(cotTexts(cot.cards[1]!)).toEqual([RECEIPT]);
+
+    await session.close();
+  });
+
+  it('keeps the repeated-message anchor when Core deduplicates its submission', async () => {
+    let invocation = 0;
+    const { session, cot, port } = await harness('chan-cot-duplicate', async (
+      command,
+      payload,
+      emit,
+    ) => {
+      if (command !== 'team.submit') throw new Error(`unexpected ${command}`);
+      invocation += 1;
+      if (invocation === 2) return { status: 'duplicate' };
+      emit(submittedEvent('turn-original', 'dispatcher', sourceIdOf(payload)));
+      emit(userMessage('turn-original', 'dispatcher', 'hello'));
+      return { status: 'submitted', turn_id: 'turn-original' };
+    });
+    const submission = {
+      attrs: {},
+      text: 'hello',
+      reminder: '',
+      sourceId: 'message-repeat',
+      anchor: {
+        chatId: 'chat-dm',
+        messageId: 'message-repeat',
+        target: chatTarget('chat-dm', 'p2p'),
+      },
+    } as const;
+
+    await session.submit(null, submission);
+    await waitFor(() => cot.cards.length === 1);
+    port.emit(assistantMessage('turn-original', 'dispatcher', 'before repeat'));
+    await waitFor(() => cotTexts(cot.cards[0]!).length === 2);
+
+    const outcome = await session.submit(null, submission);
+    expect(outcome).toEqual({ status: 'duplicate' });
+    await waitFor(() => cot.cards.length === 2);
+    await waitFor(() => cotRunStatus(cot.cards[0]!) === 'interrupted');
+    expect(cot.cards.map((card) => card.originMessageId)).toEqual([
+      'message-repeat',
+      'message-repeat',
+    ]);
+    expect(cot.cards.map(cotRunStatus)).toEqual(['interrupted', null]);
+    expect(cotTexts(cot.cards[1]!)).toEqual([RECEIPT]);
+
+    port.emit(assistantMessage('turn-original', 'dispatcher', 'after repeat'));
+    await waitFor(() => cotTexts(cot.cards[1]!).length === 2);
+    expect(cot.cards).toHaveLength(2);
+    expect(cotTexts(cot.cards[1]!)).toEqual([RECEIPT, 'after repeat']);
 
     await session.close();
   });
@@ -248,7 +383,12 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       const p = payload as Record<string, unknown>;
       // The stored route names a Team that is closed: proven no admission.
       if (p['team_name'] !== undefined) throw teamClosedError();
-      emit(submittedEvent('turn-fallback', 'dispatcher'));
+      emit(submittedEvent(
+        'turn-fallback',
+        'dispatcher',
+        sourceIdOf(payload),
+      ));
+      emit(userMessage('turn-fallback', 'dispatcher', 'hello'));
       return { status: 'submitted', turn_id: 'turn-fallback' };
     });
     await session.routing.bind({
@@ -275,25 +415,68 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       },
     });
     expect(outcome).toEqual({ status: 'submitted', turnId: 'turn-fallback' });
-    await waitFor(() => cot.cards.length === 1);
+    await waitFor(() => cot.cards.length === 2);
 
-    // Exactly one card, under the operator's own message, owned by the
-    // Dispatcher that actually answered.
-    expect(cot.cards[0]!.originMessageId).toBe('om_user_1');
+    // The refused Team's optimistic card is retired, and the Dispatcher owns
+    // the one open successor under the same visible message.
+    expect(cot.cards.map((card) => card.originMessageId)).toEqual([
+      'om_user_1',
+      'om_user_1',
+    ]);
+    expect(cot.cards.map(cotRunStatus)).toEqual(['interrupted', null]);
     port.emit(assistantMessage('turn-fallback', 'dispatcher', 'dispatcher answered'));
-    await waitFor(() => cotTexts(cot.cards[0]!).length === 2);
-    expect(cotTexts(cot.cards[0]!)).toEqual([RECEIPT, 'dispatcher answered']);
+    await waitFor(() => cotTexts(cot.cards[1]!).length === 2);
+    expect(cotTexts(cot.cards[1]!)).toEqual([RECEIPT, 'dispatcher answered']);
 
-    // And the TeamLeader whose route was refused has no card at all.
+    // The TeamLeader whose route was refused cannot present anything further.
     port.emit(assistantMessage('turn-fallback', 'leader', 'never displayed'));
     port.emit(nativeEnd('leader'));
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(cot.cards).toHaveLength(1);
+    expect(cot.cards).toHaveLength(2);
 
     await session.close();
   });
 
-  it('opens no card for an ambiguous submission, which proves no recipient', async () => {
+  it.each(['rejected', 'failed', 'stopped'] as const)(
+    'retires an optimistic anchor when Core proves the submission %s',
+    async (failure) => {
+      const { session, cot, port } = await harness(
+        `chan-cot-${failure}`,
+        async () => {
+          if (failure === 'rejected') throw teamClosedError();
+          if (failure === 'stopped') return { status: 'stopped' };
+          return {
+            status: 'failed',
+            error: { code: 'RUNTIME_FAILED', message: 'fixture failure' },
+          };
+        },
+      );
+
+      const outcome = await session.submit('alpha', {
+        attrs: {},
+        text: 'hello',
+        reminder: '',
+        sourceId: `message-${failure}`,
+        anchor: {
+          chatId: 'chat-group',
+          messageId: `message-${failure}`,
+          target: chatTarget('chat-group', 'group'),
+        },
+      });
+
+      expect(outcome.status).toBe(failure);
+      await waitFor(() => cot.cards.length === 1);
+      await waitFor(() => cotRunStatus(cot.cards[0]!) === 'interrupted');
+      port.emit(assistantMessage('turn-later', 'leader', 'must stay anchorless'));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(cot.cards).toHaveLength(1);
+      expect(cotRunStatus(cot.cards[0]!)).toBe('interrupted');
+
+      await session.close();
+    },
+  );
+
+  it('keeps the optimistic anchor when an ambiguous failure proves nothing', async () => {
     const { session, cot } = await harness('chan-cot-ambiguous', async () => {
       throw new Error('unknown transport failure');
     });
@@ -311,8 +494,9 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
     });
 
     expect(outcome.status).toBe('error');
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(cot.cards).toHaveLength(0);
+    await waitFor(() => cot.cards.length === 1);
+    expect(cot.cards[0]!.originMessageId).toBe('om_user_1');
+    expect(cotRunStatus(cot.cards[0]!)).toBeNull();
 
     await session.close();
   });
@@ -322,11 +506,12 @@ describe('FeishuChannelSession COT — a Reply never touches the anchor', () => 
   it('leaves the open card and its anchor exactly as they were', async () => {
     const { session, cot, port, bot } = await harness('chan-cot-reply', async (
       command,
-      _payload,
+      payload,
       emit,
     ) => {
       if (command !== 'team.submit') throw new Error(`unexpected ${command}`);
-      emit(submittedEvent('turn-1', 'leader'));
+      emit(submittedEvent('turn-1', 'leader', sourceIdOf(payload)));
+      emit(userMessage('turn-1', 'leader', 'hello'));
       return { status: 'submitted', turn_id: 'turn-1' };
     });
 
@@ -389,8 +574,9 @@ describe('FeishuChannelSession COT — a bot without a COT surface', () => {
   it('presents nothing and breaks nothing', async () => {
     const bot = createFakeFeishuBot();
     const session = newSession(bot, 'chan-cot-absent');
-    const port = fakePort(async (_command, _payload, emit) => {
-      emit(submittedEvent('turn-1', 'dispatcher'));
+    const port = fakePort(async (_command, payload, emit) => {
+      emit(submittedEvent('turn-1', 'dispatcher', sourceIdOf(payload)));
+      emit(userMessage('turn-1', 'dispatcher', 'hello'));
       return { status: 'submitted', turn_id: 'turn-1' };
     });
     await session.initialize(port.port);

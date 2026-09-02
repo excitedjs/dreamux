@@ -78,9 +78,9 @@ export interface FeishuTeamSubmitter {
 /**
  * Read Core's answer to `team.submit` as one of this Channel's outcomes.
  *
- * The mapping is the whole of what a submission result means here: only
- * `submitted` carries a turn to anchor a card on, and every other status is
- * either a proven non-admission or a fact that proves nothing.
+ * The mapping is the whole of what a submission result means here: some
+ * outcomes prove the optimistic Channel anchor must be retired, while an
+ * ambiguous result proves nothing and leaves it unchanged.
  */
 export function submitOutcome(result: TeamSubmitResult): FeishuSubmitOutcome {
   switch (result.status) {

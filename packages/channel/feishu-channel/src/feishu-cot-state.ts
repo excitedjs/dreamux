@@ -65,8 +65,8 @@ export interface CotPresentation {
  * for both.
  */
 export type CotRecipientIdentity =
-  | { readonly kind: 'leader'; readonly teamName: string; readonly leaderName: string }
-  | { readonly kind: 'dispatcher'; readonly agentName: string };
+  | { readonly kind: 'leader'; readonly teamName: string }
+  | { readonly kind: 'dispatcher' };
 
 /** One recipient's presentation state; the whole COT model is a map of these. */
 export interface CotState {
@@ -118,7 +118,6 @@ export class LeaderLifecycleFence {
     const eventKey = cotRecipientKey({
       kind: 'leader',
       teamName: event.team_name,
-      leaderName: event.leader_name,
     });
     if (event.status !== 'closed') {
       this.leaders.delete(eventKey);
@@ -155,9 +154,8 @@ export class LeaderLifecycleFence {
   onRouteClaimed(input: { teamName: string; target: FeishuTarget }): void {
     for (const [key, fenced] of this.targets) {
       if (
-        fenced.leaderKey.startsWith(
-          `leader${IDENTITY_KEY_SEPARATOR}${input.teamName}${IDENTITY_KEY_SEPARATOR}`,
-        ) &&
+        fenced.leaderKey ===
+          `leader${IDENTITY_KEY_SEPARATOR}${input.teamName}` &&
         sameTarget(fenced.target, input.target)
       ) {
         this.targets.delete(key);
@@ -216,7 +214,7 @@ export function cotRecipientOf(event: {
     return null;
   }
   if (event.role === 'dispatcher' && event.team_name === null) {
-    return { kind: 'dispatcher', agentName: event.teammate_name };
+    return { kind: 'dispatcher' };
   }
   if (
     event.role === 'team_leader' &&
@@ -226,7 +224,6 @@ export function cotRecipientOf(event: {
     return {
       kind: 'leader',
       teamName: event.team_name,
-      leaderName: event.teammate_name,
     };
   }
   return null;
@@ -234,9 +231,8 @@ export function cotRecipientOf(event: {
 
 export function cotRecipientKey(identity: CotRecipientIdentity): string {
   return identity.kind === 'leader'
-    ? `leader${IDENTITY_KEY_SEPARATOR}${identity.teamName}` +
-      `${IDENTITY_KEY_SEPARATOR}${identity.leaderName}`
-    : `dispatcher${IDENTITY_KEY_SEPARATOR}${identity.agentName}`;
+    ? `leader${IDENTITY_KEY_SEPARATOR}${identity.teamName}`
+    : 'dispatcher';
 }
 
 export function ensureCotState(

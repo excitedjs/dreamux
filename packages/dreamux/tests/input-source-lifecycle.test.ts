@@ -346,7 +346,12 @@ function allCatalogEvents(): ChannelCoreEvent[] {
   return [
     teamStateEvent(),
     teammateStateEvent(),
-    { ...turnScope(), kind: 'teammate.turn.submitted', turn_source: 'channel' },
+    {
+      ...turnScope(),
+      kind: 'teammate.turn.submitted',
+      turn_source: 'channel',
+      source_id: null,
+    },
     {
       ...turnScope(),
       kind: 'teammate.turn.settled',

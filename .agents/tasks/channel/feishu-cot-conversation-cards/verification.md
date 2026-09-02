@@ -129,6 +129,17 @@ a full green suite is not evidence that a boundary rule is right.
   close-out or replay; bounding it properly would mean letting the closing
   writes finish outside the aborted controller, which is a design change this
   task does not carry.
+- A submission Core disproves leaves a spent card on the message that produced
+  no turn: the receipt was already written when the Channel took the anchor, so
+  retiring it closes that card as interrupted rather than erasing it. The
+  proven-no-admission Dispatcher fallback shows it most clearly — one dead card
+  under the operator's message and one live card beside it. This is the
+  structural cost of taking the anchor before calling Core, which is what
+  removes the predecessor-card losses in the first place; the alternative is to
+  wait for Core again and get those back. Retiring deliberately leaves the
+  recipient anchorless rather than restoring the previous anchor: that card is
+  already closed, so restoring its anchor would only make the next activity open
+  a fresh card under an older message.
 - An Agent Runtime provider that does not implement the optional `nativeTurn`
   sink publishes no native-turn end, so a COT card for that provider opens and
   never closes until an anchor replacement or session close. Both built-in

@@ -34,12 +34,7 @@ export function cotLogScope(input: {
   return {
     dispatcher_id: input.dispatcherId,
     channel_id: input.channelId ?? null,
-    ...(recipient?.kind === 'leader'
-      ? { team_name: recipient.teamName, leader_name: recipient.leaderName }
-      : {}),
-    ...(recipient?.kind === 'dispatcher'
-      ? { agent_name: recipient.agentName }
-      : {}),
+    ...(recipient?.kind === 'leader' ? { team_name: recipient.teamName } : {}),
   };
 }
 

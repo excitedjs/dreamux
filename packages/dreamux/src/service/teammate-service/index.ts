@@ -258,6 +258,7 @@ export class TeammateService {
       const runtime = this.runtimeOwner.mustRuntime();
       return this.turns.submitRuntimeTurn(() => runtime.submit({ text }), {
         source: input.source,
+        ...(input.sourceId !== undefined ? { sourceId: input.sourceId } : {}),
         // The turn records the source's own body. The envelope is delivery
         // formatting, and repeating it in the conversation projection would
         // show the model's provenance markup back to a human reader.

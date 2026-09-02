@@ -240,9 +240,12 @@ describe('TeammateStateEvent and the TeammateTurn* event family', () => {
     expect(teamEvent.team_name).toBe('team-a');
   });
 
-  it('every later turn event correlates to its submission by turn_id alone (turn_source only on submitted)', () => {
+  it('submitted returns source provenance and caller id; later events correlate by turn_id alone', () => {
     assertType<
-      Equal<keyof TeammateTurnSubmittedEvent, keyof TeammateTurnScope | 'kind' | 'turn_source'>
+      Equal<
+        keyof TeammateTurnSubmittedEvent,
+        keyof TeammateTurnScope | 'kind' | 'turn_source' | 'source_id'
+      >
     >();
     assertType<
       Equal<
@@ -263,6 +266,7 @@ describe('TeammateStateEvent and the TeammateTurn* event family', () => {
       ...scope,
       kind: 'teammate.turn.submitted',
       turn_source: 'feishu',
+      source_id: 'message-fixture',
     };
     const settled: TeammateTurnSettledEvent = {
       ...scope,
@@ -274,6 +278,7 @@ describe('TeammateStateEvent and the TeammateTurn* event family', () => {
     };
 
     expect(submitted.turn_id).toBe(settled.turn_id);
+    expect(submitted.source_id).toBe('message-fixture');
   });
 
   it('TeammateTurnMessageEvent and TeammateTurnToolCallEvent both key off turn_id, never a second identity', () => {

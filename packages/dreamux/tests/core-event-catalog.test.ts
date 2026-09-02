@@ -91,6 +91,7 @@ function catalogFixtures(): Record<ChannelCoreEvent['kind'], ChannelCoreEvent> {
       ...baseScope(),
       kind: 'teammate.turn.submitted',
       turn_source: 'feishu',
+      source_id: null,
     },
     'teammate.turn.settled': {
       ...baseScope(),
@@ -729,8 +730,8 @@ describe('team.state is the redundant Team aggregate', () => {
   });
 });
 
-describe('turn events correlate only by turn_id', () => {
-  it('submitted carries turn_source and the Core turn_id; later events on the same turn share only turn_id', () => {
+describe('turn event correlation', () => {
+  it('submitted returns source_id and turn_source; later events share the Core turn_id', () => {
     const publisher = createCapturingPublisher();
     const projection = createConversationProjection({
       coreEvents: publisher,
@@ -739,7 +740,13 @@ describe('turn events correlate only by turn_id', () => {
     });
     const identity = makeIdentity({ team_id: 'alpha', name: 'scout' });
     const agent: ProjectedAgent = { identity, role: 'teammate' };
-    const turn = { id: 'turn-77', submittedAt: Date.now(), prompt: 'investigate', source: 'feishu:chat-1' };
+    const turn = {
+      id: 'turn-77',
+      submittedAt: Date.now(),
+      prompt: 'investigate',
+      source: 'feishu:chat-1',
+      sourceId: 'message-fixture',
+    };
 
     projection.projectSubmitted(agent, turn);
     projection.projectSettled({
@@ -752,7 +759,11 @@ describe('turn events correlate only by turn_id', () => {
     expect(kinds).toEqual(['teammate.turn.submitted', 'teammate.turn.message', 'teammate.turn.settled']);
 
     const submitted = publisher.published[0]?.event;
-    expect(submitted?.kind === 'teammate.turn.submitted' && submitted.turn_source).toBe('feishu:chat-1');
+    expect(submitted).toMatchObject({
+      kind: 'teammate.turn.submitted',
+      turn_source: 'feishu:chat-1',
+      source_id: 'message-fixture',
+    });
 
     for (const entry of publisher.published) {
       expect('turn_id' in entry.event && entry.event.turn_id).toBe('turn-77');

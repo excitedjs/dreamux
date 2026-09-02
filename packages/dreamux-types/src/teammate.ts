@@ -70,6 +70,12 @@ export type TeammateTurnSubmittedEvent = TeammateTurnScope & {
    * only `turn_id` to reach the anchor established at submission.
    */
   readonly turn_source: string;
+  /**
+   * The submitting caller's own id, returned so that caller can recognize the
+   * turn its submission produced. `null` means none was supplied. It is not a
+   * routing key, persistence key, or presentation identity.
+   */
+  readonly source_id: string | null;
 };
 
 export type TeammateTurnSettledEvent = TeammateTurnScope & {

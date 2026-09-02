@@ -14,7 +14,7 @@
   session restarts; one native turn emits one ended fact and closes the recipient's
   current card without logical-turn membership. Projected text keeps local paths
   readable by rendering this host's workspace and home prefixes as `.` and `~`.
-- State: `done`
+- State: `in-progress`
 - Requirement: [Current requirement](/.agents/tasks/channel/feishu-cot-conversation-cards/requirement.md)
 - Technical design: owned by the single Claude implementation developer. The
   developer receives only the locked requirement and must derive the design
@@ -116,6 +116,29 @@
   in one resident window each emit one ended fact; submissions folded into one
   result share that result's single fact. The correction adds no presentation
   identity, logical membership, buffering, or Channel state.
+
+- Requirement change (operator, 2026-09-02, after live testing): restore hiding
+  the Channel's own message body, and implement it so that it actually works.
+  "裁掉的是这个东西啊！卧槽！那这个要补回来". The 2026-09-02 deletion removed a
+  mechanism that could never fire; this restores the capability with the
+  correlation that makes it possible — `source_id`, already sent on `team.submit`
+  and used by Core for deduplication, echoed back on `teammate.turn.submitted` so
+  the Channel establishes its anchor before the body it already displayed
+  arrives. This also removes the predecessor-card duplicate that the 2026-09-01
+  adjudication had accepted as a loss.
+- Design adjudication (operator, 2026-09-02): take the simpler of the two shapes
+  offered — the Channel moves its own anchor when it submits, instead of echoing
+  a correlation id back on a Core event. "B，我说的话也不一定全都是权威". This
+  knowingly supersedes his own 2026-09-01 admission-gated-anchor ruling: that rule
+  is what forced every synchronously published fact onto the predecessor card, and
+  removing it deletes the cause instead of compensating for it.
+- Design adjudication (operator, 2026-09-02): identify the Channel's own body by
+  the `source_id` it already supplied, echoed back on `teammate.turn.submitted` —
+  not by comparing body text. "你是做了纯文本匹配？我感觉这样更恶心啊。那你还是走
+  那个带 source_id 的机制吧". Anchor timing stays as adjudicated above: the
+  Channel takes the anchor when it submits, so placement never depends on a
+  display-only projection that is allowed to fail open. The echoed id is used
+  only to recognize the Channel's own turn.
 
 ## Delivery
 

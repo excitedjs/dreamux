@@ -502,11 +502,19 @@ describe('TeammateService.submitInput: admission ledger bypass and joining, at t
 });
 
 describe('TeammateService.submitInput: the conversation projection records the source body, not the rendered envelope', () => {
-  it('projects the original text on a fresh admission — no envelope markup, and not the reminder', async () => {
-    const projected: Array<{ prompt: string | null; source: string }> = [];
+  it('projects the original text and caller id on a fresh admission — no envelope markup, and not the reminder', async () => {
+    const projected: Array<{
+      prompt: string | null;
+      source: string;
+      sourceId: string | null | undefined;
+    }> = [];
     const conversationProjection: ConversationProjection = {
       projectSubmitted(_agent, turn) {
-        projected.push({ prompt: turn.prompt, source: turn.source });
+        projected.push({
+          prompt: turn.prompt,
+          source: turn.source,
+          sourceId: turn.sourceId,
+        });
       },
       projectActivity() {},
       projectSettled() {},
@@ -519,6 +527,7 @@ describe('TeammateService.submitInput: the conversation projection records the s
       attrs: { chat: 'general' },
       text: 'hello there',
       reminder: 'stay on task',
+      sourceId: 'message-fixture',
     });
 
     expect(projected).toHaveLength(1);
@@ -529,6 +538,7 @@ describe('TeammateService.submitInput: the conversation projection records the s
     // `prompt: input.text`).
     expect(projected[0]?.prompt).toBe('hello there');
     expect(projected[0]?.source).toBe('channel');
+    expect(projected[0]?.sourceId).toBe('message-fixture');
   });
 
   it('never re-projects a duplicate: only the first admission of a repeated sourceId is recorded', async () => {

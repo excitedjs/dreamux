@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/feishu-channel",
+      "comment": "BREAKING: Review: A Feishu inbound now becomes the selected Dispatcher or TeamLeader's COT anchor immediately when the Channel submits it, interrupting the prior card and opening the successor receipt before Core runs. Only rejected, failed, and stopped outcomes retire that optimistic anchor; submitted, duplicate, ambiguous, and unknown-error outcomes keep it, while unsubmitted means no Core submission anchor was taken before Dispatcher fallback. In particular, a duplicate delivery keeps the repeated message anchored while its already-admitted turn continues. The Channel recognizes its own turn from the existing caller-supplied `source_id` echoed on `teammate.turn.submitted` and hides that turn's already-visible user body exactly once; other producers' bodies remain visible. Correlation is bounded and released. Body-text matching is deliberately not used because path, secret, or truncation sanitization can change projected text and silently defeat suppression. No config or persisted-state shape changes, and no rebuild is needed.",
+      "type": "major"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel"
+}
