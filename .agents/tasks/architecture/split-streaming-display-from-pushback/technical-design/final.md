@@ -929,15 +929,17 @@ early buffer, the old entry points, the old kinds and the `EntityTurn` fields.
   only thing separating "may wake a dormant agent" from "must not", and it is
   one boolean where there used to be a whole method. Mitigated by the
   dissolve-window test being mandatory in the same step.
-- **A stale native turn can close a fresh card.** Not introduced here —
+- **A stale native turn can close a fresh card.** One instance of this is now
+  deliberate: an unbound codex end closes whatever card is open (departure 7),
+  which is what rule 8 says a native end does. Not introduced here —
   `teammate.native_turn.ended` is already actor-scoped and carries no turn id —
   but the actor-keyed shape makes it easier to hit and it should be tested. The
   Core-emitted `turn.ended` inherits the same property: a failed submission
   ends *the actor's* card, which is the right card whenever the failure is why
   nothing is running, and the wrong one if another turn is live. The concrete
   path that reaches it — an `ambiguous` steer classification — is the task
-  record's **Open questions**, question 2; the `unsettled_turn` field on the
-  log line there is the discriminator.
+  record's **Open questions**; the `unsettled_turn` field on the log line there
+  is the discriminator.
 - **`teammate.state` is a published surface with no in-repo reader.** An
   out-of-tree Channel provider could consume it. flowx ports these PRs and is
   the other stakeholder.
@@ -1130,23 +1132,64 @@ the buffer if no submission ever bound. Keyed on the agent, there is nothing to
 attribute, so both facts now display. The claude test that asserted the drop was
 inverted to assert the emission, with the reason in its name.
 
-### 7. Unbound codex *ends* still do not display — a deliberate asymmetry
+### 7. Unbound codex *ends* now display too — the asymmetry was the defect
 
-`endNativeTurn` keeps its `record.representative === null` guard, with a new
-rationale: the display is one open card per agent, so an end from a native turn
-no Dreamux submission ever bound would close a card this entity's own
-submissions opened. Activity from such a turn is additive and harmless; its end
-is not.
+`endNativeTurn`'s `record.representative === null` guard is older than this
+change: at merge-base `ca30883d` it gated the end (`:361`) while `observeItem`
+gated activity the same way (`:322`), so an unbound native turn was invisible on
+both halves. Departure 6 removed the gate on activity. This departure first kept
+it on the end, on the rationale that an end from a native turn no Dreamux
+submission bound "would close a card this entity's own submissions opened", and
+then that its consolation — "Core's own `turn.ended` closes the card anyway" —
+assumed an ordering nothing here controls.
 
-This originally added that "in the one case that matters — an `ambiguous`
-admission — Core's own `turn.ended` closes the card anyway." That is wrong, and
-it assumes an ordering nothing here controls: Core's end fires when the
-admission resolves, while the orphan turn's items arrive whenever codex emits
-them, which can be later. When they arrive later they open a *new* card, and
-that card's end is the one refused here — it stays open until the next inbound
-retires the anchor. The guard stands; the consolation does not. Both halves now
-log, and the scenario is recorded in the task record's **Open questions**,
-question 1, with what to grep.
+Both readings are wrong, and the second review checked the first against the
+display's own product model. `feishu-cot-conversation-cards` requirement rule 1
+gives a recipient "exactly one standing anchor and at most one open card" and
+says a target "is not a presentation identity, state key, or **card
+partition**"; rule 8 says a native-ended fact "closes an existing open card but
+never opens a new one; when no card is open, Feishu ignores it". A card belongs
+to no turn, so an end never had to name one: closing whatever card is open *is*
+the documented behaviour, and rule 8's "the next opening activity opens a new
+card at that anchor" is how the display heals. The guard was a runtime-layer
+filter re-deciding what the Channel already decides — `finishCard` returns early
+when no card is open — and deciding it wrongly, by suppressing a fact the
+display model handles. The operator deferred this defect with the other one
+(「1和2都很窄…本次不修」) and then reversed once its scope was clear:
+「第一个这个判空去掉就好了吧？」.
+
+**As built now.** The end of an unbound native turn is emitted where its
+terminal actually lands, which is not `endNativeTurn` but `drainTerminalOrder`:
+that branch shifts, releases and warns about an unbound terminal before
+`finalize` is ever reached. It now reports the end first — `completed` for a
+`CollectedTurn`, `failed` carrying codex's own message for an `Error` — and then
+does the release it already did (`nativeTurns.delete`,
+`unboundObservedTurnIds.delete`, `collector.releaseTurn`, which
+`retainAfterTerminal: true` depends on). Its `pendingAdmissions.size > 0` early
+return stays: holding the terminal while an admission is in flight is what stops
+an end from overtaking its own binding. `endNativeTurn` keeps only its
+`nativeTurnEnded` half, which is what makes the end at-most-once, and lost the
+`turnId` parameter that existed for the dropped-end log.
+
+Dropping that half of the guard also unblocks the two synthesized paths, and
+neither is a new mechanism. `stop()` reaches the unbound case through the same
+drain — it awaits pending admissions first, so drain ends and deletes those
+records before the interrupt loop sees them. `failProtocol` → `failRecord` ends
+one directly, which happens only while an unbound terminal is still held behind
+an in-flight admission; before, both tore the record down silently.
+
+`finalize`'s own `representative === null` return stays, and is now the only one
+of the three. `finalize` is push-back work — it settles `record.members`, calls
+`opts.onTurnCompleted` and builds a `RuntimeCompletion` — and a turn no
+submission claimed has nothing to settle and no completion to describe. Routing
+an unbound turn through it would re-merge the two lines this change separated.
+
+The `drainTerminalOrder` warn stays, reworded from "dropping" to what now
+happens. It is kept for one reason: it is the only trace that an unbound native
+turn existed at all, which is a lost `ambiguous` admission seen from the runtime
+side, and it is what explains a card that closed with no submission behind it.
+Test: `codex-runtime.test.ts` → "ends a native turn no submission ever bound,
+after its items displayed".
 
 ### 8. `teammate.turn.settled`'s assistant text has no successor
 

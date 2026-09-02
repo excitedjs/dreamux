@@ -586,6 +586,42 @@ describe('CodexRuntime native turn end', () => {
     await runtime.stop();
   });
 
+  it('ends a native turn no submission ever bound, after its items displayed', async () => {
+    const activity: RuntimeActivity[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      activitySink: (fact) => {
+        activity.push(fact);
+      },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    // The orphan turn: `turn/start` never answers, so the admission is
+    // ambiguous and no submission binds — while codex ran the turn anyway and
+    // reports its items and its terminal. Both halves belong on the display
+    // line: a card belongs to no turn, so this end closes whatever card these
+    // items opened, and is ignored when none is open.
+    client.block('turn/start');
+    const admission = runtime.submit({ text: 'lost in flight' });
+    await waitFor(() => client.hasBlocked('turn/start'));
+    client.rejectBlocked('turn/start', new Error('connection dropped'));
+    expect((await admission).status).toBe('ambiguous');
+
+    client.emitCompleted('fresh-thread-1', 'turn-orphan', 'orphan result');
+    await waitFor(() => activity.some((fact) => fact.kind === 'turn.ended'));
+
+    expect(activity.map((fact) => fact.kind)).toEqual([
+      'assistant.message',
+      'turn.ended',
+    ]);
+    expect(activity.at(-1)).toMatchObject({ status: 'completed', reason: null });
+    await runtime.stop();
+    // The end is still at most once: stop() finds no record to end again.
+    expect(activity.filter((fact) => fact.kind === 'turn.ended')).toHaveLength(1);
+  });
+
   it('reports failed once for every turn an unscoped protocol failure tore down', async () => {
     const nativeEnds: NativeTurnEnd[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });

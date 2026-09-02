@@ -496,6 +496,15 @@ settled a still-open submission. That guard is what makes an ordinary success
 report exactly one end, and it is why no provider-side deduplication state
 exists.
 
+A native turn no Dreamux submission ever bound is not an exception: its items
+display, and so does its end. Withholding it was tried and removed — a card
+belongs to no turn (`feishu-cot-conversation-cards` rules 1 and 8: one anchor
+and at most one open card, and a native-ended fact closes an open card, never
+opens one, and is ignored when none is open), so an end has nothing to name and
+a runtime has nothing to decide. What a provider still owes is at-most-once per
+native turn; codex keeps that with a per-record flag, because the submission
+check Claude Code's synthesis uses is not available for a turn that has none.
+
 The sink is optional because its absence must not break a provider, but the
 consequence is real and is not a Core fallback: a provider that never emits
 `turn.ended` leaves a presentation whose only terminal is that fact — the Feishu

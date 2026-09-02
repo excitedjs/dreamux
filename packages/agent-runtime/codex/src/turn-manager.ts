@@ -96,11 +96,11 @@ export class TurnManager {
     this.collector = null;
     while (this.pendingAdmissions.size > 0) await Promise.allSettled([...this.pendingAdmissions]);
     this.drainTerminalOrder();
-    for (const [turnId, record] of this.nativeTurns) {
+    for (const record of this.nativeTurns.values()) {
       if (record.completion !== null) continue;
       for (const member of record.members) member.settle({ kind: 'stopped' });
       // A native turn torn down before its own terminal still ended.
-      this.endNativeTurn(turnId, record, 'interrupted', null);
+      this.endNativeTurn(record, 'interrupted', null);
     }
     for (const [turnId, record] of this.nativeTurns) {
       if (record.completion === null) this.nativeTurns.delete(turnId);
@@ -213,13 +213,21 @@ export class TurnManager {
       if (record.representative === null) {
         if (this.pendingAdmissions.size > 0) return;
         this.terminalOrder.shift();
+        // A native turn no Dreamux submission ever bound still ends on the
+        // display line, because its items already displayed. Only the display
+        // half runs: `finalize` is push-back work — it settles members, calls
+        // `onTurnCompleted`, and builds a `RuntimeCompletion` — and this turn
+        // has no submission to settle and no completion to describe.
+        const failure = record.terminal instanceof Error ? record.terminal : null;
+        const status = failure === null ? 'completed' : 'failed';
+        this.endNativeTurn(record, status, failure?.message ?? null);
         this.nativeTurns.delete(turnId);
         this.unboundObservedTurnIds.delete(turnId);
         this.collector?.releaseTurn(turnId);
         this.log(
           'warn',
-          `dropping native terminal ${turnId} without an accepted submission; ` +
-          `its displayed activity leaves a card open`,
+          `native turn ${turnId} ended without an accepted submission (${status}); ` +
+          `its end closes whatever card its activity opened`,
         );
         continue;
       }
@@ -230,6 +238,9 @@ export class TurnManager {
 
   private finalize(turnId: string, record: NativeTurnRecord, terminal: CollectedTurn | Error): void {
     if (record.completion !== null) return;
+    // The push-back guard, and the only one left: an unbound turn has no
+    // submission to settle, so `drainTerminalOrder` ends it on the display line
+    // and never routes it here.
     if (record.representative === null) return;
     let completion: RuntimeCompletion;
     if (terminal instanceof Error) {
@@ -244,7 +255,7 @@ export class TurnManager {
         for (const member of record.members) member.settle({ kind: 'completion', completion });
         record.members.length = 0;
         record.terminal = null;
-        this.endNativeTurn(turnId, record, 'failed', completion.error.message);
+        this.endNativeTurn(record, 'failed', completion.error.message);
         this.releaseRecordIfReady(turnId, record);
         return;
       }
@@ -262,7 +273,6 @@ export class TurnManager {
     // `turn/completed` is codex's one native terminal, so this is where the
     // native turn ends whatever it folded.
     this.endNativeTurn(
-      turnId,
       record,
       completion.status === 'completed' ? 'completed' : 'failed',
       completion.status === 'completed' ? null : completion.error.message,
@@ -283,7 +293,7 @@ export class TurnManager {
   private failRecord(turnId: string, record: NativeTurnRecord, error: Error): void {
     for (const member of record.members) member.settle({ kind: 'failed', error });
     record.members.length = 0;
-    this.endNativeTurn(turnId, record, 'failed', error.message);
+    this.endNativeTurn(record, 'failed', error.message);
     this.nativeTurns.delete(turnId);
     this.unboundObservedTurnIds.delete(turnId);
     this.collector?.releaseTurn(turnId);
@@ -342,29 +352,20 @@ export class TurnManager {
   /**
    * Report this native turn's one end, at most once, as its last activity.
    *
-   * A record that never bound a submission is still refused. Its end is not
-   * this entity's to report: the display stream is one open card per agent, so
-   * an end from a native turn Dreamux never submitted into would close
-   * whatever card this entity's own submissions had opened. `reason` carries
-   * codex's own error text when the end has one.
+   * Every native turn ends here, including one no Dreamux submission bound.
+   * Whether the end is *shown* is not this layer's decision: a card belongs to
+   * no turn (`feishu-cot-conversation-cards` requirement, rule 1 — a target is
+   * "not a presentation identity, state key, or card partition"), and a native
+   * end "closes an existing open card but never opens a new one; when no card
+   * is open, Feishu ignores it" (rule 8). `reason` carries codex's own error
+   * text when the end has one.
    */
   private endNativeTurn(
-    turnId: string,
     record: NativeTurnRecord,
     status: 'completed' | 'failed' | 'interrupted',
     reason: string | null,
   ): void {
     if (record.nativeTurnEnded) return;
-    if (record.representative === null) {
-      // Says out loud what the refusal costs: this turn's items already
-      // displayed, so a card is open with nothing left to close it.
-      this.log(
-        'warn',
-        `dropping native turn end ${turnId} without an accepted submission ` +
-        `(${status}); its displayed activity leaves a card open`,
-      );
-      return;
-    }
     record.nativeTurnEnded = true;
     this.emitActivity({ kind: 'turn.ended', occurredAt: Date.now(), status, reason });
   }
