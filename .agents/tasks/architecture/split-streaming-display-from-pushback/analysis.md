@@ -230,9 +230,25 @@ after it:
   construction, because the runtime has not been asked to do anything yet.
   Nothing has to be re-ordered and no buffer replaces the one being deleted.
 - **The fact means what it says.** `input` states "Core admitted this and is
-  submitting it", not "the model received it". A submission that then fails
-  admission at the provider is a fact the card already handles by going to
-  failed — the operator ruled on exactly that case on 2026-09-02.
+  submitting it", not "the model received it".
+
+**The unterminated card is a real gap, and an earlier revision waved it away.**
+That revision claimed a failed submission "is a fact the card already handles by
+going to failed", citing an operator ruling. Review refuted it. A `stopped`,
+`skipped`, or pre-admission `failed` outcome creates no `EntityTurn` and
+guarantees no runtime native end (`turn-coordinator.ts:180`,
+codex `turn-manager.ts:121`; claude's `acceptInput` returns `stopped` outright
+when the runtime is stopped, `runtime.ts:247`). So an input can be displayed
+with nothing that ever closes the card until an unrelated later native turn
+ends.
+
+The operator's words were 「那几个情况应该直接把卡片置成失败」 — those cases
+should put the card straight into failed. That is a requirement the design must
+now actually meet, not cite. The admission outcome is known synchronously at the
+same call site that published the input, so the honest answer is that the same
+site publishes a terminal when the outcome is not `submitted`. That is one more
+fact on `teammate.input`, not a new mechanism, and it must be in the design
+rather than assumed.
 
 ### What a runtime still owes
 
@@ -400,6 +416,8 @@ File by file, what a reviewer would see in the diff. Verified against the
 current source; where a reviewer's omission list was wrong, that is noted.
 
 **1. `packages/dreamux-types/src/agent-runtime.ts`**
+- `occurredAt` moves onto `RuntimeActivity`. It lives on the
+  `RuntimeActivityEvent` wrapper today, and the wrapper is being deleted.
 - `RuntimeActivity` gains `{ kind: 'turn.ended'; status }`, absorbing
   `RuntimeNativeTurnEnd`.
 - `RuntimeActivityEvent` goes; it exists only to carry `submission`. The sink
@@ -433,10 +451,17 @@ current source; where a reviewer's omission list was wrong, that is noted.
   `conversationProjection` / `role` options.
 - The file returns to its pre-#347 shape: turn admission serialization only.
 
-**5. `teammate-service/index.ts`**
-- In `submitAdmitted`, one line before `runtime.submit({ text })`: publish the
-  `input` activity from `input.text`, `input.source`, `input.sourceId` and the
-  Agent identity.
+**5. `teammate-service/index.ts` — two sites, not one**
+- In `submitAdmitted` (`:246`), inside the operation closure and before
+  `runtime.submit({ text })` (`:259`): publish `teammate.input` from
+  `input.text`, `input.source`, `input.sourceId` and the Agent identity.
+- **In `submitPreparedCompletion` (`:434`), the same**, with
+  `source: COMPLETION_SOURCE` and no `sourceId`. This is the completion
+  re-entry, and `attachSubmission` displays it today — omitting it deletes a
+  TeamLeader's view of its TeamMate's answer arriving.
+- Both sites publish a terminal when the admission outcome is not `submitted`,
+  and both carry the fail-open guard: `projectInput` runs inside the ledger
+  closure, where an uncaught throw would reject the admission.
 - `submitRuntimeTurn` stops being handed `source`, `sourceId` and `prompt`.
 
 **6. `turn-recording.ts`**
@@ -450,18 +475,28 @@ current source; where a reviewer's omission list was wrong, that is noted.
   `projectActivity` collapse to two: `projectInput(agent, input)` published by
   Core, and `projectActivity(agent, activity)` published by a runtime.
 - `ProjectableTurn` goes with them.
-- The activity-fact dedupe and `CONVERSATION_ACTIVITY_FACTS_MAX` go.
+- The activity-fact dedupe and `CONVERSATION_ACTIVITY_FACTS_MAX` are
+  **unresolved** — see `technical-design/final.md` § Unresolved. The two reviews
+  disagree and a probe settles it; they stay until then.
 - Redaction and every size bound stay exactly as they are.
 
-**8. `dreamux-types/src/teammate.ts` and `dispatcher-core-events/seal.ts`**
+**8. `dreamux-types/src/teammate.ts`, `src/channel.ts`, `src/index.ts`, and `dispatcher-core-events/seal.ts`**
+- `channel.ts` and `index.ts` re-export every type being removed; they change in
+  the same commit or the build breaks.
+- `seal.ts`'s `KINDS` is a `ReadonlySet<string>`, not checked against the union:
+  a kind missing from it is dropped silently and no channel test crosses that
+  path. It changes first, not last.
 - Five kinds out: `teammate.turn.submitted`, `.settled`, `.message`,
   `.tool_call`, `teammate.native_turn.ended`. Two in: `teammate.input` and
   `teammate.activity`.
 - The sealed catalog goes from seven kinds to four.
 
 **9. Feishu**
-- `feishu-cot-session.ts`: the five-case switch becomes two — filter on
-  `teammate.input`, render `teammate.activity`.
+- `feishu-cot-session.ts`: the five-case switch becomes **three** — filter on
+  `teammate.input`, render `teammate.activity`, and keep `team.state`, which
+  drives the leader close fence and the current-card interrupt. (The five cases
+  today are not the five projected kinds: `.settled` is ignored and the fifth
+  case is already `team.state`.)
 - `feishu-cot-adapter.ts`: the open-call key and own-body suppression stop
   keying on `turn_id` and key on the Agent plus the `sourceId` comparison the
   Channel already performs.

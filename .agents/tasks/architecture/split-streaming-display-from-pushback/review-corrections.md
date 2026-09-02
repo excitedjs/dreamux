@@ -1,7 +1,9 @@
 # Review corrections
 
-Two independent reviewers read the design in [analysis.md](analysis.md) on
-2026-09-02: one for architecture and entropy, one for source-verifiable claims.
+Two independent reviewers read this design on 2026-09-02, in two rounds: one for
+architecture and entropy, one for source-verifiable claims. Round 1 read
+[analysis.md](analysis.md); round 2 read
+[technical-design/final.md](technical-design/final.md).
 Every finding recorded here was re-checked against the source before it was
 accepted, and the ones that changed the design are marked as such.
 
@@ -78,3 +80,89 @@ against the current call graph. And the central claim survived both reviews:
 `turnsBySubmission`, the early-activity buffer and the second sink are three
 consequences of keying display on `RuntimeSubmission`, and attributing to the
 Agent removes the reason for all three.
+
+## Round 2
+
+The design had changed in response to round 1, and the technical design document
+now existed. Both reviewers were sent back with different targets: one to judge
+whether publishing before the provider call created new problems, one to walk
+every arrow of the two diagrams against the source.
+
+### Findings that changed the design
+
+- **There are two `runtime.submit` call sites, and the design named one.**
+  `submitPreparedCompletion` (`teammate-service/index.ts:451`) is the completion
+  re-entry, and `attachSubmission` calls `projectSubmitted` unconditionally — so
+  a TeamLeader's card shows a TeamMate's answer arriving today. Publishing the
+  input at `submitAdmitted` only would have deleted that display silently. Found
+  by the architecture review, chain independently verified by the other. **Both
+  sites now publish.**
+
+- **The fail-open guard had no home.** `projectDisplay` /
+  `warnProjectionFailure` are what make display fail-open today, and the change
+  list deleted them without reinstating them at the new call sites. Worse than
+  untidy: `projectInput` runs inside the admission ledger closure, so an
+  uncaught throw would reject the admission. **The guard moves with the calls.**
+
+- **"The card already handles a failed submission" was false, and cited a ruling
+  that was not recorded.** A `stopped`, `skipped` or pre-admission `failed`
+  outcome creates no `EntityTurn` and guarantees no native end, so an input
+  published before admission could leave a card open indefinitely. The
+  operator's actual words are 「那几个情况应该直接把卡片置成失败」, and the
+  design must now meet that rather than cite it. **The same call site publishes
+  a terminal when the outcome is not `submitted`.**
+
+- **The implementation sequence was not executable.** Steps called projection
+  entry points that a later step created; one step could not compile. `seal.ts`'s
+  `KINDS` is a `ReadonlySet<string>` that silently drops an unlisted kind and no
+  channel test crosses it, so it belongs in step 1. **The sequence is rewritten**,
+  and "step 7 must land whole" is withdrawn — three of its deletions are
+  independent.
+
+- **`occurredAt` would have been lost.** It lives on the `RuntimeActivityEvent`
+  wrapper being deleted. **It moves onto `RuntimeActivity`.**
+
+- **`team.state` must stay in the Feishu switch.** It drives the leader close
+  fence and the current-card interrupt. The switch goes to three cases, not two.
+
+- **`dreamux-types/src/channel.ts` and `src/index.ts`** re-export everything
+  being removed and were missing from the file list.
+
+### Corrections to the diagrams
+
+Both diagrams were wrong in ways that mattered, and both are redrawn:
+
+- The push-back entry was labelled MCP `team.submit`. The Agent-facing tool is
+  `team.send`; an external `team.submit` Command sets **no** initiator
+  (`dispatcher-service/index.ts:475`), so a Feishu message or cron fire does not
+  close the push-back loop at all.
+- The COT diagram omitted the bus `emit`, the scoped source and
+  `FeishuChannel.onCoreEvent`, and omitted the separate `attachSubmission` and
+  settlement arrows.
+- The "five cases" did not match the five projected kinds: the session ignores
+  `.settled`, and its fifth case is `team.state`.
+
+### Unresolved, and recorded as such
+
+The two reviews **disagree about the activity-fact dedupe**. One found no named
+repeater and called it defence without a scenario. The other returned
+UNDETERMINED with a mechanism: codex does not deduplicate repeated
+`item/started` / `item/completed` notifications and its activity ids are
+deterministic, so a repeat would collide. A named mechanism outranks an absence
+of one, so the dedupe stays pending a probe.
+
+### The disagreement that was settled
+
+`EntityTurn.id` keeps a caller-facing reader — `teamSubmitResult` returns it as
+`turn_id`. The architecture review had listed it among fields losing their last
+reader; the verification review confirmed it does not, and the architecture
+review accepted the correction on re-read.
+
+### One wording correction to this file
+
+The deletion table said both reviews found no path can report a native turn end
+twice. Precisely: no path can report twice **for one record object**. There is
+an unguarded double report **by turn id** — `failProtocol` deletes a record, a
+late `turn/start` response rebuilds it, and `failRecord` reports `failed` a
+second time. The flag never guarded that path, and the second report is harmless
+because no card is open. The claim is per-record, not per-turn-id.

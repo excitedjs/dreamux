@@ -54,7 +54,14 @@ Recorded here so a proposal is measured against it rather than re-deriving it.
   identity is a team name, or the Dispatcher — so nothing needs a `turn_id` to
   be placed. This is what removes representative attribution, the drop when no
   Dreamux container exists, and the bespoke actor-scoped terminal event.
-- **The one identity the requirement forces travels with the input.** Hiding the
+- **The one identity the requirement forces travels with the input.**
+  *(Superseded 2026-09-02. The bullet below was this task's own extension of the
+  operator's choice of `source_id` over text matching, not a ruling — it carries
+  no operator words, and review found it reverses #350's recorded ruling that
+  moved source identity off the Agent Runtime seam. Core publishes the input
+  fact instead; see [analysis.md](analysis.md) § 2 and
+  [review-corrections.md](review-corrections.md). Kept, struck, rather than
+  deleted, because the design that replaced it is only legible next to it.)* Hiding the
   Channel's own body while showing every other producer's cannot be answered by
   actor identity: an operator message, a task push and a cron fire are all the
   same actor. Something must say "this input is mine". Today that identity goes

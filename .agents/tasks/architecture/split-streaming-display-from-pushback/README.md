@@ -26,12 +26,12 @@
 - Solution review Issue: Not created.
 - Blockers: None. The requirement states three questions to answer before a
   solution is proposed; answering them is the next work, not a blocker.
-- Next action: Bring the reviewed question-2 design to the operator for a ruling
-  before any implementation. The design was revised after review: the `input`
-  fact is published by Core immediately before it submits, and the provider seam
-  is not touched. Two items in it are explicitly open: whether the unused
-  `teammate.turn.settled` core event may simply go, and whether the claude steer
-  envelope's `priority` field is inert.
+- Next action: Operator ruling on the technical design, then development
+  approval. The design has been through two review rounds; what is still open is
+  listed in `final.md` (the activity-fact dedupe, which needs a probe, and the
+  embedded-versus-reshaped activity payload). `priority` is no longer open — the operator ruled it
+  deleted. Whether the unread `teammate.turn.settled` may go is still open, and
+  is a flowx question too.
 - Related tasks:
   [feishu-cot-conversation-cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md)
   (the display surface this separates from, and whose locked product model stays
