@@ -1,0 +1,129 @@
+# Requirement
+
+## Initial request
+
+Separate the streaming-display surface from the push-back mechanism it is
+currently built on.
+
+Display is not only the Feishu COT card. Any surface that shows what a
+channel-facing TeamLeader or the Dispatcher is doing while it is doing it — a
+web timeline, a future client — wants the same facts. Today every one of those
+facts must hang off a Dreamux submission, and each new display requirement has
+been paid for with a mechanism that compensates for that.
+
+The operator's framing: put the runtime's event-stream pushes under one
+`Activity` namespace rather than re-deriving a curated model from submissions.
+
+## What is already established
+
+Read [runtime-input-semantics.md](runtime-input-semantics.md) first. It records
+the input semantics, the live probe, the per-input identities that exist at the
+provider boundary, and what the official documentation does and does not
+guarantee. The analysis below assumes those facts; two earlier attempts in this
+area were wrong from reasoning about half the machinery, so a claim that
+contradicts that file needs evidence, not argument.
+
+Two boundaries are already settled and are not open questions here:
+
+- **Verbatim pass-through is rejected.** Handing provider payloads through
+  unchanged would put Claude Code's stream-json shape and Codex's thread-item
+  shape into Core and into every Channel — the coupling
+  [minimize-provider-boundaries](/.agents/tasks/architecture/minimize-provider-boundaries/README.md)
+  removed. Whatever crosses stays provider-neutral.
+- **`source_id` is not the junk.** A Channel that hides its own inbound body
+  while showing every other producer's needs an identity that crosses the seam.
+  Neither runtime's per-input id is visible to a Channel, and `RuntimeSubmission`
+  carries none back, so the identity has to cross at the Core command layer.
+  `source_id` already did. Any design that claims to delete it must first say
+  which identity replaces it.
+
+## The three questions this task answers
+
+### 1. Without COT, what could Core delete?
+
+Take the display requirement away entirely and list what stops being needed.
+The point is to measure what display actually costs, separately from what it is
+worth. Expected candidates, to be confirmed or refuted against the source rather
+than assumed:
+
+- the conversation projection and the `ChannelCoreEvent` conversation kinds
+- `teammate.native_turn.ended`, the `nativeTurn` provider sink, and the
+  per-`result` end bookkeeping in both runtimes
+- `source_id` echoed on the submitted fact
+- the redaction and bounding applied to projected text
+- whatever remains of activity plumbing that only display consumes
+
+For each: is it display-only, or does something else depend on it? Anything a
+non-display consumer needs is not a display cost and must be named as such.
+
+### 2. If COT were designed from scratch, what would it be?
+
+Design against the facts in `runtime-input-semantics.md`, not against the
+current implementation. The question to answer first is what the unit of
+display is. Today it is the Dreamux submission, which is why activity must be
+attributed to one, why a folded turn picks a representative, and why a fact with
+no owning submission has nowhere to go.
+
+State plainly what each candidate design costs and what it deletes. A design
+that adds a mechanism without removing at least the one it replaces has not
+answered the question.
+
+Constraints the answer must respect:
+
+- Providers stay behind the neutral seam; a Channel never learns a provider's
+  shape.
+- Display is fail-open and best-effort. It must never affect admission,
+  settlement, completion delivery, or shutdown.
+- Projected text keeps its redaction and bounding wherever it comes from.
+- The existing locked COT product model — one recipient, one anchor, at most one
+  open card, closing on the runtime's own native end — stays in force unless
+  this task explicitly changes it with the operator's agreement. Its record is
+  [feishu-cot-conversation-cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md).
+
+### 3. Anti-leak infrastructure, folded into this task
+
+The public-repository red line is currently enforced only at release time, over
+packed tarball contents. Nothing scans the tree, so an internal path in a file
+that never reaches `dist` — a test, a fixture — can reach the default branch
+undetected. That happened on 2026-09-02: an internal mount path landed in a test
+file and was found by hand, not by a gate.
+
+Required:
+
+- Install gitleaks reproducibly on a developer machine, from a committed,
+  version-pinned, checksum-verifying script.
+- The pre-commit anti-leak gate **fails hard** when gitleaks is absent instead of
+  warning and passing, and says that skipping is not permitted and installation
+  is required.
+- A tree-wide internal-content scan — the release gate's own patterns — that runs
+  in the pre-commit hook and in CI, so a leak is caught before the default
+  branch rather than at publish time.
+- `.gitleaks.toml` stays untouched: it is shared canonical with the sibling
+  repository, which legitimately contains the paths this scan rejects. The
+  internal-path patterns live in their own script.
+
+Two facts to design around, both already verified:
+
+- `release.yml`'s version-bump job runs `rush install`, which installs the git
+  hooks, and then commits **without** `--no-verify`. A hard-failing gate breaks
+  the next stable release unless that job installs gitleaks too.
+- A tree-wide scan is red on day one: reviewed public placeholder users
+  (`me`, `example`, `op`, `meredith`, …) and four files that are themselves the
+  guardrail definitions. The allowlist is by placeholder name and by
+  pattern-definition file, never by directory — the leak that motivated this was
+  in `tests/`.
+
+## Acceptance criteria
+
+- Not yet confirmed. To be written from the answers to questions 1 and 2, once
+  the operator has ruled on the direction.
+
+## Decisions and unknowns
+
+- **Confirmed operator decisions:** the split is wanted; verbatim pass-through is
+  not; anti-leak work is folded into this task.
+- **Open:** whether question 2's answer changes the COT product model, and
+  therefore whether this becomes a refactor or a requirement change.
+- **Unknown, worth settling cheaply:** whether Claude Code honours the
+  `priority` field Dreamux writes on its steer envelope. The documentation says
+  no such field exists. If it is inert, that is one more thing to delete.
