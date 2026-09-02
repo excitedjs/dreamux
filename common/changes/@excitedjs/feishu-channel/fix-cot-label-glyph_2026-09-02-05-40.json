@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "comment": "Render the COT card's opening label with a glyph Feishu shows as text. The previous character is in the Unicode emoji set, so Feishu replaced it with a coloured emoji tile; the replacement is a dingbat with no emoji presentation. Labels and behaviour are otherwise unchanged.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel"
+}
