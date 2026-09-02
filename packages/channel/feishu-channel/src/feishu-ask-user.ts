@@ -26,6 +26,7 @@ import {
   DREAMUX_ASK_QUESTION_KEY,
   DREAMUX_ASK_REQUEST_KEY,
   DREAMUX_ASK_SUBMIT_ACTION,
+  ASK_USER_CANCEL_LABEL,
   answerLabel,
   buildAskUserCard,
   buildAskUserClosedCard,
@@ -345,14 +346,18 @@ export function createAskUserRegistry(
       }
 
       if (action === DREAMUX_ASK_SUBMIT_ACTION) {
-        // 提交 sits directly under the questions, so it is also the button
-        // pressed before anything has been chosen. Settling on that click
-        // would spend the round's one settlement telling the model every
+        // 提交回答 sits directly under the questions, so it is also the
+        // button pressed before anything has been chosen. Settling on that
+        // click would spend the round's one settlement telling the model every
         // question was left unanswered, which is worse than saying nothing.
+        // The toast names the other button by the text printed on it.
         if (round.answers.size === 0) {
           return {
             kind: 'response',
-            response: toast('warning', '先选一个再提交，或者点「不用问了」。'),
+            response: toast(
+              'warning',
+              `先选一个再提交，或者点「${ASK_USER_CANCEL_LABEL}」。`,
+            ),
           };
         }
         return settle(round, 'submitted', event);

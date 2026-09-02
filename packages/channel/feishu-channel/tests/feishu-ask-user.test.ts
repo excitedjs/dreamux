@@ -26,6 +26,7 @@ import {
   type AskUserTimers,
 } from '../src/feishu-ask-user.js';
 import {
+  ASK_USER_CANCEL_LABEL,
   DREAMUX_ASK_CANCEL_ACTION,
   DREAMUX_ASK_OPTION_KEY,
   DREAMUX_ASK_OTHER_ACTION,
@@ -282,7 +283,9 @@ describe('ask-user registry', () => {
 
   it('refuses a submit with nothing chosen instead of spending the round', () => {
     const registry = createAskUserRegistry({ timers: manualTimers() });
-    const requestId = openRound(registry);
+    const opened = registry.open({ questions: QUESTIONS, target });
+    opened.activate(undefined);
+    const { requestId } = opened;
 
     const empty = registry.apply(
       event(DREAMUX_ASK_SUBMIT_ACTION, { [DREAMUX_ASK_REQUEST_KEY]: requestId }),
@@ -290,6 +293,10 @@ describe('ask-user registry', () => {
     expect(empty.kind).toBe('response');
     if (empty.kind !== 'response') return;
     expect(empty.response.toast?.type).toBe('warning');
+    // The toast sends the user to the other button, so it has to name one the
+    // card actually draws.
+    expect(empty.response.toast?.content).toContain(ASK_USER_CANCEL_LABEL);
+    expect(stringLeaves(opened.card)).toContain(ASK_USER_CANCEL_LABEL);
 
     // The round survived the misfire, so the next click still answers it.
     registry.apply(

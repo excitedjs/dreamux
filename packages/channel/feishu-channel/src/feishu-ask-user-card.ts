@@ -24,6 +24,12 @@ export const DREAMUX_ASK_OTHER_ACTION = 'ask_user_other';
 export const DREAMUX_ASK_SUBMIT_ACTION = 'ask_user_submit';
 export const DREAMUX_ASK_CANCEL_ACTION = 'ask_user_cancel';
 
+/**
+ * What the cancel button says. Shared because a toast points at it by name,
+ * and a toast naming a button the card does not have is worse than no toast.
+ */
+export const ASK_USER_CANCEL_LABEL = 'Talk about this';
+
 export const DREAMUX_ASK_REQUEST_KEY = 'dreamux_ask_request';
 export const DREAMUX_ASK_QUESTION_KEY = 'dreamux_ask_question';
 export const DREAMUX_ASK_OPTION_KEY = 'dreamux_ask_option';
@@ -275,7 +281,7 @@ export function buildAskUserCard(view: AskUserRequestView): unknown {
                   type: 'danger',
                   width: 'fill',
                   size: 'medium',
-                  text: { tag: 'plain_text', content: 'Talk about this' },
+                  text: { tag: 'plain_text', content: ASK_USER_CANCEL_LABEL },
                   behaviors: [
                     {
                       type: 'callback',
