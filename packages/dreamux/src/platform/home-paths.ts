@@ -45,7 +45,7 @@ function lexicalHomePath(): string {
 }
 
 /**
- * A trailing separator is stripped so `/home/me/` and `/home/me` are one
+ * A trailing separator is stripped so `<home>/` and `<home>` are one
  * prefix — and so a home of `/` normalizes to the empty string and is dropped
  * rather than matching every absolute path in sight.
  */
