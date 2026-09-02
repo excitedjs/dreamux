@@ -8,6 +8,7 @@
  */
 import type { DispatcherRow } from '../state/dispatcher-store.js';
 import type { DispatcherService } from '../service/dispatcher-service/index.js';
+import type { ChannelDescriptor } from '../service/dispatcher-service/channel-descriptor.js';
 import type {
   DispatcherRuntimeStatus,
   DispatcherSummary,
@@ -25,6 +26,15 @@ export interface CoreCommandHost {
   dispatcherRow(dispatcherId: string): DispatcherRow | null;
   /** The current runtime projection of one dispatcher, live or persisted. */
   dispatcherRuntimeStatus(dispatcherId: string): Promise<DispatcherRuntimeStatus>;
+  /**
+   * The non-sensitive description of one dispatcher's configured Channels.
+   *
+   * A Channel's Commands are registered dynamically, so their names are a
+   * runtime fact no caller can derive from config. This is where a caller reads
+   * them, together with the identification and lifecycle facts that make them
+   * actionable. It carries no Channel configuration, raw or parsed.
+   */
+  dispatcherChannels(dispatcherId: string): ChannelDescriptor[];
   /** Get-or-build the per-dispatcher aggregate. */
   dispatcher(dispatcherId: string): DispatcherService;
   /**

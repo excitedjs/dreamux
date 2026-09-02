@@ -150,6 +150,22 @@ export class ChannelService {
   }
 
   /**
+   * How far one configured channel has got, in the only three states this
+   * service distinguishes.
+   *
+   * `running` means its session started and was adopted; `built` means its
+   * instance exists but its external I/O is not open yet; `stopped` means there
+   * is no instance at all. It reads both maps because they answer different
+   * questions — the same reason {@link sessionMcp} reads the built one — and it
+   * exposes nothing but that distinction, never the channel's config.
+   */
+  channelStatus(channelId: string): 'running' | 'built' | 'stopped' {
+    if (this.sessions?.has(channelId) === true) return 'running';
+    if (this.built?.has(channelId) === true) return 'built';
+    return 'stopped';
+  }
+
+  /**
    * The MCP capability this channel's created instance composed, or `null` when
    * there is no instance or it composed no session tools.
    *

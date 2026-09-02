@@ -17,10 +17,16 @@ import type {
   JsonValue,
 } from '@excitedjs/dreamux-types';
 
+import type {
+  ChannelCommandBatch,
+  ChannelCommandRegistrar,
+  ChannelCommandSource,
+} from './channel-commands.js';
 import { ServerShuttingDownError } from './errors.js';
 import type { CoreCommands } from './registry.js';
 
-export class CoreCommandPort implements CoreCommandRegistry {
+export class CoreCommandPort
+implements CoreCommandRegistry, ChannelCommandRegistrar {
   private accepting = true;
   private readonly inFlight = new Set<Promise<unknown>>();
 
@@ -29,6 +35,26 @@ export class CoreCommandPort implements CoreCommandRegistry {
   /** Every registered name, in registration order. Diagnostics only. */
   names(): readonly string[] {
     return this.registry.names();
+  }
+
+  /**
+   * Register one dispatcher's Channel catalog.
+   *
+   * Registration is not an invocation, so it does not pass the admission fence
+   * above: a dispatcher composing its own Channels is the process building
+   * itself, not a caller reaching in. What the registration produces is fenced
+   * by its own per-Channel admission.
+   */
+  registerChannelCommands(
+    dispatcherId: string,
+    sources: readonly ChannelCommandSource[],
+  ): ChannelCommandBatch {
+    return this.registry.registerChannelCommands(dispatcherId, sources);
+  }
+
+  /** Every Channel Command name registered for one dispatcher. */
+  channelCommandNames(dispatcherId: string): readonly string[] {
+    return this.registry.channelCommandNames(dispatcherId);
   }
 
   invoke(

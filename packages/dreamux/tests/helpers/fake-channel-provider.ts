@@ -14,6 +14,8 @@
  * tools".
  */
 import type {
+  ChannelCommandCapability,
+  ChannelCommandDefinition,
   ChannelCoreEvent,
   ChannelCorePort,
   ChannelEventSubscription,
@@ -84,6 +86,33 @@ export interface FakeChannelProviderOptions {
    */
   mutationTail?: () => Promise<void>;
   /**
+   * Runs inside `createSession`, before the instance is returned. A test uses
+   * it to make something happen while the host is still awaiting `build()` —
+   * a concurrent shutdown, most usefully.
+   */
+  onCreateSession?: (channelId: string) => void | Promise<void>;
+  /**
+   * Runs inside `start()`, before this session is recorded as started. The
+   * interleaving point a test needs to observe what is true *while* one
+   * session is opening: the host starts sessions one at a time, so a hook here
+   * sees every earlier session already live and every later one not yet built
+   * into the live map.
+   */
+  onStart?: (channelId: string) => void | Promise<void>;
+  /**
+   * Channel-owned Command definitions this session composes, or a thunk that
+   * decides them when Core reads the catalog. A Channel with no Commands omits
+   * this entirely, so no `ChannelCommandCapability` object exists on the
+   * instance at all — the same present-or-absent rule `mcp` follows.
+   *
+   * The thunk form is what lets a test drive the hostile case: `definitions()`
+   * is Channel-owned code Core runs synchronously, so a test can make it reach
+   * back into the dispatcher before the catalog is even assembled.
+   */
+  commands?:
+    | readonly ChannelCommandDefinition[]
+    | (() => readonly ChannelCommandDefinition[]);
+  /**
    * Optional Channel MCP composition. Omitted entirely (not present-but-empty)
    * when a test's Channel has no tools, matching `ChannelProvider.mcp?`.
    */
@@ -138,6 +167,10 @@ export function createFakeChannelProvider(
       };
       sessions.set(context.channel_id, handle);
       record(`channel:${context.channel_id}:create`);
+      // Awaited here, while the host is still inside `build()`: a test that
+      // wants a shutdown to land mid-build gets a real interleaving point
+      // rather than a timer it hopes is long enough.
+      await options.onCreateSession?.(context.channel_id);
 
       const session = {
         async initialize(port: ChannelCorePort): Promise<void> {
@@ -155,6 +188,7 @@ export function createFakeChannelProvider(
           record(`channel:${context.channel_id}:initialize`);
         },
         async start(): Promise<void> {
+          await options.onStart?.(context.channel_id);
           if (options.failStart) {
             record(`channel:${context.channel_id}:start:fail`);
             throw options.failStart();
@@ -181,12 +215,13 @@ export function createFakeChannelProvider(
         },
       };
 
-      const instance: ChannelInstance = options.mcp
-        ? {
-            session,
-            mcp: buildSessionMcp(options.mcp),
-          }
-        : { session };
+      const instance: ChannelInstance = {
+        session,
+        ...(options.mcp ? { mcp: buildSessionMcp(options.mcp) } : {}),
+        ...(options.commands !== undefined
+          ? { commands: buildCommands(options.commands) }
+          : {}),
+      };
       return instance;
     },
     ...(options.mcp
@@ -197,6 +232,15 @@ export function createFakeChannelProvider(
   };
 
   return { provider, sessions };
+}
+
+function buildCommands(
+  commands: NonNullable<FakeChannelProviderOptions['commands']>,
+): ChannelCommandCapability {
+  return {
+    definitions: () =>
+      typeof commands === 'function' ? commands() : commands,
+  };
 }
 
 function buildSessionMcp(

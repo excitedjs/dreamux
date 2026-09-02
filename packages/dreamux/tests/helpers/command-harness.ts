@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import { createConnection, createServer, type Socket } from 'node:net';
 
 import type {
+  ChannelCommandDefinition,
   ChannelEventSource,
   CoreCommandContext,
   JsonValue,
@@ -41,6 +42,7 @@ import type {
   McpServerDelegate,
 } from '../../src/service/mcp/types.js';
 import type { DispatcherService } from '../../src/service/dispatcher-service/index.js';
+import type { ChannelDescriptor } from '../../src/service/dispatcher-service/channel-descriptor.js';
 import type { DispatcherRow } from '../../src/state/dispatcher-store.js';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import type {
@@ -204,6 +206,11 @@ export interface HarnessOptions {
   /** Override `host.summarize()`, used by `server.status` and `dispatcher.list`. */
   summarize?: () => Promise<DispatcherSummary[]>;
   dispatcherRuntimeStatus?: () => Promise<DispatcherRuntimeStatus>;
+  /**
+   * Override `host.dispatcherChannels()`, the non-sensitive Channel read model
+   * `dispatcher.status` carries. Defaults to none configured.
+   */
+  dispatcherChannels?: (dispatcherId: string) => ChannelDescriptor[];
 }
 
 export interface CommandHarness {
@@ -215,7 +222,6 @@ export interface CommandHarness {
   /** Every call `host.dispatcher(id)` made, for tests that assert a call count. */
   readonly dispatcherLookups: string[];
 }
-
 /** Build one full harness: host, registry, and the admitted port, wired together exactly as `Server` wires them. */
 export function createCommandHarness(options: HarnessOptions = {}): CommandHarness {
   const dispatcher = createFakeDispatcher(options.dispatcherOverrides);
@@ -229,6 +235,7 @@ export function createCommandHarness(options: HarnessOptions = {}): CommandHarne
     dispatcherRuntimeStatus:
       options.dispatcherRuntimeStatus ??
       (async () => ({ status: 'running', sessionId: null, lastError: null })),
+    dispatcherChannels: options.dispatcherChannels ?? (() => []),
     dispatcher: (id: string) => {
       dispatcherLookups.push(id);
       return dispatcher;
@@ -466,6 +473,46 @@ export function hostileDeepPayload(depth: number): JsonValue {
     value = { nested: value };
   }
   return value as JsonValue;
+}
+
+/**
+ * One minimal, valid Channel-owned Command definition.
+ *
+ * Authored exactly as a Channel package would write one — closed input and
+ * output schemas, its own `parse`, its own `execute` — because the whole point
+ * of the registration path under test is that Core validates a Channel's
+ * definition through the identical steps it applies to a Core one. A test that
+ * needs a specific behaviour overrides `execute`; everything else stays the
+ * shape a real Channel ships.
+ */
+export function fakeChannelCommand(
+  localName: string,
+  overrides: Partial<ChannelCommandDefinition<{ note: string }, { echoed: string }>> = {},
+): ChannelCommandDefinition {
+  const definition: ChannelCommandDefinition<{ note: string }, { echoed: string }> = {
+    local_name: localName,
+    version: 1,
+    input: {
+      type: 'object',
+      additionalProperties: false,
+      properties: { note: { type: 'string' } },
+      required: ['note'],
+    },
+    output: {
+      type: 'object',
+      additionalProperties: false,
+      properties: { echoed: { type: 'string' } },
+      required: ['echoed'],
+    },
+    parse(payload) {
+      return { note: (payload as { note: string }).note };
+    },
+    async execute(_context, input) {
+      return { echoed: input.note };
+    },
+    ...overrides,
+  };
+  return definition as ChannelCommandDefinition;
 }
 
 export type { AdminResponse };

@@ -26,6 +26,7 @@
  * pagination owned by the domain that produces it.
  */
 import type {
+  ChannelCommandDefinition,
   CoreCommandContext,
   CoreCommandDefinition,
   CoreCommandRegistry,
@@ -38,6 +39,14 @@ import {
   JSON_VALUE_UNBOUNDED,
   type JsonValueBounds,
 } from '../platform/json-value.js';
+import {
+  ChannelCommands,
+  ChannelCommandUnavailableError,
+  channelCommandDispatcher,
+  CHANNEL_COMMAND_PREFIX,
+  type ChannelCommandBatch,
+  type ChannelCommandSource,
+} from './channel-commands.js';
 import {
   InternalError,
   UnknownCommandError,
@@ -72,8 +81,21 @@ const EMPTY_PAYLOAD: JsonValue = canonicalJsonValue({}, COMMAND_PAYLOAD_BOUNDS);
 /** A definition erased to what the registry itself needs to know. */
 export type AnyCoreCommand = CoreCommandDefinition<string, unknown, unknown>;
 
+/**
+ * The part of a definition the shared validation steps read. Both halves of the
+ * registry satisfy it, which is what lets one set of steps serve both: a
+ * Channel Command differs only in how its name was derived.
+ */
+type SchemaOwner = Pick<AnyCoreCommand, 'input' | 'output'>;
+
 export class CoreCommands implements CoreCommandRegistry {
   private readonly commands = new Map<string, AnyCoreCommand>();
+  /**
+   * The dispatcher-scoped half. Core Commands are fixed at composition; a
+   * Channel's are registered when its dispatcher builds it and revoked when
+   * that dispatcher stops, so they cannot live in the map above.
+   */
+  private readonly channelCommands = new ChannelCommands();
 
   constructor(definitions: readonly AnyCoreCommand[]) {
     for (const definition of definitions) {
@@ -81,6 +103,14 @@ export class CoreCommands implements CoreCommandRegistry {
         // Two owners for one name would mean two authorities for one action.
         throw new Error(
           `core command ${JSON.stringify(definition.name)} is registered twice`,
+        );
+      }
+      if (definition.name.startsWith(CHANNEL_COMMAND_PREFIX)) {
+        // The prefix is what makes the two halves distinguishable by name
+        // alone; a Core Command inside it would make resolution ambiguous.
+        throw new Error(
+          `core command ${JSON.stringify(definition.name)} uses the reserved ` +
+            `${JSON.stringify(CHANNEL_COMMAND_PREFIX)} namespace`,
         );
       }
       // Every declared branch is proven here, not on the first invocation that
@@ -97,24 +127,97 @@ export class CoreCommands implements CoreCommandRegistry {
     return [...this.commands.keys()];
   }
 
+  /**
+   * Register one dispatcher's whole Channel catalog, atomically.
+   *
+   * Validation matches the Core half exactly — malformed schemas and duplicate
+   * names are composition errors that fail the caller's start, not request
+   * errors discovered later.
+   */
+  registerChannelCommands(
+    dispatcherId: string,
+    sources: readonly ChannelCommandSource[],
+  ): ChannelCommandBatch {
+    for (const source of sources) {
+      for (const definition of source.definitions) {
+        assertChannelSchemaDefinition(source.channelId, definition, 'input');
+        assertChannelSchemaDefinition(source.channelId, definition, 'output');
+      }
+    }
+    return this.channelCommands.register(dispatcherId, sources, (name) => {
+      if (this.commands.has(name)) {
+        throw new Error(
+          `channel command ${JSON.stringify(name)} collides with a core command`,
+        );
+      }
+    });
+  }
+
+  /** Every Channel Command name registered for one dispatcher. */
+  channelCommandNames(dispatcherId: string): readonly string[] {
+    return this.channelCommands.names(dispatcherId);
+  }
+
   async invoke(
     context: CoreCommandContext,
     name: string,
     payload: JsonValue,
   ): Promise<JsonValue> {
+    if (name.startsWith(CHANNEL_COMMAND_PREFIX)) {
+      return this.invokeChannelCommand(context, name, payload);
+    }
     const definition = this.commands.get(name);
     if (definition === undefined) {
       throw new UnknownCommandError(name);
     }
     const bounded = boundedPayload(payload);
-    validateInput(definition, bounded);
+    validateInput(definition, bounded, name);
     const input = definition.parse(bounded);
     const output = await definition.execute(context, input);
     // Canonicalize before validating, so the schema checks the value adapters
     // actually receive rather than the pre-serialization object graph.
-    const result = canonicalResult(definition, output);
-    validateOutput(definition, result);
+    const result = canonicalResult(output, name);
+    validateOutput(definition, result, name);
     return result;
+  }
+
+  /**
+   * One Channel Command, through the identical path.
+   *
+   * The only two additions are the ones a dynamic registration requires: the
+   * dispatcher partition it resolves in, and the admission fence that separates
+   * "registered but not serving" from "no such Command". Bounding, validation,
+   * parsing, canonicalization, and output checking are the same steps, in the
+   * same order, so a Channel Command answers exactly as a Core one does.
+   *
+   * Everything from `parse` onward runs inside the registration's `admit`,
+   * because all of it is Channel-owned code that may synchronously close its
+   * own session. Admission and the drain entry are taken together there, so no
+   * accepted call can be missed by the drain that precedes session close.
+   */
+  private async invokeChannelCommand(
+    context: CoreCommandContext,
+    name: string,
+    payload: JsonValue,
+  ): Promise<JsonValue> {
+    const dispatcherId = channelCommandDispatcher(context, name);
+    const entry = this.channelCommands.resolve(dispatcherId, name);
+    if (entry === undefined) {
+      throw new UnknownCommandError(name);
+    }
+    const bounded = boundedPayload(payload);
+    validateInput(entry.definition, bounded, name);
+    const admitted = entry.registration.admit(async () => {
+      const input = entry.definition.parse(bounded);
+      const output = await entry.definition.execute(context, input);
+      const result = canonicalResult(output, name);
+      validateOutput(entry.definition, result, name);
+      return result;
+    });
+    if (admitted === null) {
+      throw new ChannelCommandUnavailableError(name);
+    }
+    return admitted;
   }
 }
 
@@ -158,6 +261,33 @@ function assertSchemaDefinition(
 }
 
 /**
+ * The same composition-time schema proof, for a Channel-authored definition.
+ *
+ * A Channel package is a separate package on its own release line, so a
+ * malformed schema is exactly as much a composition error as a Core one — it
+ * fails the dispatcher start that tried to register it, naming the channel and
+ * the local name an operator can act on.
+ */
+function assertChannelSchemaDefinition(
+  channelId: string,
+  definition: ChannelCommandDefinition,
+  side: 'input' | 'output',
+): void {
+  try {
+    validateSchemaDefinition(definition[side]);
+  } catch (error) {
+    if (error instanceof SchemaViolation) {
+      throw new Error(
+        `channel ${JSON.stringify(channelId)} command ` +
+          `${JSON.stringify(definition.local_name)} declares a malformed ` +
+          `${side} schema — ${error.message}`,
+      );
+    }
+    throw error;
+  }
+}
+
+/**
  * Put one result through Core's JSON boundary.
  *
  * A schema check alone cannot make a result safe to hand an adapter: an open
@@ -172,13 +302,13 @@ function assertSchemaDefinition(
  * produces an arbitrarily large one, so a generic limit here would only be an
  * arbitrary cutoff. Domain-owned pagination is the answer when one is needed.
  */
-function canonicalResult(definition: AnyCoreCommand, output: unknown): JsonValue {
+function canonicalResult(output: unknown, name: string): JsonValue {
   try {
     return canonicalJsonValue(output, JSON_VALUE_UNBOUNDED);
   } catch (error) {
     if (error instanceof JsonValueError) {
       throw new InternalError(
-        `${definition.name} produced a result that is not JSON-representable ` +
+        `${name} produced a result that is not JSON-representable ` +
           `— ${error.message}`,
       );
     }
@@ -186,13 +316,17 @@ function canonicalResult(definition: AnyCoreCommand, output: unknown): JsonValue
   }
 }
 
-function validateInput(definition: AnyCoreCommand, payload: JsonValue): void {
+function validateInput(
+  definition: SchemaOwner,
+  payload: JsonValue,
+  name: string,
+): void {
   try {
     validateJsonSchema(payload, definition.input);
   } catch (error) {
     if (error instanceof SchemaViolation) {
       throw new ValidationError(
-        `invalid ${definition.name} payload — ${error.message}`,
+        `invalid ${name} payload — ${error.message}`,
       );
     }
     throw error;
@@ -206,13 +340,17 @@ function validateInput(definition: AnyCoreCommand, payload: JsonValue): void {
  * path. The check covers what the Command declares — an open `OBJECT` is
  * checked as an object, deliberately not field by field.
  */
-function validateOutput(definition: AnyCoreCommand, output: JsonValue): void {
+function validateOutput(
+  definition: SchemaOwner,
+  output: JsonValue,
+  name: string,
+): void {
   try {
     validateJsonSchema(output, definition.output);
   } catch (error) {
     if (error instanceof SchemaViolation) {
       throw new InternalError(
-        `${definition.name} produced a result that violates its declared ` +
+        `${name} produced a result that violates its declared ` +
           `output schema — ${error.message}`,
       );
     }

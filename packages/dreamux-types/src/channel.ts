@@ -18,8 +18,9 @@
  * only and must not import `@excitedjs/dreamux`.
  */
 import type { DreamuxLogger } from './logger.js';
+import type { CoreCommandContext } from './command.js';
 import type { JsonInvokeResult, JsonInvoker } from './invoke.js';
-import type { JsonValue } from './json.js';
+import type { JsonSchema, JsonValue } from './json.js';
 import type {
   DreamuxEnvironment,
   ProviderBinCheck,
@@ -254,12 +255,62 @@ export type ChannelMcpToolOutcome = JsonInvokeResult<
 >;
 
 /**
- * What `createSession` produced. MCP is composed outside the base session, so a
- * Channel with no tools simply omits it rather than implementing fake members.
+ * One Channel-owned Command, authored exactly like a Core one.
+ *
+ * The only difference from {@link CoreCommandDefinition} is the name: a Channel
+ * declares a `local_name` — a single stable segment — and Core derives the full
+ * registered name from it. A Channel therefore cannot occupy a Core name or
+ * another Channel's namespace, and no caller has to assemble an unverified
+ * string.
+ *
+ * Everything else is deliberately identical, because the invocation is
+ * identical: the same registry resolves it, the same bounds and input schema
+ * validate the payload, and the same canonicalization and output schema check
+ * the result. There is no second call result and no Channel-specific adapter.
+ *
+ * A refusal the caller is meant to read belongs in `output`, not in a throw.
+ * This package is declaration-only, so a Channel authored against it alone has
+ * no Core error base to construct; Core classifies an unrecognized throw as
+ * `INTERNAL` with no stated next step, which is right for an implementation
+ * fault and wrong for a business answer. So a Channel that must say "this chat
+ * is not bindable" declares that outcome in its own output schema and returns
+ * it.
+ */
+export interface ChannelCommandDefinition<Input = unknown, Output = unknown> {
+  /**
+   * A single stable segment, unique within the Channel that declares it. Core
+   * rejects a name it cannot register unambiguously rather than encoding it.
+   */
+  readonly local_name: string;
+  readonly version: 1;
+  readonly input: JsonSchema;
+  readonly output: JsonSchema;
+  parse(payload: JsonValue): Input;
+  execute(context: CoreCommandContext, input: Input): Promise<Output>;
+}
+
+/**
+ * Optional Channel Command composition, declared beside the session because the
+ * handlers need the live session and the Channel-owned state it loaded.
+ *
+ * Core composes the returned definitions and owns none of them: not their
+ * schemas, not their business meaning, and not the outcomes they report. It is
+ * read once per instance, so a catalog is immutable for the life of that
+ * instance — the same rule {@link ChannelMcpCapability} follows.
+ */
+export interface ChannelCommandCapability {
+  definitions(): readonly ChannelCommandDefinition[];
+}
+
+/**
+ * What `createSession` produced. MCP and Commands are composed outside the base
+ * session, so a Channel with neither simply omits them rather than implementing
+ * fake members.
  */
 export interface ChannelInstance {
   readonly session: ChannelSession;
   readonly mcp?: ChannelSessionMcpCapability;
+  readonly commands?: ChannelCommandCapability;
 }
 
 export interface ChannelConfigContext {

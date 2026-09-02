@@ -61,9 +61,10 @@ load through the same path):
   (replace/append), bundled-skill injection, and disabled runtime features.
 - **Channel** — a provider implements session lifecycle, calls Core through
   one `invoke(command, payload)` port, subscribes to a dispatcher-scoped
-  read-only event source, and may publish its own MCP tools. Message parsing,
-  routing, binding, targets, Collaboration Spaces, and presentation are all
-  Channel-internal. Owner: [Channel](channel.md).
+  read-only event source, may publish its own MCP tools, and may serve its own
+  Commands into the one registry. Message parsing, routing, binding, targets,
+  Collaboration Spaces, and presentation are all Channel-internal. Owner:
+  [Channel](channel.md).
 
 Key source: `/packages/dreamux/src/registry/`,
 `/packages/dreamux/src/agent-runtime/catalog.ts`,
@@ -74,14 +75,41 @@ Key source: `/packages/dreamux/src/registry/`,
 One `CoreCommandRegistry` holds every Command definition; the owner-only local
 `admin.sock` and a Channel's in-process `invoke` port are transport adapters
 over the same registry — no per-adapter table, allowlist, or exposure flag.
-Namespaces: `teammate.*`, `team.*`, `workflow.*`, `dispatcher.*`,
+Core namespaces: `teammate.*`, `team.*`, `workflow.*`, `dispatcher.*`,
 `scheduler.cron.*`, plus the transport Commands `mcp.describe` / `mcp.toolcall`.
 Admin callers may pass validated `skill_sources` on `teammate.spawn` /
 `team.create`; bundled role skills cannot be shadowed. The remaining
 control-plane slices (events, protocol baseline, introspection, authentication)
 are the one [active proposal](../proposals/admin-control-plane-surface.md).
 
+`channel.*` is the one dynamic namespace. A Channel may serve Commands of its
+own, and the same registry resolves them: same bounds, same input/output schema
+validation, and same canonicalization. Channel-owned business refusals are
+declared output values; an unrecognized throw remains an implementation fault
+reported as `INTERNAL`, so Core owns no provider business-error vocabulary. It is partitioned by
+dispatcher, because two dispatchers may configure the same dispatcher-local
+`channel_id`. A registered name is
+`channel.<encoded channel_id>.<local_name>`, where the Channel declares only the
+single `local_name` segment and Core derives the rest — so a Channel can occupy
+neither a Core name nor another Channel's namespace. The id is percent-encoded
+per UTF-16 code unit at fixed width (`%XXXX`, including `%` itself), which is
+injective, so two distinct ids can never collide on one name.
+
+Registration is a dispatcher act, not a caller act: a dispatcher registers all
+of its Channels' catalogs as one atomic `ChannelCommandBatch`, and that batch
+*is* the registration lease — an empty catalog still holds it, and only the
+batch's own identity releases it. Registration therefore bypasses the
+process-level admission fence in `CoreCommandPort` (composing the process is not
+reaching into it), while every invocation passes through it. Each Channel's
+registration additionally carries its own admission lease, opened when that
+session's `start()` opens external I/O and fenced before teardown, so a name can
+be resolvable while its Channel is not yet or no longer serving. That window
+answers `CHANNEL_COMMAND_UNAVAILABLE` — a retryable `StatedFailure` — which is
+deliberately distinct from `UNKNOWN_METHOD` for a name that does not exist in
+this dispatcher's partition at all.
+
 Key source: `/packages/dreamux/src/command/`,
+`/packages/dreamux/src/command/channel-commands.ts`,
 `/packages/dreamux/src/admin/socket.ts`.
 
 ## MCP Protocol Boundary

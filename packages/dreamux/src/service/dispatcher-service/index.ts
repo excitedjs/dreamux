@@ -43,6 +43,7 @@ import { SchedulerService } from '../scheduler/service.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
 import { CronJobStore } from '../scheduler/store.js';
 import { ChannelService } from '../channel-service/index.js';
+import type { ChannelDescriptor } from './channel-descriptor.js';
 import { DispatcherCoreEventBus } from '../dispatcher-core-events/index.js';
 import type {
   TeamCreateInput,
@@ -272,6 +273,7 @@ export class DispatcherService {
         }),
       }),
       commands: opts.commands,
+      channelCommands: opts.channelCommands,
       coreEvents: this.coreEvents,
       scheduler: this.scheduler_,
       teams: this.teams,
@@ -357,6 +359,11 @@ export class DispatcherService {
       // They are revoked once, here, immediately before the sessions holding
       // them are closed.
       this.coreEvents.revokeSources();
+      // Everything Core already accepted through a Channel Command settles
+      // before the sessions it is running against are closed. The fence itself
+      // was published synchronously back in `stop`/`beginShutdown`.
+      await collectShutdownFailure(failures, () =>
+        this.inputSources.drainChannelCommands());
       await collectShutdownFailure(failures, () =>
         this.channels.closeAll(this.log));
       await collectShutdownFailure(failures, () =>
@@ -396,6 +403,17 @@ export class DispatcherService {
 
   runtimeStatus(): DispatcherRuntimeStatus {
     return dispatcherRuntimeStatus(this.inputSources.agent);
+  }
+
+  /**
+   * The non-sensitive read model of this dispatcher's configured Channels.
+   *
+   * A live aggregate is the only place that knows which Commands are currently
+   * registered and how far each session has got, so the read model is asked of
+   * it rather than reconstructed from config by a caller.
+   */
+  channelDescriptors(): ChannelDescriptor[] {
+    return this.inputSources.channelDescriptors();
   }
 
   liveRuntimeStatus(): LiveDispatcherRuntimeStatus | null {

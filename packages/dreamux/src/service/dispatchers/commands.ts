@@ -20,8 +20,10 @@ import {
   OBJECT,
   STRING,
   arrayOf,
+  enumOf,
   objectSchema,
 } from '../../command/schema.js';
+import type { ChannelDescriptor } from '../dispatcher-service/channel-descriptor.js';
 import type { DispatcherSummary } from '../dispatcher-service/types.js';
 
 interface DispatcherListResult {
@@ -34,7 +36,28 @@ interface DispatcherStatusResult {
   status: string;
   session_id: string | null;
   last_error: string | null;
+  channel_descriptors: ChannelDescriptor[];
 }
+
+/**
+ * The closed shape of one Channel description.
+ *
+ * Declared here rather than left an open `OBJECT` — the treatment the rich
+ * evolving DTOs above get — precisely because this one must not evolve
+ * silently: it is the read model that faces a Channel's own callers, and a
+ * closed schema makes an undeclared field a loud Core defect instead of a quiet
+ * leak of whatever produced it.
+ */
+const CHANNEL_DESCRIPTOR = objectSchema(
+  {
+    channel_id: STRING,
+    provider: STRING,
+    identity: NULLABLE_STRING,
+    commands: arrayOf(STRING),
+    status: enumOf(['starting', 'ready', 'closing', 'closed']),
+  },
+  ['channel_id', 'provider', 'identity', 'commands', 'status'],
+);
 
 interface DispatcherStartResult {
   dispatcher_id: string;
@@ -77,8 +100,16 @@ export function dispatcherCommands(
         status: STRING,
         session_id: NULLABLE_STRING,
         last_error: NULLABLE_STRING,
+        channel_descriptors: arrayOf(CHANNEL_DESCRIPTOR),
       },
-      ['dispatcher_id', 'channel_identity', 'status', 'session_id', 'last_error'],
+      [
+        'dispatcher_id',
+        'channel_identity',
+        'status',
+        'session_id',
+        'last_error',
+        'channel_descriptors',
+      ],
     ),
     parse(payload) {
       commandPayload(payload);
@@ -93,6 +124,7 @@ export function dispatcherCommands(
         status: runtime.status ?? 'stopped',
         session_id: runtime.sessionId,
         last_error: runtime.lastError,
+        channel_descriptors: host.dispatcherChannels(id),
       };
     },
   };

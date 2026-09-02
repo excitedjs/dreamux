@@ -211,6 +211,7 @@ export class Server {
       summarize: () => this.summarize(),
       dispatcherRow: (id) => this.repos.dispatchers.get(id),
       dispatcherRuntimeStatus: (id) => this.dispatchers.status(id),
+      dispatcherChannels: (id) => this.dispatchers.channelDescriptors(id),
       dispatcher: (id) => this.getDispatcher(id),
       mcpLeases: this.mcpLeases,
     };
@@ -230,6 +231,7 @@ export class Server {
       channelProviders: this.channelProviders,
       mcpLeases: this.mcpLeases,
       commands: this.commands,
+      channelCommands: this.commands,
       homePathPrefixes,
       adminSocketPath: this.opts.adminSocketPath ?? adminSocketPath(),
       channelLoggerFactory: this.channelLoggerFactory,

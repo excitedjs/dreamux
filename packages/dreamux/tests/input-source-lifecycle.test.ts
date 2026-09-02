@@ -40,6 +40,8 @@ import type { DispatcherChannelConfig, DreamuxConfig } from '../src/config/confi
 import { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import { ChannelProviderCatalog } from '../src/channel/catalog.js';
 import { createConversationProjection } from '../src/channel/conversation-projection.js';
+import { CoreCommandPort } from '../src/command/port.js';
+import { CoreCommands } from '../src/command/registry.js';
 import { ServerShuttingDownError } from '../src/platform/errors.js';
 import { ProviderRegistry } from '../src/registry/registry.js';
 import { parseProviderRef } from '../src/registry/provider-ref.js';
@@ -59,6 +61,7 @@ import {
   createFakeChannelProvider,
   type FakeChannelProviderResult,
 } from './helpers/fake-channel-provider.js';
+import { fakeChannelCommand } from './helpers/command-harness.js';
 
 function silentLogger(): DreamuxLogger {
   const noop = () => {};
@@ -98,6 +101,10 @@ interface Harness {
   coreEvents: DispatcherCoreEventBus;
   admittedTasks: DispatcherTaskDrain;
   commands: { context: CoreCommandContext; name: string; payload: JsonValue }[];
+  /** The real admitted port this lifecycle registers its Channel catalog into. */
+  channelCommandPort: CoreCommandPort;
+  /** Flip what `isUnavailable()` answers, as a real shutdown fence would. */
+  setUnavailable: (value: boolean) => void;
   fakeChannel: FakeChannelProviderResult;
   extraChannel: FakeChannelProviderResult | null;
   teams: TeamCollection;
@@ -124,6 +131,7 @@ async function buildHarness(options: {
 
   const recorder: string[] = [];
   const record = (label: string) => recorder.push(label);
+  let unavailable = false;
 
   const fakeChannel = createFakeChannelProvider({
     record,
@@ -187,6 +195,11 @@ async function buildHarness(options: {
       return { ok: true } as JsonValue;
     },
   };
+  // The registration half is the real one, behind the real admitted port, so
+  // the names these tests resolve are the names an admin.sock caller would.
+  // Only the invoke half above is a fake, because these tests order the
+  // lifecycle rather than exercise the Core catalog.
+  const channelCommandPort = new CoreCommandPort(new CoreCommands([]));
 
   const teams = {
     async recoverWorktreeCleanup() {
@@ -268,13 +281,14 @@ async function buildHarness(options: {
     agentMcp: () =>
       ({ leases: {}, delegates: [], adminSocketPath: '' }) as unknown as TeammateAgentMcp,
     commands: commandRegistry,
+    channelCommands: channelCommandPort,
     coreEvents,
     scheduler,
     teams,
     teammates,
     admittedTasks,
     workflows,
-    isUnavailable: () => false,
+    isUnavailable: () => unavailable,
     restartIntent: () => null,
   });
 
@@ -290,6 +304,10 @@ async function buildHarness(options: {
     coreEvents,
     admittedTasks,
     commands,
+    channelCommandPort,
+    setUnavailable: (value: boolean) => {
+      unavailable = value;
+    },
     fakeChannel,
     extraChannel: extraChannelResult,
     teams,
@@ -652,5 +670,351 @@ describe('DispatcherInputSourceLifecycle: shutdown/rollback ordering and fencing
     // must not itself touch the Channel session (that already happened via
     // closePreparedChannels/rollback in a real stop sequence).
     expect(() => harness.lifecycle.markStopped()).not.toThrow();
+  });
+});
+
+/** A promise a test settles by hand, to hold a Command handler open. */
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+const CHANNEL_CALLER: CoreCommandContext = {
+  source: 'channel',
+  dispatcher_id: 'flow',
+  channel_id: 'primary',
+};
+
+/** Invoke one Channel Command through the same admitted port an admin caller uses. */
+function invokeChannelCommand(
+  harness: Harness,
+  name: string,
+  payload: JsonValue = { note: 'x' },
+  context: CoreCommandContext = CHANNEL_CALLER,
+): Promise<JsonValue> {
+  return harness.channelCommandPort.invoke(context, name, payload);
+}
+
+/** Whether the dispatcher currently holds a registration lease at all. */
+function leaseIsFree(harness: Harness): boolean {
+  try {
+    harness.channelCommandPort.registerChannelCommands('flow', []).unregister();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+describe('DispatcherInputSourceLifecycle: Channel Command registration lifecycle', () => {
+  let harness: Harness;
+
+  afterEach(async () => {
+    if (harness) await teardown(harness);
+  });
+
+  it('registers the whole catalog when Channels are built, and serves nothing until each session has started', async () => {
+    harness = await buildHarness({
+      channelOptions: { commands: [fakeChannelCommand('ping')] },
+    });
+
+    await harness.lifecycle.prepareChannels();
+
+    // Resolvable immediately: a caller must not have to know channel start
+    // order to learn the name exists.
+    expect(harness.channelCommandPort.channelCommandNames('flow')).toEqual([
+      'channel.primary.ping',
+    ]);
+    expect(harness.lifecycle.channelCommandNames('primary')).toEqual([
+      'channel.primary.ping',
+    ]);
+    await expect(invokeChannelCommand(harness, 'channel.primary.ping')).rejects.toMatchObject(
+      { code: 'CHANNEL_COMMAND_UNAVAILABLE' },
+    );
+
+    await harness.lifecycle.start();
+    await expect(invokeChannelCommand(harness, 'channel.primary.ping')).resolves.toEqual({
+      echoed: 'x',
+    });
+  });
+
+  it('opens admission per registration, at the moment that session own start returns', async () => {
+    const observed: string[] = [];
+    harness = await buildHarness({
+      channelOptions: { commands: [fakeChannelCommand('ping')] },
+      extraChannel: {
+        id: 'secondary',
+        ref: 'npm:@example/second#create',
+        options: {
+          commands: [fakeChannelCommand('ping')],
+          // Runs inside `secondary.start()`, i.e. after primary started and
+          // before secondary is published as live. Exactly the window where
+          // "one registration at a time" is observable.
+          onStart: async () => {
+            observed.push(
+              await invokeChannelCommand(harness, 'channel.primary.ping')
+                .then(() => 'primary:served')
+                .catch((error: { code?: string }) => `primary:${error.code}`),
+            );
+            observed.push(
+              await invokeChannelCommand(
+                harness,
+                'channel.secondary.ping',
+                { note: 'x' },
+                { source: 'channel', dispatcher_id: 'flow', channel_id: 'secondary' },
+              )
+                .then(() => 'secondary:served')
+                .catch((error: { code?: string }) => `secondary:${error.code}`),
+            );
+          },
+        },
+      },
+    });
+
+    await harness.lifecycle.start();
+
+    expect(observed).toEqual([
+      'primary:served',
+      'secondary:CHANNEL_COMMAND_UNAVAILABLE',
+    ]);
+    // Both serve once the whole start returned.
+    await expect(
+      invokeChannelCommand(
+        harness,
+        'channel.secondary.ping',
+        { note: 'x' },
+        { source: 'channel', dispatcher_id: 'flow', channel_id: 'secondary' },
+      ),
+    ).resolves.toEqual({ echoed: 'x' });
+  });
+
+  it('an ordinary stop fences admission, drains what it accepted, closes the sessions, and only then revokes the catalog', async () => {
+    const held = deferred();
+    let record!: (label: string) => void;
+    harness = await buildHarness({
+      channelOptions: {
+        commands: [
+          fakeChannelCommand('slow', {
+            async execute(_context, input) {
+              record('command:slow:begin');
+              await held.promise;
+              record('command:slow:end');
+              return { echoed: input.note };
+            },
+          }),
+        ],
+      },
+    });
+    record = harness.record;
+
+    await harness.lifecycle.start();
+    const inFlight = invokeChannelCommand(harness, 'channel.primary.slow');
+    // Let the handler reach its await before the fence closes, so this is a
+    // genuinely accepted call rather than one refused at the door.
+    await Promise.resolve();
+    expect(harness.recorder).toContain('command:slow:begin');
+
+    // The stop sequence `DispatcherService.doStop` runs, in its order.
+    let drained = false;
+    const draining = harness.lifecycle.drainChannelCommands().then(() => {
+      drained = true;
+    });
+    // Fenced synchronously: a call arriving now is refused, and the descriptor
+    // says `closing` rather than `ready` from that same instant.
+    await expect(invokeChannelCommand(harness, 'channel.primary.slow')).rejects.toMatchObject(
+      { code: 'CHANNEL_COMMAND_UNAVAILABLE' },
+    );
+    expect(harness.lifecycle.channelDescriptors()).toEqual([
+      {
+        channel_id: 'primary',
+        provider: 'npm:@example/chan#create',
+        identity: null,
+        commands: ['channel.primary.slow'],
+        status: 'closing',
+      },
+    ]);
+    await Promise.resolve();
+    expect(drained).toBe(false);
+
+    held.resolve();
+    await draining;
+    await expect(inFlight).resolves.toEqual({ echoed: 'x' });
+
+    await harness.channels.closeAll(silentLogger());
+    await harness.lifecycle.closePreparedChannels();
+    harness.lifecycle.markStopped();
+
+    // The accepted call finished before the session it ran against closed, and
+    // the names went away only after that.
+    const order = (label: string) => harness.recorder.indexOf(label);
+    expect(order('command:slow:end')).toBeGreaterThan(order('command:slow:begin'));
+    expect(order('channel:primary:close')).toBeGreaterThan(order('command:slow:end'));
+    expect(harness.channelCommandPort.channelCommandNames('flow')).toEqual([]);
+    await expect(invokeChannelCommand(harness, 'channel.primary.slow')).rejects.toMatchObject(
+      { code: 'UNKNOWN_METHOD' },
+    );
+    expect(harness.lifecycle.channelDescriptors()).toEqual([
+      {
+        channel_id: 'primary',
+        provider: 'npm:@example/chan#create',
+        identity: null,
+        commands: [],
+        status: 'closed',
+      },
+    ]);
+    expect(leaseIsFree(harness)).toBe(true);
+  });
+
+  it('a prepare-only teardown revokes the catalog it registered, in the same order', async () => {
+    harness = await buildHarness({
+      channelOptions: { commands: [fakeChannelCommand('ping')] },
+    });
+    await harness.lifecycle.prepareChannels();
+    expect(harness.channelCommandPort.channelCommandNames('flow')).toEqual([
+      'channel.primary.ping',
+    ]);
+
+    await harness.lifecycle.closePreparedChannels();
+
+    expect(harness.channelCommandPort.channelCommandNames('flow')).toEqual([]);
+    expect(leaseIsFree(harness)).toBe(true);
+    expect(harness.lifecycle.channelDescriptors()[0]?.status).toBe('closed');
+  });
+
+  it('a failed start revokes the whole batch, including the Channel that had already started', async () => {
+    harness = await buildHarness({
+      channelOptions: { commands: [fakeChannelCommand('ping')] },
+      extraChannel: {
+        id: 'secondary',
+        ref: 'npm:@example/second#create',
+        options: {
+          commands: [fakeChannelCommand('ping')],
+          failStart: () => new Error('secondary channel start failed'),
+        },
+      },
+    });
+
+    await expect(harness.lifecycle.start()).rejects.toThrow(
+      /secondary channel start failed/,
+    );
+
+    expect(harness.channelCommandPort.channelCommandNames('flow')).toEqual([]);
+    await expect(invokeChannelCommand(harness, 'channel.primary.ping')).rejects.toMatchObject(
+      { code: 'UNKNOWN_METHOD' },
+    );
+    // The lease went with it, so the retry a failed start invites can register.
+    expect(leaseIsFree(harness)).toBe(true);
+    expect(harness.lifecycle.channelDescriptors().map((c) => c.status)).toEqual([
+      'closed',
+      'closed',
+    ]);
+  });
+
+  it('a shutdown that lands while build() is still running registers no catalog at all', async () => {
+    harness = await buildHarness({
+      channelOptions: {
+        commands: [fakeChannelCommand('ping')],
+        onCreateSession: () => {
+          harness.setUnavailable(true);
+        },
+      },
+    });
+
+    await expect(harness.lifecycle.prepareChannels()).rejects.toThrow(/shutting down/);
+
+    expect(harness.channelCommandPort.channelCommandNames('flow')).toEqual([]);
+    harness.setUnavailable(false);
+    expect(leaseIsFree(harness)).toBe(true);
+  });
+
+  it('a definitions() call that synchronously begins a shutdown leaves no catalog and no lease', async () => {
+    // `definitions()` is Channel-owned code Core runs synchronously while
+    // assembling the catalog: it can reach back into its own dispatcher and
+    // start a stop before the last source is even collected.
+    harness = await buildHarness({
+      channelOptions: {
+        commands: () => {
+          harness.setUnavailable(true);
+          return [fakeChannelCommand('ping')];
+        },
+      },
+    });
+
+    await expect(harness.lifecycle.prepareChannels()).rejects.toThrow(/shutting down/);
+
+    expect(harness.channelCommandPort.channelCommandNames('flow')).toEqual([]);
+    harness.setUnavailable(false);
+    expect(leaseIsFree(harness)).toBe(true);
+  });
+
+  it('a definitions() call that begins a shutdown asynchronously has its already-registered catalog revoked', async () => {
+    // The harder half of the same hazard: the fence lands *after* the catalog
+    // is in the registry, so correctness depends on the failed prepare
+    // unwinding what it registered rather than on the fence arriving in time.
+    harness = await buildHarness({
+      channelOptions: {
+        commands: () => {
+          queueMicrotask(() => harness.setUnavailable(true));
+          return [fakeChannelCommand('ping')];
+        },
+      },
+    });
+
+    await expect(harness.lifecycle.prepareChannels()).rejects.toThrow(/shutting down/);
+
+    expect(harness.channelCommandPort.channelCommandNames('flow')).toEqual([]);
+    harness.setUnavailable(false);
+    expect(leaseIsFree(harness)).toBe(true);
+    expect(harness.fakeChannel.sessions.get('primary')?.closeCalled).toBe(true);
+  });
+
+  it('a Channel that declares no Commands still gets a registration, so it has a fence of its own', async () => {
+    harness = await buildHarness();
+    await harness.lifecycle.prepareChannels();
+
+    expect(harness.channelCommandPort.channelCommandNames('flow')).toEqual([]);
+    // Registered-but-empty is not the same as unregistered: the descriptor
+    // still describes a live Channel rather than a closed one.
+    expect(harness.lifecycle.channelDescriptors()[0]).toEqual({
+      channel_id: 'primary',
+      provider: 'npm:@example/chan#create',
+      identity: null,
+      commands: [],
+      status: 'starting',
+    });
+    expect(leaseIsFree(harness)).toBe(false);
+  });
+
+  it('a retry after a fenced prepare registers a fresh catalog and stops reporting the previous fence', async () => {
+    // The retryable teardown this lifecycle actually supports: a prepare that
+    // never got as far as adopting an Agent. It fenced admission on the way
+    // out, so the fence must belong to the run that closed it — not to the one
+    // that registers next.
+    let refuse = true;
+    harness = await buildHarness({
+      channelOptions: {
+        commands: () => {
+          if (refuse) harness.setUnavailable(true);
+          return [fakeChannelCommand('ping')];
+        },
+      },
+    });
+    await expect(harness.lifecycle.prepareChannels()).rejects.toThrow(/shutting down/);
+    expect(harness.channelCommandPort.channelCommandNames('flow')).toEqual([]);
+    expect(harness.lifecycle.channelDescriptors()[0]?.status).toBe('closed');
+
+    refuse = false;
+    harness.setUnavailable(false);
+    await harness.lifecycle.start();
+
+    expect(harness.channelCommandPort.channelCommandNames('flow')).toEqual([
+      'channel.primary.ping',
+    ]);
+    expect(harness.lifecycle.channelDescriptors()[0]?.status).toBe('ready');
+    await expect(invokeChannelCommand(harness, 'channel.primary.ping')).resolves.toEqual({
+      echoed: 'x',
+    });
   });
 });

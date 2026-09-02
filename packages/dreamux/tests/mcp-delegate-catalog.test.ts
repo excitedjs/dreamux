@@ -254,6 +254,9 @@ function stubHost(): CoreCommandHost {
     dispatcherRuntimeStatus: () => {
       throw new Error('mcpCommands must not call dispatcherRuntimeStatus()');
     },
+    dispatcherChannels: () => {
+      throw new Error('mcpCommands must not call dispatcherChannels()');
+    },
     dispatcher: () => {
       throw new Error('mcpCommands must not call dispatcher()');
     },

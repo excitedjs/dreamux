@@ -31,9 +31,11 @@ shared structural types.
   packages;
 - Channel provider/session contracts, target shapes, inbound envelope shapes,
   tool descriptor/call shapes, config/session contexts, optional strict
-  collaboration operations, and dispatcher-scoped read-only core event DTOs.
-  Channel delivery receipts are status-only and the core event surface carries
-  no service Turn submitted/settled events;
+  collaboration operations, optional Channel-owned Command definitions
+  (`ChannelCommandDefinition` / `ChannelCommandCapability`), and
+  dispatcher-scoped read-only core event DTOs. Channel delivery receipts are
+  status-only and the core event surface carries no service Turn
+  submitted/settled events;
 - a minimal public logger type (`DreamuxLogger`).
 
 It does **not** export runtime implementations, default loggers, loader logic,
@@ -82,6 +84,36 @@ A provider implements the full contract against this package only — see
 > `packages/dreamux/src/agent-runtime/types.ts`) is the runtime-split slice's job
 > (issue #209 slice 3). The public target published here is already stable for
 > external and built-in runtime/channel packages to author against.
+
+## Channel Command contract
+
+A Channel may serve Commands of its own by composing an optional
+`ChannelCommandCapability` beside its session, exactly the way it composes
+`mcp` — a Channel with no Commands omits the member rather than returning an
+empty catalog. `definitions()` is read once per created instance, so a catalog
+is immutable for the life of that instance.
+
+A `ChannelCommandDefinition` is authored like a Core one — `version`,
+`input`/`output` JSON schemas, `parse`, `execute` — with one difference: it
+declares a single stable `local_name` segment and the host derives the
+registered name from it by encoding the dispatcher-local channel id, so a
+Channel can occupy neither a host name nor another Channel's namespace. The host
+applies the same payload bounds, schema validation, and result canonicalization
+it applies to its own Commands.
+
+A business refusal belongs in the declared `output` schema, not in a thrown
+error. This package is declaration-only and exports no error base a provider
+could construct, and the host classifies any unrecognized throw from a handler
+as `INTERNAL` with no stated next step — so a refusal a caller is meant to read
+and act on must be a value `execute` returns and `output` declares. Reserve
+throwing for genuine implementation faults.
+
+The host also owns when those Commands answer. They become resolvable when the
+dispatcher registers the session's catalog and start accepting calls only once
+that session's `start()` has opened external I/O; between those points, and
+again from the moment teardown fences admission, a call is refused with the
+retryable `CHANNEL_COMMAND_UNAVAILABLE` rather than reported as an unknown
+method.
 
 ## Build / test
 

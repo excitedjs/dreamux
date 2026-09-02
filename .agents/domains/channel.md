@@ -11,11 +11,13 @@ selection, or the Core event source a Channel subscribes to.
 ## Ownership
 
 A Channel provider owns platform I/O, inbound normalization, target resolution,
-provider-specific tools, message ownership facts, and **routing**: which
-conversation reaches which Team, and what a Collaboration Space is. Dreamux core
-owns Channel session lifetime, the Command port a Channel invokes, the scoped
-Core event source it subscribes to, and generic MCP forwarding. Core holds no
-binding table, no target model, and no Collaboration Space container.
+provider-specific tools, its own Command definitions, message ownership facts,
+and **routing**: which conversation reaches which Team, and what a Collaboration
+Space is. Dreamux core owns Channel session lifetime, the Command port a Channel
+invokes, the registration and admission lifecycle of the Commands a Channel
+serves, the scoped Core event source it subscribes to, and generic MCP
+forwarding. Core holds no binding table, no target model, and no Collaboration
+Space container.
 
 The built-in Feishu provider lives outside the host package:
 
@@ -69,10 +71,41 @@ Command invoker and one read-only, dispatcher-scoped event source. A Channel
 names a Command, hands it a payload, and gets one answer; both public adapters
 bind the same registry, so a Channel gets no smaller catalog and no private door.
 
+A `ChannelInstance` may also expose `commands.definitions()`. Each definition
+owns one stable `local_name`, version-1 input/output schemas, parsing, execution,
+and business outcomes; Core derives the public
+`channel.<encoded channel_id>.<local_name>` name and serves it through that same
+Command registry. The catalog is immutable for the instance's lifetime. Core
+registers every built Channel as one dispatcher-scoped atomic batch, including
+Channels whose catalogs are empty, so the batch is the complete registration
+lease and two dispatchers may independently use the same channel id and local
+names. A channel id keeps its existing arbitrary non-empty-string contract: Core
+encodes unsafe UTF-16 code units as fixed-width `%XXXX` sequences rather than
+narrowing provider configuration.
+
+Business refusals are declared output values. A provider authored against the
+declaration-only types package has no host error class to construct; an
+unrecognized throw is an implementation fault and Core reports it as
+`INTERNAL`. Registration precedes session initialization, but each Channel's own admission
+opens only after that session's `start()` returns. A registered definition whose
+session is starting or closing fails as `CHANNEL_COMMAND_UNAVAILABLE`; once the
+batch is revoked it fails as an unknown Command. Stop and failed-start rollback
+fence every registration synchronously, drain already admitted calls before
+closing their sessions, and revoke the batch only after session teardown.
+`dispatcher.status.channel_descriptors` is the non-sensitive read model for this
+lifecycle: `{ channel_id, provider, identity, commands, status }`, with status
+`starting | ready | closing | closed`. Dormant reads project configured Channels
+as `closed` without materializing a dispatcher, and the descriptor can never
+carry parsed or raw Channel configuration.
+
 Source:
 
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
+- `/packages/dreamux/src/service/dispatcher-service/input-source-lifecycle.ts`
+- `/packages/dreamux/src/service/dispatcher-service/channel-descriptor.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
+- `/packages/dreamux/src/command/channel-commands.ts`
+- `/packages/dreamux/src/command/registry.ts`
 - `/packages/channel/feishu-channel/src/feishu-channel.ts`
 - `/packages/channel/feishu-channel/src/bot.ts`
 - `/packages/channel/feishu-transport/`

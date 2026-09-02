@@ -6,6 +6,7 @@ import type {
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
+import type { ChannelCommandRegistrar } from '../../command/channel-commands.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
 import type { AgentEntityIdentityStatus } from '../agent-entity/types.js';
@@ -25,6 +26,15 @@ export interface DispatcherServiceOptions {
    * validation, and shutdown fence rather than getting a second surface.
    */
   commands: CoreCommandRegistry;
+  /**
+   * The registration half of the same port, which is Core-internal.
+   *
+   * A dispatcher registers its Channels' Commands and revokes them when it
+   * stops; a Channel only ever invokes. Carrying registration as its own field
+   * — rather than widening `commands` — keeps the provider-facing
+   * {@link CoreCommandRegistry} exactly as narrow as it is today.
+   */
+  channelCommands: ChannelCommandRegistrar;
   /** Host home prefixes resolved by Server before this aggregate is built. */
   homePathPrefixes: readonly string[];
   adminSocketPath?: string;

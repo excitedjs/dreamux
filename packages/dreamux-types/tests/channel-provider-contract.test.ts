@@ -13,6 +13,8 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
+  ChannelCommandCapability,
+  ChannelCommandDefinition,
   ChannelCorePort,
   ChannelCoreEvent,
   ChannelEventSource,
@@ -123,8 +125,8 @@ describe('ChannelEventSource / ChannelEventSubscription stay minimal', () => {
   });
 });
 
-describe('ChannelInstance composes MCP as optional, never a required fake member', () => {
-  it('a minimal Channel with no tools omits mcp entirely and still satisfies ChannelInstance', () => {
+describe('ChannelInstance composes MCP and Commands as optional, never required fake members', () => {
+  it('a minimal Channel with no tools and no Commands omits both and still satisfies ChannelInstance', () => {
     const session: ChannelSession = {
       async initialize(): Promise<void> {},
       async start(): Promise<void> {},
@@ -133,11 +135,61 @@ describe('ChannelInstance composes MCP as optional, never a required fake member
     const instance: ChannelInstance = { session };
 
     expect(instance.mcp).toBeUndefined();
+    expect(instance.commands).toBeUndefined();
     expect(Object.keys(instance)).toEqual(['session']);
   });
 
-  it('ChannelInstance has exactly session and the optional mcp — nothing else', () => {
-    assertType<Equal<keyof ChannelInstance, 'session' | 'mcp'>>();
+  it('ChannelInstance has exactly session and the optional mcp/commands — nothing else', () => {
+    assertType<Equal<keyof ChannelInstance, 'session' | 'mcp' | 'commands'>>();
+  });
+
+  it('a Channel that declares Commands composes them beside the session, authored like a Core one', async () => {
+    const session: ChannelSession = {
+      async initialize(): Promise<void> {},
+      async start(): Promise<void> {},
+      async close(): Promise<void> {},
+    };
+    // A Channel-owned Command is a whole definition, not a handler reference:
+    // it declares its own schemas and parses its own payload, which is what
+    // lets Core validate it through the identical path a Core Command takes.
+    const bind: ChannelCommandDefinition<{ chat: string }, { bound: boolean }> = {
+      local_name: 'bind_channel',
+      version: 1,
+      input: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { chat: { type: 'string' } },
+        required: ['chat'],
+      },
+      output: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { bound: { type: 'boolean' } },
+        required: ['bound'],
+      },
+      parse(payload) {
+        return { chat: (payload as { chat: string }).chat };
+      },
+      async execute() {
+        return { bound: true };
+      },
+    };
+    const commands: ChannelCommandCapability = {
+      definitions: () => [bind as ChannelCommandDefinition],
+    };
+    const instance: ChannelInstance = { session, commands };
+
+    expect(instance.commands?.definitions()).toHaveLength(1);
+    expect(instance.commands?.definitions()[0]?.local_name).toBe('bind_channel');
+    // The whole capability is one method: Core reads a catalog, it never asks
+    // a Channel to add, remove, or re-describe one Command at a time.
+    assertType<Equal<keyof ChannelCommandCapability, 'definitions'>>();
+    assertType<
+      Equal<
+        keyof ChannelCommandDefinition,
+        'local_name' | 'version' | 'input' | 'output' | 'parse' | 'execute'
+      >
+    >();
   });
 });
 
