@@ -257,6 +257,23 @@ the terminal — one more fact on `teammate.input`, not a new mechanism. An
 earlier revision claimed the card "already handles" this; review refuted that
 and it was wrong.
 
+**The write fence is upstream of the publish site, and needs nothing.**
+`submitInput` calls `enterOrdinaryMutation('submission')` before
+`submitAdmitted` (`teammate-service/index.ts:230`), and that fence throws when
+the entity is closing/closed, holds a Workflow lock token, or is being stopped
+by the host. The throw never reaches `submitRuntimeTurn`, so no
+`teammate.input` is published and no card is opened — there is nothing to
+terminate. The terminal above is required only for an outcome the runtime
+returns *after* the input was published. Adding a card path for the fence would
+be defense with no failure scenario.
+
+The fence does expose an existing asymmetry this change does not touch: the
+same "not writable" fact surfaces as a structured
+`{ status: 'unsupported', reason: 'teammate is not writable' }` on the
+completion paths (`prepareCompletion`, `submitPreparedCompletion`, which catch
+it) and as a bare throw on `submitInput` and `activate`, which do not. Recorded
+as an observation, not a change: no caller in this task's scope reads it.
+
 Two published kinds, not one, and the boundary between them is the producer:
 
 - **`teammate.input`** — published by **Core**, at admission. Carries `text`,
