@@ -32,16 +32,25 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import { FeishuChannelSession } from '../src/feishu-channel.js';
+import { FEISHU_COT_OPENING_LABELS } from '../src/feishu-cot-adapter.js';
 import { chatTarget } from '../src/routing/target.js';
 import { createFakeFeishuBot, type FakeFeishuBot } from './helpers/fake-feishu-bot.js';
 import {
   cotRunStatus,
   cotTexts,
   createFakeCotClient,
+  type FakeCotCard,
   type FakeCotClient,
 } from './helpers/fake-feishu-cot.js';
 
-const RECEIPT = '已收到消息，开始处理。';
+function expectOpeningTexts(
+  card: FakeCotCard,
+  expectedAfterOpening: readonly string[],
+): void {
+  const texts = cotTexts(card);
+  expect(FEISHU_COT_OPENING_LABELS).toContain(texts[0]);
+  expect(texts.slice(1)).toEqual(expectedAfterOpening);
+}
 
 let dir: string;
 let attachDir: string;
@@ -222,7 +231,7 @@ async function harness(
 }
 
 describe('FeishuChannelSession COT — the anchor is the visible inbound message', () => {
-  it('opens the card under the message that produced the turn, and closes it on the native end', async () => {
+  it('opens normally without an unknown-outcome line, and closes on the native end', async () => {
     const { session, cot, port } = await harness('chan-cot-anchor', async (
       command,
       payload,
@@ -250,13 +259,13 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
 
     expect(cot.cards[0]!.chatId).toBe('oc_dm');
     expect(cot.cards[0]!.originMessageId).toBe('om_user_1');
-    expect(cotTexts(cot.cards[0]!)).toEqual([RECEIPT]);
+    expectOpeningTexts(cot.cards[0]!, []);
 
     port.emit(assistantMessage('turn-1', 'dispatcher', 'the answer'));
     port.emit(nativeEnd('dispatcher'));
     await waitFor(() => cotRunStatus(cot.cards[0]!) !== null);
 
-    expect(cotTexts(cot.cards[0]!)).toEqual([RECEIPT, 'the answer']);
+    expectOpeningTexts(cot.cards[0]!, ['the answer']);
     expect(cotRunStatus(cot.cards[0]!)).toBe('done');
 
     port.emit(submittedEvent('turn-task', 'dispatcher', 'task-source', 'task'));
@@ -317,8 +326,8 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       'message-two',
     ]);
     expect(cot.cards.map(cotRunStatus)).toEqual(['interrupted', null]);
-    expect(cotTexts(cot.cards[0]!)).toEqual([RECEIPT, 'first answer']);
-    expect(cotTexts(cot.cards[1]!)).toEqual([RECEIPT]);
+    expectOpeningTexts(cot.cards[0]!, ['first answer']);
+    expectOpeningTexts(cot.cards[1]!, []);
 
     await session.close();
   });
@@ -363,12 +372,12 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       'message-repeat',
     ]);
     expect(cot.cards.map(cotRunStatus)).toEqual(['interrupted', null]);
-    expect(cotTexts(cot.cards[1]!)).toEqual([RECEIPT]);
+    expectOpeningTexts(cot.cards[1]!, []);
 
     port.emit(assistantMessage('turn-original', 'dispatcher', 'after repeat'));
     await waitFor(() => cotTexts(cot.cards[1]!).length === 2);
     expect(cot.cards).toHaveLength(2);
-    expect(cotTexts(cot.cards[1]!)).toEqual([RECEIPT, 'after repeat']);
+    expectOpeningTexts(cot.cards[1]!, ['after repeat']);
 
     await session.close();
   });
@@ -426,7 +435,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
     expect(cot.cards.map(cotRunStatus)).toEqual(['interrupted', null]);
     port.emit(assistantMessage('turn-fallback', 'dispatcher', 'dispatcher answered'));
     await waitFor(() => cotTexts(cot.cards[1]!).length === 2);
-    expect(cotTexts(cot.cards[1]!)).toEqual([RECEIPT, 'dispatcher answered']);
+    expectOpeningTexts(cot.cards[1]!, ['dispatcher answered']);
 
     // The TeamLeader whose route was refused cannot present anything further.
     port.emit(assistantMessage('turn-fallback', 'leader', 'never displayed'));
@@ -475,6 +484,37 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       await session.close();
     },
   );
+
+  it('keeps an ambiguous submission open with only its opening flavour', async () => {
+    const { session, cot } = await harness(
+      'chan-cot-ambiguous-result',
+      async () => ({
+        status: 'ambiguous',
+        error: { code: 'ADMISSION_UNKNOWN', message: 'fixture ambiguity' },
+      }),
+    );
+
+    const outcome = await session.submit(null, {
+      attrs: {},
+      text: 'hello',
+      reminder: '',
+      sourceId: 'message-ambiguous',
+      anchor: {
+        chatId: 'chat-dm',
+        messageId: 'message-ambiguous',
+        target: chatTarget('chat-dm', 'p2p'),
+      },
+    });
+
+    expect(outcome.status).toBe('ambiguous');
+    await waitFor(() => cot.cards.length === 1);
+    await waitFor(() => cotTexts(cot.cards[0]!).length === 1);
+    expect(cot.cards[0]!.originMessageId).toBe('message-ambiguous');
+    expect(cotRunStatus(cot.cards[0]!)).toBeNull();
+    expectOpeningTexts(cot.cards[0]!, []);
+
+    await session.close();
+  });
 
   it('keeps the optimistic anchor when an ambiguous failure proves nothing', async () => {
     const { session, cot } = await harness('chan-cot-ambiguous', async () => {
