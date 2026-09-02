@@ -984,8 +984,10 @@ pre-publication half of that divergence "stays invisible exactly as it is today"
 and that changing it "needs its own ruling". Applying rulings 4 and 8 uniformly
 moved the publish above the liveness check, so it no longer does: a push-back
 whose recipient's runtime is gone now shows the delivered body on the
-recipient's card followed by `turn.ended(interrupted, "the agent runtime is not
-running")`.
+recipient's card followed by `turn.ended(failed, "the agent runtime is not
+running")`. The window is the one `prepareCompletion` does not already refuse:
+a recipient already known to be stopped is answered `unsupported` at
+`index.ts:345-349` without publishing anything.
 
 Kept, because the alternative is a special case — "every admitted input is
 announced, *except* a push-back to a dead recipient" — and because a lost

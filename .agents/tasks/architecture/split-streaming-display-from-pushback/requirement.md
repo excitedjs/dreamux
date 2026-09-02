@@ -275,8 +275,13 @@ Answered on a question card after the implementation landed. The first two are
 recorded in `technical-design/final.md` § As built, items 2 and 3.
 
 - **A dropped completion push-back stays visible.** The operator chose 「保持可见」
-  over reverting it. As built, a push-back whose recipient's runtime is gone
-  shows the delivered body on the recipient's card followed by a failed end.
+  over reverting it. As built, a push-back shows the delivered body on the
+  recipient's card followed by a failed end **when the recipient's runtime
+  disappears between prepare and submit** — the narrow window `prepareCompletion`
+  does not already refuse. It was put to the operator as "a push-back to an agent
+  whose runtime is gone", which is broader than what was built: that case is
+  refused at `index.ts:345-349` before anything is published, and stays silent.
+  The ruling is recorded against the narrower behaviour it actually names.
   The design document had said this half "stays invisible exactly as it is
   today" and that changing it "needs its own ruling"; this is that ruling. What
   it buys is the diagnosis motive behind ruling 8 applied to the one case where

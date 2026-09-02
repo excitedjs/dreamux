@@ -96,9 +96,11 @@ the same change that touches it.
   input appears with the text that was submitted, before any runtime has
   accepted it, so a submission that fails is visible together with what failed.
   Anything no runtime accepted — a stopped, skipped, ambiguous, or failed
-  admission, including a completion push-back to an agent whose runtime is
-  already gone — ends its own display as a failure, carrying the reason, instead
-  of leaving a surface open forever. On a Feishu COT card that is the platform's
+  admission — ends its own display as a failure, carrying the reason, instead of
+  leaving a surface open forever. That includes a completion push-back whose
+  recipient's runtime disappears between the moment it is prepared and the
+  moment it is submitted; a push-back to a recipient already known to be stopped
+  is refused before anything is published and stays as silent as it was. On a Feishu COT card that is the platform's
   own 任务失败 terminal. A dropped push-back used to be silent.
   (Requirement: operator rulings 4, 8 and 9 in
   [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).)
