@@ -95,7 +95,7 @@
 
 ## Open questions
 
-A review found two defects after the split shipped. The operator deferred both:
+A review raised two things after the split shipped. The operator deferred both:
 
 > 「1和2都很窄，加日志，然后写进task 记录的open-question，本次不修。遇到问题了我再拉task和日志去考虑怎么修。」
 
@@ -103,52 +103,64 @@ and then reversed for the first, once it turned out to be small:
 
 > 「第一个这个判空去掉就好了吧？」
 
-That one is therefore fixed, not open: a codex native turn no submission ever
-bound displayed its activity and had its end refused, so it opened a card
-nothing could close. Its end now displays like its activity already did, because
-a card belongs to no turn — see `final.md` § As built, departure 7, for the
-requirement rules that authorise it and the three guards it distinguishes.
+That one was a real defect and is fixed, not open: a codex native turn no
+submission ever bound displayed its activity and had its end refused, so it
+opened a card nothing could close. Its end now displays like its activity
+already did, because a card belongs to no turn — see `final.md` § As built,
+departure 7, for the requirement rules that authorise it and the three guards it
+distinguishes.
 
-The one below stands, instrumented instead of fixed. It is written for whoever
-arrives with a wrongly-ended card and no memory of this task. Its log is pino
-JSON in `~/.dreamux/logs/dreamux-server.log` under `"name":"server"` — every
-dispatcher service shares that one logger, so there is no `dispatcher_id` on the
-line; the agent is named by the line's own `teammate` field.
+The second is not a defect at all; the operator ruled the behaviour intended,
+and it stays here as an observation with the log the operator asked for. It is written for
+whoever meets a 任务失败 card and wants to know whether something is broken. That
+log is pino JSON in `~/.dreamux/logs/dreamux-server.log` under `"name":"server"`
+— every dispatcher service shares that one logger, so there is no
+`dispatcher_id` on the line; the agent is named by the line's own `teammate`
+field.
 
-### Core's synthesized failed end lands on a live card
+### A failed end closes the open card, and a live turn then opens a second one
 
-**Scenario.** `classifySteerFailure`
-(`packages/agent-runtime/claude-code/src/admission-classify.ts:12-23`) falls
-through to `{ status: 'ambiguous' }` for any unclassified error that is not a
-stop (`:23`), so an ordinary steer
-hiccup makes Core end the agent's display as failed
-(`teammate-service/index.ts:272-273`) while that turn keeps running. The
-operator sees an error and a closed card, and then a second card that finishes
-normally. Before this task a failed admission published nothing, so it could not
-reach a live card at all.
+> 「不,那几个情况就把卡置成失败。说的就是唯一开着的卡,不是当前输入开的那张新卡。所有的卡都是当前teammate 自己的,没有别人的。这个先加日志吧。」
 
-**Why it is possible.** `projectFailedEnd`
-(`teammate-service/index.ts:322-341`) knows the entity, not what else is running
-on it. The design's *Known risks* already names the class — "A stale native turn
-can close a fresh card"; the concrete steer path is what is new. Reopening the
-card is not a repair here, the way it is for an end that merely arrived early:
-what the operator already saw is 任务失败 and an error line for a turn that was
-running fine, and no later card retracts that.
+**What is displayed.** Every card belongs to this TeamMate, one at a time, and
+ruling 4 is about that one open card — not about a card the failing input
+opened. When an input reaches no runtime, Core ends the open card as failed
+(`teammate-service/index.ts:272-273`) and says why. If a turn happens to still
+be running, it keeps producing afterwards, and rule 8 of the COT product model
+opens a **new** card at the same anchor for the rest of it. So the reader sees a
+任务失败 card followed by a card that finishes normally. That is the display
+model working as specified, and this note exists so nobody later reads it as a
+bug and "fixes" it.
+
+**Two paths that reach it.**
+
+- An unclassified steer error. `classifySteerFailure`
+  (`packages/agent-runtime/claude-code/src/admission-classify.ts:12-23`) falls
+  through to `{ status: 'ambiguous' }` for any error that is not a stop (`:23`),
+  and an `ambiguous` admission ends the display as failed carrying the runtime's
+  own message.
+- A close that overtakes an accepted input. An inbound that passed
+  `enterOrdinaryMutation` and then met `phase = 'closing'` — set synchronously
+  at `index.ts:554` — reaches a runtime that is stopping or already gone, so the
+  admission is `stopped` and the card ends failed with "the agent runtime is not
+  running" (`turn-recording.ts:239`). That input genuinely never reached a
+  runtime, so the failed end is exactly right.
 
 **What to grep.** `ending the agent display as failed for an input no runtime
 accepted`, and read the `unsettled_turn` field:
 
-- `unsettled_turn: true` is the defect. A non-`submitted` admission never
+- `unsettled_turn: false` — nothing else was running. The card closes and stays
+  closed until the next input opens one.
+- `unsettled_turn: true` — a submission's turn was still live, so the second
+  card is expected rather than surprising. A non-`submitted` admission never
   retains a turn of its own (`turn-coordinator.ts:56-57` returns
-  `admissionWithoutTurn` without calling `attachSubmission`), so a `true` here
-  means *another* submission's turn was still live and this end closed its card.
-- `unsettled_turn: false` is the ordinary case: nothing else was running, and
-  ending the agent's display is exactly right.
+  `admissionWithoutTurn` without calling `attachSubmission`), so the flag is
+  only ever about work that was already running.
 
 The flag counts Dreamux-bound turns only, so a codex native turn no submission
 bound reads `false`. The `reason` field cannot separate `failed` from
 `ambiguous` — both carry the runtime's error message — which is why the flag,
-not the status, is the discriminator.
+not the status, is what says which shape to expect.
 
 ## Development approval
 

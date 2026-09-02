@@ -320,10 +320,10 @@ export class TeammateService {
   }
 
   private projectFailedEnd(reason: string): void {
-    // `unsettled_turn` is the whole diagnosis when this end lands on a card the
-    // operator is watching: a non-`submitted` admission never retains a turn of
-    // its own, so a `true` here means another submission's turn is still live
-    // and this end closed *its* card.
+    // Every card is this TeamMate's, one at a time, and this end closes the one
+    // that is open. `unsettled_turn` says which shape follows: a non-`submitted`
+    // admission never retains a turn of its own, so `true` means work was
+    // already running and will open a further card for the rest of itself.
     this.deps.log.warn(
       {
         teammate: this.name,

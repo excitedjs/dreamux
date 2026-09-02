@@ -934,12 +934,15 @@ early buffer, the old entry points, the old kinds and the `EntityTurn` fields.
   which is what rule 8 says a native end does. Not introduced here —
   `teammate.native_turn.ended` is already actor-scoped and carries no turn id —
   but the actor-keyed shape makes it easier to hit and it should be tested. The
-  Core-emitted `turn.ended` inherits the same property: a failed submission
-  ends *the actor's* card, which is the right card whenever the failure is why
-  nothing is running, and the wrong one if another turn is live. The concrete
-  path that reaches it — an `ambiguous` steer classification — is the task
-  record's **Open questions**; the `unsettled_turn` field on the log line there
-  is the discriminator.
+  Core-emitted `turn.ended` inherits the same property — a failed submission
+  ends *the actor's* card — and the operator ruled that this is the intent, not
+  a hazard:
+  「不,那几个情况就把卡置成失败。说的就是唯一开着的卡,不是当前输入开的那张新卡。所有的卡都是当前teammate 自己的,没有别人的。」
+  What follows from it is display, not damage: a turn that is still running
+  keeps producing after that failed end, and rule 8 opens a new card at the same
+  anchor for the rest of it. The paths that reach it, and the `unsettled_turn`
+  field that says which shape to expect, are in the task record's **Open
+  questions**.
 - **`teammate.state` is a published surface with no in-repo reader.** An
   out-of-tree Channel provider could consume it. flowx ports these PRs and is
   the other stakeholder.
