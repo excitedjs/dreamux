@@ -96,11 +96,11 @@ export class TurnManager {
     this.collector = null;
     while (this.pendingAdmissions.size > 0) await Promise.allSettled([...this.pendingAdmissions]);
     this.drainTerminalOrder();
-    for (const record of this.nativeTurns.values()) {
+    for (const [turnId, record] of this.nativeTurns) {
       if (record.completion !== null) continue;
       for (const member of record.members) member.settle({ kind: 'stopped' });
       // A native turn torn down before its own terminal still ended.
-      this.endNativeTurn(record, 'interrupted', null);
+      this.endNativeTurn(turnId, record, 'interrupted', null);
     }
     for (const [turnId, record] of this.nativeTurns) {
       if (record.completion === null) this.nativeTurns.delete(turnId);
@@ -216,7 +216,11 @@ export class TurnManager {
         this.nativeTurns.delete(turnId);
         this.unboundObservedTurnIds.delete(turnId);
         this.collector?.releaseTurn(turnId);
-        this.log('warn', `dropping native terminal ${turnId} without an accepted submission`);
+        this.log(
+          'warn',
+          `dropping native terminal ${turnId} without an accepted submission; ` +
+          `its displayed activity leaves a card open`,
+        );
         continue;
       }
       this.terminalOrder.shift();
@@ -240,7 +244,7 @@ export class TurnManager {
         for (const member of record.members) member.settle({ kind: 'completion', completion });
         record.members.length = 0;
         record.terminal = null;
-        this.endNativeTurn(record, 'failed', completion.error.message);
+        this.endNativeTurn(turnId, record, 'failed', completion.error.message);
         this.releaseRecordIfReady(turnId, record);
         return;
       }
@@ -258,6 +262,7 @@ export class TurnManager {
     // `turn/completed` is codex's one native terminal, so this is where the
     // native turn ends whatever it folded.
     this.endNativeTurn(
+      turnId,
       record,
       completion.status === 'completed' ? 'completed' : 'failed',
       completion.status === 'completed' ? null : completion.error.message,
@@ -278,7 +283,7 @@ export class TurnManager {
   private failRecord(turnId: string, record: NativeTurnRecord, error: Error): void {
     for (const member of record.members) member.settle({ kind: 'failed', error });
     record.members.length = 0;
-    this.endNativeTurn(record, 'failed', error.message);
+    this.endNativeTurn(turnId, record, 'failed', error.message);
     this.nativeTurns.delete(turnId);
     this.unboundObservedTurnIds.delete(turnId);
     this.collector?.releaseTurn(turnId);
@@ -344,11 +349,22 @@ export class TurnManager {
    * codex's own error text when the end has one.
    */
   private endNativeTurn(
+    turnId: string,
     record: NativeTurnRecord,
     status: 'completed' | 'failed' | 'interrupted',
     reason: string | null,
   ): void {
-    if (record.nativeTurnEnded || record.representative === null) return;
+    if (record.nativeTurnEnded) return;
+    if (record.representative === null) {
+      // Says out loud what the refusal costs: this turn's items already
+      // displayed, so a card is open with nothing left to close it.
+      this.log(
+        'warn',
+        `dropping native turn end ${turnId} without an accepted submission ` +
+        `(${status}); its displayed activity leaves a card open`,
+      );
+      return;
+    }
     record.nativeTurnEnded = true;
     this.emitActivity({ kind: 'turn.ended', occurredAt: Date.now(), status, reason });
   }

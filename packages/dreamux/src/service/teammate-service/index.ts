@@ -320,6 +320,18 @@ export class TeammateService {
   }
 
   private projectFailedEnd(reason: string): void {
+    // `unsettled_turn` is the whole diagnosis when this end lands on a card the
+    // operator is watching: a non-`submitted` admission never retains a turn of
+    // its own, so a `true` here means another submission's turn is still live
+    // and this end closed *its* card.
+    this.deps.log.warn(
+      {
+        teammate: this.name,
+        unsettled_turn: this.turns.hasUnsettledCurrent(),
+        reason,
+      },
+      'ending the agent display as failed for an input no runtime accepted',
+    );
     this.deps.conversationProjection?.projectActivity(this.projectedAgent(), {
       kind: 'turn.ended',
       occurredAt: Date.now(),

@@ -934,7 +934,10 @@ early buffer, the old entry points, the old kinds and the `EntityTurn` fields.
   but the actor-keyed shape makes it easier to hit and it should be tested. The
   Core-emitted `turn.ended` inherits the same property: a failed submission
   ends *the actor's* card, which is the right card whenever the failure is why
-  nothing is running, and the wrong one if another turn is live.
+  nothing is running, and the wrong one if another turn is live. The concrete
+  path that reaches it — an `ambiguous` steer classification — is the task
+  record's **Open questions**, question 2; the `unsettled_turn` field on the
+  log line there is the discriminator.
 - **`teammate.state` is a published surface with no in-repo reader.** An
   out-of-tree Channel provider could consume it. flowx ports these PRs and is
   the other stakeholder.
@@ -1133,8 +1136,17 @@ inverted to assert the emission, with the reason in its name.
 rationale: the display is one open card per agent, so an end from a native turn
 no Dreamux submission ever bound would close a card this entity's own
 submissions opened. Activity from such a turn is additive and harmless; its end
-is not. In the one case that matters — an `ambiguous` admission — Core's own
-`turn.ended` closes the card anyway.
+is not.
+
+This originally added that "in the one case that matters — an `ambiguous`
+admission — Core's own `turn.ended` closes the card anyway." That is wrong, and
+it assumes an ordering nothing here controls: Core's end fires when the
+admission resolves, while the orphan turn's items arrive whenever codex emits
+them, which can be later. When they arrive later they open a *new* card, and
+that card's end is the one refused here — it stays open until the next inbound
+retires the anchor. The guard stands; the consolation does not. Both halves now
+log, and the scenario is recorded in the task record's **Open questions**,
+question 1, with what to grep.
 
 ### 8. `teammate.turn.settled`'s assistant text has no successor
 
