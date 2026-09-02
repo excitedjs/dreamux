@@ -238,3 +238,12 @@ Two facts to design around, both already verified:
   not to propose acting on them. It does not narrow the folded-in cleanups
   already agreed; it stops new structural work in `TeammateService` and
   `TeammateRuntimeOwner` beyond what this change needs.
+
+- **Ruled 2026-09-02, the no-wake mode is private.** The operator's words:
+  「放 submitAdmitted 吧」, answering whether it belongs on the public
+  `TeammateSubmitInput` or on the private `submitAdmitted`. So the option is
+  `submitAdmitted(input, { wake })`: `submitInput` and `submitLocked` pass wake,
+  the prepared-completion handle passes no-wake through a private fenced helper.
+  The public submit surface is unchanged, and `submitInput`'s "no
+  caller-selected mode" claim becomes true of the public surface instead of
+  false everywhere.
