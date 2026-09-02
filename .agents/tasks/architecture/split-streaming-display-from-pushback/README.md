@@ -46,8 +46,9 @@
   2. **Ruling 4's 「置成失败」 now reaches the card.** All four non-`submitted`
      admissions publish `turn.ended` with `status: 'failed'`, and a failed end
      ends the Feishu card with AG-UI's `RUN_ERROR` event, which the client
-     renders as 任务失败, carrying the reason in that event's documented
-     `message`. The earlier reading — that the wire had no failure terminal —
+     renders as 任务失败. That event carries `code` alone — two probes showed
+     its `message` is neither rendered nor required — so the reason reaches the
+     card only as the text printed before the terminal. The earlier reading — that the wire had no failure terminal —
      was wrong: it was being looked for among the values of
      `RUN_FINISHED.status`, where AG-UI does not put it. Settled by the
      2026-09-02 live probe and then by the reference the operator pointed at,

@@ -670,11 +670,13 @@ takes exactly `done | paused | interrupted` — a `RUN_FINISHED` carrying `faile
 was probed live and renders as *completed*, identically to a deliberately
 nonsense status, because the client ignores a status it does not know rather
 than rejecting the batch. `paused` is documented but never produced here: a card
-is open or ended, never held. `RUN_ERROR` carries the documented
-`{ message, code }` and nothing else, `message` being the end's own reason
-bounded to fit one event and `code` a fixed category. That reason is *also*
-printed on the card as ordinary text just before the terminal, which is what
-makes it visible — whether the client renders `RUN_ERROR.message` is unknown.
+is open or ended, never held. `RUN_ERROR` carries `{ code }` alone: the
+reference documents a `message` beside it, but a card finished with one shows
+the client's own fixed failure line and never the supplied string, and a card
+finished with `code` alone renders identically, so the field is neither
+rendered nor required. The end's reason reaches the operator only as ordinary
+text printed on the card just before the terminal — that print is load-bearing,
+not a second copy.
 
 The reference for all of this is **COT Message Brief** on the enterprise docs
 host, `open.larkoffice.com`

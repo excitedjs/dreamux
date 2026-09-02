@@ -13,7 +13,6 @@ import {
   normalizedDetail,
   toolPresentation,
   truncateEscaped,
-  truncateUtf8,
   TOOL_ARGUMENTS_SOFT_MAX_BYTES,
   TRUNCATION_MARKER,
   type CotToolCallActivity,
@@ -26,7 +25,6 @@ const TEXT_MESSAGE_EVENT_GROUP_MAX_BYTES = 224 * 1_024;
 const TOOL_RESULT_SOFT_MAX_BYTES = 1_024;
 const TOOL_RESULT_CONTENT_RESERVE_BYTES = 256;
 const SHORT_TEXT_MAX_BYTES = 120;
-const RUN_ERROR_MESSAGE_MAX_BYTES = 512;
 const COT_EVENT_ENCODING_RESERVE_BYTES = 128;
 const COT_REQUEST_ENCODING_RESERVE_BYTES = 512;
 
@@ -43,16 +41,6 @@ export type FeishuCotTerminal = Extract<
   TeammateActivity,
   { kind: 'turn.ended' }
 >['status'];
-
-/**
- * The terminal a card is waiting to send, held until its outbox drains. Both
- * fields come straight off the runtime's `turn.ended`; only the failure
- * terminal has a wire field for the reason, so the other two carry `null`.
- */
-export interface FeishuCotTerminalIntent {
-  readonly terminal: FeishuCotTerminal;
-  readonly reason: string | null;
-}
 
 export function runStartedEvent(presentationId: string): FeishuCotEventInput {
   return checkedEvent({
@@ -71,18 +59,20 @@ export function runStartedEvent(presentationId: string): FeishuCotEventInput {
  * only `RUN_ERROR` renders 任务失败. The platform accepted every one of them,
  * so only the rendered card is evidence, never the response code.
  *
- * `RUN_ERROR` sends the documented `{ message, code }` and nothing else: the
- * probe added `threadId`/`runId` and the platform tolerated them, but they are
- * not in the reference. `message` is the failing turn's own reason, bounded
- * here because Core bounds it at 100_000 characters while one event's content
- * is capped at 4 KiB; `code` is a stable category, not the reason again.
+ * `RUN_ERROR` sends `{ code }` alone. The reference documents a `message`
+ * beside it, but two probes show the client neither renders it — an expanded
+ * card shows the text appended before the terminal and then the client's own
+ * fixed failure line, never the supplied string — nor requires it: a terminal
+ * carrying only `code` renders identically. The failure reason reaches the
+ * operator as that appended text message, which is the only thing that puts it
+ * on the card.
  */
 export function runTerminalEvent(
   presentationId: string,
-  intent: FeishuCotTerminalIntent,
+  terminal: FeishuCotTerminal,
 ): FeishuCotEventInput {
   const run = { threadId: presentationId, runId: presentationId };
-  switch (intent.terminal) {
+  switch (terminal) {
     case 'completed':
       return checkedEvent({
         eventType: 'RUN_FINISHED',
@@ -96,12 +86,7 @@ export function runTerminalEvent(
     case 'failed':
       return checkedEvent({
         eventType: 'RUN_ERROR',
-        content: {
-          message: intent.reason === null
-            ? '任务失败'
-            : truncateUtf8(intent.reason, RUN_ERROR_MESSAGE_MAX_BYTES),
-          code: 'RUN_FAILED',
-        },
+        content: { code: 'RUN_FAILED' },
       });
   }
 }

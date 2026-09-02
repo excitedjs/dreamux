@@ -1041,7 +1041,8 @@ The reference then explains the rendering and fixes the shape:
   exactly as it did for the nonsense status.
 - `RUN_ERROR` is event 3, "Run failed", and its documented content is
   `{ message, code }` and nothing else — no `threadId`, no `runId`. The probe
-  sent both and the platform tolerated them; the code sends the documented shape.
+  sent the run ids anyway and the platform tolerated them; the code sends
+  neither. It sends `code` alone, for the reason the last two probes below give.
 - The event vocabulary is a numbered enum (`1 RUN_STARTED`, `2 RUN_FINISHED`,
   `3 RUN_ERROR`, `10-13 TEXT_MESSAGE_*`, `20-24 TOOL_CALL_*`, …) and both the
   name and the number are accepted in `event_type`. This layer sends names.
@@ -1055,17 +1056,15 @@ The reference then explains the rendering and fixes the shape:
 
 As built, the wire terminal is three-valued across two event types.
 `FeishuCotRunStatus` is gone; the presentation's terminal intent is
-`FeishuCotTerminalIntent`, which is `{ terminal, reason }` — the two fields of
-the neutral `turn.ended`, with `FeishuCotTerminal` being that fact's own status
+`FeishuCotTerminal`, which is the neutral `turn.ended` status itself
 (`Extract<TeammateActivity, { kind: 'turn.ended' }>['status']`). One vocabulary
-now runs from the runtime to the card: `finishCard` passes `end.status` and
-`end.reason` through with no mapping, and the lifecycle paths that end a card
-with no runtime saying so — a retired anchor, a session close — pass
-`('interrupted', null)`, because a retired anchor has no reason and is not a
-failure.
+now runs from the runtime to the card: `finishCard` passes `end.status` through
+with no mapping, and the lifecycle paths that end a card with no runtime saying
+so — a retired anchor, a session close — keep passing `'interrupted'`, because a
+retired anchor is not a failure.
 
-`runFinishedEvent` is replaced by one `runTerminalEvent(presentationId, intent)`
-with an exhaustive switch: `completed` → `RUN_FINISHED done`,
+`runFinishedEvent` is replaced by one `runTerminalEvent(presentationId,
+terminal)` with an exhaustive switch: `completed` → `RUN_FINISHED done`,
 `interrupted` → `RUN_FINISHED interrupted`, `failed` → `RUN_ERROR`. Exporting a
 `runErrorEvent` beside the old function was the alternative and was rejected: it
 would put "a failure is a different event type" — AG-UI spelling, which is this
@@ -1073,45 +1072,35 @@ module's whole job — into the adapter's flush loop. A fourth `turn.ended` stat
 would now fail to compile at that switch rather than silently render as
 interrupted.
 
-`RUN_ERROR` carries the documented `{ message, code }`, and `message` is the
-failing turn's own reason. That is where the reference puts a reason, so the
-terminal intent is no longer a bare status: `terminalIntent` is
-`{ terminal, reason }`, which is exactly the two fields of the neutral
-`turn.ended`, and `detach` takes both at all four call sites — the three
-lifecycle paths pass `('interrupted', null)` because a retired anchor has no
-reason and is not a failure. A native end that fails with no reason still needs
-a `message`, so the terminal falls back to 任务失败; `code` is the fixed
-category `RUN_FAILED`, never the reason again.
+`RUN_ERROR` sends `{ code: 'RUN_FAILED' }` and nothing else. The reference
+documents a `message` beside it, and the first implementation put the failing
+turn's own reason there; two further probes then settled that the field is
+inert. A card finished with `message: "the agent runtime is not running"`,
+expanded in the client, shows a 任务失败 title, the text message appended before
+the terminal, and then the client's own fixed 任务失败 line — **the supplied
+message appears nowhere**. A second card finished with content that was only
+`{ code: 'RUN_FAILED' }`, no `message` at all, renders identically, so the field
+is neither rendered nor required. The operator ruled:
+「这里我感觉不传都行，反正也不展示」.
 
-The reason is *also* still printed as a text message just above the terminal.
-Whether the client renders `RUN_ERROR.message` is unknown — the probe only shows
-that the card reads 任务失败 — so printing it is what actually satisfies ruling
-9 「错误信息给我打印在卡片上」, and the terminal's copy is what the reference
-asks for. Wherever both render, an operator sees the same sentence twice; that
-is cheaper than a terminal whose only documented content field is left blank.
+Two things follow, and both are as built:
 
-The reason is bounded on the way in: Core bounds it at 100_000 characters, an
-order of magnitude over one COT event's 4 KiB content cap, and a terminal event
-cannot be chunked the way `TEXT_MESSAGE_CONTENT` is. `truncateUtf8` at 512 bytes
-keeps `checkedEvent` from throwing mid-flush and leaving a card that never ends;
-a test drives a 100_000-character reason through the whole adapter to pin it.
+- **The text message printed before the terminal is load-bearing.** It is the
+  only thing that puts ruling 9's error text on a card, so `finishCard` keeps
+  printing it from `end.reason`. It is not a second copy of anything.
+- **Everything that existed only to carry the reason to the wire is deleted.**
+  The terminal intent goes back to a bare `FeishuCotTerminal` and `detach` back
+  to three arguments; `RUN_ERROR_MESSAGE_MAX_BYTES`, the 512-byte truncation at
+  the terminal builder, the 任务失败 fallback for a reasonless end, and the
+  100_000-character test that pinned the bound are all gone. That test's named
+  scenario — a long reason overflowing one event's 4 KiB content — existed only
+  because the reason was sent there; with the field gone the scenario is gone,
+  and a test with no scenario is not coverage. `truncateUtf8` had no caller left
+  outside `feishu-cot-presentation.ts` and is private there again.
 
-
-**Probed again after implementation: the client does not render
-`RUN_ERROR.message`.** A card finished with `RUN_ERROR` carrying
-`message: "the agent runtime is not running"` shows, fully expanded, the
-appended text message and then the client's own fixed 任务失败 line, under a
-任务失败 title. The supplied message appears nowhere. Two consequences:
-
-- **The text message printed before the terminal is load-bearing, not
-  belt-and-braces.** It is the only thing that puts ruling 9's error text on the
-  card. `finishCard` must keep printing it.
-- **Carrying the reason in `message` buys nothing observable**, and the byte
-  bound plus its 100_000-character test exist only to protect that field. The
-  scenario they defend against — a long reason overflowing one event's 4 KiB
-  content — exists only because the reason is sent. Sending a stable short
-  message instead removes the field's only failure mode along with the code that
-  guards it.
+Only one reader of the intent's `reason` ever existed — the terminal builder —
+which is why removing the field costs nothing: `finishCard` prints from
+`end.reason` directly, before it calls `detach`.
 
 ### 4. `TeammateRuntimeOwner`'s upward channel shrinks instead of growing
 

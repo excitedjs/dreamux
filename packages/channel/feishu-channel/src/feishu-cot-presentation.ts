@@ -300,7 +300,7 @@ export function escapedBytes(value: string): number {
   return Buffer.byteLength(JSON.stringify(value).slice(1, -1), 'utf8');
 }
 
-export function truncateUtf8(value: string, maxBytes: number): string {
+function truncateUtf8(value: string, maxBytes: number): string {
   if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value;
   const markerBytes = Buffer.byteLength(TRUNCATION_MARKER, 'utf8');
   const prefixBudget = Math.max(0, maxBytes - markerBytes);

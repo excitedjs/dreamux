@@ -301,7 +301,11 @@ recorded in `technical-design/final.md` § As built, items 2 and 3.
   the reference itself — **COT Message Brief**, on the enterprise docs host
   `open.larkoffice.com` — which confirms the probe and fixes the field shape the
   probe could not show: `RUN_FINISHED.status` is `done | paused | interrupted`,
-  and `RUN_ERROR` carries `{ message, code }`. Full record in
+  and `RUN_ERROR`'s content is `{ message, code }`. Two further probes then
+  settled `message` itself — the client renders neither it nor anything in its
+  place, and a terminal carrying only `code` renders identically — so the card
+  sends `code` alone and the reason reaches the operator as the text printed
+  before the terminal; the operator ruled 「这里我感觉不传都行，反正也不展示」. Full record in
   `technical-design/final.md` § As built, item 3.
 
 - **`rush typecheck:tests` joins the green line.** The operator chose

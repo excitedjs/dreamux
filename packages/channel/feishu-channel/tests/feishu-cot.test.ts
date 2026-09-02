@@ -38,7 +38,6 @@ import {
   FeishuCotAdapter,
   FEISHU_COT_OPENING_LABELS,
 } from '../src/feishu-cot-adapter.js';
-import { FEISHU_COT_EVENT_CONTENT_MAX_BYTES } from '../src/feishu-cot-events.js';
 import { FeishuCotSessionSeam } from '../src/feishu-cot-session.js';
 import type { VisibleMessageAnchor } from '../src/feishu-cot-state.js';
 import { chatTarget, topicTarget } from '../src/routing/target.js';
@@ -419,12 +418,9 @@ describe.each([LEADER, DISPATCHER])(
       expect(cotTerminal(card)).toBe('error');
       expect(card.events.at(-1)?.eventType).toBe('RUN_ERROR');
       expect(cotTerminalCount(card)).toBe(1);
-      // The documented content is `{ message, code }` and nothing else, so a
-      // terminal that carried the run ids as well would be inventing fields.
-      expect(Object.keys(card.events.at(-1)?.content ?? {}).sort())
-        .toEqual(['code', 'message']);
-      // A native end with no reason still needs a message: it is required.
-      expect(card.events.at(-1)?.content['message']).toBe('任务失败');
+      // `code` alone: the client renders its own failure line and never the
+      // supplied `message`, so nothing is sent in it.
+      expect(card.events.at(-1)?.content).toEqual({ code: 'RUN_FAILED' });
 
       // Already ended: the session close that follows adds no second terminal.
       await adapter.close();
@@ -468,24 +464,6 @@ describe.each([LEADER, DISPATCHER])(
       await adapter.close();
     });
 
-    it('bounds a long failure reason so the terminal still fits one event', async () => {
-      const { adapter, cot } = harness();
-      submitInbound(adapter, recipient, 'turn-1', anchorAt('oc_home', 'om_1'));
-      // Core bounds a reason at 100_000 characters, an order of magnitude over
-      // what one COT event's content may carry, so the terminal bounds it again
-      // or the projector throws mid-flush and the card never ends.
-      adapter.onActivity(nativeEnd(recipient, 'failed', '长'.repeat(100_000)));
-      await settle();
-
-      const card = cot.cards[0]!;
-      expect(cotTerminal(card)).toBe('error');
-      expect(
-        Buffer.byteLength(JSON.stringify(card.events.at(-1)?.content), 'utf8'),
-      ).toBeLessThanOrEqual(FEISHU_COT_EVENT_CONTENT_MAX_BYTES);
-
-      await adapter.close();
-    });
-
     it('prints an end reason on the card before ending it as a failure', async () => {
       const { adapter, cot } = harness();
       submitInbound(adapter, recipient, 'turn-1', anchorAt('oc_home', 'om_1'));
@@ -498,12 +476,10 @@ describe.each([LEADER, DISPATCHER])(
 
       const card = cot.cards[0]!;
       expect(cotTerminal(card)).toBe('error');
+      // Printing is the only thing that puts the reason on the card: the
+      // terminal itself carries none, and the client renders one of its own.
       expectOpeningTexts(card, ['the agent runtime is not running']);
-      // The reason rides the terminal too, in the field the reference gives it.
-      // Printing it is what makes it visible; whether the client renders this
-      // field is unknown, so the card carries it both ways.
-      expect(card.events.at(-1)?.content['message'])
-        .toBe('the agent runtime is not running');
+      expect(card.events.at(-1)?.content).toEqual({ code: 'RUN_FAILED' });
 
       await adapter.close();
     });

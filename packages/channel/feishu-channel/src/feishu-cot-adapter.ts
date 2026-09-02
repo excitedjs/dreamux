@@ -261,9 +261,9 @@ export class FeishuCotAdapter {
    * folded whatever it folded — so it closes whatever this recipient currently
    * has open, which is exactly the one card the operator is watching. A reason
    * is printed on that card before it closes, because an operator reading a
-   * card that just stopped needs to know why. It also rides the terminal, which
-   * on a failure has a documented `message` field for it; printing it is what
-   * makes it visible, since whether the client renders that field is unknown.
+   * card that just stopped needs to know why. Printing is the only way it gets
+   * there: the failure terminal's own message field is not rendered by the
+   * client, so this text is load-bearing rather than a second copy.
    *
    * It is a terminal and never an opening activity: with no card open there is
    * nothing to finish, so the fact is ignored rather than turned into a card
@@ -285,7 +285,7 @@ export class FeishuCotAdapter {
       });
     }
     state.openCalls.clear();
-    this.detach(key, state, end.status, end.reason);
+    this.detach(key, state, end.status);
     this.reapState(key, state);
   }
 
@@ -315,7 +315,7 @@ export class FeishuCotAdapter {
       state.generation += 1;
       state.anchor = null;
       state.openCalls.clear();
-      this.detach(key, state, 'interrupted', null);
+      this.detach(key, state, 'interrupted');
     }
     if (this.pending.size > 0) {
       let drainTimer: ReturnType<typeof setTimeout> | undefined;
@@ -363,7 +363,7 @@ export class FeishuCotAdapter {
     anchor: VisibleMessageAnchor | null,
   ): void {
     state.generation += 1;
-    this.detach(key, state, 'interrupted', null);
+    this.detach(key, state, 'interrupted');
     state.anchor = anchor;
     if (anchor === null) {
       state.openCalls.clear();
@@ -372,15 +372,14 @@ export class FeishuCotAdapter {
   }
 
   /**
-   * Stop writing to this card and record how it ends. The reason is the failing
-   * turn's own; the lifecycle paths that retire a card have none, and a retired
-   * anchor is an interruption rather than a failure.
+   * Stop writing to this card and record how it ends. A card retired by a
+   * lifecycle path — a replaced anchor, a closing session — is interrupted
+   * rather than failed, because nothing about it failed.
    */
   private detach(
     key: string,
     state: CotState,
     terminal: FeishuCotTerminal,
-    reason: string | null,
   ): void {
     const presentation = state.active;
     state.active = null;
@@ -391,7 +390,7 @@ export class FeishuCotAdapter {
     ) {
       return;
     }
-    presentation.terminalIntent = { terminal, reason };
+    presentation.terminalIntent = terminal;
     if (presentation.phase === 'writing') {
       this.scheduleFlush(key, state, presentation);
     }
@@ -583,7 +582,7 @@ export class FeishuCotAdapter {
           {
             ...this.logScope(state),
             presentation_id: presentation.id,
-            terminal: presentation.terminalIntent?.terminal ?? null,
+            terminal: presentation.terminalIntent,
             dropped_events: presentation.outbox.droppedEvents,
           },
           'Feishu COT finished',
