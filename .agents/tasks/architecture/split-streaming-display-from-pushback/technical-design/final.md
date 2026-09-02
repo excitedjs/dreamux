@@ -1031,9 +1031,26 @@ run status. Two conclusions follow:
 - Nothing readable through the API distinguishes the three, so the remaining
   evidence is the rendered card, which only a human in the chat can compare.
 
-The decision is therefore a visual comparison, not an API question, and the
-cards to compare exist. If `failed` renders no differently from the nonsense
-status, it is not a recognised value and `interrupted` stays.
+The decision is therefore a visual comparison, not an API question. The
+operator made it, reading the three cards: `failed` rendered **已完成**
+(completed), `interrupted` rendered **已中断**, and the nonsense status
+rendered **已完成**.
+
+**Settled: `interrupted` stays, and the reason is now stronger than the one
+this section originally gave.** `failed` is not a value the platform
+recognises — it is indistinguishable from nonsense, and both fall back to
+*completed*. Sending it would make a submission that never reached a runtime
+claim on the card that it finished normally, which is worse than the
+imprecision of `interrupted`. `FeishuCotRunStatus` stays `'done' |
+'interrupted'`, and the neutral fact keeps `status: 'failed'` because that is
+what ruling 4 says and Core is not the layer that lost the distinction.
+
+Still open: whether a recognised failure terminal exists under a different
+name. `message_cot` is absent from every public Feishu doc — the `llms.txt`
+index, the messaging, AI, aily, card, bot and MCP module docs, and web search
+— so the vocabulary cannot be read, only probed. The AG-UI standard puts the
+failure terminal in a separate `RUN_ERROR` event rather than a status value,
+which is the next candidate.
 
 ### 4. `TeammateRuntimeOwner`'s upward channel shrinks instead of growing
 
