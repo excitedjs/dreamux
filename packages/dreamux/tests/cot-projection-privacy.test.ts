@@ -213,7 +213,7 @@ describe('conversation projection: secret redaction', () => {
   });
 
   it('treats a trailing period as prose punctuation for home and workspace paths', () => {
-    const home = '/data00/home/dyzhu';
+    const home = '/home/me';
     const cwd = `${home}/work/repo`;
     expect(
       redactText(`see ${home}. edit ${cwd}/a.ts.`, cwd, [home]).value,
@@ -221,7 +221,7 @@ describe('conversation projection: secret redaction', () => {
   });
 
   it('distinguishes dot-suffixed home siblings from workspace-adjacent siblings', () => {
-    const home = '/data00/home/dyzhu';
+    const home = '/home/me';
     const cwd = `${home}/work/repo`;
     const value = [
       `${home}.bak/notes.md`,
@@ -238,7 +238,7 @@ describe('conversation projection: secret redaction', () => {
   });
 
   it('renames workspace-adjacent siblings through the containing home prefix', () => {
-    const home = '/data00/home/dyzhu';
+    const home = '/home/me';
     const cwd = `${home}/work/repo`;
     expect(
       redactText(`${cwd}.git/config ${cwd}-old/x`, cwd, [home]).value,
@@ -246,7 +246,7 @@ describe('conversation projection: secret redaction', () => {
   });
 
   it('does not treat a doubled filesystem separator as a URL scheme boundary', () => {
-    const home = '/data00/home/dyzhu';
+    const home = '/home/me';
     const cwd = `${home}/work/repo`;
     const value = `/mnt/backup/${home}/x /mnt/backup/${cwd}/x`;
     expect(redactText(value, cwd, [home]).value).toBe(value);
