@@ -19,7 +19,10 @@
   — input semantics, the 2026-09-02 live probe, the per-input identities that
   exist at the provider boundary, and what the official documentation does and
   does not guarantee.
-- Final solution: Not created.
+- Final solution:
+  [technical-design/final.md](/.agents/tasks/architecture/split-streaming-display-from-pushback/technical-design/final.md)
+  — proposed, not approved. Carries the two flow diagrams (push-back, and COT
+  rendering) and the change inventory.
 - Solution review Issue: Not created.
 - Blockers: None. The requirement states three questions to answer before a
   solution is proposed; answering them is the next work, not a blocker.
