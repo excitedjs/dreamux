@@ -5,9 +5,11 @@ import type {
 } from '@excitedjs/dreamux-types';
 import type { FeishuCotClient } from '@excitedjs/feishu-transport';
 
-import { FeishuCotAdapter } from './feishu-cot-adapter.js';
+import {
+  FeishuCotAdapter,
+  type FeishuCotInboundSubmission,
+} from './feishu-cot-adapter.js';
 import { cotErrorCategory } from './feishu-cot-diagnostics.js';
-import { FeishuSubmittedTurns } from './feishu-inbound-anchor.js';
 import type { VisibleMessageAnchor } from './feishu-cot-state.js';
 import type { FeishuTarget } from './routing/target.js';
 
@@ -22,8 +24,6 @@ export class FeishuCotSessionSeam {
   private adapter: FeishuCotAdapter | undefined;
   private isCurrent: (() => boolean) | undefined;
   private readonly context: FeishuCotSessionContext;
-
-  private readonly submitted = new FeishuSubmittedTurns();
 
   constructor(private readonly opts: {
     readonly dispatcherId: string;
@@ -54,9 +54,9 @@ export class FeishuCotSessionSeam {
   /**
    * One subscription, demultiplexed here.
    *
-   * Every submitted turn is recorded before it is presented, whoever submitted
-   * it: the recording is a key-value fact, not a presentation decision, and
-   * only a session holding the matching `turn_id` can turn it into one.
+   * A submitted fact echoes the caller-owned id. If this session still has
+   * that id in flight, the adapter remembers the exact turn so the immediately
+   * following user body is hidden once; it does not move the anchor.
    *
    * `teammate.turn.settled` is deliberately absent. It is a per-logical-
    * submission lifecycle fact, and a provider folds any number of submissions
@@ -71,7 +71,7 @@ export class FeishuCotSessionSeam {
     this.guard('listener failed; display only', () => {
       switch (event.kind) {
         case 'teammate.turn.submitted':
-          this.submitted.record(event);
+          adapter.onTurnSubmitted(event);
           return;
         case 'teammate.native_turn.ended':
           adapter.onNativeTurnEnded(event);
@@ -91,20 +91,23 @@ export class FeishuCotSessionSeam {
     });
   }
 
-  /**
-   * Bind this session's visible message to the turn its own submit created.
-   *
-   * `turnId` came back from that Command, so claiming the matching submitted
-   * event is the proof of ownership — no other session can hold it, and the
-   * event states the recipient instead of this Channel guessing at one.
-   */
-  attachInboundAnchor(turnId: string, anchor: VisibleMessageAnchor): void {
-    const event = this.submitted.claim(turnId);
-    if (event === null) return;
-    this.withAdapter(
-      'inbound anchor attach failed; display only',
-      (adapter) => adapter.onAnchoredSubmission({ event, anchor }),
-    );
+  /** Optimistically take this visible message before `team.submit` runs. */
+  beginInboundSubmission(
+    teamName: string | null,
+    anchor: VisibleMessageAnchor,
+    sourceId: string,
+  ): FeishuCotInboundSubmission | null {
+    const adapter = this.adapter;
+    const isCurrent = this.isCurrent;
+    if (adapter === undefined || isCurrent === undefined || !isCurrent()) {
+      return null;
+    }
+    try {
+      return adapter.beginInboundSubmission({ teamName, anchor, sourceId });
+    } catch (err) {
+      logCotSeamFailure(this.context, 'inbound anchor failed; display only', err);
+      return null;
+    }
   }
 
   /**
@@ -117,16 +120,11 @@ export class FeishuCotSessionSeam {
    */
   setBindingFallbackAnchor(
     teamName: string,
-    leaderName: string,
     anchor: VisibleMessageAnchor,
   ): void {
     this.withAdapter(
       'binding fallback anchor failed; notification unchanged',
-      (adapter) => adapter.setFallbackAnchorIfAbsent(
-        teamName,
-        leaderName,
-        anchor,
-      ),
+      (adapter) => adapter.setFallbackAnchorIfAbsent(teamName, anchor),
     );
   }
 
@@ -147,7 +145,6 @@ export class FeishuCotSessionSeam {
   async close(): Promise<void> {
     const adapter = this.adapter;
     this.isCurrent = undefined;
-    this.submitted.clear();
     if (adapter === undefined) return;
     this.adapter = undefined;
     try {

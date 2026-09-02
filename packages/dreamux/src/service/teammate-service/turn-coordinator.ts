@@ -36,6 +36,8 @@ export const EARLY_ACTIVITY_EVENTS_MAX = 512;
 export interface EntityTurnInput {
   /** The open provenance name the submission was rendered under. */
   source: string;
+  /** The submitting owner's id, returned only on the submitted fact. */
+  sourceId?: string;
   /** The source's original body, which is what display projections record. */
   prompt: string;
   deliverCompletion?: TurnCompletionDelivery;
@@ -204,6 +206,7 @@ export class EntityTurnCoordinator {
     const turn = new EntityTurn(
       submission,
       input.source,
+      input.sourceId ?? null,
       input.prompt,
       input.intent,
       input.submittedAt,

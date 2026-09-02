@@ -215,6 +215,7 @@ function makeTurn(
   return new EntityTurn(
     submission,
     'dispatcher',
+    null,
     'review this',
     'review',
     1,

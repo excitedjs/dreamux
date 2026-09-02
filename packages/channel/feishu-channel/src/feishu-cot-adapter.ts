@@ -4,13 +4,12 @@
  * One recipient owns one standing anchor and at most one open card. Three
  * facts move it, and nothing else does:
  *
- * - A Channel user message becomes that recipient's anchor once Core reports
- *   that it was admitted, and if a card is already open it is closed and its
- *   successor opened under the new message at once — never deferred to a
- *   settlement or a native turn end. A rejected, failed, or ambiguous admission
- *   changes nothing.
- * - Everything Core projects for that recipient is shown, once it has an
- *   anchor: assistants, tools, and every input whatever its source name.
+ * - A Channel user message becomes that recipient's anchor before Core is
+ *   invoked. If Core later proves there was no admission, that optimistic
+ *   anchor is retired; an ambiguous outcome keeps it because it proves nothing.
+ * - Everything Core projects for that recipient is shown once it has an
+ *   anchor, except the one user body this Channel already displayed as the
+ *   visible inbound message that established that anchor.
  * - The runtime's one native turn end closes the card. Logical settlement
  *   (`teammate.turn.settled`) is a per-submission lifecycle fact and closes
  *   nothing, because a provider folds any number of submissions into one turn.
@@ -50,6 +49,7 @@ import {
   type CotActivitySink,
 } from './feishu-cot-activity.js';
 import { FeishuCotIo, type FeishuCotIoHandle } from './feishu-cot-io.js';
+import { FeishuInboundCorrelations } from './feishu-inbound-anchor.js';
 import {
   admitCotOutboxEvents,
   appendCotTerminalIfFits,
@@ -83,8 +83,17 @@ export interface FeishuCotAdapterOptions {
   readonly cotClient: () => FeishuCotClient | undefined;
 }
 
+/** One optimistic anchor transition, scoped to the generation it created. */
+export interface FeishuCotInboundSubmission {
+  /** Release the caller-owned id if no submitted fact consumed it. */
+  release(): void;
+  /** Retire this anchor only if no newer inbound has replaced it. */
+  retire(): void;
+}
+
 export class FeishuCotAdapter {
   private readonly states = new Map<string, CotState>();
+  private readonly inboundCorrelations = new FeishuInboundCorrelations();
   private readonly leaderFence = new LeaderLifecycleFence();
   private readonly pending = new Set<Promise<void>>();
   private readonly controller = new AbortController();
@@ -111,6 +120,8 @@ export class FeishuCotAdapter {
         this.opts.log.debug({ ...scope, ...fields }, what);
       },
       logScope: (state) => this.logScope(state),
+      takeOwnUserBody: (key, turnId) =>
+        this.inboundCorrelations.consumeTurn(key, turnId),
     };
   }
 
@@ -126,11 +137,10 @@ export class FeishuCotAdapter {
    */
   setFallbackAnchorIfAbsent(
     teamName: string,
-    leaderName: string,
     anchor: VisibleMessageAnchor,
   ): void {
     if (this.closed) return;
-    const identity = leaderIdentity(teamName, leaderName);
+    const identity = inboundRecipient(teamName);
     if (identity === null) return;
     const prepared = prepareVisibleAnchor(anchor);
     if (prepared === null) return;
@@ -142,36 +152,61 @@ export class FeishuCotAdapter {
   }
 
   /**
-   * The Channel's own inbound message was admitted as this exact turn.
+   * Take the Channel's own anchor before invoking Core.
    *
-   * This is the whole correlation: the session recorded the visible message it
-   * was about to submit, Core answered with a `turn_id`, and the submitted
-   * event carrying that `turn_id` says who received it. Core carries no origin,
-   * no presentation id, and no anchor. Only a proven admission reaches here, so
-   * a rejected, failed, or ambiguous attempt moves no anchor and opens no card.
-   *
-   * The recipient is read from the event, including when this Channel's routing
-   * deliberately fell back to the Dispatcher.
+   * The selected recipient is already a Channel routing decision. Moving now
+   * means the submitted fact, user body, and any early activity Core publishes
+   * synchronously cannot land on the predecessor. The existing caller-owned id
+   * is retained only until the submitted fact identifies the exact turn whose
+   * already-visible user body must be hidden.
    */
-  onAnchoredSubmission(input: {
-    readonly event: TeammateTurnSubmittedEvent;
+  beginInboundSubmission(input: {
+    readonly teamName: string | null;
     readonly anchor: VisibleMessageAnchor;
-  }): void {
-    if (this.closed) return;
+    readonly sourceId: string;
+  }): FeishuCotInboundSubmission | null {
+    if (this.closed) return null;
     const anchor = prepareVisibleAnchor(input.anchor);
-    if (anchor === null) return;
-    const identity = cotRecipientOf(input.event);
-    if (identity === null) return;
+    if (anchor === null) return null;
+    const identity = inboundRecipient(input.teamName);
+    if (identity === null) return null;
     const key = cotRecipientKey(identity);
     if (
       identity.kind === 'leader' &&
       this.leaderFence.blocksAnchor(key, anchor)
     ) {
-      return;
+      return null;
     }
     const state = ensureCotState(this.states, identity);
     this.advanceAnchor(key, state, anchor);
+    const generation = state.generation;
+    const release = this.inboundCorrelations.begin(input.sourceId);
     this.openReceipt(key, state);
+    return {
+      release,
+      retire: () => {
+        release();
+        if (
+          this.closed ||
+          this.states.get(key) !== state ||
+          state.generation !== generation
+        ) {
+          return;
+        }
+        this.advanceAnchor(key, state, null);
+      },
+    };
+  }
+
+  onTurnSubmitted(event: TeammateTurnSubmittedEvent): void {
+    if (this.closed) return;
+    const identity = cotRecipientOf(event);
+    if (identity === null) return;
+    this.inboundCorrelations.submitted(
+      event.source_id,
+      cotRecipientKey(identity),
+      event.turn_id,
+    );
   }
 
   /** The one line a card opens with, so the operator sees it was received. */
@@ -263,6 +298,7 @@ export class FeishuCotAdapter {
       if (drainTimer !== undefined) clearTimeout(drainTimer);
     }
     this.controller.abort();
+    this.inboundCorrelations.clear();
     this.states.clear();
     this.leaderFence.clear();
   }
@@ -283,8 +319,9 @@ export class FeishuCotAdapter {
   /**
    * Replace this recipient's anchor, closing whatever it currently shows.
    *
-   * Whoever calls this has already earned the transition — an admission Core
-   * confirmed, or a lifecycle fence — so there is nothing left to decide here.
+   * Whoever calls this has already earned the transition — the Channel is
+   * submitting its own inbound, or a lifecycle fence is retiring it — so there
+   * is nothing left to decide here.
    * A native turn still running keeps producing into the successor card,
    * because the operator's newest message is where they are now looking; a
    * `null` anchor is the fence retiring the recipient's presentation entirely.
@@ -568,12 +605,9 @@ export class FeishuCotAdapter {
   }
 }
 
-function leaderIdentity(
-  teamName: string,
-  leaderName: string,
-): CotRecipientIdentity | null {
-  return typeof teamName === 'string' && teamName !== '' &&
-    typeof leaderName === 'string' && leaderName !== ''
-    ? { kind: 'leader', teamName, leaderName }
+function inboundRecipient(teamName: string | null): CotRecipientIdentity | null {
+  if (teamName === null) return { kind: 'dispatcher' };
+  return typeof teamName === 'string' && teamName !== ''
+    ? { kind: 'leader', teamName }
     : null;
 }

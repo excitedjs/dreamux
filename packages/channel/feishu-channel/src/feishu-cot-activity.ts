@@ -49,6 +49,8 @@ export interface CotActivitySink {
   ): void;
   debug(scope: CotLogScope, fields: Record<string, string>, what: string): void;
   logScope(state: CotState): CotLogScope;
+  /** Consume the exact turn this Channel recognized from its caller-owned id. */
+  takeOwnUserBody(key: string, turnId: string): boolean;
 }
 
 /**
@@ -114,8 +116,9 @@ export function acceptToolCallActivity(
 /**
  * One projected conversation message, whichever side wrote it.
  *
- * A user message is shown like everything else — a task's brief, a cron fire's
- * instruction, a system notice, or an assistant message.
+ * The one exception is the exact user turn this Channel just anchored from its
+ * already-visible inbound message. That body is consumed once; task, cron,
+ * system, future-producer, and other Channel turns still display normally.
  */
 export function acceptConversationMessage(
   sink: CotActivitySink,
@@ -124,6 +127,12 @@ export function acceptConversationMessage(
   event: TeammateTurnMessageEvent,
 ): void {
   if (!presentable(state)) return;
+  if (
+    event.message_role === 'user' &&
+    sink.takeOwnUserBody(key, event.turn_id)
+  ) {
+    return;
+  }
   const events = textMessageEvents({
     sourceId: event.event_id,
     role: event.message_role,

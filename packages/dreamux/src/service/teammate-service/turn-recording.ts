@@ -36,6 +36,8 @@ export interface Turn {
    * without Core re-deriving where the turn came from.
    */
   readonly source: string;
+  /** The submitting owner's id, retained only for the submitted projection. */
+  readonly sourceId: string | null;
   /** The source's original body, never the assembled envelope. */
   readonly prompt: string | null;
   readonly intent: string | null;
@@ -101,6 +103,7 @@ export class EntityTurn implements Turn {
   constructor(
     readonly runtime: RuntimeSubmission,
     readonly source: string,
+    readonly sourceId: string | null,
     readonly prompt: string | null,
     readonly intent: string | null,
     readonly submittedAt: number,

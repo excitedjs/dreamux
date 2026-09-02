@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "BREAKING: Review: Dreamux now returns a submission's caller-supplied `source_id` on the immediately published `teammate.turn.submitted` conversation fact, using `null` when no id was supplied. The value is retained on the in-process turn only as far as the submitted projection and remains neither routing nor persisted state. Channel consumers of this event must handle the added field. No rebuild is needed.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

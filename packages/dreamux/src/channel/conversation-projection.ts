@@ -47,6 +47,8 @@ interface ProjectableTurn {
   readonly id: string;
   readonly submittedAt: number;
   readonly prompt: string | null;
+  /** The submitting owner's id, echoed only on the submitted fact. */
+  readonly sourceId?: string | null;
   /**
    * The open provenance name the turn was submitted under, echoed verbatim on
    * the submitted event. Core neither parses it nor decides anything by it.
@@ -110,7 +112,12 @@ export function createConversationProjection(input: {
       if (scope === null || turn.prompt === null || input.coreEvents.hasSources?.() === false) return;
       input.coreEvents.publish(
         identity.dispatcher_id,
-        submittedEvent(scope, turn.submittedAt, turn.source),
+        submittedEvent(
+          scope,
+          turn.submittedAt,
+          turn.source,
+          turn.sourceId ?? null,
+        ),
       );
       input.coreEvents.publish(
         identity.dispatcher_id,
@@ -236,19 +243,21 @@ function actorScope(agent: ProjectedAgent) {
  * Core cannot filter by provenance without learning what a concrete source
  * means, which is exactly the coupling this boundary exists to prevent. It
  * states the open `turn_source` and lets each Channel decide what its own
- * presentation shows — the same place that already owns the visible-message
- * anchor the submitted event binds to `turn_id`.
+ * presentation shows. The caller-owned id lets that Channel recognize the
+ * turn without making this display projection responsible for anchor timing.
  */
 function submittedEvent(
   scope: NonNullable<ReturnType<typeof eventScope>>,
   occurredAt: number,
   turnSource: string,
+  sourceId: string | null,
 ): TeammateTurnSubmittedEvent {
   return {
     ...scope,
     kind: 'teammate.turn.submitted',
     occurred_at: occurredAt,
     turn_source: turnSource,
+    source_id: sourceId,
   };
 }
 

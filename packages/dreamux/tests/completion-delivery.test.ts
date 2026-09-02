@@ -546,6 +546,7 @@ describe('the real conversation projection presents a dispatcher completion deli
       teammate_name: 'dispatcher',
       role: 'dispatcher',
       turn_source: COMPLETION_SOURCE,
+      source_id: null,
     });
   });
 

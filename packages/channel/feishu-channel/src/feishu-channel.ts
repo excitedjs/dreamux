@@ -5,8 +5,8 @@
  * its own routing document, its own Collaboration Space policy, the automatic
  * provisioning it runs in memory, and the visible-message anchors its cards
  * hang under. What it hands Core is a body and, when its own routing chose a
- * Team, that Team's name; what it takes from Core is a `turn_id` and a live
- * event stream.
+ * Team, that Team's name; what it takes from Core is an admission result and a
+ * live event stream.
  *
  * The lifecycle is deliberately three calls. `initialize` loads durable state
  * and subscribes without opening the platform, which is what makes
@@ -125,8 +125,6 @@ export class FeishuChannelSession {
   private readonly provisioning: FeishuProvisioning;
   private readonly _accessMutex = new AsyncMutex();
   private readonly inactiveFence = alwaysActiveSessionFence();
-  /** Live leader names, learned from `team.state`; never durable. */
-  private readonly leaderNames = new Map<string, string>();
   private lifecycle: FeishuSessionLifecycle | undefined;
   private subscription: ChannelEventSubscription | undefined;
   private invoker: JsonInvoker | undefined;
@@ -254,7 +252,6 @@ export class FeishuChannelSession {
     lifecycle.controller.abort();
     this.subscription?.unsubscribe();
     this.subscription = undefined;
-    this.leaderNames.clear();
     // Interrupt every live card before the bot goes away. The adapter fences
     // itself first and drains within a bounded window, so a slow Feishu can
     // never hold session shutdown open.
@@ -282,11 +279,7 @@ export class FeishuChannelSession {
     try {
       this.cot.handle(event);
       if (event.kind !== 'team.state') return;
-      if (event.status !== 'closed') {
-        this.leaderNames.set(event.team_name, event.leader_name);
-        return;
-      }
-      this.leaderNames.delete(event.team_name);
+      if (event.status !== 'closed') return;
       void this.forgetTeamRoutes(event.team_name, 'team_closed');
     } catch (err) {
       this.opts.log.warn(
@@ -365,10 +358,9 @@ export class FeishuChannelSession {
    * no binding or Collaboration Space claims. Core decides nothing about
    * which: omission *is* the Channel's decision, stated in the Command.
    *
-   * The returned `turn_id` is what closes the presentation loop. It names the
-   * exact turn this call created, so claiming the matching submitted event is
-   * proof of ownership even when several sessions submit to one recipient at
-   * the same instant.
+   * The Channel takes its own anchor before invoking Core. The caller-owned
+   * source id is retained only to recognize the submitted turn whose body is
+   * already visible at that anchor; placement never waits on projection.
    */
   async submit(
     teamName: string | null,
@@ -377,6 +369,11 @@ export class FeishuChannelSession {
     if (this.lifecycle?.fence.isCurrent() !== true) {
       return { status: 'error', message: 'Feishu session is not live' };
     }
+    const inbound = this.cot.beginInboundSubmission(
+      teamName,
+      submission.anchor,
+      submission.sourceId,
+    );
     try {
       const raw = await this.invoke('team.submit', {
         ...(teamName !== null ? { team_name: teamName } : {}),
@@ -388,16 +385,17 @@ export class FeishuChannelSession {
         source_id: submission.sourceId,
       } as JsonValue);
       const outcome = submitOutcome(raw as unknown as TeamSubmitResult);
-      if (outcome.status === 'submitted' && outcome.turnId !== null) {
-        this.cot.attachInboundAnchor(outcome.turnId, submission.anchor);
-      }
+      if (submissionProvesNoAdmission(outcome)) inbound?.retire();
       return outcome;
     } catch (err) {
       const code = commandErrorCode(err);
       if (code === 'TEAM_NOT_FOUND' || code === 'TEAM_CLOSED') {
+        inbound?.retire();
         return { status: 'rejected', code, message: errorMessage(err) };
       }
       return { status: 'error', message: errorMessage(err) };
+    } finally {
+      inbound?.release();
     }
   }
 
@@ -644,9 +642,7 @@ export class FeishuChannelSession {
     if (messageId === undefined || messageId === '') return;
     this.targetRouter.observe(messageId, target);
     if (anchorTeamName === null) return;
-    const leaderName = this.leaderNames.get(anchorTeamName);
-    if (leaderName === undefined) return;
-    this.cot.setBindingFallbackAnchor(anchorTeamName, leaderName, {
+    this.cot.setBindingFallbackAnchor(anchorTeamName, {
       chatId: target.chatId,
       messageId,
       target,
@@ -682,6 +678,12 @@ export class FeishuChannelSession {
       lifecycle.inFlight.delete(task);
     }
   }
+}
+
+function submissionProvesNoAdmission(outcome: FeishuSubmitOutcome): boolean {
+  return outcome.status === 'rejected' ||
+    outcome.status === 'failed' ||
+    outcome.status === 'stopped';
 }
 
 /** Map a peer bot to the `list_chat_bots` wire shape. */
