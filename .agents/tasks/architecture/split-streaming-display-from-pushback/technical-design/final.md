@@ -437,13 +437,38 @@ lose information:
 So the enum is carrying three distinct facts and is paid for. Recorded here so
 the next reader does not re-derive it.
 
-### Not folded in under this ruling
+### Ruled separately: `teammate.turn.settled` goes
 
-Deleting the unread `teammate.turn.settled` kind is already part of this
-change's own scope, but it is **not** promoted to a cleanup by this ruling: the
-open question is whether the flowx superset repo still reads it, and the ruling
-speaks to merging cleanup, not to a cross-repo reader contract. It stays gated
-on that check.
+Deleting the unread kind was gated on whether the flowx superset repo still
+reads it. The operator closed that gate the same day —
+「没人读的 teammate.turn.settled 直接删掉吧，flowx 到时候再想办法」 — accepting
+the cross-repo cost rather than waiting on it. Confirmed before acting: no
+production consumer exists in this repo. Producers are
+`conversation-projection.ts:269`, the `seal.ts` allowlist, and the
+`turn-coordinator.ts:218` settlement hook; every other reference is a test, a
+type re-export, or a comment recording that the Feishu adapter deliberately does
+not consume it.
+
+### The change files this needs
+
+Not previously stated anywhere in this design, and it is an upgrade blocker for
+a consumer outside this repo, so it belongs here rather than in the
+implementation PR's memory.
+
+Removing four published `ChannelCoreEvent` kinds breaks any Channel provider
+subscribing to them. `@excitedjs/feishu-channel` already carries the precedent
+wording for exactly this class of change in its own changelog ("stop subscribing
+to the removed turn.submitted and turn.settled events … No rebuild is
+required"), because no persisted format moves — only a contract a subscriber
+reads at runtime.
+
+- `@excitedjs/dreamux-types` (0.8.0) and `@excitedjs/dreamux` (0.22.0) are on
+  the 0.x line, so their change files are type `minor` with the note leading
+  `BREAKING:` — never `major`, which CI rejects on 0.x.
+- `@excitedjs/feishu-channel` (5.0.0) is past 1.0.0 and takes a real semver
+  `major`.
+- No state, config, cache or path format changes, so the notes carry `Review:`
+  and say explicitly that no rebuild is needed. They must not carry `Rebuild:`.
 
 ## Unresolved: the activity-fact dedupe
 

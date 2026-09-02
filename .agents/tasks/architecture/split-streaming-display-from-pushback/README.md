@@ -30,8 +30,8 @@
   approval. The design has been through two review rounds; what is still open is
   listed in `final.md` (the activity-fact dedupe, which needs a probe, and the
   embedded-versus-reshaped activity payload). `priority` is no longer open — the operator ruled it
-  deleted. Whether the unread `teammate.turn.settled` may go is still open, and
-  is a flowx question too.
+  deleted — and neither is `teammate.turn.settled`, which the operator ruled
+  deleted outright, accepting the flowx cost.
 - Related tasks:
   [feishu-cot-conversation-cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md)
   (the display surface this separates from, and whose locked product model stays

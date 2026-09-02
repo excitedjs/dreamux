@@ -205,3 +205,13 @@ Two facts to design around, both already verified:
   finding gets forgotten, and a recorded negative result serves that motive as
   well as a merged fix. So each finding is either merged here or written down
   with the reason it does not reduce — nothing is left only in a chat log.
+
+- **Ruled 2026-09-02, `teammate.turn.settled` is deleted.** The operator's
+  words: 「没人读的 teammate.turn.settled 直接删掉吧，flowx 到时候再想办法」.
+  Verified before acting: the kind has no production consumer in this repo. Its
+  producers are `conversation-projection.ts:269`, `seal.ts:31` and the
+  `turn-coordinator.ts:218` settlement hook; every remaining reference is a test,
+  a type re-export, or a comment recording its deliberate absence
+  (`feishu-cot-session.ts:61`, `feishu-cot-adapter.ts:14`). The ruling
+  explicitly accepts the cross-repo cost rather than waiting on it, so the flowx
+  reader check is no longer a gate here — flowx handles it on its own side.
