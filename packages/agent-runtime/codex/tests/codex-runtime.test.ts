@@ -39,6 +39,7 @@ import type {
   AgentRuntimeIdentity,
   AgentRuntimeMcpServer,
   RuntimeAdmission,
+  RuntimeNativeTurnEnd,
   RuntimeSubmission,
 } from '@excitedjs/dreamux-types';
 
@@ -61,6 +62,7 @@ function makeDeps(
     cwd: '/fake/cwd',
     state: overrides.state ?? noopStateSink(),
     activitySink: overrides.activitySink ?? (() => undefined),
+    nativeTurnSink: overrides.nativeTurnSink ?? (() => undefined),
     codec: overrides.codec ?? null,
     paths: FAKE_PATHS,
     allocateSocketPath: () => '/fake/run/sockets/agent-1.sock',
@@ -180,6 +182,7 @@ describe('CodexRuntime developerInstructions re-supply', () => {
       cwd: '/fake/cwd',
       state,
       activitySink: () => undefined,
+      nativeTurnSink: () => undefined,
       codec: null,
       paths: FAKE_PATHS,
       allocateSocketPath: () => '/fake/run/sockets/agent-1.sock',
@@ -475,6 +478,178 @@ describe('CodexRuntime submit() and settlement', () => {
 
     const settlement = await submission.settled;
     expect(settlement).toEqual({ kind: 'stopped' });
+  });
+});
+
+/**
+ * One native turn, one ended fact.
+ *
+ * Codex's `turn/completed` is the whole of a native turn's end. When the
+ * app-server folds a mid-turn submission into an already-running turn, both
+ * Dreamux submissions settle from that one terminal — and it is still one end,
+ * because the fact describes the runtime's turn, not the requests inside it.
+ */
+describe('CodexRuntime native turn end', () => {
+  it('reports one completed end for a native turn that folded two submissions', async () => {
+    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+    const client = new FakeCodexWsClient({
+      autoComplete: false,
+      scriptedTurnIds: ['turn-folded', 'turn-folded'],
+    });
+    const { deps } = makeDeps({
+      client,
+      nativeTurnSink: (end) => nativeEnds.push(end),
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    const first = requireSubmitted(await runtime.submit({ text: 'first' }));
+    const second = requireSubmitted(await runtime.submit({ text: 'folded in' }));
+    client.emitCompleted('fresh-thread-1', 'turn-folded', 'shared result');
+    await first.settled;
+    await second.settled;
+
+    expect(nativeEnds.map((end) => end.status)).toEqual(['completed']);
+    // No logical membership: the fact names no submission, turn id, or target.
+    expect(Object.keys(nativeEnds[0]!).sort()).toEqual(['occurredAt', 'status']);
+    expect(Object.isFrozen(nativeEnds[0])).toBe(true);
+    await runtime.stop();
+  });
+
+  it('reports one end per native turn when two submissions ran as two turns', async () => {
+    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      nativeTurnSink: (end) => nativeEnds.push(end),
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    const first = requireSubmitted(await runtime.submit({ text: 'first' }));
+    const second = requireSubmitted(await runtime.submit({ text: 'second' }));
+    client.emitCompleted('fresh-thread-1', 'turn-1', 'first result');
+    client.emitCompleted('fresh-thread-1', 'turn-2', 'second result');
+    await first.settled;
+    await second.settled;
+
+    expect(nativeEnds.map((end) => end.status)).toEqual(['completed', 'completed']);
+    await runtime.stop();
+  });
+
+  it('reports nothing while a turn is still running', async () => {
+    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      nativeTurnSink: (end) => nativeEnds.push(end),
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    requireSubmitted(await runtime.submit({ text: 'in flight' }));
+    client.emitItem('fresh-thread-1', 'turn-1', 'completed', {
+      type: 'agentMessage',
+      id: 'item-mid',
+      text: 'thinking out loud',
+    });
+
+    expect(nativeEnds).toHaveLength(0);
+    await runtime.stop();
+  });
+
+  it('reports failed when the native turn carried an error', async () => {
+    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      nativeTurnSink: (end) => nativeEnds.push(end),
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    const submission = requireSubmitted(await runtime.submit({ text: 'do the thing' }));
+    client.emitTurnFailed('fresh-thread-1', 'turn-1', 'model refused');
+    await submission.settled;
+
+    expect(nativeEnds.map((end) => end.status)).toEqual(['failed']);
+    await runtime.stop();
+  });
+
+  it('reports failed once for every turn an unscoped protocol failure tore down', async () => {
+    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      nativeTurnSink: (end) => nativeEnds.push(end),
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
+    client.emitUnscopedError('fresh-thread-1', 'codex daemon internal error');
+    await submission.settled;
+
+    expect(nativeEnds.map((end) => end.status)).toEqual(['failed']);
+    await runtime.stop();
+  });
+
+  it('reports interrupted, exactly once, when stop() tore down a turn mid-flight', async () => {
+    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      nativeTurnSink: (end) => nativeEnds.push(end),
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    const submission = requireSubmitted(await runtime.submit({ text: 'in flight' }));
+    await runtime.stop();
+    await expect(submission.settled).resolves.toEqual({ kind: 'stopped' });
+    // A second stop() must not re-report an end already reported.
+    await runtime.stop();
+
+    expect(nativeEnds.map((end) => end.status)).toEqual(['interrupted']);
+  });
+
+  it('never reports a second end for a turn that already completed, even across stop()', async () => {
+    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      nativeTurnSink: (end) => nativeEnds.push(end),
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
+    client.emitCompleted('fresh-thread-1', 'turn-1', 'done');
+    await submission.settled;
+    await runtime.stop();
+
+    expect(nativeEnds.map((end) => end.status)).toEqual(['completed']);
+  });
+
+  it('does not fail the turn when the native turn sink throws', async () => {
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      nativeTurnSink: () => {
+        throw new Error('native turn sink exploded');
+      },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
+    client.emitCompleted('fresh-thread-1', 'turn-1', 'done');
+
+    await expect(submission.settled).resolves.toMatchObject({
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'done' },
+    });
+    await runtime.stop();
   });
 });
 

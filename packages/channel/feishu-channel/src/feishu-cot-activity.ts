@@ -1,11 +1,11 @@
 /**
  * How one live runtime activity lands on a presentation.
  *
- * These are the two steps that are identical for every recipient: the turn is
- * still the one this state is presenting, the state still has somewhere to
- * present into, and the projected card events either open a card or extend the
- * one already open. Who owns the state — a TeamLeader's standing card or a
- * single Dispatcher turn — is decided before this file is reached.
+ * These are the two steps that are identical for every recipient: the state
+ * still has somewhere to present into, and the projected card events either
+ * open a card or extend the one already open. Which recipient owns the state —
+ * a TeamLeader or the Dispatcher Agent — is decided before this file is
+ * reached, and makes no difference once it is.
  */
 import type {
   TeammateTurnMessageEvent,
@@ -21,7 +21,6 @@ import {
 } from './feishu-cot-events.js';
 import {
   cotOpenCallKey,
-  cotStateAdmitsTurn,
   cotStateHasAnchor,
   rememberOpenToolCall,
   type CotPresentation,
@@ -32,11 +31,10 @@ import {
 export interface CotActivitySink {
   readonly channelId: string | undefined;
   readonly openToolCallsMax: number;
-  /** Open a card for this turn if needed, then admit the events onto it. */
+  /** Open a card if this recipient has none, then admit the events onto it. */
   acceptOpening(
     key: string,
     state: CotState,
-    turnId: string,
     events: FeishuCotEventInput[],
   ): boolean;
   admitOutbox(
@@ -53,10 +51,17 @@ export interface CotActivitySink {
   logScope(state: CotState): CotLogScope;
 }
 
-function presentable(state: CotState, turnId: string): boolean {
-  return cotStateAdmitsTurn(state, turnId) &&
-    cotStateHasAnchor(state) &&
-    state.disabledGeneration !== state.generation;
+/**
+ * Whether this recipient can be shown anything at all.
+ *
+ * The only reason it cannot is that it has no anchor — there is nowhere to put
+ * a card, which is a fact about placement and not a filter on the source or
+ * kind of what arrived. A card that failed to create or append is not such a
+ * reason: the standing anchor outlives it, and the next opening activity tries
+ * again there.
+ */
+function presentable(state: CotState): boolean {
+  return cotStateHasAnchor(state);
 }
 
 export function acceptToolCallActivity(
@@ -65,11 +70,11 @@ export function acceptToolCallActivity(
   state: CotState,
   event: TeammateTurnToolCallEvent,
 ): void {
-  if (!presentable(state, event.turn_id)) return;
+  if (!presentable(state)) return;
   if (event.status === 'started') {
     const events = toolCallStartEvents(event, sink.channelId);
     if (events.length === 0) return;
-    const accepted = sink.acceptOpening(key, state, event.turn_id, events);
+    const accepted = sink.acceptOpening(key, state, events);
     if (accepted) {
       rememberOpenToolCall(
         state.openCalls,
@@ -106,25 +111,31 @@ export function acceptToolCallActivity(
   }
 }
 
-export function acceptAssistantMessage(
+/**
+ * One projected conversation message, whichever side wrote it.
+ *
+ * A user message is shown like everything else — a task's brief, a cron fire's
+ * instruction, a system notice, or an assistant message.
+ */
+export function acceptConversationMessage(
   sink: CotActivitySink,
   key: string,
   state: CotState,
   event: TeammateTurnMessageEvent,
 ): void {
-  if (!presentable(state, event.turn_id)) return;
+  if (!presentable(state)) return;
   const events = textMessageEvents({
     sourceId: event.event_id,
-    role: 'assistant',
+    role: event.message_role,
     content: event.content,
   });
   if (events.length === 0) {
     sink.debug(
       sink.logScope(state),
-      { activity: 'assistant', reason: 'empty_after_projection' },
+      { activity: event.message_role, reason: 'empty_after_projection' },
       'Feishu COT dropped activity with no safe display content',
     );
     return;
   }
-  sink.acceptOpening(key, state, event.turn_id, events);
+  sink.acceptOpening(key, state, events);
 }

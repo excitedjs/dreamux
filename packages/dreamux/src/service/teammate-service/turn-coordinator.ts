@@ -2,6 +2,7 @@ import type {
   DreamuxLogger,
   RuntimeActivityEvent,
   RuntimeAdmission,
+  RuntimeNativeTurnEnd,
   RuntimeSubmission,
   TeammateRole,
 } from '@excitedjs/dreamux-types';
@@ -59,7 +60,8 @@ type ConversationProjectionEntryPoint =
   | 'submitted'
   | 'early_activity'
   | 'live_activity'
-  | 'settled';
+  | 'settled'
+  | 'native_turn_end';
 
 /** Entity-owned serialization for provider admission and in-process display work. */
 export class EntityTurnCoordinator {
@@ -93,6 +95,20 @@ export class EntityTurnCoordinator {
     if (turn.isSettled()) return;
     this.projectDisplay(turn, 'live_activity', (projection, agent) => {
       projection.projectActivity(agent, turn, event);
+    });
+  };
+
+  /**
+   * One runtime-native turn ended.
+   *
+   * It reaches no `EntityTurn` on purpose: the provider folded whatever it
+   * folded, and picking one member to own the end would invent a correlation
+   * the seam refuses to state. The projection is told about the Agent alone,
+   * and every logical submission keeps settling on its own schedule.
+   */
+  readonly nativeTurnSink = (end: RuntimeNativeTurnEnd): void => {
+    this.projectActorDisplay('native_turn_end', (projection, agent) => {
+      projection.projectNativeTurnEnd(agent, end);
     });
   };
 
@@ -232,13 +248,32 @@ export class EntityTurnCoordinator {
       identity = this.opts.identity();
       operation(projection, { identity, role: this.opts.role });
     } catch (error) {
-      this.warnProjectionFailure(identity, turn, entryPoint, error);
+      this.warnProjectionFailure(identity, turn.id, entryPoint, error);
+    }
+  }
+
+  /** The same guarded projection call for a fact that names no turn. */
+  private projectActorDisplay(
+    entryPoint: ConversationProjectionEntryPoint,
+    operation: (
+      projection: ConversationProjection,
+      agent: ProjectedAgent,
+    ) => void,
+  ): void {
+    const projection = this.opts.conversationProjection;
+    if (projection === undefined) return;
+    let identity: AgentEntityIdentity | undefined;
+    try {
+      identity = this.opts.identity();
+      operation(projection, { identity, role: this.opts.role });
+    } catch (error) {
+      this.warnProjectionFailure(identity, null, entryPoint, error);
     }
   }
 
   private warnProjectionFailure(
     identity: AgentEntityIdentity | undefined,
-    turn: EntityTurn,
+    turnId: string | null,
     entryPoint: ConversationProjectionEntryPoint,
     error: unknown,
   ): void {
@@ -252,7 +287,7 @@ export class EntityTurnCoordinator {
                 agent_name: identity.name,
                 role: this.opts.role,
               }),
-          turn_id: turn.id,
+          ...(turnId === null ? {} : { turn_id: turnId }),
           entry_point: entryPoint,
           err: errorInfo(error),
         },

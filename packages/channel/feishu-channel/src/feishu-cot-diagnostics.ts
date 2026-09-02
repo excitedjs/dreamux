@@ -11,6 +11,7 @@ import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import { FeishuCotApiError } from '@excitedjs/feishu-transport';
 
 import { isFeishuOperationError } from './feishu-bounded-operation.js';
+import type { CotRecipientIdentity } from './feishu-cot-state.js';
 
 /** Which platform call failed. */
 export type CotStage = 'create' | 'append' | 'complete';
@@ -27,17 +28,17 @@ export interface CotLogScope {
 export function cotLogScope(input: {
   dispatcherId: string;
   channelId: string | undefined;
-  leader?: { teamName: string; leaderName: string } | undefined;
-  dispatcherAgent?: { agentName: string } | undefined;
+  recipient?: CotRecipientIdentity | undefined;
 }): CotLogScope {
+  const recipient = input.recipient;
   return {
     dispatcher_id: input.dispatcherId,
     channel_id: input.channelId ?? null,
-    ...(input.leader !== undefined
-      ? { team_name: input.leader.teamName, leader_name: input.leader.leaderName }
+    ...(recipient?.kind === 'leader'
+      ? { team_name: recipient.teamName, leader_name: recipient.leaderName }
       : {}),
-    ...(input.dispatcherAgent !== undefined
-      ? { agent_name: input.dispatcherAgent.agentName }
+    ...(recipient?.kind === 'dispatcher'
+      ? { agent_name: recipient.agentName }
       : {}),
   };
 }

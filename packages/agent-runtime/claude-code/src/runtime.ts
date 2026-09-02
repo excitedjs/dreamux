@@ -17,6 +17,7 @@ import { ClaudeSteerAdmissionError } from './rpc.js';
 import type { ClaudeCodeRuntimeDeps } from './runtime-deps.js';
 import {
   createRuntimeSubmission,
+  endNativeTurn,
   handleProtocolEvent,
   type ActiveTurn,
 } from './runtime-submissions.js';
@@ -381,20 +382,40 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // torn down) is a `stopped` settlement; otherwise it is a genuine `failed`.
     // Fire before the stopped early-return so an interrupted teammate turn is
     // never lost.
+    let settled = false;
     for (const deferred of turn.submissions.values()) {
-      deferred.settle(this.stopped
+      if (deferred.settle(this.stopped
         ? { kind: 'stopped' }
-        : { kind: 'failed', error: asError(err) });
+        : { kind: 'failed', error: asError(err) })) settled = true;
     }
+    // A native turn that never reached a terminal `result` still ended, but a
+    // failure observed after its result settles nothing and reports no second
+    // end.
+    if (settled) this.endNativeTurn(this.stopped ? 'interrupted' : 'failed');
     if (this.stopped) return;
     // Surface the failure as durable runtime state rather than swallowing it.
     this.setStatus('degraded', err);
   }
 
   private stopUnsettled(turn: ActiveTurn): void {
+    let stopped = false;
     for (const deferred of turn.submissions.values()) {
-      deferred.settle({ kind: 'stopped' });
+      if (deferred.settle({ kind: 'stopped' })) stopped = true;
     }
+    // Reached from stop, the fatal fence, and a window that resolved without a
+    // terminal result. Only the call that actually stopped an open submission
+    // reports the synthesized end.
+    if (stopped) this.endNativeTurn('interrupted');
+  }
+
+  private endNativeTurn(
+    status: 'failed' | 'interrupted',
+  ): void {
+    endNativeTurn(
+      status,
+      this.deps.nativeTurnSink,
+      (level, message, error) => this.log(level, message, error),
+    );
   }
 
   private recordQueuedTurnStart(): void {
@@ -523,6 +544,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       threadId: this.threadId,
       outputSchemaEnabled: this.deps.outputSchema !== undefined,
       activitySink: this.deps.activitySink,
+      nativeTurnSink: this.deps.nativeTurnSink,
       log: (level, message, error) => this.log(level, message, error),
     });
   }

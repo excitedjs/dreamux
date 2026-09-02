@@ -28,6 +28,7 @@ export interface DispatchersOptions {
   mcpLeases: McpLeaseRegistry;
   /** The process-wide admitted Command port every Channel session invokes through. */
   commands: CoreCommandRegistry;
+  homePathPrefixes: readonly string[];
   adminSocketPath?: string;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   workflowLoggerFactory?: (dispatcherId: string) => DreamuxLogger;
@@ -49,6 +50,7 @@ export class Dispatchers {
   private readonly channelProviders: ChannelProviderCatalog;
   private readonly mcpLeases: McpLeaseRegistry;
   private readonly commands: CoreCommandRegistry;
+  private readonly homePathPrefixes: readonly string[];
   private readonly adminSocketPath: string | undefined;
   private readonly channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
   private readonly workflowLoggerFactory:
@@ -73,6 +75,7 @@ export class Dispatchers {
     this.channelProviders = opts.channelProviders;
     this.mcpLeases = opts.mcpLeases;
     this.commands = opts.commands;
+    this.homePathPrefixes = opts.homePathPrefixes;
     this.adminSocketPath = opts.adminSocketPath;
     this.channelLoggerFactory = opts.channelLoggerFactory;
     this.workflowLoggerFactory = opts.workflowLoggerFactory;
@@ -174,6 +177,7 @@ export class Dispatchers {
       channelProviders: this.channelProviders,
       mcpLeases: this.mcpLeases,
       commands: this.commands,
+      homePathPrefixes: this.homePathPrefixes,
       ...(this.adminSocketPath !== undefined
         ? { adminSocketPath: this.adminSocketPath }
         : {}),

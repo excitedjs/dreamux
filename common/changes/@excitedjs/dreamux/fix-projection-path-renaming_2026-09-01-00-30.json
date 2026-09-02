@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "BREAKING: Review: Operator paths in projected conversation text are now renamed instead of blanked — workspace paths read '.' and this host's home reads '~', the way the operator's own shell prints them, replacing the '$WORKSPACE' and '$HOME_PATH' placeholders — so displayed tool arguments, tool results, and assistant text in Feishu COT cards change wording accordingly; confirm nothing downstream parses the old placeholders. No rebuild is needed. A card still says which file was touched. Paths are found by scanning for the prefixes this host actually uses rather than by matching a path-shaped pattern, and each hit must be bounded on both sides, so another machine's directory quoted in a log is left legible instead of being redacted for no privacy gain. Home prefixes are recognized inside `file://` URLs and before ordinary closing punctuation, while longer names such as `<home>xyz` and `<home>-old` remain untouched. If this host's home cannot be resolved, no home prefix is invented from the process working directory and workspace renaming remains independent. Secret redaction is unchanged: a token is still destroyed. Server resolves the host prefixes once during start and passes the resulting value into each conversation projection; there is no process-global cache, reset hook, or projection start-order dependency.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

@@ -5,7 +5,9 @@ import type {
   JsonValue,
   RuntimeActivity,
   AgentRuntimeActivitySink,
+  AgentRuntimeNativeTurnSink,
   RuntimeCompletion,
+  RuntimeNativeTurnEnd,
   RuntimeSubmission,
   RuntimeSubmissionSettlement,
   RuntimeToolAction,
@@ -16,6 +18,14 @@ export interface SubmissionDeferred {
   settle: (settlement: RuntimeSubmissionSettlement) => boolean;
 }
 
+/**
+ * One resident execution window: the commands claude is serving together.
+ *
+ * It is not one native turn. A window is opened by an initial command and can
+ * legally produce several sequential `result` boundaries — one native turn each
+ * — as commands steered or queued into it run after the earlier ones were
+ * answered.
+ */
 export interface ActiveTurn {
   initialCommandUuid: string;
   submissions: Map<string, SubmissionDeferred>;
@@ -35,7 +45,26 @@ export interface ProtocolEventContext {
   threadId: string | null;
   outputSchemaEnabled: boolean;
   activitySink: AgentRuntimeActivitySink;
+  nativeTurnSink: AgentRuntimeNativeTurnSink;
   log: (level: 'info' | 'warn' | 'error', message: string, error?: unknown) => void;
+}
+
+/**
+ * Report the end of one native turn.
+ *
+ * The sink is display-only, so a throwing consumer is logged and the window
+ * proceeds.
+ */
+export function endNativeTurn(
+  status: RuntimeNativeTurnEnd['status'],
+  sink: AgentRuntimeNativeTurnSink,
+  log: (level: 'info' | 'warn' | 'error', message: string, error?: unknown) => void,
+): void {
+  try {
+    sink(Object.freeze({ status, occurredAt: Date.now() }));
+  } catch (error) {
+    log('warn', 'claude native turn end projection failed', error);
+  }
 }
 
 export function createRuntimeSubmission(): SubmissionDeferred {
@@ -136,6 +165,15 @@ function completeStartedGroup(
       });
     }
   }
+  // The `result` is claude's native terminal, so the native turn it answers
+  // ends here regardless of how many commands were folded into it. A window
+  // that goes on to run another command opens another native turn and reaches
+  // this again with its own `result`.
+  endNativeTurn(
+    completion.status === 'completed' ? 'completed' : 'failed',
+    context.nativeTurnSink,
+    context.log,
+  );
   for (const uuid of commandUuids) {
     active.submissions.get(uuid)?.settle({ kind: 'completion', completion });
   }
@@ -151,6 +189,7 @@ function failUnattributedResult(
       : 'claude result cannot be attributed without command started lifecycle',
   );
   context.log('error', error.message, error);
+  endNativeTurn('failed', context.nativeTurnSink, context.log);
   for (const deferred of active.submissions.values()) {
     deferred.settle({ kind: 'failed', error });
   }

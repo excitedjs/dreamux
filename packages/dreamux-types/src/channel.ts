@@ -31,6 +31,7 @@ import type {
 } from './provider.js';
 import type { TeamStateEvent } from './team.js';
 import type {
+  TeammateNativeTurnEndedEvent,
   TeammateStateEvent,
   TeammateTurnMessageEvent,
   TeammateTurnSettledEvent,
@@ -52,7 +53,8 @@ export type ChannelCoreEvent =
   | TeammateTurnSubmittedEvent
   | TeammateTurnSettledEvent
   | TeammateTurnMessageEvent
-  | TeammateTurnToolCallEvent;
+  | TeammateTurnToolCallEvent
+  | TeammateNativeTurnEndedEvent;
 
 export interface ChannelEventSubscription {
   /** Idempotent; Core may already have revoked the enclosing session source. */

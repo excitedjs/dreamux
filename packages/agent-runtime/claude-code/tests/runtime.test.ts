@@ -45,6 +45,7 @@ import type {
   AgentRuntimeStateUpdate,
   AgentRuntimeSystemPrompt,
   JsonSchema,
+  RuntimeNativeTurnEnd,
 } from '@excitedjs/dreamux-types';
 
 // ─── Fake resident session ──────────────────────────────────────────────────
@@ -54,6 +55,14 @@ interface FakeSessionBehavior {
   failStart?: (spec: ClaudeCodeSessionSpec) => Error | null | undefined;
   /** Never settle `submitTurn` until `stop()` rejects it — models a stalled turn. */
   stallSubmit?: boolean;
+  /**
+   * Keep `submitTurn` pending until the test calls `releaseSubmit()`.
+   *
+   * This is the resident execution window staying open, which is what lets a
+   * test steer into it and drive more than one native `result` boundary through
+   * the one window — the real multi-boundary shape.
+   */
+  holdSubmit?: boolean;
   /** Fully custom submitTurn behavior (overrides the default echo+result). */
   onSubmit?: (
     spec: ClaudeCodeSessionSpec,
@@ -66,7 +75,12 @@ class FakeSession implements ClaudeCodeSession {
   alive = false;
   stopCalls = 0;
   onExitHandler: (() => void) | null = null;
+  /** Every initial command written into this session, in order. */
+  readonly submits: Array<{ prompt: string; commandUuid: string | undefined }> = [];
+  /** Every live steer written into the open window, in order. */
+  readonly steers: Array<{ prompt: string; commandUuid: string | undefined }> = [];
   private pendingSubmit: { reject: (error: Error) => void } | null = null;
+  private heldSubmit: { resolve: () => void } | null = null;
 
   constructor(
     readonly spec: ClaudeCodeSessionSpec,
@@ -84,8 +98,16 @@ class FakeSession implements ClaudeCodeSession {
     _options: TurnSubmitOptions = {},
     commandUuid?: string,
   ): Promise<void> {
+    this.submits.push({ prompt, commandUuid });
     if (this.behavior.stallSubmit === true) {
       await new Promise<void>((_resolve, reject) => {
+        this.pendingSubmit = { reject };
+      });
+      return;
+    }
+    if (this.behavior.holdSubmit === true) {
+      await new Promise<void>((resolve, reject) => {
+        this.heldSubmit = { resolve };
         this.pendingSubmit = { reject };
       });
       return;
@@ -114,9 +136,23 @@ class FakeSession implements ClaudeCodeSession {
     });
   }
 
-  async steerTurn(): Promise<void> {
-    // Not exercised by these lifecycle tests; live steering is covered end to
-    // end against the real RPC in session.test.ts.
+  /** Drain the held resident window, as the real RPC does once it settles. */
+  releaseSubmit(): void {
+    const held = this.heldSubmit;
+    this.heldSubmit = null;
+    this.pendingSubmit = null;
+    held?.resolve();
+  }
+
+  async steerTurn(
+    prompt: string,
+    _options: TurnSubmitOptions = {},
+    commandUuid?: string,
+  ): Promise<void> {
+    // Admission only: the caller decides what the CLI then does with it, which
+    // is what a live steer's outcome actually depends on. End-to-end steering
+    // against the real RPC is covered in session.test.ts.
+    this.steers.push({ prompt, commandUuid });
   }
 
   isAlive(): boolean {
@@ -161,6 +197,8 @@ function fireDefaultResult(
 class Harness {
   readonly sessions: FakeSession[] = [];
   readonly stateCalls: AgentRuntimeStateUpdate[] = [];
+  /** Every native turn end this runtime reported, in order. */
+  readonly nativeEnds: RuntimeNativeTurnEnd[] = [];
   behavior: FakeSessionBehavior = {};
   /** Set per test to make the leased state sink reject a specific update kind. */
   rejectStateKind: AgentRuntimeStateUpdate['kind'] | null = null;
@@ -214,6 +252,7 @@ class Harness {
         : {}),
       paths: this.paths,
       state: this.state,
+      nativeTurn: (end) => this.nativeEnds.push(end),
     };
   }
 
@@ -460,6 +499,206 @@ describe('ClaudeCodeRuntime settlement', () => {
     if (admission.status !== 'submitted') throw new Error('expected submitted');
     await runtime.stop();
     await expect(admission.submission.settled).resolves.toEqual({ kind: 'stopped' });
+  });
+});
+
+// ─── Native turn end ────────────────────────────────────────────────────────
+
+/**
+ * The provider-neutral fact Core turns into `teammate.native_turn.ended`.
+ *
+ * A native turn is one terminal `result`, not one Dreamux submission and not
+ * one resident execution window: several submissions folded into one `result`
+ * share its single end, while a steered submission that claude runs on its own
+ * after answering the first gets a second `result` — and a second end — inside
+ * the same window. The runtime is the only layer that can see those boundaries,
+ * which is why the fact is emitted here rather than derived from settlements
+ * upstream.
+ */
+describe('ClaudeCodeRuntime native turn end', () => {
+  it('reports one completed end per native turn, not one per submission', async () => {
+    const h = new Harness();
+    const runtime = await tracked(h.createRuntime());
+    await runtime.start();
+
+    const first = await runtime.submit({ text: 'one' });
+    if (first.status !== 'submitted') throw new Error('expected submitted');
+    await first.submission.settled;
+    await drain();
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed']);
+
+    // A second turn is a second native turn, so a second end — the count
+    // tracks native turns, and nothing else.
+    const second = await runtime.submit({ text: 'two' });
+    if (second.status !== 'submitted') throw new Error('expected submitted');
+    await second.submission.settled;
+    await drain();
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed', 'completed']);
+  });
+
+  it('reports two ends when a steered submission gets its own result in the same resident window', async () => {
+    const h = new Harness();
+    h.behavior.holdSubmit = true;
+    const runtime = await tracked(h.createRuntime());
+    await runtime.start();
+
+    const first = await runtime.submit({ text: 'one' });
+    if (first.status !== 'submitted') throw new Error('expected submitted');
+    await drain();
+    const session = h.sessions[0]!;
+    const initialUuid = session.submits[0]!.commandUuid!;
+    fireDefaultResult(session.spec, initialUuid, { text: 'first answer' });
+    await expect(first.submission.settled).resolves.toMatchObject({
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'first answer' },
+    });
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed']);
+
+    // The window is still open, so this is a live steer rather than a new turn.
+    const second = await runtime.submit({ text: 'two' });
+    if (second.status !== 'submitted') throw new Error('expected submitted');
+    expect(session.steers.map((steer) => steer.prompt)).toEqual(['two']);
+    const steeredUuid = session.steers[0]!.commandUuid!;
+
+    // claude did not fold it: the steered command starts and is answered by a
+    // result of its own, which is a second native turn in the same window.
+    fireDefaultResult(session.spec, steeredUuid, { text: 'second answer' });
+    await expect(second.submission.settled).resolves.toMatchObject({
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'second answer' },
+    });
+
+    expect(h.nativeEnds.map((end) => end.status)).toEqual([
+      'completed',
+      'completed',
+    ]);
+
+    // Draining the window afterwards is not another end: nothing was running.
+    session.releaseSubmit();
+    await drain();
+    expect(h.nativeEnds).toHaveLength(2);
+  });
+
+  it('reports one end for one result that folded a steered submission into it', async () => {
+    const h = new Harness();
+    h.behavior.holdSubmit = true;
+    const runtime = await tracked(h.createRuntime());
+    await runtime.start();
+
+    const first = await runtime.submit({ text: 'one' });
+    if (first.status !== 'submitted') throw new Error('expected submitted');
+    await drain();
+    const session = h.sessions[0]!;
+    const initialUuid = session.submits[0]!.commandUuid!;
+    session.spec.onProtocolEvent?.({
+      kind: 'command_lifecycle',
+      commandUuid: initialUuid,
+      state: 'started',
+    });
+
+    const second = await runtime.submit({ text: 'two' });
+    if (second.status !== 'submitted') throw new Error('expected submitted');
+    const steeredUuid = session.steers[0]!.commandUuid!;
+    session.spec.onProtocolEvent?.({
+      kind: 'command_lifecycle',
+      commandUuid: steeredUuid,
+      state: 'started',
+    });
+
+    // One result answers both started commands: one native turn, one end.
+    session.spec.onProtocolEvent?.({
+      kind: 'result',
+      outcome: {
+        isError: false,
+        text: 'one answer for both',
+        sessionId: null,
+        subtype: 'success',
+        errors: [],
+        hasStructuredOutput: false,
+      },
+    });
+    const [s1, s2] = await Promise.all([
+      first.submission.settled,
+      second.submission.settled,
+    ]);
+    expect(s1).toMatchObject({
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'one answer for both' },
+    });
+    expect(s2).toEqual(s1);
+
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed']);
+
+    session.releaseSubmit();
+    await drain();
+    expect(h.nativeEnds).toHaveLength(1);
+  });
+
+  it('reports interrupted, exactly once, when stop() ends a turn the runtime never saw finish', async () => {
+    const h = new Harness();
+    h.behavior.stallSubmit = true;
+    const runtime = await tracked(h.createRuntime());
+    await runtime.start();
+    const admission = await runtime.submit({ text: 'hangs' });
+    if (admission.status !== 'submitted') throw new Error('expected submitted');
+
+    await runtime.stop();
+    await expect(admission.submission.settled).resolves.toEqual({ kind: 'stopped' });
+    // A second stop() is idempotent and must not re-report the same end.
+    await runtime.stop();
+
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['interrupted']);
+  });
+
+  it('reports failed when the runtime rejects with a still-open submission', async () => {
+    const h = new Harness();
+    h.behavior.onSubmit = () => {
+      throw new Error('protocol connection lost');
+    };
+    const runtime = await tracked(h.createRuntime());
+    await runtime.start();
+    const admission = await runtime.submit({ text: 'hello' });
+    if (admission.status !== 'submitted') throw new Error('expected submitted');
+
+    await expect(admission.submission.settled).resolves.toMatchObject({
+      kind: 'failed',
+      error: expect.objectContaining({ message: 'protocol connection lost' }),
+    });
+    await drain();
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['failed']);
+  });
+
+  it('reports failed when the native result carries an error', async () => {
+    const h = new Harness();
+    h.behavior.onSubmit = (spec, _prompt, commandUuid) => {
+      fireDefaultResult(spec, commandUuid!, {
+        isError: true,
+        errors: ['native failure'],
+        text: '',
+      });
+    };
+    const runtime = await tracked(h.createRuntime());
+    await runtime.start();
+    const admission = await runtime.submit({ text: 'hello' });
+    if (admission.status !== 'submitted') throw new Error('expected submitted');
+    await admission.submission.settled;
+    await drain();
+
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['failed']);
+  });
+
+  it('carries only a status and a timestamp: no submission, turn id, or presentation', async () => {
+    const h = new Harness();
+    const runtime = await tracked(h.createRuntime());
+    await runtime.start();
+    const admission = await runtime.submit({ text: 'hello' });
+    if (admission.status !== 'submitted') throw new Error('expected submitted');
+    await admission.submission.settled;
+    await drain();
+
+    expect(h.nativeEnds).toHaveLength(1);
+    expect(Object.keys(h.nativeEnds[0]!).sort()).toEqual(['occurredAt', 'status']);
+    expect(Object.isFrozen(h.nativeEnds[0])).toBe(true);
   });
 });
 

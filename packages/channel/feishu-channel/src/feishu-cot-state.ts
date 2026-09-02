@@ -1,10 +1,18 @@
-/** Session-owned COT state plus its pure identity and ledger helpers. */
+/**
+ * Session-owned COT state, keyed by the recipient it presents.
+ *
+ * One recipient — a TeamLeader, or the Dispatcher Agent — owns exactly one
+ * standing anchor and at most one open card, whichever Feishu chat, DM, group,
+ * or topic supplied that anchor. A target is a property of the anchor and
+ * nothing else: it is not a presentation identity, not a state key, and not a
+ * partition, so a conversation that moves between chats moves its one card
+ * rather than growing a second.
+ *
+ * Nothing here is durable. Restarting the session loses every anchor and every
+ * open-card reference by design; there is no restore, replay, or backfill.
+ */
 import type { FeishuCotEventInput } from '@excitedjs/feishu-transport';
 
-import type {
-  DispatcherCotStateStore,
-  DispatcherTurnState,
-} from './feishu-cot-dispatcher-state.js';
 import type { FeishuCotRunStatus } from './feishu-cot-events.js';
 import { sameTarget, targetKey, type FeishuTarget } from './routing/target.js';
 
@@ -16,10 +24,10 @@ const FEISHU_COT_FENCED_TARGETS_MAX = 512;
 /**
  * The visible Feishu message a chain-of-thought card hangs under.
  *
- * The anchor is now entirely the Channel's: it is captured from the inbound
- * message this session is about to submit, or from a message this session just
- * sent, and Core never carries it. `target` is kept beside the ids so a binding
- * that moves away can retire exactly the anchors that pointed at it.
+ * The anchor is entirely the Channel's: it is captured from the inbound message
+ * this session is about to submit, or from a message this session just sent,
+ * and Core never carries it. `target` is kept beside the ids so a binding that
+ * moves away can retire exactly the anchors that pointed at it.
  */
 export interface VisibleMessageAnchor {
   readonly chatId: string;
@@ -36,7 +44,6 @@ export interface CotOutboxState {
 export interface CotPresentation {
   readonly id: string;
   readonly generation: number;
-  readonly turnId: string;
   readonly chatId: string;
   readonly originMessageId: string;
   phase: 'creating' | 'writing';
@@ -49,42 +56,28 @@ export interface CotPresentation {
 }
 
 /**
- * What every presented conversation has, whoever is answering it.
+ * Who a card belongs to.
  *
- * The presentation machinery — outbox, generation fencing, open tool calls,
- * the serialized platform tail — is identical for a Dispatcher turn and a
- * TeamLeader's card. Only the correlation around it differs, so only that is
- * stated separately below.
+ * The two recipients differ only in identity and in the outer lifecycle policy
+ * applied around them: a TeamLeader is additionally fenced by its Team's close
+ * and by route removal, and the Dispatcher has no Team to be fenced by. Every
+ * anchor, card open, append, interrupt, and close transition below is the same
+ * for both.
  */
-export interface CotStateBase {
+export type CotRecipientIdentity =
+  | { readonly kind: 'leader'; readonly teamName: string; readonly leaderName: string }
+  | { readonly kind: 'dispatcher'; readonly agentName: string };
+
+/** One recipient's presentation state; the whole COT model is a map of these. */
+export interface CotState {
+  readonly identity: CotRecipientIdentity;
   generation: number;
   anchor: VisibleMessageAnchor | null;
   active: CotPresentation | null;
-  disabledGeneration: number | null;
   readonly openCalls: Map<string, { readonly generation: number }>;
-  readonly pendingTurns: Map<string, { readonly generation: number }>;
   tail: Promise<void>;
   inFlight: number;
 }
-
-/**
- * One TeamLeader's presentation state.
- *
- * A leader keeps a standing anchor: later turns of the same conversation — a
- * completion reported back, a cron fire — write under the message the operator
- * is already watching. A Dispatcher turn does not, which is why it has its own
- * state in `feishu-cot-dispatcher-state.ts`.
- */
-export interface LeaderState extends CotStateBase {
-  readonly kind: 'leader';
-  readonly teamName: string;
-  readonly leaderName: string;
-  admittedTurnId: string | null;
-  nextAnchor: VisibleMessageAnchor | null;
-}
-
-/** The state a presentation helper operates on, whichever it is. */
-export type CotState = LeaderState | DispatcherTurnState;
 
 interface LeaderTargetFence {
   readonly leaderKey: string;
@@ -95,8 +88,10 @@ interface LeaderTargetFence {
  * What a leader may no longer present into.
  *
  * Two facts fence a card: the Team closed, and the route that produced the
- * anchor was taken away. Both are now local — one arrives as `team.state`, the
- * other is this Channel's own unbind — so the fence needs no Core event.
+ * anchor was taken away. Both are local — one arrives as `team.state`, the
+ * other is this Channel's own unbind — so the fence needs no Core event. It is
+ * the whole of the TeamLeader's extra lifecycle policy; the Dispatcher, having
+ * no Team, is never fenced.
  */
 export class LeaderLifecycleFence {
   private readonly leaders = new Set<string>();
@@ -117,18 +112,22 @@ export class LeaderLifecycleFence {
 
   onTeamState(
     event: { team_name: string; leader_name: string; status: string },
-    leaders: Map<string, LeaderState>,
-    interrupt: (key: string, state: LeaderState) => void,
+    states: Map<string, CotState>,
+    interrupt: (key: string, state: CotState) => void,
   ): void {
-    const eventKey = cotLeaderKey(event.team_name, event.leader_name);
+    const eventKey = cotRecipientKey({
+      kind: 'leader',
+      teamName: event.team_name,
+      leaderName: event.leader_name,
+    });
     if (event.status !== 'closed') {
       this.leaders.delete(eventKey);
       this.clearTargetsForLeader(eventKey);
       return;
     }
     this.rememberLeader(eventKey);
-    for (const [key, state] of leaders) {
-      if (state.teamName !== event.team_name) continue;
+    for (const [key, state] of states) {
+      if (!isTeamLeaderOf(state, event.team_name)) continue;
       this.rememberLeader(key);
       interrupt(key, state);
     }
@@ -137,16 +136,18 @@ export class LeaderLifecycleFence {
   /** A binding this Channel just removed or moved to another Team. */
   onRouteReleased(
     input: { teamName: string; target: FeishuTarget },
-    leaders: Map<string, LeaderState>,
-    interrupt: (key: string, state: LeaderState) => void,
+    states: Map<string, CotState>,
+    interrupt: (key: string, state: CotState) => void,
   ): void {
-    for (const [key, state] of leaders) {
-      if (state.teamName !== input.teamName) continue;
+    for (const [key, state] of states) {
+      if (!isTeamLeaderOf(state, input.teamName)) continue;
       this.rememberTarget(key, input.target);
-      const anchored = [state.anchor, state.nextAnchor].some(
-        (anchor) => anchor !== null && sameTarget(anchor.target, input.target),
-      );
-      if (anchored) interrupt(key, state);
+      if (
+        state.anchor !== null &&
+        sameTarget(state.anchor.target, input.target)
+      ) {
+        interrupt(key, state);
+      }
     }
   }
 
@@ -155,7 +156,7 @@ export class LeaderLifecycleFence {
     for (const [key, fenced] of this.targets) {
       if (
         fenced.leaderKey.startsWith(
-          `${input.teamName}${IDENTITY_KEY_SEPARATOR}`,
+          `leader${IDENTITY_KEY_SEPARATOR}${input.teamName}${IDENTITY_KEY_SEPARATOR}`,
         ) &&
         sameTarget(fenced.target, input.target)
       ) {
@@ -195,70 +196,67 @@ export class LeaderLifecycleFence {
   }
 }
 
-export function ensureLeaderState(
-  leaders: Map<string, LeaderState>,
-  teamName: string,
-  leaderName: string,
-): LeaderState {
-  const key = cotLeaderKey(teamName, leaderName);
-  const existing = leaders.get(key);
+function isTeamLeaderOf(state: CotState, teamName: string): boolean {
+  return state.identity.kind === 'leader' && state.identity.teamName === teamName;
+}
+
+/**
+ * The recipient an event or a routing decision names.
+ *
+ * Returns `null` for anything that is not one of the two presented recipients —
+ * a Team member, a Dispatcher-scoped TeamMate — so the caller never has to
+ * repeat the role test.
+ */
+export function cotRecipientOf(event: {
+  role: string;
+  team_name: string | null;
+  teammate_name: string;
+}): CotRecipientIdentity | null {
+  if (typeof event.teammate_name !== 'string' || event.teammate_name === '') {
+    return null;
+  }
+  if (event.role === 'dispatcher' && event.team_name === null) {
+    return { kind: 'dispatcher', agentName: event.teammate_name };
+  }
+  if (
+    event.role === 'team_leader' &&
+    typeof event.team_name === 'string' &&
+    event.team_name !== ''
+  ) {
+    return {
+      kind: 'leader',
+      teamName: event.team_name,
+      leaderName: event.teammate_name,
+    };
+  }
+  return null;
+}
+
+export function cotRecipientKey(identity: CotRecipientIdentity): string {
+  return identity.kind === 'leader'
+    ? `leader${IDENTITY_KEY_SEPARATOR}${identity.teamName}` +
+      `${IDENTITY_KEY_SEPARATOR}${identity.leaderName}`
+    : `dispatcher${IDENTITY_KEY_SEPARATOR}${identity.agentName}`;
+}
+
+export function ensureCotState(
+  states: Map<string, CotState>,
+  identity: CotRecipientIdentity,
+): CotState {
+  const key = cotRecipientKey(identity);
+  const existing = states.get(key);
   if (existing !== undefined) return existing;
-  const created: LeaderState = {
-    kind: 'leader',
-    teamName,
-    leaderName,
-    admittedTurnId: null,
+  const created: CotState = {
+    identity,
     generation: 0,
     anchor: null,
-    nextAnchor: null,
     active: null,
-    disabledGeneration: null,
     openCalls: new Map(),
-    pendingTurns: new Map(),
     tail: Promise.resolve(),
     inFlight: 0,
   };
-  leaders.set(key, created);
+  states.set(key, created);
   return created;
-}
-
-export function setLeaderFallbackAnchorIfAbsent(
-  leaders: Map<string, LeaderState>,
-  teamName: string,
-  leaderName: string,
-  anchor: VisibleMessageAnchor,
-): void {
-  if (!validLeaderIdentity(teamName, leaderName)) return;
-  const prepared = prepareVisibleAnchor(anchor);
-  if (prepared === null) return;
-  const state = ensureLeaderState(leaders, teamName, leaderName);
-  if (state.anchor !== null) return;
-  state.anchor = prepared;
-}
-
-export function refreshLeaderNextAnchor(
-  leaders: Map<string, LeaderState>,
-  teamName: string,
-  leaderName: string,
-  anchor: VisibleMessageAnchor,
-): void {
-  if (!validLeaderIdentity(teamName, leaderName)) return;
-  const state = leaders.get(cotLeaderKey(teamName, leaderName));
-  if (state === undefined) return;
-  const current = state.anchor ?? state.nextAnchor;
-  if (current === null) return;
-  const prepared = prepareVisibleAnchor(anchor);
-  if (prepared === null) return;
-  // A reply only migrates the anchor inside the same conversation. Replying
-  // somewhere else is an ordinary outbound message, not a new place for this
-  // leader's next card.
-  if (!sameTarget(current.target, prepared.target)) return;
-  state.nextAnchor = prepared;
-}
-
-function validLeaderIdentity(teamName: string, leaderName: string): boolean {
-  return typeof teamName === 'string' && teamName !== '' &&
-    typeof leaderName === 'string' && leaderName !== '';
 }
 
 export function prepareVisibleAnchor(
@@ -280,42 +278,26 @@ export function prepareVisibleAnchor(
   };
 }
 
-export function cotStateAdmitsTurn(state: CotState, turnId: string): boolean {
-  // A dispatcher state *is* one turn, so reaching it is already the proof.
-  return state.kind === 'dispatcher' || state.admittedTurnId === turnId;
-}
-
-export function releaseLeaderTurn(state: LeaderState, turnId: string): void {
-  if (state.admittedTurnId !== turnId) return;
-  state.admittedTurnId = null;
-  state.pendingTurns.delete(turnId);
-}
-
 export function cotStateHasAnchor(state: CotState): boolean {
-  return state.anchor !== null ||
-    (state.kind === 'leader' && state.nextAnchor !== null);
+  return state.anchor !== null;
 }
 
 export function reapCotState(
   closed: boolean,
   key: string,
   state: CotState,
-  leaders: Map<string, LeaderState>,
-  dispatcher: DispatcherCotStateStore,
+  states: Map<string, CotState>,
 ): void {
-  if (closed || state.inFlight > 0 || state.active !== null ||
-      state.openCalls.size > 0 || state.pendingTurns.size > 0) return;
-  if (state.kind === 'leader') {
-    if (!cotStateHasAnchor(state) && leaders.get(key) === state) {
-      leaders.delete(key);
-    }
+  if (
+    closed ||
+    state.inFlight > 0 ||
+    state.active !== null ||
+    state.anchor !== null ||
+    state.openCalls.size > 0
+  ) {
     return;
   }
-  dispatcher.reap(key, state);
-}
-
-export function cotLeaderKey(teamName: string, leaderName: string): string {
-  return `${teamName}${IDENTITY_KEY_SEPARATOR}${leaderName}`;
+  if (states.get(key) === state) states.delete(key);
 }
 
 export function cotOpenCallKey(turnId: string, callId: string): string {

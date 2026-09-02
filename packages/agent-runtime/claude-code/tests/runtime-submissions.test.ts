@@ -20,6 +20,7 @@ import {
 import type { ClaudeProtocolEvent, TurnOutcome } from '../src/types.js';
 import type {
   RuntimeActivityEvent,
+  RuntimeNativeTurnEnd,
   RuntimeSubmissionSettlement,
 } from '@excitedjs/dreamux-types';
 
@@ -39,6 +40,7 @@ interface Harness {
   active: ActiveTurn;
   deferredByUuid: Map<string, SubmissionDeferred>;
   activityEvents: RuntimeActivityEvent[];
+  nativeEnds: RuntimeNativeTurnEnd[];
   logs: Array<{ level: string; message: string }>;
   fire(event: ClaudeProtocolEvent): void;
   /** Await settlement of one submitted command uuid. */
@@ -71,17 +73,20 @@ function makeHarness(
     generation: 0,
   };
   const activityEvents: RuntimeActivityEvent[] = [];
+  const nativeEnds: RuntimeNativeTurnEnd[] = [];
   const logs: Array<{ level: string; message: string }> = [];
   return {
     active,
     deferredByUuid,
     activityEvents,
+    nativeEnds,
     logs,
     fire(event) {
       handleProtocolEvent(active, event, {
         threadId: options.threadId ?? 'thread-1',
         outputSchemaEnabled: options.outputSchemaEnabled ?? false,
         activitySink: (event) => activityEvents.push(event),
+        nativeTurnSink: (end) => nativeEnds.push(end),
         log: (level, message) => logs.push({ level, message }),
       });
     },
@@ -95,6 +100,10 @@ function makeHarness(
 
 function started(commandUuid: string): ClaudeProtocolEvent {
   return { kind: 'command_lifecycle', commandUuid, state: 'started' };
+}
+
+function completed(commandUuid: string): ClaudeProtocolEvent {
+  return { kind: 'command_lifecycle', commandUuid, state: 'completed' };
 }
 
 function resultEvent(o: TurnOutcome): ClaudeProtocolEvent {
@@ -336,12 +345,14 @@ describe('handleProtocolEvent live activity', () => {
       threadId: null,
       outputSchemaEnabled: false,
       activitySink: throwingSink,
+      nativeTurnSink: () => undefined,
       log: (level, message, error) => log(level, message, error),
     });
     handleProtocolEvent(active, streamAssistantText('text'), {
       threadId: null,
       outputSchemaEnabled: false,
       activitySink: throwingSink,
+      nativeTurnSink: () => undefined,
       log: (level, message, error) => log(level, message, error),
     });
     expect(throwingSink).toHaveBeenCalledTimes(1);
@@ -354,8 +365,176 @@ describe('handleProtocolEvent live activity', () => {
       threadId: null,
       outputSchemaEnabled: false,
       activitySink: throwingSink,
+      nativeTurnSink: () => undefined,
       log: (level, message, error) => log(level, message, error),
     });
+    await expect(deferred.submission.settled).resolves.toMatchObject({
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'ok' },
+    });
+  });
+});
+
+/**
+ * One native turn, one ended fact.
+ *
+ * A native turn is one terminal `result`, however many Dreamux commands were
+ * folded into it. The resident execution window it belongs to is not the unit:
+ * a command steered into a running window can be answered by a `result` of its
+ * own, and each such boundary is its own native turn with its own end. The fact
+ * carries a status and a timestamp and nothing else — no command uuid, no
+ * submission, no turn id — because a folded turn has no single logical owner to
+ * name.
+ */
+describe('handleProtocolEvent native turn end', () => {
+  it('emits exactly one ended fact for a turn that folded three commands into one result', () => {
+    const h = makeHarness(['cmd-1', 'cmd-2', 'cmd-3']);
+    h.fire(started('cmd-1'));
+    h.fire(started('cmd-2'));
+    h.fire(started('cmd-3'));
+    h.fire(resultEvent(outcome({ text: 'one answer for all three' })));
+
+    expect(h.nativeEnds).toHaveLength(1);
+    expect(h.nativeEnds[0]!.status).toBe('completed');
+    // No logical membership: the fact names no command, submission, or turn.
+    expect(Object.keys(h.nativeEnds[0]!).sort()).toEqual(['occurredAt', 'status']);
+  });
+
+  it('emits nothing before the result, so an in-flight turn never looks finished', () => {
+    const h = makeHarness(['cmd-1']);
+    h.fire(started('cmd-1'));
+    h.fire(streamAssistantText('still working'));
+    h.fire(streamToolUse('call-1', 'Read', { file_path: '/tmp/x' }));
+
+    expect(h.activityEvents.length).toBeGreaterThan(0);
+    expect(h.nativeEnds).toHaveLength(0);
+  });
+
+  it('reports failed when the native result carries isError', () => {
+    const h = makeHarness(['cmd-1']);
+    h.fire(started('cmd-1'));
+    h.fire(resultEvent(outcome({ isError: true, errors: ['boom'], text: '' })));
+
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['failed']);
+  });
+
+  it('reports failed once when a result cannot be attributed to any started command', () => {
+    const h = makeHarness(['cmd-1', 'cmd-2']);
+    h.fire(resultEvent(outcome()));
+
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['failed']);
+  });
+
+  it('emits one end per result boundary when a steered command runs after the first one was answered', async () => {
+    const h = makeHarness(['cmd-1', 'cmd-2']);
+    // The already legal protocol sequence for a steer that did not fold: the
+    // initial command is answered and drains, then the held-back command starts
+    // and is answered by a result of its own — two native turns in the one
+    // resident execution window.
+    h.fire(started('cmd-1'));
+    h.fire(resultEvent(outcome({ text: 'first answer' })));
+    h.fire(completed('cmd-1'));
+    h.fire(started('cmd-2'));
+    h.fire(resultEvent(outcome({ text: 'second answer' })));
+    h.fire(completed('cmd-2'));
+
+    expect(h.nativeEnds.map((end) => end.status)).toEqual([
+      'completed',
+      'completed',
+    ]);
+    // Each boundary answered its own command, so neither submission waited on
+    // the other's result.
+    const [s1, s2] = await Promise.all([h.settled('cmd-1'), h.settled('cmd-2')]);
+    expect(s1).toMatchObject({
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'first answer' },
+    });
+    expect(s2).toMatchObject({
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'second answer' },
+    });
+  });
+
+  it('reports the second boundary honestly when the steered turn fails after a completed one', () => {
+    const h = makeHarness(['cmd-1', 'cmd-2']);
+    h.fire(started('cmd-1'));
+    h.fire(resultEvent(outcome({ text: 'first answer' })));
+    h.fire(started('cmd-2'));
+    h.fire(resultEvent(outcome({ isError: true, errors: ['boom'], text: '' })));
+
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed', 'failed']);
+  });
+
+  it('reports every terminal result, including a conflicting unattributed result', () => {
+    const h = makeHarness(['cmd-1', 'cmd-2']);
+    h.fire(started('cmd-1'));
+    h.fire(resultEvent(outcome({ text: 'first' })));
+    // A conflicting second result fails loudly because no command started after
+    // the first boundary. It is still a terminal result and therefore reports
+    // its own failed native-turn end.
+    h.fire(resultEvent(outcome({ text: 'second' })));
+
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed', 'failed']);
+  });
+
+  it('reports the native result before settling its submissions', () => {
+    const order: string[] = [];
+    const deferred = createRuntimeSubmission();
+    const settle = deferred.settle;
+    deferred.settle = (settlement) => {
+      order.push('settle');
+      return settle(settlement);
+    };
+    const active = makeHarness(['cmd-1']).active;
+    active.submissions.set('cmd-1', deferred);
+    handleProtocolEvent(active, started('cmd-1'), {
+      threadId: 'thread-1',
+      outputSchemaEnabled: false,
+      activitySink: () => undefined,
+      nativeTurnSink: () => order.push('end'),
+      log: () => undefined,
+    });
+    handleProtocolEvent(active, resultEvent(outcome()), {
+      threadId: 'thread-1',
+      outputSchemaEnabled: false,
+      activitySink: () => undefined,
+      nativeTurnSink: () => order.push('end'),
+      log: () => undefined,
+    });
+
+    expect(order).toEqual(['end', 'settle']);
+  });
+
+  it('does not fail the turn when the native turn sink throws: it logs and settles anyway', async () => {
+    const deferred = createRuntimeSubmission();
+    const active: ActiveTurn = {
+      initialCommandUuid: 'cmd-1',
+      submissions: new Map([['cmd-1', deferred]]),
+      started: [],
+      completedCommands: new Set(),
+      activitySequence: 0,
+      tools: new Map(),
+      session: null,
+      sessionReady: new Promise(() => undefined),
+      resolveSession: () => undefined,
+      rejectSession: () => undefined,
+      steerQueue: Promise.resolve(),
+      generation: 0,
+    };
+    const log = vi.fn();
+    const throwingSink = vi.fn(() => {
+      throw new Error('native turn sink exploded');
+    });
+    handleProtocolEvent(active, resultEvent(outcome({ text: 'ok', sessionId: null })), {
+      threadId: null,
+      outputSchemaEnabled: false,
+      activitySink: () => undefined,
+      nativeTurnSink: throwingSink,
+      log: (level, message, error) => log(level, message, error),
+    });
+
+    expect(throwingSink).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith('warn', expect.any(String), expect.any(Error));
     await expect(deferred.submission.settled).resolves.toMatchObject({
       kind: 'completion',
       completion: { status: 'completed', resultText: 'ok' },

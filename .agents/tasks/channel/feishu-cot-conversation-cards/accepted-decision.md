@@ -124,3 +124,52 @@ persisted state remain in force.
   Feishu I/O are provider presentation policy.
 - **Use one dispatcher presentation.** Rejected: concurrent chats and
   interleaved turns would steal or terminate each other's cards.
+
+## Amendment — corrected card lifecycle (2026-09-01 / 2026-09-02)
+
+The 2026-08-26 decision above is preserved as accepted history. The clauses
+listed here were replaced by the corrective round recorded in
+[requirement.md](requirement.md) and
+[continued-optimization.md](continued-optimization.md); everything else in the
+decision still stands, including the issue #63 supersession boundary and the
+display-only, fail-open discipline.
+
+What replaced what:
+
+- **Presentation identity.** "Dispatchers keep independent per-chat and per-turn
+  state" and "TeamLeaders retain one active presentation … for the state's
+  single admitted `turn_id`" are replaced by one presentation per *recipient*.
+  Every TeamLeader and the Dispatcher owns one standing anchor and at most one
+  open card, whichever Feishu chat, DM, group, or topic supplied the anchor. A
+  target is an attribute of the anchor, not a state key. The per-chat and
+  per-turn dispatcher modules are deleted, and with them the 512/512/64
+  presentation caps.
+- **What moves an anchor.** Only a Channel user message that Core reports as
+  admitted. "A successful Reply receipt may anchor the next card" and the
+  deferred `nextAnchor` it needed are removed: a Reply is outbound only. A
+  visible Team bind card may still initialize a TeamLeader that has no anchor,
+  and never replaces one.
+- **What closes a card.** `teammate.turn.settled` no longer closes, reopens, or
+  re-anchors anything. Core publishes a new actor-scoped
+  `teammate.native_turn.ended` fact, sourced from an optional provider seam
+  (`AgentRuntimeCreateContext.nativeTurn`), and that is a card's only terminal.
+  One Claude Code terminal `result` and one Codex `turn/completed` are each one
+  native turn; several Dreamux submissions folded into one of them share its
+  single end. A provider synthesizes an end for a stop, failure, or protocol
+  loss only when that call actually settled a still-open submission, so an
+  ordinary success reports exactly one end and no deduplication state exists.
+- **What is displayed.** The source whitelist is gone: once a recipient has an
+  anchor, every projected input displays, including the body of the message this
+  Channel itself submitted. There is no body-suppression ledger — such a mark
+  could only be written after Core had already published that body inside the
+  admitting call.
+- **Accepted best-effort losses** are recorded in
+  [verification.md](verification.md) and are operator rulings, not defects.
+- **Projected paths** are renamed rather than blanked: the workspace reads `.`
+  and this host's home reads `~`, found by scanning the prefixes this host
+  actually uses. The prefixes are resolved once during `Server.start()` and
+  passed into each conversation projection as a value; no process-global cache
+  decides whether a path is renamed. See
+  [`/packages/dreamux/src/platform/home-paths.ts`](/packages/dreamux/src/platform/home-paths.ts)
+  and
+  [`/packages/dreamux/src/channel/conversation-projection.ts`](/packages/dreamux/src/channel/conversation-projection.ts).

@@ -136,6 +136,7 @@ export function createCodexAgentRuntimeProvider(
         cwd: context.cwd,
         state: context.state,
         activitySink: context.activity ?? (() => undefined),
+        nativeTurnSink: context.nativeTurn ?? (() => undefined),
         codec,
         paths,
         // The package owns socket allocation: pick a fresh name in the first of

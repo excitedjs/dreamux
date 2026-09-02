@@ -1,7 +1,6 @@
 /** Fail-open wiring between a live Feishu session and its COT adapter. */
 import type {
   ChannelCoreEvent,
-  ChannelMcpCaller,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
 import type { FeishuCotClient } from '@excitedjs/feishu-transport';
@@ -58,6 +57,11 @@ export class FeishuCotSessionSeam {
    * Every submitted turn is recorded before it is presented, whoever submitted
    * it: the recording is a key-value fact, not a presentation decision, and
    * only a session holding the matching `turn_id` can turn it into one.
+   *
+   * `teammate.turn.settled` is deliberately absent. It is a per-logical-
+   * submission lifecycle fact, and a provider folds any number of submissions
+   * into one native turn, so it says nothing about whether the card the
+   * operator is watching has finished. `teammate.native_turn.ended` does.
    */
   handle(event: ChannelCoreEvent): void {
     const adapter = this.adapter;
@@ -68,10 +72,9 @@ export class FeishuCotSessionSeam {
       switch (event.kind) {
         case 'teammate.turn.submitted':
           this.submitted.record(event);
-          adapter.onTurnSubmitted(event);
           return;
-        case 'teammate.turn.settled':
-          adapter.onTurnSettled(event);
+        case 'teammate.native_turn.ended':
+          adapter.onNativeTurnEnded(event);
           return;
         case 'teammate.turn.message':
           adapter.onTurnMessage(event);
@@ -104,6 +107,14 @@ export class FeishuCotSessionSeam {
     );
   }
 
+  /**
+   * A Team's visible bind card, offered as its leader's first anchor.
+   *
+   * The one anchor a recipient may acquire without a Channel user message, and
+   * only a TeamLeader may: a Dispatcher has no installation or restart anchor.
+   * It only ever initializes — a TeamLeader that already has a standing anchor
+   * keeps it — so no bind card can displace a live conversation's placement.
+   */
   setBindingFallbackAnchor(
     teamName: string,
     leaderName: string,
@@ -115,22 +126,6 @@ export class FeishuCotSessionSeam {
         teamName,
         leaderName,
         anchor,
-      ),
-    );
-  }
-
-  refreshReplyNextAnchor(input: {
-    caller: ChannelMcpCaller;
-    anchor: VisibleMessageAnchor;
-  }): void {
-    if (input.caller.kind !== 'team_leader') return;
-    const caller = input.caller;
-    this.withAdapter(
-      'reply anchor refresh failed; Reply unchanged',
-      (adapter) => adapter.refreshNextAnchor(
-        caller.team_name,
-        caller.leader_name,
-        input.anchor,
       ),
     );
   }

@@ -2,27 +2,37 @@
 
 ## Current state
 
-- Goal: Render each channel-facing agent conversation (dispatcher and team
-  leader; team members remain event-only) as a live, incrementally updated
-  Feishu card:
-  runtime submission activity (assistant output and tool calls) flows through
-  a neutral core conversation projection into channel sessions, and the
-  Feishu channel pins an inbound card to that turn's message, lets a TeamLeader
-  use its latest same-target Reply receipt for the next card, and uses the
-  team-group binding notification as the pre-inbound fallback, wrapping each
-  card up in place on settlement. COT display replaces the automatic inbound
-  progress reactions (the deliberate `react` tool stays). Upgrade the Lark SDK
-  to `^1.73.0` for the card APIs this needs.
+- Goal: Give each TeamLeader, and the Dispatcher, one global standing anchor and
+  at most one open Feishu COT card. Every successfully admitted Feishu inbound
+  replaces the anchor, closes the old card, and opens its successor; Reply never
+  affects an anchor or card; a Team bind card may initialize only an anchorless
+  TeamLeader, while a Dispatcher remains anchorless until its first user inbound;
+  after initialization every input, including a restart notice in the live
+  session, displays by default except the already-visible Feishu user body;
+  pre-anchor events are absent only because no card placement exists; all
+  anchor/card state is session-memory-only and is intentionally lost when that
+  session restarts; one native turn emits one ended fact and closes the recipient's
+  current card without logical-turn membership. Projected text keeps local paths
+  readable by rendering this host's workspace and home prefixes as `.` and `~`.
 - State: `done`
 - Requirement: [Current requirement](/.agents/tasks/channel/feishu-cot-conversation-cards/requirement.md)
-- Final solution: [Final solution](/.agents/tasks/channel/feishu-cot-conversation-cards/technical-design/final.md)
+- Technical design: owned by the single Claude implementation developer. The
+  developer receives only the locked requirement and must derive the design
+  from current source and repository guidance. Existing proposals and the
+  withdrawn previous solution are not implementation inputs.
+- Withdrawn historical solution marker:
+  [technical-design/final.md](/.agents/tasks/channel/feishu-cot-conversation-cards/technical-design/final.md).
 - Verification: [Verification](/.agents/tasks/channel/feishu-cot-conversation-cards/verification.md)
-- Solution review Issue: Not created — the operator approved the recorded final
-  solution directly and waived further consultation (simplest path).
+- Solution review Issue:
+  [#360](https://github.com/excitedjs/dreamux/issues/360).
 - Blockers: None.
 - Accepted decision record: [accepted-decision.md](/.agents/tasks/channel/feishu-cot-conversation-cards/accepted-decision.md) (backfilled 2026-09-01).
-- Next action: Prepare the pull request after operator approval. Do not push or
-  open the pull request before that approval.
+- Continued optimization (simplification findings raised after the draft pull
+  request, none approved for implementation):
+  [continued-optimization.md](/.agents/tasks/channel/feishu-cot-conversation-cards/continued-optimization.md).
+- Next action: None. Pull request
+  [#357](https://github.com/excitedjs/dreamux/pull/357) carries the corrective
+  and simplification rounds and is approved and merged into `next`.
 - Related tasks: Builds on
   [adopt-completion-token-routing](/.agents/tasks/completion-routing/adopt-completion-token-routing/README.md)
   (the submission activity sink this task consumes). The parked
@@ -31,17 +41,20 @@
 ## Development approval
 
 - Status: Granted.
-- Source: Operator instruction via the Team's bound channel, 2026-08-25 —
-  deliver the COT card capability as one PR, following the same process shape
-  as the completion-token task (task record; single developer, code first;
-  two independent review seats; full test verification; PR).
-- Approved implementation boundary: `packages/dreamux-types` channel and
-  runtime activity types, `packages/dreamux` core conversation projection and
-  channel/teammate service wiring, `packages/agent-runtime/claude-code` and
-  `packages/agent-runtime/codex` tool-action display reporting,
-  `packages/channel/feishu-channel` COT modules,
-  `packages/channel/feishu-transport` COT send surface and the Lark SDK
-  upgrade, associated tests and Rush change files.
+- Source: Operator instruction via the Team's bound channel, 2026-09-01 — lock
+  the refreshed requirement and assign one Claude developer to design and
+  implement it; the TeamLeader must not modify product code and must pass only
+  the requirement to the developer.
+- Approved implementation boundary: `packages/dreamux-types`,
+  `packages/dreamux`, `packages/agent-runtime/claude-code`,
+  `packages/agent-runtime/codex`, `packages/channel/feishu-channel`, affected
+  tests, current architecture knowledge, and Rush change files. Transport,
+  configuration, persistence, dependency, and service changes are out of scope
+  unless current-source evidence shows they are strictly required by the locked
+  requirement; any such expansion requires an operator decision. The original
+  approved scope explicitly includes readable local-path projection in Dreamux
+  conversation facts: workspace and current-host home prefixes render as `.` and
+  `~` rather than being blanked or replaced by opaque placeholders.
 - Explicit non-goals: reply interaction enhancements, workflow cards,
   collaboration-space resources, channel scope changes, and any web/platform
   surface.
@@ -52,25 +65,94 @@
   automatic inbound progress reaction chain is removed in the same change
   (the model-facing `react` tool stays), formally superseding the issue #63
   tri-state contract.
+- Corrective instruction (operator, 2026-09-01): one Team has one anchor and at
+  most one open card regardless of Feishu target. Reply never affects an anchor
+  or card. A visible bind card may initialize an anchorless TeamLeader; a
+  Dispatcher has no anchor until its first Channel user message. Pre-anchor events
+  produce no COT only because no placement exists; while the session remains live
+  and an anchor exists, a restart notice and every other source display normally.
+  Anchors and open-card references are best-effort, session-memory-only state;
+  restarting the session intentionally discards all of them without recovery or
+  replay.
+  Each Agent Runtime emits one ended fact per native turn regardless of folded
+  inputs.
+  Feishu already owns Team routing; the sole routing exception is a
+  proven-no-admission fallback from a missing or closed Team to the Dispatcher.
+- Review adjudication (operator, 2026-09-01): switch the anchor only after steer
+  or queue admission succeeds. Do not add complex ordering guarantees for facts
+  synchronously projected before that success is observed; predecessor-card or
+  no-anchor loss is acceptable. Do not add an early-native-end ordering buffer,
+  and allow a tool result that crosses an anchor replacement to be dropped. A
+  transient card create or append failure must not disable the standing anchor;
+  a later opening activity must be able to open a card there. A native-ended fact
+  only closes an existing card and is ignored when no card is open. A visible bind
+  card may initialize a TeamLeader only when no standing anchor exists; it never
+  replaces an existing anchor.
+- Review adjudication (operator, 2026-09-02): the local-path projection change is
+  an original requirement and remains in this pull request. The prior scope-drift
+  finding is rejected because the task record had omitted that requirement. Fix
+  the confirmed implementation defects in home resolution, punctuation-adjacent
+  prefixes, and `file://` prefix recognition without removing the capability.
+- Simplification adjudication (operator, 2026-09-02): delete every construct the
+  review proved unnecessary, and repair every confirmed local-path projection
+  defect. Concretely: report a synthesized Claude native-turn end only when that
+  call actually settled an open submission, and delete the per-window
+  deduplication flag and its command-start reset with it; delete the Channel's
+  per-turn body-suppression ledger entirely, because it can never take effect and
+  the duplicate it targets is already an accepted loss; pass this host's home
+  prefixes into the conversation projection instead of caching them in a
+  process-global, and delete the cache, its test reset hook, and the start-order
+  dependency; fix all three confirmed path defects — home resolution, prefixes
+  adjacent to ordinary prose punctuation, and prefixes inside `file://` URLs. The
+  provider-contract guard around the native-turn sink and the fail-loud
+  unattributed-result path are deliberately retained.
+- Developer seat (operator, 2026-09-02): the simplification round is implemented
+  by a Codex developer TeamMate, replacing the previous single Claude developer
+  seat for this round. The TeamLeader still writes no product code, and owns the
+  task record, knowledge closeout, commits, pushes, and review requests.
+- Review adjudication (operator, 2026-09-02): fix and push the confirmed Claude
+  native-turn granularity defect before continuing. A Claude native turn is one
+  terminal `result`, not the whole resident execution window. Sequential results
+  in one resident window each emit one ended fact; submissions folded into one
+  result share that result's single fact. The correction adds no presentation
+  identity, logical membership, buffering, or Channel state.
 
 ## Delivery
 
-- Implementation and test-stage review converged with no accepted finding left
-  open. Full verification evidence is recorded in
-  [verification.md](/.agents/tasks/channel/feishu-cot-conversation-cards/verification.md).
-- Knowledge closeout: Complete — the durable capability and supersessions are
-  recorded in
-  [Feishu COT conversation display](/.agents/tasks/channel/feishu-cot-conversation-cards/accepted-decision.md),
-  and the Channel, routing, architecture, and non-blocking-inbound current-state
-  pages are aligned.
-- Pull request / CI / merge: Pending operator approval; no push or merge has
-  been performed.
+- Corrective implementation was completed by the single Claude developer on
+  2026-09-01 and passed TeamLeader pre-review checks.
+- Exactly one developer TeamMate writes product code at a time. The 2026-09-01
+  corrective round was written by a Claude developer; the 2026-09-02
+  simplification round is written by a Codex developer. The TeamLeader must not
+  edit product code in either round.
+- The 2026-09-02 simplification round was implemented by the Codex developer and
+  passed TeamLeader pre-review after two correction cycles, both opened by a
+  TeamLeader finding rather than a failing check: a token-class widening that
+  made `<prefix>.<suffix>` read as the prefix, and a shadowing rule that
+  published the operator's raw home path. Both are recorded in
+  [continued-optimization.md](/.agents/tasks/channel/feishu-cot-conversation-cards/continued-optimization.md).
+- Knowledge closeout is complete: the accepted decision record carries an
+  amendment for the corrected card lifecycle, and
+  [verification.md](/.agents/tasks/channel/feishu-cot-conversation-cards/verification.md)
+  states the current scope, coverage, and accepted losses.
+- Independent implementation review: approved by the Devbox seat after three
+  rounds. Every finding it raised was resolved or recorded; the one it left open
+  by operator adjudication — the close-drain window — is written into
+  [verification.md](/.agents/tasks/channel/feishu-cot-conversation-cards/verification.md)'s
+  accepted losses rather than left in a review thread.
+- Existing proposal files, the withdrawn previous solution, public review text,
+  and the generated Feishu design document are not implementation authorities.
+- Pull request / CI / merge: [#357](https://github.com/excitedjs/dreamux/pull/357)
+  merged into `next` with CI green on its final head.
 
 ## Follow-ups
 
+- Simplification findings raised during operator review of the draft pull
+  request are recorded in
+  [continued-optimization.md](/.agents/tasks/channel/feishu-cot-conversation-cards/continued-optimization.md).
+  They are recorded only; each still needs an operator ruling before it becomes
+  work.
 - Split `/packages/dreamux/src/service/dispatcher-service/collaboration-routing.ts`
   before further edits; it is at the 700-line lint cap.
-- Consider per-turn TeamLeader presentations if future conversation interleaving
-  requires more than the current single-active-presentation model. The current
-  model intentionally ignores a stale settlement whose `turn_id` no longer
-  matches the active card.
+- No per-target or per-logical-turn presentation split is permitted by the
+  current requirement.

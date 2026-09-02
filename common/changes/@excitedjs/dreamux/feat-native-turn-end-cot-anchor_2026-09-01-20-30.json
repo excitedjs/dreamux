@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "BREAKING: Review: Dreamux now publishes one `teammate.native_turn.ended` core event per runtime-native turn, in addition to the existing per-submission `teammate.turn.settled`. The new event is actor-scoped: it names the Dispatcher or TeamLeader whose runtime produced it and a completed/failed/interrupted status, and it enumerates no logical turns, because a provider folds any number of Dreamux submissions into one native turn. `ConversationProjection` gains a `projectNativeTurnEnd` method, so an out-of-tree projection implementation must add it. `teammate.turn.settled` keeps its existing meaning and is unchanged. No rebuild is needed.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

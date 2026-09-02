@@ -368,6 +368,10 @@ class RecordingProjection implements ConversationProjection {
   projectSettled(input: { agent: ProjectedAgent }): void {
     this.settledRoles.push(input.agent.role);
   }
+
+  projectNativeTurnEnd(): void {
+    // Not exercised by this suite.
+  }
 }
 
 function fakeIdentity(overrides: Partial<AgentEntityIdentity> = {}): AgentEntityIdentity {
@@ -521,6 +525,7 @@ describe('the real conversation projection presents a dispatcher completion deli
     const projection = createConversationProjection({
       coreEvents: publisher,
       log: noopLog(),
+      homePathPrefixes: [],
     });
     const identity = fakeIdentity({ name: 'dispatcher', team_id: null });
     const coordinator = coordinatorFor('dispatcher', projection, identity);
@@ -549,6 +554,7 @@ describe('the real conversation projection presents a dispatcher completion deli
     const projection = createConversationProjection({
       coreEvents: publisher,
       log: noopLog(),
+      homePathPrefixes: [],
     });
     const identity = fakeIdentity({ name: 'dispatcher', team_id: null });
     const coordinator = coordinatorFor('dispatcher', projection, identity);
@@ -585,6 +591,7 @@ describe('the real conversation projection presents a dispatcher completion deli
     const projection = createConversationProjection({
       coreEvents: publisher,
       log: noopLog(),
+      homePathPrefixes: [],
     });
     const identity = fakeIdentity({ name: 'orphan', team_id: null });
     const coordinator = coordinatorFor('teammate', projection, identity);

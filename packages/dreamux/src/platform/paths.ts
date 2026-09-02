@@ -110,7 +110,7 @@ export function isUnderDreamuxRoot(path: string): boolean {
 }
 
 /** realpath, falling back to a lexical resolve when the path does not exist. */
-async function canonicalPath(path: string): Promise<string> {
+export async function canonicalPath(path: string): Promise<string> {
   try {
     return await realpath(path);
   } catch {

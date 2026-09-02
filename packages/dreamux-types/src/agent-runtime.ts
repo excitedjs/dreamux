@@ -231,6 +231,35 @@ export interface AgentRuntimeActivitySink {
 }
 
 /**
+ * The end of one runtime-native turn.
+ *
+ * A provider folds any number of Dreamux submissions into one native turn, so
+ * this fact is deliberately not a settlement: it says the runtime stopped
+ * producing for the turn it was running, once, whatever that turn contained.
+ * `completed` is the runtime's own successful terminal; `failed` is a proven
+ * terminal error; `interrupted` is a native turn that ended without either,
+ * such as a stop or a protocol loss.
+ */
+export interface RuntimeNativeTurnEnd {
+  readonly status: 'completed' | 'failed' | 'interrupted';
+  readonly occurredAt: number;
+}
+
+/**
+ * Optional, synchronous, non-backpressuring sink for native turn ends.
+ *
+ * Deliberately carries no submission, logical turn id, or member set: the
+ * fact is one-per-native-turn, and the only identity it can honestly claim is
+ * the runtime's own. Core attributes it to the entity that owns the runtime.
+ * Like {@link AgentRuntimeActivitySink} it is display-only and fail-open —
+ * Core drops writes from a revoked generation, and its absence changes only
+ * presentation.
+ */
+export interface AgentRuntimeNativeTurnSink {
+  (end: RuntimeNativeTurnEnd): void;
+}
+
+/**
  * The single input shape a live runtime accepts.
  *
  * Deliberately nothing but text: it is already the complete model-facing
@@ -335,6 +364,8 @@ export interface AgentRuntimeCreateContext<TConfig> {
   /** Leased, push-only state sink for this runtime generation. */
   readonly state: AgentRuntimeStateSink;
   readonly activity?: AgentRuntimeActivitySink;
+  /** Leased, push-only sink for this runtime generation's native turn ends. */
+  readonly nativeTurn?: AgentRuntimeNativeTurnSink;
   readonly logger?: AgentRuntimeLogger;
 }
 

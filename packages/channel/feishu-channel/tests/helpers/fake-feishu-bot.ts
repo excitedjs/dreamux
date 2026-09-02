@@ -2,6 +2,7 @@ import type {
   FeishuAppOwnerIdentity,
   FeishuBotMemberAddedEvent,
   FeishuChatMode,
+  FeishuCotClient,
   FeishuInviteMembersInput,
   FeishuInviteMembersResult,
   FeishuMessageResourceRequest,
@@ -54,6 +55,13 @@ export interface FakeFeishuBot extends FeishuBot {
   setAppOwner(owner: FeishuAppOwnerIdentity): void;
   setChatMode(chatId: string, mode: FeishuChatMode | Error | undefined): void;
   setSendError(err: Error | null): void;
+  /**
+   * Give this bot a COT surface, or take it away again.
+   *
+   * `cot` is optional on `FeishuBot` precisely so a bot without it presents no
+   * chain-of-thought card; a test that wants cards supplies one here.
+   */
+  setCot(client: FeishuCotClient | undefined): void;
   setSendReceiptDelay(delay: Promise<void> | null): void;
   setSendCardDelay(delay: Promise<void> | null): void;
   setReactionError(err: Error | null): void;
@@ -101,6 +109,7 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
   const displayName = `Fake ${appId}`;
   const reactions: FakeFeishuBot['reactions'] = [];
   const reactionOps: FakeFeishuBot['reactionOps'] = [];
+  let cotClient: FeishuCotClient | undefined;
 
   return {
     appId,
@@ -109,6 +118,9 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     },
     get botDisplayName(): string | undefined {
       return displayName;
+    },
+    get cot(): FeishuCotClient | undefined {
+      return cotClient;
     },
     async start(r: FeishuInboundRoutes): Promise<void> {
       routes = r;
@@ -229,6 +241,9 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     },
     setSendError(err: Error | null): void {
       sendError = err;
+    },
+    setCot(client: FeishuCotClient | undefined): void {
+      cotClient = client;
     },
     setSendReceiptDelay(delay: Promise<void> | null): void {
       sendReceiptDelay = delay;
