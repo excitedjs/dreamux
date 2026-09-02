@@ -548,7 +548,18 @@ The published catalog is an explicit set of seven kinds: `team.state`,
 it names the Dispatcher or TeamLeader whose runtime stopped producing and a
 terminal status, and carries no logical `turn_id`, member set, or presentation
 identity, because a provider folds any number of Dreamux submissions into one
-runtime-native turn. Sealing is the one place
+runtime-native turn.
+
+The rest of the family carries a `turn_id` because the provider hands each fact
+a `RuntimeSubmission` that Core resolves to an owning turn. That attribution is
+exact for `submitted` and `settled`, which are per submission, but only
+*representative* for the two live kinds: while a native turn folds several
+submissions, both built-in runtimes attribute streamed messages and tool calls
+to the first started command of the group rather than to whichever submission
+prompted them. That is sound for display correlation, which is all a `turn_id`
+is here — a consumer must not read it as proof that a given output answers a
+given input, and a terminal fact must not be attributed that way at all, which
+is exactly why the native-turn end carries no `turn_id`. Sealing is the one place
 a fact becomes deliverable: an event outside the set, an event whose
 `schema_version` is not `1`, or one without a finite `occurred_at` is dropped and
 logged rather than thrown, because producers publish synchronously from inside
@@ -612,7 +623,9 @@ durable — closing or restarting the session loses every anchor and open-card
 reference by design, with no restore, replay, or backfill.
 
 Only a Channel user message that Core reports as admitted moves an anchor. On
-that success Feishu closes the recipient's open card, replaces the standing
+that success Feishu closes the recipient's open card as interrupted — a card
+still open at that moment is showing work the runtime never reported an end for,
+so the newer message cut it off rather than finishing it — replaces the standing
 anchor, and opens the successor under the new message with a fixed receipt,
 without waiting for a settlement or a native turn end; a rejected, failed, or
 ambiguous admission changes nothing. A Reply is outbound only: its receipt never

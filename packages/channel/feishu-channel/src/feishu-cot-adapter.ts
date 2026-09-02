@@ -170,7 +170,7 @@ export class FeishuCotAdapter {
       return;
     }
     const state = ensureCotState(this.states, identity);
-    this.advanceAnchor(key, state, anchor, 'done');
+    this.advanceAnchor(key, state, anchor);
     this.openReceipt(key, state);
   }
 
@@ -226,14 +226,14 @@ export class FeishuCotAdapter {
   onTeamState(event: TeamStateEvent): void {
     if (this.closed) return;
     this.leaderFence.onTeamState(event, this.states, (key, state) =>
-      this.advanceAnchor(key, state, null, 'interrupted'));
+      this.advanceAnchor(key, state, null));
   }
 
   /** This Channel removed or moved a binding away from a Team. */
   onRouteReleased(input: { teamName: string; target: FeishuTarget }): void {
     if (this.closed) return;
     this.leaderFence.onRouteReleased(input, this.states, (key, state) =>
-      this.advanceAnchor(key, state, null, 'interrupted'));
+      this.advanceAnchor(key, state, null));
   }
 
   /** This Channel installed a binding, so the Team may present there again. */
@@ -293,10 +293,9 @@ export class FeishuCotAdapter {
     key: string,
     state: CotState,
     anchor: VisibleMessageAnchor | null,
-    reason: FeishuCotRunStatus,
   ): void {
     state.generation += 1;
-    this.detach(key, state, reason);
+    this.detach(key, state, 'interrupted');
     state.anchor = anchor;
     if (anchor === null) {
       state.openCalls.clear();

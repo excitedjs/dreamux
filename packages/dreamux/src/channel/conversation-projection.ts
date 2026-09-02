@@ -404,8 +404,8 @@ export function redactText(
  *
  * A hit with a path continuing after it (`<prefix>/rest`) takes
  * `nestedReplacement`, and `stripNestedSeparator` drops the separator with it so
- * a workspace turns into `./rest` rather than `.//rest`. A hit that ends there
- * takes `exactReplacement`.
+ * a workspace `<cwd>/rest` turns into `rest`. A hit that ends there takes
+ * `exactReplacement`, so a bare workspace becomes `.`.
  */
 function replacePathPrefix(
   value: string,

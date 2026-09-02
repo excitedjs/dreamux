@@ -302,8 +302,12 @@ describe.each([LEADER, DISPATCHER])(
         'om_2',
         'om_3',
       ]);
-      // Every superseded card is finished; exactly one is still open.
-      expect(cot.cards.map(cotRunStatus)).toEqual(['done', 'done', null]);
+      // Every superseded card was interrupted; exactly one is still open.
+      expect(cot.cards.map(cotRunStatus)).toEqual([
+        'interrupted',
+        'interrupted',
+        null,
+      ]);
 
       await adapter.close();
     });
@@ -329,7 +333,7 @@ describe.each([LEADER, DISPATCHER])(
 
       expect(cot.cards).toHaveLength(2);
       const [first, second] = cot.cards as [typeof cot.cards[0], typeof cot.cards[0]];
-      expect(cotRunStatus(first)).toBe('done');
+      expect(cotRunStatus(first)).toBe('interrupted');
       expect(cotTexts(first)).toEqual([RECEIPT, 'first thought']);
       // The still-running native turn keeps producing, into the card the
       // operator is now looking at.
