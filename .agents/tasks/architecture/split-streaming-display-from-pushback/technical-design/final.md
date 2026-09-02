@@ -380,10 +380,16 @@ Four constraints pin it, and each rules out a nearby alternative:
 
 - **Inside the admission-ledger closure**, so a repeat the ledger deduplicates
   does not publish a second input.
-- **Inside the `operation()` closure** `submitRuntimeTurn` invokes, not before
-  it: `submitRuntimeTurn` can return `stopped` without ever calling
-  `operation()` (`turn-coordinator.ts:125`), and publishing outside would
-  announce an input that never reached a runtime.
+- ~~**Inside the `operation()` closure** `submitRuntimeTurn` invokes, not before
+  it.~~ **Refuted by rulings 4 and 9, and not built this way.** Announcing an
+  input that never reached a runtime is exactly what those rulings ask for: the
+  input is published, and the non-`submitted` outcome ends it with its reason.
+  Keeping the publish inside `operation()` would have preserved the very hole
+  ruling 8 names — a submission that fails before the runtime accepts it shows
+  nothing at all. As built, the publish sits at the top of the admission-ledger
+  closure, above `ensureStarted()`, so a provider start failure (missing binary,
+  vanished worktree) is announced and then failed too. See
+  [As built](#as-built-departures-from-this-document).
 - **Before `runtime.submit`**, not after — ruled by the operator, and the
   ordering argument is not why. Publishing first does remove the activity race
   by construction, and verification confirms the span is safe: between the two
@@ -400,7 +406,10 @@ Four constraints pin it, and each rules out a nearby alternative:
   (`turn-coordinator.ts:239`) and they are deleted from the coordinator. This is
   not optional politeness: `projectInput` runs inside the admission closure, so
   an uncaught throw would reject the admission and run `releaseUncommitted` —
-  display affecting admission, which the requirement forbids outright.
+  display affecting admission, which the requirement forbids outright. As built
+  the guard lives **inside `createConversationProjection`** rather than at each
+  call site, so there is one of it rather than one per caller, and the
+  projection's two methods are non-throwing by contract.
 
 ### A non-`submitted` outcome ends the card through `turn.ended`
 
@@ -787,12 +796,39 @@ if it can, it is load-bearing and must be re-keyed by actor with that scenario
 written down. Deleting it on the strength of "nobody named a repeater" would be
 exactly the kind of unknowing change this repository forbids.
 
+**Resolved at implementation: deleted, because "keeping it" was not an
+available option.** Its key is `RuntimeSubmission`, the key this change removes.
+The instruction to re-key it by actor does not survive contact: an actor-keyed
+set over a long-lived agent is either unbounded, or — at the existing 512 cap —
+fills within one busy conversation and then silently drops *every* subsequent
+fact, which is worse than the duplicate row it was guarding against. The dedupe
+was therefore removed rather than carried forward under a new name.
+
+If a probe later shows codex can repeat a notification, the honest home for the
+fix is the **codex provider's own turn manager**, keyed by native turn id and
+released with the turn (`releaseRecordIfReady`) — bounded by construction,
+scoped to the layer that would know, and out of Core's neutral projection
+entirely. The Feishu layer already tolerates a repeated tool-call *result* (its
+`openCalls` entry is deleted on first use); a repeated assistant message would
+print twice. The probe itself: drive a live codex turn and count
+`item/completed` notifications per item id in `subscribeTurnCollection`.
+
 ### 2. Embedded versus reshaped activity payload
 
 `teammate.activity` should embed the neutral `RuntimeActivity` shape after
 sanitisation. Today `TeammateTurnToolCallEvent` reshapes into an
 `arguments_json` string. If the reshaped form is kept, the "Core invents no
 vocabulary" argument falls back to counting kinds.
+
+**Resolved at implementation: reshaped, with the runtime's own member names
+kept.** Embedding is not available — sanitisation is lossy and type-changing
+(`JsonValue` becomes a bounded string plus truncation and redaction flags), so
+an "embedded" payload would be a differently-typed lookalike of
+`RuntimeActivity`, which is worse than an honest second shape. The vocabulary
+argument is preserved a different way: `TeammateActivity`'s members are named
+`assistant.message`, `tool.call`, and `turn.ended` — exactly `RuntimeActivity`'s
+— so a maintainer holds one vocabulary, not two, and a new runtime fact adds a
+member on both sides without touching the event catalog or the seal.
 
 ## Implementation sequence
 
@@ -917,3 +953,106 @@ early buffer, the old entry points, the old kinds and the `EntityTurn` fields.
 The design is complete when a maintainer can explain the display path without
 mentioning a submission, `turn-coordinator.ts` contains no display code, and
 there is exactly one place in Core where an input fact is published.
+
+## As built: departures from this document
+
+Recorded here rather than left stale, per the working-authority note at the top.
+Everything not listed was built as designed.
+
+### 1. The input publishes above `ensureStarted()`, not inside `operation()`
+
+Stated in [Placement inside `submitAdmitted` is exact](#placement-inside-submitadmitted-is-exact).
+The design's placement predates rulings 4 and 9 and preserved the hole ruling 8
+names. As built, `submitAdmitted` publishes at the top of the admission-ledger
+closure and then obliges everything below it to end what it opened:
+
+- a non-`submitted` admission ends the card with the reason
+  (`asDisplayTurnEnd`, beside the two sibling admission mappers in
+  `turn-recording.ts`);
+- a **throw** — `ensureStarted()` on a dormant agent whose binary is gone,
+  `updateIntent` failing — ends the card with the error message and rethrows.
+
+One `try`/`catch` covers the whole span, with the start failure as its named
+scenario. Two acceptance tests pin both halves
+(`tests/admission-ledger.test.ts`).
+
+### 2. A completion push-back to a stopped recipient is now visible
+
+**This is a user-visible behavior change and the operator may want to veto it.**
+[A dropped completion is invisible](#a-dropped-completion-is-invisible) says the
+pre-publication half of that divergence "stays invisible exactly as it is today"
+and that changing it "needs its own ruling". Applying rulings 4 and 8 uniformly
+moved the publish above the liveness check, so it no longer does: a push-back
+whose recipient's runtime is gone now shows the delivered body on the
+recipient's card followed by `turn.ended(interrupted, "the agent runtime is not
+running")`.
+
+Kept, because the alternative is a special case — "every admitted input is
+announced, *except* a push-back to a dead recipient" — and because a lost
+hand-off is precisely the thing the operator's diagnosis motive wants to see.
+The window is narrow: `prepareCompletion`'s own liveness check refuses first in
+the common case, so this fires only when the runtime disappears between prepare
+and submit. Pinned by a test so a decision to revert it is a one-line change.
+
+### 3. Ruling 4's 「置成失败」 is a printed reason, not a failed wire status
+
+`FeishuCotRunStatus` is `'done' | 'interrupted'`, and the platform's AG-UI
+`RUN_FINISHED` status vocabulary is not documented anywhere in this repo. The
+COT `complete` endpoint accepts `'error'`, but that is the card-abandonment path
+for transport failures and conflates "our card broke" with "the submission
+failed". Guessing a third `RUN_FINISHED` status risks the platform rejecting the
+whole append batch, which breaks the card outright.
+
+As built, ruling 4's stated failure mode — a published input leaving a card open
+forever — is fully prevented: the card **ends**, and ruling 9's error text is
+printed on it first. The wire terminal is `interrupted`. If the platform does
+accept a failed status, this is a one-value change in `feishu-cot-events.ts`.
+
+### 4. `TeammateRuntimeOwner`'s upward channel shrinks instead of growing
+
+The design expected the owner to gain a projection dependency. It already held
+`deps.conversationProjection` and `options.role`, so it builds the
+`ProjectedAgent` itself and its callbacks shrink from four to two
+(`{ isActive, markClosing }`). One generation-fenced sink replaces two.
+
+### 5. `reason` on the *runtime's* `turn.ended` is a design choice, not ruling 9
+
+Ruling 9's 「那些错误场景」 refers to ruling 4's non-submitted admissions. Carrying
+a reason on the provider's own ends too — claude's failed `result`, codex's
+finalize failure and protocol teardown — is this implementation's addition under
+the same diagnosis motive. Cheap, and it makes a card that stopped say why.
+
+### 6. Previously-dropped activity now displays
+
+Both providers dropped live activity they could not attribute to a submission:
+claude returned early when no started command and no sole submission could own
+it (`emitStreamActivity`), and codex buffered into `pendingActivity` and dropped
+the buffer if no submission ever bound. Keyed on the agent, there is nothing to
+attribute, so both facts now display. The claude test that asserted the drop was
+inverted to assert the emission, with the reason in its name.
+
+### 7. Unbound codex *ends* still do not display — a deliberate asymmetry
+
+`endNativeTurn` keeps its `record.representative === null` guard, with a new
+rationale: the display is one open card per agent, so an end from a native turn
+no Dreamux submission ever bound would close a card this entity's own
+submissions opened. Activity from such a turn is additive and harmless; its end
+is not. In the one case that matters — an `ambiguous` admission — Core's own
+`turn.ended` closes the card anyway.
+
+### 8. `teammate.turn.settled`'s assistant text has no successor
+
+Ruling 3 deletes the event. Its `assistant` field (bounded by
+`ASSISTANT_TEXT_MAX`, now deleted with it) was the turn's final result text. No
+Channel consumed it — the Feishu switch deliberately omitted the kind — and the
+same text also arrives as an `assistant.message` activity from the runtime, so
+no display loses anything. `ASSISTANT_TEXT_MAX` and its truncation tests were
+removed with the field.
+
+### 9. `isSynthetic` is producer-less but stays
+
+`TurnSubmitOptions.isSynthetic` has no caller in `src/` today, exactly like
+`priority` did. Ruling 1 names `priority` and nothing else, and an operator
+ruling is quoted, never stretched — so `isSynthetic` was left alone. Recorded
+here so it is not forgotten: it is a candidate for the same treatment if the
+operator wants it, and its stream-json envelope behavior is still tested.

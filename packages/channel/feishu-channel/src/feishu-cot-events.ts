@@ -7,9 +7,12 @@ import { createHash } from 'node:crypto';
 
 import type {
   RuntimeToolAction,
-  TeammateTurnToolCallEvent,
+  TeammateActivity,
 } from '@excitedjs/dreamux-types';
 import type { FeishuCotEventInput } from '@excitedjs/feishu-transport';
+
+/** The one activity member this presentation layer renders. */
+type CotToolCallActivity = Extract<TeammateActivity, { kind: 'tool.call' }>;
 
 export const FEISHU_COT_EVENT_CONTENT_MAX_BYTES = 4_096;
 export const FEISHU_COT_APPEND_MAX_BYTES = 64 * 1_024;
@@ -70,7 +73,7 @@ export function textMessageEvents(input: {
 }
 
 export function toolCallStartEvents(
-  event: TeammateTurnToolCallEvent,
+  event: CotToolCallActivity,
   channelId?: string,
 ): FeishuCotEventInput[] {
   const toolCallId = opaqueDisplayId('call', event.call_id);
@@ -107,7 +110,7 @@ export function toolCallStartEvents(
 }
 
 export function toolCallResultEvents(
-  event: TeammateTurnToolCallEvent,
+  event: CotToolCallActivity,
   channelId?: string,
 ): FeishuCotEventInput[] {
   const messageId = opaqueDisplayId('result', event.event_id);
@@ -262,7 +265,7 @@ const OWNED_TOOL_PRESENTATION: Readonly<Record<
 };
 
 function toolPresentation(
-  event: TeammateTurnToolCallEvent,
+  event: CotToolCallActivity,
   channelId: string | undefined,
 ): ToolPresentation {
   const toolCallName = displayToolName(event.tool_name);
@@ -324,7 +327,7 @@ function ownedFeishuTool(
 }
 
 function builtInToolPresentation(
-  event: TeammateTurnToolCallEvent,
+  event: CotToolCallActivity,
 ): BuiltInToolPresentation | null {
   const tool = teammateTool(event.tool_name);
   if (

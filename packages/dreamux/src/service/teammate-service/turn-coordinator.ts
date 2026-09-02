@@ -1,19 +1,6 @@
-import type {
-  DreamuxLogger,
-  RuntimeActivityEvent,
-  RuntimeAdmission,
-  RuntimeNativeTurnEnd,
-  RuntimeSubmission,
-  TeammateRole,
-} from '@excitedjs/dreamux-types';
+import type { RuntimeAdmission, RuntimeSubmission } from '@excitedjs/dreamux-types';
 
-import type {
-  ConversationProjection,
-  ProjectedAgent,
-} from '../../channel/conversation-projection.js';
-import { errorInfo } from '../../platform/error-info.js';
 import type { AgentEntityIdentity } from '../agent-entity/types.js';
-import type { CompletionDeliveryResult } from '../completion-router/index.js';
 import {
   admissionWithoutTurn,
   EntityTurn,
@@ -23,96 +10,27 @@ import {
 
 interface EntityTurnCoordinatorOptions {
   identity: () => AgentEntityIdentity;
-  /** The runtime role this entity's owner derived; never read from identity. */
-  role: TeammateRole;
-  intent: () => string | null;
   isActive: () => boolean;
-  conversationProjection?: ConversationProjection;
-  log: DreamuxLogger;
-}
-
-export const EARLY_ACTIVITY_EVENTS_MAX = 512;
-
-export interface EntityTurnInput {
-  /** The open provenance name the submission was rendered under. */
-  source: string;
-  /** The submitting owner's id, returned only on the submitted fact. */
-  sourceId?: string;
-  /** The source's original body, which is what display projections record. */
-  prompt: string;
-  deliverCompletion?: TurnCompletionDelivery;
-}
-
-interface CapturedEntityTurnInput extends EntityTurnInput {
-  intent: string | null;
-  producerName: string;
-  submittedAt: number;
 }
 
 type ObservedRuntimeAdmission =
   | { status: 'fulfilled'; admission: RuntimeAdmission }
   | { status: 'rejected'; error: Error };
 
-interface EarlyActivityBuffer {
-  readonly events: RuntimeActivityEvent[];
-  warned: boolean;
-}
-
-type ConversationProjectionEntryPoint =
-  | 'submitted'
-  | 'early_activity'
-  | 'live_activity'
-  | 'settled'
-  | 'native_turn_end';
-
-/** Entity-owned serialization for provider admission and in-process display work. */
+/**
+ * Entity-owned serialization for provider admission.
+ *
+ * It holds the push-back line and nothing else: which submissions this entity
+ * has outstanding, in what order their admissions are attached, and who is
+ * waiting for each one's result. Display is not here — a live surface is keyed
+ * on the Agent, not on a submission, so it never needed this class's
+ * bookkeeping to find its subject.
+ */
 export class EntityTurnCoordinator {
   private admissionContinuationTail: Promise<void> = Promise.resolve();
   private readonly retainedTurns = new Set<EntityTurn>();
-  private readonly turnsBySubmission = new WeakMap<RuntimeSubmission, EntityTurn>();
-  private readonly earlyActivity =
-    new WeakMap<RuntimeSubmission, EarlyActivityBuffer>();
 
   constructor(private readonly opts: EntityTurnCoordinatorOptions) {}
-
-  readonly activitySink = (event: RuntimeActivityEvent): void => {
-    if (this.opts.conversationProjection === undefined) return;
-    const turn = this.turnsBySubmission.get(event.submission);
-    if (turn === undefined) {
-      let buffered = this.earlyActivity.get(event.submission);
-      if (buffered === undefined) {
-        buffered = { events: [], warned: false };
-        this.earlyActivity.set(event.submission, buffered);
-      }
-      if (buffered.events.length >= EARLY_ACTIVITY_EVENTS_MAX) {
-        if (!buffered.warned) {
-          buffered.warned = true;
-          this.warnEarlyActivityFull();
-        }
-        return;
-      }
-      buffered.events.push(event);
-      return;
-    }
-    if (turn.isSettled()) return;
-    this.projectDisplay(turn, 'live_activity', (projection, agent) => {
-      projection.projectActivity(agent, turn, event);
-    });
-  };
-
-  /**
-   * One runtime-native turn ended.
-   *
-   * It reaches no `EntityTurn` on purpose: the provider folded whatever it
-   * folded, and picking one member to own the end would invent a correlation
-   * the seam refuses to state. The projection is told about the Agent alone,
-   * and every logical submission keeps settling on its own schedule.
-   */
-  readonly nativeTurnSink = (end: RuntimeNativeTurnEnd): void => {
-    this.projectActorDisplay('native_turn_end', (projection, agent) => {
-      projection.projectNativeTurnEnd(agent, end);
-    });
-  };
 
   hasUnsettledCurrent(): boolean {
     return [...this.retainedTurns].some((turn) => !turn.isSettled());
@@ -120,22 +38,30 @@ export class EntityTurnCoordinator {
 
   submitRuntimeTurn(
     operation: () => Promise<RuntimeAdmission>,
-    input: EntityTurnInput,
+    deliverCompletion: TurnCompletionDelivery | null,
   ): Promise<TurnAdmission> {
     if (!this.opts.isActive()) return Promise.resolve({ status: 'stopped' });
-    return this.submitObserved(operation, input);
-  }
-
-  submitCompletion(
-    operation: () => Promise<RuntimeAdmission>,
-    input: EntityTurnInput,
-  ): Promise<CompletionDeliveryResult> {
-    if (!this.opts.isActive()) {
-      return Promise.resolve({ status: 'unsupported', reason: 'runtime stopped' });
+    let admission: Promise<RuntimeAdmission>;
+    try {
+      admission = operation();
+    } catch (error) {
+      return Promise.resolve({ status: 'ambiguous', error: asError(error) });
     }
-    return this.submitObserved(operation, input).then(
-      turnAdmissionToCompletionDelivery,
-    );
+    const observed = observeRuntimeAdmission(admission);
+    return this.enqueueAdmissionContinuation(async () => {
+      const result = await observed;
+      if (result.status === 'rejected') {
+        return { status: 'ambiguous', error: result.error };
+      }
+      if (result.admission.status !== 'submitted') {
+        return admissionWithoutTurn(result.admission);
+      }
+      const turn = this.attachSubmission(
+        result.admission.submission,
+        deliverCompletion,
+      );
+      return { status: 'submitted', turn };
+    });
   }
 
   /**
@@ -165,31 +91,6 @@ export class EntityTurnCoordinator {
     for (const turn of [...this.retainedTurns]) await turn.ensureDelivery();
   }
 
-  private submitObserved(
-    operation: () => Promise<RuntimeAdmission>,
-    input: EntityTurnInput,
-  ): Promise<TurnAdmission> {
-    const captured = this.capture(input);
-    let admission: Promise<RuntimeAdmission>;
-    try {
-      admission = operation();
-    } catch (error) {
-      return Promise.resolve({ status: 'ambiguous', error: asError(error) });
-    }
-    const observed = observeRuntimeAdmission(admission);
-    return this.enqueueAdmissionContinuation(async () => {
-      const result = await observed;
-      if (result.status === 'rejected') {
-        return { status: 'ambiguous', error: result.error };
-      }
-      if (result.admission.status !== 'submitted') {
-        return admissionWithoutTurn(result.admission);
-      }
-      const turn = this.attachSubmission(result.admission.submission, captured);
-      return { status: 'submitted', turn };
-    });
-  }
-
   private enqueueAdmissionContinuation<T>(task: () => Promise<T>): Promise<T> {
     const continuation = this.admissionContinuationTail.then(task, task);
     this.admissionContinuationTail = continuation.then(
@@ -201,130 +102,18 @@ export class EntityTurnCoordinator {
 
   private attachSubmission(
     submission: RuntimeSubmission,
-    input: CapturedEntityTurnInput,
+    deliverCompletion: TurnCompletionDelivery | null,
   ): EntityTurn {
     const turn = new EntityTurn(
       submission,
-      input.source,
-      input.sourceId ?? null,
-      input.prompt,
-      input.intent,
-      input.submittedAt,
-      input.producerName,
-      input.deliverCompletion ?? null,
+      this.opts.identity().name,
+      deliverCompletion,
     );
-    this.turnsBySubmission.set(submission, turn);
     this.retainedTurns.add(turn);
-    void turn.settled.then((settlement) => {
-      this.projectDisplay(turn, 'settled', (projection, agent) => {
-        projection.projectSettled({ agent, turn, settlement });
-      });
-    }).catch(() => undefined);
     void turn.ensureDelivery().finally(() => {
       this.retainedTurns.delete(turn);
     }).catch(() => undefined);
-    const earlyActivity = this.earlyActivity.get(submission)?.events ?? [];
-    this.earlyActivity.delete(submission);
-    this.projectDisplay(turn, 'submitted', (projection, agent) => {
-      projection.projectSubmitted(agent, turn);
-    });
-    for (const event of earlyActivity) {
-      this.projectDisplay(turn, 'early_activity', (projection, agent) => {
-        projection.projectActivity(agent, turn, event);
-      });
-    }
     return turn;
-  }
-
-  private projectDisplay(
-    turn: EntityTurn,
-    entryPoint: ConversationProjectionEntryPoint,
-    operation: (
-      projection: ConversationProjection,
-      agent: ProjectedAgent,
-    ) => void,
-  ): void {
-    const projection = this.opts.conversationProjection;
-    if (projection === undefined) return;
-    let identity: AgentEntityIdentity | undefined;
-    try {
-      identity = this.opts.identity();
-      operation(projection, { identity, role: this.opts.role });
-    } catch (error) {
-      this.warnProjectionFailure(identity, turn.id, entryPoint, error);
-    }
-  }
-
-  /** The same guarded projection call for a fact that names no turn. */
-  private projectActorDisplay(
-    entryPoint: ConversationProjectionEntryPoint,
-    operation: (
-      projection: ConversationProjection,
-      agent: ProjectedAgent,
-    ) => void,
-  ): void {
-    const projection = this.opts.conversationProjection;
-    if (projection === undefined) return;
-    let identity: AgentEntityIdentity | undefined;
-    try {
-      identity = this.opts.identity();
-      operation(projection, { identity, role: this.opts.role });
-    } catch (error) {
-      this.warnProjectionFailure(identity, null, entryPoint, error);
-    }
-  }
-
-  private warnProjectionFailure(
-    identity: AgentEntityIdentity | undefined,
-    turnId: string | null,
-    entryPoint: ConversationProjectionEntryPoint,
-    error: unknown,
-  ): void {
-    try {
-      this.opts.log.warn(
-        {
-          ...(identity === undefined
-            ? {}
-            : {
-                dispatcher_id: identity.dispatcher_id,
-                agent_name: identity.name,
-                role: this.opts.role,
-              }),
-          ...(turnId === null ? {} : { turn_id: turnId }),
-          entry_point: entryPoint,
-          err: errorInfo(error),
-        },
-        'Conversation projection failed; continuing the turn without this display update',
-      );
-    } catch {
-      // Display diagnostics are non-authoritative for turn execution.
-    }
-  }
-
-  private warnEarlyActivityFull(): void {
-    try {
-      const identity = this.opts.identity();
-      this.opts.log.warn(
-        {
-          dispatcher_id: identity.dispatcher_id,
-          agent_name: identity.name,
-          role: this.opts.role,
-          maximum: EARLY_ACTIVITY_EVENTS_MAX,
-        },
-        'Conversation projection early activity buffer is full; dropping newest activity',
-      );
-    } catch {
-      // Display diagnostics are non-authoritative for turn execution.
-    }
-  }
-
-  private capture(input: EntityTurnInput): CapturedEntityTurnInput {
-    return {
-      ...input,
-      intent: this.opts.intent(),
-      producerName: this.opts.identity().name,
-      submittedAt: Date.now(),
-    };
   }
 }
 
@@ -335,24 +124,6 @@ function observeRuntimeAdmission(
     (value) => ({ status: 'fulfilled', admission: value }),
     (error: unknown) => ({ status: 'rejected', error: asError(error) }),
   );
-}
-
-function turnAdmissionToCompletionDelivery(
-  result: TurnAdmission,
-): CompletionDeliveryResult {
-  switch (result.status) {
-    case 'submitted':
-    case 'duplicate':
-      return { status: 'accepted' };
-    case 'stopped':
-      return { status: 'unsupported', reason: 'runtime stopped' };
-    case 'failed':
-      return { status: 'failed', error: result.error };
-    case 'ambiguous':
-      return { status: 'ambiguous', error: result.error };
-    case 'skipped':
-      return { status: 'failed', error: new Error('completion delivery unexpectedly skipped') };
-  }
 }
 
 function asError(error: unknown): Error {

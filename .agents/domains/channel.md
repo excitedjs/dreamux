@@ -534,32 +534,35 @@ Each `DispatcherService` owns one in-process `DispatcherCoreEventBus`. It is a
 best-effort distribution helper, not a fact owner or store. Existing owners
 publish after their normal write point: `TeamStore` publishes Team status and
 concrete leader changes; `AgentIdentityStore` publishes TeamLeader and TeamMate
-status changes; the conversation projection publishes display-only turn lifecycle
-and activity facts for the dispatcher agent and TeamLeaders. Routing produces no
+status changes; the conversation projection publishes display-only input and
+activity facts for the dispatcher agent and TeamLeaders. Routing produces no
 core event — a Channel already owns its routing records, so it describes its own
 state from them at the moment it changes them, and Core publishing a binding fact
 back would mean Core holding one. Workflow, scheduler, and host-maintenance events
 are deliberately absent.
 
-The published catalog is an explicit set of seven kinds: `team.state`,
-`teammate.state`, `teammate.turn.submitted`, `teammate.turn.settled`,
-`teammate.turn.message`, `teammate.turn.tool_call`, and
-`teammate.native_turn.ended`. The last is actor-scoped rather than turn-scoped:
-it names the Dispatcher or TeamLeader whose runtime stopped producing and a
-terminal status, and carries no logical `turn_id`, member set, or presentation
-identity, because a provider folds any number of Dreamux submissions into one
-runtime-native turn.
+The published catalog is an explicit set of four kinds: `team.state`,
+`teammate.state`, `teammate.input`, and `teammate.activity`. The last two are
+the whole conversation, split by producer: Core says what it admitted, and the
+runtime says what it did. Both are **actor-scoped** — they name the Dispatcher
+or TeamLeader whose conversation they belong to and carry no `turn_id`, member
+set, or presentation identity, because a provider folds any number of Dreamux
+submissions into one runtime-native turn and no display fact can honestly name
+the submission that caused it.
 
-The rest of the family carries a `turn_id` because the provider hands each fact
-a `RuntimeSubmission` that Core resolves to an owning turn. That attribution is
-exact for `submitted` and `settled`, which are per submission, but only
-*representative* for the two live kinds: while a native turn folds several
-submissions, both built-in runtimes attribute streamed messages and tool calls
-to the first started command of the group rather than to whichever submission
-prompted them. That is sound for display correlation, which is all a `turn_id`
-is here — a consumer must not read it as proof that a given output answers a
-given input, and a terminal fact must not be attributed that way at all, which
-is exactly why the native-turn end carries no `turn_id`. Sealing is the one place
+`teammate.input` is published at the moment of submission, before any runtime
+has accepted it, so a submission that fails is visible together with the text
+that failed. `teammate.activity` carries a nested payload in the runtime's own
+vocabulary (`assistant.message`, `tool.call`, `turn.ended`), so a runtime that
+learns to report something new adds a member and changes no event catalog, no
+seal, and no Channel subscription. `turn.ended` is the display stream's
+terminal, carrying the producer's own reason when it has one. Core publishes
+that same terminal itself for an input no runtime ever accepted, because such
+an input still opened a surface that nothing else would close.
+
+The seal's catalog is declared as a total record over the event union, so a new
+kind that is not listed fails to compile rather than being published and
+silently dropped. Sealing is the one place
 a fact becomes deliverable: an event outside the set, an event whose
 `schema_version` is not `1`, or one without a finite `occurred_at` is dropped and
 logged rather than thrown, because producers publish synchronously from inside
@@ -645,18 +648,24 @@ Team-member events explicitly and never routes them through a recipient's state.
 
 Once a recipient has an anchor, everything Core projects for it displays:
 assistant text, tool calls and results, and every input whatever its source name,
-including `task`, `task-notification`, `cron`, `system`, a restart notice
-delivered inside a live session, and the body of the message this Channel itself
-submitted. There is no source whitelist and no body-suppression ledger. A fact
+including `task`, `task-notification`, `cron`, `system`, and a restart notice
+delivered inside a live session. The one exception is the body of the message
+this Channel itself submitted, which the operator can already see as their own
+Feishu message: the session holds a bounded set of the caller-owned ids it
+issued and recognizes an input by **comparing** `source_id` against them. Its
+mere presence proves nothing — cron fires, task push-backs, and restart notices
+carry one too. There is no source whitelist. A fact
 that arrives before the recipient has an anchor produces no card because there is
 nowhere to place one, not because its source or kind was filtered.
 
-A card's one terminal is `teammate.native_turn.ended`. `teammate.turn.settled` is
-a per-logical-submission lifecycle fact and closes, reopens, or re-anchors
-nothing: a provider folds any number of submissions into one native turn, so
-settlement says nothing about whether the card an operator is watching has
-finished. A `completed` end closes the current card as done; `failed` and
-`interrupted` close it as interrupted. The fact closes an already open card and
+A card's one terminal is a `turn.ended` activity. There is no per-submission
+lifecycle fact at this boundary at all: a provider folds any number of
+submissions into one native turn, so settlement could never say whether the card
+an operator is watching has finished. A `completed` end closes the current card
+as done; `failed` and `interrupted` close it as interrupted, printing the end's
+reason on the card first when it carries one. The Channel's own COT vocabulary
+has no third terminal value, so an operator reads *that it failed* from the
+printed reason rather than from the wire status. The fact closes an already open card and
 never opens one, so it is ignored when no card is open — a repeated end is
 therefore harmless. A create or append the platform refuses abandons only that
 presentation: the standing anchor survives it, and the next opening activity may
@@ -669,16 +678,13 @@ replacement are operator-adjudicated accepted losses, recorded with their
 reasoning in the
 [task verification record](/.agents/tasks/channel/feishu-cot-conversation-cards/verification.md).
 
-Every admitted EntityTurn that enters conversation projection publishes exactly
-one terminal display fact from its own submission settlement, including
-`completed`, `failed`, and `stopped`; non-participating turns publish no display
-events. Completed assistant text and live activity are redacted and bounded in
-core, and operator paths are renamed rather than blanked — the workspace reads
-`.` and this host's home reads `~`, from prefixes `Server.start()` resolves once
-and injects into each conversation projection as a value. The early-activity
-buffer and projected activity-id set each retain at most 512 facts per submission
-and drop newest with one warning. Card I/O has a 20-second operation deadline so
-settled draining state is eventually reaped.
+Every admitted input publishes exactly one `teammate.input`, and the runtime's
+own stream carries everything after it; an entity whose conversation is out of
+scope publishes nothing. Input bodies and live activity are redacted and bounded
+in core, and operator paths are renamed rather than blanked — the workspace
+reads `.` and this host's home reads `~`, from prefixes `Server.start()` resolves
+once and injects into each conversation projection as a value. Card I/O has a
+20-second operation deadline so settled draining state is eventually reaped.
 
 The whole path is display-only and fail-open. Projection publisher, sanitizer,
 identity, and logger failures cannot change runtime admission, settlement,

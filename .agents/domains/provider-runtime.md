@@ -357,15 +357,14 @@ than inferred, and the repo has guessed them wrong twice.
 - **Commands fold.** A message that arrives while the in-flight turn is inside a
   tool call is absorbed into that turn at the next query-loop boundary: the CLI
   issues `started` for each queued command, answers them together, and emits a
-  **single** `result` (3 commands → 1 result, observed). Folding does not depend
-  on `priority`; a message with no priority field folds too. A command that
+  **single** `result` (3 commands → 1 result, observed). A command that
   arrives between turns runs alone and gets its own `result`.
 - **`result.user_message_uuid` is not a completion ledger.** A folded command's
   uuid never appears on any `result`, so counting one result per submitted uuid
   deadlocks. When several commands fold, the single result does not reliably
-  carry the first-submitted uuid — a higher-priority later uuid has been
-  observed instead. It is usable only as a cross-talk guard.
-- **`priority: 'now'` genuinely interrupts.** The running command goes
+  carry the first-submitted uuid — a later uuid has been observed instead. It is
+  usable only as a cross-talk guard.
+- **An interrupt genuinely interrupts.** The running command goes
   `cancelled` and the CLI emits a `result` with `subtype:
   "error_during_execution"` and **no** `result` key and **no**
   `user_message_uuid`. "Missing uuid" therefore cannot mean "settle now" —
@@ -470,22 +469,23 @@ Source:
 ### Activity Reads And Scheduling
 
 Activity crosses the seam in two forms only, and neither is a liveness signal:
-the provider pushes `RuntimeActivity` events into the activity sink Core leased
+the provider pushes `RuntimeActivity` values into the activity sink Core leased
 it, and `readRecentActivity` answers a bounded cold read of a session's recent
 tail. The cold read never materializes an entity or starts a runtime, so a
 closed teammate stays readable, and it is required to produce records for a turn
 that is still in progress.
 
-A third leased sink states one fact rather than a stream. `AgentRuntimeCreateContext.nativeTurn`
-is an optional `AgentRuntimeNativeTurnSink` a provider calls once per
-runtime-native turn with a `RuntimeNativeTurnEnd` — the runtime stopped
-producing, with a completed, failed or interrupted status. It deliberately
-carries no submission, logical turn id, or member set: a provider folds any
-number of Dreamux submissions into one native turn, so the only identity it can
-honestly claim is the runtime's own, and Core attributes it to the entity that
-owns that runtime. Like the activity sink it is generation-fenced, synchronous,
-display-only and fail-open — a write from a revoked generation is dropped, and a
-throwing consumer never affects settlement.
+`RuntimeActivity` carries **no submission**. A provider folds any number of
+Dreamux submissions into one native turn, so an activity cannot honestly name
+the submission that caused it, and inventing one made a display pick an
+arbitrary member — and, when no member could be picked, drop the fact entirely.
+The agent is the subject, and it is known before any submission binds. The union
+has three members: `assistant.message`, `tool.call`, and `turn.ended` — the
+runtime stopped producing, once per native turn, with a completed, failed or
+interrupted status and its own reason text when it has one. The sink is
+generation-fenced, synchronous, display-only and fail-open — a write from a
+revoked generation is dropped, and a throwing consumer never affects
+settlement.
 
 One native turn is one provider-native terminal: one Claude Code `result`, one
 Codex `turn/completed`. A resident Claude Code execution window may legally
@@ -497,11 +497,13 @@ report exactly one end, and it is why no provider-side deduplication state
 exists.
 
 The sink is optional because its absence must not break a provider, but the
-consequence is real and is not a Core fallback: a provider that never calls it
-publishes no `teammate.native_turn.ended`, and a presentation whose only terminal
-is that fact — the Feishu COT card — will open and never close. Core does not
-derive one from settlement, because settlement is per submission and a native
-turn is not. A provider that wants its work presented live should call it.
+consequence is real and is not a Core fallback: a provider that never emits
+`turn.ended` leaves a presentation whose only terminal is that fact — the Feishu
+COT card — open forever. Core does not derive one from settlement, because
+settlement is per submission and a native turn is not. Core emits its own
+`turn.ended` only for an input **no runtime ever accepted**, where no provider
+could ever report one. A provider that wants its work presented live must emit
+the terminal itself.
 
 Scheduling asks no question either. A due cron fire is submitted immediately
 through its owner's ordinary admission gate; whether the runtime folds that

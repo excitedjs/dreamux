@@ -1,7 +1,10 @@
 import type {
   AgentRuntimeStartOutcome,
   AgentRuntimeStatus,
+  TeammateRole,
 } from '@excitedjs/dreamux-types';
+
+import type { ProjectedAgent } from '../../channel/conversation-projection.js';
 
 import { dispatcherCompletionSpillDir } from '../../platform/paths.js';
 import {
@@ -31,6 +34,8 @@ import { buildCompletionTurnText } from './completion-renderer.js';
 import { TeammateRuntimeOwner } from './runtime-owner.js';
 import { renderSubmission, type TeammateSubmitInput } from './submission.js';
 import {
+  asCompletionDeliveryResult,
+  asDisplayTurnEnd,
   toSubmissionResult,
   type TurnAdmission,
   type TurnCompletionDelivery,
@@ -68,13 +73,11 @@ export class TeammateService {
   private readonly ordinaryIdleWaiters = new Set<() => void>();
   private lockToken: object | null = null;
   /**
-   * The admission fence a host runtime release holds while it converges.
+   * The host stop converging what this entity already accepted.
+   *
    * Separate from {@link EntityPhase} on purpose: a host stop says nothing
    * about this entity's lifecycle, so it must not move a state that means the
    * entity is on its way to closed.
-   */
-  /**
-   * The host stop converging what this entity already accepted.
    *
    * It fences the same way a lock does and for exactly its own span, so the
    * operation is the fence: a second sweep joins it instead of starting a
@@ -85,6 +88,8 @@ export class TeammateService {
     (fact: TeammateClosedFact) => void | Promise<void>
   >();
   private readonly ownsWorktreeOnClose: boolean;
+  /** The runtime role this entity's owner derived; the display fact carries it. */
+  private readonly role: TeammateRole;
 
   constructor(
     private readonly deps: TeammateServiceDeps,
@@ -100,15 +105,10 @@ export class TeammateService {
       name: identity.name,
     };
     this.state = new AgentRuntimeStateStore(deps.identities, identity);
+    this.role = options.role;
     this.turns = new EntityTurnCoordinator({
       identity: () => this.current(),
-      role: options.role,
-      intent: () => this.current().intent,
       isActive: () => this.phase === 'active',
-      ...(deps.conversationProjection !== undefined
-        ? { conversationProjection: deps.conversationProjection }
-        : {}),
-      log: deps.log,
     });
     this.runtimeOwner = new TeammateRuntimeOwner(
       deps,
@@ -120,8 +120,6 @@ export class TeammateService {
         markClosing: () => {
           this.phase = 'closing';
         },
-        activitySink: this.turns.activitySink,
-        nativeTurnSink: this.turns.nativeTurnSink,
       },
     );
   }
@@ -229,7 +227,7 @@ export class TeammateService {
   async submitInput(input: TeammateSubmitInput): Promise<TurnAdmission> {
     const leave = this.enterOrdinaryMutation('submission');
     try {
-      return await this.submitAdmitted(input);
+      return await this.submitAdmitted(input, { wake: true });
     } finally {
       leave();
     }
@@ -238,36 +236,102 @@ export class TeammateService {
   /**
    * The admitted submission itself, without the ordinary-mutation fence.
    *
-   * Split out for the locked Workflow path alone, which is authorized by its
-   * lock token instead — and which the ordinary fence would refuse for exactly
-   * that reason. Every ledger rule and every rendering rule still lives here
-   * once.
+   * Split out for the two callers that are authorized some other way: the
+   * locked Workflow path, which the ordinary fence would refuse precisely
+   * because it holds the lock, and a completion push-back, which takes the
+   * fence itself and then asks for `wake: false`. Every ledger rule, every
+   * rendering rule, and the one display announcement still live here once.
+   *
+   * `wake` is the whole difference between an ordinary input and a push-back.
+   * An ordinary input materializes or reopens its target; a push-back is only
+   * meaningful to a runtime that is already live, so a stopped recipient is
+   * reported back instead of being silently woken by an answer nobody asked
+   * it to read. It is deliberately not on the public surface: no caller
+   * chooses it, the kind of submission does.
    */
-  private submitAdmitted(input: TeammateSubmitInput): Promise<TurnAdmission> {
+  private submitAdmitted(
+    input: TeammateSubmitInput,
+    options: { wake: boolean },
+  ): Promise<TurnAdmission> {
     // Rendering is validated before the key is reserved: an unsafe source or
     // attribute name is a defect in the calling path, and it must not consume a
     // duplicate reservation on its way to failing.
     const text = renderSubmission(input);
     return this.admissions.admit(this.ledgerKey, input.sourceId, async () => {
-      await this.runtimeOwner.ensureStarted();
-      // Inside the admission closure, so a deduplicated repeat neither
-      // rewrites the recovery subject nor submits a second turn.
-      if (input.intent !== undefined && input.intent !== '') {
-        await this.state.updateIntent(input.intent);
+      // Announced before anything below can fail, so a submission that never
+      // reaches a runtime is still visible together with the text that failed
+      // — which is the whole point of showing it. A deduplicated repeat never
+      // gets here, because the original already announced itself.
+      this.projectInput(input);
+      try {
+        const admission = await this.admitToRuntime(input, text, options.wake);
+        // Only a `submitted` admission produces a turn, and only a turn's
+        // runtime ever reports a native end. Every other outcome would leave
+        // the surface this input just opened waiting forever, so Core ends it
+        // itself and says why.
+        const ended = asDisplayTurnEnd(admission);
+        if (ended !== null) this.projectTurnEnd(ended);
+        return admission;
+      } catch (error) {
+        this.projectTurnEnd({ status: 'failed', reason: asError(error).message });
+        throw error;
       }
-      const runtime = this.runtimeOwner.mustRuntime();
-      return this.turns.submitRuntimeTurn(() => runtime.submit({ text }), {
-        source: input.source,
-        ...(input.sourceId !== undefined ? { sourceId: input.sourceId } : {}),
-        // The turn records the source's own body. The envelope is delivery
-        // formatting, and repeating it in the conversation projection would
-        // show the model's provenance markup back to a human reader.
-        prompt: input.text,
-        ...(input.deliverCompletion !== undefined
-          ? { deliverCompletion: input.deliverCompletion }
-          : {}),
-      });
     });
+  }
+
+  private async admitToRuntime(
+    input: TeammateSubmitInput,
+    text: string,
+    wake: boolean,
+  ): Promise<TurnAdmission> {
+    if (wake) {
+      await this.runtimeOwner.ensureStarted();
+    } else if (
+      (await this.runtimeOwner.existingRuntimeAfterStart().catch(() => null)) === null
+    ) {
+      return { status: 'stopped' };
+    }
+    // Inside the admission closure, so a deduplicated repeat neither
+    // rewrites the recovery subject nor submits a second turn.
+    if (input.intent !== undefined && input.intent !== '') {
+      await this.state.updateIntent(input.intent);
+    }
+    const runtime = this.runtimeOwner.mustRuntime();
+    return this.turns.submitRuntimeTurn(
+      () => runtime.submit({ text }),
+      input.deliverCompletion ?? null,
+    );
+  }
+
+  /**
+   * Say that this entity accepted an input, on the entity's own display stream.
+   *
+   * The fact carries the source's own body. The envelope is delivery formatting
+   * for the model, and repeating it here would show provenance markup back to a
+   * human reader.
+   */
+  private projectInput(input: TeammateSubmitInput): void {
+    this.deps.conversationProjection?.projectInput(this.projectedAgent(), {
+      source: input.source,
+      sourceId: input.sourceId ?? null,
+      text: input.text,
+      occurredAt: Date.now(),
+    });
+  }
+
+  private projectTurnEnd(
+    end: { status: 'failed' | 'interrupted'; reason: string },
+  ): void {
+    this.deps.conversationProjection?.projectActivity(this.projectedAgent(), {
+      kind: 'turn.ended',
+      occurredAt: Date.now(),
+      status: end.status,
+      reason: end.reason,
+    });
+  }
+
+  private projectedAgent(): ProjectedAgent {
+    return { identity: this.current(), role: this.role };
   }
 
   async prepareCompletion(
@@ -291,7 +355,7 @@ export class TeammateService {
         dispatcherCompletionSpillDir(this.current().dispatcher_id),
       );
       return Object.freeze({
-        submit: () => this.submitPreparedCompletion(body),
+        submit: () => this.submitCompletionInput(body),
       });
     } finally {
       leave();
@@ -419,19 +483,21 @@ export class TeammateService {
     await this.runtimeOwner.ensureStarted();
     this.assertLockToken(token);
     if (this.phase !== 'active') return { status: 'stopped' };
-    return this.submitAdmitted({ source: input.source, text: input.prompt });
+    return this.submitAdmitted(
+      { source: input.source, text: input.prompt },
+      { wake: true },
+    );
   }
 
   /**
    * Deliver a prepared completion into a running runtime.
    *
-   * Deliberately not routed through {@link submitInput}: an ordinary input
-   * materializes or reopens its target, while a completion pushback is only
-   * meaningful to a runtime that is already live — a stopped recipient reports
-   * `unsupported` so the completion router can fall back, instead of silently
-   * reopening an agent nobody asked to wake.
+   * It is an ordinary admitted input asking not to wake its target, so it gets
+   * the same ledger, the same rendering, and the same display announcement as
+   * anything else this entity accepts. Only the answer shape differs, and that
+   * is one stated mapping of the admission the entity already made.
    */
-  private async submitPreparedCompletion(
+  private async submitCompletionInput(
     body: string,
   ): Promise<CompletionDeliveryResult> {
     let leave: (() => void) | null = null;
@@ -441,16 +507,11 @@ export class TeammateService {
       return { status: 'unsupported', reason: 'teammate is not writable' };
     }
     try {
-      const runtime = await this.runtimeOwner.existingRuntimeAfterStart().catch(
-        () => null,
-      );
-      if (runtime === null) {
-        return { status: 'unsupported', reason: 'teammate runtime not running' };
-      }
-      const text = renderSubmission({ source: COMPLETION_SOURCE, text: body });
-      return await this.turns.submitCompletion(
-        () => runtime.submit({ text }),
-        { source: COMPLETION_SOURCE, prompt: body },
+      return asCompletionDeliveryResult(
+        await this.submitAdmitted(
+          { source: COMPLETION_SOURCE, text: body },
+          { wake: false },
+        ),
       );
     } finally {
       leave();
@@ -610,6 +671,10 @@ export class TeammateService {
     return this.deps.worktrees;
   }
 
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 function unsupportedPreparedCompletion(

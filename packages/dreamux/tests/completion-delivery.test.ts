@@ -19,10 +19,11 @@
  *    never produced a native result) still reaches its recipient, is never
  *    folded with another null-token delivery, and never touches the
  *    token-keyed dedupe map a REAL completion for the same producer uses.
- * 4. `EntityTurnCoordinator` never gates presentation on `role`: a
- *    `dispatcher`-role entity's completion-source turn is projected exactly
- *    like any other role's, so Dispatcher presentation cannot be silently
- *    erased by a `role === 'dispatcher'`-shaped filter reappearing here.
+ * 4. Nothing on the completion path gates presentation on `role`: the
+ *    push-back line carries no display code at all, and the real projection
+ *    presents a `dispatcher`-role entity exactly like any other, so Dispatcher
+ *    presentation cannot be silently erased by a `role === 'dispatcher'`-shaped
+ *    filter reappearing here.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -353,27 +354,6 @@ describe('completion delivery boundary: a failing recipient cannot break the pro
  * ---------------------------------------------------------------------- */
 
 /** Records every projection call, keyed by the entry point that produced it. */
-class RecordingProjection implements ConversationProjection {
-  readonly submittedRoles: TeammateRole[] = [];
-  readonly settledRoles: TeammateRole[] = [];
-
-  projectSubmitted(agent: ProjectedAgent): void {
-    this.submittedRoles.push(agent.role);
-  }
-
-  projectActivity(): void {
-    // Not exercised by this suite.
-  }
-
-  projectSettled(input: { agent: ProjectedAgent }): void {
-    this.settledRoles.push(input.agent.role);
-  }
-
-  projectNativeTurnEnd(): void {
-    // Not exercised by this suite.
-  }
-}
-
 function fakeIdentity(overrides: Partial<AgentEntityIdentity> = {}): AgentEntityIdentity {
   const now = Date.now();
   return {
@@ -422,22 +402,6 @@ function noopLog(warn?: (...args: unknown[]) => void): DreamuxLogger {
   return log as DreamuxLogger;
 }
 
-/** Build a coordinator that projects into `projection` under one fixed role. */
-function coordinatorFor(
-  role: TeammateRole,
-  projection: ConversationProjection,
-  identity: AgentEntityIdentity,
-): EntityTurnCoordinator {
-  return new EntityTurnCoordinator({
-    identity: () => identity,
-    role,
-    intent: () => null,
-    isActive: () => true,
-    conversationProjection: projection,
-    log: noopLog(),
-  });
-}
-
 /** Poll microtasks until `predicate` is true or attempts are exhausted. */
 async function waitFor(predicate: () => boolean): Promise<void> {
   for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -447,67 +411,36 @@ async function waitFor(predicate: () => boolean): Promise<void> {
   throw new Error('condition was not reached');
 }
 
-describe('EntityTurnCoordinator projects a completion-source turn regardless of role (failure-ledger #13)', () => {
-  it.each([
-    ['dispatcher', fakeIdentity({ name: 'dispatcher', team_id: null })],
-    ['team_leader', fakeIdentity({ name: 'leader', team_id: 'alpha' })],
-    ['teammate', fakeIdentity({ name: 'worker', team_id: 'alpha' })],
-  ] as const)(
-    'projects both submission and settlement for a %s-role entity delivering a completion',
-    async (role, identity) => {
-      const projection = new RecordingProjection();
-      const coordinator = coordinatorFor(role, projection, identity);
-      const runtime = controllableRuntimeSubmission();
-      const admission: RuntimeAdmission = {
-        status: 'submitted',
-        submission: runtime.submission,
-      };
+describe('nothing on the completion path can gate presentation on role (failure-ledger #13)', () => {
+  it('EntityTurnCoordinator holds no display code at all, so it cannot hold a role gate', () => {
+    // The strongest form of the original claim. Display is keyed on the Agent
+    // now and never passes through the push-back line, so the class that used
+    // to carry a role and a projection carries neither: a `role ===
+    // 'dispatcher'`-shaped filter has nowhere here to reappear.
+    const coordinatorText = readSource('src/service/teammate-service/turn-coordinator.ts');
+    expect(coordinatorText).not.toContain('conversationProjection');
+    expect(coordinatorText).not.toContain('TeammateRole');
+    expect(coordinatorText).not.toContain('role');
+  });
 
-      const resultPromise = coordinator.submitCompletion(
-        async () => admission,
-        { source: COMPLETION_SOURCE, prompt: 'TeamMate worker has finished its task.' },
-      );
-      runtime.complete('done');
-      await resultPromise;
-
-      // The submitted projection fires synchronously inside admission —
-      // no branch inside the coordinator ever skips it for a particular role.
-      expect(projection.submittedRoles).toEqual([role]);
-
-      await waitFor(() => projection.settledRoles.length === 1);
-      expect(projection.settledRoles).toEqual([role]);
-    },
-  );
-
-  it('a dispatcher-role completion delivery is projected exactly like any other role, never dropped by a role check', async () => {
-    // This is the concrete regression class failure-ledger item 13 names: a
-    // `role === 'dispatcher'`-shaped filter silently erasing Dispatcher
-    // presentation. There is no such branch in EntityTurnCoordinator today —
-    // this test fails the moment one is added back.
-    const projection = new RecordingProjection();
-    const identity = fakeIdentity({ name: 'dispatcher', team_id: null });
-    const coordinator = coordinatorFor('dispatcher', projection, identity);
-    const runtime = controllableRuntimeSubmission();
-
-    await coordinator.submitCompletion(
-      async () => ({ status: 'submitted', submission: runtime.submission }),
-      { source: COMPLETION_SOURCE, prompt: 'Workflow report-1 has completed.' },
-    );
-
-    expect(projection.submittedRoles).toEqual(['dispatcher']);
+  it('a completion push-back is the ordinary admitted-input path, asking only not to wake', () => {
+    // One submit path means the completion body is announced by the same code
+    // that announces a Channel message, so no second call site exists that
+    // could branch on role before publishing.
+    const teammateServiceText = readSource('src/service/teammate-service/index.ts');
+    expect(teammateServiceText).toMatch(/submitAdmitted\(\s*\{ source: COMPLETION_SOURCE, text: body \},\s*\{ wake: false \},\s*\)/u);
+    expect(teammateServiceText).not.toContain('submitCompletion(');
   });
 });
 
 /* -------------------------------------------------------------------------
  * 4b. Same claim, through the REAL conversation projection.
  *
- * The coordinator tests above prove EntityTurnCoordinator itself has no role
- * gate, but the one actual `role === 'dispatcher'` branch on this whole path
- * lives one layer down, in `eventScope` (conversation-projection.ts). A test
- * that swaps in a fake `ConversationProjection` never exercises that branch at
- * all, so it would not fail if `eventScope` regressed to drop dispatcher
- * presentation — exactly the erasure failure-ledger item 13 names. Wire the
- * real `createConversationProjection` here instead.
+ * The source guards above prove the push-back line has no role gate, but the
+ * one actual `role === 'dispatcher'` branch on this whole path lives one layer
+ * down, in `actorScope` (conversation-projection.ts). Wire the real
+ * `createConversationProjection` here so a regression that dropped dispatcher
+ * presentation would fail something.
  * ---------------------------------------------------------------------- */
 
 /** Records every event a dispatcher id published, in order. */
@@ -519,69 +452,58 @@ class RecordingPublisher implements DispatcherCoreEventPublisher {
   }
 }
 
-describe('the real conversation projection presents a dispatcher completion delivery (failure-ledger #13)', () => {
-  it('publishes the submitted+message events for a dispatcher-role completion turn, scoped to team_name: null', async () => {
-    const publisher = new RecordingPublisher();
-    const projection = createConversationProjection({
-      coreEvents: publisher,
-      log: noopLog(),
-      homePathPrefixes: [],
-    });
-    const identity = fakeIdentity({ name: 'dispatcher', team_id: null });
-    const coordinator = coordinatorFor('dispatcher', projection, identity);
-    const runtime = controllableRuntimeSubmission();
+function realProjection(publisher: RecordingPublisher): ConversationProjection {
+  return createConversationProjection({
+    coreEvents: publisher,
+    log: noopLog(),
+    homePathPrefixes: [],
+  });
+}
 
-    await coordinator.submitCompletion(
-      async () => ({ status: 'submitted', submission: runtime.submission }),
-      { source: COMPLETION_SOURCE, prompt: 'TeamMate worker has finished its task.' },
+describe('the real conversation projection presents a dispatcher completion delivery (failure-ledger #13)', () => {
+  it('publishes the input fact for a dispatcher-role completion body, scoped to team_name: null', () => {
+    const publisher = new RecordingPublisher();
+    const identity = fakeIdentity({ name: 'dispatcher', team_id: null });
+
+    realProjection(publisher).projectInput(
+      { identity, role: 'dispatcher' },
+      {
+        source: COMPLETION_SOURCE,
+        sourceId: null,
+        text: 'TeamMate worker has finished its task.',
+        occurredAt: Date.now(),
+      },
     );
 
-    const submitted = publisher.events
-      .map((entry) => entry.event)
-      .find((event) => event.kind === 'teammate.turn.submitted');
-    expect(submitted).toBeDefined();
-    expect(submitted).toMatchObject({
-      kind: 'teammate.turn.submitted',
+    expect(publisher.events.map((entry) => entry.event)).toMatchObject([{
+      kind: 'teammate.input',
       team_name: null,
       teammate_name: 'dispatcher',
       role: 'dispatcher',
-      turn_source: COMPLETION_SOURCE,
+      source: COMPLETION_SOURCE,
       source_id: null,
-    });
+    }]);
   });
 
-  it('publishes the settled event once the completion resolves, still scoped to team_name: null', async () => {
+  it('publishes the runtime activity that answers it, still scoped to team_name: null', () => {
     const publisher = new RecordingPublisher();
-    const projection = createConversationProjection({
-      coreEvents: publisher,
-      log: noopLog(),
-      homePathPrefixes: [],
-    });
     const identity = fakeIdentity({ name: 'dispatcher', team_id: null });
-    const coordinator = coordinatorFor('dispatcher', projection, identity);
-    const runtime = controllableRuntimeSubmission();
 
-    const resultPromise = coordinator.submitCompletion(
-      async () => ({ status: 'submitted', submission: runtime.submission }),
-      { source: COMPLETION_SOURCE, prompt: 'TeamMate worker has finished its task.' },
+    realProjection(publisher).projectActivity(
+      { identity, role: 'dispatcher' },
+      { kind: 'turn.ended', occurredAt: Date.now(), status: 'completed', reason: null },
     );
-    runtime.complete('all done');
-    await resultPromise;
 
-    await waitFor(() =>
-      publisher.events.some((entry) => entry.event.kind === 'teammate.turn.settled'));
-    const settled = publisher.events
-      .map((entry) => entry.event)
-      .find((event) => event.kind === 'teammate.turn.settled');
-    expect(settled).toMatchObject({
-      kind: 'teammate.turn.settled',
+    expect(publisher.events.map((entry) => entry.event)).toMatchObject([{
+      kind: 'teammate.activity',
       team_name: null,
-      status: 'completed',
-    });
+      role: 'dispatcher',
+      activity: { kind: 'turn.ended', status: 'completed' },
+    }]);
   });
 
-  it('negative control: a dispatcher-scoped TeamMate (role teammate, team_id null) is legitimately out of scope, not "erased"', async () => {
-    // This is the real, intended boundary eventScope draws: only a Team's own
+  it('negative control: a dispatcher-scoped TeamMate (role teammate, team_id null) is legitimately out of scope, not "erased"', () => {
+    // This is the real, intended boundary actorScope draws: only a Team's own
     // conversation (`role !== 'dispatcher' && team_id !== null`) and the
     // dispatcher's own conversation (`role === 'dispatcher' && team_id ===
     // null`) exist. A `teammate`-role entity with no team is neither, so it
@@ -589,18 +511,16 @@ describe('the real conversation projection presents a dispatcher completion deli
     // Dispatcher presentation. Pinning this distinguishes the two: the
     // dispatcher case above must publish, this one must not.
     const publisher = new RecordingPublisher();
-    const projection = createConversationProjection({
-      coreEvents: publisher,
-      log: noopLog(),
-      homePathPrefixes: [],
-    });
     const identity = fakeIdentity({ name: 'orphan', team_id: null });
-    const coordinator = coordinatorFor('teammate', projection, identity);
-    const runtime = controllableRuntimeSubmission();
 
-    await coordinator.submitCompletion(
-      async () => ({ status: 'submitted', submission: runtime.submission }),
-      { source: COMPLETION_SOURCE, prompt: 'TeamMate worker has finished its task.' },
+    realProjection(publisher).projectInput(
+      { identity, role: 'teammate' },
+      {
+        source: COMPLETION_SOURCE,
+        sourceId: null,
+        text: 'TeamMate worker has finished its task.',
+        occurredAt: Date.now(),
+      },
     );
 
     expect(publisher.events).toHaveLength(0);

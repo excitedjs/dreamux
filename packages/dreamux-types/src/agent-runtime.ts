@@ -193,15 +193,26 @@ export type RuntimeSubmissionSettlement =
   | { readonly kind: 'failed'; readonly error: Error }
   | { readonly kind: 'stopped' };
 
+/**
+ * One thing an agent's runtime did, in the runtime's own vocabulary.
+ *
+ * Keyed on the agent and nothing else. A provider folds any number of Dreamux
+ * submissions into one native turn, so an activity cannot honestly name the
+ * submission that caused it — and inventing one would make a display pick an
+ * arbitrary member. What a live surface needs is this agent's stream in order,
+ * which is what this is.
+ */
 export type RuntimeActivity =
   | {
       readonly kind: 'assistant.message';
+      readonly occurredAt: number;
       readonly id: string;
       readonly text: string;
       readonly truncated: boolean;
     }
   | {
       readonly kind: 'tool.call';
+      readonly occurredAt: number;
       readonly id: string;
       readonly callId: string;
       readonly toolName: string;
@@ -210,13 +221,21 @@ export type RuntimeActivity =
       readonly arguments: JsonValue | null;
       readonly result: JsonValue | null;
       readonly error: string | null;
+    }
+  | {
+      /**
+       * The runtime stopped producing for the turn it was running, once,
+       * whatever that turn contained. `completed` is the runtime's own
+       * successful terminal; `failed` is a proven terminal error; `interrupted`
+       * is a native turn that ended without either, such as a stop or a
+       * protocol loss. `reason` carries the runtime's own explanation when it
+       * holds one, so a display can say why rather than only that.
+       */
+      readonly kind: 'turn.ended';
+      readonly occurredAt: number;
+      readonly status: 'completed' | 'failed' | 'interrupted';
+      readonly reason: string | null;
     };
-
-export interface RuntimeActivityEvent {
-  readonly submission: RuntimeSubmission;
-  readonly activity: RuntimeActivity;
-  readonly occurredAt: number;
-}
 
 /**
  * Optional, synchronous, non-backpressuring sink for live native activity. It
@@ -227,36 +246,7 @@ export interface RuntimeActivityEvent {
  * sink and is never replayed by it.
  */
 export interface AgentRuntimeActivitySink {
-  (event: RuntimeActivityEvent): void;
-}
-
-/**
- * The end of one runtime-native turn.
- *
- * A provider folds any number of Dreamux submissions into one native turn, so
- * this fact is deliberately not a settlement: it says the runtime stopped
- * producing for the turn it was running, once, whatever that turn contained.
- * `completed` is the runtime's own successful terminal; `failed` is a proven
- * terminal error; `interrupted` is a native turn that ended without either,
- * such as a stop or a protocol loss.
- */
-export interface RuntimeNativeTurnEnd {
-  readonly status: 'completed' | 'failed' | 'interrupted';
-  readonly occurredAt: number;
-}
-
-/**
- * Optional, synchronous, non-backpressuring sink for native turn ends.
- *
- * Deliberately carries no submission, logical turn id, or member set: the
- * fact is one-per-native-turn, and the only identity it can honestly claim is
- * the runtime's own. Core attributes it to the entity that owns the runtime.
- * Like {@link AgentRuntimeActivitySink} it is display-only and fail-open —
- * Core drops writes from a revoked generation, and its absence changes only
- * presentation.
- */
-export interface AgentRuntimeNativeTurnSink {
-  (end: RuntimeNativeTurnEnd): void;
+  (activity: RuntimeActivity): void;
 }
 
 /**
@@ -363,9 +353,8 @@ export interface AgentRuntimeCreateContext<TConfig> {
   readonly paths: AgentRuntimePathContext;
   /** Leased, push-only state sink for this runtime generation. */
   readonly state: AgentRuntimeStateSink;
+  /** Leased, push-only sink for this runtime generation's live activity. */
   readonly activity?: AgentRuntimeActivitySink;
-  /** Leased, push-only sink for this runtime generation's native turn ends. */
-  readonly nativeTurn?: AgentRuntimeNativeTurnSink;
   readonly logger?: AgentRuntimeLogger;
 }
 

@@ -19,10 +19,11 @@ import {
 } from '../src/runtime-submissions.js';
 import type { ClaudeProtocolEvent, TurnOutcome } from '../src/types.js';
 import type {
-  RuntimeActivityEvent,
-  RuntimeNativeTurnEnd,
+  RuntimeActivity,
   RuntimeSubmissionSettlement,
 } from '@excitedjs/dreamux-types';
+
+type NativeTurnEnd = Extract<RuntimeActivity, { kind: 'turn.ended' }>;
 
 function outcome(overrides: Partial<TurnOutcome> = {}): TurnOutcome {
   return {
@@ -39,8 +40,8 @@ function outcome(overrides: Partial<TurnOutcome> = {}): TurnOutcome {
 interface Harness {
   active: ActiveTurn;
   deferredByUuid: Map<string, SubmissionDeferred>;
-  activityEvents: RuntimeActivityEvent[];
-  nativeEnds: RuntimeNativeTurnEnd[];
+  activityEvents: RuntimeActivity[];
+  nativeEnds: NativeTurnEnd[];
   logs: Array<{ level: string; message: string }>;
   fire(event: ClaudeProtocolEvent): void;
   /** Await settlement of one submitted command uuid. */
@@ -72,8 +73,8 @@ function makeHarness(
     steerQueue: Promise.resolve(),
     generation: 0,
   };
-  const activityEvents: RuntimeActivityEvent[] = [];
-  const nativeEnds: RuntimeNativeTurnEnd[] = [];
+  const activityEvents: RuntimeActivity[] = [];
+  const nativeEnds: NativeTurnEnd[] = [];
   const logs: Array<{ level: string; message: string }> = [];
   return {
     active,
@@ -85,8 +86,10 @@ function makeHarness(
       handleProtocolEvent(active, event, {
         threadId: options.threadId ?? 'thread-1',
         outputSchemaEnabled: options.outputSchemaEnabled ?? false,
-        activitySink: (event) => activityEvents.push(event),
-        nativeTurnSink: (end) => nativeEnds.push(end),
+        activitySink: (activity) => {
+          if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+          else activityEvents.push(activity);
+        },
         log: (level, message) => logs.push({ level, message }),
       });
     },
@@ -262,18 +265,18 @@ describe('handleProtocolEvent settlement', () => {
 });
 
 describe('handleProtocolEvent live activity', () => {
-  it('emits an assistant.message activity for streamed text, addressed to the started command as its submission', async () => {
+  it('emits an assistant.message activity for streamed text, addressed to no submission at all', async () => {
     const h = makeHarness(['cmd-1']);
     h.fire(started('cmd-1'));
     h.fire(streamAssistantText('hello there'));
     expect(h.activityEvents).toHaveLength(1);
-    expect(h.activityEvents[0]!.activity).toMatchObject({
+    expect(h.activityEvents[0]!).toMatchObject({
       kind: 'assistant.message',
       text: 'hello there',
     });
-    expect(h.activityEvents[0]!.submission).toBe(
-      h.deferredByUuid.get('cmd-1')!.submission,
-    );
+    // The seam carries no submission: a window folds any number of commands
+    // into one native turn, so the agent is the only honest subject.
+    expect(h.activityEvents[0]!).not.toHaveProperty('submission');
   });
 
   it('emits a started tool.call, then correlates its result by tool_use_id into a completed tool.call', async () => {
@@ -282,14 +285,14 @@ describe('handleProtocolEvent live activity', () => {
     h.fire(streamToolUse('call-1', 'Read', { file_path: '/tmp/x' }));
     h.fire(streamToolResult('call-1', 'file contents', false));
     expect(h.activityEvents).toHaveLength(2);
-    expect(h.activityEvents[0]!.activity).toMatchObject({
+    expect(h.activityEvents[0]!).toMatchObject({
       kind: 'tool.call',
       callId: 'call-1',
       toolName: 'Read',
       status: 'started',
       action: 'read',
     });
-    expect(h.activityEvents[1]!.activity).toMatchObject({
+    expect(h.activityEvents[1]!).toMatchObject({
       kind: 'tool.call',
       callId: 'call-1',
       toolName: 'Read',
@@ -303,7 +306,7 @@ describe('handleProtocolEvent live activity', () => {
     h.fire(started('cmd-1'));
     h.fire(streamToolUse('call-1', 'Bash', { command: 'false' }));
     h.fire(streamToolResult('call-1', 'command failed', true));
-    const finalActivity = h.activityEvents.at(-1)!.activity;
+    const finalActivity = h.activityEvents.at(-1)!;
     expect(finalActivity).toMatchObject({
       kind: 'tool.call',
       status: 'failed',
@@ -312,12 +315,17 @@ describe('handleProtocolEvent live activity', () => {
     });
   });
 
-  it('drops live activity when no started command and no sole submission can own it (no representative)', async () => {
+  it('emits live activity that no started command could have owned', async () => {
     const h = makeHarness(['cmd-1', 'cmd-2']);
-    // Neither command has been reported started, and there are two candidates:
-    // no safe representative to attribute this activity to.
-    h.fire(streamAssistantText('orphaned text'));
-    expect(h.activityEvents).toHaveLength(0);
+    // Neither command has been reported started, so the old seam had no
+    // submission to attribute this to and dropped it. The agent produced it,
+    // and the agent is who the display is keyed on.
+    h.fire(streamAssistantText('unattributable text'));
+    expect(h.activityEvents).toHaveLength(1);
+    expect(h.activityEvents[0]!).toMatchObject({
+      kind: 'assistant.message',
+      text: 'unattributable text',
+    });
   });
 
   it('does not fail the turn when the activity sink throws (a projection failure only logs a warning)', async () => {
@@ -345,14 +353,12 @@ describe('handleProtocolEvent live activity', () => {
       threadId: null,
       outputSchemaEnabled: false,
       activitySink: throwingSink,
-      nativeTurnSink: () => undefined,
       log: (level, message, error) => log(level, message, error),
     });
     handleProtocolEvent(active, streamAssistantText('text'), {
       threadId: null,
       outputSchemaEnabled: false,
       activitySink: throwingSink,
-      nativeTurnSink: () => undefined,
       log: (level, message, error) => log(level, message, error),
     });
     expect(throwingSink).toHaveBeenCalledTimes(1);
@@ -365,7 +371,6 @@ describe('handleProtocolEvent live activity', () => {
       threadId: null,
       outputSchemaEnabled: false,
       activitySink: throwingSink,
-      nativeTurnSink: () => undefined,
       log: (level, message, error) => log(level, message, error),
     });
     await expect(deferred.submission.settled).resolves.toMatchObject({
@@ -397,7 +402,9 @@ describe('handleProtocolEvent native turn end', () => {
     expect(h.nativeEnds).toHaveLength(1);
     expect(h.nativeEnds[0]!.status).toBe('completed');
     // No logical membership: the fact names no command, submission, or turn.
-    expect(Object.keys(h.nativeEnds[0]!).sort()).toEqual(['occurredAt', 'status']);
+    expect(Object.keys(h.nativeEnds[0]!).sort()).toEqual([
+      'kind', 'occurredAt', 'reason', 'status',
+    ]);
   });
 
   it('emits nothing before the result, so an in-flight turn never looks finished', () => {
@@ -490,22 +497,24 @@ describe('handleProtocolEvent native turn end', () => {
     handleProtocolEvent(active, started('cmd-1'), {
       threadId: 'thread-1',
       outputSchemaEnabled: false,
-      activitySink: () => undefined,
-      nativeTurnSink: () => order.push('end'),
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') order.push('end');
+      },
       log: () => undefined,
     });
     handleProtocolEvent(active, resultEvent(outcome()), {
       threadId: 'thread-1',
       outputSchemaEnabled: false,
-      activitySink: () => undefined,
-      nativeTurnSink: () => order.push('end'),
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') order.push('end');
+      },
       log: () => undefined,
     });
 
     expect(order).toEqual(['end', 'settle']);
   });
 
-  it('does not fail the turn when the native turn sink throws: it logs and settles anyway', async () => {
+  it('does not fail the turn when the activity sink throws on the end: it logs and settles anyway', async () => {
     const deferred = createRuntimeSubmission();
     const active: ActiveTurn = {
       initialCommandUuid: 'cmd-1',
@@ -528,8 +537,7 @@ describe('handleProtocolEvent native turn end', () => {
     handleProtocolEvent(active, resultEvent(outcome({ text: 'ok', sessionId: null })), {
       threadId: null,
       outputSchemaEnabled: false,
-      activitySink: () => undefined,
-      nativeTurnSink: throwingSink,
+      activitySink: throwingSink,
       log: (level, message, error) => log(level, message, error),
     });
 

@@ -10,13 +10,11 @@ import type { CodexWsClient } from './rpc.js';
 import type { ThreadItem } from './types.js';
 import type {
   AgentRuntimeActivitySink,
-  AgentRuntimeNativeTurnSink,
   AgentRuntimeSubmissionInput,
   JsonValue,
   RuntimeActivity,
   RuntimeAdmission,
   RuntimeCompletion,
-  RuntimeNativeTurnEnd,
   RuntimeSubmission,
   RuntimeSubmissionSettlement,
   RuntimeToolAction,
@@ -56,7 +54,6 @@ export interface TurnManagerOptions {
    */
   codec: CodexOutputSchemaCodec | null;
   activitySink: AgentRuntimeActivitySink;
-  nativeTurnSink: AgentRuntimeNativeTurnSink;
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
   onTurnCompleted?: (turn: CollectedTurn) => void;
 }
@@ -66,7 +63,6 @@ export class TurnManager {
   private readonly inFlightNativeAdmissions = new Set<number>();
   private nextNativeAdmission = 0;
   private readonly nativeTurns = new Map<string, NativeTurnRecord>();
-  private readonly pendingActivity = new Map<string, Array<{ activity: RuntimeActivity; occurredAt: number }>>();
   private readonly unboundObservedTurnIds = new Set<string>();
   private readonly terminalOrder: string[] = [];
   private protocolFailure: Error | null = null;
@@ -104,13 +100,12 @@ export class TurnManager {
       if (record.completion !== null) continue;
       for (const member of record.members) member.settle({ kind: 'stopped' });
       // A native turn torn down before its own terminal still ended.
-      this.endNativeTurn(record, 'interrupted');
+      this.endNativeTurn(record, 'interrupted', null);
     }
     for (const [turnId, record] of this.nativeTurns) {
       if (record.completion === null) this.nativeTurns.delete(turnId);
     }
     this.terminalOrder.length = 0;
-    this.pendingActivity.clear();
     this.unboundObservedTurnIds.clear();
   }
 
@@ -140,7 +135,7 @@ export class TurnManager {
       this.log('error', `turn/start submission failed for ${description}: ${normalized.message}`, normalized);
       this.inFlightNativeAdmissions.delete(admissionId);
       this.releaseCompletedRecords(admissionId);
-      this.dropOrphanActivityIfIdle();
+      this.releaseOrphanTurnsIfIdle();
       return { status: 'ambiguous', error: normalized };
     }
     const observed = this.nativeTurns.get(response.turn.id);
@@ -151,7 +146,7 @@ export class TurnManager {
     }
     this.inFlightNativeAdmissions.delete(admissionId);
     this.releaseCompletedRecords(admissionId);
-    this.dropOrphanActivityIfIdle();
+    this.releaseOrphanTurnsIfIdle();
     return { status: 'submitted', submission: deferred.submission };
   }
 
@@ -188,8 +183,6 @@ export class TurnManager {
     record.representative ??= deferred.submission;
     if (record.completion === null) record.members.push(deferred);
     this.nativeTurns.set(turnId, record);
-    for (const fact of this.pendingActivity.get(turnId) ?? []) this.emitActivity(record, fact.activity, fact.occurredAt);
-    this.pendingActivity.delete(turnId);
     if (this.protocolFailure !== null) {
       this.failRecord(turnId, record, this.protocolFailure);
       return;
@@ -221,7 +214,6 @@ export class TurnManager {
         if (this.pendingAdmissions.size > 0) return;
         this.terminalOrder.shift();
         this.nativeTurns.delete(turnId);
-        this.pendingActivity.delete(turnId);
         this.unboundObservedTurnIds.delete(turnId);
         this.collector?.releaseTurn(turnId);
         this.log('warn', `dropping native terminal ${turnId} without an accepted submission`);
@@ -248,7 +240,7 @@ export class TurnManager {
         for (const member of record.members) member.settle({ kind: 'completion', completion });
         record.members.length = 0;
         record.terminal = null;
-        this.endNativeTurn(record, 'failed');
+        this.endNativeTurn(record, 'failed', completion.error.message);
         this.releaseRecordIfReady(turnId, record);
         return;
       }
@@ -268,6 +260,7 @@ export class TurnManager {
     this.endNativeTurn(
       record,
       completion.status === 'completed' ? 'completed' : 'failed',
+      completion.status === 'completed' ? null : completion.error.message,
     );
     this.releaseRecordIfReady(turnId, record);
   }
@@ -285,9 +278,8 @@ export class TurnManager {
   private failRecord(turnId: string, record: NativeTurnRecord, error: Error): void {
     for (const member of record.members) member.settle({ kind: 'failed', error });
     record.members.length = 0;
-    this.endNativeTurn(record, 'failed');
+    this.endNativeTurn(record, 'failed', error.message);
     this.nativeTurns.delete(turnId);
-    this.pendingActivity.delete(turnId);
     this.unboundObservedTurnIds.delete(turnId);
     this.collector?.releaseTurn(turnId);
   }
@@ -302,69 +294,63 @@ export class TurnManager {
   private releaseRecordIfReady(turnId: string, record: NativeTurnRecord): void {
     if (record.completion === null || (record.releaseAfterAdmissions?.size ?? 0) > 0) return;
     this.nativeTurns.delete(turnId);
-    this.pendingActivity.delete(turnId);
     this.unboundObservedTurnIds.delete(turnId);
     this.collector?.releaseTurn(turnId);
   }
 
-  private dropOrphanActivityIfIdle(): void {
+  /** Let the collector forget a native turn no Dreamux submission ever bound. */
+  private releaseOrphanTurnsIfIdle(): void {
     if (this.inFlightNativeAdmissions.size !== 0) return;
     for (const turnId of this.unboundObservedTurnIds) {
       if (this.nativeTurns.has(turnId)) continue;
-      this.pendingActivity.delete(turnId);
       this.collector?.releaseTurn(turnId);
     }
     this.unboundObservedTurnIds.clear();
   }
 
+  /**
+   * Put what codex reported on this agent's activity stream.
+   *
+   * No record is consulted. A native turn folds any number of Dreamux
+   * submissions, so naming one of them as the item's owner was always a guess
+   * — and the buffer that existed to make that guess possible dropped
+   * everything it could not eventually attribute. The agent is the subject,
+   * and it is known before any submission binds.
+   */
   private observeItem(turnId: string, item: ThreadItem, phase: 'started' | 'completed', occurredAt: number): void {
+    const activity = itemActivity(turnId, item, phase, occurredAt);
+    if (activity !== null) this.emitActivity(activity);
     const record = this.nativeTurns.get(turnId);
-    if (record === undefined || record.representative === null) {
-      this.unboundObservedTurnIds.add(turnId);
-      if (this.inFlightNativeAdmissions.size === 0) {
-        this.dropOrphanActivityIfIdle();
-        return;
-      }
-      const activity = itemActivity(turnId, item, phase);
-      if (activity === null) return;
-      const pending = this.pendingActivity.get(turnId) ?? [];
-      pending.push({ activity, occurredAt });
-      this.pendingActivity.set(turnId, pending);
-      return;
-    }
-    const activity = itemActivity(turnId, item, phase);
-    if (activity === null) return;
-    this.emitActivity(record, activity, occurredAt);
+    if (record !== undefined && record.representative !== null) return;
+    this.unboundObservedTurnIds.add(turnId);
+    if (this.inFlightNativeAdmissions.size === 0) this.releaseOrphanTurnsIfIdle();
   }
 
-  private emitActivity(record: NativeTurnRecord, activity: RuntimeActivity, occurredAt: number): void {
-    if (record.representative === null) return;
+  private emitActivity(activity: RuntimeActivity): void {
     try {
-      this.opts.activitySink(Object.freeze({ submission: record.representative, activity: Object.freeze(activity), occurredAt }));
+      this.opts.activitySink(Object.freeze(activity));
     } catch (error) {
       this.log('warn', 'codex activity projection failed', error);
     }
   }
 
   /**
-   * Report this native turn's one end, at most once.
+   * Report this native turn's one end, at most once, as its last activity.
    *
-   * A record that never bound a submission belongs to no Dreamux entity, so
-   * there is no conversation for its end to land in and nothing is emitted.
-   * The sink is display-only, so a throwing consumer is logged and the turn
-   * proceeds.
+   * A record that never bound a submission is still refused. Its end is not
+   * this entity's to report: the display stream is one open card per agent, so
+   * an end from a native turn Dreamux never submitted into would close
+   * whatever card this entity's own submissions had opened. `reason` carries
+   * codex's own error text when the end has one.
    */
   private endNativeTurn(
     record: NativeTurnRecord,
-    status: RuntimeNativeTurnEnd['status'],
+    status: 'completed' | 'failed' | 'interrupted',
+    reason: string | null,
   ): void {
     if (record.nativeTurnEnded || record.representative === null) return;
     record.nativeTurnEnded = true;
-    try {
-      this.opts.nativeTurnSink(Object.freeze({ status, occurredAt: Date.now() }));
-    } catch (error) {
-      this.log('warn', 'codex native turn end projection failed', error);
-    }
+    this.emitActivity({ kind: 'turn.ended', occurredAt: Date.now(), status, reason });
   }
 
   private trackAdmission(admission: Promise<RuntimeAdmission>): Promise<RuntimeAdmission> {
@@ -384,12 +370,23 @@ function createRuntimeSubmission(): SubmissionDeferred {
   return { submission, settle(settlement) { if (settled) return false; settled = true; resolve(settlement); return true; } };
 }
 
-function itemActivity(turnId: string, item: ThreadItem, phase: 'started' | 'completed'): RuntimeActivity | null {
+function itemActivity(
+  turnId: string,
+  item: ThreadItem,
+  phase: 'started' | 'completed',
+  occurredAt: number,
+): RuntimeActivity | null {
   const itemId = typeof item.id === 'string' && item.id !== '' ? item.id : null;
   if (itemId === null) return null;
   if (item.type === 'agentMessage') {
     if (phase !== 'completed' || typeof item.text !== 'string' || item.text === '') return null;
-    return { kind: 'assistant.message', id: `${turnId}:${itemId}:completed`, text: item.text, truncated: false };
+    return {
+      kind: 'assistant.message',
+      occurredAt,
+      id: `${turnId}:${itemId}:completed`,
+      text: item.text,
+      truncated: false,
+    };
   }
   const toolName = toolNameFor(item);
   if (toolName === null) return null;
@@ -398,6 +395,7 @@ function itemActivity(turnId: string, item: ThreadItem, phase: 'started' | 'comp
   const error = failed ? renderProviderError(item['error']) : null;
   return {
     kind: 'tool.call',
+    occurredAt,
     id: `${turnId}:${itemId}:${phase}`,
     callId: itemId,
     toolName,

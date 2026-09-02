@@ -24,10 +24,15 @@ import type {
   AgentRuntimeProvider,
   AgentRuntimeSubmissionInput,
   DreamuxLogger,
+  RuntimeActivity,
+  RuntimeAdmission,
 } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
-import type { ConversationProjection } from '../src/channel/conversation-projection.js';
+import type {
+  ConversationInput,
+  ConversationProjection,
+} from '../src/channel/conversation-projection.js';
 import type { DreamuxConfig, ResolvedAgentConfig } from '../src/config/config.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
 import {
@@ -282,6 +287,10 @@ async function buildTeammateHarness(
     closed?: boolean;
     admissions?: AdmissionLedger;
     conversationProjection?: ConversationProjection;
+    /** Fail the provider's own `start`, the way a missing binary would. */
+    startError?: Error;
+    /** Return this admission from the provider instead of accepting. */
+    refuseWith?: Exclude<RuntimeAdmission, { status: 'submitted' }>;
   } = {},
 ): Promise<Harness> {
   const dir = await mkdtemp(join(tmpdir(), 'dreamux-submission-admission-'));
@@ -330,11 +339,13 @@ async function buildTeammateHarness(
       return {
         async start() {
           order.push('start');
+          if (options.startError !== undefined) throw options.startError;
           return { continuity: 'fresh' as const };
         },
         async submit(input: AgentRuntimeSubmissionInput) {
           order.push('submit');
           submittedInputs.push(input);
+          if (options.refuseWith !== undefined) return options.refuseWith;
           const pending = controllableRuntimeSubmission();
           pending.complete(null);
           return { status: 'submitted' as const, submission: pending.submission };
@@ -504,21 +515,19 @@ describe('TeammateService.submitInput: admission ledger bypass and joining, at t
 describe('TeammateService.submitInput: the conversation projection records the source body, not the rendered envelope', () => {
   it('projects the original text and caller id on a fresh admission — no envelope markup, and not the reminder', async () => {
     const projected: Array<{
-      prompt: string | null;
+      text: string;
       source: string;
-      sourceId: string | null | undefined;
+      sourceId: string | null;
     }> = [];
     const conversationProjection: ConversationProjection = {
-      projectSubmitted(_agent, turn) {
+      projectInput(_agent, input) {
         projected.push({
-          prompt: turn.prompt,
-          source: turn.source,
-          sourceId: turn.sourceId,
+          text: input.text,
+          source: input.source,
+          sourceId: input.sourceId,
         });
       },
       projectActivity() {},
-      projectSettled() {},
-      projectNativeTurnEnd() {},
     };
     const h = await harness({ conversationProjection });
 
@@ -534,9 +543,8 @@ describe('TeammateService.submitInput: the conversation projection records the s
     // Exactly the caller's own body: not the `<channel chat="general">...`
     // start tag, not the closing tag, and not the trailing `<reminder>`
     // sibling — all three are delivery formatting `renderSubmission` adds on
-    // top of `input.text`, which the turn never records (index.ts:
-    // `prompt: input.text`).
-    expect(projected[0]?.prompt).toBe('hello there');
+    // top of `input.text`, which the input fact never records.
+    expect(projected[0]?.text).toBe('hello there');
     expect(projected[0]?.source).toBe('channel');
     expect(projected[0]?.sourceId).toBe('message-fixture');
   });
@@ -544,12 +552,10 @@ describe('TeammateService.submitInput: the conversation projection records the s
   it('never re-projects a duplicate: only the first admission of a repeated sourceId is recorded', async () => {
     const projected: string[] = [];
     const conversationProjection: ConversationProjection = {
-      projectSubmitted(_agent, turn) {
-        if (turn.prompt !== null) projected.push(turn.prompt);
+      projectInput(_agent, input) {
+        projected.push(input.text);
       },
       projectActivity() {},
-      projectSettled() {},
-      projectNativeTurnEnd() {},
     };
     const h = await harness({ conversationProjection });
 
@@ -582,5 +588,125 @@ describe('TeammateService.prepareCompletion: completion delivery defaults to the
     const deliveredText = h.submittedInputs[1]?.text ?? '';
     expect(deliveredText.startsWith('<task-notification')).toBe(true);
     expect(deliveredText).not.toMatch(/^<channel/);
+  });
+});
+
+/**
+ * Recording projection: what a display surface would have been told, in order.
+ */
+function recordingProjection(): {
+  projection: ConversationProjection;
+  inputs: ConversationInput[];
+  activities: RuntimeActivity[];
+} {
+  const inputs: ConversationInput[] = [];
+  const activities: RuntimeActivity[] = [];
+  return {
+    inputs,
+    activities,
+    projection: {
+      projectInput(_agent, input) { inputs.push(input); },
+      projectActivity(_agent, activity) { activities.push(activity); },
+    },
+  };
+}
+
+describe('TeammateService.submitAdmitted: an input is announced before anything can refuse it', () => {
+  it('announces a submission the provider refuses, then ends it with the reason', async () => {
+    const { projection, inputs, activities } = recordingProjection();
+    const h = await harness({
+      conversationProjection: projection,
+      refuseWith: { status: 'failed', error: new Error('runtime refused the turn') },
+    });
+
+    const admission = await h.service.submitInput({
+      source: 'channel',
+      text: 'this one fails',
+      sourceId: 'msg-fail',
+    });
+
+    expect(admission.status).toBe('failed');
+    // Ruling 8: the failing text is exactly what a diagnosis needs to see.
+    expect(inputs.map((input) => input.text)).toEqual(['this one fails']);
+    // Rulings 4 and 9: no turn exists and no runtime will report a native end,
+    // so Core ends the surface its own input opened, carrying the error text.
+    expect(activities).toEqual([{
+      kind: 'turn.ended',
+      occurredAt: expect.any(Number),
+      status: 'failed',
+      reason: 'runtime refused the turn',
+    }]);
+  });
+
+  it('announces and ends a submission whose runtime never even started', async () => {
+    const { projection, inputs, activities } = recordingProjection();
+    const h = await harness({
+      conversationProjection: projection,
+      startError: new Error('claude binary is missing'),
+    });
+
+    await expect(
+      h.service.submitInput({ source: 'channel', text: 'never delivered' }),
+    ).rejects.toThrow('claude binary is missing');
+
+    expect(inputs.map((input) => input.text)).toEqual(['never delivered']);
+    expect(activities).toEqual([{
+      kind: 'turn.ended',
+      occurredAt: expect.any(Number),
+      status: 'failed',
+      reason: 'claude binary is missing',
+    }]);
+  });
+
+  it('announces an accepted submission exactly once, and does not end it', async () => {
+    const { projection, inputs, activities } = recordingProjection();
+    const h = await harness({ conversationProjection: projection });
+
+    await h.service.submitInput({ source: 'channel', text: 'accepted' });
+
+    expect(inputs).toHaveLength(1);
+    // The runtime owns the end of an accepted turn; Core must not race it.
+    expect(activities).toEqual([]);
+  });
+});
+
+describe('TeammateService.prepareCompletion: a push-back never wakes its recipient', () => {
+  it('reports unsupported once the host released the runtime, and starts nothing', async () => {
+    const { projection, inputs, activities } = recordingProjection();
+    const h = await harness({ conversationProjection: projection });
+    // Make the entity live first, so the refusal below is about `wake: false`
+    // and not about an entity that never had a runtime.
+    await h.service.submitInput({ source: 'channel', text: 'wake up' });
+
+    const prepared = await h.service.prepareCompletion({
+      kind: 'teammate',
+      source: 'worker',
+      status: 'completed',
+      result: 'the answer',
+    });
+    await h.service.stopForHost();
+    const before = h.createRuntimeCalls();
+    const stepsBefore = h.order.length;
+
+    const delivery = await prepared.submit();
+
+    expect(delivery.status).toBe('unsupported');
+    // `wake: false` is the whole difference: no second runtime is created for
+    // an answer nobody asked this agent to read.
+    expect(h.createRuntimeCalls()).toBe(before);
+    expect(h.order.slice(stepsBefore)).toEqual([]);
+
+    // The push-back is an ordinary admitted input, so it is announced like any
+    // other and then ended, saying why it went nowhere. A dropped completion
+    // used to be silent; the operator can now see one happen.
+    expect(inputs).toHaveLength(2);
+    expect(inputs[1]?.source).toBe('task-notification');
+    expect(inputs[1]?.text).toContain('the answer');
+    expect(activities).toEqual([{
+      kind: 'turn.ended',
+      occurredAt: expect.any(Number),
+      status: 'interrupted',
+      reason: 'the agent runtime is not running',
+    }]);
   });
 });

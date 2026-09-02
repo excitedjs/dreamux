@@ -45,7 +45,7 @@ import type {
   AgentRuntimeStateUpdate,
   AgentRuntimeSystemPrompt,
   JsonSchema,
-  RuntimeNativeTurnEnd,
+  RuntimeActivity,
 } from '@excitedjs/dreamux-types';
 
 // ─── Fake resident session ──────────────────────────────────────────────────
@@ -198,7 +198,7 @@ class Harness {
   readonly sessions: FakeSession[] = [];
   readonly stateCalls: AgentRuntimeStateUpdate[] = [];
   /** Every native turn end this runtime reported, in order. */
-  readonly nativeEnds: RuntimeNativeTurnEnd[] = [];
+  readonly nativeEnds: Array<Extract<RuntimeActivity, { kind: 'turn.ended' }>> = [];
   behavior: FakeSessionBehavior = {};
   /** Set per test to make the leased state sink reject a specific update kind. */
   rejectStateKind: AgentRuntimeStateUpdate['kind'] | null = null;
@@ -252,7 +252,9 @@ class Harness {
         : {}),
       paths: this.paths,
       state: this.state,
-      nativeTurn: (end) => this.nativeEnds.push(end),
+      activity: (activity) => {
+        if (activity.kind === 'turn.ended') this.nativeEnds.push(activity);
+      },
     };
   }
 
@@ -697,7 +699,9 @@ describe('ClaudeCodeRuntime native turn end', () => {
     await drain();
 
     expect(h.nativeEnds).toHaveLength(1);
-    expect(Object.keys(h.nativeEnds[0]!).sort()).toEqual(['occurredAt', 'status']);
+    expect(Object.keys(h.nativeEnds[0]!).sort()).toEqual([
+      'kind', 'occurredAt', 'reason', 'status',
+    ]);
     expect(Object.isFrozen(h.nativeEnds[0])).toBe(true);
   });
 });

@@ -3,7 +3,7 @@
 ## Current state
 
 - Goal: Separate the conversation-display surface every channel-facing TeamLeader and Dispatcher needs from the submission push-back mechanism it is currently built on, so a display consumer no longer requires a Dreamux submission to exist.
-- State: `intake`
+- State: `implemented` — built on branch `refactor/split-display-from-pushback`; build, lint, and test green.
 - Requirement: [Current requirement](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md)
 - Review record:
   [review-corrections.md](/.agents/tasks/architecture/split-streaming-display-from-pushback/review-corrections.md)
@@ -21,20 +21,31 @@
   does not guarantee.
 - Final solution:
   [technical-design/final.md](/.agents/tasks/architecture/split-streaming-display-from-pushback/technical-design/final.md)
-  — proposed, not approved. Carries the two flow diagrams (push-back, and COT
-  rendering) and the change inventory.
+  — carries the two flow diagrams (push-back, and COT rendering), the change
+  inventory, and an **As built** section recording every departure the
+  implementation made from it and why. Both previously-unresolved items (the
+  activity-fact dedupe, the embedded-versus-reshaped payload) are resolved
+  inline in that document.
 - Solution review Issue: Not created.
 - Blockers: None. The requirement states three questions to answer before a
   solution is proposed; answering them is the next work, not a blocker.
-- Next action: Operator ruling on the technical design, then development
-  approval. `final.md` was rewritten 2026-09-02 after a long source walkthrough
-  with the operator; its central change is that the completion path merges into
-  `submitInput({ start: false })`, which takes the design from two input publish
-  sites to one. What is still open is listed there (the activity-fact dedupe,
-  which needs a probe, and the embedded-versus-reshaped activity payload), plus
-  sign-off on the merge itself. `priority` is no longer open — the operator
-  ruled it deleted — and neither is `teammate.turn.settled`, which the operator
-  ruled deleted outright, accepting the flowx cost.
+- Next action: Operator review of two things the implementation decided that
+  the design had explicitly left to a ruling.
+  1. **A dropped completion push-back is now visible.** Applying rulings 4 and 8
+     uniformly moved the input publish above the recipient-liveness check, so a
+     push-back to an agent whose runtime is already gone now shows the delivered
+     body plus an interrupted end on that agent's card, where `final.md` said
+     that half "stays invisible" and "needs its own ruling". Kept because the
+     alternative is a special case; pinned by a test, so reverting is one line.
+     See `final.md` § As built, item 2.
+  2. **Ruling 4's 「置成失败」 is a printed reason, not a failed wire status.** The
+     Feishu COT vocabulary is `done | interrupted` and the platform's accepted
+     `RUN_FINISHED` statuses are undocumented here, so the card ends carrying
+     the error text rather than under a guessed third status. See item 3.
+
+  Also recorded and deliberately not done: `isSynthetic` is producer-less in
+  `src/` exactly like `priority` was, but ruling 1 names only `priority`, so it
+  was left alone (item 9).
 - Related tasks:
   [feishu-cot-conversation-cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md)
   (the display surface this separates from, and whose locked product model stays

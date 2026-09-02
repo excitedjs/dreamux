@@ -5,9 +5,7 @@ import type {
   JsonValue,
   RuntimeActivity,
   AgentRuntimeActivitySink,
-  AgentRuntimeNativeTurnSink,
   RuntimeCompletion,
-  RuntimeNativeTurnEnd,
   RuntimeSubmission,
   RuntimeSubmissionSettlement,
   RuntimeToolAction,
@@ -45,25 +43,35 @@ export interface ProtocolEventContext {
   threadId: string | null;
   outputSchemaEnabled: boolean;
   activitySink: AgentRuntimeActivitySink;
-  nativeTurnSink: AgentRuntimeNativeTurnSink;
   log: (level: 'info' | 'warn' | 'error', message: string, error?: unknown) => void;
 }
 
 /**
- * Report the end of one native turn.
+ * Report the end of one native turn, as the last activity of that turn.
  *
- * The sink is display-only, so a throwing consumer is logged and the window
- * proceeds.
+ * It is the same stream as everything else claude reported, so it takes the
+ * same route: an end is not a different kind of fact from a message, it is the
+ * one that says there will be no more. `reason` carries claude's own error text
+ * when the end has one, so a display can say why it stopped.
  */
 export function endNativeTurn(
-  status: RuntimeNativeTurnEnd['status'],
-  sink: AgentRuntimeNativeTurnSink,
+  status: 'completed' | 'failed' | 'interrupted',
+  reason: string | null,
+  sink: AgentRuntimeActivitySink,
+  log: (level: 'info' | 'warn' | 'error', message: string, error?: unknown) => void,
+): void {
+  emitActivity({ kind: 'turn.ended', occurredAt: Date.now(), status, reason }, sink, log);
+}
+
+function emitActivity(
+  activity: RuntimeActivity,
+  sink: AgentRuntimeActivitySink,
   log: (level: 'info' | 'warn' | 'error', message: string, error?: unknown) => void,
 ): void {
   try {
-    sink(Object.freeze({ status, occurredAt: Date.now() }));
+    sink(Object.freeze(activity));
   } catch (error) {
-    log('warn', 'claude native turn end projection failed', error);
+    log('warn', 'claude activity projection failed', error);
   }
 }
 
@@ -171,7 +179,8 @@ function completeStartedGroup(
   // this again with its own `result`.
   endNativeTurn(
     completion.status === 'completed' ? 'completed' : 'failed',
-    context.nativeTurnSink,
+    completion.status === 'completed' ? null : completion.error.message,
+    context.activitySink,
     context.log,
   );
   for (const uuid of commandUuids) {
@@ -189,23 +198,26 @@ function failUnattributedResult(
       : 'claude result cannot be attributed without command started lifecycle',
   );
   context.log('error', error.message, error);
-  endNativeTurn('failed', context.nativeTurnSink, context.log);
+  endNativeTurn('failed', error.message, context.activitySink, context.log);
   for (const deferred of active.submissions.values()) {
     deferred.settle({ kind: 'failed', error });
   }
 }
 
+/**
+ * Put what claude said on this agent's activity stream.
+ *
+ * No submission is looked up. A window folds any number of commands into one
+ * native turn, so naming one of them as the activity's owner was always a
+ * guess — and when the guess failed, which it did for anything claude emitted
+ * before a command's `started` lifecycle arrived, the fact was dropped
+ * entirely. The agent is the subject, and it is always known.
+ */
 function emitStreamActivity(
   active: ActiveTurn,
   raw: Record<string, unknown>,
   context: ProtocolEventContext,
 ): void {
-  const representativeUuid = active.started[0] ?? (active.submissions.size === 1
-    ? active.submissions.keys().next().value
-    : undefined);
-  if (representativeUuid === undefined) return;
-  const representative = active.submissions.get(representativeUuid);
-  if (representative === undefined) return;
   const message = recordValue(raw['message']) ?? raw;
   const messageId = stringValue(message['id']) ?? `stream-${active.activitySequence++}`;
   const content = Array.isArray(message['content']) ? message['content'] : [];
@@ -214,15 +226,7 @@ function emitStreamActivity(
     if (block === null) continue;
     const activity = activityForBlock(active, messageId, blockIndex, block);
     if (activity === null) continue;
-    try {
-      context.activitySink(Object.freeze({
-        submission: representative.submission,
-        activity: Object.freeze(activity),
-        occurredAt: Date.now(),
-      }));
-    } catch (error) {
-      context.log('warn', 'claude activity projection failed', error);
-    }
+    emitActivity(activity, context.activitySink, context.log);
   }
 }
 
@@ -235,6 +239,7 @@ function activityForBlock(
   if (block['type'] === 'text' && typeof block['text'] === 'string' && block['text'] !== '') {
     return {
       kind: 'assistant.message',
+      occurredAt: Date.now(),
       id: `${messageId}:text:${blockIndex}`,
       text: block['text'],
       truncated: false,
@@ -248,6 +253,7 @@ function activityForBlock(
     active.tools.set(callId, { name, arguments: args });
     return {
       kind: 'tool.call',
+      occurredAt: Date.now(),
       id: `${messageId}:${callId}:started`,
       callId,
       toolName: name,
@@ -266,6 +272,7 @@ function activityForBlock(
   const result = normalizeTextBlocks(block['content']);
   return {
     kind: 'tool.call',
+    occurredAt: Date.now(),
     id: `${messageId}:${callId}:result`,
     callId,
     toolName: known?.name ?? 'tool',

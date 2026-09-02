@@ -28,12 +28,10 @@ import { describe, expect, it } from 'vitest';
 import type {
   DreamuxLogger,
   TeamStateEvent,
-  TeammateNativeTurnEndedEvent,
+  TeammateActivity,
+  TeammateActivityEvent,
   TeammateRole,
-  TeammateTurnMessageEvent,
-  TeammateTurnSettledEvent,
-  TeammateTurnSubmittedEvent,
-  TeammateTurnToolCallEvent,
+  TeammateInputEvent,
 } from '@excitedjs/dreamux-types';
 
 import {
@@ -125,56 +123,56 @@ const DISPATCHER: Recipient = {
 
 let sequence = 0;
 
-function submitted(
+function input(
   recipient: Recipient,
-  turnId: string,
-  turnSource = 'feishu',
-  sourceId: string | null = null,
-): TeammateTurnSubmittedEvent {
-  return {
-    schema_version: 1,
-    kind: 'teammate.turn.submitted',
-    occurred_at: 1_700_000_000_000 + (sequence += 1),
-    ...recipient.scope,
-    turn_id: turnId,
-    turn_source: turnSource,
-    source_id: sourceId,
-  };
-}
-
-function message(
-  recipient: Recipient,
-  turnId: string,
-  role: 'user' | 'assistant',
   content: string,
-): TeammateTurnMessageEvent {
+  source = 'feishu',
+  sourceId: string | null = null,
+): TeammateInputEvent {
   return {
     schema_version: 1,
-    kind: 'teammate.turn.message',
+    kind: 'teammate.input',
     occurred_at: 1_700_000_000_000 + (sequence += 1),
     ...recipient.scope,
-    turn_id: turnId,
-    event_id: `event-${sequence}`,
-    message_role: role,
+    source,
+    source_id: sourceId,
     content,
     content_truncated: false,
     redacted: false,
   };
 }
 
-function toolCall(
+function activity(
   recipient: Recipient,
-  turnId: string,
-  callId: string,
-  status: 'started' | 'completed' | 'failed',
-): TeammateTurnToolCallEvent {
+  payload: TeammateActivity,
+): TeammateActivityEvent {
   return {
     schema_version: 1,
-    kind: 'teammate.turn.tool_call',
+    kind: 'teammate.activity',
     occurred_at: 1_700_000_000_000 + (sequence += 1),
     ...recipient.scope,
-    turn_id: turnId,
-    event_id: `event-${sequence}`,
+    activity: payload,
+  };
+}
+
+function message(recipient: Recipient, content: string): TeammateActivityEvent {
+  return activity(recipient, {
+    kind: 'assistant.message',
+    event_id: `event-${(sequence += 1)}`,
+    content,
+    content_truncated: false,
+    redacted: false,
+  });
+}
+
+function toolCall(
+  recipient: Recipient,
+  callId: string,
+  status: 'started' | 'completed' | 'failed',
+): TeammateActivityEvent {
+  return activity(recipient, {
+    kind: 'tool.call',
+    event_id: `event-${(sequence += 1)}`,
     call_id: callId,
     tool_name: 'Read',
     tool_action: 'read',
@@ -184,38 +182,21 @@ function toolCall(
     arguments_truncated: false,
     result_truncated: false,
     redacted: false,
-  };
+  });
 }
 
 function nativeEnd(
   recipient: Recipient,
   status: 'completed' | 'failed' | 'interrupted',
-): TeammateNativeTurnEndedEvent {
-  return {
-    schema_version: 1,
-    kind: 'teammate.native_turn.ended',
-    occurred_at: 1_700_000_000_000 + (sequence += 1),
-    ...recipient.scope,
+  reason: string | null = null,
+): TeammateActivityEvent {
+  return activity(recipient, {
+    kind: 'turn.ended',
     status,
-  };
-}
-
-function settled(
-  recipient: Recipient,
-  turnId: string,
-  status: 'completed' | 'failed' | 'stopped' = 'completed',
-): TeammateTurnSettledEvent {
-  return {
-    schema_version: 1,
-    kind: 'teammate.turn.settled',
-    occurred_at: 1_700_000_000_000 + (sequence += 1),
-    ...recipient.scope,
-    turn_id: turnId,
-    status,
-    assistant: null,
-    assistant_truncated: false,
+    reason,
+    reason_truncated: false,
     redacted: false,
-  };
+  });
 }
 
 function teamState(
@@ -264,9 +245,8 @@ function submitInbound(
     anchor,
     sourceId,
   });
-  adapter.onTurnSubmitted(submitted(recipient, turnId, 'feishu', sourceId));
-  adapter.onTurnMessage(
-    message(recipient, turnId, 'user', 'the already visible inbound'),
+  adapter.onInput(
+    input(recipient, 'the already visible inbound', 'feishu', sourceId),
   );
   lease?.release();
 }
@@ -290,7 +270,7 @@ describe.each([LEADER, DISPATCHER])(
         'turn-1',
         anchorAt('oc_home', 'om_user_1'),
       );
-      adapter.onTurnMessage(message(recipient, 'turn-1', 'assistant', 'working on it'));
+      adapter.onActivity(message(recipient, 'working on it'));
       await settle();
 
       expect(cot.cards).toHaveLength(1);
@@ -312,7 +292,7 @@ describe.each([LEADER, DISPATCHER])(
 
       for (const [index, anchor] of targets.entries()) {
         submitInbound(adapter, recipient, `turn-${index}`, anchor);
-        adapter.onTurnMessage(
+        adapter.onActivity(
           message(recipient, `turn-${index}`, 'assistant', `reply ${index}`),
         );
         await settle();
@@ -339,13 +319,13 @@ describe.each([LEADER, DISPATCHER])(
     it('replaces the anchor on submit, mid native turn, and keeps writing into the successor card', async () => {
       const { adapter, cot } = harness();
       submitInbound(adapter, recipient, 'turn-a', anchorAt('oc_home', 'om_first'));
-      adapter.onTurnMessage(message(recipient, 'turn-a', 'assistant', 'first thought'));
+      adapter.onActivity(message(recipient, 'first thought'));
       await settle();
 
       // The operator writes again before anything settled or ended.
       submitInbound(adapter, recipient, 'turn-b', anchorAt('oc_other', 'om_second'));
-      adapter.onTurnMessage(
-        message(recipient, 'turn-a', 'assistant', 'still the same native turn'),
+      adapter.onActivity(
+        message(recipient, 'still the same native turn'),
       );
       await settle();
 
@@ -366,19 +346,19 @@ describe.each([LEADER, DISPATCHER])(
       const { adapter, cot } = harness();
       // Two logical submissions the provider folded into one native turn.
       submitInbound(adapter, recipient, 'turn-1', anchorAt('oc_home', 'om_1'));
-      adapter.onTurnMessage(message(recipient, 'turn-1', 'assistant', 'part one'));
-      adapter.onTurnMessage(message(recipient, 'turn-2', 'assistant', 'part two'));
+      adapter.onActivity(message(recipient, 'part one'));
+      adapter.onActivity(message(recipient, 'part two'));
       await settle();
       expect(cot.cards).toHaveLength(1);
 
-      adapter.onNativeTurnEnded(nativeEnd(recipient, 'completed'));
+      adapter.onActivity(nativeEnd(recipient, 'completed'));
       await settle();
 
       const card = cot.cards[0]!;
       expect(cotRunStatus(card)).toBe('done');
       expect(cotRunFinishedCount(card)).toBe(1);
       // A second end is not a second terminal, and opens nothing.
-      adapter.onNativeTurnEnded(nativeEnd(recipient, 'completed'));
+      adapter.onActivity(nativeEnd(recipient, 'completed'));
       await settle();
       expect(cot.cards).toHaveLength(1);
       expect(cotRunFinishedCount(card)).toBe(1);
@@ -389,20 +369,20 @@ describe.each([LEADER, DISPATCHER])(
     it('ignores a native turn end while no card is open, and leaves the anchor able to open one', async () => {
       const { adapter, cot } = harness();
       submitInbound(adapter, recipient, 'turn-1', anchorAt('oc_home', 'om_1'));
-      adapter.onNativeTurnEnded(nativeEnd(recipient, 'completed'));
+      adapter.onActivity(nativeEnd(recipient, 'completed'));
       await settle();
       expect(cot.cards).toHaveLength(1);
       expect(cotRunStatus(cot.cards[0]!)).toBe('done');
 
       // The anchor still stands, but nothing is open. A terminal has nothing to
       // finish, so it produces no card at all — not even one opened to close.
-      adapter.onNativeTurnEnded(nativeEnd(recipient, 'interrupted'));
-      adapter.onNativeTurnEnded(nativeEnd(recipient, 'completed'));
+      adapter.onActivity(nativeEnd(recipient, 'interrupted'));
+      adapter.onActivity(nativeEnd(recipient, 'completed'));
       await settle();
       expect(cot.cards).toHaveLength(1);
 
       // An opening activity, by contrast, does open one at that same anchor.
-      adapter.onTurnMessage(message(recipient, 'turn-1', 'assistant', 'still talking'));
+      adapter.onActivity(message(recipient, 'still talking'));
       await settle();
       expect(cot.cards).toHaveLength(2);
       expect(cot.cards[1]!.originMessageId).toBe('om_1');
@@ -418,7 +398,7 @@ describe.each([LEADER, DISPATCHER])(
         submitInbound(adapter, recipient, 'turn-1', anchorAt('oc_home', 'om_1'));
         await settle();
 
-        adapter.onNativeTurnEnded(nativeEnd(recipient, status));
+        adapter.onActivity(nativeEnd(recipient, status));
         await settle();
 
         expect(cotRunStatus(cot.cards[0]!)).toBe('interrupted');
@@ -429,8 +409,8 @@ describe.each([LEADER, DISPATCHER])(
     it('shows a tool row and its result on the open card', async () => {
       const { adapter, cot } = harness();
       submitInbound(adapter, recipient, 'turn-1', anchorAt('oc_home', 'om_1'));
-      adapter.onTurnToolCall(toolCall(recipient, 'turn-1', 'call-1', 'started'));
-      adapter.onTurnToolCall(toolCall(recipient, 'turn-1', 'call-1', 'completed'));
+      adapter.onActivity(toolCall(recipient, 'call-1', 'started'));
+      adapter.onActivity(toolCall(recipient, 'call-1', 'completed'));
       await settle();
 
       const card = cot.cards[0]!;
@@ -446,38 +426,36 @@ describe.each([LEADER, DISPATCHER])(
       // A task brief, a runtime answer, a tool row, and a native end, all
       // before any anchor exists. Nothing is filtered by source or kind —
       // there is simply nowhere to put a card.
-      adapter.onTurnMessage(message(recipient, 'turn-0', 'user', 'a task brief'));
-      adapter.onTurnMessage(message(recipient, 'turn-0', 'assistant', 'an answer'));
-      adapter.onTurnToolCall(toolCall(recipient, 'turn-0', 'call-0', 'started'));
-      adapter.onNativeTurnEnded(nativeEnd(recipient, 'completed'));
+      adapter.onInput(input(recipient, 'a task brief', 'task'));
+      adapter.onActivity(message(recipient, 'an answer'));
+      adapter.onActivity(toolCall(recipient, 'call-0', 'started'));
+      adapter.onActivity(nativeEnd(recipient, 'completed'));
       await settle();
 
       expect(cot.cards).toHaveLength(0);
 
       // And the moment an anchor exists, the very next fact is shown.
       submitInbound(adapter, recipient, 'turn-1', anchorAt('oc_home', 'om_1'));
-      adapter.onTurnMessage(message(recipient, 'turn-1', 'assistant', 'now visible'));
+      adapter.onActivity(message(recipient, 'now visible'));
       await settle();
       expectOpeningTexts(cot.cards[0]!, ['now visible']);
 
       await adapter.close();
     });
 
-    it('never treats a logical settlement as a card terminal', async () => {
+    it('prints an end reason on the card before closing it as interrupted', async () => {
       const { adapter, cot } = harness();
       submitInbound(adapter, recipient, 'turn-1', anchorAt('oc_home', 'om_1'));
-      await settle();
-
-      // `teammate.turn.settled` is a per-submission lifecycle fact. The adapter
-      // has no entry point for it at all, and the seam never forwards one; the
-      // card the operator is watching stays open until the runtime stops.
-      expect('onTurnSettled' in adapter).toBe(false);
-      adapter.onTurnMessage(message(recipient, 'turn-1', 'assistant', 'after settlement'));
+      // An input Core admitted but no runtime accepted ends its own card and
+      // says why, because nothing else will ever close it.
+      adapter.onActivity(
+        nativeEnd(recipient, 'failed', 'the agent runtime is not running'),
+      );
       await settle();
 
       const card = cot.cards[0]!;
-      expect(cotRunStatus(card)).toBeNull();
-      expectOpeningTexts(card, ['after settlement']);
+      expect(cotRunStatus(card)).toBe('interrupted');
+      expectOpeningTexts(card, ['the agent runtime is not running']);
 
       await adapter.close();
     });
@@ -498,10 +476,10 @@ describe.each([LEADER, DISPATCHER])(
         log: silentLog,
         cotClient: () => cot,
       });
-      restarted.onTurnMessage(
-        message(recipient, 'turn-2', 'assistant', 'after the restart'),
+      restarted.onActivity(
+        message(recipient, 'after the restart'),
       );
-      restarted.onNativeTurnEnded(nativeEnd(recipient, 'completed'));
+      restarted.onActivity(nativeEnd(recipient, 'completed'));
       await settle();
 
       expect(cot.cards).toHaveLength(1);
@@ -521,9 +499,9 @@ describe('Feishu COT — the two recipients are independent presentations', () =
       'turn-dispatcher',
       anchorAt('oc_dm', 'om_dm_1'),
     );
-    adapter.onTurnMessage(message(LEADER, 'turn-leader', 'assistant', 'leader says'));
-    adapter.onTurnMessage(
-      message(DISPATCHER, 'turn-dispatcher', 'assistant', 'dispatcher says'),
+    adapter.onActivity(message(LEADER, 'leader says'));
+    adapter.onActivity(
+      message(DISPATCHER, 'dispatcher says'),
     );
     await settle();
 
@@ -532,7 +510,7 @@ describe('Feishu COT — the two recipients are independent presentations', () =
     expectOpeningTexts(cot.cards[1]!, ['dispatcher says']);
 
     // One recipient's native turn ending closes only that recipient's card.
-    adapter.onNativeTurnEnded(nativeEnd(LEADER, 'completed'));
+    adapter.onActivity(nativeEnd(LEADER, 'completed'));
     await settle();
     expect(cotRunStatus(cot.cards[0]!)).toBe('done');
     expect(cotRunStatus(cot.cards[1]!)).toBeNull();
@@ -547,8 +525,8 @@ describe('Feishu COT — the two recipients are independent presentations', () =
       scope: { teammate_name: 'alpha-worker', role: 'teammate', team_name: 'alpha' },
     };
 
-    adapter.onTurnSubmitted(submitted(member, 'turn-m', 'task', 'other-source'));
-    adapter.onTurnMessage(message(member, 'turn-m', 'assistant', 'member output'));
+    adapter.onInput(input(member, 'member brief', 'task', 'other-source'));
+    adapter.onActivity(message(member, 'member output'));
     await settle();
 
     expect(cot.cards).toHaveLength(0);
@@ -568,8 +546,8 @@ describe('Feishu COT — anchor initialization', () => {
     await settle();
     expect(cot.cards).toHaveLength(0);
 
-    adapter.onTurnMessage(
-      message(LEADER, 'turn-first', 'assistant', 'the Team speaks first'),
+    adapter.onActivity(
+      message(LEADER, 'the Team speaks first'),
     );
     await settle();
 
@@ -587,11 +565,11 @@ describe('Feishu COT — anchor initialization', () => {
       'alpha',
       anchorAt('oc_team', 'om_bind_card'),
     );
-    adapter.onNativeTurnEnded(nativeEnd(LEADER, 'completed'));
+    adapter.onActivity(nativeEnd(LEADER, 'completed'));
     await settle();
 
     // The next card still hangs under the user's message, not the bind card.
-    adapter.onTurnMessage(message(LEADER, 'turn-2', 'assistant', 'later output'));
+    adapter.onActivity(message(LEADER, 'later output'));
     await settle();
 
     expect(cot.cards.map((card) => card.originMessageId)).toEqual([
@@ -612,11 +590,9 @@ describe('Feishu COT — anchor initialization', () => {
     );
     // A restart notice reaching the Dispatcher before any user message is an
     // ordinary system input with nowhere to go.
-    adapter.onTurnMessage(
-      message(DISPATCHER, 'turn-restart', 'user', 'the server restarted'),
-    );
-    adapter.onTurnMessage(
-      message(DISPATCHER, 'turn-restart', 'assistant', 'acknowledged'),
+    adapter.onInput(input(DISPATCHER, 'the server restarted', 'system'));
+    adapter.onActivity(
+      message(DISPATCHER, 'acknowledged'),
     );
     await settle();
     expect(cot.cards).toHaveLength(0);
@@ -634,11 +610,9 @@ describe('Feishu COT — narrow Channel-body suppression', () => {
   it('hides this Channel\'s recognized turn body once and displays another turn', async () => {
     const { adapter, cot } = harness();
     submitInbound(adapter, LEADER, 'turn-channel', anchorAt('oc_team', 'om_1'));
-    adapter.onTurnMessage(
-      message(LEADER, 'turn-other', 'user', 'another producer body'),
-    );
-    adapter.onTurnMessage(
-      message(LEADER, 'turn-channel', 'assistant', 'the projected answer'),
+    adapter.onInput(input(LEADER, 'another producer body', 'task'));
+    adapter.onActivity(
+      message(LEADER, 'the projected answer'),
     );
     await settle();
 
@@ -661,7 +635,7 @@ describe('Feishu COT — stale lifecycle callbacks', () => {
     expect(cotRunStatus(cot.cards[0]!)).toBe('interrupted');
 
     // Fenced: later facts, and even a fresh anchor, present nothing.
-    adapter.onTurnMessage(message(LEADER, 'turn-2', 'assistant', 'too late'));
+    adapter.onActivity(message(LEADER, 'too late'));
     submitInbound(adapter, LEADER, 'turn-2', anchorAt('oc_team', 'om_2'));
     await settle();
     expect(cot.cards).toHaveLength(1);
@@ -675,7 +649,7 @@ describe('Feishu COT — stale lifecycle callbacks', () => {
     await settle();
 
     adapter.onTeamState(teamState('alpha', 'alpha-leader', 'closed'));
-    adapter.onTurnMessage(message(DISPATCHER, 'turn-1', 'assistant', 'still going'));
+    adapter.onActivity(message(DISPATCHER, 'still going'));
     await settle();
 
     expect(cot.cards).toHaveLength(1);
@@ -714,7 +688,7 @@ describe('Feishu COT — stale lifecycle callbacks', () => {
     cot.createError = new Error('platform refused');
 
     submitInbound(adapter, LEADER, 'turn-1', anchorAt('oc_team', 'om_1'));
-    adapter.onTurnMessage(message(LEADER, 'turn-1', 'assistant', 'never displayed'));
+    adapter.onActivity(message(LEADER, 'never displayed'));
     await settle();
     expect(cot.cards).toHaveLength(0);
 
@@ -742,7 +716,7 @@ describe('Feishu COT — a failed card leaves the standing anchor alone', () => 
 
     // No new inbound, no new anchor — just the next thing the runtime says.
     cot.createError = null;
-    adapter.onTurnMessage(message(LEADER, 'turn-1', 'assistant', 'after the failure'));
+    adapter.onActivity(message(LEADER, 'after the failure'));
     await settle();
 
     expect(cot.cards).toHaveLength(1);
@@ -763,7 +737,7 @@ describe('Feishu COT — a failed card leaves the standing anchor alone', () => 
     expect(cotTexts(cot.cards[0]!)).toEqual([]);
 
     cot.appendError = null;
-    adapter.onTurnMessage(message(LEADER, 'turn-1', 'assistant', 'after the failure'));
+    adapter.onActivity(message(LEADER, 'after the failure'));
     await settle();
 
     expect(cot.cards).toHaveLength(2);
@@ -782,7 +756,7 @@ describe('Feishu COT — a failed card leaves the standing anchor alone', () => 
     expect(cot.cards).toHaveLength(0);
 
     cot.createError = null;
-    adapter.onNativeTurnEnded(nativeEnd(LEADER, 'completed'));
+    adapter.onActivity(nativeEnd(LEADER, 'completed'));
     await settle();
     expect(cot.cards).toHaveLength(0);
 
@@ -821,8 +795,7 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
       anchor,
       sourceId,
     );
-    seam.handle(submitted(recipient, turnId, 'feishu', sourceId));
-    seam.handle(message(recipient, turnId, 'user', 'the already visible inbound'));
+    seam.handle(input(recipient, 'the already visible inbound', 'feishu', sourceId));
     lease?.release();
   }
 
@@ -840,9 +813,8 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
 
       // Another producer submits to the same recipient, and no source whitelist
       // stands between either input and the card.
-      seam.handle(submitted(LEADER, 'turn-other', source));
-      seam.handle(message(LEADER, 'turn-other', 'user', `${source} input`));
-      seam.handle(message(LEADER, 'turn-other', 'assistant', `${source} answer`));
+      seam.handle(input(LEADER, `${source} input`, source));
+      seam.handle(message(LEADER, `${source} answer`));
       await settle();
 
       expectOpeningTexts(cot.cards[0]!, [
@@ -853,12 +825,12 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
     },
   );
 
-  it('forwards the native turn end and never forwards a logical settlement', async () => {
+  it('forwards the turn end, which is the only terminal a card has', async () => {
     const { seam, cot } = seamHarness();
     submitThroughSeam(seam, LEADER, 'turn-1', anchorAt('oc_team', 'om_1'));
     await settle();
 
-    seam.handle(settled(LEADER, 'turn-1', 'completed'));
+    seam.handle(message(LEADER, 'still working'));
     await settle();
     expect(cotRunStatus(cot.cards[0]!)).toBeNull();
 
@@ -869,15 +841,14 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
     await seam.close();
   });
 
-  it('shows a user body whose submitted source_id this session did not send', async () => {
+  it('shows an input body whose source_id this session did not send', async () => {
     const { seam, cot } = seamHarness();
     const lease = seam.beginInboundSubmission(
       'alpha',
       anchorAt('oc_team', 'om_1'),
       'message-own',
     );
-    seam.handle(submitted(LEADER, 'turn-other', 'task', 'message-other'));
-    seam.handle(message(LEADER, 'turn-other', 'user', 'another producer body'));
+    seam.handle(input(LEADER, 'another producer body', 'task', 'message-other'));
     lease?.release();
     await settle();
     expect(cot.cards).toHaveLength(1);
@@ -892,7 +863,7 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
     await settle();
 
     setCurrent(false);
-    seam.handle(message(LEADER, 'turn-1', 'assistant', 'after the fence'));
+    seam.handle(message(LEADER, 'after the fence'));
     seam.handle(nativeEnd(LEADER, 'completed'));
     await settle();
 
@@ -921,7 +892,7 @@ describe('FeishuCotSessionSeam — default-show, without a source whitelist', ()
     await seam.close();
     expect(cotRunStatus(cot.cards[0]!)).toBe('interrupted');
     submitThroughSeam(seam, LEADER, 'turn-3', anchorAt('oc_team', 'om_3'));
-    seam.handle(message(LEADER, 'turn-3', 'assistant', 'after close'));
+    seam.handle(message(LEADER, 'after close'));
     await settle();
     expect(cot.cards).toHaveLength(1);
   });

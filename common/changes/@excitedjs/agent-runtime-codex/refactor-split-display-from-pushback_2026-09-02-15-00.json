@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-codex",
+      "comment": "Report live activity through one agent-keyed sink: the native-turn sink is gone and a turn end is emitted as a `turn.ended` activity carrying codex's own error text. The per-turn pending-activity buffer is deleted, so thread items observed before a submission binds are reported instead of buffered and possibly dropped; orphan turns are still released from the collector. No config, state, or path shape changed and no rebuild is required.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

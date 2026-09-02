@@ -38,10 +38,12 @@ import type {
   AgentRuntimeCreateContext,
   AgentRuntimeIdentity,
   AgentRuntimeMcpServer,
+  RuntimeActivity,
   RuntimeAdmission,
-  RuntimeNativeTurnEnd,
   RuntimeSubmission,
 } from '@excitedjs/dreamux-types';
+
+type NativeTurnEnd = Extract<RuntimeActivity, { kind: 'turn.ended' }>;
 
 function identity(
   sessionId: string | null,
@@ -62,7 +64,6 @@ function makeDeps(
     cwd: '/fake/cwd',
     state: overrides.state ?? noopStateSink(),
     activitySink: overrides.activitySink ?? (() => undefined),
-    nativeTurnSink: overrides.nativeTurnSink ?? (() => undefined),
     codec: overrides.codec ?? null,
     paths: FAKE_PATHS,
     allocateSocketPath: () => '/fake/run/sockets/agent-1.sock',
@@ -182,7 +183,6 @@ describe('CodexRuntime developerInstructions re-supply', () => {
       cwd: '/fake/cwd',
       state,
       activitySink: () => undefined,
-      nativeTurnSink: () => undefined,
       codec: null,
       paths: FAKE_PATHS,
       allocateSocketPath: () => '/fake/run/sockets/agent-1.sock',
@@ -491,14 +491,16 @@ describe('CodexRuntime submit() and settlement', () => {
  */
 describe('CodexRuntime native turn end', () => {
   it('reports one completed end for a native turn that folded two submissions', async () => {
-    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+    const nativeEnds: NativeTurnEnd[] = [];
     const client = new FakeCodexWsClient({
       autoComplete: false,
       scriptedTurnIds: ['turn-folded', 'turn-folded'],
     });
     const { deps } = makeDeps({
       client,
-      nativeTurnSink: (end) => nativeEnds.push(end),
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -511,17 +513,21 @@ describe('CodexRuntime native turn end', () => {
 
     expect(nativeEnds.map((end) => end.status)).toEqual(['completed']);
     // No logical membership: the fact names no submission, turn id, or target.
-    expect(Object.keys(nativeEnds[0]!).sort()).toEqual(['occurredAt', 'status']);
+    expect(Object.keys(nativeEnds[0]!).sort()).toEqual([
+      'kind', 'occurredAt', 'reason', 'status',
+    ]);
     expect(Object.isFrozen(nativeEnds[0])).toBe(true);
     await runtime.stop();
   });
 
   it('reports one end per native turn when two submissions ran as two turns', async () => {
-    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+    const nativeEnds: NativeTurnEnd[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      nativeTurnSink: (end) => nativeEnds.push(end),
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -538,11 +544,13 @@ describe('CodexRuntime native turn end', () => {
   });
 
   it('reports nothing while a turn is still running', async () => {
-    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+    const nativeEnds: NativeTurnEnd[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      nativeTurnSink: (end) => nativeEnds.push(end),
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -559,11 +567,13 @@ describe('CodexRuntime native turn end', () => {
   });
 
   it('reports failed when the native turn carried an error', async () => {
-    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+    const nativeEnds: NativeTurnEnd[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      nativeTurnSink: (end) => nativeEnds.push(end),
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -577,11 +587,13 @@ describe('CodexRuntime native turn end', () => {
   });
 
   it('reports failed once for every turn an unscoped protocol failure tore down', async () => {
-    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+    const nativeEnds: NativeTurnEnd[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      nativeTurnSink: (end) => nativeEnds.push(end),
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -595,11 +607,13 @@ describe('CodexRuntime native turn end', () => {
   });
 
   it('reports interrupted, exactly once, when stop() tore down a turn mid-flight', async () => {
-    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+    const nativeEnds: NativeTurnEnd[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      nativeTurnSink: (end) => nativeEnds.push(end),
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -614,11 +628,13 @@ describe('CodexRuntime native turn end', () => {
   });
 
   it('never reports a second end for a turn that already completed, even across stop()', async () => {
-    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+    const nativeEnds: NativeTurnEnd[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      nativeTurnSink: (end) => nativeEnds.push(end),
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -631,12 +647,12 @@ describe('CodexRuntime native turn end', () => {
     expect(nativeEnds.map((end) => end.status)).toEqual(['completed']);
   });
 
-  it('does not fail the turn when the native turn sink throws', async () => {
+  it('does not fail the turn when the activity sink throws on the end', async () => {
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      nativeTurnSink: () => {
-        throw new Error('native turn sink exploded');
+      activitySink: () => {
+        throw new Error('activity sink exploded');
       },
     });
     const runtime = new CodexRuntime(identity(null), deps);

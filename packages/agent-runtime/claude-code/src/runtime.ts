@@ -357,7 +357,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
           'claude-code session changed before live steer',
         );
       }
-      return session.steerTurn(prompt, { priority: 'next' }, commandUuid);
+      return session.steerTurn(prompt, {}, commandUuid);
     });
     active.steerQueue = steer.then(
       () => undefined,
@@ -391,7 +391,12 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // A native turn that never reached a terminal `result` still ended, but a
     // failure observed after its result settles nothing and reports no second
     // end.
-    if (settled) this.endNativeTurn(this.stopped ? 'interrupted' : 'failed');
+    if (settled) {
+      this.endNativeTurn(
+        this.stopped ? 'interrupted' : 'failed',
+        asError(err).message,
+      );
+    }
     if (this.stopped) return;
     // Surface the failure as durable runtime state rather than swallowing it.
     this.setStatus('degraded', err);
@@ -405,15 +410,17 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // Reached from stop, the fatal fence, and a window that resolved without a
     // terminal result. Only the call that actually stopped an open submission
     // reports the synthesized end.
-    if (stopped) this.endNativeTurn('interrupted');
+    if (stopped) this.endNativeTurn('interrupted', null);
   }
 
   private endNativeTurn(
     status: 'failed' | 'interrupted',
+    reason: string | null,
   ): void {
     endNativeTurn(
       status,
-      this.deps.nativeTurnSink,
+      reason,
+      this.deps.activitySink,
       (level, message, error) => this.log(level, message, error),
     );
   }
@@ -544,7 +551,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       threadId: this.threadId,
       outputSchemaEnabled: this.deps.outputSchema !== undefined,
       activitySink: this.deps.activitySink,
-      nativeTurnSink: this.deps.nativeTurnSink,
       log: (level, message, error) => this.log(level, message, error),
     });
   }

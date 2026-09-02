@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/feishu-channel",
+      "comment": "BREAKING: Review: watch one COT card end-to-end after upgrading. No config, state, cache, or path shape changed and no rebuild is needed. The session now subscribes to `teammate.input` and `teammate.activity` instead of the five deleted turn-scoped kinds, and recognizes its own inbound body by comparing `source_id` against the ids this session issued rather than through a two-hop turn correlation. A card's one terminal is a `turn.ended` activity, which prints its reason on the card before closing it. Open tool calls are keyed on the runtime's call id alone.",
+      "type": "major"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

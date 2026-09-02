@@ -8,11 +8,12 @@
  *   invoked. If Core later proves there was no admission, that optimistic
  *   anchor is retired; an ambiguous outcome keeps it because it proves nothing.
  * - Everything Core projects for that recipient is shown once it has an
- *   anchor, except the one user body this Channel already displayed as the
+ *   anchor, except the one input body this Channel already displayed as the
  *   visible inbound message that established that anchor.
- * - The runtime's one native turn end closes the card. Logical settlement
- *   (`teammate.turn.settled`) is a per-submission lifecycle fact and closes
- *   nothing, because a provider folds any number of submissions into one turn.
+ * - A `turn.ended` activity closes the card. It is the only terminal a card
+ *   has, and it names no submission on purpose: a provider folds any number of
+ *   submissions into one native turn, so nothing per-submission could say
+ *   whether the card the operator is watching has finished.
  *
  * The standing anchor outlives every card. A create or append that fails
  * abandons that one presentation and nothing else: the anchor stays, and the
@@ -23,10 +24,9 @@ import { randomUUID } from 'node:crypto';
 import type {
   DreamuxLogger,
   TeamStateEvent,
-  TeammateNativeTurnEndedEvent,
-  TeammateTurnMessageEvent,
-  TeammateTurnSubmittedEvent,
-  TeammateTurnToolCallEvent,
+  TeammateActivity,
+  TeammateActivityEvent,
+  TeammateInputEvent,
 } from '@excitedjs/dreamux-types';
 import type {
   FeishuCotClient,
@@ -44,7 +44,8 @@ import {
   type FeishuCotRunStatus,
 } from './feishu-cot-events.js';
 import {
-  acceptConversationMessage,
+  acceptAssistantMessage,
+  acceptInputMessage,
   acceptToolCallActivity,
   type CotActivitySink,
 } from './feishu-cot-activity.js';
@@ -126,8 +127,6 @@ export class FeishuCotAdapter {
         this.opts.log.debug({ ...scope, ...fields }, what);
       },
       logScope: (state) => this.logScope(state),
-      takeOwnUserBody: (key, turnId) =>
-        this.inboundCorrelations.consumeTurn(key, turnId),
     };
   }
 
@@ -204,15 +203,23 @@ export class FeishuCotAdapter {
     };
   }
 
-  onTurnSubmitted(event: TeammateTurnSubmittedEvent): void {
-    if (this.closed) return;
-    const identity = cotRecipientOf(event);
-    if (identity === null) return;
-    this.inboundCorrelations.submitted(
-      event.source_id,
-      cotRecipientKey(identity),
-      event.turn_id,
-    );
+  /**
+   * Core admitted one input for this recipient.
+   *
+   * The body is shown unless it is the one this session just submitted, which
+   * the operator can already see as their own Feishu message. Recognition is a
+   * comparison against the ids this session issued: a `source_id` is present on
+   * cron fires, task push-backs, and restart notices too, so its mere presence
+   * proves nothing.
+   */
+  onInput(event: TeammateInputEvent): void {
+    const found = this.stateFor(event);
+    if (found === null) return;
+    if (this.inboundCorrelations.consume(event.source_id)) return;
+    acceptInputMessage(this.activity, found.key, found.state, {
+      displayId: `input:${randomUUID()}`,
+      content: event.content,
+    });
   }
 
   /** Pick one independent flavour label when this append-only card opens. */
@@ -231,40 +238,53 @@ export class FeishuCotAdapter {
     );
   }
 
-  onTurnMessage(event: TeammateTurnMessageEvent): void {
+  onActivity(event: TeammateActivityEvent): void {
     const found = this.stateFor(event);
     if (found === null) return;
-    acceptConversationMessage(this.activity, found.key, found.state, event);
-  }
-
-  onTurnToolCall(event: TeammateTurnToolCallEvent): void {
-    const found = this.stateFor(event);
-    if (found === null) return;
-    acceptToolCallActivity(this.activity, found.key, found.state, event);
+    switch (event.activity.kind) {
+      case 'assistant.message':
+        acceptAssistantMessage(this.activity, found.key, found.state, event.activity);
+        return;
+      case 'tool.call':
+        acceptToolCallActivity(this.activity, found.key, found.state, event.activity);
+        return;
+      case 'turn.ended':
+        this.finishCard(found.key, found.state, event.activity);
+        return;
+    }
   }
 
   /**
-   * The runtime stopped producing, so the card it was writing is finished.
+   * The producer stopped, so the card it was writing is finished.
    *
    * This is the only terminal a card has. It names no logical turn — a provider
    * folded whatever it folded — so it closes whatever this recipient currently
-   * has open, which is exactly the one card the operator is watching.
+   * has open, which is exactly the one card the operator is watching. A reason
+   * is printed on that card before it closes, because an operator reading a
+   * card that just stopped needs to know why.
    *
    * It is a terminal and never an opening activity: with no card open there is
    * nothing to finish, so the fact is ignored rather than turned into a card
    * that exists only to be closed. That also makes a repeated end harmless.
    */
-  onNativeTurnEnded(event: TeammateNativeTurnEndedEvent): void {
-    const found = this.stateFor(event);
-    if (found === null) return;
-    if (found.state.active === null) return;
-    found.state.openCalls.clear();
-    this.detach(
-      found.key,
-      found.state,
-      event.status === 'completed' ? 'done' : 'interrupted',
-    );
-    this.reapState(found.key, found.state);
+  private finishCard(
+    key: string,
+    state: CotState,
+    end: Extract<TeammateActivity, { kind: 'turn.ended' }>,
+  ): void {
+    if (state.active === null) return;
+    if (end.reason !== null) {
+      acceptAssistantMessage(this.activity, key, state, {
+        kind: 'assistant.message',
+        event_id: `end:${randomUUID()}`,
+        content: end.reason,
+        content_truncated: end.reason_truncated,
+        redacted: end.redacted,
+      });
+    }
+    state.openCalls.clear();
+    this.detach(key, state, end.status === 'completed' ? 'done' : 'interrupted');
+    this.reapState(key, state);
   }
 
   onTeamState(event: TeamStateEvent): void {

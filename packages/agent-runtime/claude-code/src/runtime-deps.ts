@@ -1,7 +1,6 @@
 import type {
   AgentRuntimeActivitySink,
   AgentRuntimeMcpServer,
-  AgentRuntimeNativeTurnSink,
   AgentRuntimePathContext,
   AgentRuntimeSkillSource,
   AgentRuntimeStateSink,
@@ -32,5 +31,4 @@ export interface ClaudeCodeRuntimeDeps {
   generateSessionId?: () => string;
   logger?: DreamuxLogger;
   activitySink: AgentRuntimeActivitySink;
-  nativeTurnSink: AgentRuntimeNativeTurnSink;
 }
