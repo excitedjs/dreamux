@@ -199,9 +199,14 @@ so it stamps the actor there, where the knowledge is.
 The runtime echoes it on the `input` fact and does nothing else with it. No id
 is invented: `sourceId` already exists at the Core command layer as the
 admission-ledger key, and this hands the same value down instead of retaining
-it on the turn to echo it back out. Absent means the input did not come from a
-Channel inbound — which is exactly what a Channel needs to decide whether the
-body is its own.
+it on the turn to echo it back out.
+
+The Channel's test is a **comparison, not a presence check**. Presence does not
+mean "from a Channel" — `TeammateService.controlInput` forwards a `sourceId`
+too. What the Channel does is match the echoed id against ids *it itself
+submitted*, which is exactly what `beginInboundSubmission` records against its
+anchor today. This is the mechanism the operator chose over text matching, and
+it keeps working unchanged; only the return path shortens.
 
 ### What it deletes
 
@@ -211,9 +216,9 @@ body is its own.
 | the early-activity buffer, its 512 cap and its warning | a fact could arrive before the submission was recorded |
 | `AgentRuntimeNativeTurnSink`, `nativeTurnSink`, `generationNativeTurnSink`, the `nativeTurn` create-context slot | a fact could belong to no submission at all |
 | `teammate.native_turn.ended` — the bespoke actor-scoped core event | the only way to publish an actor-scoped fact through a submission-scoped surface |
-| codex's `NativeTurnRecord.nativeTurnEnded` flag | several terminal paths could reach one record; with the end emitted as ordinary activity, the runtime's existing terminal handling already runs once |
+| codex's `NativeTurnRecord.nativeTurnEnded` flag | its docstring claims several terminal paths can reach one record. Read against the source they cannot: `finalize` returns on `record.completion !== null` and sets `completion` before reporting; `failProtocol` skips records with a `completion` and `failRecord` deletes the record from `nativeTurns`; `stop` skips records with a `completion` and deletes the rest. Every reporting path either blocks the others or removes the record. The flag guards a double report the existing guards already prevent — confirm this reading when implementing, do not take the row on trust |
 | `sourceId` retained on `EntityTurn` | the return trip that a caller-supplied id removes |
-| `teammate.turn.submitted`, `teammate.turn.settled` | `input` replaces the first; the second already has **no consumer** — `feishu-cot-session.ts` records that it is deliberately not handled, because a per-submission settlement does not mean the work the operator is watching finished |
+| `teammate.turn.submitted`, `teammate.turn.settled` | `input` replaces the first. The second is produced (`conversation-projection.ts`) and its redaction is asserted in tests, but **no Channel consumes it**: `feishu-cot-session.ts` records that it is deliberately not handled, because a per-submission settlement does not mean the work the operator is watching finished |
 | `projectSubmitted`, `projectSettled`, `projectNativeTurnEnd`, `projectActorDisplay` | four entry points collapse to one `projectActivity(agent, activity)` |
 | representative attribution in codex | nothing needs a member chosen to own a folded turn's facts |
 
@@ -251,5 +256,6 @@ Nothing here adds a mechanism that does not replace one.
   documentation describes no such field. If it is inert it is one more deletion,
   but confirming costs a probe and is not required by this design.
 - **Whether `teammate.turn.settled` may simply go.** It is a published core
-  event kind with no consumer in this repository. Deleting an unused published
-  surface is still a surface change.
+  event kind that this repository produces but no Channel reads. Deleting an
+  unused published surface is still a surface change — and flowx is a semantic
+  superset that ports these PRs, so the question belongs to that side too.
