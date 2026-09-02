@@ -17,7 +17,7 @@ Two settled shape rules govern where code lives:
    unaware of which class implements them. `builtin:codex` / `builtin:claude-code`
    / `builtin:feishu` are providers indistinguishable from npm providers — only
    the ref→package-name resolution differs. Every provider-specific concept
-   (codex thread/home/bin, claude stream, feishu app_id) lives in the
+   (codex thread, codex home, codex bin, claude stream, feishu app_id) lives in the
    owning **package** (`@excitedjs/agent-runtime-codex`, `-claude-code`,
    `@excitedjs/feishu-channel`), never in core. The packages depend on
    `@excitedjs/dreamux-types` only and never import core. There is no
@@ -63,8 +63,8 @@ Two settled shape rules govern where code lives:
 
 ## Boundaries
 
-- **Do not leak runtime specifics into shared/core layers.** codex/claude
-  thread/home/bin/socket/stream concepts stay inside their provider package
+- **Do not leak runtime specifics into shared/core layers.** codex and claude
+  concepts — thread, home, bin, socket, stream — stay inside their provider package
   (`@excitedjs/agent-runtime-codex` / `-claude-code`). The shared contract,
   `state/`, `platform/`, `server.ts`, and the Dispatcher Service stay
   runtime-neutral, and core never names a provider's config fields.

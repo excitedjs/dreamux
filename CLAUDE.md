@@ -125,6 +125,13 @@ Do not use per-package `npm install`; workspace dependencies use `workspace:*`.
   registry URLs, internal hostnames, or real Feishu ids/tokens. `.gitleaks.toml`
   and `.npmrc` are shared canonical guardrails with the sibling repo; if a
   guardrail false-positives, stop and ask rather than editing a local allowlist.
+- **The anti-leak pre-commit gate is mandatory.** `common/git-hooks/pre-commit`
+  runs gitleaks over staged changes and `common/scripts/check-internal-content.sh`
+  over staged content, and it fails the commit when gitleaks is not installed.
+  Skipping is not permitted: never commit with `--no-verify`, and never work
+  around a missing binary. Install it — `common/scripts/install-gitleaks.sh` —
+  and retry. This applies to CI and release automation too; the release bot
+  commits through the same hook on purpose.
 - **No synchronous blocking IO in package source:** `/packages/*/src/**` must
   use async fs/process APIs. `rush lint` enforces the shared
   `@excitedjs/eslint-config` no-sync-IO gate.
