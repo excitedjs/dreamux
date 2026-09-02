@@ -467,6 +467,24 @@ mean exactly one thing: a close was attempted. Net: one meaning off the enum and
 one cross-layer write deleted, against one predicate added on the layer that
 owns the fact.
 
+**`markClosing` is the only write-back of its kind in the service layer.**
+Checked across every extracted half, because the operator asked whether other
+Services have an equivalent Owner class. `TeammateRuntimeOwner` is the only
+class named `*Owner` in `service/`, but three other halves have the same shape —
+a class extracted from one Service, talking to it through an options object —
+and none of them mutates its parent's state:
+
+| Extracted half | Upward channel | Shape |
+|---|---|---|
+| `DispatcherInputSourceLifecycle` (#317) | `isUnavailable()`, `restartIntent()`, `agentMcp()` | reads and one supplier |
+| `EntityTurnCoordinator` (#338) | `identity()`, `intent()`, `isActive()` | reads |
+| `TeamClosing` (#350) | `record()`, `leader()`, `commit(patch)`, `closeLeaderForDissolve()` | one named durable write, documented: "Closing never writes the record itself: one owner, one path, so what this half decides and what the entity answers from can never drift apart" |
+| `TeammateRuntimeOwner` (#338) | `isActive()`, two sinks, **`markClosing()`** | a bare setter for one enum value, undocumented |
+
+`TeamClosing` is the precedent that matters: an extracted half **is** allowed to
+write back, through a single named entry point whose rationale is stated.
+`markClosing` is the same need without that discipline.
+
 That does not delete `phase`. Three consumers ask three different questions of
 it and each needs a different answer: "may this entity accept work"
 (`enterOrdinaryMutation`, `lock`, `stopForHost`, `submitLocked`, both `isActive`
