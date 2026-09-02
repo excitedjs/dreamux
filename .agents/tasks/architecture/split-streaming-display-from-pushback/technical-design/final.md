@@ -285,23 +285,48 @@ one but **stays**: it is what stops Core rendering a completion body — and
 possibly spilling a large one to disk — for a recipient that is already gone.
 That is a real cost avoided, not defensive code.
 
-### The named scenario the `start: false` flag must preserve
+### The named scenario the no-wake mode must preserve
 
-This is the reason the flag exists, and the reason it must be tested rather than
-assumed. The operator named it from memory and the source confirms it:
+Corrected on the third review. An earlier revision claimed a TeamMate
+completing during a Team dissolve would resurrect the TeamLeader on the
+ordinary path. **It would not**, and a test written from that claim passes
+vacuously.
 
-`TeamClosing.stopForDissolve` calls `leader.stopForHost()`
-(`closing.ts:216-227`). By its own contract that "says nothing about this
-entity's lifecycle" — it leaves `phase === 'active'`. Only later, after
-`assessWorktree()` has done real filesystem work, does `closeResources()` reach
-`closeLeaderForDissolve` and move the phase (`closing.ts:251-266`).
+Why the ordinary path is closed: `stopRuntimesForDissolve` stops members first
+and the leader last (`closing.ts:216-227`, via
+`stopChildRuntimes` → `members.stopAllForDissolve`). `stopForHost()` awaits
+`settleAndDeliverRetained()`, which awaits `turn.ensureDelivery()` for every
+retained turn, which awaits the router's own `deliveryTask`
+(`turn-coordinator.ts:156-166`, `turn-recording.ts:143-147`). So stopping a
+member **waits for that member's completion to be delivered**, and the leader is
+still live while that happens. The leader's own completion recipient, when one
+is set, is the Dispatcher agent (`dispatcher-service/index.ts:493`), which a
+dissolve never stops.
 
-So a dissolve has a **wide** window in which the TeamLeader is *writable but has
-no runtime*. The ordinary-mutation fence does not catch it, because `phase` is
-still `active`. Only the runtime-null check does. A TeamMate completing in that
-window, routed through `ensureStarted()`, would spawn a fresh TeamLeader runtime
-after the dissolve deliberately stopped everything and immediately before the
-worktree is reclaimed.
+The window is real — `stopForHost` leaves `phase === 'active'` with no runtime
+by its own contract, and `closeResources` moves the phase only later
+(`closing.ts:251-266`) — but reaching it takes one of the two exceptional paths
+this document already names elsewhere:
+
+- `settleWithinDeadline` abandons a `submit()` that is still pending at 30s, and
+  that call resolves afterwards.
+- A member's stop fails under `collectShutdownFailure`, so its delivery is
+  deferred past the leader's stop.
+
+Two further precisions, both narrowing the stakes:
+
+- `prepareCompletion`'s retained liveness check answers first, so the no-wake
+  mode is only *reached* when the runtime disappears between prepare and a later
+  retry — not merely when the recipient is already down.
+- Even a wake that did happen is swept: `transitionToClosed` calls
+  `stopRuntime()` first. The cost is a wasted provider start inside a worktree
+  being assessed for reclamation, not a resurrected TeamLeader.
+
+**The test must therefore be entity-level, not dissolve-level.** A handle
+prepared before `stopForHost()`, whose `submit()` runs after it, must return
+`unsupported` and must cause no provider start. A test phrased as "a TeamMate
+completes during a dissolve" finds the leader alive and never executes the mode
+at all.
 
 ### Why `submitAdmitted` and not `submitInput`
 
@@ -557,6 +582,10 @@ to it through an options object — and none of them mutates its parent's state:
 | `TeamClosing` (#350) | `record()`, `leader()`, `commit(patch)`, `closeLeaderForDissolve()` | one named durable write, documented: "Closing never writes the record itself: one owner, one path, so what this half decides and what the entity answers from can never drift apart" |
 | `TeammateRuntimeOwner` (#338) | `isActive()`, two sinks, **`markClosing()`** | a bare setter for one enum value, undocumented |
 
+This change edits that last row itself: `runtime-owner` gains the projection
+call and the actor stamp, so its upward channel grows. The row is updated in the
+same change rather than left describing the pre-change shape.
+
 `TeamClosing` is the precedent that matters: an extracted half **is** allowed to
 write back, through a single named entry point whose rationale is stated.
 `markClosing` is the same need without that discipline. Moving the fact to its
@@ -599,8 +628,13 @@ recipient to try. **The gap is visibility, not policy.** The human watching the
 COT card sees the TeamMate's turn end normally while the asking Agent never
 learns the answer arrived; nothing in the display line says a hand-off was lost.
 
-This change makes that divergence legible rather than fixing it. Making a
-dropped completion user-visible is a product decision and needs its own ruling.
+This change makes **part** of that divergence legible rather than fixing it,
+and the boundary matters. A drop that happens *after* the input was published
+gets a terminal fact at the publish site, so the card fails. A drop that happens
+*before* publication — `prepareCompletion` answering `unsupported`, the
+ordinary-mutation fence throwing, either deadline firing — publishes nothing and
+stays invisible exactly as it is today. Making that half user-visible is a
+product decision and needs its own ruling.
 
 ### The router's deadline bounds the router, not the entity
 

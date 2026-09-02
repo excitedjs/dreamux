@@ -451,17 +451,24 @@ current source; where a reviewer's omission list was wrong, that is noted.
   `conversationProjection` / `role` options.
 - The file returns to its pre-#347 shape: turn admission serialization only.
 
-**5. `teammate-service/index.ts` — two sites, not one**
+**5. `teammate-service/index.ts` — one site, after the completion path merges**
+- Superseded 2026-09-02. This item previously said "two sites, not one" and
+  described a second publish in `submitPreparedCompletion`. The design now
+  merges the completion path into the ordinary one, so that method is deleted
+  and there is a single publish site. See
+  [technical-design/final.md § One publish site](technical-design/final.md).
 - In `submitAdmitted` (`:246`), inside the operation closure and before
   `runtime.submit({ text })` (`:259`): publish `teammate.input` from
-  `input.text`, `input.source`, `input.sourceId` and the Agent identity.
-- **In `submitPreparedCompletion` (`:434`), the same**, with
-  `source: COMPLETION_SOURCE` and no `sourceId`. This is the completion
-  re-entry, and `attachSubmission` displays it today — omitting it deletes a
-  TeamLeader's view of its TeamMate's answer arriving.
-- Both sites publish a terminal when the admission outcome is not `submitted`,
-  and both carry the fail-open guard: `projectInput` runs inside the ledger
-  closure, where an uncaught throw would reject the admission.
+  `input.text`, `input.source`, `input.sourceId` and the Agent identity. All
+  three callers — ordinary input, the locked Workflow path, and the merged
+  completion push-back — reach it.
+- The completion re-entry keeps being displayed, which is how a TeamLeader's
+  card shows its TeamMate's answer arriving. It now arrives through the same
+  site rather than a second one; omitting it would still delete that view.
+- The site publishes a terminal when the admission outcome is not `submitted`
+  (`stopped`, `skipped`, `ambiguous`, or a pre-admission `failed`), and carries
+  the fail-open guard: `projectInput` runs inside the ledger closure, where an
+  uncaught throw would reject the admission.
 - `submitRuntimeTurn` stops being handed `source`, `sourceId` and `prompt`.
 
 **6. `turn-recording.ts`**

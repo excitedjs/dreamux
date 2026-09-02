@@ -215,3 +215,26 @@ Two facts to design around, both already verified:
   (`feishu-cot-session.ts:61`, `feishu-cot-adapter.ts:14`). The ruling
   explicitly accepts the cross-repo cost rather than waiting on it, so the flowx
   reader check is no longer a gate here — flowx handles it on its own side.
+
+- **Ruled (earlier session), a non-`submitted` admission fails the card.** The
+  operator's words: 「那几个情况应该直接把卡片置成失败」. Covers an admission that
+  is stopped, skipped, ambiguous, or fails before reaching the runtime: each
+  creates no `EntityTurn` and guarantees no runtime native end, so an input
+  already published would otherwise leave a card open until an unrelated later
+  turn closed it. `ambiguous` was missing from the design's list until the third
+  review; the ruling's wording covers it.
+
+- **Ruled 2026-09-02, log wording is not a reason to keep code.** The operator's
+  words: 「日志这种东西根本不重要」. Said of a three-line adapter proposed only to
+  preserve the exact `unsupported` reason string when the completion path merges
+  into the ordinary one. The adapter is not written; the router's own
+  `settleWithinDeadline` catches the throw for the same dropped-without-retry
+  outcome under a different log line.
+
+- **Ruled 2026-09-02, stop refactoring this module.** The operator's words:
+  「这边实在是重构不动，你先把今天聊下来的所有的内容，重新写一下技术方案，然后拉
+  两位 reviewer 重新看看」. This is why `phase`, `markClosing`, and the 700-line
+  cap are recorded as findings and not acted on, and why the reviewers were told
+  not to propose acting on them. It does not narrow the folded-in cleanups
+  already agreed; it stops new structural work in `TeammateService` and
+  `TeammateRuntimeOwner` beyond what this change needs.
