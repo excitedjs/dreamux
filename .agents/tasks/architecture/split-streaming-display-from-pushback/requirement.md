@@ -318,3 +318,62 @@ recorded in `technical-design/final.md` § As built, items 2 and 3.
   the reason stated: `tsconfig.json` excludes `tests/` and vitest runs through
   esbuild, which erases types, so a test file compiling against a deleted type
   stays green under the other three. This change found two of them.
+
+## Rulings on the review findings (2026-09-03)
+
+A review after the implementation landed raised several findings. Two are
+recorded where the code they concern is: the codex unbound-end defect is fixed
+and written up in `technical-design/final.md` § As built, departure 7, and the
+failed-end display shape is an observation in this task's **Open questions**.
+The two below have no other home.
+
+- **A Feishu redelivery cannot double-display, because the anchor and the
+  source id are the same message id.** The finding claimed a redelivered inbound
+  would leave the recipient parked on a fresh receipt card. The operator ruled it
+  cannot happen:
+
+  > 4这个不可能出现，因为飞书重投的message id是相等的，message id既是锚点，又是source id，什么都不会影响。
+
+  The conclusion holds, and both halves of the premise are true in code:
+  `feishu-session-inbound.ts:431` sets `sourceId: event.messageId` and builds the
+  anchor from that same `event.messageId`. Core's admission ledger therefore
+  recognises the repeat — one that arrives while the first admission is still
+  pending awaits that same admission, and one that arrives after `submitted` or
+  `ambiguous` gets `duplicate` without touching the runtime
+  (`admission-ledger.ts:83-104`, committing on those two statuses at `:112`), so
+  the input body is announced once and no second end is published. That ledger is
+  the only deduplication point on this path — the Channel has none for message
+  ids, only `chat-bots-store` deduplicating bot-added events — which is what
+  `feishu-submit.ts:31` already says. It is a window, not a promise: the
+  committed set is bounded at `ADMISSION_SOURCE_WINDOW` (1024) keys per
+  Dispatcher, and `failed`, `stopped`, or `skipped` release the key so a genuine
+  retry still works.
+
+  The reason is narrower than 「什么都不会影响」, and the difference is worth
+  keeping. A redelivery *does* move the presentation: `advanceAnchor` has no
+  same-anchor short circuit, so it bumps `generation`, detaches the open card as
+  `interrupted`, and opens a new receipt card. Nothing is lost because the anchor
+  is the same message, so the successor card opens in the same place — which the
+  comment above `advanceAnchor` already states as the intent, "A native turn
+  still running keeps producing into the successor card". A running turn's
+  assistant text and its own end land on that successor and close it
+  (`finishCard` consults no generation). The one fact that does not survive the
+  switch is a tool call whose `started` was recorded in the previous generation:
+  its result is dropped rather than shown under a card that never showed the call
+  (`feishu-cot-activity.ts:91`, `:98`).
+
+  What remains is one narrow tail, and it is not the one the finding named: if
+  the redelivery arrives after that turn has already ended, the new receipt card
+  has nothing left to close it and stays open until the next inbound's
+  `advanceAnchor` closes it as `interrupted`. That is the same self-healing shape
+  as the departure 7 case.
+
+- **The completion push-back source guard stops pinning formatting.** The
+  operator ruled 「8顺手修了」. `completion-delivery.test.ts` asserted the exact
+  punctuation, spacing and line breaks of one `submitAdmitted` call, so a
+  formatter change could fail it while the behaviour it claims to lock — a
+  completion push-back is the ordinary admitted-input path, asking only not to
+  wake — was untouched. It now asserts the symbols in that one call
+  (`submitAdmitted(`, `COMPLETION_SOURCE`, `wake: false`) and nothing about how
+  they are laid out. The neighbouring absence assertions and `readSource` itself
+  were left alone.

@@ -415,8 +415,15 @@ describe('nothing on the completion path can gate presentation on role (failure-
     // One submit path means the completion body is announced by the same code
     // that announces a Channel message, so no second call site exists that
     // could branch on role before publishing.
+    //
+    // Symbols only: one `submitAdmitted` call names the completion source and
+    // asks not to wake. Where the line breaks and how the arguments are spaced
+    // is the formatter's business, and pinning it made this assertion fail for
+    // reasons that have nothing to do with the claim.
     const teammateServiceText = readSource('src/service/teammate-service/index.ts');
-    expect(teammateServiceText).toMatch(/submitAdmitted\(\s*\{ source: COMPLETION_SOURCE, text: body \},\s*\{ wake: false \},\s*\)/u);
+    expect(teammateServiceText).toMatch(
+      /submitAdmitted\([^;]*COMPLETION_SOURCE[^;]*wake:\s*false/u,
+    );
     expect(teammateServiceText).not.toContain('submitCompletion(');
   });
 });
