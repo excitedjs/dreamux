@@ -156,6 +156,13 @@ Two facts to design around, both already verified:
   not; anti-leak work is folded into this task.
 - **Open:** whether question 2's answer changes the COT product model, and
   therefore whether this becomes a refactor or a requirement change.
-- **Unknown, worth settling cheaply:** whether Claude Code honours the
-  `priority` field Dreamux writes on its steer envelope. The documentation says
-  no such field exists. If it is inert, that is one more thing to delete.
+- **Ruled 2026-09-02, `priority` goes.** The operator's words:
+  「priority 直接删掉，哪怕它有，我也不要这个特性。」 So the question of whether
+  Claude Code honours the `priority` field Dreamux writes on its steer envelope
+  (`buildUserMessage(prompt, { priority: 'now', ...options }, commandUuid)` in
+  `packages/agent-runtime/claude-code/src/rpc.ts:235`) is closed without needing
+  a probe: the ruling covers both outcomes. The field is removed, and the two
+  comments that explain it (`rpc.ts:16`, `:22`, `:293`) go with it. This is a
+  requirement decision — an interrupting steer is a capability the operator is
+  declining, not a refactor — so it is recorded here rather than smuggled in as
+  cleanup.

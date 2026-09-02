@@ -279,9 +279,10 @@ Nothing here adds a mechanism that does not replace one.
 
 ### Open, for the operator
 
-- **`priority` on the claude steer envelope.** Dreamux writes it; the official
-  documentation describes no such field. If it is inert it is one more deletion,
-  but confirming costs a probe and is not required by this design.
+- ~~`priority` on the claude steer envelope.~~ **Ruled: delete it.** See
+  [requirement.md](requirement.md#decisions-and-unknowns). No probe is needed —
+  the ruling covers the case where the field works as well as the case where it
+  is inert.
 - **Whether `teammate.turn.settled` may simply go.** COT created it in #347 and
   orphaned it in #357; this repository still produces it and no Channel reads
   it. Deleting an unused published surface is still a surface change — and
