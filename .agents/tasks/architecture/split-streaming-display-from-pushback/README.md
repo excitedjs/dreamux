@@ -5,6 +5,9 @@
 - Goal: Separate the conversation-display surface every channel-facing TeamLeader and Dispatcher needs from the submission push-back mechanism it is currently built on, so a display consumer no longer requires a Dreamux submission to exist.
 - State: `intake`
 - Requirement: [Current requirement](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md)
+- Analysis: [analysis.md](/.agents/tasks/architecture/split-streaming-display-from-pushback/analysis.md)
+  — question 1 answered (what Core could delete if display did not exist),
+  question 2 in progress.
 - Established facts this task rests on:
   [runtime-input-semantics.md](/.agents/tasks/architecture/split-streaming-display-from-pushback/runtime-input-semantics.md)
   — input semantics, the 2026-09-02 live probe, the per-input identities that

@@ -37,6 +37,35 @@ Two boundaries are already settled and are not open questions here:
   `source_id` already did. Any design that claims to delete it must first say
   which identity replaces it.
 
+## Settled design direction
+
+Ruled by the operator on 2026-09-02, before the questions below were answered.
+Recorded here so a proposal is measured against it rather than re-deriving it.
+
+- **The neutral Activity shape stays.** It exists because the two runtimes'
+  tool-call formats differ too much to hand through, and that reason has not
+  changed. Provider wire shapes do not reach Core or a Channel.
+- **Completeness increases.** The problem is not that the shape is neutral, it
+  is that the set is curated: two kinds exist, so every other runtime fact must
+  be smuggled through some other path or dropped. Each runtime fact a display
+  needs gets its own neutral kind.
+- **Attribution moves from submission to actor.** An activity names the Agent
+  whose runtime produced it. A Channel already matches on that — recipient
+  identity is a team name, or the Dispatcher — so nothing needs a `turn_id` to
+  be placed. This is what removes representative attribution, the drop when no
+  Dreamux container exists, and the bespoke actor-scoped terminal event.
+- **The one identity the requirement forces travels with the input.** Hiding the
+  Channel's own body while showing every other producer's cannot be answered by
+  actor identity: an operator message, a task push and a cron fire are all the
+  same actor. Something must say "this input is mine". Today that identity goes
+  down as `source_id`, is retained on the turn, and comes back out on
+  `teammate.turn.submitted`. It should instead travel *with the input* —
+  `AgentRuntimeSubmissionInput` is `{ text: string }` today; a caller-supplied id
+  on it, echoed by the runtime on the input fact, deletes the return path
+  entirely. Claude Code already generates exactly such an id internally
+  (`commandUuid` in `writeSteer`); this supplies it instead. Codex maps from its
+  `turn/start` response id, which it already holds.
+
 ## The three questions this task answers
 
 ### 1. Without COT, what could Core delete?
