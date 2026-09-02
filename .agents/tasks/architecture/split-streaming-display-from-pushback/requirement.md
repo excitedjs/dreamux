@@ -69,6 +69,29 @@ Recorded here so a proposal is measured against it rather than re-deriving it.
   folded native turn, not the input — so codex holds no per-input identity to
   map from.
 
+## Operator ruling: two published kinds, split by producer
+
+Ruled 2026-09-02, after the first two versions of the design had been reviewed.
+The operator's words, which proposed the split as a reading of the design:
+
+> 「我理解一下，就是输入这块用的都是TeamMate的Input事件，而且这个Input是天然带
+> source id的？所以可以通过这个source id去过滤用户通过飞书channel发回来的消息？
+> 其余所有的事件用的都是Activity事件？」
+
+It was a better boundary than the design's own, which had folded the input fact
+into one `teammate.activity` kind as a fourth discriminant. It was put back to
+the operator with what changes and what it costs, and confirmed: 「ok，出技术方案」.
+
+So: **`teammate.input` published by Core, `teammate.activity` published by a
+runtime.** Four core event kinds, not three.
+
+One correction was made to the reading in the same exchange, and it matters for
+implementation: the input fact does not carry a `sourceId` *only* when it comes
+from a Channel. A cron fire, a task push and a restart notice carry one too. The
+Channel's test is therefore a **comparison against ids it itself submitted**,
+never a presence check — which is exactly the `source_id` mechanism already
+chosen over text matching, with one hop removed.
+
 ## The three questions this task answers
 
 ### 1. Without COT, what could Core delete?

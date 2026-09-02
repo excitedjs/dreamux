@@ -253,22 +253,38 @@ design does not depend on the stronger claim, because Core owns the input fact.
 
 One sink. Four neutral kinds. No submission on the event.
 
+Two published kinds, split by **producer** — ruled by the operator on
+2026-09-02, correcting an earlier version of this section that folded them into
+one kind with a four-valued discriminant.
+
 ```
-RuntimeActivity =
-  | { kind: 'input';             text; source; sourceId: string | null }
+teammate.input        published by CORE, at admission
+  { text; source; sourceId: string | null }
+
+teammate.activity     published by a RUNTIME, through the one sink
   | { kind: 'assistant.message'; text }
   | { kind: 'tool.call';         callId; toolName; action; status; ... }
   | { kind: 'turn.ended';        status: 'completed' | 'failed' | 'interrupted' }
 ```
 
-`input` is published by Core; the other three originate in a runtime and are
-stamped with the Agent by `runtime-owner`, which already holds the identity and
-already wraps the sink with a generation fence. Every event carries
-`occurredAt`. None carries a submission or a turn id.
+The split is not cosmetic. The producer differs — Core versus a runtime, which
+is a real layer boundary a discriminant would hide. The shape differs — `source`
+and `sourceId` exist on the input fact and on nothing else, so one union would
+carry two fields meaningless to three of its four members. And the consumer
+differs — a Channel **filters** on input and **renders** activity.
 
-`source` rides along because a display consumer wants it and only Core can
-supply it: a future web timeline needs to say whether an input was a cron fire
-or a task push, and the runtime cannot know.
+Nothing was bought by merging them, either: the whitepaper is explicit that
+collapsing N things into one N-valued discriminant is not a boundary reduction,
+which is the same reason this document withdrew its "seven kinds become three"
+claim. The catalog goes from seven kinds to four.
+
+Runtime activity is stamped with the Agent by `runtime-owner`, which already
+holds the identity and already wraps the sink with a generation fence. Every
+event carries `occurredAt`. None carries a submission or a turn id.
+
+`source` rides on the input fact because a display consumer wants it and only
+Core can supply it: a future web timeline needs to say whether an input was a
+cron fire or a task push, and the runtime cannot know.
 
 ### What it deletes
 
@@ -328,8 +344,9 @@ the publication outlived the assumption because nothing ties the two together.
 
 ### What it costs
 
-- One new neutral kind (`input`, published by Core) and one renamed one
-  (`turn.ended`, absorbing `teammate.native_turn.ended`).
+- Two new core event kinds — `teammate.input`, published by Core, and
+  `teammate.activity`, published by a runtime — replacing five. Plus one renamed
+  activity kind (`turn.ended`, absorbing `teammate.native_turn.ended`).
 - Nothing on the provider seam. `AgentRuntimeSubmissionInput` stays
   `{ text: string }`.
 - The Channel's own-body suppression moves from matching a returned `source_id`
@@ -351,7 +368,9 @@ What genuinely shrinks:
 
 - **One scope shape.** Every activity names an Agent. No turn scope, no
   representative, no `turn_id`.
-- **One sink and one projection entry point**, instead of two sinks and four.
+- **One sink**, instead of two. Two projection entry points instead of four,
+  and the two that remain are split along a real producer boundary rather than
+  along four fact types.
 - **One publisher of the input fact**, which is the layer that already owns the
   body, the identity and the source.
 - **No buffered ordering.** The race is removed by construction rather than
@@ -428,18 +447,21 @@ current source; where a reviewer's omission list was wrong, that is noted.
 
 **7. `conversation-projection.ts`**
 - `projectSubmitted`, `projectSettled`, `projectNativeTurnEnd` and
-  `projectActivity` collapse to one `projectActivity(agent, activity)`.
+  `projectActivity` collapse to two: `projectInput(agent, input)` published by
+  Core, and `projectActivity(agent, activity)` published by a runtime.
 - `ProjectableTurn` goes with them.
 - The activity-fact dedupe and `CONVERSATION_ACTIVITY_FACTS_MAX` go.
 - Redaction and every size bound stay exactly as they are.
 
 **8. `dreamux-types/src/teammate.ts` and `dispatcher-core-events/seal.ts`**
 - Five kinds out: `teammate.turn.submitted`, `.settled`, `.message`,
-  `.tool_call`, `teammate.native_turn.ended`. One in: `teammate.activity`.
-- The sealed catalog goes from seven kinds to three.
+  `.tool_call`, `teammate.native_turn.ended`. Two in: `teammate.input` and
+  `teammate.activity`.
+- The sealed catalog goes from seven kinds to four.
 
 **9. Feishu**
-- `feishu-cot-session.ts`: the five-case switch becomes one.
+- `feishu-cot-session.ts`: the five-case switch becomes two — filter on
+  `teammate.input`, render `teammate.activity`.
 - `feishu-cot-adapter.ts`: the open-call key and own-body suppression stop
   keying on `turn_id` and key on the Agent plus the `sourceId` comparison the
   Channel already performs.

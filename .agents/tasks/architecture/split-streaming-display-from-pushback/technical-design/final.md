@@ -135,8 +135,8 @@ Feishu inbound / cron / task push / MCP `team.submit`
 TeammateService.submitAdmitted
   │  AdmissionLedger.admit(key, sourceId)
   │
-  ├──▶ projectActivity(agent, {kind:'input', text, source, sourceId})   ◀── NEW
-  │      published from the ORIGINAL body, before the runtime is called
+  ├──▶ projectInput(agent, {text, source, sourceId})                    ◀── NEW
+  │      teammate.input, from the ORIGINAL body, before the runtime is called
   ▼
 runtime.submit({ text })          ◀── seam unchanged: still { text } only
   │
@@ -147,7 +147,7 @@ runtime.submit({ text })          ◀── seam unchanged: still { text } only
 runtime stream
   │
   ▼
-RuntimeActivity {input? no — Core owns that | assistant.message | tool.call | turn.ended}
+RuntimeActivity {assistant.message | tool.call | turn.ended}
   │                                                    ONE sink
   ▼
 runtime-owner.generationActivitySink
@@ -156,14 +156,30 @@ runtime-owner.generationActivitySink
 ConversationProjection.projectActivity(agent, activity)   ◀── ONE entry point
   │  redactText() + size bounds
   ▼
-ChannelCoreEvent  teammate.activity                 ◀── 1 kind, not 5
+ChannelCoreEvent  teammate.activity                 ◀── 1 kind, replacing 4
   │
   ▼
-sealChannelCoreEvent (3-kind allowlist)
-  │
-  ▼
-feishu-cot-session.handle ──▶ 1 case ──▶ adapter ──▶ state ──▶ card
+feishu-cot-session.handle ──▶ adapter ──▶ state ──▶ card
 ```
+
+Two published kinds, not one, and the boundary between them is the producer:
+
+- **`teammate.input`** — published by **Core**, at admission. Carries `text`,
+  `source` and `sourceId`.
+- **`teammate.activity`** — published by a **runtime**, through the one sink.
+  Carries `assistant.message`, `tool.call` or `turn.ended`, and never a source
+  identity.
+
+Folding them into one kind with a four-valued discriminant was the first
+version of this design. It buys a smaller kind count and pays for it by hiding a
+real layer boundary and by putting two fields in the union that are meaningless
+for three of its four members. The whitepaper is explicit that collapsing N
+things into one N-valued discriminant is not a boundary reduction, so there was
+nothing to buy. The Channel also treats them differently in kind: it **filters**
+on input and **renders** activity.
+
+The sealed catalog therefore goes from seven kinds to four: `team.state`,
+`teammate.state`, `teammate.input`, `teammate.activity`.
 
 Publishing the input **before** `runtime.submit` is what removes the ordering
 race by construction: the runtime has not been asked to do anything, so nothing
@@ -197,20 +213,21 @@ diff description. Summary of the shape:
 |---|---|---|
 | Provider sinks | 2 (`activity`, `nativeTurn`) | 1 (`activity`) |
 | `RuntimeActivity` kinds | 2 | 3 (adds `turn.ended`) |
-| Core event kinds | 7 | 3 |
-| Projection entry points | 4 | 1 |
+| Core event kinds | 7 | 4 |
+| Projection entry points | 4 | 2 (`projectInput`, `projectActivity`) |
 | Display key | `RuntimeSubmission` | the Agent |
 | `AgentRuntimeSubmissionInput` | `{ text }` | `{ text }` — unchanged |
 
 ## Implementation sequence
 
 1. `dreamux-types`: add the `turn.ended` activity kind and the
-   `teammate.activity` core event; keep the old surfaces alive.
+   `teammate.input` / `teammate.activity` core events; keep the old surfaces
+   alive.
 2. Both runtimes: emit native turn ends through the activity sink.
 3. `runtime-owner`: stamp the Agent, call the projection directly.
-4. Core: publish the `input` activity in `submitAdmitted`.
-5. `conversation-projection`: collapse to one entry point.
-6. Feishu: collapse the switch, re-key the anchor.
+4. Core: publish `teammate.input` in `submitAdmitted`.
+5. `conversation-projection`: collapse to `projectInput` and `projectActivity`.
+6. Feishu: collapse the switch to those two, re-key the anchor.
 7. Delete: the second sink, `turnsBySubmission`, the early buffer, the dedupe,
    codex's `pendingActivity` and `nativeTurnEnded`, the five old core event
    kinds, the retained `EntityTurn` fields, and `{ priority: 'now' }`.
@@ -238,6 +255,10 @@ whole.
 - **A caller-supplied id on `AgentRuntimeSubmissionInput`.** The first version of
   this design. Rejected on review: it shows the envelope and reverses a recorded
   ruling.
+- **One `teammate.activity` kind carrying `input` as a fourth discriminant.**
+  The second version. Rejected by the operator on 2026-09-02 in favour of
+  splitting by producer, which is the better boundary: Core publishes the input,
+  a runtime publishes the rest.
 - **Keeping the early buffer and re-keying it by actor.** That is the banned
   fake — a mechanism surviving under a new name while nothing is removed.
 
