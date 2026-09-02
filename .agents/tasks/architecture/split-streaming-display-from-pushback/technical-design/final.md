@@ -1045,12 +1045,24 @@ imprecision of `interrupted`. `FeishuCotRunStatus` stays `'done' |
 'interrupted'`, and the neutral fact keeps `status: 'failed'` because that is
 what ruling 4 says and Core is not the layer that lost the distinction.
 
-Still open: whether a recognised failure terminal exists under a different
-name. `message_cot` is absent from every public Feishu doc — the `llms.txt`
-index, the messaging, AI, aily, card, bot and MCP module docs, and web search
-— so the vocabulary cannot be read, only probed. The AG-UI standard puts the
-failure terminal in a separate `RUN_ERROR` event rather than a status value,
-which is the next candidate.
+**A recognised failure terminal does exist, and it is a different event.** The
+AG-UI standard puts the failure terminal in a separate `RUN_ERROR` event rather
+than a status value, so that was probed too: a card finished with `RUN_ERROR`
+renders **任务失败** (task failed). That is the terminal ruling 4 asks for, and
+this layer was looking for it in the wrong place — in the values of
+`RUN_FINISHED.status`, where it does not exist.
+
+So the wire terminal is three-valued, not two: `RUN_FINISHED` with `done`,
+`RUN_FINISHED` with `interrupted`, and `RUN_ERROR`. A `turn.ended` carrying
+`status: 'failed'` maps to the third. Implementing that is a small change in
+`feishu-cot-events.ts` and the adapter's terminal intent, and it makes ruling
+4 reach the card it was always about.
+
+Documentation was not available to answer any of this: `message_cot` is absent
+from every public Feishu doc — the `llms.txt` index, the messaging, AI, aily,
+card, bot and MCP module docs, and web search. The vocabulary can only be
+probed, and `code: 0` is not a probe result, because the platform accepts a
+deliberately nonsense status too. Only the rendered card answers.
 
 ### 4. `TeammateRuntimeOwner`'s upward channel shrinks instead of growing
 
