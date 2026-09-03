@@ -140,7 +140,13 @@ home as `~`.
     native turn. One resident Claude Code execution window may legally produce
     several sequential `result` boundaries; each boundary emits its own ended
     fact. Several Dreamux inputs or logical submissions folded into the same
-    single `result` still emit only that result's one ended fact.
+    single `result` still emit only that result's one ended fact. Since the display
+    line was separated from the push-back line
+    (`.agents/tasks/architecture/split-streaming-display-from-pushback`), each
+    runtime satisfies this for *every* native turn it observes, including one no
+    Dreamux submission ever bound and one the provider only ever streamed items
+    for: the end is emitted where the provider reports its own terminal, and a
+    stop or protocol failure ends whatever is still open.
 
 13. **No logical membership contract.** The native-ended fact does not enumerate
     `RuntimeSubmission` members, logical `turn_id` values, presentation ids,

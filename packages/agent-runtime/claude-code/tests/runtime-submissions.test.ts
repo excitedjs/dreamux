@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createRuntimeSubmission,
   handleProtocolEvent,
+  NativeTurnDisplay,
   type ActiveTurn,
   type SubmissionDeferred,
 } from '../src/runtime-submissions.js';
@@ -76,6 +77,16 @@ function makeHarness(
   const activityEvents: RuntimeActivity[] = [];
   const nativeEnds: NativeTurnEnd[] = [];
   const logs: Array<{ level: string; message: string }> = [];
+  const sink = (activity: RuntimeActivity): void => {
+    if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+    else activityEvents.push(activity);
+  };
+  const log = (level: 'info' | 'warn' | 'error', message: string): void => {
+    logs.push({ level, message });
+  };
+  // The runtime owns one of these across windows; a harness driving the pure
+  // translation owns its own.
+  const display = new NativeTurnDisplay(sink, log);
   return {
     active,
     deferredByUuid,
@@ -86,11 +97,9 @@ function makeHarness(
       handleProtocolEvent(active, event, {
         threadId: options.threadId ?? 'thread-1',
         outputSchemaEnabled: options.outputSchemaEnabled ?? false,
-        activitySink: (activity) => {
-          if (activity.kind === 'turn.ended') nativeEnds.push(activity);
-          else activityEvents.push(activity);
-        },
-        log: (level, message) => logs.push({ level, message }),
+        activitySink: sink,
+        log,
+        display,
       });
     },
     settled(uuid) {
@@ -349,17 +358,20 @@ describe('handleProtocolEvent live activity', () => {
     const throwingSink = vi.fn(() => {
       throw new Error('sink exploded');
     });
+    const display = new NativeTurnDisplay(throwingSink, log);
     handleProtocolEvent(active, started('cmd-1'), {
       threadId: null,
       outputSchemaEnabled: false,
       activitySink: throwingSink,
       log: (level, message, error) => log(level, message, error),
+      display,
     });
     handleProtocolEvent(active, streamAssistantText('text'), {
       threadId: null,
       outputSchemaEnabled: false,
       activitySink: throwingSink,
       log: (level, message, error) => log(level, message, error),
+      display,
     });
     expect(throwingSink).toHaveBeenCalledTimes(1);
     expect(log).toHaveBeenCalledWith('warn', expect.any(String), expect.any(Error));
@@ -372,6 +384,7 @@ describe('handleProtocolEvent live activity', () => {
       outputSchemaEnabled: false,
       activitySink: throwingSink,
       log: (level, message, error) => log(level, message, error),
+      display,
     });
     await expect(deferred.submission.settled).resolves.toMatchObject({
       kind: 'completion',
@@ -425,11 +438,16 @@ describe('handleProtocolEvent native turn end', () => {
     expect(h.nativeEnds.map((end) => end.status)).toEqual(['failed']);
   });
 
-  it('reports failed once when a result cannot be attributed to any started command', () => {
+  it('shows claude\'s own result even when push-back cannot attribute it', async () => {
     const h = makeHarness(['cmd-1', 'cmd-2']);
     h.fire(resultEvent(outcome()));
 
-    expect(h.nativeEnds.map((end) => end.status)).toEqual(['failed']);
+    // claude finished the turn; that no started command can own the result is
+    // push-back's problem, and it fails those submissions loudly. The card
+    // shows what the provider did, not what push-back could make of it.
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed']);
+    await expect(h.settled('cmd-1')).resolves.toMatchObject({ kind: 'failed' });
+    await expect(h.settled('cmd-2')).resolves.toMatchObject({ kind: 'failed' });
   });
 
   it('emits one end per result boundary when a steered command runs after the first one was answered', async () => {
@@ -476,12 +494,12 @@ describe('handleProtocolEvent native turn end', () => {
     const h = makeHarness(['cmd-1', 'cmd-2']);
     h.fire(started('cmd-1'));
     h.fire(resultEvent(outcome({ text: 'first' })));
-    // A conflicting second result fails loudly because no command started after
-    // the first boundary. It is still a terminal result and therefore reports
-    // its own failed native-turn end.
+    // A conflicting second result fails loudly on the push-back line, because
+    // no command started after the first boundary. It is still a terminal
+    // result claude reported, so the display line reports the end it says.
     h.fire(resultEvent(outcome({ text: 'second' })));
 
-    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed', 'failed']);
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed', 'completed']);
   });
 
   it('reports the native result before settling its submissions', () => {
@@ -494,21 +512,23 @@ describe('handleProtocolEvent native turn end', () => {
     };
     const active = makeHarness(['cmd-1']).active;
     active.submissions.set('cmd-1', deferred);
+    const sink = (activity: RuntimeActivity): void => {
+      if (activity.kind === 'turn.ended') order.push('end');
+    };
+    const display = new NativeTurnDisplay(sink, () => undefined);
     handleProtocolEvent(active, started('cmd-1'), {
       threadId: 'thread-1',
       outputSchemaEnabled: false,
-      activitySink: (activity) => {
-        if (activity.kind === 'turn.ended') order.push('end');
-      },
+      activitySink: sink,
       log: () => undefined,
+      display,
     });
     handleProtocolEvent(active, resultEvent(outcome()), {
       threadId: 'thread-1',
       outputSchemaEnabled: false,
-      activitySink: (activity) => {
-        if (activity.kind === 'turn.ended') order.push('end');
-      },
+      activitySink: sink,
       log: () => undefined,
+      display,
     });
 
     expect(order).toEqual(['end', 'settle']);
@@ -534,11 +554,13 @@ describe('handleProtocolEvent native turn end', () => {
     const throwingSink = vi.fn(() => {
       throw new Error('native turn sink exploded');
     });
+    const display = new NativeTurnDisplay(throwingSink, log);
     handleProtocolEvent(active, resultEvent(outcome({ text: 'ok', sessionId: null })), {
       threadId: null,
       outputSchemaEnabled: false,
       activitySink: throwingSink,
       log: (level, message, error) => log(level, message, error),
+      display,
     });
 
     expect(throwingSink).toHaveBeenCalledTimes(1);

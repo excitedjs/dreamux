@@ -101,6 +101,7 @@ import type {
   AgentRuntimePathContext,
   AgentRuntimeStateSink,
   AgentRuntimeStateUpdate,
+  RuntimeActivity,
   RuntimeSubmissionSettlement,
 } from '@excitedjs/dreamux-types';
 
@@ -712,6 +713,90 @@ describe('codex live integration', () => {
 
         const finalPage = await provider.readRecentActivity(query, activityContext);
         expect(finalPage.records.length).toBeGreaterThanOrEqual(midTurnCount);
+      } finally {
+        await runtime.stop();
+        if (previousCodexHome === undefined) delete process.env['CODEX_HOME'];
+        else process.env['CODEX_HOME'] = previousCodexHome;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    180_000,
+  );
+
+  (runModelGate ? it : it.skip)(
+    `ends a native turn no Dreamux submission ever bound, through real codex ${detection.version}`,
+    async () => {
+      // The display line reports what codex is doing, so a turn codex runs on a
+      // thread Dreamux never submitted into still gets its end. Live, because
+      // the whole point is codex's own terminal for a turn the push-back line
+      // has no record of — a fake client can be made to emit anything.
+      const operatorHome = homedir();
+      const previousCodexHome = process.env['CODEX_HOME'];
+      const dir = mkdtempSync(join(operatorHome, '.dreamux-unbound-end-live-'));
+      const isolatedCodexHome = createIsolatedCodexHome(dir);
+      const cwd = join(dir, 'cwd');
+      mkdirSync(cwd, { recursive: true });
+      process.env['CODEX_HOME'] = isolatedCodexHome;
+
+      let client: RecordingCodexWsClient | null = null;
+      const provider = createCodexAgentRuntimeProvider({
+        codexHomeDoctor: () => {
+          /* real Codex auth is supplied through the isolated CODEX_HOME */
+        },
+        codexClientFactory: (socketPath) => {
+          client = new RecordingCodexWsClient({ socketPath });
+          return client;
+        },
+      });
+
+      const activity: RuntimeActivity[] = [];
+      const { sink, updates } = recordingStateSink();
+      const runtime = await provider.createRuntime({
+        identity: { runtimeId: 'unbound-end-live', sessionId: null },
+        config: directCodexConfig(),
+        cwd,
+        mcpServers: [],
+        skillSources: [],
+        disabledFeatures: [],
+        paths: runtimePaths(dir),
+        state: sink,
+        activity: (fact) => {
+          activity.push(fact);
+        },
+      });
+
+      const ends = (): RuntimeActivity[] =>
+        activity.filter((fact) => fact.kind === 'turn.ended');
+
+      try {
+        await runtime.start();
+        // One ordinary turn first: it is what opens the thread and the
+        // collector, and it pins the baseline of exactly one end per turn.
+        const admission = await runtime.submit({ text: 'Reply with exactly the word ok.' });
+        if (admission.status !== 'submitted') {
+          throw new Error(`baseline turn was ${admission.status}`);
+        }
+        expect((await admission.submission.settled).kind).toBe('completion');
+        await waitFor(() => ends().length === 1, 30_000, 'the submitted turn ended');
+
+        const sessionUpdate = updates.find((update) => update.kind === 'session');
+        const threadId =
+          sessionUpdate !== undefined && sessionUpdate.kind === 'session'
+            ? sessionUpdate.sessionId
+            : null;
+        expect(threadId).not.toBeNull();
+
+        // A native turn on the same thread that Dreamux never submitted: no
+        // admission, no submission, no record on the push-back line. codex runs
+        // it and reports its terminal like any other.
+        await client!.request('turn/start', {
+          threadId,
+          input: [{ type: 'text', text: 'Reply with exactly the word two.', text_elements: [] }],
+          cwd,
+        });
+        await waitFor(() => ends().length === 2, 60_000, 'the unbound turn ended');
+
+        expect(ends().at(-1)).toMatchObject({ kind: 'turn.ended', status: 'completed' });
       } finally {
         await runtime.stop();
         if (previousCodexHome === undefined) delete process.env['CODEX_HOME'];

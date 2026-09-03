@@ -31,15 +31,6 @@ interface NativeTurnRecord {
   completion: RuntimeCompletion | null;
   terminal: CollectedTurn | Error | null;
   releaseAfterAdmissions: Set<number> | null;
-  /**
-   * Whether this native turn already reported its one end.
-   *
-   * A record is reachable from several terminal paths — a collected terminal,
-   * a protocol failure, and stop — and more than one can run for the same turn
-   * id. The flag is what makes the one-end-per-native-turn contract hold rather
-   * than depend on which path happened to win.
-   */
-  nativeTurnEnded: boolean;
 }
 
 export interface TurnManagerOptions {
@@ -64,6 +55,17 @@ export class TurnManager {
   private nextNativeAdmission = 0;
   private readonly nativeTurns = new Map<string, NativeTurnRecord>();
   private readonly unboundObservedTurnIds = new Set<string>();
+  /**
+   * Every native turn codex has told this manager about, and whether the
+   * display line has already reported its end.
+   *
+   * The display line asks one question — did codex say this turn is over? — so
+   * it keeps its own answer rather than reading a push-back record, which is
+   * deleted as soon as its submissions settle and never exists at all for a
+   * turn no submission bound. One entry per native turn, the same shape and
+   * lifetime as the collector's own terminal fingerprints, cleared by `stop()`.
+   */
+  private readonly displayTurns = new Map<string, 'open' | 'ended'>();
   private readonly terminalOrder: string[] = [];
   private protocolFailure: Error | null = null;
   private collector: TurnCollector | null = null;
@@ -95,18 +97,21 @@ export class TurnManager {
     this.collector?.dispose();
     this.collector = null;
     while (this.pendingAdmissions.size > 0) await Promise.allSettled([...this.pendingAdmissions]);
+    // The collector is gone, so nothing will ever report these: a turn codex
+    // started and never finished ends as interrupted. The admissions are
+    // awaited first only so a turn that bound during the stop is in the map.
+    this.endOpenDisplayTurns('interrupted', null);
     this.drainTerminalOrder();
     for (const record of this.nativeTurns.values()) {
       if (record.completion !== null) continue;
       for (const member of record.members) member.settle({ kind: 'stopped' });
-      // A native turn torn down before its own terminal still ended.
-      this.endNativeTurn(record, 'interrupted', null);
     }
     for (const [turnId, record] of this.nativeTurns) {
       if (record.completion === null) this.nativeTurns.delete(turnId);
     }
     this.terminalOrder.length = 0;
     this.unboundObservedTurnIds.clear();
+    this.displayTurns.clear();
   }
 
   private async submit(
@@ -139,6 +144,9 @@ export class TurnManager {
       return { status: 'ambiguous', error: normalized };
     }
     const observed = this.nativeTurns.get(response.turn.id);
+    // codex started this turn, so the display line owes its end even when the
+    // submission that asked for it is refused just below.
+    this.noteDisplayTurn(response.turn.id);
     if (this.stopped && (observed === undefined || observed.terminal === null)) {
       deferred.settle({ kind: 'stopped' });
     } else {
@@ -178,7 +186,6 @@ export class TurnManager {
       completion: null,
       terminal: null,
       releaseAfterAdmissions: null,
-      nativeTurnEnded: false,
     };
     record.representative ??= deferred.submission;
     if (record.completion === null) record.members.push(deferred);
@@ -192,10 +199,20 @@ export class TurnManager {
   }
 
   private observeTerminal(turnId: string, terminal: CollectedTurn | Error): void {
+    // The display line ends here and nowhere else. codex said this native turn
+    // is over, and that fact is the card's terminal: nothing below it — the
+    // record's own bookkeeping, the terminal queue, the admissions gate, the
+    // completion the push-back line builds out of this terminal — may change
+    // it, delay it, or withhold it.
+    this.endDisplayTurn(
+      turnId,
+      terminal instanceof Error ? 'failed' : 'completed',
+      terminal instanceof Error ? terminal.message : null,
+    );
     this.unboundObservedTurnIds.delete(turnId);
     const record = this.nativeTurns.get(turnId) ?? {
       representative: null, members: [], completion: null, terminal: null,
-      releaseAfterAdmissions: null, nativeTurnEnded: false,
+      releaseAfterAdmissions: null,
     };
     if (record.terminal !== null || record.completion !== null) return;
     record.terminal = terminal;
@@ -212,23 +229,12 @@ export class TurnManager {
       if (record === undefined || record.terminal === null) return;
       if (record.representative === null) {
         if (this.pendingAdmissions.size > 0) return;
+        // Nothing to settle and no completion to describe, so this queue head
+        // is only released. Its end went out when codex reported the terminal.
         this.terminalOrder.shift();
-        // A native turn no Dreamux submission ever bound still ends on the
-        // display line, because its items already displayed. Only the display
-        // half runs: `finalize` is push-back work — it settles members, calls
-        // `onTurnCompleted`, and builds a `RuntimeCompletion` — and this turn
-        // has no submission to settle and no completion to describe.
-        const failure = record.terminal instanceof Error ? record.terminal : null;
-        const status = failure === null ? 'completed' : 'failed';
-        this.endNativeTurn(record, status, failure?.message ?? null);
         this.nativeTurns.delete(turnId);
         this.unboundObservedTurnIds.delete(turnId);
         this.collector?.releaseTurn(turnId);
-        this.log(
-          'warn',
-          `native turn ${turnId} ended without an accepted submission (${status}); ` +
-          `its end closes whatever card its activity opened`,
-        );
         continue;
       }
       this.terminalOrder.shift();
@@ -238,9 +244,9 @@ export class TurnManager {
 
   private finalize(turnId: string, record: NativeTurnRecord, terminal: CollectedTurn | Error): void {
     if (record.completion !== null) return;
-    // The push-back guard, and the only one left: an unbound turn has no
-    // submission to settle, so `drainTerminalOrder` ends it on the display line
-    // and never routes it here.
+    // Push-back only, and it decides nothing the card shows: an unbound turn
+    // has no submission to settle, so `drainTerminalOrder` releases it instead
+    // of routing it here.
     if (record.representative === null) return;
     let completion: RuntimeCompletion;
     if (terminal instanceof Error) {
@@ -255,7 +261,6 @@ export class TurnManager {
         for (const member of record.members) member.settle({ kind: 'completion', completion });
         record.members.length = 0;
         record.terminal = null;
-        this.endNativeTurn(record, 'failed', completion.error.message);
         this.releaseRecordIfReady(turnId, record);
         return;
       }
@@ -270,19 +275,16 @@ export class TurnManager {
     for (const member of record.members) member.settle({ kind: 'completion', completion });
     record.members.length = 0;
     record.terminal = null;
-    // `turn/completed` is codex's one native terminal, so this is where the
-    // native turn ends whatever it folded.
-    this.endNativeTurn(
-      record,
-      completion.status === 'completed' ? 'completed' : 'failed',
-      completion.status === 'completed' ? null : completion.error.message,
-    );
     this.releaseRecordIfReady(turnId, record);
   }
 
   private failProtocol(error: Error): void {
     this.protocolFailure ??= error;
     this.log('error', error.message, error);
+    // Every turn codex started and has not finished dies with the connection,
+    // including one this manager only ever saw items for, which has no record
+    // for the loop below to reach.
+    this.endOpenDisplayTurns('failed', this.protocolFailure.message);
     this.terminalOrder.length = 0;
     for (const [turnId, record] of this.nativeTurns) {
       if (record.completion !== null) continue;
@@ -293,7 +295,6 @@ export class TurnManager {
   private failRecord(turnId: string, record: NativeTurnRecord, error: Error): void {
     for (const member of record.members) member.settle({ kind: 'failed', error });
     record.members.length = 0;
-    this.endNativeTurn(record, 'failed', error.message);
     this.nativeTurns.delete(turnId);
     this.unboundObservedTurnIds.delete(turnId);
     this.collector?.releaseTurn(turnId);
@@ -333,6 +334,7 @@ export class TurnManager {
    * and it is known before any submission binds.
    */
   private observeItem(turnId: string, item: ThreadItem, phase: 'started' | 'completed', occurredAt: number): void {
+    this.noteDisplayTurn(turnId);
     const activity = itemActivity(turnId, item, phase, occurredAt);
     if (activity !== null) this.emitActivity(activity);
     const record = this.nativeTurns.get(turnId);
@@ -349,25 +351,45 @@ export class TurnManager {
     }
   }
 
+  /** Remember a native turn codex started: its end is now owed. */
+  private noteDisplayTurn(turnId: string): void {
+    if (!this.displayTurns.has(turnId)) this.displayTurns.set(turnId, 'open');
+  }
+
   /**
-   * Report this native turn's one end, at most once, as its last activity.
+   * Report one native turn's end on the display line, at most once.
    *
-   * Every native turn ends here, including one no Dreamux submission bound.
-   * Whether the end is *shown* is not this layer's decision: a card belongs to
-   * no turn (`feishu-cot-conversation-cards` requirement, rule 1 — a target is
-   * "not a presentation identity, state key, or card partition"), and a native
-   * end "closes an existing open card but never opens a new one; when no card
-   * is open, Feishu ignores it" (rule 8). `reason` carries codex's own error
-   * text when the end has one.
+   * `status` and `reason` are codex's own terminal and nothing else — a
+   * collected turn completed, an error failed with its message. What the
+   * push-back line then makes of that terminal (a decode it cannot restore, a
+   * submission it cannot attribute) is push-back's own outcome and never
+   * colours the card.
+   *
+   * Whether the end is *shown* is not this layer's decision either. A card
+   * belongs to no turn (`feishu-cot-conversation-cards` requirement, rule 1 — a
+   * target is "not a presentation identity, state key, or card partition"), and
+   * a native end "closes an existing open card but never opens a new one; when
+   * no card is open, Feishu ignores it" (rule 8). This layer pushes; the
+   * Channel decides.
    */
-  private endNativeTurn(
-    record: NativeTurnRecord,
+  private endDisplayTurn(
+    turnId: string,
     status: 'completed' | 'failed' | 'interrupted',
     reason: string | null,
   ): void {
-    if (record.nativeTurnEnded) return;
-    record.nativeTurnEnded = true;
+    if (this.displayTurns.get(turnId) === 'ended') return;
+    this.displayTurns.set(turnId, 'ended');
     this.emitActivity({ kind: 'turn.ended', occurredAt: Date.now(), status, reason });
+  }
+
+  /** End every native turn still owed one, because nothing else will report it. */
+  private endOpenDisplayTurns(
+    status: 'failed' | 'interrupted',
+    reason: string | null,
+  ): void {
+    for (const [turnId, state] of this.displayTurns) {
+      if (state === 'open') this.endDisplayTurn(turnId, status, reason);
+    }
   }
 
   private trackAdmission(admission: Promise<RuntimeAdmission>): Promise<RuntimeAdmission> {

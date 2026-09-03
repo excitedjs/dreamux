@@ -130,7 +130,12 @@ be running, it keeps producing afterwards, and rule 8 of the COT product model
 opens a **new** card at the same anchor for the rest of it. So the reader sees a
 任务失败 card followed by a card that finishes normally. That is the display
 model working as specified, and this note exists so nobody later reads it as a
-bug and "fixes" it.
+bug and "fixes" it. Separating the display line from the push-back line (see
+`final.md` departure 7) does not change this and does not need to: that end is
+Core's own, synthesized for an input **no runtime ever accepted**, so there is
+no provider terminal to move it onto. The two lines each report a fact that is
+true — the submission failed, and a native turn really is running — and the two
+cards are those two facts.
 
 **Two paths that reach it.**
 

@@ -622,6 +622,94 @@ describe('CodexRuntime native turn end', () => {
     expect(activity.filter((fact) => fact.kind === 'turn.ended')).toHaveLength(1);
   });
 
+  it('reports the end while an admission is still in flight', async () => {
+    // The display line is not behind the admissions gate. codex finished a turn
+    // of its own while a `turn/start` this runtime issued has not answered yet,
+    // and the end goes out then — the gate exists so `finalize` does not settle
+    // a submission that has not bound yet, which is push-back's problem.
+    const nativeEnds: NativeTurnEnd[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    client.block('turn/start');
+    const admission = runtime.submit({ text: 'still admitting' });
+    await waitFor(() => client.hasBlocked('turn/start'));
+
+    client.emitCompleted('fresh-thread-1', 'turn-orphan', 'orphan result');
+    await waitFor(() => nativeEnds.length === 1);
+    expect(nativeEnds[0]).toMatchObject({ status: 'completed', reason: null });
+
+    client.rejectBlocked('turn/start', new Error('connection dropped'));
+    expect((await admission).status).toBe('ambiguous');
+    await runtime.stop();
+    expect(nativeEnds).toHaveLength(1);
+  });
+
+  it('ends a turn codex only ever sent items for, when stop() tears it down', async () => {
+    const nativeEnds: NativeTurnEnd[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
+    client.emitCompleted('fresh-thread-1', 'turn-1', 'done');
+    await submission.settled;
+
+    // A turn with no submission and no terminal of its own: the only thing this
+    // runtime knows about it is that codex showed something for it. It is still
+    // a native turn, and stop() ends it.
+    client.emitItem('fresh-thread-1', 'turn-observed', 'completed', {
+      type: 'agentMessage',
+      id: 'item-observed',
+      text: 'a turn nobody asked for',
+    });
+    await runtime.stop();
+
+    expect(nativeEnds.map((end) => end.status)).toEqual(['completed', 'interrupted']);
+  });
+
+  it('ends a turn codex only ever sent items for, when the protocol fails', async () => {
+    const nativeEnds: NativeTurnEnd[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
+    client.emitCompleted('fresh-thread-1', 'turn-1', 'done');
+    await submission.settled;
+    client.emitItem('fresh-thread-1', 'turn-observed', 'completed', {
+      type: 'agentMessage',
+      id: 'item-observed',
+      text: 'a turn nobody asked for',
+    });
+
+    client.emitUnscopedError('fresh-thread-1', 'codex daemon internal error');
+    await waitFor(() => nativeEnds.length === 2);
+
+    expect(nativeEnds.map((end) => end.status)).toEqual(['completed', 'failed']);
+    expect(nativeEnds.at(-1)!.reason).toContain('codex daemon internal error');
+    await runtime.stop();
+  });
+
   it('reports failed once for every turn an unscoped protocol failure tore down', async () => {
     const nativeEnds: NativeTurnEnd[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });
@@ -730,6 +818,35 @@ describe('CodexRuntime outputSchema binding', () => {
     }
     // AgentRuntimeSubmissionInput carries only `text` — there is structurally
     // no field a caller could use to vary the schema per submit.
+    await runtime.stop();
+  });
+
+  it('shows the turn codex reported even when the encoded text cannot be restored', async () => {
+    // The card reports what codex did: the turn completed. Restoring the
+    // encoded text is push-back's work on that same terminal, and when it fails
+    // it fails the submission — it does not turn codex's completed turn into a
+    // failure on the display line.
+    const nativeEnds: NativeTurnEnd[] = [];
+    const codec = compileCodexOutputSchema(schema as unknown as Record<string, unknown>);
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      codec,
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    const submission = requireSubmitted(await runtime.submit({ text: 'go' }));
+    client.emitCompleted('fresh-thread-1', 'turn-1', 'not the encoded envelope');
+    await expect(submission.settled).resolves.toMatchObject({
+      kind: 'completion',
+      completion: { status: 'failed' },
+    });
+
+    expect(nativeEnds.map((end) => end.status)).toEqual(['completed']);
     await runtime.stop();
   });
 

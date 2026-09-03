@@ -136,6 +136,14 @@ class FakeSession implements ClaudeCodeSession {
     });
   }
 
+  /** Kill the held resident window the way a lost child does. */
+  failSubmit(error: Error): void {
+    const pending = this.pendingSubmit;
+    this.pendingSubmit = null;
+    this.heldSubmit = null;
+    pending?.reject(error);
+  }
+
   /** Drain the held resident window, as the real RPC does once it settles. */
   releaseSubmit(): void {
     const held = this.heldSubmit;
@@ -191,6 +199,19 @@ function fireDefaultResult(
       hasStructuredOutput: false,
       ...overrides,
     },
+  });
+}
+
+/** One line of live assistant text, as the parser hands it to the runtime. */
+function fireAssistantText(spec: ClaudeCodeSessionSpec, text: string): void {
+  spec.onProtocolEvent?.({
+    kind: 'stream',
+    line: {
+      raw: {
+        type: 'assistant',
+        message: { id: 'msg-1', content: [{ type: 'text', text }] },
+      },
+    } as ClaudeProtocolEvent extends { kind: 'stream'; line: infer L } ? L : never,
   });
 }
 
@@ -687,6 +708,77 @@ describe('ClaudeCodeRuntime native turn end', () => {
     await drain();
 
     expect(h.nativeEnds.map((end) => end.status)).toEqual(['failed']);
+  });
+
+  it('reports one end for the real lifecycle order, where `completed` follows the result', async () => {
+    // The CLI's legal sequence is started → result → completed: the command's
+    // terminal lifecycle is what drains the window, and it arrives after the
+    // result that already ended the native turn. It is push-back's drainage
+    // signal, not claude reporting new work, so it opens nothing for the
+    // teardown to then interrupt.
+    const h = new Harness();
+    h.behavior.onSubmit = (spec, _prompt, commandUuid) => {
+      fireDefaultResult(spec, commandUuid!, { text: 'answered' });
+      spec.onProtocolEvent?.({
+        kind: 'command_lifecycle',
+        commandUuid: commandUuid!,
+        state: 'completed',
+      });
+    };
+    const runtime = await tracked(h.createRuntime());
+    await runtime.start();
+    const admission = await runtime.submit({ text: 'hello' });
+    if (admission.status !== 'submitted') throw new Error('expected submitted');
+    await admission.submission.settled;
+    await drain();
+
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed']);
+  });
+
+  it('reports the end of a native turn that has no submission left to settle', async () => {
+    // The window's first result answered and settled the only submission; what
+    // claude does next in the same window is a native turn of its own, and the
+    // stop that tears it down ends it. Whether push-back had anything left to
+    // settle says nothing about whether claude was working.
+    const h = new Harness();
+    h.behavior.holdSubmit = true;
+    const runtime = await tracked(h.createRuntime());
+    await runtime.start();
+    const admission = await runtime.submit({ text: 'one' });
+    if (admission.status !== 'submitted') throw new Error('expected submitted');
+    await drain();
+    const session = h.sessions[0]!;
+    fireDefaultResult(session.spec, session.submits[0]!.commandUuid!);
+    await admission.submission.settled;
+    await drain();
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed']);
+
+    fireAssistantText(session.spec, 'still working on something else');
+    await runtime.stop();
+    await drain();
+
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed', 'interrupted']);
+  });
+
+  it('reports failed for a native turn the run died on with nothing left to settle', async () => {
+    const h = new Harness();
+    h.behavior.holdSubmit = true;
+    const runtime = await tracked(h.createRuntime());
+    await runtime.start();
+    const admission = await runtime.submit({ text: 'one' });
+    if (admission.status !== 'submitted') throw new Error('expected submitted');
+    await drain();
+    const session = h.sessions[0]!;
+    fireDefaultResult(session.spec, session.submits[0]!.commandUuid!);
+    await admission.submission.settled;
+    await drain();
+
+    fireAssistantText(session.spec, 'working on the queued command');
+    session.failSubmit(new Error('protocol connection lost'));
+    await drain();
+
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed', 'failed']);
+    expect(h.nativeEnds.at(-1)!.reason).toBe('protocol connection lost');
   });
 
   it('carries only a status and a timestamp: no submission, turn id, or presentation', async () => {

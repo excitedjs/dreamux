@@ -377,3 +377,31 @@ The two below have no other home.
   (`submitAdmitted(`, `COMPLETION_SOURCE`, `wake: false`) and nothing about how
   they are laid out. The neighbouring absence assertions and `readSource` itself
   were left alone.
+
+## The ruling that separated the display line from push-back (2026-09-03)
+
+The operator ruled that the split was half done: the end of a native turn was
+still computed by, and gated behind, the push-back line.
+
+> 你这有点扯淡了，你不还是把回推的事件和CoT耦合在一起了吗？这个事件是专门给回推用的，然后它还应该有一个ended事件，不是无脑推吗？
+
+> 无人认领的流，它应该有一个对应的始终推送的关闭事件啊
+
+> 你把这个 ended 的事件加在了一堆门控逻辑后面。这不就变成了给自己找麻烦吗？这一堆门控后面，还能真实反映出 provider 正在发生的事情吗？
+
+And the motive for the whole task, which is the acceptance criterion the change
+was judged against:
+
+> 我这次的目标是把回推和CoT的机制拆开，本质上就是因为：
+> 1. 回推那边有大量的门控
+> 2. CoT需要真实反映agent provider现在正在发生的事情
+
+The second motive decides every case below: the card shows what the provider
+actually did, not the conclusion the push-back line drew after turning that into
+a `RuntimeCompletion`. Both providers were in scope — "两个 provider 要么一起改，
+要么就别改 —— 只修一个是把不对称固化下来" — and the acceptance was stated as a
+count: of the seven gates between codex reporting a terminal and `turn.ended`
+being emitted, only the collector's line admission and the at-most-once check may
+remain in front of the end, and the at-most-once check must be keyed by native
+turn id so it survives the record being deleted. What was built, gate by gate, is
+recorded in `technical-design/final.md` § As built, departure 7.

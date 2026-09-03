@@ -491,10 +491,9 @@ One native turn is one provider-native terminal: one Claude Code `result`, one
 Codex `turn/completed`. A resident Claude Code execution window may legally
 answer several commands in sequence and so reports one end per `result`. Where a
 turn ends with no native terminal at all — a stop, a protocol loss, a rejected
-run — the provider synthesizes an end, but only from the call that actually
-settled a still-open submission. That guard is what makes an ordinary success
-report exactly one end, and it is why no provider-side deduplication state
-exists.
+run — the provider synthesizes an end for every native turn still open, whether
+or not there was a submission left to settle: what the push-back line still owed
+never said whether the provider was working.
 
 A native turn no Dreamux submission ever bound is not an exception: its items
 display, and so does its end. Withholding it was tried and removed — a card
@@ -502,8 +501,10 @@ belongs to no turn (`feishu-cot-conversation-cards` rules 1 and 8: one anchor
 and at most one open card, and a native-ended fact closes an open card, never
 opens one, and is ignored when none is open), so an end has nothing to name and
 a runtime has nothing to decide. What a provider still owes is at-most-once per
-native turn; codex keeps that with a per-record flag, because the submission
-check Claude Code's synthesis uses is not available for a turn that has none.
+native turn, and each keeps that in display-line state of its own rather than in
+push-back's: codex in a map keyed by native turn id, which outlives the record
+for that turn, and Claude Code — whose protocol names no native turn — in one
+open flag on the runtime, which outlives the resident window.
 
 The sink is optional because its absence must not break a provider, but the
 consequence is real and is not a Core fallback: a provider that never emits

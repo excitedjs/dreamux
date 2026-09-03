@@ -1135,64 +1135,124 @@ the buffer if no submission ever bound. Keyed on the agent, there is nothing to
 attribute, so both facts now display. The claude test that asserted the drop was
 inverted to assert the emission, with the reason in its name.
 
-### 7. Unbound codex *ends* now display too — the asymmetry was the defect
+### 7. The display end is the provider's own terminal, on both runtimes
 
-`endNativeTurn`'s `record.representative === null` guard is older than this
-change: at merge-base `ca30883d` it gated the end (`:361`) while `observeItem`
-gated activity the same way (`:322`), so an unbound native turn was invisible on
-both halves. Departure 6 removed the gate on activity. This departure first kept
-it on the end, on the rationale that an end from a native turn no Dreamux
-submission bound "would close a card this entity's own submissions opened", and
-then that its consolation — "Core's own `turn.ended` closes the card anyway" —
-assumed an ordering nothing here controls.
+At merge-base `ca30883d` both providers computed a native turn's end from what
+the push-back line had made of it. codex called `endNativeTurn` from `finalize`
+with the status of the `RuntimeCompletion` it had just built — including the
+failed one it built when the output-schema codec could not restore the turn's
+text — and skipped the call entirely for a turn no submission bound
+(`record.representative === null`). Claude Code had the same shape in
+`completeStartedGroup` (`completion.status === 'completed' ? …`), plus two
+synthesized ends that fired only when the call had settled at least one
+submission (`if (settled)`, `if (stopped)`).
 
-Both readings are wrong, and the second review checked the first against the
-display's own product model. `feishu-cot-conversation-cards` requirement rule 1
-gives a recipient "exactly one standing anchor and at most one open card" and
-says a target "is not a presentation identity, state key, or **card
-partition**"; rule 8 says a native-ended fact "closes an existing open card but
-never opens a new one; when no card is open, Feishu ignores it". A card belongs
-to no turn, so an end never had to name one: closing whatever card is open *is*
-the documented behaviour, and rule 8's "the next opening activity opens a new
-card at that anchor" is how the display heals. The guard was a runtime-layer
-filter re-deciding what the Channel already decides — `finishCard` returns early
-when no card is open — and deciding it wrongly, by suppressing a fact the
-display model handles. The operator deferred this defect with the other one
-(「1和2都很窄…本次不修」) and then reversed once its scope was clear:
-「第一个这个判空去掉就好了吧？」.
+Departure 6 removed the attribution gate on *activity*. This departure first
+kept it on the end, then moved the unbound codex end into `drainTerminalOrder`,
+behind the terminal queue and the admissions gate. The operator ruled that whole
+shape wrong:
 
-**As built now.** The end of an unbound native turn is emitted where its
-terminal actually lands, which is not `endNativeTurn` but `drainTerminalOrder`:
-that branch shifts, releases and warns about an unbound terminal before
-`finalize` is ever reached. It now reports the end first — `completed` for a
-`CollectedTurn`, `failed` carrying codex's own message for an `Error` — and then
-does the release it already did (`nativeTurns.delete`,
-`unboundObservedTurnIds.delete`, `collector.releaseTurn`, which
-`retainAfterTerminal: true` depends on). Its `pendingAdmissions.size > 0` early
-return stays: holding the terminal while an admission is in flight is what stops
-an end from overtaking its own binding. `endNativeTurn` keeps only its
-`nativeTurnEnded` half, which is what makes the end at-most-once, and lost the
-`turnId` parameter that existed for the dropped-end log.
+> 你这有点扯淡了，你不还是把回推的事件和CoT耦合在一起了吗？这个事件是专门给回推用的，然后它还应该有一个ended事件，不是无脑推吗？
 
-Dropping that half of the guard also unblocks the two synthesized paths, and
-neither is a new mechanism. `stop()` reaches the unbound case through the same
-drain — it awaits pending admissions first, so drain ends and deletes those
-records before the interrupt loop sees them. `failProtocol` → `failRecord` ends
-one directly, which happens only while an unbound terminal is still held behind
-an in-flight admission; before, both tore the record down silently.
+> 无人认领的流，它应该有一个对应的始终推送的关闭事件啊
 
-`finalize`'s own `representative === null` return stays, and is now the only one
-of the three. `finalize` is push-back work — it settles `record.members`, calls
-`opts.onTurnCompleted` and builds a `RuntimeCompletion` — and a turn no
-submission claimed has nothing to settle and no completion to describe. Routing
-an unbound turn through it would re-merge the two lines this change separated.
+> 你把这个 ended 的事件加在了一堆门控逻辑后面。这不就变成了给自己找麻烦吗？这一堆门控后面，还能真实反映出 provider 正在发生的事情吗？
 
-The `drainTerminalOrder` warn stays, reworded from "dropping" to what now
-happens. It is kept for one reason: it is the only trace that an unbound native
-turn existed at all, which is a lost `ambiguous` admission seen from the runtime
-side, and it is what explains a card that closed with no submission behind it.
-Test: `codex-runtime.test.ts` → "ends a native turn no submission ever bound,
-after its items displayed".
+and stated the motive the acceptance criterion follows from:
+
+> 我这次的目标是把回推和CoT的机制拆开，本质上就是因为：
+> 1. 回推那边有大量的门控
+> 2. CoT需要真实反映agent provider现在正在发生的事情
+
+**As built now.** The display line reports the provider's own terminal, where
+the provider reports it, and reads nothing the push-back line produces.
+
+- codex ends in `observeTerminal`, as its first statement: `completed` for a
+  `CollectedTurn`, `failed` carrying the `Error`'s message. Nothing under it —
+  the record's `terminal !== null || completion !== null` bookkeeping, the
+  `terminalOrder` queue, `drainTerminalOrder`'s head checks, the
+  `pendingAdmissions` gate, `finalize` — is on the path any more.
+- Claude Code ends in `handleProtocolEvent`'s `result` branch, before
+  `completeStartedGroup` runs: `completed`, or `failed` with claude's own
+  `errors`/`subtype` text. The attribution, the completion and the settlements
+  are push-back's work on the same fact and cannot change, delay or withhold it.
+- The synthesized ends — codex `stop()`/`failProtocol`, claude
+  `stopUnsettled`/`markTurnFailed` — no longer ask whether a submission was
+  settled. They end every native turn that is still open, which is what reaches
+  a turn the provider only ever streamed items for.
+
+**At-most-once moved off the push-back record.** codex keeps
+`displayTurns: Map<string, 'open' | 'ended'>`, noted from `submit` (the turn id
+codex answered with), `observeItem` and `observeTerminal`, and cleared by
+`stop()` — one entry per native turn, the same shape and lifetime as the
+collector's own `terminalFingerprints`. It survives `nativeTurns.delete`, which
+is exactly what `record.nativeTurnEnded` could not do. Claude Code names no
+native turn, so its equivalent is one `NativeTurnDisplay.open` flag on the
+runtime (not on `ActiveTurn`, which is dropped when the window closes): a
+`result` reports its end unconditionally, and the synthesized ends report only
+when a turn is open. Only `command_lifecycle` `started` and stream lines open
+it. The CLI's legal order is `started` → `result` → `completed`, so a `completed`
+arrives *after* the end it belongs to; treating it as news from claude re-opens a
+finished turn and hands `stopUnsettled` one to interrupt, which paints a spurious
+`interrupted` end on every ordinary turn. Regression test: `runtime.test.ts` →
+"reports one end for the real lifecycle order, where `completed` follows the
+result".
+
+**What that deleted.** codex: `endNativeTurn` and all five of its call sites,
+`NativeTurnRecord.nativeTurnEnded` and both initializers, and the display half
+of `drainTerminalOrder`'s unbound branch together with its warn. Claude Code:
+the module-level `endNativeTurn`, the runtime's private wrapper, the `settled`
+and `stopped` locals that gated the two synthesized ends, and
+`failUnattributedResult`'s own end. The unbound branch in `drainTerminalOrder`
+itself stays — with the end gone it is purely the queue-head release
+(`terminalOrder.shift`, `nativeTurns.delete`, `unboundObservedTurnIds.delete`,
+`collector.releaseTurn`, which `retainAfterTerminal: true` depends on), and
+without it the queue stalls behind a head nothing else drains. `finalize`'s
+`representative === null` return stays for the same reason it always had: it is
+push-back work — it settles `record.members`, calls `opts.onTurnCompleted` and
+builds a `RuntimeCompletion` — and a turn no submission claimed has nothing to
+settle and no completion to describe.
+
+**Does the display end still need `NativeTurnRecord`?** No. Neither provider's
+end reads a push-back record any more: codex's reads the terminal it was handed
+and its own map, claude's reads the `result` outcome and its own flag. The
+record is now push-back state only.
+
+**The gates that were counted, and where they are.** Seven stood between "codex
+says the turn ended" and "`turn.ended` is emitted"; two remain, and both are the
+display line's own:
+
+| # | gate | now |
+| --- | --- | --- |
+| 1 | collector line admission: session/thread checks, `rememberTerminal`'s duplicate/conflict verdict (`events.ts`) | **kept** — the display line wants it: codex contradicting itself must not paint two ends |
+| 2 | `observeTerminal`'s `record.terminal !== null \|\| record.completion !== null` | off the path: the end is emitted above it |
+| 3 | the `terminalOrder` FIFO | off the path: the end never enters the queue |
+| 4 | `drainTerminalOrder`'s head check | off the path |
+| 5 | `drainTerminalOrder`'s `pendingAdmissions.size > 0` | off the path; kept for `finalize`, which must not settle a submission that has not bound yet |
+| 6 | `finalize` — `completion !== null`, codec restore, status from `RuntimeCompletion` | off the path entirely |
+| 7 | the at-most-once flag | **kept**, moved to `displayTurns` keyed by native turn id, so a deleted record no longer loses an orphan turn |
+
+Claude Code's four go the same way: result attribution, the `completion`
+construction (`resultTextFromTurnOutcome` throwing), the status read off
+`completion.status`, and the `if (settled)` / `if (stopped)` guards are all
+below or beside the end, none in front of it.
+
+**Behaviour this changed, deliberately.** A codex turn whose encoded result
+cannot be restored, and a claude `result` no started command can be attributed
+to, used to paint the card as a failed turn; they now show the turn the provider
+reported, while the submissions still settle as failed. That is the second
+motive applied literally: the card says what the provider did, not what
+push-back could make of it.
+
+Tests: `codex-runtime.test.ts` → "reports the end while an admission is still in
+flight", "ends a turn codex only ever sent items for, when stop() tears it
+down" / "…when the protocol fails", "shows the turn codex reported even when the
+encoded text cannot be restored"; `runtime.test.ts` → "reports the end of a
+native turn that has no submission left to settle", "reports failed for a native
+turn the run died on with nothing left to settle"; `runtime-submissions.test.ts`
+→ "shows claude's own result even when push-back cannot attribute it";
+`codex-live.test.ts` → "ends a native turn no Dreamux submission ever bound,
+through real codex".
 
 ### 8. `teammate.turn.settled`'s assistant text has no successor
 
