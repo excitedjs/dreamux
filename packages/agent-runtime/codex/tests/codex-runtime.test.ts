@@ -38,10 +38,12 @@ import type {
   AgentRuntimeCreateContext,
   AgentRuntimeIdentity,
   AgentRuntimeMcpServer,
+  RuntimeActivity,
   RuntimeAdmission,
-  RuntimeNativeTurnEnd,
   RuntimeSubmission,
 } from '@excitedjs/dreamux-types';
+
+type NativeTurnEnd = Extract<RuntimeActivity, { kind: 'turn.ended' }>;
 
 function identity(
   sessionId: string | null,
@@ -62,7 +64,6 @@ function makeDeps(
     cwd: '/fake/cwd',
     state: overrides.state ?? noopStateSink(),
     activitySink: overrides.activitySink ?? (() => undefined),
-    nativeTurnSink: overrides.nativeTurnSink ?? (() => undefined),
     codec: overrides.codec ?? null,
     paths: FAKE_PATHS,
     allocateSocketPath: () => '/fake/run/sockets/agent-1.sock',
@@ -182,7 +183,6 @@ describe('CodexRuntime developerInstructions re-supply', () => {
       cwd: '/fake/cwd',
       state,
       activitySink: () => undefined,
-      nativeTurnSink: () => undefined,
       codec: null,
       paths: FAKE_PATHS,
       allocateSocketPath: () => '/fake/run/sockets/agent-1.sock',
@@ -491,14 +491,16 @@ describe('CodexRuntime submit() and settlement', () => {
  */
 describe('CodexRuntime native turn end', () => {
   it('reports one completed end for a native turn that folded two submissions', async () => {
-    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+    const nativeEnds: NativeTurnEnd[] = [];
     const client = new FakeCodexWsClient({
       autoComplete: false,
       scriptedTurnIds: ['turn-folded', 'turn-folded'],
     });
     const { deps } = makeDeps({
       client,
-      nativeTurnSink: (end) => nativeEnds.push(end),
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -511,17 +513,21 @@ describe('CodexRuntime native turn end', () => {
 
     expect(nativeEnds.map((end) => end.status)).toEqual(['completed']);
     // No logical membership: the fact names no submission, turn id, or target.
-    expect(Object.keys(nativeEnds[0]!).sort()).toEqual(['occurredAt', 'status']);
+    expect(Object.keys(nativeEnds[0]!).sort()).toEqual([
+      'kind', 'occurredAt', 'reason', 'status',
+    ]);
     expect(Object.isFrozen(nativeEnds[0])).toBe(true);
     await runtime.stop();
   });
 
   it('reports one end per native turn when two submissions ran as two turns', async () => {
-    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+    const nativeEnds: NativeTurnEnd[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      nativeTurnSink: (end) => nativeEnds.push(end),
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -538,11 +544,13 @@ describe('CodexRuntime native turn end', () => {
   });
 
   it('reports nothing while a turn is still running', async () => {
-    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+    const nativeEnds: NativeTurnEnd[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      nativeTurnSink: (end) => nativeEnds.push(end),
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -559,11 +567,13 @@ describe('CodexRuntime native turn end', () => {
   });
 
   it('reports failed when the native turn carried an error', async () => {
-    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+    const nativeEnds: NativeTurnEnd[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      nativeTurnSink: (end) => nativeEnds.push(end),
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -576,12 +586,141 @@ describe('CodexRuntime native turn end', () => {
     await runtime.stop();
   });
 
-  it('reports failed once for every turn an unscoped protocol failure tore down', async () => {
-    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+  it('ends a native turn no submission ever bound, after its items displayed', async () => {
+    const activity: RuntimeActivity[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      nativeTurnSink: (end) => nativeEnds.push(end),
+      activitySink: (fact) => {
+        activity.push(fact);
+      },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    // The orphan turn: `turn/start` never answers, so the admission is
+    // ambiguous and no submission binds — while codex ran the turn anyway and
+    // reports its items and its terminal. Both halves belong on the display
+    // line: a card belongs to no turn, so this end closes whatever card these
+    // items opened, and is ignored when none is open.
+    client.block('turn/start');
+    const admission = runtime.submit({ text: 'lost in flight' });
+    await waitFor(() => client.hasBlocked('turn/start'));
+    client.rejectBlocked('turn/start', new Error('connection dropped'));
+    expect((await admission).status).toBe('ambiguous');
+
+    client.emitCompleted('fresh-thread-1', 'turn-orphan', 'orphan result');
+    await waitFor(() => activity.some((fact) => fact.kind === 'turn.ended'));
+
+    expect(activity.map((fact) => fact.kind)).toEqual([
+      'assistant.message',
+      'turn.ended',
+    ]);
+    expect(activity.at(-1)).toMatchObject({ status: 'completed', reason: null });
+    await runtime.stop();
+    // stop() reports its own interrupted end without asking whether a turn was
+    // open; the runtime keeps no such answer, and a consumer with nothing open
+    // ignores it.
+    expect(activity.filter((fact) => fact.kind === 'turn.ended').map((fact) => fact.status))
+      .toEqual(['completed', 'interrupted']);
+  });
+
+  it('reports the end while an admission is still in flight', async () => {
+    // The display line is not behind the admissions gate. codex finished a turn
+    // of its own while a `turn/start` this runtime issued has not answered yet,
+    // and the end goes out then — the gate exists so `finalize` does not settle
+    // a submission that has not bound yet, which is push-back's problem.
+    const nativeEnds: NativeTurnEnd[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    client.block('turn/start');
+    const admission = runtime.submit({ text: 'still admitting' });
+    await waitFor(() => client.hasBlocked('turn/start'));
+
+    client.emitCompleted('fresh-thread-1', 'turn-orphan', 'orphan result');
+    await waitFor(() => nativeEnds.length === 1);
+    expect(nativeEnds[0]).toMatchObject({ status: 'completed', reason: null });
+
+    client.rejectBlocked('turn/start', new Error('connection dropped'));
+    expect((await admission).status).toBe('ambiguous');
+    await runtime.stop();
+    expect(nativeEnds.map((end) => end.status)).toEqual(['completed', 'interrupted']);
+  });
+
+  it('ends a turn codex only ever sent items for, when stop() tears it down', async () => {
+    const nativeEnds: NativeTurnEnd[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
+    client.emitCompleted('fresh-thread-1', 'turn-1', 'done');
+    await submission.settled;
+
+    // A turn with no submission and no terminal of its own: the only thing this
+    // runtime knows about it is that codex showed something for it. It is still
+    // a native turn, and stop() ends it.
+    client.emitItem('fresh-thread-1', 'turn-observed', 'completed', {
+      type: 'agentMessage',
+      id: 'item-observed',
+      text: 'a turn nobody asked for',
+    });
+    await runtime.stop();
+
+    expect(nativeEnds.map((end) => end.status)).toEqual(['completed', 'interrupted']);
+  });
+
+  it('ends a turn codex only ever sent items for, when the protocol fails', async () => {
+    const nativeEnds: NativeTurnEnd[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
+    client.emitCompleted('fresh-thread-1', 'turn-1', 'done');
+    await submission.settled;
+    client.emitItem('fresh-thread-1', 'turn-observed', 'completed', {
+      type: 'agentMessage',
+      id: 'item-observed',
+      text: 'a turn nobody asked for',
+    });
+
+    client.emitUnscopedError('fresh-thread-1', 'codex daemon internal error');
+    await waitFor(() => nativeEnds.length === 2);
+
+    expect(nativeEnds.map((end) => end.status)).toEqual(['completed', 'failed']);
+    expect(nativeEnds.at(-1)!.reason).toContain('codex daemon internal error');
+    await runtime.stop();
+  });
+
+  it('reports failed once for every turn an unscoped protocol failure tore down', async () => {
+    const nativeEnds: NativeTurnEnd[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -595,11 +734,13 @@ describe('CodexRuntime native turn end', () => {
   });
 
   it('reports interrupted, exactly once, when stop() tore down a turn mid-flight', async () => {
-    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+    const nativeEnds: NativeTurnEnd[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      nativeTurnSink: (end) => nativeEnds.push(end),
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -607,18 +748,24 @@ describe('CodexRuntime native turn end', () => {
     const submission = requireSubmitted(await runtime.submit({ text: 'in flight' }));
     await runtime.stop();
     await expect(submission.settled).resolves.toEqual({ kind: 'stopped' });
-    // A second stop() must not re-report an end already reported.
+    // A second stop() is a no-op at the runtime: nothing is torn down twice,
+    // so no second end is reported.
     await runtime.stop();
 
     expect(nativeEnds.map((end) => end.status)).toEqual(['interrupted']);
   });
 
-  it('never reports a second end for a turn that already completed, even across stop()', async () => {
-    const nativeEnds: RuntimeNativeTurnEnd[] = [];
+  it('reports the teardown end after a turn already completed: the runtime holds no display state', async () => {
+    // The manager does not remember that the turn ended, and does not ask.
+    // stop() reports an interrupted end regardless; a card belongs to no turn,
+    // and a consumer with nothing open ignores the end (rule 8).
+    const nativeEnds: NativeTurnEnd[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      nativeTurnSink: (end) => nativeEnds.push(end),
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -628,28 +775,7 @@ describe('CodexRuntime native turn end', () => {
     await submission.settled;
     await runtime.stop();
 
-    expect(nativeEnds.map((end) => end.status)).toEqual(['completed']);
-  });
-
-  it('does not fail the turn when the native turn sink throws', async () => {
-    const client = new FakeCodexWsClient({ autoComplete: false });
-    const { deps } = makeDeps({
-      client,
-      nativeTurnSink: () => {
-        throw new Error('native turn sink exploded');
-      },
-    });
-    const runtime = new CodexRuntime(identity(null), deps);
-    await runtime.start();
-
-    const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
-    client.emitCompleted('fresh-thread-1', 'turn-1', 'done');
-
-    await expect(submission.settled).resolves.toMatchObject({
-      kind: 'completion',
-      completion: { status: 'completed', resultText: 'done' },
-    });
-    await runtime.stop();
+    expect(nativeEnds.map((end) => end.status)).toEqual(['completed', 'interrupted']);
   });
 });
 
@@ -678,6 +804,35 @@ describe('CodexRuntime outputSchema binding', () => {
     }
     // AgentRuntimeSubmissionInput carries only `text` — there is structurally
     // no field a caller could use to vary the schema per submit.
+    await runtime.stop();
+  });
+
+  it('shows the turn codex reported even when the encoded text cannot be restored', async () => {
+    // The card reports what codex did: the turn completed. Restoring the
+    // encoded text is push-back's work on that same terminal, and when it fails
+    // it fails the submission — it does not turn codex's completed turn into a
+    // failure on the display line.
+    const nativeEnds: NativeTurnEnd[] = [];
+    const codec = compileCodexOutputSchema(schema as unknown as Record<string, unknown>);
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      codec,
+      activitySink: (activity) => {
+        if (activity.kind === 'turn.ended') nativeEnds.push(activity);
+      },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    const submission = requireSubmitted(await runtime.submit({ text: 'go' }));
+    client.emitCompleted('fresh-thread-1', 'turn-1', 'not the encoded envelope');
+    await expect(submission.settled).resolves.toMatchObject({
+      kind: 'completion',
+      completion: { status: 'failed' },
+    });
+
+    expect(nativeEnds.map((end) => end.status)).toEqual(['completed']);
     await runtime.stop();
   });
 

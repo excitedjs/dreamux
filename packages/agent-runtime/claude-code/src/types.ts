@@ -101,8 +101,6 @@ export interface TurnSubmitOptions {
    * sub-agent completion notification. Never set on human channel turns.
    */
   isSynthetic?: boolean;
-  /** Optional stdin delivery priority (claude-code `priority`). */
-  priority?: 'now' | 'next' | 'later';
 }
 
 /** The reduced outcome of one assistant turn, terminated by a `result`. */

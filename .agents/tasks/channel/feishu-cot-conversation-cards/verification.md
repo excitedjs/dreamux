@@ -9,19 +9,44 @@
   host paths, and it adds one resolved value to the dispatcher composition; no
   path *contract* — none of the host-owned builders in `platform/paths.ts` —
   changed.
-- The runtime and core expose one provider-neutral native-turn-ended fact per
+- (Superseded 2026-09-03: a provider keeps no display state, so it reports an
+  end from the native terminal it observed and again, without asking whether a
+  turn was open, when it tears down a live native session; Core reports one of
+  its own for an input no runtime accepted. One Dreamux-owned native turn
+  therefore no longer means one fact — the Channel ignores an end with nothing
+  open — and the fact also carries the producer's own reason beside the actor
+  and terminal status. See
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).)
+  The runtime and core expose one provider-neutral native-turn-ended fact per
   Dreamux-owned native turn. The fact carries only the actor and terminal
   status; it does not expose folded logical submissions, presentation targets,
   or Feishu concepts.
 - The Feishu Channel owns one session-memory standing anchor and at most one
   open card per channel-facing TeamLeader or Dispatcher. Feishu targets are
   anchor attributes rather than presentation identities.
-- A successfully admitted Channel inbound replaces the recipient's anchor.
+- (Superseded in part 2026-09-02 by
+  [#364](https://github.com/excitedjs/dreamux/pull/364): anchor timing is no
+  longer gated on admission. The Channel takes the recipient's anchor when it
+  submits, before Core answers, and retires it only on an outcome that proves no
+  turn exists — waiting for admission is what pushed synchronously published
+  facts onto the predecessor card, which is the loss the list below now records
+  instead. The Dispatcher's first anchor is likewise taken at submit. The Reply
+  and bind-card statements stand.)
+  A successfully admitted Channel inbound replaces the recipient's anchor.
   Reply does not affect COT presentation. A visible bind card initializes only
   an anchorless TeamLeader; Dispatcher presentation starts with its first
   successfully admitted Channel inbound.
 - With an anchor, ordinary supported facts append to the open card or open a
-  new card when none is open. There is no source whitelist and no body
+  new card when none is open. (Superseded 2026-09-02 by
+  [#364](https://github.com/excitedjs/dreamux/pull/364): there is still no
+  source whitelist, but the Channel hides the body of its own submission
+  exactly once, because the operator can already see that message as their own
+  Feishu message. Recognition is a comparison against the caller-owned source
+  ids this session issued, never a check that an id is present — #364
+  correlated them through `teammate.turn.submitted` and the turn id, and
+  [#367](https://github.com/excitedjs/dreamux/pull/367) deletes the turn-scoped
+  events and consumes the same id on the `teammate.input` fact instead.)
+  There is no source whitelist and no body
   suppression: the body of the message this Channel submitted displays like any
   other input.
 - Card create or append failure abandons only that card attempt and leaves the
@@ -35,14 +60,36 @@
 
 - Claude and Codex runtime suites cover native-turn-ended emission for
   completion, failure, interruption, folding, teardown, and fail-open sink
-  errors. One terminal `result` reports one end; a resident Claude execution
+  errors. (Superseded 2026-09-03: the three throwing-sink tests are deleted
+  with the provider-side guard they exercised — two in the Claude submissions
+  suite, one in the codex runtime suite. `AgentRuntimeActivitySink` now states
+  that the sink never throws: Core's conversation projection catches and logs a
+  projection failure itself, so a provider calls it bare and there is no branch
+  left to exercise. See
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).)
+  One terminal `result` reports one end; a resident Claude execution
   window that answers several commands in sequence reports one end per result;
   a synthesized end is reported only by the call that actually settled a
   still-open submission, so an ordinary success reports exactly one end.
+  (Superseded 2026-09-03: the provider display state that made the synthesized
+  end at-most-once is deleted, so a teardown reports an end without asking
+  whether a turn was open — an ordinary success followed by `stop()` reports
+  the completed end and then an interrupted one, which the Channel ignores
+  because nothing is open. See
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).)
 - Dreamux type and core suites cover the neutral event shape, closed event
   catalog, actor-only projection, runtime-generation fencing, and unchanged
   admission/completion behavior.
-- Feishu adapter tests run the same anchor and card lifecycle contract for
+- (Superseded 2026-09-02: two items below no longer hold and a third names a
+  deleted mechanism. The Channel takes the anchor when it submits and retires it
+  only on an outcome that proves no admission, so replacement is no longer
+  post-admission; it hides the one body it submitted — recognised by the
+  `source_id` it issued — exactly once, while every other body still displays;
+  and no settlement event survives, so `turn.ended` is the card's only terminal,
+  whatever it folded. See [#364](https://github.com/excitedjs/dreamux/pull/364)
+  and
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).)
+  Feishu adapter tests run the same anchor and card lifecycle contract for
   TeamLeader and Dispatcher, including global recipient identity across target
   changes, post-admission anchor replacement, default source display, narrow
   no-anchor suppression, memory-only reset, bind-card
@@ -105,12 +152,23 @@ a full green suite is not evidence that a boundary rule is right.
 
 ## Accepted best-effort losses
 
-- A fact synchronously projected before steer or queue success returns may be
+- (Superseded 2026-09-02 by
+  [#364](https://github.com/excitedjs/dreamux/pull/364): the Channel takes the
+  anchor when it submits, so a fact published synchronously inside the admitting
+  call lands on the successor card, and its own body is recognized by the source
+  id it issued rather than displayed. What that trade cost is the spent card
+  recorded below.) A fact synchronously projected before steer or queue success
+  returns may be
   appended to the predecessor card or discarded when no anchor exists. The
   Channel does not buffer, reorder, or add a private/public correlation
   contract for this window. This is also why no body suppression exists: the
   body of this Channel's own inbound is exactly such a fact.
-- An exceptionally early native-turn-ended fact may be ignored before the
+- (Superseded 2026-09-02: the receipt card opens inside the submitting call,
+  before Core is invoked, and the presentation is installed on the recipient's
+  state synchronously, so an end for an inbound this Channel anchored can no
+  longer arrive before that card opens. See
+  [#364](https://github.com/excitedjs/dreamux/pull/364).)
+  An exceptionally early native-turn-ended fact may be ignored before the
   post-admission receipt card opens, leaving that card open until a later
   anchor replacement or session close.
 - A tool result that crosses an anchor replacement may be discarded rather
@@ -140,7 +198,10 @@ a full green suite is not evidence that a boundary rule is right.
   recipient anchorless rather than restoring the previous anchor: that card is
   already closed, so restoring its anchor would only make the next activity open
   a fresh card under an older message.
-- An Agent Runtime provider that does not implement the optional `nativeTurn`
+- (Superseded 2026-09-02: the optional `nativeTurn` sink is deleted; the end
+  arrives as a `turn.ended` member of the single activity sink. See
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).)
+  An Agent Runtime provider that does not implement the optional `nativeTurn`
   sink publishes no native-turn end, so a COT card for that provider opens and
   never closes until an anchor replacement or session close. Both built-in
   providers implement it. Core deliberately derives no fallback from

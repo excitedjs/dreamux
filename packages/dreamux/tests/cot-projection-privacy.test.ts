@@ -2,10 +2,10 @@
  * Coverage cell C (event half), Stage 9 node "core-events".
  *
  * The frozen post-COT baseline: `channel/conversation-projection.ts`'s
- * workspace/secret redaction and truncation rules for `teammate.turn.message`
- * and `teammate.turn.tool_call`. Everything else about the catalog (six-kind
- * union, live delivery, team.state/teammate.state, turn_id correlation) lives
- * in `tests/core-event-catalog.test.ts`.
+ * workspace/secret redaction and truncation rules for `teammate.input` and
+ * `teammate.activity`. Everything else about the catalog (the four-kind union,
+ * live delivery, team.state/teammate.state) lives in
+ * `tests/core-event-catalog.test.ts`.
  *
  * "Visible after redaction remain unchanged" is tested directly: content with
  * no secret/path shape must survive byte-for-byte, not be narrowed to any
@@ -16,13 +16,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
-  RuntimeActivityEvent,
-  RuntimeSubmission,
+  RuntimeActivity,
+  TeammateActivity,
+  TeammateInputEvent,
 } from '@excitedjs/dreamux-types';
 
 import {
-  ASSISTANT_TEXT_MAX,
-  CONVERSATION_ACTIVITY_FACTS_MAX,
   CONVERSATION_MESSAGE_MAX,
   CONVERSATION_TOOL_ARGUMENTS_MAX,
   CONVERSATION_TOOL_RESULT_MAX,
@@ -51,28 +50,55 @@ function harness(overrides: { hasSources?: boolean } = {}) {
   return { publisher, warnCalls, projection, agent };
 }
 
-function fakeSubmission(): RuntimeSubmission {
-  return { settled: Promise.resolve({ kind: 'stopped' }) };
+/** The one `teammate.input` this projection published. */
+function inputOf(
+  publisher: ReturnType<typeof createCapturingPublisher>,
+): TeammateInputEvent {
+  const event = publisher.published.find((entry) => entry.event.kind === 'teammate.input')?.event;
+  if (event?.kind !== 'teammate.input') throw new Error('expected a projected input event');
+  return event;
 }
 
-function submittedMessageContent(
+/** The one `teammate.activity` payload this projection published. */
+function activityOf(
   publisher: ReturnType<typeof createCapturingPublisher>,
-): string {
-  const message = publisher.published.find((entry) => entry.event.kind === 'teammate.turn.message')?.event;
-  if (message?.kind !== 'teammate.turn.message') throw new Error('expected a projected message event');
-  return message.content;
+): TeammateActivity {
+  const event = publisher.published.find((entry) => entry.event.kind === 'teammate.activity')?.event;
+  if (event?.kind !== 'teammate.activity') throw new Error('expected a projected activity event');
+  return event.activity;
+}
+
+function projectPrompt(
+  projection: ReturnType<typeof createConversationProjection>,
+  agent: ProjectedAgent,
+  text: string,
+): void {
+  projection.projectInput(agent, {
+    source: 'feishu',
+    sourceId: null,
+    text,
+    occurredAt: Date.now(),
+  });
+}
+
+function assistantActivity(
+  text: string,
+  truncated = false,
+): RuntimeActivity {
+  return {
+    kind: 'assistant.message',
+    occurredAt: Date.now(),
+    id: 'evt-1',
+    text,
+    truncated,
+  };
 }
 
 describe('conversation projection: secret redaction', () => {
   it('redacts an inline password/token-shaped assignment, keeping the key and separator', () => {
     const { publisher, projection, agent } = harness();
-    projection.projectSubmitted(agent, {
-      id: 'turn-1',
-      submittedAt: Date.now(),
-      prompt: 'the password: "hunter2xyz" must rotate',
-      source: 'feishu',
-    });
-    const content = submittedMessageContent(publisher);
+    projectPrompt(projection, agent, 'the password: "hunter2xyz" must rotate');
+    const content = inputOf(publisher).content;
     expect(content).not.toContain('hunter2xyz');
     expect(content).toContain('password: <redacted>');
   });
@@ -80,39 +106,24 @@ describe('conversation projection: secret redaction', () => {
   it('redacts an inline api_key= assignment', () => {
     const { publisher, projection, agent } = harness();
     const fakeSecret = ['sk', 'live', 'abcdef1234567890'].join('_');
-    projection.projectSubmitted(agent, {
-      id: 'turn-1',
-      submittedAt: Date.now(),
-      prompt: `set api_key=${fakeSecret} in env`,
-      source: 'feishu',
-    });
-    const content = submittedMessageContent(publisher);
+    projectPrompt(projection, agent, `set api_key=${fakeSecret} in env`);
+    const content = inputOf(publisher).content;
     expect(content).not.toContain(fakeSecret);
     expect(content).toContain('api_key=<redacted>');
   });
 
   it('redacts an authorization: value pair', () => {
     const { publisher, projection, agent } = harness();
-    projection.projectSubmitted(agent, {
-      id: 'turn-1',
-      submittedAt: Date.now(),
-      prompt: 'authorization: mySecretToken123abc grants access',
-      source: 'feishu',
-    });
-    const content = submittedMessageContent(publisher);
+    projectPrompt(projection, agent, 'authorization: mySecretToken123abc grants access');
+    const content = inputOf(publisher).content;
     expect(content).not.toContain('mySecretToken123abc');
     expect(content).toContain('authorization: <redacted>');
   });
 
   it('redacts a bare Bearer token', () => {
     const { publisher, projection, agent } = harness();
-    projection.projectSubmitted(agent, {
-      id: 'turn-1',
-      submittedAt: Date.now(),
-      prompt: 'call it with Bearer abcDEF123.ghiJKL456-_9',
-      source: 'feishu',
-    });
-    const content = submittedMessageContent(publisher);
+    projectPrompt(projection, agent, 'call it with Bearer abcDEF123.ghiJKL456-_9');
+    const content = inputOf(publisher).content;
     expect(content).not.toContain('abcDEF123.ghiJKL456-_9');
     expect(content).toContain('Bearer <redacted>');
   });
@@ -124,26 +135,16 @@ describe('conversation projection: secret redaction', () => {
       'eyJzdWIiOiIxMjM0NTY3ODkwIn0',
       'SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c',
     ].join('.');
-    projection.projectSubmitted(agent, {
-      id: 'turn-1',
-      submittedAt: Date.now(),
-      prompt: `session ${jwt} end`,
-      source: 'feishu',
-    });
-    const content = submittedMessageContent(publisher);
+    projectPrompt(projection, agent, `session ${jwt} end`);
+    const content = inputOf(publisher).content;
     expect(content).not.toContain(jwt);
     expect(content).toContain('<redacted-jwt>');
   });
 
   it('redacts an AWS-style access key', () => {
     const { publisher, projection, agent } = harness();
-    projection.projectSubmitted(agent, {
-      id: 'turn-1',
-      submittedAt: Date.now(),
-      prompt: 'key AKIAABCDEFGHIJKLMN in use',
-      source: 'feishu',
-    });
-    const content = submittedMessageContent(publisher);
+    projectPrompt(projection, agent, 'key AKIAABCDEFGHIJKLMN in use');
+    const content = inputOf(publisher).content;
     expect(content).not.toContain('AKIAABCDEFGHIJKLMN');
     expect(content).toContain('<redacted-access-key>');
   });
@@ -155,26 +156,16 @@ describe('conversation projection: secret redaction', () => {
       'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDExampleKeyData',
       ['-----END', 'PRIVATE KEY-----'].join(' '),
     ].join('\n');
-    projection.projectSubmitted(agent, {
-      id: 'turn-1',
-      submittedAt: Date.now(),
-      prompt: `here is the key:\n${pem}\nend`,
-      source: 'feishu',
-    });
-    const content = submittedMessageContent(publisher);
+    projectPrompt(projection, agent, `here is the key:\n${pem}\nend`);
+    const content = inputOf(publisher).content;
     expect(content).not.toContain('MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDExampleKeyData');
     expect(content).toContain('<redacted-private-key>');
   });
 
   it('relativizes an entity workspace path to a repo-relative one', () => {
     const { publisher, projection, agent } = harness();
-    projection.projectSubmitted(agent, {
-      id: 'turn-1',
-      submittedAt: Date.now(),
-      prompt: `file at ${CWD}/secrets/env.local was read`,
-      source: 'feishu',
-    });
-    const content = submittedMessageContent(publisher);
+    projectPrompt(projection, agent, `file at ${CWD}/secrets/env.local was read`);
+    const content = inputOf(publisher).content;
     expect(content).not.toContain(CWD);
     expect(content).toBe('file at secrets/env.local was read');
   });
@@ -305,14 +296,8 @@ describe('conversation projection: secret redaction', () => {
 
   it('marks redacted:true only when a rule actually fired, false for ordinary text', () => {
     const { publisher, projection, agent } = harness();
-    projection.projectSubmitted(agent, {
-      id: 'turn-1',
-      submittedAt: Date.now(),
-      prompt: 'nothing sensitive here at all',
-      source: 'feishu',
-    });
-    const message = publisher.published.find((entry) => entry.event.kind === 'teammate.turn.message')?.event;
-    expect(message?.kind === 'teammate.turn.message' && message.redacted).toBe(false);
+    projectPrompt(projection, agent, 'nothing sensitive here at all');
+    expect(inputOf(publisher).redacted).toBe(false);
   });
 });
 
@@ -321,40 +306,31 @@ describe('conversation projection: content visible after redaction is unchanged,
     const { publisher, projection, agent } = harness();
     const args = { file: 'report.md', count: 3, tags: ['alpha', 'beta'], nested: { ok: true } };
     const result = { status: 'ok', rows: [10, 20, 30], summary: 'no issues found' };
-    const activity: RuntimeActivityEvent = {
-      submission: fakeSubmission(),
+    projection.projectActivity(agent, {
+      kind: 'tool.call',
       occurredAt: Date.now(),
-      activity: {
-        kind: 'tool.call',
-        id: 'evt-1',
-        callId: 'call-1',
-        toolName: 'read_file',
-        action: 'read',
-        status: 'completed',
-        arguments: args,
-        result,
-        error: null,
-      },
-    };
-    projection.projectActivity(agent, { id: 'turn-1', submittedAt: Date.now(), prompt: null, source: 'feishu' }, activity);
+      id: 'evt-1',
+      callId: 'call-1',
+      toolName: 'read_file',
+      action: 'read',
+      status: 'completed',
+      arguments: args,
+      result,
+      error: null,
+    });
 
-    const toolEvent = publisher.published.find((entry) => entry.event.kind === 'teammate.turn.tool_call')?.event;
-    expect(toolEvent?.kind === 'teammate.turn.tool_call' && toolEvent.arguments_json).toBe(JSON.stringify(args));
-    expect(toolEvent?.kind === 'teammate.turn.tool_call' && toolEvent.result_json).toBe(JSON.stringify(result));
-    expect(toolEvent?.kind === 'teammate.turn.tool_call' && toolEvent.redacted).toBe(false);
+    const tool = activityOf(publisher);
+    expect(tool.kind === 'tool.call' && tool.arguments_json).toBe(JSON.stringify(args));
+    expect(tool.kind === 'tool.call' && tool.result_json).toBe(JSON.stringify(result));
+    expect(tool.kind === 'tool.call' && tool.redacted).toBe(false);
   });
 
   it('keeps an ordinary assistant message byte-identical', () => {
     const { publisher, projection, agent } = harness();
     const text = 'Ran the tests. 42 passed, 0 failed. Nothing else to report.';
-    const activity: RuntimeActivityEvent = {
-      submission: fakeSubmission(),
-      occurredAt: Date.now(),
-      activity: { kind: 'assistant.message', id: 'evt-1', text, truncated: false },
-    };
-    projection.projectActivity(agent, { id: 'turn-1', submittedAt: Date.now(), prompt: null, source: 'feishu' }, activity);
-    const message = publisher.published.find((entry) => entry.event.kind === 'teammate.turn.message')?.event;
-    expect(message?.kind === 'teammate.turn.message' && message.content).toBe(text);
+    projection.projectActivity(agent, assistantActivity(text));
+    const message = activityOf(publisher);
+    expect(message.kind === 'assistant.message' && message.content).toBe(text);
   });
 });
 
@@ -362,224 +338,158 @@ describe('conversation projection: truncation at and above the bound', () => {
   it('does not truncate a message exactly at CONVERSATION_MESSAGE_MAX', () => {
     const { publisher, projection, agent } = harness();
     const prompt = 'a'.repeat(CONVERSATION_MESSAGE_MAX);
-    projection.projectSubmitted(agent, { id: 'turn-1', submittedAt: Date.now(), prompt, source: 'feishu' });
-    const message = publisher.published.find((entry) => entry.event.kind === 'teammate.turn.message')?.event;
-    expect(message?.kind === 'teammate.turn.message' && message.content.length).toBe(CONVERSATION_MESSAGE_MAX);
-    expect(message?.kind === 'teammate.turn.message' && message.content_truncated).toBe(false);
+    projectPrompt(projection, agent, prompt);
+    const event = inputOf(publisher);
+    expect(event.content.length).toBe(CONVERSATION_MESSAGE_MAX);
+    expect(event.content_truncated).toBe(false);
   });
 
   it('truncates a message one byte over CONVERSATION_MESSAGE_MAX to exactly the bound', () => {
     const { publisher, projection, agent } = harness();
     const prompt = 'a'.repeat(CONVERSATION_MESSAGE_MAX + 1);
-    projection.projectSubmitted(agent, { id: 'turn-1', submittedAt: Date.now(), prompt, source: 'feishu' });
-    const message = publisher.published.find((entry) => entry.event.kind === 'teammate.turn.message')?.event;
-    expect(message?.kind === 'teammate.turn.message' && message.content.length).toBe(CONVERSATION_MESSAGE_MAX);
-    expect(message?.kind === 'teammate.turn.message' && message.content_truncated).toBe(true);
+    projectPrompt(projection, agent, prompt);
+    const event = inputOf(publisher);
+    expect(event.content.length).toBe(CONVERSATION_MESSAGE_MAX);
+    expect(event.content_truncated).toBe(true);
   });
 
   it('marks content_truncated when the runtime itself reports truncation, even under the bound', () => {
     const { publisher, projection, agent } = harness();
-    const activity: RuntimeActivityEvent = {
-      submission: fakeSubmission(),
-      occurredAt: Date.now(),
-      activity: { kind: 'assistant.message', id: 'evt-1', text: 'short text', truncated: true },
-    };
-    projection.projectActivity(agent, { id: 'turn-1', submittedAt: Date.now(), prompt: null, source: 'feishu' }, activity);
-    const message = publisher.published.find((entry) => entry.event.kind === 'teammate.turn.message')?.event;
-    expect(message?.kind === 'teammate.turn.message' && message.content_truncated).toBe(true);
-  });
-
-  it('does not truncate a settled assistant result exactly at ASSISTANT_TEXT_MAX', () => {
-    const { publisher, projection, agent } = harness();
-    const resultText = 'b'.repeat(ASSISTANT_TEXT_MAX);
-    const turn = { id: 'turn-1', submittedAt: Date.now(), prompt: 'go', source: 'feishu' };
-    projection.projectSettled({
-      agent,
-      turn,
-      settlement: { status: 'completed', resultText, truncated: false },
-    });
-    const settled = publisher.published.find((entry) => entry.event.kind === 'teammate.turn.settled')?.event;
-    expect(settled?.kind === 'teammate.turn.settled' && settled.assistant?.length).toBe(ASSISTANT_TEXT_MAX);
-    expect(settled?.kind === 'teammate.turn.settled' && settled.assistant_truncated).toBe(false);
-  });
-
-  it('truncates a settled assistant result one byte over ASSISTANT_TEXT_MAX to exactly the bound', () => {
-    const { publisher, projection, agent } = harness();
-    const resultText = 'b'.repeat(ASSISTANT_TEXT_MAX + 1);
-    const turn = { id: 'turn-1', submittedAt: Date.now(), prompt: 'go', source: 'feishu' };
-    projection.projectSettled({
-      agent,
-      turn,
-      settlement: { status: 'completed', resultText, truncated: false },
-    });
-    const settled = publisher.published.find((entry) => entry.event.kind === 'teammate.turn.settled')?.event;
-    expect(settled?.kind === 'teammate.turn.settled' && settled.assistant?.length).toBe(ASSISTANT_TEXT_MAX);
-    expect(settled?.kind === 'teammate.turn.settled' && settled.assistant_truncated).toBe(true);
-  });
-
-  it('marks assistant_truncated when the provider itself reported truncation, even under the text bound', () => {
-    const { publisher, projection, agent } = harness();
-    const turn = { id: 'turn-1', submittedAt: Date.now(), prompt: 'go', source: 'feishu' };
-    projection.projectSettled({
-      agent,
-      turn,
-      settlement: { status: 'completed', resultText: 'short', truncated: true },
-    });
-    const settled = publisher.published.find((entry) => entry.event.kind === 'teammate.turn.settled')?.event;
-    expect(settled?.kind === 'teammate.turn.settled' && settled.assistant_truncated).toBe(true);
+    projection.projectActivity(agent, assistantActivity('short text', true));
+    const message = activityOf(publisher);
+    expect(message.kind === 'assistant.message' && message.content_truncated).toBe(true);
   });
 
   it('does not truncate tool arguments exactly at CONVERSATION_TOOL_ARGUMENTS_MAX', () => {
     const { publisher, projection, agent } = harness();
     const args = 'c'.repeat(CONVERSATION_TOOL_ARGUMENTS_MAX);
-    const activity: RuntimeActivityEvent = {
-      submission: fakeSubmission(),
+    projection.projectActivity(agent, {
+      kind: 'tool.call',
       occurredAt: Date.now(),
-      activity: {
-        kind: 'tool.call',
-        id: 'evt-1',
-        callId: 'call-1',
-        toolName: 'shell',
-        action: 'run',
-        status: 'completed',
-        arguments: args,
-        result: null,
-        error: null,
-      },
-    };
-    projection.projectActivity(agent, { id: 'turn-1', submittedAt: Date.now(), prompt: null, source: 'feishu' }, activity);
-    const toolEvent = publisher.published.find((entry) => entry.event.kind === 'teammate.turn.tool_call')?.event;
-    expect(toolEvent?.kind === 'teammate.turn.tool_call' && toolEvent.arguments_json?.length).toBe(
+      id: 'evt-1',
+      callId: 'call-1',
+      toolName: 'shell',
+      action: 'run',
+      status: 'completed',
+      arguments: args,
+      result: null,
+      error: null,
+    });
+    const toolEvent = activityOf(publisher);
+    expect(toolEvent.kind === 'tool.call' && toolEvent.arguments_json?.length).toBe(
       CONVERSATION_TOOL_ARGUMENTS_MAX,
     );
-    expect(toolEvent?.kind === 'teammate.turn.tool_call' && toolEvent.arguments_truncated).toBe(false);
+    expect(toolEvent.kind === 'tool.call' && toolEvent.arguments_truncated).toBe(false);
   });
 
   it('truncates tool arguments one byte over CONVERSATION_TOOL_ARGUMENTS_MAX to exactly the bound', () => {
     const { publisher, projection, agent } = harness();
     const args = 'c'.repeat(CONVERSATION_TOOL_ARGUMENTS_MAX + 1);
-    const activity: RuntimeActivityEvent = {
-      submission: fakeSubmission(),
+    projection.projectActivity(agent, {
+      kind: 'tool.call',
       occurredAt: Date.now(),
-      activity: {
-        kind: 'tool.call',
-        id: 'evt-1',
-        callId: 'call-1',
-        toolName: 'shell',
-        action: 'run',
-        status: 'completed',
-        arguments: args,
-        result: null,
-        error: null,
-      },
-    };
-    projection.projectActivity(agent, { id: 'turn-1', submittedAt: Date.now(), prompt: null, source: 'feishu' }, activity);
-    const toolEvent = publisher.published.find((entry) => entry.event.kind === 'teammate.turn.tool_call')?.event;
-    expect(toolEvent?.kind === 'teammate.turn.tool_call' && toolEvent.arguments_json?.length).toBe(
+      id: 'evt-1',
+      callId: 'call-1',
+      toolName: 'shell',
+      action: 'run',
+      status: 'completed',
+      arguments: args,
+      result: null,
+      error: null,
+    });
+    const toolEvent = activityOf(publisher);
+    expect(toolEvent.kind === 'tool.call' && toolEvent.arguments_json?.length).toBe(
       CONVERSATION_TOOL_ARGUMENTS_MAX,
     );
-    expect(toolEvent?.kind === 'teammate.turn.tool_call' && toolEvent.arguments_truncated).toBe(true);
+    expect(toolEvent.kind === 'tool.call' && toolEvent.arguments_truncated).toBe(true);
   });
 
   it('does not truncate a tool result exactly at CONVERSATION_TOOL_RESULT_MAX', () => {
     const { publisher, projection, agent } = harness();
     const result = 'd'.repeat(CONVERSATION_TOOL_RESULT_MAX);
-    const activity: RuntimeActivityEvent = {
-      submission: fakeSubmission(),
+    projection.projectActivity(agent, {
+      kind: 'tool.call',
       occurredAt: Date.now(),
-      activity: {
-        kind: 'tool.call',
-        id: 'evt-1',
-        callId: 'call-1',
-        toolName: 'shell',
-        action: 'run',
-        status: 'completed',
-        arguments: null,
-        result,
-        error: null,
-      },
-    };
-    projection.projectActivity(agent, { id: 'turn-1', submittedAt: Date.now(), prompt: null, source: 'feishu' }, activity);
-    const toolEvent = publisher.published.find((entry) => entry.event.kind === 'teammate.turn.tool_call')?.event;
-    expect(toolEvent?.kind === 'teammate.turn.tool_call' && toolEvent.result_json?.length).toBe(
+      id: 'evt-1',
+      callId: 'call-1',
+      toolName: 'shell',
+      action: 'run',
+      status: 'completed',
+      arguments: null,
+      result,
+      error: null,
+    });
+    const toolEvent = activityOf(publisher);
+    expect(toolEvent.kind === 'tool.call' && toolEvent.result_json?.length).toBe(
       CONVERSATION_TOOL_RESULT_MAX,
     );
-    expect(toolEvent?.kind === 'teammate.turn.tool_call' && toolEvent.result_truncated).toBe(false);
+    expect(toolEvent.kind === 'tool.call' && toolEvent.result_truncated).toBe(false);
   });
 
   it('truncates a tool result one byte over CONVERSATION_TOOL_RESULT_MAX to exactly the bound', () => {
     const { publisher, projection, agent } = harness();
     const result = 'd'.repeat(CONVERSATION_TOOL_RESULT_MAX + 1);
-    const activity: RuntimeActivityEvent = {
-      submission: fakeSubmission(),
+    projection.projectActivity(agent, {
+      kind: 'tool.call',
       occurredAt: Date.now(),
-      activity: {
-        kind: 'tool.call',
-        id: 'evt-1',
-        callId: 'call-1',
-        toolName: 'shell',
-        action: 'run',
-        status: 'completed',
-        arguments: null,
-        result,
-        error: null,
-      },
-    };
-    projection.projectActivity(agent, { id: 'turn-1', submittedAt: Date.now(), prompt: null, source: 'feishu' }, activity);
-    const toolEvent = publisher.published.find((entry) => entry.event.kind === 'teammate.turn.tool_call')?.event;
-    expect(toolEvent?.kind === 'teammate.turn.tool_call' && toolEvent.result_json?.length).toBe(
+      id: 'evt-1',
+      callId: 'call-1',
+      toolName: 'shell',
+      action: 'run',
+      status: 'completed',
+      arguments: null,
+      result,
+      error: null,
+    });
+    const toolEvent = activityOf(publisher);
+    expect(toolEvent.kind === 'tool.call' && toolEvent.result_json?.length).toBe(
       CONVERSATION_TOOL_RESULT_MAX,
     );
-    expect(toolEvent?.kind === 'teammate.turn.tool_call' && toolEvent.result_truncated).toBe(true);
-  });
-
-  it('a failed/stopped settlement carries no assistant text at all', () => {
-    const { publisher, projection, agent } = harness();
-    const turn = { id: 'turn-1', submittedAt: Date.now(), prompt: 'go', source: 'feishu' };
-    projection.projectSettled({ agent, turn, settlement: { status: 'failed' } });
-    const settled = publisher.published.find((entry) => entry.event.kind === 'teammate.turn.settled')?.event;
-    expect(settled?.kind === 'teammate.turn.settled' && settled.assistant).toBeNull();
-    expect(settled?.kind === 'teammate.turn.settled' && settled.assistant_truncated).toBe(false);
+    expect(toolEvent.kind === 'tool.call' && toolEvent.result_truncated).toBe(true);
   });
 });
 
-describe('conversation projection: bounded activity fact set', () => {
-  it('deduplicates a repeated activity id on the same submission into exactly one publish', () => {
-    const { publisher, projection, agent } = harness();
-    const submission = fakeSubmission();
-    const turn = { id: 'turn-1', submittedAt: Date.now(), prompt: null, source: 'feishu' };
-    const activity: RuntimeActivityEvent = {
-      submission,
-      occurredAt: Date.now(),
-      activity: { kind: 'assistant.message', id: 'evt-dup', text: 'first', truncated: false },
-    };
-    projection.projectActivity(agent, turn, activity);
-    projection.projectActivity(agent, turn, activity);
+describe('conversation projection: the turn.ended reason', () => {
+  function endedActivity(reason: string | null): RuntimeActivity {
+    return { kind: 'turn.ended', occurredAt: Date.now(), status: 'failed', reason };
+  }
 
-    const messages = publisher.published.filter((entry) => entry.event.kind === 'teammate.turn.message');
-    expect(messages).toHaveLength(1);
+  it('redacts and relativizes the reason, which carries a raw provider error message', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(
+      agent,
+      endedActivity(`spawn ${CWD}/bin/agent failed: authorization: tok3nAbcDef123`),
+    );
+    const ended = activityOf(publisher);
+    expect(ended.kind === 'turn.ended' && ended.reason).toBe(
+      'spawn bin/agent failed: authorization: <redacted>',
+    );
+    expect(ended.kind === 'turn.ended' && ended.redacted).toBe(true);
+    expect(ended.kind === 'turn.ended' && ended.reason_truncated).toBe(false);
   });
 
-  it('drops activity beyond CONVERSATION_ACTIVITY_FACTS_MAX for one submission, warning exactly once', () => {
-    const { publisher, warnCalls, projection, agent } = harness();
-    const submission = fakeSubmission();
-    const turn = { id: 'turn-1', submittedAt: Date.now(), prompt: null, source: 'feishu' };
+  it('keeps an ordinary reason byte-identical and reports redacted:false', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, endedActivity('the agent runtime is not running'));
+    const ended = activityOf(publisher);
+    expect(ended.kind === 'turn.ended' && ended.reason).toBe('the agent runtime is not running');
+    expect(ended.kind === 'turn.ended' && ended.redacted).toBe(false);
+  });
 
-    for (let i = 0; i < CONVERSATION_ACTIVITY_FACTS_MAX + 2; i += 1) {
-      const activity: RuntimeActivityEvent = {
-        submission,
-        occurredAt: Date.now(),
-        activity: { kind: 'assistant.message', id: `evt-${i}`, text: `msg ${i}`, truncated: false },
-      };
-      projection.projectActivity(agent, turn, activity);
-    }
+  it('bounds the reason by CONVERSATION_MESSAGE_MAX, as a provider message has no length the runtime owes us', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, endedActivity('e'.repeat(CONVERSATION_MESSAGE_MAX + 1)));
+    const ended = activityOf(publisher);
+    expect(ended.kind === 'turn.ended' && ended.reason?.length).toBe(CONVERSATION_MESSAGE_MAX);
+    expect(ended.kind === 'turn.ended' && ended.reason_truncated).toBe(true);
+  });
 
-    const messages = publisher.published.filter((entry) => entry.event.kind === 'teammate.turn.message');
-    expect(messages).toHaveLength(CONVERSATION_ACTIVITY_FACTS_MAX);
-    expect(
-      warnCalls.filter(
-        (c) => c.message === 'Conversation projection activity fact set is full; dropping newest activity',
-      ),
-    ).toHaveLength(1);
+  it('carries a null reason through as null, not an empty string', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, endedActivity(null));
+    const ended = activityOf(publisher);
+    expect(ended.kind === 'turn.ended' && ended.reason).toBeNull();
+    expect(ended.kind === 'turn.ended' && ended.reason_truncated).toBe(false);
+    expect(ended.kind === 'turn.ended' && ended.redacted).toBe(false);
   });
 });

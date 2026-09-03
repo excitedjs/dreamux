@@ -54,14 +54,10 @@ export class FeishuCotSessionSeam {
   /**
    * One subscription, demultiplexed here.
    *
-   * A submitted fact echoes the caller-owned id. If this session still has
-   * that id in flight, the adapter remembers the exact turn so the immediately
-   * following user body is hidden once; it does not move the anchor.
-   *
-   * `teammate.turn.settled` is deliberately absent. It is a per-logical-
-   * submission lifecycle fact, and a provider folds any number of submissions
-   * into one native turn, so it says nothing about whether the card the
-   * operator is watching has finished. `teammate.native_turn.ended` does.
+   * Two facts carry the whole conversation, split by producer: Core says what
+   * it admitted, and the runtime says what it did. The input echoes the
+   * caller-owned id, so a body this session itself submitted is recognized and
+   * hidden once rather than shown twice; it does not move the anchor.
    */
   handle(event: ChannelCoreEvent): void {
     const adapter = this.adapter;
@@ -70,17 +66,11 @@ export class FeishuCotSessionSeam {
     if (!isCurrent()) return;
     this.guard('listener failed; display only', () => {
       switch (event.kind) {
-        case 'teammate.turn.submitted':
-          adapter.onTurnSubmitted(event);
+        case 'teammate.input':
+          adapter.onInput(event);
           return;
-        case 'teammate.native_turn.ended':
-          adapter.onNativeTurnEnded(event);
-          return;
-        case 'teammate.turn.message':
-          adapter.onTurnMessage(event);
-          return;
-        case 'teammate.turn.tool_call':
-          adapter.onTurnToolCall(event);
+        case 'teammate.activity':
+          adapter.onActivity(event);
           return;
         case 'team.state':
           adapter.onTeamState(event);

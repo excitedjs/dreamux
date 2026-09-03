@@ -176,14 +176,18 @@ terminal outcome is snapshotted into the object-owned latch.
 Turn identity is deliberately narrow. TeamMate `spawn`, `send`, and `close`
 receipts carry no Turn id; the Team `send` receipt returns a process-local
 `turn_id` for a `submitted` admission only (a `duplicate` returns before runtime
-admission and has no second turn identity to report), and the Channel display
-event surface carries one to correlate a presentation with its lifecycle.
+admission and has no second turn identity to report), and no Channel event
+carries one at all — display is keyed on the Agent, so nothing on that surface
+can be mistaken for proof that an output answers an input.
 Workflow records, completion routing, and identity state carry none. Dreamux
 persists no Turn archive and no rolling conversation projection.
 
-Providers report live assistant and tool activity through the submission's
-synchronous activity sink; native session history stays cold and is read only on
-demand. Conversation-bearing entities may feed that activity into the live,
+Providers report live assistant and tool activity, and the end of a native turn,
+through one synchronous activity sink leased to the runtime generation and keyed
+on the Agent — a provider folds any number of submissions into one native turn,
+so no activity could honestly name the submission that caused it; native session
+history stays cold and is read only on demand. Conversation-bearing entities
+may feed that activity into the live,
 non-persistent conversation display projection.
 
 The two built-in Activity readers keep native schemas, discovery rules, cursor

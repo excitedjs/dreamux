@@ -26,9 +26,9 @@ import type {
   ChannelEventSubscription,
   DreamuxLogger,
   JsonValue,
-  TeammateNativeTurnEndedEvent,
-  TeammateTurnMessageEvent,
-  TeammateTurnSubmittedEvent,
+  TeammateActivity,
+  TeammateActivityEvent,
+  TeammateInputEvent,
 } from '@excitedjs/dreamux-types';
 
 import { FeishuChannelSession } from '../src/feishu-channel.js';
@@ -36,7 +36,7 @@ import { FEISHU_COT_OPENING_LABELS } from '../src/feishu-cot-adapter.js';
 import { chatTarget } from '../src/routing/target.js';
 import { createFakeFeishuBot, type FakeFeishuBot } from './helpers/fake-feishu-bot.js';
 import {
-  cotRunStatus,
+  cotTerminal,
   cotTexts,
   createFakeCotClient,
   type FakeCotCard,
@@ -124,57 +124,59 @@ function teamClosedError(): Error & { code: string } {
   return err;
 }
 
-/** The `teammate.turn.submitted` Core publishes while `team.submit` still runs. */
-function submittedEvent(
-  turnId: string,
-  recipient: 'dispatcher' | 'leader',
-  sourceId: string | null = null,
-  turnSource = 'feishu',
-): TeammateTurnSubmittedEvent {
+function scopeOf(recipient: 'dispatcher' | 'leader') {
   return {
-    schema_version: 1,
-    kind: 'teammate.turn.submitted',
-    occurred_at: 1_700_000_000_000,
+    schema_version: 1 as const,
     teammate_name: recipient === 'dispatcher' ? 'dispatcher-agent' : 'alpha-leader',
-    role: recipient === 'dispatcher' ? 'dispatcher' : 'team_leader',
+    role: (recipient === 'dispatcher' ? 'dispatcher' : 'team_leader') as
+      'dispatcher' | 'team_leader',
     team_name: recipient === 'dispatcher' ? null : 'alpha',
-    turn_id: turnId,
-    turn_source: turnSource,
-    source_id: sourceId,
   };
 }
 
-function assistantMessage(
-  turnId: string,
+/** The `teammate.input` Core publishes while `team.submit` still runs. */
+function inputEvent(
   recipient: 'dispatcher' | 'leader',
   content: string,
-): TeammateTurnMessageEvent {
+  sourceId: string | null = null,
+  source = 'feishu',
+): TeammateInputEvent {
   return {
-    schema_version: 1,
-    kind: 'teammate.turn.message',
-    occurred_at: 1_700_000_000_001,
-    teammate_name: recipient === 'dispatcher' ? 'dispatcher-agent' : 'alpha-leader',
-    role: recipient === 'dispatcher' ? 'dispatcher' : 'team_leader',
-    team_name: recipient === 'dispatcher' ? null : 'alpha',
-    turn_id: turnId,
-    event_id: `event-${turnId}`,
-    message_role: 'assistant',
+    ...scopeOf(recipient),
+    kind: 'teammate.input',
+    occurred_at: 1_700_000_000_000,
+    source,
+    source_id: sourceId,
     content,
     content_truncated: false,
     redacted: false,
   };
 }
 
-function userMessage(
-  turnId: string,
+function activityEvent(
+  recipient: 'dispatcher' | 'leader',
+  activity: TeammateActivity,
+): TeammateActivityEvent {
+  return {
+    ...scopeOf(recipient),
+    kind: 'teammate.activity',
+    occurred_at: 1_700_000_000_001,
+    activity,
+  };
+}
+
+function assistantMessage(
+  eventId: string,
   recipient: 'dispatcher' | 'leader',
   content: string,
-): TeammateTurnMessageEvent {
-  return {
-    ...assistantMessage(turnId, recipient, content),
-    event_id: `user-event-${turnId}`,
-    message_role: 'user',
-  };
+): TeammateActivityEvent {
+  return activityEvent(recipient, {
+    kind: 'assistant.message',
+    event_id: `event-${eventId}`,
+    content,
+    content_truncated: false,
+    redacted: false,
+  });
 }
 
 function sourceIdOf(payload: JsonValue): string {
@@ -186,16 +188,15 @@ function sourceIdOf(payload: JsonValue): string {
 function nativeEnd(
   recipient: 'dispatcher' | 'leader',
   status: 'completed' | 'failed' | 'interrupted' = 'completed',
-): TeammateNativeTurnEndedEvent {
-  return {
-    schema_version: 1,
-    kind: 'teammate.native_turn.ended',
-    occurred_at: 1_700_000_000_002,
-    teammate_name: recipient === 'dispatcher' ? 'dispatcher-agent' : 'alpha-leader',
-    role: recipient === 'dispatcher' ? 'dispatcher' : 'team_leader',
-    team_name: recipient === 'dispatcher' ? null : 'alpha',
+  reason: string | null = null,
+): TeammateActivityEvent {
+  return activityEvent(recipient, {
+    kind: 'turn.ended',
     status,
-  };
+    reason,
+    reason_truncated: false,
+    redacted: false,
+  });
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
@@ -238,8 +239,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       emit,
     ) => {
       if (command !== 'team.submit') throw new Error(`unexpected ${command}`);
-      emit(submittedEvent('turn-1', 'dispatcher', sourceIdOf(payload)));
-      emit(userMessage('turn-1', 'dispatcher', 'hello'));
+      emit(inputEvent('dispatcher', 'hello', sourceIdOf(payload)));
       return { status: 'submitted', turn_id: 'turn-1' };
     });
 
@@ -263,13 +263,12 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
 
     port.emit(assistantMessage('turn-1', 'dispatcher', 'the answer'));
     port.emit(nativeEnd('dispatcher'));
-    await waitFor(() => cotRunStatus(cot.cards[0]!) !== null);
+    await waitFor(() => cotTerminal(cot.cards[0]!) !== null);
 
     expectOpeningTexts(cot.cards[0]!, ['the answer']);
-    expect(cotRunStatus(cot.cards[0]!)).toBe('done');
+    expect(cotTerminal(cot.cards[0]!)).toBe('done');
 
-    port.emit(submittedEvent('turn-task', 'dispatcher', 'task-source', 'task'));
-    port.emit(userMessage('turn-task', 'dispatcher', 'task body'));
+    port.emit(inputEvent('dispatcher', 'task body', 'task-source', 'task'));
     await waitFor(() => cot.cards.length === 2);
     expect(cotTexts(cot.cards[1]!)).toEqual(['task body']);
 
@@ -286,8 +285,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       if (command !== 'team.submit') throw new Error(`unexpected ${command}`);
       submissionIndex += 1;
       const turnId = `turn-${submissionIndex}`;
-      emit(submittedEvent(turnId, 'dispatcher', sourceIdOf(payload)));
-      emit(userMessage(turnId, 'dispatcher', `body ${submissionIndex}`));
+      emit(inputEvent('dispatcher', `body ${submissionIndex}`, sourceIdOf(payload)));
       return { status: 'submitted', turn_id: turnId };
     });
 
@@ -318,14 +316,14 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       },
     });
     await waitFor(() => cot.cards.length === 2);
-    await waitFor(() => cotRunStatus(cot.cards[0]!) === 'interrupted');
+    await waitFor(() => cotTerminal(cot.cards[0]!) === 'interrupted');
 
     expect(cot.cards).toHaveLength(2);
     expect(cot.cards.map((card) => card.originMessageId)).toEqual([
       'message-one',
       'message-two',
     ]);
-    expect(cot.cards.map(cotRunStatus)).toEqual(['interrupted', null]);
+    expect(cot.cards.map(cotTerminal)).toEqual(['interrupted', null]);
     expectOpeningTexts(cot.cards[0]!, ['first answer']);
     expectOpeningTexts(cot.cards[1]!, []);
 
@@ -342,8 +340,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       if (command !== 'team.submit') throw new Error(`unexpected ${command}`);
       invocation += 1;
       if (invocation === 2) return { status: 'duplicate' };
-      emit(submittedEvent('turn-original', 'dispatcher', sourceIdOf(payload)));
-      emit(userMessage('turn-original', 'dispatcher', 'hello'));
+      emit(inputEvent('dispatcher', 'hello', sourceIdOf(payload)));
       return { status: 'submitted', turn_id: 'turn-original' };
     });
     const submission = {
@@ -366,12 +363,12 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
     const outcome = await session.submit(null, submission);
     expect(outcome).toEqual({ status: 'duplicate' });
     await waitFor(() => cot.cards.length === 2);
-    await waitFor(() => cotRunStatus(cot.cards[0]!) === 'interrupted');
+    await waitFor(() => cotTerminal(cot.cards[0]!) === 'interrupted');
     expect(cot.cards.map((card) => card.originMessageId)).toEqual([
       'message-repeat',
       'message-repeat',
     ]);
-    expect(cot.cards.map(cotRunStatus)).toEqual(['interrupted', null]);
+    expect(cot.cards.map(cotTerminal)).toEqual(['interrupted', null]);
     expectOpeningTexts(cot.cards[1]!, []);
 
     port.emit(assistantMessage('turn-original', 'dispatcher', 'after repeat'));
@@ -392,12 +389,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       const p = payload as Record<string, unknown>;
       // The stored route names a Team that is closed: proven no admission.
       if (p['team_name'] !== undefined) throw teamClosedError();
-      emit(submittedEvent(
-        'turn-fallback',
-        'dispatcher',
-        sourceIdOf(payload),
-      ));
-      emit(userMessage('turn-fallback', 'dispatcher', 'hello'));
+      emit(inputEvent('dispatcher', 'hello', sourceIdOf(payload)));
       return { status: 'submitted', turn_id: 'turn-fallback' };
     });
     await session.routing.bind({
@@ -432,7 +424,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       'om_user_1',
       'om_user_1',
     ]);
-    expect(cot.cards.map(cotRunStatus)).toEqual(['interrupted', null]);
+    expect(cot.cards.map(cotTerminal)).toEqual(['interrupted', null]);
     port.emit(assistantMessage('turn-fallback', 'dispatcher', 'dispatcher answered'));
     await waitFor(() => cotTexts(cot.cards[1]!).length === 2);
     expectOpeningTexts(cot.cards[1]!, ['dispatcher answered']);
@@ -475,11 +467,11 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
 
       expect(outcome.status).toBe(failure);
       await waitFor(() => cot.cards.length === 1);
-      await waitFor(() => cotRunStatus(cot.cards[0]!) === 'interrupted');
+      await waitFor(() => cotTerminal(cot.cards[0]!) === 'interrupted');
       port.emit(assistantMessage('turn-later', 'leader', 'must stay anchorless'));
       await new Promise((resolve) => setTimeout(resolve, 20));
       expect(cot.cards).toHaveLength(1);
-      expect(cotRunStatus(cot.cards[0]!)).toBe('interrupted');
+      expect(cotTerminal(cot.cards[0]!)).toBe('interrupted');
 
       await session.close();
     },
@@ -510,7 +502,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
     await waitFor(() => cot.cards.length === 1);
     await waitFor(() => cotTexts(cot.cards[0]!).length === 1);
     expect(cot.cards[0]!.originMessageId).toBe('message-ambiguous');
-    expect(cotRunStatus(cot.cards[0]!)).toBeNull();
+    expect(cotTerminal(cot.cards[0]!)).toBeNull();
     expectOpeningTexts(cot.cards[0]!, []);
 
     await session.close();
@@ -536,7 +528,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
     expect(outcome.status).toBe('error');
     await waitFor(() => cot.cards.length === 1);
     expect(cot.cards[0]!.originMessageId).toBe('om_user_1');
-    expect(cotRunStatus(cot.cards[0]!)).toBeNull();
+    expect(cotTerminal(cot.cards[0]!)).toBeNull();
 
     await session.close();
   });
@@ -550,8 +542,7 @@ describe('FeishuChannelSession COT — a Reply never touches the anchor', () => 
       emit,
     ) => {
       if (command !== 'team.submit') throw new Error(`unexpected ${command}`);
-      emit(submittedEvent('turn-1', 'leader', sourceIdOf(payload)));
-      emit(userMessage('turn-1', 'leader', 'hello'));
+      emit(inputEvent('leader', 'hello', sourceIdOf(payload)));
       return { status: 'submitted', turn_id: 'turn-1' };
     });
 
@@ -583,10 +574,10 @@ describe('FeishuChannelSession COT — a Reply never touches the anchor', () => 
     // operator's original message.
     expect(cot.cards).toHaveLength(1);
     expect(cot.cards[0]!.originMessageId).toBe('om_user_1');
-    expect(cotRunStatus(cot.cards[0]!)).toBeNull();
+    expect(cotTerminal(cot.cards[0]!)).toBeNull();
 
     port.emit(nativeEnd('leader'));
-    await waitFor(() => cotRunStatus(cot.cards[0]!) !== null);
+    await waitFor(() => cotTerminal(cot.cards[0]!) !== null);
     expect(cot.cards).toHaveLength(1);
 
     await session.close();
@@ -615,8 +606,7 @@ describe('FeishuChannelSession COT — a bot without a COT surface', () => {
     const bot = createFakeFeishuBot();
     const session = newSession(bot, 'chan-cot-absent');
     const port = fakePort(async (_command, payload, emit) => {
-      emit(submittedEvent('turn-1', 'dispatcher', sourceIdOf(payload)));
-      emit(userMessage('turn-1', 'dispatcher', 'hello'));
+      emit(inputEvent('dispatcher', 'hello', sourceIdOf(payload)));
       return { status: 'submitted', turn_id: 'turn-1' };
     });
     await session.initialize(port.port);

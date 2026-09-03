@@ -5,9 +5,7 @@ import type {
   JsonValue,
   RuntimeActivity,
   AgentRuntimeActivitySink,
-  AgentRuntimeNativeTurnSink,
   RuntimeCompletion,
-  RuntimeNativeTurnEnd,
   RuntimeSubmission,
   RuntimeSubmissionSettlement,
   RuntimeToolAction,
@@ -45,26 +43,36 @@ export interface ProtocolEventContext {
   threadId: string | null;
   outputSchemaEnabled: boolean;
   activitySink: AgentRuntimeActivitySink;
-  nativeTurnSink: AgentRuntimeNativeTurnSink;
   log: (level: 'info' | 'warn' | 'error', message: string, error?: unknown) => void;
 }
 
 /**
- * Report the end of one native turn.
+ * Report a native turn's end on the display line.
  *
- * The sink is display-only, so a throwing consumer is logged and the window
- * proceeds.
+ * `status` and `reason` are claude's own terminal fact and nothing else: a
+ * `result` completed or failed with its errors, a run that died, a teardown
+ * that interrupted. What the push-back line then makes of it (a result text it
+ * cannot extract, a command it cannot attribute, a submission already settled)
+ * is push-back's own outcome and never colours the card.
+ *
+ * The runtime keeps no display state: it does not know, and does not ask,
+ * whether a native turn is open before reporting an end. Whether the end is
+ * *shown* is not this layer's decision. A card belongs to no turn
+ * (`feishu-cot-conversation-cards` requirement, rule 1), and a native end
+ * "closes an existing open card but never opens a new one; when no card is
+ * open, Feishu ignores it" (rule 8). This layer pushes; the Channel decides.
  */
 export function endNativeTurn(
-  status: RuntimeNativeTurnEnd['status'],
-  sink: AgentRuntimeNativeTurnSink,
-  log: (level: 'info' | 'warn' | 'error', message: string, error?: unknown) => void,
+  status: 'completed' | 'failed' | 'interrupted',
+  reason: string | null,
+  sink: AgentRuntimeActivitySink,
 ): void {
-  try {
-    sink(Object.freeze({ status, occurredAt: Date.now() }));
-  } catch (error) {
-    log('warn', 'claude native turn end projection failed', error);
-  }
+  emitActivity({ kind: 'turn.ended', occurredAt: Date.now(), status, reason }, sink);
+}
+
+/** The sink is Core's and never throws (`AgentRuntimeActivitySink`). */
+function emitActivity(activity: RuntimeActivity, sink: AgentRuntimeActivitySink): void {
+  sink(Object.freeze(activity));
 }
 
 export function createRuntimeSubmission(): SubmissionDeferred {
@@ -92,8 +100,12 @@ export function handleProtocolEvent(
   context: ProtocolEventContext,
 ): void {
   if (event.kind === 'command_lifecycle') {
+    // `started` is the one lifecycle state recorded here: it is the
+    // attribution input for the group the next `result` completes. The
+    // terminal states are drainage bookkeeping that arrives after that
+    // `result`.
+    if (event.state !== 'started') return;
     if (
-      event.state === 'started' &&
       active.submissions.has(event.commandUuid) &&
       !active.completedCommands.has(event.commandUuid) &&
       !active.started.includes(event.commandUuid)
@@ -103,11 +115,25 @@ export function handleProtocolEvent(
     return;
   }
   if (event.kind === 'result') {
+    // `result` is claude's native terminal, and the display line ends on it:
+    // the attribution, the completion and the settlements below are
+    // push-back's work on the same fact, and none of them may change the end,
+    // delay it, or withhold it.
+    endNativeTurn(
+      event.outcome.isError ? 'failed' : 'completed',
+      event.outcome.isError ? turnFailureMessage(event.outcome) : null,
+      context.activitySink,
+    );
     completeStartedGroup(active, event.outcome, context);
     return;
   }
   const raw = recordValue(event.line.raw);
   if (raw !== null) emitStreamActivity(active, raw, context);
+}
+
+/** claude's own words for why its turn failed. */
+function turnFailureMessage(outcome: TurnOutcome): string {
+  return outcome.errors.join('; ') || outcome.subtype || 'claude turn failed';
 }
 
 function completeStartedGroup(
@@ -145,7 +171,7 @@ function completeStartedGroup(
   if (outcome.isError) {
     completion = Object.freeze({
       status: 'failed',
-      error: new Error(outcome.errors.join('; ') || outcome.subtype || 'claude turn failed'),
+      error: new Error(turnFailureMessage(outcome)),
     });
   } else {
     try {
@@ -165,15 +191,6 @@ function completeStartedGroup(
       });
     }
   }
-  // The `result` is claude's native terminal, so the native turn it answers
-  // ends here regardless of how many commands were folded into it. A window
-  // that goes on to run another command opens another native turn and reaches
-  // this again with its own `result`.
-  endNativeTurn(
-    completion.status === 'completed' ? 'completed' : 'failed',
-    context.nativeTurnSink,
-    context.log,
-  );
   for (const uuid of commandUuids) {
     active.submissions.get(uuid)?.settle({ kind: 'completion', completion });
   }
@@ -189,23 +206,25 @@ function failUnattributedResult(
       : 'claude result cannot be attributed without command started lifecycle',
   );
   context.log('error', error.message, error);
-  endNativeTurn('failed', context.nativeTurnSink, context.log);
   for (const deferred of active.submissions.values()) {
     deferred.settle({ kind: 'failed', error });
   }
 }
 
+/**
+ * Put what claude said on this agent's activity stream.
+ *
+ * No submission is looked up. A window folds any number of commands into one
+ * native turn, so naming one of them as the activity's owner was always a
+ * guess — and when the guess failed, which it did for anything claude emitted
+ * before a command's `started` lifecycle arrived, the fact was dropped
+ * entirely. The agent is the subject, and it is always known.
+ */
 function emitStreamActivity(
   active: ActiveTurn,
   raw: Record<string, unknown>,
   context: ProtocolEventContext,
 ): void {
-  const representativeUuid = active.started[0] ?? (active.submissions.size === 1
-    ? active.submissions.keys().next().value
-    : undefined);
-  if (representativeUuid === undefined) return;
-  const representative = active.submissions.get(representativeUuid);
-  if (representative === undefined) return;
   const message = recordValue(raw['message']) ?? raw;
   const messageId = stringValue(message['id']) ?? `stream-${active.activitySequence++}`;
   const content = Array.isArray(message['content']) ? message['content'] : [];
@@ -214,15 +233,7 @@ function emitStreamActivity(
     if (block === null) continue;
     const activity = activityForBlock(active, messageId, blockIndex, block);
     if (activity === null) continue;
-    try {
-      context.activitySink(Object.freeze({
-        submission: representative.submission,
-        activity: Object.freeze(activity),
-        occurredAt: Date.now(),
-      }));
-    } catch (error) {
-      context.log('warn', 'claude activity projection failed', error);
-    }
+    emitActivity(activity, context.activitySink);
   }
 }
 
@@ -235,6 +246,7 @@ function activityForBlock(
   if (block['type'] === 'text' && typeof block['text'] === 'string' && block['text'] !== '') {
     return {
       kind: 'assistant.message',
+      occurredAt: Date.now(),
       id: `${messageId}:text:${blockIndex}`,
       text: block['text'],
       truncated: false,
@@ -248,6 +260,7 @@ function activityForBlock(
     active.tools.set(callId, { name, arguments: args });
     return {
       kind: 'tool.call',
+      occurredAt: Date.now(),
       id: `${messageId}:${callId}:started`,
       callId,
       toolName: name,
@@ -266,6 +279,7 @@ function activityForBlock(
   const result = normalizeTextBlocks(block['content']);
   return {
     kind: 'tool.call',
+    occurredAt: Date.now(),
     id: `${messageId}:${callId}:result`,
     callId,
     toolName: known?.name ?? 'tool',

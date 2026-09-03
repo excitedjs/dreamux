@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux-types",
+      "comment": "BREAKING: Review: every Channel provider must be rewritten against the four-kind Core event catalog, and every Agent Runtime provider against the single activity sink; an old provider fails to compile. No config, state, cache, or path shape changed and no rebuild is needed. Streaming display is keyed on the Agent instead of on a `RuntimeSubmission`. `ChannelCoreEvent` is now `team.state | teammate.state | teammate.input | teammate.activity`: the five turn-scoped kinds (`teammate.turn.submitted`, `teammate.turn.settled`, `teammate.turn.message`, `teammate.turn.tool_call`, `teammate.native_turn.ended`) and `TeammateTurnScope` are deleted, and both new kinds are actor-scoped with no `turn_id`. `teammate.input` is published at the moment of submission and carries the source, caller id, and body; `teammate.activity` nests the runtime's own vocabulary (`assistant.message`, `tool.call`, `turn.ended`). On the runtime seam, `RuntimeActivity` gains `occurredAt` and a `turn.ended` member and no longer names a submission; `RuntimeActivityEvent`, `RuntimeNativeTurnEnd`, `AgentRuntimeNativeTurnSink`, and `AgentRuntimeCreateContext.nativeTurn` are deleted, and `AgentRuntimeActivitySink` takes a `RuntimeActivity` directly. `AgentRuntimeSubmissionInput` stays `{ text }`.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

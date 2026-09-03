@@ -126,11 +126,6 @@ export function controllableTurn(overrides: Partial<Turn> = {}): ControllableTur
   const turn: Turn = {
     id: overrides.id ?? `turn-${Math.random().toString(36).slice(2)}`,
     runtime: overrides.runtime ?? ({ settled: Promise.resolve({ kind: 'stopped' }) } as Turn['runtime']),
-    source: overrides.source ?? 'task',
-    sourceId: overrides.sourceId ?? null,
-    prompt: overrides.prompt ?? null,
-    intent: overrides.intent ?? null,
-    submittedAt: overrides.submittedAt ?? Date.now(),
     settled,
     delivery: overrides.delivery ?? Promise.resolve(),
   };

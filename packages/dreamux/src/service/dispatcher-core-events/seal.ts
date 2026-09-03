@@ -22,17 +22,18 @@ import { deepFreeze } from '../frozen-snapshot.js';
  *
  * A Channel switches on `kind`, so an unknown one is not a fact it can act on;
  * it is a Core defect, and the log line the bus writes on rejection is how it
- * is seen.
+ * is seen. Declaring it as a total record over the union is what keeps that
+ * true: a new event kind that is not listed here fails to compile, where a bare
+ * set of strings would have let it be published and silently dropped.
  */
-const KINDS: ReadonlySet<string> = new Set([
-  'team.state',
-  'teammate.state',
-  'teammate.turn.submitted',
-  'teammate.turn.settled',
-  'teammate.turn.message',
-  'teammate.turn.tool_call',
-  'teammate.native_turn.ended',
-]);
+const KIND_CATALOG: Record<ChannelCoreEvent['kind'], true> = {
+  'team.state': true,
+  'teammate.state': true,
+  'teammate.input': true,
+  'teammate.activity': true,
+};
+
+const KINDS: ReadonlySet<string> = new Set(Object.keys(KIND_CATALOG));
 
 export function sealChannelCoreEvent(
   event: ChannelCoreEvent,

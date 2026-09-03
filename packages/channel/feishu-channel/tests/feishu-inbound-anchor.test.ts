@@ -3,24 +3,30 @@ import { describe, expect, it } from 'vitest';
 import { FeishuInboundCorrelations } from '../src/feishu-inbound-anchor.js';
 
 describe('FeishuInboundCorrelations', () => {
-  it('recognizes a pending caller id and hides its exact turn once', () => {
+  it('recognizes a caller id this session issued, exactly once', () => {
     const correlations = new FeishuInboundCorrelations();
     const release = correlations.begin('message-own');
 
-    correlations.submitted('message-own', 'leader:alpha', 'turn-own');
-    expect(correlations.consumeTurn('leader:alpha', 'turn-own')).toBe(true);
-    expect(correlations.consumeTurn('leader:alpha', 'turn-own')).toBe(false);
+    expect(correlations.consume('message-own')).toBe(true);
+    expect(correlations.consume('message-own')).toBe(false);
     release();
   });
 
-  it('does not hide a turn carrying another producer\'s caller id', () => {
+  it('does not recognize another producer\'s caller id', () => {
     const correlations = new FeishuInboundCorrelations();
     const release = correlations.begin('message-own');
 
-    correlations.submitted('message-other', 'leader:alpha', 'turn-other');
-
-    expect(correlations.consumeTurn('leader:alpha', 'turn-other')).toBe(false);
+    // A cron fire, a task push-back, and a restart notice all carry a
+    // source_id: recognition is a comparison, never a presence check.
+    expect(correlations.consume('message-other')).toBe(false);
     release();
+  });
+
+  it('recognizes no id at all when the input carries none', () => {
+    const correlations = new FeishuInboundCorrelations();
+    correlations.begin('message-own');
+
+    expect(correlations.consume(null)).toBe(false);
   });
 
   it('releases an in-flight id when team.submit returns without its fact', () => {
@@ -28,26 +34,20 @@ describe('FeishuInboundCorrelations', () => {
     const release = correlations.begin('message-own');
     release();
 
-    correlations.submitted('message-own', 'leader:alpha', 'turn-late');
-    expect(correlations.consumeTurn('leader:alpha', 'turn-late')).toBe(false);
+    expect(correlations.consume('message-own')).toBe(false);
   });
 
-  it('releases a recognized turn when its projected body never arrives', () => {
+  it('lets the caller release an id the input fact already consumed', () => {
     const correlations = new FeishuInboundCorrelations();
     const release = correlations.begin('message-own');
-    correlations.submitted('message-own', 'dispatcher', 'turn-own');
+    expect(correlations.consume('message-own')).toBe(true);
+
+    // The release the caller holds and the consumed body are the same token,
+    // so the `finally` release must not free a concurrent repeat's token.
+    const releaseSecond = correlations.begin('message-own');
     release();
-
-    expect(correlations.consumeTurn('dispatcher', 'turn-own')).toBe(false);
-  });
-
-  it('keeps recipients distinct even if a turn id is reused', () => {
-    const correlations = new FeishuInboundCorrelations();
-    correlations.begin('message-own');
-    correlations.submitted('message-own', 'leader:alpha', 'turn-shared');
-
-    expect(correlations.consumeTurn('dispatcher', 'turn-shared')).toBe(false);
-    expect(correlations.consumeTurn('leader:alpha', 'turn-shared')).toBe(true);
+    expect(correlations.consume('message-own')).toBe(true);
+    releaseSecond();
   });
 
   it('supports concurrent repeats of one source id without stale release', () => {
@@ -55,11 +55,9 @@ describe('FeishuInboundCorrelations', () => {
     const releaseFirst = correlations.begin('message-shared');
     const releaseSecond = correlations.begin('message-shared');
 
-    correlations.submitted('message-shared', 'dispatcher', 'turn-own');
-    expect(correlations.consumeTurn('dispatcher', 'turn-own')).toBe(true);
+    expect(correlations.consume('message-shared')).toBe(true);
     releaseFirst();
-    correlations.submitted('message-shared', 'dispatcher', 'turn-repeat');
-    expect(correlations.consumeTurn('dispatcher', 'turn-repeat')).toBe(true);
+    expect(correlations.consume('message-shared')).toBe(true);
     releaseSecond();
   });
 
@@ -71,23 +69,17 @@ describe('FeishuInboundCorrelations', () => {
     }
     const overflowRelease = correlations.begin('message-overflow');
 
-    correlations.submitted(
-      'message-overflow',
-      'dispatcher',
-      'turn-overflow',
-    );
-    expect(correlations.consumeTurn('dispatcher', 'turn-overflow')).toBe(false);
+    expect(correlations.consume('message-overflow')).toBe(false);
 
     for (const release of releases) release();
     overflowRelease();
   });
 
-  it('clear releases pending ids and remembered turns', () => {
+  it('clear releases every pending id', () => {
     const correlations = new FeishuInboundCorrelations();
     correlations.begin('message-own');
-    correlations.submitted('message-own', 'dispatcher', 'turn-own');
     correlations.clear();
 
-    expect(correlations.consumeTurn('dispatcher', 'turn-own')).toBe(false);
+    expect(correlations.consume('message-own')).toBe(false);
   });
 });

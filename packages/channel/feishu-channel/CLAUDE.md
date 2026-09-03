@@ -4,8 +4,8 @@ This package is the built-in Feishu `ChannelProvider` for Dreamux (alias
 `builtin:feishu`, issue #209 slice 5). It sits between
 `@excitedjs/feishu-transport` and `@excitedjs/dreamux`, implements the neutral
 `@excitedjs/dreamux-types` `ChannelProvider`/`ChannelSession` contract, and
-depends on `@excitedjs/dreamux-types` + `@excitedjs/feishu-transport` **only** —
-never on `@excitedjs/dreamux` core.
+depends on `@excitedjs/dreamux-types`, `@excitedjs/dreamux-utils`, and
+`@excitedjs/feishu-transport` **only** — never on `@excitedjs/dreamux` core.
 
 ## Responsibilities
 
@@ -80,8 +80,8 @@ Requirements:
   `dreamux_pairing_token`. The token must not appear in card text, toast text,
   specs, fixtures, or logs committed to the repo.
 - The Feishu MCP surface must not include an `access` tool. Keep approval out
-  of the agent/model tool list; the channel MCP tools are `reply`, `react`, and
-  `list_chat_bots`.
+  of the agent/model tool list; `src/tools/registry.ts` holds the whole Feishu
+  MCP surface, and no caller's catalog in it carries an approval tool.
 - Only the Feishu App Owner may approve. Resolve owner identity through the
   transport-owned Feishu application API wrapper, then compare the click
   operator's open_id with the creator/owner open_id values returned there.
@@ -119,9 +119,9 @@ Design constraints:
   lookup. Bot display names come from the transport's runtime bot info
   (`/open-apis/bot/v3/info` `app_name`); if missing, the channel falls back to
   the neutral `Dreamux bot` label.
-- Any change to this flow must update `feishu-pairing-card.test.ts`,
-  `feishu-mcp-tools.test.ts`, the transport tests for new SDK wrappers, and the
-  `.agents` pairing-access spec/decision docs when the contract changes.
+- Any change to this flow must update `feishu-pairing-card.test.ts`, the
+  transport tests for new SDK wrappers, and
+  `.agents/domains/feishu-pairing-access.md` when the contract changes.
 
 ## Attachment Message Contract
 
@@ -145,8 +145,11 @@ runtime attachments retain the applicable structured facts.
 ## Upstream / Downstream Contract
 
 - Upstream: `@excitedjs/feishu-transport` low-level Lark operations.
-- Intended downstream: `@excitedjs/dreamux`. After issue #97, Dreamux does not
-  depend on this package at runtime until the channel package is deliberately
-  reintroduced into the published dependency graph.
+- Intended downstream: `@excitedjs/dreamux`. Since issue #209 slice 5, Dreamux
+  depends on this package at runtime again: `@excitedjs/dreamux` declares it as
+  a dependency, and `builtin:feishu` resolves to it through
+  `BUILTIN_PROVIDER_PACKAGES` on the generic provider loading path. The package
+  stays `shouldPublish: true` so the published manifest can resolve it — the
+  issue #97 failure mode.
 - Dreamux may provide cache roots, limits, and logging hooks, but the channel
   owns how resources are downloaded, cached, represented, and degraded.

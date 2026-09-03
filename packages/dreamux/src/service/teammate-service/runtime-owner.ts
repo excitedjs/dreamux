@@ -3,7 +3,6 @@ import type {
   AgentRuntimeActivitySink,
   AgentRuntimeCreateContext,
   AgentRuntimeMcpServer,
-  AgentRuntimeNativeTurnSink,
   AgentRuntimeProvider,
   AgentRuntimeStartOutcome,
   AgentRuntimeStatus,
@@ -37,8 +36,6 @@ interface RuntimeLaunchSpec {
 interface TeammateRuntimeOwnerCallbacks {
   isActive: () => boolean;
   markClosing: () => void;
-  activitySink: AgentRuntimeActivitySink;
-  nativeTurnSink: AgentRuntimeNativeTurnSink;
 }
 
 /** Raw runtime authority retained exclusively inside one TeamMate entity. */
@@ -289,14 +286,20 @@ export class TeammateRuntimeOwner {
    * A generation-scoped activity closure.
    *
    * Activity shares the state lease's generation, so a replaced runtime cannot
-   * publish into its successor's conversation stream. The sink is synchronous
-   * and non-throwing by contract, so a stale write is dropped and logged
-   * (fail-open) rather than raised back into the provider.
+   * publish into its successor's conversation stream — including the stream's
+   * `turn.ended` terminal, which would otherwise finish its successor's card.
+   * The sink is synchronous and non-throwing by contract, so a stale write is
+   * dropped and logged (fail-open) rather than raised back into the provider.
+   *
+   * The activity goes straight to the display projection. This entity's turn
+   * bookkeeping is not consulted: a provider folds any number of submissions
+   * into one native turn, so there is no submission to attribute the fact to,
+   * and the Agent is the only subject it honestly has.
    */
   private generationActivitySink(
     lease: AgentRuntimeGenerationLease,
   ): AgentRuntimeActivitySink {
-    return (event) => {
+    return (activity) => {
       if (!lease.isCurrent()) {
         this.deps.log.debug(
           { teammate: this.state.current().name },
@@ -304,30 +307,10 @@ export class TeammateRuntimeOwner {
         );
         return;
       }
-      this.callbacks.activitySink(event);
-    };
-  }
-
-  /**
-   * The same generation fence for native turn ends.
-   *
-   * A replaced runtime must not finish its successor's displayed turn, so the
-   * end is dropped when its generation is gone — the same fail-open rule the
-   * activity sink follows, for the same reason: this is display, not
-   * settlement.
-   */
-  private generationNativeTurnSink(
-    lease: AgentRuntimeGenerationLease,
-  ): AgentRuntimeNativeTurnSink {
-    return (end) => {
-      if (!lease.isCurrent()) {
-        this.deps.log.debug(
-          { teammate: this.state.current().name },
-          'dropped Agent Runtime native turn end from a revoked runtime generation',
-        );
-        return;
-      }
-      this.callbacks.nativeTurnSink(end);
+      this.deps.conversationProjection?.projectActivity(
+        { identity: this.state.current(), role: this.options.role },
+        activity,
+      );
     };
   }
 
@@ -354,7 +337,6 @@ export class TeammateRuntimeOwner {
           ? { outputSchema: this.options.outputSchema }
           : {}),
         activity: this.generationActivitySink(lease),
-        nativeTurn: this.generationNativeTurnSink(lease),
         ...(this.options.systemPrompt !== undefined
           ? { systemPrompt: this.options.systemPrompt }
           : {}),

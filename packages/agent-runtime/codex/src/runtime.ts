@@ -248,7 +248,6 @@ export class CodexRuntime implements AgentRuntime {
       codec: this.deps.codec,
       log: this.log,
       activitySink: this.deps.activitySink,
-      nativeTurnSink: this.deps.nativeTurnSink,
     });
   }
 

@@ -251,10 +251,10 @@ function parseCommandLifecycle(parsed: Record<string, unknown>): ParsedLine {
 /**
  * One user turn as a stream-json `user` message line (no trailing newline).
  *
- * `isSynthetic` / `priority` are siblings of `message` on the stdin envelope
- * (claude-code SDKUserMessage schema), not part of the message body. They are
- * only set for the native completion-notification idiom; a plain channel turn
- * omits them entirely and reads as a normal human user turn.
+ * `isSynthetic` is a sibling of `message` on the stdin envelope (claude-code
+ * SDKUserMessage schema), not part of the message body. It is only set for the
+ * native completion-notification idiom; a plain channel turn omits it entirely
+ * and reads as a normal human user turn.
  */
 export function buildUserMessage(
   text: string,
@@ -267,7 +267,6 @@ export function buildUserMessage(
   };
   if (commandUuid !== undefined) envelope['uuid'] = commandUuid;
   if (options.isSynthetic === true) envelope['isSynthetic'] = true;
-  if (options.priority !== undefined) envelope['priority'] = options.priority;
   return JSON.stringify(envelope);
 }
 

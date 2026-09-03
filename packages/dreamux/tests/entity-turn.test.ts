@@ -212,16 +212,7 @@ function makeTurn(
   submission: RuntimeSubmission,
   delivery: TurnCompletionDelivery | null,
 ): EntityTurn {
-  return new EntityTurn(
-    submission,
-    'dispatcher',
-    null,
-    'review this',
-    'review',
-    1,
-    'reviewer',
-    delivery,
-  );
+  return new EntityTurn(submission, 'reviewer', delivery);
 }
 
 function deliveryMock() {
