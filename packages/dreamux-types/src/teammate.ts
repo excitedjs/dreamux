@@ -46,90 +46,107 @@ export interface TeammateStateEvent {
 }
 
 /**
- * The identity every turn event carries. Later turn events correlate to their
- * submission by `turn_id` alone.
- */
-export interface TeammateTurnScope {
-  readonly schema_version: 1;
-  readonly occurred_at: number;
-  readonly teammate_name: string;
-  /** Runtime projection supplied by the owning Service; never persisted. */
-  readonly role: TeammateRole;
-  readonly team_name: string | null;
-  readonly turn_id: string;
-}
-
-export type TeammateTurnSubmittedEvent = TeammateTurnScope & {
-  readonly kind: 'teammate.turn.submitted';
-  /**
-   * The open provenance name the submitting owner chose — the same value Core
-   * rendered the model envelope's root from. Deliberately not a Core enum: a
-   * new Channel form names itself without a Core contract change, and a
-   * consumer that presents turns differently by provenance owns that mapping
-   * itself. Required here and not repeated on later turn events, which need
-   * only `turn_id` to reach the anchor established at submission.
-   */
-  readonly turn_source: string;
-  /**
-   * The submitting caller's own id, returned so that caller can recognize the
-   * turn its submission produced. `null` means none was supplied. It is not a
-   * routing key, persistence key, or presentation identity.
-   */
-  readonly source_id: string | null;
-};
-
-export type TeammateTurnSettledEvent = TeammateTurnScope & {
-  readonly kind: 'teammate.turn.settled';
-  readonly status: 'completed' | 'failed' | 'stopped';
-  readonly assistant: string | null;
-  readonly assistant_truncated: boolean;
-  readonly redacted: boolean;
-};
-
-export type TeammateTurnMessageEvent = TeammateTurnScope & {
-  readonly kind: 'teammate.turn.message';
-  readonly event_id: string;
-  readonly message_role: 'user' | 'assistant';
-  readonly content: string;
-  readonly content_truncated: boolean;
-  readonly redacted: boolean;
-};
-
-export type TeammateTurnToolCallEvent = TeammateTurnScope & {
-  readonly kind: 'teammate.turn.tool_call';
-  readonly event_id: string;
-  readonly call_id: string;
-  readonly tool_name: string;
-  readonly tool_action: RuntimeToolAction | null;
-  readonly status: 'started' | 'completed' | 'failed';
-  readonly arguments_json: string | null;
-  readonly result_json: string | null;
-  readonly arguments_truncated: boolean;
-  readonly result_truncated: boolean;
-  readonly redacted: boolean;
-};
-
-/**
- * One runtime-native turn ended for this TeamMate.
+ * The identity every conversation display fact carries: the Agent it belongs to
+ * and nothing else.
  *
- * Deliberately actor-scoped rather than turn-scoped. A provider folds any
- * number of Dreamux submissions into one native turn, so no single logical
- * `turn_id` owns the end — and inventing one would make a presentation pick an
- * arbitrary member. The honest fact is "this Agent's runtime stopped
- * producing", published once per native turn, which is exactly what a live
- * progress surface needs to finish whatever it currently shows for that Agent.
- *
- * It is not a lifecycle fact: `teammate.turn.settled` remains the
- * per-submission settlement, and neither event replaces the other.
+ * Deliberately not a turn scope. A provider folds any number of Dreamux
+ * submissions into one native turn, so no display fact can honestly name the
+ * submission that produced it; what a live surface shows is one Agent's stream
+ * in the order it happened, which is exactly what this scopes.
  */
-export interface TeammateNativeTurnEndedEvent {
+export interface TeammateActorScope {
   readonly schema_version: 1;
-  readonly kind: 'teammate.native_turn.ended';
   readonly occurred_at: number;
   readonly teammate_name: string;
   /** Runtime projection supplied by the owning Service; never persisted. */
   readonly role: TeammateRole;
   /** `null` for a Dispatcher, which never belongs to a Team. */
   readonly team_name: string | null;
-  readonly status: 'completed' | 'failed' | 'interrupted';
 }
+
+/**
+ * Core admitted one input for this TeamMate.
+ *
+ * Published at the moment of submission, before any runtime has accepted it, so
+ * a submission that fails is visible together with the text that failed. It is
+ * the only event in this family Core itself produces; everything after it is
+ * the runtime's own account of what it did.
+ */
+export type TeammateInputEvent = TeammateActorScope & {
+  readonly kind: 'teammate.input';
+  /**
+   * The open provenance name the submitting owner chose — the same value Core
+   * rendered the model envelope's root from. Deliberately not a Core enum: a
+   * new Channel form names itself without a Core contract change, and a
+   * consumer that presents inputs differently by provenance owns that mapping
+   * itself.
+   */
+  readonly source: string;
+  /**
+   * The submitting caller's own id, returned so that caller can recognize its
+   * own submission. `null` means none was supplied. A caller compares it
+   * against ids it issued; its mere presence proves nothing, because cron
+   * fires, task push-backs, and restart notices carry one too.
+   */
+  readonly source_id: string | null;
+  /** The source's own body, never the assembled provenance envelope. */
+  readonly content: string;
+  readonly content_truncated: boolean;
+  readonly redacted: boolean;
+};
+
+/**
+ * One thing the runtime did, in the runtime's own vocabulary, already
+ * sanitized and bounded by Core.
+ *
+ * The member names match `RuntimeActivity`'s on purpose: this is the same
+ * fact with its payloads made safe to display, not a second vocabulary a
+ * maintainer has to hold beside the first.
+ */
+export type TeammateActivity =
+  | {
+      readonly kind: 'assistant.message';
+      readonly event_id: string;
+      readonly content: string;
+      readonly content_truncated: boolean;
+      readonly redacted: boolean;
+    }
+  | {
+      readonly kind: 'tool.call';
+      readonly event_id: string;
+      readonly call_id: string;
+      readonly tool_name: string;
+      readonly tool_action: RuntimeToolAction | null;
+      readonly status: 'started' | 'completed' | 'failed';
+      readonly arguments_json: string | null;
+      readonly result_json: string | null;
+      readonly arguments_truncated: boolean;
+      readonly result_truncated: boolean;
+      readonly redacted: boolean;
+    }
+  | {
+      /**
+       * The runtime stopped producing, once per native turn. It is the display
+       * stream's terminal: a surface showing this Agent's activity finishes on
+       * it. Core publishes the same fact for an input no runtime ever accepted,
+       * because such an input still opened a surface that nothing else closes.
+       */
+      readonly kind: 'turn.ended';
+      readonly status: 'completed' | 'failed' | 'interrupted';
+      /** Why it ended, when the producer holds a reason; `null` otherwise. */
+      readonly reason: string | null;
+      readonly reason_truncated: boolean;
+      readonly redacted: boolean;
+    };
+
+/**
+ * One runtime activity fact for this TeamMate.
+ *
+ * A single published kind carries the whole runtime vocabulary, so a runtime
+ * that learns to report something new adds a {@link TeammateActivity} member
+ * and changes no event catalog, no seal, and no Channel subscription.
+ */
+export type TeammateActivityEvent = TeammateActorScope & {
+  readonly kind: 'teammate.activity';
+  readonly activity: TeammateActivity;
+};

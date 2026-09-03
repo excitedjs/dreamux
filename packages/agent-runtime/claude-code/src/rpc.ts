@@ -12,14 +12,13 @@
  *  - **Commands fold.** A message that arrives while the in-flight turn is
  *    inside a tool call is absorbed into that turn at the next query-loop
  *    boundary. Several commands then share ONE `result` (3 → 1 observed), and
- *    a folded command's uuid never appears on any `result`. Folding does not
- *    depend on `priority`.
+ *    a folded command's uuid never appears on any `result`.
  *  - **Or they do not.** A command that arrives between turns runs on its own
  *    and gets its own `result`.
  *  - **`result.user_message_uuid` is not a completion ledger.** It is present
  *    only sometimes, is not reliably the first-submitted uuid of a fold, and
- *    is absent entirely on the `error_during_execution` artifact a
- *    `priority: 'now'` interrupt produces.
+ *    is absent entirely on the `error_during_execution` artifact an
+ *    interrupt produces.
  *  - **`command_lifecycle` is the attribution signal.** Started commands identify
  *    the submissions represented by the next native `result`; terminal states
  *    drain the resident execution window. Its ordering against `result` is not
@@ -232,7 +231,7 @@ export class ClaudeCodeStreamRpc {
       };
       try {
         this.stdin.write(
-          `${buildUserMessage(prompt, { priority: 'now', ...options }, commandUuid)}\n`,
+          `${buildUserMessage(prompt, options, commandUuid)}\n`,
           (err) => {
             if (err != null) {
               fail(err);
@@ -290,7 +289,7 @@ export class ClaudeCodeStreamRpc {
    *
    * A command ending abnormally never fails the turn by itself: the probe
    * shows a `cancelled` command coexisting with another that answers normally
-   * (that is exactly what a `priority: 'now'` interrupt looks like), so
+   * (that is exactly what an interrupt looks like), so
    * rejecting on `cancelled` — as the pre-#342 code did — is wrong.
    */
   private markCommandTerminal(

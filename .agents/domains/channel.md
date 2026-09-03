@@ -79,10 +79,11 @@ Source:
 
 ### Provider tools and MCP
 
-The Feishu package owns its tool names and JSON schemas. Twelve definitions are
-registered, and the served surface is caller-scoped:
+The Feishu package owns its tool names and JSON schemas. Thirteen definitions
+are registered, and the served surface is caller-scoped:
 
-- messaging (both callers): `reply`, `react`, `list_chat_bots`
+- messaging (both callers): `reply`, `react`, `list_chat_bots`,
+  `ask_user_question`
 - Dispatcher routing: `bind_channel`, `unbind_channel`, `list_bindings`
 - TeamLeader routing: `bind_channel`, `unbind_channel`, each with no team field
 - Dispatcher Collaboration Space: `bind_collaboration_space`,
@@ -119,10 +120,82 @@ Successful results are canonical values: `reply` returns
 the value unchanged as `structuredContent` with exact `content: []` and validates
 it against the provider output schema.
 
+#### `ask_user_question`
+
+The arguments deliberately mirror Claude Code's own AskUserQuestion, down to the
+field descriptions, so a model reads the two as one tool: 1-4 `questions`, each
+with a `header` chip, a `question`, and 2-4 `options` of `label` +
+`description`. Four fields differ, and two of them are the chat. A `chat_id` is
+required, because a chat tool needs a destination and AskUserQuestion has no
+such concept; a `message_id` is optional, and when the model names the message
+its question came out of, the card is addressed the way a reply is — into that
+message's topic, under the anchor the target router already holds for it. With
+no message named, the card is addressed at the chat, which in a topic group
+opens a topic of its own: right for a question belonging to no particular
+message, wrong for one that does. A message id from another chat is ignored
+rather than obeyed, the same rule `reply` follows, so a stale id cannot
+redirect a question into a conversation it was not meant for.
+
+The other two fields are gone. There is no `multiSelect`: the operator ruled
+multi-select out of this channel, so every question takes exactly one answer.
+And there is no `preview`: it was first drawn as a column beside the options,
+and the operator removed it on sight — "这个 preview 有点复杂了，给他去掉，
+他也会影响卡片的布局". A per-option preview cannot be drawn without a second
+column, and that column reshaped the layout of every question carrying one, so
+the field went with the column.
+
+The difference that shapes the design is not an argument at all: **the tool does
+not return the answer.** It returns `{ request_id, status: 'asked', next }` as soon
+as the card is sent, and `next` instructs the model to end its turn. A click
+settles the round server-side and the answer reaches Core as an ordinary
+inbound submission, on the path a typed reply takes. Blocking the tool call was
+the alternative and it loses the case that matters — a person who answers after
+lunch — because the MCP client, not Dreamux, bounds how long a tool call may
+run.
+
+The card carries no client state, and that is deliberate rather than incidental.
+Feishu has no radio component: `select_static` is its only native single-select
+and its options hold a label and nothing else, so an option's description would
+vanish the moment the dropdown closed. Each option is therefore an
+`interactive_container`, which holds no state at all — so "which option is
+selected" exists only in the session's registry, every click is a callback, and
+the selection is visible solely because the whole card is repainted from the
+server's answer map. There is no `form`, because a form batches its inputs until
+submit and would cost each question the ability to settle on its own.
+
+Anyone in the chat may answer the card, and that is a decision rather than an
+oversight: asked whether a non-asker clicking should be gated, the operator
+ruled "不需要限制，所有人都可以点". The answer carries the clicker's open_id as
+`sender_id`, so who answered is never lost — but no authorization check stands
+between a group member and the card.
+
+A round exists only once its card does. The registry builds the round and the
+card together but puts neither in play until the send lands, so a send that
+throws leaves nothing waiting — rather than a question with no card, whose TTL
+would later report an unanswered question to a model whose user was never asked
+one.
+
+提交 with nothing chosen is refused with a toast instead of settling. The button
+sits directly under the questions, so it is also the one pressed by accident,
+and a round settles exactly once: spending that settlement to tell the model
+every question was left unanswered is worse than saying nothing. A partial
+answer still submits, and the questions nobody answered are reported as such.
+
+A round closes itself after `ASK_USER_CARD_TTL_MS`, which is under the 15
+minutes after which Feishu stops accepting clicks on a card. Past that cutoff
+the card still looks live but every click is dropped, so an unanswered round
+repaints the card as closed and tells the model no answer came and to stand
+still until the user's next message. Rounds live in memory: a session teardown
+abandons them, and a later click reports the round as gone rather than
+answering nothing.
+
 Source:
 
 - `/packages/channel/feishu-channel/src/tools/registry.ts`
 - `/packages/channel/feishu-channel/src/tools/messaging-tools.ts`
+- `/packages/channel/feishu-channel/src/tools/ask-user-question.ts`
+- `/packages/channel/feishu-channel/src/feishu-ask-user.ts`
+- `/packages/channel/feishu-channel/src/feishu-ask-user-card.ts`
 - `/packages/channel/feishu-channel/src/tools/routing-tools.ts`
 - `/packages/channel/feishu-channel/src/tools/space-tools.ts`
 - `/packages/dreamux-types/src/channel.ts`
@@ -204,8 +277,9 @@ Omission *is* the Channel's decision. Both forms are the one generic
 optional standing reminder, and a stable `source_id` that Core deduplicates a
 repeat on; Core renders the provenance envelope itself. Nothing about chats,
 threads, or topic mode crosses. The returned `turn_id` names the exact turn the
-call created, which is what lets a Channel claim the matching submitted event as
-its own.
+call created. A Channel recognizes its own submission by the `source_id` it
+sent, which Core echoes on `teammate.input`; there is no per-submission turn
+event left to claim.
 
 Source:
 
@@ -534,32 +608,35 @@ Each `DispatcherService` owns one in-process `DispatcherCoreEventBus`. It is a
 best-effort distribution helper, not a fact owner or store. Existing owners
 publish after their normal write point: `TeamStore` publishes Team status and
 concrete leader changes; `AgentIdentityStore` publishes TeamLeader and TeamMate
-status changes; the conversation projection publishes display-only turn lifecycle
-and activity facts for the dispatcher agent and TeamLeaders. Routing produces no
+status changes; the conversation projection publishes display-only input and
+activity facts for the dispatcher agent and TeamLeaders. Routing produces no
 core event — a Channel already owns its routing records, so it describes its own
 state from them at the moment it changes them, and Core publishing a binding fact
 back would mean Core holding one. Workflow, scheduler, and host-maintenance events
 are deliberately absent.
 
-The published catalog is an explicit set of seven kinds: `team.state`,
-`teammate.state`, `teammate.turn.submitted`, `teammate.turn.settled`,
-`teammate.turn.message`, `teammate.turn.tool_call`, and
-`teammate.native_turn.ended`. The last is actor-scoped rather than turn-scoped:
-it names the Dispatcher or TeamLeader whose runtime stopped producing and a
-terminal status, and carries no logical `turn_id`, member set, or presentation
-identity, because a provider folds any number of Dreamux submissions into one
-runtime-native turn.
+The published catalog is an explicit set of four kinds: `team.state`,
+`teammate.state`, `teammate.input`, and `teammate.activity`. The last two are
+the whole conversation, split by producer: Core says what it admitted, and the
+runtime says what it did. Both are **actor-scoped** — they name the Dispatcher
+or TeamLeader whose conversation they belong to and carry no `turn_id`, member
+set, or presentation identity, because a provider folds any number of Dreamux
+submissions into one runtime-native turn and no display fact can honestly name
+the submission that caused it.
 
-The rest of the family carries a `turn_id` because the provider hands each fact
-a `RuntimeSubmission` that Core resolves to an owning turn. That attribution is
-exact for `submitted` and `settled`, which are per submission, but only
-*representative* for the two live kinds: while a native turn folds several
-submissions, both built-in runtimes attribute streamed messages and tool calls
-to the first started command of the group rather than to whichever submission
-prompted them. That is sound for display correlation, which is all a `turn_id`
-is here — a consumer must not read it as proof that a given output answers a
-given input, and a terminal fact must not be attributed that way at all, which
-is exactly why the native-turn end carries no `turn_id`. Sealing is the one place
+`teammate.input` is published at the moment of submission, before any runtime
+has accepted it, so a submission that fails is visible together with the text
+that failed. `teammate.activity` carries a nested payload in the runtime's own
+vocabulary (`assistant.message`, `tool.call`, `turn.ended`), so a runtime that
+learns to report something new adds a member and changes no event catalog, no
+seal, and no Channel subscription. `turn.ended` is the display stream's
+terminal, carrying the producer's own reason when it has one. Core publishes
+that same terminal itself for an input no runtime ever accepted, because such
+an input still opened a surface that nothing else would close.
+
+The seal's catalog is declared as a total record over the event union, so a new
+kind that is not listed fails to compile rather than being published and
+silently dropped. Sealing is the one place
 a fact becomes deliverable: an event outside the set, an event whose
 `schema_version` is not `1`, or one without a finite `occurred_at` is dropped and
 logged rather than thrown, because producers publish synchronously from inside
@@ -571,7 +648,8 @@ A Channel session receives one read-only `ChannelEventSource` with a single
 the whole `ChannelCoreEvent` union and demultiplexes inside the Channel, so adding
 an event changes only that catalog and its consumers.
 
-Turn events expose one process-local `turn_id` for presentation correlation but no
+No event carries a turn identity: presentation correlation is the `source_id` a
+caller supplied, echoed back on its own input, and nothing exposes a
 runtime-native Turn object or transcript. Conversation events may contain bounded,
 redacted user/assistant display text and bounded tool arguments/results; other
 events contain no prompt or assistant text. No event contains native transcript
@@ -600,7 +678,8 @@ Source:
 - `/packages/dreamux/src/service/team-collection/store.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
 - `/packages/dreamux/src/channel/conversation-projection.ts`
-- `/packages/dreamux/src/service/teammate-service/turn-coordinator.ts`
+- `/packages/dreamux/src/service/teammate-service/index.ts`
+- `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 
 ### Feishu conversation display
@@ -610,7 +689,7 @@ team-scoped entities, not a Feishu role filter in core. TeamLeaders and Team
 members publish the event surface; team-less dispatcher-spawned TeamMates do not
 participate. Its scope is either a team-less dispatcher or a named
 TeamLeader/Team member; an origin-less dispatcher turn is rejected by one core
-predicate before submitted, activity, or settled facts can enter the bus.
+predicate before any input or activity fact can enter the bus.
 
 The Feishu session subscribes through `feishu-cot-adapter`. It owns card
 anchoring, event-to-card projection, bounded outbox batching, serialized I/O, and
@@ -622,13 +701,20 @@ between chats moves its one card rather than growing a second. None of it is
 durable — closing or restarting the session loses every anchor and open-card
 reference by design, with no restore, replay, or backfill.
 
-Only a Channel user message that Core reports as admitted moves an anchor. On
-that success Feishu closes the recipient's open card as interrupted — a card
-still open at that moment is showing work the runtime never reported an end for,
-so the newer message cut it off rather than finishing it — replaces the standing
-anchor, and opens the successor under the new message with a fixed receipt,
-without waiting for a settlement or a native turn end; a rejected, failed, or
-ambiguous admission changes nothing. A Reply is outbound only: its receipt never
+Only a Channel user message moves an anchor, and the Channel moves it at the
+moment it submits rather than after Core answers: the anchor is the Channel's
+own state, which Core neither carries nor validates, and waiting for Core to
+confirm admission was what pushed the user's own body and any early activity
+onto the predecessor card. Taking it closes the recipient's open card as
+interrupted — a card still open at that moment is showing work the runtime never
+reported an end for, so the newer message cut it off rather than finishing it —
+replaces the standing anchor, and opens the successor under the new message with
+an opening label that claims nothing about admission, without waiting for a
+settlement or a native turn end; a submission Core proves it did not admit
+retires that anchor again, closing the spent card and leaving the recipient
+anchorless rather than restoring its predecessor, while an ambiguous outcome
+proves nothing and leaves the new anchor standing. A Reply is outbound only: its
+receipt never
 creates, replaces, defers, or retires an anchor and never opens, moves, or closes
 a card. A visible Team bind card may initialize a TeamLeader that has no standing
 anchor and never replaces one, while the Dispatcher has no installation or
@@ -645,40 +731,68 @@ Team-member events explicitly and never routes them through a recipient's state.
 
 Once a recipient has an anchor, everything Core projects for it displays:
 assistant text, tool calls and results, and every input whatever its source name,
-including `task`, `task-notification`, `cron`, `system`, a restart notice
-delivered inside a live session, and the body of the message this Channel itself
-submitted. There is no source whitelist and no body-suppression ledger. A fact
+including `task`, `task-notification`, `cron`, `system`, and a restart notice
+delivered inside a live session. The one exception is the body of the message
+this Channel itself submitted, which the operator can already see as their own
+Feishu message: the session holds a bounded set of the caller-owned ids it
+issued and recognizes an input by **comparing** `source_id` against them. Its
+mere presence proves nothing — cron fires, task push-backs, and restart notices
+carry one too. There is no source whitelist. A fact
 that arrives before the recipient has an anchor produces no card because there is
 nowhere to place one, not because its source or kind was filtered.
 
-A card's one terminal is `teammate.native_turn.ended`. `teammate.turn.settled` is
-a per-logical-submission lifecycle fact and closes, reopens, or re-anchors
-nothing: a provider folds any number of submissions into one native turn, so
-settlement says nothing about whether the card an operator is watching has
-finished. A `completed` end closes the current card as done; `failed` and
-`interrupted` close it as interrupted. The fact closes an already open card and
+A card's one terminal is a `turn.ended` activity. There is no per-submission
+lifecycle fact at this boundary at all: a provider folds any number of
+submissions into one native turn, so settlement could never say whether the card
+an operator is watching has finished. The end's three statuses are the
+card's three terminals, and they are spelled across two AG-UI events, not one:
+`completed` and `interrupted` are `RUN_FINISHED` statuses (`done` and
+`interrupted`), while `failed` is the separate `RUN_ERROR` event. `RUN_FINISHED`
+takes exactly `done | paused | interrupted` — a `RUN_FINISHED` carrying `failed`
+was probed live and renders as *completed*, identically to a deliberately
+nonsense status, because the client ignores a status it does not know rather
+than rejecting the batch. `paused` is documented but never produced here: a card
+is open or ended, never held. `RUN_ERROR` carries `{ code }` alone: the
+reference documents a `message` beside it, but a card finished with one shows
+the client's own fixed failure line and never the supplied string, and a card
+finished with `code` alone renders identically, so the field is neither
+rendered nor required. The end's reason reaches the operator only as ordinary
+text printed on the card just before the terminal — that print is load-bearing,
+not a second copy.
+
+The reference for all of this is **COT Message Brief** on the enterprise docs
+host, `open.larkoffice.com`
+(`/document/uAjLw4CM/ukTMukTMukTM/reference/im-v1/message_cot/cot-message-brief`);
+the public `open.feishu.cn` documentation carries no `message_cot` reference at
+all, so a reader who checks only the public host will conclude, wrongly, that
+this surface is undocumented. It gives the event vocabulary as a numbered enum
+(`1 RUN_STARTED`, `2 RUN_FINISHED`, `3 RUN_ERROR`, `10-13 TEXT_MESSAGE_*`,
+`20-24 TOOL_CALL_*`, …), accepts either the name or the number in `event_type`,
+and spells fields in camelCase — which is what this Channel sends. The fact
+closes an already open card and
 never opens one, so it is ignored when no card is open — a repeated end is
 therefore harmless. A create or append the platform refuses abandons only that
 presentation: the standing anchor survives it, and the next opening activity may
 open a card there again.
 
-Facts Core publishes synchronously inside the admitting call are best effort and
-may land on the predecessor card or, with no anchor yet, nowhere. That window,
+Facts Core publishes synchronously inside the admitting call land on the
+successor card, not the predecessor, because the Channel takes its anchor and
+writes its receipt before it calls Core. What remains is the window that opens
+between that receipt and Core's answer: a submission Core disproves leaves a
+spent card on the message that produced no turn, because retiring the anchor
+closes that card as interrupted rather than erasing it. That window,
 the exceptionally early native end, and a tool result crossing an anchor
 replacement are operator-adjudicated accepted losses, recorded with their
 reasoning in the
 [task verification record](/.agents/tasks/channel/feishu-cot-conversation-cards/verification.md).
 
-Every admitted EntityTurn that enters conversation projection publishes exactly
-one terminal display fact from its own submission settlement, including
-`completed`, `failed`, and `stopped`; non-participating turns publish no display
-events. Completed assistant text and live activity are redacted and bounded in
-core, and operator paths are renamed rather than blanked — the workspace reads
-`.` and this host's home reads `~`, from prefixes `Server.start()` resolves once
-and injects into each conversation projection as a value. The early-activity
-buffer and projected activity-id set each retain at most 512 facts per submission
-and drop newest with one warning. Card I/O has a 20-second operation deadline so
-settled draining state is eventually reaped.
+Every admitted input publishes exactly one `teammate.input`, and the runtime's
+own stream carries everything after it; an entity whose conversation is out of
+scope publishes nothing. Input bodies and live activity are redacted and bounded
+in core, and operator paths are renamed rather than blanked — the workspace
+reads `.` and this host's home reads `~`, from prefixes `Server.start()` resolves
+once and injects into each conversation projection as a value. Card I/O has a
+20-second operation deadline so settled draining state is eventually reaped.
 
 The whole path is display-only and fail-open. Projection publisher, sanitizer,
 identity, and logger failures cannot change runtime admission, settlement,
@@ -690,7 +804,8 @@ surface remain.
 Source:
 
 - `/packages/dreamux/src/channel/conversation-projection.ts`
-- `/packages/dreamux/src/service/teammate-service/turn-coordinator.ts`
+- `/packages/dreamux/src/service/teammate-service/index.ts`
+- `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
 - `/packages/dreamux/src/platform/home-paths.ts`
 - `/packages/channel/feishu-channel/src/feishu-cot-adapter.ts`
 - `/packages/channel/feishu-channel/src/feishu-cot-state.ts`

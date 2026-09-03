@@ -36,6 +36,17 @@ the same change that touches it.
   needing no orphan governance; a later message on that conversation simply
   creates or selects another Team. Dissolving a Team cancels all bindings that
   point at it.
+- **A question the agent cannot answer becomes a card, and the turn ends.**
+  When an agent is blocked on a decision only the user can make, the built-in
+  Feishu channel posts an interactive question card — 1-4 single-select
+  questions, each with an "Other" text box — and the agent stops and waits: the
+  tool returns as soon as the card is sent, never the answer. Anyone in the chat
+  may answer, an explicit operator ruling rather than a gap, and the answer
+  arrives as an ordinary inbound message carrying who clicked. Dismissing the
+  card tells the agent to stop asking and talk it through instead; a card nobody
+  answers closes itself before Feishu stops accepting clicks and tells the agent
+  to stand still rather than wait forever.
+  (Domain: [channel](/.agents/domains/channel.md).)
 - **A collaboration space is a Channel product flow.** The Channel provisions a
   Team via ordinary `team.create` for a chat or topic it manages; provisioning
   progress is volatile, and a crash may leave an accepted orphan Team rather
@@ -92,6 +103,27 @@ the same change that touches it.
   presentation is a deliberately tuned surface; changes to it are their own
   requirement, never a refactor side effect.
   (Decision: [feishu-cot-conversation-display](/.agents/tasks/channel/feishu-cot-conversation-cards/accepted-decision.md).)
+- **A displayed input is announced when it is submitted, and always ends.** The
+  input appears with the text that was submitted, before any runtime has
+  accepted it, so a submission that fails is visible together with what failed.
+  Anything no runtime accepted — a stopped, skipped, ambiguous, or failed
+  admission — ends its own display as a failure, carrying the reason, instead of
+  leaving a surface open forever. That includes a completion push-back whose
+  recipient's runtime disappears between the moment it is prepared and the
+  moment it is submitted; a push-back to a recipient already known to be stopped
+  is refused before anything is published and stays as silent as it was. On a Feishu COT card that is the platform's
+  own 任务失败 terminal. A dropped push-back used to be silent.
+  (Requirement: operator rulings 4, 8 and 9 in
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).)
+- **A card's terminal is the runtime's own.** A card ends when the runtime
+  reports that its native turn ended, with the status and reason the runtime
+  itself gave. What Dreamux then makes of that turn — a structured result it
+  cannot decode, a submission it cannot attribute — fails that submission and
+  does not recolour the card. A runtime torn down while it was running reports
+  that end itself, as 已中断.
+  (Requirement: 「CoT需要真实反映agent provider现在正在发生的事情」 and the
+  2026-09-03 ruling on display state in
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md).)
 
 ## Failures the model sees
 

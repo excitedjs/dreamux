@@ -72,7 +72,6 @@ export type {
   AgentRuntimeIdentity,
   AgentRuntimeLogger,
   AgentRuntimeMcpServer,
-  AgentRuntimeNativeTurnSink,
   AgentRuntimeOnboardCapability,
   AgentRuntimePathContext,
   AgentRuntimeProvider,
@@ -88,10 +87,8 @@ export type {
   AgentRuntimeSubmissionInput,
   AgentRuntimeSystemPrompt,
   RuntimeActivity,
-  RuntimeActivityEvent,
   RuntimeAdmission,
   RuntimeCompletion,
-  RuntimeNativeTurnEnd,
   RuntimeSubmission,
   RuntimeSubmissionSettlement,
   RuntimeToolAction,
@@ -115,15 +112,13 @@ export type {
 } from './team.js';
 export type {
   TeamContainedRole,
-  TeammateNativeTurnEndedEvent,
+  TeammateActivity,
+  TeammateActivityEvent,
+  TeammateActorScope,
+  TeammateInputEvent,
   TeammateRole,
   TeammateStateEvent,
   TeammateStatus,
-  TeammateTurnMessageEvent,
-  TeammateTurnScope,
-  TeammateTurnSettledEvent,
-  TeammateTurnSubmittedEvent,
-  TeammateTurnToolCallEvent,
 } from './teammate.js';
 export type {
   ChannelBinCheck,

@@ -115,15 +115,26 @@ export function cotToolResultCount(card: FakeCotCard): number {
     .length;
 }
 
-/** The status the card finished with, or `null` while it is still open. */
-export function cotRunStatus(card: FakeCotCard): string | null {
-  const finished = card.events.filter(
-    (event) => event.eventType === 'RUN_FINISHED',
-  );
-  const last = finished.at(-1);
-  return last === undefined ? null : String(last.content['status'] ?? '');
+/**
+ * How the card ended, or `null` while it is still open.
+ *
+ * A card ends through either of two AG-UI events: `RUN_FINISHED` carries the
+ * ordinary statuses and `RUN_ERROR` is the failure terminal, so a helper that
+ * only looked at `RUN_FINISHED` would report a failed card as still open.
+ */
+export function cotTerminal(card: FakeCotCard): string | null {
+  const last = card.events.filter(isCotTerminal).at(-1);
+  if (last === undefined) return null;
+  return last.eventType === 'RUN_ERROR'
+    ? 'error'
+    : String(last.content['status'] ?? '');
 }
 
-export function cotRunFinishedCount(card: FakeCotCard): number {
-  return card.events.filter((event) => event.eventType === 'RUN_FINISHED').length;
+/** How many times this card was ended; the invariant is at most once. */
+export function cotTerminalCount(card: FakeCotCard): number {
+  return card.events.filter(isCotTerminal).length;
+}
+
+function isCotTerminal(event: { eventType: string }): boolean {
+  return event.eventType === 'RUN_FINISHED' || event.eventType === 'RUN_ERROR';
 }

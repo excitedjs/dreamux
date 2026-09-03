@@ -331,14 +331,13 @@ function teammateStateEvent(): ChannelCoreEvent {
   };
 }
 
-function turnScope() {
+function actorScope() {
   return {
     schema_version: 1 as const,
     occurred_at: Date.now(),
     teammate_name: 'flow',
     role: 'dispatcher' as const,
     team_name: null,
-    turn_id: 'turn-1',
   };
 }
 
@@ -347,50 +346,24 @@ function allCatalogEvents(): ChannelCoreEvent[] {
     teamStateEvent(),
     teammateStateEvent(),
     {
-      ...turnScope(),
-      kind: 'teammate.turn.submitted',
-      turn_source: 'channel',
+      ...actorScope(),
+      kind: 'teammate.input',
+      source: 'channel',
       source_id: null,
-    },
-    {
-      ...turnScope(),
-      kind: 'teammate.turn.settled',
-      status: 'completed',
-      assistant: 'done',
-      assistant_truncated: false,
-      redacted: false,
-    },
-    {
-      ...turnScope(),
-      kind: 'teammate.turn.message',
-      event_id: 'evt-1',
-      message_role: 'assistant',
       content: 'hi',
       content_truncated: false,
       redacted: false,
     },
     {
-      ...turnScope(),
-      kind: 'teammate.turn.tool_call',
-      event_id: 'evt-2',
-      call_id: 'call-1',
-      tool_name: 'reply',
-      tool_action: null,
-      status: 'completed',
-      arguments_json: null,
-      result_json: null,
-      arguments_truncated: false,
-      result_truncated: false,
-      redacted: false,
-    },
-    {
-      schema_version: 1 as const,
-      occurred_at: Date.now(),
-      teammate_name: 'flow',
-      role: 'dispatcher' as const,
-      team_name: null,
-      kind: 'teammate.native_turn.ended',
-      status: 'completed',
+      ...actorScope(),
+      kind: 'teammate.activity',
+      activity: {
+        kind: 'assistant.message',
+        event_id: 'evt-1',
+        content: 'hi back',
+        content_truncated: false,
+        redacted: false,
+      },
     },
   ];
 }
@@ -457,7 +430,7 @@ describe('DispatcherInputSourceLifecycle: startup ordering', () => {
     ]);
   });
 
-  it('delivers each of the seven catalog event kinds to a subscribed Channel', async () => {
+  it('delivers each of the four catalog event kinds to a subscribed Channel', async () => {
     harness = await buildHarness();
     await harness.lifecycle.prepareChannels();
 
@@ -469,11 +442,8 @@ describe('DispatcherInputSourceLifecycle: startup ordering', () => {
     expect(handle?.receivedEvents.map((event) => event.kind)).toEqual([
       'team.state',
       'teammate.state',
-      'teammate.turn.submitted',
-      'teammate.turn.settled',
-      'teammate.turn.message',
-      'teammate.turn.tool_call',
-      'teammate.native_turn.ended',
+      'teammate.input',
+      'teammate.activity',
     ]);
   });
 

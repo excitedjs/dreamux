@@ -101,6 +101,14 @@ export function createFakeFeishuBot(appId = 'fake-bot'): FakeFeishuBot {
       return { messageIds };
     },
 
+    async editCard(messageId: string, card: unknown): Promise<void> {
+      // A repaint replaces what that card shows, so the recorded card has to
+      // move with it: a double that kept the first version would let a test
+      // assert on a card the user stopped seeing.
+      const sent = sentCards.find((entry) => entry.messageIds.includes(messageId));
+      if (sent !== undefined) sent.card = card;
+    },
+
     async inviteMembers(
       input: FeishuInviteMembersInput,
     ): Promise<FeishuInviteMembersResult> {

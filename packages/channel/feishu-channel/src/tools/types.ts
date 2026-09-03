@@ -13,6 +13,7 @@ import type {
   JsonValue,
 } from '@excitedjs/dreamux-types';
 
+import type { AskUserQuestionSpec } from '../feishu-ask-user-card.js';
 import type { FeishuSpaceRecord } from '../routing/document.js';
 import type { FeishuBindingView } from '../routing/index.js';
 import type { FeishuTargetKind } from '../routing/target.js';
@@ -64,6 +65,16 @@ export interface FeishuToolSession {
     emoji: string,
   ): Promise<{ reaction_id: string }>;
   listKnownChatBots(chatId: string): Promise<FeishuListChatBotsResult>;
+  /**
+   * Send a question card and return once it is sent. The answer is not awaited:
+   * it reaches the model later as an inbound submission, so this resolves with
+   * the round's identity rather than with what the user chose.
+   */
+  askUserQuestion(input: {
+    chatId: string;
+    questions: readonly AskUserQuestionSpec[];
+    messageId?: string;
+  }): Promise<{ request_id: string }>;
   /**
    * `requireOwner` is the Team a route must already belong to, if any Team
    * does. A Dispatcher omits it and may move any route; a TeamLeader passes

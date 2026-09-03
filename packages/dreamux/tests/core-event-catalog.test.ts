@@ -61,7 +61,6 @@ function baseScope(overrides: Partial<{
     teammate_name: 'scout',
     role: 'teammate' as const,
     team_name: 'alpha',
-    turn_id: 'turn-1',
     ...overrides,
   };
 }
@@ -87,54 +86,34 @@ function catalogFixtures(): Record<ChannelCoreEvent['kind'], ChannelCoreEvent> {
       team_name: 'alpha',
       status: 'running',
     },
-    'teammate.turn.submitted': {
+    // Both display facts are actor-scoped: a provider folds any number of
+    // logical submissions into one native turn, so neither carries a `turn_id`
+    // — only whose conversation it belongs to.
+    'teammate.input': {
       ...baseScope(),
-      kind: 'teammate.turn.submitted',
-      turn_source: 'feishu',
+      kind: 'teammate.input',
+      source: 'feishu',
       source_id: null,
-    },
-    'teammate.turn.settled': {
-      ...baseScope(),
-      kind: 'teammate.turn.settled',
-      status: 'completed',
-      assistant: 'done',
-      assistant_truncated: false,
-      redacted: false,
-    },
-    'teammate.turn.message': {
-      ...baseScope(),
-      kind: 'teammate.turn.message',
-      event_id: 'evt-1',
-      message_role: 'user',
       content: 'hi',
       content_truncated: false,
       redacted: false,
     },
-    'teammate.turn.tool_call': {
+    'teammate.activity': {
       ...baseScope(),
-      kind: 'teammate.turn.tool_call',
-      event_id: 'evt-2',
-      call_id: 'call-1',
-      tool_name: 'read_file',
-      tool_action: 'read',
-      status: 'completed',
-      arguments_json: '{}',
-      result_json: '{}',
-      arguments_truncated: false,
-      result_truncated: false,
-      redacted: false,
-    },
-    // The one actor-scoped turn fact: a provider folds any number of logical
-    // submissions into one native turn, so this event deliberately carries no
-    // `turn_id` — only who the runtime belongs to and how it stopped.
-    'teammate.native_turn.ended': {
-      schema_version: 1,
-      kind: 'teammate.native_turn.ended',
-      occurred_at: Date.now(),
-      teammate_name: 'alpha-leader',
-      role: 'team_leader',
-      team_name: 'alpha',
-      status: 'completed',
+      kind: 'teammate.activity',
+      activity: {
+        kind: 'tool.call',
+        event_id: 'evt-2',
+        call_id: 'call-1',
+        tool_name: 'read_file',
+        tool_action: 'read',
+        status: 'completed',
+        arguments_json: '{}',
+        result_json: '{}',
+        arguments_truncated: false,
+        result_truncated: false,
+        redacted: false,
+      },
     },
   };
 }
@@ -173,7 +152,7 @@ function makeTeamRecordInput(
   };
 }
 
-describe('the published Core event catalog is exactly seven kinds', () => {
+describe('the published Core event catalog is exactly four kinds', () => {
   it('accepts a schema-valid fixture of every catalog kind', () => {
     const fixtures = catalogFixtures();
     for (const [kind, event] of Object.entries(fixtures)) {
@@ -198,6 +177,12 @@ describe('the published Core event catalog is exactly seven kinds', () => {
       'host.maintenance',
       'teammate.created',
       'team.transfer_back',
+      // Deleted with the submission-keyed display line.
+      'teammate.turn.submitted',
+      'teammate.turn.settled',
+      'teammate.turn.message',
+      'teammate.turn.tool_call',
+      'teammate.native_turn.ended',
     ];
     const base = baseScope();
     for (const kind of rejectedKinds) {
@@ -219,7 +204,7 @@ describe('the published Core event catalog is exactly seven kinds', () => {
   });
 
   it('deep-freezes a sealed event so no listener can rewrite a broadcast fact', () => {
-    const sealed = sealChannelCoreEvent(catalogFixtures()['teammate.turn.message']);
+    const sealed = sealChannelCoreEvent(catalogFixtures()['teammate.activity']);
     expect(sealed).not.toBeNull();
     expect(Object.isFrozen(sealed)).toBe(true);
   });
@@ -366,20 +351,20 @@ describe('DispatcherCoreEventBus: live, best-effort delivery', () => {
     });
     const identity = makeIdentity({ team_id: 'alpha', name: 'scout' });
     const agent: ProjectedAgent = { identity, role: 'teammate' };
-    const turn = { id: 'turn-1', submittedAt: Date.now(), prompt: 'go', source: 'feishu' };
-
-    expect(() => projection.projectSubmitted(agent, turn)).not.toThrow();
     expect(() =>
-      projection.projectSettled({
-        agent,
-        turn,
-        settlement: { status: 'completed', resultText: 'done', truncated: false },
+      projection.projectInput(agent, {
+        source: 'feishu', sourceId: null, text: 'go', occurredAt: Date.now(),
+      }),
+    ).not.toThrow();
+    expect(() =>
+      projection.projectActivity(agent, {
+        kind: 'turn.ended', occurredAt: Date.now(), status: 'completed', reason: null,
       }),
     ).not.toThrow();
 
     const kinds = wellBehaved.map((event) => event.kind);
-    expect(kinds).toContain('teammate.turn.submitted');
-    expect(kinds).toContain('teammate.turn.settled');
+    expect(kinds).toContain('teammate.input');
+    expect(kinds).toContain('teammate.activity');
   });
 });
 
@@ -402,10 +387,10 @@ describe('DispatcherCoreEventBus: subscription lifecycle', () => {
     const received: ChannelCoreEvent[] = [];
     source.source.subscribe((event) => { received.push(event); });
 
-    bus.publisher.publish(DISPATCHER_ID, catalogFixtures()['teammate.turn.submitted']);
+    bus.publisher.publish(DISPATCHER_ID, catalogFixtures()['teammate.input']);
 
     expect(received).toHaveLength(1);
-    expect(received[0]?.kind).toBe('teammate.turn.submitted');
+    expect(received[0]?.kind).toBe('teammate.input');
   });
 
   it('revoking one source stops its delivery without touching a sibling source', () => {
@@ -730,8 +715,8 @@ describe('team.state is the redundant Team aggregate', () => {
   });
 });
 
-describe('turn event correlation', () => {
-  it('submitted returns source_id and turn_source; later events share the Core turn_id', () => {
+describe('display fact correlation', () => {
+  it('the input fact returns source_id and source, and no event carries a turn_id', () => {
     const publisher = createCapturingPublisher();
     const projection = createConversationProjection({
       coreEvents: publisher,
@@ -740,37 +725,38 @@ describe('turn event correlation', () => {
     });
     const identity = makeIdentity({ team_id: 'alpha', name: 'scout' });
     const agent: ProjectedAgent = { identity, role: 'teammate' };
-    const turn = {
-      id: 'turn-77',
-      submittedAt: Date.now(),
-      prompt: 'investigate',
+    projection.projectInput(agent, {
       source: 'feishu:chat-1',
       sourceId: 'message-fixture',
-    };
-
-    projection.projectSubmitted(agent, turn);
-    projection.projectSettled({
-      agent,
-      turn,
-      settlement: { status: 'completed', resultText: 'done', truncated: false },
+      text: 'investigate',
+      occurredAt: Date.now(),
+    });
+    projection.projectActivity(agent, {
+      kind: 'assistant.message',
+      occurredAt: Date.now(),
+      id: 'evt-1',
+      text: 'done',
+      truncated: false,
     });
 
     const kinds = publisher.published.map((entry) => entry.event.kind);
-    expect(kinds).toEqual(['teammate.turn.submitted', 'teammate.turn.message', 'teammate.turn.settled']);
+    expect(kinds).toEqual(['teammate.input', 'teammate.activity']);
 
-    const submitted = publisher.published[0]?.event;
-    expect(submitted).toMatchObject({
-      kind: 'teammate.turn.submitted',
-      turn_source: 'feishu:chat-1',
+    // One input fact carries the provenance and the body together: there is no
+    // second event to correlate to it, and so no correlation key at all.
+    expect(publisher.published[0]?.event).toMatchObject({
+      kind: 'teammate.input',
+      source: 'feishu:chat-1',
       source_id: 'message-fixture',
+      content: 'investigate',
     });
 
     for (const entry of publisher.published) {
-      expect('turn_id' in entry.event && entry.event.turn_id).toBe('turn-77');
+      expect('turn_id' in entry.event).toBe(false);
     }
   });
 
-  it('never carries a ChannelOrigin, turnOrigin, or presentation-correlation field on any turn event', () => {
+  it('never carries a ChannelOrigin, turnOrigin, or presentation-correlation field on any display fact', () => {
     const publisher = createCapturingPublisher();
     const projection = createConversationProjection({
       coreEvents: publisher,
@@ -779,13 +765,11 @@ describe('turn event correlation', () => {
     });
     const identity = makeIdentity({ team_id: 'alpha', name: 'scout' });
     const agent: ProjectedAgent = { identity, role: 'teammate' };
-    const turn = { id: 'turn-9', submittedAt: Date.now(), prompt: 'do it', source: 'feishu:chat-1' };
-
-    projection.projectSubmitted(agent, turn);
-    projection.projectSettled({
-      agent,
-      turn,
-      settlement: { status: 'completed', resultText: 'ok', truncated: false },
+    projection.projectInput(agent, {
+      source: 'feishu:chat-1', sourceId: null, text: 'do it', occurredAt: Date.now(),
+    });
+    projection.projectActivity(agent, {
+      kind: 'turn.ended', occurredAt: Date.now(), status: 'completed', reason: null,
     });
 
     const forbidden = /channelorigin|turnorigin|presentation.?correlation|correlation.?token/i;
@@ -805,9 +789,9 @@ describe('turn event correlation', () => {
     });
     const identity = makeIdentity({ team_id: null, name: 'scout' });
     const agent: ProjectedAgent = { identity, role: 'teammate' };
-    const turn = { id: 'turn-1', submittedAt: Date.now(), prompt: 'go', source: 'dispatcher:cli' };
-
-    projection.projectSubmitted(agent, turn);
+    projection.projectInput(agent, {
+      source: 'dispatcher:cli', sourceId: null, text: 'go', occurredAt: Date.now(),
+    });
 
     expect(publisher.published).toHaveLength(0);
   });
@@ -821,9 +805,9 @@ describe('turn event correlation', () => {
     });
     const identity = makeIdentity({ team_id: 'alpha', name: 'scout' });
     const agent: ProjectedAgent = { identity, role: 'teammate' };
-    const turn = { id: 'turn-1', submittedAt: Date.now(), prompt: 'go', source: 'feishu' };
-
-    projection.projectSubmitted(agent, turn);
+    projection.projectInput(agent, {
+      source: 'feishu', sourceId: null, text: 'go', occurredAt: Date.now(),
+    });
 
     expect(publisher.published).toHaveLength(0);
   });
@@ -867,7 +851,7 @@ describe('activity from a revoked runtime generation can never reach a replaceme
     const sinkBody = source.slice(sinkStart, source.indexOf('private resolveLaunch'));
     const guardIndex = sinkBody.indexOf('lease.isCurrent()');
     const logIndex = sinkBody.indexOf('dropped Agent Runtime activity from a revoked runtime generation');
-    const forwardIndex = sinkBody.indexOf('this.callbacks.activitySink(event)');
+    const forwardIndex = sinkBody.indexOf('projectActivity(');
     expect(guardIndex).toBeGreaterThan(-1);
     expect(logIndex).toBeGreaterThan(guardIndex);
     expect(forwardIndex).toBeGreaterThan(logIndex);

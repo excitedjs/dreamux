@@ -7,7 +7,10 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { AgentEntitySubmissionResult } from '../agent-entity/types.js';
-import type { PreparedCompletionFact } from '../completion-router/index.js';
+import type {
+  CompletionDeliveryResult,
+  PreparedCompletionFact,
+} from '../completion-router/index.js';
 
 export type TurnOutcome =
   | { status: 'completed'; resultText: string | null; truncated: boolean }
@@ -27,21 +30,16 @@ export type TurnCompletionDelivery = (
   fact: PreparedCompletionFact,
 ) => Promise<void>;
 
+/**
+ * One submission this entity is waiting on.
+ *
+ * It carries only what the push-back line needs. Provenance, source id, body,
+ * intent, and submission time used to live here for the display projection;
+ * display is keyed on the Agent now and reads none of them.
+ */
 export interface Turn {
   readonly id: string;
   readonly runtime: RuntimeSubmission;
-  /**
-   * The open provenance name this turn was submitted under — the same value the
-   * model envelope was rendered with, kept so display consumers can report it
-   * without Core re-deriving where the turn came from.
-   */
-  readonly source: string;
-  /** The submitting owner's id, retained only for the submitted projection. */
-  readonly sourceId: string | null;
-  /** The source's original body, never the assembled envelope. */
-  readonly prompt: string | null;
-  readonly intent: string | null;
-  readonly submittedAt: number;
   readonly settled: Promise<TurnOutcome>;
   readonly delivery: Promise<void>;
 }
@@ -102,11 +100,6 @@ export class EntityTurn implements Turn {
 
   constructor(
     readonly runtime: RuntimeSubmission,
-    readonly source: string,
-    readonly sourceId: string | null,
-    readonly prompt: string | null,
-    readonly intent: string | null,
-    readonly submittedAt: number,
     private readonly producerName: string,
     private readonly deliveryClosure: TurnCompletionDelivery | null,
   ) {
@@ -199,6 +192,56 @@ export function toSubmissionResult(
       return { status: 'ambiguous', error: admission.error.message };
     case 'skipped':
       return { status: 'stopped', error: 'turn skipped' };
+  }
+}
+
+/**
+ * State an admission's decision in the shape a completion push-back reads.
+ *
+ * Beside {@link asInboundDeliveryResult} for the same reason it exists: the
+ * admission decides, and every caller-facing shape is one stated mapping of
+ * that decision rather than a second authority that could drift from it.
+ */
+export function asCompletionDeliveryResult(
+  result: TurnAdmission,
+): CompletionDeliveryResult {
+  switch (result.status) {
+    case 'submitted':
+    case 'duplicate':
+      return { status: 'accepted' };
+    case 'stopped':
+      return { status: 'unsupported', reason: 'runtime stopped' };
+    case 'failed':
+      return { status: 'failed', error: result.error };
+    case 'ambiguous':
+      return { status: 'ambiguous', error: result.error };
+    case 'skipped':
+      return { status: 'failed', error: new Error('completion delivery unexpectedly skipped') };
+  }
+}
+
+/**
+ * Why an admission that produced no turn fails the display surface its input
+ * opened; `null` when a turn exists and the runtime will end it.
+ *
+ * Only a `submitted` admission produces a turn, and only a live turn's runtime
+ * ever reports a native end — so every other outcome would leave that surface
+ * open forever. All four are the same verdict, `failed`: nothing answered the
+ * input. Only the reason differs, so only the reason is returned. The third
+ * stated mapping of the one decision, for the same reason as the other two.
+ */
+export function failedAdmissionReason(result: TurnAdmission): string | null {
+  switch (result.status) {
+    case 'submitted':
+    case 'duplicate':
+      return null;
+    case 'stopped':
+      return 'the agent runtime is not running';
+    case 'skipped':
+      return 'the agent runtime skipped this input';
+    case 'failed':
+    case 'ambiguous':
+      return result.error.message;
   }
 }
 

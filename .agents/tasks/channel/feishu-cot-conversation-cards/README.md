@@ -14,6 +14,19 @@
   session restarts; one native turn emits one ended fact and closes the recipient's
   current card without logical-turn membership. Projected text keeps local paths
   readable by rendering this host's workspace and home prefixes as `.` and `~`.
+- Superseded in part (2026-09-02,
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md)):
+  the product model above stays in force — one recipient, one standing anchor, at
+  most one open card — but the mechanism under it was replaced. The five
+  turn-scoped Core events (including `teammate.turn.submitted` and its `source_id`
+  echo) and the optional `nativeTurn` provider sink are deleted. Display is keyed
+  on the Agent: Core publishes `teammate.input`, carrying the same `source_id`,
+  and `teammate.activity`, whose `turn.ended` member is the card's only terminal.
+  That terminal is also no longer two-valued: a `failed` end ends the card with
+  AG-UI's `RUN_ERROR` event, which is what renders 任务失败, so requirement item
+  14's "failed or interrupted native ends close it as interrupted" no longer
+  holds. Read every mechanism named below under one of those old names through
+  that mapping.
 - State: `in-progress`
 - Requirement: [Current requirement](/.agents/tasks/channel/feishu-cot-conversation-cards/requirement.md)
 - Technical design: owned by the single Claude implementation developer. The

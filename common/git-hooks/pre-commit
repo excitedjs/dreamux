@@ -12,12 +12,16 @@
 #   3. anti-leak — scan the *staged* changes with gitleaks. dreamux is a PUBLIC
 #      repo: company-internal content (Feishu ids, tokens, private-mirror
 #      registry URLs, secrets) must never be committed.
+#   4. internal-content — scan the *staged* changes for internal identifiers and
+#      paths that `.gitleaks.toml` deliberately does not cover, because that
+#      config is shared verbatim with the internal sibling repository where
+#      those paths are legitimate.
 #
 # The ESLint gate fails if package dependencies are missing because Rush only
 # installs this hook after `rush install` / `rush update`, which should also
-# install the package-local eslint binaries. The gitleaks gate still warns and
-# passes when the external binary is not installed; CI runs the full-history
-# non-bypassable scan.
+# install the package-local eslint binaries. The anti-leak gate FAILS HARD when
+# gitleaks is not installed: a guardrail that silently steps aside is not a
+# guardrail. Install it with `common/scripts/install-gitleaks.sh`.
 #
 # Rush installs this script into .git/hooks on `rush install` / `rush update`.
 # If your hooks aren't wired up yet, point git at this directory manually:
@@ -138,16 +142,45 @@ if [ -n "${AUTHOR_EMAIL_DENYLIST_REGEX:-}" ]; then
 fi
 
 # --- 3. anti-leak gate -------------------------------------------------------
-if ! command -v gitleaks >/dev/null 2>&1; then
-  echo "[anti-leak] gitleaks not installed — skipping local scan; CI will enforce." >&2
-  echo "[anti-leak] install: https://github.com/gitleaks/gitleaks#installing" >&2
-  exit 0
+# This gate is mandatory. It does not warn-and-pass, and `--no-verify` is not an
+# accepted way past it: dreamux is public, and a leak that reaches the default
+# branch cannot be un-published. If gitleaks is missing, install it.
+#
+# `common/scripts/install-gitleaks.sh` installs into ~/.local/bin by default,
+# which is not on every shell's PATH, so look there (and in an explicit
+# GITLEAKS_INSTALL_DIR) before declaring it absent.
+gitleaks_bin=""
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks_bin=gitleaks
+elif [ -n "${GITLEAKS_INSTALL_DIR:-}" ] && [ -x "$GITLEAKS_INSTALL_DIR/gitleaks" ]; then
+  gitleaks_bin="$GITLEAKS_INSTALL_DIR/gitleaks"
+elif [ -x "$HOME/.local/bin/gitleaks" ]; then
+  gitleaks_bin="$HOME/.local/bin/gitleaks"
 fi
 
-if ! gitleaks protect --staged \
+if [ -z "$gitleaks_bin" ]; then
+  echo "[anti-leak] gitleaks is not installed — refusing to commit." >&2
+  echo "[anti-leak] This gate is mandatory and must not be skipped." >&2
+  echo "[anti-leak] Do NOT commit with --no-verify. Install it instead:" >&2
+  echo "[anti-leak]   common/scripts/install-gitleaks.sh" >&2
+  echo "[anti-leak] Then retry the commit." >&2
+  exit 1
+fi
+
+if ! "$gitleaks_bin" git --staged \
   --config "$repo_root/.gitleaks.toml" \
   --redact --exit-code 1 -v; then
   echo "[anti-leak] gitleaks flagged a potential secret in your staged changes." >&2
   echo "[anti-leak] Remove it before committing — this is a public repo." >&2
+  exit 1
+fi
+
+# --- 4. internal-content gate ------------------------------------------------
+# Internal identifiers and paths that .gitleaks.toml does not cover, because it
+# is shared verbatim with the internal sibling repository. Same patterns the
+# release workflow applies to packed tarballs, applied to the source tree so a
+# leak in a test or a fixture is caught before the default branch rather than at
+# publish time.
+if ! sh "$repo_root/common/scripts/check-internal-content.sh" --staged; then
   exit 1
 fi

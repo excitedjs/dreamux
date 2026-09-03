@@ -140,7 +140,18 @@ home as `~`.
     native turn. One resident Claude Code execution window may legally produce
     several sequential `result` boundaries; each boundary emits its own ended
     fact. Several Dreamux inputs or logical submissions folded into the same
-    single `result` still emit only that result's one ended fact.
+    single `result` still emit only that result's one ended fact. Since the display
+    line was separated from the push-back line
+    (`.agents/tasks/architecture/split-streaming-display-from-pushback`), each
+    runtime satisfies this for *every* native turn it observes, including one no
+    Dreamux submission ever bound and one the provider only ever streamed items
+    for: the end is emitted where the provider reports its own terminal, and a
+    turn killed before any terminal — by a stop, the state fence, a protocol
+    loss, or a run that died — is ended by that teardown instead. The teardown
+    reports its one end for a live native session without asking whether a turn
+    was open, because the provider keeps no display state that could answer, so
+    the Channel may receive an end with nothing open and ignores it under item
+    8.
 
 13. **No logical membership contract.** The native-ended fact does not enumerate
     `RuntimeSubmission` members, logical `turn_id` values, presentation ids,
@@ -152,8 +163,15 @@ home as `~`.
     remains a per-logical-submission lifecycle fact and never closes, reopens,
     re-anchors, or partitions a COT card. A native completed end closes the current
     card as completed; failed or interrupted native ends close it as interrupted.
-    Channel-user anchor replacement is the only independent reason to close one
-    card and open its successor while the same native turn is still running.
+    Two independent reasons close one card and open its successor while the same
+    native turn is still running. The first is Channel-user anchor replacement.
+    The second was added with the operator's agreement by
+    [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md)
+    (rulings 4, 8 and 9, recorded there): an input that reaches no runtime makes
+    Core publish its own `turn.ended` with `status: 'failed'`, which ends the one
+    open card even when a native turn is still producing. That turn's remaining
+    activity opens the successor card at the same anchor under item 8, so a
+    reader sees a failed card followed by one that finishes normally.
 
 ## Accepted best-effort losses
 
@@ -167,6 +185,13 @@ home as `~`.
   subsequent anchor replacement or session close.
 - A tool-call result that crosses an anchor replacement may be omitted. This task
   does not add cross-card tool-call recovery or migration.
+- The same loss follows any card ending, not only an anchor replacement.
+  `finishCard` clears the recipient's open-call state unconditionally, so when
+  Core's synthesized failed end (item 14) closes a card while a native turn is
+  still running, that turn's outstanding tool call loses its pairing: the result
+  arrives, finds no recorded start, and is neither displayed nor allowed to open
+  a successor card. Assistant text from the same turn still opens the successor,
+  so what is lost is the one tool row, not the card.
 
 ## Existing COT behavior retained or completed
 
@@ -206,9 +231,11 @@ home as `~`.
   Core.
 - No admission-gated anchor. Waiting for Core to answer before moving the
   Channel's own anchor is what created the predecessor-card losses.
-- No provider-side deduplication flag for native turn ends. A synthesized end is
-  reported only when the reporting call actually settled something, so no second
-  report exists to suppress.
+- No provider-side deduplication flag for native turn ends. A provider keeps no
+  display state at all: it reports the end its native stream gives it, and one
+  more when it tears down a live native session, without asking whether a turn
+  was open. The Channel ignores an end that arrives with nothing open (item 8),
+  which is what makes reporting without that question correct.
 - No process-global cache for host home prefixes. The resolved prefixes are an
   input passed to the conversation projection.
 
@@ -259,10 +286,15 @@ home as `~`.
   `.` and `~` respectively, including paths followed by sentence punctuation and
   paths embedded in `file://` URLs. A missing home environment does not cause the
   process working directory to be displayed as `~`.
-- On the Claude side a synthesized end is reported only when that call settled a
-  submission that was still open, so an ordinary success reports exactly one end
-  without any deduplication state, and each terminal `result` reports its own end
-  by construction.
+- On the Claude side each terminal `result` reports its own end by construction,
+  and the provider keeps no display state that could gate a second one
+  ([split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md)):
+  `stop()` and the fence report one interrupted end for a live child only, and a
+  run that died before any stop reports a failed end carrying its own error. A
+  start that never produced a child reports nothing — Core stops that runtime
+  before revoking its generation, so Core's own failed end is what carries the
+  start error to the card — and a teardown end after the turn's own `result`
+  reaches a recipient with nothing open, which ignores it under item 8.
 - The conversation projection receives this host's home prefixes as a constructor
   input. No module-level cache, no test reset hook, and no start-order dependency
   decides whether a projected path is renamed.

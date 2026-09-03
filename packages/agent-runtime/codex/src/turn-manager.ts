@@ -10,13 +10,11 @@ import type { CodexWsClient } from './rpc.js';
 import type { ThreadItem } from './types.js';
 import type {
   AgentRuntimeActivitySink,
-  AgentRuntimeNativeTurnSink,
   AgentRuntimeSubmissionInput,
   JsonValue,
   RuntimeActivity,
   RuntimeAdmission,
   RuntimeCompletion,
-  RuntimeNativeTurnEnd,
   RuntimeSubmission,
   RuntimeSubmissionSettlement,
   RuntimeToolAction,
@@ -33,15 +31,6 @@ interface NativeTurnRecord {
   completion: RuntimeCompletion | null;
   terminal: CollectedTurn | Error | null;
   releaseAfterAdmissions: Set<number> | null;
-  /**
-   * Whether this native turn already reported its one end.
-   *
-   * A record is reachable from several terminal paths — a collected terminal,
-   * a protocol failure, and stop — and more than one can run for the same turn
-   * id. The flag is what makes the one-end-per-native-turn contract hold rather
-   * than depend on which path happened to win.
-   */
-  nativeTurnEnded: boolean;
 }
 
 export interface TurnManagerOptions {
@@ -56,7 +45,6 @@ export interface TurnManagerOptions {
    */
   codec: CodexOutputSchemaCodec | null;
   activitySink: AgentRuntimeActivitySink;
-  nativeTurnSink: AgentRuntimeNativeTurnSink;
   log?: (level: 'info' | 'warn' | 'error', msg: string, err?: unknown) => void;
   onTurnCompleted?: (turn: CollectedTurn) => void;
 }
@@ -66,7 +54,6 @@ export class TurnManager {
   private readonly inFlightNativeAdmissions = new Set<number>();
   private nextNativeAdmission = 0;
   private readonly nativeTurns = new Map<string, NativeTurnRecord>();
-  private readonly pendingActivity = new Map<string, Array<{ activity: RuntimeActivity; occurredAt: number }>>();
   private readonly unboundObservedTurnIds = new Set<string>();
   private readonly terminalOrder: string[] = [];
   private protocolFailure: Error | null = null;
@@ -99,18 +86,20 @@ export class TurnManager {
     this.collector?.dispose();
     this.collector = null;
     while (this.pendingAdmissions.size > 0) await Promise.allSettled([...this.pendingAdmissions]);
+    // The collector is gone, so nothing will ever report a turn codex started
+    // and never finished: this teardown reports one interrupted end, without
+    // asking whether a turn was open. The manager keeps no such answer; a
+    // consumer with nothing open ignores the end.
+    this.endNativeTurn('interrupted', null);
     this.drainTerminalOrder();
     for (const record of this.nativeTurns.values()) {
       if (record.completion !== null) continue;
       for (const member of record.members) member.settle({ kind: 'stopped' });
-      // A native turn torn down before its own terminal still ended.
-      this.endNativeTurn(record, 'interrupted');
     }
     for (const [turnId, record] of this.nativeTurns) {
       if (record.completion === null) this.nativeTurns.delete(turnId);
     }
     this.terminalOrder.length = 0;
-    this.pendingActivity.clear();
     this.unboundObservedTurnIds.clear();
   }
 
@@ -140,7 +129,7 @@ export class TurnManager {
       this.log('error', `turn/start submission failed for ${description}: ${normalized.message}`, normalized);
       this.inFlightNativeAdmissions.delete(admissionId);
       this.releaseCompletedRecords(admissionId);
-      this.dropOrphanActivityIfIdle();
+      this.releaseOrphanTurnsIfIdle();
       return { status: 'ambiguous', error: normalized };
     }
     const observed = this.nativeTurns.get(response.turn.id);
@@ -151,7 +140,7 @@ export class TurnManager {
     }
     this.inFlightNativeAdmissions.delete(admissionId);
     this.releaseCompletedRecords(admissionId);
-    this.dropOrphanActivityIfIdle();
+    this.releaseOrphanTurnsIfIdle();
     return { status: 'submitted', submission: deferred.submission };
   }
 
@@ -183,13 +172,10 @@ export class TurnManager {
       completion: null,
       terminal: null,
       releaseAfterAdmissions: null,
-      nativeTurnEnded: false,
     };
     record.representative ??= deferred.submission;
     if (record.completion === null) record.members.push(deferred);
     this.nativeTurns.set(turnId, record);
-    for (const fact of this.pendingActivity.get(turnId) ?? []) this.emitActivity(record, fact.activity, fact.occurredAt);
-    this.pendingActivity.delete(turnId);
     if (this.protocolFailure !== null) {
       this.failRecord(turnId, record, this.protocolFailure);
       return;
@@ -199,10 +185,19 @@ export class TurnManager {
   }
 
   private observeTerminal(turnId: string, terminal: CollectedTurn | Error): void {
+    // The display line ends here, on codex's own terminal. The collector
+    // reports each turn's terminal once, so this is the one end the turn gets
+    // from its stream: nothing below it — the record's own bookkeeping, the
+    // terminal queue, the admissions gate, the completion the push-back line
+    // builds out of this terminal — may change it, delay it, or withhold it.
+    this.endNativeTurn(
+      terminal instanceof Error ? 'failed' : 'completed',
+      terminal instanceof Error ? terminal.message : null,
+    );
     this.unboundObservedTurnIds.delete(turnId);
     const record = this.nativeTurns.get(turnId) ?? {
       representative: null, members: [], completion: null, terminal: null,
-      releaseAfterAdmissions: null, nativeTurnEnded: false,
+      releaseAfterAdmissions: null,
     };
     if (record.terminal !== null || record.completion !== null) return;
     record.terminal = terminal;
@@ -219,12 +214,12 @@ export class TurnManager {
       if (record === undefined || record.terminal === null) return;
       if (record.representative === null) {
         if (this.pendingAdmissions.size > 0) return;
+        // Nothing to settle and no completion to describe, so this queue head
+        // is only released. Its end went out when codex reported the terminal.
         this.terminalOrder.shift();
         this.nativeTurns.delete(turnId);
-        this.pendingActivity.delete(turnId);
         this.unboundObservedTurnIds.delete(turnId);
         this.collector?.releaseTurn(turnId);
-        this.log('warn', `dropping native terminal ${turnId} without an accepted submission`);
         continue;
       }
       this.terminalOrder.shift();
@@ -234,6 +229,9 @@ export class TurnManager {
 
   private finalize(turnId: string, record: NativeTurnRecord, terminal: CollectedTurn | Error): void {
     if (record.completion !== null) return;
+    // Push-back only, and it decides nothing the card shows: an unbound turn
+    // has no submission to settle, so `drainTerminalOrder` releases it instead
+    // of routing it here.
     if (record.representative === null) return;
     let completion: RuntimeCompletion;
     if (terminal instanceof Error) {
@@ -248,7 +246,6 @@ export class TurnManager {
         for (const member of record.members) member.settle({ kind: 'completion', completion });
         record.members.length = 0;
         record.terminal = null;
-        this.endNativeTurn(record, 'failed');
         this.releaseRecordIfReady(turnId, record);
         return;
       }
@@ -263,18 +260,18 @@ export class TurnManager {
     for (const member of record.members) member.settle({ kind: 'completion', completion });
     record.members.length = 0;
     record.terminal = null;
-    // `turn/completed` is codex's one native terminal, so this is where the
-    // native turn ends whatever it folded.
-    this.endNativeTurn(
-      record,
-      completion.status === 'completed' ? 'completed' : 'failed',
-    );
     this.releaseRecordIfReady(turnId, record);
   }
 
   private failProtocol(error: Error): void {
+    const first = this.protocolFailure === null;
     this.protocolFailure ??= error;
     this.log('error', error.message, error);
+    // Whatever codex had running dies with the connection, including a turn
+    // this manager only ever saw items for, which has no record for the loop
+    // below to reach. The first failure reports that end; later ones repeat
+    // the same dead connection.
+    if (first) this.endNativeTurn('failed', this.protocolFailure.message);
     this.terminalOrder.length = 0;
     for (const [turnId, record] of this.nativeTurns) {
       if (record.completion !== null) continue;
@@ -285,9 +282,7 @@ export class TurnManager {
   private failRecord(turnId: string, record: NativeTurnRecord, error: Error): void {
     for (const member of record.members) member.settle({ kind: 'failed', error });
     record.members.length = 0;
-    this.endNativeTurn(record, 'failed');
     this.nativeTurns.delete(turnId);
-    this.pendingActivity.delete(turnId);
     this.unboundObservedTurnIds.delete(turnId);
     this.collector?.releaseTurn(turnId);
   }
@@ -302,69 +297,65 @@ export class TurnManager {
   private releaseRecordIfReady(turnId: string, record: NativeTurnRecord): void {
     if (record.completion === null || (record.releaseAfterAdmissions?.size ?? 0) > 0) return;
     this.nativeTurns.delete(turnId);
-    this.pendingActivity.delete(turnId);
     this.unboundObservedTurnIds.delete(turnId);
     this.collector?.releaseTurn(turnId);
   }
 
-  private dropOrphanActivityIfIdle(): void {
+  /** Let the collector forget a native turn no Dreamux submission ever bound. */
+  private releaseOrphanTurnsIfIdle(): void {
     if (this.inFlightNativeAdmissions.size !== 0) return;
     for (const turnId of this.unboundObservedTurnIds) {
       if (this.nativeTurns.has(turnId)) continue;
-      this.pendingActivity.delete(turnId);
       this.collector?.releaseTurn(turnId);
     }
     this.unboundObservedTurnIds.clear();
   }
 
+  /**
+   * Put what codex reported on this agent's activity stream.
+   *
+   * No record is consulted. A native turn folds any number of Dreamux
+   * submissions, so naming one of them as the item's owner was always a guess
+   * — and the buffer that existed to make that guess possible dropped
+   * everything it could not eventually attribute. The agent is the subject,
+   * and it is known before any submission binds.
+   */
   private observeItem(turnId: string, item: ThreadItem, phase: 'started' | 'completed', occurredAt: number): void {
+    const activity = itemActivity(turnId, item, phase, occurredAt);
+    if (activity !== null) this.emitActivity(activity);
     const record = this.nativeTurns.get(turnId);
-    if (record === undefined || record.representative === null) {
-      this.unboundObservedTurnIds.add(turnId);
-      if (this.inFlightNativeAdmissions.size === 0) {
-        this.dropOrphanActivityIfIdle();
-        return;
-      }
-      const activity = itemActivity(turnId, item, phase);
-      if (activity === null) return;
-      const pending = this.pendingActivity.get(turnId) ?? [];
-      pending.push({ activity, occurredAt });
-      this.pendingActivity.set(turnId, pending);
-      return;
-    }
-    const activity = itemActivity(turnId, item, phase);
-    if (activity === null) return;
-    this.emitActivity(record, activity, occurredAt);
+    if (record !== undefined && record.representative !== null) return;
+    this.unboundObservedTurnIds.add(turnId);
+    if (this.inFlightNativeAdmissions.size === 0) this.releaseOrphanTurnsIfIdle();
   }
 
-  private emitActivity(record: NativeTurnRecord, activity: RuntimeActivity, occurredAt: number): void {
-    if (record.representative === null) return;
-    try {
-      this.opts.activitySink(Object.freeze({ submission: record.representative, activity: Object.freeze(activity), occurredAt }));
-    } catch (error) {
-      this.log('warn', 'codex activity projection failed', error);
-    }
+  /** The sink is Core's and never throws (`AgentRuntimeActivitySink`). */
+  private emitActivity(activity: RuntimeActivity): void {
+    this.opts.activitySink(Object.freeze(activity));
   }
 
   /**
-   * Report this native turn's one end, at most once.
+   * Report a native turn's end on the display line.
    *
-   * A record that never bound a submission belongs to no Dreamux entity, so
-   * there is no conversation for its end to land in and nothing is emitted.
-   * The sink is display-only, so a throwing consumer is logged and the turn
-   * proceeds.
+   * `status` and `reason` are codex's own terminal and nothing else — a
+   * collected turn completed, an error failed with its message, a teardown
+   * interrupted. What the push-back line then makes of that terminal (a decode
+   * it cannot restore, a submission it cannot attribute) is push-back's own
+   * outcome and never colours the card.
+   *
+   * This manager keeps no display state: it does not know, and does not ask,
+   * whether a turn is open before reporting an end. Whether the end is *shown*
+   * is not this layer's decision. A card belongs to no turn
+   * (`feishu-cot-conversation-cards` requirement, rule 1 — a target is "not a
+   * presentation identity, state key, or card partition"), and a native end
+   * "closes an existing open card but never opens a new one; when no card is
+   * open, Feishu ignores it" (rule 8). This layer pushes; the Channel decides.
    */
   private endNativeTurn(
-    record: NativeTurnRecord,
-    status: RuntimeNativeTurnEnd['status'],
+    status: 'completed' | 'failed' | 'interrupted',
+    reason: string | null,
   ): void {
-    if (record.nativeTurnEnded || record.representative === null) return;
-    record.nativeTurnEnded = true;
-    try {
-      this.opts.nativeTurnSink(Object.freeze({ status, occurredAt: Date.now() }));
-    } catch (error) {
-      this.log('warn', 'codex native turn end projection failed', error);
-    }
+    this.emitActivity({ kind: 'turn.ended', occurredAt: Date.now(), status, reason });
   }
 
   private trackAdmission(admission: Promise<RuntimeAdmission>): Promise<RuntimeAdmission> {
@@ -384,12 +375,23 @@ function createRuntimeSubmission(): SubmissionDeferred {
   return { submission, settle(settlement) { if (settled) return false; settled = true; resolve(settlement); return true; } };
 }
 
-function itemActivity(turnId: string, item: ThreadItem, phase: 'started' | 'completed'): RuntimeActivity | null {
+function itemActivity(
+  turnId: string,
+  item: ThreadItem,
+  phase: 'started' | 'completed',
+  occurredAt: number,
+): RuntimeActivity | null {
   const itemId = typeof item.id === 'string' && item.id !== '' ? item.id : null;
   if (itemId === null) return null;
   if (item.type === 'agentMessage') {
     if (phase !== 'completed' || typeof item.text !== 'string' || item.text === '') return null;
-    return { kind: 'assistant.message', id: `${turnId}:${itemId}:completed`, text: item.text, truncated: false };
+    return {
+      kind: 'assistant.message',
+      occurredAt,
+      id: `${turnId}:${itemId}:completed`,
+      text: item.text,
+      truncated: false,
+    };
   }
   const toolName = toolNameFor(item);
   if (toolName === null) return null;
@@ -398,6 +400,7 @@ function itemActivity(turnId: string, item: ThreadItem, phase: 'started' | 'comp
   const error = failed ? renderProviderError(item['error']) : null;
   return {
     kind: 'tool.call',
+    occurredAt,
     id: `${turnId}:${itemId}:${phase}`,
     callId: itemId,
     toolName,

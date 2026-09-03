@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/feishu-channel",
+      "comment": "BREAKING: Review: watch one COT card end-to-end after upgrading, including one input that fails before a runtime accepts it — that card now reads 任务失败 instead of 已中断. No config, state, cache, or path shape changed and no rebuild is needed. The session now subscribes to `teammate.input` and `teammate.activity` instead of the five deleted turn-scoped kinds, and recognizes its own inbound body by comparing `source_id` against the ids this session issued rather than through a two-hop turn correlation. A card's one terminal is a `turn.ended` activity, which prints its reason on the card before ending it. That terminal is now three-valued across two AG-UI events: a `completed` end sends `RUN_FINISHED done`, an `interrupted` end and every lifecycle interrupt send `RUN_FINISHED interrupted`, and a `failed` end sends `RUN_ERROR`, which is what the Feishu client renders as 任务失败 — a submission no runtime accepted used to end the card as 已中断. Open tool calls are keyed on the runtime's call id alone.",
+      "type": "major"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

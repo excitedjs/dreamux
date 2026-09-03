@@ -153,11 +153,33 @@ What replaced what:
   re-anchors anything. Core publishes a new actor-scoped
   `teammate.native_turn.ended` fact, sourced from an optional provider seam
   (`AgentRuntimeCreateContext.nativeTurn`), and that is a card's only terminal.
+  (Superseded 2026-09-02: the fact is now the `turn.ended` member of
+  `teammate.activity`, produced by the one activity sink; the second sink and
+  the `teammate.native_turn.ended` kind are deleted. See
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).)
   One Claude Code terminal `result` and one Codex `turn/completed` are each one
   native turn; several Dreamux submissions folded into one of them share its
   single end. A provider synthesizes an end for a stop, failure, or protocol
   loss only when that call actually settled a still-open submission, so an
   ordinary success reports exactly one end and no deduplication state exists.
+  (Superseded 2026-09-03: the operator ruled the providers' at-most-once tables
+  out, so a provider keeps no display state and never asks whether a turn was
+  open. It reports `turn.ended` from the native terminal it observed — one codex
+  terminal per turn, one Claude `result` — and again when it tears down a native
+  session: codex from `TurnManager.stop()` and from its first protocol failure,
+  Claude Code from `stop()` and from the state fence, both gated on a live
+  child,
+  and from a run that died, gated only on not having been stopped. An ordinary
+  success followed by a teardown therefore reports two ends, not one. The only
+  deduplication left is the native stream's own, and the Channel ignores an end
+  that arrives with nothing open (requirement rule 8). A runtime start that
+  fails
+  reports no end from either provider — the codex manager does not exist until
+  the native session is up, and a Claude child that failed to come up is gone
+  before Core's `stop()` — so Core's own failed end carries the start error to
+  the card; the one exception is a state write failing after the native session
+  is up, where the fence's teardown ends first. See
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).)
 - **What is displayed.** The source whitelist is gone: once a recipient has an
   anchor, every projected input displays, including the body of the message this
   Channel itself submitted. There is no body-suppression ledger — such a mark

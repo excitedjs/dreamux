@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "comment": "Repository guardrail only: make the anti-leak pre-commit gate mandatory and add a tree-wide internal-content scan. Touches this package's contributor documentation and adds a guardrail test; no package behavior or version change.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

@@ -108,6 +108,13 @@ export type BotMemberAddedHandler = (
 export interface FeishuCardActionEvent {
   operatorOpenId?: string;
   actionValue: Record<string, unknown>;
+  /**
+   * What the user typed, for an `input` that carries its own callback. Feishu
+   * sends it as `action.input_value`, outside `action.value`, and only a
+   * form-less input ever reports one: inside a `form` the text is withheld
+   * until submit and arrives as `form_value` instead.
+   */
+  inputValue?: string;
   openChatId?: string;
   openMessageId?: string;
   raw: unknown;
@@ -159,6 +166,8 @@ export interface FeishuBot extends FeishuMessageResourceFetcher {
   /** Optional for externally supplied bots; absence disables topic projection. */
   getChatMode?(chatId: string): Promise<FeishuChatMode | undefined>;
   addReaction(messageId: string, emoji: string): Promise<string>;
+  /** Repaint an already-sent card in place, by message id. */
+  editCard(messageId: string, card: unknown): Promise<void>;
   fetchMessageResource(
     request: FeishuMessageResourceRequest,
   ): Promise<FeishuMessageResourceResponse>;
@@ -291,6 +300,10 @@ export function createFeishuBot(
       return transport.getChatMode?.(chatId) ?? Promise.resolve(undefined);
     },
 
+    editCard(messageId: string, card: unknown): Promise<void> {
+      return transport.editCard(messageId, card);
+    },
+
     addReaction(messageId: string, emoji: string): Promise<string> {
       return transport.addReaction(messageId, emoji);
     },
@@ -420,6 +433,7 @@ function normalizeCardActionEvent(raw: unknown): FeishuCardActionEvent {
     asRecord(event['card_action']);
   const context = asRecord(root['context']) ?? asRecord(event['context']) ?? root;
   const actionValue = asRecord(action?.['value']) ?? {};
+  const inputValue = firstString(action?.['input_value'], action?.['inputValue']);
   const operatorOpenId = firstString(operator?.['open_id'], operator?.['openId']);
   const openChatId = firstString(
     context['open_chat_id'],
@@ -436,6 +450,7 @@ function normalizeCardActionEvent(raw: unknown): FeishuCardActionEvent {
   return {
     ...(operatorOpenId !== '' ? { operatorOpenId } : {}),
     actionValue,
+    ...(inputValue !== '' ? { inputValue } : {}),
     ...(openChatId !== '' ? { openChatId } : {}),
     ...(openMessageId !== '' ? { openMessageId } : {}),
     raw,

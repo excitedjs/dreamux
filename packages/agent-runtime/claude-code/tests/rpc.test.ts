@@ -216,7 +216,7 @@ function lifecycleChunk(
 }
 
 /**
- * What a `priority: 'now'` interrupt leaves behind: an error result with
+ * What an interrupt leaves behind: an error result with
  * neither a `result` key nor a `user_message_uuid`. It is an artifact of the
  * cancelled command, not an answer, so it is not a native completion boundary.
  */
@@ -389,7 +389,7 @@ describe('ClaudeCodeStreamRpc idle deadline (issue #156)', () => {
     const turn = h.rpc.submitTurn('first');
     const initialUuid = writtenCommandUuid(h.stdin, 0);
     h.rpc.onStdoutChunk(initLine());
-    await h.rpc.steerTurn('second', { priority: 'next' });
+    await h.rpc.steerTurn('second');
     const steerUuid = writtenCommandUuid(h.stdin, 1);
     const rejection = expect(turn).rejects.toThrow(
       /without running any of its commands.*discarded/u,
@@ -603,7 +603,7 @@ describe('ClaudeCodeStreamRpc native completion boundaries', () => {
     const turn = h.rpc.submitTurn('first');
     const initialUuid = writtenCommandUuid(h.stdin, 0);
     h.rpc.onStdoutChunk(initLine());
-    await h.rpc.steerTurn('second', { priority: 'next' });
+    await h.rpc.steerTurn('second');
     await h.rpc.steerTurn('third');
     const secondUuid = writtenCommandUuid(h.stdin, 1);
     const thirdUuid = writtenCommandUuid(h.stdin, 2);
@@ -669,7 +669,7 @@ describe('ClaudeCodeStreamRpc native completion boundaries', () => {
     const turn = h.rpc.submitTurn('first');
     const initialUuid = writtenCommandUuid(h.stdin, 0);
     h.rpc.onStdoutChunk(initLine());
-    await h.rpc.steerTurn('second', { priority: 'next' });
+    await h.rpc.steerTurn('second');
     const steerUuid = writtenCommandUuid(h.stdin, 1);
 
     const settlements: string[] = [];
@@ -708,7 +708,7 @@ describe('ClaudeCodeStreamRpc native completion boundaries', () => {
     const turn = h.rpc.submitTurn('first');
     const initialUuid = writtenCommandUuid(h.stdin, 0);
     h.rpc.onStdoutChunk(initLine());
-    await h.rpc.steerTurn('second', { priority: 'next' });
+    await h.rpc.steerTurn('second');
     const steerUuid = writtenCommandUuid(h.stdin, 1);
 
     const settlements: string[] = [];
@@ -755,7 +755,7 @@ describe('ClaudeCodeStreamRpc native completion boundaries', () => {
     const turn = h.rpc.submitTurn('first');
     const initialUuid = writtenCommandUuid(h.stdin, 0);
     h.rpc.onStdoutChunk(initLine());
-    await h.rpc.steerTurn('second', { priority: 'next' });
+    await h.rpc.steerTurn('second');
     const steerUuid = writtenCommandUuid(h.stdin, 1);
 
     // A discarded command never produces anything further, so it is terminal
@@ -784,7 +784,7 @@ describe('ClaudeCodeStreamRpc native completion boundaries', () => {
     const turn = h.rpc.submitTurn('first');
     const initialUuid = writtenCommandUuid(h.stdin, 0);
     h.rpc.onStdoutChunk(initLine());
-    await h.rpc.steerTurn('second', { priority: 'next' });
+    await h.rpc.steerTurn('second');
     const steerUuid = writtenCommandUuid(h.stdin, 1);
 
     // The initial command runs and answers; the window then waits only on the
@@ -832,7 +832,7 @@ describe('ClaudeCodeStreamRpc native completion boundaries', () => {
     const turn = h.rpc.submitTurn('first');
     const initialUuid = writtenCommandUuid(h.stdin, 0);
     h.rpc.onStdoutChunk(initLine());
-    await h.rpc.steerTurn('second', { priority: 'next' });
+    await h.rpc.steerTurn('second');
     const steerUuid = writtenCommandUuid(h.stdin, 1);
 
     // A refused steer coexists with a command that answers normally, exactly
@@ -927,8 +927,8 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     const h = createHarness();
     const turn = h.rpc.submitTurn('first');
     const initialUuid = writtenCommandUuid(h.stdin, 0);
-    const second = h.rpc.steerTurn('second', { priority: 'next' });
-    const third = h.rpc.steerTurn('third', { priority: 'next' });
+    const second = h.rpc.steerTurn('second');
+    const third = h.rpc.steerTurn('third');
     let secondSettled = false;
     let thirdSettled = false;
     void second.then(
@@ -1098,7 +1098,7 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     const turn = h.rpc.submitTurn('first');
     const initialUuid = writtenCommandUuid(h.stdin, 0);
     h.rpc.onStdoutChunk(initLine());
-    await h.rpc.steerTurn('second', { priority: 'next' });
+    await h.rpc.steerTurn('second');
     const steerUuid = writtenCommandUuid(h.stdin, 1);
 
     expect(h.stdin.writes).toHaveLength(2);
@@ -1109,7 +1109,6 @@ describe('ClaudeCodeStreamRpc active steering', () => {
         role: 'user',
         content: [{ type: 'text', text: 'second' }],
       },
-      priority: 'next',
     });
 
     h.rpc.onStdoutChunk(resultLine('initial', initialUuid));
@@ -1157,12 +1156,12 @@ describe('ClaudeCodeStreamRpc active steering', () => {
     expect(h.results()).toEqual([]);
   });
 
-  it("does not forward the error_during_execution artifact of a priority:'now' interrupt as a completion boundary", async () => {
+  it('does not forward the error_during_execution artifact of an interrupt as a completion boundary', async () => {
     const h = createHarness();
     const turn = h.rpc.submitTurn('first');
     const initialUuid = writtenCommandUuid(h.stdin, 0);
     h.rpc.onStdoutChunk(initLine());
-    await h.rpc.steerTurn('interrupt', { priority: 'now' });
+    await h.rpc.steerTurn('interrupt');
     const steerUuid = writtenCommandUuid(h.stdin, 1);
 
     const settlements: string[] = [];
@@ -1171,7 +1170,7 @@ describe('ClaudeCodeStreamRpc active steering', () => {
       (err: Error) => settlements.push(`rejected:${err.message}`),
     );
 
-    // `priority: 'now'` genuinely interrupts: the running command is cancelled
+    // An interrupt genuinely interrupts: the running command is cancelled
     // and the CLI emits an `error_during_execution` envelope with neither a
     // `result` key nor a `user_message_uuid`. That artifact is not a native
     // answer — it must neither settle the window nor mint a boundary.

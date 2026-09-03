@@ -15,6 +15,8 @@
 #     `workspace:*` dependency that landed with the channel refactor (#4).
 #   - kb — validate the .agents/ knowledge base (link / orphan check)
 #   - gitleaks — secret scan over the full git history (anti-leak guardrail)
+#   - internal-content — tree-wide scan for internal identifiers and paths that
+#     .gitleaks.toml deliberately does not cover (anti-leak guardrail)
 #
 # The rush bootstrap (`node common/scripts/install-run-rush.js update`) is
 # the only way to install a `workspace:*` graph, so a broken rush.json or
@@ -204,6 +206,8 @@ jobs:
           shellcheck \
             .agents/scripts/check.sh \
             common/git-hooks/pre-commit \
+            common/scripts/check-internal-content.sh \
+            common/scripts/install-gitleaks.sh \
             bin/dreamux \
             packages/dreamux/bin/dreamux
 
@@ -264,29 +268,45 @@ jobs:
     timeout-minutes: 10
     # Anti-leak guardrail. dreamux is a PUBLIC repo: company-internal content
     # (Feishu ids, tokens, private-mirror URLs, secrets) must never land in a
-    # commit. This job is the authoritative, non-bypassable gate — the
-    # committed pre-commit hook (common/git-hooks/pre-commit) is only a local
-    # pre-flight that warn-and-passes when gitleaks isn't installed.
+    # commit. This job is the authoritative gate over the full history; the
+    # committed pre-commit hook (common/git-hooks/pre-commit) runs the same
+    # scan over staged changes and fails hard when gitleaks is absent, so the
+    # two agree instead of one quietly standing down.
     #
-    # `gitleaks detect` scans the whole git history, so it catches a secret
-    # even if it was added and then "fixed" in a later commit; fetch-depth: 0
-    # gives the job that full history (incl. the committed pnpm-lock.yaml).
-    # The gitleaks binary is pinned and downloaded directly rather than via
-    # gitleaks-action, which needs a license key for org repos and would hide
-    # the exact command — kept identical to the local hook's invocation.
-    env:
-      GITLEAKS_VERSION: '8.30.1'
+    # `gitleaks git` scans the whole git history, so it catches a secret even
+    # if it was added and then "fixed" in a later commit; fetch-depth: 0 gives
+    # the job that full history (incl. the committed pnpm-lock.yaml). The
+    # binary comes from the same pinned, checksum-verifying script a developer
+    # machine uses, so the version lives in exactly one place.
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Install gitleaks ${{ env.GITLEAKS_VERSION }}
+      - name: Install gitleaks
+        env:
+          GITLEAKS_INSTALL_DIR: ${{ runner.temp }}/gitleaks
         run: |
-          mkdir -p "$RUNNER_TEMP/gitleaks"
-          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
-            | tar -xz -C "$RUNNER_TEMP/gitleaks" gitleaks
-          echo "$RUNNER_TEMP/gitleaks" >> "$GITHUB_PATH"
-      - name: gitleaks version
-        run: gitleaks version
-      - name: gitleaks detect (full history, lockfile included, --exit-code 1)
-        run: gitleaks detect --source . --config .gitleaks.toml --redact --exit-code 1 -v
+          set -euo pipefail
+          common/scripts/install-gitleaks.sh
+          echo "$GITLEAKS_INSTALL_DIR" >> "$GITHUB_PATH"
+      - name: gitleaks git (full history, lockfile included, --exit-code 1)
+        run: gitleaks git . --config .gitleaks.toml --redact --exit-code 1 -v
+
+  internal-content:
+    name: internal-content — public-repo path scan (tree)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The second half of the anti-leak guardrail. `.gitleaks.toml` is shared
+    # verbatim with the internal sibling repository, where the internal mount
+    # and developer home paths this scan rejects are legitimate — so those
+    # patterns cannot live there. They live in the script below, which is the
+    # same scan the pre-commit hook runs over staged changes and the release
+    # workflow runs over packed tarballs.
+    #
+    # Tree-wide rather than diff-wide on purpose: the release gate only ever
+    # saw what reached `dist`, which is why an internal path in a test file
+    # reached the default branch on 2026-09-02 without a gate firing.
+    steps:
+      - uses: actions/checkout@v4
+      - name: check-internal-content (every tracked file)
+        run: common/scripts/check-internal-content.sh --tree

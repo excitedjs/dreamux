@@ -150,10 +150,11 @@ Source: `/packages/eslint-config/`, `/packages/dreamux/tests/no-sync-io-gate.tes
 |---|---|
 | `rush-change-status` | PRs only: `rush change --verify --target-branch origin/<base>`, plus the 0.x major-change-file scan |
 | `commit-metadata` | Author email must have a domain and must not be machine-local; `*@users.noreply.github.com` always passes; an optional private denylist regex comes from a repo variable, never from a committed file |
-| `shellcheck` | Linux + macOS, over `.agents/scripts/check.sh`, `common/git-hooks/pre-commit`, `bin/dreamux`, `packages/dreamux/bin/dreamux` |
+| `shellcheck` | Linux + macOS, over `.agents/scripts/check.sh`, `common/git-hooks/pre-commit`, `common/scripts/check-internal-content.sh`, `common/scripts/install-gitleaks.sh`, `bin/dreamux`, `packages/dreamux/bin/dreamux` |
 | `kb` | `.agents/scripts/check.sh` — knowledge-base link and orphan check |
 | `rush` | Linux + macOS: update → build → built-CLI smoke → typecheck → typecheck:tests → lint → install codex → test |
-| `gitleaks` | Full-history `gitleaks detect` with the pinned binary and `.gitleaks.toml` |
+| `gitleaks` | Full-history `gitleaks git .` with the pinned binary and `.gitleaks.toml` |
+| `internal-content` | `common/scripts/check-internal-content.sh --tree` over every tracked file |
 
 Order inside the `rush` job is load-bearing. Build precedes typecheck because a
 package's `tsc --noEmit` resolves workspace dependencies through their emitted
@@ -310,23 +311,57 @@ private registry URLs, internal hostnames, real Feishu ids, or tokens.
   public formats, so the config itself leaks nothing.
 - `/.npmrc` pins the public npm registry, keeping a private mirror URL out of
   the lockfile.
-- `common/git-hooks/pre-commit` runs `gitleaks protect --staged` as a local
-  pre-flight and warn-passes when gitleaks is not installed.
-- The `gitleaks` CI job is the authoritative, non-bypassable gate: it scans the
-  full history with a pinned binary, so a secret added and later "fixed" is
-  still caught.
+- `common/git-hooks/pre-commit` runs `gitleaks git --staged` and
+  `common/scripts/check-internal-content.sh --staged`. The gate is **mandatory**:
+  a missing gitleaks binary fails the commit rather than warning and passing,
+  and `--no-verify` is not an accepted way past it. Install with
+  `common/scripts/install-gitleaks.sh` — a pinned, checksum-verifying script
+  that installs into `~/.local/bin` by default (`GITLEAKS_INSTALL_DIR` overrides
+  it). The hook looks in `$GITLEAKS_INSTALL_DIR` and `~/.local/bin` as well as
+  `PATH`, because that default directory is not on every shell's `PATH`.
+- The `gitleaks` CI job scans the full history with the same pinned binary, so a
+  secret added and later "fixed" is still caught. The pin lives only in
+  `install-gitleaks.sh`; CI and the release workflow both install through it.
+- **Internal paths are a separate gate from secrets.** `.gitleaks.toml` is
+  shared verbatim with the internal sibling repository, which legitimately
+  contains the internal mount and developer home paths this repository must not
+  publish — so those patterns cannot live there.
+  `common/scripts/check-internal-content.sh` owns them instead, and runs in the
+  hook (`--staged`) and in the `internal-content` CI job (`--tree`, every
+  tracked file). Its allowlist is by reviewed placeholder user name and by
+  named pattern-definition file, never by directory: the leak that motivated
+  the tree scan was in `tests/`, which a directory exclusion would have missed.
 - The prerelease job additionally audits every packed tarball before upload —
-  `package/package.json` must be present, and a regex scan over every packed
-  file rejects Feishu identifier formats, the internal `/data00/` mount, and any
-  absolute `/home/<user>/` path except the reviewed public `/home/volta/` and
-  `/home/linuxbrew/` examples compiled into `dist`.
+  `package/package.json` must be present, and
+  `check-internal-content.sh --tarball` scans every packed file with the same
+  patterns as the tree scan, allowing only the reviewed public `/home/volta/`
+  and `/home/linuxbrew/` install locations compiled into `dist`
+  (`ALLOWED_DIST_RE`; the source-tree placeholder users are not allowed in an
+  artifact). The script is the one owner of the patterns, so the two gates
+  cannot drift apart; `internal-content-scan.test.ts` runs the tarball mode
+  against a packed fixture, so the release gate's behavior is verifiable
+  without a release.
+- The release `version` job commits the version bump **through this hook**, with
+  no `--no-verify`, so it installs gitleaks first. Release automation is not
+  exempt from the red line. It is also the only workflow job that commits at
+  all — `grep -n "git commit" .github/workflows/*.yml` returns exactly that one
+  site — so it is the only one that needs the binary.
+
+**Running the full-history scan locally is red in a clone that has the internal
+sibling repository as a remote.** `gitleaks git .` walks every reachable commit,
+including `remotes/flowx/*`, whose history legitimately contains Feishu ids. A
+finding there is not a finding in this repository — check
+`git merge-base --is-ancestor <sha> origin/next` before treating it as one. The
+CI job clones only `origin`, so it never sees them.
 
 If a guardrail false-positives, stop and ask. Do not edit a local allowlist,
 path exclusion, or bypass flag in only this repo.
 
 Source: `/.gitleaks.toml`, `/.npmrc`, `/common/git-hooks/pre-commit`,
+`/common/scripts/install-gitleaks.sh`,
+`/common/scripts/check-internal-content.sh`,
 `/.github/workflows/ci.yml`, `/.github/workflows/release.yml`,
-`/packages/dreamux/tests/release-workflow-manifest-audit.test.ts`.
+`/packages/dreamux/tests/internal-content-scan.test.ts`.
 
 ### The Four-Step Release Path
 
@@ -472,13 +507,16 @@ upstream `tar` takes SIGPIPE and exits 141, and pipefail propagates it.
 **Rejected direction:** trusting a gate that produces no artifacts (zero
 tarballs now fails hard: "a manifest gate that scans nothing is not a gate"),
 and piping `tar` into a short-circuiting consumer (use a here-string, which has
-no upstream process to signal). Extend the `/home/<user>/` allow-list only with
-reviewed, provably-public example paths;
-`/packages/dreamux/tests/release-workflow-manifest-audit.test.ts` locks the exact
-two-stage filter against the real workflow text.
+no upstream process to signal). Extend the artifact allow-list
+(`ALLOWED_DIST_RE` in `common/scripts/check-internal-content.sh`) only with
+reviewed, provably-public install locations; the workflow no longer carries a
+pattern of its own, and `/packages/dreamux/tests/internal-content-scan.test.ts`
+exercises the tarball mode against a packed fixture instead of mirroring
+workflow text.
 
 Source: `/.github/workflows/release.yml`,
-`/packages/dreamux/tests/release-workflow-manifest-audit.test.ts`.
+`/common/scripts/check-internal-content.sh`,
+`/packages/dreamux/tests/internal-content-scan.test.ts`.
 
 ### Assuming a green build proves more than it does
 

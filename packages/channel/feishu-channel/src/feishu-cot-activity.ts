@@ -7,20 +7,19 @@
  * a TeamLeader or the Dispatcher Agent — is decided before this file is
  * reached, and makes no difference once it is.
  */
-import type {
-  TeammateTurnMessageEvent,
-  TeammateTurnToolCallEvent,
-} from '@excitedjs/dreamux-types';
+import type { TeammateActivity } from '@excitedjs/dreamux-types';
 import type { FeishuCotEventInput } from '@excitedjs/feishu-transport';
 
 import type { CotLogScope } from './feishu-cot-diagnostics.js';
+
+type CotToolCallActivity = Extract<TeammateActivity, { kind: 'tool.call' }>;
+type CotAssistantMessage = Extract<TeammateActivity, { kind: 'assistant.message' }>;
 import {
   textMessageEvents,
   toolCallResultEvents,
   toolCallStartEvents,
 } from './feishu-cot-events.js';
 import {
-  cotOpenCallKey,
   cotStateHasAnchor,
   rememberOpenToolCall,
   type CotPresentation,
@@ -49,8 +48,6 @@ export interface CotActivitySink {
   ): void;
   debug(scope: CotLogScope, fields: Record<string, string>, what: string): void;
   logScope(state: CotState): CotLogScope;
-  /** Consume the exact turn this Channel recognized from its caller-owned id. */
-  takeOwnUserBody(key: string, turnId: string): boolean;
 }
 
 /**
@@ -70,7 +67,7 @@ export function acceptToolCallActivity(
   sink: CotActivitySink,
   key: string,
   state: CotState,
-  event: TeammateTurnToolCallEvent,
+  event: CotToolCallActivity,
 ): void {
   if (!presentable(state)) return;
   if (event.status === 'started') {
@@ -78,20 +75,21 @@ export function acceptToolCallActivity(
     if (events.length === 0) return;
     const accepted = sink.acceptOpening(key, state, events);
     if (accepted) {
+      // Keyed on the runtime's own call id: a provider folds any number of
+      // submissions into one native turn, so there is no turn half to add.
       rememberOpenToolCall(
         state.openCalls,
         state.generation,
-        cotOpenCallKey(event.turn_id, event.call_id),
+        event.call_id,
         sink.openToolCallsMax,
       );
     }
     return;
   }
-  const callKey = cotOpenCallKey(event.turn_id, event.call_id);
-  const opened = state.openCalls.get(callKey);
+  const opened = state.openCalls.get(event.call_id);
   if (opened === undefined) return;
   if (opened.generation !== state.generation) {
-    state.openCalls.delete(callKey);
+    state.openCalls.delete(event.call_id);
     return;
   }
   const presentation = state.active;
@@ -101,11 +99,11 @@ export function acceptToolCallActivity(
     presentation.closed ||
     presentation.terminalIntent !== null
   ) {
-    state.openCalls.delete(callKey);
+    state.openCalls.delete(event.call_id);
     return;
   }
   const events = toolCallResultEvents(event, sink.channelId);
-  state.openCalls.delete(callKey);
+  state.openCalls.delete(event.call_id);
   if (events.length === 0) return;
   if (sink.admitOutbox(state, presentation, events) &&
       presentation.phase === 'writing') {
@@ -113,35 +111,47 @@ export function acceptToolCallActivity(
   }
 }
 
-/**
- * One projected conversation message, whichever side wrote it.
- *
- * The one exception is the exact user turn this Channel just anchored from its
- * already-visible inbound message. That body is consumed once; task, cron,
- * system, future-producer, and other Channel turns still display normally.
- */
-export function acceptConversationMessage(
+/** One thing the assistant said, on this recipient's card. */
+export function acceptAssistantMessage(
   sink: CotActivitySink,
   key: string,
   state: CotState,
-  event: TeammateTurnMessageEvent,
+  event: CotAssistantMessage,
 ): void {
   if (!presentable(state)) return;
-  if (
-    event.message_role === 'user' &&
-    sink.takeOwnUserBody(key, event.turn_id)
-  ) {
-    return;
-  }
-  const events = textMessageEvents({
-    sourceId: event.event_id,
-    role: event.message_role,
-    content: event.content,
-  });
+  acceptDisplayText(sink, key, state, 'assistant', event.event_id, event.content);
+}
+
+/**
+ * One body Core admitted as input, on this recipient's card.
+ *
+ * The caller has already decided this is not the body the operator can see in
+ * their own Feishu message; everything else — cron fires, task push-backs,
+ * restart notices, another Channel's message — displays normally.
+ */
+export function acceptInputMessage(
+  sink: CotActivitySink,
+  key: string,
+  state: CotState,
+  input: { readonly displayId: string; readonly content: string },
+): void {
+  if (!presentable(state)) return;
+  acceptDisplayText(sink, key, state, 'user', input.displayId, input.content);
+}
+
+function acceptDisplayText(
+  sink: CotActivitySink,
+  key: string,
+  state: CotState,
+  role: 'user' | 'assistant',
+  displayId: string,
+  content: string,
+): void {
+  const events = textMessageEvents({ sourceId: displayId, role, content });
   if (events.length === 0) {
     sink.debug(
       sink.logScope(state),
-      { activity: event.message_role, reason: 'empty_after_projection' },
+      { activity: role, reason: 'empty_after_projection' },
       'Feishu COT dropped activity with no safe display content',
     );
     return;

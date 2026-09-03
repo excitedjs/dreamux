@@ -148,6 +148,21 @@ jobs:
           echo "changed=true" >> "$GITHUB_OUTPUT"
           echo "should_publish=true" >> "$GITHUB_OUTPUT"
 
+      - name: Install gitleaks for the mandatory pre-commit gate
+        if: steps.version.outputs.changed == 'true'
+        # The step above ran `rush install`, which installs
+        # common/git-hooks/pre-commit. That hook's anti-leak gate fails hard
+        # when gitleaks is absent, and the version bump below commits WITHOUT
+        # `--no-verify` on purpose — the release bot is not exempt from the
+        # public-repo red line. So the binary has to be here, from the same
+        # pinned, checksum-verified script a developer machine uses.
+        env:
+          GITLEAKS_INSTALL_DIR: ${{ runner.temp }}/gitleaks
+        run: |
+          set -euo pipefail
+          common/scripts/install-gitleaks.sh
+          echo "$GITLEAKS_INSTALL_DIR" >> "$GITHUB_PATH"
+
       - name: Push version bump
         if: steps.version.outputs.changed == 'true'
         env:
@@ -353,22 +368,11 @@ jobs:
               fail=1
             fi
             # Public-repo red line: a published artifact must not carry internal
-            # Feishu identifiers, the internal /data00 mount, or an absolute
-            # builder/developer home path. `/home/volta/` and
-            # `/home/linuxbrew/` are intentional PUBLIC examples compiled into
-            # dist, so those exact tokens are allow-listed; any other
-            # /home/<user>/ token is treated as a leaked path.
-            # Extend the allow-list (grep -vxE alternation) only with reviewed,
-            # provably-public example paths.
-            leaks="$(
-              tar xzO -f "$tgz" 2>/dev/null \
-                | grep -aoE '(ou_[A-Za-z0-9]{20}|oc_[A-Za-z0-9]{20}|cli_[A-Za-z0-9]{16}|/data00/|/home/[a-z][a-z0-9_-]+/)' \
-                | grep -vxE '/home/(volta|linuxbrew)/' \
-                | sort -u || true
-            )"
-            if [ -n "$leaks" ]; then
-              echo "FORBIDDEN internal content in $tgz:" >&2
-              printf '  %s\n' "$leaks" >&2
+            # Feishu identifiers, the internal mount, or a builder/developer
+            # home path. The patterns and the artifact allow-list have one
+            # owner, common/scripts/check-internal-content.sh, which also
+            # guards the source tree; extend them there, never here.
+            if ! common/scripts/check-internal-content.sh --tarball "$tgz"; then
               fail=1
             fi
           done

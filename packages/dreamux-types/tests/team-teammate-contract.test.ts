@@ -3,7 +3,7 @@
  *
  * Covers the Team-owned Commands whose contracts changed materially for
  * Channel use (`TeamCreateCommand`, `TeamSubmitCommand`), the aggregate
- * `TeamStateEvent`, and the TeamMate turn-event family every Channel consumes
+ * `TeamStateEvent`, and the actor-keyed TeamMate facts every Channel consumes
  * through {@link ChannelCoreEvent}. `TeammateRole`/`TeamContainedRole` use
  * `team_leader` and `teammate` — the pre-refactor `team_member` vocabulary is
  * gone.
@@ -22,12 +22,10 @@ import type {
 import type {
   TeamContainedRole,
   TeammateRole,
+  TeammateActivityEvent,
+  TeammateActorScope,
+  TeammateInputEvent,
   TeammateStateEvent,
-  TeammateTurnMessageEvent,
-  TeammateTurnScope,
-  TeammateTurnSettledEvent,
-  TeammateTurnSubmittedEvent,
-  TeammateTurnToolCallEvent,
 } from '../src/teammate.js';
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 0) extends <T>() => T extends B
@@ -216,7 +214,7 @@ describe('TeamStateEvent republishes an aggregate with a bounded teammate summar
   });
 });
 
-describe('TeammateStateEvent and the TeammateTurn* event family', () => {
+describe('TeammateStateEvent, teammate.input, and teammate.activity', () => {
   it('TeammateStateEvent.team_name is null only for a Dispatcher, which never joins a Team', () => {
     const dispatcherEvent: TeammateStateEvent = {
       schema_version: 1,
@@ -240,81 +238,98 @@ describe('TeammateStateEvent and the TeammateTurn* event family', () => {
     expect(teamEvent.team_name).toBe('team-a');
   });
 
-  it('submitted returns source provenance and caller id; later events correlate by turn_id alone', () => {
+  it('teammate.input carries source provenance and the caller id, and no turn identity', () => {
     assertType<
       Equal<
-        keyof TeammateTurnSubmittedEvent,
-        keyof TeammateTurnScope | 'kind' | 'turn_source' | 'source_id'
-      >
-    >();
-    assertType<
-      Equal<
-        keyof TeammateTurnSettledEvent,
-        keyof TeammateTurnScope | 'kind' | 'status' | 'assistant' | 'assistant_truncated' | 'redacted'
+        keyof TeammateInputEvent,
+        | keyof TeammateActorScope
+        | 'kind'
+        | 'source'
+        | 'source_id'
+        | 'content'
+        | 'content_truncated'
+        | 'redacted'
       >
     >();
 
-    const scope: TeammateTurnScope = {
+    const input: TeammateInputEvent = {
       schema_version: 1,
       occurred_at: 1,
       teammate_name: 'agent-1',
       role: 'teammate',
       team_name: 'team-a',
-      turn_id: 'turn-1',
-    };
-    const submitted: TeammateTurnSubmittedEvent = {
-      ...scope,
-      kind: 'teammate.turn.submitted',
-      turn_source: 'feishu',
+      kind: 'teammate.input',
+      source: 'feishu',
       source_id: 'message-fixture',
-    };
-    const settled: TeammateTurnSettledEvent = {
-      ...scope,
-      kind: 'teammate.turn.settled',
-      status: 'completed',
-      assistant: 'done',
-      assistant_truncated: false,
-      redacted: false,
-    };
-
-    expect(submitted.turn_id).toBe(settled.turn_id);
-    expect(submitted.source_id).toBe('message-fixture');
-  });
-
-  it('TeammateTurnMessageEvent and TeammateTurnToolCallEvent both key off turn_id, never a second identity', () => {
-    const base: TeammateTurnScope = {
-      schema_version: 1,
-      occurred_at: 1,
-      teammate_name: 'agent-1',
-      role: 'teammate',
-      team_name: 'team-a',
-      turn_id: 'turn-1',
-    };
-    const message: TeammateTurnMessageEvent = {
-      ...base,
-      kind: 'teammate.turn.message',
-      event_id: 'evt-1',
-      message_role: 'assistant',
       content: 'hello',
       content_truncated: false,
       redacted: false,
     };
-    const toolCall: TeammateTurnToolCallEvent = {
-      ...base,
-      kind: 'teammate.turn.tool_call',
-      event_id: 'evt-2',
-      call_id: 'call-1',
-      tool_name: 'search',
-      tool_action: 'search',
-      status: 'completed',
-      arguments_json: '{}',
-      result_json: '{}',
-      arguments_truncated: false,
-      result_truncated: false,
-      redacted: false,
+
+    expect(input.source_id).toBe('message-fixture');
+    // A caller recognizes its own submission by comparing this against ids it
+    // issued. Presence proves nothing: cron fires, task push-backs, and restart
+    // notices carry a source id too.
+    expect(Object.keys(input)).not.toContain('turn_id');
+  });
+
+  it('teammate.activity nests the whole runtime vocabulary under one kind, addressed by the actor alone', () => {
+    assertType<
+      Equal<keyof TeammateActivityEvent, keyof TeammateActorScope | 'kind' | 'activity'>
+    >();
+
+    const scope: TeammateActorScope = {
+      schema_version: 1,
+      occurred_at: 1,
+      teammate_name: 'agent-1',
+      role: 'teammate',
+      team_name: 'team-a',
+    };
+    const message: TeammateActivityEvent = {
+      ...scope,
+      kind: 'teammate.activity',
+      activity: {
+        kind: 'assistant.message',
+        event_id: 'evt-1',
+        content: 'hello',
+        content_truncated: false,
+        redacted: false,
+      },
+    };
+    const toolCall: TeammateActivityEvent = {
+      ...scope,
+      kind: 'teammate.activity',
+      activity: {
+        kind: 'tool.call',
+        event_id: 'evt-2',
+        call_id: 'call-1',
+        tool_name: 'search',
+        tool_action: 'search',
+        status: 'completed',
+        arguments_json: '{}',
+        result_json: '{}',
+        arguments_truncated: false,
+        result_truncated: false,
+        redacted: false,
+      },
+    };
+    const ended: TeammateActivityEvent = {
+      ...scope,
+      kind: 'teammate.activity',
+      activity: {
+        kind: 'turn.ended',
+        status: 'failed',
+        reason: 'the agent runtime is not running',
+        reason_truncated: false,
+        redacted: false,
+      },
     };
 
-    expect(message.turn_id).toBe('turn-1');
-    expect(toolCall.turn_id).toBe('turn-1');
+    // Every member is addressed by the same actor scope; none carries a turn or
+    // submission identity a consumer would have to correlate on.
+    for (const event of [message, toolCall, ended]) {
+      expect(event.teammate_name).toBe('agent-1');
+      expect(Object.keys(event.activity)).not.toContain('turn_id');
+    }
   });
 });

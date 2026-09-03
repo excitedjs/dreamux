@@ -1,0 +1,224 @@
+/**
+ * `ask_user_question` — the decision card, offered to the model.
+ *
+ * The arguments are AskUserQuestion's, near enough to be read as the same tool:
+ * `questions`, each with a `header` chip, a `question`, and 2-4 `options` of
+ * `label` + `description`. Four fields differ. Two are the chat: `chat_id` is
+ * required and `message_id` is offered, because a card has to be addressed at
+ * a conversation and, when the question came out of something someone said, at
+ * the message it came out of. AskUserQuestion, answered inside the client that
+ * called it, needs neither. The other two are gone: `multiSelect`, because the
+ * operator ruled multi-select out of this channel, and `preview`, which the
+ * operator dropped after seeing what it cost the card —
+ * "这个 preview 有点复杂了，给他去掉，他也会影响卡片的布局". Rendering it meant
+ * a second column beside the options, which reshaped every question that used
+ * it.
+ *
+ * The other difference is in the answer, not the arguments. AskUserQuestion
+ * returns what the user chose; this returns as soon as the card is sent, and
+ * the answer arrives later as an ordinary inbound message. The model therefore
+ * has to be told to stop and wait — which is what `next` in the result is for,
+ * repeated on every call so it survives a long context.
+ */
+import { PublicInvokeFailure } from '@excitedjs/dreamux-utils';
+
+import type { AskUserOption, AskUserQuestionSpec } from '../feishu-ask-user-card.js';
+import {
+  asRecord,
+  closedObjectSchema,
+  nonEmptyString,
+  optionalString,
+  requireString,
+} from './schema.js';
+import type { FeishuToolDef } from './types.js';
+
+const MAX_HEADER_CHARS = 12;
+const MIN_QUESTIONS = 1;
+const MAX_QUESTIONS = 4;
+const MIN_OPTIONS = 2;
+const MAX_OPTIONS = 4;
+
+/** The standing instruction for a tool whose answer never arrives in its result. */
+export const ASK_USER_NEXT_INSTRUCTION =
+  'The question card has been sent. Do NOT do any further work and do NOT ' +
+  'guess an answer: end your turn now and wait. The user\'s answer arrives ' +
+  'later as a normal inbound message. If the user dismisses the card, that ' +
+  'message will say so — drop the card and continue in plain conversation.';
+
+const optionSchema = closedObjectSchema(
+  {
+    label: {
+      ...nonEmptyString,
+      description:
+        'The display text for this option that the user will see and select. ' +
+        'Should be concise (1-5 words) and clearly describe the choice.',
+    },
+    description: {
+      ...nonEmptyString,
+      description:
+        'Explanation of what this option means or what will happen if chosen. ' +
+        'Useful for providing context about trade-offs or implications.',
+    },
+  },
+  ['label', 'description'],
+);
+
+const questionSchema = closedObjectSchema(
+  {
+    header: {
+      ...nonEmptyString,
+      maxLength: MAX_HEADER_CHARS,
+      description:
+        'Very short label displayed as a chip/tag (max 12 chars). Examples: ' +
+        '"Auth method", "Library", "Approach".',
+    },
+    question: {
+      ...nonEmptyString,
+      description:
+        'The complete question to ask the user. Should be clear, specific, ' +
+        'and end with a question mark.',
+    },
+    options: {
+      type: 'array',
+      minItems: MIN_OPTIONS,
+      maxItems: MAX_OPTIONS,
+      items: optionSchema,
+      description:
+        'The available choices for this question. Must have 2-4 options. Each ' +
+        'option should be a distinct, mutually exclusive choice. There should ' +
+        "be no 'Other' option, that will be provided automatically.",
+    },
+  },
+  ['header', 'question', 'options'],
+);
+
+interface AskUserQuestionInput {
+  chatId: string;
+  questions: readonly AskUserQuestionSpec[];
+  messageId?: string;
+}
+
+function parseOption(raw: unknown, where: string): AskUserOption {
+  const obj = asRecord(raw, where);
+  return {
+    label: requireString(obj, 'label'),
+    description: requireString(obj, 'description'),
+  };
+}
+
+function parseQuestion(raw: unknown, index: number): AskUserQuestionSpec {
+  const where = `questions[${index}]`;
+  const obj = asRecord(raw, where);
+  const header = requireString(obj, 'header');
+  if ([...header].length > MAX_HEADER_CHARS) {
+    throw new PublicInvokeFailure(
+      `${where}.header must be at most ${MAX_HEADER_CHARS} characters`,
+    );
+  }
+  const options = obj['options'];
+  if (
+    !Array.isArray(options) ||
+    options.length < MIN_OPTIONS ||
+    options.length > MAX_OPTIONS
+  ) {
+    throw new PublicInvokeFailure(
+      `${where}.options must have ${MIN_OPTIONS}-${MAX_OPTIONS} options`,
+    );
+  }
+  return {
+    header,
+    question: requireString(obj, 'question'),
+    options: options.map((option, optionIndex) =>
+      parseOption(option, `${where}.options[${optionIndex}]`),
+    ),
+  };
+}
+
+export const askUserQuestionDef: FeishuToolDef<AskUserQuestionInput> = {
+  name: 'ask_user_question',
+  title: 'Ask the user a question',
+  description:
+    'Use this tool only when you are blocked on a decision that is genuinely ' +
+    "the user's to make: one you cannot resolve from the request, the code, " +
+    'or sensible defaults. It renders the questions as an interactive Feishu ' +
+    'card in the chat.\n\n' +
+    'Usage notes:\n' +
+    '- Users will always be able to write an "Other" answer of their own, so ' +
+    'never add an "Other" option yourself\n' +
+    '- If you recommend a specific option, make that the first option in the ' +
+    'list and add "(Recommended)" at the end of the label\n' +
+    '- Single-select only: every question takes exactly one answer. Split a ' +
+    'decision that needs several answers into several questions\n' +
+    '- This tool does NOT return the answer. It returns as soon as the card ' +
+    'is sent; end your turn and wait, and the answer will arrive as a normal ' +
+    'inbound message\n\n' +
+    "Reserve this for decisions where the user's answer changes what you do " +
+    'next — not for choices with a conventional default or facts you can ' +
+    'verify in the codebase yourself. In those cases pick the obvious option, ' +
+    'mention it in your response, and proceed.',
+  callers: ['dispatcher', 'team_leader'],
+  inputSchema: closedObjectSchema(
+    {
+      chat_id: {
+        ...nonEmptyString,
+        description:
+          'Feishu chat id from the inbound <channel source="feishu"> block. ' +
+          'The card is sent to this conversation.',
+      },
+      message_id: {
+        ...nonEmptyString,
+        description:
+          'Optional id of the message this question came out of. The card is ' +
+          'sent under it, in the same topic, exactly as a reply would be.',
+      },
+      questions: {
+        type: 'array',
+        minItems: MIN_QUESTIONS,
+        maxItems: MAX_QUESTIONS,
+        items: questionSchema,
+        description: 'Questions to ask the user (1-4 questions)',
+      },
+    },
+    ['chat_id', 'questions'],
+  ),
+  outputSchema: closedObjectSchema(
+    {
+      request_id: nonEmptyString,
+      status: { type: 'string', enum: ['asked'] },
+      next: nonEmptyString,
+    },
+    ['request_id', 'status', 'next'],
+  ),
+  annotations: { readOnlyHint: false, destructiveHint: false },
+  parse(raw) {
+    const obj = asRecord(raw, 'ask_user_question arguments');
+    const questions = obj['questions'];
+    if (
+      !Array.isArray(questions) ||
+      questions.length < MIN_QUESTIONS ||
+      questions.length > MAX_QUESTIONS
+    ) {
+      throw new PublicInvokeFailure(
+        `questions must have ${MIN_QUESTIONS}-${MAX_QUESTIONS} questions`,
+      );
+    }
+    const messageId = optionalString(obj, 'message_id');
+    return {
+      chatId: requireString(obj, 'chat_id'),
+      questions: questions.map(parseQuestion),
+      ...(messageId !== null ? { messageId } : {}),
+    };
+  },
+  async handle(ctx, input) {
+    const result = await ctx.session.askUserQuestion({
+      chatId: input.chatId,
+      questions: input.questions,
+      ...(input.messageId !== undefined ? { messageId: input.messageId } : {}),
+    });
+    return {
+      request_id: result.request_id,
+      status: 'asked',
+      next: ASK_USER_NEXT_INSTRUCTION,
+    };
+  },
+};
