@@ -2,7 +2,8 @@
  * What a tool row sends to Feishu, from what the runtime said about the call.
  *
  * Wire shapes follow the COT Message Brief (`TOOL_CALL_START` with `icon` and
- * `title`; `TOOL_CALL_RESULT` segments `{type:'code', language, code}`).
+ * `title`; `TOOL_CALL_RESULT` segments `{type:'code', language, code}` and
+ * `{type:'list', items, more?}`).
  */
 
 import { describe, expect, it } from 'vitest';
@@ -25,6 +26,7 @@ function toolCall(overrides: Partial<ToolCall>): ToolCall {
     tool_action: 'run',
     summary: null,
     invocation: null,
+    files: [],
     status: 'started',
     arguments_json: null,
     result_json: null,
@@ -103,6 +105,69 @@ describe('runtime-labelled tool rows', () => {
         { type: 'code', language: 'text', code: ' M src/a.ts\n?? src/b.ts' },
       ],
     });
+  });
+
+  it('shows the files a read was about as pills, and nothing else', () => {
+    const [result] = toolCallResultEvents(toolCall({
+      tool_name: 'Read',
+      tool_action: 'read',
+      status: 'completed',
+      summary: 'src/a.ts',
+      files: ['src/a.ts'],
+      result_json: 'export const a = 1;',
+    }));
+    expect(result!.content).toMatchObject({
+      content: { type: 'list', items: [{ text: 'src/a.ts', icon: 'read' }] },
+    });
+  });
+
+  it('shows the files a patch touched as pills, without the diff or the output', () => {
+    const [result] = toolCallResultEvents(toolCall({
+      tool_name: 'apply_patch',
+      tool_action: 'edit',
+      status: 'completed',
+      summary: 'src/a.ts, src/b.ts',
+      invocation: 'src/a.ts\n@@ -1 +1 @@\n-x\n+y',
+      files: ['src/a.ts', 'src/b.ts'],
+      result_json: 'applied',
+    }));
+    expect(result!.content).toMatchObject({
+      content: { type: 'list', items: [{ text: 'src/a.ts', icon: 'write' }, { text: 'src/b.ts', icon: 'write' }] },
+    });
+  });
+
+  it('keeps the diff and the output on a failed edit, after the failure line and the pills', () => {
+    const [result] = toolCallResultEvents(toolCall({
+      tool_name: 'Edit',
+      tool_action: 'edit',
+      status: 'failed',
+      summary: 'src/a.ts',
+      invocation: 'src/a.ts\n@@ -1 +1 @@\n-x\n+y',
+      files: ['src/a.ts'],
+      result_json: 'file not found',
+    }));
+    expect(result!.content).toMatchObject({
+      content: [
+        { type: 'text', text: '执行失败' },
+        { type: 'list', items: [{ text: 'src/a.ts', icon: 'write' }] },
+        { type: 'code', language: 'text', code: 'src/a.ts\n@@ -1 +1 @@\n-x\n+y' },
+        { type: 'code', language: 'text', code: 'file not found' },
+      ],
+    });
+  });
+
+  it('folds the files past the pill budget into one +N pill', () => {
+    const files = Array.from({ length: 40 }, (_, i) => `packages/example/src/deeply/nested/module-${String(i).padStart(2, '0')}.ts`);
+    const [result] = toolCallResultEvents(toolCall({
+      tool_action: 'edit',
+      status: 'completed',
+      files,
+    }));
+    const list = (result!.content as { content: { type: string; items?: unknown[]; more?: { text: string } } }).content;
+    expect(list.type).toBe('list');
+    expect(list.items!.length).toBeGreaterThan(0);
+    expect(list.items!.length).toBeLessThan(files.length);
+    expect(list.more).toEqual({ text: `+${files.length - list.items!.length}` });
   });
 
   it('shows a failed result with its failure line first', () => {

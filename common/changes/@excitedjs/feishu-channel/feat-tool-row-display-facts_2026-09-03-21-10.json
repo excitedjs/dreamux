@@ -2,7 +2,7 @@
   "changes": [
     {
       "packageName": "@excitedjs/feishu-channel",
-      "comment": "COT tool rows show what the runtime said about the call: the row title is the runtime's summary (with a verb for read/list/search/edit rows and the tool name for rows without an action), the row carries the documented built-in icon for its action (bash/read/write/search), raw JSON arguments are no longer written into a titled row, and the expanded result shows the invocation as a code segment before the output. Result code segments now use the documented code field.",
+      "comment": "COT tool rows show what the runtime said about the call: the row title is the runtime's summary (with a verb for read/list/search/edit rows and the tool name for rows without an action), the row carries the documented built-in icon for its action (bash/read/write/search), raw JSON arguments are no longer written into a titled row, and the expanded result shows the invocation as a code segment before the output. A read or edit that succeeded expands to the files it touched as pills (a +N pill stands for those past the pill budget) and nothing else; a failed one keeps its diff and output after the pills. Result code segments now use the documented code field.",
       "type": "minor"
     }
   ],

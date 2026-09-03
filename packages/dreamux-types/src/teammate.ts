@@ -119,6 +119,7 @@ export type TeammateActivity =
       readonly tool_action: RuntimeToolAction | null;
       readonly summary: string | null;
       readonly invocation: string | null;
+      readonly files: readonly string[];
       readonly status: 'started' | 'completed' | 'failed';
       readonly arguments_json: string | null;
       readonly result_json: string | null;

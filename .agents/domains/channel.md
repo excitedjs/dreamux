@@ -753,9 +753,15 @@ only on a row nothing could title — a Channel-owned or teammate tool keeps its
 own title as before, and an MCP tool no runtime can label still shows its
 arguments inline, which is the one raw row left. The `TOOL_CALL_RESULT` of a
 runtime-labelled row is the documented segment array: `执行失败` first when it
-failed, the `invocation` as a `code` segment (`language: bash` for a run),
-then the output as a `code` segment, each spelling its body in the documented
-`code` field. A probe card sent to the operator on 2026-09-03 settled the
+failed, the call's `files` as the pills of a `list` segment (each with the
+icon of the call's action, bounded by `TOOL_FILES_SOFT_MAX_BYTES` with one
+`+N` pill standing for the rest), the `invocation` as a `code` segment
+(`language: bash` for a run), then the output as a `code` segment, each
+spelling its body in the documented `code` field. A read or edit that
+succeeded stops after its pills: the operator ruled the diff and the output
+redundant beside them (「有了胶囊的，可以忽略底下这个编辑的代码段。只看编辑了
+哪些文件就行了」) because the client cannot fold a code segment away; a failed
+one keeps them, since the output is where the failure's reason appears. A probe card sent to the operator on 2026-09-03 settled the
 three client facts this rests on: a titled row shows the `title` alone, with
 no tool name in front of it; an `ARGS` delta sent beside a title is shown
 nowhere, which is why the invocation has to travel in the result; and the

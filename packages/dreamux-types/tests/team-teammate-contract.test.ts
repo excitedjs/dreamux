@@ -307,6 +307,7 @@ describe('TeammateStateEvent, teammate.input, and teammate.activity', () => {
         tool_action: 'search',
         summary: null,
         invocation: null,
+        files: [],
         status: 'completed',
         arguments_json: '{}',
         result_json: '{}',

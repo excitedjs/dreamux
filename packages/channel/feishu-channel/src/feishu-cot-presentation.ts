@@ -14,6 +14,8 @@ import type {
 export type CotToolCallActivity = Extract<TeammateActivity, { kind: 'tool.call' }>;
 
 export const TOOL_ARGUMENTS_SOFT_MAX_BYTES = 512;
+/** What the pills of a result's file list may spend before the rest is folded into a `more` pill. */
+export const TOOL_FILES_SOFT_MAX_BYTES = 512;
 export const TRUNCATION_MARKER = '…（已截断）';
 const TOOL_NAME_MAX_BYTES = 80;
 
@@ -41,12 +43,26 @@ interface BuiltInToolPresentation {
 
 /**
  * What the runtime said about its own call, ready for the card: the row's
- * title composed from the runtime's summary, and the invocation the expanded
- * row shows in the caller's notation instead of as JSON.
+ * title composed from the runtime's summary, the invocation the expanded
+ * row shows in the caller's notation instead of as JSON, and the files the
+ * call was about as the pills of a `list` segment.
  */
 interface RuntimeToolPresentation {
   readonly invocation: string | null;
   readonly invocationLanguage: 'text' | 'bash';
+  readonly files: CotFileList | null;
+}
+
+/** One pill of a `list` result segment, as the COT Message Brief shapes it. */
+export interface CotListItem {
+  readonly text: string;
+  readonly icon?: CotToolIcon;
+}
+
+/** The pills a result shows for the call's files, and the one that stands for the rest. */
+export interface CotFileList {
+  readonly items: readonly CotListItem[];
+  readonly more?: CotListItem;
 }
 
 interface ToolPresentation {
@@ -63,7 +79,7 @@ interface ToolPresentation {
  * (`search`, `bash`, `read`, `write`, `doc`, `calendar`, `task`, `meeting`,
  * `default`); this Channel uses the ones a runtime's tool actions map onto.
  */
-type CotToolIcon = 'search' | 'bash' | 'read' | 'write' | 'default';
+export type CotToolIcon = 'search' | 'bash' | 'read' | 'write' | 'default';
 
 const ACTION_TOOL_NAMES: Readonly<Record<RuntimeToolAction, string>> = {
   read: 'Read',
@@ -149,8 +165,29 @@ export function toolPresentation(
         TOOL_ARGUMENTS_SOFT_MAX_BYTES,
       ),
       invocationLanguage: event.tool_action === 'run' ? 'bash' : 'text',
+      files: fileList(event),
     },
   };
+}
+
+/**
+ * The call's files as pills, each with the icon of the call's action, kept
+ * within `TOOL_FILES_SOFT_MAX_BYTES` so a patch over many files leaves room
+ * for its diff: the pills that fit, then one `+N` pill for the rest.
+ */
+function fileList(event: CotToolCallActivity): CotFileList | null {
+  if (event.files.length === 0) return null;
+  const icon = event.tool_action === null ? undefined : ACTION_ICONS[event.tool_action];
+  const items: CotListItem[] = [];
+  let bytes = 0;
+  for (const [index, file] of event.files.entries()) {
+    bytes += escapedBytes(file);
+    if (bytes > TOOL_FILES_SOFT_MAX_BYTES) {
+      return { items, more: { text: `+${event.files.length - index}` } };
+    }
+    items.push(icon === undefined ? { text: file } : { text: file, icon });
+  }
+  return { items };
 }
 
 function runtimeToolTitle(event: CotToolCallActivity, actionName: string): string | null {

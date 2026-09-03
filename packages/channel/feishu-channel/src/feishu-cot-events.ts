@@ -17,6 +17,7 @@ import {
   TRUNCATION_MARKER,
   type CotToolCallActivity,
 } from './feishu-cot-presentation.js';
+import type { CotFileList } from './feishu-cot-presentation.js';
 
 export const FEISHU_COT_EVENT_CONTENT_MAX_BYTES = 4_096;
 export const FEISHU_COT_APPEND_MAX_BYTES = 64 * 1_024;
@@ -177,11 +178,23 @@ export function toolCallResultEvents(
       resultLanguage: presentation.builtInTool.resultLanguage,
       forceResultCode: presentation.builtInTool.forceResultCode,
     });
+  } else if (presentation.runtimeTool?.files && event.status !== 'failed') {
+    // A read or edit that succeeded shows its files and nothing else: the
+    // operator ruled the diff and the output redundant beside the pills, and
+    // the client cannot fold a code segment away. A failed one keeps them,
+    // because the output is the only place the failure's reason appears.
+    content = assembleToolResultContent({
+      failed: false,
+      argumentsText: null,
+      files: presentation.runtimeTool.files,
+      resultText: null,
+    });
   } else {
     content = assembleToolResultContent({
       failed: event.status === 'failed',
       argumentsText: presentation.runtimeTool?.invocation ?? null,
       argumentsLanguage: presentation.runtimeTool?.invocationLanguage,
+      files: presentation.runtimeTool?.files ?? null,
       resultText: normalizedDetail(
         event.result_json,
         event.result_truncated,
@@ -271,6 +284,8 @@ export interface ToolResultParts {
   readonly failed: boolean;
   readonly argumentsText: string | null;
   readonly argumentsLanguage?: 'text' | 'bash';
+  /** The call's files, shown as the pills of a `list` segment before anything else. */
+  readonly files?: CotFileList | null;
   readonly resultText: string | null;
   readonly resultLanguage?: 'text' | 'javascript';
   readonly forceResultCode?: boolean;
@@ -318,6 +333,7 @@ function toolResultSegments(
 ): unknown {
   const segments: Array<Record<string, unknown>> = [];
   if (parts.failed) segments.push({ type: 'text', text: '执行失败' });
+  if (parts.files) segments.push({ type: 'list', ...parts.files });
   if (argumentsText !== null) {
     segments.push({
       type: 'code',

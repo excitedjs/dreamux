@@ -232,6 +232,14 @@ export type RuntimeActivity =
        * it in that notation instead of as JSON. `null` when there is none.
        */
       readonly invocation: string | null;
+      /**
+       * The files the call reads or changes, as the runtime reported them
+       * in structured members of the call: a file tool's path argument, the
+       * paths of a patch, the files a parsed shell command read. Empty when
+       * the call is not about files or the runtime reported none; never
+       * recovered from a label or an output by parsing.
+       */
+      readonly files: readonly string[];
       readonly status: 'started' | 'completed' | 'failed';
       readonly arguments: JsonValue | null;
       readonly result: JsonValue | null;

@@ -1,10 +1,11 @@
 /**
  * How codex's thread items present themselves on a display line.
  *
- * A tool row wants three neutral facts beside the tool's name: what kind of
+ * A tool row wants four neutral facts beside the tool's name: what kind of
  * thing the item does (`action`), the one line codex's own TUI leads with
- * (`summary`), and the member of the item that has a notation of its own
- * (`invocation`). The wording follows the TUI's exec, patch and web-search
+ * (`summary`), the member of the item that has a notation of its own
+ * (`invocation`), and the files a read or a patch is about (`files`). The
+ * wording follows the TUI's exec, patch and web-search
  * cells (`codex-rs/tui/src/exec_cell`, `diff_render.rs`, `history_cell/search.rs`)
  * so that a card and a terminal describe one call the same way. An item this
  * module does not label — MCP and dynamic tool calls included — gets `null`
@@ -19,9 +20,10 @@ export interface ToolDisplay {
   readonly action: RuntimeToolAction | null;
   readonly summary: string | null;
   readonly invocation: string | null;
+  readonly files: readonly string[];
 }
 
-const UNKNOWN: ToolDisplay = { action: null, summary: null, invocation: null };
+const UNKNOWN: ToolDisplay = { action: null, summary: null, invocation: null, files: [] };
 
 export function toolDisplay(item: ThreadItem): ToolDisplay {
   switch (item.type) {
@@ -40,6 +42,8 @@ export function toolDisplay(item: ThreadItem): ToolDisplay {
 interface CommandAction {
   readonly action: RuntimeToolAction;
   readonly detail: string | null;
+  /** The file a `read` action is about: its path, or its bare name when codex reported no path. */
+  readonly file: string | null;
 }
 
 function commandDisplay(item: ThreadItem): ToolDisplay {
@@ -48,13 +52,14 @@ function commandDisplay(item: ThreadItem): ToolDisplay {
   const first = actions[0];
   const uniform = first !== undefined && actions.every((entry) => entry.action === first.action);
   if (!uniform || first.action === 'run') {
-    return { action: 'run', summary: firstLine(command), invocation: command };
+    return { action: 'run', summary: firstLine(command), invocation: command, files: [] };
   }
-  const details = [...new Set(actions.map((entry) => entry.detail).filter((d): d is string => d !== null))];
+  const details = unique(actions.map((entry) => entry.detail));
   return {
     action: first.action,
     summary: details.length === 0 ? firstLine(command) : details.join(', '),
     invocation: command,
+    files: first.action === 'read' ? unique(actions.map((entry) => entry.file)) : [],
   };
 }
 
@@ -65,11 +70,13 @@ function commandActions(value: unknown): CommandAction[] {
     const record = recordValue(entry);
     if (record === null) continue;
     switch (record['type']) {
-      case 'read':
-        actions.push({ action: 'read', detail: stringField(record, 'name') });
+      case 'read': {
+        const name = stringField(record, 'name');
+        actions.push({ action: 'read', detail: name, file: stringField(record, 'path') ?? name });
         break;
+      }
       case 'listFiles':
-        actions.push({ action: 'list_files', detail: stringField(record, 'path') });
+        actions.push({ action: 'list_files', detail: stringField(record, 'path'), file: null });
         break;
       case 'search': {
         const query = stringField(record, 'query');
@@ -77,11 +84,12 @@ function commandActions(value: unknown): CommandAction[] {
         actions.push({
           action: 'search',
           detail: query !== null && path !== null ? `${query} in ${path}` : query ?? path,
+          file: null,
         });
         break;
       }
       default:
-        actions.push({ action: 'run', detail: null });
+        actions.push({ action: 'run', detail: null, file: null });
     }
   }
   return actions;
@@ -96,7 +104,7 @@ function fileChangeDisplay(item: ThreadItem): ToolDisplay {
   const changes = Array.isArray(item['changes'])
     ? item['changes'].map(recordValue).filter((c): c is Record<string, unknown> => c !== null)
     : [];
-  const paths = [...new Set(changes.map((c) => stringField(c, 'path')).filter((p): p is string => p !== null))];
+  const paths = unique(changes.map((c) => stringField(c, 'path')));
   const diffs = changes.flatMap((change) => {
     const path = stringField(change, 'path');
     const diff = stringField(change, 'diff');
@@ -106,6 +114,7 @@ function fileChangeDisplay(item: ThreadItem): ToolDisplay {
     action: 'edit',
     summary: paths.length === 0 ? null : paths.join(', '),
     invocation: diffs.length === 0 ? null : diffs.join('\n\n'),
+    files: paths,
   };
 }
 
@@ -135,7 +144,11 @@ function webSearchDisplay(item: ThreadItem): ToolDisplay {
     default:
       break;
   }
-  return { action: 'search', summary: detail ?? query, invocation: null };
+  return { action: 'search', summary: detail ?? query, invocation: null, files: [] };
+}
+
+function unique(values: ReadonlyArray<string | null>): string[] {
+  return [...new Set(values.filter((value): value is string => value !== null))];
 }
 
 function stringField(record: Record<string, unknown>, key: string): string | null {

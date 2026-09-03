@@ -1,10 +1,11 @@
 /**
  * How claude's built-in tools present themselves on a display line.
  *
- * A tool row wants three neutral facts beside the tool's name: what kind of
+ * A tool row wants four neutral facts beside the tool's name: what kind of
  * thing the call does (`action`), the one line claude's own UI leads with
- * (`summary`), and the member of the input that has a notation of its own
- * (`invocation`). All three come from the tool's declared input schema
+ * (`summary`), the member of the input that has a notation of its own
+ * (`invocation`), and the files a file tool touches (`files`). All four come
+ * from the tool's declared input schema
  * (`sdk-tools.d.ts` of `@anthropic-ai/claude-agent-sdk`; `Skill` from the
  * CLI's observed wire), so this module is the only place in the runtime that
  * knows a built-in tool's field names. A tool this table does not know —
@@ -17,9 +18,10 @@ export interface ToolDisplay {
   readonly action: RuntimeToolAction | null;
   readonly summary: string | null;
   readonly invocation: string | null;
+  readonly files: readonly string[];
 }
 
-const UNKNOWN: ToolDisplay = { action: null, summary: null, invocation: null };
+const UNKNOWN: ToolDisplay = { action: null, summary: null, invocation: null, files: [] };
 
 export function toolDisplay(name: string | null | undefined, args: JsonValue | null): ToolDisplay {
   const input = inputRecord(args);
@@ -35,38 +37,44 @@ export function toolDisplay(name: string | null | undefined, args: JsonValue | n
         action: 'run',
         summary: field('description') ?? firstLine(command),
         invocation: command,
+        files: [],
       };
     }
     case 'Read':
-      return { action: 'read', summary: field('file_path'), invocation: null };
+      return fileTool('read', field('file_path'));
     case 'Write':
     case 'Edit':
     case 'MultiEdit':
-      return { action: 'edit', summary: field('file_path'), invocation: null };
+      return fileTool('edit', field('file_path'));
     case 'NotebookEdit':
-      return { action: 'edit', summary: field('notebook_path'), invocation: null };
+      return fileTool('edit', field('notebook_path'));
     case 'Grep':
     case 'Glob':
-      return { action: 'search', summary: field('pattern'), invocation: null };
+      return { action: 'search', summary: field('pattern'), invocation: null, files: [] };
     case 'WebSearch':
-      return { action: 'search', summary: field('query'), invocation: null };
+      return { action: 'search', summary: field('query'), invocation: null, files: [] };
     case 'ToolSearch':
-      return { action: null, summary: field('query'), invocation: null };
+      return { action: null, summary: field('query'), invocation: null, files: [] };
     case 'WebFetch':
-      return { action: null, summary: field('url'), invocation: null };
+      return { action: null, summary: field('url'), invocation: null, files: [] };
     case 'Agent':
-      return { action: null, summary: field('description'), invocation: field('prompt') };
+      return { action: null, summary: field('description'), invocation: field('prompt'), files: [] };
     case 'Skill':
-      return { action: null, summary: field('skill'), invocation: null };
+      return { action: null, summary: field('skill'), invocation: null, files: [] };
     case 'TaskCreate':
-      return { action: null, summary: field('subject'), invocation: null };
+      return { action: null, summary: field('subject'), invocation: null, files: [] };
     case 'REPL':
-      return { action: 'run', summary: field('description'), invocation: field('code') };
+      return { action: 'run', summary: field('description'), invocation: field('code'), files: [] };
     case 'Workflow':
-      return { action: null, summary: field('name'), invocation: field('script') };
+      return { action: null, summary: field('name'), invocation: field('script'), files: [] };
     default:
       return UNKNOWN;
   }
+}
+
+/** A file tool is labelled by the one path it touches, which is also its file list. */
+function fileTool(action: 'read' | 'edit', path: string | null): ToolDisplay {
+  return { action, summary: path, invocation: null, files: path === null ? [] : [path] };
 }
 
 function inputRecord(args: JsonValue | null): Readonly<Record<string, JsonValue>> {

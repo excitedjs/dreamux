@@ -124,7 +124,9 @@ the same change that touches it.
   title it — a command's stated purpose, the file a read or edit touched, the
   pattern a search ran, the task a sub-agent was given — carries the icon for
   what it did, and expands to the call in the caller's own notation (the
-  shell command line, the task text, the diff) before its output. Raw JSON
+  shell command line, the task text) before its output. A read or edit that
+  succeeded expands to the files it touched as pills and nothing more; only
+  a failed one still shows its diff and output. Raw JSON
   arguments appear only on a row no runtime could label, which today means
   MCP tools the Channel does not own. Codex web searches are rows too.
   (Ruling: 「优化一下 COT 的展示效果 … 你需要同时兼顾 claude code 和 codex 这两边
