@@ -318,11 +318,17 @@ native identifiers.
   native order.
 - Native aliases folded into the logical input must converge before the shared
   completion settles.
-- The provider owns its private source-deduplication reservation. Concurrent use
+- Core owns the source-deduplication reservation, not the provider: the seam
+  carries only text, so a provider has no source identity to deduplicate with,
+  and one Dispatcher-wide `AdmissionLedger` reserves `[entity, source id]`
+  before the runtime is called. Concurrent use
   of one reserved source shares the same admission result.
 - A source commits after acceptance or ambiguous post-admission failure. It is
-  released only after a provider-proven pre-admission failure.
-- Resident runtimes bound committed source ids with a FIFO window; pending
+  released on every other outcome — `failed`, `stopped`, `skipped`, or a throw
+  before the provider seam — so a genuine retry still works.
+- Core's one ledger — Dispatcher-wide so it outlives an entity service object
+  that is deleted and rematerialized on reopen or retire — bounds committed
+  source ids with a FIFO window (`ADMISSION_SOURCE_WINDOW`); pending
   reservations remain separate single-flight state and are never evicted before
   native admission resolves.
 - `RuntimeAdmission.failed` is reserved for provider-proven pre-admission
@@ -506,7 +512,8 @@ double fault with no gate added for it. What the push-back line still owed never
 said whether the provider was working, and the provider keeps no display-side
 answer of its own either (operator ruling, 2026-09-03: 「cot 相关的部分，在
 provider 应该是完全无状态的」, recorded in the
-[split-streaming-display-from-pushback requirement](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md)).
+[split-streaming-display-from-pushback
+requirement](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md)).
 
 A native turn no Dreamux submission ever bound is not an exception: its items
 display, and so does its end. Withholding it was tried and removed — a card

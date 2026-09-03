@@ -628,13 +628,20 @@ between chats moves its one card rather than growing a second. None of it is
 durable — closing or restarting the session loses every anchor and open-card
 reference by design, with no restore, replay, or backfill.
 
-Only a Channel user message that Core reports as admitted moves an anchor. On
-that success Feishu closes the recipient's open card as interrupted — a card
-still open at that moment is showing work the runtime never reported an end for,
-so the newer message cut it off rather than finishing it — replaces the standing
-anchor, and opens the successor under the new message with a fixed receipt,
-without waiting for a settlement or a native turn end; a rejected, failed, or
-ambiguous admission changes nothing. A Reply is outbound only: its receipt never
+Only a Channel user message moves an anchor, and the Channel moves it at the
+moment it submits rather than after Core answers: the anchor is the Channel's
+own state, which Core neither carries nor validates, and waiting for Core to
+confirm admission was what pushed the user's own body and any early activity
+onto the predecessor card. Taking it closes the recipient's open card as
+interrupted — a card still open at that moment is showing work the runtime never
+reported an end for, so the newer message cut it off rather than finishing it —
+replaces the standing anchor, and opens the successor under the new message with
+an opening label that claims nothing about admission, without waiting for a
+settlement or a native turn end; a submission Core proves it did not admit
+retires that anchor again, closing the spent card and leaving the recipient
+anchorless rather than restoring its predecessor, while an ambiguous outcome
+proves nothing and leaves the new anchor standing. A Reply is outbound only: its
+receipt never
 creates, replaces, defers, or retires an anchor and never opens, moves, or closes
 a card. A visible Team bind card may initialize a TeamLeader that has no standing
 anchor and never replaces one, while the Dispatcher has no installation or
@@ -688,14 +695,19 @@ all, so a reader who checks only the public host will conclude, wrongly, that
 this surface is undocumented. It gives the event vocabulary as a numbered enum
 (`1 RUN_STARTED`, `2 RUN_FINISHED`, `3 RUN_ERROR`, `10-13 TEXT_MESSAGE_*`,
 `20-24 TOOL_CALL_*`, …), accepts either the name or the number in `event_type`,
-and spells fields in camelCase — which is what this Channel sends. The fact closes an already open card and
+and spells fields in camelCase — which is what this Channel sends. The fact
+closes an already open card and
 never opens one, so it is ignored when no card is open — a repeated end is
 therefore harmless. A create or append the platform refuses abandons only that
 presentation: the standing anchor survives it, and the next opening activity may
 open a card there again.
 
-Facts Core publishes synchronously inside the admitting call are best effort and
-may land on the predecessor card or, with no anchor yet, nowhere. That window,
+Facts Core publishes synchronously inside the admitting call land on the
+successor card, not the predecessor, because the Channel takes its anchor and
+writes its receipt before it calls Core. What remains is the window that opens
+between that receipt and Core's answer: a submission Core disproves leaves a
+spent card on the message that produced no turn, because retiring the anchor
+closes that card as interrupted rather than erasing it. That window,
 the exceptionally early native end, and a tool result crossing an anchor
 replacement are operator-adjudicated accepted losses, recorded with their
 reasoning in the
