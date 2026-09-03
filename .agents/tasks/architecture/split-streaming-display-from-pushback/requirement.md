@@ -480,9 +480,33 @@ input was announced and no end followed. Departure 10 of
 added: the "ended event carrying the provider's real error" the operator asked
 for is the entity's existing failed end, now reached on the leader paths too.
 
-**What is open.** The codex resume half. Two records state the contract the
-withdrawn approach would have changed, and a ruling would be quoted against
-both: `AgentRuntime.start` in `dreamux-types` ("failure rejects and never
-silently becomes fresh") and the `session_lost` handling in
-`agent-entity/runtime-state.ts`, which keeps the session id and marks the
-identity `degraded`.
+**The second half, as ruled later the same day.** The log showed why the
+leader could not be resumed: `createNew` activated the leader 554ms after
+creation, codex answered `thread/start` with a thread id, and no turn ever
+followed — codex writes a rollout at the first turn, not at `thread/start`, so
+the persisted session id named a thread codex had never written. The operator
+ruled the fix is where the process starts, not how codex recovers:
+
+> 把这个进程延迟拉起就好了，如果 team.create 的时候，没有传递 prompt，就不拉起进程，不拉起进程就没有 turn/start ，就不会有一个 空的 rollup 文件，就不会遇到这个问题了
+
+> teammate 同理，其实是 teammateService 到 agent runtime 之间这里卡一道。只不过现在 spawn teammate 的 prompt 是必传的。你可以看下到底是 懒创建 teammate 还是teammate 到 agent provider 这里懒创建进程吧。
+
+**What was built.** The gate already existed: a runtime starts only in
+`RuntimeOwner.ensureStarted()`, reached by a waking `submitInput`, and
+`createRuntime` constructs an object in both providers. The one bypass on the
+Team path was `leader.activate()` in `TeamService.createNew`; it is deleted.
+With a `prompt`, the prompt's own submission starts the runtime inside the
+entity's span (so a start failure is announced and ended like any other, and
+creation is abandoned as before); without one, nothing starts until the first
+`submitToLeader`. TeamMate spawn already submits its mandatory prompt, so it was
+lazy already. `activate()` keeps its one caller, the dispatcher agent's
+restart-notice start, which resumes an existing session and submits at once.
+The `AgentRuntime.start` contract ("failure rejects and never silently becomes
+fresh") and the `session_lost` handling are untouched. What changes for the
+operator: `team.create` without a `prompt` no longer proves the runtime can
+start, and its TeamLeader identity stays `starting` until the first turn.
+
+**What remains.** A codex killed between `thread/start` and the first turn's
+rollout write, or a cleared `~/.codex/sessions`, still leaves a session id
+codex cannot resume; the start failure is now visible on the card, and the
+recovery is dissolve and recreate. No defense is added for it.

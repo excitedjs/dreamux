@@ -10,8 +10,7 @@ import type { TeamCollectionOptions } from '../src/service/team-collection/types
 import {
   buildTeamCollectionHarness,
   minimalTeamRecordInput,
-  mockLeaderActivationRejected,
-  mockLeaderActivationResolved,
+  mockLeaderSubmissionRejected,
   type TeamCollectionHarness,
 } from './helpers/team-harness.js';
 
@@ -25,11 +24,11 @@ import {
  */
 
 let harness: TeamCollectionHarness | null = null;
-let activation: { restore(): void } | null = null;
+let submission: { restore(): void } | null = null;
 
 afterEach(async () => {
-  activation?.restore();
-  activation = null;
+  submission?.restore();
+  submission = null;
   await harness?.cleanup();
   harness = null;
 });
@@ -57,7 +56,6 @@ async function allFiles(root: string): Promise<string[]> {
 
 describe('team.create idempotency', () => {
   it('publishes the accepted request identity directly into the record, with no separate ledger file anywhere', async () => {
-    activation = mockLeaderActivationResolved();
     harness = await buildTeamCollectionHarness();
     const hash = hashOf({ intent: 'ship the thing' });
 
@@ -85,7 +83,6 @@ describe('team.create idempotency', () => {
   });
 
   it('resolves a same-id, same-hash replay to the same Team, even from a fresh TeamCollection over the same store (a restart)', async () => {
-    activation = mockLeaderActivationResolved();
     harness = await buildTeamCollectionHarness();
     const hash = hashOf({ intent: 'ship the thing' });
     const requestId = 'req-replay';
@@ -127,7 +124,6 @@ describe('team.create idempotency', () => {
   });
 
   it('raises IdempotencyConflictError for the same request id replayed with a different payload, and creates no second Team', async () => {
-    activation = mockLeaderActivationResolved();
     harness = await buildTeamCollectionHarness();
     const requestId = 'req-conflict';
 
@@ -153,7 +149,6 @@ describe('team.create idempotency', () => {
   });
 
   it('answers a replay against a closed Team with status "closed", from the exact same request identity', async () => {
-    activation = mockLeaderActivationResolved();
     harness = await buildTeamCollectionHarness();
     const hash = hashOf({ intent: 'short-lived' });
     const requestId = 'req-closed-replay';
@@ -186,7 +181,6 @@ describe('team.create idempotency', () => {
   });
 
   it('leaves a candidate name free after a failed attempt, so a fresh request can take it', async () => {
-    activation = mockLeaderActivationResolved();
     // Force the very first candidate to collide with an unrelated, already
     // published Team, so allocation must move on to a second candidate.
     let calls = 0;
@@ -215,8 +209,13 @@ describe('team.create idempotency', () => {
 
   it('leaves a durable, replayable acceptance even when creation fails AFTER the record is published', async () => {
     harness = await buildTeamCollectionHarness();
-    activation = mockLeaderActivationRejected(new Error('runtime boom'));
-    const hash = hashOf({ intent: 'will fail to activate' });
+    submission = mockLeaderSubmissionRejected(new Error('runtime boom'));
+    // A prompt is what makes the leader's first submission happen at all — a
+    // promptless creation reaches no runtime, so it could never fail here.
+    const hash = hashOf({
+      intent: "will fail on the leader's first submission",
+      prompt: 'first task',
+    });
     const requestId = 'req-after-publish-failure';
 
     await expect(
@@ -226,7 +225,8 @@ describe('team.create idempotency', () => {
         options: {
           namePrefix: 'alpha',
           leaderAgentRuntime: 'fake',
-          intent: 'will fail to activate',
+          intent: "will fail on the leader's first submission",
+          prompt: 'first task',
         },
       }),
     ).rejects.toThrow(/runtime boom/);
@@ -244,7 +244,8 @@ describe('team.create idempotency', () => {
       options: {
         namePrefix: 'alpha',
         leaderAgentRuntime: 'fake',
-        intent: 'will fail to activate',
+        intent: "will fail on the leader's first submission",
+        prompt: 'first task',
       },
     });
     expect(replay.status).toBe('closed');
@@ -252,7 +253,6 @@ describe('team.create idempotency', () => {
   });
 
   it('serializes two concurrent createFromRequest calls under the same request id into one created Team', async () => {
-    activation = mockLeaderActivationResolved();
     harness = await buildTeamCollectionHarness();
     const hash = hashOf({ intent: 'racing callers' });
     const requestId = 'req-concurrent';

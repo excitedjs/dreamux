@@ -12,16 +12,16 @@ import type { DreamuxConfig } from '../src/config/config.js';
 import {
   buildTeamCollectionHarness,
   minimalTeamRecordInput,
-  mockLeaderActivation,
+  mockLeaderSubmission,
   type TeamCollectionHarness,
 } from './helpers/team-harness.js';
 
 let harness: TeamCollectionHarness | null = null;
-let activation: { restore(): void } | null = null;
+let submission: { restore(): void } | null = null;
 
 afterEach(async () => {
-  activation?.restore();
-  activation = null;
+  submission?.restore();
+  submission = null;
   await harness?.cleanup();
   harness = null;
 });
@@ -183,19 +183,24 @@ describe('TeamCollection: closed Teams are record-only reads', () => {
 
 describe('TeamCollection: shared create/open construction', () => {
   it('joins a concurrent open() to the exact same in-flight creation, and only delivers work after the leader is usable', async () => {
-    const gate = mockLeaderActivation();
-    activation = gate;
+    const gate = mockLeaderSubmission();
+    submission = gate;
     harness = await buildTeamCollectionHarness();
 
+    // A prompt is what makes the leader's first submission happen at all — a
+    // promptless creation would reach no runtime, and there would be nothing
+    // here to hold open.
     const creating = harness.collection.create({
       name: 'joined',
       leaderAgentRuntime: 'fake',
       intent: 'first caller',
+      prompt: 'first task',
     });
 
     // Wait for the record to actually be durable (the record is published
-    // BEFORE `activate()` is called) so the concurrent `admit` below has a
-    // real, findable Team to join rather than racing record publication.
+    // BEFORE the leader's first `submitInput()` call) so the concurrent
+    // `admit` below has a real, findable Team to join rather than racing
+    // record publication.
     await waitFor(async () => (await harness!.seedStore.get('joined')) !== null);
 
     let delivered = false;
@@ -206,8 +211,8 @@ describe('TeamCollection: shared create/open construction', () => {
       return service.view();
     });
 
-    // The leader's `activate()` is still held open, so nothing has been
-    // delivered to the joined caller yet — construction is shared, not
+    // The leader's first `submitInput()` is still held open, so nothing has
+    // been delivered to the joined caller yet — construction is shared, not
     // bypassed by a second, independent build.
     await settledOrPending(admitting);
     expect(delivered).toBe(false);
@@ -218,7 +223,7 @@ describe('TeamCollection: shared create/open construction', () => {
     expect(delivered).toBe(true);
     expect(createResult.team.status).toBe('running');
     expect(admitResult.status).toBe('running');
-    // Exactly one leader materialization for both callers together.
+    // Exactly one leader submission for both callers together.
     expect(gate.callCount()).toBe(1);
 
     // The exact same TeamService instance both callers ended up sharing is

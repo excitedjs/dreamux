@@ -229,9 +229,14 @@ write, and a reserved-name guard blocks names that would recreate a removed
 layout leaf. Naming adds no transient reservation queue and serializes no
 separate creation operations.
 
-`team.create` may include a first `prompt`. When it is omitted the TeamLeader
-starts idle and waits for a later Team `send` or bound-channel inbound; the Team
-fabricates no synthetic default prompt. Team-owned members share the Team
+`team.create` may include a first `prompt`. Creation itself starts no leader
+runtime: the runtime starts inside the first submission that needs it — the
+`prompt` when there is one, otherwise the first Team `send` or bound-channel
+inbound — so a provider thread is never opened without the turn that makes it
+durable (a codex thread started without a turn writes no rollout, and the next
+start of that leader cannot resume it; found live 2026-09-03). The Team
+fabricates no synthetic default prompt. A `running` Team record means creation
+completed, never that a process is alive. Team-owned members share the Team
 workspace.
 
 Binding a conversation to a Team is not a Team capability at all: routing is the

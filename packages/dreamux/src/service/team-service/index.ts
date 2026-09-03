@@ -256,8 +256,13 @@ export class TeamService {
     let leader: TeammateService | null = null;
     try {
       // The TeamMate layer owns identity creation: the Team hands over its own
-      // creation inputs and gets back a started leader, rather than assembling
-      // and persisting an Agent identity itself.
+      // creation inputs and gets back a leader, rather than assembling and
+      // persisting an Agent identity itself. Nothing starts here: the leader's
+      // runtime starts inside the first submission that needs it — the prompt
+      // below when there is one, the first ordinary submission otherwise — so
+      // a provider thread is never opened without the turn that makes it
+      // durable. A codex thread started without a turn writes no rollout, and
+      // the next start of that leader fails to resume it.
       leader = await service.createLeader({
         leaderName,
         agentRuntime: input.leaderAgentRuntime,
@@ -271,7 +276,6 @@ export class TeamService {
           : {}),
       });
       service.leader_ = leader;
-      await leader.activate();
       let submission: AgentEntitySubmissionResult | null = null;
       if (input.prompt !== undefined) {
         const delivery = await resolveTeamLeaderCompletionDelivery({
@@ -527,8 +531,8 @@ export class TeamService {
    * stayed on its opening label with no error (found live, 2026-09-03).
    *
    * A persisted `starting` Team with a valid leader identity is the
-   * recoverable tail of Team creation, and it converges the way creation
-   * converges: `running` once its leader has taken a turn, not before.
+   * recoverable tail of Team creation; it becomes `running` once its leader
+   * has taken a turn.
    */
   async submitToLeader(
     input: TeammateSubmitInput & { initiator?: CompletionInitiator },

@@ -210,7 +210,14 @@ not the status, is what says which shape to expect.
   provider's error, and the leader paths now reach it. Departure 10 of
   `technical-design/final.md` is corrected in place. The second half (codex,
   fresh thread on an exact "no rollout found") was withheld on the operator's
-  own words, and stays open:
+  own words:
 
   > 哎不对，我想一下，第二个问题的修法不一定是这样。
+
+  and re-ruled the same day as a Core change instead: Team creation starts no
+  leader runtime (`createNew` no longer calls `leader.activate()`), so a codex
+  thread is never started without the turn that writes its rollout. The
+  ruling and what it changes for the operator are in `requirement.md`, last
+  section; the product catalog carries the new bullet "Creating a Team starts
+  no process".
 - Knowledge closeout: Pending.

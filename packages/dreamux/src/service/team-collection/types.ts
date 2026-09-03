@@ -318,7 +318,7 @@ export interface TeamHistoryResult {
 export interface TeamCreateResult extends TeamSummary {
   /**
    * The leader's first-turn result, or `null` when the team was created without
-   * an explicit `prompt` (the leader starts idle and fires no turn at creation).
+   * an explicit `prompt` (no leader process starts and no turn fires at creation).
    */
   status: AgentEntitySubmissionResult['status'] | null;
   error?: string;
