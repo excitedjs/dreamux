@@ -34,8 +34,9 @@
 - Solution review Issue: Not created.
 - Blockers: None. Questions 1, 1b and 2 are answered and question 3 is
   implemented, so the solution they gated is built rather than pending.
-- Next action: Operator review of two things the implementation decided that
-  the design had explicitly left to a ruling.
+- Next action: Operator review of three things the implementation decided.
+  The design had explicitly left the first two to a ruling; the third is a
+  review-time deletion made without one.
   1. **A dropped completion push-back is now visible.** Applying rulings 4 and 8
      uniformly moved the input publish above the recipient-liveness check, so a
      push-back to an agent whose runtime is already gone now shows the delivered
@@ -54,6 +55,14 @@
      2026-09-02 live probe and then by the reference the operator pointed at,
      **COT Message Brief** on `open.larkoffice.com`, which the public
      `open.feishu.cn` docs do not carry; see item 3.
+  3. **The provider-side guard around the activity sink is deleted without a
+     ruling** (commit `34208cdf`). `AgentRuntimeActivitySink` now states that
+     the sink never throws — Core's `createConversationProjection` wraps every
+     call — so the try/catch in both providers defended no named scenario and
+     the tests that forged a throwing sink went with it. Its own commit, so one
+     revert drops it. The two display-state rulings of 2026-09-03 that the
+     rest of the branch rests on are recorded verbatim in `requirement.md`
+     § Ruling on display state.
 
   Recorded and deliberately not done:
   - `isSynthetic` is producer-less in `src/` exactly like `priority` was, but

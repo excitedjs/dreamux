@@ -167,11 +167,13 @@ What replaced what:
   open. It reports `turn.ended` from the native terminal it observed — one codex
   terminal per turn, one Claude `result` — and again when it tears down a native
   session: codex from `TurnManager.stop()` and from its first protocol failure,
-  Claude Code from `stop()` and from the state fence, both gated on a live child,
+  Claude Code from `stop()` and from the state fence, both gated on a live
+  child,
   and from a run that died, gated only on not having been stopped. An ordinary
   success followed by a teardown therefore reports two ends, not one. The only
   deduplication left is the native stream's own, and the Channel ignores an end
-  that arrives with nothing open (requirement rule 8). A runtime start that fails
+  that arrives with nothing open (requirement rule 8). A runtime start that
+  fails
   reports no end from either provider — the codex manager does not exist until
   the native session is up, and a Claude child that failed to come up is gone
   before Core's `stop()` — so Core's own failed end carries the start error to

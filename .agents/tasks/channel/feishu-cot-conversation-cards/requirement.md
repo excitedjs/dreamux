@@ -150,7 +150,8 @@ home as `~`.
     loss, or a run that died — is ended by that teardown instead. The teardown
     reports its one end for a live native session without asking whether a turn
     was open, because the provider keeps no display state that could answer, so
-    the Channel may receive an end with nothing open and ignores it under item 8.
+    the Channel may receive an end with nothing open and ignores it under item
+    8.
 
 13. **No logical membership contract.** The native-ended fact does not enumerate
     `RuntimeSubmission` members, logical `turn_id` values, presentation ids,

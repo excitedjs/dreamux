@@ -1213,7 +1213,22 @@ finished turn and hands `stopUnsettled` one to interrupt, which paints a spuriou
 "reports one end for the real lifecycle order, where `completed` follows the
 result".
 
-**What that deleted.** *(Superseded 2026-09-03 — deleting the provider display state brought the name `endNativeTurn` back on both sides, now stateless: it reads no record and no display state, and only calls the sink. codex holds it as a private `TurnManager` method taking `(status, reason)`, called from `stop()`, `observeTerminal` and `failProtocol`; Claude Code keeps the module-level helper in `runtime-submissions.ts`, now `(status, reason, sink)`, plus the runtime's private `(status, reason)` wrapper over it. What this departure deleted was the gated form described below — codex's `endNativeTurn(record, …)` behind `record.nativeTurnEnded`, and claude's `settled` / `stopped` guards — and every other item in the list is still gone. See `requirement.md` § Ruling on display state.)* codex: `endNativeTurn` and all five of its call sites, `NativeTurnRecord.nativeTurnEnded` and both initializers, and the display half of `drainTerminalOrder`'s unbound branch together with its warn. Claude Code: the module-level `endNativeTurn`, the runtime's private wrapper, the `settled` and `stopped` locals that gated the two synthesized ends, and `failUnattributedResult`'s own end. The unbound branch in `drainTerminalOrder`
+**What that deleted.** *(Superseded 2026-09-03 — deleting the provider display
+state brought the name `endNativeTurn` back on both sides, now stateless: it
+reads no record and no display state, and only calls the sink. codex holds it as
+a private `TurnManager` method taking `(status, reason)`, called from `stop()`,
+`observeTerminal` and `failProtocol`; Claude Code keeps the module-level helper
+in `runtime-submissions.ts`, now `(status, reason, sink)`, plus the runtime's
+private `(status, reason)` wrapper over it. What this departure deleted was the
+gated form described below — codex's `endNativeTurn(record, …)` behind
+`record.nativeTurnEnded`, and claude's `settled` / `stopped` guards — and every
+other item in the list is still gone. See `requirement.md` § Ruling on display
+state.)* codex: `endNativeTurn` and all five of its call sites,
+`NativeTurnRecord.nativeTurnEnded` and both initializers, and the display half
+of `drainTerminalOrder`'s unbound branch together with its warn. Claude Code:
+the module-level `endNativeTurn`, the runtime's private wrapper, the `settled`
+and `stopped` locals that gated the two synthesized ends, and
+`failUnattributedResult`'s own end. The unbound branch in `drainTerminalOrder`
 itself stays — with the end gone it is purely the queue-head release
 (`terminalOrder.shift`, `nativeTurns.delete`, `unboundObservedTurnIds.delete`,
 `collector.releaseTurn`, which `retainAfterTerminal: true` depends on), and

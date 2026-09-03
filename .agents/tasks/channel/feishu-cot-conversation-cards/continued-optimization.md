@@ -30,7 +30,17 @@ which shares this pull request but is a separate subject from card lifecycle.
 
 ## 1. Claude native-turn end: narrow the synthesis rather than deduplicate it
 
-- **Status:** Delivered 2026-09-02. *(Superseded 2026-09-03 — the narrowing went with the rest of the providers' display state: a provider now keeps none. `stopUnsettled` reports no end at all; the `result` branch of `handleProtocolEvent` ends the native turn itself, before push-back touches it; `stop()` and the fatal generation fence each report one interrupted end when the native session is live; and a run that died reports `failed` unless a stop already reported it. None of them asks whether a turn was open — the Channel ignores an end that finds nothing open ([requirement.md](requirement.md) item 8). Read the two blocks below as the finding as it was raised and the shape as it was then delivered. See [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).)*
+- **Status:** Delivered 2026-09-02. *(Superseded 2026-09-03 — the narrowing went
+  with the rest of the providers' display state: a provider now keeps none.
+  `stopUnsettled` reports no end at all; the `result` branch of
+  `handleProtocolEvent` ends the native turn itself, before push-back touches
+  it; `stop()` and the fatal generation fence each report one interrupted end
+  when the native session is live; and a run that died reports `failed` unless a
+  stop already reported it. None of them asks whether a turn was open — the
+  Channel ignores an end that finds nothing open
+  ([requirement.md](requirement.md) item 8). Read the two blocks below as the
+  finding as it was raised and the shape as it was then delivered. See
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).)*
 - **Files:** [`/packages/agent-runtime/claude-code/src/runtime.ts`](/packages/agent-runtime/claude-code/src/runtime.ts),
   [`/packages/agent-runtime/claude-code/src/runtime-submissions.ts`](/packages/agent-runtime/claude-code/src/runtime-submissions.ts)
 
@@ -90,7 +100,14 @@ Estimated net reduction on the Claude side: 30 to 40 lines.
 
 ### Lower-value defensive code found in the same pass
 
-- (Superseded 2026-09-03: the guard is deleted in both providers, and `AgentRuntimeActivitySink` now states that the sink never throws — Core owns that failure, catching and logging every projection failure inside `createConversationProjection`'s `guarded` wrapper, so a provider calls the sink bare and the out-of-tree-Core rationale below no longer holds. The tests that forged a throwing sink are deleted with it. See [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).) `endNativeTurn` wraps the sink call in `try`/`catch`. Inside this repository
+- (Superseded 2026-09-03: the guard is deleted in both providers, and
+  `AgentRuntimeActivitySink` now states that the sink never throws — Core owns
+  that failure, catching and logging every projection failure inside
+  `createConversationProjection`'s `guarded` wrapper, so a provider calls the
+  sink bare and the out-of-tree-Core rationale below no longer holds. The tests
+  that forged a throwing sink are deleted with it. See
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).)
+  `endNativeTurn` wraps the sink call in `try`/`catch`. Inside this repository
   the consumer already catches everything, so nothing can propagate; the guard
   only pays for itself because the sink is a public provider contract that an
   out-of-tree Core could break. Retained by the 2026-09-02 adjudication.
