@@ -481,8 +481,8 @@ the submission that caused it, and inventing one made a display pick an
 arbitrary member — and, when no member could be picked, drop the fact entirely.
 The agent is the subject, and it is known before any submission binds. The union
 has three members: `assistant.message`, `tool.call`, and `turn.ended` — the
-runtime stopped producing, once per native turn, with a completed, failed or
-interrupted status and its own reason text when it has one. The sink is
+runtime stopped producing, with a completed, failed or interrupted status and
+its own reason text when it has one. The sink is
 generation-fenced, synchronous, display-only and fail-open — a write from a
 revoked generation is dropped, and a throwing consumer never affects
 settlement.
@@ -491,20 +491,26 @@ One native turn is one provider-native terminal: one Claude Code `result`, one
 Codex `turn/completed`. A resident Claude Code execution window may legally
 answer several commands in sequence and so reports one end per `result`. Where a
 turn ends with no native terminal at all — a stop, a protocol loss, a rejected
-run — the provider synthesizes an end for every native turn still open, whether
-or not there was a submission left to settle: what the push-back line still owed
-never said whether the provider was working.
+run — the provider reports one end from that teardown without asking whether a
+turn was open: codex from `TurnManager.stop()` and from the first protocol
+failure, Claude Code from `stop()`, from the fence killing a live child, and
+from a run that died before any stop. What the push-back line still owed never
+said whether the provider was working, and the provider keeps no display-side
+answer of its own either (operator ruling, 2026-09-03: 「cot 相关的部分，在
+provider 应该是完全无状态的」, recorded in the
+[split-streaming-display-from-pushback requirement](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md)).
 
 A native turn no Dreamux submission ever bound is not an exception: its items
 display, and so does its end. Withholding it was tried and removed — a card
 belongs to no turn (`feishu-cot-conversation-cards` rules 1 and 8: one anchor
 and at most one open card, and a native-ended fact closes an open card, never
 opens one, and is ignored when none is open), so an end has nothing to name and
-a runtime has nothing to decide. What a provider still owes is at-most-once per
-native turn, and each keeps that in display-line state of its own rather than in
-push-back's: codex in a map keyed by native turn id, which outlives the record
-for that turn, and Claude Code — whose protocol names no native turn — in one
-open flag on the runtime, which outlives the resident window.
+a runtime has nothing to decide. The same rule is why a provider holds no
+at-most-once state: a teardown end after a turn already reported its own
+terminal reaches a consumer with nothing open, which ignores it. The only
+deduplication is the native stream's own — the codex collector reports each
+turn's terminal once (`rememberTerminal`), and one Claude Code `result` is one
+end.
 
 The sink is optional because its absence must not break a provider, but the
 consequence is real and is not a Core fallback: a provider that never emits

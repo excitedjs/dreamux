@@ -55,17 +55,6 @@ export class TurnManager {
   private nextNativeAdmission = 0;
   private readonly nativeTurns = new Map<string, NativeTurnRecord>();
   private readonly unboundObservedTurnIds = new Set<string>();
-  /**
-   * Every native turn codex has told this manager about, and whether the
-   * display line has already reported its end.
-   *
-   * The display line asks one question — did codex say this turn is over? — so
-   * it keeps its own answer rather than reading a push-back record, which is
-   * deleted as soon as its submissions settle and never exists at all for a
-   * turn no submission bound. One entry per native turn, the same shape and
-   * lifetime as the collector's own terminal fingerprints, cleared by `stop()`.
-   */
-  private readonly displayTurns = new Map<string, 'open' | 'ended'>();
   private readonly terminalOrder: string[] = [];
   private protocolFailure: Error | null = null;
   private collector: TurnCollector | null = null;
@@ -97,10 +86,11 @@ export class TurnManager {
     this.collector?.dispose();
     this.collector = null;
     while (this.pendingAdmissions.size > 0) await Promise.allSettled([...this.pendingAdmissions]);
-    // The collector is gone, so nothing will ever report these: a turn codex
-    // started and never finished ends as interrupted. The admissions are
-    // awaited first only so a turn that bound during the stop is in the map.
-    this.endOpenDisplayTurns('interrupted', null);
+    // The collector is gone, so nothing will ever report a turn codex started
+    // and never finished: this teardown reports one interrupted end, without
+    // asking whether a turn was open. The manager keeps no such answer; a
+    // consumer with nothing open ignores the end.
+    this.endNativeTurn('interrupted', null);
     this.drainTerminalOrder();
     for (const record of this.nativeTurns.values()) {
       if (record.completion !== null) continue;
@@ -111,7 +101,6 @@ export class TurnManager {
     }
     this.terminalOrder.length = 0;
     this.unboundObservedTurnIds.clear();
-    this.displayTurns.clear();
   }
 
   private async submit(
@@ -144,9 +133,6 @@ export class TurnManager {
       return { status: 'ambiguous', error: normalized };
     }
     const observed = this.nativeTurns.get(response.turn.id);
-    // codex started this turn, so the display line owes its end even when the
-    // submission that asked for it is refused just below.
-    this.noteDisplayTurn(response.turn.id);
     if (this.stopped && (observed === undefined || observed.terminal === null)) {
       deferred.settle({ kind: 'stopped' });
     } else {
@@ -199,13 +185,12 @@ export class TurnManager {
   }
 
   private observeTerminal(turnId: string, terminal: CollectedTurn | Error): void {
-    // The display line ends here and nowhere else. codex said this native turn
-    // is over, and that fact is the card's terminal: nothing below it — the
-    // record's own bookkeeping, the terminal queue, the admissions gate, the
-    // completion the push-back line builds out of this terminal — may change
-    // it, delay it, or withhold it.
-    this.endDisplayTurn(
-      turnId,
+    // The display line ends here, on codex's own terminal. The collector
+    // reports each turn's terminal once, so this is the one end the turn gets
+    // from its stream: nothing below it — the record's own bookkeeping, the
+    // terminal queue, the admissions gate, the completion the push-back line
+    // builds out of this terminal — may change it, delay it, or withhold it.
+    this.endNativeTurn(
       terminal instanceof Error ? 'failed' : 'completed',
       terminal instanceof Error ? terminal.message : null,
     );
@@ -279,12 +264,14 @@ export class TurnManager {
   }
 
   private failProtocol(error: Error): void {
+    const first = this.protocolFailure === null;
     this.protocolFailure ??= error;
     this.log('error', error.message, error);
-    // Every turn codex started and has not finished dies with the connection,
-    // including one this manager only ever saw items for, which has no record
-    // for the loop below to reach.
-    this.endOpenDisplayTurns('failed', this.protocolFailure.message);
+    // Whatever codex had running dies with the connection, including a turn
+    // this manager only ever saw items for, which has no record for the loop
+    // below to reach. The first failure reports that end; later ones repeat
+    // the same dead connection.
+    if (first) this.endNativeTurn('failed', this.protocolFailure.message);
     this.terminalOrder.length = 0;
     for (const [turnId, record] of this.nativeTurns) {
       if (record.completion !== null) continue;
@@ -334,7 +321,6 @@ export class TurnManager {
    * and it is known before any submission binds.
    */
   private observeItem(turnId: string, item: ThreadItem, phase: 'started' | 'completed', occurredAt: number): void {
-    this.noteDisplayTurn(turnId);
     const activity = itemActivity(turnId, item, phase, occurredAt);
     if (activity !== null) this.emitActivity(activity);
     const record = this.nativeTurns.get(turnId);
@@ -351,45 +337,28 @@ export class TurnManager {
     }
   }
 
-  /** Remember a native turn codex started: its end is now owed. */
-  private noteDisplayTurn(turnId: string): void {
-    if (!this.displayTurns.has(turnId)) this.displayTurns.set(turnId, 'open');
-  }
-
   /**
-   * Report one native turn's end on the display line, at most once.
+   * Report a native turn's end on the display line.
    *
    * `status` and `reason` are codex's own terminal and nothing else — a
-   * collected turn completed, an error failed with its message. What the
-   * push-back line then makes of that terminal (a decode it cannot restore, a
-   * submission it cannot attribute) is push-back's own outcome and never
-   * colours the card.
+   * collected turn completed, an error failed with its message, a teardown
+   * interrupted. What the push-back line then makes of that terminal (a decode
+   * it cannot restore, a submission it cannot attribute) is push-back's own
+   * outcome and never colours the card.
    *
-   * Whether the end is *shown* is not this layer's decision either. A card
-   * belongs to no turn (`feishu-cot-conversation-cards` requirement, rule 1 — a
-   * target is "not a presentation identity, state key, or card partition"), and
-   * a native end "closes an existing open card but never opens a new one; when
-   * no card is open, Feishu ignores it" (rule 8). This layer pushes; the
-   * Channel decides.
+   * This manager keeps no display state: it does not know, and does not ask,
+   * whether a turn is open before reporting an end. Whether the end is *shown*
+   * is not this layer's decision. A card belongs to no turn
+   * (`feishu-cot-conversation-cards` requirement, rule 1 — a target is "not a
+   * presentation identity, state key, or card partition"), and a native end
+   * "closes an existing open card but never opens a new one; when no card is
+   * open, Feishu ignores it" (rule 8). This layer pushes; the Channel decides.
    */
-  private endDisplayTurn(
-    turnId: string,
+  private endNativeTurn(
     status: 'completed' | 'failed' | 'interrupted',
     reason: string | null,
   ): void {
-    if (this.displayTurns.get(turnId) === 'ended') return;
-    this.displayTurns.set(turnId, 'ended');
     this.emitActivity({ kind: 'turn.ended', occurredAt: Date.now(), status, reason });
-  }
-
-  /** End every native turn still owed one, because nothing else will report it. */
-  private endOpenDisplayTurns(
-    status: 'failed' | 'interrupted',
-    reason: string | null,
-  ): void {
-    for (const [turnId, state] of this.displayTurns) {
-      if (state === 'open') this.endDisplayTurn(turnId, status, reason);
-    }
   }
 
   private trackAdmission(admission: Promise<RuntimeAdmission>): Promise<RuntimeAdmission> {

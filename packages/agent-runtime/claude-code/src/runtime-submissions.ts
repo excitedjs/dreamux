@@ -44,68 +44,31 @@ export interface ProtocolEventContext {
   outputSchemaEnabled: boolean;
   activitySink: AgentRuntimeActivitySink;
   log: (level: 'info' | 'warn' | 'error', message: string, error?: unknown) => void;
-  /** The display line's own state; the runtime owns it across windows. */
-  display: NativeTurnDisplay;
 }
 
 /**
- * Whether claude is running a native turn, and so still owes its end.
+ * Report a native turn's end on the display line.
  *
- * The display line reports what the provider is doing, so it keeps its own
- * state instead of reading the push-back window: an `ActiveTurn` is a resident
- * window that answers several commands with a `result` each, it is dropped the
- * moment the window closes, and whether a submission is left in it says
- * nothing about whether claude is still working. claude names no native turn,
- * so this is one open flag rather than a map keyed by turn id — it is the same
- * fact, held the only way claude's protocol allows.
+ * `status` and `reason` are claude's own terminal fact and nothing else: a
+ * `result` completed or failed with its errors, a run that died, a teardown
+ * that interrupted. What the push-back line then makes of it (a result text it
+ * cannot extract, a command it cannot attribute, a submission already settled)
+ * is push-back's own outcome and never colours the card.
+ *
+ * The runtime keeps no display state: it does not know, and does not ask,
+ * whether a native turn is open before reporting an end. Whether the end is
+ * *shown* is not this layer's decision. A card belongs to no turn
+ * (`feishu-cot-conversation-cards` requirement, rule 1), and a native end
+ * "closes an existing open card but never opens a new one; when no card is
+ * open, Feishu ignores it" (rule 8). This layer pushes; the Channel decides.
  */
-export class NativeTurnDisplay {
-  private open = false;
-
-  constructor(
-    private readonly sink: AgentRuntimeActivitySink,
-    private readonly log: (
-      level: 'info' | 'warn' | 'error',
-      message: string,
-      error?: unknown,
-    ) => void,
-  ) {}
-
-  /** claude is running a native turn: its end is now owed. */
-  note(): void {
-    this.open = true;
-  }
-
-  /**
-   * Report a native turn's end, because claude itself said the turn is over.
-   *
-   * `status` and `reason` are that terminal fact and nothing else. What the
-   * push-back line then makes of it (a result text it cannot extract, a command
-   * it cannot attribute, a submission already settled) is push-back's own
-   * outcome and never colours the card.
-   *
-   * Whether the end is *shown* is not this layer's decision either. A card
-   * belongs to no turn (`feishu-cot-conversation-cards` requirement, rule 1),
-   * and a native end "closes an existing open card but never opens a new one;
-   * when no card is open, Feishu ignores it" (rule 8).
-   */
-  end(status: 'completed' | 'failed' | 'interrupted', reason: string | null): void {
-    this.open = false;
-    emitActivity(
-      { kind: 'turn.ended', occurredAt: Date.now(), status, reason },
-      this.sink,
-      this.log,
-    );
-  }
-
-  /**
-   * End the native turn claude is still running, because nothing will report
-   * it: the run died or was torn down. A turn that already reported its own
-   * terminal is over, and this adds no second end to it.
-   */
-  endOpen(status: 'failed' | 'interrupted', reason: string | null): void {
-    if (this.open) this.end(status, reason);
-  }
+export function endNativeTurn(
+  status: 'completed' | 'failed' | 'interrupted',
+  reason: string | null,
+  sink: AgentRuntimeActivitySink,
+  log: (level: 'info' | 'warn' | 'error', message: string, error?: unknown) => void,
+): void {
+  emitActivity({ kind: 'turn.ended', occurredAt: Date.now(), status, reason }, sink, log);
 }
 
 function emitActivity(
@@ -145,12 +108,11 @@ export function handleProtocolEvent(
   context: ProtocolEventContext,
 ): void {
   if (event.kind === 'command_lifecycle') {
-    // Only `started` says claude is running something. The terminal states are
-    // push-back's drainage bookkeeping, and `completed` arrives *after* the
-    // `result` that ended the native turn — treating it as news from claude
-    // would re-open a turn that is over and hand the teardown one to interrupt.
+    // `started` is the one lifecycle state recorded here: it is the
+    // attribution input for the group the next `result` completes. The
+    // terminal states are drainage bookkeeping that arrives after that
+    // `result`.
     if (event.state !== 'started') return;
-    context.display.note();
     if (
       active.submissions.has(event.commandUuid) &&
       !active.completedCommands.has(event.commandUuid) &&
@@ -161,19 +123,19 @@ export function handleProtocolEvent(
     return;
   }
   if (event.kind === 'result') {
-    // `result` is claude's native terminal, and the display line ends on it
-    // and on nothing else: the attribution, the completion and the settlements
-    // below are push-back's work on the same fact, and none of them may change
-    // the end, delay it, or withhold it.
-    context.display.end(
+    // `result` is claude's native terminal, and the display line ends on it:
+    // the attribution, the completion and the settlements below are
+    // push-back's work on the same fact, and none of them may change the end,
+    // delay it, or withhold it.
+    endNativeTurn(
       event.outcome.isError ? 'failed' : 'completed',
       event.outcome.isError ? turnFailureMessage(event.outcome) : null,
+      context.activitySink,
+      context.log,
     );
     completeStartedGroup(active, event.outcome, context);
     return;
   }
-  // claude is producing output, so a native turn is running and owes an end.
-  context.display.note();
   const raw = recordValue(event.line.raw);
   if (raw !== null) emitStreamActivity(active, raw, context);
 }

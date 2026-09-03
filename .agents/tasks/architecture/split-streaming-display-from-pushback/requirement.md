@@ -403,5 +403,44 @@ a `RuntimeCompletion`. Both providers were in scope — "两个 provider 要么�
 count: of the seven gates between codex reporting a terminal and `turn.ended`
 being emitted, only the collector's line admission and the at-most-once check may
 remain in front of the end, and the at-most-once check must be keyed by native
-turn id so it survives the record being deleted. What was built, gate by gate, is
-recorded in `technical-design/final.md` § As built, departure 7.
+turn id so it survives the record being deleted. *(Superseded 2026-09-03: the
+at-most-once check was deleted from both providers; see § Ruling on display
+state below.)* What was built, gate by gate, is recorded in
+`technical-design/final.md` § As built, departure 7.
+
+## Ruling on display state (2026-09-03)
+
+Reviewing PR #367, the operator ruled on the at-most-once table the design
+above kept in each provider (`displayTurns` in codex, `NativeTurnDisplay` in
+Claude Code):
+
+> 这个表直接删了不就可以了？cot 相关的部分，在 provider 应该是完全无状态的
+
+and restated what the split is, as a whole:
+
+> 那就把367做干净，起码刚才我们找到的finding 1，它就不是一个很干净的写法。就是最初这个PR，我提的要求就是把所有的COT逻辑和回推需要的机制全部拆开。拆解下来，就是说Provider里边需要提供稳定、忠于原始事件流的消息上报。这个消息上报在Dreamus这一层完全不消费，它只转发，并且拼上团队信息之类的，meta 信息，然后到飞书Channel这层自己组装这个开卡关卡逻辑。
+
+He framed what each provider is for:
+
+> 其实你想一下，我现在要做的，从 codex 层面来说，就是在做 codex app，从claude code 来说，就是在做claude code app或者 tui。他们两者都是对应到 codex app-server 和 claude code sdk 的 --json-stream 模式 cot 卡片只比他们多了一个开卡关卡换卡的模型。agent runtime provider 只是给 codex 和 claude 多包了一层，包成一个中立的形状，事件流这一套是完全不变的。
+
+> 举一个更恰当的例子，就是做 claude code 的 vscode extension。假如说没有换卡这个动作。cot 就是忠实展示事件流
+
+**What this supersedes.** The acceptance count above (the at-most-once check
+"must be keyed by native turn id so it survives the record being deleted") and
+departure 7 of `technical-design/final.md`, whose "at-most-once moved off the
+push-back record" paragraph and gate row 7 are marked superseded in place.
+
+**What was built instead.** Both tables are deleted. A provider reports
+`turn.ended` from the native terminal it observed and, without asking whether a
+turn was open, when it tears down a live native session: codex from
+`TurnManager.stop()` and from the first protocol failure (the manager exists
+only after a successful native start, so a failed start reports nothing and
+leaves the card to Core's own failed end carrying the start error); Claude Code
+from `stop()`, from the fence killing a live child (a fence that fires while a
+start is still failing has no child and reports nothing, for the same reason),
+and from a run that died before any stop. The only deduplication is the native
+stream's own — the codex collector reports each turn's terminal once, and one
+Claude Code `result` is one end. An end that reaches the Channel with nothing
+open is ignored (`feishu-cot-conversation-cards` rule 8), which is what makes
+the unconditional teardown end correct.

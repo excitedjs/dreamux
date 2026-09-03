@@ -618,8 +618,11 @@ describe('CodexRuntime native turn end', () => {
     ]);
     expect(activity.at(-1)).toMatchObject({ status: 'completed', reason: null });
     await runtime.stop();
-    // The end is still at most once: stop() finds no record to end again.
-    expect(activity.filter((fact) => fact.kind === 'turn.ended')).toHaveLength(1);
+    // stop() reports its own interrupted end without asking whether a turn was
+    // open; the runtime keeps no such answer, and a consumer with nothing open
+    // ignores it.
+    expect(activity.filter((fact) => fact.kind === 'turn.ended').map((fact) => fact.status))
+      .toEqual(['completed', 'interrupted']);
   });
 
   it('reports the end while an admission is still in flight', async () => {
@@ -649,7 +652,7 @@ describe('CodexRuntime native turn end', () => {
     client.rejectBlocked('turn/start', new Error('connection dropped'));
     expect((await admission).status).toBe('ambiguous');
     await runtime.stop();
-    expect(nativeEnds).toHaveLength(1);
+    expect(nativeEnds.map((end) => end.status)).toEqual(['completed', 'interrupted']);
   });
 
   it('ends a turn codex only ever sent items for, when stop() tears it down', async () => {
@@ -745,13 +748,17 @@ describe('CodexRuntime native turn end', () => {
     const submission = requireSubmitted(await runtime.submit({ text: 'in flight' }));
     await runtime.stop();
     await expect(submission.settled).resolves.toEqual({ kind: 'stopped' });
-    // A second stop() must not re-report an end already reported.
+    // A second stop() is a no-op at the runtime: nothing is torn down twice,
+    // so no second end is reported.
     await runtime.stop();
 
     expect(nativeEnds.map((end) => end.status)).toEqual(['interrupted']);
   });
 
-  it('never reports a second end for a turn that already completed, even across stop()', async () => {
+  it('reports the teardown end after a turn already completed: the runtime holds no display state', async () => {
+    // The manager does not remember that the turn ended, and does not ask.
+    // stop() reports an interrupted end regardless; a card belongs to no turn,
+    // and a consumer with nothing open ignores the end (rule 8).
     const nativeEnds: NativeTurnEnd[] = [];
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
@@ -768,7 +775,7 @@ describe('CodexRuntime native turn end', () => {
     await submission.settled;
     await runtime.stop();
 
-    expect(nativeEnds.map((end) => end.status)).toEqual(['completed']);
+    expect(nativeEnds.map((end) => end.status)).toEqual(['completed', 'interrupted']);
   });
 
   it('does not fail the turn when the activity sink throws on the end', async () => {

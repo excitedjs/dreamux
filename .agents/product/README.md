@@ -104,6 +104,15 @@ the same change that touches it.
   own 任务失败 terminal. A dropped push-back used to be silent.
   (Requirement: operator rulings 4, 8 and 9 in
   [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).)
+- **A card's terminal is the runtime's own.** A card ends when the runtime
+  reports that its native turn ended, with the status and reason the runtime
+  itself gave. What Dreamux then makes of that turn — a structured result it
+  cannot decode, a submission it cannot attribute — fails that submission and
+  does not recolour the card. A runtime torn down while it was running reports
+  that end itself, as 已中断.
+  (Requirement: 「CoT需要真实反映agent provider现在正在发生的事情」 and the
+  2026-09-03 ruling on display state in
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md).)
 
 ## Failures the model sees
 

@@ -17,8 +17,8 @@ import { ClaudeSteerAdmissionError } from './rpc.js';
 import type { ClaudeCodeRuntimeDeps } from './runtime-deps.js';
 import {
   createRuntimeSubmission,
+  endNativeTurn,
   handleProtocolEvent,
-  NativeTurnDisplay,
   type ActiveTurn,
 } from './runtime-submissions.js';
 import { asError, classifySteerFailure } from './admission-classify.js';
@@ -77,13 +77,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private generation = 0;
   private activeTurn: ActiveTurn | null = null;
   private queuedTurnCount = 0;
-  /**
-   * The display line's state. It belongs to the runtime, not to `activeTurn`:
-   * a window is dropped as soon as it closes, and the end of the native turn
-   * claude was running has to be reportable after that.
-   */
-  private readonly display: NativeTurnDisplay;
-
   constructor(
     identity: AgentRuntimeIdentity,
     private readonly deps: ClaudeCodeRuntimeDeps,
@@ -112,10 +105,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     this.resumeOnNextSpawn = priorSessionId !== null;
     this.resumed = priorSessionId !== null;
     this.logger = deps.logger ?? consoleFallbackLogger(this.dispatcherId);
-    this.display = new NativeTurnDisplay(
-      deps.activitySink,
-      (level, message, error) => this.log(level, message, error),
-    );
   }
 
   start(): Promise<AgentRuntimeStartOutcome> {
@@ -182,6 +171,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     if (this.status === 'stopped') return;
     this.stopped = true;
     this.generation += 1;
+    // The resident child is being torn down, so nothing will ever report a
+    // native turn it was still running: this stop reports one interrupted end,
+    // without asking whether a turn was open. The runtime keeps no such answer;
+    // a consumer with nothing open ignores the end.
+    this.endNativeTurn('interrupted', null);
     if (this.activeTurn !== null) this.stopUnsettled(this.activeTurn);
     return this.track(this.stopRuntime());
   }
@@ -263,9 +257,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       active.submissions.set(commandUuid, deferred);
       try {
         await this.steerActiveTurn(active, text, commandUuid);
-        // claude has the command, so it is running a native turn whose end the
-        // display line owes even if nothing else is ever heard about it.
-        this.display.note();
         return { status: 'submitted', submission: deferred.submission };
       } catch (error) {
         active.submissions.delete(commandUuid);
@@ -296,7 +287,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       generation: this.generation,
     };
     this.activeTurn = turn;
-    this.display.note();
     void this.runActiveTurnOnQueue(text, turn).then(
       () => this.markTurnSucceeded(turn),
       (err) => this.markTurnFailed(turn, err),
@@ -394,8 +384,9 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     turn.rejectSession(asError(err));
     // The run died, which is claude's own terminal for whatever native turn it
     // was on — reported before any settlement, and whether or not there is a
-    // submission left to settle.
-    this.display.endOpen(this.stopped ? 'interrupted' : 'failed', asError(err).message);
+    // submission left to settle. After stop() the teardown has already
+    // reported the interrupted end; this run died of that teardown.
+    if (!this.stopped) this.endNativeTurn('failed', asError(err).message);
     // A turn that fails after stop() was requested (the resident child is being
     // torn down) is a `stopped` settlement; otherwise it is a genuine `failed`.
     // Fire before the stopped early-return so an interrupted teammate turn is
@@ -411,13 +402,24 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   }
 
   private stopUnsettled(turn: ActiveTurn): void {
-    // Reached from stop, the fatal fence, and a window that resolved without a
-    // terminal result. A native turn still running when the window is torn down
-    // ended, whether or not it had a submission left to stop.
-    this.display.endOpen('interrupted', null);
+    // Push-back only: reached from stop, the fatal fence, and a window that
+    // closed with a submission still unanswered. The display line is not
+    // consulted here; the teardown that closed the window reported its end.
     for (const deferred of turn.submissions.values()) {
       deferred.settle({ kind: 'stopped' });
     }
+  }
+
+  private endNativeTurn(
+    status: 'completed' | 'failed' | 'interrupted',
+    reason: string | null,
+  ): void {
+    endNativeTurn(
+      status,
+      reason,
+      this.deps.activitySink,
+      (level, message, error) => this.log(level, message, error),
+    );
   }
 
   private recordQueuedTurnStart(): void {
@@ -547,7 +549,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       outputSchemaEnabled: this.deps.outputSchema !== undefined,
       activitySink: this.deps.activitySink,
       log: (level, message, error) => this.log(level, message, error),
-      display: this.display,
     });
   }
   private assertGeneration(generation: number): void {
@@ -573,6 +574,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     if (turn !== null) this.stopUnsettled(turn);
     const session = this.session;
     if (session !== null) {
+      // Killing a live child interrupts whatever it was running; the end is
+      // reported for that child and not otherwise. A fence that fires while a
+      // start is still failing has no child, and the card is then closed by
+      // Core's own failed end carrying the start error.
+      this.endNativeTurn('interrupted', null);
       // The reference is dropped only once this child's own stop succeeded; a
       // failure propagates to `RuntimeStateFence.terminated()` with the
       // termination authority intact, and leaves the status alone so a later

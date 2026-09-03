@@ -1181,7 +1181,11 @@ the provider reports it, and reads nothing the push-back line produces.
   settled. They end every native turn that is still open, which is what reaches
   a turn the provider only ever streamed items for.
 
-**At-most-once moved off the push-back record.** codex keeps
+**At-most-once moved off the push-back record.** *(Superseded 2026-09-03 —
+the operator ruled the tables below out: 「这个表直接删了不就可以了？cot 相关的部分，
+在 provider 应该是完全无状态的」. Both were deleted; a teardown reports one end
+without asking whether a turn was open, and the Channel ignores an end with
+nothing open. See `requirement.md` § Ruling on display state.)* codex keeps
 `displayTurns: Map<string, 'open' | 'ended'>`, noted from `submit` (the turn id
 codex answered with), `observeItem` and `observeTerminal`, and cleared by
 `stop()` — one entry per native turn, the same shape and lifetime as the
@@ -1230,7 +1234,7 @@ display line's own:
 | 4 | `drainTerminalOrder`'s head check | off the path |
 | 5 | `drainTerminalOrder`'s `pendingAdmissions.size > 0` | off the path; kept for `finalize`, which must not settle a submission that has not bound yet |
 | 6 | `finalize` — `completion !== null`, codec restore, status from `RuntimeCompletion` | off the path entirely |
-| 7 | the at-most-once flag | **kept**, moved to `displayTurns` keyed by native turn id, so a deleted record no longer loses an orphan turn |
+| 7 | the at-most-once flag | **deleted 2026-09-03** (as first built: kept, moved to `displayTurns` keyed by native turn id) — the provider holds no display state; a teardown end with nothing open is ignored by the Channel |
 
 Claude Code's four go the same way: result attribution, the `completion`
 construction (`resultTextFromTurnOutcome` throwing), the status read off

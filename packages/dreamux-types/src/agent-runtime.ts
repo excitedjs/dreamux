@@ -224,12 +224,18 @@ export type RuntimeActivity =
     }
   | {
       /**
-       * The runtime stopped producing for the turn it was running, once,
-       * whatever that turn contained. `completed` is the runtime's own
-       * successful terminal; `failed` is a proven terminal error; `interrupted`
-       * is a native turn that ended without either, such as a stop or a
-       * protocol loss. `reason` carries the runtime's own explanation when it
-       * holds one, so a display can say why rather than only that.
+       * The runtime stopped producing for the turn it was running, whatever
+       * that turn contained. `completed` is the runtime's own successful
+       * terminal; `failed` is a proven terminal error; `interrupted` is a
+       * native turn that ended without either, such as a stop or a protocol
+       * loss. `reason` carries the runtime's own explanation when it holds
+       * one, so a display can say why rather than only that.
+       *
+       * A provider reports this from the native terminal it observed, and
+       * again, without asking whether a turn was open, when it tears down a
+       * live native session. It keeps no display state to answer that
+       * question, so a consumer may receive an end with nothing open and
+       * ignores it: a native end closes an open display and never opens one.
        */
       readonly kind: 'turn.ended';
       readonly occurredAt: number;

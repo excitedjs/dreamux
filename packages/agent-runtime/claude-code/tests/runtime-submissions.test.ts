@@ -14,7 +14,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createRuntimeSubmission,
   handleProtocolEvent,
-  NativeTurnDisplay,
   type ActiveTurn,
   type SubmissionDeferred,
 } from '../src/runtime-submissions.js';
@@ -84,9 +83,6 @@ function makeHarness(
   const log = (level: 'info' | 'warn' | 'error', message: string): void => {
     logs.push({ level, message });
   };
-  // The runtime owns one of these across windows; a harness driving the pure
-  // translation owns its own.
-  const display = new NativeTurnDisplay(sink, log);
   return {
     active,
     deferredByUuid,
@@ -99,7 +95,6 @@ function makeHarness(
         outputSchemaEnabled: options.outputSchemaEnabled ?? false,
         activitySink: sink,
         log,
-        display,
       });
     },
     settled(uuid) {
@@ -358,20 +353,17 @@ describe('handleProtocolEvent live activity', () => {
     const throwingSink = vi.fn(() => {
       throw new Error('sink exploded');
     });
-    const display = new NativeTurnDisplay(throwingSink, log);
     handleProtocolEvent(active, started('cmd-1'), {
       threadId: null,
       outputSchemaEnabled: false,
       activitySink: throwingSink,
       log: (level, message, error) => log(level, message, error),
-      display,
     });
     handleProtocolEvent(active, streamAssistantText('text'), {
       threadId: null,
       outputSchemaEnabled: false,
       activitySink: throwingSink,
       log: (level, message, error) => log(level, message, error),
-      display,
     });
     expect(throwingSink).toHaveBeenCalledTimes(1);
     expect(log).toHaveBeenCalledWith('warn', expect.any(String), expect.any(Error));
@@ -384,7 +376,6 @@ describe('handleProtocolEvent live activity', () => {
       outputSchemaEnabled: false,
       activitySink: throwingSink,
       log: (level, message, error) => log(level, message, error),
-      display,
     });
     await expect(deferred.submission.settled).resolves.toMatchObject({
       kind: 'completion',
@@ -515,20 +506,17 @@ describe('handleProtocolEvent native turn end', () => {
     const sink = (activity: RuntimeActivity): void => {
       if (activity.kind === 'turn.ended') order.push('end');
     };
-    const display = new NativeTurnDisplay(sink, () => undefined);
     handleProtocolEvent(active, started('cmd-1'), {
       threadId: 'thread-1',
       outputSchemaEnabled: false,
       activitySink: sink,
       log: () => undefined,
-      display,
     });
     handleProtocolEvent(active, resultEvent(outcome()), {
       threadId: 'thread-1',
       outputSchemaEnabled: false,
       activitySink: sink,
       log: () => undefined,
-      display,
     });
 
     expect(order).toEqual(['end', 'settle']);
@@ -554,13 +542,11 @@ describe('handleProtocolEvent native turn end', () => {
     const throwingSink = vi.fn(() => {
       throw new Error('native turn sink exploded');
     });
-    const display = new NativeTurnDisplay(throwingSink, log);
     handleProtocolEvent(active, resultEvent(outcome({ text: 'ok', sessionId: null })), {
       threadId: null,
       outputSchemaEnabled: false,
       activitySink: throwingSink,
       log: (level, message, error) => log(level, message, error),
-      display,
     });
 
     expect(throwingSink).toHaveBeenCalledTimes(1);
