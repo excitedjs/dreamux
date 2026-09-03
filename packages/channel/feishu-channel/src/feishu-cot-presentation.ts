@@ -16,7 +16,7 @@ export type CotToolCallActivity = Extract<TeammateActivity, { kind: 'tool.call' 
 export const TOOL_ARGUMENTS_SOFT_MAX_BYTES = 512;
 /** What the pills of a result's item list may spend before the rest is folded into a `more` pill. */
 export const TOOL_ITEMS_SOFT_MAX_BYTES = 512;
-export const TRUNCATION_MARKER = '…（已截断）';
+export const TRUNCATION_MARKER = '… (truncated)';
 const TOOL_NAME_MAX_BYTES = 80;
 
 function displayToolName(toolName: string): string {
@@ -26,7 +26,7 @@ function displayToolName(toolName: string): string {
     .at(-1)
     ?.trim();
   return truncateUtf8(
-    leaf === undefined || leaf === '' ? '工具' : leaf,
+    leaf === undefined || leaf === '' ? 'tool' : leaf,
     TOOL_NAME_MAX_BYTES,
   );
 }
@@ -104,10 +104,10 @@ const ACTION_ICONS: Readonly<Record<RuntimeToolAction, CotToolIcon>> = {
  * and takes no verb.
  */
 const ACTION_VERBS: Readonly<Record<RuntimeToolAction, string>> = {
-  read: '读取 ',
-  list_files: '列出 ',
-  search: '搜索 ',
-  edit: '编辑 ',
+  read: 'Read ',
+  list_files: 'List ',
+  search: 'Search ',
+  edit: 'Edit ',
   run: '',
 };
 
@@ -115,11 +115,11 @@ const OWNED_TOOL_PRESENTATION: Readonly<Record<
   OwnedTool,
   Pick<ToolPresentation, 'icon' | 'title'>
 >> = {
-  reply: { icon: 'write', title: '回复飞书消息' },
-  react: { icon: 'default', title: '点击飞书表情' },
+  reply: { icon: 'write', title: 'Reply on Feishu' },
+  react: { icon: 'default', title: 'React on Feishu' },
   list_chat_bots: {
     icon: 'search',
-    title: '查看群机器人',
+    title: 'List chat bots',
   },
 };
 
@@ -267,15 +267,15 @@ function builtInToolPresentation(
     }
     const displayIntent = boundedTitleText(intent);
     return {
-      title: displayIntent === '' ? '分派成员' : `分派成员 ${displayIntent}`,
+      title: displayIntent === '' ? 'Spawn teammate' : `Spawn teammate: ${displayIntent}`,
       resultText: [
-        `Agent Runtime：${agentRuntime === undefined || agentRuntime.trim() === ''
-          ? '未指定'
+        `Agent runtime: ${agentRuntime === undefined || agentRuntime.trim() === ''
+          ? 'unspecified'
           : agentRuntime}`,
-        `Identity：${identity === undefined || identity.trim() === ''
-          ? '未指定'
+        `Identity: ${identity === undefined || identity.trim() === ''
+          ? 'unspecified'
           : identity}`,
-        `Prompt：${prompt}`,
+        `Prompt: ${prompt}`,
       ].join('\n'),
       resultLanguage: 'text',
       forceResultCode: false,
@@ -286,8 +286,8 @@ function builtInToolPresentation(
     const prompt = nonBlankString(args['prompt']);
     if (name === null || prompt === null) return null;
     return {
-      title: `发送消息 → ${boundedTitleText(name)}`,
-      resultText: `目标：${name}\nPrompt：${prompt}`,
+      title: `Send to ${boundedTitleText(name)}`,
+      resultText: `To: ${name}\nPrompt: ${prompt}`,
       resultLanguage: 'text',
       forceResultCode: false,
     };
@@ -297,7 +297,7 @@ function builtInToolPresentation(
     const note = nonBlankString(args['note']);
     if (name === null || note === null) return null;
     return {
-      title: `关闭成员 ${boundedTitleText(name)}`,
+      title: `Close teammate ${boundedTitleText(name)}`,
       resultText: note,
       resultLanguage: 'text',
       forceResultCode: false,

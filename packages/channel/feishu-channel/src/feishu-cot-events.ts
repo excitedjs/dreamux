@@ -56,9 +56,10 @@ export function runStartedEvent(presentationId: string): FeishuCotEventInput {
  * failure in its own `RUN_ERROR` event ("COT Message Brief", on the enterprise
  * docs host `open.larkoffice.com`; the public `open.feishu.cn` docs carry no
  * `message_cot` reference at all). A live probe agrees: `RUN_FINISHED` with
- * `failed` renders 已完成, exactly as a deliberately nonsense status does, and
- * only `RUN_ERROR` renders 任务失败. The platform accepted every one of them,
- * so only the rendered card is evidence, never the response code.
+ * `failed` renders the client's 已完成 ("completed"), exactly as a deliberately
+ * nonsense status does, and only `RUN_ERROR` renders its 任务失败 ("task
+ * failed"). The platform accepted every one of them, so only the rendered card
+ * is evidence, never the response code.
  *
  * `RUN_ERROR` sends `{ code }` alone. The reference documents a `message`
  * beside it, but two probes show the client neither renders it — an expanded
@@ -162,7 +163,7 @@ export function toolCallResultEvents(
   const messageId = opaqueDisplayId('result', event.event_id);
   const toolCallId = opaqueDisplayId('call', event.call_id);
   const presentation = toolPresentation(event, channelId);
-  const statusText = event.status === 'failed' ? '执行失败' : '执行完成';
+  const statusText = event.status === 'failed' ? 'Failed' : 'Completed';
   let content: unknown;
   if (presentation.ownedTool !== null) {
     content = { type: 'text', text: statusText };
@@ -321,7 +322,7 @@ export function assembleToolResultContent(parts: ToolResultParts): unknown {
     content = toolResultSegments(parts, argumentsText, resultText);
   }
   if (jsonBytes(content) > maxBytes) {
-    return { type: 'text', text: parts.failed ? '执行失败' : '执行完成' };
+    return { type: 'text', text: parts.failed ? 'Failed' : 'Completed' };
   }
   return content;
 }
@@ -332,7 +333,7 @@ function toolResultSegments(
   resultText: string | null,
 ): unknown {
   const segments: Array<Record<string, unknown>> = [];
-  if (parts.failed) segments.push({ type: 'text', text: '执行失败' });
+  if (parts.failed) segments.push({ type: 'text', text: 'Failed' });
   if (parts.items) segments.push({ type: 'list', ...parts.items });
   if (argumentsText !== null) {
     segments.push({
@@ -349,7 +350,7 @@ function toolResultSegments(
     });
   }
   if (segments.length === 0) {
-    return { type: 'text', text: parts.failed ? '执行失败' : '执行完成' };
+    return { type: 'text', text: parts.failed ? 'Failed' : 'Completed' };
   }
   if (segments.length === 1) {
     const onlyText = argumentsText ?? resultText;

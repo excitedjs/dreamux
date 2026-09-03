@@ -752,7 +752,7 @@ action. A titled row sends no `TOOL_CALL_ARGS`. The raw JSON arguments go out
 only on a row nothing could title — a Channel-owned or teammate tool keeps its
 own title as before, and an MCP tool no runtime can label still shows its
 arguments inline, which is the one raw row left. The `TOOL_CALL_RESULT` of a
-runtime-labelled row is the documented segment array: `执行失败` first when it
+runtime-labelled row is the documented segment array: `Failed` first when it
 failed, the call's `items` as the pills of a `list` segment (each with the
 icon of the call's action, bounded by `TOOL_ITEMS_SOFT_MAX_BYTES` with one
 `+N` pill standing for the rest), the `invocation` as a `code` segment

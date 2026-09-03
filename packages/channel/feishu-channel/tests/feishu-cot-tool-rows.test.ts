@@ -65,7 +65,7 @@ describe('runtime-labelled tool rows', () => {
       tool_action: 'read',
       summary: 'src/a.ts',
     }));
-    expect(start!.content).toMatchObject({ toolCallName: 'Read', icon: 'read', title: '读取 src/a.ts' });
+    expect(start!.content).toMatchObject({ toolCallName: 'Read', icon: 'read', title: 'Read src/a.ts' });
   });
 
   it('names the tool before the summary when the runtime has no action for it', () => {
@@ -148,7 +148,7 @@ describe('runtime-labelled tool rows', () => {
     }));
     expect(result!.content).toMatchObject({
       content: [
-        { type: 'text', text: '执行失败' },
+        { type: 'text', text: 'Failed' },
         { type: 'list', items: [{ text: 'src/a.ts', icon: 'write' }] },
         { type: 'code', language: 'text', code: 'src/a.ts\n@@ -1 +1 @@\n-x\n+y' },
         { type: 'code', language: 'text', code: 'file not found' },
@@ -179,7 +179,7 @@ describe('runtime-labelled tool rows', () => {
     }));
     expect(result!.content).toMatchObject({
       content: [
-        { type: 'text', text: '执行失败' },
+        { type: 'text', text: 'Failed' },
         { type: 'code', language: 'bash', code: 'npm test' },
         { type: 'code', language: 'text', code: 'command failed' },
       ],
