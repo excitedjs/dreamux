@@ -197,4 +197,20 @@ not the status, is what says which shape to expect.
   The display split ships in the same PR: #367 carries it on
   `refactor/split-display-from-pushback` with five Rush change files, alongside
   the anti-leak gate's one.
+- Follow-up fix (2026-09-03, branch `fix/leader-start-failure-display`): after
+  #367 merged, a TeamLeader whose codex could not start left its Feishu card on
+  the opening label with no error. Every TeamLeader path pre-started the leader
+  in `TeamService.ensureRouteReady()`, outside the entity's announce/end span,
+  so the start failure reached no display. The operator's directive:
+
+  > 这两个问题都修一下，找一个合适的时机把错误信息也放进ended 事件里丢给 channel，让他能反映出 provider 的真实报错 第二个是在 codex 如果精确命中了 no rollout found 错误，就丢弃 resume 语义拉起一个新的 对话来
+
+  The first half is built by deleting `ensureRouteReady()` — no new event or
+  field: the entity's existing failed `turn.ended` already carries the
+  provider's error, and the leader paths now reach it. Departure 10 of
+  `technical-design/final.md` is corrected in place. The second half (codex,
+  fresh thread on an exact "no rollout found") was withheld on the operator's
+  own words, and stays open:
+
+  > 哎不对，我想一下，第二个问题的修法不一定是这样。
 - Knowledge closeout: Pending.

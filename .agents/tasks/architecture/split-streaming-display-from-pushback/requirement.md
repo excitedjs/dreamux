@@ -459,3 +459,30 @@ stream's own — the codex collector reports each turn's terminal once, and one
 Claude Code `result` is one end. An end that reaches the Channel with nothing
 open is ignored (`feishu-cot-conversation-cards` rule 8), which is what makes
 the unconditional teardown end correct.
+
+## Ruling on a start failure no card learned of (2026-09-03)
+
+After PR #367 merged, a Team's leader could not start its codex process and
+its Feishu card stayed on the opening label with no error. The operator asked
+for two fixes:
+
+> 这两个问题都修一下，找一个合适的时机把错误信息也放进ended 事件里丢给 channel，让他能反映出 provider 的真实报错 第二个是在 codex 如果精确命中了 no rollout found 错误，就丢弃 resume 语义拉起一个新的 对话来
+
+and then withheld the second:
+
+> 哎不对，我想一下，第二个问题的修法不一定是这样。
+
+**What was built.** The first. The `turn.ended` a Channel receives already
+carried the reason for every input the entity announced; the gap was that the
+leader's start ran outside the entity's span on every TeamLeader path, so no
+input was announced and no end followed. Departure 10 of
+`technical-design/final.md` records the correction. No event or field was
+added: the "ended event carrying the provider's real error" the operator asked
+for is the entity's existing failed end, now reached on the leader paths too.
+
+**What is open.** The codex resume half. Two records state the contract the
+withdrawn approach would have changed, and a ruling would be quoted against
+both: `AgentRuntime.start` in `dreamux-types` ("failure rejects and never
+silently becomes fresh") and the `session_lost` handling in
+`agent-entity/runtime-state.ts`, which keeps the session id and marks the
+identity `degraded`.

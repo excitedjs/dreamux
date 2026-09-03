@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
+import { AGENT_TASK_SOURCE } from '../src/service/submission-sources.js';
 import type { AgentEntityIdentity } from '../src/service/agent-entity/types.js';
 import { TeamService } from '../src/service/team-service/index.js';
 import type { TeamServiceDeps } from '../src/service/team-service/types.js';
@@ -223,7 +224,7 @@ describe('a Team whose dissolve never committed a closed record', () => {
     expect(reads).toBe(1);
   });
 
-  it('drives route readiness through the leader it materialized', async () => {
+  it('submits through the leader it materialized', async () => {
     const team = await bootTeam();
 
     const settled = team.dissolveSettled();
@@ -233,13 +234,16 @@ describe('a Team whose dissolve never committed a closed record', () => {
     await team.service.status();
     const restored = team.slot.leader_;
     expect(restored).not.toBeNull();
-    const activate = vi
-      .spyOn(restored as TeammateService, 'activate')
-      .mockResolvedValue();
+    const submitInput = vi
+      .spyOn(restored as TeammateService, 'submitInput')
+      .mockResolvedValue({ status: 'skipped' });
 
-    await team.service.ensureRouteReady();
+    await team.service.submitToLeader({
+      source: AGENT_TASK_SOURCE,
+      text: 'work for the restored leader',
+    });
 
-    expect(activate).toHaveBeenCalledTimes(1);
+    expect(submitInput).toHaveBeenCalledTimes(1);
     expect(team.slot.leader_).toBe(restored);
   });
 

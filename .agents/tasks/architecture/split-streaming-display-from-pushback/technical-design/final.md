@@ -1307,6 +1307,26 @@ re-asserted *after* the await, which is the point of a locked submission.
 Closing the hole means announcing the input before that re-check, which would
 publish an input a revoked lock then refuses. Recorded, not fixed.
 
+**Corrected 2026-09-03: "every other path" was wrong for the TeamLeader.**
+Every TeamLeader submission — a Channel `team.submit`, the MCP delegate, a
+cron fire — went through `TeamService.ensureRouteReady()`, which called the
+leader's `activate()` *before* `submitInput`. A provider start failure threw
+there, outside the entity's span, so on all three paths nothing was announced
+and nothing ended. The Feishu Channel's optimistic receipt card keeps its
+anchor on a thrown submission by contract (a failure proves nothing about
+whether a turn exists), so the card stayed on its opening label with no error.
+Found live on a Team whose codex could not resume its thread. Closed by
+deleting `ensureRouteReady()`: `submitToLeader` is the one leader entry (the
+cron path now goes through it too), the leader's runtime starts inside the
+entity's admitted-input span like every other Agent's, and the aggregate
+transition follows the turn the way creation's does — a persisted `starting`
+Team becomes `running` once a submission is `submitted`, and stays `starting`
+otherwise. The `workflowService.start()` the pre-start also made is gone from
+the submit path, not moved: creation opens workflow admission itself, and boot
+opens it for every non-closed Team (`runtime-registry.startWorkflows`), so no
+open Team reaches a submission with admission closed. Pinned by
+`tests/team-leader-start-failure.test.ts`. The lock path above is unchanged.
+
 ### 11. Tests are typechecked by `rush typecheck:tests`, which is not part of `rush build`
 
 `tsconfig.json` excludes `tests/`, and vitest runs through esbuild, which erases
