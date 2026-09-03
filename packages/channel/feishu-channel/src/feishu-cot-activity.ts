@@ -20,7 +20,6 @@ import {
   toolCallStartEvents,
 } from './feishu-cot-events.js';
 import {
-  cotOpenCallKey,
   cotStateHasAnchor,
   rememberOpenToolCall,
   type CotPresentation,
@@ -76,20 +75,21 @@ export function acceptToolCallActivity(
     if (events.length === 0) return;
     const accepted = sink.acceptOpening(key, state, events);
     if (accepted) {
+      // Keyed on the runtime's own call id: a provider folds any number of
+      // submissions into one native turn, so there is no turn half to add.
       rememberOpenToolCall(
         state.openCalls,
         state.generation,
-        cotOpenCallKey(event.call_id),
+        event.call_id,
         sink.openToolCallsMax,
       );
     }
     return;
   }
-  const callKey = cotOpenCallKey(event.call_id);
-  const opened = state.openCalls.get(callKey);
+  const opened = state.openCalls.get(event.call_id);
   if (opened === undefined) return;
   if (opened.generation !== state.generation) {
-    state.openCalls.delete(callKey);
+    state.openCalls.delete(event.call_id);
     return;
   }
   const presentation = state.active;
@@ -99,11 +99,11 @@ export function acceptToolCallActivity(
     presentation.closed ||
     presentation.terminalIntent !== null
   ) {
-    state.openCalls.delete(callKey);
+    state.openCalls.delete(event.call_id);
     return;
   }
   const events = toolCallResultEvents(event, sink.channelId);
-  state.openCalls.delete(callKey);
+  state.openCalls.delete(event.call_id);
   if (events.length === 0) return;
   if (sink.admitOutbox(state, presentation, events) &&
       presentation.phase === 'writing') {

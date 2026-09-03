@@ -296,18 +296,6 @@ export function reapCotState(
   if (states.get(key) === state) states.delete(key);
 }
 
-/**
- * A tool call's own id is the whole key.
- *
- * It used to be paired with a logical turn id, which the display no longer
- * has: a provider folds any number of submissions into one native turn, so the
- * turn half never distinguished two calls that the runtime's own call id did
- * not already tell apart.
- */
-export function cotOpenCallKey(callId: string): string {
-  return callId;
-}
-
 export function rememberOpenToolCall(
   openCalls: Map<string, { readonly generation: number }>,
   generation: number,

@@ -160,10 +160,11 @@ export class FeishuCotAdapter {
    * Take the Channel's own anchor before invoking Core.
    *
    * The selected recipient is already a Channel routing decision. Moving now
-   * means the submitted fact, user body, and any early activity Core publishes
-   * synchronously cannot land on the predecessor. The existing caller-owned id
-   * is retained only until the submitted fact identifies the exact turn whose
-   * already-visible user body must be hidden.
+   * means the input fact, its body, and any early activity Core publishes
+   * synchronously cannot land on the predecessor. The caller's source id is
+   * registered here and consumed by the `teammate.input` fact that carries it,
+   * which is how the already-visible user body is recognised as this
+   * session's own and not shown a second time.
    */
   beginInboundSubmission(input: {
     readonly teamName: string | null;
