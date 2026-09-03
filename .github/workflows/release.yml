@@ -368,22 +368,11 @@ jobs:
               fail=1
             fi
             # Public-repo red line: a published artifact must not carry internal
-            # Feishu identifiers, the internal /data00 mount, or an absolute
-            # builder/developer home path. `/home/volta/` and
-            # `/home/linuxbrew/` are intentional PUBLIC examples compiled into
-            # dist, so those exact tokens are allow-listed; any other
-            # /home/<user>/ token is treated as a leaked path.
-            # Extend the allow-list (grep -vxE alternation) only with reviewed,
-            # provably-public example paths.
-            leaks="$(
-              tar xzO -f "$tgz" 2>/dev/null \
-                | grep -aoE '(ou_[A-Za-z0-9]{20}|oc_[A-Za-z0-9]{20}|cli_[A-Za-z0-9]{16}|/data00/|/home/[a-z][a-z0-9_-]+/)' \
-                | grep -vxE '/home/(volta|linuxbrew)/' \
-                | sort -u || true
-            )"
-            if [ -n "$leaks" ]; then
-              echo "FORBIDDEN internal content in $tgz:" >&2
-              printf '  %s\n' "$leaks" >&2
+            # Feishu identifiers, the internal mount, or a builder/developer
+            # home path. The patterns and the artifact allow-list have one
+            # owner, common/scripts/check-internal-content.sh, which also
+            # guards the source tree; extend them there, never here.
+            if ! common/scripts/check-internal-content.sh --tarball "$tgz"; then
               fail=1
             fi
           done

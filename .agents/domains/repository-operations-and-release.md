@@ -332,13 +332,15 @@ private registry URLs, internal hostnames, real Feishu ids, or tokens.
   named pattern-definition file, never by directory: the leak that motivated
   the tree scan was in `tests/`, which a directory exclusion would have missed.
 - The prerelease job additionally audits every packed tarball before upload —
-  `package/package.json` must be present, and a regex scan over every packed
-  file rejects Feishu identifier formats, the internal `/data00/` mount, and any
-  absolute `/home/<user>/` path except the reviewed public `/home/volta/` and
-  `/home/linuxbrew/` examples compiled into `dist`. The tarball audit and the
-  tree scan must extract the same pattern; `internal-content-scan.test.ts`
-  asserts they do, because two gates only cover for each other while they look
-  for the same thing.
+  `package/package.json` must be present, and
+  `check-internal-content.sh --tarball` scans every packed file with the same
+  patterns as the tree scan, allowing only the reviewed public `/home/volta/`
+  and `/home/linuxbrew/` install locations compiled into `dist`
+  (`ALLOWED_DIST_RE`; the source-tree placeholder users are not allowed in an
+  artifact). The script is the one owner of the patterns, so the two gates
+  cannot drift apart; `internal-content-scan.test.ts` runs the tarball mode
+  against a packed fixture, so the release gate's behavior is verifiable
+  without a release.
 - The release `version` job commits the version bump **through this hook**, with
   no `--no-verify`, so it installs gitleaks first. Release automation is not
   exempt from the red line. It is also the only workflow job that commits at
@@ -359,7 +361,6 @@ Source: `/.gitleaks.toml`, `/.npmrc`, `/common/git-hooks/pre-commit`,
 `/common/scripts/install-gitleaks.sh`,
 `/common/scripts/check-internal-content.sh`,
 `/.github/workflows/ci.yml`, `/.github/workflows/release.yml`,
-`/packages/dreamux/tests/release-workflow-manifest-audit.test.ts`,
 `/packages/dreamux/tests/internal-content-scan.test.ts`.
 
 ### The Four-Step Release Path
@@ -506,13 +507,16 @@ upstream `tar` takes SIGPIPE and exits 141, and pipefail propagates it.
 **Rejected direction:** trusting a gate that produces no artifacts (zero
 tarballs now fails hard: "a manifest gate that scans nothing is not a gate"),
 and piping `tar` into a short-circuiting consumer (use a here-string, which has
-no upstream process to signal). Extend the `/home/<user>/` allow-list only with
-reviewed, provably-public example paths;
-`/packages/dreamux/tests/release-workflow-manifest-audit.test.ts` locks the exact
-two-stage filter against the real workflow text.
+no upstream process to signal). Extend the artifact allow-list
+(`ALLOWED_DIST_RE` in `common/scripts/check-internal-content.sh`) only with
+reviewed, provably-public install locations; the workflow no longer carries a
+pattern of its own, and `/packages/dreamux/tests/internal-content-scan.test.ts`
+exercises the tarball mode against a packed fixture instead of mirroring
+workflow text.
 
 Source: `/.github/workflows/release.yml`,
-`/packages/dreamux/tests/release-workflow-manifest-audit.test.ts`.
+`/common/scripts/check-internal-content.sh`,
+`/packages/dreamux/tests/internal-content-scan.test.ts`.
 
 ### Assuming a green build proves more than it does
 
