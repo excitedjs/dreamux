@@ -109,7 +109,7 @@ function catalogFixtures(): Record<ChannelCoreEvent['kind'], ChannelCoreEvent> {
         tool_action: 'read',
         summary: null,
         invocation: null,
-        files: [],
+        items: [],
         status: 'completed',
         arguments_json: '{}',
         result_json: '{}',

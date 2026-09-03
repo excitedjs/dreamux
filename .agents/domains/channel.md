@@ -753,8 +753,8 @@ only on a row nothing could title — a Channel-owned or teammate tool keeps its
 own title as before, and an MCP tool no runtime can label still shows its
 arguments inline, which is the one raw row left. The `TOOL_CALL_RESULT` of a
 runtime-labelled row is the documented segment array: `执行失败` first when it
-failed, the call's `files` as the pills of a `list` segment (each with the
-icon of the call's action, bounded by `TOOL_FILES_SOFT_MAX_BYTES` with one
+failed, the call's `items` as the pills of a `list` segment (each with the
+icon of the call's action, bounded by `TOOL_ITEMS_SOFT_MAX_BYTES` with one
 `+N` pill standing for the rest), the `invocation` as a `code` segment
 (`language: bash` for a run), then the output as a `code` segment, each
 spelling its body in the documented `code` field. A read or edit that

@@ -199,10 +199,10 @@ home as `~`.
     for one-line tool rows; Feishu owns all card rendering and I/O.
     *Fulfilled 2026-09-03.* The facts are `summary` (the one line the
     runtime's own UI labels the call with), `invocation` (the call in the
-    caller's notation) and `files` (the files a read or edit is about, only
-    as the provider's protocol already lists them) on the `tool.call`
-    activity, beside the existing `action`. Feishu shows `files` as the
-    pills of a `list` result segment. The operator's ruling that set the shape: 「你需要同时兼顾 claude
+    caller's notation) and `items` (what the call is about, one entry each —
+    today the files a read or edit touches — only as the provider's protocol
+    already lists them) on the `tool.call` activity, beside the existing
+    `action`. Feishu shows `items` as the pills of a `list` result segment. The operator's ruling that set the shape: 「你需要同时兼顾 claude
     code 和 codex 这两边 … 然后在 dreamux 的 activity 的 interface 里，扩展一些
     字段，最后 feishu-cot-adapter 这里对齐最终上传到飞书的消息格式」. Each
     runtime derives them in its own `src/tool-display.ts`; Feishu composes the

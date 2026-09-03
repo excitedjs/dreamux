@@ -529,15 +529,17 @@ wrapper); the sink never throws, and a provider calls it bare.
 A `tool.call` carries, beside the tool's name and its classified `action`,
 three display facts the runtime owns because only it knows its tool
 vocabulary: `summary`, the one line its own UI labels the call with,
-`invocation`, the call in the caller's own notation, and `files`, the files
-a read or an edit is about. `files` holds only what the provider's protocol
-already carries as structured members — Claude Code's `file_path` and
-`notebook_path` inputs, Codex's `fileChange.changes[].path` and the `path` of
-a parsed `read` command action — and is empty for everything else; no
-provider recovers a file from a label or an output by parsing (ruling:
-「两边自己去按照自己的协议，把能拆分出来的 file item 拆出来，拆不出来的就不管
-了」). Each provider derives them in one
-module, `src/tool-display.ts`, the only place in that runtime that knows a
+`invocation`, the call in the caller's own notation, and `items`, what the
+call is about, one entry each. `items` holds only what the provider's
+protocol already carries as structured members — today Claude Code's
+`file_path` and `notebook_path` inputs, Codex's `fileChange.changes[].path`
+and the `path` of a parsed `read` command action — and is empty for
+everything else; no provider recovers an item from a label or an output by
+parsing (ruling: 「两边自己去按照自己的协议，把能拆分出来的 file item 拆出来，
+拆不出来的就不管了」). The member is named for the list, not for files, so a
+runtime whose protocol names other discrete things for a call lists those
+(ruling: 「那我推荐你给改成 items，不要固定叫 files，限制了其他用法」). Each
+provider derives them in one module, `src/tool-display.ts`, the only place in that runtime that knows a
 built-in tool's field names. Claude Code reads the input schemas
 `@anthropic-ai/claude-agent-sdk` declares in `sdk-tools.d.ts`: a `Bash` call
 is its `description`, else the command's first line, with the `command` as

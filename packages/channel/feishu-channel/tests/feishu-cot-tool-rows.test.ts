@@ -26,7 +26,7 @@ function toolCall(overrides: Partial<ToolCall>): ToolCall {
     tool_action: 'run',
     summary: null,
     invocation: null,
-    files: [],
+    items: [],
     status: 'started',
     arguments_json: null,
     result_json: null,
@@ -113,7 +113,7 @@ describe('runtime-labelled tool rows', () => {
       tool_action: 'read',
       status: 'completed',
       summary: 'src/a.ts',
-      files: ['src/a.ts'],
+      items: ['src/a.ts'],
       result_json: 'export const a = 1;',
     }));
     expect(result!.content).toMatchObject({
@@ -128,7 +128,7 @@ describe('runtime-labelled tool rows', () => {
       status: 'completed',
       summary: 'src/a.ts, src/b.ts',
       invocation: 'src/a.ts\n@@ -1 +1 @@\n-x\n+y',
-      files: ['src/a.ts', 'src/b.ts'],
+      items: ['src/a.ts', 'src/b.ts'],
       result_json: 'applied',
     }));
     expect(result!.content).toMatchObject({
@@ -143,7 +143,7 @@ describe('runtime-labelled tool rows', () => {
       status: 'failed',
       summary: 'src/a.ts',
       invocation: 'src/a.ts\n@@ -1 +1 @@\n-x\n+y',
-      files: ['src/a.ts'],
+      items: ['src/a.ts'],
       result_json: 'file not found',
     }));
     expect(result!.content).toMatchObject({
@@ -157,17 +157,17 @@ describe('runtime-labelled tool rows', () => {
   });
 
   it('folds the files past the pill budget into one +N pill', () => {
-    const files = Array.from({ length: 40 }, (_, i) => `packages/example/src/deeply/nested/module-${String(i).padStart(2, '0')}.ts`);
+    const paths = Array.from({ length: 40 }, (_, i) => `packages/example/src/deeply/nested/module-${String(i).padStart(2, '0')}.ts`);
     const [result] = toolCallResultEvents(toolCall({
       tool_action: 'edit',
       status: 'completed',
-      files,
+      items: paths,
     }));
     const list = (result!.content as { content: { type: string; items?: unknown[]; more?: { text: string } } }).content;
     expect(list.type).toBe('list');
     expect(list.items!.length).toBeGreaterThan(0);
-    expect(list.items!.length).toBeLessThan(files.length);
-    expect(list.more).toEqual({ text: `+${files.length - list.items!.length}` });
+    expect(list.items!.length).toBeLessThan(paths.length);
+    expect(list.more).toEqual({ text: `+${paths.length - list.items!.length}` });
   });
 
   it('shows a failed result with its failure line first', () => {

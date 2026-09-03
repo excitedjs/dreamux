@@ -2,7 +2,7 @@
   "changes": [
     {
       "packageName": "@excitedjs/dreamux",
-      "comment": "Core projects the new tool.call summary, invocation and files through the same path renaming and secret redaction as arguments and results, and bounds the two texts (CONVERSATION_TOOL_SUMMARY_MAX = 512 characters for the summary; the arguments bound for the invocation).",
+      "comment": "Core projects the new tool.call summary, invocation and items through the same path renaming and secret redaction as arguments and results, and bounds the two texts (CONVERSATION_TOOL_SUMMARY_MAX = 512 characters for the summary; the arguments bound for the invocation).",
       "type": "minor"
     }
   ],

@@ -205,7 +205,7 @@ function projectedActivity(
       const invocation = activity.invocation === null
         ? null
         : sanitizeText(activity.invocation, cwd, homePathPrefixes, CONVERSATION_TOOL_ARGUMENTS_MAX);
-      const files = activity.files.map((file) => redactText(file, cwd, homePathPrefixes));
+      const items = activity.items.map((item) => redactText(item, cwd, homePathPrefixes));
       const args = sanitizeJson(
         activity.arguments,
         cwd,
@@ -226,7 +226,7 @@ function projectedActivity(
         tool_action: activity.action,
         summary: summary?.value ?? null,
         invocation: invocation?.value ?? null,
-        files: files.map((file) => file.value),
+        items: items.map((item) => item.value),
         status: activity.status,
         arguments_json: args?.value ?? null,
         result_json: result?.value ?? null,
@@ -235,7 +235,7 @@ function projectedActivity(
         arguments_truncated: args?.truncated ?? false,
         result_truncated: result?.truncated ?? false,
         redacted: (summary?.redacted ?? false) || (invocation?.redacted ?? false) ||
-          files.some((file) => file.redacted) ||
+          items.some((item) => item.redacted) ||
           (args?.redacted ?? false) || (result?.redacted ?? false),
       };
     }

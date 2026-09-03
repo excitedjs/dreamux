@@ -178,7 +178,7 @@ function toolCall(
     tool_action: 'read',
     summary: null,
     invocation: null,
-    files: [],
+    items: [],
     status,
     arguments_json: status === 'started' ? '{"file_path":"/tmp/example"}' : null,
     result_json: status === 'started' ? null : 'file contents',

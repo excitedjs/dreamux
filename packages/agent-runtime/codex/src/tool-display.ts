@@ -4,7 +4,7 @@
  * A tool row wants four neutral facts beside the tool's name: what kind of
  * thing the item does (`action`), the one line codex's own TUI leads with
  * (`summary`), the member of the item that has a notation of its own
- * (`invocation`), and the files a read or a patch is about (`files`). The
+ * (`invocation`), and the items a read or a patch is about (`items`). The
  * wording follows the TUI's exec, patch and web-search
  * cells (`codex-rs/tui/src/exec_cell`, `diff_render.rs`, `history_cell/search.rs`)
  * so that a card and a terminal describe one call the same way. An item this
@@ -20,10 +20,10 @@ export interface ToolDisplay {
   readonly action: RuntimeToolAction | null;
   readonly summary: string | null;
   readonly invocation: string | null;
-  readonly files: readonly string[];
+  readonly items: readonly string[];
 }
 
-const UNKNOWN: ToolDisplay = { action: null, summary: null, invocation: null, files: [] };
+const UNKNOWN: ToolDisplay = { action: null, summary: null, invocation: null, items: [] };
 
 export function toolDisplay(item: ThreadItem): ToolDisplay {
   switch (item.type) {
@@ -52,14 +52,14 @@ function commandDisplay(item: ThreadItem): ToolDisplay {
   const first = actions[0];
   const uniform = first !== undefined && actions.every((entry) => entry.action === first.action);
   if (!uniform || first.action === 'run') {
-    return { action: 'run', summary: firstLine(command), invocation: command, files: [] };
+    return { action: 'run', summary: firstLine(command), invocation: command, items: [] };
   }
   const details = unique(actions.map((entry) => entry.detail));
   return {
     action: first.action,
     summary: details.length === 0 ? firstLine(command) : details.join(', '),
     invocation: command,
-    files: first.action === 'read' ? unique(actions.map((entry) => entry.file)) : [],
+    items: first.action === 'read' ? unique(actions.map((entry) => entry.file)) : [],
   };
 }
 
@@ -114,7 +114,7 @@ function fileChangeDisplay(item: ThreadItem): ToolDisplay {
     action: 'edit',
     summary: paths.length === 0 ? null : paths.join(', '),
     invocation: diffs.length === 0 ? null : diffs.join('\n\n'),
-    files: paths,
+    items: paths,
   };
 }
 
@@ -144,7 +144,7 @@ function webSearchDisplay(item: ThreadItem): ToolDisplay {
     default:
       break;
   }
-  return { action: 'search', summary: detail ?? query, invocation: null, files: [] };
+  return { action: 'search', summary: detail ?? query, invocation: null, items: [] };
 }
 
 function unique(values: ReadonlyArray<string | null>): string[] {

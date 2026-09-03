@@ -4,7 +4,7 @@
  * A tool row wants four neutral facts beside the tool's name: what kind of
  * thing the call does (`action`), the one line claude's own UI leads with
  * (`summary`), the member of the input that has a notation of its own
- * (`invocation`), and the files a file tool touches (`files`). All four come
+ * (`invocation`), and the items a file tool is about (`items`). All four come
  * from the tool's declared input schema
  * (`sdk-tools.d.ts` of `@anthropic-ai/claude-agent-sdk`; `Skill` from the
  * CLI's observed wire), so this module is the only place in the runtime that
@@ -18,10 +18,10 @@ export interface ToolDisplay {
   readonly action: RuntimeToolAction | null;
   readonly summary: string | null;
   readonly invocation: string | null;
-  readonly files: readonly string[];
+  readonly items: readonly string[];
 }
 
-const UNKNOWN: ToolDisplay = { action: null, summary: null, invocation: null, files: [] };
+const UNKNOWN: ToolDisplay = { action: null, summary: null, invocation: null, items: [] };
 
 export function toolDisplay(name: string | null | undefined, args: JsonValue | null): ToolDisplay {
   const input = inputRecord(args);
@@ -37,7 +37,7 @@ export function toolDisplay(name: string | null | undefined, args: JsonValue | n
         action: 'run',
         summary: field('description') ?? firstLine(command),
         invocation: command,
-        files: [],
+        items: [],
       };
     }
     case 'Read':
@@ -50,31 +50,31 @@ export function toolDisplay(name: string | null | undefined, args: JsonValue | n
       return fileTool('edit', field('notebook_path'));
     case 'Grep':
     case 'Glob':
-      return { action: 'search', summary: field('pattern'), invocation: null, files: [] };
+      return { action: 'search', summary: field('pattern'), invocation: null, items: [] };
     case 'WebSearch':
-      return { action: 'search', summary: field('query'), invocation: null, files: [] };
+      return { action: 'search', summary: field('query'), invocation: null, items: [] };
     case 'ToolSearch':
-      return { action: null, summary: field('query'), invocation: null, files: [] };
+      return { action: null, summary: field('query'), invocation: null, items: [] };
     case 'WebFetch':
-      return { action: null, summary: field('url'), invocation: null, files: [] };
+      return { action: null, summary: field('url'), invocation: null, items: [] };
     case 'Agent':
-      return { action: null, summary: field('description'), invocation: field('prompt'), files: [] };
+      return { action: null, summary: field('description'), invocation: field('prompt'), items: [] };
     case 'Skill':
-      return { action: null, summary: field('skill'), invocation: null, files: [] };
+      return { action: null, summary: field('skill'), invocation: null, items: [] };
     case 'TaskCreate':
-      return { action: null, summary: field('subject'), invocation: null, files: [] };
+      return { action: null, summary: field('subject'), invocation: null, items: [] };
     case 'REPL':
-      return { action: 'run', summary: field('description'), invocation: field('code'), files: [] };
+      return { action: 'run', summary: field('description'), invocation: field('code'), items: [] };
     case 'Workflow':
-      return { action: null, summary: field('name'), invocation: field('script'), files: [] };
+      return { action: null, summary: field('name'), invocation: field('script'), items: [] };
     default:
       return UNKNOWN;
   }
 }
 
-/** A file tool is labelled by the one path it touches, which is also its file list. */
+/** A file tool is labelled by the one path it touches, which is also its one item. */
 function fileTool(action: 'read' | 'edit', path: string | null): ToolDisplay {
-  return { action, summary: path, invocation: null, files: path === null ? [] : [path] };
+  return { action, summary: path, invocation: null, items: path === null ? [] : [path] };
 }
 
 function inputRecord(args: JsonValue | null): Readonly<Record<string, JsonValue>> {
