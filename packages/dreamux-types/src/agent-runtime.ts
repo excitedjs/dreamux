@@ -250,6 +250,9 @@ export type RuntimeActivity =
  * presentation. The stable progress view is
  * {@link AgentRuntimeProvider.readRecentActivity}, which never replays this
  * sink and is never replayed by it.
+ *
+ * The sink never throws. A projection failure is caught and logged inside
+ * Core, so a provider calls it bare and holds no guard of its own.
  */
 export interface AgentRuntimeActivitySink {
   (activity: RuntimeActivity): void;

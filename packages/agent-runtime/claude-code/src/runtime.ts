@@ -414,12 +414,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     status: 'completed' | 'failed' | 'interrupted',
     reason: string | null,
   ): void {
-    endNativeTurn(
-      status,
-      reason,
-      this.deps.activitySink,
-      (level, message, error) => this.log(level, message, error),
-    );
+    endNativeTurn(status, reason, this.deps.activitySink);
   }
 
   private recordQueuedTurnStart(): void {

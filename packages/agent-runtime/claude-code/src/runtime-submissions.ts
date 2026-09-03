@@ -66,21 +66,13 @@ export function endNativeTurn(
   status: 'completed' | 'failed' | 'interrupted',
   reason: string | null,
   sink: AgentRuntimeActivitySink,
-  log: (level: 'info' | 'warn' | 'error', message: string, error?: unknown) => void,
 ): void {
-  emitActivity({ kind: 'turn.ended', occurredAt: Date.now(), status, reason }, sink, log);
+  emitActivity({ kind: 'turn.ended', occurredAt: Date.now(), status, reason }, sink);
 }
 
-function emitActivity(
-  activity: RuntimeActivity,
-  sink: AgentRuntimeActivitySink,
-  log: (level: 'info' | 'warn' | 'error', message: string, error?: unknown) => void,
-): void {
-  try {
-    sink(Object.freeze(activity));
-  } catch (error) {
-    log('warn', 'claude activity projection failed', error);
-  }
+/** The sink is Core's and never throws (`AgentRuntimeActivitySink`). */
+function emitActivity(activity: RuntimeActivity, sink: AgentRuntimeActivitySink): void {
+  sink(Object.freeze(activity));
 }
 
 export function createRuntimeSubmission(): SubmissionDeferred {
@@ -131,7 +123,6 @@ export function handleProtocolEvent(
       event.outcome.isError ? 'failed' : 'completed',
       event.outcome.isError ? turnFailureMessage(event.outcome) : null,
       context.activitySink,
-      context.log,
     );
     completeStartedGroup(active, event.outcome, context);
     return;
@@ -242,7 +233,7 @@ function emitStreamActivity(
     if (block === null) continue;
     const activity = activityForBlock(active, messageId, blockIndex, block);
     if (activity === null) continue;
-    emitActivity(activity, context.activitySink, context.log);
+    emitActivity(activity, context.activitySink);
   }
 }
 

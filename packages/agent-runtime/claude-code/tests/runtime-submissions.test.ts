@@ -9,7 +9,7 @@
  * hand-built `ClaudeProtocolEvent` values, exactly like a real
  * `ClaudeCodeSession`'s `onProtocolEvent` callback would receive them.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   createRuntimeSubmission,
@@ -331,57 +331,6 @@ describe('handleProtocolEvent live activity', () => {
       text: 'unattributable text',
     });
   });
-
-  it('does not fail the turn when the activity sink throws (a projection failure only logs a warning)', async () => {
-    const deferred = createRuntimeSubmission();
-    const submissions = new Map([['cmd-1', deferred]]);
-    const active: ActiveTurn = {
-      initialCommandUuid: 'cmd-1',
-      submissions,
-      started: [],
-      completedCommands: new Set(),
-      activitySequence: 0,
-      tools: new Map(),
-      session: null,
-      sessionReady: new Promise(() => undefined),
-      resolveSession: () => undefined,
-      rejectSession: () => undefined,
-      steerQueue: Promise.resolve(),
-      generation: 0,
-    };
-    const log = vi.fn();
-    const throwingSink = vi.fn(() => {
-      throw new Error('sink exploded');
-    });
-    handleProtocolEvent(active, started('cmd-1'), {
-      threadId: null,
-      outputSchemaEnabled: false,
-      activitySink: throwingSink,
-      log: (level, message, error) => log(level, message, error),
-    });
-    handleProtocolEvent(active, streamAssistantText('text'), {
-      threadId: null,
-      outputSchemaEnabled: false,
-      activitySink: throwingSink,
-      log: (level, message, error) => log(level, message, error),
-    });
-    expect(throwingSink).toHaveBeenCalledTimes(1);
-    expect(log).toHaveBeenCalledWith('warn', expect.any(String), expect.any(Error));
-    // The turn is still live: settling it afterwards must still work.
-    // sessionId: null since this harness pins no threadId (threadId: null
-    // below) — resultTextFromTurnOutcome only validates a NON-null result
-    // session id against the pinned thread.
-    handleProtocolEvent(active, resultEvent(outcome({ text: 'ok', sessionId: null })), {
-      threadId: null,
-      outputSchemaEnabled: false,
-      activitySink: throwingSink,
-      log: (level, message, error) => log(level, message, error),
-    });
-    await expect(deferred.submission.settled).resolves.toMatchObject({
-      kind: 'completion',
-      completion: { status: 'completed', resultText: 'ok' },
-    });
-  });
 });
 
 /**
@@ -520,41 +469,6 @@ describe('handleProtocolEvent native turn end', () => {
     });
 
     expect(order).toEqual(['end', 'settle']);
-  });
-
-  it('does not fail the turn when the activity sink throws on the end: it logs and settles anyway', async () => {
-    const deferred = createRuntimeSubmission();
-    const active: ActiveTurn = {
-      initialCommandUuid: 'cmd-1',
-      submissions: new Map([['cmd-1', deferred]]),
-      started: [],
-      completedCommands: new Set(),
-      activitySequence: 0,
-      tools: new Map(),
-      session: null,
-      sessionReady: new Promise(() => undefined),
-      resolveSession: () => undefined,
-      rejectSession: () => undefined,
-      steerQueue: Promise.resolve(),
-      generation: 0,
-    };
-    const log = vi.fn();
-    const throwingSink = vi.fn(() => {
-      throw new Error('native turn sink exploded');
-    });
-    handleProtocolEvent(active, resultEvent(outcome({ text: 'ok', sessionId: null })), {
-      threadId: null,
-      outputSchemaEnabled: false,
-      activitySink: throwingSink,
-      log: (level, message, error) => log(level, message, error),
-    });
-
-    expect(throwingSink).toHaveBeenCalledTimes(1);
-    expect(log).toHaveBeenCalledWith('warn', expect.any(String), expect.any(Error));
-    await expect(deferred.submission.settled).resolves.toMatchObject({
-      kind: 'completion',
-      completion: { status: 'completed', resultText: 'ok' },
-    });
   });
 });
 

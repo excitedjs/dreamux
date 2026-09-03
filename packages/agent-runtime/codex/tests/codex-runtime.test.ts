@@ -777,27 +777,6 @@ describe('CodexRuntime native turn end', () => {
 
     expect(nativeEnds.map((end) => end.status)).toEqual(['completed', 'interrupted']);
   });
-
-  it('does not fail the turn when the activity sink throws on the end', async () => {
-    const client = new FakeCodexWsClient({ autoComplete: false });
-    const { deps } = makeDeps({
-      client,
-      activitySink: () => {
-        throw new Error('activity sink exploded');
-      },
-    });
-    const runtime = new CodexRuntime(identity(null), deps);
-    await runtime.start();
-
-    const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
-    client.emitCompleted('fresh-thread-1', 'turn-1', 'done');
-
-    await expect(submission.settled).resolves.toMatchObject({
-      kind: 'completion',
-      completion: { status: 'completed', resultText: 'done' },
-    });
-    await runtime.stop();
-  });
 });
 
 describe('CodexRuntime outputSchema binding', () => {

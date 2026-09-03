@@ -329,12 +329,9 @@ export class TurnManager {
     if (this.inFlightNativeAdmissions.size === 0) this.releaseOrphanTurnsIfIdle();
   }
 
+  /** The sink is Core's and never throws (`AgentRuntimeActivitySink`). */
   private emitActivity(activity: RuntimeActivity): void {
-    try {
-      this.opts.activitySink(Object.freeze(activity));
-    } catch (error) {
-      this.log('warn', 'codex activity projection failed', error);
-    }
+    this.opts.activitySink(Object.freeze(activity));
   }
 
   /**

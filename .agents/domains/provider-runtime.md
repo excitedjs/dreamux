@@ -485,7 +485,8 @@ runtime stopped producing, with a completed, failed or interrupted status and
 its own reason text when it has one. The sink is
 generation-fenced, synchronous, display-only and fail-open — a write from a
 revoked generation is dropped, and a throwing consumer never affects
-settlement.
+settlement. That guard is Core's (`createConversationProjection`'s `guarded`
+wrapper); the sink never throws, and a provider calls it bare.
 
 One native turn is one provider-native terminal: one Claude Code `result`, one
 Codex `turn/completed`. A resident Claude Code execution window may legally
