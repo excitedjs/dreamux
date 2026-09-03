@@ -459,3 +459,54 @@ stream's own — the codex collector reports each turn's terminal once, and one
 Claude Code `result` is one end. An end that reaches the Channel with nothing
 open is ignored (`feishu-cot-conversation-cards` rule 8), which is what makes
 the unconditional teardown end correct.
+
+## Ruling on a start failure no card learned of (2026-09-03)
+
+After PR #367 merged, a Team's leader could not start its codex process and
+its Feishu card stayed on the opening label with no error. The operator asked
+for two fixes:
+
+> 这两个问题都修一下，找一个合适的时机把错误信息也放进ended 事件里丢给 channel，让他能反映出 provider 的真实报错 第二个是在 codex 如果精确命中了 no rollout found 错误，就丢弃 resume 语义拉起一个新的 对话来
+
+and then withheld the second:
+
+> 哎不对，我想一下，第二个问题的修法不一定是这样。
+
+**What was built.** The first. The `turn.ended` a Channel receives already
+carried the reason for every input the entity announced; the gap was that the
+leader's start ran outside the entity's span on every TeamLeader path, so no
+input was announced and no end followed. Departure 10 of
+`technical-design/final.md` records the correction. No event or field was
+added: the "ended event carrying the provider's real error" the operator asked
+for is the entity's existing failed end, now reached on the leader paths too.
+
+**The second half, as ruled later the same day.** The log showed why the
+leader could not be resumed: `createNew` activated the leader 554ms after
+creation, codex answered `thread/start` with a thread id, and no turn ever
+followed — codex writes a rollout at the first turn, not at `thread/start`, so
+the persisted session id named a thread codex had never written. The operator
+ruled the fix is where the process starts, not how codex recovers:
+
+> 把这个进程延迟拉起就好了，如果 team.create 的时候，没有传递 prompt，就不拉起进程，不拉起进程就没有 turn/start ，就不会有一个 空的 rollup 文件，就不会遇到这个问题了
+
+> teammate 同理，其实是 teammateService 到 agent runtime 之间这里卡一道。只不过现在 spawn teammate 的 prompt 是必传的。你可以看下到底是 懒创建 teammate 还是teammate 到 agent provider 这里懒创建进程吧。
+
+**What was built.** The gate already existed: a runtime starts only in
+`RuntimeOwner.ensureStarted()`, reached by a waking `submitInput`, and
+`createRuntime` constructs an object in both providers. The one bypass on the
+Team path was `leader.activate()` in `TeamService.createNew`; it is deleted.
+With a `prompt`, the prompt's own submission starts the runtime inside the
+entity's span (so a start failure is announced and ended like any other, and
+creation is abandoned as before); without one, nothing starts until the first
+`submitToLeader`. TeamMate spawn already submits its mandatory prompt, so it was
+lazy already. `activate()` keeps its one caller, the dispatcher agent's
+restart-notice start, which resumes an existing session and submits at once.
+The `AgentRuntime.start` contract ("failure rejects and never silently becomes
+fresh") and the `session_lost` handling are untouched. What changes for the
+operator: `team.create` without a `prompt` no longer proves the runtime can
+start, and its TeamLeader identity stays `starting` until the first turn.
+
+**What remains.** A codex killed between `thread/start` and the first turn's
+rollout write, or a cleared `~/.codex/sessions`, still leaves a session id
+codex cannot resume; the start failure is now visible on the card, and the
+recovery is dissolve and recreate. No defense is added for it.

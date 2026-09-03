@@ -119,11 +119,11 @@ export interface AgentEntityRuntimeStatus {
 export interface CreateTeamLeaderInput {
   name: string;
   /**
-   * Optional explicit first-turn prompt. When omitted, the leader is started
-   * idle and fires no turn at creation — the team no longer fabricates a
-   * synthetic default prompt to auto-run a turn. A leader created without a
-   * prompt waits for a bound channel or a dispatcher `send` to drive its first
-   * real turn.
+   * Optional explicit first-turn prompt. When omitted, no runtime starts and
+   * no turn fires at creation — the team no longer fabricates a synthetic
+   * default prompt to auto-run a turn. A leader created without a prompt waits
+   * for a bound channel or a dispatcher `send` to start its runtime with its
+   * first real turn.
    */
   prompt?: string;
   agentRuntime: string;

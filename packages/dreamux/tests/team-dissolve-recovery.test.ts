@@ -51,7 +51,6 @@ interface ClosingHarness {
   deleteStoreFile: ReturnType<typeof vi.fn>;
   workflowStart: ReturnType<typeof vi.fn>;
   schedulerStart: ReturnType<typeof vi.fn>;
-  leaderActivate: ReturnType<typeof vi.fn>;
   /** What the Team is currently holding for its leader, as `leader_` does. */
   held: () => TeammateService | null;
 }
@@ -62,9 +61,7 @@ function harness(overrides: {
   assess?: () => Promise<WorktreeCleanupAssessment>;
 } = {}): ClosingHarness {
   const order: string[] = [];
-  const leaderActivate = vi.fn();
   const wrapper = (): TeammateService => ({
-    activate: leaderActivate,
     stopForHost: async () => { order.push('leader.stopForHost'); },
   }) as unknown as TeammateService;
   // Mirrors the Team's own wiring: a Team holding no wrapper materializes one
@@ -120,7 +117,6 @@ function harness(overrides: {
     deleteStoreFile,
     workflowStart,
     schedulerStart,
-    leaderActivate,
     held: () => holding,
   };
 }
@@ -169,7 +165,6 @@ describe('a dissolve whose record never closed leaves the Team on disk', () => {
     // One wrapper existed and was closed. Nothing replaced it, and nothing was
     // started: the next ordinary use is what materializes a leader again.
     expect(h.order.filter((step) => step.startsWith('leader.materialize'))).toEqual([]);
-    expect(h.leaderActivate).not.toHaveBeenCalled();
     expect(h.held()).toBeNull();
   });
 

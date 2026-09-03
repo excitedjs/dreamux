@@ -9,12 +9,17 @@
  *
  * The one seam this harness fakes is the Agent Runtime itself: starting a real
  * Codex/Claude process is out of scope for a unit suite and would violate the
- * "no network, no real login" test-style rule. `TeammateService.activate` is
- * the sole boundary between "Team lifecycle" and "runtime process", so this
- * mocks exactly that method (via `mockLeaderActivation`) and lets everything
- * above it — record publication, name allocation, identity alignment, roster
- * projection, workflow/scheduler bootstrap — run for real against a temp
- * `DREAMUX_ROOT` and a temp dispatcher workspace outside it.
+ * "no network, no real login" test-style rule. A TeamLeader's runtime starts
+ * inside its own first `submitInput()` call, not inside a separate `activate()`
+ * step: a Team creation WITH a prompt calls `leader.submitInput()` once the
+ * leader's identity is durable, and that call is what starts the runtime; a
+ * creation WITHOUT a prompt calls nothing on the runtime at all.
+ * `TeammateService.submitInput` is therefore the sole boundary between "Team
+ * lifecycle" and "runtime process", so this mocks exactly that method (via
+ * `mockLeaderSubmission`) and lets everything above it — record publication,
+ * name allocation, identity alignment, roster projection, workflow/scheduler
+ * bootstrap — run for real against a temp `DREAMUX_ROOT` and a temp dispatcher
+ * workspace outside it.
  */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -32,6 +37,7 @@ import { TeamStore } from '../../src/service/team-collection/store.js';
 import type { TeamRecord } from '../../src/service/team-collection/types.js';
 import { TeammateService } from '../../src/service/teammate-service/index.js';
 import type { TeammateAgentMcp } from '../../src/service/teammate-service/types.js';
+import type { Turn } from '../../src/service/teammate-service/turn-recording.js';
 import { reuseCwdWorktree, WorktreeManager } from '../../src/service/worktree/manager.js';
 import {
   dispatcherDir,
@@ -130,8 +136,8 @@ export async function buildTeamCollectionHarness(input?: {
   const collection = new TeamCollection({
     dispatcherId,
     config,
-    // Never resolved in these tests: every leader activation is mocked via
-    // `mockLeaderActivation`, so nothing here ever asks the catalog for a real
+    // Never resolved in these tests: every leader submission is mocked via
+    // `mockLeaderSubmission`, so nothing here ever asks the catalog for a real
     // provider implementation.
     agentRuntimeProviders: {} as unknown as TeamCollectionOptions['agentRuntimeProviders'],
     worktrees,
@@ -169,34 +175,39 @@ export async function buildTeamCollectionHarness(input?: {
   };
 }
 
-export interface LeaderActivationGate {
-  /** Resolve every `activate()` call currently waiting, and every future one. */
+export interface LeaderSubmissionGate {
+  /** Resolve every `submitInput()` call currently waiting, and every future one. */
   release(): void;
-  /** How many times `activate()` has been invoked so far. */
+  /** How many times `submitInput()` has been invoked so far. */
   callCount(): number;
   restore(): void;
 }
 
 /**
- * Hold every `TeammateService.activate()` call open until released.
+ * Hold every `TeammateService.submitInput()` call open until released.
  *
- * This is the harness's one seam into the runtime boundary: Team creation
- * always calls `leader.activate()` once the leader's identity is durable, and
- * holding that call open is what lets a test observe "under construction" as a
- * real, inspectable state — e.g. proving a concurrent `open()`/`admit()` joins
- * the same construction instead of reading a half-built Team.
+ * This is the harness's one seam into the runtime boundary: a Team creation
+ * WITH a prompt calls `leader.submitInput()` once the leader's identity is
+ * durable, and that call is what starts the runtime — holding it open is what
+ * lets a test observe "under construction" as a real, inspectable state — e.g.
+ * proving a concurrent `open()`/`admit()` joins the same construction instead
+ * of reading a half-built Team. A creation WITHOUT a prompt reaches no runtime
+ * at all, so those tests need no mock here.
  */
-export function mockLeaderActivation(): LeaderActivationGate {
+export function mockLeaderSubmission(): LeaderSubmissionGate {
   let release: (() => void) | null = null;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
   let calls = 0;
   const spy = vi
-    .spyOn(TeammateService.prototype, 'activate')
+    .spyOn(TeammateService.prototype, 'submitInput')
     .mockImplementation(async () => {
       calls += 1;
       await gate;
+      // Neither `createNew` nor `toSubmissionResult` reads the turn itself —
+      // only the admission's `status` — so a minimal stub is enough here.
+      return { status: 'submitted' as const, turn: {} as unknown as Turn };
     });
   return {
     release: () => release?.(),
@@ -205,34 +216,19 @@ export function mockLeaderActivation(): LeaderActivationGate {
   };
 }
 
-/** Let every currently-mocked `activate()` resolve immediately. */
-export function mockLeaderActivationResolved(): LeaderActivationGate {
-  let calls = 0;
-  const spy = vi
-    .spyOn(TeammateService.prototype, 'activate')
-    .mockImplementation(async () => {
-      calls += 1;
-    });
-  return {
-    release: () => {},
-    callCount: () => calls,
-    restore: () => spy.mockRestore(),
-  };
-}
-
 /**
- * Fail every `activate()` call with `error`.
+ * Fail every `submitInput()` call with `error`.
  *
  * Used to force a Team creation to fail AFTER its record is already published
  * (creation publishes the `starting` record, then writes the leader identity,
- * then calls `activate()`) — the "failure after the acceptance point" case
- * idempotency has to answer for, as opposed to a failure that never reaches
- * publication at all.
+ * then submits the prompt to the leader) — the "failure after the acceptance
+ * point" case idempotency has to answer for, as opposed to a failure that
+ * never reaches publication at all.
  */
-export function mockLeaderActivationRejected(error: Error): LeaderActivationGate {
+export function mockLeaderSubmissionRejected(error: Error): LeaderSubmissionGate {
   let calls = 0;
   const spy = vi
-    .spyOn(TeammateService.prototype, 'activate')
+    .spyOn(TeammateService.prototype, 'submitInput')
     .mockImplementation(async () => {
       calls += 1;
       throw error;

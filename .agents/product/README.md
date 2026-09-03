@@ -85,6 +85,13 @@ the same change that touches it.
 - **`identity` shapes only the agent it is given to.** The `identity` passed
   to `team.create` guides the created TeamLeader alone; members do not inherit
   it — each member's identity comes from its own `teammate.spawn`.
+- **Creating a Team starts no process.** `team.create` without a `prompt`
+  creates the Team and its TeamLeader identity and starts nothing; the
+  TeamLeader's runtime starts with the first message that reaches it, and a
+  runtime that cannot start says so on that message's display rather than at
+  creation. With a `prompt`, the runtime starts inside that first turn. A
+  TeamMate's runtime has always started with its spawn prompt.
+  (Ruling: [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md).)
 - **Closed entities are records.** A closed Team or TeamMate is never
   materialized into a live object by startup, queries, or cleanup; the one door
   back is an explicit `send` that reopens a member.

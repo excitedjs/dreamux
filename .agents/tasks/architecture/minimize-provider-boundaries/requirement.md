@@ -1285,3 +1285,17 @@ and path callbacks supply provider-owned cache, log, and runtime-socket roots.
   execution shape.
 - Channel-owned binding state schemas, durability, concurrency, migration, and
   provider-specific tool contracts after the Core binding store is removed.
+
+## Since this was recorded
+
+- **2026-09-03 — the creation-time leader start is gone.** "A `starting` Team
+  moves to `running` only after the leader is usable" was built as
+  `leader.activate()` inside `TeamService.createNew`, ahead of the `running`
+  write. That start is deleted: creation starts no leader runtime, `running`
+  is written when creation completes (after the optional prompt's own
+  submission, which starts the runtime inside the entity's admitted-input
+  span), and a persisted `starting` Team recovered later becomes `running`
+  once a submission is `submitted`. A codex thread started at creation without
+  a turn wrote no rollout and could never be resumed. Ruling and reasons:
+  [split-streaming-display-from-pushback/requirement.md](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md),
+  last section.

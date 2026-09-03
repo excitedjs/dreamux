@@ -168,20 +168,16 @@ export class TeamService {
       teamRoot: deps.teamRoot,
       admitOperation: (task) => deps.admitOperation(task),
       admit: (task) => this.admit(task),
-      submitScheduled: async (input) => {
-        // A scheduled turn proves the leader usable exactly like any other
-        // ordinary submission, so it observes the same aggregate transition: a
-        // reconstructed `starting` Team converges to `running` before the turn
-        // reaches the runtime. Same single route-readiness path.
-        await this.ensureRouteReady();
-        return asInboundDeliveryResult(
-          await (await this.leaderService()).submitInput({
+      // A scheduled turn is an ordinary leader submission and takes the one
+      // entry every other invoker takes, aggregate transition included.
+      submitScheduled: async (input) =>
+        asInboundDeliveryResult(
+          await this.submitToLeader({
             source: SCHEDULED_SOURCE,
             text: input.prompt,
             sourceId: input.sourceId,
           }),
-        );
-      },
+        ),
       log: deps.log,
     });
     this.scheduler_ = scheduler.service;
@@ -260,8 +256,13 @@ export class TeamService {
     let leader: TeammateService | null = null;
     try {
       // The TeamMate layer owns identity creation: the Team hands over its own
-      // creation inputs and gets back a started leader, rather than assembling
-      // and persisting an Agent identity itself.
+      // creation inputs and gets back a leader, rather than assembling and
+      // persisting an Agent identity itself. Nothing starts here: the leader's
+      // runtime starts inside the first submission that needs it — the prompt
+      // below when there is one, the first ordinary submission otherwise — so
+      // a provider thread is never opened without the turn that makes it
+      // durable. A codex thread started without a turn writes no rollout, and
+      // the next start of that leader fails to resume it.
       leader = await service.createLeader({
         leaderName,
         agentRuntime: input.leaderAgentRuntime,
@@ -275,7 +276,6 @@ export class TeamService {
           : {}),
       });
       service.leader_ = leader;
-      await leader.activate();
       let submission: AgentEntitySubmissionResult | null = null;
       if (input.prompt !== undefined) {
         const delivery = await resolveTeamLeaderCompletionDelivery({
@@ -424,24 +424,6 @@ export class TeamService {
   }
 
   /**
-   * Materialize the TeamLeader before another service publishes this Team as a
-   * routable owner. A persisted `starting` Team with a valid leader identity is
-   * the recoverable tail of Team creation; only mark it running after the leader
-   * can actually start.
-   */
-  async ensureRouteReady(): Promise<void> {
-    const record = this.mustRecord();
-    if (record.status === 'closed') {
-      throw new Error(`Team ${JSON.stringify(this.id)} is closed`);
-    }
-    await (await this.leaderService()).activate();
-    await this.workflowService.start();
-    if (record.status === 'starting') {
-      await this.updateRecord({ status: 'running' });
-    }
-  }
-
-  /**
    * Run one caller operation inside this Team's work fence.
    *
    * From the moment a dissolve raises the fence, and permanently once this Team
@@ -539,19 +521,25 @@ export class TeamService {
    * top of an ordinary submission, and it is supplied only when a Core-side
    * initiator is waiting for this turn's completion; a Channel-originated turn
    * has none, because the leader answers on its own Channel.
+   *
+   * The leader's runtime is started by the submission itself, never ahead of
+   * it. The entity announces the input, starts its runtime, and ends the
+   * display with the provider's own error when that start fails — but only
+   * for a start that happens inside its admitted-input span. Starting the
+   * leader here first put a codex start failure before the announcement, so
+   * nothing was announced and nothing ended, and the Channel's receipt card
+   * stayed on its opening label with no error (found live, 2026-09-03).
+   *
+   * A persisted `starting` Team with a valid leader identity is the
+   * recoverable tail of Team creation; it becomes `running` once its leader
+   * has taken a turn.
    */
   async submitToLeader(
     input: TeammateSubmitInput & { initiator?: CompletionInitiator },
   ): Promise<TurnAdmission> {
     return this.admit(async () => {
-      // Every ordinary leader submission observes the same aggregate transition
-      // route publication does: a persisted `starting` Team whose leader was
-      // reconstructed here becomes `running` before any runtime submission.
-      // This reuses the one route-readiness path rather than repairing status a
-      // second way.
-      await this.ensureRouteReady();
       const { initiator, ...submission } = input;
-      return (await this.leaderService()).submitInput({
+      const admission = await (await this.leaderService()).submitInput({
         ...submission,
         ...(initiator !== undefined
           ? {
@@ -564,6 +552,13 @@ export class TeamService {
             }
           : {}),
       });
+      if (
+        admission.status === 'submitted' &&
+        this.mustRecord().status === 'starting'
+      ) {
+        await this.updateRecord({ status: 'running' });
+      }
+      return admission;
     });
   }
 
