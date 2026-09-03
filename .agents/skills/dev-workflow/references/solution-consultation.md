@@ -16,7 +16,7 @@ Do not modify implementation artifacts or create prototypes during consultation.
 
 ## Select the path
 
-Apply the one-file fast path first when it is eligible. Otherwise choose between a
+Apply the minimal-change fast path first when it is eligible. Otherwise choose between a
 TeamLeader-authored solution with three reviewers and a three-proposal consultation.
 Base the classification on the recorded requirement and current code, not on task
 size labels or intuition alone.
@@ -136,25 +136,25 @@ same three TeamMates: reviewers from a simple path now each produce an independe
 proposal, while proposal authors from a complex path revise their own proposal. Run
 cross-review and reconcile a new final solution.
 
-## Use the one-file fast path
+## Use the minimal-change fast path
 
 Skip technical proposal and solution-review TeamMates when all of the following are
 true. Skip the GitHub solution-review Issue for this path.
 
-- the expected implementation changes exactly one existing implementation file;
-  task-document updates do not count;
-- the change is local and mechanically direct;
+- the expected implementation is minimal and mechanically direct over a small
+  surface the TeamLeader can hold in one review pass; task-document updates do not
+  count toward that surface;
 - it changes no public contract, persisted data, migration, dependency, build
   configuration, security boundary, or compatibility behavior;
 - it contains no material technical choice requiring comparison.
 
-One file is necessary but not sufficient. A high-risk or decision-bearing change
-uses one of the reviewed paths even when physically located in one file.
+A small diff is necessary but not sufficient. A high-risk or decision-bearing change
+uses one of the reviewed paths however few lines or files it touches.
 
 For an eligible fast-path task, have the TeamLeader write a brief repair solution
 and verification plan to `technical-design/final.md`, link it from the task README,
 and proceed to the development-approval gate.
-If investigation or implementation reveals a second implementation file or a
-material technical choice, stop, mark the fast path invalid, reclassify it between
-the simple review and complex consultation paths, and do not let the earlier
-approval cover the expanded scope.
+If investigation or implementation reveals a material technical choice or work
+beyond the approved boundary, stop, mark the fast path invalid, reclassify it
+between the simple review and complex consultation paths, and do not let the
+earlier approval cover the expanded scope.

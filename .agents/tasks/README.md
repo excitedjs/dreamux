@@ -11,3 +11,4 @@ index only when its scope matches the confirmed task.
 - [Completion Routing](/.agents/tasks/completion-routing/README.md): Cross-provider completion delivery semantics: logical completion identity, at-most-once ordered push-back, and turn settlement contracts.
 - [Channel](/.agents/tasks/channel/README.md): Channel provider, routing, transport, and conversation-presentation capabilities.
 - [Architecture](/.agents/tasks/architecture/README.md): Cross-cutting architecture boundaries, public contracts, layering, and capability ownership.
+- [Builtin Skills](/.agents/tasks/builtin-skills/README.md): Bundled Dreamux skills shipped in the npm package: their routing, references, and model-facing contracts.

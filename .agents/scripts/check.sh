@@ -203,6 +203,10 @@ fi
 # and tests; check 1 never sees them. Generated changelogs keep historical
 # paths and are exempt, and .agents/wip/ is an intentionally untracked scratch
 # reference in .gitignore.
+#
+# Keep this block free of `case` and of comments: bash 3.2 re-scans a process
+# substitution body and mis-reads a case pattern's closing bracket as the end
+# of the substitution, so the prefix skip below uses a parameter-expansion test.
 while IFS= read -r violation; do
   echo "stale .agents reference: $violation" >&2
   errors=$((errors + 1))
@@ -218,9 +222,9 @@ done < <(
     | sort -u \
     | while IFS= read -r line; do
         cited="${line##*-> }"
-        case "$cited" in
-          .agents/wip*) continue ;;
-        esac
+        if [ "${cited#.agents/wip}" != "$cited" ]; then
+          continue
+        fi
         if [ ! -e "$REPO_ROOT/$cited" ]; then
           printf '%s\n' "$line"
         fi

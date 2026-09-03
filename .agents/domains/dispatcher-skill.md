@@ -14,9 +14,10 @@ deliberately composed into both Dispatcher and TeamLeader runtimes:
   lifecycle, the host envelope, each built-in provider schema, current V3
   Feishu access, and the managed-daemon self-upgrade SOP. The root and every
   non-upgrade reference remain current-state-only. The self-upgrade reference
-  is the narrow generic transition exception: it stages the target package and
-  reads that target's changelog and routed owner references rather than carrying
-  release-specific schemas or migration recipes.
+  is the narrow generic transition exception: install the target, read its
+  changelog and apply config migrations through routed owners, repair until
+  doctor passes, then perform notification restart. It carries no
+  release-specific schema or migration body.
 - `skills/team-leader/team-workflow` is injected only into TeamLeader runtimes.
   It covers team-scoped TeamMate MCP cautions, shared Team workspace
   coordination, provider-visible channel replies, TeamLeader cron cautions, and

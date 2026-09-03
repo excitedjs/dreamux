@@ -49,10 +49,10 @@ prototype or add temporary diagnostic code. An initial request such as "fix X" o
 3. **Design and review the technical solution.** Use the finalized requirement
    files in the task as the sole input. First apply an explicit remembered operator
    preference about solution workflow; otherwise have the TeamLeader classify the
-   task and confirm the proposed path with the operator. Use the one-file fast path,
+   task and confirm the proposed path with the operator. Use the minimal-change fast path,
    a TeamLeader-authored solution with three independent reviewers, or a complex
    three-proposal consultation. Merge the result into one local final solution and,
-   except on the one-file fast path, create or update one public GitHub Issue as the
+   except on the minimal-change fast path, create or update one public GitHub Issue as the
    operator review surface. Follow
    [solution-consultation.md](references/solution-consultation.md).
 
@@ -64,7 +64,7 @@ prototype or add temporary diagnostic code. An initial request such as "fix X" o
    [development-approval.md](references/development-approval.md).
 
 5. **Implement with one writer and pass TeamLeader pre-review.** Except for the
-   TeamLeader-only one-file fast path, directly start exactly one write-capable
+   TeamLeader-only minimal-change fast path, directly start exactly one write-capable
    developer TeamMate using the [developer identity](references/developer-identity.md).
    Wait for Dreamux to push its completion without polling, with a one-hour one-shot
    recovery reminder. After implementation completes, have the TeamLeader inspect
@@ -74,7 +74,7 @@ prototype or add temporary diagnostic code. An initial request such as "fix X" o
    workspace to independent implementation review. Follow
    [implementation.md](references/implementation.md).
 
-6. **Run independent implementation review.** For the approved one-file fast path,
+6. **Run independent implementation review.** For the approved minimal-change fast path,
    start one separate read-only TeamMate for one review turn and skip the workflow.
    For every other path, run the shared `workflow` skill's code-review method as one
    `workflow_run`, tuned by exactly two Dreamux deltas: the approved requirement and
