@@ -74,10 +74,12 @@ channel's own MCP server owns those tools and their schemas.
 `dissolve({ team_name, note, force? })` is submitted, not awaited. It answers
 `{ accepted, team_name, status: "submitted" }` as soon as the Team owns the
 background work and never reports how the dissolve went; read the Team's status
-afterwards. Uncommitted, untracked, or unmerged work in a managed worktree
-leaves the Team open and running instead of closing it, and `force: true`
-discards exactly that local work — never the branch, its commits, a reused
-directory, or the source repository.
+afterwards. Uncommitted, untracked, or unmerged work in a managed
+`delete-on-close` worktree leaves the Team open and running instead of closing
+it, and `force: true` discards exactly that local work so the removal can
+proceed — never the branch, its commits, a reused directory, or the source
+repository. A `cleanup: keep` checkout is retained with its changes whether or
+not `force` is set.
 
 Dispatcher `cron` MCP tools are `cron_create`, `cron_list`, `cron_update`, and
 `cron_delete`. Cron prompts are injected back into the

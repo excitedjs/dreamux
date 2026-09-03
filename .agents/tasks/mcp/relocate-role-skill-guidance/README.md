@@ -2,14 +2,14 @@
 
 ## Current state
 
-- Goal: Dispatcher and TeamLeader stop loading dispatcher-workflow and team-workflow every turn: tool knowledge moves into MCP tool and parameter descriptions, behavioral rules move into the role prompts, and both skills stay bundled as optional, non-mandated skills.
+- Goal: Dispatcher and TeamLeader stop loading dispatcher-workflow and team-workflow every turn: tool knowledge moves into MCP tool and parameter descriptions, the pre-schema map of the role's MCP servers moves into the role prompts (no behavioral rules), and both skills stay bundled as optional, on-demand TeamMate-collaboration methodology.
 - State: `review`
 - Requirement: [Current requirement](/.agents/tasks/mcp/relocate-role-skill-guidance/requirement.md)
 - Final solution: [technical-design/final.md](/.agents/tasks/mcp/relocate-role-skill-guidance/technical-design/final.md) (draft: [draft.md](/.agents/tasks/mcp/relocate-role-skill-guidance/technical-design/draft.md); review: [reviews/codex-review.md](/.agents/tasks/mcp/relocate-role-skill-guidance/technical-design/reviews/codex-review.md)).
 - Solution review Issue: https://github.com/excitedjs/dreamux/issues/368
 - Blockers: None. The task record was restored and WIP-committed (operator-approved) after the incident below; the leftover edits of the stopped run were discarded (operator-approved).
-- Next action: Independent implementation review (code-review workflow at xhigh with the requirement-fidelity finder) over the current workspace; then adjudication, operator ratification, knowledge closeout, PR.
-- Implementation: workflow `run-2e69c695-1f27-403a-a814-2b5965a913f2` completed with all gates green (the earlier `run-2973de5d-635f-4feb-9df2-6a71857d38aa` failed at script compile before any agent started). TeamLeader pre-review passed; evidence in [verification.md](/.agents/tasks/mcp/relocate-role-skill-guidance/verification.md).
+- Next action: Land the adjudicated review findings (verification.md, "Review adjudication") through one developer TeamMate as a follow-up commit on PR #369, complete knowledge closeout, set `done`, request re-review.
+- Implementation: the re-run implementation workflow completed with all gates green (an earlier re-run failed at script compile before any agent started). TeamLeader pre-review passed; evidence in [verification.md](/.agents/tasks/mcp/relocate-role-skill-guidance/verification.md).
 - Related tasks: None.
 - Solution path (operator ruling, 2026-09-02, Feishu group, verbatim): "ok，拉一个 codex 评审即可，不用走三位了" — TeamLeader-authored solution reviewed by exactly one Codex reviewer instead of three. Requirement input revision: requirement.md as of this ruling.
 - Review adjudication (2026-09-02): one Codex reviewer, 11 findings; 10 accepted, 1 partially (test coverage of the private TeamLeader prompt builder); rulings recorded in final.md §10.
@@ -23,10 +23,10 @@
 
 ## Incident (2026-09-02)
 
-- Implementation workflow run `run-27f7158a-ca05-4865-a395-1f8963ced47a` (9 disjoint writer lanes → fidelity critic + gates → bounded self-repair) started 17:25 Asia/Shanghai. Every writer lane completed, then the Team workspace directory was deleted from under the run at about 17:39: the Dreamux server log shows a dissolve of a different Team, `dreamux-fable-ylw3mjs`, first blocked because "the managed worktree is dirty" (dirty with this Team's uncommitted lane edits), which points at both Teams having resolved to the same managed worktree path. The round-1 fixer re-created the worktree clean at ca30883; all uncommitted work, including this task record, was lost. The run was stopped by the TeamLeader at 18:10 before the round-2 fixer could invent prompt text without the solution.
+- Implementation workflow run (9 disjoint writer lanes → fidelity critic + gates → bounded self-repair) started 17:25 Asia/Shanghai. Every writer lane completed, then the Team workspace directory was deleted from under the run at about 17:39: the Dreamux server log shows a dissolve of a different Team with the same name prefix, first blocked because "the managed worktree is dirty" (dirty with this Team's uncommitted lane edits), which points at both Teams having resolved to the same managed worktree path. The round-1 fixer re-created the worktree clean at ca30883; all uncommitted work, including this task record, was lost. The run was stopped by the TeamLeader at 18:10 before the round-2 fixer could invent prompt text without the solution.
 - Recovery: the task record (README, requirement, draft, final, review) was rewritten from the TeamLeader's context. Lane reports from the stopped run are the only record of the lost edits; the implementation is re-run from the restored solution.
 
 ## Delivery
 
-- Pull request / CI / merge: Not started.
+- Pull request / CI / merge: https://github.com/excitedjs/dreamux/pull/369 (opened 2026-09-02 on the operator's instruction before the independent review finished; head `YisenFE:dreamux/dreamux-fable` on the fork `YisenFE/dreamux-fork` because the pushing account has read-only access to `excitedjs/dreamux`; commit `1d5e6c9`). CI: pending. Merge: pending operator.
 - Knowledge closeout: Pending.

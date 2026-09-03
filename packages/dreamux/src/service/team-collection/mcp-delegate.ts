@@ -242,7 +242,7 @@ function teamToolDescriptors(
     return [
       tool(
         'dissolve',
-        'Call this only when the Team\'s work is complete. First check the workspace for uncommitted, untracked, or unmerged work; if there is any, or you cannot tell, do not dissolve: report it and ask the user. Submit a dissolve of this descriptor-bound Team. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }) and never reports how the dissolve went: the Team\'s Workflow, TeamMates, and this TeamLeader are stopped behind that receipt, so expect this call to lose its response. note is required and records why the Team stopped. Uncommitted, untracked, or unmerged work in the managed worktree leaves the Team open and running instead of closing it. force: true discards that local work so the managed checkout can be removed; it never deletes the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user\'s.',
+        'Call this only when the Team\'s work is complete. First check the workspace for uncommitted, untracked, or unmerged work; if there is any, or you cannot tell, do not dissolve: report it and ask the user. Submit a dissolve of this descriptor-bound Team. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }) and never reports how the dissolve went: the Team\'s Workflow, TeamMates, and this TeamLeader are stopped behind that receipt, so expect this call to lose its response. note is required and records why the Team stopped. Uncommitted, untracked, or unmerged work in a managed delete-on-close worktree leaves the Team open and running instead of closing it. force: true only overrides a delete-on-close removal blocked by uncommitted, untracked, or unmerged work, by discarding that work; under cleanup: keep the checkout and its changes are retained; never the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user\'s.',
         {
           note: {
             type: 'string',
@@ -255,9 +255,11 @@ function teamToolDescriptors(
             type: 'boolean',
             description:
               'Only with the user\'s explicit confirmation in this conversation. ' +
-              'Discards uncommitted, untracked, and unmerged work in the managed ' +
-              'checkout so it can be removed; never the branch, its commits, a ' +
-              'reused directory, or the source repository.',
+              'It only overrides a delete-on-close removal blocked by ' +
+              'uncommitted, untracked, or unmerged work, by discarding that ' +
+              'work; under cleanup: keep the checkout and its changes are ' +
+              'retained; never the branch, its commits, a reused directory, or ' +
+              'the source repository.',
           },
         },
         ['note'],
@@ -467,7 +469,7 @@ function teamToolDescriptors(
     ),
     tool(
       'dissolve',
-      'Submit a dissolve of one Team (by team_name) and its agents. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }); the Team is stopped and closed behind that receipt, so this call never reports the outcome. note is required: it records why a recoverable Team was stopped. Uncommitted, untracked, or unmerged work in the managed worktree leaves the Team open and running instead of closing it, so read the Team\'s status afterwards to see what happened. force: true discards that local work so the managed checkout can be removed; it never deletes the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user\'s.',
+      'Submit a dissolve of one Team (by team_name) and its agents. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }); the Team is stopped and closed behind that receipt, so this call never reports the outcome. note is required: it records why a recoverable Team was stopped. Uncommitted, untracked, or unmerged work in a managed delete-on-close worktree leaves the Team open and running instead of closing it, so read the Team\'s status afterwards to see what happened. force: true only overrides a delete-on-close removal blocked by uncommitted, untracked, or unmerged work, by discarding that work; under cleanup: keep the checkout and its changes are retained; never the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user\'s.',
       {
         team_name: {
           type: 'string',
@@ -484,9 +486,11 @@ function teamToolDescriptors(
         force: {
           type: 'boolean',
           description:
-            'Discards uncommitted, untracked, and unmerged work in the managed ' +
-            'checkout so it can be removed; never the branch, its commits, a ' +
-            'reused directory, or the source repository.',
+            'Only overrides a delete-on-close removal blocked by uncommitted, ' +
+            'untracked, or unmerged work, by discarding that work; under ' +
+            'cleanup: keep the checkout and its changes are retained; never ' +
+            'the branch, its commits, a reused directory, or the source ' +
+            'repository.',
         },
       },
       ['team_name', 'note'],

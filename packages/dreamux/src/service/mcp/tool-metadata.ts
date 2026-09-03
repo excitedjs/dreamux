@@ -187,7 +187,8 @@ export function repoInputSchema(): Record<string, unknown> {
         maxLength: 64,
         description:
           'managed: label for the worktree directory and the default branch ' +
-          'name; defaults to the TeamMate\'s or Team\'s name.',
+          'name; defaults to the TeamMate\'s name, or team-<team_name> for a ' +
+          'Team.',
       },
       cleanup: {
         type: 'string',

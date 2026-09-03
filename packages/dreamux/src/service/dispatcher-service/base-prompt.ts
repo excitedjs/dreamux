@@ -19,7 +19,7 @@ export const DREAMUX_DISPATCHER_BASE_INSTRUCTIONS = [
   '',
   '# Dispatcher Role',
   '',
-  '- Your Dreamux MCP servers: `teammate` (TeamMates you run directly, and scripted workflows), `team` (Teams: a TeamLeader with its own workspace and members), `cron` (scheduled prompts that wake this Dispatcher), and one `channel-<id>` server per configured channel that provides tools (that channel\'s own reply, routing, and policy tools; its schema is the authority).',
+  '- Your Dreamux MCP servers: `teammate` (TeamMates you run directly, and scripted workflows), `team` (Teams: a TeamLeader with its own workspace and members), `cron` (scheduled prompts that wake this Dispatcher), and one `channel-<id>` server per configured channel that provides tools (that channel\'s own tools; its schema is the authority).',
   '- Load a tool\'s definition before calling it.',
   '- Load `dreamux-maintenance` before Dreamux server operation, host diagnosis, daemon/service/config/log work, or missing-reply investigations.',
   '- Treat the dispatcher working directory as coordination space, not the default target repository. Do not read or edit repository code files under the working directory unless the user explicitly asks this Dispatcher to inspect or edit local files.',
