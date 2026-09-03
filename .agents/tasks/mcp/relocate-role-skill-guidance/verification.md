@@ -92,3 +92,21 @@ finding → ruling → reason → operator-ruling conflict.
 | I10, I11 | Feishu runtime refusal text still says "Ask the Dispatcher to move it" | accept, pending operator OK | Same banned wording as the description this change removed; one string in `routing/index.ts`, outside the approved boundary | Needs a ruling (asked 2026-09-03) |
 | I14 | `spawn`/`send` completion clause unconditional | accept | Condition on a submitted turn: a `failed`/`stopped`/`ambiguous` receipt has no turn to push | No |
 | refuted (2) | `cron` property vs tool sentence; `force` lost its guards | reject | Verifier refuted both with quotes; `force` keeps "only with the user's explicit confirmation" | — |
+
+## Rebase and anti-leak gate (2026-09-03)
+
+- Rebased onto `next` at the operator's request (three commits behind: the
+  Feishu `ask_user_question` tool, the mandatory anti-leak gate, the runnable
+  self-upgrade SOP); no conflicts. After the rebase: `rush update
+  --bypass-policy` (the host's global `core.hooksPath` points at a
+  machine-wide security hook, so Rush cannot install the repository hook and
+  Rush's own documented bypass is used for the install step only), `rush
+  build`, `rush typecheck`, `rush typecheck:tests`, `rush lint`, and the
+  focused tests (dreamux: 7 files / 123 tests including
+  `internal-content-scan.test.ts`; feishu-channel routing: 7) all passed.
+- `common/scripts/check-internal-content.sh` over the tree: clean.
+- gitleaks 8.30.1 installed with `common/scripts/install-gitleaks.sh`;
+  `gitleaks git --config .gitleaks.toml` over this branch's commits: no leaks.
+  Because the repository pre-commit hook is not wired on this host (global
+  `core.hooksPath`), the hook script is run by hand against the staged
+  changes before each commit instead of changing the host's hook setting.
