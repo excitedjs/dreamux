@@ -424,6 +424,8 @@ Source:
 
 - `/packages/agent-runtime/claude-code/src/types.ts`
 - `/packages/agent-runtime/claude-code/src/runtime-submissions.ts`
+- `/packages/agent-runtime/claude-code/src/tool-display.ts`
+- `/packages/agent-runtime/codex/src/tool-display.ts`
 - `/packages/agent-runtime/claude-code/tests/runtime-submissions.test.ts`
 
 History: the 2026-09-03 ruling 「所有的 user 消息都隐藏即可」 in
@@ -523,6 +525,25 @@ generation-fenced, synchronous, display-only and fail-open — a write from a
 revoked generation is dropped, and a throwing consumer never affects
 settlement. That guard is Core's (`createConversationProjection`'s `guarded`
 wrapper); the sink never throws, and a provider calls it bare.
+
+A `tool.call` carries, beside the tool's name and its classified `action`,
+two display facts the runtime owns because only it knows its tool vocabulary:
+`summary`, the one line its own UI labels the call with, and `invocation`,
+the call in the caller's own notation. Each provider derives them in one
+module, `src/tool-display.ts`, the only place in that runtime that knows a
+built-in tool's field names. Claude Code reads the input schemas
+`@anthropic-ai/claude-agent-sdk` declares in `sdk-tools.d.ts`: a `Bash` call
+is its `description`, else the command's first line, with the `command` as
+invocation; file tools are their path; searches their pattern or query;
+`Agent` its description with the prompt as invocation; `Skill` its name.
+Codex follows the TUI's own exec, patch and web-search cells: a uniformly
+parsed command is the files it read, the paths it listed, or `query in
+path`, otherwise the command's first line, always with the command as
+invocation; a patch is its paths with the diffs codex prepared as invocation;
+a `webSearch` item, which carries no tool name and was dropped before, is a
+`web_search` row. Anything outside those tables — every MCP tool — reports
+`null` and displays as its name. Core sanitizes both facts exactly as it does
+arguments and results.
 
 One native turn is one provider-native terminal: one Claude Code `result`, one
 Codex `turn/completed`. A resident Claude Code execution window may legally

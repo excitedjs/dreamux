@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux-types",
+      "comment": "BREAKING: Review: RuntimeActivity and TeammateActivity tool.call now carry two required, nullable neutral display facts beside the tool name: summary (the one line the runtime's own UI labels the call with) and invocation (the call as a person would write it, such as the shell command line); TeammateActivity adds summary_truncated and invocation_truncated. A provider outside this repository must populate them (null when it has no label) to compile. No rebuild is needed.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types"
+}

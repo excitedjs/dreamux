@@ -315,6 +315,23 @@ describe('handleProtocolEvent live activity', () => {
     });
   });
 
+  it('carries the display facts derived from the tool input on both the started and the result activity', async () => {
+    const h = makeHarness(['cmd-1']);
+    h.fire(started('cmd-1'));
+    h.fire(streamToolUse('call-1', 'Bash', { command: 'git status --short', description: 'Show working tree status' }));
+    h.fire(streamToolResult('call-1', 'M src/a.ts', false));
+    expect(h.activityEvents).toHaveLength(2);
+    for (const activity of h.activityEvents) {
+      expect(activity).toMatchObject({
+        kind: 'tool.call',
+        toolName: 'Bash',
+        action: 'run',
+        summary: 'Show working tree status',
+        invocation: 'git status --short',
+      });
+    }
+  });
+
   it('marks a tool_result carrying is_error as a failed tool.call and surfaces a display error', async () => {
     const h = makeHarness(['cmd-1']);
     h.fire(started('cmd-1'));

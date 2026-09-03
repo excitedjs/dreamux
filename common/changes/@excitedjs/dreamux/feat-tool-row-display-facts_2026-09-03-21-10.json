@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Core projects the new tool.call summary and invocation through the same path renaming, secret redaction and bounding as arguments and results (CONVERSATION_TOOL_SUMMARY_MAX = 512 characters for the summary; the arguments bound for the invocation).",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

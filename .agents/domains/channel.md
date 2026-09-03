@@ -741,6 +741,27 @@ carry one too. There is no source whitelist. A fact
 that arrives before the recipient has an anchor produces no card because there is
 nowhere to place one, not because its source or kind was filtered.
 
+A tool row is composed from what the runtime said about the call, never from
+its argument schema. The row's `TOOL_CALL_START` carries the built-in `icon`
+the COT Message Brief documents for the call's `tool_action` (`read`; `write`
+for an edit; `search` for a search or a listing; `bash` for a run) and a
+`title` composed from the runtime's `summary`: the summary alone for a run,
+whose summary is already a sentence; a Chinese verb before it for a read,
+listing, search or edit; the display tool name before it for a call with no
+action. A titled row sends no `TOOL_CALL_ARGS`. The raw JSON arguments go out
+only on a row nothing could title — a Channel-owned or teammate tool keeps its
+own title as before, and an MCP tool no runtime can label still shows its
+arguments inline, which is the one raw row left. The `TOOL_CALL_RESULT` of a
+runtime-labelled row is the documented segment array: `执行失败` first when it
+failed, the `invocation` as a `code` segment (`language: bash` for a run),
+then the output as a `code` segment, each spelling its body in the documented
+`code` field. A probe card sent to the operator on 2026-09-03 settled the
+three client facts this rests on: a titled row shows the `title` alone, with
+no tool name in front of it; an `ARGS` delta sent beside a title is shown
+nowhere, which is why the invocation has to travel in the result; and the
+client renders a code segment's body from `code` and from the older `content`
+alike, so the switch follows the docs, not a rendering failure.
+
 A card's one terminal is a `turn.ended` activity. There is no per-submission
 lifecycle fact at this boundary at all: a provider folds any number of
 submissions into one native turn, so settlement could never say whether the card

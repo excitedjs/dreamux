@@ -119,6 +119,18 @@ the same change that touches it.
   the body the operator can already see in the chat.
   (Ruling: 「所有的 user 消息都隐藏即可」, 2026-09-03, in
   [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md).)
+- **A tool row says what the call was, not how the runtime spelled it.** A
+  tool row on the Feishu card is titled the way the runtime's own UI would
+  title it — a command's stated purpose, the file a read or edit touched, the
+  pattern a search ran, the task a sub-agent was given — carries the icon for
+  what it did, and expands to the call in the caller's own notation (the
+  shell command line, the task text, the diff) before its output. Raw JSON
+  arguments appear only on a row no runtime could label, which today means
+  MCP tools the Channel does not own. Codex web searches are rows too.
+  (Ruling: 「优化一下 COT 的展示效果 … 你需要同时兼顾 claude code 和 codex 这两边
+  … 然后在 dreamux 的 activity 的 interface 里，扩展一些字段，最后
+  feishu-cot-adapter 这里对齐最终上传到飞书的消息格式」, 2026-09-03, in
+  [feishu-cot-conversation-cards](/.agents/tasks/channel/feishu-cot-conversation-cards/requirement.md).)
 - **A displayed input is announced when it is submitted, and always ends.** The
   input appears with the text that was submitted, before any runtime has
   accepted it, so a submission that fails is visible together with what failed.

@@ -13,6 +13,7 @@ import type { DispatcherCoreEventPublisher } from '../service/dispatcher-core-ev
 import type { AgentEntityIdentity } from '../service/agent-entity/types.js';
 
 export const CONVERSATION_MESSAGE_MAX = 100_000;
+export const CONVERSATION_TOOL_SUMMARY_MAX = 512;
 export const CONVERSATION_TOOL_ARGUMENTS_MAX = 60_000;
 export const CONVERSATION_TOOL_RESULT_MAX = 120_000;
 
@@ -198,6 +199,12 @@ function projectedActivity(
       };
     }
     case 'tool.call': {
+      const summary = activity.summary === null
+        ? null
+        : sanitizeText(activity.summary, cwd, homePathPrefixes, CONVERSATION_TOOL_SUMMARY_MAX);
+      const invocation = activity.invocation === null
+        ? null
+        : sanitizeText(activity.invocation, cwd, homePathPrefixes, CONVERSATION_TOOL_ARGUMENTS_MAX);
       const args = sanitizeJson(
         activity.arguments,
         cwd,
@@ -216,12 +223,17 @@ function projectedActivity(
         call_id: activity.callId,
         tool_name: activity.toolName.slice(0, 200),
         tool_action: activity.action,
+        summary: summary?.value ?? null,
+        invocation: invocation?.value ?? null,
         status: activity.status,
         arguments_json: args?.value ?? null,
         result_json: result?.value ?? null,
+        summary_truncated: summary?.truncated ?? false,
+        invocation_truncated: invocation?.truncated ?? false,
         arguments_truncated: args?.truncated ?? false,
         result_truncated: result?.truncated ?? false,
-        redacted: (args?.redacted ?? false) || (result?.redacted ?? false),
+        redacted: (summary?.redacted ?? false) || (invocation?.redacted ?? false) ||
+          (args?.redacted ?? false) || (result?.redacted ?? false),
       };
     }
     case 'turn.ended': {

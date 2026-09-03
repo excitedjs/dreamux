@@ -1,4 +1,5 @@
 import { resultTextFromTurnOutcome } from './runtime-session.js';
+import { toolDisplay } from './tool-display.js';
 import type { ClaudeCodeSession } from './supervisor.js';
 import type {
   ClaudeActivityLine,
@@ -12,7 +13,6 @@ import type {
   RuntimeCompletion,
   RuntimeSubmission,
   RuntimeSubmissionSettlement,
-  RuntimeToolAction,
 } from '@excitedjs/dreamux-types';
 
 export interface SubmissionDeferred {
@@ -278,7 +278,7 @@ function assistantBlockActivity(
     id: `${messageId}:${callId}:started`,
     callId,
     toolName: name,
-    action: namedToolAction(name),
+    ...toolDisplay(name, args),
     status: 'started',
     arguments: args,
     result: null,
@@ -304,7 +304,7 @@ function toolResultActivity(
     id: `${messageId}:${callId}:result`,
     callId,
     toolName: known?.name ?? 'tool',
-    action: namedToolAction(known?.name),
+    ...toolDisplay(known?.name, known?.arguments ?? null),
     status: failed ? 'failed' : 'completed',
     arguments: known?.arguments ?? null,
     result,
@@ -315,22 +315,6 @@ function toolResultActivity(
 function displayError(value: JsonValue | null): string | null {
   if (value === null) return null;
   return typeof value === 'string' ? value : JSON.stringify(value);
-}
-
-function namedToolAction(value: unknown): RuntimeToolAction | null {
-  switch (value) {
-    case 'Read': return 'read';
-    case 'Grep':
-    case 'Glob':
-    case 'WebSearch': return 'search';
-    case 'Write':
-    case 'Edit':
-    case 'MultiEdit':
-    case 'NotebookEdit': return 'edit';
-    case 'Bash':
-    case 'PowerShell': return 'run';
-    default: return null;
-  }
 }
 
 function normalizeTextBlocks(value: unknown): JsonValue | null {

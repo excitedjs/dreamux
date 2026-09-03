@@ -25,6 +25,7 @@ import {
   CONVERSATION_MESSAGE_MAX,
   CONVERSATION_TOOL_ARGUMENTS_MAX,
   CONVERSATION_TOOL_RESULT_MAX,
+  CONVERSATION_TOOL_SUMMARY_MAX,
   createConversationProjection,
   redactText,
   type ProjectedAgent,
@@ -313,6 +314,8 @@ describe('conversation projection: content visible after redaction is unchanged,
       callId: 'call-1',
       toolName: 'read_file',
       action: 'read',
+      summary: null,
+      invocation: null,
       status: 'completed',
       arguments: args,
       result,
@@ -323,6 +326,54 @@ describe('conversation projection: content visible after redaction is unchanged,
     expect(tool.kind === 'tool.call' && tool.arguments_json).toBe(JSON.stringify(args));
     expect(tool.kind === 'tool.call' && tool.result_json).toBe(JSON.stringify(result));
     expect(tool.kind === 'tool.call' && tool.redacted).toBe(false);
+  });
+
+  it('renames workspace paths inside the tool summary and invocation, like every other payload', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, {
+      kind: 'tool.call',
+      occurredAt: Date.now(),
+      id: 'evt-1',
+      callId: 'call-1',
+      toolName: 'Bash',
+      action: 'run',
+      summary: `${CWD}/src/a.ts`,
+      invocation: `cat ${CWD}/src/a.ts`,
+      status: 'started',
+      arguments: { command: `cat ${CWD}/src/a.ts` },
+      result: null,
+      error: null,
+    });
+
+    const tool = activityOf(publisher);
+    expect(tool.kind === 'tool.call' && tool.summary).toBe('src/a.ts');
+    expect(tool.kind === 'tool.call' && tool.invocation).toBe('cat src/a.ts');
+    expect(tool.kind === 'tool.call' && tool.summary_truncated).toBe(false);
+    expect(tool.kind === 'tool.call' && tool.invocation_truncated).toBe(false);
+  });
+
+  it('bounds the tool summary at CONVERSATION_TOOL_SUMMARY_MAX and folds a redacted invocation into redacted', () => {
+    const { publisher, projection, agent } = harness();
+    projection.projectActivity(agent, {
+      kind: 'tool.call',
+      occurredAt: Date.now(),
+      id: 'evt-1',
+      callId: 'call-1',
+      toolName: 'Bash',
+      action: 'run',
+      summary: 's'.repeat(CONVERSATION_TOOL_SUMMARY_MAX + 1),
+      invocation: 'post https://example.test with Bearer abcDEF123.ghiJKL456-_9',
+      status: 'started',
+      arguments: null,
+      result: null,
+      error: null,
+    });
+
+    const tool = activityOf(publisher);
+    expect(tool.kind === 'tool.call' && tool.summary?.length).toBe(CONVERSATION_TOOL_SUMMARY_MAX);
+    expect(tool.kind === 'tool.call' && tool.summary_truncated).toBe(true);
+    expect(tool.kind === 'tool.call' && tool.invocation).toBe('post https://example.test with Bearer <redacted>');
+    expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
   });
 
   it('keeps an ordinary assistant message byte-identical', () => {
@@ -370,6 +421,8 @@ describe('conversation projection: truncation at and above the bound', () => {
       callId: 'call-1',
       toolName: 'shell',
       action: 'run',
+      summary: null,
+      invocation: null,
       status: 'completed',
       arguments: args,
       result: null,
@@ -392,6 +445,8 @@ describe('conversation projection: truncation at and above the bound', () => {
       callId: 'call-1',
       toolName: 'shell',
       action: 'run',
+      summary: null,
+      invocation: null,
       status: 'completed',
       arguments: args,
       result: null,
@@ -414,6 +469,8 @@ describe('conversation projection: truncation at and above the bound', () => {
       callId: 'call-1',
       toolName: 'shell',
       action: 'run',
+      summary: null,
+      invocation: null,
       status: 'completed',
       arguments: null,
       result,
@@ -436,6 +493,8 @@ describe('conversation projection: truncation at and above the bound', () => {
       callId: 'call-1',
       toolName: 'shell',
       action: 'run',
+      summary: null,
+      invocation: null,
       status: 'completed',
       arguments: null,
       result,

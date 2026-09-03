@@ -134,7 +134,7 @@ export function toolCallStartEvents(
       },
     }),
   ];
-  if (presentation.ownedTool === null && presentation.builtInTool === null) {
+  if (presentation.title === undefined) {
     const args = normalizedDetail(
       event.arguments_json,
       event.arguments_truncated,
@@ -180,7 +180,8 @@ export function toolCallResultEvents(
   } else {
     content = assembleToolResultContent({
       failed: event.status === 'failed',
-      argumentsText: null,
+      argumentsText: presentation.runtimeTool?.invocation ?? null,
+      argumentsLanguage: presentation.runtimeTool?.invocationLanguage,
       resultText: normalizedDetail(
         event.result_json,
         event.result_truncated,
@@ -260,9 +261,16 @@ function opaqueDisplayId(kind: string, source: string): string {
 }
 
 
+/**
+ * The pieces of one `TOOL_CALL_RESULT`: what the call was, in the caller's
+ * notation, and what came back. Segments follow the COT Message Brief —
+ * `{type:'text', text}` and `{type:'code', language, code}`, alone or as an
+ * array — and `language` is documented as semantic only, never highlighted.
+ */
 export interface ToolResultParts {
   readonly failed: boolean;
   readonly argumentsText: string | null;
+  readonly argumentsLanguage?: 'text' | 'bash';
   readonly resultText: string | null;
   readonly resultLanguage?: 'text' | 'javascript';
   readonly forceResultCode?: boolean;
@@ -311,13 +319,17 @@ function toolResultSegments(
   const segments: Array<Record<string, unknown>> = [];
   if (parts.failed) segments.push({ type: 'text', text: '执行失败' });
   if (argumentsText !== null) {
-    segments.push({ type: 'code', language: 'text', content: argumentsText });
+    segments.push({
+      type: 'code',
+      language: parts.argumentsLanguage ?? 'text',
+      code: argumentsText,
+    });
   }
   if (resultText !== null) {
     segments.push({
       type: 'code',
       language: parts.resultLanguage ?? 'text',
-      content: resultText,
+      code: resultText,
     });
   }
   if (segments.length === 0) {

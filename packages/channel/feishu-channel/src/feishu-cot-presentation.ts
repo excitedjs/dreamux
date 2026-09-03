@@ -39,13 +39,31 @@ interface BuiltInToolPresentation {
   readonly forceResultCode: boolean;
 }
 
+/**
+ * What the runtime said about its own call, ready for the card: the row's
+ * title composed from the runtime's summary, and the invocation the expanded
+ * row shows in the caller's notation instead of as JSON.
+ */
+interface RuntimeToolPresentation {
+  readonly invocation: string | null;
+  readonly invocationLanguage: 'text' | 'bash';
+}
+
 interface ToolPresentation {
   readonly toolCallName: string;
-  readonly icon?: 'search' | 'bash' | 'read' | 'write' | 'default';
+  readonly icon?: CotToolIcon;
   readonly title?: string;
   readonly ownedTool: OwnedTool | null;
   readonly builtInTool: BuiltInToolPresentation | null;
+  readonly runtimeTool: RuntimeToolPresentation | null;
 }
+
+/**
+ * The built-in icons the COT Message Brief documents for `TOOL_CALL_START.icon`
+ * (`search`, `bash`, `read`, `write`, `doc`, `calendar`, `task`, `meeting`,
+ * `default`); this Channel uses the ones a runtime's tool actions map onto.
+ */
+type CotToolIcon = 'search' | 'bash' | 'read' | 'write' | 'default';
 
 const ACTION_TOOL_NAMES: Readonly<Record<RuntimeToolAction, string>> = {
   read: 'Read',
@@ -53,6 +71,28 @@ const ACTION_TOOL_NAMES: Readonly<Record<RuntimeToolAction, string>> = {
   search: 'Search',
   edit: 'Edit',
   run: 'Bash',
+};
+
+const ACTION_ICONS: Readonly<Record<RuntimeToolAction, CotToolIcon>> = {
+  read: 'read',
+  list_files: 'search',
+  search: 'search',
+  edit: 'write',
+  run: 'bash',
+};
+
+/**
+ * The verb a row leads with when the runtime's summary names only the object
+ * of the call — the path read, the pattern searched. A `run` summary is
+ * already a sentence (the command's stated purpose, or the command itself)
+ * and takes no verb.
+ */
+const ACTION_VERBS: Readonly<Record<RuntimeToolAction, string>> = {
+  read: '读取 ',
+  list_files: '列出 ',
+  search: '搜索 ',
+  edit: '编辑 ',
+  run: '',
 };
 
 const OWNED_TOOL_PRESENTATION: Readonly<Record<
@@ -79,6 +119,7 @@ export function toolPresentation(
       ...OWNED_TOOL_PRESENTATION[ownedTool],
       ownedTool,
       builtInTool: null,
+      runtimeTool: null,
     };
   }
   const builtInTool = builtInToolPresentation(event);
@@ -88,15 +129,37 @@ export function toolPresentation(
       title: builtInTool.title,
       ownedTool: null,
       builtInTool,
+      runtimeTool: null,
     };
   }
+  const actionName = event.tool_action === null
+    ? toolCallName
+    : ACTION_TOOL_NAMES[event.tool_action];
+  const title = runtimeToolTitle(event, actionName);
   return {
-    toolCallName: event.tool_action === null
-      ? toolCallName
-      : ACTION_TOOL_NAMES[event.tool_action],
+    toolCallName: actionName,
+    ...(event.tool_action === null ? {} : { icon: ACTION_ICONS[event.tool_action] }),
+    ...(title === null ? {} : { title }),
     ownedTool: null,
     builtInTool: null,
+    runtimeTool: {
+      invocation: normalizedDetail(
+        event.invocation,
+        event.invocation_truncated,
+        TOOL_ARGUMENTS_SOFT_MAX_BYTES,
+      ),
+      invocationLanguage: event.tool_action === 'run' ? 'bash' : 'text',
+    },
   };
+}
+
+function runtimeToolTitle(event: CotToolCallActivity, actionName: string): string | null {
+  if (event.summary === null) return null;
+  const summary = boundedTitleText(event.summary);
+  if (summary === '') return null;
+  return event.tool_action === null
+    ? `${actionName}: ${summary}`
+    : `${ACTION_VERBS[event.tool_action]}${summary}`;
 }
 
 function ownedFeishuTool(

@@ -197,6 +197,21 @@ home as `~`.
 
 15. Runtime providers expose neutral tool display facts with enough information
     for one-line tool rows; Feishu owns all card rendering and I/O.
+    *Fulfilled 2026-09-03.* The facts are `summary` (the one line the
+    runtime's own UI labels the call with) and `invocation` (the call in the
+    caller's notation) on the `tool.call` activity, beside the existing
+    `action`. The operator's ruling that set the shape: 「你需要同时兼顾 claude
+    code 和 codex 这两边 … 然后在 dreamux 的 activity 的 interface 里，扩展一些
+    字段，最后 feishu-cot-adapter 这里对齐最终上传到飞书的消息格式」. Each
+    runtime derives them in its own `src/tool-display.ts`; Feishu composes the
+    row title, icon and result segments from them and never parses a
+    provider's argument schema. What stays raw: a row for a tool no runtime
+    can label — MCP tools the Channel does not own — still shows JSON
+    arguments, because that label would have to come from the tool catalog,
+    not the runtime. Codex-side facts the display still lacks, found while
+    doing this and left unfixed: a `declined` command or patch reports as
+    completed, a command's exit code is not read, and an MCP error object is
+    stringified as JSON instead of its `message`.
 16. COT remains the automatic progress surface. The model-facing `react` tool is
     retained; no automatic received/in-progress reaction ledger is reintroduced.
 17. The existing official Lark COT transport surface and compatible SDK version
