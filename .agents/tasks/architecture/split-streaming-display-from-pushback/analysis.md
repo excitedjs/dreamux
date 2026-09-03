@@ -2,7 +2,9 @@
 
 Answers to the questions in [requirement.md](requirement.md). Question 1 is
 answered, with a follow-up measurement of what COT changed in the push-back
-mechanism itself; question 2 is in progress.
+mechanism itself; question 2 is answered below, and PR #367 implemented it.
+Question 3 (anti-leak) is answered in the requirement and shipped in the same
+PR; it is not analysed here.
 
 ## 1. What Core could delete if display did not exist
 
@@ -11,6 +13,16 @@ item is whether a non-display consumer depends on it.
 
 ### The seam that makes this measurable
 
+*(Superseded 2026-09-03 by the implementation in PR #367 — the seam this section
+names is gone. `EntityTurnCoordinator` is admission serialization only: no
+`activitySink`, no `conversationProjection` option, no early-activity buffer.
+Activity now reaches the projection from `runtime-owner`'s
+`generationActivitySink`. Parts of the inventory below went with it — the
+turn-coordinator members, the native-turn sink and its types, the five
+`teammate.turn.*` / `teammate.native_turn.ended` kinds — while the projection
+itself and its redaction survive, because the split moved display rather than
+removing it. The inventory is kept as the measurement that justified the split,
+taken against the shape before it.)*
 `EntityTurnCoordinator.activitySink` opens with
 `if (this.opts.conversationProjection === undefined) return;`. The push activity
 path exists for the conversation projection and for nothing else — that single
@@ -427,14 +439,23 @@ current source; where a reviewer's omission list was wrong, that is noted.
 - `AgentRuntimeSubmissionInput` is **not touched**.
 
 **2. Both runtimes**
-- The four Claude Code and four codex native-end report sites stay — they are
-  where the fact is known — but they emit through the one activity sink instead
-  of a second sink.
-- codex: `NativeTurnRecord.nativeTurnEnded` goes (redundant, confirmed by both
-  reviews). `pendingActivity` goes — it is the early-arrival buffer inside the
-  provider. `representative` stops being used to attribute activity.
-  `unboundObservedTurnIds` and `dropOrphanActivityIfIdle` **stay**, reduced to
-  the `collector.releaseTurn` memory release they also serve.
+- **Superseded by the implementation (PR #367).** This item previously said
+  the four Claude Code and four codex native-end report sites stay. As built,
+  Claude Code keeps four — the `result` terminal, `stop()`, the fence, and a
+  run that died — but codex reports from three, and they are not the three
+  this list counted: it ends on its own collected terminal (`observeTerminal`),
+  in `stop()`, and on the first protocol failure, where the merge-base ends
+  were in `stop()`, `finalize` (twice) and `failRecord`. Both providers emit
+  through the one activity sink, and neither keeps display state:
+  `NativeTurnRecord.nativeTurnEnded` and `pendingActivity` are gone, a
+  teardown reports an end without asking whether a turn was open, and the
+  Channel ignores an end with no card open. The two ends that could fire with
+  no child — Claude Code's `stop()` and its fence — are gated on a live native
+  session, and the codex manager does not exist until the native session is
+  up. `representative` no longer attributes activity; `unboundObservedTurnIds`
+  stays, and the orphan release is now `releaseOrphanTurnsIfIdle`, reduced to
+  the `collector.releaseTurn` memory release it also served. See
+  [technical-design/final.md § As built, item 7](technical-design/final.md).
 - Claude Code: `{ priority: 'now' }` and its three explaining comments go, per
   the operator's ruling.
 
@@ -482,9 +503,13 @@ current source; where a reviewer's omission list was wrong, that is noted.
   `projectActivity` collapse to two: `projectInput(agent, input)` published by
   Core, and `projectActivity(agent, activity)` published by a runtime.
 - `ProjectableTurn` goes with them.
-- The activity-fact dedupe and `CONVERSATION_ACTIVITY_FACTS_MAX` are
-  **unresolved** — see `technical-design/final.md` § Unresolved. The two reviews
-  disagree and a probe settles it; they stay until then.
+- The activity-fact dedupe and `CONVERSATION_ACTIVITY_FACTS_MAX` were left
+  **unresolved** here and settled at implementation: both deleted. The dedupe's
+  key was the per-activity submission handle this change removes, and an
+  actor-keyed replacement is either unbounded or, at the 512 cap, drops every
+  fact past it. If a probe ever shows codex repeating a notification, the fix
+  belongs in the codex turn manager, not Core. See
+  `technical-design/final.md` § Unresolved.
 - Redaction and every size bound stay exactly as they are.
 
 **8. `dreamux-types/src/teammate.ts`, `src/channel.ts`, `src/index.ts`, and `dispatcher-core-events/seal.ts`**

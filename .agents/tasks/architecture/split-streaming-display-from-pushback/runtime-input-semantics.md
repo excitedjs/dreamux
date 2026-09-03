@@ -100,7 +100,11 @@ consumer:
 `RuntimeSubmission` is `{ settled: Promise<RuntimeSubmissionSettlement> }` and
 carries no provider-side identity back to Core. `RuntimeActivity` has exactly
 two kinds, `assistant.message` and `tool.call`, and every activity event must
-name a `submission` to exist at all.
+name a `submission` to exist at all. *(Superseded 2026-09-03 — this task
+deleted the submission key: `RuntimeActivity` is keyed on the Agent and names
+no submission, and a third kind, `turn.ended`, reports the runtime's own
+terminal — and, when a live native session is torn down, an `interrupted` end.
+See `/packages/dreamux-types/src/agent-runtime.ts`.)*
 
 **Consequence.** A Channel that must hide the body of its *own* inbound while
 showing every other producer's needs an identity that crosses the seam. Neither
@@ -113,7 +117,11 @@ an accident of the current design — it is the minimum the requirement admits.
 
 Codex keeps `unboundObservedTurnIds` and `pendingActivity`: it can observe a
 native turn that no submission has bound yet, buffer its activity, and deliver
-it when a submission binds. Claude Code has no equivalent —
+it when a submission binds. *(Superseded 2026-09-02 — the buffer went with the
+submission key: `pendingActivity` is deleted, codex emits an observed item's
+activity as it arrives whether or not a submission has bound, and
+`unboundObservedTurnIds` survives only so the collector can release a turn no
+submission ever bound.)* Claude Code has no equivalent —
 `ClaudeCodeRuntime.onProtocolEvent` returns silently when `activeTurn` is
 `null`, with no log.
 
@@ -122,6 +130,16 @@ window does not drain early. It is recorded because the divergence is real and
 because a silent drop leaves no evidence if it ever does happen.
 
 ## Attribution inside a folded turn is representative, not exact
+
+*(Superseded 2026-09-02 — streamed activity is no longer attributed to any
+submission: `RuntimeActivity` is keyed on the Agent, and the three events named
+below — `teammate.turn.message`, `teammate.turn.tool_call` and
+`teammate.native_turn.ended` — were deleted with the submission-keyed display
+line, leaving `teammate.activity`, which carries no `turn_id` at all. Each
+runtime still picks a representative, but it now settles push-back completions
+only and feeds nothing on the display line. The conclusion generalized rather
+than merely held: no display fact is attributed to a submission, not only the
+terminal one.)*
 
 While a native turn folds several submissions, both runtimes attribute streamed
 activity to a representative: Claude Code uses `active.started[0]`, Codex uses
@@ -150,7 +168,11 @@ and one central fact lives outside the narrative documentation entirely.
 - **No priority field is documented** on a stream-json input message, and a
   feature request for exactly that steering concept was closed unimplemented.
   Dreamux writes `priority: 'now'` on its steer envelope; it is most likely
-  inert. Worth confirming before any design leans on it.
+  inert. Worth confirming before any design leans on it. *(Superseded
+  2026-09-03 — the field is gone: the operator ruled `priority` out on
+  2026-09-02 and this task removed it from `buildUserMessage`, so there is
+  nothing left to confirm. See `requirement.md` § Ruled 2026-09-02,
+  `priority` goes.)*
 - **There is no stdin interrupt.** The only documented interrupt for a raw child
   process is SIGINT; writing another user message only queues.
 

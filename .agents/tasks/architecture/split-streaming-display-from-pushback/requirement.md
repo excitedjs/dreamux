@@ -260,7 +260,13 @@ Two facts to design around, both already verified:
   (`observeItem` buffers activity for an unbound turn into `pendingActivity`
   while an admission is in flight, `turn-manager.ts:320-333`, and
   `bindSubmission` releases it only after `await submitTurnStart(...)` returns,
-  `:146-149`, `:191`). The operator ruled for the submit site anyway, on a
+  `:146-149`, `:191`). *(Superseded 2026-09-03: `pendingActivity` was deleted
+  when the display line was keyed on the Agent rather than the submission.
+  `observeItem` now emits each item's activity as it arrives, without
+  consulting a record to attribute it, and `bindSubmission` has no buffer left
+  to release. Kept, marked, because it records the code the ruling was measured
+  against, and the ruling itself rests on a different reason — the one the next
+  sentence states.)* The operator ruled for the submit site anyway, on a
   reason the ordering argument does not cover: a submission that fails must be
   visible **with its input**, because that is what makes an error diagnosable.
 
@@ -280,7 +286,7 @@ recorded in `technical-design/final.md` § As built, items 2 and 3.
   disappears between prepare and submit** — the narrow window `prepareCompletion`
   does not already refuse. It was put to the operator as "a push-back to an agent
   whose runtime is gone", which is broader than what was built: that case is
-  refused at `index.ts:345-349` before anything is published, and stays silent.
+  refused at `index.ts:357-361` before anything is published, and stays silent.
   The ruling is recorded against the narrower behaviour it actually names.
   The design document had said this half "stays invisible exactly as it is
   today" and that changing it "needs its own ruling"; this is that ruling. What

@@ -32,8 +32,8 @@
   activity-fact dedupe, the embedded-versus-reshaped payload) are resolved
   inline in that document.
 - Solution review Issue: Not created.
-- Blockers: None. The requirement states three questions to answer before a
-  solution is proposed; answering them is the next work, not a blocker.
+- Blockers: None. Questions 1, 1b and 2 are answered and question 3 is
+  implemented, so the solution they gated is built rather than pending.
 - Next action: Operator review of two things the implementation decided that
   the design had explicitly left to a ruling.
   1. **A dropped completion push-back is now visible.** Applying rulings 4 and 8
@@ -106,9 +106,10 @@ and then reversed for the first, once it turned out to be small:
 That one was a real defect and is fixed, not open: a codex native turn no
 submission ever bound displayed its activity and had its end refused, so it
 opened a card nothing could close. Its end now displays like its activity
-already did, because a card belongs to no turn — see `final.md` § As built,
-departure 7, for the requirement rules that authorise it and the three guards it
-distinguishes.
+already did, because a card belongs to no turn — see `requirement.md`
+§ Ruling on display state for the rule that authorises it, and
+`final.md` § As built, departure 7, for the gate table that shows what no
+longer stands in front of the end.
 
 The second is not a defect at all; the operator ruled the behaviour intended,
 and it stays here as an observation with the log the operator asked for. It is written for
@@ -174,13 +175,17 @@ not the status, is what says which shape to expect.
 
 ## Delivery
 
-- Pull request / CI / merge: Question 3 (anti-leak infrastructure) ships in
-  [PR #367](https://github.com/excitedjs/dreamux/pull/367), all checks green,
-  awaiting review. It depends on none of the design above.
-  Two things PR #367 cannot verify before merge, named in its body: the
+- Pull request / CI / merge: [PR #367](https://github.com/excitedjs/dreamux/pull/367)
+  carries both halves — the display split and question 3's anti-leak
+  infrastructure, which depends on none of the design above — all checks green,
+  awaiting review.
+  One thing PR #367 still cannot verify before merge, named in its body: the
   `release.yml` step is only exercised by the next real release (watch the
-  "Install gitleaks" step and the version-bump commit passing the hook).
-  The display split itself is implemented on
-  `refactor/split-display-from-pushback` with five Rush change files; no PR
-  opened yet.
+  "Install gitleaks" step and the version-bump commit passing the hook). The
+  other — the new `internal-content` job and the rewritten `gitleaks` job,
+  which `ci.yml` runs on this branch only through the pull request — ran green
+  on the PR itself.
+  The display split ships in the same PR: #367 carries it on
+  `refactor/split-display-from-pushback` with five Rush change files, alongside
+  the anti-leak gate's one.
 - Knowledge closeout: Pending.

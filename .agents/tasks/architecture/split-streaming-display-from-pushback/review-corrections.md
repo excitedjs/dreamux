@@ -151,6 +151,17 @@ UNDETERMINED with a mechanism: codex does not deduplicate repeated
 deterministic, so a repeat would collide. A named mechanism outranks an absence
 of one, so the dedupe stays pending a probe.
 
+**Resolved at implementation: deleted.** Its key was the `RuntimeSubmission`
+that `RuntimeActivityEvent` carried, and this change deletes that wrapper — the
+activity sink now takes a bare `RuntimeActivity`, so no submission reaches the
+projection to key on. The instruction to re-key it by actor does not survive
+contact either: an actor-keyed set over a long-lived agent is either unbounded
+or, at the 512 cap it carried, silently drops every later fact. The probe
+therefore never became the deciding question, and `conversation-projection.ts`
+carries no dedupe today; [technical-design/final.md](technical-design/final.md)
+keeps the full reasoning, including where the fix would belong if a probe ever
+names a repeater.
+
 ### The disagreement that was settled
 
 `EntityTurn.id` keeps a caller-facing reader — `teamSubmitResult` returns it as
@@ -166,3 +177,13 @@ an unguarded double report **by turn id** — `failProtocol` deletes a record, a
 late `turn/start` response rebuilds it, and `failRecord` reports `failed` a
 second time. The flag never guarded that path, and the second report is harmless
 because no card is open. The claim is per-record, not per-turn-id.
+*(Superseded 2026-09-03: the operator ruled the provider's COT-related state
+out, so neither the flag nor the per-turn-id table that was to replace it
+exists, and the per-record/per-turn-id distinction has no subject left to draw.
+`failRecord` now reports nothing on the display line; `failProtocol` reports one
+end on its first failure; and `TurnManager.stop()` reports an interrupted end
+without asking whether a turn was open — so a native terminal followed by a
+teardown end is the shape this layer is meant to produce, not an unguarded path.
+The Channel absorbs the extra one: with no card open there is nothing to finish
+(`feishu-cot-adapter.ts`'s `finishCard`). See [requirement.md](requirement.md)
+§ Ruling on display state.)*

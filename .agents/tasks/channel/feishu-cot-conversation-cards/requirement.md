@@ -146,7 +146,11 @@ home as `~`.
     runtime satisfies this for *every* native turn it observes, including one no
     Dreamux submission ever bound and one the provider only ever streamed items
     for: the end is emitted where the provider reports its own terminal, and a
-    stop or protocol failure ends whatever is still open.
+    turn killed before any terminal — by a stop, the state fence, a protocol
+    loss, or a run that died — is ended by that teardown instead. The teardown
+    reports its one end for a live native session without asking whether a turn
+    was open, because the provider keeps no display state that could answer, so
+    the Channel may receive an end with nothing open and ignores it under item 8.
 
 13. **No logical membership contract.** The native-ended fact does not enumerate
     `RuntimeSubmission` members, logical `turn_id` values, presentation ids,
@@ -226,9 +230,11 @@ home as `~`.
   Core.
 - No admission-gated anchor. Waiting for Core to answer before moving the
   Channel's own anchor is what created the predecessor-card losses.
-- No provider-side deduplication flag for native turn ends. A synthesized end is
-  reported only when the reporting call actually settled something, so no second
-  report exists to suppress.
+- No provider-side deduplication flag for native turn ends. A provider keeps no
+  display state at all: it reports the end its native stream gives it, and one
+  more when it tears down a live native session, without asking whether a turn
+  was open. The Channel ignores an end that arrives with nothing open (item 8),
+  which is what makes reporting without that question correct.
 - No process-global cache for host home prefixes. The resolved prefixes are an
   input passed to the conversation projection.
 
@@ -279,10 +285,15 @@ home as `~`.
   `.` and `~` respectively, including paths followed by sentence punctuation and
   paths embedded in `file://` URLs. A missing home environment does not cause the
   process working directory to be displayed as `~`.
-- On the Claude side a synthesized end is reported only when that call settled a
-  submission that was still open, so an ordinary success reports exactly one end
-  without any deduplication state, and each terminal `result` reports its own end
-  by construction.
+- On the Claude side each terminal `result` reports its own end by construction,
+  and the provider keeps no display state that could gate a second one
+  ([split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md)):
+  `stop()` and the fence report one interrupted end for a live child only, and a
+  run that died before any stop reports a failed end carrying its own error. A
+  start that never produced a child reports nothing — Core stops that runtime
+  before revoking its generation, so Core's own failed end is what carries the
+  start error to the card — and a teardown end after the turn's own `result`
+  reaches a recipient with nothing open, which ignores it under item 8.
 - The conversation projection receives this host's home prefixes as a constructor
   input. No module-level cache, no test reset hook, and no start-order dependency
   decides whether a projected path is renamed.

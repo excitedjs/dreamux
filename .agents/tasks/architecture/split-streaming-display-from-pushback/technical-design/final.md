@@ -1176,10 +1176,21 @@ the provider reports it, and reads nothing the push-back line produces.
   `completeStartedGroup` runs: `completed`, or `failed` with claude's own
   `errors`/`subtype` text. The attribution, the completion and the settlements
   are push-back's work on the same fact and cannot change, delay or withhold it.
-- The synthesized ends — codex `stop()`/`failProtocol`, claude
-  `stopUnsettled`/`markTurnFailed` — no longer ask whether a submission was
-  settled. They end every native turn that is still open, which is what reaches
-  a turn the provider only ever streamed items for.
+- The teardown ends ask nothing about a submission, and hold no display state
+  to ask about: each reports one end unconditionally, and the Channel ignores an
+  end that arrives with nothing open (rule 8) — which is what reaches a turn the
+  provider only ever streamed items for. codex reports from
+  `TurnManager.stop()`, which every `teardownCodexRuntime` reaches (a stop, the
+  fence, a restart), and from the first `failProtocol`. Claude Code reports from
+  `stop()` and from `terminateForFence`, each for a live child only, and from
+  `markTurnFailed`, a run that died before any stop; `stopUnsettled` is
+  push-back only and reports no end. The gate on the two child-scoped ends is
+  the native session's existence, not an open turn: a failed start leaves no
+  child and no codex manager at all, and Core stops that runtime before revoking
+  its generation (`runtime-owner.ts`), so an end reported there would close the
+  card ahead of Core's own failed end carrying the start error. See
+  `requirement.md` § Ruling on display state for the ruling and for the one
+  start failure that sits past that gate.
 
 **At-most-once moved off the push-back record.** *(Superseded 2026-09-03 —
 the operator ruled the tables below out: 「这个表直接删了不就可以了？cot 相关的部分，
@@ -1202,12 +1213,7 @@ finished turn and hands `stopUnsettled` one to interrupt, which paints a spuriou
 "reports one end for the real lifecycle order, where `completed` follows the
 result".
 
-**What that deleted.** codex: `endNativeTurn` and all five of its call sites,
-`NativeTurnRecord.nativeTurnEnded` and both initializers, and the display half
-of `drainTerminalOrder`'s unbound branch together with its warn. Claude Code:
-the module-level `endNativeTurn`, the runtime's private wrapper, the `settled`
-and `stopped` locals that gated the two synthesized ends, and
-`failUnattributedResult`'s own end. The unbound branch in `drainTerminalOrder`
+**What that deleted.** *(Superseded 2026-09-03 — deleting the provider display state brought the name `endNativeTurn` back on both sides, now stateless: it reads no record and no display state, and only calls the sink. codex holds it as a private `TurnManager` method taking `(status, reason)`, called from `stop()`, `observeTerminal` and `failProtocol`; Claude Code keeps the module-level helper in `runtime-submissions.ts`, now `(status, reason, sink)`, plus the runtime's private `(status, reason)` wrapper over it. What this departure deleted was the gated form described below — codex's `endNativeTurn(record, …)` behind `record.nativeTurnEnded`, and claude's `settled` / `stopped` guards — and every other item in the list is still gone. See `requirement.md` § Ruling on display state.)* codex: `endNativeTurn` and all five of its call sites, `NativeTurnRecord.nativeTurnEnded` and both initializers, and the display half of `drainTerminalOrder`'s unbound branch together with its warn. Claude Code: the module-level `endNativeTurn`, the runtime's private wrapper, the `settled` and `stopped` locals that gated the two synthesized ends, and `failUnattributedResult`'s own end. The unbound branch in `drainTerminalOrder`
 itself stays — with the end gone it is purely the queue-head release
 (`terminalOrder.shift`, `nativeTurns.delete`, `unboundObservedTurnIds.delete`,
 `collector.releaseTurn`, which `retainAfterTerminal: true` depends on), and
@@ -1218,9 +1224,10 @@ builds a `RuntimeCompletion` — and a turn no submission claimed has nothing to
 settle and no completion to describe.
 
 **Does the display end still need `NativeTurnRecord`?** No. Neither provider's
-end reads a push-back record any more: codex's reads the terminal it was handed
-and its own map, claude's reads the `result` outcome and its own flag. The
-record is now push-back state only.
+end reads a push-back record any more, and neither keeps display state of its
+own: codex's reads the terminal it was handed, claude's reads the `result`
+outcome, and a teardown — or a run that died before any stop — reports its end
+without consulting either. The record is now push-back state only.
 
 **The gates that were counted, and where they are.** Seven stood between "codex
 says the turn ended" and "`turn.ended` is emitted"; two remain, and both are the

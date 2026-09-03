@@ -9,7 +9,15 @@
   host paths, and it adds one resolved value to the dispatcher composition; no
   path *contract* — none of the host-owned builders in `platform/paths.ts` —
   changed.
-- The runtime and core expose one provider-neutral native-turn-ended fact per
+- (Superseded 2026-09-03: a provider keeps no display state, so it reports an
+  end from the native terminal it observed and again, without asking whether a
+  turn was open, when it tears down a live native session; Core reports one of
+  its own for an input no runtime accepted. One Dreamux-owned native turn
+  therefore no longer means one fact — the Channel ignores an end with nothing
+  open — and the fact also carries the producer's own reason beside the actor
+  and terminal status. See
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).)
+  The runtime and core expose one provider-neutral native-turn-ended fact per
   Dreamux-owned native turn. The fact carries only the actor and terminal
   status; it does not expose folded logical submissions, presentation targets,
   or Feishu concepts.
@@ -35,10 +43,22 @@
 
 - Claude and Codex runtime suites cover native-turn-ended emission for
   completion, failure, interruption, folding, teardown, and fail-open sink
-  errors. One terminal `result` reports one end; a resident Claude execution
+  errors. (Superseded 2026-09-03: the three throwing-sink tests are deleted
+  with the provider-side guard they exercised — two in the Claude submissions
+  suite, one in the codex runtime suite. `AgentRuntimeActivitySink` now states
+  that the sink never throws: Core's conversation projection catches and logs a
+  projection failure itself, so a provider calls it bare and there is no branch
+  left to exercise. See
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).) One terminal `result` reports one end; a resident Claude execution
   window that answers several commands in sequence reports one end per result;
   a synthesized end is reported only by the call that actually settled a
   still-open submission, so an ordinary success reports exactly one end.
+  (Superseded 2026-09-03: the provider display state that made the synthesized
+  end at-most-once is deleted, so a teardown reports an end without asking
+  whether a turn was open — an ordinary success followed by `stop()` reports
+  the completed end and then an interrupted one, which the Channel ignores
+  because nothing is open. See
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).)
 - Dreamux type and core suites cover the neutral event shape, closed event
   catalog, actor-only projection, runtime-generation fencing, and unchanged
   admission/completion behavior.
