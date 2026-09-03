@@ -858,4 +858,16 @@ describe('ClaudeCodeRuntime failed-start rollback', () => {
       ),
     ).toBe(true);
   });
+
+  it('reports no end when the stop that follows a failed start finds no child', async () => {
+    // Core stops a runtime whose start failed before it revokes the generation,
+    // so an end reported here would reach the card ahead of Core's own failed
+    // end carrying the start error. With no child there is nothing to end.
+    const h = new Harness();
+    h.behavior.failStart = () => new Error('spawn exploded');
+    const runtime = await tracked(h.createRuntime());
+    await expect(runtime.start()).rejects.toThrow(/spawn exploded/);
+    await runtime.stop();
+    expect(h.nativeEnds).toEqual([]);
+  });
 });

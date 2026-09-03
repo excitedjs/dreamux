@@ -420,7 +420,7 @@ and restated what the split is, as a whole:
 
 > 那就把367做干净，起码刚才我们找到的finding 1，它就不是一个很干净的写法。就是最初这个PR，我提的要求就是把所有的COT逻辑和回推需要的机制全部拆开。拆解下来，就是说Provider里边需要提供稳定、忠于原始事件流的消息上报。这个消息上报在Dreamus这一层完全不消费，它只转发，并且拼上团队信息之类的，meta 信息，然后到飞书Channel这层自己组装这个开卡关卡逻辑。
 
-He framed what each provider is for:
+The operator framed what each provider is for:
 
 > 其实你想一下，我现在要做的，从 codex 层面来说，就是在做 codex app，从claude code 来说，就是在做claude code app或者 tui。他们两者都是对应到 codex app-server 和 claude code sdk 的 --json-stream 模式 cot 卡片只比他们多了一个开卡关卡换卡的模型。agent runtime provider 只是给 codex 和 claude 多包了一层，包成一个中立的形状，事件流这一套是完全不变的。
 
@@ -434,12 +434,21 @@ push-back record" paragraph and gate row 7 are marked superseded in place.
 **What was built instead.** Both tables are deleted. A provider reports
 `turn.ended` from the native terminal it observed and, without asking whether a
 turn was open, when it tears down a live native session: codex from
-`TurnManager.stop()` and from the first protocol failure (the manager exists
-only after a successful native start, so a failed start reports nothing and
-leaves the card to Core's own failed end carrying the start error); Claude Code
-from `stop()`, from the fence killing a live child (a fence that fires while a
-start is still failing has no child and reports nothing, for the same reason),
-and from a run that died before any stop. The only deduplication is the native
+`TurnManager.stop()` and from the first protocol failure; Claude Code from
+`stop()` and from the fence, each for a live child only, and from a run that
+died before any stop. The gate is the native session's existence, not a display
+fact, and it is what a failed start needs: Core stops a runtime whose start
+failed before it revokes the generation (`runtime-owner.ts`), so a teardown end
+would otherwise reach the card ahead of Core's own failed end carrying the start
+error. The codex manager does not exist until the native session is up, and a
+Claude Code child that failed to come up is gone before `stop()` runs, so both
+report nothing there. One start failure sits on the far side of that gate: a
+state write failing after the native session is up — Claude Code's `session`
+and `ready` writes, codex's `markReady` — where the state fence's own teardown
+(`RuntimeStateFence` closes on every failed write and calls the provider's
+`terminate`) reports an interrupted end ahead of Core's failed one. That is a
+double fault — the state store broke at that instant — and no gate is added for
+it. The only deduplication is the native
 stream's own — the codex collector reports each turn's terminal once, and one
 Claude Code `result` is one end. An end that reaches the Channel with nothing
 open is ignored (`feishu-cot-conversation-cards` rule 8), which is what makes

@@ -171,11 +171,15 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     if (this.status === 'stopped') return;
     this.stopped = true;
     this.generation += 1;
-    // The resident child is being torn down, so nothing will ever report a
-    // native turn it was still running: this stop reports one interrupted end,
-    // without asking whether a turn was open. The runtime keeps no such answer;
-    // a consumer with nothing open ignores the end.
-    this.endNativeTurn('interrupted', null);
+    // A live child being torn down will never report the native turn it was
+    // still running, so this stop reports one interrupted end for it, without
+    // asking whether a turn was open: the runtime keeps no such answer, and a
+    // consumer with nothing open ignores the end. The end is for a live child
+    // and not otherwise, as the fence's is: a start that failed left no child,
+    // and Core stops that runtime before revoking its generation, so an end
+    // here would close the card ahead of Core's own failed end carrying the
+    // start error.
+    if (this.session !== null) this.endNativeTurn('interrupted', null);
     if (this.activeTurn !== null) this.stopUnsettled(this.activeTurn);
     return this.track(this.stopRuntime());
   }

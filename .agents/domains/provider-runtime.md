@@ -494,8 +494,15 @@ answer several commands in sequence and so reports one end per `result`. Where a
 turn ends with no native terminal at all — a stop, a protocol loss, a rejected
 run — the provider reports one end from that teardown without asking whether a
 turn was open: codex from `TurnManager.stop()` and from the first protocol
-failure, Claude Code from `stop()`, from the fence killing a live child, and
-from a run that died before any stop. What the push-back line still owed never
+failure, Claude Code from `stop()` and from the fence, each for a live child
+only, and from a run that died before any stop. The gate is the native session's
+existence, not a display fact: Core stops a runtime whose start failed before it
+revokes the generation, so a teardown end reported with no child would close the
+card ahead of Core's own failed end carrying the start error. A state write that
+fails after the native session is up (Claude Code's `session` and `ready`
+writes, codex's `markReady`) is the one failure past that gate: the state
+fence's own teardown reports an interrupted end ahead of Core's failed one, a
+double fault with no gate added for it. What the push-back line still owed never
 said whether the provider was working, and the provider keeps no display-side
 answer of its own either (operator ruling, 2026-09-03: 「cot 相关的部分，在
 provider 应该是完全无状态的」, recorded in the
