@@ -110,6 +110,15 @@ the same change that touches it.
   presentation is a deliberately tuned surface; changes to it are their own
   requirement, never a refactor side effect.
   (Decision: [feishu-cot-conversation-display](/.agents/tasks/channel/feishu-cot-conversation-cards/accepted-decision.md).)
+- **A runtime's own conversation traffic is not the agent speaking.** What a
+  Claude Code session emits as a `user` envelope — its tool results, and the
+  context the CLI injects into its own conversation such as the whole SKILL.md
+  after a `Skill` call — is never displayed as text. Only the tool result
+  reaches the card, on the tool's own row. What the operator sent is a
+  different fact: Core announces it as an input, and the Feishu card hides just
+  the body the operator can already see in the chat.
+  (Ruling: 「所有的 user 消息都隐藏即可」, 2026-09-03, in
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md).)
 - **A displayed input is announced when it is submitted, and always ends.** The
   input appears with the text that was submitted, before any runtime has
   accepted it, so a submission that fails is visible together with what failed.

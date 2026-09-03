@@ -321,6 +321,15 @@ describe('parseLine', () => {
     }
   });
 
+  it('classifies a user envelope as user, keeping the raw line for the display line', () => {
+    const raw = {
+      type: 'user',
+      session_id: 's1',
+      message: { role: 'user', content: [{ type: 'text', text: 'injected' }] },
+    };
+    expect(parseLine(JSON.stringify(raw))).toEqual({ kind: 'user', raw });
+  });
+
   it('classifies unmodelled JSON as other and non-JSON as parse_error', () => {
     expect(parseLine(JSON.stringify({ type: 'stream_event', event: {} })).kind).toBe('other');
     expect(parseLine('not json').kind).toBe('parse_error');

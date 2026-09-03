@@ -400,6 +400,9 @@ export class ClaudeCodeStreamRpc {
         this.pending?.aggregator.accept(line);
         this.options.onProtocolEvent?.({ kind: 'stream', line });
         break;
+      case 'user':
+        this.options.onProtocolEvent?.({ kind: 'stream', line });
+        break;
       case 'command_lifecycle': {
         const pending = this.pending;
         if (pending === null || line.commandUuid === null) break;
@@ -489,7 +492,9 @@ export class ClaudeCodeStreamRpc {
         );
         break;
       default:
-        this.options.onProtocolEvent?.({ kind: 'stream', line });
+        // Every other envelope (`system` notices past `init`, `stream_event`,
+        // `rate_limit_event`, ...) carries nothing the runtime consumes. It
+        // already counted as activity for the idle deadline above.
         break;
     }
   }

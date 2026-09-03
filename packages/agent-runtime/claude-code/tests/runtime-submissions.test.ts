@@ -157,19 +157,29 @@ function streamToolResult(
   isError: boolean,
   messageId = 'msg-2',
 ): ClaudeProtocolEvent {
+  return streamUserEnvelope(
+    [{ type: 'tool_result', tool_use_id: callId, content, is_error: isError }],
+    messageId,
+  );
+}
+
+/**
+ * A `user` envelope exactly as the CLI emits it on stdout: `role: user`, a
+ * content array, and no flag saying who wrote it. The CLI puts its own tool
+ * results here, and beside them the context it injects into its conversation —
+ * a loaded skill body, hook output — as plain text blocks.
+ */
+function streamUserEnvelope(
+  content: unknown[],
+  messageId = 'msg-2',
+): ClaudeProtocolEvent {
   return {
     kind: 'stream',
     line: {
-      kind: 'other',
-      type: 'user',
-      subtype: null,
+      kind: 'user',
       raw: {
-        message: {
-          id: messageId,
-          content: [
-            { type: 'tool_result', tool_use_id: callId, content, is_error: isError },
-          ],
-        },
+        type: 'user',
+        message: { id: messageId, role: 'user', content },
       },
     },
   };
@@ -330,6 +340,49 @@ describe('handleProtocolEvent live activity', () => {
       kind: 'assistant.message',
       text: 'unattributable text',
     });
+  });
+
+  it('shows nothing for text in a user envelope: a loaded skill body is neither the agent nor the operator', async () => {
+    const h = makeHarness(['cmd-1']);
+    h.fire(started('cmd-1'));
+    h.fire(streamToolUse('call-1', 'Skill', { skill: 'team-workflow' }));
+    h.fire(streamToolResult('call-1', 'Launching skill: team-workflow', false));
+    // Observed on the wire (Claude Code 2.1.259): right after the Skill tool's
+    // result the CLI emits a `user` envelope whose only content is a text
+    // block carrying the entire SKILL.md. The old mapping read the block
+    // type alone and put that on the card as the agent's own words.
+    h.fire(streamUserEnvelope(
+      [{ type: 'text', text: 'Base directory for this skill: ~/.claude/skills/team-workflow\n\n# Team Workflow\n...' }],
+      'msg-3',
+    ));
+    expect(h.activityEvents.map((activity) => activity.kind)).toEqual([
+      'tool.call',
+      'tool.call',
+    ]);
+    expect(h.activityEvents[1]!).toMatchObject({
+      kind: 'tool.call',
+      callId: 'call-1',
+      status: 'completed',
+      result: 'Launching skill: team-workflow',
+    });
+  });
+
+  it('still correlates a tool_result that shares its user envelope with injected text', async () => {
+    const h = makeHarness(['cmd-1']);
+    h.fire(started('cmd-1'));
+    h.fire(streamToolUse('call-1', 'Read', { file_path: 'x' }));
+    h.fire(streamUserEnvelope([
+      { type: 'tool_result', tool_use_id: 'call-1', content: 'file contents', is_error: false },
+      { type: 'text', text: '<system-reminder>injected context</system-reminder>' },
+    ]));
+    expect(h.activityEvents).toHaveLength(2);
+    expect(h.activityEvents[1]!).toMatchObject({
+      kind: 'tool.call',
+      callId: 'call-1',
+      status: 'completed',
+      result: 'file contents',
+    });
+    expect(h.activityEvents.some((activity) => activity.kind === 'assistant.message')).toBe(false);
   });
 });
 

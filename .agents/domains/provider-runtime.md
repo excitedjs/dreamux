@@ -403,6 +403,36 @@ Source:
 - `/packages/agent-runtime/claude-code/src/stream.ts`
 - `/packages/agent-runtime/claude-code/tests/rpc.test.ts`
 
+### Claude Code Stream-Json Envelopes On The Display Line
+
+The display line reads two stdout envelopes and nothing else
+(`ClaudeActivityLine`): `assistant`, whose text blocks are the model's words and
+whose `tool_use` blocks are its tool calls; and `user`, whose `tool_result`
+blocks are what those tools returned, correlated to the call by `tool_use_id`.
+A `user` envelope on stdout is the CLI's own, never the operator's: stdin input
+is not echoed back (Dreamux does not pass `--replay-user-messages`), so a text
+block there is context the CLI injected into its conversation — observed on
+2.1.259, the `Skill` tool's result is only `Launching skill: <name>` and the
+whole SKILL.md body follows as a separate `user` line with no field marking it
+as injected. None of that text is displayed. Every other stdout line — `init`,
+`command_lifecycle`, control traffic, `system` notices, `stream_event`,
+`rate_limit_event` — stays inside the RPC, which only counts it as activity for
+the idle deadline. The operator's own input is displayed by Core's
+`teammate.input`, not by anything on this line.
+
+Source:
+
+- `/packages/agent-runtime/claude-code/src/types.ts`
+- `/packages/agent-runtime/claude-code/src/runtime-submissions.ts`
+- `/packages/agent-runtime/claude-code/tests/runtime-submissions.test.ts`
+
+History: the 2026-09-03 ruling 「所有的 user 消息都隐藏即可」 in
+[split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md);
+the wire evidence and the deferred divergences (Remote Control response field
+names, a subagent's tool calls shown as the agent's own, unconsumed `system` subtypes)
+are frozen in
+[claude-code-stream-json-protocol](/.agents/research/claude-code-stream-json-protocol.md).
+
 Provider-native history formats, session discovery, cursor envelopes, and typed
 errors stay inside each runtime package's own `src/activity/`. Both built-ins
 reuse `/packages/dreamux-utils/src/activity-scan.ts` for provider-neutral

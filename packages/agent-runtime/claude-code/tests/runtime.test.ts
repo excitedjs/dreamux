@@ -207,11 +207,14 @@ function fireAssistantText(spec: ClaudeCodeSessionSpec, text: string): void {
   spec.onProtocolEvent?.({
     kind: 'stream',
     line: {
+      kind: 'assistant',
+      text,
+      sessionId: null,
       raw: {
         type: 'assistant',
         message: { id: 'msg-1', content: [{ type: 'text', text }] },
       },
-    } as ClaudeProtocolEvent extends { kind: 'stream'; line: infer L } ? L : never,
+    },
   });
 }
 

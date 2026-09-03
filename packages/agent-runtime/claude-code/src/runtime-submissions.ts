@@ -1,6 +1,10 @@
 import { resultTextFromTurnOutcome } from './runtime-session.js';
 import type { ClaudeCodeSession } from './supervisor.js';
-import type { ClaudeProtocolEvent, TurnOutcome } from './types.js';
+import type {
+  ClaudeActivityLine,
+  ClaudeProtocolEvent,
+  TurnOutcome,
+} from './types.js';
 import type {
   JsonValue,
   RuntimeActivity,
@@ -127,8 +131,7 @@ export function handleProtocolEvent(
     completeStartedGroup(active, event.outcome, context);
     return;
   }
-  const raw = recordValue(event.line.raw);
-  if (raw !== null) emitStreamActivity(active, raw, context);
+  emitStreamActivity(active, event.line, context);
 }
 
 /** claude's own words for why its turn failed. */
@@ -212,32 +215,43 @@ function failUnattributedResult(
 }
 
 /**
- * Put what claude said on this agent's activity stream.
+ * Put what claude said and did on this agent's activity stream.
  *
  * No submission is looked up. A window folds any number of commands into one
  * native turn, so naming one of them as the activity's owner was always a
  * guess — and when the guess failed, which it did for anything claude emitted
  * before a command's `started` lifecycle arrived, the fact was dropped
  * entirely. The agent is the subject, and it is always known.
+ *
+ * The envelope decides what a block means, not the block's own type. An
+ * `assistant` envelope carries the model's words and its tool calls. A `user`
+ * envelope carries what those tools returned — and, as plain text blocks, the
+ * context the CLI injected into its own conversation: the body of a skill it
+ * just loaded, hook output, reminders. None of that text is the agent's, and
+ * none of it is the operator's (stdin is never echoed back), so it is not
+ * displayed at all. Operator ruling, 2026-09-03: 「所有的 user 消息都隐藏即可」.
  */
 function emitStreamActivity(
   active: ActiveTurn,
-  raw: Record<string, unknown>,
+  line: ClaudeActivityLine,
   context: ProtocolEventContext,
 ): void {
-  const message = recordValue(raw['message']) ?? raw;
+  const message = recordValue(line.raw['message']) ?? line.raw;
   const messageId = stringValue(message['id']) ?? `stream-${active.activitySequence++}`;
   const content = Array.isArray(message['content']) ? message['content'] : [];
   for (const [blockIndex, candidate] of content.entries()) {
     const block = recordValue(candidate);
     if (block === null) continue;
-    const activity = activityForBlock(active, messageId, blockIndex, block);
+    const activity = line.kind === 'assistant'
+      ? assistantBlockActivity(active, messageId, blockIndex, block)
+      : toolResultActivity(active, messageId, block);
     if (activity === null) continue;
     emitActivity(activity, context.activitySink);
   }
 }
 
-function activityForBlock(
+/** What the model said, or a tool it called. */
+function assistantBlockActivity(
   active: ActiveTurn,
   messageId: string,
   blockIndex: number,
@@ -252,25 +266,32 @@ function activityForBlock(
       truncated: false,
     };
   }
-  if (block['type'] === 'tool_use') {
-    const callId = stringValue(block['id']);
-    const name = stringValue(block['name']);
-    if (callId === null || callId === '' || name === null) return null;
-    const args = toJsonValue(block['input']);
-    active.tools.set(callId, { name, arguments: args });
-    return {
-      kind: 'tool.call',
-      occurredAt: Date.now(),
-      id: `${messageId}:${callId}:started`,
-      callId,
-      toolName: name,
-      action: namedToolAction(name),
-      status: 'started',
-      arguments: args,
-      result: null,
-      error: null,
-    };
-  }
+  if (block['type'] !== 'tool_use') return null;
+  const callId = stringValue(block['id']);
+  const name = stringValue(block['name']);
+  if (callId === null || callId === '' || name === null) return null;
+  const args = toJsonValue(block['input']);
+  active.tools.set(callId, { name, arguments: args });
+  return {
+    kind: 'tool.call',
+    occurredAt: Date.now(),
+    id: `${messageId}:${callId}:started`,
+    callId,
+    toolName: name,
+    action: namedToolAction(name),
+    status: 'started',
+    arguments: args,
+    result: null,
+    error: null,
+  };
+}
+
+/** What a tool returned, correlated to the call the model made. */
+function toolResultActivity(
+  active: ActiveTurn,
+  messageId: string,
+  block: Record<string, unknown>,
+): RuntimeActivity | null {
   if (block['type'] !== 'tool_result') return null;
   const callId = stringValue(block['tool_use_id']);
   if (callId === null || callId === '') return null;

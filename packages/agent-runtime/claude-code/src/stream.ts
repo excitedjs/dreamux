@@ -5,8 +5,10 @@
  * on stdio under `--input-format stream-json --output-format stream-json`. This
  * is what makes the `builtin:claude-code` runtime *resident*: one long-lived
  * `claude --print` process consumes user-message lines on stdin and streams
- * `init` / `assistant` / `result` envelopes on stdout, instead of a fresh
- * one-shot process per turn.
+ * `init` / `assistant` / `user` / `result` envelopes on stdout, instead of a
+ * fresh one-shot process per turn. The `user` envelopes are the CLI's, not the
+ * operator's: stdin input is never echoed, so a `user` line is a tool result
+ * or context the CLI injected into its own conversation.
  *
  * Two design rules, both load-bearing:
  *
@@ -184,6 +186,8 @@ export function parseLine(line: string): ParsedLine {
         sessionId: str(parsed['session_id']),
         raw: parsed,
       };
+    case 'user':
+      return { kind: 'user', raw: parsed };
     case 'result':
       return { kind: 'result', outcome: parseResult(parsed), raw: parsed };
     case 'control_request': {
