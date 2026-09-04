@@ -242,10 +242,25 @@ function teamToolDescriptors(
     return [
       tool(
         'dissolve',
-        'Submit a dissolve of this descriptor-bound Team. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }) and never reports how the dissolve went: the Team\'s Workflow, TeamMates, and this TeamLeader are stopped behind that receipt, so expect this call to lose its response. note is required and records why the Team stopped. Uncommitted, untracked, or unmerged work in the managed worktree leaves the Team open and running instead of closing it. force: true discards that local work so the managed checkout can be removed; it never deletes the branch, its commits, a reused directory, or the source repository.',
+        'Call this only when the Team\'s work is complete. First check the workspace for uncommitted, untracked, or unmerged work; if there is any, or you cannot tell, do not dissolve: report it and ask the user. Submit a dissolve of this descriptor-bound Team. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }) and never reports how the dissolve went: the Team\'s Workflow, TeamMates, and this TeamLeader are stopped behind that receipt, so expect this call to lose its response. note is required and records why the Team stopped. Uncommitted, untracked, or unmerged work in a managed delete-on-close worktree leaves the Team open and running instead of closing it. force: true only overrides a delete-on-close removal blocked by uncommitted, untracked, or unmerged work, by discarding that work; under cleanup: keep the checkout and its changes are retained; never the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user\'s.',
         {
-          note: { type: 'string', minLength: 1, maxLength: 2000, pattern: '\\S' },
-          force: { type: 'boolean' },
+          note: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 2000,
+            pattern: '\\S',
+            description: 'Why the Team stops; recorded on it.',
+          },
+          force: {
+            type: 'boolean',
+            description:
+              'Only with the user\'s explicit confirmation in this conversation. ' +
+              'It only overrides a delete-on-close removal blocked by ' +
+              'uncommitted, untracked, or unmerged work, by discarding that ' +
+              'work; under cleanup: keep the checkout and its changes are ' +
+              'retained; never the branch, its commits, a reused directory, or ' +
+              'the source repository.',
+          },
         },
         ['note'],
         {
@@ -261,12 +276,48 @@ function teamToolDescriptors(
       'create',
       'Create a Team with its TeamLeader. name_prefix is only a requested label; create RETURNS a concrete, never-reused team_name with a 4-8 character random suffix, and every later status/history/dissolve/send call MUST use that returned team_name. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to let Dreamux allocate a plain shared work directory for the Team, or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } to choose an existing path or create a managed git worktree. prompt is optional: when supplied it is delivered as the TeamLeader\'s first turn; when omitted no TeamLeader process starts until bound-channel inbound or a later Team MCP send arrives. Routing a channel conversation to the Team is the channel\'s own decision, made with that channel\'s tools.',
       {
-        name_prefix: { type: 'string', minLength: 1, maxLength: 64 },
-        repo: repoInputSchema(),
-        leader_agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
-        intent: { type: 'string', minLength: 1, maxLength: 2000 },
-        identity: { type: 'string', minLength: 1, maxLength: 4000 },
-        prompt: { type: 'string', maxLength: 20000 },
+        name_prefix: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 64,
+          description:
+            'Requested label; the concrete team_name comes back in the result.',
+        },
+        repo: {
+          ...repoInputSchema(),
+          description: 'Where the Team works; omit for a fresh shared directory.',
+        },
+        leader_agent_runtime: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 128,
+          description:
+            'Agent runtime id for the TeamLeader, from ' +
+            'get_capabilities.agent_runtimes[].id on the teammate server.',
+        },
+        intent: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 2000,
+          description:
+            'One-line subject of the Team\'s work; shown in list and history and ' +
+            'kept for recovery.',
+        },
+        identity: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 4000,
+          description:
+            'Standing role and boundaries appended to the TeamLeader\'s system ' +
+            'prompt for every turn.',
+        },
+        prompt: {
+          type: 'string',
+          maxLength: 20000,
+          description:
+            'The TeamLeader\'s first turn; omit it and no TeamLeader process ' +
+            'starts until a routed inbound or a later send arrives.',
+        },
       },
       ['name_prefix', 'leader_agent_runtime', 'intent'],
       {
@@ -279,9 +330,24 @@ function teamToolDescriptors(
       'send',
       'Submit a follow-up turn to a Team\'s TeamLeader by team_name. This targets the TeamLeader agent only; it does not send to Team members and does not bind or post to a channel.',
       {
-        team_name: { type: 'string', minLength: 1, maxLength: 64 },
-        prompt: { type: 'string', minLength: 1, maxLength: 20000 },
-        intent: { type: 'string', minLength: 1, maxLength: 2000 },
+        team_name: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 64,
+          description: 'The concrete team_name returned by create.',
+        },
+        prompt: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 20000,
+          description: 'The next turn for the TeamLeader.',
+        },
+        intent: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 2000,
+          description: 'Replaces the Team\'s recorded subject before the turn.',
+        },
       },
       ['team_name', 'prompt'],
       {
@@ -314,7 +380,14 @@ function teamToolDescriptors(
     tool(
       'status',
       'Read one Team\'s detailed current status by its team_name (record, TeamLeader status, and member count).',
-      { team_name: { type: 'string', minLength: 1, maxLength: 64 } },
+      {
+        team_name: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 64,
+          description: 'The concrete team_name returned by create.',
+        },
+      },
       ['team_name'],
       {
         title: 'Read Team status',
@@ -333,14 +406,53 @@ function teamToolDescriptors(
       'history',
       'Search Teams for recovery (closed included) by team_name, status, repo, intent text, and time range. A compact recovery list, not a raw event timeline. Returns { items, next_cursor }.',
       {
-        team_name: { type: 'string', minLength: 1, maxLength: 64 },
-        status: { type: 'string', enum: ['starting', 'running', 'closed'] },
-        repo: { type: 'string', minLength: 1, maxLength: 4096 },
-        grep: { type: 'string', minLength: 1, maxLength: 500 },
-        since: { type: 'integer' },
-        until: { type: 'integer' },
-        limit: { type: 'integer', minimum: 1, maximum: 100 },
-        cursor: { type: 'string', minLength: 1, maxLength: 1000 },
+        team_name: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 64,
+          description: 'Exact concrete team_name.',
+        },
+        status: {
+          type: 'string',
+          enum: ['starting', 'running', 'closed'],
+          description: 'Filter by Team status: starting, running, or closed.',
+        },
+        repo: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 4096,
+          description: 'Case-insensitive substring of the source repository path.',
+        },
+        grep: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 500,
+          description:
+            'Case-insensitive substring over team_name, intent, source ' +
+            'repository, leader name, and close note.',
+        },
+        since: {
+          type: 'integer',
+          description:
+            'Epoch milliseconds; lower bound on a record\'s last update.',
+        },
+        until: {
+          type: 'integer',
+          description:
+            'Epoch milliseconds; upper bound on a record\'s last update.',
+        },
+        limit: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 100,
+          description: 'Rows per page; default 20, max 100.',
+        },
+        cursor: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 1000,
+          description: 'next_cursor from the previous page.',
+        },
       },
       [],
       {
@@ -357,11 +469,29 @@ function teamToolDescriptors(
     ),
     tool(
       'dissolve',
-      'Submit a dissolve of one Team (by team_name) and its agents. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }); the Team is stopped and closed behind that receipt, so this call never reports the outcome. note is required: it records why a recoverable Team was stopped. Uncommitted, untracked, or unmerged work in the managed worktree leaves the Team open and running instead of closing it, so read the Team\'s status afterwards to see what happened. force: true discards that local work so the managed checkout can be removed; it never deletes the branch, its commits, a reused directory, or the source repository.',
+      'Submit a dissolve of one Team (by team_name) and its agents. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }); the Team is stopped and closed behind that receipt, so this call never reports the outcome. note is required: it records why a recoverable Team was stopped. Uncommitted, untracked, or unmerged work in a managed delete-on-close worktree leaves the Team open and running instead of closing it, so read the Team\'s status afterwards to see what happened. force: true only overrides a delete-on-close removal blocked by uncommitted, untracked, or unmerged work, by discarding that work; under cleanup: keep the checkout and its changes are retained; never the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user\'s.',
       {
-        team_name: { type: 'string', minLength: 1, maxLength: 64 },
-        note: { type: 'string', minLength: 1, maxLength: 2000 },
-        force: { type: 'boolean' },
+        team_name: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 64,
+          description: 'The concrete team_name returned by create.',
+        },
+        note: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 2000,
+          description: 'Why the Team stops; recorded on it.',
+        },
+        force: {
+          type: 'boolean',
+          description:
+            'Only overrides a delete-on-close removal blocked by uncommitted, ' +
+            'untracked, or unmerged work, by discarding that work; under ' +
+            'cleanup: keep the checkout and its changes are retained; never ' +
+            'the branch, its commits, a reused directory, or the source ' +
+            'repository.',
+        },
       },
       ['team_name', 'note'],
       {

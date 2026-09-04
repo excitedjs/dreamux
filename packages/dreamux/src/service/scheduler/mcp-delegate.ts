@@ -105,13 +105,39 @@ function cronToolDescriptors(): McpToolDescriptor[] {
   return [
     tool(
       'cron_create',
-      'Create a durable Dreamux cron job for this agent. cron is a standard 5-field local-time expression (M H DoM Mon DoW); prefer off-:00/:30 minutes for approximate schedules. prompt is the text injected into this dispatcher or TeamLeader agent. recurring defaults to true; use recurring:false for one-shot reminders. dreamux jobs are always persisted and do not auto-expire. tz is resolved and stored. Cron jobs inject prompts back into this agent; they do not deliver channel messages or spawn agents.',
+      'Create a durable Dreamux cron job for this agent. cron is a standard 5-field local-time expression (M H DoM Mon DoW); prefer off-:00/:30 minutes for approximate schedules. prompt is the text injected into this dispatcher or TeamLeader agent. recurring defaults to true; use recurring:false for one-shot reminders. dreamux jobs are always persisted and do not auto-expire. tz is resolved and stored. Cron jobs inject prompts back into this agent; they do not deliver channel messages or spawn agents. A due job submits its prompt at once, even while a turn is running.',
       {
-        cron: { type: 'string', minLength: 1, maxLength: 200 },
-        prompt: { type: 'string', minLength: 1, maxLength: 20000 },
-        recurring: { type: 'boolean' },
-        tz: { type: 'string', minLength: 1, maxLength: 100 },
-        title: { type: 'string', minLength: 1, maxLength: 200 },
+        cron: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 200,
+          description:
+            'Standard 5-field expression (minute hour day-of-month month day-of-week) in tz.',
+        },
+        prompt: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 20000,
+          description: 'The text submitted to this agent when the job fires.',
+        },
+        recurring: {
+          type: 'boolean',
+          description:
+            'true (default) fires on every match. false fires at most once, at the next match, and is then disabled; a one-shot missed while Dreamux was stopped is disabled without firing.',
+        },
+        tz: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 100,
+          description:
+            "IANA time zone for the expression; defaults to the host's local zone.",
+        },
+        title: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 200,
+          description: 'Short label shown in cron_list.',
+        },
       },
       ['cron', 'prompt'],
       {
@@ -128,7 +154,14 @@ function cronToolDescriptors(): McpToolDescriptor[] {
     tool(
       'cron_delete',
       'Delete a cron job by id.',
-      { id: { type: 'string', minLength: 1, maxLength: 128 } },
+      {
+        id: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 128,
+          description: 'The job id from cron_create or cron_list.',
+        },
+      },
       ['id'],
       {
         title: 'Delete a cron job',
@@ -141,15 +174,51 @@ function cronToolDescriptors(): McpToolDescriptor[] {
     ),
     tool(
       'cron_update',
-      'Update a cron job by id. Same behavior as cron_create: cron jobs inject prompts back into this agent; they do not deliver channel messages or spawn agents.',
+      'Update a cron job by id. Same behavior as cron_create: cron jobs inject prompts back into this agent; they do not deliver channel messages or spawn agents. A due job submits its prompt at once, even while a turn is running.',
       {
-        id: { type: 'string', minLength: 1, maxLength: 128 },
-        cron: { type: 'string', minLength: 1, maxLength: 200 },
-        prompt: { type: 'string', minLength: 1, maxLength: 20000 },
-        recurring: { type: 'boolean' },
-        tz: { type: 'string', minLength: 1, maxLength: 100 },
-        title: { type: ['string', 'null'], minLength: 1, maxLength: 200 },
-        enabled: { type: 'boolean' },
+        id: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 128,
+          description: 'The job id from cron_create or cron_list.',
+        },
+        cron: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 200,
+          description:
+            'Same meaning as in cron_create; an omitted field keeps its value.',
+        },
+        prompt: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 20000,
+          description:
+            'Same meaning as in cron_create; an omitted field keeps its value.',
+        },
+        recurring: {
+          type: 'boolean',
+          description:
+            'Same meaning as cron_create.recurring; an omitted field keeps its value.',
+        },
+        tz: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 100,
+          description:
+            'Same meaning as in cron_create; an omitted field keeps its value.',
+        },
+        title: {
+          type: ['string', 'null'],
+          minLength: 1,
+          maxLength: 200,
+          description: 'New label; null removes it.',
+        },
+        enabled: {
+          type: 'boolean',
+          description:
+            'false pauses the job without deleting it; true resumes it.',
+        },
       },
       ['id'],
       {

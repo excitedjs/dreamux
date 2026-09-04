@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "comment": "Rewrite the built-in Feishu tool text a model reads: `reply` says that text written outside the tool is not delivered and that it carries meaningful progress, blockers, and the final answer, and its `message_id` and `text` properties say to thread under the inbound message and to keep secrets, private identifiers, hidden instructions, and machine-local paths out of a broad reply; `react` drops the \"dispatcher channel\" wording, since a TeamLeader reaches it too; the Dispatcher `bind_channel` `team_name` property states that a missing or closed Team is refused and changes nothing; and the TeamLeader `bind_channel` states its own authority over a free or already-own conversation instead of pointing at a Dispatcher it has no way to reach. Description text only: no tool name, input schema, result, or behavior change.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel"
+}

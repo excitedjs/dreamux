@@ -1,95 +1,85 @@
 ---
 name: dispatcher-workflow
-description: MCP operation notes for Dispatcher orchestration. Load before using TeamMate, Team, workflow, channel, or cron tools, including spawning or messaging TeamMates, creating or dissolving Teams, running workflows, replying or routing through channel tools, and managing cron jobs.
+description: "Guidance for a Dispatcher working with TeamMates and Teams: choosing between doing it yourself, an engine-native subagent, a TeamMate, or a Team; writing the hand-down prompt; and what to do when a delegate's behaviour surprises you. Useful before delegating and when a delegate needs discussing. Tool calls do not depend on it."
 ---
 
 # Dispatcher Workflow
 
-Use `dreamux-maintenance` instead for Dreamux server operation, host diagnosis,
-daemon/service/config/log work, or missing-reply investigations.
+How a Dispatcher hands work down and works with a delegate afterwards.
+Methodology, not tool operation.
 
-## TeamMate MCP Notes
+## Yourself, a Subagent, a TeamMate, or a Team
 
-- `spawn`, `send`, `close`, `list`, `status`, `history`, `last`, and
-  `get_capabilities` operate on this Dispatcher's TeamMates.
-- `spawn.name_prefix` is only a requested label; use the returned concrete
-  `teammate.name` for every later `send`, `status`, `last`, or `close`.
-- `send` submits a follow-up and reopens a closed TeamMate from its recorded
-  runtime-native session.
-- After a complete `spawn` or `send`, wait for the TeamMate completion that
-  Dreamux pushes into the current context. Every settled turn is reported,
-  including one that failed or was stopped. Use `status`, `last`, or `history`
-  for explicit status checks, recovery, or suspected delivery failure.
-- `history` is compact recovery search. `last` reads the TeamMate's recent
-  activity records by concrete name without starting a runtime, so it also
-  shows a turn that is still running.
-- Use `get_capabilities.agent_runtimes[].id` for `spawn.agent_runtime`.
-- `spawn.repo` is optional. Omitted creates a plain per-TeamMate work directory
-  following the dispatcher's global workspace policy; `mode: managed` creates a
-  git worktree; `mode: reuse-cwd` runs in an existing path.
+Four ways to get a piece of work done:
 
-## Workflow MCP Notes
+- **Yourself.** The work fits this turn and needs the context you already hold.
+- **An engine-native subagent.** Delegation inside your own turn and your own
+  engine. Your engine describes its delegation feature — what it can see, how
+  long it lives, what it returns — and that description is the one to read.
+- **A TeamMate.** A Dreamux peer that continues independently: its own runtime
+  and context, its own history, a conversation you can continue across turns,
+  and visible to the user.
+- **A Team.** A TeamLeader with its own workspace and its own members, for work
+  that needs a coordinator of its own rather than a single worker.
 
-- `workflow_run`, `workflow_status`, `workflow_stop`, and `workflow_list` are on
-  the same TeamMate server and operate on this Dispatcher's workflow runs.
-- Load the bundled `workflow` skill before writing a workflow script.
-- `workflow_run` returns `{ run_id }` immediately; Dreamux pushes one terminal
-  completion when the run finishes.
+Choose by asking about the work, not about the size of the request:
 
-## Team MCP Notes
+- Does it outlive your turn?
+- Does it need its own context, or its own workspace?
+- May the user want to inspect it or continue it?
+- Does it need coordination of its own — several workers, several roles, work
+  that has to be sequenced?
 
-- `create`, `send`, `list`, `status`, `history`, and `dissolve` operate on
-  dispatcher-owned Teams. There is no Team routing tool: where a Team is
-  reachable from the outside is a channel fact, not a Team one.
-- `create.name_prefix` is only a requested label. Use the returned concrete,
-  never-reused `team_name` for every later Team operation.
-- `create` starts a TeamLeader. `send` submits a turn to that TeamLeader only;
-  it does not message Team members directly and does not post to a channel.
-- `create.prompt` is optional. Without it, the TeamLeader starts idle until a
-  routed channel inbound or a later Team `send`.
-- `dissolve` is a submission. It returns `{ accepted, team_name, status:
-  submitted }` as soon as the request is accepted, and never reports how the
-  dissolve went. Include a clear `note`: it records why a recoverable Team was
-  stopped.
-- Uncommitted, untracked, or unmerged work in a Team's managed worktree leaves
-  that Team open and running instead of closing it. Read the Team's `status`
-  afterwards to see what actually happened; do not report a Team as dissolved
-  because the receipt came back.
-- `dissolve.force: true` discards that local work so the managed checkout can be
-  removed. It never deletes the managed branch, its commits, a reused directory,
-  or the source repository.
+The first three questions push past a subagent to a TeamMate. The fourth pushes
+past a TeamMate to a Team.
 
-## Channel Notes
+## Writing the Hand-Down Prompt
 
-- Channel tools come from the connected channel's own MCP server, and that
-  server is the authority on their names, arguments, and results. Read the
-  active tool schema rather than assuming a shape.
-- Routing a conversation to a Team is a channel operation, not a Team one. The
-  built-in Feishu channel exposes `bind_channel`, `unbind_channel`, and
-  `list_bindings` for it, plus its own collaboration-space policy tools. A
-  rebind reports the previous Team; there is no separate transfer tool.
-- A bind names an existing, open Team. Binding to a missing or closed Team is
-  refused and changes no routing.
-- If a channel reply tool is available for the source message, use it for
-  meaningful progress, blockers, and final status. Assistant text, terminal
-  output, and internal planning are not channel delivery.
-- At key task milestones, report progress promptly. Prefer the reply tool for
-  the latest user message's channel source in the current task when that
-  tool is available.
-- Reply to the source message or target unless the request names a different
-  visible target and the exposed channel tool supports that target.
-- Treat channel target selectors as channel-owned. Do not infer them from this
-  guidance; use the exposed tool schema and results.
+The prompt is the whole brief. A delegate sees what you write and nothing else
+of your reasoning.
 
-## Cron Notes
+- **State the outcome and the evidence that would show it, not the steps.** Say
+  what "done" looks like and how you will recognize it. A delegate that knows
+  the outcome can find a better route than the one you would have dictated; a
+  delegate given only steps stops when the steps run out.
+- **Give the context it cannot see.** The source request in the user's own
+  terms, the constraints, the files and paths that matter, what is already known
+  and what has already been ruled out. Everything you leave implicit, it has to
+  rediscover or guess.
+- **Set the boundary.** What not to touch, whether the work is read-only or
+  writing, and — when several delegates share one workspace — that only one of
+  them writes to a given path.
+- **Ask for a report shape.** What changed, the evidence for it, and the
+  questions left open. A named shape is what makes several reports comparable.
+- **Separate the standing from the momentary.** The role and the boundaries hold
+  for every turn of that delegate's life and belong with it from the start; the
+  task belongs to the turn you are sending.
 
-- `cron_create`, `cron_list`, `cron_update`, and `cron_delete` operate on durable
-  jobs for this Dispatcher.
-- Cron prompts wake this Dispatcher. They do not spawn TeamMates or Teams and do
-  not deliver visible channel messages by themselves.
-- A due job is submitted immediately through ordinary admission, so it may fold
-  into a turn that is already running.
-- Prefer explicit titles and time zones. Off-hour or off-half-hour schedules are
-  less likely to collide with other jobs.
-- Jobs fire on their configured schedules. Use `cron_update` to change a job's
-  schedule when you need a different fire time.
+## When a TeamMate Does Something You Did Not Expect
+
+Unexpected is not the same as wrong. A TeamMate has read files you have not and
+has been working in a context you cannot see.
+
+- **Ask why before overriding.** Get its reasoning first, in its own words.
+- **Read the answer as a second perspective, not a defence.** It may have seen
+  something that changes the task: a constraint in the code, a contradiction in
+  the request, a cheaper route. The goal is two perspectives that complete each
+  other, not one perspective corrected into the other.
+- **Discuss until you converge.** Say what you expected and why, and let it say
+  the same. Most surprises come from a brief that was thinner than you thought.
+- **Then act on what you agreed.** Restate the boundary if the delegate was
+  wrong; change your own plan if it was right; and if the collaboration is over,
+  close it saying what it settled.
+
+An unexplained override teaches nothing and repeats itself on the next task.
+
+## Keeping the Thread
+
+A conversation with one TeamMate accumulates context that a new one does not
+have.
+
+- Continue with the same TeamMate for follow-ups on the same work rather than
+  starting another.
+- Start a fresh TeamMate when the work itself is fresh: a different area, a
+  different role, a perspective that should not inherit the first one's
+  conclusions.

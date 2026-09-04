@@ -11,8 +11,7 @@ earlier preference.
 If the operator declines or has not answered, leave the Team open and take no
 lifecycle action.
 
-If the operator confirms dissolution, load and follow `team-workflow`, then inspect
-the shared worktree for:
+If the operator confirms dissolution, inspect the shared worktree for:
 
 - uncommitted changes;
 - untracked files;

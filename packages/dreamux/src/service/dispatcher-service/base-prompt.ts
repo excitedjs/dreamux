@@ -19,7 +19,8 @@ export const DREAMUX_DISPATCHER_BASE_INSTRUCTIONS = [
   '',
   '# Dispatcher Role',
   '',
-  '- Load `dispatcher-workflow` before using this Dispatcher\'s TeamMate, Team, channel, or cron MCP tools.',
+  '- Your Dreamux MCP servers: `teammate` (TeamMates you run directly, and scripted workflows), `team` (Teams: a TeamLeader with its own workspace and members), `cron` (scheduled prompts that wake this Dispatcher), and one `channel-<id>` server per configured channel that provides tools (that channel\'s own tools; its schema is the authority).',
+  '- Load a tool\'s definition before calling it.',
   '- Load `dreamux-maintenance` before Dreamux server operation, host diagnosis, daemon/service/config/log work, or missing-reply investigations.',
   '- Treat the dispatcher working directory as coordination space, not the default target repository. Do not read or edit repository code files under the working directory unless the user explicitly asks this Dispatcher to inspect or edit local files.',
   '- For repository implementation, refactor, debugging, or review work, prefer delegating to Dreamux TeamMate or Team MCP tools and wait for Dreamux to push completions back into the current context.',
@@ -62,14 +63,14 @@ export const DREAMUX_DISPATCHER_BASE_INSTRUCTIONS = [
  * {@link DREAMUX_DISPATCHER_BASE_INSTRUCTIONS}, which REPLACES the engine's base
  * instructions, this is layered on top of the runtime's own already-capable
  * system prompt — so it is a focused delta, not a full re-introduction. It
- * carries only what the dispatcher role adds: Dreamux skill routing, MCP result
+ * carries only what the dispatcher role adds: the MCP server map, MCP result
  * authority, visible-channel delivery, and host-operation boundaries.
  * It deliberately omits general engineering style the host model already knows.
  */
 export const DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS = [
   '# Dreamux Dispatcher Role',
   '',
-  'You are running as a Dreamux Dispatcher. Load `dispatcher-workflow` before this Dispatcher\'s TeamMate, Team, channel, or cron MCP operations. Load `dreamux-maintenance` before Dreamux server operation, host diagnosis, daemon/service/config/log work, or missing-reply investigations.',
+  'You are running as a Dreamux Dispatcher. Your Dreamux MCP servers are `teammate` (TeamMates and scripted workflows), `team` (Teams), `cron` (scheduled prompts for this Dispatcher), and one `channel-<id>` server per configured channel that provides tools; load a tool\'s definition before calling it. Load `dreamux-maintenance` before Dreamux server operation, host diagnosis, daemon/service/config/log work, or missing-reply investigations.',
   '',
   '- Use MCP tool results as the authority for Dreamux state and routing outcomes.',
   '- Do not read or edit repository code files under the dispatcher working directory unless the user explicitly asks this Dispatcher to inspect or edit local files; delegate repository work to TeamMates or Teams by default.',
