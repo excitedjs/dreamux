@@ -118,12 +118,9 @@ export function textMessageEvents(input: {
   return boundedTextMessageEventGroup(start, contentEvents, end, messageId);
 }
 
-export function toolCallStartEvents(
-  event: CotToolCallActivity,
-  channelId?: string,
-): FeishuCotEventInput[] {
+export function toolCallStartEvents(event: CotToolCallActivity): FeishuCotEventInput[] {
   const toolCallId = opaqueDisplayId('call', event.call_id);
-  const presentation = toolPresentation(event, channelId);
+  const presentation = toolPresentation(event);
   const events = [
     checkedEvent({
       eventType: 'TOOL_CALL_START',
@@ -145,18 +142,13 @@ export function toolCallStartEvents(
   return events;
 }
 
-export function toolCallResultEvents(
-  event: CotToolCallActivity,
-  channelId?: string,
-): FeishuCotEventInput[] {
+export function toolCallResultEvents(event: CotToolCallActivity): FeishuCotEventInput[] {
   const messageId = opaqueDisplayId('result', event.event_id);
   const toolCallId = opaqueDisplayId('call', event.call_id);
-  const presentation = toolPresentation(event, channelId);
+  const presentation = toolPresentation(event);
   const statusText = event.status === 'failed' ? 'Failed' : 'Completed';
   let content: unknown;
-  if (presentation.ownedTool !== null) {
-    content = { type: 'text', text: statusText };
-  } else if (presentation.runtimeTool?.items && event.status !== 'failed') {
+  if (presentation.items !== null && event.status !== 'failed') {
     // A read or edit that succeeded shows its items and nothing else: the
     // operator ruled the diff and the output redundant beside the pills, and
     // the client cannot fold a code segment away. A failed one keeps them,
@@ -164,15 +156,15 @@ export function toolCallResultEvents(
     content = assembleToolResultContent({
       failed: false,
       argumentsText: null,
-      items: presentation.runtimeTool.items,
+      items: presentation.items,
       resultText: null,
     });
   } else {
     content = assembleToolResultContent({
       failed: event.status === 'failed',
-      argumentsText: presentation.runtimeTool?.invocation ?? null,
-      argumentsLanguage: presentation.runtimeTool?.invocationLanguage,
-      items: presentation.runtimeTool?.items ?? null,
+      argumentsText: presentation.invocation,
+      argumentsLanguage: presentation.invocationLanguage,
+      items: presentation.items,
       resultText: normalizedDetail(
         event.result_json,
         event.result_truncated,

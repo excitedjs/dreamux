@@ -95,6 +95,31 @@ describe('runtime-labelled tool rows', () => {
     });
   });
 
+  it("presents the Channel's own tools by the same rule as any other MCP tool", () => {
+    for (const toolName of ['mcp__chan-cot__reply', 'channel-chan-cot.react', 'feishu.list_chat_bots']) {
+      const [start] = toolCallStartEvents(toolCall({
+        tool_name: toolName,
+        tool_action: null,
+        arguments_json: '{"chat_id":"oc_1","text":"hi"}',
+      }));
+      expect(start!.content).toEqual({
+        toolCallId: expect.any(String),
+        toolCallName: toolName.split(/__|\./).at(-1),
+        icon: 'app-default_outlined',
+      });
+    }
+    const [result] = toolCallResultEvents(toolCall({
+      tool_name: 'mcp__chan-cot__reply',
+      tool_action: null,
+      status: 'completed',
+      result_json: '{"message_ids":["om_1"]}',
+    }));
+    // No fixed Completed line: the output expands like any other tool's.
+    expect(result!.content).toMatchObject({
+      content: { type: 'text', text: '{"message_ids":["om_1"]}' },
+    });
+  });
+
   it('expands a result into the invocation and the output as documented code segments', () => {
     const [result] = toolCallResultEvents(toolCall({
       status: 'completed',

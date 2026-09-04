@@ -115,7 +115,6 @@ export class FeishuCotAdapter {
       signal: this.controller.signal,
     });
     this.activity = {
-      channelId: opts.channelId,
       openToolCallsMax: FEISHU_COT_OPEN_TOOL_CALLS_MAX,
       acceptOpening: (key, state, events) =>
         this.acceptOpeningActivityForState(key, state, events),

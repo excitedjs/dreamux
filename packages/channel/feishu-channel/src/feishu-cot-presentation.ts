@@ -31,18 +31,6 @@ function displayToolName(toolName: string): string {
   );
 }
 
-type OwnedTool = 'reply' | 'react' | 'list_chat_bots';
-/**
- * What the runtime said about its own call, ready for the card: the row's
- * title composed from the runtime's summary, the invocation the expanded
- * row shows in the caller's notation instead of as JSON, and the items the
- * call was about as the pills of a `list` segment.
- */
-interface RuntimeToolPresentation {
-  readonly invocation: string | null;
-  readonly invocationLanguage: 'text' | 'bash';
-  readonly items: CotItemList | null;
-}
 
 /** One pill of a `list` result segment, as the COT Message Brief shapes it. */
 export interface CotListItem {
@@ -56,12 +44,23 @@ export interface CotItemList {
   readonly more?: CotListItem;
 }
 
+/**
+ * What the runtime said about the call, ready for the card: the row's title
+ * composed from the runtime's summary, the icon of the action it named, the
+ * invocation the expanded row shows in the caller's notation instead of as
+ * JSON, and the items the call was about as the pills of a `list` segment.
+ * Nothing here comes from the tool's identity: a Channel-owned tool and a
+ * foreign MCP tool are presented by the same rule (operator ruling,
+ * 2026-09-04: 「这些全部回退吧」, on the Channel's hand-made titles for its own
+ * `reply`, `react` and `list_chat_bots`).
+ */
 interface ToolPresentation {
   readonly toolCallName: string;
   readonly icon?: CotToolIcon;
   readonly title?: string;
-  readonly ownedTool: OwnedTool | null;
-  readonly runtimeTool: RuntimeToolPresentation | null;
+  readonly invocation: string | null;
+  readonly invocationLanguage: 'text' | 'bash';
+  readonly items: CotItemList | null;
 }
 
 /**
@@ -72,7 +71,7 @@ interface ToolPresentation {
  * `app-default_outlined` for a call nothing could label (operator ruling,
  * 2026-09-04: 「mcp 工具隐藏掉参数吧，icon 选 app-default_outlined」).
  */
-export type CotToolIcon = 'search' | 'bash' | 'read' | 'write' | 'default' | 'app-default_outlined';
+export type CotToolIcon = 'search' | 'bash' | 'read' | 'write' | 'app-default_outlined';
 
 const ACTION_TOOL_NAMES: Readonly<Record<RuntimeToolAction, string>> = {
   read: 'Read',
@@ -104,34 +103,9 @@ const ACTION_VERBS: Readonly<Record<RuntimeToolAction, string>> = {
   run: '',
 };
 
-const OWNED_TOOL_PRESENTATION: Readonly<Record<
-  OwnedTool,
-  Pick<ToolPresentation, 'icon' | 'title'>
->> = {
-  reply: { icon: 'write', title: 'Reply on Feishu' },
-  react: { icon: 'default', title: 'React on Feishu' },
-  list_chat_bots: {
-    icon: 'search',
-    title: 'List chat bots',
-  },
-};
-
-export function toolPresentation(
-  event: CotToolCallActivity,
-  channelId: string | undefined,
-): ToolPresentation {
-  const toolCallName = displayToolName(event.tool_name);
-  const ownedTool = ownedFeishuTool(event.tool_name, channelId);
-  if (ownedTool !== null) {
-    return {
-      toolCallName,
-      ...OWNED_TOOL_PRESENTATION[ownedTool],
-      ownedTool,
-      runtimeTool: null,
-    };
-  }
+export function toolPresentation(event: CotToolCallActivity): ToolPresentation {
   const actionName = event.tool_action === null
-    ? toolCallName
+    ? displayToolName(event.tool_name)
     : ACTION_TOOL_NAMES[event.tool_action];
   const title = runtimeToolTitle(event, actionName);
   // A call with neither an action nor a label — an MCP tool, today — shows
@@ -143,16 +117,13 @@ export function toolPresentation(
     toolCallName: actionName,
     ...(icon === undefined ? {} : { icon }),
     ...(title === null ? {} : { title }),
-    ownedTool: null,
-    runtimeTool: {
-      invocation: normalizedDetail(
-        event.invocation,
-        event.invocation_truncated,
-        TOOL_ARGUMENTS_SOFT_MAX_BYTES,
-      ),
-      invocationLanguage: event.tool_action === 'run' ? 'bash' : 'text',
-      items: itemList(event),
-    },
+    invocation: normalizedDetail(
+      event.invocation,
+      event.invocation_truncated,
+      TOOL_ARGUMENTS_SOFT_MAX_BYTES,
+    ),
+    invocationLanguage: event.tool_action === 'run' ? 'bash' : 'text',
+    items: itemList(event),
   };
 }
 
@@ -183,36 +154,6 @@ function runtimeToolTitle(event: CotToolCallActivity, actionName: string): strin
   return event.tool_action === null
     ? `${actionName}: ${summary}`
     : `${ACTION_VERBS[event.tool_action]}${summary}`;
-}
-
-function ownedFeishuTool(
-  toolName: string,
-  channelId: string | undefined,
-): OwnedTool | null {
-  let server: string | null = null;
-  let leaf: string | null = null;
-  const mcpParts = toolName.split('__');
-  if (mcpParts.length === 3 && mcpParts[0] === 'mcp') {
-    [, server, leaf] = mcpParts;
-  } else {
-    const separator = toolName.lastIndexOf('.');
-    if (separator > 0 && separator < toolName.length - 1) {
-      server = toolName.slice(0, separator);
-      leaf = toolName.slice(separator + 1);
-    }
-  }
-  // Core names a Channel MCP server from the configured channel id, so accept
-  // both the bare id and the namespaced form it is injected under.
-  if (
-    server !== 'feishu' &&
-    (channelId === undefined ||
-      (server !== channelId && server !== `channel-${channelId}`))
-  ) {
-    return null;
-  }
-  return leaf === 'reply' || leaf === 'react' || leaf === 'list_chat_bots'
-    ? leaf
-    : null;
 }
 
 function boundedTitleText(value: string): string {

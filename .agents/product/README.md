@@ -127,12 +127,12 @@ the same change that touches it.
   shell command line, the task text) before its output. A read or edit that
   succeeded expands to the files it touched as pills and nothing more; only
   a failed one still shows its diff and output. A row no runtime could label
-  — today MCP tools the Channel does not own — shows its tool name behind a
-  generic app icon with its arguments hidden; its output still expands. Raw
+  — today every MCP tool, the Channel's own reply/react/list_chat_bots
+  included — shows its tool name behind a generic app icon with its arguments
+  hidden; its output still expands. Raw
   JSON arguments appear nowhere on the card. Codex web searches are rows too.
   The card's own words — row verbs (Read, Edit, Search, List), the Completed and
-  Failed status lines, the truncation marker, and the titles of the
-  Channel's own tools — are English. Dreamux's own teammate tools (spawn,
+  Failed status lines, and the truncation marker — are English. Dreamux's own teammate tools (spawn,
   send, close, workflow) appear as plain unlabelled rows for now.
 - **A compaction is one line.** When the runtime compacts its context, the
   card shows `Compacted session` as an assistant message, and nothing of the

@@ -211,10 +211,12 @@ home as `~`.
     hand-composed titles for the teammate tools (`spawn`, `send`, `close`,
     `workflow_run`) were removed on the ruling 「那你先给 dreamux 内置mcp 工具的覆
     盖都删掉吧。我想想这里怎么做。」, and how Core labels its own tools is open.
-    What stays raw: a row for a tool no runtime
-    can label — MCP tools the Channel does not own — still shows JSON
-    arguments, because that label would have to come from the tool catalog,
-    not the runtime. Codex-side facts the display still lacks, found while
+    The Channel's own `reply`, `react` and `list_chat_bots` lost their
+    hand-made titles and icons the same day (「这些全部回退吧」). What stays
+    unlabelled: a row for a tool no runtime can label — every MCP tool, the
+    Channel's own included — shows its name behind the generic app icon with
+    its arguments hidden (「mcp 工具隐藏掉参数吧」), because a label would have
+    to come from the tool catalog, not the runtime. Codex-side facts the display still lacks, found while
     doing this and left unfixed: a `declined` command or patch reports as
     completed, a command's exit code is not read, and an MCP error object is
     stringified as JSON instead of its `message`.
