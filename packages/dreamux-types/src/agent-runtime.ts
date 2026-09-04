@@ -181,7 +181,6 @@ export type RuntimeCompletion =
   | {
       readonly status: 'completed';
       readonly resultText: string | null;
-      readonly truncated: boolean;
     }
   | {
       readonly status: 'failed';
@@ -208,7 +207,6 @@ export type RuntimeActivity =
       readonly occurredAt: number;
       readonly id: string;
       readonly text: string;
-      readonly truncated: boolean;
     }
   | {
       readonly kind: 'tool.call';
@@ -217,6 +215,30 @@ export type RuntimeActivity =
       readonly callId: string;
       readonly toolName: string;
       readonly action: RuntimeToolAction | null;
+      /**
+       * The call as the runtime's own UI labels it, in one line: a command's
+       * stated purpose, the path a file tool touches, the pattern a search
+       * runs, the task a sub-agent was given. `null` when the runtime has no
+       * label of its own for the tool, so a display falls back to the name.
+       */
+      readonly summary: string | null;
+      /**
+       * The call as a person would write it: the shell command line, the
+       * task text handed to a sub-agent, the script a runner executes.
+       * `arguments` is the tool's full structured input; this is the one
+       * member of it that has a notation of its own, so a display can show
+       * it in that notation instead of as JSON. `null` when there is none.
+       */
+      readonly invocation: string | null;
+      /**
+       * What the call is about, one entry per item, as the runtime reported
+       * it in structured members of the call: the path a file tool reads or
+       * writes, the paths of a patch, the files a parsed shell command read.
+       * Not limited to files: a runtime lists whatever discrete things its
+       * protocol names for the call. Empty when it names none; never
+       * recovered from a label or an output by parsing.
+       */
+      readonly items: readonly string[];
       readonly status: 'started' | 'completed' | 'failed';
       readonly arguments: JsonValue | null;
       readonly result: JsonValue | null;

@@ -510,3 +510,35 @@ start, and its TeamLeader identity stays `starting` until the first turn.
 rollout write, or a cleared `~/.codex/sessions`, still leaves a session id
 codex cannot resume; the start failure is now visible on the card, and the
 recovery is dissolve and recreate. No defense is added for it.
+
+## Ruling on Claude Code `user` envelopes (2026-09-03)
+
+A TeamLeader on Claude Code loaded three skills, and each SKILL.md body
+appeared on its Feishu COT card as long markdown. The wire shows why: after the
+`Skill` tool's own result (`Launching skill: <name>`) the CLI emits a `user`
+envelope whose only content is a text block carrying the whole skill body, with
+no field marking it as the CLI's own. The runtime's block mapping read the block
+type alone and published that text as the agent's `assistant.message`.
+
+The operator ruled the display, not the rendering:
+
+> 其实不用管这个不全的问题，给他隐藏了就行了。
+
+> 其实所有的 user 消息都隐藏即可。
+
+**What was built.** The display line reads the envelope, not the block: an
+`assistant` envelope yields the model's text and its tool calls; a `user`
+envelope yields tool results only, correlated to the call by `tool_use_id`, and
+its text blocks yield nothing. The seam between the RPC and the display line is
+typed to those two envelopes (`ClaudeActivityLine` in
+`/packages/agent-runtime/claude-code/src/types.ts`), and the RPC no longer
+forwards any other stream line to it. The operator's own message is a different
+fact and is untouched: it goes to stdin, is never echoed back, and is announced
+by Core as `teammate.input`, which the Feishu Channel hides only when it is the
+body the operator can already see in the chat.
+
+**Left alone, knowingly.** Why the Feishu client rendered the skill body from
+its second 4096-byte delta onward — the first delta, the previous skill body,
+and the tool row between them did not render, while Dreamux logged no append
+failure and dropped nothing — is not investigated: the text that triggered it
+is no longer sent.

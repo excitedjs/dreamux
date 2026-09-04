@@ -1,9 +1,9 @@
 /**
- * What a COT card shows for a tool call, and the byte bounding every card
- * string shares. Core owns generic safety processing; this module owns display
- * text — deriving it from one tool call, and keeping it inside Feishu's
- * per-event content budget. Building the events themselves is
- * `feishu-cot-events.ts`, which is this module's only caller.
+ * What a COT card shows for a tool call. Core redacts; this module owns display
+ * text, deriving it from one tool call; `feishu-cot-events.ts`, its only
+ * caller, builds the events and fits them to Feishu's per-event limit — the
+ * one bound a card string has (operator ruling, 2026-09-04: 「截断长度以飞书平台
+ * 上给出的最长长度为准」).
  */
 import type {
   RuntimeToolAction,
@@ -13,8 +13,9 @@ import type {
 /** The one activity member this presentation layer renders. */
 export type CotToolCallActivity = Extract<TeammateActivity, { kind: 'tool.call' }>;
 
-export const TOOL_ARGUMENTS_SOFT_MAX_BYTES = 512;
-export const TRUNCATION_MARKER = '…（已截断）';
+/** What the pills of a result's item list may spend before the rest is folded into a `more` pill. */
+export const TOOL_ITEMS_SOFT_MAX_BYTES = 512;
+export const TRUNCATION_MARKER = '… (truncated)';
 const TOOL_NAME_MAX_BYTES = 80;
 
 function displayToolName(toolName: string): string {
@@ -24,28 +25,52 @@ function displayToolName(toolName: string): string {
     .at(-1)
     ?.trim();
   return truncateUtf8(
-    leaf === undefined || leaf === '' ? '工具' : leaf,
+    leaf === undefined || leaf === '' ? 'tool' : leaf,
     TOOL_NAME_MAX_BYTES,
   );
 }
 
-type OwnedTool = 'reply' | 'react' | 'list_chat_bots';
-type TeammateTool = 'spawn' | 'send' | 'close' | 'workflow_run';
 
-interface BuiltInToolPresentation {
-  readonly title: string;
-  readonly resultText: string;
-  readonly resultLanguage: 'text' | 'javascript';
-  readonly forceResultCode: boolean;
+/** One pill of a `list` result segment, as the COT Message Brief shapes it. */
+export interface CotListItem {
+  readonly text: string;
+  readonly icon?: CotToolIcon;
 }
 
+/** The pills a result shows for the call's items, and the one that stands for the rest. */
+export interface CotItemList {
+  readonly items: readonly CotListItem[];
+  readonly more?: CotListItem;
+}
+
+/**
+ * What the runtime said about the call, ready for the card: the row's title
+ * composed from the runtime's summary, the icon of the action it named, the
+ * invocation the expanded row shows in the caller's notation instead of as
+ * JSON, and the items the call was about as the pills of a `list` segment.
+ * Nothing here comes from the tool's identity: a Channel-owned tool and a
+ * foreign MCP tool are presented by the same rule (operator ruling,
+ * 2026-09-04: 「这些全部回退吧」, on the Channel's hand-made titles for its own
+ * `reply`, `react` and `list_chat_bots`).
+ */
 interface ToolPresentation {
   readonly toolCallName: string;
-  readonly icon?: 'search' | 'bash' | 'read' | 'write' | 'default';
+  readonly icon?: CotToolIcon;
   readonly title?: string;
-  readonly ownedTool: OwnedTool | null;
-  readonly builtInTool: BuiltInToolPresentation | null;
+  readonly invocation: string | null;
+  readonly invocationLanguage: 'text' | 'bash';
+  readonly items: CotItemList | null;
 }
+
+/**
+ * `TOOL_CALL_START.icon` as the COT Message Brief documents it: a built-in
+ * enum (`search`, `bash`, `read`, `write`, `doc`, `calendar`, `task`,
+ * `meeting`, `default`) or a token from the card icon library. This Channel
+ * uses the built-ins a runtime's tool actions map onto, and the library's
+ * `app-default_outlined` for a call nothing could label (operator ruling,
+ * 2026-09-04: 「mcp 工具隐藏掉参数吧，icon 选 app-default_outlined」).
+ */
+export type CotToolIcon = 'search' | 'bash' | 'read' | 'write' | 'app-default_outlined';
 
 const ACTION_TOOL_NAMES: Readonly<Record<RuntimeToolAction, string>> = {
   read: 'Read',
@@ -55,235 +80,95 @@ const ACTION_TOOL_NAMES: Readonly<Record<RuntimeToolAction, string>> = {
   run: 'Bash',
 };
 
-const OWNED_TOOL_PRESENTATION: Readonly<Record<
-  OwnedTool,
-  Pick<ToolPresentation, 'icon' | 'title'>
->> = {
-  reply: { icon: 'write', title: '回复飞书消息' },
-  react: { icon: 'default', title: '点击飞书表情' },
-  list_chat_bots: {
-    icon: 'search',
-    title: '查看群机器人',
-  },
+const ACTION_ICONS: Readonly<Record<RuntimeToolAction, CotToolIcon>> = {
+  read: 'read',
+  list_files: 'search',
+  search: 'search',
+  edit: 'write',
+  run: 'bash',
 };
 
-export function toolPresentation(
-  event: CotToolCallActivity,
-  channelId: string | undefined,
-): ToolPresentation {
-  const toolCallName = displayToolName(event.tool_name);
-  const ownedTool = ownedFeishuTool(event.tool_name, channelId);
-  if (ownedTool !== null) {
-    return {
-      toolCallName,
-      ...OWNED_TOOL_PRESENTATION[ownedTool],
-      ownedTool,
-      builtInTool: null,
-    };
-  }
-  const builtInTool = builtInToolPresentation(event);
-  if (builtInTool !== null) {
-    return {
-      toolCallName,
-      title: builtInTool.title,
-      ownedTool: null,
-      builtInTool,
-    };
-  }
+/**
+ * The verb a row leads with when the runtime's summary names only the object
+ * of the call — the path read, the pattern searched. A `run` summary is
+ * already a sentence (the command's stated purpose, or the command itself)
+ * and takes no verb.
+ */
+const ACTION_VERBS: Readonly<Record<RuntimeToolAction, string>> = {
+  read: 'Read ',
+  list_files: 'List ',
+  search: 'Search ',
+  edit: 'Edit ',
+  run: '',
+};
+
+export function toolPresentation(event: CotToolCallActivity): ToolPresentation {
+  const actionName = event.tool_action === null
+    ? displayToolName(event.tool_name)
+    : ACTION_TOOL_NAMES[event.tool_action];
+  const title = runtimeToolTitle(event, actionName);
+  // A call with neither an action nor a label — an MCP tool, today — shows
+  // its name behind the generic app icon; its arguments are not shown.
+  const icon: CotToolIcon | undefined = event.tool_action === null
+    ? (title === null ? 'app-default_outlined' : undefined)
+    : ACTION_ICONS[event.tool_action];
   return {
-    toolCallName: event.tool_action === null
-      ? toolCallName
-      : ACTION_TOOL_NAMES[event.tool_action],
-    ownedTool: null,
-    builtInTool: null,
+    toolCallName: actionName,
+    ...(icon === undefined ? {} : { icon }),
+    ...(title === null ? {} : { title }),
+    invocation: nonEmpty(event.invocation),
+    invocationLanguage: event.tool_action === 'run' ? 'bash' : 'text',
+    items: itemList(event),
   };
 }
 
-function ownedFeishuTool(
-  toolName: string,
-  channelId: string | undefined,
-): OwnedTool | null {
-  let server: string | null = null;
-  let leaf: string | null = null;
-  const mcpParts = toolName.split('__');
-  if (mcpParts.length === 3 && mcpParts[0] === 'mcp') {
-    [, server, leaf] = mcpParts;
-  } else {
-    const separator = toolName.lastIndexOf('.');
-    if (separator > 0 && separator < toolName.length - 1) {
-      server = toolName.slice(0, separator);
-      leaf = toolName.slice(separator + 1);
+/**
+ * The call's items as pills, each with the icon of the call's action, kept
+ * within `TOOL_ITEMS_SOFT_MAX_BYTES` so a patch over many files leaves room
+ * for its diff: the pills that fit, then one `+N` pill for the rest. A first
+ * item longer than the whole budget is truncated into one pill instead of
+ * being folded into a count no pill explains (operator ruling, 2026-09-04:
+ * 「按照单条去截断即可」).
+ */
+function itemList(event: CotToolCallActivity): CotItemList | null {
+  if (event.items.length === 0) return null;
+  const icon = event.tool_action === null ? undefined : ACTION_ICONS[event.tool_action];
+  const pill = (text: string): CotListItem => (icon === undefined ? { text } : { text, icon });
+  const items: CotListItem[] = [];
+  let bytes = 0;
+  for (const [index, item] of event.items.entries()) {
+    bytes += escapedBytes(item);
+    if (bytes > TOOL_ITEMS_SOFT_MAX_BYTES) {
+      if (items.length > 0) {
+        return { items, more: { text: `+${event.items.length - index}` } };
+      }
+      const rest = event.items.length - index - 1;
+      const truncated = [pill(truncateEscaped(item, TOOL_ITEMS_SOFT_MAX_BYTES))];
+      return rest === 0 ? { items: truncated } : { items: truncated, more: { text: `+${rest}` } };
     }
+    items.push(pill(item));
   }
-  // Core names a Channel MCP server from the configured channel id, so accept
-  // both the bare id and the namespaced form it is injected under.
-  if (
-    server !== 'feishu' &&
-    (channelId === undefined ||
-      (server !== channelId && server !== `channel-${channelId}`))
-  ) {
-    return null;
-  }
-  return leaf === 'reply' || leaf === 'react' || leaf === 'list_chat_bots'
-    ? leaf
-    : null;
+  return { items };
 }
 
-function builtInToolPresentation(
-  event: CotToolCallActivity,
-): BuiltInToolPresentation | null {
-  const tool = teammateTool(event.tool_name);
-  if (
-    tool === null ||
-    event.arguments_truncated ||
-    event.arguments_json === null
-  ) {
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(event.arguments_json);
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return null;
-  }
-  const args = parsed as Record<string, unknown>;
-  if (tool === 'spawn') {
-    const namePrefix = nonBlankString(args['name_prefix']);
-    const prompt = nonBlankString(args['prompt']);
-    const intent = stringValue(args['intent']);
-    const agentRuntime = optionalString(args['agent_runtime']);
-    const identity = optionalString(args['identity']);
-    if (
-      namePrefix === null ||
-      prompt === null ||
-      intent === null ||
-      agentRuntime === null ||
-      identity === null
-    ) {
-      return null;
-    }
-    const displayIntent = boundedTitleText(intent);
-    return {
-      title: displayIntent === '' ? '分派成员' : `分派成员 ${displayIntent}`,
-      resultText: [
-        `Agent Runtime：${agentRuntime === undefined || agentRuntime.trim() === ''
-          ? '未指定'
-          : agentRuntime}`,
-        `Identity：${identity === undefined || identity.trim() === ''
-          ? '未指定'
-          : identity}`,
-        `Prompt：${prompt}`,
-      ].join('\n'),
-      resultLanguage: 'text',
-      forceResultCode: false,
-    };
-  }
-  if (tool === 'send') {
-    const name = nonBlankString(args['name']);
-    const prompt = nonBlankString(args['prompt']);
-    if (name === null || prompt === null) return null;
-    return {
-      title: `发送消息 → ${boundedTitleText(name)}`,
-      resultText: `目标：${name}\nPrompt：${prompt}`,
-      resultLanguage: 'text',
-      forceResultCode: false,
-    };
-  }
-  if (tool === 'close') {
-    const name = nonBlankString(args['name']);
-    const note = nonBlankString(args['note']);
-    if (name === null || note === null) return null;
-    return {
-      title: `关闭成员 ${boundedTitleText(name)}`,
-      resultText: note,
-      resultLanguage: 'text',
-      forceResultCode: false,
-    };
-  }
-  const script = nonBlankString(args['script']);
-  const scriptPath = nonBlankString(args['scriptPath']);
-  const resultText = script ?? scriptPath;
-  if (resultText === null) return null;
-  const workflowName = script === null ? null : workflowMetaName(script);
-  return {
-    title: workflowName === null
-      ? 'Workflow'
-      : `Workflow ${boundedTitleText(workflowName)}`,
-    resultText,
-    resultLanguage: script === null ? 'text' : 'javascript',
-    forceResultCode: script !== null,
-  };
+function runtimeToolTitle(event: CotToolCallActivity, actionName: string): string | null {
+  if (event.summary === null) return null;
+  const summary = event.summary.trim();
+  if (summary === '') return null;
+  return event.tool_action === null
+    ? `${actionName}: ${summary}`
+    : `${ACTION_VERBS[event.tool_action]}${summary}`;
 }
 
-function teammateTool(toolName: string): TeammateTool | null {
-  const prefixes = ['mcp__teammate__', 'teammate.'] as const;
-  const prefix = prefixes.find((candidate) => toolName.startsWith(candidate));
-  if (prefix === undefined) return null;
-  const verb = toolName.slice(prefix.length);
-  return verb === 'spawn' || verb === 'send' || verb === 'close' ||
-    verb === 'workflow_run'
-    ? verb
-    : null;
+/** A detail the runtime gave, or `null` when it gave none or an empty one. */
+export function nonEmpty(value: string | null): string | null {
+  return value === null || value === '' ? null : value;
 }
 
-function nonBlankString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() !== '' ? value : null;
-}
-
-function stringValue(value: unknown): string | null {
-  return typeof value === 'string' ? value : null;
-}
-
-function optionalString(value: unknown): string | null | undefined {
-  return value === undefined || typeof value === 'string' ? value : null;
-}
-
-function boundedTitleText(value: string): string {
-  return normalizedDetail(value, false, TOOL_ARGUMENTS_SOFT_MAX_BYTES)?.trim() ?? '';
-}
-
-function workflowMetaName(script: string): string | null {
-  const match = /\bexport\s+const\s+meta\s*=\s*\{[^}]*?\bname\s*:\s*(['"])([^'"\\\r\n]+)\1/u
-    .exec(script);
-  const name = match?.[2]?.trim();
-  return name === undefined || name === '' ? null : name;
-}
-
-export function normalizedDetail(
-  value: string | null,
-  sourceTruncated: boolean,
-  softMaxBytes: number,
-): string | null {
-  if (value === null || value === '') return null;
-  // Preserve provider detail verbatim here; the escaped-byte budget below
-  // remains the authoritative safety boundary for display payload size.
-  const normalized = value;
-  if (normalized === '') return null;
-  if (!sourceTruncated && escapedBytes(normalized) <= softMaxBytes) return normalized;
-  return truncateEscaped(normalized, softMaxBytes, true);
-}
-
-export function truncateEscaped(
-  value: string,
-  maxBytes: number,
-  forceMarker = false,
-): string {
+export function truncateEscaped(value: string, maxBytes: number): string {
   const valueBytes = escapedBytes(value);
-  if (!forceMarker && valueBytes <= maxBytes) return value;
+  if (valueBytes <= maxBytes) return value;
   const markerBytes = escapedBytes(TRUNCATION_MARKER);
-  if (
-    forceMarker &&
-    value.endsWith(TRUNCATION_MARKER) &&
-    valueBytes <= maxBytes
-  ) {
-    return value;
-  }
-  if (forceMarker && valueBytes + markerBytes <= maxBytes) {
-    return `${value}${TRUNCATION_MARKER}`;
-  }
   const prefixBudget = Math.max(0, maxBytes - markerBytes);
   const prefix: string[] = [];
   let bytes = 0;

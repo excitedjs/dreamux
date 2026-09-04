@@ -247,7 +247,6 @@ describe('TeammateStateEvent, teammate.input, and teammate.activity', () => {
         | 'source'
         | 'source_id'
         | 'content'
-        | 'content_truncated'
         | 'redacted'
       >
     >();
@@ -262,7 +261,6 @@ describe('TeammateStateEvent, teammate.input, and teammate.activity', () => {
       source: 'feishu',
       source_id: 'message-fixture',
       content: 'hello',
-      content_truncated: false,
       redacted: false,
     };
 
@@ -292,7 +290,6 @@ describe('TeammateStateEvent, teammate.input, and teammate.activity', () => {
         kind: 'assistant.message',
         event_id: 'evt-1',
         content: 'hello',
-        content_truncated: false,
         redacted: false,
       },
     };
@@ -305,11 +302,12 @@ describe('TeammateStateEvent, teammate.input, and teammate.activity', () => {
         call_id: 'call-1',
         tool_name: 'search',
         tool_action: 'search',
+        summary: null,
+        invocation: null,
+        items: [],
         status: 'completed',
         arguments_json: '{}',
         result_json: '{}',
-        arguments_truncated: false,
-        result_truncated: false,
         redacted: false,
       },
     };
@@ -320,7 +318,6 @@ describe('TeammateStateEvent, teammate.input, and teammate.activity', () => {
         kind: 'turn.ended',
         status: 'failed',
         reason: 'the agent runtime is not running',
-        reason_truncated: false,
         redacted: false,
       },
     };

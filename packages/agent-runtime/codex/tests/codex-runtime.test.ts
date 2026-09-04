@@ -385,7 +385,7 @@ describe('CodexRuntime submit() and settlement', () => {
     const secondSettlement = await second.settled;
     expect(firstSettlement).toMatchObject({
       kind: 'completion',
-      completion: { status: 'completed', resultText: 'first result', truncated: false },
+      completion: { status: 'completed', resultText: 'first result' },
     });
     expect(secondSettlement).toMatchObject({
       kind: 'completion',
@@ -710,6 +710,27 @@ describe('CodexRuntime native turn end', () => {
 
     expect(nativeEnds.map((end) => end.status)).toEqual(['completed', 'failed']);
     expect(nativeEnds.at(-1)!.reason).toContain('codex daemon internal error');
+    await runtime.stop();
+  });
+
+  it('shows a contextCompaction item as the one line Compacted session, on completion only', async () => {
+    const messages: string[] = [];
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      activitySink: (activity) => {
+        if (activity.kind === 'assistant.message') messages.push(activity.text);
+      },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    requireSubmitted(await runtime.submit({ text: 'work' }));
+    client.emitItem('fresh-thread-1', 'turn-1', 'started', { type: 'contextCompaction', id: 'compact-1' });
+    client.emitItem('fresh-thread-1', 'turn-1', 'completed', { type: 'contextCompaction', id: 'compact-1' });
+    await waitFor(() => messages.length === 1);
+
+    expect(messages).toEqual(['Compacted session']);
     await runtime.stop();
   });
 

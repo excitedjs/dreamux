@@ -28,7 +28,6 @@ import {
 
 /** What the adapter lends this step: its card engine, nothing else. */
 export interface CotActivitySink {
-  readonly channelId: string | undefined;
   readonly openToolCallsMax: number;
   /** Open a card if this recipient has none, then admit the events onto it. */
   acceptOpening(
@@ -71,7 +70,7 @@ export function acceptToolCallActivity(
 ): void {
   if (!presentable(state)) return;
   if (event.status === 'started') {
-    const events = toolCallStartEvents(event, sink.channelId);
+    const events = toolCallStartEvents(event);
     if (events.length === 0) return;
     const accepted = sink.acceptOpening(key, state, events);
     if (accepted) {
@@ -102,7 +101,7 @@ export function acceptToolCallActivity(
     state.openCalls.delete(event.call_id);
     return;
   }
-  const events = toolCallResultEvents(event, sink.channelId);
+  const events = toolCallResultEvents(event);
   state.openCalls.delete(event.call_id);
   if (events.length === 0) return;
   if (sink.admitOutbox(state, presentation, events) &&

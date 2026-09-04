@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Core projects the new tool.call summary, invocation and items through the same path renaming and secret redaction as arguments and results, and bounds nothing: the CONVERSATION_* character caps on inputs, messages, arguments, results and reasons and the 200-character tool-name cut are gone, so a surface receives every display string whole and cuts it at its own platform's limit where it sends. Secret redaction now keeps a structured payload parseable: a quoted secret becomes the quoted string <redacted> (it used to become a bare word that broke the JSON), and a bare secret stops at the quote or bracket that closes it instead of swallowing them.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

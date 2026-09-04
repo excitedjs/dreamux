@@ -25,6 +25,26 @@ export type ParsedLine =
       sessionId: string | null;
       raw: JsonObject;
     }
+  | {
+      /**
+       * A `user` envelope on stdout is never the operator: stdin input is not
+       * echoed back. It carries what claude's tools returned (`tool_result`
+       * blocks) and, beside them, context the CLI injected into its own
+       * conversation as plain text blocks — the body of a skill it just
+       * loaded, hook output, reminders.
+       */
+      kind: 'user';
+      raw: JsonObject;
+    }
+  | {
+      /**
+       * The CLI compacted its context: a `system` envelope with subtype
+       * `compact_boundary`. The summary it wrote rides separately, in a
+       * synthetic `user` envelope, and is never displayed.
+       */
+      kind: 'compact_boundary';
+      raw: JsonObject;
+    }
   | { kind: 'result'; outcome: ResultEnvelope; raw: JsonObject }
   | {
       kind: 'command_lifecycle';
@@ -147,13 +167,26 @@ export interface ClaudeCodeSessionSpec {
   onProtocolEvent?: (event: ClaudeProtocolEvent) => void;
 }
 
+/**
+ * The three envelopes the display line reads: what claude said and did
+ * (`assistant`), what its tools returned (`user`), and the CLI's notice that
+ * it compacted its context (`system` with subtype `compact_boundary`). Every
+ * other stdout line — `init`, command lifecycle, control traffic, every other
+ * `system` notice, hook and rate-limit notices — is the RPC's own business
+ * and never reaches the display.
+ */
+export type ClaudeActivityLine = Extract<
+  ParsedLine,
+  { kind: 'assistant' | 'user' | 'compact_boundary' }
+>;
+
 export type ClaudeProtocolEvent =
   | {
       readonly kind: 'command_lifecycle';
       readonly commandUuid: string;
       readonly state: CommandLifecycleState;
     }
-  | { readonly kind: 'stream'; readonly line: ParsedLine }
+  | { readonly kind: 'stream'; readonly line: ClaudeActivityLine }
   | { readonly kind: 'result'; readonly outcome: TurnOutcome };
 
 /**

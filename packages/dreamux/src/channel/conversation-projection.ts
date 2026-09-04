@@ -12,11 +12,17 @@ import { errorInfo } from '../platform/error-info.js';
 import type { DispatcherCoreEventPublisher } from '../service/dispatcher-core-events/index.js';
 import type { AgentEntityIdentity } from '../service/agent-entity/types.js';
 
-export const CONVERSATION_MESSAGE_MAX = 100_000;
-export const CONVERSATION_TOOL_ARGUMENTS_MAX = 60_000;
-export const CONVERSATION_TOOL_RESULT_MAX = 120_000;
-
-const INLINE_SECRET_RE = /(["']?\b(?:secret|password|passwd|token|authorization|cookie|credential|api[_-]?key|private[_-]?key|client[_-]?secret)\b["']?)(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|`[^`]*`|[^\s,;]+)/giu;
+/**
+ * `key: value` / `key=value` pairs whose key names a secret. The value is one
+ * quoted string (a JSON string with its escapes, or a shell-style single- or
+ * back-quoted one) or one bare word. A bare word stops at whitespace, a
+ * separator, a quote, or a closing bracket, so the shape *around* the secret
+ * survives: a structured result carries redaction inside its own string and is
+ * still the same JSON afterwards (the Channel parses it to decide how to show
+ * it), and a `token: xyz` phrase inside a JSON string does not swallow the
+ * quote and bracket that close it.
+ */
+const INLINE_SECRET_RE = /(["']?\b(?:secret|password|passwd|token|authorization|cookie|credential|api[_-]?key|private[_-]?key|client[_-]?secret)\b["']?)(\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'[^']*'|`[^`]*`|[^\s,;"'`)\]}]+)/giu;
 const BEARER_RE = /\bBearer\s+[A-Za-z0-9._~+/-]+=*/giu;
 const PRIVATE_KEY_RE = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/giu;
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu;
@@ -37,7 +43,14 @@ const COMMON_ACCESS_KEY_RE = /\b(?:AKIA|ASIA|AKLT)[A-Z0-9]{12,}\b/gu;
  */
 const PATH_TOKEN_CHARACTER_RE = /[\p{L}\p{N}_.~\\/-]/u;
 
-interface SanitizedText { value: string; truncated: boolean; redacted: boolean }
+/**
+ * Core redacts and never truncates. How much of a payload a surface can show
+ * is that surface's own limit, applied where it sends (operator ruling,
+ * 2026-09-04: 「core那边只做脱敏，不做截断 … Channel这边先去解析JSON，然后在发送接
+ * 口之前去做截断」). Cutting here would hand every surface an already-damaged
+ * value — a JSON result that no longer parses — with no way to get it back.
+ */
+interface RedactedText { value: string; redacted: boolean }
 
 /**
  * The projected Agent: its durable identity plus the runtime role its owner
@@ -115,12 +128,7 @@ export function createConversationProjection(input: {
       const scope = actorScope(agent);
       if (scope === null || input.coreEvents.hasSources?.() === false) return;
       guarded(agent, 'input', () => {
-        const content = sanitizeText(
-          admitted.text,
-          identity.cwd,
-          input.homePathPrefixes,
-          CONVERSATION_MESSAGE_MAX,
-        );
+        const content = redactText(admitted.text, identity.cwd, input.homePathPrefixes);
         const event: TeammateInputEvent = {
           ...scope,
           kind: 'teammate.input',
@@ -128,7 +136,6 @@ export function createConversationProjection(input: {
           source: admitted.source,
           source_id: admitted.sourceId,
           content: content.value,
-          content_truncated: content.truncated,
           redacted: content.redacted,
         };
         input.coreEvents.publish(identity.dispatcher_id, event);
@@ -188,84 +195,68 @@ function projectedActivity(
 ): TeammateActivity {
   switch (activity.kind) {
     case 'assistant.message': {
-      const content = sanitizeText(activity.text, cwd, homePathPrefixes, CONVERSATION_MESSAGE_MAX);
+      const content = redactText(activity.text, cwd, homePathPrefixes);
       return {
         kind: 'assistant.message',
         event_id: activity.id,
         content: content.value,
-        content_truncated: activity.truncated || content.truncated,
         redacted: content.redacted,
       };
     }
     case 'tool.call': {
-      const args = sanitizeJson(
-        activity.arguments,
-        cwd,
-        homePathPrefixes,
-        CONVERSATION_TOOL_ARGUMENTS_MAX,
-      );
-      const result = sanitizeJson(
-        activity.error ?? activity.result,
-        cwd,
-        homePathPrefixes,
-        CONVERSATION_TOOL_RESULT_MAX,
-      );
+      const summary = activity.summary === null
+        ? null
+        : redactText(activity.summary, cwd, homePathPrefixes);
+      const invocation = activity.invocation === null
+        ? null
+        : redactText(activity.invocation, cwd, homePathPrefixes);
+      const items = activity.items.map((item) => redactText(item, cwd, homePathPrefixes));
+      const args = redactJson(activity.arguments, cwd, homePathPrefixes);
+      const result = redactJson(activity.error ?? activity.result, cwd, homePathPrefixes);
       return {
         kind: 'tool.call',
         event_id: activity.id,
         call_id: activity.callId,
-        tool_name: activity.toolName.slice(0, 200),
+        tool_name: activity.toolName,
         tool_action: activity.action,
+        summary: summary?.value ?? null,
+        invocation: invocation?.value ?? null,
+        items: items.map((item) => item.value),
         status: activity.status,
         arguments_json: args?.value ?? null,
         result_json: result?.value ?? null,
-        arguments_truncated: args?.truncated ?? false,
-        result_truncated: result?.truncated ?? false,
-        redacted: (args?.redacted ?? false) || (result?.redacted ?? false),
+        redacted: (summary?.redacted ?? false) || (invocation?.redacted ?? false) ||
+          items.some((item) => item.redacted) ||
+          (args?.redacted ?? false) || (result?.redacted ?? false),
       };
     }
     case 'turn.ended': {
       const reason = activity.reason === null
         ? null
-        : sanitizeText(activity.reason, cwd, homePathPrefixes, CONVERSATION_MESSAGE_MAX);
+        : redactText(activity.reason, cwd, homePathPrefixes);
       return {
         kind: 'turn.ended',
         status: activity.status,
         reason: reason?.value ?? null,
-        reason_truncated: reason?.truncated ?? false,
         redacted: reason?.redacted ?? false,
       };
     }
   }
 }
 
-function sanitizeJson(
+/**
+ * A structured value travels as its compact JSON text, redacted like any other
+ * string; a value that already is a string travels as itself. A consumer that
+ * wants the structure back parses the text — it is whole, never cut, and a
+ * redacted secret inside it is still a JSON string, so it still parses.
+ */
+function redactJson(
   value: JsonValue | string | null,
   cwd: string,
   homePathPrefixes: readonly string[],
-  max: number,
-): SanitizedText | null {
+): RedactedText | null {
   if (value === null) return null;
-  return sanitizeText(
-    typeof value === 'string' ? value : JSON.stringify(value),
-    cwd,
-    homePathPrefixes,
-    max,
-  );
-}
-
-function sanitizeText(
-  value: string,
-  cwd: string,
-  homePathPrefixes: readonly string[],
-  max: number,
-): SanitizedText {
-  const safe = redactText(value, cwd, homePathPrefixes);
-  return {
-    value: safe.value.length > max ? safe.value.slice(0, max) : safe.value,
-    truncated: safe.value.length > max,
-    redacted: safe.redacted,
-  };
+  return redactText(typeof value === 'string' ? value : JSON.stringify(value), cwd, homePathPrefixes);
 }
 
 /**
@@ -285,7 +276,7 @@ export function redactText(
   value: string,
   cwd: string,
   homePaths: readonly string[],
-): { value: string; redacted: boolean } {
+): RedactedText {
   let redacted = replacePathPrefix(value, cwd, '.', '', true);
   redacted = redacted.replace(PRIVATE_KEY_RE, '<redacted-private-key>');
   for (const homePath of homePaths) {
@@ -294,7 +285,15 @@ export function redactText(
   redacted = redacted.replace(BEARER_RE, 'Bearer <redacted>');
   redacted = redacted.replace(JWT_RE, '<redacted-jwt>');
   redacted = redacted.replace(COMMON_ACCESS_KEY_RE, '<redacted-access-key>');
-  redacted = redacted.replace(INLINE_SECRET_RE, (_match, key: string, separator: string) => `${key}${separator}<redacted>`);
+  redacted = redacted.replace(
+    INLINE_SECRET_RE,
+    (_match, key: string, separator: string, secret: string) => {
+      // A quoted secret stays a quoted (now empty of meaning) string, so the
+      // text around it keeps whatever grammar it had — JSON included.
+      const quote = /^["'`]/u.test(secret) ? secret[0] : '';
+      return `${key}${separator}${quote}<redacted>${quote}`;
+    },
+  );
   return { value: redacted, redacted: redacted !== value };
 }
 

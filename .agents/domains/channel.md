@@ -650,8 +650,14 @@ an event changes only that catalog and its consumers.
 
 No event carries a turn identity: presentation correlation is the `source_id` a
 caller supplied, echoed back on its own input, and nothing exposes a
-runtime-native Turn object or transcript. Conversation events may contain bounded,
-redacted user/assistant display text and bounded tool arguments/results; other
+runtime-native Turn object or transcript. Conversation events may contain
+redacted user/assistant display text and redacted tool arguments/results, whole:
+Core bounds nothing, and the Channel cuts a string only where it would exceed
+Feishu's per-event limit (「core那边只做脱敏，不做截断 … Channel这边先去解析JSON，
+然后在发送接口之前去做截断」, 2026-09-04). Redaction keeps a structured payload
+parseable — a quoted secret becomes the quoted string `<redacted>`, and a bare
+one stops at the quote or bracket that closes it — because the Channel parses
+`result_json` to decide how to show it. Other
 events contain no prompt or assistant text. No event contains native transcript
 paths, raw errors, or platform user identity.
 
@@ -741,6 +747,64 @@ carry one too. There is no source whitelist. A fact
 that arrives before the recipient has an anchor produces no card because there is
 nowhere to place one, not because its source or kind was filtered.
 
+A tool row is composed from what the runtime said about the call, never from
+its argument schema. The row's `TOOL_CALL_START` carries the built-in `icon`
+the COT Message Brief documents for the call's `tool_action` (`read`; `write`
+for an edit; `search` for a search or a listing; `bash` for a run) and a
+`title` composed from the runtime's `summary`: the summary alone for a run,
+whose summary is already a sentence; a verb before it for a read, listing,
+search or edit; the display tool name before it for a call with no action. No
+row sends `TOOL_CALL_ARGS`: a call with neither an action nor a label — an MCP
+tool no runtime can label, today, this Channel's own tools (`reply`, `react`,
+`list_chat_bots`) and Core's teammate tools included — shows its display name
+behind the icon-library token
+`app-default_outlined` with its arguments hidden (operator ruling, 2026-09-04:
+「现在 mcp 工具效果比较差，mcp 工具隐藏掉参数吧，icon 选 app-default_outlined」); its
+output still expands. The Channel used to compose titles for Core's teammate
+tools (`spawn`, `send`, `close`, `workflow_run`) by matching the MCP name and
+re-parsing the arguments against Core's field names — a copy of Core's tool
+schema living in the Channel, with no record of the design. The operator had
+it removed, 2026-09-04: 「那你先给 dreamux 内置mcp 工具的覆盖都删掉吧。我想想这里怎么
+做。」 How Core's own tools get labelled is an open design point; until it is
+settled they are plain unlabelled rows. The Channel's own three tools lost
+their hand-made titles and icons the same day, on the ruling 「这些全部回退吧」
+that followed the operator noticing `react`'s built-in `default` icon renders
+nothing: no row is presented from the tool's identity any more, only from what
+the runtime said about the call. The `TOOL_CALL_RESULT` of a
+runtime-labelled row is the documented segment array: `Failed` first when it
+failed, the call's `items` as the pills of a `list` segment (each with the
+icon of the call's action, bounded by `TOOL_ITEMS_SOFT_MAX_BYTES` with one
+`+N` pill standing for the rest; a first item longer than the whole budget is
+truncated into one pill rather than folded into that count, per 「按照单条去截断
+即可」, 2026-09-04), the `invocation` as a `code` segment
+(`language: bash` for a run), then the output, shown by what it is rather
+than by how long it is: a value that parses as a JSON object or array is
+pretty-printed (`JSON.stringify(value, null, 2)`) in a `json` code segment,
+anything else is a plain `text` segment (「文本的输出，就按文本输出。能解析成JSON
+的再放进代码段」, 2026-09-04). That rule replaced, within one day, both #347's
+inline exception for a one-line output under 120 bytes and the all-code rule
+that lasted one commit (「全都给他们包到代码块里面」), once MCP rows made the
+mix of boxed and unboxed outputs visible. A code segment spells its body in
+the documented `code` field. Every string a row sends is cut only where it
+would exceed Feishu's 4,096-byte per-event content limit, last, after the
+JSON was parsed and printed, with the English truncation marker (「截断长度以飞
+书平台上给出的最长长度为准，现在有点短」): the earlier 512-byte invocation and
+title soft caps and the 1,024-byte output soft cap are gone, and so is Core's
+own bounding. A read or edit that
+succeeded stops after its pills: the operator ruled the diff and the output
+redundant beside them (「有了胶囊的，可以忽略底下这个编辑的代码段。只看编辑了
+哪些文件就行了」) because the client cannot fold a code segment away; a failed
+one keeps them, since the output is where the failure's reason appears. A probe card sent to the operator on 2026-09-03 settled the
+three client facts this rests on: a titled row shows the `title` alone, with
+no tool name in front of it; an `ARGS` delta sent beside a title is shown
+nowhere, which is why the invocation has to travel in the result; and the
+client renders a code segment's body from `code` and from the older `content`
+alike, so the switch follows the docs, not a rendering failure. A third probe
+(2026-09-04) settled the icon facts: the icon-library token
+`app-default_outlined` renders a glyph on an untitled and on a titled row
+alike, while the built-in `default` renders no glyph at all — a row sent with
+`icon: default` looks exactly like one sent without `icon`.
+
 A card's one terminal is a `turn.ended` activity. There is no per-submission
 lifecycle fact at this boundary at all: a provider folds any number of
 submissions into one native turn, so settlement could never say whether the card
@@ -788,8 +852,9 @@ reasoning in the
 
 Every admitted input publishes exactly one `teammate.input`, and the runtime's
 own stream carries everything after it; an entity whose conversation is out of
-scope publishes nothing. Input bodies and live activity are redacted and bounded
-in core, and operator paths are renamed rather than blanked — the workspace
+scope publishes nothing. Input bodies and live activity are redacted in core —
+never bounded there: a surface cuts what it cannot send, where it sends it —
+and operator paths are renamed rather than blanked — the workspace
 reads `.` and this host's home reads `~`, from prefixes `Server.start()` resolves
 once and injects into each conversation projection as a value. Card I/O has a
 20-second operation deadline so settled draining state is eventually reaped.

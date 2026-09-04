@@ -157,19 +157,29 @@ function streamToolResult(
   isError: boolean,
   messageId = 'msg-2',
 ): ClaudeProtocolEvent {
+  return streamUserEnvelope(
+    [{ type: 'tool_result', tool_use_id: callId, content, is_error: isError }],
+    messageId,
+  );
+}
+
+/**
+ * A `user` envelope exactly as the CLI emits it on stdout: `role: user`, a
+ * content array, and no flag saying who wrote it. The CLI puts its own tool
+ * results here, and beside them the context it injects into its conversation —
+ * a loaded skill body, hook output — as plain text blocks.
+ */
+function streamUserEnvelope(
+  content: unknown[],
+  messageId = 'msg-2',
+): ClaudeProtocolEvent {
   return {
     kind: 'stream',
     line: {
-      kind: 'other',
-      type: 'user',
-      subtype: null,
+      kind: 'user',
       raw: {
-        message: {
-          id: messageId,
-          content: [
-            { type: 'tool_result', tool_use_id: callId, content, is_error: isError },
-          ],
-        },
+        type: 'user',
+        message: { id: messageId, role: 'user', content },
       },
     },
   };
@@ -183,7 +193,7 @@ describe('handleProtocolEvent settlement', () => {
     const settlement = await h.settled('cmd-1');
     expect(settlement).toEqual({
       kind: 'completion',
-      completion: { status: 'completed', resultText: 'the answer', truncated: false },
+      completion: { status: 'completed', resultText: 'the answer' },
     });
   });
 
@@ -269,6 +279,35 @@ describe('handleProtocolEvent settlement', () => {
 });
 
 describe('handleProtocolEvent live activity', () => {
+  it('shows a compaction as the one line Compacted session, never the summary the CLI wrote', () => {
+    const h = makeHarness(['cmd-1']);
+    h.fire(started('cmd-1'));
+    h.fire({
+      kind: 'stream',
+      line: {
+        kind: 'compact_boundary',
+        raw: { type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto', pre_tokens: 14950, post_tokens: 1789 } },
+      },
+    });
+    // The summary rides right behind the boundary as a synthetic `user`
+    // envelope whose content is one string, not a block array.
+    h.fire({
+      kind: 'stream',
+      line: {
+        kind: 'user',
+        raw: {
+          type: 'user',
+          isSynthetic: true,
+          isReplay: true,
+          message: { role: 'user', content: 'This session is being continued from a previous conversation that ran out of context.' },
+        },
+      },
+    });
+    expect(h.activityEvents).toEqual([
+      expect.objectContaining({ kind: 'assistant.message', text: 'Compacted session' }),
+    ]);
+  });
+
   it('emits an assistant.message activity for streamed text, addressed to no submission at all', async () => {
     const h = makeHarness(['cmd-1']);
     h.fire(started('cmd-1'));
@@ -305,6 +344,23 @@ describe('handleProtocolEvent live activity', () => {
     });
   });
 
+  it('carries the display facts derived from the tool input on both the started and the result activity', async () => {
+    const h = makeHarness(['cmd-1']);
+    h.fire(started('cmd-1'));
+    h.fire(streamToolUse('call-1', 'Bash', { command: 'git status --short', description: 'Show working tree status' }));
+    h.fire(streamToolResult('call-1', 'M src/a.ts', false));
+    expect(h.activityEvents).toHaveLength(2);
+    for (const activity of h.activityEvents) {
+      expect(activity).toMatchObject({
+        kind: 'tool.call',
+        toolName: 'Bash',
+        action: 'run',
+        summary: 'Show working tree status',
+        invocation: 'git status --short',
+      });
+    }
+  });
+
   it('marks a tool_result carrying is_error as a failed tool.call and surfaces a display error', async () => {
     const h = makeHarness(['cmd-1']);
     h.fire(started('cmd-1'));
@@ -330,6 +386,49 @@ describe('handleProtocolEvent live activity', () => {
       kind: 'assistant.message',
       text: 'unattributable text',
     });
+  });
+
+  it('shows nothing for text in a user envelope: a loaded skill body is neither the agent nor the operator', async () => {
+    const h = makeHarness(['cmd-1']);
+    h.fire(started('cmd-1'));
+    h.fire(streamToolUse('call-1', 'Skill', { skill: 'team-workflow' }));
+    h.fire(streamToolResult('call-1', 'Launching skill: team-workflow', false));
+    // Observed on the wire (Claude Code 2.1.259): right after the Skill tool's
+    // result the CLI emits a `user` envelope whose only content is a text
+    // block carrying the entire SKILL.md. The old mapping read the block
+    // type alone and put that on the card as the agent's own words.
+    h.fire(streamUserEnvelope(
+      [{ type: 'text', text: 'Base directory for this skill: ~/.claude/skills/team-workflow\n\n# Team Workflow\n...' }],
+      'msg-3',
+    ));
+    expect(h.activityEvents.map((activity) => activity.kind)).toEqual([
+      'tool.call',
+      'tool.call',
+    ]);
+    expect(h.activityEvents[1]!).toMatchObject({
+      kind: 'tool.call',
+      callId: 'call-1',
+      status: 'completed',
+      result: 'Launching skill: team-workflow',
+    });
+  });
+
+  it('still correlates a tool_result that shares its user envelope with injected text', async () => {
+    const h = makeHarness(['cmd-1']);
+    h.fire(started('cmd-1'));
+    h.fire(streamToolUse('call-1', 'Read', { file_path: 'x' }));
+    h.fire(streamUserEnvelope([
+      { type: 'tool_result', tool_use_id: 'call-1', content: 'file contents', is_error: false },
+      { type: 'text', text: '<system-reminder>injected context</system-reminder>' },
+    ]));
+    expect(h.activityEvents).toHaveLength(2);
+    expect(h.activityEvents[1]!).toMatchObject({
+      kind: 'tool.call',
+      callId: 'call-1',
+      status: 'completed',
+      result: 'file contents',
+    });
+    expect(h.activityEvents.some((activity) => activity.kind === 'assistant.message')).toBe(false);
   });
 });
 

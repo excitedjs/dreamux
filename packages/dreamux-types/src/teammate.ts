@@ -91,13 +91,13 @@ export type TeammateInputEvent = TeammateActorScope & {
   readonly source_id: string | null;
   /** The source's own body, never the assembled provenance envelope. */
   readonly content: string;
-  readonly content_truncated: boolean;
   readonly redacted: boolean;
 };
 
 /**
  * One thing the runtime did, in the runtime's own vocabulary, already
- * sanitized and bounded by Core.
+ * redacted by Core. Core bounds nothing here: how much of a payload a
+ * surface can show is that surface's own limit, applied where it sends.
  *
  * The member names match `RuntimeActivity`'s on purpose: this is the same
  * fact with its payloads made safe to display, not a second vocabulary a
@@ -108,7 +108,6 @@ export type TeammateActivity =
       readonly kind: 'assistant.message';
       readonly event_id: string;
       readonly content: string;
-      readonly content_truncated: boolean;
       readonly redacted: boolean;
     }
   | {
@@ -117,11 +116,12 @@ export type TeammateActivity =
       readonly call_id: string;
       readonly tool_name: string;
       readonly tool_action: RuntimeToolAction | null;
+      readonly summary: string | null;
+      readonly invocation: string | null;
+      readonly items: readonly string[];
       readonly status: 'started' | 'completed' | 'failed';
       readonly arguments_json: string | null;
       readonly result_json: string | null;
-      readonly arguments_truncated: boolean;
-      readonly result_truncated: boolean;
       readonly redacted: boolean;
     }
   | {
@@ -135,7 +135,6 @@ export type TeammateActivity =
       readonly status: 'completed' | 'failed' | 'interrupted';
       /** Why it ended, when the producer holds a reason; `null` otherwise. */
       readonly reason: string | null;
-      readonly reason_truncated: boolean;
       readonly redacted: boolean;
     };
 

@@ -84,6 +84,10 @@ boundary of a long task and after every context compaction, not just at kickoff.
   — frozen diagnosis of why agent-written code drifted after the pluginization
   inflection; its live backlog is tracked in
   [harness-gaps](tasks/architecture/harness-gaps/README.md).
+- [Claude Code stream-json protocol](research/claude-code-stream-json-protocol.md)
+  — frozen 2026-09-03 snapshot of what the CLI emits on stdout (live probe and
+  SDK 0.3.259 types) against what the runtime reads; evidence for hiding
+  `user` envelopes, with the deferred divergences.
 
 ## Active Proposals
 

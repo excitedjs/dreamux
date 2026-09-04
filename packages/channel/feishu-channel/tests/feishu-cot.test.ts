@@ -137,7 +137,6 @@ function input(
     source,
     source_id: sourceId,
     content,
-    content_truncated: false,
     redacted: false,
   };
 }
@@ -160,7 +159,6 @@ function message(recipient: Recipient, content: string): TeammateActivityEvent {
     kind: 'assistant.message',
     event_id: `event-${(sequence += 1)}`,
     content,
-    content_truncated: false,
     redacted: false,
   });
 }
@@ -176,11 +174,12 @@ function toolCall(
     call_id: callId,
     tool_name: 'Read',
     tool_action: 'read',
+    summary: null,
+    invocation: null,
+    items: [],
     status,
     arguments_json: status === 'started' ? '{"file_path":"/tmp/example"}' : null,
     result_json: status === 'started' ? null : 'file contents',
-    arguments_truncated: false,
-    result_truncated: false,
     redacted: false,
   });
 }
@@ -194,7 +193,6 @@ function nativeEnd(
     kind: 'turn.ended',
     status,
     reason,
-    reason_truncated: false,
     redacted: false,
   });
 }

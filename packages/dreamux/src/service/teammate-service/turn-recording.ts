@@ -13,7 +13,7 @@ import type {
 } from '../completion-router/index.js';
 
 export type TurnOutcome =
-  | { status: 'completed'; resultText: string | null; truncated: boolean }
+  | { status: 'completed'; resultText: string | null }
   | { status: 'failed'; error: Error }
   | { status: 'stopped' };
 
@@ -108,11 +108,7 @@ export class EntityTurn implements Turn {
         this.selectedCompletion = settlement.completion;
         return this.settle(
           settlement.completion.status === 'completed'
-            ? {
-                status: 'completed',
-                resultText: settlement.completion.resultText,
-                truncated: settlement.completion.truncated,
-              }
+            ? { status: 'completed', resultText: settlement.completion.resultText }
             : { status: 'failed', error: settlement.completion.error },
         );
       }

@@ -69,7 +69,7 @@ describe('AgentRuntime live handle exposes exactly start, submit, stop', () => {
 
     const settlement: RuntimeSubmissionSettlement = {
       kind: 'completion',
-      completion: { status: 'completed', resultText: 'ack', truncated: false },
+      completion: { status: 'completed', resultText: 'ack' },
     };
     const submission: RuntimeSubmission = { settled: Promise.resolve(settlement) };
 
@@ -172,11 +172,11 @@ describe('RuntimeAdmission is exactly submitted | stopped | skipped | failed | a
 });
 
 describe('RuntimeCompletion has no displaySubmission member', () => {
-  it('the completed branch carries only status/resultText/truncated', () => {
+  it('the completed branch carries only status/resultText', () => {
     assertType<
       Equal<
         keyof Extract<RuntimeCompletion, { status: 'completed' }>,
-        'status' | 'resultText' | 'truncated'
+        'status' | 'resultText'
       >
     >();
   });
@@ -208,7 +208,7 @@ describe('RuntimeSubmissionSettlement is exactly completion | failed | stopped',
     expect(
       describeSettlement({
         kind: 'completion',
-        completion: { status: 'completed', resultText: null, truncated: false },
+        completion: { status: 'completed', resultText: null },
       }),
     ).toBe('completed');
     expect(describeSettlement({ kind: 'failed', error: new Error('nope') })).toBe('nope');

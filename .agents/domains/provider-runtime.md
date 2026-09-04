@@ -403,6 +403,40 @@ Source:
 - `/packages/agent-runtime/claude-code/src/stream.ts`
 - `/packages/agent-runtime/claude-code/tests/rpc.test.ts`
 
+### Claude Code Stream-Json Envelopes On The Display Line
+
+The display line reads three stdout envelopes and nothing else
+(`ClaudeActivityLine`): `assistant`, whose text blocks are the model's words and
+whose `tool_use` blocks are its tool calls; `user`, whose `tool_result`
+blocks are what those tools returned, correlated to the call by `tool_use_id`;
+and the `system` envelope with subtype `compact_boundary`, which becomes the
+one-line `Compacted session` message described below.
+A `user` envelope on stdout is the CLI's own, never the operator's: stdin input
+is not echoed back (Dreamux does not pass `--replay-user-messages`), so a text
+block there is context the CLI injected into its conversation — observed on
+2.1.259, the `Skill` tool's result is only `Launching skill: <name>` and the
+whole SKILL.md body follows as a separate `user` line with no field marking it
+as injected. None of that text is displayed. Every other stdout line — `init`,
+`command_lifecycle`, control traffic, every other `system` notice,
+`stream_event`, `rate_limit_event` — stays inside the RPC, which only counts it
+as activity for the idle deadline. The operator's own input is displayed by Core's
+`teammate.input`, not by anything on this line.
+
+Source:
+
+- `/packages/agent-runtime/claude-code/src/types.ts`
+- `/packages/agent-runtime/claude-code/src/runtime-submissions.ts`
+- `/packages/agent-runtime/claude-code/src/tool-display.ts`
+- `/packages/agent-runtime/codex/src/tool-display.ts`
+- `/packages/agent-runtime/claude-code/tests/runtime-submissions.test.ts`
+
+History: the 2026-09-03 ruling 「所有的 user 消息都隐藏即可」 in
+[split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md);
+the wire evidence and the deferred divergences (Remote Control response field
+names, a subagent's tool calls shown as the agent's own, unconsumed `system` subtypes)
+are frozen in
+[claude-code-stream-json-protocol](/.agents/research/claude-code-stream-json-protocol.md).
+
 Provider-native history formats, session discovery, cursor envelopes, and typed
 errors stay inside each runtime package's own `src/activity/`. Both built-ins
 reuse `/packages/dreamux-utils/src/activity-scan.ts` for provider-neutral
@@ -488,11 +522,49 @@ arbitrary member — and, when no member could be picked, drop the fact entirely
 The agent is the subject, and it is known before any submission binds. The union
 has three members: `assistant.message`, `tool.call`, and `turn.ended` — the
 runtime stopped producing, with a completed, failed or interrupted status and
-its own reason text when it has one. The sink is
+its own reason text when it has one. A context compaction is published through
+the same union as an `assistant.message` reading `Compacted session` — Claude
+Code on its `system`/`compact_boundary` envelope, Codex on the completion of
+its `contextCompaction` item — and the summary is not: Claude Code puts it on
+the wire as a synthetic `user` envelope whose content is one string (dropped
+with every other `user` text), Codex never emits it (its `contextCompaction`
+item carries only an id, and codex-core records the compaction output into
+history without an event). Operator ruling, 2026-09-04: 「我不要正文，正文太长了，
+只显示压缩发生了即可。claude code 的网页上只显示了 Compacted session，我只需要这一
+行字即可。」 and, on the shape, 「我觉得没必要给他单独加一个新的 activity 类型，你直接在
+provider 里，多推一个 assistant message，内容就这一行。」 The sink is
 generation-fenced, synchronous, display-only and fail-open — a write from a
 revoked generation is dropped, and a throwing consumer never affects
 settlement. That guard is Core's (`createConversationProjection`'s `guarded`
 wrapper); the sink never throws, and a provider calls it bare.
+
+A `tool.call` carries, beside the tool's name and its classified `action`,
+three display facts the runtime owns because only it knows its tool
+vocabulary: `summary`, the one line its own UI labels the call with,
+`invocation`, the call in the caller's own notation, and `items`, what the
+call is about, one entry each. `items` holds only what the provider's
+protocol already carries as structured members — today Claude Code's
+`file_path` and `notebook_path` inputs, Codex's `fileChange.changes[].path`
+and the `path` of a parsed `read` command action — and is empty for
+everything else; no provider recovers an item from a label or an output by
+parsing (ruling: 「两边自己去按照自己的协议，把能拆分出来的 file item 拆出来，
+拆不出来的就不管了」). The member is named for the list, not for files, so a
+runtime whose protocol names other discrete things for a call lists those
+(ruling: 「那我推荐你给改成 items，不要固定叫 files，限制了其他用法」). Each
+provider derives them in one module, `src/tool-display.ts`, the only place in that runtime that knows a
+built-in tool's field names. Claude Code reads the input schemas
+`@anthropic-ai/claude-agent-sdk` declares in `sdk-tools.d.ts`: a `Bash` call
+is its `description`, else the command's first line, with the `command` as
+invocation; file tools are their path; searches their pattern or query;
+`Agent` its description with the prompt as invocation; `Skill` its name.
+Codex follows the TUI's own exec, patch and web-search cells: a uniformly
+parsed command is the files it read, the paths it listed, or `query in
+path`, otherwise the command's first line, always with the command as
+invocation; a patch is its paths with the diffs codex prepared as invocation;
+a `webSearch` item, which carries no tool name and was dropped before, is a
+`web_search` row. Anything outside those tables — every MCP tool — reports
+`null` and displays as its name. Core sanitizes both facts exactly as it does
+arguments and results.
 
 One native turn is one provider-native terminal: one Claude Code `result`, one
 Codex `turn/completed`. A resident Claude Code execution window may legally

@@ -207,11 +207,14 @@ function fireAssistantText(spec: ClaudeCodeSessionSpec, text: string): void {
   spec.onProtocolEvent?.({
     kind: 'stream',
     line: {
+      kind: 'assistant',
+      text,
+      sessionId: null,
       raw: {
         type: 'assistant',
         message: { id: 'msg-1', content: [{ type: 'text', text }] },
       },
-    } as ClaudeProtocolEvent extends { kind: 'stream'; line: infer L } ? L : never,
+    },
   });
 }
 
@@ -493,7 +496,7 @@ describe('ClaudeCodeRuntime settlement', () => {
     if (admission.status !== 'submitted') throw new Error('expected submitted');
     await expect(admission.submission.settled).resolves.toEqual({
       kind: 'completion',
-      completion: { status: 'completed', resultText: 'echo:hello', truncated: false },
+      completion: { status: 'completed', resultText: 'echo:hello' },
     });
   });
 

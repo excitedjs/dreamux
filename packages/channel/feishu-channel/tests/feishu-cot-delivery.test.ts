@@ -148,7 +148,6 @@ function inputEvent(
     source,
     source_id: sourceId,
     content,
-    content_truncated: false,
     redacted: false,
   };
 }
@@ -174,7 +173,6 @@ function assistantMessage(
     kind: 'assistant.message',
     event_id: `event-${eventId}`,
     content,
-    content_truncated: false,
     redacted: false,
   });
 }
@@ -194,7 +192,6 @@ function nativeEnd(
     kind: 'turn.ended',
     status,
     reason,
-    reason_truncated: false,
     redacted: false,
   });
 }

@@ -1,6 +1,11 @@
 import { resultTextFromTurnOutcome } from './runtime-session.js';
+import { toolDisplay } from './tool-display.js';
 import type { ClaudeCodeSession } from './supervisor.js';
-import type { ClaudeProtocolEvent, TurnOutcome } from './types.js';
+import type {
+  ClaudeActivityLine,
+  ClaudeProtocolEvent,
+  TurnOutcome,
+} from './types.js';
 import type {
   JsonValue,
   RuntimeActivity,
@@ -8,7 +13,6 @@ import type {
   RuntimeCompletion,
   RuntimeSubmission,
   RuntimeSubmissionSettlement,
-  RuntimeToolAction,
 } from '@excitedjs/dreamux-types';
 
 export interface SubmissionDeferred {
@@ -127,8 +131,7 @@ export function handleProtocolEvent(
     completeStartedGroup(active, event.outcome, context);
     return;
   }
-  const raw = recordValue(event.line.raw);
-  if (raw !== null) emitStreamActivity(active, raw, context);
+  emitStreamActivity(active, event.line, context);
 }
 
 /** claude's own words for why its turn failed. */
@@ -182,7 +185,6 @@ function completeStartedGroup(
           context.threadId,
           context.outputSchemaEnabled,
         ),
-        truncated: false,
       });
     } catch (error) {
       completion = Object.freeze({
@@ -212,32 +214,66 @@ function failUnattributedResult(
 }
 
 /**
- * Put what claude said on this agent's activity stream.
+ * Put what claude said and did on this agent's activity stream.
  *
  * No submission is looked up. A window folds any number of commands into one
  * native turn, so naming one of them as the activity's owner was always a
  * guess — and when the guess failed, which it did for anything claude emitted
  * before a command's `started` lifecycle arrived, the fact was dropped
  * entirely. The agent is the subject, and it is always known.
+ *
+ * The envelope decides what a block means, not the block's own type. An
+ * `assistant` envelope carries the model's words and its tool calls. A `user`
+ * envelope carries what those tools returned — and, as plain text blocks, the
+ * context the CLI injected into its own conversation: the body of a skill it
+ * just loaded, hook output, reminders. None of that text is the agent's, and
+ * none of it is the operator's (stdin is never echoed back), so it is not
+ * displayed at all. Operator ruling, 2026-09-03: 「所有的 user 消息都隐藏即可」.
  */
 function emitStreamActivity(
   active: ActiveTurn,
-  raw: Record<string, unknown>,
+  line: ClaudeActivityLine,
   context: ProtocolEventContext,
 ): void {
-  const message = recordValue(raw['message']) ?? raw;
+  if (line.kind === 'compact_boundary') {
+    emitActivity(compactedActivity(active), context.activitySink);
+    return;
+  }
+  const message = recordValue(line.raw['message']) ?? line.raw;
   const messageId = stringValue(message['id']) ?? `stream-${active.activitySequence++}`;
   const content = Array.isArray(message['content']) ? message['content'] : [];
   for (const [blockIndex, candidate] of content.entries()) {
     const block = recordValue(candidate);
     if (block === null) continue;
-    const activity = activityForBlock(active, messageId, blockIndex, block);
+    const activity = line.kind === 'assistant'
+      ? assistantBlockActivity(active, messageId, blockIndex, block)
+      : toolResultActivity(active, messageId, block);
     if (activity === null) continue;
     emitActivity(activity, context.activitySink);
   }
 }
 
-function activityForBlock(
+/**
+ * The one line the card shows for a compaction, in the words Claude Code's
+ * own UI uses. The summary the CLI wrote is not shown. Operator ruling,
+ * 2026-09-04: 「我不要正文，正文太长了，只显示压缩发生了即可。claude code 的网页上只
+ * 显示了 Compacted session，我只需要这一行字即可。」 — and on the shape, 「没必要给他
+ * 单独加一个新的 activity 类型，你直接在provider 里，多推一个 assistant message，
+ * 内容就这一行。」
+ */
+const COMPACTED_SESSION_MESSAGE = 'Compacted session';
+
+function compactedActivity(active: ActiveTurn): RuntimeActivity {
+  return {
+    kind: 'assistant.message',
+    occurredAt: Date.now(),
+    id: `stream-${active.activitySequence++}:compacted`,
+    text: COMPACTED_SESSION_MESSAGE,
+  };
+}
+
+/** What the model said, or a tool it called. */
+function assistantBlockActivity(
   active: ActiveTurn,
   messageId: string,
   blockIndex: number,
@@ -249,28 +285,34 @@ function activityForBlock(
       occurredAt: Date.now(),
       id: `${messageId}:text:${blockIndex}`,
       text: block['text'],
-      truncated: false,
     };
   }
-  if (block['type'] === 'tool_use') {
-    const callId = stringValue(block['id']);
-    const name = stringValue(block['name']);
-    if (callId === null || callId === '' || name === null) return null;
-    const args = toJsonValue(block['input']);
-    active.tools.set(callId, { name, arguments: args });
-    return {
-      kind: 'tool.call',
-      occurredAt: Date.now(),
-      id: `${messageId}:${callId}:started`,
-      callId,
-      toolName: name,
-      action: namedToolAction(name),
-      status: 'started',
-      arguments: args,
-      result: null,
-      error: null,
-    };
-  }
+  if (block['type'] !== 'tool_use') return null;
+  const callId = stringValue(block['id']);
+  const name = stringValue(block['name']);
+  if (callId === null || callId === '' || name === null) return null;
+  const args = toJsonValue(block['input']);
+  active.tools.set(callId, { name, arguments: args });
+  return {
+    kind: 'tool.call',
+    occurredAt: Date.now(),
+    id: `${messageId}:${callId}:started`,
+    callId,
+    toolName: name,
+    ...toolDisplay(name, args),
+    status: 'started',
+    arguments: args,
+    result: null,
+    error: null,
+  };
+}
+
+/** What a tool returned, correlated to the call the model made. */
+function toolResultActivity(
+  active: ActiveTurn,
+  messageId: string,
+  block: Record<string, unknown>,
+): RuntimeActivity | null {
   if (block['type'] !== 'tool_result') return null;
   const callId = stringValue(block['tool_use_id']);
   if (callId === null || callId === '') return null;
@@ -283,7 +325,7 @@ function activityForBlock(
     id: `${messageId}:${callId}:result`,
     callId,
     toolName: known?.name ?? 'tool',
-    action: namedToolAction(known?.name),
+    ...toolDisplay(known?.name, known?.arguments ?? null),
     status: failed ? 'failed' : 'completed',
     arguments: known?.arguments ?? null,
     result,
@@ -294,22 +336,6 @@ function activityForBlock(
 function displayError(value: JsonValue | null): string | null {
   if (value === null) return null;
   return typeof value === 'string' ? value : JSON.stringify(value);
-}
-
-function namedToolAction(value: unknown): RuntimeToolAction | null {
-  switch (value) {
-    case 'Read': return 'read';
-    case 'Grep':
-    case 'Glob':
-    case 'WebSearch': return 'search';
-    case 'Write':
-    case 'Edit':
-    case 'MultiEdit':
-    case 'NotebookEdit': return 'edit';
-    case 'Bash':
-    case 'PowerShell': return 'run';
-    default: return null;
-  }
 }
 
 function normalizeTextBlocks(value: unknown): JsonValue | null {

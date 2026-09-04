@@ -197,6 +197,35 @@ home as `~`.
 
 15. Runtime providers expose neutral tool display facts with enough information
     for one-line tool rows; Feishu owns all card rendering and I/O.
+    *Fulfilled 2026-09-03.* The facts are `summary` (the one line the
+    runtime's own UI labels the call with), `invocation` (the call in the
+    caller's notation) and `items` (what the call is about, one entry each —
+    today the files a read or edit touches — only as the provider's protocol
+    already lists them) on the `tool.call` activity, beside the existing
+    `action`. Feishu shows `items` as the pills of a `list` result segment. The operator's ruling that set the shape: 「你需要同时兼顾 claude
+    code 和 codex 这两边 … 然后在 dreamux 的 activity 的 interface 里，扩展一些
+    字段，最后 feishu-cot-adapter 这里对齐最终上传到飞书的消息格式」. Each
+    runtime derives them in its own `src/tool-display.ts`; Feishu composes the
+    row title, icon and result segments from them and never parses a
+    provider's argument schema — nor, since 2026-09-04, Core's: the Channel's
+    hand-composed titles for the teammate tools (`spawn`, `send`, `close`,
+    `workflow_run`) were removed on the ruling 「那你先给 dreamux 内置mcp 工具的覆
+    盖都删掉吧。我想想这里怎么做。」, and how Core labels its own tools is open.
+    The Channel's own `reply`, `react` and `list_chat_bots` lost their
+    hand-made titles and icons the same day (「这些全部回退吧」). What stays
+    unlabelled: a row for a tool no runtime can label — every MCP tool, the
+    Channel's own included — shows its name behind the generic app icon with
+    its arguments hidden (「mcp 工具隐藏掉参数吧」), because a label would have
+    to come from the tool catalog, not the runtime. Codex-side facts the display still lacks, found while
+    doing this and left unfixed: a `declined` command or patch reports as
+    completed, a command's exit code is not read, an MCP error object is
+    stringified as JSON instead of its `message`, and an MCP result is
+    forwarded as the whole `{content, structuredContent, _meta}` envelope
+    (`resultFor` in `turn-manager.ts`), so a Codex row prints the envelope
+    where the Claude Code row prints only the `structuredContent` payload.
+    The operator saw the envelope on a `reply` row and left it (「先不修了，先这
+    样吧」, 2026-09-04); the fix, when wanted, unwraps in the Codex provider —
+    `structuredContent`, else the joined `content` text, else null.
 16. COT remains the automatic progress surface. The model-facing `react` tool is
     retained; no automatic received/in-progress reaction ledger is reintroduced.
 17. The existing official Lark COT transport surface and compatible SDK version

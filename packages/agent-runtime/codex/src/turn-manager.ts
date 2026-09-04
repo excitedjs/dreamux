@@ -7,6 +7,7 @@ import {
 } from './events.js';
 import type { CodexOutputSchemaCodec } from './output-schema-codec.js';
 import type { CodexWsClient } from './rpc.js';
+import { toolDisplay } from './tool-display.js';
 import type { ThreadItem } from './types.js';
 import type {
   AgentRuntimeActivitySink,
@@ -17,7 +18,6 @@ import type {
   RuntimeCompletion,
   RuntimeSubmission,
   RuntimeSubmissionSettlement,
-  RuntimeToolAction,
 } from '@excitedjs/dreamux-types';
 
 interface SubmissionDeferred {
@@ -253,7 +253,6 @@ export class TurnManager {
       completion = Object.freeze({
         status: 'completed',
         resultText: extractAssistantText(completedTurn),
-        truncated: false,
       });
     }
     record.completion = completion;
@@ -375,6 +374,16 @@ function createRuntimeSubmission(): SubmissionDeferred {
   return { submission, settle(settlement) { if (settled) return false; settled = true; resolve(settlement); return true; } };
 }
 
+/**
+ * The one line the card shows for a compaction, in the words Claude Code's
+ * UI uses for the same fact. codex's `contextCompaction` item carries only
+ * its id, and the summary codex wrote never leaves codex-core. Operator
+ * ruling, 2026-09-04: 「只显示压缩发生了即可 … 我只需要这一行字即可」 — and on the
+ * shape, 「没必要给他单独加一个新的 activity 类型，你直接在provider 里，多推一个
+ * assistant message，内容就这一行。」
+ */
+const COMPACTED_SESSION_MESSAGE = 'Compacted session';
+
 function itemActivity(
   turnId: string,
   item: ThreadItem,
@@ -390,7 +399,15 @@ function itemActivity(
       occurredAt,
       id: `${turnId}:${itemId}:completed`,
       text: item.text,
-      truncated: false,
+    };
+  }
+  if (item.type === 'contextCompaction') {
+    if (phase !== 'completed') return null;
+    return {
+      kind: 'assistant.message',
+      occurredAt,
+      id: `${turnId}:${itemId}:completed`,
+      text: COMPACTED_SESSION_MESSAGE,
     };
   }
   const toolName = toolNameFor(item);
@@ -404,34 +421,12 @@ function itemActivity(
     id: `${turnId}:${itemId}:${phase}`,
     callId: itemId,
     toolName,
-    action: toolActionFor(item),
+    ...toolDisplay(item),
     status: phase === 'started' ? 'started' : failed ? 'failed' : 'completed',
     arguments: toJsonValue(item['arguments'] ?? item['input'] ?? item['command'] ?? item['changes'] ?? null),
     result: phase === 'completed' ? resultFor(item) : null,
     error,
   };
-}
-
-function toolActionFor(item: ThreadItem): RuntimeToolAction | null {
-  if (item.type === 'commandExecution') return commandActionFor(item['commandActions']);
-  if (item.type === 'fileChange') return 'edit';
-  return null;
-}
-
-function commandActionFor(value: unknown): RuntimeToolAction {
-  if (!Array.isArray(value) || value.length === 0) return 'run';
-  const actions = value.map((entry): RuntimeToolAction | null => {
-    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return null;
-    switch ((entry as Record<string, unknown>)['type']) {
-      case 'read': return 'read';
-      case 'listFiles': return 'list_files';
-      case 'search': return 'search';
-      case 'unknown': return 'run';
-      default: return null;
-    }
-  });
-  const first = actions[0];
-  return first !== null && actions.every((action) => action === first) ? first : 'run';
 }
 
 function resultFor(item: ThreadItem): JsonValue | null {
@@ -466,6 +461,7 @@ function renderProviderError(value: unknown): string | null {
 function toolNameFor(item: ThreadItem): string | null {
   if (item.type === 'commandExecution') return 'exec_command';
   if (item.type === 'fileChange') return 'apply_patch';
+  if (item.type === 'webSearch') return 'web_search';
   if (item.type === 'mcpToolCall') {
     const server = typeof item['server'] === 'string' ? item['server'] : null;
     const tool = typeof item['tool'] === 'string' ? item['tool'] : null;

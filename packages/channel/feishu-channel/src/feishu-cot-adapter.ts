@@ -115,7 +115,6 @@ export class FeishuCotAdapter {
       signal: this.controller.signal,
     });
     this.activity = {
-      channelId: opts.channelId,
       openToolCallsMax: FEISHU_COT_OPEN_TOOL_CALLS_MAX,
       acceptOpening: (key, state, events) =>
         this.acceptOpeningActivityForState(key, state, events),
@@ -281,7 +280,6 @@ export class FeishuCotAdapter {
         kind: 'assistant.message',
         event_id: `end:${randomUUID()}`,
         content: end.reason,
-        content_truncated: end.reason_truncated,
         redacted: end.redacted,
       });
     }

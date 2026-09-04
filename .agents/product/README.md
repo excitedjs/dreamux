@@ -110,6 +110,40 @@ the same change that touches it.
   presentation is a deliberately tuned surface; changes to it are their own
   requirement, never a refactor side effect.
   (Decision: [feishu-cot-conversation-display](/.agents/tasks/channel/feishu-cot-conversation-cards/accepted-decision.md).)
+- **A runtime's own conversation traffic is not the agent speaking.** What a
+  Claude Code session emits as a `user` envelope — its tool results, and the
+  context the CLI injects into its own conversation such as the whole SKILL.md
+  after a `Skill` call — is never displayed as text. Only the tool result
+  reaches the card, on the tool's own row. What the operator sent is a
+  different fact: Core announces it as an input, and the Feishu card hides just
+  the body the operator can already see in the chat.
+  (Ruling: 「所有的 user 消息都隐藏即可」, 2026-09-03, in
+  [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md).)
+- **A tool row says what the call was, not how the runtime spelled it.** A
+  tool row on the Feishu card is titled the way the runtime's own UI would
+  title it — a command's stated purpose, the file a read or edit touched, the
+  pattern a search ran, the task a sub-agent was given — carries the icon for
+  what it did, and expands to the call in the caller's own notation (the
+  shell command line, the task text) before its output. A read or edit that
+  succeeded expands to the files it touched as pills and nothing more; only
+  a failed one still shows its diff and output. A row no runtime could label
+  — today every MCP tool, the Channel's own reply/react/list_chat_bots
+  included — shows its tool name behind a generic app icon with its arguments
+  hidden; its output still expands. An output that parses as JSON is
+  pretty-printed in a json code segment; any other output is plain text.
+  Every card string is cut only at Feishu's own per-event limit, never
+  earlier in Core. Raw
+  JSON arguments appear nowhere on the card. Codex web searches are rows too.
+  The card's own words — row verbs (Read, Edit, Search, List), the Completed and
+  Failed status lines, and the truncation marker — are English. Dreamux's own teammate tools (spawn,
+  send, close, workflow) appear as plain unlabelled rows for now.
+- **A compaction is one line.** When the runtime compacts its context, the
+  card shows `Compacted session` as an assistant message, and nothing of the
+  summary the runtime wrote for itself.
+  (Ruling: 「优化一下 COT 的展示效果 … 你需要同时兼顾 claude code 和 codex 这两边
+  … 然后在 dreamux 的 activity 的 interface 里，扩展一些字段，最后
+  feishu-cot-adapter 这里对齐最终上传到飞书的消息格式」, 2026-09-03, in
+  [feishu-cot-conversation-cards](/.agents/tasks/channel/feishu-cot-conversation-cards/requirement.md).)
 - **A displayed input is announced when it is submitted, and always ends.** The
   input appears with the text that was submitted, before any runtime has
   accepted it, so a submission that fails is visible together with what failed.

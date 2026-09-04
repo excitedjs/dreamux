@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-claude-code",
+      "comment": "Claude Code `user` envelopes on stdout are no longer shown on the conversation display. The stream-json mapping read block types alone, so the text the CLI injects into its own conversation — the whole SKILL.md after a `Skill` call, hook output, reminders — was published as the agent's own `assistant.message` and rendered as long markdown on Feishu COT cards. Only `assistant` envelopes now yield text and tool-call activity; a `user` envelope yields tool results only. The display seam is typed to those two envelopes (`ClaudeActivityLine`), and the RPC no longer forwards other stream lines to it.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

@@ -17,7 +17,7 @@
  *
  * `RuntimeCompletion` itself carries no `displaySubmission` member (see
  * `packages/dreamux-types/src/agent-runtime.ts`): the current contract is
- * `{ status: 'completed', resultText, truncated }` or
+ * `{ status: 'completed', resultText }` or
  * `{ status: 'failed', error }` and nothing else. `completedCompletion` /
  * `failedCompletion` below still accept a leading `submission` argument only
  * because it is the natural argument every call site already has on hand (the
@@ -94,12 +94,10 @@ export function controllableRuntimeSubmission(): ControllableRuntimeSubmission {
 export function completedCompletion(
   _submission: RuntimeSubmission,
   resultText: string | null = null,
-  truncated = false,
 ): RuntimeCompletion {
   return Object.freeze({
     status: 'completed' as const,
     resultText,
-    truncated,
   });
 }
 
