@@ -24,7 +24,6 @@ export const FEISHU_COT_APPEND_MAX_BYTES = 64 * 1_024;
 const TEXT_MESSAGE_EVENT_GROUP_MAX_BYTES = 224 * 1_024;
 const TOOL_RESULT_SOFT_MAX_BYTES = 1_024;
 const TOOL_RESULT_CONTENT_RESERVE_BYTES = 256;
-const SHORT_TEXT_MAX_BYTES = 120;
 const COT_EVENT_ENCODING_RESERVE_BYTES = 128;
 const COT_REQUEST_ENCODING_RESERVE_BYTES = 512;
 
@@ -319,18 +318,9 @@ function toolResultSegments(
   if (segments.length === 0) {
     return { type: 'text', text: parts.failed ? 'Failed' : 'Completed' };
   }
-  if (segments.length === 1) {
-    const onlyText = argumentsText ?? resultText;
-    if (
-      onlyText !== null &&
-      !onlyText.includes('\n') &&
-      Buffer.byteLength(onlyText, 'utf8') <= SHORT_TEXT_MAX_BYTES
-    ) {
-      return { type: 'text', text: onlyText };
-    }
-    return segments[0];
-  }
-  return segments;
+  // A one-line output is a code segment like any other: the operator ruled
+  // out the inline short-text exception (「全都给他们包到代码块里面」, 2026-09-04).
+  return segments.length === 1 ? segments[0] : segments;
 }
 
 function shrinkForContentBudget(value: string, overflowBytes: number): string {

@@ -123,9 +123,10 @@ describe('runtime-labelled tool rows', () => {
       status: 'completed',
       result_json: '{"message_ids":["om_1"]}',
     }));
-    // No fixed Completed line: the output expands like any other tool's.
+    // No fixed Completed line: the output expands like any other tool's, and
+    // a one-line output is a code segment too (「全都给他们包到代码块里面」).
     expect(result!.content).toMatchObject({
-      content: { type: 'text', text: '{"message_ids":["om_1"]}' },
+      content: { type: 'code', language: 'text', code: '{"message_ids":["om_1"]}' },
     });
   });
 

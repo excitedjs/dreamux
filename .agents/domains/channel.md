@@ -772,7 +772,11 @@ icon of the call's action, bounded by `TOOL_ITEMS_SOFT_MAX_BYTES` with one
 truncated into one pill rather than folded into that count, per 「按照单条去截断
 即可」, 2026-09-04), the `invocation` as a `code` segment
 (`language: bash` for a run), then the output as a `code` segment, each
-spelling its body in the documented `code` field. A read or edit that
+spelling its body in the documented `code` field. The output is a code
+segment however short it is: #347 had shown a one-line output under 120
+bytes as plain text, and the operator removed that exception once MCP rows
+made it visible as some outputs boxed and some not (「全都给他们包到代码块里
+面」, 2026-09-04). A read or edit that
 succeeded stops after its pills: the operator ruled the diff and the output
 redundant beside them (「有了胶囊的，可以忽略底下这个编辑的代码段。只看编辑了
 哪些文件就行了」) because the client cannot fold a code segment away; a failed
