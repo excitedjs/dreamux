@@ -2,9 +2,9 @@
  * The Team namespace's canonical Commands.
  *
  * The Team owns creation identity, leader submission, its read projections, and
- * dissolve, so all six definitions live with the collection that owns those
- * actions. External channel binding is deliberately absent: it is Channel-owned
- * behavior, not a Core Team Command.
+ * interrupt, dissolve, so all seven definitions live with the collection that
+ * owns those actions. External channel binding is deliberately absent: it is
+ * Channel-owned behavior, not a Core Team Command.
  *
  * These are the shared `admin.sock` and Channel-to-Core surface, and only that.
  * An Agent reaches the same Team through the Team MCP delegate beside this file,
@@ -18,6 +18,7 @@
  * caller sends.
  */
 import type {
+  AgentRuntimeInterruptOutcome,
   AgentRuntimeSkillSource,
   CoreCommandDefinition,
   TeamCreateCommand,
@@ -95,6 +96,10 @@ interface TeamCreateInput {
 
 interface TeamSubmitInput {
   command: TeamSubmitCommand;
+}
+
+interface TeamInterruptInput {
+  teamName: string | null;
 }
 
 interface TeamNameInput {
@@ -295,6 +300,34 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
     },
   };
 
+  const interrupt: CoreCommandDefinition<
+    'team.interrupt',
+    TeamInterruptInput,
+    AgentRuntimeInterruptOutcome
+  > = {
+    name: 'team.interrupt',
+    version: 1,
+    input: objectSchema({ team_name: NON_EMPTY_STRING }),
+    output: objectSchema(
+      { status: enumOf(['interrupted', 'idle']) },
+      ['status'],
+    ),
+    parse(payload) {
+      return {
+        teamName: optionalTeamNameParam(
+          commandPayload(payload),
+          'team_name',
+        ),
+      };
+    },
+    async execute(context, input) {
+      const dispatcher = mustDispatcher(host, context);
+      return input.teamName === null
+        ? dispatcher.interruptAgent()
+        : dispatcher.interruptTeamLeader(input.teamName);
+    },
+  };
+
   const list: CoreCommandDefinition<'team.list', void, { teams: unknown[] }> = {
     name: 'team.list',
     version: 1,
@@ -407,6 +440,7 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
   return [
     create,
     submit,
+    interrupt,
     list,
     status,
     history,

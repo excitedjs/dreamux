@@ -34,14 +34,12 @@ import type { Writable } from 'node:stream';
 import { randomUUID } from 'node:crypto';
 
 import {
-  buildCanUseToolAllow,
-  buildControlAck,
-  buildRemoteControlEnable,
   buildUserMessage,
   LineBuffer,
   parseLine,
   TurnAggregator,
 } from './stream.js';
+import { ClaudeCodeControlRpc } from './control-rpc.js';
 import type { ParsedLine, TurnSubmitOptions } from './types.js';
 
 interface PendingTurn {
@@ -70,6 +68,8 @@ interface PendingTurn {
   ranAnyCommand: boolean;
   /** Whether a `result` envelope has been accepted into {@link aggregator}. */
   sawResult: boolean;
+  /** An explicit interrupt request targets this execution window. */
+  interruptRequested: boolean;
   /**
    * Why the most recent command ended *without* being run (Codex's
    * `lastSubmissionError`). Only read to name the cause when a turn ends with
@@ -117,12 +117,14 @@ export class ClaudeCodeStreamRpc {
   private readonly lineBuf = new LineBuffer();
   private pending: PendingTurn | null = null;
   private lifecycleSupported: boolean | null = null;
-  private remoteControlRequestId: string | null = null;
+  private readonly control: ClaudeCodeControlRpc;
 
   constructor(
     private readonly stdin: Writable,
     private readonly options: ClaudeCodeStreamRpcOptions,
-  ) {}
+  ) {
+    this.control = new ClaudeCodeControlRpc(stdin, options);
+  }
 
   async submitTurn(
     prompt: string,
@@ -148,6 +150,7 @@ export class ClaudeCodeStreamRpc {
         startedSinceResult: new Set(),
         ranAnyCommand: false,
         sawResult: false,
+        interruptRequested: false,
         lastAbnormalReason: null,
         capabilityWaiters: [],
         writeWaiters: new Map(),
@@ -254,21 +257,27 @@ export class ClaudeCodeStreamRpc {
     this.settlePending(err)?.reject(err);
   }
 
+  interruptTurn(reason: string): Promise<boolean> {
+    return this.control.interruptTurn(this.pending, reason);
+  }
+
   enableRemoteControl(): void {
-    if (!this.stdin.writable) return;
-    this.remoteControlRequestId = randomUUID();
-    this.stdin.write(`${buildRemoteControlEnable(this.remoteControlRequestId)}\n`);
+    this.control.enableRemoteControl();
   }
 
   /**
    * Detach the in-flight turn: clear its deadline timer and null `pending`,
    * returning it so the caller can resolve or reject it exactly once.
    */
-  private settlePending(failure?: Error): PendingTurn | null {
+  private settlePending(
+    failure?: Error,
+    interruptOutcome = false,
+  ): PendingTurn | null {
     const pending = this.pending;
     if (pending === null) return null;
     if (pending.timer !== null) clearTimeout(pending.timer);
     this.pending = null;
+    this.control.settleTurn(pending, failure, interruptOutcome);
     // On an explicit failure (write error, stop, idle reap) both waiter kinds
     // get the real error. On a clean `result` settlement there is no error:
     // capability waiters never got a decision, while write waiters were written
@@ -279,6 +288,13 @@ export class ClaudeCodeStreamRpc {
     );
     this.rejectWriteWaiters(pending, failure ?? steerWriteUnconfirmedError());
     return pending;
+  }
+
+  /** End the execution window on the native artifacts of an accepted interrupt. */
+  private settleInterrupted(pending: PendingTurn): void {
+    if (this.pending !== pending) return;
+    this.options.onProtocolEvent?.({ kind: 'interrupted' });
+    this.settlePending(undefined, true)?.resolve();
   }
 
   /**
@@ -347,6 +363,10 @@ export class ClaudeCodeStreamRpc {
     }
     if (pending.sawResult) {
       this.settlePending()?.resolve();
+      return;
+    }
+    if (pending.interruptRequested) {
+      this.settleInterrupted(pending);
       return;
     }
     if (pending.ranAnyCommand) return;
@@ -466,6 +486,10 @@ export class ClaudeCodeStreamRpc {
           line.outcome.userMessageUuid === null &&
           line.outcome.text === null
         ) {
+          if (pending.interruptRequested) {
+            this.settleInterrupted(pending);
+            break;
+          }
           this.options.log?.('warn', 'claude interrupt result artifact ignored');
           break;
         }
@@ -481,10 +505,15 @@ export class ClaudeCodeStreamRpc {
         break;
       }
       case 'control_request':
-        this.onControlRequest(line.requestId, line.subtype, line.request);
+        this.control.onControlRequest(line.requestId, line.subtype, line.request);
         break;
       case 'control_response':
-        this.onControlResponse(line.requestId, line.ok, line.response, line.error);
+        this.control.onControlResponse(
+          line.requestId,
+          line.ok,
+          line.response,
+          line.error,
+        );
         break;
       case 'parse_error':
         this.options.log?.(
@@ -564,55 +593,6 @@ export class ClaudeCodeStreamRpc {
     for (const waiter of waiters) waiter.reject(failure);
   }
 
-  private onControlRequest(
-    requestId: string | null,
-    subtype: string | null,
-    request: Record<string, unknown>,
-  ): void {
-    if (requestId === null || !this.stdin.writable) return;
-    // Unattended posture: answer permission callbacks so a turn never wedges
-    // waiting on a human.
-    let reply: string;
-    if (subtype === 'can_use_tool') {
-      const rawInput = request['input'];
-      const input =
-        typeof rawInput === 'object' &&
-        rawInput !== null &&
-        !Array.isArray(rawInput)
-          ? (rawInput as Record<string, unknown>)
-          : {};
-      reply = buildCanUseToolAllow(requestId, input);
-    } else {
-      reply = buildControlAck(requestId);
-    }
-    this.stdin.write(`${reply}\n`);
-  }
-
-  private onControlResponse(
-    requestId: string | null,
-    ok: boolean,
-    response: Record<string, unknown> | null,
-    error: string | null,
-  ): void {
-    if (requestId === null || requestId !== this.remoteControlRequestId) return;
-    this.remoteControlRequestId = null;
-    if (ok && response !== null) {
-      const url = response['session_url'] ?? response['connect_url'];
-      if (typeof url === 'string') {
-        this.options.onRemoteControlUrl?.(url);
-      } else {
-        this.options.log?.(
-          'warn',
-          'claude remote control enable succeeded without a URL',
-        );
-      }
-      return;
-    }
-    this.options.log?.(
-      'warn',
-      `claude remote control enable failed${error !== null ? `: ${error}` : ''}`,
-    );
-  }
 }
 
 function lifecycleUnsupportedError(): Error {

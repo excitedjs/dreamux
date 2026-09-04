@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: Agent Runtime providers now expose a neutral interrupt operation that reports whether an active turn was interrupted or the runtime was idle. Any package implementing AgentRuntime must now implement interrupt().",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

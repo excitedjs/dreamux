@@ -259,6 +259,7 @@ export interface TeamListRow {
   intent: string | null;
   source_repo: string | null;
   leader_name: string;
+  leader_agent_runtime: string;
   leader_state: AgentEntityIdentityStatus | null;
   member_count: number;
   created_at: number;

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Claude Code agents can now interrupt the active native turn without stopping the resident session; an idle runtime reports that no turn is running.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-claude-code"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

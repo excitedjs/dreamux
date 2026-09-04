@@ -1,4 +1,5 @@
 import type {
+  AgentRuntimeInterruptOutcome,
   TeamStateTeammateSummary,
 } from '@excitedjs/dreamux-types';
 
@@ -38,10 +39,7 @@ import type {
   TeamSummary,
   TeamView,
 } from '../team-collection/types.js';
-import {
-  teamErrorInfo,
-  TeamClosedError,
-} from '../team-collection/errors.js';
+import { TeamClosedError } from '../team-collection/errors.js';
 import {
   alignedWithLeader,
   createTeamLeaderAgentForTeam,
@@ -443,28 +441,36 @@ export class TeamService {
   /**
    * Submit this Team's dissolve.
    *
-   * The answer is the submission, not the outcome: once this Team owns the one
-   * background operation that will stop it, close it, and reclaim its checkout,
-   * the caller is done. Nothing about assessing a workspace, terminating
-   * runtimes, or removing a checkout is worth holding a tool call open for, and
-   * no persisted phase survives the process that ran it — a run that ends
+   * The answer is the submission, not the outcome. For a non-forced dissolve,
+   * the one read that can refuse the whole operation runs before that answer;
+   * once it passes, this Team owns the background stop, close, and reclaim.
+   * No persisted phase survives the process that ran it — a run that ends
    * mid-dissolve simply leaves an open Team whose children reopen lazily.
    *
    * Whoever asks, it is one operation: a second submission joins the first
    * rather than dismantling the same Team twice, and a dissolve that was
    * refused can be asked again.
    */
-  dissolve(input: TeamDissolveCommand): TeamDissolveReceipt {
+  async dissolve(input: TeamDissolveCommand): Promise<TeamDissolveReceipt> {
     const note = requireLifecycleText(input.note, 'Team dissolve note');
-    if (this.dissolveTask === null) {
-      // Published before it runs, so nothing it does — including failing at
-      // once — can happen while this Team still looks open. Observed, never
-      // awaited: the operation belongs to this Team, so its failure is this
-      // Team's to report rather than an unhandled rejection.
-      const task = Promise.resolve().then(() => this.runDissolve({ ...input, note }));
-      this.dissolveTask = task;
-      void task.catch(() => {});
-    }
+    if (this.dissolveTask !== null) return this.dissolveReceipt();
+    if (!input.force) await this.closing.requireReclaimableWorktree();
+    if (this.dissolveTask !== null) return this.dissolveReceipt();
+    // `Promise.resolve().then(...)` would queue `runDissolve` before this async
+    // method's resolution wakes its caller. The macrotask boundary makes the
+    // receipt observable first, while publishing `dissolveTask` here still
+    // raises the admission fence before anything else can enter the Team.
+    const task = new Promise<void>((resolve, reject) => {
+      setImmediate(() => {
+        void this.runDissolve({ ...input, note }).then(resolve, reject);
+      });
+    });
+    this.dissolveTask = task;
+    void task.catch(() => {});
+    return this.dissolveReceipt();
+  }
+
+  private dissolveReceipt(): TeamDissolveReceipt {
     return { accepted: true, team_name: this.id, status: 'submitted' };
   }
 
@@ -481,7 +487,7 @@ export class TeamService {
       await this.closing.dissolve(input);
     } catch (error) {
       this.dissolveTask = null;
-      this.logDissolveFailure('Team dissolve failed', error);
+      this.closing.reportDissolveFailure('Team dissolve failed', error);
       throw error;
     }
     // This Team is over and already dropped by its owner; what is left is
@@ -491,19 +497,11 @@ export class TeamService {
     try {
       await this.cleanup.settle(this.id);
     } catch (error) {
-      this.logDissolveFailure('Team managed worktree cleanup failed', error);
+      this.closing.reportDissolveFailure(
+        'Team managed worktree cleanup failed',
+        error,
+      );
     }
-  }
-
-  private logDissolveFailure(message: string, error: unknown): void {
-    this.deps.log.error(
-      {
-        dispatcher_id: this.dispatcherId,
-        team_id: this.id,
-        err: teamErrorInfo(error),
-      },
-      message,
-    );
   }
 
   /** Give back the runtime authority this Team holds, without closing it. */
@@ -560,6 +558,11 @@ export class TeamService {
       }
       return admission;
     });
+  }
+
+  /** Interrupt the TeamLeader's owned runtime without starting a dormant one. */
+  interruptLeader(): Promise<AgentRuntimeInterruptOutcome> {
+    return this.admit(async () => (await this.leaderService()).interrupt());
   }
 
   /**

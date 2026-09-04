@@ -38,7 +38,7 @@ import type { DispatcherAccessState } from './feishu-gate.js';
 import type { PeerBot } from './chat-bots-store.js';
 
 const INTRODUCE_RE = /^\/introduce(?:\s|$)/i;
-const UNKNOWN_PEER_LABEL = '伙伴';
+const UNKNOWN_PEER_LABEL = 'peer';
 
 export interface IntroduceAuthInput {
   chatType: string;
@@ -124,7 +124,21 @@ export function detectIntroduce(
   rawContent: string,
   mentions: Mention[],
 ): boolean {
-  if (messageType !== 'text') return false;
+  const remaining = leadingTextAfterMentions(
+    messageType,
+    rawContent,
+    mentions,
+  );
+  return remaining !== null && INTRODUCE_RE.test(remaining);
+}
+
+/** Decode text content and remove every leading Feishu mention placeholder. */
+export function leadingTextAfterMentions(
+  messageType: string,
+  rawContent: string,
+  mentions: readonly Mention[],
+): string | null {
+  if (messageType !== 'text') return null;
   let text: string;
   try {
     const parsed = JSON.parse(rawContent) as unknown;
@@ -135,7 +149,7 @@ export function detectIntroduce(
           : ''
         : '';
   } catch {
-    return false;
+    return null;
   }
   // Strip leading Feishu mention keys longest-first: keys can be prefixes of
   // one another (`@_user_1` vs `@_user_10`), so checking the shorter key first
@@ -157,7 +171,7 @@ export function detectIntroduce(
       }
     }
   }
-  return INTRODUCE_RE.test(remaining);
+  return remaining;
 }
 
 /**
@@ -194,7 +208,8 @@ export function introducedPeers(
 export function introduceAckText(peers: PeerBot[]): string | null {
   if (peers.length === 0) return null;
   const items = peers.map((peer) => `@${displayNameForAck(peer)}`).join(' ');
-  return `✅ 已认识本群 ${peers.length} 个伙伴：${items}`;
+  const peerLabel = peers.length === 1 ? 'peer' : 'peers';
+  return `✅ Met ${peers.length} ${peerLabel} in this group: ${items}`;
 }
 
 function displayNameForAck(peer: PeerBot): string {

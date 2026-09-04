@@ -39,6 +39,10 @@ import {
   introducedPeers,
 } from './introduce.js';
 import {
+  detectFeishuSlashCommand,
+  type FeishuSlashCommand,
+} from './feishu-slash-commands.js';
+import {
   PAIRING_TTL_MS,
   PAIRING_TOKEN_REGEX,
   dreamuxFeishuGate,
@@ -347,12 +351,21 @@ export async function onMessage(
   }
 
   // deliver
-  await deliverAcceptedMessage(h, event);
+  const command = detectFeishuSlashCommand({
+    messageType: event.messageType,
+    rawContent: event.rawContent,
+    mentions: event.mentions,
+    chatType: classification.chatType,
+    botMentioned,
+    senderKind: classification.senderKind,
+  });
+  await deliverAcceptedMessage(h, event, command);
 }
 
 async function deliverAcceptedMessage(
   h: SessionHandle,
   acceptedEvent: FeishuInboundEvent,
+  command: FeishuSlashCommand | null,
 ): Promise<void> {
   const work = createFeishuInboundWork(h.sessionFence);
   try {
@@ -362,6 +375,31 @@ async function deliverAcceptedMessage(
       () => h.targetRouter.projectInbound(acceptedEvent, work.signal),
     );
     work.assertSessionActive();
+    if (command !== null) {
+      const reply = await h.delivery.command({
+        command,
+        target: route.target,
+        containerChatId: route.containerChatId,
+      });
+      work.assertSessionActive();
+      if (reply.kind === 'text') {
+        await sendReply(h, {
+          chatId: acceptedEvent.chatId,
+          text: reply.text,
+          messageId: acceptedEvent.messageId,
+        });
+      } else {
+        await sendCard(h, {
+          target: {
+            conversationId: acceptedEvent.chatId,
+            replyTo: acceptedEvent.messageId,
+          },
+          card: reply.card,
+          signal: work.signal,
+        });
+      }
+      return;
+    }
     const built = await buildSubmission(h, acceptedEvent, work, route.target);
     work.assertSessionActive();
     const outcome = await h.delivery.deliver({

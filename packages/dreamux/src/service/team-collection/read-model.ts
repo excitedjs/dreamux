@@ -90,6 +90,7 @@ export class TeamCollectionReadModel {
       intent: team.intent,
       source_repo: team.source_repo,
       leader_name: team.leader_name,
+      leader_agent_runtime: team.leader_agent_runtime,
       leader_state: await this.leaderState(team),
       member_count: await this.memberCount(team),
       created_at: team.created_at,

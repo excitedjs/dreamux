@@ -47,6 +47,7 @@ export interface FakeFeishuBot extends FeishuBot {
     reactionId: string;
   }>;
   readonly chatModeRequests: string[];
+  readonly chatNameRequests: string[];
   readonly messageReadRequests: FeishuMessageReadRequest[];
   readonly messageResourceRequests: FeishuMessageResourceRequest[];
   inject(event: FeishuInboundEvent): Promise<void>;
@@ -54,6 +55,7 @@ export interface FakeFeishuBot extends FeishuBot {
   injectCardAction(event: FeishuCardActionEvent): Promise<unknown>;
   setAppOwner(owner: FeishuAppOwnerIdentity): void;
   setChatMode(chatId: string, mode: FeishuChatMode | Error | undefined): void;
+  setChatName(chatId: string, name: string | Error | undefined): void;
   setSendError(err: Error | null): void;
   /**
    * Give this bot a COT surface, or take it away again.
@@ -105,6 +107,8 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
   const messageResourceRequests: FeishuMessageResourceRequest[] = [];
   const chatModes = new Map<string, FeishuChatMode | Error>();
   const chatModeRequests: string[] = [];
+  const chatNames = new Map<string, string | Error>();
+  const chatNameRequests: string[] = [];
   const openId: string | undefined = `fake-open-id-${appId}`;
   const displayName = `Fake ${appId}`;
   const reactions: FakeFeishuBot['reactions'] = [];
@@ -162,6 +166,12 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
       if (result instanceof Error) throw result;
       return result;
     },
+    async resolveChatName(chatId: string): Promise<string | undefined> {
+      chatNameRequests.push(chatId);
+      const result = chatNames.get(chatId);
+      if (result instanceof Error) throw result;
+      return result;
+    },
     async addReaction(messageId: string, emoji: string): Promise<string> {
       if (reactionError !== null) throw reactionError;
       const reactionId = `reaction-fake-${nextReactionId++}`;
@@ -214,6 +224,9 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     get chatModeRequests() {
       return chatModeRequests;
     },
+    get chatNameRequests() {
+      return chatNameRequests;
+    },
     get messageReadRequests() {
       return messageReadRequests;
     },
@@ -238,6 +251,10 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     setChatMode(chatId: string, mode: FeishuChatMode | Error | undefined): void {
       if (mode === undefined) chatModes.delete(chatId);
       else chatModes.set(chatId, mode);
+    },
+    setChatName(chatId: string, name: string | Error | undefined): void {
+      if (name === undefined) chatNames.delete(chatId);
+      else chatNames.set(chatId, name);
     },
     setSendError(err: Error | null): void {
       sendError = err;

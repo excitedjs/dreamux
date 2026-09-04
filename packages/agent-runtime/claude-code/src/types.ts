@@ -181,6 +181,7 @@ export type ClaudeActivityLine = Extract<
 >;
 
 export type ClaudeProtocolEvent =
+  | { readonly kind: 'interrupted' }
   | {
       readonly kind: 'command_lifecycle';
       readonly commandUuid: string;
@@ -209,6 +210,8 @@ export interface ClaudeCodeSession {
     options?: TurnSubmitOptions,
     commandUuid?: string,
   ): Promise<void>;
+  /** Interrupt the native turn when one is currently running. */
+  interruptTurn(reason: string): Promise<boolean>;
   /** Whether the child is currently alive. */
   isAlive(): boolean;
   /**

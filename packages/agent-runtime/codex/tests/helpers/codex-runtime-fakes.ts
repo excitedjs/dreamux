@@ -201,6 +201,7 @@ export class FakeCodexWsClient {
       }
       return { turn: { id: turnId } } as R;
     }
+    if (method === 'turn/interrupt') return {} as R;
     throw new Error(`FakeCodexWsClient: unexpected method ${method}`);
   }
 

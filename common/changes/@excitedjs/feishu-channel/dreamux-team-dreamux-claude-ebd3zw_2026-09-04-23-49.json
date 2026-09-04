@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "The built-in Feishu Channel recognizes human-authored /stop, /teams, and /dissolve after ordinary inbound authorization. Commands reply directly without creating a model turn, remove a stale binding when Core proves its Team unavailable, and /teams renders the current Running Team locator card. The /introduce acknowledgement is now in English.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

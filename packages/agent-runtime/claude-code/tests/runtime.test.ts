@@ -79,6 +79,7 @@ class FakeSession implements ClaudeCodeSession {
   readonly submits: Array<{ prompt: string; commandUuid: string | undefined }> = [];
   /** Every live steer written into the open window, in order. */
   readonly steers: Array<{ prompt: string; commandUuid: string | undefined }> = [];
+  interruptCalls = 0;
   private pendingSubmit: { reject: (error: Error) => void } | null = null;
   private heldSubmit: { resolve: () => void } | null = null;
 
@@ -161,6 +162,11 @@ class FakeSession implements ClaudeCodeSession {
     // is what a live steer's outcome actually depends on. End-to-end steering
     // against the real RPC is covered in session.test.ts.
     this.steers.push({ prompt, commandUuid });
+  }
+
+  async interruptTurn(): Promise<boolean> {
+    this.interruptCalls += 1;
+    return this.pendingSubmit !== null;
   }
 
   isAlive(): boolean {
@@ -468,6 +474,43 @@ describe('ClaudeCodeRuntime structured output', () => {
 // ─── submit(): prepared text only, no native rendering ──────────────────────
 
 describe('ClaudeCodeRuntime submit contract', () => {
+  it('answers idle while an admitted turn still has no live session to interrupt', async () => {
+    const h = new Harness();
+    h.behavior.failStart = () => new Error('spawn failed');
+    const runtime = await tracked(h.createRuntime());
+    const startFailure = expect(runtime.start()).rejects.toThrow('spawn failed');
+    const admissionPromise = runtime.submit({ text: 'racing spawn' });
+
+    // `submit` publishes the active turn synchronously, but the child has not
+    // reached a live session. Interrupt must neither await nor inherit spawn.
+    await expect(runtime.interrupt()).resolves.toEqual({ status: 'idle' });
+
+    const admission = await admissionPromise;
+    if (admission.status !== 'submitted') throw new Error('expected submitted');
+    await startFailure;
+    await expect(admission.submission.settled).resolves.toMatchObject({
+      kind: 'failed',
+      error: expect.objectContaining({ message: 'spawn failed' }),
+    });
+  });
+
+  it('interrupts only an active turn and stays idle without starting a session', async () => {
+    const h = new Harness();
+    h.behavior.stallSubmit = true;
+    const runtime = await tracked(h.createRuntime());
+
+    await expect(runtime.interrupt()).resolves.toEqual({ status: 'idle' });
+    expect(h.sessions).toHaveLength(0);
+
+    await runtime.start();
+    const admission = await runtime.submit({ text: 'keep working' });
+    if (admission.status !== 'submitted') throw new Error('expected submitted');
+    await expect(runtime.interrupt()).resolves.toEqual({ status: 'interrupted' });
+    expect(h.sessions[0]!.interruptCalls).toBe(1);
+    await runtime.stop();
+    await expect(admission.submission.settled).resolves.toEqual({ kind: 'stopped' });
+  });
+
   it('forwards submitted text to the native turn verbatim, with no wrapping or native syntax injected', async () => {
     const h = new Harness();
     let capturedPrompt: string | null = null;

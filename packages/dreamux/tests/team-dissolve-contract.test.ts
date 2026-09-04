@@ -40,17 +40,13 @@ afterEach(async () => {
   }
 });
 
-describe('the preflight ordering TeamClosing owns per caller kind', () => {
-  it('a dispatcher-triggered dissolve assesses the worktree before anything stops, then rechecks after', async () => {
+describe('the admitted ordering TeamClosing owns per caller kind', () => {
+  it('a dispatcher-triggered dissolve rechecks the worktree after every runtime stops', async () => {
     const h = closingHarness();
 
     await expect(h.closing.dissolve(dispatcherDissolve)).resolves.toBeUndefined();
 
     expect(h.order).toEqual([
-      // The Dispatcher's own refusal question: nothing has stopped yet, so a
-      // block here costs the Team nothing.
-      'assess',
-      // stop
       'workflows.stopAll',
       'scheduler.stop',
       'members.stopAll',
@@ -66,7 +62,7 @@ describe('the preflight ordering TeamClosing owns per caller kind', () => {
       'leader.close',
       'record.commit',
     ]);
-    expect(h.assessCalls()).toBe(2);
+    expect(h.assessCalls()).toBe(1);
   });
 
   it('a TeamLeader self-dissolve stops its other children first, checks while it is still alive, then stops itself', async () => {
@@ -106,6 +102,7 @@ describe('the preflight ordering TeamClosing owns per caller kind', () => {
       ],
     });
 
+    await expect(h.closing.requireReclaimableWorktree()).resolves.toBeUndefined();
     await expect(h.closing.dissolve(dispatcherDissolve)).rejects.toThrow(/is dirty/);
 
     // The stop already ran (nothing is undone), but nothing durable closed.
@@ -113,6 +110,7 @@ describe('the preflight ordering TeamClosing owns per caller kind', () => {
     expect(h.order).not.toContain('members.close');
     expect(h.order).not.toContain('leader.close');
     expect(h.order).not.toContain('record.commit');
+    expect(h.assessCalls()).toBe(2);
     // Reachable again: admission comes back over what really is on disk.
     expect(h.workflowStart).toHaveBeenCalledTimes(1);
     expect(h.schedulerStart).toHaveBeenCalledTimes(1);
@@ -215,12 +213,12 @@ describe('IMMEDIATE RECEIPT: one TeamService submission capability for both call
     const dispatcherTeam = await bootDissolveTeam();
     const leaderTeam = await bootDissolveTeam();
     try {
-      const dispatcherReceipt = dispatcherTeam.service.dissolve({
+      const dispatcherReceipt = await dispatcherTeam.service.dissolve({
         requester: 'dispatcher',
         force: true,
         note: 'dispatcher dissolve',
       });
-      const leaderReceipt = leaderTeam.service.dissolve({
+      const leaderReceipt = await leaderTeam.service.dissolve({
         requester: 'team_leader',
         force: true,
         note: 'self dissolve',
@@ -260,7 +258,7 @@ describe('IMMEDIATE RECEIPT: one TeamService submission capability for both call
       expect(leader).not.toBeNull();
       const stopSpy = vi.spyOn(leader!, 'stopForHost');
 
-      const receipt = team.service.dissolve({
+      const receipt = await team.service.dissolve({
         requester: 'team_leader',
         force: true,
         note: 'self dissolve',
@@ -282,7 +280,7 @@ describe('IMMEDIATE RECEIPT: one TeamService submission capability for both call
     }
   });
 
-  it('a dispatcher-triggered dissolve also returns before the worktree is ever assessed', async () => {
+  it('a forced dispatcher dissolve returns before the worktree is ever assessed', async () => {
     const team = await bootDissolveTeam();
     try {
       const assessCalls: number[] = [];
@@ -291,7 +289,7 @@ describe('IMMEDIATE RECEIPT: one TeamService submission capability for both call
         return { status: 'eligible' };
       });
 
-      const receipt = team.service.dissolve({
+      const receipt = await team.service.dissolve({
         requester: 'dispatcher',
         force: true,
         note: 'dispatcher dissolve',
@@ -306,20 +304,92 @@ describe('IMMEDIATE RECEIPT: one TeamService submission capability for both call
       await team.cleanup();
     }
   });
+
+  it.each(['dispatcher', 'team_leader'] as const)(
+    'a blocked non-forced %s dissolve rejects before admission and leaves the Team open',
+    async (requester) => {
+      const team = await bootDissolveTeam();
+      try {
+        team.setAssessment(async () =>
+          blockedAssessment('dirty', fakeTeamRecord().worktree),
+        );
+
+        await expect(team.service.dissolve({
+          requester,
+          force: false,
+          note: 'blocked dissolve',
+        })).rejects.toThrow(/dirty/u);
+
+        expect(team.service.view().status).toBe('running');
+        await expect(team.service.admit(async () => 'open')).resolves.toBe('open');
+      } finally {
+        await team.cleanup();
+      }
+    },
+  );
 });
 
 describe('OPERATION AS FENCE', () => {
+  it('two concurrent non-forced submissions assess freely but dismantle the Team once', async () => {
+    const team = await bootDissolveTeam();
+    try {
+      const closingRef = (team.service as unknown as { closing: TeamClosing }).closing;
+      const dissolveSpy = vi.spyOn(closingRef, 'dissolve');
+
+      const receipts = await Promise.all([
+        team.service.dissolve({ requester: 'dispatcher', force: false, note: 'x' }),
+        team.service.dissolve({ requester: 'dispatcher', force: false, note: 'x' }),
+      ]);
+
+      expect(receipts).toEqual([
+        { accepted: true, team_name: team.teamId, status: 'submitted' },
+        { accepted: true, team_name: team.teamId, status: 'submitted' },
+      ]);
+      await team.waitClosed();
+      expect(dissolveSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      await team.cleanup();
+    }
+  });
+
+  it('a repeated non-forced submission joins before assessing the worktree again', async () => {
+    const team = await bootDissolveTeam();
+    try {
+      const closingRef = (team.service as unknown as { closing: TeamClosing }).closing;
+      const assessment = vi.spyOn(closingRef, 'requireReclaimableWorktree')
+        .mockResolvedValueOnce()
+        .mockRejectedValue(new Error('managed checkout already removed'));
+
+      const first = await team.service.dissolve({
+        requester: 'dispatcher',
+        force: false,
+        note: 'first',
+      });
+      const repeated = await team.service.dissolve({
+        requester: 'dispatcher',
+        force: false,
+        note: 'repeat',
+      });
+
+      expect(repeated).toEqual(first);
+      expect(assessment).toHaveBeenCalledTimes(1);
+      await team.waitClosed();
+    } finally {
+      await team.cleanup();
+    }
+  });
+
   it('a repeated submission never re-triggers the underlying close', async () => {
     const team = await bootDissolveTeam();
     try {
       const closingRef = (team.service as unknown as { closing: TeamClosing }).closing;
       const dissolveSpy = vi.spyOn(closingRef, 'dissolve');
 
-      const receipts = [
+      const receipts = await Promise.all([
         team.service.dissolve({ requester: 'dispatcher', force: true, note: 'x' }),
         team.service.dissolve({ requester: 'dispatcher', force: true, note: 'x' }),
         team.service.dissolve({ requester: 'dispatcher', force: true, note: 'x' }),
-      ];
+      ]);
 
       for (const receipt of receipts) {
         expect(receipt).toEqual({
@@ -508,7 +578,7 @@ describe('DURABLE-FACT RECOVERY: the cron store deletion is not rolled back by a
       // store is already gone; deleting it again is a no-op unlink) and
       // actually converges to closed this time.
       team.setCommitFails(false);
-      const retryReceipt = team.service.dissolve({
+      const retryReceipt = await team.service.dissolve({
         requester: 'dispatcher',
         force: true,
         note: 'retry',

@@ -77,6 +77,30 @@ describe('adapter equivalence — one representative Command per namespace', () 
     expect((viaChannel as { teams: unknown[] }).teams).toEqual([{ team_id: 'alpha' }]);
   });
 
+  it('team.interrupt: both adapters preserve optional Team addressing', async () => {
+    const interruptAgent = vi.fn(async () => ({ status: 'idle' as const }));
+    const interruptTeamLeader = vi.fn(async (_teamId: string) => ({
+      status: 'interrupted' as const,
+    }));
+    const harness = createCommandHarness({
+      dispatcherOverrides: { interruptAgent, interruptTeamLeader },
+    });
+    admin = await startHarnessAdminSocket(harness);
+    const lease = createHarnessChannelInvoker(harness);
+
+    const dispatcherResult = await admin.send('team.interrupt', {
+      dispatcher_id: 'harness-d1',
+    });
+    const leaderResult = await lease.port.invoke.invoke('team.interrupt', {
+      team_name: 'alpha',
+    });
+
+    expect(dispatcherResult).toMatchObject({ ok: true, result: { status: 'idle' } });
+    expect(leaderResult).toEqual({ status: 'interrupted' });
+    expect(interruptAgent).toHaveBeenCalledOnce();
+    expect(interruptTeamLeader).toHaveBeenCalledWith('alpha');
+  });
+
   it('teammate.list: identical result via both adapters', async () => {
     const harness = createCommandHarness({
       dispatcherOverrides: { teammates: { list: async () => [{ name: 'mate-1' }] } },

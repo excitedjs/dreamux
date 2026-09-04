@@ -242,7 +242,7 @@ function teamToolDescriptors(
     return [
       tool(
         'dissolve',
-        'Submit a dissolve of this descriptor-bound Team. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }) and never reports how the dissolve went: the Team\'s Workflow, TeamMates, and this TeamLeader are stopped behind that receipt, so expect this call to lose its response. note is required and records why the Team stopped. Uncommitted, untracked, or unmerged work in the managed worktree leaves the Team open and running instead of closing it. force: true discards that local work so the managed checkout can be removed; it never deletes the branch, its commits, a reused directory, or the source repository.',
+        'Submit a dissolve of this descriptor-bound Team. A non-forced request first checks whether the managed worktree can be reclaimed and throws the blocking reason when it cannot. Once accepted, it returns a receipt immediately ({ accepted, team_name, status: submitted }); the Team\'s Workflow, TeamMates, and this TeamLeader are stopped behind that receipt, so expect the accepted call to lose its response and not report the later outcome. note is required and records why the Team stopped. force: true discards uncommitted, untracked, or unmerged work so the managed checkout can be removed; it never deletes the branch, its commits, a reused directory, or the source repository.',
         {
           note: { type: 'string', minLength: 1, maxLength: 2000, pattern: '\\S' },
           force: { type: 'boolean' },
@@ -357,7 +357,7 @@ function teamToolDescriptors(
     ),
     tool(
       'dissolve',
-      'Submit a dissolve of one Team (by team_name) and its agents. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }); the Team is stopped and closed behind that receipt, so this call never reports the outcome. note is required: it records why a recoverable Team was stopped. Uncommitted, untracked, or unmerged work in the managed worktree leaves the Team open and running instead of closing it, so read the Team\'s status afterwards to see what happened. force: true discards that local work so the managed checkout can be removed; it never deletes the branch, its commits, a reused directory, or the source repository.',
+      'Submit a dissolve of one Team (by team_name) and its agents. A non-forced request first checks whether the managed worktree can be reclaimed and throws the blocking reason when it cannot. Once accepted, it returns a receipt immediately ({ accepted, team_name, status: submitted }); the Team is stopped and closed behind that receipt, so the accepted call does not report the later outcome. note is required: it records why a recoverable Team was stopped. force: true discards uncommitted, untracked, or unmerged work so the managed checkout can be removed; it never deletes the branch, its commits, a reused directory, or the source repository.',
       {
         team_name: { type: 'string', minLength: 1, maxLength: 64 },
         note: { type: 'string', minLength: 1, maxLength: 2000 },

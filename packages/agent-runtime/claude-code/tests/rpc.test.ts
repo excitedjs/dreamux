@@ -124,6 +124,7 @@ function createHarness(
         if (event.kind === 'command_lifecycle') {
           return `${event.commandUuid}:${event.state}`;
         }
+        if (event.kind === 'interrupted') return 'interrupted';
         return 'stream';
       }),
   };
@@ -382,6 +383,65 @@ describe('ClaudeCodeStreamRpc idle deadline (issue #156)', () => {
       },
     })}\n`);
     expect(urls).toEqual(['https://example.invalid/session/fake']);
+  });
+
+  it('settles a lifecycle-supported interrupted turn without failing or reaping it', async () => {
+    const h = createHarness();
+    const turn = h.rpc.submitTurn('work');
+    const commandUuid = writtenCommandUuid(h.stdin, 0);
+    h.rpc.onStdoutChunk(initLine());
+    h.rpc.onStdoutChunk(lifecycleChunk(commandUuid, 'started'));
+    const interrupted = h.rpc.interruptTurn('Stopped from Feishu.');
+    const request = JSON.parse(h.stdin.writes[1]!) as {
+      type: string;
+      request_id: string;
+      request: Record<string, unknown>;
+    };
+    expect(request).toEqual({
+      type: 'control_request',
+      request_id: request.request_id,
+      request: {
+        subtype: 'interrupt',
+        reason: 'Stopped from Feishu.',
+      },
+    });
+    expect(request.request).not.toHaveProperty('cancel_queued');
+    h.rpc.onStdoutChunk(`${JSON.stringify({
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: request.request_id,
+        response: {},
+      },
+    })}\n`);
+    await expect(interrupted).resolves.toBe(true);
+    h.rpc.onStdoutChunk(lifecycleChunk(commandUuid, 'cancelled'));
+
+    await expect(turn).resolves.toBeUndefined();
+    expect(h.kinds()).toEqual([
+      'command_lifecycle',
+      'command_lifecycle',
+      'interrupted',
+    ]);
+    expect(h.results()).toEqual([]);
+    expect(h.reap).not.toHaveBeenCalled();
+  });
+
+  it('settles an interrupted turn without lifecycle support or a control response', async () => {
+    const h = createHarness();
+    const turn = h.rpc.submitTurn('work');
+    h.rpc.onStdoutChunk(initLine([]));
+    const interrupted = h.rpc.interruptTurn('Stopped from Feishu.');
+
+    // Without msg_lifecycle_v1 the result artifact is the only native fact
+    // proving the requested interrupt ended this execution window.
+    h.rpc.onStdoutChunk(interruptArtifactLine());
+
+    await expect(interrupted).resolves.toBe(true);
+    await expect(turn).resolves.toBeUndefined();
+    expect(h.kinds()).toEqual(['interrupted']);
+    expect(h.results()).toEqual([]);
+    expect(h.reap).not.toHaveBeenCalled();
   });
 
   it('fails a multi-command turn only once the last unrun command is terminal', async () => {

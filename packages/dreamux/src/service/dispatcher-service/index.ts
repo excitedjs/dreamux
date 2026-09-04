@@ -501,6 +501,16 @@ export class DispatcherService {
     return this.admitOperation(() => this.mustAgent().submitInput(input));
   }
 
+  interruptAgent() {
+    return this.admitOperation(() => this.mustAgent().interrupt());
+  }
+
+  interruptTeamLeader(teamId: string) {
+    return this.admitOperation(async () =>
+      (await this.teams.open(teamId)).interruptLeader(),
+    );
+  }
+
   listTeams() {
     return this.teams.list();
   }

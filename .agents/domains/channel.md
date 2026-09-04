@@ -290,6 +290,81 @@ Source:
 - `/packages/dreamux/src/service/channel-submission.ts`
 - `/packages/dreamux/src/service/submission-sources.ts`
 
+### Slash commands
+
+The Feishu Channel answers `/stop`, `/teams`, and `/dissolve` itself. They are
+one command table, not three special cases, and nothing about them reaches a
+model: a recognized command is consumed, so no submission is built, no turn is
+created, and no COT anchor is opened for it.
+
+Recognition, which reuses `/introduce`'s decoder rather than adding a second
+one:
+
+- text messages only; a command inside a rich-text post is not one;
+- leading Feishu mention placeholders are stripped first, longest key first, so
+  an `@`-prefixed command still matches;
+- the remaining text must *start* with the token, followed by whitespace or end
+  of message, so a command quoted mid-sentence never fires;
+- matching is case-insensitive, and everything after the token is ignored
+  entirely — no command takes an argument;
+- in a group or topic the bot must be @-mentioned, even where ordinary delivery
+  needs no mention. A direct message has no mention to require;
+- only a human sender's message is a command. The gate admits a trusted peer bot
+  that mentions us, and the operator's authorization ruling was about ordinary
+  human inbound, so a bot message that happens to start with a command token
+  goes down the ordinary delivery path instead of dissolving a Team.
+
+Authorization is the ordinary inbound gate and nothing more. `/dissolve` gets no
+sender allowlist and no confirmation step; the operator ruled that explicitly.
+
+Dispatch happens after the route is projected and before anything is submitted,
+so each command reads the same `bound` / `provision` / `dispatcher` plan the
+delivery path would have used:
+
+- **`/stop`** invokes `team.interrupt`, naming the bound Team or omitting the
+  name to reach the Dispatcher Agent, exactly as `team.submit` addresses. It
+  interrupts only the agent this conversation talks to, never the TeamMates that
+  agent started. A `provision` plan has no Team yet, so it answers that the
+  conversation has no bound Team rather than interrupting the Dispatcher Agent's
+  unrelated work.
+- **`/teams`** invokes `team.list`, keeps the `running` rows, and renders the
+  Running Team locator card in TypeScript. Teams are grouped by repository
+  basename; panel and runtime tag colours come from a fixed palette indexed by a
+  stable hash of the name, so the same repository and the same agent runtime
+  always render the same colour without a name-to-colour table. Panels are
+  always collapsed. Only this Channel's own bindings appear — bindings are
+  Channel-owned and Core holds no cross-channel registry to read.
+- **`/dissolve`** invokes `team.dissolve` on the bound Team with a generated
+  note and never sends `force`. Its three outcomes are all reported: dissolved,
+  no bound Team, or refused by Core.
+
+A command whose Team is gone reconciles the route rather than repeating an error
+forever: `TEAM_NOT_FOUND` and `TEAM_CLOSED` remove the stale binding, exactly as
+the delivery path does. Both that reaction and the `team.state` closed event are
+one capability, `FeishuRouteReconciliation`, because they remove the same durable
+rows; only a real close is announced to its conversations.
+
+Every command answers with one line, including on failure; a Core rejection is
+reported rather than swallowed. All user-facing text these commands produce is
+English, and so is `/introduce`'s acknowledgement, by operator ruling — they
+deliberately do not follow the Chinese and bilingual text elsewhere in this
+Channel.
+
+Binding entries on the `/teams` card show each chat's current name, resolved
+live through the transport's chat lookup. The stored `display` on a binding row
+cannot serve this: it is an optional label whoever called `bind_channel` chose to
+pass, and automatic per-topic provisioning passes `null`, so the Teams most
+likely to be running have none. A failed lookup degrades to the chat id for that
+one chat and never fails the card.
+
+Source:
+
+- `/packages/channel/feishu-channel/src/feishu-slash-commands.ts`
+- `/packages/channel/feishu-channel/src/feishu-route-reconciliation.ts`
+- `/packages/channel/feishu-channel/src/feishu-running-teams-card.ts`
+- `/packages/channel/feishu-channel/src/feishu-session-inbound.ts`
+- `/packages/channel/feishu-channel/src/introduce.ts`
+
 ### Inbound content fidelity
 
 Before any content work, the Feishu session classifies raw chat/sender identity

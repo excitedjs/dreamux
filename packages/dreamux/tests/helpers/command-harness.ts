@@ -80,6 +80,8 @@ export interface FakeDispatcherOverrides {
   createTeam?: (input: unknown) => Promise<unknown>;
   submitToTeamLeader?: (input: unknown) => Promise<unknown>;
   submitToAgent?: (input: unknown) => Promise<unknown>;
+  interruptAgent?: () => Promise<unknown>;
+  interruptTeamLeader?: (teamId: string) => Promise<unknown>;
   listTeams?: () => Promise<unknown[]>;
   getTeamStatus?: (teamId: string) => Promise<unknown>;
   getTeamHistory?: (query: unknown) => Promise<unknown>;
@@ -135,6 +137,10 @@ export function createFakeDispatcher(
     submitToAgent:
       overrides.submitToAgent ??
       (async () => ({ status: 'submitted', turn: { id: 'harness-turn-1' } })),
+    interruptAgent:
+      overrides.interruptAgent ?? (async () => ({ status: 'idle' })),
+    interruptTeamLeader:
+      overrides.interruptTeamLeader ?? (async () => ({ status: 'idle' })),
     listTeams: overrides.listTeams ?? (async () => []),
     getTeamStatus:
       overrides.getTeamStatus ??

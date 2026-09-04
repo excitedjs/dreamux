@@ -47,6 +47,29 @@ the same change that touches it.
   answers closes itself before Feishu stops accepting clicks and tells the agent
   to stand still rather than wait forever.
   (Domain: [channel](/.agents/domains/channel.md).)
+- **A message that starts with a known slash command is executed, not
+  delivered.** In the built-in Feishu channel a human message whose leading
+  text is `/stop`, `/teams`, or `/dissolve` is carried out by the Channel
+  itself and answered as a receipt: no agent sees it, and no agent is asked to
+  render the reply. Only the leading token counts — trailing words after it are
+  ignored, and the same token mid-message is ordinary text — and in a group the
+  bot must be @-mentioned. Nothing gates a command beyond the ordinary
+  authorization to deliver a message here; there is no separate command
+  permission. When there is no object to act on, the answer is one line saying
+  why. `/stop` interrupts the current turn of the agent this conversation talks
+  to directly — the bound Team's TeamLeader, or the Dispatcher Agent in a DM —
+  and never its TeamMates; an agent that is not mid-turn is reported idle
+  rather than started in order to be interrupted. `/teams` posts a card of the
+  running Teams grouped by repository, each with its TeamLeader runtime, its
+  intent, and links to the chats bound to it. `/dissolve` dissolves the Team
+  bound to this conversation with a generated note and never forces.
+  (Task: [add-feishu-slash-commands](/.agents/tasks/channel/add-feishu-slash-commands/README.md).)
+- **The Feishu channel writes its slash-command and introduce text in
+  English.** Command receipts, the running-Teams card, and the `/introduce`
+  acknowledgement are English by operator ruling. This says nothing about
+  agent-authored replies, or about the pairing-approval card, which keeps its
+  Simplified Chinese default copy.
+  (Task: [add-feishu-slash-commands](/.agents/tasks/channel/add-feishu-slash-commands/README.md).)
 - **A collaboration space is a Channel product flow.** The Channel provisions a
   Team via ordinary `team.create` for a chat or topic it manages; provisioning
   progress is volatile, and a crash may leave an accepted orphan Team rather
@@ -78,6 +101,12 @@ the same change that touches it.
   itself: it **never deletes the managed branch, its commits, a reused
   directory, or the source repository** — a user's committed work survives
   every dissolve.
+- **A dissolve that cannot reclaim its worktree is refused before it is
+  accepted.** A non-forced dissolve assesses the managed worktree first: if it
+  is dirty or unmerged the caller gets the refusal and its reason, rather than
+  an `accepted` receipt for a dissolve that then quietly stops. `force` remains
+  the authorization to discard that work.
+  (Task: [add-feishu-slash-commands](/.agents/tasks/channel/add-feishu-slash-commands/README.md).)
 - **A failed dissolve leaves a Team that still exists.** Whatever committed
   before the failure stays committed (closed members stay closed, deleted cron
   stores stay deleted); the next ordinary use rebuilds from disk, and the next

@@ -365,6 +365,18 @@ export async function submitTurnStart(
   return client.request<TurnStartResponse>('turn/start', params);
 }
 
+/** Interrupt one running turn and resolve once Codex accepts the request. */
+export async function interruptTurn(
+  client: CodexWsClient,
+  threadId: string,
+  turnId: string,
+): Promise<void> {
+  await client.request<Record<string, never>>('turn/interrupt', {
+    threadId,
+    turnId,
+  });
+}
+
 /**
  * Send a `turn/start` request and await `turn/completed`.
  * Returns the collected turn, or throws on RPC failure.

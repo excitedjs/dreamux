@@ -1,7 +1,8 @@
 /**
  * Codex version gate. Dreamux depends on the app-server protocol surface used
- * by the built-in runtime: `thread/start`, `thread/resume`, `turn/start`, and
- * thread-level instruction overrides (`baseInstructions` / `developerInstructions`).
+ * by the built-in runtime: `thread/start`, `thread/resume`, `turn/start`,
+ * `turn/interrupt`, and thread-level instruction overrides
+ * (`baseInstructions` / `developerInstructions`).
  * Doctor surfaces unsupported Codex builds loudly rather than letting prompt
  * customization or turn delivery degrade silently at runtime.
  *

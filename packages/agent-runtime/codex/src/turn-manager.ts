@@ -1,5 +1,6 @@
 import {
   extractAssistantText,
+  interruptTurn,
   subscribeTurnCollection,
   submitTurnStart,
   type CollectedTurn,
@@ -11,6 +12,7 @@ import { toolDisplay } from './tool-display.js';
 import type { ThreadItem } from './types.js';
 import type {
   AgentRuntimeActivitySink,
+  AgentRuntimeInterruptOutcome,
   AgentRuntimeSubmissionInput,
   JsonValue,
   RuntimeActivity,
@@ -79,6 +81,19 @@ export class TurnManager {
     return this.trackAdmission(
       this.enqueueDecision(() => this.submit(input.text, 'submission')),
     );
+  }
+
+  interrupt(): Promise<AgentRuntimeInterruptOutcome> {
+    return this.enqueueDecision(async () => {
+      if (this.stopped) return { status: 'idle' };
+      const active = [...this.nativeTurns].reverse().find(
+        ([, record]) => record.terminal === null && record.completion === null,
+      );
+      const threadId = this.opts.getThreadId();
+      if (active === undefined || threadId === null) return { status: 'idle' };
+      await interruptTurn(this.opts.client, threadId, active[0]);
+      return { status: 'interrupted' };
+    });
   }
 
   async stop(): Promise<void> {

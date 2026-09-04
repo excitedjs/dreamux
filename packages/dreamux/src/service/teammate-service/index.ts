@@ -1,4 +1,5 @@
 import type {
+  AgentRuntimeInterruptOutcome,
   AgentRuntimeStartOutcome,
   AgentRuntimeStatus,
   TeammateRole,
@@ -273,7 +274,9 @@ export class TeammateService {
         if (failure !== null) this.projectFailedEnd(failure);
         return admission;
       } catch (error) {
-        this.projectFailedEnd(asError(error).message);
+        this.projectFailedEnd(
+          error instanceof Error ? error.message : String(error),
+        );
         throw error;
       }
     });
@@ -301,6 +304,11 @@ export class TeammateService {
       () => runtime.submit({ text }),
       input.deliverCompletion ?? null,
     );
+  }
+
+  /** Interrupt the current turn without waking this Agent. */
+  interrupt(): Promise<AgentRuntimeInterruptOutcome> {
+    return this.runtimeOwner.interrupt();
   }
 
   /**
@@ -681,10 +689,6 @@ export class TeammateService {
     return this.deps.worktrees;
   }
 
-}
-
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
 }
 
 function unsupportedPreparedCompletion(

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Adds the team.interrupt Command and includes the TeamLeader runtime in team.list. A non-forced team.dissolve now checks worktree reclaimability before returning its receipt, so a blocked dissolve is rejected while the Team is still open.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}
