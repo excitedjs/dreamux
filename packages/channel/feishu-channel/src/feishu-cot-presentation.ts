@@ -75,11 +75,14 @@ interface ToolPresentation {
 }
 
 /**
- * The built-in icons the COT Message Brief documents for `TOOL_CALL_START.icon`
- * (`search`, `bash`, `read`, `write`, `doc`, `calendar`, `task`, `meeting`,
- * `default`); this Channel uses the ones a runtime's tool actions map onto.
+ * `TOOL_CALL_START.icon` as the COT Message Brief documents it: a built-in
+ * enum (`search`, `bash`, `read`, `write`, `doc`, `calendar`, `task`,
+ * `meeting`, `default`) or a token from the card icon library. This Channel
+ * uses the built-ins a runtime's tool actions map onto, and the library's
+ * `app-default_outlined` for a call nothing could label (operator ruling,
+ * 2026-09-04: 「mcp 工具隐藏掉参数吧，icon 选 app-default_outlined」).
  */
-export type CotToolIcon = 'search' | 'bash' | 'read' | 'write' | 'default';
+export type CotToolIcon = 'search' | 'bash' | 'read' | 'write' | 'default' | 'app-default_outlined';
 
 const ACTION_TOOL_NAMES: Readonly<Record<RuntimeToolAction, string>> = {
   read: 'Read',
@@ -152,9 +155,14 @@ export function toolPresentation(
     ? toolCallName
     : ACTION_TOOL_NAMES[event.tool_action];
   const title = runtimeToolTitle(event, actionName);
+  // A call with neither an action nor a label — an MCP tool, today — shows
+  // its name behind the generic app icon; its arguments are not shown.
+  const icon: CotToolIcon | undefined = event.tool_action === null
+    ? (title === null ? 'app-default_outlined' : undefined)
+    : ACTION_ICONS[event.tool_action];
   return {
     toolCallName: actionName,
-    ...(event.tool_action === null ? {} : { icon: ACTION_ICONS[event.tool_action] }),
+    ...(icon === undefined ? {} : { icon }),
     ...(title === null ? {} : { title }),
     ownedTool: null,
     builtInTool: null,

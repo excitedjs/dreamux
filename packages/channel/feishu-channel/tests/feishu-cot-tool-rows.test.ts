@@ -81,14 +81,18 @@ describe('runtime-labelled tool rows', () => {
     });
   });
 
-  it('keeps the raw-argument row for a call the runtime could not label', () => {
+  it('hides the arguments of a call nothing could label and gives it the generic app icon', () => {
     const events = toolCallStartEvents(toolCall({
       tool_name: 'mcp__other__thing',
       tool_action: null,
       arguments_json: '{"x":1}',
     }));
-    expect(eventTypes(events)).toEqual(['TOOL_CALL_START', 'TOOL_CALL_ARGS', 'TOOL_CALL_END']);
-    expect(events[0]!.content).toEqual({ toolCallId: expect.any(String), toolCallName: 'thing' });
+    expect(eventTypes(events)).toEqual(['TOOL_CALL_START', 'TOOL_CALL_END']);
+    expect(events[0]!.content).toEqual({
+      toolCallId: expect.any(String),
+      toolCallName: 'thing',
+      icon: 'app-default_outlined',
+    });
   });
 
   it('expands a result into the invocation and the output as documented code segments', () => {

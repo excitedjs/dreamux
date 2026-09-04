@@ -13,7 +13,6 @@ import {
   normalizedDetail,
   toolPresentation,
   truncateEscaped,
-  TOOL_ARGUMENTS_SOFT_MAX_BYTES,
   TRUNCATION_MARKER,
   type CotToolCallActivity,
 } from './feishu-cot-presentation.js';
@@ -135,24 +134,14 @@ export function toolCallStartEvents(
         ...(presentation.title === undefined ? {} : { title: presentation.title }),
       },
     }),
+    // No row sends `TOOL_CALL_ARGS`: beside a title the client shows the
+    // delta nowhere (probe, 2026-09-03), and a row nothing could title hides
+    // its arguments by ruling (「mcp 工具隐藏掉参数吧」, 2026-09-04).
+    checkedEvent({
+      eventType: 'TOOL_CALL_END',
+      content: { toolCallId },
+    }),
   ];
-  if (presentation.title === undefined) {
-    const args = normalizedDetail(
-      event.arguments_json,
-      event.arguments_truncated,
-      TOOL_ARGUMENTS_SOFT_MAX_BYTES,
-    );
-    if (args !== null) {
-      events.push(checkedEvent({
-        eventType: 'TOOL_CALL_ARGS',
-        content: { toolCallId, delta: args },
-      }));
-    }
-  }
-  events.push(checkedEvent({
-    eventType: 'TOOL_CALL_END',
-    content: { toolCallId },
-  }));
   return events;
 }
 

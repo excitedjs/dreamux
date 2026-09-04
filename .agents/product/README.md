@@ -126,10 +126,11 @@ the same change that touches it.
   what it did, and expands to the call in the caller's own notation (the
   shell command line, the task text) before its output. A read or edit that
   succeeded expands to the files it touched as pills and nothing more; only
-  a failed one still shows its diff and output. Raw JSON
-  arguments appear only on a row no runtime could label, which today means
-  MCP tools the Channel does not own. Codex web searches are rows too. The
-  card's own words — row verbs (Read, Edit, Search, List), the Completed and
+  a failed one still shows its diff and output. A row no runtime could label
+  — today MCP tools the Channel does not own — shows its tool name behind a
+  generic app icon with its arguments hidden; its output still expands. Raw
+  JSON arguments appear nowhere on the card. Codex web searches are rows too.
+  The card's own words — row verbs (Read, Edit, Search, List), the Completed and
   Failed status lines, the truncation marker, and the titles of Channel and
   teammate tools — are English.
 - **A compaction is one line.** When the runtime compacts its context, the

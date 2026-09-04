@@ -746,12 +746,14 @@ its argument schema. The row's `TOOL_CALL_START` carries the built-in `icon`
 the COT Message Brief documents for the call's `tool_action` (`read`; `write`
 for an edit; `search` for a search or a listing; `bash` for a run) and a
 `title` composed from the runtime's `summary`: the summary alone for a run,
-whose summary is already a sentence; a Chinese verb before it for a read,
-listing, search or edit; the display tool name before it for a call with no
-action. A titled row sends no `TOOL_CALL_ARGS`. The raw JSON arguments go out
-only on a row nothing could title — a Channel-owned or teammate tool keeps its
-own title as before, and an MCP tool no runtime can label still shows its
-arguments inline, which is the one raw row left. The `TOOL_CALL_RESULT` of a
+whose summary is already a sentence; a verb before it for a read, listing,
+search or edit; the display tool name before it for a call with no action. No
+row sends `TOOL_CALL_ARGS`: a Channel-owned or teammate tool keeps its own
+title as before, and a call with neither an action nor a label — an MCP tool
+no runtime can label, today — shows its display name behind the icon-library
+token `app-default_outlined` with its arguments hidden (operator ruling,
+2026-09-04: 「现在 mcp 工具效果比较差，mcp 工具隐藏掉参数吧，icon 选
+app-default_outlined」); its output still expands. The `TOOL_CALL_RESULT` of a
 runtime-labelled row is the documented segment array: `Failed` first when it
 failed, the call's `items` as the pills of a `list` segment (each with the
 icon of the call's action, bounded by `TOOL_ITEMS_SOFT_MAX_BYTES` with one
