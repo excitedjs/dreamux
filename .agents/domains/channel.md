@@ -768,7 +768,11 @@ three client facts this rests on: a titled row shows the `title` alone, with
 no tool name in front of it; an `ARGS` delta sent beside a title is shown
 nowhere, which is why the invocation has to travel in the result; and the
 client renders a code segment's body from `code` and from the older `content`
-alike, so the switch follows the docs, not a rendering failure.
+alike, so the switch follows the docs, not a rendering failure. A third probe
+(2026-09-04) settled the icon facts: the icon-library token
+`app-default_outlined` renders a glyph on an untitled and on a titled row
+alike, while the built-in `default` renders no glyph at all — a row sent with
+`icon: default` looks exactly like one sent without `icon`.
 
 A card's one terminal is a `turn.ended` activity. There is no per-submission
 lifecycle fact at this boundary at all: a provider folds any number of
