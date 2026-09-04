@@ -131,8 +131,9 @@ the same change that touches it.
   generic app icon with its arguments hidden; its output still expands. Raw
   JSON arguments appear nowhere on the card. Codex web searches are rows too.
   The card's own words — row verbs (Read, Edit, Search, List), the Completed and
-  Failed status lines, the truncation marker, and the titles of Channel and
-  teammate tools — are English.
+  Failed status lines, the truncation marker, and the titles of the
+  Channel's own tools — are English. Dreamux's own teammate tools (spawn,
+  send, close, workflow) appear as plain unlabelled rows for now.
 - **A compaction is one line.** When the runtime compacts its context, the
   card shows `Compacted session` as an assistant message, and nothing of the
   summary the runtime wrote for itself.

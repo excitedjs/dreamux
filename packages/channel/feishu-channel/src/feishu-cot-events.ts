@@ -156,18 +156,6 @@ export function toolCallResultEvents(
   let content: unknown;
   if (presentation.ownedTool !== null) {
     content = { type: 'text', text: statusText };
-  } else if (presentation.builtInTool !== null) {
-    content = assembleToolResultContent({
-      failed: event.status === 'failed',
-      argumentsText: null,
-      resultText: normalizedDetail(
-        presentation.builtInTool.resultText,
-        false,
-        FEISHU_COT_EVENT_CONTENT_MAX_BYTES,
-      ),
-      resultLanguage: presentation.builtInTool.resultLanguage,
-      forceResultCode: presentation.builtInTool.forceResultCode,
-    });
   } else if (presentation.runtimeTool?.items && event.status !== 'failed') {
     // A read or edit that succeeded shows its items and nothing else: the
     // operator ruled the diff and the output redundant beside the pills, and
@@ -277,8 +265,6 @@ export interface ToolResultParts {
   /** The call's items, shown as the pills of a `list` segment before anything else. */
   readonly items?: CotItemList | null;
   readonly resultText: string | null;
-  readonly resultLanguage?: 'text' | 'javascript';
-  readonly forceResultCode?: boolean;
 }
 
 export function assembleToolResultContent(parts: ToolResultParts): unknown {
@@ -334,7 +320,7 @@ function toolResultSegments(
   if (resultText !== null) {
     segments.push({
       type: 'code',
-      language: parts.resultLanguage ?? 'text',
+      language: 'text',
       code: resultText,
     });
   }
@@ -345,7 +331,6 @@ function toolResultSegments(
     const onlyText = argumentsText ?? resultText;
     if (
       onlyText !== null &&
-      !parts.forceResultCode &&
       !onlyText.includes('\n') &&
       Buffer.byteLength(onlyText, 'utf8') <= SHORT_TEXT_MAX_BYTES
     ) {

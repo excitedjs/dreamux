@@ -207,7 +207,11 @@ home as `~`.
     字段，最后 feishu-cot-adapter 这里对齐最终上传到飞书的消息格式」. Each
     runtime derives them in its own `src/tool-display.ts`; Feishu composes the
     row title, icon and result segments from them and never parses a
-    provider's argument schema. What stays raw: a row for a tool no runtime
+    provider's argument schema — nor, since 2026-09-04, Core's: the Channel's
+    hand-composed titles for the teammate tools (`spawn`, `send`, `close`,
+    `workflow_run`) were removed on the ruling 「那你先给 dreamux 内置mcp 工具的覆
+    盖都删掉吧。我想想这里怎么做。」, and how Core labels its own tools is open.
+    What stays raw: a row for a tool no runtime
     can label — MCP tools the Channel does not own — still shows JSON
     arguments, because that label would have to come from the tool catalog,
     not the runtime. Codex-side facts the display still lacks, found while

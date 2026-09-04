@@ -32,15 +32,6 @@ function displayToolName(toolName: string): string {
 }
 
 type OwnedTool = 'reply' | 'react' | 'list_chat_bots';
-type TeammateTool = 'spawn' | 'send' | 'close' | 'workflow_run';
-
-interface BuiltInToolPresentation {
-  readonly title: string;
-  readonly resultText: string;
-  readonly resultLanguage: 'text' | 'javascript';
-  readonly forceResultCode: boolean;
-}
-
 /**
  * What the runtime said about its own call, ready for the card: the row's
  * title composed from the runtime's summary, the invocation the expanded
@@ -70,7 +61,6 @@ interface ToolPresentation {
   readonly icon?: CotToolIcon;
   readonly title?: string;
   readonly ownedTool: OwnedTool | null;
-  readonly builtInTool: BuiltInToolPresentation | null;
   readonly runtimeTool: RuntimeToolPresentation | null;
 }
 
@@ -137,17 +127,6 @@ export function toolPresentation(
       toolCallName,
       ...OWNED_TOOL_PRESENTATION[ownedTool],
       ownedTool,
-      builtInTool: null,
-      runtimeTool: null,
-    };
-  }
-  const builtInTool = builtInToolPresentation(event);
-  if (builtInTool !== null) {
-    return {
-      toolCallName,
-      title: builtInTool.title,
-      ownedTool: null,
-      builtInTool,
       runtimeTool: null,
     };
   }
@@ -165,7 +144,6 @@ export function toolPresentation(
     ...(icon === undefined ? {} : { icon }),
     ...(title === null ? {} : { title }),
     ownedTool: null,
-    builtInTool: null,
     runtimeTool: {
       invocation: normalizedDetail(
         event.invocation,
@@ -237,127 +215,8 @@ function ownedFeishuTool(
     : null;
 }
 
-function builtInToolPresentation(
-  event: CotToolCallActivity,
-): BuiltInToolPresentation | null {
-  const tool = teammateTool(event.tool_name);
-  if (
-    tool === null ||
-    event.arguments_truncated ||
-    event.arguments_json === null
-  ) {
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(event.arguments_json);
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return null;
-  }
-  const args = parsed as Record<string, unknown>;
-  if (tool === 'spawn') {
-    const namePrefix = nonBlankString(args['name_prefix']);
-    const prompt = nonBlankString(args['prompt']);
-    const intent = stringValue(args['intent']);
-    const agentRuntime = optionalString(args['agent_runtime']);
-    const identity = optionalString(args['identity']);
-    if (
-      namePrefix === null ||
-      prompt === null ||
-      intent === null ||
-      agentRuntime === null ||
-      identity === null
-    ) {
-      return null;
-    }
-    const displayIntent = boundedTitleText(intent);
-    return {
-      title: displayIntent === '' ? 'Spawn teammate' : `Spawn teammate: ${displayIntent}`,
-      resultText: [
-        `Agent runtime: ${agentRuntime === undefined || agentRuntime.trim() === ''
-          ? 'unspecified'
-          : agentRuntime}`,
-        `Identity: ${identity === undefined || identity.trim() === ''
-          ? 'unspecified'
-          : identity}`,
-        `Prompt: ${prompt}`,
-      ].join('\n'),
-      resultLanguage: 'text',
-      forceResultCode: false,
-    };
-  }
-  if (tool === 'send') {
-    const name = nonBlankString(args['name']);
-    const prompt = nonBlankString(args['prompt']);
-    if (name === null || prompt === null) return null;
-    return {
-      title: `Send to ${boundedTitleText(name)}`,
-      resultText: `To: ${name}\nPrompt: ${prompt}`,
-      resultLanguage: 'text',
-      forceResultCode: false,
-    };
-  }
-  if (tool === 'close') {
-    const name = nonBlankString(args['name']);
-    const note = nonBlankString(args['note']);
-    if (name === null || note === null) return null;
-    return {
-      title: `Close teammate ${boundedTitleText(name)}`,
-      resultText: note,
-      resultLanguage: 'text',
-      forceResultCode: false,
-    };
-  }
-  const script = nonBlankString(args['script']);
-  const scriptPath = nonBlankString(args['scriptPath']);
-  const resultText = script ?? scriptPath;
-  if (resultText === null) return null;
-  const workflowName = script === null ? null : workflowMetaName(script);
-  return {
-    title: workflowName === null
-      ? 'Workflow'
-      : `Workflow ${boundedTitleText(workflowName)}`,
-    resultText,
-    resultLanguage: script === null ? 'text' : 'javascript',
-    forceResultCode: script !== null,
-  };
-}
-
-function teammateTool(toolName: string): TeammateTool | null {
-  const prefixes = ['mcp__teammate__', 'teammate.'] as const;
-  const prefix = prefixes.find((candidate) => toolName.startsWith(candidate));
-  if (prefix === undefined) return null;
-  const verb = toolName.slice(prefix.length);
-  return verb === 'spawn' || verb === 'send' || verb === 'close' ||
-    verb === 'workflow_run'
-    ? verb
-    : null;
-}
-
-function nonBlankString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() !== '' ? value : null;
-}
-
-function stringValue(value: unknown): string | null {
-  return typeof value === 'string' ? value : null;
-}
-
-function optionalString(value: unknown): string | null | undefined {
-  return value === undefined || typeof value === 'string' ? value : null;
-}
-
 function boundedTitleText(value: string): string {
   return normalizedDetail(value, false, TOOL_ARGUMENTS_SOFT_MAX_BYTES)?.trim() ?? '';
-}
-
-function workflowMetaName(script: string): string | null {
-  const match = /\bexport\s+const\s+meta\s*=\s*\{[^}]*?\bname\s*:\s*(['"])([^'"\\\r\n]+)\1/u
-    .exec(script);
-  const name = match?.[2]?.trim();
-  return name === undefined || name === '' ? null : name;
 }
 
 export function normalizedDetail(
