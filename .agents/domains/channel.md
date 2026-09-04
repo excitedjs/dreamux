@@ -654,7 +654,10 @@ runtime-native Turn object or transcript. Conversation events may contain
 redacted user/assistant display text and redacted tool arguments/results, whole:
 Core bounds nothing, and the Channel cuts a string only where it would exceed
 Feishu's per-event limit (「core那边只做脱敏，不做截断 … Channel这边先去解析JSON，
-然后在发送接口之前去做截断」, 2026-09-04); other
+然后在发送接口之前去做截断」, 2026-09-04). Redaction keeps a structured payload
+parseable — a quoted secret becomes the quoted string `<redacted>`, and a bare
+one stops at the quote or bracket that closes it — because the Channel parses
+`result_json` to decide how to show it. Other
 events contain no prompt or assistant text. No event contains native transcript
 paths, raw errors, or platform user identity.
 

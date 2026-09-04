@@ -12,7 +12,17 @@ import { errorInfo } from '../platform/error-info.js';
 import type { DispatcherCoreEventPublisher } from '../service/dispatcher-core-events/index.js';
 import type { AgentEntityIdentity } from '../service/agent-entity/types.js';
 
-const INLINE_SECRET_RE = /(["']?\b(?:secret|password|passwd|token|authorization|cookie|credential|api[_-]?key|private[_-]?key|client[_-]?secret)\b["']?)(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|`[^`]*`|[^\s,;]+)/giu;
+/**
+ * `key: value` / `key=value` pairs whose key names a secret. The value is one
+ * quoted string (a JSON string with its escapes, or a shell-style single- or
+ * back-quoted one) or one bare word. A bare word stops at whitespace, a
+ * separator, a quote, or a closing bracket, so the shape *around* the secret
+ * survives: a structured result carries redaction inside its own string and is
+ * still the same JSON afterwards (the Channel parses it to decide how to show
+ * it), and a `token: xyz` phrase inside a JSON string does not swallow the
+ * quote and bracket that close it.
+ */
+const INLINE_SECRET_RE = /(["']?\b(?:secret|password|passwd|token|authorization|cookie|credential|api[_-]?key|private[_-]?key|client[_-]?secret)\b["']?)(\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'[^']*'|`[^`]*`|[^\s,;"'`)\]}]+)/giu;
 const BEARER_RE = /\bBearer\s+[A-Za-z0-9._~+/-]+=*/giu;
 const PRIVATE_KEY_RE = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/giu;
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu;
@@ -237,7 +247,8 @@ function projectedActivity(
 /**
  * A structured value travels as its compact JSON text, redacted like any other
  * string; a value that already is a string travels as itself. A consumer that
- * wants the structure back parses the text — it is whole, never cut.
+ * wants the structure back parses the text — it is whole, never cut, and a
+ * redacted secret inside it is still a JSON string, so it still parses.
  */
 function redactJson(
   value: JsonValue | string | null,
@@ -274,7 +285,15 @@ export function redactText(
   redacted = redacted.replace(BEARER_RE, 'Bearer <redacted>');
   redacted = redacted.replace(JWT_RE, '<redacted-jwt>');
   redacted = redacted.replace(COMMON_ACCESS_KEY_RE, '<redacted-access-key>');
-  redacted = redacted.replace(INLINE_SECRET_RE, (_match, key: string, separator: string) => `${key}${separator}<redacted>`);
+  redacted = redacted.replace(
+    INLINE_SECRET_RE,
+    (_match, key: string, separator: string, secret: string) => {
+      // A quoted secret stays a quoted (now empty of meaning) string, so the
+      // text around it keeps whatever grammar it had — JSON included.
+      const quote = /^["'`]/u.test(secret) ? secret[0] : '';
+      return `${key}${separator}${quote}<redacted>${quote}`;
+    },
+  );
   return { value: redacted, redacted: redacted !== value };
 }
 

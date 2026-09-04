@@ -95,7 +95,56 @@ describe('conversation projection: secret redaction', () => {
     projectPrompt(projection, agent, 'the password: "hunter2xyz" must rotate');
     const content = inputOf(publisher).content;
     expect(content).not.toContain('hunter2xyz');
-    expect(content).toContain('password: <redacted>');
+    expect(content).toContain('password: "<redacted>"');
+  });
+
+  it('keeps a redacted structured result parseable: a quoted secret stays a string', () => {
+    const { publisher, projection, agent } = harness();
+    const result = {
+      token: 'abc123secret',
+      nested: { api_key: 'k-1', password: 'p"q\\r', count: 7 },
+      note: 'cookie: session=xyz; keep',
+    };
+    projection.projectActivity(agent, {
+      kind: 'tool.call',
+      occurredAt: Date.now(),
+      id: 'evt-1',
+      callId: 'call-1',
+      toolName: 'mcp__probe__lookup',
+      action: null,
+      summary: null,
+      invocation: null,
+      items: [],
+      status: 'completed',
+      arguments: null,
+      result,
+      error: null,
+    });
+
+    const tool = activityOf(publisher);
+    const text = tool.kind === 'tool.call' ? tool.result_json : null;
+    expect(text).not.toContain('abc123secret');
+    expect(text).not.toContain('k-1');
+    expect(text).not.toContain('p\\"q');
+    expect(text).not.toContain('session=xyz');
+    expect(JSON.parse(text ?? '')).toEqual({
+      token: '<redacted>',
+      nested: { api_key: '<redacted>', password: '<redacted>', count: 7 },
+      note: 'cookie: <redacted>; keep',
+    });
+    expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
+  });
+
+  it('stops a bare secret at the quote and bracket that close its JSON string', () => {
+    const envelope = JSON.stringify({
+      content: [{ type: 'text', text: 'token: xyz' }],
+      structuredContent: { ok: true },
+    });
+    const { value } = redactText(envelope, '/workspace/repo', ['/home/me']);
+    expect(JSON.parse(value)).toEqual({
+      content: [{ type: 'text', text: 'token: <redacted>' }],
+      structuredContent: { ok: true },
+    });
   });
 
   it('redacts an inline api_key= assignment', () => {
