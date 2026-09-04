@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Harden the bundled self-upgrade guide: resolve the managed launcher and the exact target before installing, refuse an equal or lower target, and drop the unreachable no-notice routing promise.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

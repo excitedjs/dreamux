@@ -147,3 +147,66 @@ The bundled self-upgrade reference states one runnable four-step procedure:
   omission of a private registry flag are required substitutions under the
   repository's public-repo red line, not a partial adoption of the ruling.
 - Blocking unknowns: none.
+
+
+## Follow-up slice: harden the lean SOP (issue #374)
+
+After PR #370 merged, the operator filed
+[issue #374](https://github.com/excitedjs/dreamux/issues/374) with three named
+scenarios and an explicit non-goal list. The lean four-step shape is confirmed
+correct; only the smallest textual corrections inside those steps are in scope.
+
+### Confirmed scenarios and their evidence
+
+1. **The SOP could upgrade one install and restart another.** Onboarding
+   defaults the service launcher to whichever launcher ran it
+   (`packages/dreamux/src/onboard/wizard.ts` resolves `dreamuxBin` from
+   `process.env['DREAMUX_BIN'] ?? process.argv[1]`, and
+   `packages/dreamux/src/onboard/service.ts` writes that absolute path into
+   `ExecStart` / `ProgramArguments`). A service pinned to an npx or local-checkout
+   launcher therefore need not be the `dreamux` this shell resolves. The SOP read
+   `oldVersion` from the shell's `dreamux`, installed into the shell's global
+   prefix, restarted the service, received the service's resume notice, and
+   reported the other copy's version as success.
+2. **The SOP installed before it compared.** The target was only known after
+   `npm install --global` had already changed the live prefix. A named selector,
+   or `latest` while the installed copy is a newer prerelease, resolves at or
+   below `oldVersion` — and this repository publishes a beta prerelease on every
+   merge to `next`, so being ahead of `latest` is ordinary, not exotic. The
+   `(oldVersion, targetVersion]` range in step 2 is then empty or inverted.
+3. **The no-notice instruction had no executing actor.** The resume notice is
+   injected into a Dispatcher as it comes up
+   (`packages/dreamux/src/daemon/restart-intent.ts`). If resume or startup fails,
+   no turn exists, so no model is present to observe that the notice never
+   arrived. `Use the root skill's Service lifecycle route if ... the notice does
+   not arrive` promised an action nobody could take.
+
+### Desired outcome
+
+- Step 1 resolves the managed launcher and its environment once from
+  `doctor --json`, reads `oldVersion` from that launcher, and stops on a
+  launcher / PATH / global-prefix mismatch.
+- Step 1 resolves the exact target with `npm view` before installing; equal is a
+  reported no-op, lower is refused, only higher installs. The post-install check
+  requires the managed launcher to report the resolved target.
+- Step 4 keeps Service lifecycle routing only for a synchronous restart failure
+  while the caller is still alive, and drops the unreachable no-notice promise.
+- `.agents/product/README.md` carries the Channel-visible upgrade outcome with a
+  pointer to this task record.
+
+### Non-goals (operator's list, verbatim in effect)
+
+No package staging or `npm pack`, no dependency rehearsal prefixes, no
+backup/artifact matrices, no rollback protocols, no independent
+controller/recovery actor, and no new persisted state, timers, retry loops, or
+recovery mechanisms. If a fix would materially expand the SOP, the scenario is
+left fail-loud instead.
+
+### Acknowledged direction change
+
+Scenario 1's fix restores a narrow piece of the launcher/prefix identity proof
+that PR #370 deleted. This is deliberate and was surfaced to the operator before
+implementation: the deleted version proved identity across staged artifacts and
+rehearsal prefixes, while this one resolves the launcher once and stops on a
+mismatch. The scenario is named and reachable, which is what the deleted version
+lacked.
