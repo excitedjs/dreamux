@@ -42,6 +42,18 @@ describe('toolDisplay', () => {
     })).toEqual({ action: 'search', summary: 'TODO in src', invocation: 'rg TODO src', items: [] });
   });
 
+  it('labels an all-listing command by the paths it listed', () => {
+    expect(toolDisplay({
+      type: 'commandExecution',
+      id: 'item-1',
+      command: 'ls src && ls tests',
+      commandActions: [
+        { type: 'listFiles', command: 'ls src', path: 'src' },
+        { type: 'listFiles', command: 'ls tests', path: 'tests' },
+      ],
+    })).toEqual({ action: 'list_files', summary: 'src, tests', invocation: 'ls src && ls tests', items: [] });
+  });
+
   it('falls back to the command line for a mixed pipeline', () => {
     expect(toolDisplay({
       type: 'commandExecution',
@@ -86,6 +98,12 @@ describe('toolDisplay', () => {
       query: 'x',
       action: { type: 'search', queries: ['first', 'second'] },
     })).toMatchObject({ summary: 'first …' });
+    expect(toolDisplay({
+      type: 'webSearch',
+      id: 'item-1',
+      query: 'x',
+      action: { type: 'openPage', url: 'https://example.test/page' },
+    })).toMatchObject({ action: 'search', summary: 'https://example.test/page' });
   });
 
   it('labels nothing for an MCP tool call', () => {

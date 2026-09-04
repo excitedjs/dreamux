@@ -768,7 +768,9 @@ the runtime said about the call. The `TOOL_CALL_RESULT` of a
 runtime-labelled row is the documented segment array: `Failed` first when it
 failed, the call's `items` as the pills of a `list` segment (each with the
 icon of the call's action, bounded by `TOOL_ITEMS_SOFT_MAX_BYTES` with one
-`+N` pill standing for the rest), the `invocation` as a `code` segment
+`+N` pill standing for the rest; a first item longer than the whole budget is
+truncated into one pill rather than folded into that count, per 「按照单条去截断
+即可」, 2026-09-04), the `invocation` as a `code` segment
 (`language: bash` for a run), then the output as a `code` segment, each
 spelling its body in the documented `code` field. A read or edit that
 succeeded stops after its pills: the operator ruled the diff and the output

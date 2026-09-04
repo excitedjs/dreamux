@@ -68,6 +68,15 @@ describe('runtime-labelled tool rows', () => {
     expect(start!.content).toMatchObject({ toolCallName: 'Read', icon: 'read', title: 'Read src/a.ts' });
   });
 
+  it('leads a listing row with List and the search icon', () => {
+    const [start] = toolCallStartEvents(toolCall({
+      tool_name: 'Bash',
+      tool_action: 'list_files',
+      summary: 'src',
+    }));
+    expect(start!.content).toMatchObject({ toolCallName: 'List', icon: 'search', title: 'List src' });
+  });
+
   it('names the tool before the summary when the runtime has no action for it', () => {
     const [start] = toolCallStartEvents(toolCall({
       tool_name: 'Skill',
@@ -183,6 +192,21 @@ describe('runtime-labelled tool rows', () => {
         { type: 'code', language: 'text', code: 'file not found' },
       ],
     });
+  });
+
+  it('truncates a first item longer than the whole pill budget into one pill instead of hiding it', () => {
+    const long = `packages/example/src/${'deeply-nested-'.repeat(50)}module.ts`;
+    const [result] = toolCallResultEvents(toolCall({
+      tool_action: 'edit',
+      status: 'completed',
+      items: [long, 'src/b.ts'],
+    }));
+    const list = (result!.content as { content: { type: string; items: Array<{ text: string }>; more?: { text: string } } }).content;
+    expect(list.type).toBe('list');
+    expect(list.items).toHaveLength(1);
+    expect(list.items[0]!.text.endsWith('… (truncated)')).toBe(true);
+    expect(Buffer.byteLength(list.items[0]!.text, 'utf8')).toBeLessThanOrEqual(512);
+    expect(list.more).toEqual({ text: '+1' });
   });
 
   it('folds the files past the pill budget into one +N pill', () => {

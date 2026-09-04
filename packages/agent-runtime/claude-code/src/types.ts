@@ -168,10 +168,12 @@ export interface ClaudeCodeSessionSpec {
 }
 
 /**
- * The two envelopes the display line reads: what claude said and did
- * (`assistant`), and what its tools returned (`user`). Every other stdout line
- * — `init`, command lifecycle, control traffic, hook and rate-limit notices —
- * is the RPC's own business and never reaches the display.
+ * The three envelopes the display line reads: what claude said and did
+ * (`assistant`), what its tools returned (`user`), and the CLI's notice that
+ * it compacted its context (`system` with subtype `compact_boundary`). Every
+ * other stdout line — `init`, command lifecycle, control traffic, every other
+ * `system` notice, hook and rate-limit notices — is the RPC's own business
+ * and never reaches the display.
  */
 export type ClaudeActivityLine = Extract<
   ParsedLine,

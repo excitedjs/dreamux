@@ -405,19 +405,21 @@ Source:
 
 ### Claude Code Stream-Json Envelopes On The Display Line
 
-The display line reads two stdout envelopes and nothing else
+The display line reads three stdout envelopes and nothing else
 (`ClaudeActivityLine`): `assistant`, whose text blocks are the model's words and
-whose `tool_use` blocks are its tool calls; and `user`, whose `tool_result`
-blocks are what those tools returned, correlated to the call by `tool_use_id`.
+whose `tool_use` blocks are its tool calls; `user`, whose `tool_result`
+blocks are what those tools returned, correlated to the call by `tool_use_id`;
+and the `system` envelope with subtype `compact_boundary`, which becomes the
+one-line `Compacted session` message described below.
 A `user` envelope on stdout is the CLI's own, never the operator's: stdin input
 is not echoed back (Dreamux does not pass `--replay-user-messages`), so a text
 block there is context the CLI injected into its conversation — observed on
 2.1.259, the `Skill` tool's result is only `Launching skill: <name>` and the
 whole SKILL.md body follows as a separate `user` line with no field marking it
 as injected. None of that text is displayed. Every other stdout line — `init`,
-`command_lifecycle`, control traffic, `system` notices, `stream_event`,
-`rate_limit_event` — stays inside the RPC, which only counts it as activity for
-the idle deadline. The operator's own input is displayed by Core's
+`command_lifecycle`, control traffic, every other `system` notice,
+`stream_event`, `rate_limit_event` — stays inside the RPC, which only counts it
+as activity for the idle deadline. The operator's own input is displayed by Core's
 `teammate.input`, not by anything on this line.
 
 Source:

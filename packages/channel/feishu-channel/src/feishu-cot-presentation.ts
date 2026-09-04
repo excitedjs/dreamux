@@ -130,19 +130,28 @@ export function toolPresentation(event: CotToolCallActivity): ToolPresentation {
 /**
  * The call's items as pills, each with the icon of the call's action, kept
  * within `TOOL_ITEMS_SOFT_MAX_BYTES` so a patch over many files leaves room
- * for its diff: the pills that fit, then one `+N` pill for the rest.
+ * for its diff: the pills that fit, then one `+N` pill for the rest. A first
+ * item longer than the whole budget is truncated into one pill instead of
+ * being folded into a count no pill explains (operator ruling, 2026-09-04:
+ * 「按照单条去截断即可」).
  */
 function itemList(event: CotToolCallActivity): CotItemList | null {
   if (event.items.length === 0) return null;
   const icon = event.tool_action === null ? undefined : ACTION_ICONS[event.tool_action];
+  const pill = (text: string): CotListItem => (icon === undefined ? { text } : { text, icon });
   const items: CotListItem[] = [];
   let bytes = 0;
   for (const [index, item] of event.items.entries()) {
     bytes += escapedBytes(item);
     if (bytes > TOOL_ITEMS_SOFT_MAX_BYTES) {
-      return { items, more: { text: `+${event.items.length - index}` } };
+      if (items.length > 0) {
+        return { items, more: { text: `+${event.items.length - index}` } };
+      }
+      const rest = event.items.length - index - 1;
+      const truncated = [pill(truncateEscaped(item, TOOL_ITEMS_SOFT_MAX_BYTES))];
+      return rest === 0 ? { items: truncated } : { items: truncated, more: { text: `+${rest}` } };
     }
-    items.push(icon === undefined ? { text: item } : { text: item, icon });
+    items.push(pill(item));
   }
   return { items };
 }
@@ -166,12 +175,8 @@ export function normalizedDetail(
   softMaxBytes: number,
 ): string | null {
   if (value === null || value === '') return null;
-  // Preserve provider detail verbatim here; the escaped-byte budget below
-  // remains the authoritative safety boundary for display payload size.
-  const normalized = value;
-  if (normalized === '') return null;
-  if (!sourceTruncated && escapedBytes(normalized) <= softMaxBytes) return normalized;
-  return truncateEscaped(normalized, softMaxBytes, true);
+  if (!sourceTruncated && escapedBytes(value) <= softMaxBytes) return value;
+  return truncateEscaped(value, softMaxBytes, true);
 }
 
 export function truncateEscaped(
