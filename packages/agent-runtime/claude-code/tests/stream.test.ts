@@ -46,6 +46,17 @@ describe('parseLine', () => {
     expect(line).toMatchObject({ kind: 'init', sessionId: 's1', model: 'claude-x' });
   });
 
+  it('parses a system/compact_boundary envelope and leaves other system subtypes as other', () => {
+    const boundary = parseLine(JSON.stringify({
+      type: 'system',
+      subtype: 'compact_boundary',
+      compact_metadata: { trigger: 'auto', pre_tokens: 14950, post_tokens: 1789 },
+    }));
+    expect(boundary.kind).toBe('compact_boundary');
+    const status = parseLine(JSON.stringify({ type: 'system', subtype: 'status', status: 'compacting' }));
+    expect(status).toMatchObject({ kind: 'other', type: 'system', subtype: 'status' });
+  });
+
   it('parses an assistant envelope, joining text blocks', () => {
     const line = parseLine(
       JSON.stringify({

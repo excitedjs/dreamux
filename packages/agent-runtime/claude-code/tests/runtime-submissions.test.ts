@@ -279,6 +279,35 @@ describe('handleProtocolEvent settlement', () => {
 });
 
 describe('handleProtocolEvent live activity', () => {
+  it('shows a compaction as the one line Compacted session, never the summary the CLI wrote', () => {
+    const h = makeHarness(['cmd-1']);
+    h.fire(started('cmd-1'));
+    h.fire({
+      kind: 'stream',
+      line: {
+        kind: 'compact_boundary',
+        raw: { type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto', pre_tokens: 14950, post_tokens: 1789 } },
+      },
+    });
+    // The summary rides right behind the boundary as a synthetic `user`
+    // envelope whose content is one string, not a block array.
+    h.fire({
+      kind: 'stream',
+      line: {
+        kind: 'user',
+        raw: {
+          type: 'user',
+          isSynthetic: true,
+          isReplay: true,
+          message: { role: 'user', content: 'This session is being continued from a previous conversation that ran out of context.' },
+        },
+      },
+    });
+    expect(h.activityEvents).toEqual([
+      expect.objectContaining({ kind: 'assistant.message', text: 'Compacted session', truncated: false }),
+    ]);
+  });
+
   it('emits an assistant.message activity for streamed text, addressed to no submission at all', async () => {
     const h = makeHarness(['cmd-1']);
     h.fire(started('cmd-1'));

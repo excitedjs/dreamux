@@ -401,6 +401,7 @@ export class ClaudeCodeStreamRpc {
         this.options.onProtocolEvent?.({ kind: 'stream', line });
         break;
       case 'user':
+      case 'compact_boundary':
         this.options.onProtocolEvent?.({ kind: 'stream', line });
         break;
       case 'command_lifecycle': {
@@ -492,7 +493,8 @@ export class ClaudeCodeStreamRpc {
         );
         break;
       default:
-        // Every other envelope (`system` notices past `init`, `stream_event`,
+        // Every other envelope (`system` notices past `init` and
+        // `compact_boundary`, `stream_event`,
         // `rate_limit_event`, ...) carries nothing the runtime consumes. It
         // already counted as activity for the idle deadline above.
         break;

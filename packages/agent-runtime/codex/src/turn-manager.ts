@@ -375,6 +375,16 @@ function createRuntimeSubmission(): SubmissionDeferred {
   return { submission, settle(settlement) { if (settled) return false; settled = true; resolve(settlement); return true; } };
 }
 
+/**
+ * The one line the card shows for a compaction, in the words Claude Code's
+ * UI uses for the same fact. codex's `contextCompaction` item carries only
+ * its id, and the summary codex wrote never leaves codex-core. Operator
+ * ruling, 2026-09-04: 「只显示压缩发生了即可 … 我只需要这一行字即可」 — and on the
+ * shape, 「没必要给他单独加一个新的 activity 类型，你直接在provider 里，多推一个
+ * assistant message，内容就这一行。」
+ */
+const COMPACTED_SESSION_MESSAGE = 'Compacted session';
+
 function itemActivity(
   turnId: string,
   item: ThreadItem,
@@ -390,6 +400,16 @@ function itemActivity(
       occurredAt,
       id: `${turnId}:${itemId}:completed`,
       text: item.text,
+      truncated: false,
+    };
+  }
+  if (item.type === 'contextCompaction') {
+    if (phase !== 'completed') return null;
+    return {
+      kind: 'assistant.message',
+      occurredAt,
+      id: `${turnId}:${itemId}:completed`,
+      text: COMPACTED_SESSION_MESSAGE,
       truncated: false,
     };
   }

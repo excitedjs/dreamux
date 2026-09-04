@@ -36,6 +36,15 @@ export type ParsedLine =
       kind: 'user';
       raw: JsonObject;
     }
+  | {
+      /**
+       * The CLI compacted its context: a `system` envelope with subtype
+       * `compact_boundary`. The summary it wrote rides separately, in a
+       * synthetic `user` envelope, and is never displayed.
+       */
+      kind: 'compact_boundary';
+      raw: JsonObject;
+    }
   | { kind: 'result'; outcome: ResultEnvelope; raw: JsonObject }
   | {
       kind: 'command_lifecycle';
@@ -164,7 +173,10 @@ export interface ClaudeCodeSessionSpec {
  * — `init`, command lifecycle, control traffic, hook and rate-limit notices —
  * is the RPC's own business and never reaches the display.
  */
-export type ClaudeActivityLine = Extract<ParsedLine, { kind: 'assistant' | 'user' }>;
+export type ClaudeActivityLine = Extract<
+  ParsedLine,
+  { kind: 'assistant' | 'user' | 'compact_boundary' }
+>;
 
 export type ClaudeProtocolEvent =
   | {

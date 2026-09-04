@@ -236,6 +236,10 @@ function emitStreamActivity(
   line: ClaudeActivityLine,
   context: ProtocolEventContext,
 ): void {
+  if (line.kind === 'compact_boundary') {
+    emitActivity(compactedActivity(active), context.activitySink);
+    return;
+  }
   const message = recordValue(line.raw['message']) ?? line.raw;
   const messageId = stringValue(message['id']) ?? `stream-${active.activitySequence++}`;
   const content = Array.isArray(message['content']) ? message['content'] : [];
@@ -248,6 +252,26 @@ function emitStreamActivity(
     if (activity === null) continue;
     emitActivity(activity, context.activitySink);
   }
+}
+
+/**
+ * The one line the card shows for a compaction, in the words Claude Code's
+ * own UI uses. The summary the CLI wrote is not shown. Operator ruling,
+ * 2026-09-04: 「我不要正文，正文太长了，只显示压缩发生了即可。claude code 的网页上只
+ * 显示了 Compacted session，我只需要这一行字即可。」 — and on the shape, 「没必要给他
+ * 单独加一个新的 activity 类型，你直接在provider 里，多推一个 assistant message，
+ * 内容就这一行。」
+ */
+const COMPACTED_SESSION_MESSAGE = 'Compacted session';
+
+function compactedActivity(active: ActiveTurn): RuntimeActivity {
+  return {
+    kind: 'assistant.message',
+    occurredAt: Date.now(),
+    id: `stream-${active.activitySequence++}:compacted`,
+    text: COMPACTED_SESSION_MESSAGE,
+    truncated: false,
+  };
 }
 
 /** What the model said, or a tool it called. */

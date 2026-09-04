@@ -173,6 +173,9 @@ export function parseLine(line: string): ParsedLine {
       if (subtype === 'command_lifecycle') {
         return parseCommandLifecycle(parsed);
       }
+      if (subtype === 'compact_boundary') {
+        return { kind: 'compact_boundary', raw: parsed };
+      }
       return { kind: 'other', type, subtype, raw: parsed };
     case 'command_lifecycle':
       // The resident CLI emits `command_lifecycle` as a top-level `type`

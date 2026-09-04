@@ -132,6 +132,9 @@ the same change that touches it.
   card's own words — row verbs (Read, Edit, Search, List), the Completed and
   Failed status lines, the truncation marker, and the titles of Channel and
   teammate tools — are English.
+- **A compaction is one line.** When the runtime compacts its context, the
+  card shows `Compacted session` as an assistant message, and nothing of the
+  summary the runtime wrote for itself.
   (Ruling: 「优化一下 COT 的展示效果 … 你需要同时兼顾 claude code 和 codex 这两边
   … 然后在 dreamux 的 activity 的 interface 里，扩展一些字段，最后
   feishu-cot-adapter 这里对齐最终上传到飞书的消息格式」, 2026-09-03, in

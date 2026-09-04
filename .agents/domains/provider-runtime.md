@@ -520,7 +520,17 @@ arbitrary member — and, when no member could be picked, drop the fact entirely
 The agent is the subject, and it is known before any submission binds. The union
 has three members: `assistant.message`, `tool.call`, and `turn.ended` — the
 runtime stopped producing, with a completed, failed or interrupted status and
-its own reason text when it has one. The sink is
+its own reason text when it has one. A context compaction is published through
+the same union as an `assistant.message` reading `Compacted session` — Claude
+Code on its `system`/`compact_boundary` envelope, Codex on the completion of
+its `contextCompaction` item — and the summary is not: Claude Code puts it on
+the wire as a synthetic `user` envelope whose content is one string (dropped
+with every other `user` text), Codex never emits it (its `contextCompaction`
+item carries only an id, and codex-core records the compaction output into
+history without an event). Operator ruling, 2026-09-04: 「我不要正文，正文太长了，
+只显示压缩发生了即可。claude code 的网页上只显示了 Compacted session，我只需要这一
+行字即可。」 and, on the shape, 「我觉得没必要给他单独加一个新的 activity 类型，你直接在
+provider 里，多推一个 assistant message，内容就这一行。」 The sink is
 generation-fenced, synchronous, display-only and fail-open — a write from a
 revoked generation is dropped, and a throwing consumer never affects
 settlement. That guard is Core's (`createConversationProjection`'s `guarded`
