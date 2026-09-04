@@ -315,8 +315,8 @@ function teamToolDescriptors(
           type: 'string',
           maxLength: 20000,
           description:
-            'The TeamLeader\'s first turn; omit to start it idle until a routed ' +
-            'inbound or a later send.',
+            'The TeamLeader\'s first turn; omit it and no TeamLeader process ' +
+            'starts until a routed inbound or a later send arrives.',
         },
       },
       ['name_prefix', 'leader_agent_runtime', 'intent'],
