@@ -496,7 +496,7 @@ describe('ClaudeCodeRuntime settlement', () => {
     if (admission.status !== 'submitted') throw new Error('expected submitted');
     await expect(admission.submission.settled).resolves.toEqual({
       kind: 'completion',
-      completion: { status: 'completed', resultText: 'echo:hello', truncated: false },
+      completion: { status: 'completed', resultText: 'echo:hello' },
     });
   });
 

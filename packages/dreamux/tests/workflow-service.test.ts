@@ -418,7 +418,7 @@ describe('workflow.stop and failure delivery use the null-completion-token entry
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(resolved).toBe(false); // still converging the accepted turn
 
-    turn.settle({ status: 'completed', resultText: JSON.stringify({ done: true }), truncated: false });
+    turn.settle({ status: 'completed', resultText: JSON.stringify({ done: true }) });
     const stopResult = await stopPromise;
     expect(stopResult.status).toBe('stopped');
 
@@ -505,7 +505,7 @@ describe('team-scoped Workflow member creation: a narrow createLocked capability
     // The handle stays locked while the workflow still owns it.
     expect(order).toEqual(['submit:task']);
 
-    turn.settle({ status: 'completed', resultText: JSON.stringify({ ok: true }), truncated: false });
+    turn.settle({ status: 'completed', resultText: JSON.stringify({ ok: true }) });
     runner.emit({ type: 'run_result', status: 'completed', result: null });
     await waitUntil(() => order.includes('unlock'));
 

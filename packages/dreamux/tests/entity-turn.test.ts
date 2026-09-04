@@ -21,7 +21,6 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
     await expect(turn.settled).resolves.toEqual({
       status: 'completed',
       resultText: 'done',
-      truncated: false,
     });
     await turn.delivery;
     expect(delivery).toHaveBeenCalledTimes(1);
@@ -150,14 +149,13 @@ describe('entity-owned in-process Turn terminal pipeline', () => {
 
     // The token is provider-owned and frozen: a later mutation attempt cannot
     // rewrite what this turn already reported or what it hands to delivery.
-    expect(() => Object.assign(completion, { resultText: 'mutated', truncated: true }))
+    expect(() => Object.assign(completion, { resultText: 'mutated' }))
       .toThrow(TypeError);
 
     await turn.delivery;
     expect(settled).toEqual({
       status: 'completed',
       resultText: 'first',
-      truncated: false,
     });
     const [deliveredCompletion, deliveredFact] = delivery.mock.calls[0] ?? [];
     expect(deliveredCompletion).toBe(completion);

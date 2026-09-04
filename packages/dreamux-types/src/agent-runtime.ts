@@ -181,7 +181,6 @@ export type RuntimeCompletion =
   | {
       readonly status: 'completed';
       readonly resultText: string | null;
-      readonly truncated: boolean;
     }
   | {
       readonly status: 'failed';

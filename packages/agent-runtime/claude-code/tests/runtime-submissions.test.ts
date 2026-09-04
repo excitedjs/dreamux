@@ -193,7 +193,7 @@ describe('handleProtocolEvent settlement', () => {
     const settlement = await h.settled('cmd-1');
     expect(settlement).toEqual({
       kind: 'completion',
-      completion: { status: 'completed', resultText: 'the answer', truncated: false },
+      completion: { status: 'completed', resultText: 'the answer' },
     });
   });
 

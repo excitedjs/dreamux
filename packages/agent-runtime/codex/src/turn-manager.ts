@@ -253,7 +253,6 @@ export class TurnManager {
       completion = Object.freeze({
         status: 'completed',
         resultText: extractAssistantText(completedTurn),
-        truncated: false,
       });
     }
     record.completion = completion;

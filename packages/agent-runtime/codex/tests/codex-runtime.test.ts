@@ -385,7 +385,7 @@ describe('CodexRuntime submit() and settlement', () => {
     const secondSettlement = await second.settled;
     expect(firstSettlement).toMatchObject({
       kind: 'completion',
-      completion: { status: 'completed', resultText: 'first result', truncated: false },
+      completion: { status: 'completed', resultText: 'first result' },
     });
     expect(secondSettlement).toMatchObject({
       kind: 'completion',

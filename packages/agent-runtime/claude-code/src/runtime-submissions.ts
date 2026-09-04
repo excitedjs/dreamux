@@ -185,7 +185,6 @@ function completeStartedGroup(
           context.threadId,
           context.outputSchemaEnabled,
         ),
-        truncated: false,
       });
     } catch (error) {
       completion = Object.freeze({
