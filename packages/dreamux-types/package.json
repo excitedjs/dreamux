@@ -1,6 +1,6 @@
 {
   "name": "@excitedjs/dreamux-types",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Declaration-only provider-authoring contracts for Dreamux: Agent Runtime and Channel provider types external providers compile against without depending on @excitedjs/dreamux (issue excitedjs/dreamux#209).",
   "license": "MIT",
   "repository": {

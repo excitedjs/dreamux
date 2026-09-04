@@ -2,6 +2,111 @@
   "name": "@excitedjs/dreamux",
   "entries": [
     {
+      "version": "0.23.0",
+      "tag": "@excitedjs/dreamux_v0.23.0",
+      "date": "Fri, 04 Sep 2026 10:24:24 GMT",
+      "comments": {
+        "none": [
+          {
+            "comment": "Repository guardrail only: make the anti-leak pre-commit gate mandatory and add a tree-wide internal-content scan. Touches this package's contributor documentation and adds a guardrail test; no package behavior or version change."
+          },
+          {
+            "comment": "Replace a literal absolute home path in a compiled docstring, and an internal mount path used as a test fixture, with neutral placeholders. Comment and fixture text only: no behaviour, published contract, or path semantics change."
+          },
+          {
+            "comment": "Documentation-only: update knowledge-base citation paths in test and source comments after the .agents reorganization; no package behavior or version change."
+          },
+          {
+            "comment": "Test-only: the live-gate `FeishuBot` double implements the interface structurally, so it gains the `editCard` method the Feishu channel added for card repaints. No package behavior or version change."
+          },
+          {
+            "comment": "Release pipeline pushes to the protected main/next branches now authenticate with the repository release deploy key under the release-branch-pr-gate ruleset; promote-next relies on the push-triggered release run instead of an explicit dispatch. No package behavior or version change."
+          }
+        ],
+        "minor": [
+          {
+            "comment": "BREAKING: Review: Channel consumers must handle the new display-only per-turn conversation stream for dispatcher, TeamLeader, and Team-member conversations, including exactly one settled event for every participating admitted turn. No rebuild is needed. Dreamux projects the neutral stream for Channel providers; Feishu COT renders dispatcher and TeamLeader events only."
+          },
+          {
+            "comment": "BREAKING: Review: Dreamux now publishes one `teammate.native_turn.ended` core event per runtime-native turn, in addition to the existing per-submission `teammate.turn.settled`. The new event is actor-scoped: it names the Dispatcher or TeamLeader whose runtime produced it and a completed/failed/interrupted status, and it enumerates no logical turns, because a provider folds any number of Dreamux submissions into one native turn. `ConversationProjection` gains a `projectNativeTurnEnd` method, so an out-of-tree projection implementation must add it. `teammate.turn.settled` keeps its existing meaning and is unchanged. No rebuild is needed."
+          },
+          {
+            "comment": "Core projects the new tool.call summary, invocation and items through the same path renaming and secret redaction as arguments and results, and bounds nothing: the CONVERSATION_* character caps on inputs, messages, arguments, results and reasons and the 200-character tool-name cut are gone, so a surface receives every display string whole and cuts it at its own platform's limit where it sends. Secret redaction now keeps a structured payload parseable: a quoted secret becomes the quoted string <redacted> (it used to become a bare word that broke the JSON), and a bare secret stops at the quote or bracket that closes it instead of swallowing them."
+          },
+          {
+            "comment": "BREAKING: Review: Dreamux now returns a submission's caller-supplied `source_id` on the immediately published `teammate.turn.submitted` conversation fact, using `null` when no id was supplied. The value is retained on the in-process turn only as far as the submitted projection and remains neither routing nor persisted state. Channel consumers of this event must handle the added field. No rebuild is needed."
+          },
+          {
+            "comment": "BREAKING: the Dispatcher status surfaces renamed their Codex-native thread vocabulary to the neutral session vocabulary Dreamux already uses everywhere else. The `dispatcher.status` output field `thread_id` is now `session_id`, and the Dispatcher rows in `dispatcher.list` and `server.status` carry `session_id` in place of `thread_id`. No alias is kept, so a caller or script that still reads `thread_id` off a Dispatcher row or a `dispatcher.status` result reads undefined; it must read `session_id` instead. The value is unchanged — every one of these fields already read the persisted identity's `session.id` — so only the name a caller reads changes. No persisted file, key, or filename changed: the identity schema has always stored `session`/`session_id`, and no rebuild is required."
+          },
+          {
+            "comment": "BREAKING: Review: Operator paths in projected conversation text are now renamed instead of blanked — workspace paths read '.' and this host's home reads '~', the way the operator's own shell prints them, replacing the '$WORKSPACE' and '$HOME_PATH' placeholders — so displayed tool arguments, tool results, and assistant text in Feishu COT cards change wording accordingly; confirm nothing downstream parses the old placeholders. No rebuild is needed. A card still says which file was touched. Paths are found by scanning for the prefixes this host actually uses rather than by matching a path-shaped pattern, and each hit must be bounded on both sides, so another machine's directory quoted in a log is left legible instead of being redacted for no privacy gain. Home prefixes are recognized inside `file://` URLs and before ordinary closing punctuation, while longer names such as `<home>xyz` and `<home>-old` remain untouched. If this host's home cannot be resolved, no home prefix is invented from the process working directory and workspace renaming remains independent. Secret redaction is unchanged: a token is still destroyed. Server resolves the host prefixes once during start and passes the resulting value into each conversation projection; there is no process-global cache, reset hook, or projection start-order dependency."
+          },
+          {
+            "comment": "BREAKING: Rebuild: stop the daemon, delete `~/.dreamux/state/<dispatcher-id>/channel-bindings.json` and `collaboration-spaces.json` for every dispatcher, remove any `dispatchers[].channels[].collaborationSpace` key from `config.json`, start the daemon, and re-bind the conversations you want routed. Core no longer owns the channel-binding store, the Collaboration Space state, or its config key — a Channel now owns its own routing and does not migrate existing routes, so `dreamux serve` aborts while either file is present. Review: agent identities, Team records, and cron jobs are NOT rebuilt and need no action; `identity.json` keeps its `session_id` string, and a leftover `role` or `transcript_locator` is inert residue. Any agent whose session was recorded under the short-lived nested `session` object simply starts a fresh session on its next turn, so check whether a running agent needs its context restated. Team records replace the persisted dissolve state machine with status plus `worktree.cleanup_state`: a dissolve still waiting for its Team to go idle is not resumed and must be re-submitted. Team name claims and the create-request ledger are gone. The Agent MCP surface changes with it: Team `bind_channel`/`transfer_back` and the Core collaboration-space tools are removed (routing is now the Channel's own tool), `dissolve` answers with a submitted receipt instead of blocking, and `last` returns recent Activity Records (`limit` 1-200) instead of completed transcript turns and no longer reports `transcript_path`. Scheduled cron fires submit immediately through ordinary admission and may fold into a running turn."
+          },
+          {
+            "comment": "BREAKING: Review: remove any automation that invokes `dreamux dispatcher stop` or the `dispatcher.stop` Command; per-Dispatcher stop and restart are no longer supported. Use `dreamux daemon stop` or `dreamux daemon restart` only for whole-process lifecycle. No rebuild is needed."
+          },
+          {
+            "comment": "BREAKING: Rebuild: if a cron store carries a removed shape, delete that job — or the whole `cron-jobs.json` under `~/.dreamux/state/<dispatcher-id>/` or `~/.dreamux/state/<dispatcher-id>/team/<team-id>/` — and recreate the schedule with `cron_create`. Cron jobs only inject a prompt into their owning Dispatcher or TeamLeader, so the declared but never executed `action.kind: spawn-teammate` and `deliver` target are removed rather than parsed and refused: a store file containing either now fails loud when it is read, and `dreamux doctor` names the file. The `scheduler.cron.create` and `scheduler.cron.update` Commands no longer accept `deliver`, and the cron MCP job output no longer reports it. Team `list`, `status`, and `history` also stop reporting a leader whose identity file is old state as if it had no state; that record now raises the same fail-loud error every other read path gives it."
+          },
+          {
+            "comment": "Every agent-facing tool failure and every admin/Channel command failure now produces a result the caller can act on. A failure a domain knows about states its own stable code, the concrete fact, and the next step to take: a Team that is gone (TEAM_NOT_FOUND) or over (TEAM_CLOSED) — now two distinct answers on every surface, including a TeamLeader's own — a TeamMate that does not exist (TEAMMATE_NOT_FOUND), a cron job id that names nothing (CRON_JOB_NOT_FOUND), and an unknown workflow run (WORKFLOW_RUN_NOT_FOUND). A caller mistake is reported as BAD_REQUEST naming the rule it broke: a malformed cron expression, an unusable timezone, an invalid Team or TeamMate name, a blank name_prefix, intent, or close note, an unusable history limit, and an unreadable history cursor. These codes now reach admin.sock and Channel callers, where such failures previously reported INTERNAL, and the next step travels beside the code and message as a new optional `action` field on the admin error envelope and on a rejected in-process Channel command. Only a domain's own named rule becomes BAD_REQUEST: an unforeseen failure raised while validating a request, and any rule broken by persisted state, stay unclassified. An unclassified failure is no longer answered with fixed sanitized text and is no longer wrapped on its way out: it reaches the caller as INTERNAL carrying the message it already had, and is logged whole — stack included — by the boundary that observed it. A malformed MCP delegate result now fails `mcp.toolcall` instead of being reported as a successful one. Closing an already-closed TeamMate is reported as the success it is — including when a concurrent close commits while this one is reading — rather than as a failure. An admin socket that is absent or refusing is now reported as TRANSPORT_ERROR carrying the socket error Node itself reported, instead of the authored \"is the server running?\" advice that replaced it. No config, state, or path shape changed and no rebuild is required."
+          },
+          {
+            "comment": "BREAKING: Review: watch one conversation card end-to-end after upgrading. An input now appears on the card at the moment it is submitted rather than after the runtime accepted it; a submission that never reaches a runtime now ends the recipient's one open card with the failure text; and a completion push-back whose recipient's runtime disappears between the moment it is prepared and the moment it is submitted is now visible (the delivered body plus a failed end naming the reason) where it used to be silently dropped — a push-back to a recipient already known to be stopped is still refused before anything is published and stays as silent as it was. No config, state, cache, or path shape changed and no rebuild is needed. Core's conversation projection is keyed on the Agent: `projectSubmitted`/`projectSettled`/`projectNativeTurnEnd` collapse into `projectInput`/`projectActivity`, which are fail-open by contract. `EntityTurnCoordinator` carries no display code at all — its two sinks, the `RuntimeSubmission`-keyed turn map, the 512-entry early-activity buffer, and the per-submission activity dedupe are deleted — and `EntityTurn` drops the five fields only display read. Every admission that produces no turn — stopped, skipped, ambiguous, or failed — ends its display as `failed` with the reason attached. `TeammateService` has one `runtime.submit` call site: a completion push-back is the ordinary admitted input asking `{ wake: false }`. The Core event seal's catalog is now a total record over the event union, so an unlisted kind fails to compile instead of being dropped at runtime."
+          }
+        ],
+        "patch": [
+          {
+            "comment": "Stop passing Core's internal provider descriptor to external channel factories. Both external provider loaders now type their factory context as the published ref-only `ProviderFactoryContext` from `@excitedjs/dreamux-types`, so Core's registration descriptor never reaches the implementation side and the two loaders are symmetric; the structurally identical local context aliases are gone. Internal contract cleanup only: the built-in Feishu channel factory takes no context argument, so no behavior, config, state, or path shape changed and no rebuild is required."
+          },
+          {
+            "comment": "Remove the producer-less `last_lost_thread_id` field from the `dispatcher.status` result. Nothing has ever produced a value for it: it was declared as the literal `null`, schema-typed as NULL, listed as required, and hardcoded to `null` on every response, with no reader anywhere in Dreamux. Callers that ignored it are unaffected; a caller that required the key to be present must stop doing so. No config, state, or path shape changed and no rebuild is required."
+          },
+          {
+            "comment": "Team creation no longer starts the TeamLeader's Agent Runtime. `team.create` without a `prompt` creates the Team and the leader identity and starts nothing; the runtime starts with the first message that reaches the leader (with a `prompt`, inside that first turn). This stops codex from opening a thread that never gets a turn and therefore never writes a rollout, which made the leader impossible to resume on the next start. A runtime that cannot start now surfaces on the first message's display instead of failing `team.create`."
+          },
+          {
+            "comment": "A TeamLeader whose Agent Runtime fails to start now shows the submitted input and the provider's own error on its conversation display, instead of leaving the display open on its opening label. The leader's runtime starts inside the submission that needs it on every TeamLeader path (Channel, Agent delegate, cron), and a `starting` Team becomes `running` once its leader has taken a turn."
+          },
+          {
+            "comment": "Report the real package version as the MCP server identity. All four Dreamux-served MCP servers (dreamux-team, dreamux-teammate, dreamux-cron, and the Channel servers) hand-wrote `0.4.0` as their `serverInfo.version`, so every connecting agent was told a version Dreamux left behind many releases ago. The version now comes from one shared constant read out of the package manifest, so it tracks the package automatically instead of needing four edits per release. The value an agent sees changes from `0.4.0` to the installed package version; this is advertisement metadata only, and no tool, schema, or behavior depends on it. No config, state, or path shape changed and no rebuild is required."
+          },
+          {
+            "comment": "Remove dead skill-source normalization from the Team and TeamMate MCP delegates. Both called `normalizeSkillSources(null, ...)`, which returns `null` immediately for a `null` input, so the fence never ran and the guarded `skillSources` spread was always empty. The live fence on the Command path, which normalizes real caller-supplied skill sources and injects the TeamLeader's required roots, is untouched. No behavior, config, state, or path shape changed and no rebuild is required."
+          },
+          {
+            "comment": "Remove the leftover `assertProviderDescriptorShape` loader assertion. It validated that a loaded provider echoed Core's own registration descriptor back, which no provider does any more: Core keeps the sole authoritative descriptor in its registered-provider wrapper. The helper had no caller left in any package. No behavior, config, state, or path shape changed and no rebuild is required."
+          },
+          {
+            "comment": "Give the scheduler one definition of a valid cron schedule. The five-field shape, timezone probe, pattern parse, future-run check, and recurring minimum-interval gap were written out twice — once for the command path and once for the persisted-reload path — and the copies had already drifted apart in what they checked and in how they worded an unknown timezone. The rules now live in one validator that takes the failure classification as a parameter, so a caller mistake is still reported as a rule violation and a bad schedule already on disk is still reported as corrupt state, with the same messages. Two consequences a reader may notice: a corrupt-state report for an unknown timezone now says which timezone was rejected instead of relaying the platform's wording, and a genuine platform fault during the timezone probe is no longer misreported as corrupt state. A redundant third validation pass over persisted jobs at scheduler start is removed; it could only re-derive what loading the store already proved. No config, state, or path shape changed and no rebuild is required."
+          },
+          {
+            "comment": "Simplify the bundled managed-daemon self-upgrade guide to install the target, handle its changelog and config migrations, repair doctor failures, and perform notification restart."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/agent-runtime-claude-code\" to `0.6.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/agent-runtime-codex\" to `0.5.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.9.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.5.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/feishu-channel\" to `6.0.0`"
+          }
+        ]
+      }
+    },
+    {
       "version": "0.22.0",
       "tag": "@excitedjs/dreamux_v0.22.0",
       "date": "Tue, 25 Aug 2026 11:45:34 GMT",

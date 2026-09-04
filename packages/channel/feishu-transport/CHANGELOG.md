@@ -1,6 +1,18 @@
 # Change Log - @excitedjs/feishu-transport
 
-This log was last generated on Sun, 26 Jul 2026 02:44:44 GMT and should not be manually modified.
+This log was last generated on Fri, 04 Sep 2026 10:24:24 GMT and should not be manually modified.
+
+## 0.9.0
+Fri, 04 Sep 2026 10:24:24 GMT
+
+### Minor changes
+
+- BREAKING: Review: The removeReaction transport surface is removed. Feishu COT message operations are added and require @larksuiteoapi/node-sdk ^1.73.0; text sends expose a fail-open onMessageCreated observer with message ID and ordinal; addReaction remains available. No rebuild is needed.
+- Add `editCard(messageId, card)`, which repaints an already-sent card in place. It generalizes the patch call `editText` already made, so a card can be closed out without a click to answer it.
+
+### Patches
+
+- A bot open_id lookup that fails or returns an empty result at startup is no longer permanent: it is not cached as an answer, and the next inbound chat message retries the same bounded lookup before that message is handled, so a successful retry applies to that message and every later one instead of requiring a channel restart. Concurrent messages share one in-flight lookup, a failed retry leaves the identity unresolved for a later message to retry, and a message that arrives while it is still unresolved is delivered unchanged — groups that require an @-mention keep dropping messages until a lookup succeeds. This is process-local transport state only: no configuration, persisted state, path shape, or public API changed, and no rebuild is required.
 
 ## 0.8.0
 Sun, 26 Jul 2026 02:44:44 GMT

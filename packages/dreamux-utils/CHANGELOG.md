@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/dreamux-utils
 
-This log was last generated on Tue, 25 Aug 2026 11:45:34 GMT and should not be manually modified.
+This log was last generated on Fri, 04 Sep 2026 10:24:24 GMT and should not be manually modified.
+
+## 0.5.0
+Fri, 04 Sep 2026 10:24:24 GMT
+
+### Minor changes
+
+- BREAKING: Review: confirm no caller still reads a provider transcript or renders a turn through this package. No rebuild is needed. The `transcript` and `turn-render` modules are removed with their exports; such a caller must use the provider's own Activity Records instead. New shared helpers are exported for bounded activity scanning, the runtime state lease fence, and JSON invocation (`PublicInvokeFailure`, `settleJsonInvoke`).
 
 ## 0.4.0
 Tue, 25 Aug 2026 11:45:34 GMT
