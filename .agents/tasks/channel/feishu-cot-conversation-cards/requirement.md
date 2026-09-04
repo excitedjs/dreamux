@@ -218,8 +218,14 @@ home as `~`.
     its arguments hidden (「mcp 工具隐藏掉参数吧」), because a label would have
     to come from the tool catalog, not the runtime. Codex-side facts the display still lacks, found while
     doing this and left unfixed: a `declined` command or patch reports as
-    completed, a command's exit code is not read, and an MCP error object is
-    stringified as JSON instead of its `message`.
+    completed, a command's exit code is not read, an MCP error object is
+    stringified as JSON instead of its `message`, and an MCP result is
+    forwarded as the whole `{content, structuredContent, _meta}` envelope
+    (`resultFor` in `turn-manager.ts`), so a Codex row prints the envelope
+    where the Claude Code row prints only the `structuredContent` payload.
+    The operator saw the envelope on a `reply` row and left it (「先不修了，先这
+    样吧」, 2026-09-04); the fix, when wanted, unwraps in the Codex provider —
+    `structuredContent`, else the joined `content` text, else null.
 16. COT remains the automatic progress surface. The model-facing `react` tool is
     retained; no automatic received/in-progress reaction ledger is reintroduced.
 17. The existing official Lark COT transport surface and compatible SDK version
