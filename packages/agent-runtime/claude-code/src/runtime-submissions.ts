@@ -270,7 +270,6 @@ function compactedActivity(active: ActiveTurn): RuntimeActivity {
     occurredAt: Date.now(),
     id: `stream-${active.activitySequence++}:compacted`,
     text: COMPACTED_SESSION_MESSAGE,
-    truncated: false,
   };
 }
 
@@ -287,7 +286,6 @@ function assistantBlockActivity(
       occurredAt: Date.now(),
       id: `${messageId}:text:${blockIndex}`,
       text: block['text'],
-      truncated: false,
     };
   }
   if (block['type'] !== 'tool_use') return null;

@@ -95,7 +95,6 @@ function catalogFixtures(): Record<ChannelCoreEvent['kind'], ChannelCoreEvent> {
       source: 'feishu',
       source_id: null,
       content: 'hi',
-      content_truncated: false,
       redacted: false,
     },
     'teammate.activity': {
@@ -113,10 +112,6 @@ function catalogFixtures(): Record<ChannelCoreEvent['kind'], ChannelCoreEvent> {
         status: 'completed',
         arguments_json: '{}',
         result_json: '{}',
-        summary_truncated: false,
-        invocation_truncated: false,
-        arguments_truncated: false,
-        result_truncated: false,
         redacted: false,
       },
     },
@@ -741,7 +736,6 @@ describe('display fact correlation', () => {
       occurredAt: Date.now(),
       id: 'evt-1',
       text: 'done',
-      truncated: false,
     });
 
     const kinds = publisher.published.map((entry) => entry.event.kind);

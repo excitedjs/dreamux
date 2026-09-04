@@ -280,7 +280,6 @@ export class FeishuCotAdapter {
         kind: 'assistant.message',
         event_id: `end:${randomUUID()}`,
         content: end.reason,
-        content_truncated: end.reason_truncated,
         redacted: end.redacted,
       });
     }

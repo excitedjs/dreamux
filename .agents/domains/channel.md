@@ -650,8 +650,11 @@ an event changes only that catalog and its consumers.
 
 No event carries a turn identity: presentation correlation is the `source_id` a
 caller supplied, echoed back on its own input, and nothing exposes a
-runtime-native Turn object or transcript. Conversation events may contain bounded,
-redacted user/assistant display text and bounded tool arguments/results; other
+runtime-native Turn object or transcript. Conversation events may contain
+redacted user/assistant display text and redacted tool arguments/results, whole:
+Core bounds nothing, and the Channel cuts a string only where it would exceed
+Feishu's per-event limit (「core那边只做脱敏，不做截断 … Channel这边先去解析JSON，
+然后在发送接口之前去做截断」, 2026-09-04); other
 events contain no prompt or assistant text. No event contains native transcript
 paths, raw errors, or platform user identity.
 
@@ -771,12 +774,20 @@ icon of the call's action, bounded by `TOOL_ITEMS_SOFT_MAX_BYTES` with one
 `+N` pill standing for the rest; a first item longer than the whole budget is
 truncated into one pill rather than folded into that count, per 「按照单条去截断
 即可」, 2026-09-04), the `invocation` as a `code` segment
-(`language: bash` for a run), then the output as a `code` segment, each
-spelling its body in the documented `code` field. The output is a code
-segment however short it is: #347 had shown a one-line output under 120
-bytes as plain text, and the operator removed that exception once MCP rows
-made it visible as some outputs boxed and some not (「全都给他们包到代码块里
-面」, 2026-09-04). A read or edit that
+(`language: bash` for a run), then the output, shown by what it is rather
+than by how long it is: a value that parses as a JSON object or array is
+pretty-printed (`JSON.stringify(value, null, 2)`) in a `json` code segment,
+anything else is a plain `text` segment (「文本的输出，就按文本输出。能解析成JSON
+的再放进代码段」, 2026-09-04). That rule replaced, within one day, both #347's
+inline exception for a one-line output under 120 bytes and the all-code rule
+that lasted one commit (「全都给他们包到代码块里面」), once MCP rows made the
+mix of boxed and unboxed outputs visible. A code segment spells its body in
+the documented `code` field. Every string a row sends is cut only where it
+would exceed Feishu's 4,096-byte per-event content limit, last, after the
+JSON was parsed and printed, with the English truncation marker (「截断长度以飞
+书平台上给出的最长长度为准，现在有点短」): the earlier 512-byte invocation and
+title soft caps and the 1,024-byte output soft cap are gone, and so is Core's
+own bounding. A read or edit that
 succeeded stops after its pills: the operator ruled the diff and the output
 redundant beside them (「有了胶囊的，可以忽略底下这个编辑的代码段。只看编辑了
 哪些文件就行了」) because the client cannot fold a code segment away; a failed
@@ -838,8 +849,9 @@ reasoning in the
 
 Every admitted input publishes exactly one `teammate.input`, and the runtime's
 own stream carries everything after it; an entity whose conversation is out of
-scope publishes nothing. Input bodies and live activity are redacted and bounded
-in core, and operator paths are renamed rather than blanked — the workspace
+scope publishes nothing. Input bodies and live activity are redacted in core —
+never bounded there: a surface cuts what it cannot send, where it sends it —
+and operator paths are renamed rather than blanked — the workspace
 reads `.` and this host's home reads `~`, from prefixes `Server.start()` resolves
 once and injects into each conversation projection as a value. Card I/O has a
 20-second operation deadline so settled draining state is eventually reaped.

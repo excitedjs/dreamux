@@ -2,7 +2,7 @@
   "changes": [
     {
       "packageName": "@excitedjs/dreamux-types",
-      "comment": "BREAKING: Review: RuntimeActivity and TeammateActivity tool.call now carry three required neutral display facts beside the tool name: summary (the one line the runtime's own UI labels the call with) invocation (the call as a person would write it, such as the shell command line), and items (what the call is about, one entry each, as the runtime's protocol lists them — today the files a read or edit touches; empty otherwise); TeammateActivity adds summary_truncated and invocation_truncated. A provider outside this repository must populate them (null when it has no label) to compile. No rebuild is needed.",
+      "comment": "BREAKING: Review: RuntimeActivity and TeammateActivity tool.call now carry three required neutral display facts beside the tool name: summary (the one line the runtime's own UI labels the call with) invocation (the call as a person would write it, such as the shell command line), and items (what the call is about, one entry each, as the runtime's protocol lists them — today the files a read or edit touches; empty otherwise); TeammateInputEvent and TeammateActivity drop their Core-truncation flags (content_truncated, summary_truncated, invocation_truncated, arguments_truncated, result_truncated, reason_truncated), and RuntimeActivity's assistant.message drops its truncated member: Core redacts and never truncates, and a provider is not asked to. A provider outside this repository must populate the three facts (null when it has no label) and stop setting truncated on assistant messages to compile. No rebuild is needed.",
       "type": "minor"
     }
   ],

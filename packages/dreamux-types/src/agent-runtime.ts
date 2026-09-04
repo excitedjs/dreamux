@@ -208,7 +208,6 @@ export type RuntimeActivity =
       readonly occurredAt: number;
       readonly id: string;
       readonly text: string;
-      readonly truncated: boolean;
     }
   | {
       readonly kind: 'tool.call';

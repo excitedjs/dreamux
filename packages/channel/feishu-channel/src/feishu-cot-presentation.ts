@@ -1,9 +1,9 @@
 /**
- * What a COT card shows for a tool call, and the byte bounding every card
- * string shares. Core owns generic safety processing; this module owns display
- * text — deriving it from one tool call, and keeping it inside Feishu's
- * per-event content budget. Building the events themselves is
- * `feishu-cot-events.ts`, which is this module's only caller.
+ * What a COT card shows for a tool call. Core redacts; this module owns display
+ * text, deriving it from one tool call; `feishu-cot-events.ts`, its only
+ * caller, builds the events and fits them to Feishu's per-event limit — the
+ * one bound a card string has (operator ruling, 2026-09-04: 「截断长度以飞书平台
+ * 上给出的最长长度为准」).
  */
 import type {
   RuntimeToolAction,
@@ -13,7 +13,6 @@ import type {
 /** The one activity member this presentation layer renders. */
 export type CotToolCallActivity = Extract<TeammateActivity, { kind: 'tool.call' }>;
 
-export const TOOL_ARGUMENTS_SOFT_MAX_BYTES = 512;
 /** What the pills of a result's item list may spend before the rest is folded into a `more` pill. */
 export const TOOL_ITEMS_SOFT_MAX_BYTES = 512;
 export const TRUNCATION_MARKER = '… (truncated)';
@@ -117,11 +116,7 @@ export function toolPresentation(event: CotToolCallActivity): ToolPresentation {
     toolCallName: actionName,
     ...(icon === undefined ? {} : { icon }),
     ...(title === null ? {} : { title }),
-    invocation: normalizedDetail(
-      event.invocation,
-      event.invocation_truncated,
-      TOOL_ARGUMENTS_SOFT_MAX_BYTES,
-    ),
+    invocation: nonEmpty(event.invocation),
     invocationLanguage: event.tool_action === 'run' ? 'bash' : 'text',
     items: itemList(event),
   };
@@ -158,45 +153,22 @@ function itemList(event: CotToolCallActivity): CotItemList | null {
 
 function runtimeToolTitle(event: CotToolCallActivity, actionName: string): string | null {
   if (event.summary === null) return null;
-  const summary = boundedTitleText(event.summary);
+  const summary = event.summary.trim();
   if (summary === '') return null;
   return event.tool_action === null
     ? `${actionName}: ${summary}`
     : `${ACTION_VERBS[event.tool_action]}${summary}`;
 }
 
-function boundedTitleText(value: string): string {
-  return normalizedDetail(value, false, TOOL_ARGUMENTS_SOFT_MAX_BYTES)?.trim() ?? '';
+/** A detail the runtime gave, or `null` when it gave none or an empty one. */
+export function nonEmpty(value: string | null): string | null {
+  return value === null || value === '' ? null : value;
 }
 
-export function normalizedDetail(
-  value: string | null,
-  sourceTruncated: boolean,
-  softMaxBytes: number,
-): string | null {
-  if (value === null || value === '') return null;
-  if (!sourceTruncated && escapedBytes(value) <= softMaxBytes) return value;
-  return truncateEscaped(value, softMaxBytes, true);
-}
-
-export function truncateEscaped(
-  value: string,
-  maxBytes: number,
-  forceMarker = false,
-): string {
+export function truncateEscaped(value: string, maxBytes: number): string {
   const valueBytes = escapedBytes(value);
-  if (!forceMarker && valueBytes <= maxBytes) return value;
+  if (valueBytes <= maxBytes) return value;
   const markerBytes = escapedBytes(TRUNCATION_MARKER);
-  if (
-    forceMarker &&
-    value.endsWith(TRUNCATION_MARKER) &&
-    valueBytes <= maxBytes
-  ) {
-    return value;
-  }
-  if (forceMarker && valueBytes + markerBytes <= maxBytes) {
-    return `${value}${TRUNCATION_MARKER}`;
-  }
   const prefixBudget = Math.max(0, maxBytes - markerBytes);
   const prefix: string[] = [];
   let bytes = 0;

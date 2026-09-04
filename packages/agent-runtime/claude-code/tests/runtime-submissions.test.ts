@@ -304,7 +304,7 @@ describe('handleProtocolEvent live activity', () => {
       },
     });
     expect(h.activityEvents).toEqual([
-      expect.objectContaining({ kind: 'assistant.message', text: 'Compacted session', truncated: false }),
+      expect.objectContaining({ kind: 'assistant.message', text: 'Compacted session' }),
     ]);
   });
 

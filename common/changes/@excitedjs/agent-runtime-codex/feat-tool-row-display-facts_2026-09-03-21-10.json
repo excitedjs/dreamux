@@ -2,7 +2,7 @@
   "changes": [
     {
       "packageName": "@excitedjs/agent-runtime-codex",
-      "comment": "Tool calls now carry display facts in the codex TUI's own wording: a command is labelled by the files it read, the paths it listed, or the query it searched when codex's command parse is uniform, otherwise by its first line, always with the command line as the invocation; a patch by the files it touches with the diffs codex prepared as the invocation. Read commands and patches also report their files as the call's items (from the parsed command's path and the patch's paths). Web search items, previously dropped because they carry no tool name, now appear as web_search rows labelled by the query or page. A context compaction (the contextCompaction item's completion) is published as an assistant message reading \"Compacted session\".",
+      "comment": "Tool calls now carry display facts in the codex TUI's own wording: a command is labelled by the files it read, the paths it listed, or the query it searched when codex's command parse is uniform, otherwise by its first line, always with the command line as the invocation; a patch by the files it touches with the diffs codex prepared as the invocation. Read commands and patches also report their files as the call's items (from the parsed command's path and the patch's paths). Web search items, previously dropped because they carry no tool name, now appear as web_search rows labelled by the query or page. A context compaction (the contextCompaction item's completion) is published as an assistant message reading \"Compacted session\". Assistant messages no longer carry a truncated flag: the provider never truncated, and the seam no longer asks.",
       "type": "minor"
     }
   ],

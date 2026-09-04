@@ -129,8 +129,10 @@ the same change that touches it.
   a failed one still shows its diff and output. A row no runtime could label
   — today every MCP tool, the Channel's own reply/react/list_chat_bots
   included — shows its tool name behind a generic app icon with its arguments
-  hidden; its output still expands. An output is always a code segment,
-  one-liners included. Raw
+  hidden; its output still expands. An output that parses as JSON is
+  pretty-printed in a json code segment; any other output is plain text.
+  Every card string is cut only at Feishu's own per-event limit, never
+  earlier in Core. Raw
   JSON arguments appear nowhere on the card. Codex web searches are rows too.
   The card's own words — row verbs (Read, Edit, Search, List), the Completed and
   Failed status lines, and the truncation marker — are English. Dreamux's own teammate tools (spawn,

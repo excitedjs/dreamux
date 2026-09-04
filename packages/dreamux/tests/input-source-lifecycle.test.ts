@@ -351,7 +351,6 @@ function allCatalogEvents(): ChannelCoreEvent[] {
       source: 'channel',
       source_id: null,
       content: 'hi',
-      content_truncated: false,
       redacted: false,
     },
     {
@@ -361,7 +360,6 @@ function allCatalogEvents(): ChannelCoreEvent[] {
         kind: 'assistant.message',
         event_id: 'evt-1',
         content: 'hi back',
-        content_truncated: false,
         redacted: false,
       },
     },

@@ -2,8 +2,14 @@
  * What a tool row sends to Feishu, from what the runtime said about the call.
  *
  * Wire shapes follow the COT Message Brief (`TOOL_CALL_START` with `icon` and
- * `title`; `TOOL_CALL_RESULT` segments `{type:'code', language, code}` and
- * `{type:'list', items, more?}`).
+ * `title`; `TOOL_CALL_RESULT` segments `{type:'text', text}`,
+ * `{type:'code', language, code}` and `{type:'list', items, more?}`).
+ *
+ * What came back is shown by what it is, not by how long it is: a value that
+ * parses as JSON is pretty-printed in a `json` code segment, anything else is
+ * plain text (operator ruling, 2026-09-04: 「文本的输出，就按文本输出。能解析成JSON
+ * 的再放进代码段」), and a string is cut only where it would exceed Feishu's
+ * per-event content limit (「截断长度以飞书平台上给出的最长长度为准」).
  */
 
 import { describe, expect, it } from 'vitest';
@@ -30,10 +36,6 @@ function toolCall(overrides: Partial<ToolCall>): ToolCall {
     status: 'started',
     arguments_json: null,
     result_json: null,
-    summary_truncated: false,
-    invocation_truncated: false,
-    arguments_truncated: false,
-    result_truncated: false,
     redacted: false,
     ...overrides,
   };
@@ -123,14 +125,14 @@ describe('runtime-labelled tool rows', () => {
       status: 'completed',
       result_json: '{"message_ids":["om_1"]}',
     }));
-    // No fixed Completed line: the output expands like any other tool's, and
-    // a one-line output is a code segment too (「全都给他们包到代码块里面」).
+    // No fixed Completed line: the output expands like any other tool's — a
+    // structured value, so pretty-printed as JSON.
     expect(result!.content).toMatchObject({
-      content: { type: 'code', language: 'text', code: '{"message_ids":["om_1"]}' },
+      content: { type: 'code', language: 'json', code: '{\n  "message_ids": [\n    "om_1"\n  ]\n}' },
     });
   });
 
-  it('expands a result into the invocation and the output as documented code segments', () => {
+  it('expands a result into the invocation as a code segment and a text output as text', () => {
     const [result] = toolCallResultEvents(toolCall({
       status: 'completed',
       summary: 'Show working tree status',
@@ -141,9 +143,63 @@ describe('runtime-labelled tool rows', () => {
       role: 'tool',
       content: [
         { type: 'code', language: 'bash', code: 'git status --short' },
-        { type: 'code', language: 'text', code: ' M src/a.ts\n?? src/b.ts' },
+        { type: 'text', text: ' M src/a.ts\n?? src/b.ts' },
       ],
     });
+  });
+
+  it('pretty-prints an output that parses as JSON in a json code segment', () => {
+    const [result] = toolCallResultEvents(toolCall({
+      tool_name: 'mcp__teammate__spawn',
+      tool_action: null,
+      status: 'completed',
+      result_json: '{"teammate":{"name":"tm-1","status":"running"},"status":"submitted"}',
+    }));
+    expect(result!.content).toMatchObject({
+      content: {
+        type: 'code',
+        language: 'json',
+        code: [
+          '{',
+          '  "teammate": {',
+          '    "name": "tm-1",',
+          '    "status": "running"',
+          '  },',
+          '  "status": "submitted"',
+          '}',
+        ].join('\n'),
+      },
+    });
+  });
+
+  it('shows an output that is not a JSON object or array as text, a bare scalar included', () => {
+    for (const output of ['42', 'true', 'ok', '{"unterminated": 1']) {
+      const [result] = toolCallResultEvents(toolCall({ status: 'completed', result_json: output }));
+      expect(result!.content).toMatchObject({ content: { type: 'text', text: output } });
+    }
+  });
+
+  it("cuts an output only at Feishu's per-event content limit, with the marker", () => {
+    const [result] = toolCallResultEvents(toolCall({
+      status: 'completed',
+      result_json: 'x'.repeat(10_000),
+    }));
+    const shown = (result!.content as { content: { type: string; text: string } }).content;
+    expect(shown.type).toBe('text');
+    expect(shown.text.endsWith('… (truncated)')).toBe(true);
+    // Past the old 1,024-byte soft cap, inside the 4,096-byte event limit.
+    expect(Buffer.byteLength(shown.text, 'utf8')).toBeGreaterThan(1_024);
+    expect(Buffer.byteLength(JSON.stringify(result!.content), 'utf8')).toBeLessThanOrEqual(4_096);
+  });
+
+  it("passes a long title through whole and cuts it only at the event limit", () => {
+    const long = 'Run the whole suite '.repeat(40).trim();
+    const [start] = toolCallStartEvents(toolCall({ summary: long }));
+    expect(start!.content).toMatchObject({ title: long });
+    const [huge] = toolCallStartEvents(toolCall({ summary: 't'.repeat(10_000) }));
+    const title = (huge!.content as { title: string }).title;
+    expect(title.endsWith('… (truncated)')).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(huge!.content), 'utf8')).toBeLessThanOrEqual(4_096);
   });
 
   it('shows the files a read was about as pills, and nothing else', () => {
@@ -190,7 +246,7 @@ describe('runtime-labelled tool rows', () => {
         { type: 'text', text: 'Failed' },
         { type: 'list', items: [{ text: 'src/a.ts', icon: 'write' }] },
         { type: 'code', language: 'text', code: 'src/a.ts\n@@ -1 +1 @@\n-x\n+y' },
-        { type: 'code', language: 'text', code: 'file not found' },
+        { type: 'text', text: 'file not found' },
       ],
     });
   });
@@ -235,7 +291,7 @@ describe('runtime-labelled tool rows', () => {
       content: [
         { type: 'text', text: 'Failed' },
         { type: 'code', language: 'bash', code: 'npm test' },
-        { type: 'code', language: 'text', code: 'command failed' },
+        { type: 'text', text: 'command failed' },
       ],
     });
   });

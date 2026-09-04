@@ -2,7 +2,7 @@
   "changes": [
     {
       "packageName": "@excitedjs/dreamux",
-      "comment": "Core projects the new tool.call summary, invocation and items through the same path renaming and secret redaction as arguments and results, and bounds the two texts (CONVERSATION_TOOL_SUMMARY_MAX = 512 characters for the summary; the arguments bound for the invocation).",
+      "comment": "Core projects the new tool.call summary, invocation and items through the same path renaming and secret redaction as arguments and results, and bounds nothing: the CONVERSATION_* character caps on inputs, messages, arguments, results and reasons and the 200-character tool-name cut are gone, so a surface receives every display string whole and cuts it at its own platform's limit where it sends.",
       "type": "minor"
     }
   ],

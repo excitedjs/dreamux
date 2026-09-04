@@ -400,7 +400,6 @@ function itemActivity(
       occurredAt,
       id: `${turnId}:${itemId}:completed`,
       text: item.text,
-      truncated: false,
     };
   }
   if (item.type === 'contextCompaction') {
@@ -410,7 +409,6 @@ function itemActivity(
       occurredAt,
       id: `${turnId}:${itemId}:completed`,
       text: COMPACTED_SESSION_MESSAGE,
-      truncated: false,
     };
   }
   const toolName = toolNameFor(item);

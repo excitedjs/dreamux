@@ -2,8 +2,10 @@
  * Coverage cell C (event half), Stage 9 node "core-events".
  *
  * The frozen post-COT baseline: `channel/conversation-projection.ts`'s
- * workspace/secret redaction and truncation rules for `teammate.input` and
- * `teammate.activity`. Everything else about the catalog (the four-kind union,
+ * workspace/secret redaction rules for `teammate.input` and
+ * `teammate.activity`. Core redacts and never truncates (operator ruling,
+ * 2026-09-04: 「core那边只做脱敏，不做截断」): a surface cuts what it cannot send,
+ * where it sends it. Everything else about the catalog (the four-kind union,
  * live delivery, team.state/teammate.state) lives in
  * `tests/core-event-catalog.test.ts`.
  *
@@ -22,10 +24,6 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import {
-  CONVERSATION_MESSAGE_MAX,
-  CONVERSATION_TOOL_ARGUMENTS_MAX,
-  CONVERSATION_TOOL_RESULT_MAX,
-  CONVERSATION_TOOL_SUMMARY_MAX,
   createConversationProjection,
   redactText,
   type ProjectedAgent,
@@ -82,16 +80,12 @@ function projectPrompt(
   });
 }
 
-function assistantActivity(
-  text: string,
-  truncated = false,
-): RuntimeActivity {
+function assistantActivity(text: string): RuntimeActivity {
   return {
     kind: 'assistant.message',
     occurredAt: Date.now(),
     id: 'evt-1',
     text,
-    truncated,
   };
 }
 
@@ -351,11 +345,9 @@ describe('conversation projection: content visible after redaction is unchanged,
     expect(tool.kind === 'tool.call' && tool.summary).toBe('src/a.ts');
     expect(tool.kind === 'tool.call' && tool.invocation).toBe('cat src/a.ts');
     expect(tool.kind === 'tool.call' && tool.items).toEqual(['src/a.ts']);
-    expect(tool.kind === 'tool.call' && tool.summary_truncated).toBe(false);
-    expect(tool.kind === 'tool.call' && tool.invocation_truncated).toBe(false);
   });
 
-  it('bounds the tool summary at CONVERSATION_TOOL_SUMMARY_MAX and folds a redacted invocation into redacted', () => {
+  it('passes a long summary through whole and folds a redacted invocation into redacted', () => {
     const { publisher, projection, agent } = harness();
     projection.projectActivity(agent, {
       kind: 'tool.call',
@@ -364,7 +356,7 @@ describe('conversation projection: content visible after redaction is unchanged,
       callId: 'call-1',
       toolName: 'Bash',
       action: 'run',
-      summary: 's'.repeat(CONVERSATION_TOOL_SUMMARY_MAX + 1),
+      summary: 's'.repeat(100_000),
       invocation: 'post https://example.test with Bearer abcDEF123.ghiJKL456-_9',
       items: [],
       status: 'started',
@@ -374,8 +366,7 @@ describe('conversation projection: content visible after redaction is unchanged,
     });
 
     const tool = activityOf(publisher);
-    expect(tool.kind === 'tool.call' && tool.summary?.length).toBe(CONVERSATION_TOOL_SUMMARY_MAX);
-    expect(tool.kind === 'tool.call' && tool.summary_truncated).toBe(true);
+    expect(tool.kind === 'tool.call' && tool.summary?.length).toBe(100_000);
     expect(tool.kind === 'tool.call' && tool.invocation).toBe('post https://example.test with Bearer <redacted>');
     expect(tool.kind === 'tool.call' && tool.redacted).toBe(true);
   });
@@ -386,133 +377,6 @@ describe('conversation projection: content visible after redaction is unchanged,
     projection.projectActivity(agent, assistantActivity(text));
     const message = activityOf(publisher);
     expect(message.kind === 'assistant.message' && message.content).toBe(text);
-  });
-});
-
-describe('conversation projection: truncation at and above the bound', () => {
-  it('does not truncate a message exactly at CONVERSATION_MESSAGE_MAX', () => {
-    const { publisher, projection, agent } = harness();
-    const prompt = 'a'.repeat(CONVERSATION_MESSAGE_MAX);
-    projectPrompt(projection, agent, prompt);
-    const event = inputOf(publisher);
-    expect(event.content.length).toBe(CONVERSATION_MESSAGE_MAX);
-    expect(event.content_truncated).toBe(false);
-  });
-
-  it('truncates a message one byte over CONVERSATION_MESSAGE_MAX to exactly the bound', () => {
-    const { publisher, projection, agent } = harness();
-    const prompt = 'a'.repeat(CONVERSATION_MESSAGE_MAX + 1);
-    projectPrompt(projection, agent, prompt);
-    const event = inputOf(publisher);
-    expect(event.content.length).toBe(CONVERSATION_MESSAGE_MAX);
-    expect(event.content_truncated).toBe(true);
-  });
-
-  it('marks content_truncated when the runtime itself reports truncation, even under the bound', () => {
-    const { publisher, projection, agent } = harness();
-    projection.projectActivity(agent, assistantActivity('short text', true));
-    const message = activityOf(publisher);
-    expect(message.kind === 'assistant.message' && message.content_truncated).toBe(true);
-  });
-
-  it('does not truncate tool arguments exactly at CONVERSATION_TOOL_ARGUMENTS_MAX', () => {
-    const { publisher, projection, agent } = harness();
-    const args = 'c'.repeat(CONVERSATION_TOOL_ARGUMENTS_MAX);
-    projection.projectActivity(agent, {
-      kind: 'tool.call',
-      occurredAt: Date.now(),
-      id: 'evt-1',
-      callId: 'call-1',
-      toolName: 'shell',
-      action: 'run',
-      summary: null,
-      invocation: null,
-      items: [],
-      status: 'completed',
-      arguments: args,
-      result: null,
-      error: null,
-    });
-    const toolEvent = activityOf(publisher);
-    expect(toolEvent.kind === 'tool.call' && toolEvent.arguments_json?.length).toBe(
-      CONVERSATION_TOOL_ARGUMENTS_MAX,
-    );
-    expect(toolEvent.kind === 'tool.call' && toolEvent.arguments_truncated).toBe(false);
-  });
-
-  it('truncates tool arguments one byte over CONVERSATION_TOOL_ARGUMENTS_MAX to exactly the bound', () => {
-    const { publisher, projection, agent } = harness();
-    const args = 'c'.repeat(CONVERSATION_TOOL_ARGUMENTS_MAX + 1);
-    projection.projectActivity(agent, {
-      kind: 'tool.call',
-      occurredAt: Date.now(),
-      id: 'evt-1',
-      callId: 'call-1',
-      toolName: 'shell',
-      action: 'run',
-      summary: null,
-      invocation: null,
-      items: [],
-      status: 'completed',
-      arguments: args,
-      result: null,
-      error: null,
-    });
-    const toolEvent = activityOf(publisher);
-    expect(toolEvent.kind === 'tool.call' && toolEvent.arguments_json?.length).toBe(
-      CONVERSATION_TOOL_ARGUMENTS_MAX,
-    );
-    expect(toolEvent.kind === 'tool.call' && toolEvent.arguments_truncated).toBe(true);
-  });
-
-  it('does not truncate a tool result exactly at CONVERSATION_TOOL_RESULT_MAX', () => {
-    const { publisher, projection, agent } = harness();
-    const result = 'd'.repeat(CONVERSATION_TOOL_RESULT_MAX);
-    projection.projectActivity(agent, {
-      kind: 'tool.call',
-      occurredAt: Date.now(),
-      id: 'evt-1',
-      callId: 'call-1',
-      toolName: 'shell',
-      action: 'run',
-      summary: null,
-      invocation: null,
-      items: [],
-      status: 'completed',
-      arguments: null,
-      result,
-      error: null,
-    });
-    const toolEvent = activityOf(publisher);
-    expect(toolEvent.kind === 'tool.call' && toolEvent.result_json?.length).toBe(
-      CONVERSATION_TOOL_RESULT_MAX,
-    );
-    expect(toolEvent.kind === 'tool.call' && toolEvent.result_truncated).toBe(false);
-  });
-
-  it('truncates a tool result one byte over CONVERSATION_TOOL_RESULT_MAX to exactly the bound', () => {
-    const { publisher, projection, agent } = harness();
-    const result = 'd'.repeat(CONVERSATION_TOOL_RESULT_MAX + 1);
-    projection.projectActivity(agent, {
-      kind: 'tool.call',
-      occurredAt: Date.now(),
-      id: 'evt-1',
-      callId: 'call-1',
-      toolName: 'shell',
-      action: 'run',
-      summary: null,
-      invocation: null,
-      items: [],
-      status: 'completed',
-      arguments: null,
-      result,
-      error: null,
-    });
-    const toolEvent = activityOf(publisher);
-    expect(toolEvent.kind === 'tool.call' && toolEvent.result_json?.length).toBe(
-      CONVERSATION_TOOL_RESULT_MAX,
-    );
-    expect(toolEvent.kind === 'tool.call' && toolEvent.result_truncated).toBe(true);
   });
 });
 
@@ -532,7 +396,6 @@ describe('conversation projection: the turn.ended reason', () => {
       'spawn bin/agent failed: authorization: <redacted>',
     );
     expect(ended.kind === 'turn.ended' && ended.redacted).toBe(true);
-    expect(ended.kind === 'turn.ended' && ended.reason_truncated).toBe(false);
   });
 
   it('keeps an ordinary reason byte-identical and reports redacted:false', () => {
@@ -543,20 +406,11 @@ describe('conversation projection: the turn.ended reason', () => {
     expect(ended.kind === 'turn.ended' && ended.redacted).toBe(false);
   });
 
-  it('bounds the reason by CONVERSATION_MESSAGE_MAX, as a provider message has no length the runtime owes us', () => {
-    const { publisher, projection, agent } = harness();
-    projection.projectActivity(agent, endedActivity('e'.repeat(CONVERSATION_MESSAGE_MAX + 1)));
-    const ended = activityOf(publisher);
-    expect(ended.kind === 'turn.ended' && ended.reason?.length).toBe(CONVERSATION_MESSAGE_MAX);
-    expect(ended.kind === 'turn.ended' && ended.reason_truncated).toBe(true);
-  });
-
   it('carries a null reason through as null, not an empty string', () => {
     const { publisher, projection, agent } = harness();
     projection.projectActivity(agent, endedActivity(null));
     const ended = activityOf(publisher);
     expect(ended.kind === 'turn.ended' && ended.reason).toBeNull();
-    expect(ended.kind === 'turn.ended' && ended.reason_truncated).toBe(false);
     expect(ended.kind === 'turn.ended' && ended.redacted).toBe(false);
   });
 });

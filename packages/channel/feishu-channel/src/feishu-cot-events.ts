@@ -10,7 +10,7 @@ import type { FeishuCotEventInput } from '@excitedjs/feishu-transport';
 
 import {
   escapedBytes,
-  normalizedDetail,
+  nonEmpty,
   toolPresentation,
   truncateEscaped,
   TRUNCATION_MARKER,
@@ -22,8 +22,9 @@ export const FEISHU_COT_EVENT_CONTENT_MAX_BYTES = 4_096;
 export const FEISHU_COT_APPEND_MAX_BYTES = 64 * 1_024;
 
 const TEXT_MESSAGE_EVENT_GROUP_MAX_BYTES = 224 * 1_024;
-const TOOL_RESULT_SOFT_MAX_BYTES = 1_024;
-const TOOL_RESULT_CONTENT_RESERVE_BYTES = 256;
+/** What an event's content keeps free for its ids and keys beside the one string being fitted. */
+const EVENT_CONTENT_RESERVE_BYTES = 256;
+const TITLE_MAX_BYTES = FEISHU_COT_EVENT_CONTENT_MAX_BYTES - EVENT_CONTENT_RESERVE_BYTES;
 const COT_EVENT_ENCODING_RESERVE_BYTES = 128;
 const COT_REQUEST_ENCODING_RESERVE_BYTES = 512;
 
@@ -127,7 +128,9 @@ export function toolCallStartEvents(event: CotToolCallActivity): FeishuCotEventI
         toolCallId,
         toolCallName: presentation.toolCallName,
         ...(presentation.icon === undefined ? {} : { icon: presentation.icon }),
-        ...(presentation.title === undefined ? {} : { title: presentation.title }),
+        ...(presentation.title === undefined
+          ? {}
+          : { title: truncateEscaped(presentation.title, TITLE_MAX_BYTES) }),
       },
     }),
     // No row sends `TOOL_CALL_ARGS`: beside a title the client shows the
@@ -156,7 +159,7 @@ export function toolCallResultEvents(event: CotToolCallActivity): FeishuCotEvent
       failed: false,
       argumentsText: null,
       items: presentation.items,
-      resultText: null,
+      result: null,
     });
   } else {
     content = assembleToolResultContent({
@@ -164,11 +167,7 @@ export function toolCallResultEvents(event: CotToolCallActivity): FeishuCotEvent
       argumentsText: presentation.invocation,
       argumentsLanguage: presentation.invocationLanguage,
       items: presentation.items,
-      resultText: normalizedDetail(
-        event.result_json,
-        event.result_truncated,
-        TOOL_RESULT_SOFT_MAX_BYTES,
-      ),
+      result: toolResultOutput(event.result_json),
     });
   }
   const projected = {
@@ -255,37 +254,62 @@ export interface ToolResultParts {
   readonly argumentsLanguage?: 'text' | 'bash';
   /** The call's items, shown as the pills of a `list` segment before anything else. */
   readonly items?: CotItemList | null;
-  readonly resultText: string | null;
+  readonly result: ToolResultOutput | null;
+}
+
+/**
+ * What came back, as the card shows it: a structured value pretty-printed as
+ * a `json` code segment, anything else as plain text (operator ruling,
+ * 2026-09-04: 「文本的输出，就按文本输出。能解析成JSON的再放进代码段」). The whole
+ * text is parsed first and cut last, so a cut never decides what a value was.
+ */
+export interface ToolResultOutput {
+  readonly kind: 'json' | 'text';
+  readonly text: string;
+}
+
+export function toolResultOutput(resultJson: string | null): ToolResultOutput | null {
+  const text = nonEmpty(resultJson);
+  if (text === null) return null;
+  try {
+    const value: unknown = JSON.parse(text);
+    if (typeof value === 'object' && value !== null) {
+      return { kind: 'json', text: JSON.stringify(value, null, 2) };
+    }
+  } catch {
+    // Not JSON: the runtime's own text, shown as text.
+  }
+  return { kind: 'text', text };
 }
 
 export function assembleToolResultContent(parts: ToolResultParts): unknown {
   let argumentsText = parts.argumentsText;
-  let resultText = parts.resultText;
+  let result = parts.result;
   const maxBytes = FEISHU_COT_EVENT_CONTENT_MAX_BYTES -
-    TOOL_RESULT_CONTENT_RESERVE_BYTES;
-  let content = toolResultSegments(parts, argumentsText, resultText);
+    EVENT_CONTENT_RESERVE_BYTES;
+  let content = toolResultSegments(parts, argumentsText, result);
 
-  if (jsonBytes(content) > maxBytes && resultText !== null) {
-    resultText = shrinkForContentBudget(
-      resultText,
-      jsonBytes(content) - maxBytes,
-    );
-    content = toolResultSegments(parts, argumentsText, resultText);
+  if (jsonBytes(content) > maxBytes && result !== null) {
+    result = {
+      kind: result.kind,
+      text: shrinkForContentBudget(result.text, jsonBytes(content) - maxBytes),
+    };
+    content = toolResultSegments(parts, argumentsText, result);
   }
   if (jsonBytes(content) > maxBytes && argumentsText !== null) {
     argumentsText = shrinkForContentBudget(
       argumentsText,
       jsonBytes(content) - maxBytes,
     );
-    content = toolResultSegments(parts, argumentsText, resultText);
+    content = toolResultSegments(parts, argumentsText, result);
   }
   if (jsonBytes(content) > maxBytes) {
-    resultText = null;
-    content = toolResultSegments(parts, argumentsText, resultText);
+    result = null;
+    content = toolResultSegments(parts, argumentsText, result);
   }
   if (jsonBytes(content) > maxBytes) {
     argumentsText = null;
-    content = toolResultSegments(parts, argumentsText, resultText);
+    content = toolResultSegments(parts, argumentsText, result);
   }
   if (jsonBytes(content) > maxBytes) {
     return { type: 'text', text: parts.failed ? 'Failed' : 'Completed' };
@@ -296,7 +320,7 @@ export function assembleToolResultContent(parts: ToolResultParts): unknown {
 function toolResultSegments(
   parts: ToolResultParts,
   argumentsText: string | null,
-  resultText: string | null,
+  result: ToolResultOutput | null,
 ): unknown {
   const segments: Array<Record<string, unknown>> = [];
   if (parts.failed) segments.push({ type: 'text', text: 'Failed' });
@@ -308,18 +332,14 @@ function toolResultSegments(
       code: argumentsText,
     });
   }
-  if (resultText !== null) {
-    segments.push({
-      type: 'code',
-      language: 'text',
-      code: resultText,
-    });
+  if (result !== null) {
+    segments.push(result.kind === 'json'
+      ? { type: 'code', language: 'json', code: result.text }
+      : { type: 'text', text: result.text });
   }
   if (segments.length === 0) {
     return { type: 'text', text: parts.failed ? 'Failed' : 'Completed' };
   }
-  // A one-line output is a code segment like any other: the operator ruled
-  // out the inline short-text exception (「全都给他们包到代码块里面」, 2026-09-04).
   return segments.length === 1 ? segments[0] : segments;
 }
 
