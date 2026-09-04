@@ -11,6 +11,7 @@ import type { FeishuCotEventInput } from '@excitedjs/feishu-transport';
 import {
   escapedBytes,
   nonEmpty,
+  preserveSpacing,
   toolPresentation,
   truncateEscaped,
   TRUNCATION_MARKER,
@@ -262,6 +263,8 @@ export interface ToolResultParts {
  * a `json` code segment, anything else as plain text (operator ruling,
  * 2026-09-04: 「文本的输出，就按文本输出。能解析成JSON的再放进代码段」). The whole
  * text is parsed first and cut last, so a cut never decides what a value was.
+ * Plain text keeps its spacing the way the client keeps it (`preserveSpacing`),
+ * before the cut is measured; a code segment keeps its own spaces.
  */
 export interface ToolResultOutput {
   readonly kind: 'json' | 'text';
@@ -279,7 +282,7 @@ export function toolResultOutput(resultJson: string | null): ToolResultOutput | 
   } catch {
     // Not JSON: the runtime's own text, shown as text.
   }
-  return { kind: 'text', text };
+  return { kind: 'text', text: preserveSpacing(text) };
 }
 
 export function assembleToolResultContent(parts: ToolResultParts): unknown {

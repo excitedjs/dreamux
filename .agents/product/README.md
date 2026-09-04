@@ -130,7 +130,10 @@ the same change that touches it.
   — today every MCP tool, the Channel's own reply/react/list_chat_bots
   included — shows its tool name behind a generic app icon with its arguments
   hidden; its output still expands. An output that parses as JSON is
-  pretty-printed in a json code segment; any other output is plain text.
+  pretty-printed in a json code segment; any other output is plain text
+  that keeps its indentation and column alignment (each space that begins
+  a line or sits in a run is sent as a no-break space, because the client
+  collapses ordinary runs; single spaces between words still wrap).
   Every card string is cut only at Feishu's own per-event limit, never
   earlier in Core. Raw
   JSON arguments appear nowhere on the card. Codex web searches are rows too.
