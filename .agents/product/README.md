@@ -161,6 +161,18 @@ the same change that touches it.
 
 ## Local state and upgrades
 
+- **A resumed upgrade reports itself in the conversation that asked for it.** An
+  explicit upgrade request resolves the managed service's own launcher, resolves
+  the exact target before installing anything, applies the changelog's config
+  migrations, repairs until `doctor` passes, and only then restarts with a
+  resume notice. Once the Dispatcher resumes, the operator sees old and new
+  versions, the migrations done, the doctor result, and the restart outcome. An
+  upgrade that cannot get doctor to pass, that resolves to a target at or below
+  the installed version, or that finds the managed launcher and the shell's
+  `dreamux` are different installs reports that and stops before restarting.
+  Past the restart the caller may already be gone, so a Dispatcher that never
+  resumes reports nothing at all.
+  (Decision: [adopt-lean-self-upgrade-sop](/.agents/tasks/builtin-skills/adopt-lean-self-upgrade-sop/README.md).)
 - **Local runtime state is disposable; upgrades fail loudly.** Team, Agent, and
   Dispatcher operational state is rebuildable operational data, not a protected
   asset. On the 0.x line an incompatible shape is handled by fail-loud plus

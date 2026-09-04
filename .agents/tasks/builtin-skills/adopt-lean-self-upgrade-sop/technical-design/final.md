@@ -165,3 +165,26 @@ Two blockers were accepted and applied; both are recorded with evidence in
    macOS bash 3.2. One `case` inside a process substitution became a
    parameter-expansion prefix test. The operator extended the implementation
    boundary to cover this file.
+
+
+## Follow-up slice: issue #374 corrections
+
+Path: minimal-change fast path, same as the parent slice.
+
+- `references/self-upgrade.md` step 1 — resolve the managed service once from
+  `doctor --json`, take `service.execStart[0]` as the launcher and its captured
+  environment as the environment, read `oldVersion` from that launcher, stop on a
+  launcher / `PATH` / `npm prefix -g` mismatch, resolve the exact target with
+  `npm view` before installing, treat equal as a reported no-op and lower as a
+  refusal, and require the managed launcher to report the resolved target after
+  install.
+- `references/self-upgrade.md` step 4 — Service lifecycle routing applies only to
+  a synchronous restart failure while the caller survives; the unreachable
+  no-notice promise is deleted.
+- `.agents/product/README.md` — one entry under `Local state and upgrades` for
+  the Channel-visible upgrade outcome, pointing at this task record.
+- One Rush change file, `patch`.
+
+Everything on the operator's non-goal list stays absent. No CLI, daemon, config,
+or state behavior changes; `doctor --json`, `npm view`, and `npm prefix -g` are
+existing surfaces this guide composes.
