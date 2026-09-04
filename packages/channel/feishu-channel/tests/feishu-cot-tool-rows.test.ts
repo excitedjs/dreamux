@@ -143,12 +143,52 @@ describe('runtime-labelled tool rows', () => {
       role: 'tool',
       content: [
         { type: 'code', language: 'bash', code: 'git status --short' },
-        { type: 'text', text: ' M src/a.ts\n?? src/b.ts' },
+        // The leading space is a no-break space: the client drops an ordinary one.
+        { type: 'text', text: '\u00a0M src/a.ts\n?? src/b.ts' },
       ],
     });
   });
 
-  it('pretty-prints an output that parses as JSON in a json code segment', () => {
+  it('keeps the indentation and column alignment of a text output with no-break spaces', () => {
+    const [result] = toolCallResultEvents(toolCall({
+      status: 'completed',
+      result_json: [
+        'DIST_TAGS={',
+        '  "latest": "0.23.0"',
+        '}',
+        'drwxr-xr-x  2 me  4096 src',
+        'a single space between words stays a space',
+      ].join('\n'),
+    }));
+    // Each space that begins a line or sits in a run of two or more becomes
+    // U+00A0; the single spaces stay, so a long line still wraps at them.
+    expect(result!.content).toMatchObject({
+      content: {
+        type: 'text',
+        text: [
+          'DIST_TAGS={',
+          '\u00a0\u00a0"latest": "0.23.0"',
+          '}',
+          'drwxr-xr-x\u00a0\u00a02 me\u00a0\u00a04096 src',
+          'a single space between words stays a space',
+        ].join('\n'),
+      },
+    });
+  });
+
+  it('measures the cut after the spaces were converted', () => {
+    const [result] = toolCallResultEvents(toolCall({
+      status: 'completed',
+      result_json: '  x\n'.repeat(3_000),
+    }));
+    const shown = (result!.content as { content: { type: string; text: string } }).content;
+    expect(shown.text.startsWith('\u00a0\u00a0x\n')).toBe(true);
+    expect(shown.text.endsWith('… (truncated)')).toBe(true);
+    // Two bytes per converted space, counted inside the event limit.
+    expect(Buffer.byteLength(JSON.stringify(result!.content), 'utf8')).toBeLessThanOrEqual(4_096);
+  });
+
+  it('pretty-prints an output that parses as JSON in a json code segment, its spaces untouched', () => {
     const [result] = toolCallResultEvents(toolCall({
       tool_name: 'mcp__teammate__spawn',
       tool_action: null,

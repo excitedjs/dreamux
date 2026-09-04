@@ -781,7 +781,18 @@ truncated into one pill rather than folded into that count, per 「按照单条�
 than by how long it is: a value that parses as a JSON object or array is
 pretty-printed (`JSON.stringify(value, null, 2)`) in a `json` code segment,
 anything else is a plain `text` segment (「文本的输出，就按文本输出。能解析成JSON
-的再放进代码段」, 2026-09-04). That rule replaced, within one day, both #347's
+的再放进代码段」, 2026-09-04). The text segment travels with each space that
+begins a line, or sits in a run of two or more, turned into a no-break space
+(U+00A0, `preserveSpacing` in `feishu-cot-presentation.ts`): the client
+collapses a run of ordinary spaces and drops a leading one, so a Bash
+output's indentation and column alignment were lost (「这里头的空格都没了」,
+2026-09-04). A probe card the same day settled the client facts: a raw run
+collapses; U+00A0, U+2002 and the `&nbsp;` entity all keep it; a `<pre>`
+wrapper is shown as literal text with its spaces still collapsed; and an
+entity inside a row `title` is decoded too — tags are escaped, entities are
+decoded. The character was chosen over the entity for costing two bytes of
+the event budget rather than six, and a single inner space stays ordinary so
+a long line still wraps. A code segment keeps its own spaces. That rule replaced, within one day, both #347's
 inline exception for a one-line output under 120 bytes and the all-code rule
 that lasted one commit (「全都给他们包到代码块里面」), once MCP rows made the
 mix of boxed and unboxed outputs visible. A code segment spells its body in

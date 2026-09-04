@@ -165,6 +165,23 @@ export function nonEmpty(value: string | null): string | null {
   return value === null || value === '' ? null : value;
 }
 
+const NO_BREAK_SPACE = '\u00a0';
+
+/**
+ * A `text` segment as the Feishu client keeps its spacing. The client
+ * collapses a run of ordinary spaces to one and drops the run that begins a
+ * line, so a text output lost its indentation and its column alignment; a
+ * no-break space stays where it was (probe card, 2026-09-04: raw spaces
+ * collapsed, U+00A0 and the `&nbsp;` entity both kept the indentation, a
+ * `<pre>` wrapper was shown as literal text). Each space that begins a line,
+ * or sits in a run of two or more, becomes U+00A0; a single space between
+ * words stays a space, so a long line still wraps there. The character, not
+ * the entity: two bytes of the event budget instead of six.
+ */
+export function preserveSpacing(text: string): string {
+  return text.replace(/^ +| {2,}/gmu, (run) => NO_BREAK_SPACE.repeat(run.length));
+}
+
 export function truncateEscaped(value: string, maxBytes: number): string {
   const valueBytes = escapedBytes(value);
   if (valueBytes <= maxBytes) return value;

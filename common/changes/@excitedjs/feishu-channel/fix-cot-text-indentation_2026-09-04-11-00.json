@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/feishu-channel",
+      "comment": "A plain-text tool output on a COT card keeps its indentation and column alignment: each space that begins a line or sits in a run of two or more is sent as a no-break space, because the Feishu client collapses ordinary runs. Single spaces between words are unchanged, and so are JSON code segments.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel"
+}
