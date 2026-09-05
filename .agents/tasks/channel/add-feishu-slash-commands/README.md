@@ -11,10 +11,10 @@
   consultation and the public review Issue for this task.
 - Blockers: None. The dissolve-receipt question was ruled on by the operator and
   is recorded in the requirement and the solution.
-- Next action: Open the PR against `next` and wait for CI. The independent xhigh
-  review's two real regressions (an interrupted Claude Code turn settling as a
-  failure; two concurrent non-forced dissolves both dismantling the Team) are
-  fixed and re-reviewed at source; all gates are green.
+- Next action: Obtain the required non-author approval on PR #379, then merge on
+  operator authority. The independent xhigh review's two real regressions (an
+  interrupted Claude Code turn settling as a failure; two concurrent non-forced
+  dissolves both dismantling the Team) are fixed and re-reviewed at source.
 - Related tasks: None.
 
 ## Development approval
@@ -36,7 +36,11 @@
 - Commit: `670ae316`, one commit on top of `origin/next`, 65 files. The branch
   carries nothing else; the COT-spacing work it used to sit on top of is already
   merged upstream as `0d8098f1` (#378).
-- Pull request / CI / merge: PR not yet opened.
+- Pull request / CI / merge: [PR #379](https://github.com/excitedjs/dreamux/pull/379)
+  open against `next`; all nine required checks green (both `rush` legs, `rush
+  change` declaration, KB link/orphan, gitleaks full history, internal-content
+  path scan, commit metadata, both shellcheck legs). Merge pending operator
+  authority and the required non-author approval.
 - Gates: `rush build`, `rush lint`, `rush test`, `rush typecheck:tests`,
   `rush change --verify`, and `.agents/scripts/check.sh` all green. Details and
   coverage in [verification.md](/.agents/tasks/channel/add-feishu-slash-commands/verification.md).
