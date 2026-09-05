@@ -137,6 +137,11 @@
   provider in the TeamLeader prompt's server map and the `<channel>`
   envelope.
 
+- R13 (2026-09-06 01:24, answer on the sixth card, his own wording): "channel
+  mcp 改名，channel xml上加一个标签，叫source=feishu" — both: the channel MCP
+  server is renamed by provider, and the `<channel>` envelope gains a
+  `source="feishu"` attribute. Before that (01:20) he had asked "这样配置文件是不是至少不用改？也就没有升级迁移动作？" and was told, after checking, yes.
+
 ## Evidence
 
 Everything here is traced from PR #369 head (`5e1a3464`) unless labeled
@@ -407,6 +412,27 @@ not a cache key; no skill, doc, or KB page spells `channel-<id>` or
 one file, the tests asserting `channel-primary`, and a non-breaking change
 file noting the tool-name change (`channel_primary` → `channel_feishu`).
 
+### The `source` attribute's history (source read, 2026-09-06, for R13)
+
+- Before PR #350 the Feishu layer rendered the `<channel source="feishu" …>`
+  envelope itself. #350 moved envelope rendering to Core (`submission.ts`:
+  "source: a name and some attributes it renders and never reads") and the
+  attribute went with it. `tests/channel-input-format.test.ts` locks the
+  new ownership, not the attribute's absence: its comment reads "The channel
+  layer still renders no wrapper of its own: Core is the sole owner of the
+  <channel ...> envelope", and it asserts the six baseline attrs. Adding
+  `source` to the Feishu-owned `attrs` list (`feishu-message.ts`) is a
+  knowing change to that attrs assertion, not a reversal of the ownership
+  decision.
+- Three Feishu tool descriptions still say "Feishu chat id from the inbound
+  <channel source="feishu"> block" (`tools/messaging-tools.ts` ×3,
+  `tools/ask-user-question.ts`); they went stale at #350 and R13 makes them
+  true again.
+- The pushed completion reads `TeamMate <name> has finished its task. Output
+  below:` (or failed / was stopped; workflow variants) inside a
+  `<task-notification>` tag (`completion-renderer.ts`,
+  `submission-sources.ts`). Nothing marks it as automated.
+
 ## Proposed changes (TeamLeader's reading of the rulings; status per item)
 
 1. TeamLeader prompt → three parts: sentence 1; sentence 2 reduced to the
@@ -481,13 +507,25 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
    receive both unless the design says otherwise; whether the sentence names
    the TeamLeader is a design choice.
 
+9. Channel provider visibility (R12, R13), inside this PR: the channel MCP
+   server is named `channel-<provider descriptor id>` (`channel-feishu`),
+   built in `channel-service/mcp-delegate.ts`; `channels[].id` stays the
+   internal key everywhere else (config, routing state, logs, core events),
+   so no config change and no migration. The Feishu envelope adds a
+   `source="feishu"` attribute to its `attrs`. Tests asserting
+   `channel-primary` and the six-attr list change knowingly; the three stale
+   tool descriptions become accurate. A non-breaking change file notes the
+   tool-name change (`channel_primary` → `channel_feishu`). The TeamLeader
+   prompt's server map then reads "one `channel-<provider>` server per
+   configured channel", which settles (a).
+
 ## Acceptance criteria
 
 - Not yet confirmed (depends on the open decisions).
 
 ## Decisions and unknowns
 
-- Confirmed operator decisions: R1–R12 above (R11 is the proposal R12 ruled on).
+- Confirmed operator decisions: R1–R13 above (R11 is the proposal R12 and R13 ruled on).
 - Open decisions for the operator:
   - (a) Sentence 2: dropping "Load a tool's definition before calling it" is
     confirmed (R5). Still open: the engine-neutral channel clause, re-asked
@@ -524,10 +562,9 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
     `<system-reminder>` tags on Claude Code (`args.ts`).
   - (l) Resolved by R12: keep `channels[].id`, make the provider visible to
     the model, inside this PR.
-  - (m) How the provider becomes visible: server renamed to
-    `channel-<provider>` with the id internal (recommended), or `channel-<id>`
-    kept and the provider marked in the prompt server map and the envelope.
-    Card sent 2026-09-06 01:20.
+  - (m) Resolved by R13: both the server rename and a `source="feishu"`
+    envelope attribute (proposed change 9). This also resolves (a): the
+    server map names `channel-<provider>`.
   - (k) Resolved by R9: core appends the TeamMate-side fact sentence to
     Team-scoped TeamMates (proposed change 8).
 - Assumptions (TeamLeader's, to confirm): the split in R3 is at the skill
@@ -535,5 +572,5 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
   renames apply to bundled skill directory names and frontmatter names, not to
   tool names.
 - Blocking unknowns: none; the mid-turn delivery fact is established (f).
-  Open for discussion with the operator: (m) how the provider becomes
-  visible, which also settles (a); (j) the not-a-user-message marking.
+  Open for discussion with the operator: (j) the not-a-user-message marking
+  (card sent 2026-09-06 01:26).
