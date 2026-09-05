@@ -116,11 +116,17 @@
   option). The question named "Team 里的 TeamMate"; the ruling is read that
   narrowly (Team-scoped TeamMates), not as covering Dispatcher-scoped ones.
 
-- R10 (2026-09-06 01:10, on heterogeneous-model guidance in the `teamwork`
-  skill): first "用那个查询工具查一下即可。技能里提示一下", then twenty seconds
-  later "不对，技能里不写". The correction stands: the skill says nothing
-  about runtime selection or the runtime query; `get_capabilities` and the
-  `agent_runtime` field description already carry that.
+- R10 (2026-09-06 01:10–01:14, on heterogeneous-model guidance in the
+  `teamwork` skill): first "用那个查询工具查一下即可。技能里提示一下", then
+  "不对，技能里不写", then the final word: "这个你第一次理解的是正确的，就是让他查，get_capabilities ，并充分利用异构模型的优势。但是不提具体怎么异构，不建议哪些模型承担哪些角色。" The skill says: query
+  `get_capabilities` for the available runtimes and use the strengths of
+  heterogeneous models; it does not say how, and does not map models to
+  roles.
+- R11 (2026-09-06 01:14, the "other problem" behind the channel clause):
+  "channel这里有另外一个问题，就是feishu channel现在变成了channel id拼接，这导致了一个很严重的问题，就是合并转发消息，回复消息，在模型那里完全无法把channel 和lark cli关联起来了。"
+  "我建议channel这里还是不要用id拼接，还是改回provider name 拼接？毕竟一个provider在一个dispatcher 内只允许注册一次。我是不是连channel provider id 都可以删掉了？"
+  — a proposal and a question, not yet a ruling; card sent 01:16 (decision (l)).
+
 
 ## Evidence
 
@@ -321,6 +327,38 @@ TeamMate's claims about the user as claims, not approval.
 - The released `team-workflow` skill is MCP operation notes only; it says
   nothing about what a hand-down carries.
 
+### Channel id versus provider name (source read, 2026-09-06, for R11)
+
+- Config rejects two channels with one provider in a dispatcher:
+  `config/config.ts` "each provider may appear at most once per dispatcher".
+  The channel id therefore carries nothing the provider does not.
+- The channel MCP server is named `channel-<id>`
+  (`channel-service/mcp-delegate.ts`, `SERVER_NAME_PREFIX`); the file's
+  comment justifies the prefix by the id being "an operator's own string"
+  that could collide with `team` or `cron`.
+- Nothing model-visible names the provider: the `<channel>` envelope carries
+  only `chat_id`, `chat_type`, `thread_id`, `message_id`, `sender_id`,
+  `sender_name` (`feishu-channel/src/feishu-message.ts`); the ask-card
+  settlement envelope carries `chat_id`, `thread_id`, `message_id`;
+  `CHANNEL_REMINDER` does not say Feishu. Only the channel tools'
+  descriptions do, and on Codex those are invisible until searched. So the
+  model's only handle is `channel-primary`, which explains the observed
+  failure to relate the channel to lark-cli.
+- A provider ref is `builtin:feishu` or `npm:<package>`; the usable name
+  part is the descriptor id (`feishu` for the builtin,
+  `registry/builtins.ts`). The descriptor id shape for npm providers is not
+  yet checked.
+- Removing the id touches: `channels[].id` in config (onboard defaults
+  `primary`, then `channel-2`…, `onboard/wizard.ts`); the channel-service
+  instance map key; `channel_id` on core events; the Feishu routing document
+  path `feishu-routing.<slug>.<digest>.json` (slug and digest derived from the
+  channel id, `routing/store.ts`) and its `channel_id` field, which fails
+  loud on mismatch. That is a config-shape plus persisted-state break: Rush
+  change file with `Rebuild:`, `dreamux-maintenance` `config-envelope.md` and
+  `builtin-feishu.md`, and existing `bind_channel` bindings recreated.
+  Dispatcher persisted state stores `channel_identity` (the bot identity),
+  not the id.
+
 ## Proposed changes (TeamLeader's reading of the rulings; status per item)
 
 1. TeamLeader prompt → three parts: sentence 1; sentence 2 reduced to the
@@ -380,9 +418,9 @@ TeamMate's claims about the user as claims, not approval.
    TeamMates for options or to the user through the question card; never
    rewrite the requirement on the user's behalf. `identity` holds the role
    and the stop-when-blocked posture; `prompt` holds the task context; the
-   same applies to `send`. Heterogeneous runtimes (R10): the skill says
-   nothing about them; the `agent_runtime` field description and
-   `get_capabilities` already carry the choice.
+   same applies to `send`. Heterogeneous runtimes (R10 final): the skill
+   says to query `get_capabilities` for the available runtimes and to use
+   the strengths of heterogeneous models; no how, no model-to-role mapping.
 
 8. Core appends one factual sentence to every Team-scoped TeamMate's system
    prompt (R9), the same shape as the TeamLeader identity line: who it is
@@ -401,7 +439,7 @@ TeamMate's claims about the user as claims, not approval.
 
 ## Decisions and unknowns
 
-- Confirmed operator decisions: R1–R10 above.
+- Confirmed operator decisions: R1–R10 above (R11 is a proposal awaiting the card).
 - Open decisions for the operator:
   - (a) Sentence 2: dropping "Load a tool's definition before calling it" is
     confirmed (R5). Still open: the engine-neutral channel clause, re-asked
@@ -436,6 +474,10 @@ TeamMate's claims about the user as claims, not approval.
     property description stays.
   - (h) Optional: whether the identity prompt should keep arriving inside
     `<system-reminder>` tags on Claude Code (`args.ts`).
+  - (l) R11: drop `channels[].id` and name the channel server by the
+    provider's descriptor id (`channel-feishu`), or keep the id and only
+    make the provider model-visible; and whether that lands as a separate PR
+    before this one (recommended) or inside it. Card sent 2026-09-06 01:16.
   - (k) Resolved by R9: core appends the TeamMate-side fact sentence to
     Team-scoped TeamMates (proposed change 8).
 - Assumptions (TeamLeader's, to confirm): the split in R3 is at the skill
@@ -443,5 +485,5 @@ TeamMate's claims about the user as claims, not approval.
   renames apply to bundled skill directory names and frontmatter names, not to
   tool names.
 - Blocking unknowns: none; the mid-turn delivery fact is established (f).
-  Open for discussion with the operator: (a) the channel clause, (j) the
-  not-a-user-message marking.
+  Open for discussion with the operator: (a) the channel clause, now tied to
+  (l); (j) the not-a-user-message marking.
