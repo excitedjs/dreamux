@@ -148,14 +148,10 @@
   This TeamLeader had recommended not adding it; the operator ruled
   otherwise.
 
-- Pending (2026-09-06 01:27): after all fourteen rulings were played back
-  the operator wrote "好像还缺了一个dispatcher-workflow技能。" — reopening what
-  R5/R6 had deferred. Card sent 01:29 (decision (n)) with three paths:
-  `teamwork` becomes a shared skill the Dispatcher also receives and
-  `dispatcher-workflow` keeps only its Team/channel/cron sections (with one
-  named exception to R6 for the Dispatcher prompt's load sentence);
-  `dispatcher-workflow` only gets a narrow-trigger description and tool
-  pointers; or R5 stands and it is untouched beyond PR #369's rewrite.
+- R15 (2026-09-06 01:27–01:31): after the playback the operator wrote "好像还缺了一个dispatcher-workflow技能。" and answered the eighth card: "这个没办法都放，因为创建团队是dispatcher 才能做的事，而dispatcher 的teammate 只是早期dreamux 遗留功能，一直留到了现在。我倾向他的技能只按照减少触发，follow我们前面所有决策来设计。不需要搞那么复杂。" — `dispatcher-workflow` stays a Dispatcher-only
+  skill (not shared with `teamwork`); it is redesigned only to reduce its
+  triggering, following the earlier rulings, and no further. Dispatcher
+  TeamMates are named a legacy leftover.
 
 ## Evidence
 
@@ -540,13 +536,26 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
     every TeamMate and workflow completion. Exact wording is a design-time
     choice; the sentence states a fact and gives no order.
 
+11. `dispatcher-workflow` (R15): stays under `skills/dispatcher/`, content
+    as PR #369 rewrote it. Its description becomes a narrow trigger (load
+    when about to use this Dispatcher's TeamMate, Team, workflow, channel,
+    or cron tools; not needed otherwise) and the Dispatcher-caller tool
+    descriptions point at it, the same shape as items 4 and 7 for the
+    TeamLeader. Open with the operator: the Dispatcher base prompt's own
+    load sentence ("Load `dispatcher-workflow` before this Dispatcher's
+    TeamMate, Team, channel, or cron MCP operations", `base-prompt.ts` lines
+    22 and 72) has the same shape as the TeamLeader sentence whose
+    channel-tool coverage the Codex TeamLeader confirmed as the per-turn
+    load cause; leaving it (R6) leaves the Dispatcher's trigger unchanged on
+    Codex, so a narrowed skill description alone does not reduce it.
+
 ## Acceptance criteria
 
 - Not yet confirmed (depends on the open decisions).
 
 ## Decisions and unknowns
 
-- Confirmed operator decisions: R1–R14 above (R11 is the proposal R12 and R13 ruled on). One reopened decision, (n) `dispatcher-workflow`; then the technical design.
+- Confirmed operator decisions: R1–R14 above (R11 is the proposal R12 and R13 ruled on). Open: (o) the Dispatcher load sentence, and the solution path; then the technical design.
 - Open decisions for the operator:
   - (a) Sentence 2: dropping "Load a tool's definition before calling it" is
     confirmed (R5). Still open: the engine-neutral channel clause, re-asked
@@ -593,5 +602,7 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
   renames apply to bundled skill directory names and frontmatter names, not to
   tool names.
 - Blocking unknowns: none; the mid-turn delivery fact is established (f).
-  Open with the operator as of 2026-09-06 01:29: (n) `dispatcher-workflow`,
-  reopened by the operator after the playback.
+  (n) resolved by R15. Open as of 2026-09-06 01:32: (o) whether the
+  Dispatcher prompt's load sentence may change as one named exception to R6,
+  since the skill description alone does not reduce the Dispatcher's trigger;
+  and the solution-workflow path (simple path proposed).
