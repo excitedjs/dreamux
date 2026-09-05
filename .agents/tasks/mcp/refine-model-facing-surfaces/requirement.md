@@ -191,6 +191,16 @@
   COT card is not something the model needs to know about when told how to reach
   the user. Applies to the adjudication of every reviewer finding, not only F7.
   Sent to the Codex reviewer as a follow-up for its own re-read.
+- R22 (2026-09-06 02:5x, answers on the approval card, first two questions):
+  the public-artifact half of the secrets rule, with no model-facing owner
+  after R2 and R19 → "不要了" (knowingly deleted; final.md §3.12); the second
+  channel-reply sentence in the Codex Dispatcher prompt's "Working With The
+  User" section → "一起删" (J3 confirmed). Third question (the Claude Code
+  skill-adapter cache fix, final.md §3.9): "怎么会这样？Claude 那边不是直接按照
+  目录配置的吗？那升级不应该影响才对啊？" — answered with the mechanism (the
+  runtime builds a symlink view under the cache keyed on root names and paths
+  only); decision pending. Development approval: "先看看问题 3" — not granted
+  yet.
 
 ## Evidence
 
@@ -603,7 +613,7 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
 
 ## Decisions and unknowns
 
-- Confirmed operator decisions: R1–R21 above (R11 is the proposal R12 and R13 ruled on). No open decisions; the technical design proceeds on the simple path (R17) with two reviewers (R18); R21 is the adjudication principle for reviewer findings.
+- Confirmed operator decisions: R1–R22 above (R11 is the proposal R12 and R13 ruled on). No open decisions; the technical design proceeds on the simple path (R17) with two reviewers (R18); R21 is the adjudication principle for reviewer findings.
 - Open decisions for the operator:
   - (a) Sentence 2: dropping "Load a tool's definition before calling it" is
     confirmed (R5). Still open: the engine-neutral channel clause, re-asked
