@@ -142,6 +142,12 @@
   server is renamed by provider, and the `<channel>` envelope gains a
   `source="feishu"` attribute. Before that (01:20) he had asked "这样配置文件是不是至少不用改？也就没有升级迁移动作？" and was told, after checking, yes.
 
+- R14 (2026-09-06 01:27, answer on the seventh card): the pushed
+  `<task-notification>` gains one factual sentence saying it is an automated
+  notification from Dreamux, not a message from the user → "加一句事实".
+  This TeamLeader had recommended not adding it; the operator ruled
+  otherwise.
+
 ## Evidence
 
 Everything here is traced from PR #369 head (`5e1a3464`) unless labeled
@@ -519,13 +525,19 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
    prompt's server map then reads "one `channel-<provider>` server per
    configured channel", which settles (a).
 
+10. Completion push-back marking (R14): the status line rendered by
+    `completion-renderer.ts` is followed by one factual sentence, "This is an
+    automated notification from Dreamux, not a message from the user.", on
+    every TeamMate and workflow completion. Exact wording is a design-time
+    choice; the sentence states a fact and gives no order.
+
 ## Acceptance criteria
 
 - Not yet confirmed (depends on the open decisions).
 
 ## Decisions and unknowns
 
-- Confirmed operator decisions: R1–R13 above (R11 is the proposal R12 and R13 ruled on).
+- Confirmed operator decisions: R1–R14 above (R11 is the proposal R12 and R13 ruled on). No open decisions remain; next step is the technical design.
 - Open decisions for the operator:
   - (a) Sentence 2: dropping "Load a tool's definition before calling it" is
     confirmed (R5). Still open: the engine-neutral channel clause, re-asked
@@ -537,8 +549,8 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
   - (d) Resolved by R6/R7: Claude Code-style wording plus the shared-files
     sentence; the spawn/send description keeps one short contract sentence;
     the Dispatcher prompts are left for the Dispatcher work.
-  - (j) Whether the pushed `<task-notification>` states that it is an
-    automated notification and not a user message (operator: to discuss).
+  - (j) Resolved by R14: the push-back carries one factual sentence
+    (proposed change 10). Background kept for the design:
     Facts for that discussion: on Claude Code the push-back is a plain
     user-role stream-json message; the Claude Code provider has an unused
     `isSynthetic` option (`claude-code/src/types.ts`, `stream.ts`
@@ -572,5 +584,4 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
   renames apply to bundled skill directory names and frontmatter names, not to
   tool names.
 - Blocking unknowns: none; the mid-turn delivery fact is established (f).
-  Open for discussion with the operator: (j) the not-a-user-message marking
-  (card sent 2026-09-06 01:26).
+  Nothing open with the operator as of 2026-09-06 01:27.
