@@ -162,6 +162,11 @@
   load sentence drops its channel item ("去掉 channel 一项"); the solution
   workflow is the simple path: TeamLeader-authored draft, three independent
   reviewers, TeamLeader-adjudicated final ("简单路径").
+- R18 (2026-09-06 01:35): "评审只拉codex和seed两位teammate ，按照我们决策中写的teamwork 技能的描述一样去和这两位reviewer去协作" — the simple path
+  runs with two reviewers, one on the Codex runtime and one on the Seed
+  runtime (not three), and the TeamLeader works with them the way the
+  `teamwork` skill designed here says: context, not control.
+
 - Pending (01:35): the Dispatcher prompt walkthrough, tenth card (decision
   (p)): the MCP-authority bullet, the four bullets that mirror the deleted
   TeamLeader sentences (two no-polling, channel reply, secrets), the
