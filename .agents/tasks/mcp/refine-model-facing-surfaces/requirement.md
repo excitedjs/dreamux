@@ -153,6 +153,20 @@
   triggering, following the earlier rulings, and no further. Dispatcher
   TeamMates are named a legacy leftover.
 
+- R16 (2026-09-06 01:32): "我刚才说的所有往后放都是说在需求澄清阶段往后放，不是不在这个pr内。前面的讨论完了，在讨论往后放的部分" — every earlier "往后放" (R1's Dispatcher
+  logic, R5's `dispatcher-workflow`, R6's Dispatcher prompt bullets) meant
+  deferred within requirement clarification; all of it lands in this PR.
+  This TeamLeader had read them as out of scope; the record below is
+  corrected accordingly.
+- R17 (2026-09-06 01:33, answers on the ninth card): the Dispatcher prompt's
+  load sentence drops its channel item ("去掉 channel 一项"); the solution
+  workflow is the simple path: TeamLeader-authored draft, three independent
+  reviewers, TeamLeader-adjudicated final ("简单路径").
+- Pending (01:35): the Dispatcher prompt walkthrough, tenth card (decision
+  (p)): the MCP-authority bullet, the four bullets that mirror the deleted
+  TeamLeader sentences (two no-polling, channel reply, secrets), the
+  channel-attributes bullet, and the host-boundary bullet.
+
 ## Evidence
 
 Everything here is traced from PR #369 head (`5e1a3464`) unless labeled
@@ -475,8 +489,8 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
    its TeamLeader and omits the shared-files sentence, because a Team works
    in its own workspace (TeamLeader's judgment, to confirm). The spawn/send
    descriptions keep one contract sentence: "Returns a receipt at once; the
-   completion is pushed later as a new message." (R6). The Dispatcher prompts
-   are not touched (R6).
+   completion is pushed later as a new message." (R6). The Dispatcher prompts were deferred by R6 and are in this PR by
+   R16; see item 12.
 4. Skills (R3, confirmed intent): `team-workflow` is renamed to `teamwork` (R4) and
    `workflow` to `dynamic-workflow`; each skill's description states its single load
    trigger (about to spawn or send to a TeamMate; about to write a
@@ -485,8 +499,11 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
    sits where the intent forms. Skill names, roots, and the
    `bundled-skill-sources` test change knowingly; a Rush change file records
    the rename (bundled skills are an upgrade-visible surface).
-5. Dispatcher prompts: not touched in this task (R6); their duplicated
-   bullets are noted for the Dispatcher work.
+5. Dispatcher prompts (R1, R6 deferred; R16 in scope; R17): both variants
+   in `base-prompt.ts` change in step — the Codex `replace` text (its
+   "Dispatcher Role" section only; the six Codex-style sections stay) and
+   the Claude Code `append` text. The load sentence loses its channel item
+   (R17). The remaining bullets are ruled on the tenth card (item 12).
 6. `.agents/domains/model-facing-writing.md` gains the principle: a reminder
    states a consequence, never an order; each rule has one owner, in the layer
    nearest the action; and records the per-engine pre-query visibility facts.
@@ -541,13 +558,20 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
     when about to use this Dispatcher's TeamMate, Team, workflow, channel,
     or cron tools; not needed otherwise) and the Dispatcher-caller tool
     descriptions point at it, the same shape as items 4 and 7 for the
-    TeamLeader. Open with the operator: the Dispatcher base prompt's own
-    load sentence ("Load `dispatcher-workflow` before this Dispatcher's
-    TeamMate, Team, channel, or cron MCP operations", `base-prompt.ts` lines
-    22 and 72) has the same shape as the TeamLeader sentence whose
-    channel-tool coverage the Codex TeamLeader confirmed as the per-turn
-    load cause; leaving it (R6) leaves the Dispatcher's trigger unchanged on
-    Codex, so a narrowed skill description alone does not reduce it.
+    TeamLeader. The Dispatcher base prompt's load sentence ("Load
+    `dispatcher-workflow` before this Dispatcher's TeamMate, Team, channel,
+    or cron MCP operations", both variants) has the same shape as the
+    TeamLeader sentence whose channel-tool coverage the Codex TeamLeader
+    confirmed as the per-turn load cause; R17 drops its channel item.
+
+12. Dispatcher prompt bullets (R16; card pending): proposed per bullet —
+    delete the MCP-authority bullet; keep the working-directory bullet as an
+    identity statement (R1: the Dispatcher coordinates, repository work goes
+    to TeamMates or Teams) rather than a prohibition; delete the two
+    no-polling bullets, the channel-reply bullet, and the secrets bullet (the
+    same set R2 and R4 removed from the TeamLeader; asked again because R2
+    named only the TeamLeader sentences); delete the channel-attributes
+    bullet; keep the host-boundary bullet reworded as a consequence.
 
 ## Acceptance criteria
 
@@ -555,7 +579,7 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
 
 ## Decisions and unknowns
 
-- Confirmed operator decisions: R1–R14 above (R11 is the proposal R12 and R13 ruled on). Open: (o) the Dispatcher load sentence, and the solution path; then the technical design.
+- Confirmed operator decisions: R1–R14 above (R11 is the proposal R12 and R13 ruled on). Open: (p) the Dispatcher prompt bullets; then the technical design on the simple path (R17).
 - Open decisions for the operator:
   - (a) Sentence 2: dropping "Load a tool's definition before calling it" is
     confirmed (R5). Still open: the engine-neutral channel clause, re-asked
@@ -577,7 +601,8 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
     only text, so nothing sets it; `<task-notification>` and
     `<channel …>` already differ structurally; no confusion between the two
     has been observed.
-  - (e) Resolved by R5: `dispatcher-workflow` waits for the Dispatcher work.
+  - (e) R5 deferred `dispatcher-workflow`; R15 and R16 settle it inside this
+    PR (item 11).
   - (f) Resolved by R4 and done: probe results are under "Evidence" (both
     engines deliver a pushed submission mid-turn at the next tool boundary). The operator also states that on Claude Code
     the dispatch-result reminder text is not visible to the model; this
@@ -602,7 +627,6 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
   renames apply to bundled skill directory names and frontmatter names, not to
   tool names.
 - Blocking unknowns: none; the mid-turn delivery fact is established (f).
-  (n) resolved by R15. Open as of 2026-09-06 01:32: (o) whether the
-  Dispatcher prompt's load sentence may change as one named exception to R6,
-  since the skill description alone does not reduce the Dispatcher's trigger;
-  and the solution-workflow path (simple path proposed).
+  (n) resolved by R15; (o) resolved by R17 (channel item dropped; simple
+  path). Open as of 2026-09-06 01:35: (p) the Dispatcher prompt bullets
+  (item 12), tenth card.
