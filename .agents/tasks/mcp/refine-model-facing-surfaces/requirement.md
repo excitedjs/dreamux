@@ -92,6 +92,16 @@
   - Dispatcher duplicate no-polling bullets: "随 Dispatcher 往后放" — the
     Dispatcher prompts are not touched in this task.
 
+- R7 (2026-09-06 00:41–00:47): the operator asked this TeamLeader to launch a
+  Claude Code subagent on the Sonnet model and borrow how Claude Code words
+  its own dispatch result (verbatim: "你自己启动一个 Subversion，然后看一下 Claude Code 这边的返回值是怎么写的？可以借鉴一下。记得起一个sonnet 模型的。" then "写错了，是subagent"). Card answers, verbatim per question:
+  - Dispatch-result reminder version: "借鉴 Claude Code 版" (the recommended
+    option).
+  - Add Claude Code's "do not touch the files it is working on" sentence to
+    the dispatch result: "加".
+  - Mark the pushed `<task-notification>` as "automated, not a user message"
+    the way Claude Code does: "这个我们可以商量一下。" (open, (j)).
+
 ## Evidence
 
 Everything here is traced from PR #369 head (`5e1a3464`) unless labeled
@@ -206,6 +216,22 @@ does the work: "The sentence is what stops the loop."
   reason the channel experience differs from the TUI, and why the reminder has
   to state the consequence ("the user does not see it") rather than an order.
 
+### Claude Code's own dispatch wording (Sonnet subagent, 2026-09-06 00:43)
+
+- Launch result (guidance sentences; the internal id and output path are
+  omitted): "The agent is working in the background. You will be notified
+  automatically when it completes." / "You know nothing about its results
+  until that notification arrives — do not report, assume, or predict them;
+  continue other work or respond to the user in the meantime." / "Do not
+  duplicate this agent's work — avoid working with the same files or topics
+  it is using." / a warning not to read the agent's transcript file.
+- Completion: a `<task-notification>` wrapped in a "SYSTEM NOTIFICATION -
+  NOT USER INPUT" preamble, carrying status, a one-line summary, the result
+  text, usage, and a note that a resumed agent may notify again.
+- Dreamux's own pair for comparison: the `dispatch-reminders.ts` text quoted
+  above, and `completion-renderer.ts` ("TeamMate X has finished its task.
+  Output below: …"), which already uses the same tag name.
+
 ## Proposed changes (TeamLeader's reading of the rulings; status per item)
 
 1. TeamLeader prompt → three parts: sentence 1; sentence 2 reduced to the
@@ -225,16 +251,20 @@ does the work: "The sentence is what stops the loop."
    is not shown to them." The public-artifact secrets sentence is dropped
    (R4: "这个保密的话，我感觉可以直接去掉"); whether the secrets clause inside
    the Feishu `reply.text` property description also goes is open (i).
-3. Dispatch-result reminders (`dispatch-reminders.ts`): kept as the single
-   owner of the no-polling fact (R1: written for Codex), reworded as a
-   consequence, for example "Submitted. The TeamMate's completion arrives in
-   this context as a new message when it finishes, whether it completed,
-   failed, or was stopped. Reading last, status, or history does not make it
-   arrive sooner." The spawn/send description keeps one contract sentence
-   ("Returns a receipt at once; the completion is pushed later as a new
-   message") because on Codex the model reads only the receipt type before
-   calling. Proposed, awaiting the operator; the last sentence depends on the
-   unverified Codex delivery fact above.
+3. Dispatch-result reminders (`dispatch-reminders.ts`), R6/R7: the three
+   texts follow Claude Code's own wording. TeamMate version: "Submitted. The
+   TeamMate is working; Dreamux will notify you automatically when it
+   finishes, whether it completed, failed, or was stopped. You know nothing
+   about its result until that notification arrives, so do not report or
+   predict it; continue other work or answer the user in the meantime. Do
+   not edit the files it is working on." The workflow_run version says the
+   same of the run and keeps the shared-files sentence (workflow agents share
+   the caller's workspace). The Team version says the same of the Team and
+   its TeamLeader and omits the shared-files sentence, because a Team works
+   in its own workspace (TeamLeader's judgment, to confirm). The spawn/send
+   descriptions keep one contract sentence: "Returns a receipt at once; the
+   completion is pushed later as a new message." (R6). The Dispatcher prompts
+   are not touched (R6).
 4. Skills (R3, confirmed intent): `team-workflow` is renamed to `teamwork` (R4) and
    `workflow` to `dynamic-workflow`; each skill's description states its single load
    trigger (about to spawn or send to a TeamMate; about to write a
@@ -264,10 +294,19 @@ does the work: "The sentence is what stops the loop."
   - (b) Resolved by R4: `teamwork`.
   - (c) Resolved by R4: the channel owns its reminder; the public-artifact
     secrets sentence is dropped.
-  - (d) Dispatch-result reminder wording: open; the operator asked for the
-    reason (R6). Resolved by R6: the spawn/send description keeps one short
-    contract sentence; the Dispatcher prompts are left for the Dispatcher
-    work.
+  - (d) Resolved by R6/R7: Claude Code-style wording plus the shared-files
+    sentence; the spawn/send description keeps one short contract sentence;
+    the Dispatcher prompts are left for the Dispatcher work.
+  - (j) Whether the pushed `<task-notification>` states that it is an
+    automated notification and not a user message (operator: to discuss).
+    Facts for that discussion: on Claude Code the push-back is a plain
+    user-role stream-json message; the Claude Code provider has an unused
+    `isSynthetic` option (`claude-code/src/types.ts`, `stream.ts`
+    `buildUserMessage`) whose comment reserves it for "the native
+    completion-notification idiom", but the neutral submission seam carries
+    only text, so nothing sets it; `<task-notification>` and
+    `<channel …>` already differ structurally; no confusion between the two
+    has been observed.
   - (e) Resolved by R5: `dispatcher-workflow` waits for the Dispatcher work.
   - (f) Resolved by R4 and done: probe results are under "Evidence" (both
     engines deliver a pushed submission mid-turn at the next tool boundary). The operator also states that on Claude Code
@@ -286,3 +325,5 @@ does the work: "The sentence is what stops the loop."
   renames apply to bundled skill directory names and frontmatter names, not to
   tool names.
 - Blocking unknowns: none; the mid-turn delivery fact is established (f).
+  Open for discussion with the operator: (a) the channel clause, (j) the
+  not-a-user-message marking.
