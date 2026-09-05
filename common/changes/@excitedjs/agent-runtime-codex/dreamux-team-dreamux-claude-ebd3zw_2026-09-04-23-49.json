@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Codex agents can now interrupt the active app-server turn through turn/interrupt; an idle runtime reports that no turn is running.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

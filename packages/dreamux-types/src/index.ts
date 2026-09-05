@@ -70,6 +70,7 @@ export type {
   AgentRuntimeDiagnosticRunner,
   AgentRuntimeDiagnosticResult,
   AgentRuntimeIdentity,
+  AgentRuntimeInterruptOutcome,
   AgentRuntimeLogger,
   AgentRuntimeMcpServer,
   AgentRuntimeOnboardCapability,

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Feishu transports can resolve a chat's current name through the chat lookup API for Channel-rendered binding displays.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

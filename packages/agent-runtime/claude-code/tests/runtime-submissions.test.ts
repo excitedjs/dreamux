@@ -186,6 +186,16 @@ function streamUserEnvelope(
 }
 
 describe('handleProtocolEvent settlement', () => {
+  it('settles every accepted submission as stopped when the native turn is interrupted', async () => {
+    const h = makeHarness(['cmd-1', 'cmd-2']);
+
+    h.fire({ kind: 'interrupted' });
+
+    await expect(h.settled('cmd-1')).resolves.toEqual({ kind: 'stopped' });
+    await expect(h.settled('cmd-2')).resolves.toEqual({ kind: 'stopped' });
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['interrupted']);
+  });
+
   it('settles the single accepted submission as completed with the native result text', async () => {
     const h = makeHarness(['cmd-1']);
     h.fire(started('cmd-1'));

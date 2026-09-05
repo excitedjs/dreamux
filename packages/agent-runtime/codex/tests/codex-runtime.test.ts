@@ -365,6 +365,48 @@ describe('CodexRuntime stop() semantics', () => {
 });
 
 describe('CodexRuntime submit() and settlement', () => {
+  it('interrupts the tracked native turn and reports idle when none is running', async () => {
+    const client = new FakeCodexWsClient({ autoComplete: false });
+    const { deps } = makeDeps({ client });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await expect(runtime.interrupt()).resolves.toEqual({ status: 'idle' });
+    await runtime.start();
+
+    await expect(runtime.interrupt()).resolves.toEqual({ status: 'idle' });
+    const submission = requireSubmitted(await runtime.submit({ text: 'work' }));
+    await expect(runtime.interrupt()).resolves.toEqual({ status: 'interrupted' });
+    expect(client.requests.find((request) => request.method === 'turn/interrupt'))
+      .toMatchObject({
+        params: { threadId: 'fresh-thread-1', turnId: 'turn-1' },
+      });
+
+    client.emitCompleted('fresh-thread-1', 'turn-1', 'done');
+    await submission.settled;
+    await runtime.stop();
+  });
+
+  it('interrupts the most recently started turn when two native turns are open', async () => {
+    const client = new FakeCodexWsClient({
+      autoComplete: false,
+      scriptedTurnIds: ['turn-older', 'turn-newer'],
+    });
+    const { deps } = makeDeps({ client });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+
+    requireSubmitted(await runtime.submit({ text: 'first' }));
+    requireSubmitted(await runtime.submit({ text: 'second' }));
+    await expect(runtime.interrupt()).resolves.toEqual({ status: 'interrupted' });
+
+    expect(client.requests.filter((request) => request.method === 'turn/interrupt'))
+      .toEqual([expect.objectContaining({
+        params: { threadId: 'fresh-thread-1', turnId: 'turn-newer' },
+      })]);
+    client.emitCompleted('fresh-thread-1', 'turn-older', 'first done');
+    client.emitCompleted('fresh-thread-1', 'turn-newer', 'second done');
+    await runtime.stop();
+  });
+
   it('admits a second submit during an active turn without waiting for the first (non-blocking mid-turn submit)', async () => {
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({ client });

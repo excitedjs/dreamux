@@ -20,3 +20,4 @@
 - [Feishu Access Foundation Records](/.agents/tasks/channel/feishu-access-foundations/README.md) — `done`: Preserve the Feishu access decisions: pairing access V3, allow_chats trust semantics, and inbound attachments.
 
 - [Feishu conversation-of-thought cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md) — `done`: Render dispatcher and TeamLeader conversations as conversation-anchored Feishu COT cards through a neutral, display-only core projection.
+- [Feishu slash commands](/.agents/tasks/channel/add-feishu-slash-commands/README.md) — `done`: Handle /stop, /teams, and /dissolve deterministically in the Feishu channel through one extensible command table

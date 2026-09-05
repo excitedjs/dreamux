@@ -35,8 +35,8 @@ helpers, provider loaders, or runtime implementations.
 
 Agent Runtime providers implement `AgentRuntimeProvider` and return one
 `AgentRuntime` instance per launched agent. The runtime interface is
-single-instance and has exactly three methods: `start`, `submit`, and `stop`.
-Nothing is pulled from the handle — every runtime fact flows out through the
+single-instance and has exactly four methods: `start`, `submit`, `interrupt`,
+and `stop`. Nothing is pulled from the handle — every runtime fact flows out through the
 leased state and activity sinks Core supplied when it created the instance — so
 there is no status, checkpoint, capability, or liveness method to call on it.
 Everything that is a read rather than a live handle hangs off the provider
@@ -351,6 +351,49 @@ Source:
 - `/packages/agent-runtime/claude-code/src/runtime-submissions.ts`
 - `/packages/agent-runtime/claude-code/src/rpc.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
+
+### Turn Interruption
+
+`AgentRuntime.interrupt()` ends the turn a runtime is running right now and
+leaves the runtime alive. It is not a stop: the native session, its model
+context, and the process all survive, so the agent answers the next submission
+without a restart.
+
+The outcome is `interrupted` or `idle`, and the provider decides which — it is
+the only party that knows whether a native turn is open, so Core never
+re-derives that from turn records. `idle` means there was nothing to interrupt.
+A provider that cannot reach its runtime rejects rather than reporting `idle`,
+because "nothing was running" and "the request failed" are different answers to
+the caller.
+
+Interrupting never starts a dormant runtime. Core's runtime owner interrupts
+only a runtime this process already holds and answers `idle` otherwise, so a
+`/stop` cannot resurrect an agent that had already gone quiet.
+
+Each provider maps the neutral call to its own protocol:
+
+- **Claude Code** writes a stream-json `control_request` with
+  `subtype: "interrupt"`, the same outbound control channel Remote Control
+  already uses, and resolves on the matching `control_response`. Queued commands
+  are deliberately not cancelled. An interrupted turn needs its own settlement:
+  the CLI's interrupt artifact — a `result` with
+  `subtype: "error_during_execution"` and no result or uuid — is not an answer
+  boundary, and the interrupted command reaches `command_lifecycle: cancelled`,
+  which is an abnormal terminal that leaves `ranAnyCommand` false. Without that
+  path the turn either rejects as "ended without running any of its commands" or,
+  where lifecycle events are absent, hangs until the idle reaper kills the very
+  session the interrupt meant to keep. The request therefore marks its turn, and
+  a marked turn resolves as interrupted from whichever terminal arrives first.
+- **Codex** sends `turn/interrupt` with `{ threadId, turnId }` and gets an empty
+  response. The method is part of the app-server v2 surface at the declared
+  minimum `0.137.0`, so this added no version requirement.
+
+Source:
+
+- `/packages/dreamux-types/src/agent-runtime.ts`
+- `/packages/agent-runtime/claude-code/src/rpc.ts`
+- `/packages/agent-runtime/codex/src/turn-manager.ts`
+- `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
 
 ### Claude Code Stream-Json Settlement
 

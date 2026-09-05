@@ -2,6 +2,7 @@ import type {
   AgentRuntime,
   AgentRuntimeActivitySink,
   AgentRuntimeCreateContext,
+  AgentRuntimeInterruptOutcome,
   AgentRuntimeMcpServer,
   AgentRuntimeProvider,
   AgentRuntimeStartOutcome,
@@ -87,6 +88,12 @@ export class TeammateRuntimeOwner {
   async existingRuntimeAfterStart(): Promise<AgentRuntime | null> {
     await this.starting;
     return this.runtime;
+  }
+
+  /** Interrupt only a runtime this process already owns; never start one. */
+  async interrupt(): Promise<AgentRuntimeInterruptOutcome> {
+    const runtime = await this.existingRuntimeAfterStart();
+    return runtime === null ? { status: 'idle' } : runtime.interrupt();
   }
 
   hasNoRuntimeAuthority(): boolean {

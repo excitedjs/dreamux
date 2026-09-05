@@ -103,6 +103,13 @@ export function handleProtocolEvent(
   event: ClaudeProtocolEvent,
   context: ProtocolEventContext,
 ): void {
+  if (event.kind === 'interrupted') {
+    endNativeTurn('interrupted', null, context.activitySink);
+    for (const deferred of active.submissions.values()) {
+      deferred.settle({ kind: 'stopped' });
+    }
+    return;
+  }
   if (event.kind === 'command_lifecycle') {
     // `started` is the one lifecycle state recorded here: it is the
     // attribution input for the group the next `result` completes. The

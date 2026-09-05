@@ -159,6 +159,13 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     return this.rpc.steerTurn(prompt, options, commandUuid);
   }
 
+  interruptTurn(reason: string): Promise<boolean> {
+    if (this.stopRequested || this.stopped || this.rpc === null) {
+      return Promise.resolve(false);
+    }
+    return this.rpc.interruptTurn(reason);
+  }
+
   async stop(): Promise<void> {
     if (this.stopped) return;
     if (this.stopTask !== null) return this.stopTask;

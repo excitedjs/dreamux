@@ -286,6 +286,15 @@ export function buildRemoteControlEnable(requestId: string): string {
   });
 }
 
+/** Interrupt the running turn without cancelling commands queued behind it. */
+export function buildInterruptRequest(requestId: string, reason: string): string {
+  return JSON.stringify({
+    type: 'control_request',
+    request_id: requestId,
+    request: { subtype: 'interrupt', reason },
+  });
+}
+
 /**
  * Answer a `can_use_tool` control request with `allow`. A Dreamux dispatcher
  * runs unattended, so the answer for a runtime that has no human to consult is

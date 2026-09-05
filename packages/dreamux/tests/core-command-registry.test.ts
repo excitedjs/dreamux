@@ -40,6 +40,7 @@ const FROZEN_NAMESPACE_TABLE = [
   'dispatcher.start',
   'team.create',
   'team.submit',
+  'team.interrupt',
   'team.list',
   'team.status',
   'team.history',

@@ -27,6 +27,7 @@ import { RuntimeStateFence } from '@excitedjs/dreamux-utils';
 import type {
   AgentRuntime,
   AgentRuntimeIdentity,
+  AgentRuntimeInterruptOutcome,
   AgentRuntimeStartOutcome,
   AgentRuntimeStatus,
   AgentRuntimeSubmissionInput,
@@ -250,6 +251,22 @@ export class ClaudeCodeRuntime implements AgentRuntime {
    */
   submit(input: AgentRuntimeSubmissionInput): Promise<RuntimeAdmission> {
     return this.trackAdmission(this.acceptInput(input.text));
+  }
+
+  async interrupt(): Promise<AgentRuntimeInterruptOutcome> {
+    const active = this.activeTurn;
+    if (active === null) return { status: 'idle' };
+    // Admission publishes `activeTurn` before a child has necessarily reached
+    // a live session. An interrupt in that window answers idle: it must not
+    // wait for, or inherit the failure of, a spawn it did not initiate.
+    if (active.session === null && this.session?.isAlive() !== true) {
+      return { status: 'idle' };
+    }
+    const session = active.session ?? await active.sessionReady;
+    if (this.activeTurn !== active || active.session !== session) return { status: 'idle' };
+    return await session.interruptTurn('Interrupted by Dreamux user command.')
+      ? { status: 'interrupted' }
+      : { status: 'idle' };
   }
 
   private async acceptInput(text: string): Promise<RuntimeAdmission> {

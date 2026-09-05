@@ -12,6 +12,10 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type { VisibleMessageAnchor } from './feishu-cot-state.js';
+import type {
+  FeishuSlashCommand,
+  FeishuSlashCommandReply,
+} from './feishu-slash-commands.js';
 import type { FeishuTarget } from './routing/target.js';
 
 /**
@@ -94,6 +98,12 @@ export function submitOutcome(result: TeamSubmitResult): FeishuSubmitOutcome {
   }
 }
 
+export function submissionProvesNoAdmission(outcome: FeishuSubmitOutcome): boolean {
+  return outcome.status === 'rejected' ||
+    outcome.status === 'failed' ||
+    outcome.status === 'stopped';
+}
+
 /** Read a rejected Command's code without assuming an error class. */
 export function commandErrorCode(error: unknown): string | null {
   if (error === null || typeof error !== 'object') return null;
@@ -106,6 +116,11 @@ export function errorMessage(error: unknown): string {
 }
 
 export interface FeishuInboundDelivery {
+  command(input: {
+    command: FeishuSlashCommand;
+    target: FeishuTarget;
+    containerChatId: string | null;
+  }): Promise<FeishuSlashCommandReply>;
   /**
    * Route one built submission and answer with what Core said.
    *
