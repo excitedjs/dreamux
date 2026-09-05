@@ -110,6 +110,12 @@
   - "重点就一句话，context not control 。我不确定你是否理解这个意思，不过确实切中了我过往遇到的痛点。"
   - Earlier framing in the same thread (01:00): "TeamMate 应该有别于 SubAgent。它实质上是拉起了一个完整的coding Agent。它拥有完整的Harness体系，所以我们本质上应该要和真正的团队成员协作一样，去和TeamMate协作。而不是把它当作执行某个明确独立任务的 subagent。并且要充分利用上异构模型的优势"
 
+- R9 (2026-09-06 01:09, answer on the fourth question card): who states the
+  TeamMate-side fact "you are a TeamMate of Team X; the TeamLeader reads only
+  what you output when your turn ends" → "核心加一句事实" (the recommended
+  option). The question named "Team 里的 TeamMate"; the ruling is read that
+  narrowly (Team-scoped TeamMates), not as covering Dispatcher-scoped ones.
+
 ## Evidence
 
 Everything here is traced from PR #369 head (`5e1a3464`) unless labeled
@@ -370,13 +376,24 @@ TeamMate's claims about the user as claims, not approval.
    and the stop-when-blocked posture; `prompt` holds the task context; the
    same applies to `send`.
 
+8. Core appends one factual sentence to every Team-scoped TeamMate's system
+   prompt (R9), the same shape as the TeamLeader identity line: who it is
+   (its concrete name and Team), and that its TeamLeader reads only what it
+   outputs when its turn ends. No orders; the stop-when-blocked license stays
+   in the TeamLeader's hand-down (item 7). Design-time details: it is built
+   where `teammateSystemPromptOptions` joins `systemPromptAppend` and
+   `identity_prompt` (`teammate-collection/index.ts`); workflow agents on the
+   same collection already receive `WORKFLOW_AGENT_SYSTEM_PROMPT` and would
+   receive both unless the design says otherwise; whether the sentence names
+   the TeamLeader is a design choice.
+
 ## Acceptance criteria
 
 - Not yet confirmed (depends on the open decisions).
 
 ## Decisions and unknowns
 
-- Confirmed operator decisions: R1–R8 above.
+- Confirmed operator decisions: R1–R9 above.
 - Open decisions for the operator:
   - (a) Sentence 2: dropping "Load a tool's definition before calling it" is
     confirmed (R5). Still open: the engine-neutral channel clause, re-asked
@@ -411,15 +428,14 @@ TeamMate's claims about the user as claims, not approval.
     property description stays.
   - (h) Optional: whether the identity prompt should keep arriving inside
     `<system-reminder>` tags on Claude Code (`args.ts`).
-  - (k) Who states the TeamMate-side fact "you are a TeamMate of Team X; the
-    TeamLeader reads only what you output when your turn ends": a
-    core-appended sentence of the same shape as the TeamLeader identity line
-    (recommended), a `teamwork` convention that the TeamLeader writes it into
-    `identity`, or decide at design time. Card sent 2026-09-06 01:05.
+  - (k) Resolved by R9: core appends the TeamMate-side fact sentence to
+    Team-scoped TeamMates (proposed change 8).
 - Assumptions (TeamLeader's, to confirm): the split in R3 is at the skill
   level; the `teammate` MCP server keeps carrying the workflow_* tools. The
   renames apply to bundled skill directory names and frontmatter names, not to
   tool names.
 - Blocking unknowns: none; the mid-turn delivery fact is established (f).
   Open for discussion with the operator: (a) the channel clause, (j) the
-  not-a-user-message marking, (k) the TeamMate-side fact sentence.
+  not-a-user-message marking, and whether the `teamwork` skill carries
+  heterogeneous-model guidance (R8's "充分利用上异构模型的优势") and, if so, on
+  what basis.
