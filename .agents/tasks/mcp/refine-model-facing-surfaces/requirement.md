@@ -148,6 +148,15 @@
   This TeamLeader had recommended not adding it; the operator ruled
   otherwise.
 
+- Pending (2026-09-06 01:27): after all fourteen rulings were played back
+  the operator wrote "好像还缺了一个dispatcher-workflow技能。" — reopening what
+  R5/R6 had deferred. Card sent 01:29 (decision (n)) with three paths:
+  `teamwork` becomes a shared skill the Dispatcher also receives and
+  `dispatcher-workflow` keeps only its Team/channel/cron sections (with one
+  named exception to R6 for the Dispatcher prompt's load sentence);
+  `dispatcher-workflow` only gets a narrow-trigger description and tool
+  pointers; or R5 stands and it is untouched beyond PR #369's rewrite.
+
 ## Evidence
 
 Everything here is traced from PR #369 head (`5e1a3464`) unless labeled
@@ -537,7 +546,7 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
 
 ## Decisions and unknowns
 
-- Confirmed operator decisions: R1–R14 above (R11 is the proposal R12 and R13 ruled on). No open decisions remain; next step is the technical design.
+- Confirmed operator decisions: R1–R14 above (R11 is the proposal R12 and R13 ruled on). One reopened decision, (n) `dispatcher-workflow`; then the technical design.
 - Open decisions for the operator:
   - (a) Sentence 2: dropping "Load a tool's definition before calling it" is
     confirmed (R5). Still open: the engine-neutral channel clause, re-asked
@@ -584,4 +593,5 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
   renames apply to bundled skill directory names and frontmatter names, not to
   tool names.
 - Blocking unknowns: none; the mid-turn delivery fact is established (f).
-  Nothing open with the operator as of 2026-09-06 01:27.
+  Open with the operator as of 2026-09-06 01:29: (n) `dispatcher-workflow`,
+  reopened by the operator after the playback.
