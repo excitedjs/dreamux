@@ -177,6 +177,11 @@
   #280 on 2026-07-03 with no incident cited) and re-asked on the eleventh
   card (decision (p), last item).
 
+- R20 (2026-09-06 01:40, answer on the eleventh card): the host-boundary
+  bullet stays, reworded as a consequence → "留，改后果句". With this, every
+  item raised in clarification is ruled; the requirement is frozen at this
+  revision for the solution phase.
+
 ## Evidence
 
 Everything here is traced from PR #369 head (`5e1a3464`) unless labeled
@@ -579,8 +584,8 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
     Dispatcher coordinates, repository work goes to TeamMates or Teams)
     rather than a prohibition; delete the two no-polling bullets, the
     channel-reply bullet, and the secrets bullet; delete the
-    channel-attributes bullet. The host-boundary bullet is the last open
-    item: keep reworded as a consequence (proposed) or delete.
+    channel-attributes bullet; keep the host-boundary bullet reworded as a
+    consequence (R20).
 
 ## Acceptance criteria
 
@@ -588,7 +593,7 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
 
 ## Decisions and unknowns
 
-- Confirmed operator decisions: R1–R14 above (R11 is the proposal R12 and R13 ruled on). Open: (p) the Dispatcher prompt bullets; then the technical design on the simple path (R17).
+- Confirmed operator decisions: R1–R14 above (R11 is the proposal R12 and R13 ruled on). No open decisions; the technical design proceeds on the simple path (R17) with two reviewers (R18).
 - Open decisions for the operator:
   - (a) Sentence 2: dropping "Load a tool's definition before calling it" is
     confirmed (R5). Still open: the engine-neutral channel clause, re-asked
@@ -637,5 +642,5 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
   tool names.
 - Blocking unknowns: none; the mid-turn delivery fact is established (f).
   (n) resolved by R15; (o) resolved by R17 (channel item dropped; simple
-  path). (p) settled by R19 except the host-boundary bullet, eleventh card
-  sent 01:39.
+  path). (p) settled by R19 and R20. Nothing open with the operator as of
+  2026-09-06 01:40.
