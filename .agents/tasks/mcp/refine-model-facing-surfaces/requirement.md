@@ -398,8 +398,14 @@ Consequence: the model only needs to know which provider a channel server
 is. Naming the server `channel-<provider descriptor id>` (unique per
 dispatcher by the config rule) makes every tool name carry it, with
 `channels[].id` kept as an internal key: config, routing state, logs
-unchanged, no rebuild. The server name is not persisted anywhere; runtimes
-receive MCP config at launch.
+unchanged, no rebuild. Checked 01:22 for the operator's question "这样配置文件是不是至少不用改？也就没有升级迁移动作？": the name is
+built in one place (`channel-service/mcp-delegate.ts`); nothing under
+`state/`, the MCP leases, or tool metadata stores it; both runtimes take
+their MCP config at launch; `MCP_IDENTITY_VERSION` is the package version,
+not a cache key; no skill, doc, or KB page spells `channel-<id>` or
+`channel-primary`. So: config untouched, no migration; the change is that
+one file, the tests asserting `channel-primary`, and a non-breaking change
+file noting the tool-name change (`channel_primary` → `channel_feishu`).
 
 ## Proposed changes (TeamLeader's reading of the rulings; status per item)
 
