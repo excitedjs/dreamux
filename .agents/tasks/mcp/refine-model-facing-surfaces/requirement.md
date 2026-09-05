@@ -67,6 +67,19 @@
   - Who lands the change: "#369 不合，我另开 PR" — this TeamLeader opens a new
     PR on `next` that includes what PR #369 carried; PR #369 is not merged.
 
+- R5 (2026-09-06 00:35, answers on the second question card, verbatim per
+  question):
+  - Prompt sentence 2: "频道那句是什么意思？第一句那个可以删，我觉得没问题。这里的理论支撑就是加载工具定义，这是Claude Code 和 Codex 内置的机制。我们根本就不需要提醒。只不过模型可能只看工具名，并不知道这些工具是干什么的。或者说，Codex 那边连工具名都看不到，我们只提醒它有这些工具就可以了。" — the
+    "Load a tool's definition before calling it" sentence is deleted; the
+    channel clause is re-explained and re-asked (open, (a)).
+  - Dispatch-result reminder / description contract sentence / Dispatcher
+    duplicate bullets: "这句说得有点太复杂了，我看不懂，重新展开解释一下。" — re-explained as
+    three separate decisions and re-asked (open, (d)).
+  - Whether the split and renames also apply to `dispatcher-workflow`: "随
+    Dispatcher 往后放" (the recommended option).
+  - The secrets clause in the Feishu `reply.text` property description:
+    "保留".
+
 ## Evidence
 
 Everything here is traced from PR #369 head (`5e1a3464`) unless labeled
@@ -232,16 +245,17 @@ does the work: "The sentence is what stops the loop."
 
 - Confirmed operator decisions: R1, R2, R3 above.
 - Open decisions for the operator:
-  - (a) Sentence 2 rewrite: drop "Load a tool's definition before calling it"
-    and use the engine-neutral channel clause.
+  - (a) Sentence 2: dropping "Load a tool's definition before calling it" is
+    confirmed (R5). Still open: the engine-neutral channel clause, re-asked
+    after explaining that Codex renders the server name `channel-primary` as
+    `channel_primary`.
   - (b) Resolved by R4: `teamwork`.
   - (c) Resolved by R4: the channel owns its reminder; the public-artifact
     secrets sentence is dropped.
   - (d) Dispatch-result reminder wording; keep the one contract sentence in
     the spawn/send descriptions; delete the four duplicate Dispatcher prompt
     bullets now or with the Dispatcher work.
-  - (e) Whether the split and renames also apply to the Dispatcher's
-    `dispatcher-workflow` skill, or wait for the Dispatcher work.
+  - (e) Resolved by R5: `dispatcher-workflow` waits for the Dispatcher work.
   - (f) Resolved by R4 and done: probe results are under "Evidence" (both
     engines deliver a pushed submission mid-turn at the next tool boundary). The operator also states that on Claude Code
     the dispatch-result reminder text is not visible to the model; this
@@ -250,8 +264,8 @@ does the work: "The sentence is what stops the loop."
     Codex-only surface.
   - (g) Resolved by R4: this TeamLeader opens a new PR on `next` that
     includes PR #369's content; PR #369 is not merged.
-  - (i) Whether the secrets clause in the Feishu `reply.text` property
-    description stays, now that the public-artifact sentence is dropped.
+  - (i) Resolved by R5: the secrets clause in the Feishu `reply.text`
+    property description stays.
   - (h) Optional: whether the identity prompt should keep arriving inside
     `<system-reminder>` tags on Claude Code (`args.ts`).
 - Assumptions (TeamLeader's, to confirm): the split in R3 is at the skill
