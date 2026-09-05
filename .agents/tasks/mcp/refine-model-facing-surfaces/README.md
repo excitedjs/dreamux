@@ -7,8 +7,8 @@
 - Requirement: [Current requirement](/.agents/tasks/mcp/refine-model-facing-surfaces/requirement.md) — operator rulings R1–R3 recorded verbatim, evidence inventory, proposed changes, and the open decisions.
 - Final solution: Not created.
 - Solution review Issue: Not created.
-- Blockers: Open decisions (a)–(h) in the requirement; the Codex mid-turn completion-delivery fact is unverified.
-- Next action: The operator answers the open decisions; then the TeamLeader writes the solution.
+- Blockers: Open decisions (a), (d), (e), (h), (i) in the requirement; the mid-turn completion-delivery fact is being probed by this TeamLeader.
+- Next action: The operator answers the remaining open decisions (second question card); the TeamLeader records the probe result, then writes the solution for a new PR on `next` that includes PR #369's content (R4).
 - Lineage: the deep review of PR #369 (https://github.com/excitedjs/dreamux/pull/369) on 2026-09-05; that PR's own record (`relocate-role-skill-guidance`, on the PR branch) holds the 2026-09-02 rulings this task builds on. This task does not change that PR's record.
 - Related tasks: None.
 

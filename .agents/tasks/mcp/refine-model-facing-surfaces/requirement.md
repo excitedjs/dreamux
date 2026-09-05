@@ -57,6 +57,16 @@
   P1 review comments asked to keep in the prompt.
 - R3 (2026-09-06 00:15): "你捋的很清楚，不过还有一个点是，他在加载技能之前，就应该知道有这些 MCP。在他打算用这个MCP之前，才去看技能。并且把Teammate和那个Workflow两个拆开。如果他要去用TeamMate，就让他去看Team Workflow。给这个 Team Workflow 技能改个名字吧，改成"团队协作"，我也不知道英文用什么，Team collaboration？感觉有点长 如果他要用 TeamMate 的 Workflow 工具，就让他去看 Workflow 技能。Workflow这边给它改一个名字，叫做 Dynamic workflow."
 
+- R4 (2026-09-06 00:24, answers on a question card, verbatim per question):
+  - Channel reminder owner and the public-artifact secrets sentence:
+    "渠道的reminder只能是渠道来出。不能是core来出。未来会有很多种渠道，每个渠道的 Reminder 肯定不一样的。这个保密的话，我感觉可以直接去掉。"
+  - English name of the team-collaboration skill: "teamwork" (the recommended
+    option).
+  - Whether the Codex TeamLeader should run the completion-delivery probe:
+    "这个你自己都可以测。凯丽和你用的都是完全相同的MCP工具。你和他的差异只有工具名，以及在toolsearch 之前工具的暴露程度。另外，你这边应该看不到 send 相关的 text。那句提醒你不要轮询的话，你自己应该是看不到的。"
+  - Who lands the change: "#369 不合，我另开 PR" — this TeamLeader opens a new
+    PR on `next` that includes what PR #369 carried; PR #369 is not merged.
+
 ## Evidence
 
 Everything here is traced from PR #369 head (`5e1a3464`) unless labeled
@@ -167,17 +177,14 @@ does the work: "The sentence is what stops the loop."
    operator. `tests/team-leader-prompt.test.ts` then asserts the three parts
    and the absence of behavioral rules (a knowing change to a test the
    operator asked for on 2026-09-02).
-2. Channel reminder: wording becomes a consequence (R1, confirmed wording
-   intent), for example "The user in this chat sees only what you send
-   through this channel's tools; your assistant text is not shown to them."
-   Proposed and open: Core renders this sentence for every channel-sourced
-   submission instead of Feishu passing it through the `reminder` field, which
-   deletes the `team.submit` `reminder` parameter, the `reminder` field in
-   `dreamux-types` `team.ts`, Feishu's `CHANNEL_REMINDER`, and the "Text you
-   write outside this tool is not delivered" sentence of the Feishu `reply`
-   description, and covers the external-provider scenario from the 2026-09-02
-   P1 without a prompt line. Also open: where the public-artifact secrets
-   sentence lives (appended to this reminder, or only in `reply.text`).
+2. Channel reminder (R4): the reminder stays the channel's own text, passed
+   through the `team.submit` `reminder` field as today; Core does not author
+   it, because each channel will word its own. Feishu's `CHANNEL_REMINDER` is
+   reworded from an order to a consequence, for example "The user in this
+   chat sees only what you send through the reply tool; your assistant text
+   is not shown to them." The public-artifact secrets sentence is dropped
+   (R4: "这个保密的话，我感觉可以直接去掉"); whether the secrets clause inside
+   the Feishu `reply.text` property description also goes is open (i).
 3. Dispatch-result reminders (`dispatch-reminders.ts`): kept as the single
    owner of the no-polling fact (R1: written for Codex), reworded as a
    consequence, for example "Submitted. The TeamMate's completion arrives in
@@ -188,9 +195,8 @@ does the work: "The sentence is what stops the loop."
    message") because on Codex the model reads only the receipt type before
    calling. Proposed, awaiting the operator; the last sentence depends on the
    unverified Codex delivery fact above.
-4. Skills (R3, confirmed intent): `team-workflow` is renamed to the
-   team-collaboration skill (English name open) and `workflow` to
-   `dynamic-workflow`; each skill's description states its single load
+4. Skills (R3, confirmed intent): `team-workflow` is renamed to `teamwork` (R4) and
+   `workflow` to `dynamic-workflow`; each skill's description states its single load
    trigger (about to spawn or send to a TeamMate; about to write a
    workflow script) and says it is not needed otherwise; the spawn/send and
    workflow_* tool descriptions point at the matching skill so the pointer
@@ -213,24 +219,29 @@ does the work: "The sentence is what stops the loop."
 - Open decisions for the operator:
   - (a) Sentence 2 rewrite: drop "Load a tool's definition before calling it"
     and use the engine-neutral channel clause.
-  - (b) English name for "团队协作" (candidates: `teamwork`,
-    `team-collaboration`, `collaboration`).
-  - (c) Channel reminder owner: Core (recommended) or Feishu only; and where
-    the public-artifact secrets sentence lives.
+  - (b) Resolved by R4: `teamwork`.
+  - (c) Resolved by R4: the channel owns its reminder; the public-artifact
+    secrets sentence is dropped.
   - (d) Dispatch-result reminder wording; keep the one contract sentence in
     the spawn/send descriptions; delete the four duplicate Dispatcher prompt
     bullets now or with the Dispatcher work.
   - (e) Whether the split and renames also apply to the Dispatcher's
     `dispatcher-workflow` skill, or wait for the Dispatcher work.
-  - (f) Whether to run the Codex delivery probe: the Codex TeamLeader spawns a
-    read-only TeamMate and reads `last` repeatedly inside the same turn, to
-    see whether the completion lands mid-turn or after the turn ends.
-  - (g) Who lands this: a new review round on PR #369 by its author, or a
-    follow-up PR.
+  - (f) Resolved by R4: this TeamLeader runs the probe itself (result recorded
+    under "Evidence" when done). The operator also states that on Claude Code
+    the dispatch-result reminder text is not visible to the model; this
+    matches the recorded Claude Code behavior of dropping MCP `content` text
+    when `structuredContent` is present, so that reminder is effectively a
+    Codex-only surface.
+  - (g) Resolved by R4: this TeamLeader opens a new PR on `next` that
+    includes PR #369's content; PR #369 is not merged.
+  - (i) Whether the secrets clause in the Feishu `reply.text` property
+    description stays, now that the public-artifact sentence is dropped.
   - (h) Optional: whether the identity prompt should keep arriving inside
     `<system-reminder>` tags on Claude Code (`args.ts`).
 - Assumptions (TeamLeader's, to confirm): the split in R3 is at the skill
   level; the `teammate` MCP server keeps carrying the workflow_* tools. The
   renames apply to bundled skill directory names and frontmatter names, not to
   tool names.
-- Blocking unknowns: the Codex mid-turn delivery fact (f).
+- Blocking unknowns: the mid-turn delivery fact, to be probed by this
+  TeamLeader (f).
