@@ -211,6 +211,13 @@
   final.md as committed at `a169ac94`; implementation runs through the
   ultracode workflow driven by this TeamLeader.
 
+- R25 (2026-09-06 ~03:00, answer on the member-model card): asked "ultracode
+  工作流里的成员用什么模型？", the operator chose "写码 opus、其余 sonnet".
+  TeamLeader's reading, labeled: workflow agents that write code (package
+  source, tests, the bundled skill roots) run on opus; every other agent
+  (knowledge base and task records, change files, gate runs, review passes)
+  runs on sonnet.
+
 ## Evidence
 
 Everything here is traced from PR #369 head (`5e1a3464`) unless labeled
@@ -622,7 +629,7 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
 
 ## Decisions and unknowns
 
-- Confirmed operator decisions: R1–R24 above (R11 is the proposal R12 and R13 ruled on). No open decisions; the technical design proceeds on the simple path (R17) with two reviewers (R18); R21 is the adjudication principle for reviewer findings.
+- Confirmed operator decisions: R1–R25 above (R11 is the proposal R12 and R13 ruled on). No open decisions; the technical design proceeds on the simple path (R17) with two reviewers (R18); R21 is the adjudication principle for reviewer findings.
 - Open decisions for the operator:
   - (a) Sentence 2: dropping "Load a tool's definition before calling it" is
     confirmed (R5). Still open: the engine-neutral channel clause, re-asked
