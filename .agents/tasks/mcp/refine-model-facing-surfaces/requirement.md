@@ -181,6 +181,16 @@
   bullet stays, reworded as a consequence → "留，改后果句". With this, every
   item raised in clarification is ruled; the requirement is frozen at this
   revision for the solution phase.
+- R21 (2026-09-06 02:18, group message during the solution review, on the
+  Codex reviewer's finding F7 about the Feishu reminder wording): "我给你补充几
+  个上下文 1. COT 卡不能代替 reply 工具，与用户沟通最主要的渠道还是 reply 2. 不
+  要追求绝对的事实。而是控制 agent 应该知道的信息和不必知道的信息。我感觉 codex
+  的 F7 完全没必要，你甚至可以去质疑 codex ，问问他按照这个原则，哪些 finding 会
+  被撤回". Reading: a model-facing sentence is judged by whether the model needs
+  the information, not by whether it is exhaustively true of every surface; the
+  COT card is not something the model needs to know about when told how to reach
+  the user. Applies to the adjudication of every reviewer finding, not only F7.
+  Sent to the Codex reviewer as a follow-up for its own re-read.
 
 ## Evidence
 
@@ -593,7 +603,7 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
 
 ## Decisions and unknowns
 
-- Confirmed operator decisions: R1–R14 above (R11 is the proposal R12 and R13 ruled on). No open decisions; the technical design proceeds on the simple path (R17) with two reviewers (R18).
+- Confirmed operator decisions: R1–R21 above (R11 is the proposal R12 and R13 ruled on). No open decisions; the technical design proceeds on the simple path (R17) with two reviewers (R18); R21 is the adjudication principle for reviewer findings.
 - Open decisions for the operator:
   - (a) Sentence 2: dropping "Load a tool's definition before calling it" is
     confirmed (R5). Still open: the engine-neutral channel clause, re-asked
