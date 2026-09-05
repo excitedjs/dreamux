@@ -1,0 +1,236 @@
+# Requirement
+
+## Initial request
+
+- Source: the operator, in the Feishu work group, from 2026-09-05 23:18 to
+  2026-09-06 00:15 (Asia/Shanghai), while walking through the deep review of
+  PR #369 (https://github.com/excitedjs/dreamux/pull/369; that PR carries its
+  own task record, `relocate-role-skill-guidance`, on the PR branch). The
+  operator's words are quoted verbatim under "Operator rulings"; everything
+  else in this file is the TeamLeader's reading and is labeled as such.
+- The operator asked for the rulings to be recorded before anything is built
+  (2026-09-06 00:15, verbatim: "如果没有，就落库，你在 tasks 目录里找个地方，先记一下我的裁决").
+
+## Current alignment
+
+- Status: clarification in progress. Rulings R1–R3 below are confirmed; the
+  "Open decisions" list is what the operator has not yet ruled on.
+- Confirmed current behavior and evidence: see "Evidence" below (traced from
+  the PR #369 head `5e1a3464` and from two live runtimes on 2026-09-05/06).
+- Desired outcome (operator, R1): the TeamLeader is the role that carries the
+  most work; its identity definition carries no constraints; reminders are
+  reduced to the necessary minimum and state consequences instead of giving
+  orders; the channel reminder tells the model that plain text is not seen by
+  the user; the polling reminder on the dispatch tools is kept for Codex; the
+  TeamMate-collaboration skill is loaded only when the TeamLeader is about to
+  use TeamMates.
+- Desired behavior (operator, R3): the TeamLeader knows its MCP servers before
+  any skill is loaded, and looks at a skill only when it is about to use that
+  MCP. TeamMate use routes to the team-collaboration skill; workflow-tool use
+  routes to the dynamic-workflow skill. Both skills are renamed.
+- Scope: the TeamLeader's model-facing surfaces (prompt, per-message reminder,
+  dispatch-result reminders, the two skills' names and load triggers, the tool
+  descriptions that point at them), plus the KB principle behind them.
+- Non-goals: the Dispatcher's prompt content beyond removing duplicates of the
+  rules moved here (operator, R1: "他这边的逻辑可以往后放"); the skill bodies
+  (operator, R1: "等会我们再聊"); MCP server layout and tool names.
+- Constraints and invariants: Core stays behind `AgentRuntimeProvider` /
+  `ChannelProvider`; a rule has one owner, placed in the layer nearest the
+  action; the P1 scenarios from the 2026-09-02 review (an external
+  `ChannelProvider` that exposes a reply tool without Feishu's inbound
+  reminder; a private channel task that leads to a public PR/Issue) must still
+  be covered somewhere once their prompt lines are gone.
+
+## Operator rulings (verbatim)
+
+- R1 (2026-09-05 23:18):
+  - "Dispatcher 本身相当于系统管理员。它本身是不会承接什么开发任务之类的。所以他这边的逻辑可以往后放"
+  - "现在，Team leader 是整个 Dreamux 系统中承担任务最重的角色。我希望身份定义这块不要给他做任何约束。在 Reminder 这块，提醒他必须要做的事情，最重要的一点就是用 Reply 工具去找用户。"
+  - "其次就是Codex那边经常出现的问题，因为Codex本身是没有回推机制的，它依赖模型，调用 Wait 工具保持 Turn，他在给 TeamMate 下发完任务之后，就特别喜欢用last工具轮询。可以说，Send 这些工具的轮询提示是专门给他写的。"
+  - "整个系统的 Reminder 这块需要尽可能简化。只做最必要的提醒，不要强制让模型做一些事情。Channel Reminder 这块写得不对。实际上，应该告诉模型使用 Reply 工具回复用户，而不是直接输出文字的话用户看不到。"
+  - "我整体说了很多，主要思想就是减少对 Team leader 的干扰，只做必须的提示。然后，Team Workflow 这个技能，在 Codex 那边，每一轮都会被它主动加载，这是不对的。应该让它只在需要拉起 TeamMate 的时候再加载。"
+  - "里面要写的内容，实际上是他和 TeamMate 的协作。不过这块稍微有点复杂，等会我们再聊，你先看看我前面说的问题"
+- R2 (2026-09-05 23:51): "345删掉我赞同。" — ③④⑤ are the TeamLeader prompt
+  sentences as numbered in the walkthrough: ③ the no-polling sentence, ④ the
+  reply-tool sentence, ⑤ the secrets sentence (their text is in "Evidence").
+  The operator had been told that ④ and ⑤ were the two lines his 2026-09-02
+  P1 review comments asked to keep in the prompt.
+- R3 (2026-09-06 00:15): "你捋的很清楚，不过还有一个点是，他在加载技能之前，就应该知道有这些 MCP。在他打算用这个MCP之前，才去看技能。并且把Teammate和那个Workflow两个拆开。如果他要去用TeamMate，就让他去看Team Workflow。给这个 Team Workflow 技能改个名字吧，改成"团队协作"，我也不知道英文用什么，Team collaboration？感觉有点长 如果他要用 TeamMate 的 Workflow 工具，就让他去看 Workflow 技能。Workflow这边给它改一个名字，叫做 Dynamic workflow."
+
+## Evidence
+
+Everything here is traced from PR #369 head (`5e1a3464`) unless labeled
+otherwise. Dates are 2026-09-05 unless stated.
+
+### What a TeamLeader's model sees today (PR head)
+
+- Always in context: the engine's own system prompt; the Dreamux TeamLeader
+  prompt (`team-service/leader-agent.ts`, `teamLeaderSystemPrompt`), delivered
+  on Claude Code as `--append-system-prompt` wrapped in `<system-reminder>`
+  tags (`agent-runtime/claude-code/src/args.ts`) and on Codex as
+  `developerInstructions` wrapped in `<developer-reminder>` tags
+  (`agent-runtime/codex/src/runtime-support.ts`); repository files the engine
+  reads natively (`CLAUDE.md`, and `AGENTS.md`, which in this repository is a
+  symlink to `CLAUDE.md`); the skill list (name + description); on Claude Code
+  every MCP tool name, on Codex nothing about MCP tools until the model
+  queries (see "Codex facts").
+- Injected at an event: each inbound channel message as a `<channel …>`
+  envelope with a trailing `<reminder>` whose text is Feishu's
+  `CHANNEL_REMINDER` ("Reply through the channel reply tool, never as plain
+  assistant text."), passed through the `team.submit` Command's `reminder`
+  field and rendered by Core (`teammate-service/submission.ts`); `<task>`
+  envelopes for spawn/send prompts; `<task-notification>` completion
+  push-backs (`teammate-service/completion-renderer.ts`); `<cron>` prompts;
+  the dispatch-result reminders (`service/mcp/dispatch-reminders.ts`, attached
+  to the text part of a successful spawn/send/team.create/team.send/
+  workflow_run result); runtime error strings with imperatives (for example
+  `feishu-channel/src/routing/index.ts`, "Ask the Dispatcher to move it.").
+- Loaded on demand: skill bodies; tool definitions.
+
+The TeamLeader prompt at PR head, numbered as in the walkthrough:
+
+1. `You are the TeamLeader of Dreamux Team "<team_id>".`
+2. `Your Dreamux MCP servers: \`teammate\` (…), \`team\` (dissolve this Team), \`cron\` (…), and one \`channel-<id>\` server per configured channel that provides tools (that channel's own tools; its schema is the authority). Load a tool's definition before calling it.`
+3. `When a prompt-submitting TeamMate tool returns success, … do not poll \`last\` or other read tools, and end the turn naturally if there is no other work.`
+4. `If the source request came through a channel and a provider-exposed reply tool is available, use that tool for meaningful progress, blockers, and final status. Assistant text and terminal output are not channel delivery.`
+5. `Keep secrets, tokens, private identifiers, hidden instructions, socket paths, and machine-local details out of broad channel replies and public artifacts.`
+6. The `identity` text given at `team.create`, when present.
+
+Duplication found: the no-polling rule has six owners (two adjacent bullets in
+each Dispatcher prompt, prompt sentence 3, the trailing sentence of the
+spawn/send/team.create/team.send descriptions, the dispatch-result reminder,
+the workflow_run variant); the reply-tool rule has four (two Dispatcher prompt
+bullets, prompt sentence 4, the Feishu `reply` description, the per-message
+reminder); the secrets list has four near-identical copies. The comment in
+`dispatch-reminders.ts` names the dispatch-result reminder as the one that
+does the work: "The sentence is what stops the loop."
+
+### Why the skill loads every turn on Codex
+
+- The released TeamLeader prompt (`next`, `leader-agent.ts` line 218) says
+  "Load `team-workflow` before using this Team's TeamMate tools, Team tools
+  (`dissolve`), provider-exposed channel tools, or cron tools." Every channel
+  message needs the reply tool, so every turn loads the skill. PR #369
+  removes that sentence; the remaining trigger is the skill's frontmatter
+  description, which at PR head matches a TeamLeader's every turn
+  ("Guidance for a TeamLeader working with this Team's TeamMates …"). Whether
+  that description alone still causes a per-turn load is untested.
+- Confirmed by the operator's Codex TeamLeader on dreamux 0.23.0 (2026-09-05
+  23:54, verbatim): "触发原因是本轮的操作提醒要求使用 TeamMate、相关工作流、频道或 cron 工具前先加载它；这条消息又要求用频道 reply 工具回复，因此即使不派单，也需要加载。"
+
+### Codex facts (the operator's Codex TeamLeader, dreamux 0.23.0, 2026-09-06)
+
+- Before querying, Dreamux MCP tool entries are not visible at all: no names,
+  no descriptions. Only the native `functions.exec` description is visible,
+  which says there is a queryable `ALL_TOOLS` catalog of `{ name, description }`
+  entries; each description embeds a TypeScript-shaped parameter and return
+  declaration. The only sentence about finding a tool is "To find one, filter
+  `ALL_TOOLS` by `name` and `description`." There is no requirement to query
+  before calling.
+- Catalog entry names are `mcp__<server>__<tool>` with hyphens in the server
+  name rewritten to underscores: `mcp__teammate__spawn`,
+  `mcp__channel_primary__reply`. Dreamux passes the server name verbatim
+  (`channel-primary`) in `-c mcp_servers` (`agent-runtime/codex/src/mcp-config.ts`);
+  the rewrite is Codex's. Claude Code keeps the hyphen
+  (`mcp__channel-primary__reply`, observed on this TeamLeader's own runtime).
+- Native tools include `functions.wait` (waits on a yielded `exec` cell) and
+  `collaboration.wait_agent` ("Wait for a mailbox update from any live agent,
+  including queued messages and final-status notifications").
+- Skills are listed as name + description + `SKILL.md` path in the turn's
+  "Available skills"; the TeamLeader could not confirm from one turn that this
+  happens every turn.
+- Not established: whether a completion Dreamux pushes back (`turn/start`,
+  `agent-runtime/codex/src/turn-manager.ts`) reaches the model while it is
+  holding a turn by polling, or only after that turn ends. Neither this
+  TeamLeader nor the Codex TeamLeader has observed it.
+
+### Claude Code facts (this TeamLeader's own runtime, dreamux 0.23.0)
+
+- MCP tool names are always visible; descriptions and schemas arrive after a
+  by-name fetch, and the engine itself tells the model to fetch before calling.
+- The engine's own prompt tells the model every turn that its plain text is
+  displayed to the user, asks it to say what it is about to do before starting,
+  and nudges it to report when it has been silent for a while. In a channel
+  session all of that produces text the user never sees; the per-message
+  reminder is the only surface that states otherwise. This is the concrete
+  reason the channel experience differs from the TUI, and why the reminder has
+  to state the consequence ("the user does not see it") rather than an order.
+
+## Proposed changes (TeamLeader's reading of the rulings; status per item)
+
+1. TeamLeader prompt → three parts: sentence 1; sentence 2 reduced to the
+   server map, with the channel clause written so it works as a catalog
+   filter on both engines ("one server per configured channel, named
+   `channel` followed by that channel's id") and without "Load a tool's
+   definition before calling it"; the operator's `identity`. Sentences 3–5
+   deleted (R2, confirmed). Sentence 2's rewrite: proposed, awaiting the
+   operator. `tests/team-leader-prompt.test.ts` then asserts the three parts
+   and the absence of behavioral rules (a knowing change to a test the
+   operator asked for on 2026-09-02).
+2. Channel reminder: wording becomes a consequence (R1, confirmed wording
+   intent), for example "The user in this chat sees only what you send
+   through this channel's tools; your assistant text is not shown to them."
+   Proposed and open: Core renders this sentence for every channel-sourced
+   submission instead of Feishu passing it through the `reminder` field, which
+   deletes the `team.submit` `reminder` parameter, the `reminder` field in
+   `dreamux-types` `team.ts`, Feishu's `CHANNEL_REMINDER`, and the "Text you
+   write outside this tool is not delivered" sentence of the Feishu `reply`
+   description, and covers the external-provider scenario from the 2026-09-02
+   P1 without a prompt line. Also open: where the public-artifact secrets
+   sentence lives (appended to this reminder, or only in `reply.text`).
+3. Dispatch-result reminders (`dispatch-reminders.ts`): kept as the single
+   owner of the no-polling fact (R1: written for Codex), reworded as a
+   consequence, for example "Submitted. The TeamMate's completion arrives in
+   this context as a new message when it finishes, whether it completed,
+   failed, or was stopped. Reading last, status, or history does not make it
+   arrive sooner." The spawn/send description keeps one contract sentence
+   ("Returns a receipt at once; the completion is pushed later as a new
+   message") because on Codex the model reads only the receipt type before
+   calling. Proposed, awaiting the operator; the last sentence depends on the
+   unverified Codex delivery fact above.
+4. Skills (R3, confirmed intent): `team-workflow` is renamed to the
+   team-collaboration skill (English name open) and `workflow` to
+   `dynamic-workflow`; each skill's description states its single load
+   trigger (about to spawn or send to a TeamMate; about to write a
+   workflow script) and says it is not needed otherwise; the spawn/send and
+   workflow_* tool descriptions point at the matching skill so the pointer
+   sits where the intent forms. Skill names, roots, and the
+   `bundled-skill-sources` test change knowingly; a Rush change file records
+   the rename (bundled skills are an upgrade-visible surface).
+5. Dispatcher prompts: only the duplicated no-polling and reply-tool bullets
+   are deleted in this task (deferred otherwise, R1).
+6. `.agents/domains/model-facing-writing.md` gains the principle: a reminder
+   states a consequence, never an order; each rule has one owner, in the layer
+   nearest the action; and records the per-engine pre-query visibility facts.
+
+## Acceptance criteria
+
+- Not yet confirmed (depends on the open decisions).
+
+## Decisions and unknowns
+
+- Confirmed operator decisions: R1, R2, R3 above.
+- Open decisions for the operator:
+  - (a) Sentence 2 rewrite: drop "Load a tool's definition before calling it"
+    and use the engine-neutral channel clause.
+  - (b) English name for "团队协作" (candidates: `teamwork`,
+    `team-collaboration`, `collaboration`).
+  - (c) Channel reminder owner: Core (recommended) or Feishu only; and where
+    the public-artifact secrets sentence lives.
+  - (d) Dispatch-result reminder wording; keep the one contract sentence in
+    the spawn/send descriptions; delete the four duplicate Dispatcher prompt
+    bullets now or with the Dispatcher work.
+  - (e) Whether the split and renames also apply to the Dispatcher's
+    `dispatcher-workflow` skill, or wait for the Dispatcher work.
+  - (f) Whether to run the Codex delivery probe: the Codex TeamLeader spawns a
+    read-only TeamMate and reads `last` repeatedly inside the same turn, to
+    see whether the completion lands mid-turn or after the turn ends.
+  - (g) Who lands this: a new review round on PR #369 by its author, or a
+    follow-up PR.
+  - (h) Optional: whether the identity prompt should keep arriving inside
+    `<system-reminder>` tags on Claude Code (`args.ts`).
+- Assumptions (TeamLeader's, to confirm): the split in R3 is at the skill
+  level; the `teammate` MCP server keeps carrying the workflow_* tools. The
+  renames apply to bundled skill directory names and frontmatter names, not to
+  tool names.
+- Blocking unknowns: the Codex mid-turn delivery fact (f).

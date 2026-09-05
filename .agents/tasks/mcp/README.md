@@ -16,3 +16,4 @@
 
 ## Tasks
 - [MCP Protocol Conformance Rulings](/.agents/tasks/mcp/protocol-conformance/README.md) — `done`: Preserve the settled rulings behind the official-SDK MCP server replacement.
+- [Refine the model-facing surfaces of the TeamLeader](/.agents/tasks/mcp/refine-model-facing-surfaces/README.md) — `intake`: Reduce what Dreamux injects into a TeamLeader's context to the necessary minimum: identity and MCP server map in the prompt, factual reminders at the action, skills loaded only when the corresponding MCP is about to be used
