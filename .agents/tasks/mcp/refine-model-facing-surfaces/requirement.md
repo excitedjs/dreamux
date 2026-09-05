@@ -167,10 +167,15 @@
   runtime (not three), and the TeamLeader works with them the way the
   `teamwork` skill designed here says: context, not control.
 
-- Pending (01:35): the Dispatcher prompt walkthrough, tenth card (decision
-  (p)): the MCP-authority bullet, the four bullets that mirror the deleted
-  TeamLeader sentences (two no-polling, channel reply, secrets), the
-  channel-attributes bullet, and the host-boundary bullet.
+- R19 (2026-09-06 01:38, answers on the tenth card, the Dispatcher prompt
+  bullets): the MCP-authority bullet → "删"; the four bullets mirroring the
+  deleted TeamLeader sentences (two no-polling, channel reply, secrets) →
+  "全删"; the channel-attributes bullet → "删"; the host-boundary bullet →
+  "这句提示的是什么。" — explained (it guards host-level changes — credentials,
+  access policy, persistent config, service units, shell startup files,
+  PATH, runtime auth — against an ambiguous channel request; added by PR
+  #280 on 2026-07-03 with no incident cited) and re-asked on the eleventh
+  card (decision (p), last item).
 
 ## Evidence
 
@@ -569,14 +574,13 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
     TeamLeader sentence whose channel-tool coverage the Codex TeamLeader
     confirmed as the per-turn load cause; R17 drops its channel item.
 
-12. Dispatcher prompt bullets (R16; card pending): proposed per bullet —
-    delete the MCP-authority bullet; keep the working-directory bullet as an
-    identity statement (R1: the Dispatcher coordinates, repository work goes
-    to TeamMates or Teams) rather than a prohibition; delete the two
-    no-polling bullets, the channel-reply bullet, and the secrets bullet (the
-    same set R2 and R4 removed from the TeamLeader; asked again because R2
-    named only the TeamLeader sentences); delete the channel-attributes
-    bullet; keep the host-boundary bullet reworded as a consequence.
+12. Dispatcher prompt bullets (R16, R19): delete the MCP-authority bullet;
+    keep the working-directory bullet as an identity statement (R1: the
+    Dispatcher coordinates, repository work goes to TeamMates or Teams)
+    rather than a prohibition; delete the two no-polling bullets, the
+    channel-reply bullet, and the secrets bullet; delete the
+    channel-attributes bullet. The host-boundary bullet is the last open
+    item: keep reworded as a consequence (proposed) or delete.
 
 ## Acceptance criteria
 
@@ -633,5 +637,5 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
   tool names.
 - Blocking unknowns: none; the mid-turn delivery fact is established (f).
   (n) resolved by R15; (o) resolved by R17 (channel item dropped; simple
-  path). Open as of 2026-09-06 01:35: (p) the Dispatcher prompt bullets
-  (item 12), tenth card.
+  path). (p) settled by R19 except the host-boundary bullet, eleventh card
+  sent 01:39.
