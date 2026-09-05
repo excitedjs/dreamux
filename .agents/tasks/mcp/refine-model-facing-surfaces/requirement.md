@@ -205,6 +205,11 @@
   A "the view's identity includes the child skill inventory" and B "no shared
   cache; each runtime rebuilds its own view at start"): "不能走 b，太不可控了。"
   B is ruled out; A (final.md §3.9) is the only fix shape on the table.
+- R24 (2026-09-06 02:55, answers on the second approval card): the Claude
+  skill-adapter fix (A) → "并入本 PR"; development approval → "进开发。你自己用
+  ultracode 模式一次性搞定。" Approval is bound to requirement R1–R24 and
+  final.md as committed at `a169ac94`; implementation runs through the
+  ultracode workflow driven by this TeamLeader.
 
 ## Evidence
 
@@ -617,7 +622,7 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
 
 ## Decisions and unknowns
 
-- Confirmed operator decisions: R1–R23 above (R11 is the proposal R12 and R13 ruled on). No open decisions; the technical design proceeds on the simple path (R17) with two reviewers (R18); R21 is the adjudication principle for reviewer findings.
+- Confirmed operator decisions: R1–R24 above (R11 is the proposal R12 and R13 ruled on). No open decisions; the technical design proceeds on the simple path (R17) with two reviewers (R18); R21 is the adjudication principle for reviewer findings.
 - Open decisions for the operator:
   - (a) Sentence 2: dropping "Load a tool's definition before calling it" is
     confirmed (R5). Still open: the engine-neutral channel clause, re-asked
