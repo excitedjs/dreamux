@@ -116,6 +116,11 @@
   option). The question named "Team 里的 TeamMate"; the ruling is read that
   narrowly (Team-scoped TeamMates), not as covering Dispatcher-scoped ones.
 
+- R10 (2026-09-06 01:10, on heterogeneous-model guidance in the `teamwork`
+  skill): "用那个查询工具查一下即可。技能里提示一下" — no runtime-selection
+  guidance; the skill only points at `get_capabilities` for the available
+  runtimes.
+
 ## Evidence
 
 Everything here is traced from PR #369 head (`5e1a3464`) unless labeled
@@ -374,7 +379,9 @@ TeamMate's claims about the user as claims, not approval.
    TeamMates for options or to the user through the question card; never
    rewrite the requirement on the user's behalf. `identity` holds the role
    and the stop-when-blocked posture; `prompt` holds the task context; the
-   same applies to `send`.
+   same applies to `send`. Heterogeneous runtimes (R10): the skill only
+   notes that each TeamMate picks its own `agent_runtime` and that
+   `get_capabilities` lists the choices; no selection guidance.
 
 8. Core appends one factual sentence to every Team-scoped TeamMate's system
    prompt (R9), the same shape as the TeamLeader identity line: who it is
@@ -393,7 +400,7 @@ TeamMate's claims about the user as claims, not approval.
 
 ## Decisions and unknowns
 
-- Confirmed operator decisions: R1–R9 above.
+- Confirmed operator decisions: R1–R10 above.
 - Open decisions for the operator:
   - (a) Sentence 2: dropping "Load a tool's definition before calling it" is
     confirmed (R5). Still open: the engine-neutral channel clause, re-asked
@@ -436,6 +443,4 @@ TeamMate's claims about the user as claims, not approval.
   tool names.
 - Blocking unknowns: none; the mid-turn delivery fact is established (f).
   Open for discussion with the operator: (a) the channel clause, (j) the
-  not-a-user-message marking, and whether the `teamwork` skill carries
-  heterogeneous-model guidance (R8's "充分利用上异构模型的优势") and, if so, on
-  what basis.
+  not-a-user-message marking.
