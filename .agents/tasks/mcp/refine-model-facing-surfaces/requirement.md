@@ -128,6 +128,15 @@
   — a proposal and a question, not yet a ruling; card sent 01:16 (decision (l)).
 
 
+- R12 (2026-09-06 01:17–01:19): the operator added "在绑定mcp移动到feishu channel 之前，模型甚至调用绑定还需要传 provider id ，而他没有任何地方可以查这个id，除非去看配置文件。现在你还需要明确下模型现在在整个闭环链路上还需要感知channel id 的吗？" and answered
+  the fifth card: keep `channels[].id`, only make the provider visible to
+  the model ("保留 id，只让模型看见 provider"); land it inside this PR
+  ("并入本 PR"). How the provider becomes visible is re-asked on a sixth
+  card (decision (m)): rename the server to `channel-<provider>` with the id
+  kept as an internal key (recommended), or keep `channel-<id>` and mark the
+  provider in the TeamLeader prompt's server map and the `<channel>`
+  envelope.
+
 ## Evidence
 
 Everything here is traced from PR #369 head (`5e1a3464`) unless labeled
@@ -359,6 +368,39 @@ TeamMate's claims about the user as claims, not approval.
   Dispatcher persisted state stores `channel_identity` (the bot identity),
   not the id.
 
+### Does the model need the channel id anywhere in the loop? (trace, 2026-09-06)
+
+No. The id reaches the model in exactly one place: the MCP server name
+`channel-<id>`, and therefore every channel tool name
+(`mcp__channel-primary__reply`). Everywhere else, none:
+
+- `<channel>` envelope attributes: `chat_id`, `chat_type`, `thread_id`,
+  `message_id`, `sender_id`, `sender_name`; the ask-card settlement
+  envelope: `chat_id`, `thread_id`, `message_id`. `CHANNEL_REMINDER` names
+  no channel.
+- Channel tool inputs (`feishu-channel/src/tools/`): `reply`, `react`,
+  `ask_user_question`, `list_chat_bots` take `chat_id` / `thread_id` /
+  `message_id`; `bind_channel` and `unbind_channel` take `chat_id` /
+  `thread_id` (the TeamLeader variant does not even take `team_name`; the
+  Team comes from the lease); space tools take `space_name`.
+- Team tools (`team-collection/mcp-delegate.ts`): `create`, `send`, `list`,
+  `dissolve` have no channel field; `create`'s description: "Routing a
+  channel conversation to the Team is the channel's own decision, made with
+  that channel's tools." Cron tools: none.
+- Dispatcher base prompt, `dispatcher-workflow`, `team-workflow`: say
+  "channel", never an id. PR #369's prompt server map is the only text that
+  spells the `channel-<id>` pattern.
+- The operator's bind anecdote is the pre-move state: `bind_channel` now
+  lives on the channel's own server, so the channel is implied by the
+  server.
+
+Consequence: the model only needs to know which provider a channel server
+is. Naming the server `channel-<provider descriptor id>` (unique per
+dispatcher by the config rule) makes every tool name carry it, with
+`channels[].id` kept as an internal key: config, routing state, logs
+unchanged, no rebuild. The server name is not persisted anywhere; runtimes
+receive MCP config at launch.
+
 ## Proposed changes (TeamLeader's reading of the rulings; status per item)
 
 1. TeamLeader prompt → three parts: sentence 1; sentence 2 reduced to the
@@ -439,7 +481,7 @@ TeamMate's claims about the user as claims, not approval.
 
 ## Decisions and unknowns
 
-- Confirmed operator decisions: R1–R10 above (R11 is a proposal awaiting the card).
+- Confirmed operator decisions: R1–R12 above (R11 is the proposal R12 ruled on).
 - Open decisions for the operator:
   - (a) Sentence 2: dropping "Load a tool's definition before calling it" is
     confirmed (R5). Still open: the engine-neutral channel clause, re-asked
@@ -474,10 +516,12 @@ TeamMate's claims about the user as claims, not approval.
     property description stays.
   - (h) Optional: whether the identity prompt should keep arriving inside
     `<system-reminder>` tags on Claude Code (`args.ts`).
-  - (l) R11: drop `channels[].id` and name the channel server by the
-    provider's descriptor id (`channel-feishu`), or keep the id and only
-    make the provider model-visible; and whether that lands as a separate PR
-    before this one (recommended) or inside it. Card sent 2026-09-06 01:16.
+  - (l) Resolved by R12: keep `channels[].id`, make the provider visible to
+    the model, inside this PR.
+  - (m) How the provider becomes visible: server renamed to
+    `channel-<provider>` with the id internal (recommended), or `channel-<id>`
+    kept and the provider marked in the prompt server map and the envelope.
+    Card sent 2026-09-06 01:20.
   - (k) Resolved by R9: core appends the TeamMate-side fact sentence to
     Team-scoped TeamMates (proposed change 8).
 - Assumptions (TeamLeader's, to confirm): the split in R3 is at the skill
@@ -485,5 +529,5 @@ TeamMate's claims about the user as claims, not approval.
   renames apply to bundled skill directory names and frontmatter names, not to
   tool names.
 - Blocking unknowns: none; the mid-turn delivery fact is established (f).
-  Open for discussion with the operator: (a) the channel clause, now tied to
-  (l); (j) the not-a-user-message marking.
+  Open for discussion with the operator: (m) how the provider becomes
+  visible, which also settles (a); (j) the not-a-user-message marking.
