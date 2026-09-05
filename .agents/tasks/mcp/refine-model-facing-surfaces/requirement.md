@@ -117,9 +117,10 @@
   narrowly (Team-scoped TeamMates), not as covering Dispatcher-scoped ones.
 
 - R10 (2026-09-06 01:10, on heterogeneous-model guidance in the `teamwork`
-  skill): "用那个查询工具查一下即可。技能里提示一下" — no runtime-selection
-  guidance; the skill only points at `get_capabilities` for the available
-  runtimes.
+  skill): first "用那个查询工具查一下即可。技能里提示一下", then twenty seconds
+  later "不对，技能里不写". The correction stands: the skill says nothing
+  about runtime selection or the runtime query; `get_capabilities` and the
+  `agent_runtime` field description already carry that.
 
 ## Evidence
 
@@ -379,9 +380,9 @@ TeamMate's claims about the user as claims, not approval.
    TeamMates for options or to the user through the question card; never
    rewrite the requirement on the user's behalf. `identity` holds the role
    and the stop-when-blocked posture; `prompt` holds the task context; the
-   same applies to `send`. Heterogeneous runtimes (R10): the skill only
-   notes that each TeamMate picks its own `agent_runtime` and that
-   `get_capabilities` lists the choices; no selection guidance.
+   same applies to `send`. Heterogeneous runtimes (R10): the skill says
+   nothing about them; the `agent_runtime` field description and
+   `get_capabilities` already carry the choice.
 
 8. Core appends one factual sentence to every Team-scoped TeamMate's system
    prompt (R9), the same shape as the TeamLeader identity line: who it is
