@@ -1,5 +1,6 @@
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ChannelProviderCatalog } from '../../channel/catalog.js';
+import type { ChannelCommandRegistrar } from '../../command/channel-commands.js';
 import type { DreamuxConfig } from '../../config/config.js';
 import type { RestartIntentConsumer } from '../../daemon/restart-intent.js';
 import type { DispatcherStore } from '../../state/dispatcher-store.js';
@@ -10,6 +11,10 @@ import type {
 import { AgentIdentityStore } from '../agent-entity/identity-store.js';
 import { dispatcherDir } from '../../platform/paths.js';
 import { DispatcherService } from '../dispatcher-service/index.js';
+import {
+  channelDescriptors,
+  type ChannelDescriptor,
+} from '../dispatcher-service/channel-descriptor.js';
 import type {
   DispatcherRuntimeStatus,
   DispatcherServiceOptions,
@@ -28,6 +33,11 @@ export interface DispatchersOptions {
   mcpLeases: McpLeaseRegistry;
   /** The process-wide admitted Command port every Channel session invokes through. */
   commands: CoreCommandRegistry;
+  /**
+   * The registration half of that same port. Core-internal: dispatchers
+   * register their Channels' Commands through it, and no provider sees it.
+   */
+  channelCommands: ChannelCommandRegistrar;
   homePathPrefixes: readonly string[];
   adminSocketPath?: string;
   channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
@@ -50,6 +60,7 @@ export class Dispatchers {
   private readonly channelProviders: ChannelProviderCatalog;
   private readonly mcpLeases: McpLeaseRegistry;
   private readonly commands: CoreCommandRegistry;
+  private readonly channelCommands: ChannelCommandRegistrar;
   private readonly homePathPrefixes: readonly string[];
   private readonly adminSocketPath: string | undefined;
   private readonly channelLoggerFactory: (dispatcherId: string) => DreamuxLogger;
@@ -75,6 +86,7 @@ export class Dispatchers {
     this.channelProviders = opts.channelProviders;
     this.mcpLeases = opts.mcpLeases;
     this.commands = opts.commands;
+    this.channelCommands = opts.channelCommands;
     this.homePathPrefixes = opts.homePathPrefixes;
     this.adminSocketPath = opts.adminSocketPath;
     this.channelLoggerFactory = opts.channelLoggerFactory;
@@ -154,6 +166,30 @@ export class Dispatchers {
     };
   }
 
+  /**
+   * The non-sensitive Channel read model of one dispatcher.
+   *
+   * A materialized aggregate answers for itself, because only it knows which
+   * Commands are registered and how far each session has got. For a dispatcher
+   * this process never materialized the answer is its configured Channels with
+   * no Commands and `closed` status — a plain read, never a reason to build an
+   * aggregate, exactly like {@link status} above.
+   */
+  channelDescriptors(id: string): ChannelDescriptor[] {
+    const service = this.services.get(id);
+    if (service !== undefined) return service.channelDescriptors();
+    const configured =
+      this.config.dispatchers.find((dispatcher) => dispatcher.id === id)
+        ?.channels ?? [];
+    return channelDescriptors({
+      configured,
+      registered: () => false,
+      liveStatus: () => 'stopped',
+      admissionFenced: false,
+      commandNames: () => [],
+    });
+  }
+
   async shutdown(): Promise<void> {
     this.beginShutdown();
     const results = await Promise.allSettled(
@@ -177,6 +213,7 @@ export class Dispatchers {
       channelProviders: this.channelProviders,
       mcpLeases: this.mcpLeases,
       commands: this.commands,
+      channelCommands: this.channelCommands,
       homePathPrefixes: this.homePathPrefixes,
       ...(this.adminSocketPath !== undefined
         ? { adminSocketPath: this.adminSocketPath }

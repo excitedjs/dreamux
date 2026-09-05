@@ -71,6 +71,18 @@ Design background:
   changed through that provider's own MCP tools. Dreamux Core has no binding
   table and no Collaboration Space container; a Channel names a Team when it
   submits, and Core takes it from there.
+- **A Channel may serve Commands, not just call them.** A Channel provider can
+  compose optional Command definitions beside its session, each naming one
+  stable local name; Core registers them per dispatcher as
+  `channel.<encoded channel_id>.<local_name>` — the dispatcher-local channel id
+  is percent-encoded so no id can collide with another — and serves them from
+  the same registry as its own Commands, over the same admin socket and
+  in-process ports. Core owns only when they answer, never what they mean: a
+  registered Command whose Channel has not finished starting, or has begun
+  stopping, is refused as retryable rather than reported as unknown. `dreamux
+  dispatcher status --id <ID>` reports each configured Channel's registered
+  Command names, its operator-declared identity, and its lifecycle state — and
+  no Channel configuration value.
 - **TeamMate is server-hosted.** `spawn` starts a named, semi-resident TeamMate
   and returns its concrete name; `send` submits follow-up turns and reopens a
   closed TeamMate. `last` reads the provider's recent Activity Records — bounded

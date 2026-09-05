@@ -122,6 +122,8 @@ export type {
 } from './teammate.js';
 export type {
   ChannelBinCheck,
+  ChannelCommandCapability,
+  ChannelCommandDefinition,
   ChannelConfigCapability,
   ChannelConfigContext,
   ChannelCorePort,

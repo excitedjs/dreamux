@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Dreamux now registers Channel-served Commands. Each dispatcher registers its Channels' catalogs as one atomic batch and serves them from the existing Command registry under channel.<encoded channel_id>.<local_name>, where the host percent-encodes the dispatcher-local channel id, over the same admin socket and in-process adapters as built-in Commands. A Command whose Channel has not finished starting, or has begun stopping, is refused as retryable CHANNEL_COMMAND_UNAVAILABLE rather than as an unknown method. dispatcher status now also reports each configured Channel's registered Command names, declared identity, and lifecycle state, and never any Channel configuration value.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

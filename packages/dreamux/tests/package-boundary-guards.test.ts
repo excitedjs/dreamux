@@ -349,6 +349,8 @@ describe('each package\'s index.ts re-export set is an intentional, pinned surfa
         'AgentRuntimeSystemPrompt',
         'BuiltinProviderRef',
         'ChannelBinCheck',
+        'ChannelCommandCapability',
+        'ChannelCommandDefinition',
         'ChannelCommandError',
         'ChannelCommandRetryableErrorCode',
         'ChannelConfigCapability',

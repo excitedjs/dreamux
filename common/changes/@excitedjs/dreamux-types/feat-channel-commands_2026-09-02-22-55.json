@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Channel providers may now serve their own Commands. A ChannelInstance can compose an optional ChannelCommandCapability beside its session, whose definitions() returns ChannelCommandDefinition values authored like host Commands but naming only a single stable local_name; the host encodes the channel id and derives the registered name channel.<encoded channel_id>.<local_name> from it. Both types are additive and optional, so an existing Channel provider compiles unchanged.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "053700@gmail.com"
+}
