@@ -80,6 +80,18 @@
   - The secrets clause in the Feishu `reply.text` property description:
     "保留".
 
+- R6 (2026-09-06 00:40, answers on the third question card, verbatim per
+  question):
+  - Channel clause of prompt sentence 2: "这个地方还有另外一个问题，我们等会儿单独聊。" —
+    deferred to a separate discussion (open, (a)).
+  - Dispatch-result reminder wording: "你要改这个的理由是什么？" — the reason is
+    given back to the operator and the decision re-asked (open, (d)).
+  - spawn/send description trailing sentence: "改成短契约句" (the recommended
+    option) — becomes "Returns a receipt at once; the completion is pushed
+    later as a new message."
+  - Dispatcher duplicate no-polling bullets: "随 Dispatcher 往后放" — the
+    Dispatcher prompts are not touched in this task.
+
 ## Evidence
 
 Everything here is traced from PR #369 head (`5e1a3464`) unless labeled
@@ -231,8 +243,8 @@ does the work: "The sentence is what stops the loop."
    sits where the intent forms. Skill names, roots, and the
    `bundled-skill-sources` test change knowingly; a Rush change file records
    the rename (bundled skills are an upgrade-visible surface).
-5. Dispatcher prompts: only the duplicated no-polling and reply-tool bullets
-   are deleted in this task (deferred otherwise, R1).
+5. Dispatcher prompts: not touched in this task (R6); their duplicated
+   bullets are noted for the Dispatcher work.
 6. `.agents/domains/model-facing-writing.md` gains the principle: a reminder
    states a consequence, never an order; each rule has one owner, in the layer
    nearest the action; and records the per-engine pre-query visibility facts.
@@ -252,9 +264,10 @@ does the work: "The sentence is what stops the loop."
   - (b) Resolved by R4: `teamwork`.
   - (c) Resolved by R4: the channel owns its reminder; the public-artifact
     secrets sentence is dropped.
-  - (d) Dispatch-result reminder wording; keep the one contract sentence in
-    the spawn/send descriptions; delete the four duplicate Dispatcher prompt
-    bullets now or with the Dispatcher work.
+  - (d) Dispatch-result reminder wording: open; the operator asked for the
+    reason (R6). Resolved by R6: the spawn/send description keeps one short
+    contract sentence; the Dispatcher prompts are left for the Dispatcher
+    work.
   - (e) Resolved by R5: `dispatcher-workflow` waits for the Dispatcher work.
   - (f) Resolved by R4 and done: probe results are under "Evidence" (both
     engines deliver a pushed submission mid-turn at the next tool boundary). The operator also states that on Claude Code
