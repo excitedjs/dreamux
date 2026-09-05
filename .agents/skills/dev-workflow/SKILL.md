@@ -120,7 +120,7 @@ knowledge re-supply, structural pre-review accounts, and reporting cadence.
 
 ## TeamLeader ownership
 
-Load and follow `team-workflow` before using TeamMate or Team tools. The TeamLeader
+Load `team-workflow` when composing a hand-down prompt for a TeamMate. The TeamLeader
 owns task identity, requirement accuracy, factual adjudication, the final solution,
 development authorization, authoritative `.agents/**` and GitHub updates, commits,
 pushes, PR actions, and the final merge outcome. Technical consultation may

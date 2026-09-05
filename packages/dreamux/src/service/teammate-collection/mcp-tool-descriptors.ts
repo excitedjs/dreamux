@@ -22,6 +22,7 @@ import {
   type McpToolDescriptor,
 } from '../mcp/tool-metadata.js';
 import {
+  DEFAULT_WORKFLOW_MAX_CONCURRENCY,
   MAX_WORKFLOW_MAX_CONCURRENCY,
   MIN_WORKFLOW_MAX_CONCURRENCY,
 } from '../workflow-service/limits.js';
@@ -67,18 +68,60 @@ export function teammateToolDescriptors(
       'history',
       'Search this TeamMate set for recovery (closed included). A compact recovery list keyed by concrete name, not a raw event timeline. Returns { items, next_cursor }.',
       {
-        name: { type: 'string', minLength: 1, maxLength: 64 },
+        name: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 64,
+          description: 'Exact concrete name.',
+        },
         status: {
           type: 'string',
           enum: ['starting', 'running', 'degraded', 'closed', 'stopped'],
+          description: 'Filter by lifecycle status.',
         },
-        agent_runtime: { type: 'string', minLength: 1, maxLength: 128 },
-        repo: { type: 'string', minLength: 1, maxLength: 4096 },
-        grep: { type: 'string', minLength: 1, maxLength: 500 },
-        since: { type: 'integer' },
-        until: { type: 'integer' },
-        limit: { type: 'integer', minimum: 1, maximum: 100 },
-        cursor: { type: 'string', minLength: 1, maxLength: 1000 },
+        agent_runtime: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 128,
+          description: 'Exact agent runtime id.',
+        },
+        repo: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 4096,
+          description:
+            'Case-insensitive substring of the source repository path.',
+        },
+        grep: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 500,
+          description:
+            'Case-insensitive substring over name, agent runtime, source ' +
+            'repository, intent, and close note.',
+        },
+        since: {
+          type: 'integer',
+          description:
+            'Epoch milliseconds; lower bound on a record\'s last update.',
+        },
+        until: {
+          type: 'integer',
+          description:
+            'Epoch milliseconds; upper bound on a record\'s last update.',
+        },
+        limit: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 100,
+          description: 'Rows per page; default 20, max 100.',
+        },
+        cursor: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 1000,
+          description: 'next_cursor from the previous page.',
+        },
       },
       [],
       {
@@ -108,8 +151,15 @@ export function teammateToolDescriptors(
     ),
     tool(
       'status',
-      'Read one TeamMate identity and live runtime status by its concrete name.',
-      { name: { type: 'string', minLength: 1, maxLength: 64 } },
+      'Read one TeamMate\'s identity and live runtime status by its concrete name, for an explicit check.',
+      {
+        name: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 64,
+          description: 'The concrete name returned by spawn.',
+        },
+      },
       ['name'],
       {
         title: 'Read TeamMate status',
@@ -121,10 +171,30 @@ export function teammateToolDescriptors(
       'last',
       'Read a TeamMate\'s recent activity without starting or resuming it. Returns assistant messages and tool records oldest first, including an in-progress turn. limit defaults to 20 (range 1..200); use cursor for older pages and set include_tools=false to omit tool records.',
       {
-        name: { type: 'string', minLength: 1, maxLength: 64 },
-        limit: { type: 'integer', minimum: 1, maximum: 200 },
-        cursor: { type: 'string', minLength: 1, maxLength: 4096 },
-        include_tools: { type: 'boolean' },
+        name: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 64,
+          description: 'The concrete name returned by spawn.',
+        },
+        limit: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 200,
+          description: 'Records to return; default 20, max 200.',
+        },
+        cursor: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 4096,
+          description:
+            'next_cursor from the previous page, for older records.',
+        },
+        include_tools: {
+          type: 'boolean',
+          description:
+            'false omits tool records and returns assistant messages only.',
+        },
       },
       ['name'],
       {
@@ -169,23 +239,50 @@ export function teammateToolDescriptors(
     ),
   ];
   const spawnProperties: Record<string, unknown> = {
-    name_prefix: { type: 'string', minLength: 1, maxLength: 64 },
-    prompt: { type: 'string', minLength: 1, maxLength: 20000 },
+    name_prefix: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 64,
+      description: 'Requested label; the concrete name comes back in the result.',
+    },
+    prompt: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 20000,
+      description: 'The TeamMate\'s first turn.',
+    },
     agent_runtime: {
       type: 'string',
-      description:
-        'Spawnable agents[].id returned by get_capabilities.agent_runtimes[].id.',
+      description: 'Agent runtime id from get_capabilities.agent_runtimes[].id.',
     },
-    intent: { type: 'string', minLength: 1, maxLength: 2000 },
-    identity: { type: 'string', minLength: 1, maxLength: 4000 },
+    intent: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 2000,
+      description:
+        'One-line subject of the work; shown in list and history and kept ' +
+        'for recovery.',
+    },
+    identity: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 4000,
+      description:
+        'Standing role and boundaries appended to the TeamMate\'s system ' +
+        'prompt for every turn.',
+    },
   };
   if (callerKind === 'dispatcher') {
-    spawnProperties['repo'] = repoInputSchema();
+    spawnProperties['repo'] = {
+      ...repoInputSchema(),
+      description:
+        'Where the TeamMate works; omit for a fresh per-TeamMate directory.',
+    };
   }
   const spawnDescription =
     callerKind === 'dispatcher'
-      ? 'Start a resumable TeamMate agent managed by this dispatcher and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. repo is optional: omit it to let Dreamux allocate a fresh per-TeamMate work directory, or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } to choose an existing path or create a managed git worktree.'
-      : 'Start a resumable TeamMate agent in this Team\'s shared workspace and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. Coordinate edits so only one TeamMate writes the shared workspace unless the work is read-only or edits are independent. This tool does not accept a repo parameter.';
+      ? 'Start a resumable TeamMate agent managed by this dispatcher and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. repo is optional: omit it to let Dreamux allocate a fresh per-TeamMate work directory, or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } to choose an existing path or create a managed git worktree. Dreamux pushes the turn\'s completion back into your context whether it finished, failed, or was stopped.'
+      : 'Start a resumable TeamMate agent in this Team\'s shared workspace and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. Coordinate edits so only one TeamMate writes the shared workspace unless the work is read-only, the edits are independent, or the user asked for parallel edits. This tool does not accept a repo parameter. Dreamux pushes the turn\'s completion back into your context whether it finished, failed, or was stopped.';
   const teammateReceiptSchema = closedObjectSchema(
     {
       teammate: OPEN_OBJECT,
@@ -199,8 +296,17 @@ export function teammateToolDescriptors(
       'workflow_run',
       'Load the bundled `workflow` skill before use. Start a deterministic multi-agent workflow from an inline module script (`script`) or a local file path (`scriptPath`) and return { run_id } immediately; Dreamux pushes one terminal completion when the run finishes.',
       {
-        script: { type: 'string', minLength: 1 },
-        scriptPath: { type: 'string', minLength: 1 },
+        script: {
+          type: 'string',
+          minLength: 1,
+          description: 'Inline workflow module source.',
+        },
+        scriptPath: {
+          type: 'string',
+          minLength: 1,
+          description:
+            'Path to a workflow module file readable by the Dreamux server.',
+        },
         args: {
           type: ['object', 'array', 'string', 'number', 'boolean', 'null'],
           description:
@@ -211,6 +317,10 @@ export function teammateToolDescriptors(
           type: 'integer',
           minimum: MIN_WORKFLOW_MAX_CONCURRENCY,
           maximum: MAX_WORKFLOW_MAX_CONCURRENCY,
+          description:
+            'Agents allowed to run at once; default ' +
+            `${DEFAULT_WORKFLOW_MAX_CONCURRENCY}, range ` +
+            `${MIN_WORKFLOW_MAX_CONCURRENCY}..${MAX_WORKFLOW_MAX_CONCURRENCY}.`,
         },
       },
       [],
@@ -226,7 +336,12 @@ export function teammateToolDescriptors(
     tool(
       'workflow_status',
       'Load the bundled `workflow` skill before use. Read phase, agent progress, concrete TeamMate names, and terminal result for one workflow run.',
-      { run_id: workflowRunIdSchema() },
+      {
+        run_id: {
+          ...workflowRunIdSchema(),
+          description: 'The run_id returned by workflow_run.',
+        },
+      },
       ['run_id'],
       {
         title: 'Read workflow status',
@@ -237,7 +352,12 @@ export function teammateToolDescriptors(
     tool(
       'workflow_stop',
       'Load the bundled `workflow` skill before use. Stop one running workflow and return its resulting status.',
-      { run_id: workflowRunIdSchema() },
+      {
+        run_id: {
+          ...workflowRunIdSchema(),
+          description: 'The run_id returned by workflow_run.',
+        },
+      },
       ['run_id'],
       {
         title: 'Stop a workflow',
@@ -276,11 +396,26 @@ export function teammateToolDescriptors(
     ),
     tool(
       'send',
-      'Send a turn to a TeamMate agent; reopens a closed one from the runtime-native session recorded on it (interpreted by its agent_runtime) first. Pass intent to update the recorded recovery subject before the turn.',
+      'Send a turn to a TeamMate agent; reopens a closed one from the runtime-native session recorded on it (interpreted by its agent_runtime) first. Pass intent to update the recorded recovery subject before the turn. Dreamux pushes the turn\'s completion back into your context whether it finished, failed, or was stopped.',
       {
-        name: { type: 'string', minLength: 1, maxLength: 64 },
-        prompt: { type: 'string', minLength: 1, maxLength: 20000 },
-        intent: { type: 'string', minLength: 1, maxLength: 2000 },
+        name: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 64,
+          description: 'The concrete name returned by spawn.',
+        },
+        prompt: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 20000,
+          description: 'The next turn.',
+        },
+        intent: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 2000,
+          description: 'Replaces the recorded subject before the turn.',
+        },
       },
       ['name', 'prompt'],
       {
@@ -293,8 +428,18 @@ export function teammateToolDescriptors(
       'close',
       'Close a named TeamMate agent and retain its history; send reopens it later. note is required: it records why a recoverable session was stopped.',
       {
-        name: { type: 'string', minLength: 1, maxLength: 64 },
-        note: { type: 'string', minLength: 1, maxLength: 2000 },
+        name: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 64,
+          description: 'The concrete name returned by spawn.',
+        },
+        note: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 2000,
+          description: 'Why the TeamMate is closed; recorded on it.',
+        },
       },
       ['name', 'note'],
       {

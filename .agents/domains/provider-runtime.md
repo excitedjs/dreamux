@@ -213,10 +213,9 @@ Source:
 
 ### Bundled Skills And Injection
 
-Dreamux ships bundled skills under `/packages/dreamux/skills/`. Which skill
-covers what — and the tool surfaces those skills describe — is owned by
-[bundled Dreamux skills](dispatcher-skill.md); this page owns the role gate and
-how a root reaches an engine.
+Dreamux ships bundled skills under `/packages/dreamux/skills/`. What each skill
+is for is owned by [bundled Dreamux skills](dispatcher-skill.md); this page owns
+the role gate and how a root reaches an engine.
 
 Current role gate, by root rather than by skill:
 

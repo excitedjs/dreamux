@@ -11,7 +11,9 @@ Current source owners:
 - `/packages/dreamux/skills/`
 - `/packages/dreamux/src/service/dispatcher-service/base-prompt.ts`
 - `/packages/dreamux/src/service/team-service/index.ts`
+- `/packages/dreamux/src/service/mcp/tool-metadata.ts` (the shared `repo` input and its property descriptions)
 - `/packages/dreamux/src/service/teammate-collection/mcp-delegate.ts`
+- `/packages/dreamux/src/service/teammate-collection/mcp-tool-descriptors.ts`
 - `/packages/dreamux/src/service/team-collection/mcp-delegate.ts`
 - `/packages/dreamux/src/service/scheduler/mcp-delegate.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
@@ -111,7 +113,8 @@ guidance unless the Dispatcher role itself needs it.
 Dispatcher prompt content should still be compact and role-specific:
 
 - identify the Dreamux Dispatcher role;
-- load `dispatcher-workflow` before TeamMate, Team, channel, or cron MCP work;
+- map the role's MCP servers (`teammate`, `team`, `cron`, `channel-<id>`) and
+  say to load a tool's definition before calling it;
 - load `dreamux-maintenance` before Dreamux host/server diagnosis;
 - state that repository implementation, debugging, and review work should be
   delegated to TeamMate/Team MCP by default;
@@ -137,7 +140,8 @@ MCP descriptions are model-facing. Keep them short and operational:
 - what the tool does;
 - which identifier the caller must use;
 - what result or side effect is authoritative;
-- important non-obvious cautions, such as shared-workspace write coordination.
+- important non-obvious cautions, such as shared-workspace write coordination;
+- every input property carries a one-sentence description.
 
 Avoid internal architecture adjectives and implementation layouts in tool
 descriptions: "core-owned", "hidden tool", `.workspace/work/<name>`, and

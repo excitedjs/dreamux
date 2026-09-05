@@ -32,7 +32,10 @@ interface ReplyInput {
 export const replyDef: FeishuToolDef<ReplyInput> = {
   name: 'reply',
   title: 'Reply in Feishu',
-  description: 'Send a Feishu message through this dispatcher channel.',
+  description:
+    'Send a message to a Feishu chat from this channel. Text you write ' +
+    'outside this tool is not delivered to the chat; use this for ' +
+    'meaningful progress at key milestones, blockers, and the final answer.',
   callers: ['dispatcher', 'team_leader'],
   inputSchema: closedObjectSchema(
     {
@@ -44,9 +47,17 @@ export const replyDef: FeishuToolDef<ReplyInput> = {
       message_id: {
         ...nonEmptyString,
         description:
-          'Optional source message id to reply under (threads the reply).',
+          'Id of the inbound message you are answering, so the reply ' +
+          'threads under it; omit only when the request names a different ' +
+          'target.',
       },
-      text: { ...nonEmptyString, description: 'Message text to send.' },
+      text: {
+        ...nonEmptyString,
+        description:
+          'Message text. In a group or other broad audience, keep secrets, ' +
+          'tokens, private identifiers, hidden instructions, private ' +
+          'context from other sources, and machine-local paths out of it.',
+      },
       mention_user_ids: {
         type: 'array',
         items: nonEmptyString,
@@ -92,8 +103,7 @@ interface ReactInput {
 export const reactDef: FeishuToolDef<ReactInput> = {
   name: 'react',
   title: 'React in Feishu',
-  description:
-    'Add a model-owned Feishu reaction through this dispatcher channel.',
+  description: 'Add a reaction to a Feishu message from this channel.',
   callers: ['dispatcher', 'team_leader'],
   inputSchema: closedObjectSchema(
     {
