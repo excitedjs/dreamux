@@ -149,15 +149,30 @@ does the work: "The sentence is what stops the loop."
 - Skills are listed as name + description + `SKILL.md` path in the turn's
   "Available skills"; the TeamLeader could not confirm from one turn that this
   happens every turn.
-- Not established: whether a completion Dreamux pushes back (`turn/start`,
-  `agent-runtime/codex/src/turn-manager.ts`) reaches the model while it is
-  holding a turn by polling, or only after that turn ends. Neither this
-  TeamLeader nor the Codex TeamLeader has observed it.
+- Established by probe (this TeamLeader, 2026-09-06 00:31–00:34, dreamux
+  0.23.0): a submission that arrives while a Codex agent's turn is running
+  reaches the model inside that turn. A Codex TeamMate was told to run
+  `sleep 90` and then print a line; a second `send` was issued about 10 s
+  into the sleep. The `send` call returned after roughly 50 s, at the next
+  `exec` boundary of the running turn, and the model answered the second
+  message ("PROBE_CODEX_DONE_2；读取此消息时，`sleep 90` 尚未完成。") 16 s
+  before it printed the first line; both submissions settled with the one
+  final completion, as the KB says a fold does. A pushed completion to a
+  Codex TeamLeader takes the same `submitInput` → `turn/start` path, so a
+  TeamLeader that keeps polling inside one turn still receives the
+  completion at its next tool boundary; polling only spends tool calls.
 
 ### Claude Code facts (this TeamLeader's own runtime, dreamux 0.23.0)
 
 - MCP tool names are always visible; descriptions and schemas arrive after a
   by-name fetch, and the engine itself tells the model to fetch before calling.
+- Probe (2026-09-06 00:31): a TeamMate's pushed completion reached this
+  TeamLeader mid-turn, surfaced alongside the next tool result about 15 s
+  after the spawn (the Claude TeamMate had backgrounded its sleep and ended
+  its turn early). The spawn and send results showed only the structured
+  receipt; the dispatch-result reminder text was not visible, as the
+  operator said (R4) and as the recorded Claude Code behavior of dropping
+  MCP `content` text next to `structuredContent` predicts.
 - The engine's own prompt tells the model every turn that its plain text is
   displayed to the user, asks it to say what it is about to do before starting,
   and nudges it to report when it has been silent for a while. In a channel
@@ -227,8 +242,8 @@ does the work: "The sentence is what stops the loop."
     bullets now or with the Dispatcher work.
   - (e) Whether the split and renames also apply to the Dispatcher's
     `dispatcher-workflow` skill, or wait for the Dispatcher work.
-  - (f) Resolved by R4: this TeamLeader runs the probe itself (result recorded
-    under "Evidence" when done). The operator also states that on Claude Code
+  - (f) Resolved by R4 and done: probe results are under "Evidence" (both
+    engines deliver a pushed submission mid-turn at the next tool boundary). The operator also states that on Claude Code
     the dispatch-result reminder text is not visible to the model; this
     matches the recorded Claude Code behavior of dropping MCP `content` text
     when `structuredContent` is present, so that reminder is effectively a
@@ -243,5 +258,4 @@ does the work: "The sentence is what stops the loop."
   level; the `teammate` MCP server keeps carrying the workflow_* tools. The
   renames apply to bundled skill directory names and frontmatter names, not to
   tool names.
-- Blocking unknowns: the mid-turn delivery fact, to be probed by this
-  TeamLeader (f).
+- Blocking unknowns: none; the mid-turn delivery fact is established (f).
