@@ -269,7 +269,9 @@ a recommendation each, and the operator ruled on 2–7 in one message
 After the merge of #380 (2026-09-06 15:38) the operator read the R29 sentence
 and ruled on it (15:40, follow-up PR):
 
-- R34 (the TeamLeader's workspace sentence): "应该是这个样子，就是这个地方只写。WorkTree和清理模式。只有他自己需要解散的时候，才把解散相关内容写到解散工具的 Description 里。\n不然他刚开始干活时，前面的提示词里就有一个"解散"，然后怎么怎么样。他可能在很长一段时间都不需要感知到解散。"
+- R34 (the TeamLeader's workspace sentence): "应该是这个样子，就是这个地方只写。WorkTree和清理模式。只有他自己需要解散的时候，才把解散相关内容写到解散工具的 Description 里。 不然他刚开始干活时，前面的提示词里就有一个“解散”，然后怎么怎么样。他可能在很长一段时间都不需要感知到解散。"
+  (two lines in the original message, joined at the line break; the inner
+  quotation marks are the operator's own curly ones)
   TeamLeader's reading, labeled: the prompt sentence names only the workspace
   kind and its cleanup mode; every sentence about what happens at dissolve
   lives in the `dissolve` description, which the leader reads only when it is
