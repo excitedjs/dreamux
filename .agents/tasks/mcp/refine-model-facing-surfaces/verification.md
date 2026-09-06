@@ -158,6 +158,9 @@ channel id). No higher-cost simplification, efficiency, or layering finding.
 
 ## Live probes (final.md §8, before the PR is ready)
 
+R27 waived the Claude Code half of this gate after the probe below had
+already run; the PR does not wait for it.
+
 - Codex: `codex-live.test.ts` runs a real codex against the Dreamux MCP shim
   with a fake Feishu backend; it observes `channel-feishu` in
   `mcpServerStatus/list` with its `reply` tool and drives one reply through

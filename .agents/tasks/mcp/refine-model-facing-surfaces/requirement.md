@@ -223,6 +223,14 @@
   TeamLeader's reading, labeled: the review workflow's agents run on the
   `codex` and `seed` agent runtimes.
 
+- R27 (2026-09-06 13:00, reply to the progress message whose last sentence
+  said a card would follow on whether the pre-PR Claude Code live probe of
+  final.md §8 should be run against a daemon started from this build):
+  "不用做了。" TeamLeader's reading, labeled: that probe, and the card asking
+  about it, are waived; the PR does not wait for them. The probe had already
+  been run through a fake-backend harness before this ruling arrived; its
+  result stays in verification.md as evidence, not as a gate.
+
 ## Evidence
 
 Everything here is traced from PR #369 head (`5e1a3464`) unless labeled
@@ -634,7 +642,7 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
 
 ## Decisions and unknowns
 
-- Confirmed operator decisions: R1–R26 above (R11 is the proposal R12 and R13 ruled on). No open decisions; the technical design proceeds on the simple path (R17) with two reviewers (R18); R21 is the adjudication principle for reviewer findings.
+- Confirmed operator decisions: R1–R27 above (R11 is the proposal R12 and R13 ruled on). No open decisions; the technical design proceeds on the simple path (R17) with two reviewers (R18); R21 is the adjudication principle for reviewer findings.
 - Open decisions for the operator:
   - (a) Sentence 2: dropping "Load a tool's definition before calling it" is
     confirmed (R5). Still open: the engine-neutral channel clause, re-asked

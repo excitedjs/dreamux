@@ -24,7 +24,7 @@
 
 - Pull request / CI / merge: Pending — the PR on `next` is opened from the closeout commit; #369 stays unmerged and is closed by the operator.
 - Knowledge closeout (2026-09-06):
-  - Task record (this directory): requirement.md carries R1–R26 verbatim; technical-design/final.md corrected for the fifth `resolve` caller, the new `system-prompt.ts` module, the renamed product page, and the test table; verification.md written.
+  - Task record (this directory): requirement.md carries R1–R27 verbatim; technical-design/final.md corrected for the fifth `resolve` caller, the new `system-prompt.ts` module, the renamed product page, and the test table; verification.md written.
   - Sibling task record: [relocate-role-skill-guidance](/.agents/tasks/mcp/relocate-role-skill-guidance/README.md) gained the delivery line that #369 ships through this task's PR (final.md §3.13).
   - Product: [dynamic-workflow-usage.md](/.agents/product/dynamic-workflow-usage.md) follows the shared skill's new path. [`.agents/product/README.md`](/.agents/product/README.md): N/A — no catalog entry describes role prompts, dispatch reminders, bundled skill names, or the channel server name; the user-visible behavior of every tool is unchanged.
   - Domains: [channel.md](/.agents/domains/channel.md) (provider-named server, `source` attribute, channel-owned reminder), [dispatcher-skill.md](/.agents/domains/dispatcher-skill.md) (skill names and load triggers), [model-facing-writing.md](/.agents/domains/model-facing-writing.md) (the surface rules of final.md §3.10 and the pre-query visibility facts from review finding 6), [provider-runtime.md](/.agents/domains/provider-runtime.md) (adapter identity and manifest v2).
