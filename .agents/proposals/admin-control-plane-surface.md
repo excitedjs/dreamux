@@ -283,7 +283,7 @@ parameter.
 Only custom roots are persisted on the agent identity. At runtime the owning
 service recomposes required built-in role roots with the stored additions; a
 TeamLeader therefore always keeps the bundled Dreamux Team workflow root.
-Custom roots cannot shadow the bundled `team-workflow` skill name, and they do
+Custom roots cannot shadow the bundled `teamwork` skill name, and they do
 not reintroduce workspace skill installation or symlink behavior. Admin DTOs
 and public model-facing views do not project the stored paths.
 

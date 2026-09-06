@@ -14,6 +14,16 @@
  * ref-only `ProviderFactoryContext`. `builtin:feishu` resolves to
  * `@excitedjs/feishu-channel` through the same loading path once the alias is
  * resolved; a missing built-in channel package fails loud with the named ref.
+ *
+ * Unsettled for external providers: a channel provider's registration id is now
+ * a segment of the model-facing MCP server name — `channel-<id>` on Claude
+ * Code, `channel_<id>` on Codex. Builtin ids satisfy
+ * `BUILTIN_PROVIDER_ID_PATTERN` (`/^[a-z][a-z0-9-]*$/`) and are total for that
+ * use, but the shared loader seeds an `npm:` provider's id from the raw ref
+ * (`npm:pkg#export`), which no engine has been shown to accept as a name
+ * segment. No external channel provider exists yet and the id is a registry
+ * key, so there is deliberately no sanitizer and no id change here: the first
+ * external channel provider is what settles the id shape.
  */
 import { type ProviderRegistry } from '../registry/index.js';
 import {

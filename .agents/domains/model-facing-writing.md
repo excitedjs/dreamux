@@ -11,11 +11,45 @@ Current source owners:
 - `/packages/dreamux/skills/`
 - `/packages/dreamux/src/service/dispatcher-service/base-prompt.ts`
 - `/packages/dreamux/src/service/team-service/index.ts`
+- `/packages/dreamux/src/service/mcp/tool-metadata.ts` (the shared `repo` input and its property descriptions)
 - `/packages/dreamux/src/service/teammate-collection/mcp-delegate.ts`
+- `/packages/dreamux/src/service/teammate-collection/mcp-tool-descriptors.ts`
+- `/packages/dreamux/src/service/teammate-collection/system-prompt.ts` (what a TeamMate is told about itself)
 - `/packages/dreamux/src/service/team-collection/mcp-delegate.ts`
 - `/packages/dreamux/src/service/scheduler/mcp-delegate.ts`
 - `/packages/dreamux/src/service/channel-service/index.ts`
 - `/packages/channel/feishu-channel/src/tools/`
+
+## Design Principles
+
+- An identity statement says who the model is and what it has; it carries no
+  rule.
+- A reminder states a consequence the model cannot see, at the moment of the
+  action, and does not generally order the model what to do. The
+  dispatch-result reminders (`spawn`/`send`/`team.create`/`team.send`/
+  `workflow_run`, owned by `dispatch-reminders.ts`) are recorded as the
+  operator's specific wording choice at that boundary — borrowed from how
+  Claude Code phrases its own subagent-dispatch result — and do carry short
+  imperatives ("do not report or predict it", "Do not edit the files it is
+  working on"). That is a deliberate, narrow exception at one boundary, not a
+  license to add imperatives to reminders generally.
+- Each rule has one owner, in the layer nearest the action: the channel owns
+  "the user sees only the reply tool", the dispatch delegate owns "the result
+  arrives later", the skill owns methodology, and the tool description owns
+  the contract of that tool.
+- A skill is loaded when the model is about to use the MCP the skill is about,
+  never as a standing condition of a turn. The trigger is the skill's
+  frontmatter description plus a pointer sentence in the tool description that
+  is about to be used.
+- Per-engine visibility facts the writer must know: Claude Code drops MCP
+  `content` text on a tool result once `structuredContent` is also present, so
+  a reminder attached only as `content` text is invisible there; Codex renders
+  a `channel-<provider>` MCP server's tools as `channel_<provider>__…`
+  (underscore-joined), never the hyphenated server name. Before a tool
+  definition is fetched the engines also differ: Codex lists no Dreamux MCP
+  tool at all until the model searches its `ALL_TOOLS` catalog, while Claude
+  Code shows the MCP tool names up front — which is why a role prompt carries
+  a server map and nothing more about the tools.
 
 ## Reader First
 
@@ -32,8 +66,9 @@ Before adding a rule, verify the real tool projection in source:
   Channel tool, and the TeamLeader's copy of it carries no team field at all.
 - Ordinary TeamMates and team members receive no bundled Dreamux skill by
   default.
-- Dispatchers and TeamLeaders both receive the shared `workflow` skill; its
-  four tools remain caller-scoped by the existing TeamMate MCP projection.
+- Dispatchers and TeamLeaders both receive the shared `dynamic-workflow`
+  skill; its four tools remain caller-scoped by the existing TeamMate MCP
+  projection.
 - Channel reply tools exist only when the active Channel provider exposes them.
 
 Do not invent a communication path. If there is no tool or runtime delivery
@@ -111,16 +146,26 @@ guidance unless the Dispatcher role itself needs it.
 Dispatcher prompt content should still be compact and role-specific:
 
 - identify the Dreamux Dispatcher role;
-- load `dispatcher-workflow` before TeamMate, Team, channel, or cron MCP work;
-- load `dreamux-maintenance` before Dreamux host/server diagnosis;
-- state that repository implementation, debugging, and review work should be
-  delegated to TeamMate/Team MCP by default;
-- forbid reading or editing repository code files under the dispatcher working
-  directory unless the user explicitly asks the Dispatcher to do that local
-  inspection or edit;
-- treat MCP tool results as authority for Dreamux state;
-- use provider-exposed reply tools for visible channel delivery when available;
-- keep provider `meta` opaque and protect secrets/private identifiers.
+- map the role's MCP servers: `teammate`, `team`, `cron`, and one
+  `channel-<provider>` server per configured channel that provides tools, for
+  example `channel-feishu`;
+- load `dreamux-maintenance` before Dreamux server operation, host diagnosis,
+  daemon/service/config/log work, or missing-reply investigations;
+- state that the dispatcher working directory is coordination space, not a
+  target repository: repository implementation, refactoring, debugging, and
+  review work is done by TeamMates or Teams unless the user explicitly asks
+  this Dispatcher to inspect or edit local files;
+- state the host boundary as a consequence, not a standing authorization rule:
+  credentials, access policy, persistent config, service units, shell startup
+  files, PATH, and runtime auth are host-owned, and an ambiguous channel
+  request leaves changing them unauthorized until the owner confirms.
+
+Identity carries no rule (Design Principles above), so the prompt stops there:
+no reply-tool instruction, no secrets clause, no tool-definition-loading
+sentence, and no MCP-authority bullet — each is either an engine-native
+mechanism the model does not need reminding of, or a consequence some other
+layer (the channel's own reminder, a tool description) already states once, at
+the action.
 
 Append prompts layer onto an already-capable runtime prompt, so they should be
 short role deltas rather than a full reintroduction.
@@ -137,7 +182,8 @@ MCP descriptions are model-facing. Keep them short and operational:
 - what the tool does;
 - which identifier the caller must use;
 - what result or side effect is authoritative;
-- important non-obvious cautions, such as shared-workspace write coordination.
+- important non-obvious cautions, such as shared-workspace write coordination;
+- every input property carries a one-sentence description.
 
 Avoid internal architecture adjectives and implementation layouts in tool
 descriptions: "core-owned", "hidden tool", `.workspace/work/<name>`, and
@@ -182,15 +228,24 @@ decides its shape, with no code list, no allowlist, and no policy table
 Do not introduce correlation/failure ids, uniform sanitize templates,
 per-operation visibility allowlists, or Core-invented recovery advice.
 
-The general no-polling and completion-delivery rule belongs in Dispatcher and
-TeamLeader role prompts. A bound Dreamux tool definition may select one
-operation-local success text without changing its canonical structured result:
-submitted Team and TeamMate create/send receipts carry their matching reminder,
-and a `workflow_run` receipt with a non-empty `run_id` carries the workflow
-reminder. Idle, failed, read, unrelated, and ordinary mutation results carry no
-text. `/packages/dreamux/src/service/mcp/dispatch-reminders.ts` is the sole owner
-of those texts and selectors; the selector is not public tool metadata, Command
-data, or a Channel provider contract.
+The no-polling and completion-delivery rule has no home in Dispatcher or
+TeamLeader role prompts; those carry only identity and the MCP server map (see
+Prompt Shape above). It has two owners instead, each stating the same fact at
+a different layer:
+`/packages/dreamux/src/service/mcp/dispatch-reminders.ts`, which selects one
+operation-local reminder text without changing the tool's canonical structured
+result — submitted TeamMate `spawn`/`send`, Team `send`, and a Team `create`
+called with a `prompt` (result status `created`) carry their matching
+reminder; a `create` called without a `prompt` attaches nothing; a
+`workflow_run` receipt with a non-empty `run_id` carries the workflow
+reminder; idle, failed, read, unrelated, and ordinary mutation results carry no
+text — and the trailing sentence of the hand-off tool descriptions (`spawn`,
+`send`, `team.create`, `team.send`, `workflow_run`), which states the same
+fact as a short contract sentence so the model reads it even where the
+reminder itself is not visible (Claude Code drops the reminder's `content`
+text once `structuredContent` is present). The selector in
+`dispatch-reminders.ts` is not public tool metadata, Command data, or a
+Channel provider contract.
 
 ## Tests
 

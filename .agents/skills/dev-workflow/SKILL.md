@@ -76,7 +76,7 @@ prototype or add temporary diagnostic code. An initial request such as "fix X" o
 
 6. **Run independent implementation review.** For the approved minimal-change fast path,
    start one separate read-only TeamMate for one review turn and skip the workflow.
-   For every other path, run the shared `workflow` skill's code-review method as one
+   For every other path, run the shared `dynamic-workflow` skill's code-review method as one
    `workflow_run`, tuned by exactly two Dreamux deltas: the approved requirement and
    technical solution travel with the review scope, and one added finder checks the
    implementation against them. Have the TeamLeader adjudicate either result. Follow
@@ -120,7 +120,7 @@ knowledge re-supply, structural pre-review accounts, and reporting cadence.
 
 ## TeamLeader ownership
 
-Load and follow `team-workflow` before using TeamMate or Team tools. The TeamLeader
+Load `teamwork` when composing a hand-down prompt for a TeamMate. The TeamLeader
 owns task identity, requirement accuracy, factual adjudication, the final solution,
 development authorization, authoritative `.agents/**` and GitHub updates, commits,
 pushes, PR actions, and the final merge outcome. Technical consultation may

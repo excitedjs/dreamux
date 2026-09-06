@@ -19,6 +19,7 @@ import type { AdmissionLedger } from '../teammate-service/admission-ledger.js';
 import type { ConversationProjection } from '../../channel/conversation-projection.js';
 import type {
   AgentEntityIdentity,
+  AgentEntityWorktreeIdentity,
 } from '../agent-entity/types.js';
 import {
   createTeammateService,
@@ -90,6 +91,14 @@ export interface TeamLeaderForTeamDeps extends Omit<
 > {
   teamId: string;
   /**
+   * The Team's checkout as its record holds it. The leader's own identity is
+   * always a reuse of the Team directory, so the Team record is the only
+   * place that knows whether that directory is a managed worktree removed on
+   * dissolve; the leader is told so in its prompt because its `dissolve` tool
+   * asks it to act on that fact.
+   */
+  workspace: AgentEntityWorktreeIdentity;
+  /**
    * This leader's own Agent-facing MCP servers, built by the dispatcher that
    * owns every object they reach. The Team supplies its identity; it does not
    * assemble a tool surface.
@@ -126,12 +135,14 @@ export interface TeamLeaderCreationInput {
 export function teamLeaderAgentBase(input: {
   deps: TeamServiceDeps;
   teamId: string;
+  workspace: AgentEntityWorktreeIdentity;
   identities: AgentIdentityStore;
 }): Omit<TeamLeaderForTeamDeps, 'identity'> {
   const { deps } = input;
   return {
     dispatcherId: deps.dispatcherId,
     teamId: input.teamId,
+    workspace: input.workspace,
     leaderMcp: deps.leaderMcp,
     config: deps.config,
     agentRuntimeProviders: deps.agentRuntimeProviders,
@@ -190,7 +201,7 @@ export async function createTeamLeaderAgentForTeam(
 export function restoreTeamLeaderAgentForTeam(
   deps: TeamLeaderForTeamDeps,
 ): TeammateService {
-  const { teamId, leaderMcp, ...agentDeps } = deps;
+  const { teamId, workspace, leaderMcp, ...agentDeps } = deps;
   const leaderName = deps.identity.name;
   return createTeamLeaderAgent({
     ...agentDeps,
@@ -205,21 +216,41 @@ export function restoreTeamLeaderAgentForTeam(
       source: 'dreamux-core',
     }, ...deps.identity.skill_sources],
     disabledFeatures: [DISABLE_FEATURE_CRON],
-    systemPrompt: teamLeaderSystemPrompt(teamId, deps.identity.identity_prompt),
+    systemPrompt: teamLeaderSystemPrompt(
+      teamId,
+      workspace,
+      deps.identity.identity_prompt,
+    ),
   });
 }
 
 function teamLeaderSystemPrompt(
   teamId: string,
+  workspace: AgentEntityWorktreeIdentity,
   identityPrompt: string | null,
 ): AgentRuntimeSystemPrompt {
   const append = [
     `You are the TeamLeader of Dreamux Team ${JSON.stringify(teamId)}.`,
-    'Load `team-workflow` before using this Team\'s TeamMate tools, Team tools (`dissolve`), provider-exposed channel tools, or cron tools.',
-    'When a prompt-submitting TeamMate tool returns success, the task was submitted successfully; Dreamux core will push the completion back automatically, so do not poll `last` or other read tools, and end the turn naturally if there is no other work.',
+    'Your Dreamux MCP servers: `teammate` (this Team\'s members, who share the Team workspace, and scripted workflows), `team` (dissolve this Team), `cron` (scheduled prompts that wake this TeamLeader), and one `channel-<provider>` server per configured channel that provides tools, for example `channel-feishu` (that channel\'s own tools).',
+    teamWorkspaceSentence(workspace),
   ];
   if (identityPrompt !== null) append.push(identityPrompt);
   return { append };
+}
+
+/**
+ * The one workspace fact the leader cannot see from inside the directory:
+ * whether Dreamux removes it on dissolve. The `dissolve` description tells the
+ * leader what to check before dissolving a workspace that is removed; a kept
+ * one never blocks the dissolve.
+ */
+function teamWorkspaceSentence(workspace: AgentEntityWorktreeIdentity): string {
+  if (workspace.mode === 'managed' && workspace.cleanup === 'delete-on-close') {
+    return `Your Team's workspace ${workspace.path} is a managed git worktree that Dreamux removes when the Team dissolves; uncommitted, untracked, or unmerged work there blocks the dissolve.`;
+  }
+  return workspace.mode === 'managed'
+    ? `Your Team's workspace ${workspace.path} is a managed git worktree that is kept after the Team dissolves.`
+    : `Your Team's workspace ${workspace.path} is a reused directory that is kept after the Team dissolves.`;
 }
 
 /**

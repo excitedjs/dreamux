@@ -6,7 +6,6 @@ import { join } from 'node:path';
 import type { DispatcherClaudeCodeConfig } from './config.js';
 import { claudeCodeResidentArgs } from './args.js';
 import { stringifyClaudeCodeMcpConfig } from './mcp-config.js';
-import { skillAdapterKey } from './skill-adapter.js';
 import { materializeClaudeSkillAddDir } from './skill-materializer.js';
 import {
   type ClaudeCodeSession,
@@ -50,7 +49,13 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private readonly bin: string;
   private readonly cwd: string;
   private readonly mcpConfigJson: string;
-  private readonly skillAddDirRoot: string;
+  /**
+   * The materialized Claude view of this runtime's skill sources, or null when
+   * it has none. The adapter root is keyed by what the sources hold on disk, so
+   * it is only known once `startRuntime` has read them; every spawn happens
+   * after that.
+   */
+  private skillAddDirRoot: string | null = null;
   private readonly stderrLogPath: string;
   private readonly logger: DreamuxLogger;
   private status: AgentRuntimeStatus = 'declared';
@@ -86,12 +91,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     this.config = deps.config;
     this.bin = deps.resolveBinPath(this.config.bin);
     this.cwd = deps.cwd;
-    this.skillAddDirRoot = join(
-      deps.paths.cacheDir(),
-      'claude-code',
-      'skills',
-      skillAdapterKey(deps.skillSources ?? []),
-    );
     this.mcpConfigJson = stringifyClaudeCodeMcpConfig(deps.mcpServers);
     // Compose the resident stream-json child's stderr log under the neutral
     // central logs root (B2): core no longer names a per-runtime log file. The
@@ -133,8 +132,8 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     this.assertGeneration(generation);
     await this.publishStatus('starting');
     try {
-      await materializeClaudeSkillAddDir(
-        this.skillAddDirRoot,
+      this.skillAddDirRoot = await materializeClaudeSkillAddDir(
+        this.deps.paths.cacheDir(),
         this.deps.skillSources ?? [],
       );
       this.assertGeneration(generation);
@@ -464,9 +463,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
         : { freshSessionId: candidateSessionId }),
       systemPromptAppend: this.deps.systemPromptAppend,
       skillAddDirs:
-        (this.deps.skillSources ?? []).length === 0
-          ? []
-          : [this.skillAddDirRoot],
+        this.skillAddDirRoot === null ? [] : [this.skillAddDirRoot],
       disableFeatures: this.deps.disableFeatures,
       outputSchema: this.deps.outputSchema,
     });

@@ -21,7 +21,7 @@ directly.
 
 ## Review the minimal-change fast path once
 
-Load and follow `team-workflow`, then start exactly one separate read-only TeamMate
+Load and follow `teamwork`, then start exactly one separate read-only TeamMate
 with the common identity and the minimal-change fast-path seat block from
 [reviewer-identities.md](reviewer-identities.md). The TeamLeader authored this
 implementation, so this reviewer must be a different agent.
@@ -32,9 +32,9 @@ accepted correction through its own pre-review checks.
 
 ## Run the workflow review
 
-For every other implementation path, load and follow the shared `workflow` skill and
-run one `workflow_run` carrying the code-review method it owns in
-[code-review.md](/packages/dreamux/skills/shared/workflow/references/code-review.md).
+For every other implementation path, load and follow the shared `dynamic-workflow`
+skill and run one `workflow_run` carrying the code-review method it owns in
+[code-review.md](/packages/dreamux/skills/shared/dynamic-workflow/references/code-review.md).
 Run it at the `xhigh` gear: the TeamLeader pre-review has already removed the shallow
 defects and the minimal-change fast path already absorbs trivial changes, so the depth the
 higher gear buys is what this last gate before merge into `next` is for.

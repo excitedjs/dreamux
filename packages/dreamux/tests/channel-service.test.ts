@@ -19,8 +19,9 @@
  *     ref-only in the other direction too, and that a descriptor kind/ref
  *     conflict fails loud *before* the module is even imported.
  *   - `channelMcpDelegates` is the one place a caller-specific tool catalog is
- *     composed; it is reached only from the Dispatcher-agent and TeamLeader
- *     delegate assemblies, never from the ordinary TeamMate one.
+ *     composed; it names each server after the provider it resolved, and it is
+ *     reached only from the Dispatcher-agent and TeamLeader delegate
+ *     assemblies, never from the ordinary TeamMate one.
  */
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -62,13 +63,17 @@ function channelConfig(id: string, provider: string): DispatcherChannelConfig {
   return { id, provider, config: { marker: id } };
 }
 
-/** A ChannelProviderCatalog resolving to whatever fixed providers a test hands it. */
+/**
+ * A ChannelProviderCatalog resolving to whatever fixed providers a test hands
+ * it. `id` defaults to the ref, which is what the loader seeds for an `npm:`
+ * provider; a builtin registers the bare id its descriptor carries.
+ */
 function catalogWith(
-  registrations: ReadonlyArray<{ ref: string; provider: unknown }>,
+  registrations: ReadonlyArray<{ ref: string; id?: string; provider: unknown }>,
 ): ChannelProviderCatalog {
   const registry = new ProviderRegistry();
-  for (const { ref, provider } of registrations) {
-    const descriptor = { id: ref, kind: 'channel' as const, ref: parseProviderRef(ref) };
+  for (const { ref, id, provider } of registrations) {
+    const descriptor = { id: id ?? ref, kind: 'channel' as const, ref: parseProviderRef(ref) };
     registry.register(descriptor);
     registry.registerImplementation(descriptor.id, provider);
   }
@@ -357,6 +362,27 @@ describe('channelMcpDelegates (Channel MCP injection)', () => {
     });
     return { result, seenCallers };
   }
+
+  it('names each server after the resolved provider, not the configured channel id', () => {
+    const { result } = mcpProviderWithCaller();
+    const catalog = catalogWith([
+      { ref: 'builtin:feishu', id: 'feishu', provider: result.provider },
+    ]);
+    const delegates = channelMcpDelegates({
+      dispatcherId: 'flow',
+      channels: [channelConfig('primary', 'builtin:feishu')],
+      channelProviders: catalog,
+      caller: { kind: 'dispatcher' },
+      sessionMcp: () => null,
+      dispatch: (task) => task(),
+    });
+
+    // `primary` is the operator's own string, which the model has nowhere to
+    // look up; the provider is what it can associate these tools with. Both
+    // model-visible names are the provider's.
+    expect(delegates.map((delegate) => delegate.name)).toEqual(['channel-feishu']);
+    expect(delegates[0]!.describe().identity.name).toBe('dreamux-channel-feishu');
+  });
 
   it('composes a caller-specific catalog for a dispatcher caller', async () => {
     const { result, seenCallers } = mcpProviderWithCaller();

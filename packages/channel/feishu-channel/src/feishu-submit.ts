@@ -15,14 +15,16 @@ import type { VisibleMessageAnchor } from './feishu-cot-state.js';
 import type { FeishuTarget } from './routing/target.js';
 
 /**
- * The standing instruction appended once after the envelope Core assembles.
+ * The standing note appended once after the envelope Core assembles.
  *
- * It is the caller's own note to the model, not part of the message, so it is
- * passed as `reminder` and Core renders it as the final `<reminder>` sibling.
- * The Channel no longer spells the tag itself.
+ * It states the consequence this Channel owns and the model cannot see: in a
+ * Feishu chat, assistant text never reaches the human, so only a `reply` call
+ * does. Every channel words its own, so it is passed as `reminder` and Core
+ * renders it as the final `<reminder>` sibling. The Channel no longer spells
+ * the tag itself.
  */
 export const CHANNEL_REMINDER =
-  'Reply through the channel reply tool, never as plain assistant text.';
+  'The user in this chat sees only what you send through the reply tool; your assistant text is not shown to them.';
 
 export interface FeishuSubmission {
   readonly attrs: Readonly<Record<string, string>>;

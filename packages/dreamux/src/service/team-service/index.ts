@@ -639,6 +639,7 @@ export class TeamService {
     return teamLeaderAgentBase({
       deps: this.deps,
       teamId: this.id,
+      workspace: this.mustRecord().worktree,
       identities: this.leaderIdentity,
     });
   }

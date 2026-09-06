@@ -59,7 +59,7 @@ Confirmation of the solution workflow is not development approval.
 ## Run the simple solution-review path
 
 Have the TeamLeader write the proposed solution to `technical-design/draft.md`,
-grounded in the current requirement and code. Load and follow `team-workflow`, then
+grounded in the current requirement and code. Load and follow `teamwork`, then
 start exactly three independent review TeamMates with the common and solution
 reviewer identities from [solution-identities.md](solution-identities.md). Add
 another only for an additional genuinely independent technical domain.
@@ -79,7 +79,7 @@ three-proposal consultation.
 
 ## Run the complex three-proposal path
 
-Load and follow `team-workflow`. Start exactly three independent solution TeamMates
+Load and follow `teamwork`. Start exactly three independent solution TeamMates
 with the common and solution-author identities from
 [solution-identities.md](solution-identities.md). Add another only when the task
 contains an additional genuinely independent technical domain that the first three

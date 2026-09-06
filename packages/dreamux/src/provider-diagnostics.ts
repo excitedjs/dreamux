@@ -77,7 +77,9 @@ export async function runDispatcherProviderDiagnostics(
   ];
 
   for (const channel of dispatcher.channels) {
-    const provider = catalogs.channel.resolve(channel.provider);
+    const { implementation: provider } = catalogs.channel.resolve(
+      channel.provider,
+    );
     const diagnostic = provider.diagnostic;
     const result =
       diagnostic === undefined
@@ -132,7 +134,7 @@ export function providerBinChecksForConfig(
     for (const channel of dispatcher.channels) {
       const diagnostic = options.catalogs.channel.resolve(
         channel.provider,
-      ).diagnostic;
+      ).implementation.diagnostic;
       if (diagnostic === undefined) continue;
       for (const check of diagnostic.binChecks(
         channelDiagnosticContext(

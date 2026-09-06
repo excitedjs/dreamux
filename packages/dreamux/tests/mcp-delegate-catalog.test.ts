@@ -387,10 +387,14 @@ function toolNames(tools: readonly unknown[]): string[] {
 }
 
 describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate', () => {
-  it('names its server channel-<id> and its identity dreamux-channel-<id>', () => {
+  // The model-facing name follows the provider, never the configured channel
+  // id: `feishu-main` is an operator string the model cannot look up, while
+  // `feishu` is what it can associate a channel's tools with.
+  it('names its server channel-<provider> and its identity dreamux-channel-<provider>', () => {
     const provider = fakeProvider(() => []);
     const delegate = createChannelMcpDelegate({
       dispatcherId: 'd1',
+      providerId: 'feishu',
       channelId: 'feishu-main',
       provider,
       config: {},
@@ -398,8 +402,8 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
       sessionMcp: null,
       dispatch: (task) => task(),
     });
-    expect(delegate.name).toBe('channel-feishu-main');
-    expect(delegate.describe().identity.name).toBe('dreamux-channel-feishu-main');
+    expect(delegate.name).toBe('channel-feishu');
+    expect(delegate.describe().identity.name).toBe('dreamux-channel-feishu');
   });
 
   it('drops a session-target registration when no created-instance capability exists', () => {
@@ -411,6 +415,7 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
     ]);
     const delegate = createChannelMcpDelegate({
       dispatcherId: 'd1',
+      providerId: 'fake',
       channelId: 'c1',
       provider,
       config: {},
@@ -432,6 +437,7 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
     ]);
     const delegate = createChannelMcpDelegate({
       dispatcherId: 'd7',
+      providerId: 'feishu',
       channelId: 'feishu-main',
       provider,
       config: {},
@@ -459,6 +465,7 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
     ]); // no invokeFn supplied: registration contract requires it, so it drops
     const delegate = createChannelMcpDelegate({
       dispatcherId: 'd1',
+      providerId: 'fake',
       channelId: 'c1',
       provider,
       config: {},
@@ -482,6 +489,7 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
     );
     const delegate = createChannelMcpDelegate({
       dispatcherId: 'd1',
+      providerId: 'fake',
       channelId: 'c1',
       provider,
       config: {},
@@ -501,6 +509,7 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
     );
     const delegate = createChannelMcpDelegate({
       dispatcherId: 'd1',
+      providerId: 'fake',
       channelId: 'c1',
       provider,
       config: {},
@@ -531,6 +540,7 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
     // is reached through, not per delegate.
     const delegateWithFencedDispatch = createChannelMcpDelegate({
       dispatcherId: 'd1',
+      providerId: 'fake',
       channelId: 'c1',
       provider: fakeProvider(() => [
         { target: 'provider', tool: { name: 't', inputSchema: { type: 'object' } } },
@@ -548,6 +558,7 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
 
     const delegateWithUnlistedFailure = createChannelMcpDelegate({
       dispatcherId: 'd1',
+      providerId: 'fake',
       channelId: 'c1',
       provider: fakeProvider(() => [
         { target: 'provider', tool: { name: 't', inputSchema: { type: 'object' } } },
@@ -580,6 +591,7 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
 
     const dispatcherDelegate = createChannelMcpDelegate({
       dispatcherId: 'd1',
+      providerId: 'feishu',
       channelId: 'feishu-main',
       provider,
       config: {},
@@ -589,6 +601,7 @@ describe('service/channel-service/mcp-delegate.ts — createChannelMcpDelegate',
     });
     const teamLeaderDelegate = createChannelMcpDelegate({
       dispatcherId: 'd1',
+      providerId: 'feishu',
       channelId: 'feishu-main',
       provider,
       config: {},

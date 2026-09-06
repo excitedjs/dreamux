@@ -108,6 +108,33 @@ Source:
 - `/packages/dreamux/src/agent-runtime/external-provider.ts`
 - `/packages/dreamux/src/channel/external-channel-provider.ts`
 
+### Channel Provider Id As A Server-Name Segment
+
+A channel provider's registration id is model-facing: `createChannelMcpDelegate`
+names that provider's MCP server `channel-<provider>` and its MCP identity
+`dreamux-channel-<provider>` (Claude Code renders that hyphenated name as-is;
+Codex renders its tools underscore-joined, `channel_<provider>__…`). Naming is
+total for builtin providers because `BUILTIN_PROVIDER_ID_PATTERN`
+(`/^[a-z][a-z0-9-]*$/`, `registry/provider-ref.ts`) already constrains every
+builtin id to a valid server-name segment on both engines. For `npm:`
+providers the shared loader seeds `descriptor.id` from the raw ref (for
+example `npm:pkg#export`), which no engine has been shown to accept as a name
+segment, and `descriptor.id` is also the config-facing registry key, so there
+is deliberately no sanitizer and no id change today — no external channel
+provider exists to observe the failure against. This is a reserved, unsettled
+name shape, not a bug: the first external channel provider author is who
+settles it, and `channel/external-channel-provider.ts`'s doc comment carries
+the same note at the source the author will actually read. `channels[].id`
+(the dispatcher-local channel binding, distinct from the provider's own
+registration id) is unaffected and keeps its existing meaning.
+
+Source:
+
+- `/packages/dreamux/src/registry/provider-ref.ts`
+- `/packages/dreamux/src/channel/catalog.ts`
+- `/packages/dreamux/src/channel/external-channel-provider.ts`
+- `/packages/dreamux/src/service/channel-service/mcp-delegate.ts`
+
 ### Runtime Create Context
 
 Core launches every agent through `AgentRuntimeProvider.createRuntime(context)`.
@@ -213,19 +240,18 @@ Source:
 
 ### Bundled Skills And Injection
 
-Dreamux ships bundled skills under `/packages/dreamux/skills/`. Which skill
-covers what — and the tool surfaces those skills describe — is owned by
-[bundled Dreamux skills](dispatcher-skill.md); this page owns the role gate and
-how a root reaches an engine.
+Dreamux ships bundled skills under `/packages/dreamux/skills/`. What each skill
+is for is owned by [bundled Dreamux skills](dispatcher-skill.md); this page owns
+the role gate and how a root reaches an engine.
 
 Current role gate, by root rather than by skill:
 
 - Dispatcher roles receive `skills/dispatcher/` (holding `dispatcher-workflow`
   and `dreamux-maintenance`) plus the shared root.
-- TeamLeader roles receive `skills/team-leader/` (holding `team-workflow`) plus
+- TeamLeader roles receive `skills/team-leader/` (holding `teamwork`) plus
   the shared root.
-- Both roles therefore receive the shared `workflow` root; ordinary TeamMate and
-  team-member roles receive no bundled Dreamux skill.
+- Both roles therefore receive the shared `dynamic-workflow` root; ordinary
+  TeamMate and team-member roles receive no bundled Dreamux skill.
 
 Core emits those role roots, never per-skill selector paths, so root scanning
 cannot expose a sibling role's skills.
@@ -238,7 +264,7 @@ Normalization canonicalizes each custom root to an existing readable absolute
 realpath, collapses duplicate roots, and rejects a root whose direct-child skill
 name collides with another root's. For TeamLeader creation, required-source
 normalization includes both the role-specific and shared roots, reserving the
-bundled `team-workflow` and `workflow` names so custom roots cannot shadow
+bundled `teamwork` and `dynamic-workflow` names so custom roots cannot shadow
 either required skill. This capability is not part of MCP tool schemas or
 model-facing runtime discovery.
 
@@ -248,7 +274,13 @@ Runtime packages own engine-specific application:
   initialize and before thread start/resume.
 - Claude Code materializes a runtime-owned add-dir root containing a
   `.claude/skills/<name>` entry per skill under each supplied root, then passes
-  that materialized root through `--add-dir`.
+  that materialized root through `--add-dir`. The root is keyed by the set of
+  source roots, so one set of roots always maps to one directory; its manifest
+  records the child skill inventory found under each root, and a start whose
+  inventory differs from the manifest (an in-place upgrade that renamed a
+  bundled skill, a custom root that changed) rebuilds the view and swaps it
+  into the same path. A source root that cannot be read fails the start with
+  an error naming the source and its path.
 
 `dreamux onboard` and dispatcher startup do not install bundled skills into a
 workspace. They are package-shipped runtime injection sources only.

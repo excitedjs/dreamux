@@ -151,11 +151,7 @@ export class TeamRuntimeRegistry {
           teammateName: `team-${teamId}`,
           cwd: input.repoCwd ?? workspaceRoot,
           dispatcherWorkspace: workspaceRoot,
-          request: input.worktree ?? {
-            mode: 'managed',
-            slug: `team-${teamId}`,
-            cleanup: 'keep',
-          },
+          ...(input.worktree !== undefined ? { request: input.worktree } : {}),
         });
   }
 

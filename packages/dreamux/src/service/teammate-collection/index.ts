@@ -1,8 +1,4 @@
-import type {
-  AgentRuntimeSystemPrompt,
-  DreamuxLogger,
-  JsonSchema,
-} from '@excitedjs/dreamux-types';
+import type { DreamuxLogger, JsonSchema } from '@excitedjs/dreamux-types';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/index.js';
 import type { ConversationProjection } from '../../channel/conversation-projection.js';
@@ -53,6 +49,7 @@ import type {
 import type { SuffixGenerator } from '../name-allocator.js';
 import { closeMembersForDissolve } from './dissolve-members.js';
 import { teamMateNotFound } from './errors.js';
+import { teammateSystemPromptOptions } from './system-prompt.js';
 import {
   collectShutdownFailure,
   throwShutdownFailures,
@@ -514,8 +511,8 @@ export class TeammateCollection implements TeammateOps {
     options: CreateLockedTeammateOptions = {},
   ): TeammateService {
     const systemPrompt = teammateSystemPromptOptions(
+      identity,
       options.systemPromptAppend,
-      identity.identity_prompt,
     );
     return createTeammateService({
       dispatcherId: this.dispatcherId,
@@ -686,15 +683,4 @@ export class TeammateCollection implements TeammateOps {
       );
     }
   }
-}
-
-function teammateSystemPromptOptions(
-  operationAppend: readonly string[] | undefined,
-  identityPrompt: string | null,
-): { systemPrompt: AgentRuntimeSystemPrompt } | undefined {
-  const append = [
-    ...(operationAppend ?? []),
-    ...(identityPrompt !== null ? [identityPrompt] : []),
-  ];
-  return append.length === 0 ? undefined : { systemPrompt: { append } };
 }

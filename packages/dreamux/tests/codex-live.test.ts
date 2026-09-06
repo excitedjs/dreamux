@@ -910,11 +910,13 @@ describe('codex live integration', () => {
         // through the generic `dreamux mcp` shim before relying on the model
         // calling `reply` later in this same test. The server's advertised
         // name is the Channel MCP delegate's own namespacing
-        // (`channel-<configured channel id>`, see `SERVER_NAME_PREFIX` in
-        // `service/channel-service/mcp-delegate.ts`) — there is no longer a
-        // literal `feishu` server name, since the delegate is generic over
-        // any Channel provider and namespaces by the operator's own channel
-        // id, not the provider's identity.
+        // (`channel-<provider registration id>`, see `SERVER_NAME_PREFIX` in
+        // `service/channel-service/mcp-delegate.ts`): this dispatcher's
+        // channel is configured with id `primary` behind `builtin:feishu`, so
+        // the name codex reports is `channel-feishu`. The delegate is still
+        // generic over any Channel provider — Core names the server from the
+        // registration it resolved, and the Channel package never names
+        // itself.
         //
         // codex connects each Agent-facing MCP server lazily rather than at
         // spawn: `mcpServerStatus/list` can legitimately report a known
@@ -930,7 +932,7 @@ describe('codex live integration', () => {
               'mcpServerStatus/list',
               {},
             );
-            feishu = status.data.find((entry) => entry.name === 'channel-primary');
+            feishu = status.data.find((entry) => entry.name === 'channel-feishu');
             if (feishu !== undefined && Object.keys(feishu.tools ?? {}).length > 0) break;
             await new Promise((resolve) => setTimeout(resolve, 200));
           }

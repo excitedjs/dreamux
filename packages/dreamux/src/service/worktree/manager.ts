@@ -176,7 +176,7 @@ export class WorktreeManager {
         path,
         branch,
         base_ref: baseRef,
-        cleanup: input.request?.cleanup ?? 'keep',
+        cleanup: input.request?.cleanup ?? 'delete-on-close',
         cleanup_state: 'managed-active',
         cleanup_error: null,
       },
