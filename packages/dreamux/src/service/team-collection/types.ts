@@ -240,6 +240,16 @@ export interface TeamView {
   closed_at: number | null;
   close_note: string | null;
   worktree_cleanup: AgentEntityWorktreeIdentity['cleanup_state'];
+  /**
+   * The workspace kind and its cleanup mode, from the record's worktree
+   * identity. `worktree_cleanup` above is the lifecycle state and reads
+   * `managed-active` for every open managed worktree, so only these two say
+   * whether a dissolve removes the worktree (`managed` + `delete-on-close`).
+   * The TeamLeader is told the same two facts in its prompt; the Dispatcher,
+   * which can dissolve a Team it did not create, reads them here.
+   */
+  worktree_mode: AgentEntityWorktreeIdentity['mode'];
+  worktree_cleanup_mode: AgentEntityWorktreeIdentity['cleanup'];
 }
 
 export interface TeamSummary {

@@ -167,23 +167,26 @@ describe('the prompt a TeamLeader runtime is launched with', () => {
     expect(prompt).toContain('channel-');
   });
 
-  it('tells the leader its reused workspace is kept after dissolve', async () => {
+  it('names a reused workspace and its cleanup mode', async () => {
     const prompt = await launchedLeaderPrompt();
-    expect(prompt).toContain('reused directory');
-    expect(prompt).toContain('kept after the Team dissolves');
-    expect(prompt).not.toContain('blocks the dissolve');
+    expect(prompt).toContain('is a reused directory (cleanup: keep).');
   });
 
-  it('tells the leader a managed delete-on-close workspace is removed and what blocks the dissolve', async () => {
+  it('names a managed delete-on-close workspace and its cleanup mode', async () => {
     const prompt = await launchedLeaderPrompt(null, managedWorktree('delete-on-close'));
-    expect(prompt).toContain('removes when the Team dissolves');
-    expect(prompt).toContain('blocks the dissolve');
+    expect(prompt).toContain('is a managed git worktree (cleanup: delete-on-close).');
   });
 
-  it('tells the leader a managed kept workspace is kept', async () => {
+  it('names a managed kept workspace and its cleanup mode', async () => {
     const prompt = await launchedLeaderPrompt(null, managedWorktree('keep'));
-    expect(prompt).toContain('managed git worktree that is kept');
-    expect(prompt).not.toContain('blocks the dissolve');
+    expect(prompt).toContain('is a managed git worktree (cleanup: keep).');
+  });
+
+  it('never mentions dissolving; that lives in the dissolve description', async () => {
+    for (const workspace of [undefined, managedWorktree('delete-on-close'), managedWorktree('keep')]) {
+      const prompt = await launchedLeaderPrompt(null, workspace);
+      expect(prompt.replace(/`team` \(dissolve this Team\)/, '')).not.toMatch(/dissolv/i);
+    }
   });
 
   it('ends with the operator\'s own identity text', async () => {

@@ -239,18 +239,14 @@ function teamLeaderSystemPrompt(
 }
 
 /**
- * The one workspace fact the leader cannot see from inside the directory:
- * whether Dreamux removes it on dissolve. The `dissolve` description tells the
- * leader what to check before dissolving a workspace that is removed; a kept
- * one never blocks the dissolve.
+ * The one workspace fact the leader cannot see from inside the directory: its
+ * kind and its cleanup mode. What a cleanup mode means when the Team dissolves
+ * is stated only by the `dissolve` description, so a leader that never
+ * dissolves never reads about dissolving (operator ruling R34).
  */
 function teamWorkspaceSentence(workspace: AgentEntityWorktreeIdentity): string {
-  if (workspace.mode === 'managed' && workspace.cleanup === 'delete-on-close') {
-    return `Your Team's workspace ${workspace.path} is a managed git worktree that Dreamux removes when the Team dissolves; uncommitted, untracked, or unmerged work there blocks the dissolve.`;
-  }
-  return workspace.mode === 'managed'
-    ? `Your Team's workspace ${workspace.path} is a managed git worktree that is kept after the Team dissolves.`
-    : `Your Team's workspace ${workspace.path} is a reused directory that is kept after the Team dissolves.`;
+  const kind = workspace.mode === 'managed' ? 'a managed git worktree' : 'a reused directory';
+  return `Your Team's workspace ${workspace.path} is ${kind} (cleanup: ${workspace.cleanup}).`;
 }
 
 /**
