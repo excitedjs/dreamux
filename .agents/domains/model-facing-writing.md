@@ -45,7 +45,11 @@ Current source owners:
   `content` text on a tool result once `structuredContent` is also present, so
   a reminder attached only as `content` text is invisible there; Codex renders
   a `channel-<provider>` MCP server's tools as `channel_<provider>__…`
-  (underscore-joined), never the hyphenated server name.
+  (underscore-joined), never the hyphenated server name. Before a tool
+  definition is fetched the engines also differ: Codex lists no Dreamux MCP
+  tool at all until the model searches its `ALL_TOOLS` catalog, while Claude
+  Code shows the MCP tool names up front — which is why a role prompt carries
+  a server map and nothing more about the tools.
 
 ## Reader First
 

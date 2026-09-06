@@ -127,11 +127,14 @@ function uniqueSkillSources(
     byRoot.set(resolve(source.path), source);
   }
   return [...byRoot.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([, source]) => source);
 }
 
-/** The child skills of one root, in a fixed order: the key hashes this list. */
+/**
+ * The child skills of one root in code-point order: the key hashes this list,
+ * so the order must not depend on the process locale.
+ */
 async function skillDirsInRoot(
   root: string,
 ): Promise<Array<{ name: string; path: string }>> {
@@ -139,5 +142,5 @@ async function skillDirsInRoot(
   return entries
     .filter((entry) => entry.isDirectory())
     .map((entry) => ({ name: entry.name, path: join(root, entry.name) }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }

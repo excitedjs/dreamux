@@ -67,7 +67,14 @@ Run by the workflow's gate agent after the last source change, read from the
 | `rush change --verify` | cannot pass in an uncommitted tree: rush enumerates change files from the committed diff against the target branch and reads them from disk, and #369's two files are deleted but still in HEAD. Run after the commit with `--target-branch origin/next --no-fetch`; result recorded below. |
 | leftover check | old skill directories absent; `team-workflow` absent from `packages/dreamux/{skills,src,README.md}`, `.agents/domains`, `.agents/skills` |
 
-Post-commit gate results: _pending_.
+Post-commit gate results (after the review fixes below, tree at the closeout
+commit): `rush build` green (8 operations), `rush lint` green (7), `rush test`
+green (`codex-live.test.ts` 9 passed against codex 0.153.4), `rush typecheck:tests`
+green (6), `.agents/scripts/check.sh` `KB OK`, `rush change --verify
+--target-branch origin/next --no-fetch` lists the three change files and
+passes, `git diff --check` clean. One intermediate run failed `rush build` on an
+unescaped apostrophe the TeamLeader had introduced in the `team.create`
+description while applying finding 3; fixed before the final run.
 
 ## Probes on the built artifact
 
@@ -93,19 +100,96 @@ From `dist/` after the final build:
 
 ## Independent implementation review
 
-_pending: workflow `wf_3ec0137d-806` (six finders — correctness, architecture,
-model-facing text, tests, requirement fidelity, public safety and records —
-each finding verified by three lenses, majority refutes)._
+Run through Dreamux's own `workflow_run` in the Team's daemon (the code-review
+method of the `dynamic-workflow` skill at the `xhigh` gear; R26: nodes on the
+`codex` and `seed` runtimes, alternating): a scope node, seven finders (angles
+A–E, one merged cleanup finder, one fidelity finder that checks the tree
+against the requirement and the design), one verifier per source location
+with the three-state ladder, a sweep, and a synthesis. A first attempt through
+the TeamLeader's own engine-side workflow tool died twice with the TeamLeader's
+process before any finder returned; the daemon-side run is the one recorded
+here.
+
+Stats: 8 candidates, 8 verifier groups, 6 verified, 6 confirmed, 0 refuted.
+The cleanup finder returned no usable result and two verifier groups (one at
+`skill-adapter.ts:140`, one on the Seed design-review file) returned none, so
+their candidates were dropped; a follow-up single reviewer covered the cleanup
+angles and re-read the dropped location (below).
+
+Findings and TeamLeader adjudication:
+
+1. This record cited an engine-side workflow run id. Accepted: replaced by
+   non-identifying wording (the repository forbids committing internal
+   identifiers).
+2. The new reserved names collide with a pre-existing custom skill named
+   `teamwork` or `dynamic-workflow` passed through `team.create`
+   `skill_sources`: creation rejects it, and a Team created before the release
+   fails loudly at its Claude Code TeamLeader's next start (`duplicate Claude
+   skill name`; reproduced by the verifier against `dist/`). Accepted as an
+   upgrade note in the `@excitedjs/dreamux` change file (fail-loud plus a
+   manual rename). No code: every rename of a reserved name changes the reserved
+   set, and no operator scenario names such a custom skill.
+3. The `repo` descriptions of `teammate.spawn` and `team.create` promised a
+   fresh directory unconditionally while `workspace.enabled: false` reuses the
+   dispatcher's own directory (reproduced against `dist/`; the qualifier had
+   lived in the old `dispatcher-workflow` skill and was lost in #369). Accepted:
+   the four descriptions now state the policy.
+4. This record listed the pre-PR live probes of final.md §8 as post-release
+   acceptance. Accepted: see "Live probes" below.
+5. `localeCompare` in the sorts that feed the Claude adapter key made the key
+   locale-dependent (reproduced by the verifier: en_US and sv_SE give two keys
+   for one skill set, and the first root is never reused). Accepted: both sorts
+   use code-point order.
+6. `model-facing-writing.md` lacked the pre-query visibility facts §3.10
+   requires (Codex lists no Dreamux MCP tool before an `ALL_TOOLS` search;
+   Claude Code shows tool names up front). Accepted: added.
+
+Cleanup angles follow-up (single codex reviewer, read-only, over
+`origin/next..HEAD` plus the working tree): one confirmed finding — the new
+`mcp-tool-descriptions.test.ts` re-implemented `isPlainObject` from
+`@excitedjs/dreamux-utils` under another name; accepted, the test imports the
+package helper. Four candidates refuted by the reviewer with evidence: the
+apostrophe build break (already fixed in the tree), a repeated inventory read
+per runtime start (the materializer runs once per start and reads the roots in
+parallel), symlinked child skills being skipped (the `isDirectory` filter is
+unchanged from `origin/next`), and provider-named servers colliding within one
+dispatcher (config rejects a repeated provider; session lookup still keys on the
+channel id). No higher-cost simplification, efficiency, or layering finding.
+
+## Live probes (final.md §8, before the PR is ready)
+
+- Codex: `codex-live.test.ts` runs a real codex against the Dreamux MCP shim
+  with a fake Feishu backend; it observes `channel-feishu` in
+  `mcpServerStatus/list` with its `reply` tool and drives one reply through
+  it. Covered by the gate run.
+- Claude Code: a one-off vitest probe (kept outside the repository) booted a
+  real `Server` from this build with the fake Feishu backend of the codex-live
+  test and the real `claude` binary (2.1.260, `--model opus`), with the adapter
+  cache pre-seeded by a copy of the live one (three version-1 roots whose
+  children are `team-workflow` and `workflow`). One inbound message asked the
+  Dispatcher to report, through `channel-feishu`, its `mcp__channel*` tool
+  names, its skill names, and the server names its instructions list. The reply
+  arrived in the fake backend through `channel-feishu` and read: `TOOLS:` the
+  eleven `mcp__channel-feishu__*` tools including `reply`; `SKILLS:` the
+  operator's user-level skills plus `dispatcher-workflow`,
+  `dreamux-maintenance`, `dynamic-workflow` (no `workflow`); `SERVERS:`
+  `teammate, team, cron, channel-feishu`. The cache gained a fourth root with a
+  version-2 manifest linking those three skills; the three old roots were left
+  untouched. The probe drove the Dispatcher role (dispatcher and shared roots),
+  not a TeamLeader: the harness has no TeamLeader path without a live channel
+  binding, and the TeamLeader root goes through the same materializer and the
+  same `--add-dir` mechanism (the same-root, renamed-children case is
+  `skill-materializer.test.ts`; the team-leader/shared roots against the copied
+  cache are the dist probe above). Not exercised: a TeamLeader started through
+  the installed package after an in-place upgrade — the post-release probes of
+  final.md §1.
 
 ## Skipped coverage and residual risk
 
-- Not exercised live: a Claude Code TeamLeader started through the installed
-  package from an existing adapter cache after the rename (needs the released
-  package); the `channel-feishu` tool list as Claude Code shows it; one reply
-  through the renamed server on each engine. These are the post-release
-  acceptance probes of final.md §1 and §8.
 - Description-driven skill loading is the engine's heuristic; whether a model
-  associates `source="feishu"` with `channel_feishu` is empirical.
+  associates `source="feishu"` with `channel_feishu` is empirical. The
+  post-release acceptance probes of final.md §1 ("which skills did you load on
+  this turn and why", "can you find the Feishu channel's tools") cover this.
 - The dispatch reminders are invisible on Claude Code (the engine drops MCP
   `content` text next to `structuredContent`); the description sentence is the
   only carrier there.

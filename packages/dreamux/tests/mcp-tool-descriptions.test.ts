@@ -21,6 +21,8 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { isPlainObject } from '@excitedjs/dreamux-utils';
+
 import {
   bundledDispatcherSkillRoot,
   bundledSharedSkillRoot,
@@ -133,10 +135,6 @@ const HAND_OFF_SENTENCES: readonly [string, string, string][] = [
   ],
 ];
 
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 /**
  * Every property of an object schema by dotted path, descending into nested
  * object schemas that declare their own properties.
@@ -145,7 +143,7 @@ function inputProperties(
   schema: unknown,
   prefix: string,
 ): [string, unknown][] {
-  if (!isJsonObject(schema) || !isJsonObject(schema['properties'])) {
+  if (!isPlainObject(schema) || !isPlainObject(schema['properties'])) {
     return [];
   }
   return Object.entries(schema['properties']).flatMap(([name, property]) => [
@@ -172,7 +170,7 @@ describe('Dreamux MCP tool descriptions', () => {
       for (const advertised of tools) {
         const { name, inputSchema } = advertised as AdvertisedTool;
         for (const [path, property] of inputProperties(inputSchema, '')) {
-          const description = isJsonObject(property)
+          const description = isPlainObject(property)
             ? property['description']
             : undefined;
           expect(

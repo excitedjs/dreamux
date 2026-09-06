@@ -218,6 +218,11 @@
   (knowledge base and task records, change files, gate runs, review passes)
   runs on sonnet.
 
+- R26 (2026-09-06 11:53, reply to the message announcing that the
+  implementation review moves to Dreamux's own `workflow_run`): "节点用codex和seed".
+  TeamLeader's reading, labeled: the review workflow's agents run on the
+  `codex` and `seed` agent runtimes.
+
 ## Evidence
 
 Everything here is traced from PR #369 head (`5e1a3464`) unless labeled
@@ -629,7 +634,7 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
 
 ## Decisions and unknowns
 
-- Confirmed operator decisions: R1–R25 above (R11 is the proposal R12 and R13 ruled on). No open decisions; the technical design proceeds on the simple path (R17) with two reviewers (R18); R21 is the adjudication principle for reviewer findings.
+- Confirmed operator decisions: R1–R26 above (R11 is the proposal R12 and R13 ruled on). No open decisions; the technical design proceeds on the simple path (R17) with two reviewers (R18); R21 is the adjudication principle for reviewer findings.
 - Open decisions for the operator:
   - (a) Sentence 2: dropping "Load a tool's definition before calling it" is
     confirmed (R5). Still open: the engine-neutral channel clause, re-asked
