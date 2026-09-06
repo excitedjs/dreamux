@@ -84,7 +84,7 @@ Accepted when:
 ```
 You are the TeamLeader of Dreamux Team "<teamId>".
 Your Dreamux MCP servers: `teammate` (this Team's members, who share the Team workspace, and scripted workflows), `team` (dissolve this Team), `cron` (scheduled prompts that wake this TeamLeader), and one `channel-<provider>` server per configured channel that provides tools, for example `channel-feishu` (that channel's own tools).
-Your Team's workspace <path> is a managed git worktree that Dreamux removes when the Team dissolves; uncommitted, untracked, or unmerged work there blocks the dissolve.   ← or: … is a managed git worktree that is kept after the Team dissolves. / … is a reused directory that is kept after the Team dissolves.
+Your Team's workspace <path> is a managed git worktree (cleanup: delete-on-close).   ← or: (cleanup: keep) / … is a reused directory (cleanup: keep).
 <identity_prompt, when set>
 ```
 
@@ -92,9 +92,12 @@ R1, R2, R5, J14. The `channel-feishu` example is an existence pointer and a
 substring filter on Codex, where the model sees `channel_feishu` (Seed F5).
 The workspace sentence was added after the external review of #380 (R29): the
 leader's own identity is always a reuse of the Team directory, so only the
-Team record knows whether that directory is a managed worktree removed on
-dissolve, and the `dissolve` description asks the leader to act on that fact
-(§3.14). It is a fact about the leader's situation, not a rule, so R1 holds.
+Team record knows whether that directory is a managed worktree and what its
+cleanup mode is. The sentence names exactly those two facts (R34, after the
+merge): what a cleanup mode means when the Team dissolves is stated only by
+the `dissolve` description (§3.14), so a leader that never dissolves never
+reads about dissolving. A fact about the leader's situation, not a rule, so
+R1 holds.
 
 ### 3.2 Dispatcher prompts (`dispatcher-service/base-prompt.ts`, both exports)
 
@@ -389,13 +392,16 @@ The reviewer (ryanxiang7) read the whole source change after the PR opened;
 the operator ruled on the findings (R28–R33, requirement.md). Beyond §3.1,
 §3.6, §3.7 and §3.9 above:
 
-- The TeamLeader-facing `dissolve` description opens: "Your system prompt says
-  whether Dreamux removes the Team's workspace on dissolve. If it does, first
-  check the workspace for uncommitted, untracked, or unmerged work; if there
-  is any, or you cannot tell, do not dissolve: report it and ask the user. A
-  kept workspace never blocks the dissolve." The sentence #369 had moved from
-  the old skill told every leader to check, while Core blocks a dissolve only
-  for a managed delete-on-close worktree (R29).
+- The TeamLeader-facing `dissolve` description opens: "Your system prompt
+  names the Team's workspace and its cleanup mode. Under cleanup:
+  delete-on-close Dreamux removes the managed worktree when the Team
+  dissolves, so first check it for uncommitted, untracked, or unmerged work;
+  if there is any, or you cannot tell, do not dissolve: report it and ask the
+  user. Under cleanup: keep, and in a reused directory, nothing is removed and
+  nothing blocks the dissolve." The sentence #369 had moved from the old skill
+  told every leader to check, while Core blocks a dissolve only for a managed
+  delete-on-close worktree (R29); the meaning of the modes lives here and not
+  in the prompt (R34).
 - A managed worktree requested without `cleanup` defaults to `delete-on-close`
   (`worktree/manager.ts`; R31). `reuse-cwd` records `keep` and is never
   removed. The `cleanup` property description states the default, and the

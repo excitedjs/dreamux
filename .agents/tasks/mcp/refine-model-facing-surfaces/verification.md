@@ -285,6 +285,20 @@ origin/next --no-fetch`, `git diff --check`: all green. Focused suites:
 `channel-input-format` (dreamux), `skill-materializer` (claude-code, five
 cases), `feishu-settlement-envelope` (feishu-channel).
 
+## Post-merge correction (R34, 2026-09-06)
+
+Reading the report of the review round, the operator ruled that the
+TeamLeader prompt's workspace sentence must name only the worktree and its
+cleanup mode, and that everything about dissolving belongs in the `dissolve`
+description alone: a leader that starts work should not meet the word
+"dissolve" in its prompt, since it may not need the concept for a long time.
+`teamWorkspaceSentence` now renders `Your Team's workspace <path> is a managed
+git worktree (cleanup: delete-on-close).` (or `(cleanup: keep)`, or `is a
+reused directory (cleanup: keep).`); the `dissolve` description defines what
+each mode means at dissolve. `team-leader-prompt.test.ts` pins the three
+sentences and asserts the prompt does not mention dissolving outside the
+server map's `team` entry. Gates on the follow-up branch: see the PR.
+
 ## Skipped coverage and residual risk
 
 - Description-driven skill loading is the engine's heuristic; whether a model
