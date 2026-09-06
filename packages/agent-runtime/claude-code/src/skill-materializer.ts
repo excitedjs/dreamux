@@ -13,18 +13,20 @@ import type { AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
 import {
   readSkillAdapterManifest,
   validateSkillAdapter,
+  type SkillAdapterManifest,
 } from './skill-adapter.js';
 
 /**
- * Atomically materialize the Claude-compatible view of role-gated skills and
- * return the adapter root the child must be given, or null when this runtime
- * has no skill sources.
+ * Materialize the Claude-compatible view of role-gated skills and return the
+ * adapter root the child must be given, or null when this runtime has no
+ * skill sources.
  *
- * The root is `<cacheDir>/claude-code/skills/<key>`, keyed by what is on disk:
- * the source roots and the skill directories under them. An in-place package
- * upgrade that renames skills under an unchanged root therefore lands on a new
- * key and materializes afresh; roots keyed by an earlier inventory are never
- * revalidated again.
+ * The root is `<cacheDir>/claude-code/skills/<key>`, one directory per set of
+ * source roots. Its manifest records the skill directories under each root as
+ * they were when the view was built; a start that reads a different inventory
+ * (an in-place package upgrade that renamed skills, a custom root that gained
+ * a skill) rebuilds the view beside the root and swaps it into the same path,
+ * so the path never changes and no earlier view is left behind.
  */
 export async function materializeClaudeSkillAddDir(
   cacheDir: string,
@@ -61,15 +63,46 @@ export async function materializeClaudeSkillAddDir(
     );
     await mkdir(dirname(root), { recursive: true });
     await testHooks.beforePublish?.();
-    await rename(tmpRoot, root);
+    await publish(tmpRoot, root, manifest);
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'EEXIST' || code === 'ENOTEMPTY') {
-      await rm(tmpRoot, { recursive: true, force: true }).catch(() => undefined);
-      if (await validateSkillAdapter(root, manifest)) return root;
-    }
     await rm(tmpRoot, { recursive: true, force: true }).catch(() => undefined);
     throw err;
   }
   return root;
+}
+
+/**
+ * Put the fresh view at `root`: whatever occupies the path (a stale view, a
+ * manifest of the previous format, a half-written tree) is moved aside first
+ * and removed once the swap is done. Two runtimes starting together may both
+ * reach here; each swap leaves a complete view at the path, and the one whose
+ * final rename finds the path already taken keeps the other's view when it
+ * validates.
+ */
+async function publish(
+  tmpRoot: string,
+  root: string,
+  manifest: SkillAdapterManifest,
+): Promise<void> {
+  const staleRoot = `${root}.${randomUUID()}.stale`;
+  try {
+    await rename(root, staleRoot);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+  try {
+    await rename(tmpRoot, root);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'EEXIST' && code !== 'ENOTEMPTY') throw err;
+    await rm(tmpRoot, { recursive: true, force: true }).catch(() => undefined);
+    if (!(await validateSkillAdapter(root, manifest))) {
+      throw new Error(
+        `invalid Claude skill adapter at ${root} after a concurrent publish`,
+        { cause: err },
+      );
+    }
+  } finally {
+    await rm(staleRoot, { recursive: true, force: true }).catch(() => undefined);
+  }
 }

@@ -84,11 +84,17 @@ Accepted when:
 ```
 You are the TeamLeader of Dreamux Team "<teamId>".
 Your Dreamux MCP servers: `teammate` (this Team's members, who share the Team workspace, and scripted workflows), `team` (dissolve this Team), `cron` (scheduled prompts that wake this TeamLeader), and one `channel-<provider>` server per configured channel that provides tools, for example `channel-feishu` (that channel's own tools).
+Your Team's workspace <path> is a managed git worktree that Dreamux removes when the Team dissolves; uncommitted, untracked, or unmerged work there blocks the dissolve.   ← or: … is a managed git worktree that is kept after the Team dissolves. / … is a reused directory that is kept after the Team dissolves.
 <identity_prompt, when set>
 ```
 
 R1, R2, R5, J14. The `channel-feishu` example is an existence pointer and a
 substring filter on Codex, where the model sees `channel_feishu` (Seed F5).
+The workspace sentence was added after the external review of #380 (R29): the
+leader's own identity is always a reuse of the Team directory, so only the
+Team record knows whether that directory is a managed worktree removed on
+dissolve, and the `dissolve` description asks the leader to act on that fact
+(§3.14). It is a fact about the leader's situation, not a rule, so R1 holds.
 
 ### 3.2 Dispatcher prompts (`dispatcher-service/base-prompt.ts`, both exports)
 
@@ -224,11 +230,13 @@ You are TeamMate "<name>" of Dreamux Team "<team_id>". Your TeamLeader receives 
 ```
 
 then the operation's own append (`WORKFLOW_AGENT_SYSTEM_PROMPT` for workflow
-agents), then the operator's `identity`. Applies to every Team-scoped entity
-of the collection, workflow agents included (J8; both reviewers agree after
-R21: the child needs to know its final output is what comes back, and the
-workflow append already states the value/schema contract). Dispatcher-scoped
-TeamMates receive nothing (J7, R9's scope). The draft's "sees nothing of your
+agents), then the operator's `identity`. A workflow agent receives only the
+first sentence (`You are TeamMate "<name>" of Dreamux Team "<team_id>".`):
+its output is consumed by the workflow script, not delivered to the
+TeamLeader, so the second sentence was false for it and competed with the
+workflow contract that follows (external review of #380; R28 supersedes J8's
+"workflow agents included"). Dispatcher-scoped TeamMates receive nothing (J7,
+R9's scope). The draft's "sees nothing of your
 turn until it ends" is dropped: `last` reads a running turn, and the model
 does not need that fact (R21).
 
@@ -264,11 +272,12 @@ doc comment and `provider-runtime.md`) as the gap the first external channel
 provider must settle (Q1: both reviewers agree; Seed's "fails loudly at
 launch" is not adopted because it was not verified).
 
-`feishu-message.ts` appends `['source', 'feishu']` first;
+`feishu-message.ts` adds `source: 'feishu'` to the inbound attrs;
 `deliverAskUserSettlement` adds the same attribute to the settlement envelope
-(J9). Core's envelope renderer emits attrs in order, so the model reads
-`<channel source="feishu" chat_id=…>`. The three tool descriptions that
-already say `<channel source="feishu">` become accurate without edits.
+(J9). The attribute's position is not a contract (R33): Core's renderer emits
+attrs in insertion order and the Feishu channel happens to add `source` first,
+but no test pins that and nothing may rely on it. The three tool descriptions
+that already say `<channel source="feishu">` become accurate without edits.
 
 Runtime adapters need no change for the rename: Claude Code's `args.ts`
 builds `--disallowedTools` from feature names; Codex's `mcp-config.ts` quotes
@@ -284,18 +293,28 @@ status lines themselves are unchanged (Q5, Codex). Not added to `<cron>` or
 
 ### 3.9 Claude Code skill adapter identity (`@excitedjs/agent-runtime-claude-code`)
 
-Codex F1. The adapter's identity becomes the set of source roots *and* the
-child skill directories under each (names and real paths): `skillAdapterKey`
-and `skillAdapterManifest` (manifest `version: 2`) are computed from that
-inventory, so a renamed child under an unchanged root yields a new key, a new
-root, and a fresh materialization; old roots are never revalidated. Because
-the inventory is read from disk, the key is computed inside
-`materializeClaudeSkillAddDir`, which returns the root it produced; the
-runtime stores that root before spawning the child, and `--add-dir` uses it.
-Owner: the Claude adapter (its cache, its native view). No Core change, no
-provider ABI change, no old-name aliases. Test: renaming a child skill under
-an unchanged source root materializes a new adapter with the new names.
-Change file: `@excitedjs/agent-runtime-claude-code`, `patch`.
+Codex F1, reshaped after the external review of #380 (R30). The adapter root
+stays keyed by the set of source roots (names and real paths, the version-1
+key), so one set of roots always maps to one directory; the manifest
+(`version: 2`) additionally records the child skill directories under each
+root as they were when the view was built. Every start reads the inventory
+from disk and compares it with the manifest: a mismatch — a renamed child
+under an unchanged root after an in-place upgrade, a custom root that gained
+or lost a skill, a manifest of the previous format — rebuilds the view beside
+the root and swaps it into the same path, moving the stale tree aside and
+removing it. The path a running child was given never changes and no earlier
+view is left behind (the first shape of this fix opened a new directory per
+inventory and never removed the old ones; the review named the unbounded
+growth). Because the roots are read on every start, a custom root that was
+deleted or moved fails the start with an error naming the source and its
+path. The key is computed inside `materializeClaudeSkillAddDir`, which
+returns the root; the runtime stores that root before spawning the child, and
+`--add-dir` uses it. Owner: the Claude adapter (its cache, its native view).
+No Core change, no provider ABI change, no old-name aliases. Tests: renaming a
+child skill under an unchanged root refreshes the same root; a version-1 root
+is refreshed in place; a malformed target left by a concurrent writer is
+replaced; an unreadable root is named. Change file:
+`@excitedjs/agent-runtime-claude-code`, `patch`.
 
 ### 3.10 Knowledge base and README
 
@@ -363,6 +382,31 @@ Delivery gains one line — #369 not merged by operator ruling of 2026-09-05;
 content delivered through this task's PR. This task's README already states
 that (Seed F6.3). `requirement.md` Evidence: the attachment-point sentence
 drops `team.create` from today's list (Codex F6).
+
+### 3.14 Corrections from the external review of #380
+
+The reviewer (ryanxiang7) read the whole source change after the PR opened;
+the operator ruled on the findings (R28–R33, requirement.md). Beyond §3.1,
+§3.6, §3.7 and §3.9 above:
+
+- The TeamLeader-facing `dissolve` description opens: "Your system prompt says
+  whether Dreamux removes the Team's workspace on dissolve. If it does, first
+  check the workspace for uncommitted, untracked, or unmerged work; if there
+  is any, or you cannot tell, do not dissolve: report it and ask the user. A
+  kept workspace never blocks the dissolve." The sentence #369 had moved from
+  the old skill told every leader to check, while Core blocks a dissolve only
+  for a managed delete-on-close worktree (R29).
+- A managed worktree requested without `cleanup` defaults to `delete-on-close`
+  (`worktree/manager.ts`; R31). `reuse-cwd` records `keep` and is never
+  removed. The `cleanup` property description states the default.
+- `team.create.prompt` carries `minLength: 1` like `teammate.spawn.prompt` and
+  `team.send.prompt` (R32: an empty string submitted an empty first turn with
+  the Team reminder attached).
+- The `@excitedjs/dreamux` change note leads with `BREAKING:` and carries a
+  `Rebuild:` line for the reserved skill names, the precedent of the workflow
+  skill's own note; the `@excitedjs/agent-runtime-claude-code` note describes
+  the in-place refresh and the named error for an unreadable root.
+- `.agents/proposals/admin-control-plane-surface.md` names `teamwork`.
 
 ## 4. Adjudication of the reviewers' findings
 
@@ -440,17 +484,17 @@ README: §3.10. Change files: §3.11. Task records: §3.13.
 
 | Test | What moves | Why |
 |---|---|---|
-| `dreamux/tests/team-leader-prompt.test.ts` | drop the 'reply tool' / 'public artifacts' case; add: identity arrives last; with `identityPrompt: null` the prompt contains none of `do not poll`, `reply tool`, `public artifacts`, `Load a tool` | R2, R5, Codex F8 |
+| `dreamux/tests/team-leader-prompt.test.ts` | drop the 'reply tool' / 'public artifacts' case; add: identity arrives last; with `identityPrompt: null` the prompt contains none of `do not poll`, `reply tool`, `public artifacts`, `Load a tool`; the workspace sentence for a reused, a managed kept, and a managed delete-on-close workspace | R2, R5, Codex F8, R29 |
 | `dreamux/tests/mcp-tool-descriptions.test.ts` | skill roots renamed; `dynamic-workflow` added to `SKILL_DESCRIPTION_SOURCES`; both Dispatcher prompts: contain `Load \`dreamux-maintenance\``, contain none of the four fragments above; hand-off descriptions (spawn, send, team.create, team.send, workflow_run) state the pushed completion | §3.2, §3.3, §3.5, Seed F7, Codex F8 |
 | `dreamux/tests/bundled-skill-sources.test.ts` | names per root; README regexes | §3.5 |
-| `dreamux/tests/channel-input-format.test.ts` | seven attrs, `source` first | R13 |
+| `dreamux/tests/channel-input-format.test.ts` | seven attrs including `source`; the position is not asserted | R13, R33 |
 | `dreamux/tests/channel-service.test.ts`, `mcp-delegate-catalog.test.ts`, `codex-live.test.ts` | provider-named server and identity | R12 |
 | `dreamux/tests/completion-renderer.test.ts` | the notification sentence in both branches | R14 |
-| new `dreamux/tests/teammate-system-prompt.test.ts`: TeamMate system-prompt order (Team-scoped, dispatcher-scoped, workflow agent) | §3.6 | R9 |
+| new `dreamux/tests/teammate-system-prompt.test.ts`: TeamMate system-prompt order (Team-scoped, dispatcher-scoped, workflow agent — the last without the TeamLeader sentence) | §3.6 | R9, R28 |
 | new `dreamux/tests/team-create-reminder.test.ts`: Team delegate `create` with prompt carries the Team reminder; without prompt, or on an `existing` replay, carries none | §3.3 | Codex F6 |
-| new `feishu-channel/tests/feishu-settlement-envelope.test.ts`: the settlement envelope carries `source` first and the same reminder | §3.7 | J9 |
+| new `feishu-channel/tests/feishu-settlement-envelope.test.ts`: the settlement envelope carries `source` among its attrs and the same reminder | §3.7 | J9, R33 |
 | feishu-channel `feishu-message-budget.test.ts` | reminder text where quoted (at implementation only this file had a word to change; `public-api.test.ts` and dreamux `package-boundary-guards.test.ts` name the export, not the text, and are untouched) | R4 |
-| `claude-code/tests/skill-materializer.test.ts` | renamed child under an unchanged root → new adapter | §3.9 |
+| `claude-code/tests/skill-materializer.test.ts` | renamed child under an unchanged root → the same root refreshed in place; a version-1 root refreshed; a malformed concurrent target replaced; an unreadable root named | §3.9, R30 |
 
 Untouched, by decision: `mcp-public-failures.test.ts` (`channel-x` is an
 inline fixture), `completion-delivery.test.ts` (hand-built bodies),

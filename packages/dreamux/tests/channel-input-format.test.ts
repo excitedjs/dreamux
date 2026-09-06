@@ -105,9 +105,9 @@ describe('the Channel → Core submission pipeline: formatFeishuMessageForRuntim
     const rendered = renderSubmission(submission);
 
     // Core's own provenance name, not whatever the Channel calls itself —
-    // with the Channel's own `source` as the first attribute inside it, which
-    // is what the model reads before any id.
-    expect(rendered.startsWith('<channel source="feishu" ')).toBe(true);
+    // with the Channel's own `source` among the attributes inside it.
+    expect(rendered.startsWith('<channel ')).toBe(true);
+    expect(rendered).toContain(' source="feishu"');
     expect(rendered).toContain(' chat_id="chat-1"');
     expect(rendered).toContain(' thread_id="topic-a"');
     expect(rendered.endsWith('</channel>')).toBe(true);

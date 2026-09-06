@@ -223,6 +223,60 @@ loaded the operator's user-level `lark-im` and `lark-shared` skills "because
 the task asked for a reply through Feishu": the same Codex habit as the
 Dispatcher's, this time on a user skill rather than a Dreamux one.
 
+## External review of #380 (ryanxiang7, 2026-09-06)
+
+The reviewer read the whole source change and left seven inline comments and
+one general one. Each was verified against the source before being reported
+to the operator; the operator ruled on items 2–7 (R28–R33), and items 1 and 8
+were applied as reported.
+
+1. The `team.create` description's leftover apostrophe escape after the
+   apostrophe fix (`\'`) — confirmed cosmetic, corrected.
+2. The Team-scoped workflow agent was told its TeamLeader receives its output,
+   which is false for a workflow agent and competes with the workflow
+   contract — confirmed; R28. The workflow agent now receives only the
+   membership sentence (`system-prompt.ts`; `teammate-system-prompt.test.ts`).
+3. The `dissolve` description told every TeamLeader to inspect the workspace,
+   while Core blocks a dissolve only for a managed delete-on-close worktree —
+   confirmed; the first fix scoped the wording, the operator ruled that the
+   leader cannot know which case it is in and must be told at start (R29).
+   The TeamLeader prompt now carries a workspace sentence built from the Team
+   record's worktree identity (`leader-agent.ts`, `team-service/index.ts`),
+   and the description refers to it (`mcp-delegate.ts`;
+   `team-leader-prompt.test.ts` covers the three cases).
+4. The version-2 adapter key opened a new directory per inventory and never
+   removed the old ones (unbounded growth on every upgrade) — confirmed; R30
+   asked for one stable directory. The key is the root set again; the manifest
+   carries the inventory; a mismatch rebuilds beside the root and swaps it in,
+   removing the stale tree (`skill-adapter.ts`, `skill-materializer.ts`;
+   `skill-materializer.test.ts`, five cases including the version-1 root and
+   the concurrent malformed target).
+5. Every managed worktree defaulted to `keep`, so the default `dissolve`
+   never removed anything — confirmed; R31 changed the default to
+   `delete-on-close` (`worktree/manager.ts`, the `cleanup` description in
+   `tool-metadata.ts`; product README and the dispatcher-orchestration page
+   updated; change note carries the new default).
+6. `team.create.prompt` lacked `minLength: 1` — confirmed (an empty string
+   submitted an empty first turn with the Team reminder); the operator asked
+   what it meant (R32), the fix stood.
+7. Two tests pinned `source` as the first attribute of the envelopes although
+   nothing depends on the position — R33 ruled the order is not a contract;
+   the two assertions now check presence (`channel-input-format.test.ts`,
+   `feishu-settlement-envelope.test.ts`), the design, the channel page, and
+   the feishu-channel change note no longer say "first".
+8. The `@excitedjs/dreamux` change note did not lead with `BREAKING:` although
+   two skill names became reserved — confirmed; the note now leads with
+   `BREAKING:` and carries `Rebuild:`; the claude-code note was rewritten for
+   the stable directory; the proposal page names `teamwork`.
+
+Gates after the round (working tree with all eight fixes, 2026-09-06 15:20):
+`rush build`, `rush lint`, `rush test`, `rush typecheck:tests`,
+`.agents/scripts/check.sh` (KB OK), `rush change --verify --target-branch
+origin/next --no-fetch`, `git diff --check`: all green. Focused suites:
+`team-leader-prompt`, `teammate-system-prompt`, `mcp-tool-descriptions`,
+`channel-input-format` (dreamux), `skill-materializer` (claude-code, five
+cases), `feishu-settlement-envelope` (feishu-channel).
+
 ## Skipped coverage and residual risk
 
 - Description-driven skill loading is the engine's heuristic; whether a model

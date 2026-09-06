@@ -274,7 +274,13 @@ Runtime packages own engine-specific application:
   initialize and before thread start/resume.
 - Claude Code materializes a runtime-owned add-dir root containing a
   `.claude/skills/<name>` entry per skill under each supplied root, then passes
-  that materialized root through `--add-dir`.
+  that materialized root through `--add-dir`. The root is keyed by the set of
+  source roots, so one set of roots always maps to one directory; its manifest
+  records the child skill inventory found under each root, and a start whose
+  inventory differs from the manifest (an in-place upgrade that renamed a
+  bundled skill, a custom root that changed) rebuilds the view and swaps it
+  into the same path. A source root that cannot be read fails the start with
+  an error naming the source and its path.
 
 `dreamux onboard` and dispatcher startup do not install bundled skills into a
 workspace. They are package-shipped runtime injection sources only.

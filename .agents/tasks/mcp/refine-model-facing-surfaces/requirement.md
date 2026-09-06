@@ -231,6 +231,41 @@
   been run through a fake-backend harness before this ruling arrived; its
   result stays in verification.md as evidence, not as a gate.
 
+The external review of PR #380 (ryanxiang7, 2026-09-06) raised seven inline
+findings and one unanchored one; the TeamLeader reported them numbered 1–8 with
+a recommendation each, and the operator ruled on 2–7 in one message
+(2026-09-06 15:00). Items 1 and 8 had no ruling and were applied as reported.
+
+- R28 (item 2, the Team-scoped workflow agent's prompt): "改。Workflow 里面的
+  agent，本来就很难确保它们输出稳定的 structured output 这已经比较困难了，尽量还是不要给他们引入什么干扰项。"
+  TeamLeader's reading, labeled: the reported fix is approved — a workflow
+  agent keeps the membership sentence and loses "Your TeamLeader receives what
+  you output when your turn ends"; nothing else competes with the workflow
+  contract.
+- R29 (item 3, the `dissolve` description's workspace check): "但是对于对于
+  Team leader 来说，他并不知道自己到底是 managed WorkTree，还是 reuse CWD 呀。他要是解散的时候有这个判断的话，你需要在一开始就注入给他呀。"
+  TeamLeader's reading, labeled: the TeamLeader's prompt states at start
+  whether its workspace is removed on dissolve, and the description refers to
+  that sentence.
+- R30 (item 4, the adapter cache): "之前这个地方是怎么保障的？能不能用点哈希之类的手段，始终让它在同一个目录里面？"
+  Answered: the previous key hashed the root set, so one set of roots always
+  mapped to one directory, but validation also looked only at the roots, so a
+  renamed child never refreshed the view. The TeamLeader proposed keying by
+  the roots again with the inventory recorded in the manifest and the same
+  directory refreshed in place on a mismatch, and proceeded on it; the operator
+  did not object.
+- R31 (item 5, the `cleanup` default): "cleanup 改成默认delete on close。不然一堆keep太恶心了。"
+  TeamLeader's reading, labeled: a managed worktree requested without
+  `cleanup` defaults to `delete-on-close`. `reuse-cwd` is not a git worktree
+  and is never removed; the TeamLeader said so in the same reply.
+- R32 (item 6, `team.create.prompt` without `minLength`): "这个是什么意思？" — a
+  question, answered (an empty string passed the schema and submitted an empty
+  first turn with the Team reminder attached); the fix stood.
+- R33 (item 7, the attribute order of the envelope): "不用确保有序。意义不大。把确保有序的测试给删了"
+  TeamLeader's reading, labeled: `source="feishu"` stays an attribute of both
+  envelopes; its position is not a contract, and the two assertions that
+  pinned it are removed.
+
 ## Evidence
 
 Everything here is traced from PR #369 head (`5e1a3464`) unless labeled
@@ -642,7 +677,7 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
 
 ## Decisions and unknowns
 
-- Confirmed operator decisions: R1–R27 above (R11 is the proposal R12 and R13 ruled on). No open decisions; the technical design proceeds on the simple path (R17) with two reviewers (R18); R21 is the adjudication principle for reviewer findings.
+- Confirmed operator decisions: R1–R33 above (R11 is the proposal R12 and R13 ruled on). No open decisions; the technical design proceeds on the simple path (R17) with two reviewers (R18); R21 is the adjudication principle for reviewer findings.
 - Open decisions for the operator:
   - (a) Sentence 2: dropping "Load a tool's definition before calling it" is
     confirmed (R5). Still open: the engine-neutral channel clause, re-asked

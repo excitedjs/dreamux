@@ -292,15 +292,17 @@ call created. A Channel recognizes its own submission by the `source_id` it
 sent, which Core echoes on `teammate.input`; there is no per-submission turn
 event left to claim.
 
-Feishu's display attrs open with `source` (`feishu`), rendered first in the
-model-visible `<channel …>` envelope, ahead of `chat_id`, `chat_type`, the
-optional `thread_id`, `message_id`, `sender_id`, `sender_name`, and
-`create_time`. It is the same fact that names the `channel-feishu` MCP server
-(above), given so a model can tie the envelope it is reading to the tools that
-answer it. The ask-user settlement envelope — a card answer arriving back as
-an ordinary inbound submission (see `ask_user_question` above) — carries
-`source` first for the same reason: a settlement reads like a channel message
-because it is one.
+Feishu's display attrs carry `source` (`feishu`) next to `chat_id`,
+`chat_type`, the optional `thread_id`, `message_id`, `sender_id`,
+`sender_name`, and `create_time` in the model-visible `<channel …>` envelope.
+It is the same fact that names the `channel-feishu` MCP server (above), given
+so a model can tie the envelope it is reading to the tools that answer it. The
+channel adds it first and Core renders attrs in insertion order, but the
+position is not a contract and no test pins it (R33 in the
+refine-model-facing-surfaces record). The ask-user settlement envelope — a
+card answer arriving back as an ordinary inbound submission (see
+`ask_user_question` above) — carries the same attribute for the same reason:
+a settlement reads like a channel message because it is one.
 
 The standing reminder is the Channel's own consequence sentence, worded and
 owned here, not by Core: it states the one fact this model cannot see for

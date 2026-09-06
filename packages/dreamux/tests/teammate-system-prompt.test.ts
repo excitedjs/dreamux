@@ -239,13 +239,12 @@ describe('the system prompt an Agent of a TeammateCollection is launched with', 
     expect(launch.systemPrompt).toBeUndefined();
   });
 
-  it('puts a Team-scoped workflow agent between the two: membership first, the workflow contract next, the identity last', async () => {
+  it('tells a Team-scoped workflow agent who it is, then the workflow contract, then the identity — and nothing about its TeamLeader receiving its output', async () => {
     const { name, launch } = await launchedWorkflowAgent();
 
     expect(name).toBe('tm-agent-test');
     expect(launch.systemPrompt?.append).toEqual([
-      'You are TeamMate "tm-agent-test" of Dreamux Team "alpha". Your TeamLeader ' +
-        'receives what you output when your turn ends.',
+      'You are TeamMate "tm-agent-test" of Dreamux Team "alpha".',
       WORKFLOW_AGENT_SYSTEM_PROMPT,
       IDENTITY,
     ]);

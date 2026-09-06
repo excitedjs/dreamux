@@ -7,6 +7,7 @@ import {
   readlink,
   rename,
   rm,
+  symlink,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -60,7 +61,7 @@ describe('Claude skill materialization', () => {
     ).resolves.toContain('"version": 2');
   });
 
-  it('fails loud when a concurrent winner leaves a malformed target', async () => {
+  it('replaces a malformed target a concurrent writer left behind', async () => {
     const fixture = await createFixture();
     const target = await adapterRoot(fixture);
     const publishReady = deferred();
@@ -83,59 +84,110 @@ describe('Claude skill materialization', () => {
     );
     releasePublish.resolve();
 
-    await expect(materializing).rejects.toThrow(
-      /invalid Claude skill adapter/u,
+    await expect(materializing).resolves.toBe(target);
+    await expect(
+      readFile(join(target, '.dreamux-skill-adapter.json'), 'utf8'),
+    ).resolves.toContain('"version": 2');
+    expect(await readlink(join(target, '.claude', 'skills', 'review'))).toBe(
+      fixture.skill,
     );
-    await expect(lstat(target)).resolves.toMatchObject({});
-    const leftovers = await readdir(dirname(target));
-    expect(leftovers.some((name) => name.endsWith('.tmp'))).toBe(false);
+    await expectNoLeftovers(dirname(target));
+  });
+
+  it('refreshes a root left by the previous adapter version in place', async () => {
+    const fixture = await createFixture();
+    const target = await adapterRoot(fixture);
+    await mkdir(join(target, '.claude', 'skills'), { recursive: true });
+    await symlink(
+      fixture.skill,
+      join(target, '.claude', 'skills', 'stale-name'),
+      'dir',
+    );
+    await writeFile(
+      join(target, '.dreamux-skill-adapter.json'),
+      JSON.stringify({
+        version: 1,
+        key: target.split('/').at(-1),
+        sources: [{ name: 'review', path: fixture.source }],
+      }),
+    );
+
+    await expect(
+      materializeClaudeSkillAddDir(fixture.cacheDir, fixture.sources),
+    ).resolves.toBe(target);
+    await expect(
+      readFile(join(target, '.dreamux-skill-adapter.json'), 'utf8'),
+    ).resolves.toContain('"version": 2');
+    expect(await readlink(join(target, '.claude', 'skills', 'review'))).toBe(
+      fixture.skill,
+    );
+    await expect(
+      lstat(join(target, '.claude', 'skills', 'stale-name')),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    await expectNoLeftovers(dirname(target));
   });
 
   /**
    * An in-place package upgrade renames the skills under a source root whose own
-   * name and path never change. The child inventory is part of the adapter's
-   * identity, so that upgrade lands on a new root with the new names, and the
-   * root the previous inventory produced is left exactly as it was.
+   * name and path never change. The root is keyed by the roots alone, so the
+   * upgrade lands on the same directory; the manifest records the children, so
+   * the stale view is detected and replaced there.
    */
-  it('materializes a new adapter when a child skill is renamed under an unchanged root', async () => {
+  it('refreshes the same adapter root in place when a child skill is renamed under an unchanged root', async () => {
     const fixture = await createFixture();
-    const before = await adapterRoot(fixture);
+    const root = await adapterRoot(fixture);
     await expect(
       materializeClaudeSkillAddDir(fixture.cacheDir, fixture.sources),
-    ).resolves.toBe(before);
+    ).resolves.toBe(root);
     const beforeManifest = await readFile(
-      join(before, '.dreamux-skill-adapter.json'),
+      join(root, '.dreamux-skill-adapter.json'),
       'utf8',
     );
 
     const renamedSkill = join(fixture.source, 'code-review');
     await rename(fixture.skill, renamedSkill);
 
-    const after = await adapterRoot(fixture);
-    expect(after).not.toBe(before);
+    expect(await adapterRoot(fixture)).toBe(root);
     await expect(
       materializeClaudeSkillAddDir(fixture.cacheDir, fixture.sources),
-    ).resolves.toBe(after);
+    ).resolves.toBe(root);
     expect(await readlink(join(
-      after,
+      root,
       '.claude',
       'skills',
       'code-review',
     ))).toBe(renamedSkill);
     await expect(
-      lstat(join(after, '.claude', 'skills', 'review')),
+      lstat(join(root, '.claude', 'skills', 'review')),
     ).rejects.toMatchObject({ code: 'ENOENT' });
+    const afterManifest = await readFile(
+      join(root, '.dreamux-skill-adapter.json'),
+      'utf8',
+    );
+    expect(afterManifest).not.toBe(beforeManifest);
+    expect(afterManifest).toContain('code-review');
+    await expectNoLeftovers(dirname(root));
+  });
+
+  it('names the skill source when its root can no longer be read', async () => {
+    const fixture = await createFixture();
+    await materializeClaudeSkillAddDir(fixture.cacheDir, fixture.sources);
+
+    await rm(fixture.source, { recursive: true, force: true });
 
     await expect(
-      readFile(join(before, '.dreamux-skill-adapter.json'), 'utf8'),
-    ).resolves.toBe(beforeManifest);
-    expect(await readlink(join(
-      before,
-      '.claude',
-      'skills',
-      'review',
-    ))).toBe(fixture.skill);
+      materializeClaudeSkillAddDir(fixture.cacheDir, fixture.sources),
+    ).rejects.toThrow(
+      `skill source "review" root ${fixture.source} cannot be read: `,
+    );
   });
+
+  async function expectNoLeftovers(dir: string): Promise<void> {
+    const leftovers = await readdir(dir);
+    expect(
+      leftovers.filter((name) => name.endsWith('.tmp') || name.endsWith('.stale')),
+    ).toEqual([]);
+  }
 
   async function createFixture() {
     const root = await mkdtemp(join(tmpdir(), 'dreamux-claude-skills-'));

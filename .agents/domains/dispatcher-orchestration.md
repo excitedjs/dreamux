@@ -290,7 +290,11 @@ admission instead.
 Assessment checks only dirty and unmerged state; it enumerates no refs and walks
 no repository history. `cleanup: keep` and non-managed workspaces are terminally
 retained, as is dirty or unmerged work, which requires an explicit user
-decision. Managed `delete-on-close` cleanup calls `git worktree remove <path>`,
+decision. A managed worktree requested without `cleanup` is `delete-on-close`
+(`worktree/manager.ts`; R31 of the refine-model-facing-surfaces record), and
+its TeamLeader is told so in its prompt because the `dissolve` description asks
+it to check such a workspace before dissolving. Managed `delete-on-close`
+cleanup calls `git worktree remove <path>`,
 non-forced by default so Git's own refusal is the final authority. `force: true`
 is that user decision, not a bypass of it: it authorizes
 `git worktree remove --force` and discards the uncommitted, untracked, or

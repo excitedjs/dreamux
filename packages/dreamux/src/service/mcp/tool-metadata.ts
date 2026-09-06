@@ -194,8 +194,9 @@ export function repoInputSchema(): Record<string, unknown> {
         type: 'string',
         enum: ['keep', 'delete-on-close'],
         description:
-          'managed: keep leaves the worktree after close; delete-on-close ' +
-          'removes it when the agent closes and the tree is clean.',
+          'managed: delete-on-close (the default) removes the worktree when ' +
+          'the agent closes or its Team dissolves and the tree is clean; keep ' +
+          'leaves it in place.',
       },
     },
     required: ['mode'],

@@ -30,6 +30,7 @@ import type {
 import type { AgentRuntimeProviderCatalog } from '../src/agent-runtime/index.js';
 import type { DreamuxConfig, ResolvedAgentConfig } from '../src/config/config.js';
 import { AgentIdentityStore } from '../src/service/agent-entity/identity-store.js';
+import type { AgentEntityWorktreeIdentity } from '../src/service/agent-entity/types.js';
 import { restoreTeamLeaderAgentForTeam } from '../src/service/team-service/leader-agent.js';
 import { AdmissionLedger } from '../src/service/teammate-service/admission-ledger.js';
 import type { TeammateAgentMcp } from '../src/service/teammate-service/types.js';
@@ -63,6 +64,7 @@ afterEach(async () => {
  */
 async function launchedLeaderAppend(
   identityPrompt: string | null = null,
+  workspace: (teamRoot: string) => AgentEntityWorktreeIdentity = reuseCwdWorktree,
 ): Promise<readonly string[]> {
   const teamRoot = await mkdtemp(join(tmpdir(), 'dreamux-team-leader-prompt-'));
   roots.push(teamRoot);
@@ -114,6 +116,7 @@ async function launchedLeaderAppend(
   const leader = restoreTeamLeaderAgentForTeam({
     dispatcherId: DISPATCHER,
     teamId: TEAM,
+    workspace: workspace(teamRoot),
     identity,
     leaderMcp: () =>
       ({ leases: {}, delegates: [], adminSocketPath: '' }) as unknown as TeammateAgentMcp,
@@ -135,8 +138,24 @@ async function launchedLeaderAppend(
 /** The whole prompt as one text, for the assertions that read across lines. */
 async function launchedLeaderPrompt(
   identityPrompt: string | null = null,
+  workspace: (teamRoot: string) => AgentEntityWorktreeIdentity = reuseCwdWorktree,
 ): Promise<string> {
-  return (await launchedLeaderAppend(identityPrompt)).join('\n');
+  return (await launchedLeaderAppend(identityPrompt, workspace)).join('\n');
+}
+
+function managedWorktree(
+  cleanup: AgentEntityWorktreeIdentity['cleanup'],
+): (teamRoot: string) => AgentEntityWorktreeIdentity {
+  return (teamRoot) => ({
+    mode: 'managed',
+    slug: 'team-alpha',
+    path: teamRoot,
+    branch: 'dreamux/team-alpha',
+    base_ref: 'HEAD',
+    cleanup,
+    cleanup_state: 'managed-active',
+    cleanup_error: null,
+  });
 }
 
 describe('the prompt a TeamLeader runtime is launched with', () => {
@@ -146,6 +165,25 @@ describe('the prompt a TeamLeader runtime is launched with', () => {
     expect(prompt).toContain('`team`');
     expect(prompt).toContain('`cron`');
     expect(prompt).toContain('channel-');
+  });
+
+  it('tells the leader its reused workspace is kept after dissolve', async () => {
+    const prompt = await launchedLeaderPrompt();
+    expect(prompt).toContain('reused directory');
+    expect(prompt).toContain('kept after the Team dissolves');
+    expect(prompt).not.toContain('blocks the dissolve');
+  });
+
+  it('tells the leader a managed delete-on-close workspace is removed and what blocks the dissolve', async () => {
+    const prompt = await launchedLeaderPrompt(null, managedWorktree('delete-on-close'));
+    expect(prompt).toContain('removes when the Team dissolves');
+    expect(prompt).toContain('blocks the dissolve');
+  });
+
+  it('tells the leader a managed kept workspace is kept', async () => {
+    const prompt = await launchedLeaderPrompt(null, managedWorktree('keep'));
+    expect(prompt).toContain('managed git worktree that is kept');
+    expect(prompt).not.toContain('blocks the dissolve');
   });
 
   it('ends with the operator\'s own identity text', async () => {

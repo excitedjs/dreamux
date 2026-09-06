@@ -77,7 +77,10 @@ the same change that touches it.
   never rolls the dissolve back. Automatic cleanup removes only the worktree
   itself: it **never deletes the managed branch, its commits, a reused
   directory, or the source repository** — a user's committed work survives
-  every dissolve.
+  every dissolve. A managed worktree requested without `cleanup` is
+  `delete-on-close` (operator ruling R31 in the refine-model-facing-surfaces
+  record, 2026-09-06: kept worktrees piled up); pass `cleanup: keep` to retain
+  one.
 - **A failed dissolve leaves a Team that still exists.** Whatever committed
   before the failure stays committed (closed members stay closed, deleted cron
   stores stay deleted); the next ordinary use rebuilds from disk, and the next

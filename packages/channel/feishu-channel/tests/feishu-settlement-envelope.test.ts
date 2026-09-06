@@ -74,7 +74,7 @@ function handle(delivery: FeishuInboundDelivery): SessionHandle {
 }
 
 describe('the ask-card settlement envelope', () => {
-  it('carries source="feishu" as its first attribute, ahead of the ids', async () => {
+  it('carries source="feishu" among its attributes, next to the ids', async () => {
     const { delivery, submissions } = capturingDelivery();
 
     // Expiry is the settlement path that delivers synchronously; a click
@@ -93,15 +93,13 @@ describe('the ask-card settlement envelope', () => {
     });
 
     expect(submissions).toHaveLength(1);
-    expect(Object.keys(submissions[0]?.attrs ?? {})).toEqual([
-      'source',
-      'chat_id',
-      'thread_id',
-      'message_id',
-      'sender_id',
-      'ask_user_request_id',
-    ]);
-    expect(submissions[0]?.attrs.source).toBe('feishu');
+    expect(submissions[0]?.attrs).toMatchObject({
+      source: 'feishu',
+      chat_id: 'oc_room',
+      thread_id: 'omt_thread',
+      message_id: 'om_card',
+      ask_user_request_id: 'req-1',
+    });
     // The same standing note an inbound message carries: an answer leaves the
     // model in the same chat, under the same consequence.
     expect(submissions[0]?.reminder).toBe(CHANNEL_REMINDER);
