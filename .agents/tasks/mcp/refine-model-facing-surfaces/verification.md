@@ -209,15 +209,28 @@ The Codex Dispatcher on the same alpha confirmed the version and the
 `channel-feishu` name and tools, declined to quote the envelope, reminder,
 prompt, or tool descriptions, and reported loading `dispatcher-workflow`
 "for the channel reply" on that turn although the skill's description says it
-is needed for no other tool — the description-driven loading heuristic below,
-observed once on Codex.
+is needed for no other tool — the description-driven loading heuristic below.
+
+A second round on a Codex TeamLeader (a Team without a repo, bound to the
+same group): it summarized rather than quoted its identity line and server
+map (TeamLeader; `teammate`, `team`, `cron`, `channel-feishu`), listed
+`teamwork` and `dynamic-workflow` among its skills with the old names absent,
+loaded neither of them, named `channel-feishu` with its six tools (calling
+`reply` as `mcp__channel_feishu__reply`, Codex's underscore rendering),
+confirmed `source="feishu"` as the first attribute of the inbound `<channel>`
+block, summarized the channel reminder's meaning, and dissolved the Team. It
+loaded the operator's user-level `lark-im` and `lark-shared` skills "because
+the task asked for a reply through Feishu": the same Codex habit as the
+Dispatcher's, this time on a user skill rather than a Dreamux one.
 
 ## Skipped coverage and residual risk
 
 - Description-driven skill loading is the engine's heuristic; whether a model
   associates `source="feishu"` with `channel_feishu` is empirical. On the alpha,
-  Claude Code followed the triggers exactly and Codex loaded
-  `dispatcher-workflow` once for a plain channel reply; recorded, not acted on.
+  Claude Code followed the triggers exactly; Codex respected the bundled
+  skills' triggers on its TeamLeader turn but loaded a skill for a plain
+  channel reply on both of its turns (`dispatcher-workflow` as Dispatcher, the
+  user-level `lark-im` as TeamLeader); recorded, not acted on.
 - The dispatch reminders are invisible on Claude Code (the engine drops MCP
   `content` text next to `structuredContent`); the description sentence is the
   only carrier there.
