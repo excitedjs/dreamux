@@ -187,12 +187,37 @@ already run; the PR does not wait for it.
   the installed package after an in-place upgrade — the post-release probes of
   final.md §1.
 
+## Alpha acceptance (2026-09-06)
+
+On the operator's order the release workflow published
+`@excitedjs/dreamux@0.24.0-alpha.gffd8b4b7feab` from the PR branch; the
+operator upgraded his own Codex Dispatcher to it in place and had it create a
+Claude Code Team without a repo, bound to the work group. The TeamLeader
+answered the acceptance probes of final.md §1 in the group:
+
+- Identity line and server map: verbatim the §3.1 text.
+- Skill list: `teamwork` and `dynamic-workflow` present, the old names absent
+  — an in-place upgrade over an existing adapter cache, so the §3.9 adapter
+  identity re-materialized the view.
+- Skills loaded on the turn: none; the stated reasons cite the load triggers
+  of the new descriptions.
+- Channel server: `channel-feishu` with its six TeamLeader tools.
+- Reminders: the channel reminder verbatim and nothing else from Dreamux.
+- It checked the workspace and dissolved the Team itself.
+
+The Codex Dispatcher on the same alpha confirmed the version and the
+`channel-feishu` name and tools, declined to quote the envelope, reminder,
+prompt, or tool descriptions, and reported loading `dispatcher-workflow`
+"for the channel reply" on that turn although the skill's description says it
+is needed for no other tool — the description-driven loading heuristic below,
+observed once on Codex.
+
 ## Skipped coverage and residual risk
 
 - Description-driven skill loading is the engine's heuristic; whether a model
-  associates `source="feishu"` with `channel_feishu` is empirical. The
-  post-release acceptance probes of final.md §1 ("which skills did you load on
-  this turn and why", "can you find the Feishu channel's tools") cover this.
+  associates `source="feishu"` with `channel_feishu` is empirical. On the alpha,
+  Claude Code followed the triggers exactly and Codex loaded
+  `dispatcher-workflow` once for a plain channel reply; recorded, not acted on.
 - The dispatch reminders are invisible on Claude Code (the engine drops MCP
   `content` text next to `structuredContent`); the description sentence is the
   only carrier there.

@@ -8,7 +8,7 @@
 - Final solution: [technical-design/final.md](/.agents/tasks/mcp/refine-model-facing-surfaces/technical-design/final.md) (2026-09-06), adjudicated from [draft.md](/.agents/tasks/mcp/refine-model-facing-surfaces/technical-design/draft.md) and the two reviews under `technical-design/reviews/` (Codex and Seed runtimes, R18; the Codex file includes its reconsideration under R21).
 - Solution review Issue: Not created.
 - Blockers: None.
-- Next action: Open the PR on `next`; after the merge and release, run the post-release acceptance probes of final.md §1 on the operator's Codex TeamLeader and a Claude Code TeamLeader.
+- Next action: Merge #380 (operator) and close #369. The acceptance probes of final.md §1 ran on the alpha built from the PR branch (verification.md, "Alpha acceptance").
 - Verification: [verification.md](/.agents/tasks/mcp/refine-model-facing-surfaces/verification.md) — implementation method, gates, built-artifact probes, the independent review with adjudication, the live probes of final.md §8, residual risk.
 - Lineage: the deep review of PR #369 (https://github.com/excitedjs/dreamux/pull/369) on 2026-09-05; that PR's own record (`relocate-role-skill-guidance`, on the PR branch) holds the 2026-09-02 rulings this task builds on. This task adds one delivery line to that PR's record (draft §3.11): #369 is not merged and its content ships through this task's PR.
 - Related tasks: None.
