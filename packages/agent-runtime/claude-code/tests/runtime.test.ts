@@ -125,6 +125,7 @@ class FakeSession implements ClaudeCodeSession {
     }
     this.spec.onProtocolEvent?.({
       kind: 'result',
+      commandUuids: commandUuid === undefined ? [] : [commandUuid],
       outcome: {
         isError: false,
         text: `echo:${prompt}`,
@@ -190,6 +191,7 @@ function fireDefaultResult(
   spec.onProtocolEvent?.({ kind: 'command_lifecycle', commandUuid, state: 'started' });
   spec.onProtocolEvent?.({
     kind: 'result',
+    commandUuids: [commandUuid],
     outcome: {
       isError: false,
       text: 'ok',
@@ -634,6 +636,7 @@ describe('ClaudeCodeRuntime native turn end', () => {
     // One result answers both started commands: one native turn, one end.
     session.spec.onProtocolEvent?.({
       kind: 'result',
+      commandUuids: [initialUuid, steeredUuid],
       outcome: {
         isError: false,
         text: 'one answer for both',

@@ -396,6 +396,27 @@ describe('TurnAggregator', () => {
     expect(agg.outcome()?.sessionId).toBe('s-init');
   });
 
+  it('leaves in-flight text intact when takeOutcome is called before a result', () => {
+    const agg = new TurnAggregator();
+    agg.accept(parseLine(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'running answer' }] } })));
+    expect(agg.takeOutcome()).toBeNull();
+    agg.accept(parseLine(JSON.stringify({ type: 'result', subtype: 'success', result: '' })));
+    expect(agg.takeOutcome()?.text).toBe('running answer');
+    agg.accept(parseLine(JSON.stringify({ type: 'result', subtype: 'success', result: '' })));
+    expect(agg.takeOutcome()?.text).toBe('');
+  });
+
+  it('discards cancelled text without requiring a result or discarding session identity', () => {
+    const agg = new TurnAggregator();
+    agg.accept(parseLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' })));
+    agg.accept(parseLine(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'cancelled answer' }] } })));
+    agg.discard();
+    expect(agg.takeOutcome()).toBeNull();
+    expect(agg.sessionId).toBe('s1');
+    agg.accept(parseLine(JSON.stringify({ type: 'result', subtype: 'success', result: '' })));
+    expect(agg.takeOutcome()).toMatchObject({ text: '', sessionId: 's1' });
+  });
+
   it('returns null outcome before the result lands', () => {
     const agg = new TurnAggregator();
     agg.accept(parseLine(JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' })));

@@ -79,3 +79,145 @@
      non-blocking follow-ups: `stop()` backstops the first and the second
      leaks nothing; both are left unchanged here to avoid untested hot-path
      churn.
+
+## Background-turn repair verification (2026-09-07)
+
+- Baseline: `48882651`; integration target: `next`.
+- Bootstrap: `node common/scripts/install-run-rush.js update` passed.
+- Native protocol probe: Claude Code 2.1.263, isolated resident stream-json
+  process, real background Bash completion, two explicit inputs injected during
+  a foreground tool call in its follow-up turn. Both inputs emitted queued,
+  started, and completed lifecycle states before the shared result. The result
+  retained `origin.kind = task-notification`, omitted user_message_uuid, and
+  contained both requested output markers. A subsequent ordinary request
+  completed in the same process. The probe closed stdin and exited cleanly.
+- This proves origin cannot veto a started request group and confirms
+  completed-before-result ordering. The initial ordinary input emitted started
+  before init. An earlier reading missed that ordering; UUID matching without
+  started remains compatibility coverage, not an observation from this probe.
+- Isolated replay against the previously installed adapter demonstrated the
+  foreign-UUID reap and queued-only fallback defects. Reap was a spy; no real
+  process was terminated by that replay.
+- At this initial-probe stage, repaired-provider verification had not run. Its
+  completed results are recorded below. Raw local traces are not committed.
+
+- Additional native 2.1.263 probes passed: a pure background follow-up completed
+  and accepted a later input in the same process; a late explicit input emitted
+  queued, then the prior background result arrived, then the input emitted
+  started and received its own result. Both processes exited cleanly after the
+  final follow-up. These are native protocol probes, not yet repaired-provider
+  or Core end-to-end results.
+
+- First implementation pre-review: five source files and six test/fixture files.
+  Developer reported scoped build/lint/test/typecheck:tests passing (179 tests).
+  TeamLeader found that the global lifecycle-observed/single-command fallback
+  incorrectly excludes an initial UUID-matched result when another request is
+  queued or refused. Added started frames in old tests masked that case. Returned
+  to the same writer to restore those sequences and use positive UUID evidence
+  without reinstating the foreign-UUID veto.
+- The new command-group field changes the exported Claude-specific session
+  callback, not the neutral AgentRuntime ABI. A breaking package release note
+  will accurately describe this extension-seam impact.
+
+### Repaired-provider pre-review
+
+- Rebased onto `2575e056` from `origin/next`; the baseline card-spacing commit
+  was already present upstream and was dropped by rebase. No manual conflicts.
+- Corrected pre-review finding: restored the original no-start sequences and
+  added positive UUID matching alongside the started group. Developer scoped
+  build/lint/test/typecheck:tests passed: 12 files, 183 tests.
+- Full Rush build, lint, test and typecheck:tests passed after rebase. Full test
+  included real Codex 0.153.4 integration; no live-test skip flag was set.
+  Initial simultaneous Rush commands were refused by its repository lock,
+  then rerun sequentially.
+- Live repaired provider plus actual Core CompletionDeliveryPolicy passed on
+  Claude Code 2.1.263 in three isolated resident processes:
+  - pure background: three native results, only the initial and subsequent
+    explicit requests delivered (two deliveries); background activity/end seen;
+  - folded B/C: both submissions shared the same completion object; three native
+    results and three deliveries including initial and subsequent requests;
+  - queued B: four native results, three deliveries; background result excluded
+    and B received its own result, followed by the subsequent request.
+- Every mode used exactly one resident PID throughout the scenario and accepted
+  a subsequent request. All probe processes exited successfully after explicit
+  test cleanup. Cleanup stops just after the final settlement and can log the
+  existing stop-before-command-drain diagnostic; it did not alter settlements.
+- These probes use real native subprocesses and the production provider/router,
+  with an in-memory recipient to count automatic delivery; they do not deploy
+  the change into an existing Dreamux host or send test messages to a chat.
+
+### Independent review and TeamLeader adjudication
+
+The complete staged repair was reviewed at xhigh against `2575e056`, including
+source, tests, owning knowledge, package documentation and the release note.
+Seven finders and nineteen verifier seats completed without workflow failures;
+all eleven reported candidates are adjudicated below. The existing operator
+authorization to repair background turns and open a PR covers these corrections.
+They retain submission-based routing and introduce no origin filter.
+
+| Item | Decision | Reason and correction |
+| --- | --- | --- |
+| R1: cancelled text survives without a result | Accept | Discard aggregate text at the cancelled native boundary, including when another input remains queued in the same window. Preserve session identity and other running members. |
+| R2: background process exit lacks a native end | Accept | Publish the missing failed end using existing session ownership; retain the active request failure path without duplicate ends. |
+| R3: owning settlement section contradicts repair | Accept | Rewrite the current owning section around positive UUID evidence, started command groups and attributed-result drainage. |
+| R4: requirement still says native validation is pending | Accept | Link the completed provider/Core probes and correct the initial started observation. |
+| R5: legacy fallback overrides a foreign UUID | Accept with evidence limit | Keep absent-UUID legacy compatibility, but do not override an explicitly foreign UUID. The mechanism is demonstrable; that legacy native ordering has not been reproduced. |
+| R6: lifecycle input lacks both started and result UUID | Reject as unproven | No complete native trace establishes this combination. Restoring sole-pending attribution would consume known queued background results. |
+| R7: protocol callbacks continue after stop | Accept narrowly | Suppress late callbacks using the existing stopped flag. Outer Team or Channel closure may close a reopened card, so a permanent card hang is not claimed for every teardown. |
+| R8: old fixture models the double omission | Reject as native proof | A synthetic fixture is not evidence of a supported producer sequence. Keep no-start plus matching-UUID compatibility coverage and the approved removal of ambiguous fallback. |
+| R9: initial no-start command omitted from a shared result | Reject as unproven | The premise combined different versions and an incorrect probe reading. A new initial A plus steers B/C probe observed started for all three and one result naming A. |
+| R10: later no-start command drains before its own result | Reject as unproven | The required combined native ordering has not been observed. Do not add another attribution ledger or infer group members without evidence. |
+| R11: historical COT task retains fail-loud guidance | Accept as knowledge correction | Preserve historical quotes and append dated supersession links to this repair. |
+
+For R6/R8/R9/R10, future raw traces can reopen the decision; successful probes
+on one version do not establish an all-version guarantee. In the hypothetical
+partial-settlement cases, Core sends a stopped notification, not zero delivery.
+
+The raw native traces were rechecked during review: all four initial inputs
+emitted started before init and before their first result. The added initial
+A plus B/C fold probe also accepted a subsequent input in the same process and
+exited cleanly. Private raw logs and runtime identifiers remain uncommitted.
+
+Adjacent source comments will be aligned with resident aggregation. The public
+RPC command_lifecycle observation callback is retained: absence of an internal
+runtime consumer does not authorize removal of an exported capability. No
+additional origin state, mirror ledger or public pending-query API is needed.
+
+### Accepted corrections and final pre-review
+
+R1, R2, R5 and R7 are implemented with no extra attribution ledger. The
+aggregator's discard capability retains session identity and leaves the existing
+no-result takeOutcome behavior intact. Cancellation clears unfinished content
+without removing other started submissions. Background exit uses the existing
+active session ownership; stop uses the existing stopped flag. Legacy UUID-less
+input remains supported, while a foreign UUID does not consume it.
+
+The TeamLeader inspected the complete final source/test change against HEAD,
+including rewritten assertions and the preserved fold/queue/interruption
+contracts. New tests cover cancellation with no result across and within a
+window, surviving started members, queued refusal/discard, unbound exit, active
+exit without duplicate end, admission before session ownership, and callbacks
+after stop. Scoped build, lint, test and typecheck:tests passed: 12 test files,
+199 cases. A subsequent class-comment correction changed no executable code.
+
+R3, R4 and R11 are corrected in the owning settlement section, current
+requirement/verification and dated historical COT annotations. The package
+README also now distinguishes immediate result settlement from request drainage
+and names Core as source-deduplication owner.
+
+The final repair changes five source files and six test/fixture files, all in
+the Claude package. The public lifecycle observation callback remains intact.
+No existing host was upgraded and no raw native traces were committed. The
+three earlier repaired-provider/Core live probes remain evidence for native
+background/fold/queue behavior; the cancellation/exit corrections were verified
+by deterministic provider/RPC regressions, not additional live probes.
+
+Final full-workspace Rush build, lint, test and typecheck:tests passed. The full
+test completed in 2 minutes 13.7 seconds with real Codex 0.153.4 enabled; its
+SUCCESS WITH WARNINGS summaries contain expected runtime stderr diagnostics.
+Build was refreshed after the comment-only correction. No accepted review
+finding remains unresolved.
+
+Knowledge closeout passed: task-record check, KB links/reachability (167 files),
+git diff --check, and the internal-content tree scan. The task is done for PR
+handoff; merge and deployment require separate operator authority.

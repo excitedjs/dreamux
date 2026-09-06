@@ -335,6 +335,26 @@ Source:
 - `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
 
+### Regression Trap: background origin is not completion ownership
+
+A Claude background task can start a native follow-up with no submitted command,
+then receive explicit requests midway through that turn. The command lifecycle
+that admits those requests determines the result's submitted group; the original
+trigger and the result's single user-message UUID do not describe that whole
+group. Filtering all task-notification results drops valid steered answers.
+
+Native result/activity handling must work without a submission. No submitted
+group means no request settlement, not a process failure. A merely queued request
+must not be settled by a prior background result through a sole-pending fallback.
+Normal completed lifecycle frames may precede their shared result, so they do not
+erase its started group. Core continues routing shared completion tokens to the
+recipients captured on each submitted request.
+
+Source: `/packages/agent-runtime/claude-code/src/rpc.ts`,
+`/packages/agent-runtime/claude-code/src/runtime-submissions.ts`,
+`/packages/agent-runtime/claude-code/src/runtime.ts`,
+`/packages/dreamux/src/service/completion-router/index.ts`.
+
 ### Logical Turn And Admission
 
 The runtime object is the provider-owned authority for native submission and
@@ -386,54 +406,60 @@ Source:
 
 ### Claude Code Stream-Json Settlement
 
-Both runtimes wait for every native submission folded into a logical turn to
-converge, but they read convergence off different signals. Codex has a native
-turn id per submission. Claude Code does not: these are the `claude`
-stream-json wire facts, probed against a live resident session (2.1.231) rather
-than inferred, and the repo has guessed them wrong twice.
+Claude stream-json has command UUIDs but no result-to-submission ledger. Native
+probes on 2.1.231 and 2.1.263 establish that commands started during a tool call
+can fold into one result, while queued commands can run later with their own
+results. Terminal lifecycle frames can arrive before or after the result.
 
-- **Commands fold.** A message that arrives while the in-flight turn is inside a
-  tool call is absorbed into that turn at the next query-loop boundary: the CLI
-  issues `started` for each queued command, answers them together, and emits a
-  **single** `result` (3 commands → 1 result, observed). A command that
-  arrives between turns runs alone and gets its own `result`.
-- **`result.user_message_uuid` is not a completion ledger.** A folded command's
-  uuid never appears on any `result`, so counting one result per submitted uuid
-  deadlocks. When several commands fold, the single result does not reliably
-  carry the first-submitted uuid — a later uuid has been observed instead. It is
-  usable only as a cross-talk guard.
-- **An interrupt genuinely interrupts.** The running command goes
-  `cancelled` and the CLI emits a `result` with `subtype:
-  "error_during_execution"` and **no** `result` key and **no**
-  `user_message_uuid`. "Missing uuid" therefore cannot mean "settle now" —
-  that artifact would settle the turn on an interrupt.
-- **`command_lifecycle` is the only 1:1 signal.** Every submitted uuid reaches a
-  terminal state (`queued → started → completed | cancelled`), folded commands
-  included. It is a top-level `type` (`{type, command_uuid, state, uuid,
-  session_id}`); the `system`-subtype shape is only kept for older streams and
-  fixtures.
-- **Ordering between lifecycle and result is not stable.** Terminal states have
-  been observed both before and after the result they belong to. Only eventual
-  arrival may be assumed.
+RPC owns the command group at each native result boundary:
 
-Consequently a logical turn settles when **every submitted command uuid has
-reached a terminal lifecycle state and at least one `result` has been seen**,
-carrying the last result seen (the aggregator is last-result-wins). A result
-naming a uuid this turn never submitted is dropped rather than allowed to settle
-another turn. Two escapes keep that gate from hanging: a build with no
-`msg_lifecycle_v1` has no lifecycle signal at all and settles on its first
-result; and a turn whose commands all ended without ever running (`cancelled`,
-`discarded`, or a failed steer write) can never be answered and fails
-immediately, because the idle deadline is not an acceptable backstop there — it
-reaps the resident child, and unrelated stream lines re-arm it. A turn that did
-run a command keeps waiting for its result, since terminality does not imply the
-result has already been emitted.
+- Include every submitted command that started since the preceding result.
+  A completed lifecycle frame does not remove that membership; cancellation,
+  refusal or discard removes the affected command.
+- Add an exactly matching submitted `user_message_uuid` as positive evidence,
+  including the supported compatibility sequence without a started frame.
+  A single UUID cannot enumerate a fold, and a foreign or absent UUID never
+  vetoes the started group. Background origin is not attribution evidence.
+- With lifecycle support, an empty group stays empty: a sole queued request
+  is not proof that a preceding background result answers it. Without lifecycle
+  support, the single-input compatibility fallback applies only when the result
+  omits its UUID; an explicit foreign UUID must not override attribution.
+
+Runtime settlement consumes this group once and creates one immutable
+completion shared by its submissions. Core routes that object to the captured
+recipients. Native activity and result/end handling also run with an empty
+group; such a result creates no request settlement and never reaps the process.
+There is no second runtime command-membership ledger.
+
+Request drainage is separate from result settlement. RPC waits for all submitted
+commands to become terminal, for the current started group to be consumed, and
+for an attributed result. Without lifecycle support, the attributed result is
+the drainage boundary. If all commands end without completing and without an
+attributed result, RPC fails that request window without reaping the resident
+process. Terminality
+alone cannot prove that a started command's result has arrived.
+
+Aggregation belongs to the resident stream, so native background text survives
+request-window changes. Each result consumes its own accumulated text. A
+cancelled native command discards unfinished text even if no result follows, so a
+later empty answer cannot inherit it. The existing interrupt artifact
+(`error_during_execution` with neither result text nor user UUID) consumes the
+aggregation but is not an answer boundary. Explicit stop fences late callbacks;
+an unexpected resident exit reports the missing failed native end even when no
+request remains to settle.
+
+The Claude-specific session callback exposes the result's `commandUuids` group;
+custom session factories must supply it. The neutral runtime ABI is unchanged.
 
 Source:
 
 - `/packages/agent-runtime/claude-code/src/rpc.ts`
 - `/packages/agent-runtime/claude-code/src/stream.ts`
+- `/packages/agent-runtime/claude-code/src/runtime-submissions.ts`
+- `/packages/agent-runtime/claude-code/src/runtime.ts`
+- `/packages/agent-runtime/claude-code/src/types.ts`
 - `/packages/agent-runtime/claude-code/tests/rpc.test.ts`
+- `/packages/agent-runtime/claude-code/tests/runtime-background.test.ts`
 
 ### Claude Code Stream-Json Envelopes On The Display Line
 
@@ -450,9 +476,11 @@ block there is context the CLI injected into its conversation — observed on
 whole SKILL.md body follows as a separate `user` line with no field marking it
 as injected. None of that text is displayed. Every other stdout line — `init`,
 `command_lifecycle`, control traffic, every other `system` notice,
-`stream_event`, `rate_limit_event` — stays inside the RPC, which only counts it
-as activity for the idle deadline. The operator's own input is displayed by Core's
-`teammate.input`, not by anything on this line.
+`stream_event`, `rate_limit_event` — is excluded from Core display activity.
+RPC still uses protocol events for lifecycle, session setup and control handling,
+and exposes its Claude-specific observation callback. Incoming lines also
+refresh a pending request window's idle deadline. Core displays the operator's
+own input through `teammate.input`, not through this line.
 
 Source:
 

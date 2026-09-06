@@ -99,6 +99,19 @@ the same change that touches it.
   materialized into a live object by startup, queries, or cleanup; the one door
   back is an explicit `send` that reopens a member.
 
+## Background work and completion delivery
+
+- **Background work survives the requested turn.** A Claude teammate may keep
+  native background tasks running and process their completion in a later native
+  turn. A turn without a related Dreamux submission does not automatically push
+  a completion to a parent agent and does not cause process teardown.
+- **Steering into background work still receives an answer.** A submitted
+  request that joins an ongoing background follow-up is answered by that turn's
+  result. A request that remains queued waits for its own result. Folded requests
+  share one completion delivered once per recipient; the turn's original trigger
+  does not override those relationships.
+  (Requirement: [background-turn repair](/.agents/tasks/completion-routing/adopt-completion-token-routing/requirement.md#background-turn-repair-2026-09-07).)
+
 ## Observing agents
 
 - **`last` is the mid-turn progress window.** Its story: a TeamMate has been

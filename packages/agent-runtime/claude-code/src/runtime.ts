@@ -19,6 +19,7 @@ import {
   endNativeTurn,
   handleProtocolEvent,
   type ActiveTurn,
+  type NativeActivityState,
 } from './runtime-submissions.js';
 import { asError, classifySteerFailure } from './admission-classify.js';
 import { buildClaudeProcessEnv } from './runtime-session.js';
@@ -278,10 +279,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     const turn: ActiveTurn = {
       initialCommandUuid: commandUuid,
       submissions: new Map([[commandUuid, deferred]]),
-      started: [],
-      completedCommands: new Set(),
-      activitySequence: 0,
-      tools: new Map(),
       session: null,
       sessionReady,
       resolveSession,
@@ -467,6 +464,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       disableFeatures: this.deps.disableFeatures,
       outputSchema: this.deps.outputSchema,
     });
+    const activity: NativeActivityState = { activitySequence: 0, tools: new Map() };
     const session = this.deps.sessionFactory({
       bin: this.bin,
       args,
@@ -480,7 +478,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
             this.log('info', `claude-code remote control URL: ${url}`);
           }
         : undefined,
-      onProtocolEvent: (event) => this.onProtocolEvent(event),
+      onProtocolEvent: (event) => this.onProtocolEvent(event, activity),
       log: (level, msg, err) => this.log(level, msg, err),
     });
     session.setOnExit(() => {
@@ -522,6 +520,12 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     if (this.session !== session) return; // already replaced/stopped
     if (this.stopped) return;
     this.log('error', 'claude-code resident child exited unexpectedly');
+    const error = new Error('claude resident child exited');
+    // An admitted request may not have reached this session yet. Only a
+    // request bound to it will report this exit through markTurnFailed.
+    if (this.activeTurn?.session !== session) {
+      this.endNativeTurn('failed', error.message);
+    }
     try {
       await session.stop();
       if (this.session === session) this.session = null;
@@ -530,21 +534,17 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       return;
     }
     if (!this.stopped) {
-      this.setStatus(
-        'degraded',
-        new Error('claude resident child exited'),
-      );
+      this.setStatus('degraded', error);
     }
   }
 
-  private onProtocolEvent(event: ClaudeProtocolEvent): void {
-    const active = this.activeTurn;
-    if (active === null) return;
-    handleProtocolEvent(active, event, {
+  private onProtocolEvent(event: ClaudeProtocolEvent, activity: NativeActivityState): void {
+    if (this.stopped) return;
+    handleProtocolEvent(this.activeTurn, event, {
+      activity,
       threadId: this.threadId,
       outputSchemaEnabled: this.deps.outputSchema !== undefined,
       activitySink: this.deps.activitySink,
-      log: (level, message, error) => this.log(level, message, error),
     });
   }
   private assertGeneration(generation: number): void {

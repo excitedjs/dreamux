@@ -2,7 +2,8 @@
  * Claude Code stream-json turn RPC.
  *
  * The supervisor owns the child process. This class owns one in-flight command
- * group, stdout line demux, command drainage, and defensive control replies.
+ * group, resident native-turn aggregation, stdout line demux, command drainage,
+ * and defensive control replies.
  *
  * One resident CLI execution window can span several submitted commands: a
  * live steer is written while the CLI is already running. How the CLI answers them is
@@ -24,8 +25,9 @@
  *    drain the resident execution window. Its ordering against `result` is not
  *    stable.
  *
- * Every valid `result` is forwarded immediately as its own native completion
- * boundary. Lifecycle terminality only decides when the command group has
+ * Every valid `result` is forwarded immediately as its own native boundary,
+ * including background results with no submitted group. Lifecycle terminality
+ * and attributed results decide when the command group has
  * drained and the resident session may accept a new initial command; it never
  * aggregates several results into one completion.
  */
@@ -47,7 +49,6 @@ import type { ParsedLine, TurnSubmitOptions } from './types.js';
 interface PendingTurn {
   resolve: () => void;
   reject: (err: Error) => void;
-  aggregator: TurnAggregator;
   timer: NodeJS.Timeout | null;
   /**
    * Every command uuid written into this resident execution window, in submission order:
@@ -66,12 +67,12 @@ interface PendingTurn {
   terminal: Set<string>;
   /** Commands started since the last result boundary, retained through terminal lifecycle. */
   startedSinceResult: Set<string>;
-  /** Whether any command reached `completed`, i.e. the CLI actually ran one. */
+  /** Whether any command reached `completed` and may still produce its result. */
   ranAnyCommand: boolean;
-  /** Whether a `result` envelope has been accepted into {@link aggregator}. */
+  /** Whether a result has answered any submitted command in this window. */
   sawResult: boolean;
   /**
-   * Why the most recent command ended *without* being run (Codex's
+   * Why the most recent command ended without an answer (Codex's
    * `lastSubmissionError`). Only read to name the cause when a turn ends with
    * nothing that could answer it.
    */
@@ -115,6 +116,7 @@ export interface ClaudeCodeStreamRpcOptions {
 
 export class ClaudeCodeStreamRpc {
   private readonly lineBuf = new LineBuffer();
+  private readonly aggregator = new TurnAggregator();
   private pending: PendingTurn | null = null;
   private lifecycleSupported: boolean | null = null;
   private remoteControlRequestId: string | null = null;
@@ -141,7 +143,6 @@ export class ClaudeCodeStreamRpc {
       const pending: PendingTurn = {
         resolve,
         reject,
-        aggregator: new TurnAggregator(),
         timer: null,
         submitted: [commandUuid],
         terminal: new Set(),
@@ -283,9 +284,8 @@ export class ClaudeCodeStreamRpc {
 
   /**
    * Mark a submitted command as producing nothing further, then re-check
-   * settlement. `abnormalReason` is `null` for the normal ending (`completed`)
-   * and a short phrase for a command that never ran — those are logged,
-   * because the CLI gives no other trace of a command it declined.
+   * drainage. `abnormalReason` is `null` for the normal ending (`completed`)
+   * and a short phrase for a command declined or cancelled by the CLI.
    *
    * A command ending abnormally never fails the turn by itself: the probe
    * shows a `cancelled` command coexisting with another that answers normally
@@ -316,21 +316,22 @@ export class ClaudeCodeStreamRpc {
 
   /**
    * The drainage gate: every submitted command has reached a terminal
-   * lifecycle state AND at least one valid `result` has been seen. Result
-   * identity and settlement have already been forwarded one-by-one.
+   * lifecycle state, no started command awaits a result, AND a result has
+   * answered a submitted command. Background results do not satisfy that last
+   * condition. Each native boundary has already been forwarded separately.
    *
    * Two escapes, both anti-hang:
    *
    *  - no lifecycle signal at all (`msg_lifecycle_v1` absent, so no
    *    `command_lifecycle` will ever arrive) — the `result` is then the only
    *    terminal event there is, so settle on it;
-   *  - every command terminal, none of them ever ran, and no result — nothing
-   *    can answer this turn, so fail it loudly. The idle deadline is not an
+   *  - every command terminal, none completed, and no attributed result —
+   *    nothing can answer this window, so fail it loudly. The idle deadline is not an
    *    acceptable backstop here: it reaps the resident child, and any inbound
    *    line re-arms it, so a healthy session could be killed long after the
    *    turn became unanswerable.
    *
-   * When a command *did* run but no result has arrived yet, this waits: the
+   * When a command completed but no result has arrived yet, this waits: the
    * probe shows terminal lifecycle states arriving both before and after the
    * result they belong to, so "terminal, therefore no result is coming" is not
    * a sound inference.
@@ -385,19 +386,18 @@ export class ClaudeCodeStreamRpc {
   }
 
   private onLine(line: ParsedLine): void {
-    // Idle-timeout reset: any inbound stream line for the pending turn is
-    // activity, so push the deadline out. The terminal `result` clears the
-    // timer via `settlePending` below.
+    // Native activity refreshes the pending commands' idle deadline, even
+    // during a background turn. Only command drainage clears the timer.
     if (this.pending !== null) this.armIdleTimer(this.pending);
     switch (line.kind) {
       case 'init':
         this.decideLifecycleSupport(
           line.capabilities.includes('msg_lifecycle_v1'),
         );
-        this.pending?.aggregator.accept(line);
+        this.aggregator.accept(line);
         break;
       case 'assistant':
-        this.pending?.aggregator.accept(line);
+        this.aggregator.accept(line);
         this.options.onProtocolEvent?.({ kind: 'stream', line });
         break;
       case 'user':
@@ -406,21 +406,23 @@ export class ClaudeCodeStreamRpc {
         break;
       case 'command_lifecycle': {
         const pending = this.pending;
-        if (pending === null || line.commandUuid === null) break;
-        if (line.state !== null) {
-          this.options.onProtocolEvent?.({
-            kind: 'command_lifecycle',
-            commandUuid: line.commandUuid,
-            state: line.state,
-          });
-        }
-        if (line.state === 'started') pending.startedSinceResult.add(line.commandUuid);
+        if (line.commandUuid === null || line.state === null) break;
+        this.options.onProtocolEvent?.({
+          kind: 'command_lifecycle',
+          commandUuid: line.commandUuid,
+          state: line.state,
+        });
         // `command_lifecycle` does double duty: it coordinates live-steer
         // admission (writeWaiters) and proves lifecycle capability, and its
         // terminal states are the drainage gate when the CLI represents several
         // started commands with one `result`.
         const newlySupported = this.lifecycleSupported === null;
-        if (newlySupported) this.lifecycleSupported = true;
+        this.lifecycleSupported = true;
+        if (line.state === 'cancelled') this.aggregator.discard();
+        if (pending === null) break;
+        if (line.state === 'started' && pending.submitted.includes(line.commandUuid)) {
+          pending.startedSinceResult.add(line.commandUuid);
+        }
         this.resolveWriteWaiter(pending, line.commandUuid);
         if (newlySupported && this.pending === pending) {
           this.flushCapabilityWaiters(pending);
@@ -440,25 +442,8 @@ export class ClaudeCodeStreamRpc {
       }
       case 'result': {
         const pending = this.pending;
-        if (pending === null) {
-          const error = new Error(
-            'claude result envelope arrived without an attributable command group',
-          );
-          this.options.log?.('error', error.message, error);
-          this.options.reapOnTimeout();
-          break;
-        }
-        const commandUuid = line.outcome.userMessageUuid;
-        if (commandUuid !== null && !pending.submitted.includes(commandUuid)) {
-          const error = new Error(
-            `claude result envelope for unsubmitted command ${commandUuid}; ` +
-              'native completion ownership is ambiguous',
-          );
-          this.options.log?.('error', error.message, error);
-          this.settlePending(error)?.reject(error);
-          this.options.reapOnTimeout();
-          break;
-        }
+        this.aggregator.accept(line);
+        const outcome = this.aggregator.takeOutcome()!;
         // The interrupt artifact (`error_during_execution` with no result) is
         // not a native answer boundary. Older valid results may omit the uuid.
         if (
@@ -469,15 +454,30 @@ export class ClaudeCodeStreamRpc {
           this.options.log?.('warn', 'claude interrupt result artifact ignored');
           break;
         }
-        pending.aggregator.accept(line);
-        const outcome = pending.aggregator.takeOutcome()!;
-        pending.startedSinceResult.clear();
-        pending.sawResult = true;
+        // Every started command participates, including background steers.
+        // A matching result UUID also identifies a submitted input whose
+        // started event was omitted; a foreign UUID never vetoes the group.
+        const commandUuids = new Set(pending?.startedSinceResult);
+        if (pending !== null) {
+          const commandUuid = line.outcome.userMessageUuid;
+          if (commandUuid !== null && pending.submitted.includes(commandUuid)) {
+            commandUuids.add(commandUuid);
+          }
+          // Without lifecycle, admission allows only the initial input. Its
+          // legacy UUID-less result is attributable, but an explicit foreign
+          // UUID is not. Lifecycle-capable background results stay unassigned.
+          if (this.lifecycleSupported !== true && commandUuid === null) {
+            commandUuids.add(pending.submitted[0]!);
+          }
+          pending.startedSinceResult.clear();
+          if (commandUuids.size > 0) pending.sawResult = true;
+        }
         this.options.onProtocolEvent?.({
           kind: 'result',
           outcome,
+          commandUuids: [...commandUuids],
         });
-        this.settleIfReady(pending);
+        if (pending !== null) this.settleIfReady(pending);
         break;
       }
       case 'control_request':

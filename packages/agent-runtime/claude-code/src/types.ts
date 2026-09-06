@@ -92,9 +92,10 @@ export interface ResultEnvelope {
    *
    * This is an optional attribution hint on the wire: `result` carries no
    * `command_uuid`, its own `uuid` is server-generated, and `session_id` is
-   * shared by every execution window of the resident session. The RPC layer
-   * validates a present value against submitted commands; started lifecycle
-   * facts own attribution when this field is absent.
+   * shared by every execution window of the resident session. It can name an
+   * internal background input even when submitted commands joined that turn.
+   * A matching value adds that submitted command to the started group; an
+   * internal or absent value never vetoes any started command.
    */
   readonly userMessageUuid: string | null;
   /** Error subtypes may carry a message list; empty otherwise. */
@@ -187,7 +188,12 @@ export type ClaudeProtocolEvent =
       readonly state: CommandLifecycleState;
     }
   | { readonly kind: 'stream'; readonly line: ClaudeActivityLine }
-  | { readonly kind: 'result'; readonly outcome: TurnOutcome };
+  | {
+      readonly kind: 'result';
+      readonly outcome: TurnOutcome;
+      /** Submitted commands answered by this result; empty for background-only turns. */
+      readonly commandUuids: readonly string[];
+    };
 
 /**
  * A resident Claude Code session. Full turns are serialized by the caller;

@@ -132,8 +132,8 @@ function parseResult(o: JsonObject): ResultEnvelope {
     text,
     sessionId: str(o['session_id']),
     // The client-supplied `uuid` of a user message associated with this result.
-    // It is optional and is validated as a hint; command lifecycle remains the
-    // ownership source when one result represents several started commands.
+    // It is optional and may name an internal background input; command
+    // lifecycle owns which submitted commands this result answers.
     userMessageUuid: str(o['user_message_uuid']),
     errors,
     hasStructuredOutput,
@@ -318,9 +318,11 @@ export function buildControlAck(requestId: string): string {
 // ─── Turn aggregation ───────────────────────────────────────────────────────
 
 /**
- * Accumulates the envelopes of a single turn and resolves a `TurnOutcome` when
- * the `result` lands. One aggregator per turn: feed every `ParsedLine`, then
- * read `outcome()` once `done` is true.
+ * Accumulates native-turn envelopes across a resident session. Feed each
+ * `ParsedLine`; `done` becomes true when a result arrives, and `outcome()`
+ * reads it without consuming it. Use `takeOutcome()` at a result boundary
+ * or `discard()` on cancellation to clear turn content for reuse while
+ * retaining the session identity.
  *
  * The final text prefers the `result.result` (the CLI's own canonical answer)
  * and falls back to the latest `assistant` snapshot — so a turn that ends
@@ -377,8 +379,13 @@ export class TurnAggregator {
   takeOutcome(): TurnOutcome | null {
     const outcome = this.outcome();
     if (outcome === null) return null;
+    this.discard();
+    return outcome;
+  }
+
+  /** Discard accumulated native-turn content, retaining the session identity. */
+  discard(): void {
     this.result = null;
     this.lastAssistantText = '';
-    return outcome;
   }
 }

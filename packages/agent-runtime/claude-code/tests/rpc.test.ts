@@ -583,19 +583,17 @@ describe('ClaudeCodeStreamRpc native completion boundaries', () => {
     ]);
   });
 
-  it('fails the window loudly and reaps when a native result names a command it never submitted', async () => {
+  it('attributes an internal-UUID result to the started submitted command', async () => {
     const h = createHarness();
     const turn = h.rpc.submitTurn('go');
-    const rejection = expect(turn).rejects.toThrow(
-      /result envelope for unsubmitted command/u,
-    );
+    const uuid = writtenCommandUuid(h.stdin, 0);
     h.rpc.onStdoutChunk(initLine());
-    h.rpc.onStdoutChunk(resultLine('stray', 'never-submitted-uuid'));
-
-    await rejection;
-    // Ambiguous ownership is not a completion boundary.
-    expect(h.results()).toEqual([]);
-    expect(h.reap).toHaveBeenCalledTimes(1);
+    h.rpc.onStdoutChunk(lifecycleChunk(uuid, 'started', 'completed'));
+    h.rpc.onStdoutChunk(resultLine('answer', 'internal-background-input'));
+    await turn;
+    expect(h.events.at(-1)).toMatchObject({ kind: 'result', commandUuids: [uuid] });
+    expect(h.results()[0]).toMatchObject({ text: 'answer' });
+    expect(h.reap).not.toHaveBeenCalled();
   });
 
   it('settles a fold of three commands answered by ONE result, at the last completed', async () => {
@@ -849,76 +847,43 @@ describe('ClaudeCodeStreamRpc native completion boundaries', () => {
     ]);
   });
 
-  it("does not let a settled turn's late result settle the next turn", async () => {
-    const log = vi.fn();
-    const h = createHarness({ log });
-
-    // Window A drains.
-    const turnA = h.rpc.submitTurn('a');
+  it('keeps a queued next command pending when a result names the previous input', async () => {
+    const h = createHarness();
+    const first = h.rpc.submitTurn('a');
     const uuidA = writtenCommandUuid(h.stdin, 0);
     h.rpc.onStdoutChunk(initLine());
     h.rpc.onStdoutChunk(resultLine('a result', uuidA));
     h.rpc.onStdoutChunk(lifecycleChunk(uuidA, 'completed'));
-    await turnA;
-    expect(h.results().map((outcome) => outcome.text)).toEqual(['a result']);
+    await first;
 
-    // Window B opens before A's trailing traffic has drained.
-    const turnB = h.rpc.submitTurn('b');
+    const second = h.rpc.submitTurn('b');
     const uuidB = writtenCommandUuid(h.stdin, 1);
-    // Setup only. Both uuids are independent randomUUID() defaults, so a
-    // reference comparison between them could never fail; assert the shape
-    // that the stale-result path below actually depends on instead.
-    expect(uuidB).toMatch(UUID_RE);
-    // A stale result for A must never mint a boundary inside B — B's sender
-    // would be handed A's answer as its own completion. The RPC now treats
-    // that ambiguity as fatal: it fails B loudly and reaps the resident child
-    // rather than dropping the line quietly (src/rpc.ts `result` case).
-    const rejection = expect(turnB).rejects.toThrow(
-      /result envelope for unsubmitted command/u,
-    );
-    log.mockClear();
+    const drained = vi.fn();
+    void second.then(drained);
+    h.rpc.onStdoutChunk(lifecycleChunk(uuidB, 'queued'));
+    h.rpc.onStdoutChunk(resultLine('background result', uuidA));
+    await macrotask();
+    expect(drained).not.toHaveBeenCalled();
+    expect(h.events.at(-1)).toMatchObject({ kind: 'result', commandUuids: [] });
 
-    h.rpc.onStdoutChunk(resultLine('a stale result', uuidA));
-    await rejection;
-
-    // The decisive assertion: no second boundary exists, so nothing carrying
-    // 'a stale result' can ever reach B's sender.
-    expect(h.results().map((outcome) => outcome.text)).toEqual(['a result']);
-    expect(log).toHaveBeenCalledWith(
-      'error',
-      expect.stringContaining(uuidA),
-      expect.any(Error),
-    );
-    expect(h.reap).toHaveBeenCalledTimes(1);
+    h.rpc.onStdoutChunk(lifecycleChunk(uuidB, 'started', 'completed'));
+    h.rpc.onStdoutChunk(resultLine('b result', uuidB));
+    await second;
+    expect(h.events.at(-1)).toMatchObject({ kind: 'result', commandUuids: [uuidB] });
+    expect(h.reap).not.toHaveBeenCalled();
   });
 
-  it('logs an error and reaps when a result arrives with no pending turn', async () => {
-    const log = vi.fn();
-    const h = createHarness({ log });
-
-    const turn = h.rpc.submitTurn('go');
-    const commandUuid = writtenCommandUuid(h.stdin, 0);
-    h.rpc.onStdoutChunk(commandLifecycleLine(commandUuid, 'completed'));
-    h.rpc.onStdoutChunk(resultLine('first', commandUuid));
-    await turn;
-    expect(h.results().map((outcome) => outcome.text)).toEqual(['first']);
-
-    // A late result (e.g. a steered command draining in a later stdout flush)
-    // has no command group to attribute it to. Forwarding it would mint a
-    // completion boundary owned by nobody, so it is refused: the RPC logs at
-    // 'error' and reaps the resident child (behaviour changed from the older
-    // 'warn'-and-drop; see src/rpc.ts, the `pending === null` result branch).
-    log.mockClear();
-    h.rpc.onStdoutChunk(resultLine('late'));
-
-    expect(log).toHaveBeenCalledWith(
-      'error',
-      expect.stringContaining('without an attributable command group'),
-      expect.any(Error),
-    );
-    expect(h.reap).toHaveBeenCalledTimes(1);
-    // Still exactly one boundary: the orphan was not forwarded.
-    expect(h.results().map((outcome) => outcome.text)).toEqual(['first']);
+  it('aggregates and forwards native results without a pending command group', () => {
+    const h = createHarness();
+    h.rpc.onStdoutChunk(initLine());
+    h.rpc.onStdoutChunk(assistantLine('background text'));
+    h.rpc.onStdoutChunk(resultLine(''));
+    expect(h.events.at(-1)).toMatchObject({
+      kind: 'result', commandUuids: [], outcome: { text: 'background text', sessionId: 's1' },
+    });
+    h.rpc.onStdoutChunk(resultLine(''));
+    expect(h.results()[1]).toMatchObject({ text: '' });
+    expect(h.reap).not.toHaveBeenCalled();
   });
 });
 
@@ -1191,6 +1156,23 @@ describe('ClaudeCodeStreamRpc active steering', () => {
       text: 'interrupting answer',
       isError: false,
     });
+  });
+
+  it.each(['absent', 'matching'])('does not let legacy compatibility override a foreign UUID before an %s-UUID result', async (finalUuid) => {
+    const h = createHarness();
+    const turn = h.rpc.submitTurn('A');
+    const aUuid = writtenCommandUuid(h.stdin, 0);
+    const drained = vi.fn();
+    void turn.then(drained);
+    h.rpc.onStdoutChunk(initLine([]));
+    h.rpc.onStdoutChunk(resultLine('foreign answer', 'foreign-input'));
+    await macrotask();
+    expect(drained).not.toHaveBeenCalled();
+    expect(h.events.at(-1)).toMatchObject({ kind: 'result', commandUuids: [] });
+    h.rpc.onStdoutChunk(resultLine('A answer', finalUuid === 'matching' ? aUuid : undefined));
+    await turn;
+    expect(h.events.at(-1)).toMatchObject({ kind: 'result', commandUuids: [aUuid] });
+    expect(h.reap).not.toHaveBeenCalled();
   });
 
   it('settles on the first native result when init advertises no lifecycle capability', async () => {

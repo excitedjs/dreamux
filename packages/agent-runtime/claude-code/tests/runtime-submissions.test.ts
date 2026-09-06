@@ -42,7 +42,6 @@ interface Harness {
   deferredByUuid: Map<string, SubmissionDeferred>;
   activityEvents: RuntimeActivity[];
   nativeEnds: NativeTurnEnd[];
-  logs: Array<{ level: string; message: string }>;
   fire(event: ClaudeProtocolEvent): void;
   /** Await settlement of one submitted command uuid. */
   settled(uuid: string): Promise<RuntimeSubmissionSettlement>;
@@ -62,10 +61,6 @@ function makeHarness(
   const active: ActiveTurn = {
     initialCommandUuid: commandUuids[0]!,
     submissions,
-    started: [],
-    completedCommands: new Set(),
-    activitySequence: 0,
-    tools: new Map(),
     session: null,
     sessionReady: new Promise(() => undefined),
     resolveSession: () => undefined,
@@ -75,26 +70,22 @@ function makeHarness(
   };
   const activityEvents: RuntimeActivity[] = [];
   const nativeEnds: NativeTurnEnd[] = [];
-  const logs: Array<{ level: string; message: string }> = [];
+  const activity = { activitySequence: 0, tools: new Map() };
   const sink = (activity: RuntimeActivity): void => {
     if (activity.kind === 'turn.ended') nativeEnds.push(activity);
     else activityEvents.push(activity);
-  };
-  const log = (level: 'info' | 'warn' | 'error', message: string): void => {
-    logs.push({ level, message });
   };
   return {
     active,
     deferredByUuid,
     activityEvents,
     nativeEnds,
-    logs,
     fire(event) {
       handleProtocolEvent(active, event, {
         threadId: options.threadId ?? 'thread-1',
         outputSchemaEnabled: options.outputSchemaEnabled ?? false,
         activitySink: sink,
-        log,
+        activity,
       });
     },
     settled(uuid) {
@@ -105,16 +96,8 @@ function makeHarness(
   };
 }
 
-function started(commandUuid: string): ClaudeProtocolEvent {
-  return { kind: 'command_lifecycle', commandUuid, state: 'started' };
-}
-
-function completed(commandUuid: string): ClaudeProtocolEvent {
-  return { kind: 'command_lifecycle', commandUuid, state: 'completed' };
-}
-
-function resultEvent(o: TurnOutcome): ClaudeProtocolEvent {
-  return { kind: 'result', outcome: o };
+function resultEvent(o: TurnOutcome, commandUuids: string[] = ['cmd-1']): ClaudeProtocolEvent {
+  return { kind: 'result', outcome: o, commandUuids };
 }
 
 function streamAssistantText(text: string, messageId = 'msg-1'): ClaudeProtocolEvent {
@@ -188,7 +171,6 @@ function streamUserEnvelope(
 describe('handleProtocolEvent settlement', () => {
   it('settles the single accepted submission as completed with the native result text', async () => {
     const h = makeHarness(['cmd-1']);
-    h.fire(started('cmd-1'));
     h.fire(resultEvent(outcome({ text: 'the answer' })));
     const settlement = await h.settled('cmd-1');
     expect(settlement).toEqual({
@@ -199,7 +181,6 @@ describe('handleProtocolEvent settlement', () => {
 
   it('settles as failed when the native result carries isError', async () => {
     const h = makeHarness(['cmd-1']);
-    h.fire(started('cmd-1'));
     h.fire(resultEvent(outcome({ isError: true, errors: ['boom'], text: '' })));
     const settlement = await h.settled('cmd-1');
     expect(settlement.kind).toBe('completion');
@@ -212,7 +193,6 @@ describe('handleProtocolEvent settlement', () => {
 
   it('settles as failed (not silently completed) when the result session id contradicts the pinned thread', async () => {
     const h = makeHarness(['cmd-1'], { threadId: 'thread-1' });
-    h.fire(started('cmd-1'));
     h.fire(resultEvent(outcome({ sessionId: 'a-different-thread' })));
     const settlement = await h.settled('cmd-1');
     expect(settlement.kind).toBe('completion');
@@ -223,7 +203,6 @@ describe('handleProtocolEvent settlement', () => {
 
   it('settles as failed when a --json-schema session returns no structured_output', async () => {
     const h = makeHarness(['cmd-1'], { outputSchemaEnabled: true });
-    h.fire(started('cmd-1'));
     h.fire(resultEvent(outcome({ hasStructuredOutput: false })));
     const settlement = await h.settled('cmd-1');
     expect(settlement.kind).toBe('completion');
@@ -234,10 +213,7 @@ describe('handleProtocolEvent settlement', () => {
 
   it('folds several started commands answered by one native result into completions sharing the SAME completion object (fold identity)', async () => {
     const h = makeHarness(['cmd-1', 'cmd-2', 'cmd-3']);
-    h.fire(started('cmd-1'));
-    h.fire(started('cmd-2'));
-    h.fire(started('cmd-3'));
-    h.fire(resultEvent(outcome({ text: 'one answer for all three' })));
+    h.fire(resultEvent(outcome({ text: 'one answer for all three' }), ['cmd-1', 'cmd-2', 'cmd-3']));
     const [s1, s2, s3] = await Promise.all([
       h.settled('cmd-1'),
       h.settled('cmd-2'),
@@ -254,34 +230,27 @@ describe('handleProtocolEvent settlement', () => {
     }
   });
 
-  it('fails every pending submission loudly when a result cannot be attributed to any started command', async () => {
+  it('leaves submissions pending when a background result answers no submitted command', async () => {
     const h = makeHarness(['cmd-1', 'cmd-2']);
-    // Neither command was ever reported started, and there are two pending
-    // submissions: the result cannot be safely attributed to either.
-    h.fire(resultEvent(outcome()));
-    const [s1, s2] = await Promise.all([h.settled('cmd-1'), h.settled('cmd-2')]);
-    expect(s1.kind).toBe('failed');
-    expect(s2.kind).toBe('failed');
-    expect(h.logs.some((entry) => entry.level === 'error')).toBe(true);
+    const settlements: RuntimeSubmissionSettlement[] = [];
+    void h.settled('cmd-1').then((value) => settlements.push(value));
+    void h.settled('cmd-2').then((value) => settlements.push(value));
+    h.fire(resultEvent(outcome(), []));
+    await Promise.resolve();
+    expect(settlements).toEqual([]);
+    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed']);
+
+    h.fire(resultEvent(outcome(), ['cmd-1', 'cmd-2']));
+    const [first, second] = await Promise.all([h.settled('cmd-1'), h.settled('cmd-2')]);
+    expect(first.kind).toBe('completion');
+    expect(second).toEqual(first);
   });
 
-  it('attributes an unstarted result to the sole pending submission of a single-command turn', async () => {
-    // Some Claude Code builds omit `started` for a fast turn; a turn with
-    // exactly one submission still has an unambiguous owner.
-    const h = makeHarness(['cmd-1']);
-    h.fire(resultEvent(outcome({ text: 'fast answer' })));
-    const settlement = await h.settled('cmd-1');
-    expect(settlement.kind).toBe('completion');
-    if (settlement.kind === 'completion' && settlement.completion.status === 'completed') {
-      expect(settlement.completion.resultText).toBe('fast answer');
-    }
-  });
 });
 
 describe('handleProtocolEvent live activity', () => {
   it('shows a compaction as the one line Compacted session, never the summary the CLI wrote', () => {
     const h = makeHarness(['cmd-1']);
-    h.fire(started('cmd-1'));
     h.fire({
       kind: 'stream',
       line: {
@@ -310,7 +279,6 @@ describe('handleProtocolEvent live activity', () => {
 
   it('emits an assistant.message activity for streamed text, addressed to no submission at all', async () => {
     const h = makeHarness(['cmd-1']);
-    h.fire(started('cmd-1'));
     h.fire(streamAssistantText('hello there'));
     expect(h.activityEvents).toHaveLength(1);
     expect(h.activityEvents[0]!).toMatchObject({
@@ -324,7 +292,6 @@ describe('handleProtocolEvent live activity', () => {
 
   it('emits a started tool.call, then correlates its result by tool_use_id into a completed tool.call', async () => {
     const h = makeHarness(['cmd-1']);
-    h.fire(started('cmd-1'));
     h.fire(streamToolUse('call-1', 'Read', { file_path: '/tmp/x' }));
     h.fire(streamToolResult('call-1', 'file contents', false));
     expect(h.activityEvents).toHaveLength(2);
@@ -346,7 +313,6 @@ describe('handleProtocolEvent live activity', () => {
 
   it('carries the display facts derived from the tool input on both the started and the result activity', async () => {
     const h = makeHarness(['cmd-1']);
-    h.fire(started('cmd-1'));
     h.fire(streamToolUse('call-1', 'Bash', { command: 'git status --short', description: 'Show working tree status' }));
     h.fire(streamToolResult('call-1', 'M src/a.ts', false));
     expect(h.activityEvents).toHaveLength(2);
@@ -363,7 +329,6 @@ describe('handleProtocolEvent live activity', () => {
 
   it('marks a tool_result carrying is_error as a failed tool.call and surfaces a display error', async () => {
     const h = makeHarness(['cmd-1']);
-    h.fire(started('cmd-1'));
     h.fire(streamToolUse('call-1', 'Bash', { command: 'false' }));
     h.fire(streamToolResult('call-1', 'command failed', true));
     const finalActivity = h.activityEvents.at(-1)!;
@@ -390,7 +355,6 @@ describe('handleProtocolEvent live activity', () => {
 
   it('shows nothing for text in a user envelope: a loaded skill body is neither the agent nor the operator', async () => {
     const h = makeHarness(['cmd-1']);
-    h.fire(started('cmd-1'));
     h.fire(streamToolUse('call-1', 'Skill', { skill: 'team-workflow' }));
     h.fire(streamToolResult('call-1', 'Launching skill: team-workflow', false));
     // Observed on the wire (Claude Code 2.1.259): right after the Skill tool's
@@ -415,7 +379,6 @@ describe('handleProtocolEvent live activity', () => {
 
   it('still correlates a tool_result that shares its user envelope with injected text', async () => {
     const h = makeHarness(['cmd-1']);
-    h.fire(started('cmd-1'));
     h.fire(streamToolUse('call-1', 'Read', { file_path: 'x' }));
     h.fire(streamUserEnvelope([
       { type: 'tool_result', tool_use_id: 'call-1', content: 'file contents', is_error: false },
@@ -446,10 +409,7 @@ describe('handleProtocolEvent live activity', () => {
 describe('handleProtocolEvent native turn end', () => {
   it('emits exactly one ended fact for a turn that folded three commands into one result', () => {
     const h = makeHarness(['cmd-1', 'cmd-2', 'cmd-3']);
-    h.fire(started('cmd-1'));
-    h.fire(started('cmd-2'));
-    h.fire(started('cmd-3'));
-    h.fire(resultEvent(outcome({ text: 'one answer for all three' })));
+    h.fire(resultEvent(outcome({ text: 'one answer for all three' }), ['cmd-1', 'cmd-2', 'cmd-3']));
 
     expect(h.nativeEnds).toHaveLength(1);
     expect(h.nativeEnds[0]!.status).toBe('completed');
@@ -461,7 +421,6 @@ describe('handleProtocolEvent native turn end', () => {
 
   it('emits nothing before the result, so an in-flight turn never looks finished', () => {
     const h = makeHarness(['cmd-1']);
-    h.fire(started('cmd-1'));
     h.fire(streamAssistantText('still working'));
     h.fire(streamToolUse('call-1', 'Read', { file_path: '/tmp/x' }));
 
@@ -471,22 +430,9 @@ describe('handleProtocolEvent native turn end', () => {
 
   it('reports failed when the native result carries isError', () => {
     const h = makeHarness(['cmd-1']);
-    h.fire(started('cmd-1'));
     h.fire(resultEvent(outcome({ isError: true, errors: ['boom'], text: '' })));
 
     expect(h.nativeEnds.map((end) => end.status)).toEqual(['failed']);
-  });
-
-  it('shows claude\'s own result even when push-back cannot attribute it', async () => {
-    const h = makeHarness(['cmd-1', 'cmd-2']);
-    h.fire(resultEvent(outcome()));
-
-    // claude finished the turn; that no started command can own the result is
-    // push-back's problem, and it fails those submissions loudly. The card
-    // shows what the provider did, not what push-back could make of it.
-    expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed']);
-    await expect(h.settled('cmd-1')).resolves.toMatchObject({ kind: 'failed' });
-    await expect(h.settled('cmd-2')).resolves.toMatchObject({ kind: 'failed' });
   });
 
   it('emits one end per result boundary when a steered command runs after the first one was answered', async () => {
@@ -495,12 +441,8 @@ describe('handleProtocolEvent native turn end', () => {
     // initial command is answered and drains, then the held-back command starts
     // and is answered by a result of its own — two native turns in the one
     // resident execution window.
-    h.fire(started('cmd-1'));
     h.fire(resultEvent(outcome({ text: 'first answer' })));
-    h.fire(completed('cmd-1'));
-    h.fire(started('cmd-2'));
-    h.fire(resultEvent(outcome({ text: 'second answer' })));
-    h.fire(completed('cmd-2'));
+    h.fire(resultEvent(outcome({ text: 'second answer' }), ['cmd-2']));
 
     expect(h.nativeEnds.map((end) => end.status)).toEqual([
       'completed',
@@ -521,22 +463,17 @@ describe('handleProtocolEvent native turn end', () => {
 
   it('reports the second boundary honestly when the steered turn fails after a completed one', () => {
     const h = makeHarness(['cmd-1', 'cmd-2']);
-    h.fire(started('cmd-1'));
     h.fire(resultEvent(outcome({ text: 'first answer' })));
-    h.fire(started('cmd-2'));
-    h.fire(resultEvent(outcome({ isError: true, errors: ['boom'], text: '' })));
+    h.fire(resultEvent(outcome({ isError: true, errors: ['boom'], text: '' }), ['cmd-2']));
 
     expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed', 'failed']);
   });
 
-  it('reports every terminal result, including a conflicting unattributed result', () => {
+  it('reports every terminal result, including a background result', () => {
     const h = makeHarness(['cmd-1', 'cmd-2']);
-    h.fire(started('cmd-1'));
     h.fire(resultEvent(outcome({ text: 'first' })));
-    // A conflicting second result fails loudly on the push-back line, because
-    // no command started after the first boundary. It is still a terminal
-    // result claude reported, so the display line reports the end it says.
-    h.fire(resultEvent(outcome({ text: 'second' })));
+    // A background turn has no submitted group but still reports its end.
+    h.fire(resultEvent(outcome({ text: 'second' }), []));
 
     expect(h.nativeEnds.map((end) => end.status)).toEqual(['completed', 'completed']);
   });
@@ -554,17 +491,11 @@ describe('handleProtocolEvent native turn end', () => {
     const sink = (activity: RuntimeActivity): void => {
       if (activity.kind === 'turn.ended') order.push('end');
     };
-    handleProtocolEvent(active, started('cmd-1'), {
-      threadId: 'thread-1',
-      outputSchemaEnabled: false,
-      activitySink: sink,
-      log: () => undefined,
-    });
     handleProtocolEvent(active, resultEvent(outcome()), {
       threadId: 'thread-1',
       outputSchemaEnabled: false,
       activitySink: sink,
-      log: () => undefined,
+      activity: { activitySequence: 0, tools: new Map() },
     });
 
     expect(order).toEqual(['end', 'settle']);

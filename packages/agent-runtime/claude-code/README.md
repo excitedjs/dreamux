@@ -35,24 +35,25 @@ through the same package-loader path as external `npm:` providers.
 ## Turn lifecycle
 
 The public runtime boundary returns one `RuntimeSubmission` handle per accepted
-send, settled by an immutable provider-owned `RuntimeCompletion` created at each
-real native result boundary. Inputs merged before session creation and supported
-live steering settle with the same completion object; queued sends settle with
-distinct completions in native order. Command UUIDs are private wire aliases;
-when `msg_lifecycle_v1` is available, all aliases must reach a terminal command
-state and a final result must be captured before the object settles. Live steer
-fails loudly without that capability. Runtime stop fences queued session work,
-terminates the supervised process group with absence proof, and resolves every
-unsettled public object as stopped.
+send. Each native result creates one immutable `RuntimeCompletion` shared by the
+submissions it answers. Folded inputs share that completion object; queued inputs
+wait for their own result. RPC derives the answered command group from started
+commands and matching result UUID evidence. Request-window drainage separately
+waits for terminal lifecycle states and the attributed results.
 
-Source deduplication is provider-private. A source is reserved while its native
-admission is in flight, committed only after acceptance or an ambiguous
-post-write failure, and released after a proven pre-write failure. Concurrent
-uses of the same reserved source share the same admission outcome. Accordingly,
-`failed` means the command was proven not written, while `ambiguous` means a
-native write may have been accepted and must not be retried automatically.
-Runtime stop synchronously fences new input, releases pending capability/write
-waiters, and drains all already-started admission calls before it resolves.
+Background native turns may run without a submission. Their activity and result
+boundaries remain observable, but they settle no unrelated request and do not
+terminate the resident process. Explicit inputs steered into a background turn
+settle normally once they join it. Live steering fails loudly without
+`msg_lifecycle_v1`; lifecycle-less sessions retain single-input compatibility.
+
+Core owns source deduplication, captured recipients and completion-token delivery.
+The provider owns native admission: `failed` means the command was proven not
+written, while `ambiguous` means a native write may have been accepted and must
+not be retried automatically. Runtime stop synchronously fences new input,
+releases pending capability/write waiters, terminates the supervised process
+group with absence proof, resolves unsettled submissions as stopped, and drains
+already-started admission calls before it resolves.
 
 ## Native sessions and transcripts
 
@@ -72,3 +73,14 @@ message/tool blocks in chronological order, and owns opaque cursors, query and
 rewrite mismatch detection, payload redaction/truncation, and the fixed host
 output budget. Native command/session IDs and filesystem paths never appear in
 transcript pages.
+
+## Custom session factories
+
+A custom `ClaudeCodeSessionFactory` that emits `onProtocolEvent` results must
+include `commandUuids`: the submitted commands answered by that result. Use an
+empty array for a native turn with no related submission. Folded inputs share
+one result and its command group; a queued input is included only in the result
+that answers it. The default session computes this group from native command
+lifecycle and matching result UUID evidence. The turn's original trigger does
+not decide completion delivery. This Claude-specific callback requirement does
+not change the neutral `AgentRuntime` or `RuntimeSubmission` contracts.

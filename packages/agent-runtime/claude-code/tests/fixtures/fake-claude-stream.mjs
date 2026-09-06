@@ -70,7 +70,7 @@ rl.on('line', (line) => {
     });
   }
   if (mode === 'echo') {
-    emit({ type: 'result', subtype: 'success', result: `echo:${text}`, session_id: 'fake-sess-1' });
+    emit({ type: 'result', subtype: 'success', result: `echo:${text}`, session_id: 'fake-sess-1', user_message_uuid: msg.uuid });
   }
   // mode 'stall': deliberately no `result` — the turn never terminates.
 });

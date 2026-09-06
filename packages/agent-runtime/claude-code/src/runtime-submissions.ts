@@ -31,10 +31,6 @@ export interface SubmissionDeferred {
 export interface ActiveTurn {
   initialCommandUuid: string;
   submissions: Map<string, SubmissionDeferred>;
-  started: string[];
-  completedCommands: Set<string>;
-  activitySequence: number;
-  tools: Map<string, { name: string; arguments: JsonValue | null }>;
   session: ClaudeCodeSession | null;
   sessionReady: Promise<ClaudeCodeSession>;
   resolveSession: (session: ClaudeCodeSession) => void;
@@ -43,11 +39,17 @@ export interface ActiveTurn {
   generation: number;
 }
 
+/** Resident activity survives the drainage of any submitted command group. */
+export interface NativeActivityState {
+  activitySequence: number;
+  tools: Map<string, { name: string; arguments: JsonValue | null }>;
+}
+
 export interface ProtocolEventContext {
+  activity: NativeActivityState;
   threadId: string | null;
   outputSchemaEnabled: boolean;
   activitySink: AgentRuntimeActivitySink;
-  log: (level: 'info' | 'warn' | 'error', message: string, error?: unknown) => void;
 }
 
 /**
@@ -99,25 +101,11 @@ export function createRuntimeSubmission(): SubmissionDeferred {
 }
 
 export function handleProtocolEvent(
-  active: ActiveTurn,
+  active: ActiveTurn | null,
   event: ClaudeProtocolEvent,
   context: ProtocolEventContext,
 ): void {
-  if (event.kind === 'command_lifecycle') {
-    // `started` is the one lifecycle state recorded here: it is the
-    // attribution input for the group the next `result` completes. The
-    // terminal states are drainage bookkeeping that arrives after that
-    // `result`.
-    if (event.state !== 'started') return;
-    if (
-      active.submissions.has(event.commandUuid) &&
-      !active.completedCommands.has(event.commandUuid) &&
-      !active.started.includes(event.commandUuid)
-    ) {
-      active.started.push(event.commandUuid);
-    }
-    return;
-  }
+  if (event.kind === 'command_lifecycle') return;
   if (event.kind === 'result') {
     // `result` is claude's native terminal, and the display line ends on it:
     // the attribution, the completion and the settlements below are
@@ -128,10 +116,11 @@ export function handleProtocolEvent(
       event.outcome.isError ? turnFailureMessage(event.outcome) : null,
       context.activitySink,
     );
-    completeStartedGroup(active, event.outcome, context);
+    context.activity.tools.clear();
+    if (active !== null) completeSubmittedGroup(active, event.commandUuids, event.outcome, context);
     return;
   }
-  emitStreamActivity(active, event.line, context);
+  emitStreamActivity(context.activity, event.line, context);
 }
 
 /** claude's own words for why its turn failed. */
@@ -139,36 +128,13 @@ function turnFailureMessage(outcome: TurnOutcome): string {
   return outcome.errors.join('; ') || outcome.subtype || 'claude turn failed';
 }
 
-function completeStartedGroup(
+function completeSubmittedGroup(
   active: ActiveTurn,
+  commandUuids: readonly string[],
   outcome: TurnOutcome,
   context: ProtocolEventContext,
 ): void {
-  const commandUuids = active.started.splice(0);
-  if (
-    commandUuids.length === 0 &&
-    (active.submissions.size > 1 || active.completedCommands.size > 0)
-  ) {
-    failUnattributedResult(active, context);
-    return;
-  }
-  for (const uuid of commandUuids) active.completedCommands.add(uuid);
-  let representative = commandUuids
-    .map(uuid => active.submissions.get(uuid))
-    .find((deferred): deferred is SubmissionDeferred => deferred !== undefined);
-  if (representative === undefined && active.submissions.size === 1) {
-    const only = active.submissions.entries().next().value as
-      | [string, SubmissionDeferred]
-      | undefined;
-    if (only !== undefined) {
-      commandUuids.push(only[0]);
-      representative = only[1];
-    }
-  }
-  if (representative === undefined) {
-    failUnattributedResult(active, context);
-    return;
-  }
+  if (commandUuids.length === 0) return;
 
   let completion: RuntimeCompletion;
   if (outcome.isError) {
@@ -180,7 +146,7 @@ function completeStartedGroup(
     try {
       completion = Object.freeze({
         status: 'completed',
-          resultText: resultTextFromTurnOutcome(
+        resultText: resultTextFromTurnOutcome(
           outcome,
           context.threadId,
           context.outputSchemaEnabled,
@@ -189,27 +155,12 @@ function completeStartedGroup(
     } catch (error) {
       completion = Object.freeze({
         status: 'failed',
-          error: asError(error),
+        error: asError(error),
       });
     }
   }
   for (const uuid of commandUuids) {
     active.submissions.get(uuid)?.settle({ kind: 'completion', completion });
-  }
-}
-
-function failUnattributedResult(
-  active: ActiveTurn,
-  context: ProtocolEventContext,
-): void {
-  const error = new Error(
-    active.completedCommands.size > 0
-      ? 'claude emitted a conflicting result without a new started command'
-      : 'claude result cannot be attributed without command started lifecycle',
-  );
-  context.log('error', error.message, error);
-  for (const deferred of active.submissions.values()) {
-    deferred.settle({ kind: 'failed', error });
   }
 }
 
@@ -231,7 +182,7 @@ function failUnattributedResult(
  * displayed at all. Operator ruling, 2026-09-03: 「所有的 user 消息都隐藏即可」.
  */
 function emitStreamActivity(
-  active: ActiveTurn,
+  active: NativeActivityState,
   line: ClaudeActivityLine,
   context: ProtocolEventContext,
 ): void {
@@ -263,7 +214,7 @@ function emitStreamActivity(
  */
 const COMPACTED_SESSION_MESSAGE = 'Compacted session';
 
-function compactedActivity(active: ActiveTurn): RuntimeActivity {
+function compactedActivity(active: NativeActivityState): RuntimeActivity {
   return {
     kind: 'assistant.message',
     occurredAt: Date.now(),
@@ -274,7 +225,7 @@ function compactedActivity(active: ActiveTurn): RuntimeActivity {
 
 /** What the model said, or a tool it called. */
 function assistantBlockActivity(
-  active: ActiveTurn,
+  active: NativeActivityState,
   messageId: string,
   blockIndex: number,
   block: Record<string, unknown>,
@@ -309,7 +260,7 @@ function assistantBlockActivity(
 
 /** What a tool returned, correlated to the call the model made. */
 function toolResultActivity(
-  active: ActiveTurn,
+  active: NativeActivityState,
   messageId: string,
   block: Record<string, unknown>,
 ): RuntimeActivity | null {
