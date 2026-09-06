@@ -22,8 +22,8 @@ const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
 const EXPECTED_SKILLS_BY_ROOT = {
   [bundledDispatcherSkillRoot()]: ['dispatcher-workflow', 'dreamux-maintenance'],
-  [bundledTeamLeaderSkillRoot()]: ['team-workflow'],
-  [bundledSharedSkillRoot()]: ['workflow'],
+  [bundledTeamLeaderSkillRoot()]: ['teamwork'],
+  [bundledSharedSkillRoot()]: ['dynamic-workflow'],
 } satisfies Record<string, string[]>;
 
 describe('bundled Dreamux skill roots', () => {
@@ -31,8 +31,8 @@ describe('bundled Dreamux skill roots', () => {
     expect([...BUNDLED_SKILL_NAMES]).toEqual([
       'dispatcher-workflow',
       'dreamux-maintenance',
-      'team-workflow',
-      'workflow',
+      'dynamic-workflow',
+      'teamwork',
     ]);
   });
 
@@ -68,15 +68,15 @@ describe('bundled Dreamux skill roots', () => {
       for (const roleSkill of [
         'dispatcher-workflow',
         'dreamux-maintenance',
-        'team-workflow',
+        'teamwork',
       ]) {
         expect(document).toContain(roleSkill);
       }
       expect(document).toMatch(
-        /both[\s\S]{0,100}(?:shared )?`workflow`|shared `workflow`[\s\S]{0,100}both/,
+        /both[\s\S]{0,100}(?:shared )?`dynamic-workflow`|shared `dynamic-workflow`[\s\S]{0,100}both/,
       );
       expect(document).toMatch(
-        /required-source[\s\S]{0,180}`workflow`[\s\S]{0,100}(?:shadow|custom)/,
+        /required-source[\s\S]{0,180}`dynamic-workflow`[\s\S]{0,100}(?:shadow|custom)/,
       );
     }
   });

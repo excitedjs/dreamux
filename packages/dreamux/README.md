@@ -26,12 +26,12 @@ Design background:
   available through Dreamux-owned MCP surfaces.
 - Bundled Dreamux skills injected at runtime by role (issues #209 and #313):
   core hands the Dispatcher `dispatcher-workflow` and `dreamux-maintenance`, the
-  TeamLeader `team-workflow`, and both roles the shared `workflow` skill. The
+  TeamLeader `teamwork`, and both roles the shared `dynamic-workflow` skill. The
   runtime applies those role-specific plus shared roots to its engine (Codex
   `skills/extraRoots/set`, Claude Code `--add-dir`). Role-specific roots remain
   disjoint, while the shared root is deliberately composed into both roles.
   For admin-created TeamLeaders, required-source normalization protects both
-  `team-workflow` and `workflow` from custom skill-root shadowing. `dreamux
+  `teamwork` and `dynamic-workflow` from custom skill-root shadowing. `dreamux
   onboard` does not install bundled skills into dispatcher workspaces.
 - Providerized dispatcher declarations, a process-local provider registry,
   server-owned state/log paths, the `builtin:feishu` Channel provider, the

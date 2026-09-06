@@ -389,6 +389,9 @@ async function deliverAskUserSettlement(
       containerChatId: target.kind === 'topic' ? target.chatId : null,
       submission: {
         attrs: {
+          // Same provenance the inbound envelope carries, in the same place:
+          // an answer arrives as a channel message and reads like one.
+          source: 'feishu',
           chat_id: target.chatId,
           ...(target.threadId !== undefined
             ? { thread_id: target.threadId }

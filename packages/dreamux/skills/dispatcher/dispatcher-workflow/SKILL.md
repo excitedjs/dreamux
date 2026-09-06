@@ -1,6 +1,6 @@
 ---
 name: dispatcher-workflow
-description: "Guidance for a Dispatcher working with TeamMates and Teams: choosing between doing it yourself, an engine-native subagent, a TeamMate, or a Team; writing the hand-down prompt; and what to do when a delegate's behaviour surprises you. Useful before delegating and when a delegate needs discussing. Tool calls do not depend on it."
+description: "How a Dispatcher hands work to a TeamMate or a Team and works with it afterwards. Load when about to spawn or send to a TeamMate, or create or send to a Team; not needed for any other tool."
 ---
 
 # Dispatcher Workflow
@@ -54,6 +54,16 @@ of your reasoning.
 - **Separate the standing from the momentary.** The role and the boundaries hold
   for every turn of that delegate's life and belong with it from the start; the
   task belongs to the turn you are sending.
+
+What the brief carries is context, not control. The goal, the constraints in the
+user's own words, what you already know and what you are only guessing — those
+are yours to give. The edit plan is not: a delegate handed the files to change
+and the way to change them has nowhere to put the discovery that the plan does
+not survive contact with the code, so it writes code around the obstacle instead
+of reporting it. When a delegate comes back saying it cannot do the work, that
+is a finding: read what it found, and either take the decision to the user or
+put the options to another delegate, rather than re-sending the same task with
+firmer wording.
 
 ## When a TeamMate Does Something You Did Not Expect
 

@@ -78,7 +78,9 @@ export class ChannelService {
     const channels = new Map<string, ChannelInstance>();
     try {
       for (const channelConfig of channelConfigs) {
-        const provider = this.opts.channelProviders.resolve(channelConfig.provider);
+        const { implementation: provider } = this.opts.channelProviders.resolve(
+          channelConfig.provider,
+        );
         channels.set(
           channelConfig.id,
           await provider.createSession({

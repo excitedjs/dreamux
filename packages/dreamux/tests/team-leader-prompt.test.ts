@@ -7,10 +7,13 @@
  * fake Agent Runtime provider, start it, and inspect the launch context the
  * provider is handed.
  *
- * The assertions name durable role facts only — which MCP servers this role
- * has, that visible delivery goes through the channel's own reply tool, that
- * private details stay out of public artifacts, and that no skill is mandated
- * before every turn — never the sentences that carry them.
+ * The positive assertions name durable role facts only — which MCP servers
+ * this role has, that the operator's identity text is the last thing the model
+ * reads, and that no skill is mandated before every turn — never the sentences
+ * that carry them. The negative ones do match fragments, because a rule this
+ * prompt no longer owns can only be named by its own words: each fragment is
+ * Dreamux-owned and stable, so seeing one here means a rule that now belongs
+ * to another surface came back.
  */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -54,8 +57,13 @@ afterEach(async () => {
   }
 });
 
-/** Start a real TeamLeader and return the prompt its runtime was launched with. */
-async function launchedLeaderPrompt(): Promise<string> {
+/**
+ * Start a real TeamLeader and return the system-prompt lines its runtime was
+ * launched with, in order.
+ */
+async function launchedLeaderAppend(
+  identityPrompt: string | null = null,
+): Promise<readonly string[]> {
   const teamRoot = await mkdtemp(join(tmpdir(), 'dreamux-team-leader-prompt-'));
   roots.push(teamRoot);
 
@@ -75,7 +83,7 @@ async function launchedLeaderPrompt(): Promise<string> {
     runtimeCwd: teamRoot,
     worktree: reuseCwdWorktree(teamRoot),
     intent: null,
-    identityPrompt: null,
+    identityPrompt,
     status: 'running',
   });
 
@@ -121,7 +129,14 @@ async function launchedLeaderPrompt(): Promise<string> {
   await leader.activate();
 
   expect(launches).toHaveLength(1);
-  return (launches[0]?.systemPrompt?.append ?? []).join('\n');
+  return launches[0]?.systemPrompt?.append ?? [];
+}
+
+/** The whole prompt as one text, for the assertions that read across lines. */
+async function launchedLeaderPrompt(
+  identityPrompt: string | null = null,
+): Promise<string> {
+  return (await launchedLeaderAppend(identityPrompt)).join('\n');
 }
 
 describe('the prompt a TeamLeader runtime is launched with', () => {
@@ -133,14 +148,29 @@ describe('the prompt a TeamLeader runtime is launched with', () => {
     expect(prompt).toContain('channel-');
   });
 
-  it('owns visible channel delivery and the confidentiality boundary', async () => {
+  it('ends with the operator\'s own identity text', async () => {
+    const identityPrompt = 'You are the release captain for this Team.';
+    const append = await launchedLeaderAppend(identityPrompt);
+    expect(append.at(-1)).toBe(identityPrompt);
+  });
+
+  it('carries no rule that another surface now owns', async () => {
     const prompt = await launchedLeaderPrompt();
-    expect(prompt).toContain('reply tool');
-    expect(prompt).toContain('public artifacts');
+    for (const fragment of [
+      'do not poll',
+      'reply tool',
+      'public artifacts',
+      'Load a tool',
+    ]) {
+      expect(
+        prompt,
+        `the TeamLeader prompt states "${fragment}" again`,
+      ).not.toContain(fragment);
+    }
   });
 
   it('mandates no skill before a turn', async () => {
     const prompt = await launchedLeaderPrompt();
-    expect(prompt).not.toContain('team-workflow');
+    expect(prompt).not.toContain('teamwork');
   });
 });

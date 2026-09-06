@@ -17,6 +17,7 @@
 - Status: Granted by the operator on 2026-09-06 (chat message answering the approval card), verbatim: "进开发。你自己用 ultracode 模式一次性搞定。" Bound to [requirement.md](/.agents/tasks/mcp/refine-model-facing-surfaces/requirement.md) R1–R24 and [technical-design/final.md](/.agents/tasks/mcp/refine-model-facing-surfaces/technical-design/final.md) as committed at `a169ac94`.
 - Approved implementation boundary: final.md §6 (source files in `packages/dreamux`, `packages/channel/feishu-channel`, `packages/agent-runtime/claude-code`; the renamed skill roots and three `SKILL.md` files; the tests of final.md §7; the KB pages and README of §3.10; three change files of §3.11; the task records of §3.13). Non-goals: final.md §5. The three approval-time questions of final.md §9 are settled by R22 (public-artifact rule dropped; second channel-reply sentence deleted) and R23/R24 (Claude adapter fix A, in this PR).
 - Implementation method (operator ruling in the same answer): the ultracode workflow, driven by this TeamLeader; member models per R25: opus for the agents that write code, sonnet for the rest.
+- Correction to the approved text (implementation, 2026-09-06): final.md §2, §3.7 and §6 counted four `ChannelProviderCatalog.resolve` callers and listed `runnable-channel.ts` as touched. `onboard/wizard.ts` is a fifth caller, so §3.7's return-shape change forces a type-only adaptation there, and `runnable-channel.ts` needs no edit. No requirement, behavior, or scope changes; the three sections now say so.
 
 ## Delivery
 

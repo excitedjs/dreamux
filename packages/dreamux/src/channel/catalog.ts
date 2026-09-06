@@ -36,6 +36,23 @@ export class WrongChannelProviderKindError extends Error {
   }
 }
 
+/**
+ * One registered channel provider: the id Core registered it under, paired with
+ * the implementation the loader produced.
+ *
+ * The channel twin of `RegisteredAgentRuntimeProvider`. A provider
+ * implementation carries no registration identity, so every caller that needs
+ * the id — the Channel MCP server name above all — reads it from this wrapper
+ * instead of asking the registry a second time for a ref it already resolved.
+ * The id, not the whole descriptor: after resolution no channel caller reads
+ * the ref or the kind, so this wrapper does not offer a second place to read
+ * them.
+ */
+export interface RegisteredChannelProvider {
+  readonly id: string;
+  readonly implementation: ChannelProvider<unknown>;
+}
+
 export interface ChannelProviderCatalogOptions {
   registry: ProviderRegistry;
 }
@@ -54,7 +71,7 @@ export class ChannelProviderCatalog {
       .filter((provider): provider is ChannelProvider<unknown> => provider !== null);
   }
 
-  resolve(ref: string): ChannelProvider<unknown> {
+  resolve(ref: string): RegisteredChannelProvider {
     let descriptor: ProviderDescriptor;
     try {
       descriptor = this.registry.resolve(ref);
@@ -75,7 +92,7 @@ export class ChannelProviderCatalog {
         'the provider is registered but has no channel implementation wired in this phase',
       );
     }
-    return provider;
+    return { id: descriptor.id, implementation: provider };
   }
 
   private channelProviderForDescriptor(

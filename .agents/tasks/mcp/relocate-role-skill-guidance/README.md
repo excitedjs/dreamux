@@ -29,4 +29,8 @@
 ## Delivery
 
 - Pull request / CI / merge: https://github.com/excitedjs/dreamux/pull/369 (opened 2026-09-02 on the operator's instruction before the independent review finished; head `YisenFE:dreamux/dreamux-fable` on the fork `YisenFE/dreamux-fork` because the pushing account has read-only access to `excitedjs/dreamux`; rebased onto `next` on 2026-09-03 at the operator's request, no conflicts; commits `8dcbf98` (implementation) and `771d35b` (accepted review findings), plus the closeout commit). CI: green before the rebase; re-running after it. Review: the operator requested changes on 2026-09-02; all nine items landed in `771d35b` and each thread was answered. Merge: pending operator.
+- #369 was not merged, by operator ruling of 2026-09-05: its content is
+  delivered through the
+  [refine-model-facing-surfaces](/.agents/tasks/mcp/refine-model-facing-surfaces/README.md)
+  task's PR instead.
 - Knowledge closeout: Pending.

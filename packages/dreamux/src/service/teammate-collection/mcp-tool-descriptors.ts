@@ -279,10 +279,19 @@ export function teammateToolDescriptors(
         'Where the TeamMate works; omit for a fresh per-TeamMate directory.',
     };
   }
+  // The pointer to the hand-down skill opens the description of the tool the
+  // model is about to call, which is where the intent to hand work down forms.
+  // Which skill depends on who is calling: a TeamLeader hands work only to a
+  // TeamMate, a Dispatcher to a TeamMate or a Team.
+  const handOffSkillPointer =
+    callerKind === 'dispatcher'
+      ? 'The bundled `dispatcher-workflow` skill covers how to brief a TeamMate or a Team.'
+      : 'The bundled `teamwork` skill covers how to brief a TeamMate.';
   const spawnDescription =
     callerKind === 'dispatcher'
-      ? 'Start a resumable TeamMate agent managed by this dispatcher and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. repo is optional: omit it to let Dreamux allocate a fresh per-TeamMate work directory, or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } to choose an existing path or create a managed git worktree. Dreamux pushes the turn\'s completion back into your context whether it finished, failed, or was stopped.'
-      : 'Start a resumable TeamMate agent in this Team\'s shared workspace and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. Coordinate edits so only one TeamMate writes the shared workspace unless the work is read-only, the edits are independent, or the user asked for parallel edits. This tool does not accept a repo parameter. Dreamux pushes the turn\'s completion back into your context whether it finished, failed, or was stopped.';
+      ? `${handOffSkillPointer} Start a resumable TeamMate agent managed by this dispatcher and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. repo is optional: omit it to let Dreamux allocate a fresh per-TeamMate work directory, or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } to choose an existing path or create a managed git worktree. Returns a receipt at once; the completion is pushed later as a new message.`
+      : `${handOffSkillPointer} Start a resumable TeamMate agent in this Team's shared workspace and submit its first turn. name_prefix is the requested label; spawn RETURNS the concrete, never-reused name that all later send/status/last/close MUST use. Use get_capabilities.agent_runtimes[].id as agent_runtime. intent is required: it is the durable recovery subject. Coordinate edits so only one TeamMate writes the shared workspace unless the work is read-only, the edits are independent, or the user asked for parallel edits. This tool does not accept a repo parameter. Returns a receipt at once; the completion is pushed later as a new message.`;
+  const sendDescription = `${handOffSkillPointer} Send a turn to a TeamMate agent; reopens a closed one from the runtime-native session recorded on it (interpreted by its agent_runtime) first. Pass intent to update the recorded recovery subject before the turn. Returns a receipt at once; the completion is pushed later as a new message.`;
   const teammateReceiptSchema = closedObjectSchema(
     {
       teammate: OPEN_OBJECT,
@@ -294,7 +303,7 @@ export function teammateToolDescriptors(
   const workflowTools: McpToolDescriptor[] = [
     tool(
       'workflow_run',
-      'Load the bundled `workflow` skill before use. Start a deterministic multi-agent workflow from an inline module script (`script`) or a local file path (`scriptPath`) and return { run_id } immediately; Dreamux pushes one terminal completion when the run finishes.',
+      'The bundled `dynamic-workflow` skill covers the script API. Start a deterministic multi-agent workflow from an inline module script (`script`) or a local file path (`scriptPath`) and return { run_id } immediately; Dreamux pushes one terminal completion when the run finishes.',
       {
         script: {
           type: 'string',
@@ -335,7 +344,7 @@ export function teammateToolDescriptors(
     ),
     tool(
       'workflow_status',
-      'Load the bundled `workflow` skill before use. Read phase, agent progress, concrete TeamMate names, and terminal result for one workflow run.',
+      'Read phase, agent progress, concrete TeamMate names, and terminal result for one workflow run.',
       {
         run_id: {
           ...workflowRunIdSchema(),
@@ -351,7 +360,7 @@ export function teammateToolDescriptors(
     ),
     tool(
       'workflow_stop',
-      'Load the bundled `workflow` skill before use. Stop one running workflow and return its resulting status.',
+      'Stop one running workflow and return its resulting status.',
       {
         run_id: {
           ...workflowRunIdSchema(),
@@ -370,7 +379,7 @@ export function teammateToolDescriptors(
     ),
     tool(
       'workflow_list',
-      'Load the bundled `workflow` skill before use. List workflow runs in the current dispatcher or TeamLeader caller scope.',
+      'List workflow runs in the current dispatcher or TeamLeader caller scope.',
       {},
       [],
       {
@@ -396,7 +405,7 @@ export function teammateToolDescriptors(
     ),
     tool(
       'send',
-      'Send a turn to a TeamMate agent; reopens a closed one from the runtime-native session recorded on it (interpreted by its agent_runtime) first. Pass intent to update the recorded recovery subject before the turn. Dreamux pushes the turn\'s completion back into your context whether it finished, failed, or was stopped.',
+      sendDescription,
       {
         name: {
           type: 'string',

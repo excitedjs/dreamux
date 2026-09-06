@@ -4,15 +4,30 @@ import { isAbsolute, join, resolve } from 'node:path';
 
 import type { AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
 
-interface SkillAdapterManifest {
-  version: 1;
+/**
+ * One source root as it exists on disk: the root's own name and absolute path,
+ * plus the skill directories under it.
+ *
+ * The children are part of the adapter's identity because package upgrades
+ * happen in place: `npm install --global` can rename the skills under a source
+ * root whose own name and path never change, and a key that saw only the roots
+ * would keep serving the previous names forever.
+ */
+interface SkillAdapterSource {
+  name: string;
+  path: string;
+  skills: Array<{ name: string; path: string }>;
+}
+
+export interface SkillAdapterManifest {
+  version: 2;
   key: string;
-  sources: Array<{ name: string; path: string }>;
+  sources: SkillAdapterSource[];
 }
 
 export async function validateSkillAdapter(
   root: string,
-  sources: readonly AgentRuntimeSkillSource[],
+  expected: SkillAdapterManifest,
 ): Promise<boolean> {
   let rootInfo;
   try {
@@ -53,7 +68,6 @@ export async function validateSkillAdapter(
       cause: error,
     });
   }
-  const expected = skillAdapterManifest(sources);
   if (
     value === null ||
     typeof value !== 'object' ||
@@ -65,21 +79,42 @@ export async function validateSkillAdapter(
   return true;
 }
 
-export function skillAdapterKey(
+/**
+ * Read the adapter's identity from disk — the source roots and the skill
+ * directories under each. Every adapter root is keyed by this manifest, so a
+ * renamed child lands on a new key instead of reusing the stale view.
+ */
+export async function readSkillAdapterManifest(
   sources: readonly AgentRuntimeSkillSource[],
-): string {
-  if (sources.length === 0) return 'empty';
-  const normalized = uniqueSkillSources(sources).map((source) => ({
-    name: source.name,
-    path: resolve(source.path),
-  }));
+): Promise<SkillAdapterManifest> {
+  return skillAdapterManifest(await readSkillAdapterInventory(sources));
+}
+
+async function readSkillAdapterInventory(
+  sources: readonly AgentRuntimeSkillSource[],
+): Promise<SkillAdapterSource[]> {
+  return Promise.all(
+    uniqueSkillSources(sources).map(async (source) => {
+      const path = resolve(source.path);
+      return { name: source.name, path, skills: await skillDirsInRoot(path) };
+    }),
+  );
+}
+
+function skillAdapterManifest(
+  inventory: SkillAdapterSource[],
+): SkillAdapterManifest {
+  return { version: 2, key: skillAdapterKey(inventory), sources: inventory };
+}
+
+function skillAdapterKey(inventory: readonly SkillAdapterSource[]): string {
   return createHash('sha256')
-    .update(JSON.stringify(normalized))
+    .update(JSON.stringify(inventory))
     .digest('hex')
     .slice(0, 24);
 }
 
-export function uniqueSkillSources(
+function uniqueSkillSources(
   sources: readonly AgentRuntimeSkillSource[],
 ): AgentRuntimeSkillSource[] {
   const byRoot = new Map<string, AgentRuntimeSkillSource>();
@@ -96,24 +131,13 @@ export function uniqueSkillSources(
     .map(([, source]) => source);
 }
 
-export function skillAdapterManifest(
-  sources: readonly AgentRuntimeSkillSource[],
-): SkillAdapterManifest {
-  return {
-    version: 1,
-    key: skillAdapterKey(sources),
-    sources: uniqueSkillSources(sources).map((source) => ({
-      name: source.name,
-      path: resolve(source.path),
-    })),
-  };
-}
-
-export async function skillDirsInRoot(
+/** The child skills of one root, in a fixed order: the key hashes this list. */
+async function skillDirsInRoot(
   root: string,
 ): Promise<Array<{ name: string; path: string }>> {
   const entries = await readdir(root, { withFileTypes: true });
   return entries
     .filter((entry) => entry.isDirectory())
-    .map((entry) => ({ name: entry.name, path: join(root, entry.name) }));
+    .map((entry) => ({ name: entry.name, path: join(root, entry.name) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }

@@ -157,7 +157,16 @@ async function create(
       ...(identityPrompt !== null ? { identity: identityPrompt } : {}),
     },
   });
-  return { structured: result };
+  return {
+    structured: result,
+    // A create that carried a prompt handed work down: the TeamLeader's first
+    // turn was submitted behind this receipt, and its result arrives later.
+    // Without a prompt no turn starts, and an `existing` or `closed` replay
+    // submitted nothing — neither has a completion to wait for.
+    ...(prompt !== null && result.status === 'created'
+      ? { text: TEAM_DISPATCH_SUCCESS_REMINDER }
+      : {}),
+  };
 }
 
 async function send(
@@ -274,7 +283,7 @@ function teamToolDescriptors(
   return [
     tool(
       'create',
-      'Create a Team with its TeamLeader. name_prefix is only a requested label; create RETURNS a concrete, never-reused team_name with a 4-8 character random suffix, and every later status/history/dissolve/send call MUST use that returned team_name. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to let Dreamux allocate a plain shared work directory for the Team, or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } to choose an existing path or create a managed git worktree. prompt is optional: when supplied it is delivered as the TeamLeader\'s first turn; when omitted no TeamLeader process starts until bound-channel inbound or a later Team MCP send arrives. Routing a channel conversation to the Team is the channel\'s own decision, made with that channel\'s tools.',
+      'The bundled `dispatcher-workflow` skill covers how to brief a TeamMate or a Team. Create a Team with its TeamLeader. name_prefix is only a requested label; create RETURNS a concrete, never-reused team_name with a 4-8 character random suffix, and every later status/history/dissolve/send call MUST use that returned team_name. intent is required: it is the durable recovery subject for the Team. repo is optional: omit it to let Dreamux allocate a plain shared work directory for the Team, or pass { mode: reuse-cwd | managed, path?, base_ref?, branch?, slug?, cleanup? } to choose an existing path or create a managed git worktree. prompt is optional: when supplied it is delivered as the TeamLeader\'s first turn; when omitted no TeamLeader process starts until bound-channel inbound or a later Team MCP send arrives. Routing a channel conversation to the Team is the channel\'s own decision, made with that channel\'s tools. With `prompt`, returns a receipt at once and the TeamLeader\'s completion is pushed later as a new message; without it, the Team is created and nothing is submitted.',
       {
         name_prefix: {
           type: 'string',
@@ -328,7 +337,7 @@ function teamToolDescriptors(
     ),
     tool(
       'send',
-      'Submit a follow-up turn to a Team\'s TeamLeader by team_name. This targets the TeamLeader agent only; it does not send to Team members and does not bind or post to a channel.',
+      'The bundled `dispatcher-workflow` skill covers how to brief a TeamMate or a Team. Submit a follow-up turn to a Team\'s TeamLeader by team_name. This targets the TeamLeader agent only; it does not send to Team members and does not bind or post to a channel. Returns a receipt at once; the completion is pushed later as a new message.',
       {
         team_name: {
           type: 'string',

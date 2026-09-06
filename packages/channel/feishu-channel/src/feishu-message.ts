@@ -92,10 +92,10 @@ export interface FormattedFeishuAttachment {
 
 export interface FormatFeishuMessageResult {
   /**
-   * Opaque display attributes for the runtime's channel block (chat_id,
-   * chat_type, optional thread_id, message_id, sender_id, sender_name,
-   * create_time). The channel no longer renders the final XML — each runtime
-   * wraps these into its own channel envelope.
+   * Opaque display attributes for the runtime's channel block (source,
+   * chat_id, chat_type, optional thread_id, message_id, sender_id,
+   * sender_name, create_time). The channel no longer renders the final XML —
+   * each runtime wraps these into its own channel envelope.
    */
   attrs: Array<[string, string]>;
   /**
@@ -127,6 +127,9 @@ export async function formatFeishuMessageForRuntime(
   }
   const attachments = resolution.attachments;
   const attrs: Array<[string, string]> = [];
+  // First, and constant: the provider name is what lets the model tie this
+  // envelope to the `channel-feishu` MCP server whose tools answer it.
+  attrs.push(['source', 'feishu']);
   appendNonEmptyAttr(attrs, 'chat_id', event.chatId);
   appendNonEmptyAttr(attrs, 'chat_type', event.chatType);
   if (event.threadId !== undefined && event.threadId !== '') {

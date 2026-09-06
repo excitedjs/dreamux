@@ -56,10 +56,15 @@ Accepted when:
   attachment points is wrong and is corrected in this PR (Codex F6).
 - A Team can be created with `repo.mode: reuse-cwd`, so a Team's workspace can
   overlap other writers (Codex F5).
-- `ChannelProviderCatalog.resolve` has four callers:
+- `ChannelProviderCatalog.resolve` has five callers:
   `channel-service/mcp-delegates.ts`, `channel-service/index.ts`,
-  `provider-diagnostics.ts`, and the structural `ChannelProviderResolver` in
-  `dispatcher-service/runnable-channel.ts`, whose result is discarded (Seed F3).
+  `provider-diagnostics.ts`, `onboard/wizard.ts`, and the structural
+  `ChannelProviderResolver` in `dispatcher-service/runnable-channel.ts`, whose
+  result is discarded (Seed F3, corrected at implementation on 2026-09-06: the
+  four named before are the sites that use the catalog Core injects, whose
+  receivers are `channelProviders` and `catalogs.channel`; the onboard wizard
+  constructs its own `ChannelProviderCatalog` over a locally built registry,
+  outside the running service, and calls it `channelCatalog`).
 - The ask-card settlement envelope is built inline in
   `feishu-session-ops.ts` `deliverAskUserSettlement` and submitted through
   the same path as inbound messages (Seed J9).
@@ -230,17 +235,24 @@ does not need that fact (R21).
 ### 3.7 Channel MCP server named by provider; `source` attribute
 
 `ChannelProviderCatalog.resolve(ref)` returns `{ id: descriptor.id,
-implementation }`, the shape of its agent-runtime twin; the four callers in §2
-adapt (three destructure; the structural resolver in `runnable-channel.ts`
-discards the result and changes only its type). `createChannelMcpDelegate`
-receives `providerId`, names the server `channel-<providerId>` and its MCP
-identity `dreamux-channel-<providerId>` (J10), and keeps `channelId` for
-`sessionMcp` lookups, logs, and events. The comment block in
-`mcp-delegate.ts` that justifies id-based naming is rewritten to say the name
-follows the provider because that is what the model can associate with a
-channel's tools, and that config's one-provider-per-dispatcher rule keeps it
-unique (Seed F3). `channels[].id` keeps its meaning; no config change, no
-state change, no migration.
+implementation }`, the shape of its agent-runtime twin; the five callers in §2
+adapt (`channel-service/mcp-delegates.ts`, `channel-service/index.ts` and
+`provider-diagnostics.ts` destructure; `onboard/wizard.ts` hands the wrapper to
+`onboardChannel`, which reads `id` and `implementation` from it instead of
+resolving the same ref a second time through the registry — the twin of
+`onboardAgentRuntime`, and the case the wrapper's doc comment names; the
+structural resolver in `runnable-channel.ts` already declares `resolve(ref):
+unknown`, so it is untouched). Corrected at implementation on 2026-09-06, with
+§2, from "the four callers in §2 adapt (three destructure; the structural
+resolver in `runnable-channel.ts` discards the result and changes only its
+type)". `createChannelMcpDelegate` receives `providerId`, names the server
+`channel-<providerId>` and its MCP identity `dreamux-channel-<providerId>`
+(J10), and keeps `channelId` for `sessionMcp` lookups, logs, and events. The
+comment block in `mcp-delegate.ts` that justifies id-based naming is rewritten
+to say the name follows the provider because that is what the model can
+associate with a channel's tools, and that config's one-provider-per-dispatcher
+rule keeps it unique (Seed F3). `channels[].id` keeps its meaning; no config
+change, no state change, no migration.
 
 Naming is total for builtin providers (`BUILTIN_PROVIDER_ID_PATTERN`
 `/^[a-z][a-z0-9-]*$/`). For `npm:` providers the loader seeds `descriptor.id`
@@ -304,6 +316,9 @@ Change file: `@excitedjs/agent-runtime-claude-code`, `patch`.
   `team-workflow` → `teamwork`. Archived proposals and research notes keep
   historical names.
 - `packages/dreamux/README.md`: the bundled-skills paragraph.
+- `.agents/product/dynamic-workflow-usage.md`: its two references to the
+  shared skill's path (found at implementation; the KB check fails on a dead
+  path).
 - `.agents/scripts/check.sh` green. `dreamux-maintenance` untouched (no
   config or state shape changes).
 
@@ -403,13 +418,17 @@ skill; Dispatcher-scoped TeamMate prompts.
 `packages/dreamux/src`: `service/team-service/leader-agent.ts`;
 `service/dispatcher-service/base-prompt.ts`;
 `service/mcp/dispatch-reminders.ts`;
-`service/teammate-collection/mcp-tool-descriptors.ts`, `index.ts`;
+`service/teammate-collection/mcp-tool-descriptors.ts`, `index.ts`,
+`system-prompt.ts` (new at implementation: `index.ts` sits at the shared
+700-line lint cap, so the prompt join moved to its own module);
 `service/team-collection/mcp-delegate.ts` (descriptions; create reminder);
 `service/teammate-service/completion-renderer.ts`; `channel/catalog.ts`;
 `channel/external-channel-provider.ts` (doc comment);
 `service/channel-service/index.ts`, `mcp-delegates.ts`, `mcp-delegate.ts`;
-`provider-diagnostics.ts`; `service/dispatcher-service/runnable-channel.ts`
-(type only); `platform/paths.ts`.
+`provider-diagnostics.ts`; `onboard/wizard.ts` (§3.7's fifth caller, type
+only); `platform/paths.ts`. `service/dispatcher-service/runnable-channel.ts`
+is not in the boundary: its structural resolver already returns `unknown`.
+Both listings corrected at implementation on 2026-09-06 with §2 and §3.7.
 `packages/channel/feishu-channel/src`: `feishu-submit.ts`,
 `feishu-message.ts`, `feishu-session-ops.ts`.
 `packages/agent-runtime/claude-code/src`: `skill-adapter.ts`,
@@ -427,10 +446,10 @@ README: §3.10. Change files: §3.11. Task records: §3.13.
 | `dreamux/tests/channel-input-format.test.ts` | seven attrs, `source` first | R13 |
 | `dreamux/tests/channel-service.test.ts`, `mcp-delegate-catalog.test.ts`, `codex-live.test.ts` | provider-named server and identity | R12 |
 | `dreamux/tests/completion-renderer.test.ts` | the notification sentence in both branches | R14 |
-| new: TeamMate system-prompt order (Team-scoped, dispatcher-scoped, workflow agent) | §3.6 | R9 |
-| new or extended: Team delegate `create` with prompt carries the Team reminder; without prompt carries none | §3.3 | Codex F6 |
-| new: Feishu settlement envelope carries `source` | §3.7 | J9 |
-| feishu-channel `feishu-message-budget.test.ts`, `public-api.test.ts`; dreamux `package-boundary-guards.test.ts` | reminder text where quoted | R4 |
+| new `dreamux/tests/teammate-system-prompt.test.ts`: TeamMate system-prompt order (Team-scoped, dispatcher-scoped, workflow agent) | §3.6 | R9 |
+| new `dreamux/tests/team-create-reminder.test.ts`: Team delegate `create` with prompt carries the Team reminder; without prompt, or on an `existing` replay, carries none | §3.3 | Codex F6 |
+| new `feishu-channel/tests/feishu-settlement-envelope.test.ts`: the settlement envelope carries `source` first and the same reminder | §3.7 | J9 |
+| feishu-channel `feishu-message-budget.test.ts` | reminder text where quoted (at implementation only this file had a word to change; `public-api.test.ts` and dreamux `package-boundary-guards.test.ts` name the export, not the text, and are untouched) | R4 |
 | `claude-code/tests/skill-materializer.test.ts` | renamed child under an unchanged root → new adapter | §3.9 |
 
 Untouched, by decision: `mcp-public-failures.test.ts` (`channel-x` is an

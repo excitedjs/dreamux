@@ -79,6 +79,17 @@ Source:
 
 ### Provider tools and MCP
 
+Core names this channel's MCP server after its provider, not its configured
+channel id: `channel-feishu`, MCP identity `dreamux-channel-feishu`. Claude
+Code shows that hyphenated name as-is; Codex renders its tools
+underscore-joined, `channel_feishu__…`. The provider is what a model can
+associate a channel's tools with — it already knows what Feishu is, while a
+channel id is a private operator string with nowhere for the model to look it
+up — and config admits each provider at most once per dispatcher, so naming by
+provider is still unique within the set of servers one agent sees.
+`channels[].id` is unaffected: it keeps its separate meaning for
+dispatcher-local channel binding, `sessionMcp` lookups, logs, and events.
+
 The Feishu package owns its tool names and JSON schemas. Thirteen definitions
 are registered, and the served surface is caller-scoped:
 
@@ -281,11 +292,29 @@ call created. A Channel recognizes its own submission by the `source_id` it
 sent, which Core echoes on `teammate.input`; there is no per-submission turn
 event left to claim.
 
+Feishu's display attrs open with `source` (`feishu`), rendered first in the
+model-visible `<channel …>` envelope, ahead of `chat_id`, `chat_type`, the
+optional `thread_id`, `message_id`, `sender_id`, `sender_name`, and
+`create_time`. It is the same fact that names the `channel-feishu` MCP server
+(above), given so a model can tie the envelope it is reading to the tools that
+answer it. The ask-user settlement envelope — a card answer arriving back as
+an ordinary inbound submission (see `ask_user_question` above) — carries
+`source` first for the same reason: a settlement reads like a channel message
+because it is one.
+
+The standing reminder is the Channel's own consequence sentence, worded and
+owned here, not by Core: it states the one fact this model cannot see for
+itself — that in a Feishu chat, assistant text never reaches the human, only a
+`reply` call does — so the model is not told what to do, only what already
+happens.
+
 Source:
 
 - `/packages/channel/feishu-channel/src/routing/index.ts`
 - `/packages/channel/feishu-channel/src/feishu-submit.ts`
 - `/packages/channel/feishu-channel/src/feishu-channel.ts`
+- `/packages/channel/feishu-channel/src/feishu-message.ts`
+- `/packages/channel/feishu-channel/src/feishu-session-ops.ts`
 - `/packages/dreamux/src/service/team-collection/commands.ts`
 - `/packages/dreamux/src/service/channel-submission.ts`
 - `/packages/dreamux/src/service/submission-sources.ts`

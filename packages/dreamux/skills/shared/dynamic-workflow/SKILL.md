@@ -1,6 +1,6 @@
 ---
-name: workflow
-description: Deterministic multi-agent orchestration with workflow_run, workflow_status, workflow_stop, and workflow_list. Load for staged, parallel, or pipelined TeamMate work that should produce one terminal result.
+name: dynamic-workflow
+description: "How to write a Dreamux workflow script for workflow_run. Load when about to write or run a workflow script; not needed for any other tool."
 ---
 
 # Dynamic Workflow

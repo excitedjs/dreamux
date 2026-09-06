@@ -243,8 +243,8 @@ otherwise. Dates are 2026-09-05 unless stated.
   envelopes for spawn/send prompts; `<task-notification>` completion
   push-backs (`teammate-service/completion-renderer.ts`); `<cron>` prompts;
   the dispatch-result reminders (`service/mcp/dispatch-reminders.ts`, attached
-  to the text part of a successful spawn/send/team.create/team.send/
-  workflow_run result); runtime error strings with imperatives (for example
+  to the text part of a successful spawn/send/team.send/workflow_run result);
+  runtime error strings with imperatives (for example
   `feishu-channel/src/routing/index.ts`, "Ask the Dispatcher to move it.").
 - Loaded on demand: skill bodies; tool definitions.
 

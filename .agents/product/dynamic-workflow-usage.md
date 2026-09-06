@@ -418,10 +418,10 @@ one agent for overlapping edits.
   through 16**.
 - An individual turn timeout is controlled by the selected runtime.
 
-The bundled `workflow` skill
-(`/packages/dreamux/skills/shared/workflow/SKILL.md`) is the owner of these
-user-facing numbers; this page restates them for operators and must follow the
-skill when they change. The
+The bundled `dynamic-workflow` skill
+(`/packages/dreamux/skills/shared/dynamic-workflow/SKILL.md`) is the owner of
+these user-facing numbers; this page restates them for operators and must follow
+the skill when they change. The
 [current architecture](/.agents/domains/current-architecture.md#dynamic-workflows)
 describes where they are enforced without duplicating the values.
 
@@ -468,4 +468,4 @@ successful `null`.
 
 - `/packages/dreamux/src/service/workflow-service/`
 - `/packages/dreamux/src/service/teammate-collection/mcp-delegate.ts`
-- `/packages/dreamux/skills/shared/workflow/SKILL.md`
+- `/packages/dreamux/skills/shared/dynamic-workflow/SKILL.md`

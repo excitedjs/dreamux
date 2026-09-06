@@ -64,9 +64,12 @@ function inboundEvent(overrides: Partial<FeishuInboundEvent> = {}): FeishuInboun
 }
 
 describe('formatFeishuMessageForRuntime (structured, no pre-rendered XML)', () => {
-  it('returns the six baseline attrs and omits an absent thread id', async () => {
+  it('returns the seven baseline attrs, source first, and omits an absent thread id', async () => {
     const result = await formatFeishuMessageForRuntime(inboundEvent());
+    // `source` leads because the model reads the envelope's provenance before
+    // its ids; the Channel owns the attribute, not the wrapper.
     expect(result.attrs.map(([k]) => k)).toEqual([
+      'source',
       'chat_id',
       'chat_type',
       'message_id',
@@ -101,8 +104,10 @@ describe('the Channel → Core submission pipeline: formatFeishuMessageForRuntim
     });
     const rendered = renderSubmission(submission);
 
-    // Core's own provenance name, not whatever the Channel calls itself.
-    expect(rendered.startsWith('<channel ')).toBe(true);
+    // Core's own provenance name, not whatever the Channel calls itself —
+    // with the Channel's own `source` as the first attribute inside it, which
+    // is what the model reads before any id.
+    expect(rendered.startsWith('<channel source="feishu" ')).toBe(true);
     expect(rendered).toContain(' chat_id="chat-1"');
     expect(rendered).toContain(' thread_id="topic-a"');
     expect(rendered.endsWith('</channel>')).toBe(true);

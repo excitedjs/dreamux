@@ -45,14 +45,19 @@ import { MCP_IDENTITY_VERSION } from '../mcp/identity-version.js';
 /**
  * The namespace every Channel MCP server is named in.
  *
- * A configured channel id is an operator's own string, chosen without knowing
- * which servers Dreamux composes beside it, so using it bare would let a
- * channel called `team` or `cron` collide with an internal delegate. The prefix
- * makes the two families structurally disjoint instead of relying on operators
- * to avoid names they were never told about. It does not replace the generic
- * uniqueness proof the composition boundary runs — nothing here can see the
- * rest of the set — it only keeps this domain from being the reason that proof
- * fails.
+ * The name follows the provider, not the configured channel. The provider is
+ * what the model can associate a channel's tools with: it already knows what
+ * Feishu is, so `channel-feishu` tells it these tools reach the Feishu chat it
+ * is being talked to from, while a channel id is a private operator string the
+ * model has nowhere to look up. Config admits each provider at most once per
+ * dispatcher, so naming by provider is still unique inside the set of servers
+ * one agent sees.
+ *
+ * The prefix keeps this family structurally disjoint from the internal
+ * delegates, so a provider named `team` or `cron` cannot collide with one. It
+ * does not replace the generic uniqueness proof the composition boundary runs
+ * — nothing here can see the rest of the set — it only keeps this domain from
+ * being the reason that proof fails.
  *
  * Prefixing is also all this domain does to the id. The name that comes out is
  * a logical one, and it reaches every runtime and every model unchanged.
@@ -73,6 +78,8 @@ type ChannelToolHandler = (
 
 export interface ChannelMcpDelegateInput {
   dispatcherId: string;
+  /** The registration id of the provider behind this channel; names the server. */
+  providerId: string;
   /** The configured channel this server serves: Core's id, not a session's. */
   channelId: string;
   provider: ChannelProvider<unknown>;
@@ -104,12 +111,12 @@ export interface ChannelMcpDelegateInput {
 export function createChannelMcpDelegate(
   input: ChannelMcpDelegateInput,
 ): McpServerDelegate {
-  // The configured id, carried verbatim behind a constant prefix. Nothing here
-  // rewrites it to suit a runtime's configuration format: a channel is named to
-  // the model the way its operator named it, and each runtime adapter quotes
-  // whatever it is handed. The prefix is constant and config already keeps
-  // channel ids unique per dispatcher, so two channels cannot collide either.
-  const serverName = `${SERVER_NAME_PREFIX}${input.channelId}`;
+  // The provider's registration id, carried verbatim behind a constant prefix.
+  // Nothing here rewrites it to suit a runtime's configuration format: each
+  // runtime adapter quotes whatever it is handed. The configured channel id
+  // stays out of the name and keeps its own jobs below — the session-MCP
+  // lookup, the call context, and the log and error text.
+  const serverName = `${SERVER_NAME_PREFIX}${input.providerId}`;
   // Fixed once, here, and only from registrations whose declared target has a
   // handler right now. Binding the handler *is* the availability proof, so the
   // advertised list and the dispatch table cannot disagree: a tool is in both
@@ -131,13 +138,13 @@ export function createChannelMcpDelegate(
     tools.push(registration.tool);
   }
   return {
-    // Namespaced by Core, from the configured channel id, which is Core's own
-    // fact. A provider never names the server it is exposed through.
+    // Namespaced by Core, from the provider's registration id, which is Core's
+    // own fact. A provider never names the server it is exposed through.
     name: serverName,
     describe(): McpDelegateDescription {
       return {
         identity: {
-          name: `dreamux-channel-${input.channelId}`,
+          name: `dreamux-channel-${input.providerId}`,
           version: MCP_IDENTITY_VERSION,
         },
         tools,

@@ -15,6 +15,13 @@ afterEach(() => {
   }
 });
 
+// An independent literal of the pushed sentence (ruling R14 in
+// `.agents/tasks/mcp/refine-model-facing-surfaces/requirement.md`),
+// deliberately not imported from the renderer, so a wording change in source
+// has to be made here knowingly too.
+const NOTIFICATION =
+  'This is an automated notification from Dreamux, not a message from the user.';
+
 describe('buildCompletionTurnText', () => {
   it.each([
     ['completed', 'TeamMate worker has finished its task.'],
@@ -26,7 +33,7 @@ describe('buildCompletionTurnText', () => {
       temporarySpillDir(),
     );
 
-    expect(text).toBe(`${line} Output below:\n\nresult`);
+    expect(text).toBe(`${line} ${NOTIFICATION} Output below:\n\nresult`);
   });
 
   it.each([
@@ -43,7 +50,7 @@ describe('buildCompletionTurnText', () => {
         temporarySpillDir(),
       );
 
-      expect(text).toBe(`${line} Output below:\n\n`);
+      expect(text).toBe(`${line} ${NOTIFICATION} Output below:\n\n`);
     },
   );
 
@@ -57,7 +64,7 @@ describe('buildCompletionTurnText', () => {
       temporarySpillDir(),
     );
 
-    expect(text).toBe(`${line} Output below:\n\nresult`);
+    expect(text).toBe(`${line} ${NOTIFICATION} Output below:\n\nresult`);
   });
 
   it('uses the same spill directory for workflow completions', async () => {
@@ -68,8 +75,8 @@ describe('buildCompletionTurnText', () => {
     );
 
     const prefix =
-      'Workflow report-1 has completed. The output is too long, so the full ' +
-      'result was saved to a file:\n\n';
+      `Workflow report-1 has completed. ${NOTIFICATION} The output is too ` +
+      'long, so the full result was saved to a file:\n\n';
     expect(text.startsWith(prefix)).toBe(true);
     expect(text.slice(prefix.length)).toMatch(
       new RegExp(`^${escapeRegex(spillDir)}/completion-[0-9a-f-]+\\.output$`, 'u'),

@@ -9,7 +9,7 @@ solution, scope, and verification links.
 For the minimal-change fast path, have the TeamLeader implement directly as previously
 approved and do not start a TeamMate. When the entire implementation surface is
 `.agents/**`, the TeamLeader also implements directly as the sole repository writer.
-For every other path, load and follow `team-workflow`, then directly start exactly
+For every other path, load and follow `teamwork`, then directly start exactly
 one write-capable developer TeamMate with the identity in
 [developer-identity.md](developer-identity.md). Do not run another writer
 concurrently. The TeamLeader must regain control and inspect the completed diff

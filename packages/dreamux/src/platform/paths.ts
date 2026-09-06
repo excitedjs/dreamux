@@ -56,8 +56,8 @@ const PACKAGE_ROOT = dirname(dirname(HERE));
 export const BUNDLED_SKILL_NAMES = [
   'dispatcher-workflow',
   'dreamux-maintenance',
-  'team-workflow',
-  'workflow',
+  'dynamic-workflow',
+  'teamwork',
 ] as const;
 
 export type BundledSkillName = typeof BUNDLED_SKILL_NAMES[number];

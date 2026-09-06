@@ -7,10 +7,14 @@
  * `cron` catalogs as each caller sees them — nested objects such as `repo`
  * included — and fails on any input property that states only its type.
  *
- * The negative gates cover the other half of the same move, matching stable
- * names rather than sentences: the Dispatcher prompts no longer send the model
- * to `dispatcher-workflow` before tool work, and neither role skill's
- * frontmatter description asks to be loaded before using a tool.
+ * The other gates cover the rest of the same move, matching stable names and
+ * Dreamux-owned sentences rather than prose: the Dispatcher prompts no longer
+ * send the model to `dispatcher-workflow` before tool work and no longer carry
+ * a rule another surface now owns, while keeping the one skill trigger the
+ * role does own; no bundled skill's frontmatter description asks to be loaded
+ * before using a tool; and every hand-off tool states in its own description
+ * that the completion is pushed back later, which on Claude Code is the only
+ * place the model can read it.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -19,6 +23,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   bundledDispatcherSkillRoot,
+  bundledSharedSkillRoot,
   bundledTeamLeaderSkillRoot,
 } from '../src/platform/paths.js';
 import {
@@ -32,6 +37,7 @@ import { teammateToolDescriptors } from '../src/service/teammate-collection/mcp-
 /** What the walk reads out of an advertised tool, which is otherwise opaque. */
 interface AdvertisedTool {
   readonly name: string;
+  readonly description: string;
   readonly inputSchema: unknown;
 }
 
@@ -69,8 +75,63 @@ const SKILL_DESCRIPTION_SOURCES: Record<string, string> = {
     'dispatcher-workflow',
     'SKILL.md',
   ),
-  'team-workflow': join(bundledTeamLeaderSkillRoot(), 'team-workflow', 'SKILL.md'),
+  teamwork: join(bundledTeamLeaderSkillRoot(), 'teamwork', 'SKILL.md'),
+  'dynamic-workflow': join(
+    bundledSharedSkillRoot(),
+    'dynamic-workflow',
+    'SKILL.md',
+  ),
 };
+
+/** The two role prompts Dreamux writes for a Dispatcher, by export name. */
+const DISPATCHER_PROMPTS: Record<string, string> = {
+  DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
+  DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
+};
+
+/**
+ * Rules that used to live in a Dispatcher prompt and now have a single owner
+ * elsewhere: the no-polling rule and the pushed completion belong to the
+ * dispatch-result reminders and the hand-off descriptions, reaching the user
+ * belongs to the channel's own reminder, and loading a tool definition is the
+ * engine's own mechanism. Fragments, not sentences, so a reworded comeback is
+ * still caught.
+ */
+const RULES_OWNED_ELSEWHERE = [
+  'do not poll',
+  'reply tool',
+  'public artifacts',
+  'Load a tool',
+];
+
+/**
+ * What a hand-off tool must say about the result the caller will never see in
+ * its own return value. The dispatch-result reminder carries the same fact,
+ * but Claude Code drops an MCP result's text next to its structured content,
+ * so there the description is the only carrier.
+ */
+const PUSHED_COMPLETION =
+  'Returns a receipt at once; the completion is pushed later as a new message.';
+
+const HAND_OFF_SENTENCES: readonly [string, string, string][] = [
+  ['teammate (dispatcher)', 'spawn', PUSHED_COMPLETION],
+  ['teammate (dispatcher)', 'send', PUSHED_COMPLETION],
+  ['teammate (team_leader)', 'spawn', PUSHED_COMPLETION],
+  ['teammate (team_leader)', 'send', PUSHED_COMPLETION],
+  [
+    'team (dispatcher)',
+    'create',
+    'With `prompt`, returns a receipt at once and the TeamLeader\'s completion ' +
+      'is pushed later as a new message; without it, the Team is created and ' +
+      'nothing is submitted.',
+  ],
+  ['team (dispatcher)', 'send', PUSHED_COMPLETION],
+  [
+    'teammate (dispatcher)',
+    'workflow_run',
+    'Dreamux pushes one terminal completion when the run finishes.',
+  ],
+];
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -126,10 +187,7 @@ describe('Dreamux MCP tool descriptions', () => {
 
 describe('role guidance is not a precondition for tool calls', () => {
   it('keeps the Dispatcher prompts from routing tool work through a skill', () => {
-    for (const [prompt, text] of Object.entries({
-      DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
-      DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
-    })) {
+    for (const [prompt, text] of Object.entries(DISPATCHER_PROMPTS)) {
       expect(
         text,
         `${prompt} still sends the model to dispatcher-workflow`,
@@ -137,7 +195,7 @@ describe('role guidance is not a precondition for tool calls', () => {
     }
   });
 
-  it('keeps a load mandate out of the role skill descriptions', () => {
+  it('keeps a load mandate out of the bundled skill descriptions', () => {
     for (const [skill, source] of Object.entries(SKILL_DESCRIPTION_SOURCES)) {
       const description = frontmatterDescription(source);
       expect(
@@ -150,4 +208,36 @@ describe('role guidance is not a precondition for tool calls', () => {
       ).not.toContain('before using');
     }
   });
+});
+
+describe('what only the Dispatcher role prompts still carry', () => {
+  it('triggers the one skill the role itself owns', () => {
+    for (const [prompt, text] of Object.entries(DISPATCHER_PROMPTS)) {
+      expect(
+        text,
+        `${prompt} no longer triggers dreamux-maintenance`,
+      ).toContain('Load `dreamux-maintenance`');
+    }
+  });
+
+  it('states no rule another surface now owns', () => {
+    for (const [prompt, text] of Object.entries(DISPATCHER_PROMPTS)) {
+      for (const fragment of RULES_OWNED_ELSEWHERE) {
+        expect(text, `${prompt} states "${fragment}" again`).not.toContain(
+          fragment,
+        );
+      }
+    }
+  });
+});
+
+describe('a hand-off says the completion comes back later', () => {
+  for (const [catalog, name, sentence] of HAND_OFF_SENTENCES) {
+    it(`states it on ${catalog} "${name}"`, () => {
+      const tool = (CATALOGS[catalog] as readonly AdvertisedTool[] | undefined)
+        ?.find((advertised) => advertised.name === name);
+      expect(tool, `${catalog} advertises no tool "${name}"`).toBeDefined();
+      expect(tool?.description).toContain(sentence);
+    });
+  }
 });

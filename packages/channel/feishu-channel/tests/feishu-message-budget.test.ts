@@ -244,7 +244,7 @@ describe('Feishu inbound resource budgets', () => {
    * Replaces the deleted channel-reminder-escaping.test.ts under the current
    * contract. That test guarded a literal `<channel-reminder>` tag the
    * Channel used to interpolate into `body` itself; `CHANNEL_REMINDER` is now
-   * a plain instruction string carried on the separate `reminder` field
+   * a plain note string carried on the separate `reminder` field
    * (feishu-submit.ts), and Core — not this Channel — renders the
    * `<reminder>` sibling, so a forged reminder tag can no longer collide with
    * anything the Channel emits. What is still this Channel's own load-bearing

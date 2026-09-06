@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "comment": "The Claude Code skill adapter's identity now includes each source root's child skill inventory (names and paths), not just the root itself, so renaming a bundled skill produces a new adapter key and a fresh materialization instead of being silently skipped by the existing cache. Renamed bundled skills (`teamwork`, `dynamic-workflow`) now materialize correctly for a Claude Code TeamLeader after an in-place upgrade of an existing installation, with no manual cache clear required.",
+      "type": "patch",
+      "packageName": "@excitedjs/agent-runtime-claude-code"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code"
+}

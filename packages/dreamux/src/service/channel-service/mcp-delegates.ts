@@ -42,11 +42,13 @@ export function channelMcpDelegates(
 ): McpServerDelegate[] {
   const delegates: McpServerDelegate[] = [];
   for (const channel of input.channels) {
-    const provider = input.channelProviders.resolve(channel.provider);
+    const { id: providerId, implementation: provider } =
+      input.channelProviders.resolve(channel.provider);
     if (provider.mcp === undefined) continue;
     delegates.push(
       createChannelMcpDelegate({
         dispatcherId: input.dispatcherId,
+        providerId,
         channelId: channel.id,
         provider,
         config: channel.config,
