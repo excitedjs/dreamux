@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/agent-runtime-claude-code
 
-This log was last generated on Fri, 04 Sep 2026 10:24:24 GMT and should not be manually modified.
+This log was last generated on Sun, 06 Sep 2026 09:34:07 GMT and should not be manually modified.
+
+## 0.6.1
+Sun, 06 Sep 2026 09:34:07 GMT
+
+### Patches
+
+- The Claude Code skill adapter now records each source root's child skill inventory (names and paths) in its manifest and compares it on every start, so an in-place package upgrade that renames bundled skills refreshes the view instead of serving the stale one: renamed bundled skills (`teamwork`, `dynamic-workflow`) materialize correctly for a Claude Code TeamLeader after an in-place upgrade, with no manual cache clear. The adapter root stays keyed by the set of source roots, so the same roots always map to the same directory and a refresh replaces it in place — a root left by the previous release is refreshed rather than orphaned, and no earlier view accumulates. Because the roots are read on every start, a custom skill source root that was deleted or moved after its Team was created fails that TeamLeader's next start with an error naming the source and its path, where the previous cached view started without re-reading the roots.
 
 ## 0.6.0
 Fri, 04 Sep 2026 10:24:24 GMT

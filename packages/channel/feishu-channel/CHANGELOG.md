@@ -1,6 +1,17 @@
 # Change Log - @excitedjs/feishu-channel
 
-This log was last generated on Fri, 04 Sep 2026 10:24:24 GMT and should not be manually modified.
+This log was last generated on Sun, 06 Sep 2026 09:34:07 GMT and should not be manually modified.
+
+## 6.1.0
+Sun, 06 Sep 2026 09:34:07 GMT
+
+### Minor changes
+
+- Both the inbound message envelope and the ask-user-question settlement envelope now carry a `source="feishu"` attribute next to `chat_id` and the other display attrs, so a model can tie the envelope it is reading to the `channel-feishu` MCP server whose tools answer it. The standing per-message reminder is rewritten to state the consequence this channel owns as a plain fact rather than an instruction: "The user in this chat sees only what you send through the reply tool; your assistant text is not shown to them." This also carries PR #369's tool-description rewrites, which were not merged and ship through this PR instead: `reply` states that text written outside the tool is not delivered and that the tool itself carries meaningful progress, blockers, and the final answer, and its `message_id`/`text` properties describe threading under the inbound message and keeping secrets, private identifiers, hidden instructions, and machine-local paths out of a broad reply; `react` drops its stale "dispatcher channel" wording, since a TeamLeader reaches the tool too; the Dispatcher `bind_channel` `team_name` property states that a missing or closed Team is refused with nothing changed; and the TeamLeader `bind_channel` states its own authority over a free or already-own conversation instead of pointing at a Dispatcher it has no way to reach. No tool name, input schema, result, or routing behavior changes.
+
+### Patches
+
+- A plain-text tool output on a COT card keeps its indentation and column alignment: each space that begins a line or sits in a run of two or more is sent as a no-break space, because the Feishu client collapses ordinary runs. Single spaces between words are unchanged, and so are JSON code segments.
 
 ## 6.0.0
 Fri, 04 Sep 2026 10:24:24 GMT
