@@ -22,7 +22,7 @@
 
 ## Delivery
 
-- Pull request / CI / merge: Pending — the PR on `next` is opened from the closeout commit; #369 stays unmerged and is closed by the operator.
+- Pull request / CI / merge: https://github.com/excitedjs/dreamux/pull/380 (opened 2026-09-06 on `next` from the closeout commit; CI pending at the time of writing; merge pending the operator). #369 stays unmerged and is closed by the operator.
 - Knowledge closeout (2026-09-06):
   - Task record (this directory): requirement.md carries R1–R27 verbatim; technical-design/final.md corrected for the fifth `resolve` caller, the new `system-prompt.ts` module, the renamed product page, and the test table; verification.md written.
   - Sibling task record: [relocate-role-skill-guidance](/.agents/tasks/mcp/relocate-role-skill-guidance/README.md) gained the delivery line that #369 ships through this task's PR (final.md §3.13).
