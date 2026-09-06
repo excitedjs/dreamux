@@ -230,8 +230,11 @@ one general one. Each was verified against the source before being reported
 to the operator; the operator ruled on items 2–7 (R28–R33), and items 1 and 8
 were applied as reported.
 
-1. The `team.create` description's leftover apostrophe escape after the
-   apostrophe fix (`\'`) — confirmed cosmetic, corrected.
+1. The `@excitedjs/dreamux` change note described an upgrade blocker (two
+   reserved skill names) without leading with `BREAKING:` or carrying
+   `Rebuild:` — confirmed; the note now leads with `BREAKING:` and carries
+   `Rebuild:`, the shape of the workflow skill's own note; the claude-code
+   note was rewritten for the stable directory (item 4).
 2. The Team-scoped workflow agent was told its TeamLeader receives its output,
    which is false for a workflow agent and competes with the workflow
    contract — confirmed; R28. The workflow agent now receives only the
@@ -264,10 +267,10 @@ were applied as reported.
    the two assertions now check presence (`channel-input-format.test.ts`,
    `feishu-settlement-envelope.test.ts`), the design, the channel page, and
    the feishu-channel change note no longer say "first".
-8. The `@excitedjs/dreamux` change note did not lead with `BREAKING:` although
-   two skill names became reserved — confirmed; the note now leads with
-   `BREAKING:` and carries `Rebuild:`; the claude-code note was rewritten for
-   the stable directory; the proposal page names `teamwork`.
+8. (Unanchored, in the review body.) The live proposal
+   `.agents/proposals/admin-control-plane-surface.md` still named the bundled
+   skill `team-workflow` — confirmed; it names `teamwork` now. Archived
+   proposals keep the historical names.
 
 Gates after the round (working tree with all eight fixes, 2026-09-06 15:20):
 `rush build`, `rush lint`, `rush test`, `rush typecheck:tests`,
