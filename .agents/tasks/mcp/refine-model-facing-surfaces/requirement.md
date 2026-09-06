@@ -277,6 +277,20 @@ and ruled on it (15:40, follow-up PR):
   lives in the `dissolve` description, which the leader reads only when it is
   about to dissolve.
 
+The review of the follow-up PR #382 (ryanxiang7, 2026-09-06 16:04) found that
+the Dispatcher has no surface reporting a Team's cleanup mode: `team.status`,
+`team.list`, and `team.history` project only the lifecycle state
+`worktree_cleanup`, which reads `managed-active` for every open managed
+worktree, while the Dispatcher-facing `dissolve` and its `force` are phrased
+in `delete-on-close` / `keep` terms; before R31 the Dispatcher could infer the
+mode from its own request. The TeamLeader reported it with a proposal
+(`worktree_mode` and `worktree_cleanup_mode` on `team.status` only, bundled
+into #382 before the beta) and the operator ruled (16:16):
+
+- R35: "嗯，加一下字段。"
+  TeamLeader's reading, labeled: the two fields are added to `team.status` as
+  proposed, in #382.
+
 ## Evidence
 
 Everything here is traced from PR #369 head (`5e1a3464`) unless labeled
@@ -688,7 +702,7 @@ file noting the tool-name change (`channel_primary` → `channel_feishu`).
 
 ## Decisions and unknowns
 
-- Confirmed operator decisions: R1–R34 above (R11 is the proposal R12 and R13 ruled on). No open decisions; the technical design proceeds on the simple path (R17) with two reviewers (R18); R21 is the adjudication principle for reviewer findings.
+- Confirmed operator decisions: R1–R35 above (R11 is the proposal R12 and R13 ruled on). No open decisions; the technical design proceeds on the simple path (R17) with two reviewers (R18); R21 is the adjudication principle for reviewer findings.
 - Open decisions for the operator:
   - (a) Sentence 2: dropping "Load a tool's definition before calling it" is
     confirmed (R5). Still open: the engine-neutral channel clause, re-asked

@@ -297,7 +297,19 @@ git worktree (cleanup: delete-on-close).` (or `(cleanup: keep)`, or `is a
 reused directory (cleanup: keep).`); the `dissolve` description defines what
 each mode means at dissolve. `team-leader-prompt.test.ts` pins the three
 sentences and asserts the prompt does not mention dissolving outside the
-server map's `team` entry. Gates on the follow-up branch: see the PR.
+server map's `team` entry.
+
+The review of #382 (ryanxiang7) raised two non-blocking notes. The R34 quote
+carried a literal `\n` and straight inner quotation marks — normalized. And
+the Dispatcher could not see a Team's cleanup mode (verified in
+`read-model.ts`, `team-view.ts`, `types.ts`: the three projections carry only
+`worktree_cleanup` = `cleanup_state`, `managed-active` for every open managed
+worktree; the `TeamListRow` comment pointed to `team.status` for a
+`worktree_mode` it did not carry). R35 added `worktree_mode` and
+`worktree_cleanup_mode` to `TeamView` (`team-view.test.ts` pins both for a
+managed delete-on-close worktree and a reused directory); the `team.status`
+output schema is an open object, so no schema change. Gates on the follow-up
+branch: see the PR.
 
 ## Skipped coverage and residual risk
 

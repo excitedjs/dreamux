@@ -402,6 +402,16 @@ the operator ruled on the findings (R28–R33, requirement.md). Beyond §3.1,
   told every leader to check, while Core blocks a dissolve only for a managed
   delete-on-close worktree (R29); the meaning of the modes lives here and not
   in the prompt (R34).
+- `team.status` reports `worktree_mode` and `worktree_cleanup_mode` next to
+  the lifecycle state `worktree_cleanup` (R35, review of #382): the lifecycle
+  state reads `managed-active` for every open managed worktree, so the
+  Dispatcher, whose `dissolve` and `force` are phrased in `delete-on-close` /
+  `keep` terms, could not tell whether a dissolve removes anything once R31
+  flipped the default. `list` and `history` stay compact, as the `TeamListRow`
+  comment already promised; the Dispatcher-facing `dissolve` description
+  names the two fields. The TeamLeader gets the same two facts in its prompt
+  because its Team catalog has no read tool; the Dispatcher has one, so for
+  it the fact belongs in a read result, not in a prompt.
 - A managed worktree requested without `cleanup` defaults to `delete-on-close`
   (`worktree/manager.ts`; R31). `reuse-cwd` records `keep` and is never
   removed. The `cleanup` property description states the default, and the

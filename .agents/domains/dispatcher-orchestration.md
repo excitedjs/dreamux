@@ -295,7 +295,10 @@ decision. A managed worktree requested without `cleanup` is `delete-on-close`
 TeamLeader's prompt names the workspace and its cleanup mode, nothing more;
 what the mode means at dissolve is stated only by the `dissolve` description,
 which asks the leader to check a `delete-on-close` worktree before dissolving
-(R34). Managed `delete-on-close`
+(R34). The Dispatcher reads the same two facts from `team.status`
+(`worktree_mode`, `worktree_cleanup_mode`; R35), because the lifecycle state
+`worktree_cleanup` reads `managed-active` for every open managed worktree and
+so cannot say whether a dissolve removes anything. Managed `delete-on-close`
 cleanup calls `git worktree remove <path>`,
 non-forced by default so Git's own refusal is the final authority. `force: true`
 is that user decision, not a bypass of it: it authorizes

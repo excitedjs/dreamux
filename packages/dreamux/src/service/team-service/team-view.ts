@@ -13,5 +13,7 @@ export function teamView(team: TeamRecord): TeamView {
     closed_at: team.closed_at,
     close_note: team.close_note,
     worktree_cleanup: team.worktree.cleanup_state,
+    worktree_mode: team.worktree.mode,
+    worktree_cleanup_mode: team.worktree.cleanup,
   };
 }

@@ -389,7 +389,7 @@ function teamToolDescriptors(
     ),
     tool(
       'status',
-      'Read one Team\'s detailed current status by its team_name (record, TeamLeader status, and member count).',
+      'Read one Team\'s detailed current status by its team_name (record with its workspace kind and cleanup mode, TeamLeader status, and member count).',
       {
         team_name: {
           type: 'string',
@@ -479,7 +479,7 @@ function teamToolDescriptors(
     ),
     tool(
       'dissolve',
-      'Submit a dissolve of one Team (by team_name) and its agents. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }); the Team is stopped and closed behind that receipt, so this call never reports the outcome. note is required: it records why a recoverable Team was stopped. Uncommitted, untracked, or unmerged work in a managed delete-on-close worktree leaves the Team open and running instead of closing it, so read the Team\'s status afterwards to see what happened. force: true only overrides a delete-on-close removal blocked by uncommitted, untracked, or unmerged work, by discarding that work; under cleanup: keep the checkout and its changes are retained; never the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user\'s.',
+      'Submit a dissolve of one Team (by team_name) and its agents. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }); the Team is stopped and closed behind that receipt, so this call never reports the outcome. note is required: it records why a recoverable Team was stopped. team.status reports the Team\'s worktree_mode and worktree_cleanup_mode; only a managed delete-on-close worktree is removed. Uncommitted, untracked, or unmerged work in such a worktree leaves the Team open and running instead of closing it, so read the Team\'s status afterwards to see what happened. force: true only overrides a delete-on-close removal blocked by uncommitted, untracked, or unmerged work, by discarding that work; under cleanup: keep the checkout and its changes are retained; never the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user\'s.',
       {
         team_name: {
           type: 'string',
