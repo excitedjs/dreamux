@@ -257,8 +257,13 @@ were applied as reported.
 5. Every managed worktree defaulted to `keep`, so the default `dissolve`
    never removed anything — confirmed; R31 changed the default to
    `delete-on-close` (`worktree/manager.ts`, the `cleanup` description in
-   `tool-metadata.ts`; product README and the dispatcher-orchestration page
-   updated; change note carries the new default).
+   `tool-metadata.ts`; product README, the dispatcher-orchestration page, and
+   the maintenance skill's service-lifecycle reference updated; change note
+   carries the new default). The Team runtime registry also carried a
+   fallback request `{ mode: 'managed', slug, cleanup: 'keep' }` for a
+   `repoCwd` without a worktree request; both callers derive the pair from
+   `repoWorktree()` together, the managed-by-default policy lives there, and
+   the fallback would have pinned the old default, so it is removed.
 6. `team.create.prompt` lacked `minLength: 1` — confirmed (an empty string
    submitted an empty first turn with the Team reminder); the operator asked
    what it meant (R32), the fix stood.

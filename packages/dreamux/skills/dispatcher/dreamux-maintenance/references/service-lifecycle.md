@@ -136,7 +136,10 @@ runtime app-server readiness, and same-version restart cautions.
   and running rather than closing it. `force: true` on the dissolve is that
   decision — it authorizes `git worktree remove --force` and discards the
   uncommitted, untracked, or unmerged work in the managed checkout. `cleanup:
-  keep` and non-managed workspaces are terminally retained. For a managed
+  keep` and non-managed workspaces are terminally retained. The record's
+  `worktree.cleanup` is written once at creation from the caller's `repo`
+  request: a managed worktree requested without `cleanup` records
+  `delete-on-close`; a reused directory records `keep`. For a managed
   `delete-on-close` worktree, Dreamux runs `git worktree remove <path>`, forced
   only under that authorization: it does not use ref reachability as an
   eligibility check, and neither form deletes the managed branch or its

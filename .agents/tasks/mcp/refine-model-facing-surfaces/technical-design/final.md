@@ -398,7 +398,12 @@ the operator ruled on the findings (R28–R33, requirement.md). Beyond §3.1,
   for a managed delete-on-close worktree (R29).
 - A managed worktree requested without `cleanup` defaults to `delete-on-close`
   (`worktree/manager.ts`; R31). `reuse-cwd` records `keep` and is never
-  removed. The `cleanup` property description states the default.
+  removed. The `cleanup` property description states the default, and the
+  maintenance skill's service-lifecycle reference records what the Team
+  record's `worktree.cleanup` is written from. The Team runtime registry's
+  fallback request for a `repoCwd` without a worktree request (which pinned
+  `keep`) is gone: both callers build the pair through `repoWorktree()`, which
+  owns the managed-by-default policy.
 - `team.create.prompt` carries `minLength: 1` like `teammate.spawn.prompt` and
   `team.send.prompt` (R32: an empty string submitted an empty first turn with
   the Team reminder attached).
