@@ -398,6 +398,17 @@ export class DispatcherService {
     return dispatcherRuntimeStatus(this.inputSources.agent);
   }
 
+  /** Public Channel metadata in configuration order, without starting sessions. */
+  listChannels() {
+    const live = this.channels.live();
+    return this.channels.configuredChannels().map((channel) => ({
+      channel_id: channel.id,
+      provider: channel.provider,
+      identity: channel.identity ?? '',
+      live: live.has(channel.id),
+    }));
+  }
+
   liveRuntimeStatus(): LiveDispatcherRuntimeStatus | null {
     return liveDispatcherRuntimeStatus(this.inputSources.agent);
   }

@@ -58,6 +58,11 @@ Team's members are the same pair again, scoped to the Team.
   by naming a Team, so Core neither stores that decision nor reconstructs it,
   and nothing here resolves a target or authorizes an egress. An instance is
   published as live only after provider start succeeds.
+  `commands.ts` owns `channel.list`, which reads public Channel metadata through
+  `DispatcherService.listChannels()`: configured id, provider ref, opaque
+  identity (empty when absent), and live status, in configuration order. The
+  command also works for stopped dispatchers without starting sessions; it never
+  returns provider configuration.
 - **`team-collection/`** — `TeamCollection` owns the Team store, worktrees,
   create/list/history, and the Team Commands and MCP delegate.
   `runtime-registry.ts` owns materialization: one construction per team id,

@@ -1,6 +1,142 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { AgentRuntimeProviderCatalog } from '../src/agent-runtime/catalog.js';
+import { ChannelProviderCatalog } from '../src/channel/catalog.js';
+import type { DreamuxConfig } from '../src/config/config.js';
 import { ExecaCommandRunner } from '../src/onboard/commands.js';
+import { getRuntimeConfig, setRuntimeConfig } from '../src/platform/paths.js';
+import { parseProviderRef } from '../src/registry/provider-ref.js';
+import { ProviderRegistry } from '../src/registry/registry.js';
+import { Server } from '../src/server.js';
+import { adminContext, createCommandHarness } from './helpers/command-harness.js';
+import { createFakeChannelProvider } from './helpers/fake-channel-provider.js';
+
+describe('channel.list', () => {
+  it('returns every configured Channel in order, including one without an identity', async () => {
+    const channels = [
+      { channel_id: 'primary', provider: 'npm:@example/primary', identity: '', live: true },
+      {
+        channel_id: 'secondary',
+        provider: 'npm:@example/secondary',
+        identity: 'secondary-identity',
+        live: false,
+      },
+    ];
+    const harness = createCommandHarness({
+      dispatcherOverrides: { listChannels: () => channels },
+    });
+
+    await expect(
+      harness.port.invoke(adminContext('harness-d1'), 'channel.list', {}),
+    ).resolves.toEqual({ channels });
+    expect(harness.dispatcherLookups).toEqual(['harness-d1']);
+  });
+
+  it('rejects a missing dispatcher_id before looking up an aggregate', async () => {
+    const harness = createCommandHarness();
+
+    await expect(
+      harness.port.invoke(adminContext(), 'channel.list', {}),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('dispatcher_id') });
+    expect(harness.dispatcherLookups).toEqual([]);
+  });
+
+  it('rejects an unknown Dispatcher before looking up an aggregate', async () => {
+    const harness = createCommandHarness();
+
+    await expect(
+      harness.port.invoke(adminContext('unknown-dispatcher'), 'channel.list', {}),
+    ).rejects.toMatchObject({ code: 'DISPATCHER_NOT_FOUND' });
+    expect(harness.dispatcherLookups).toEqual([]);
+  });
+
+  it('reads a stopped Dispatcher through the real Server host without starting sessions', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dreamux-channel-list-'));
+    const previousConfig = getRuntimeConfig();
+    const previousRoot = process.env['DREAMUX_ROOT'];
+    process.env['DREAMUX_ROOT'] = root;
+    const fake = createFakeChannelProvider();
+    const registry = new ProviderRegistry();
+    const channels = [
+      { id: 'primary', provider: 'npm:@example/primary', config: { marker: 'private' } },
+      {
+        id: 'secondary',
+        provider: 'npm:@example/secondary',
+        identity: 'secondary-identity',
+        config: { marker: 'private' },
+        rawConfig: { marker: 'private-raw' },
+      },
+    ];
+    for (const channel of channels) {
+      registry.register({ id: channel.provider, kind: 'channel', ref: parseProviderRef(channel.provider) });
+      registry.registerImplementation(channel.provider, fake.provider);
+    }
+    const runtime = { provider: 'npm:@example/runtime', config: {} };
+    const config: DreamuxConfig = {
+      agents: { example: runtime },
+      dispatchers: [{
+        id: 'stopped',
+        cwd: root,
+        enabled: false,
+        workspace: { enabled: false },
+        channels,
+        agentRuntime: 'example',
+        runtime,
+      }],
+    };
+    const runtimes = new AgentRuntimeProviderCatalog({ registry });
+    const resolveRuntime = vi.spyOn(runtimes, 'resolve');
+    const noop = () => {};
+    const server = new Server({
+      config,
+      providerRegistry: registry,
+      agentRuntimeProviderCatalog: runtimes,
+      channelProviderCatalog: new ChannelProviderCatalog({ registry }),
+      adminSocketPath: join(root, 'admin.sock'),
+      logger: { error: noop, warn: noop, info: noop, debug: noop, trace: noop },
+    });
+
+    try {
+      await server.start();
+      const context = adminContext('stopped');
+      const statusBefore = await server.commands.invoke(context, 'dispatcher.status', {});
+      const listBefore = await server.commands.invoke(adminContext(), 'dispatcher.list', {});
+
+      await expect(server.commands.invoke(context, 'channel.list', {})).resolves.toEqual({
+        channels: [
+          { channel_id: 'primary', provider: 'npm:@example/primary', identity: '', live: false },
+          {
+            channel_id: 'secondary',
+            provider: 'npm:@example/secondary',
+            identity: 'secondary-identity',
+            live: false,
+          },
+        ],
+      });
+
+      expect(fake.sessions.size).toBe(0);
+      expect(resolveRuntime).not.toHaveBeenCalled();
+      expect(server.getDispatcher('stopped').runtimeStatus().sessionId).toBeNull();
+      expect(statusBefore).toMatchObject({ channel_identity: '', status: 'stopped', session_id: null });
+      await expect(server.commands.invoke(context, 'dispatcher.status', {})).resolves.toEqual(statusBefore);
+      await expect(server.commands.invoke(adminContext(), 'dispatcher.list', {})).resolves.toEqual(listBefore);
+    } finally {
+      try {
+        await server.shutdown();
+      } finally {
+        resolveRuntime.mockRestore();
+        setRuntimeConfig(previousConfig);
+        if (previousRoot === undefined) delete process.env['DREAMUX_ROOT'];
+        else process.env['DREAMUX_ROOT'] = previousRoot;
+        await rm(root, { recursive: true, force: true });
+      }
+    }
+  });
+});
 
 describe('ExecaCommandRunner', () => {
   let previousLeakEnv: string | undefined;

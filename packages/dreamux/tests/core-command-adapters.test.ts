@@ -12,6 +12,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { COMMAND_PAYLOAD_BOUNDS } from '../src/command/registry.js';
+import * as hostPaths from '../src/platform/paths.js';
 import {
   adminContext,
   channelContext,
@@ -75,6 +76,27 @@ describe('adapter equivalence — one representative Command per namespace', () 
     expect(viaAdmin.ok).toBe(true);
     expect((viaAdmin as { result: unknown }).result).toEqual(viaChannel);
     expect((viaChannel as { teams: unknown[] }).teams).toEqual([{ team_id: 'alpha' }]);
+  });
+
+  it('server-ctl channel list --id maps to channel.list with dispatcher_id', async () => {
+    const harness = createCommandHarness();
+    admin = await startHarnessAdminSocket(harness);
+    const socketPath = vi.spyOn(hostPaths, 'adminSocketPath').mockReturnValue(admin.socketPath);
+    const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const argv = process.argv;
+    process.argv = ['node', 'server-ctl', 'channel', 'list', '--id', 'harness-d1'];
+
+    try {
+      await import('../src/cli/server-ctl.js');
+      await vi.waitFor(() => {
+        expect(output).toHaveBeenCalledWith(JSON.stringify({ channels: [] }, null, 2));
+      });
+      expect(harness.dispatcherLookups).toEqual(['harness-d1']);
+    } finally {
+      process.argv = argv;
+      output.mockRestore();
+      socketPath.mockRestore();
+    }
   });
 
   it('teammate.list: identical result via both adapters', async () => {

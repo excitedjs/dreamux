@@ -60,6 +60,11 @@ Two settled shape rules govern where code lives:
   delivery) inside the Dispatcher Service.
 - Own the canonical Command catalog and expose it identically to `admin.sock`
   and to an in-process Channel's `invoke` port.
+- Expose `channel.list` (CLI: `dreamux server-ctl channel list --id <ID>`) for
+  dispatcher-scoped public Channel metadata: `channel_id`, provider ref,
+  opaque `identity` (empty when absent), and `live`, in configuration order.
+  `DispatcherService.listChannels()` reads configured and live Channels without
+  starting sessions or exposing provider configuration.
 
 ## Boundaries
 
