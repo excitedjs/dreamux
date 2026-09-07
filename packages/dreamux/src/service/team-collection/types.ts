@@ -325,8 +325,7 @@ export interface TeamHistoryResult {
   next_cursor: string | null;
 }
 
-/** The fully materialized result returned only by the internal creation path. */
-export interface CreatedTeam extends Omit<TeamSummary, 'leader'> {
+export interface TeamCreateResult extends Omit<TeamSummary, 'leader'> {
   /** A successful creation always publishes its TeamLeader identity. */
   leader: AgentEntityRuntimeStatus;
   /**

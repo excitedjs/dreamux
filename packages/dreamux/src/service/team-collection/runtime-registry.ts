@@ -17,9 +17,9 @@ import { TeamClosedError, teamErrorInfo } from './errors.js';
 import { readTeamRoster } from './roster-reader.js';
 import type { TeamStore } from './store.js';
 import type {
-  CreatedTeam,
   TeamCollectionOptions,
   TeamCreateAtNameInput,
+  TeamCreateResult,
   TeamRecord,
 } from './types.js';
 
@@ -57,7 +57,7 @@ export class TeamRuntimeRegistry {
   async create(
     input: TeamCreateAtNameInput,
     teamId: string,
-  ): Promise<CreatedTeam | null> {
+  ): Promise<TeamCreateResult | null> {
     requireLifecycleText(input.intent, 'Team create intent');
     // A cheap early-out before the expensive workspace preparation. The
     // authoritative answer is the exclusive record publication below, which
