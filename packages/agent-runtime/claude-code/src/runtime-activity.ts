@@ -1,53 +1,24 @@
-import { resultTextFromTurnOutcome } from './runtime-session.js';
+import { turnFailureMessage } from './runtime-session.js';
 import { toolDisplay } from './tool-display.js';
-import type { ClaudeCodeSession } from './supervisor.js';
 import type {
   ClaudeActivityLine,
   ClaudeProtocolEvent,
-  TurnOutcome,
 } from './types.js';
 import type {
   JsonValue,
   RuntimeActivity,
   AgentRuntimeActivitySink,
-  RuntimeCompletion,
-  RuntimeSubmission,
-  RuntimeSubmissionSettlement,
 } from '@excitedjs/dreamux-types';
 
-export interface SubmissionDeferred {
-  submission: RuntimeSubmission;
-  settle: (settlement: RuntimeSubmissionSettlement) => boolean;
-}
-
-/**
- * One resident execution window: the commands claude is serving together.
- *
- * It is not one native turn. A window is opened by an initial command and can
- * legally produce several sequential `result` boundaries — one native turn each
- * — as commands steered or queued into it run after the earlier ones were
- * answered.
- */
-export interface ActiveTurn {
-  initialCommandUuid: string;
-  submissions: Map<string, SubmissionDeferred>;
-  started: string[];
-  completedCommands: Set<string>;
+/** Resident activity is independent of request admission and settlement. */
+export interface NativeActivityState {
   activitySequence: number;
   tools: Map<string, { name: string; arguments: JsonValue | null }>;
-  session: ClaudeCodeSession | null;
-  sessionReady: Promise<ClaudeCodeSession>;
-  resolveSession: (session: ClaudeCodeSession) => void;
-  rejectSession: (error: Error) => void;
-  steerQueue: Promise<void>;
-  generation: number;
 }
 
 export interface ProtocolEventContext {
-  threadId: string | null;
-  outputSchemaEnabled: boolean;
+  activity: NativeActivityState;
   activitySink: AgentRuntimeActivitySink;
-  log: (level: 'info' | 'warn' | 'error', message: string, error?: unknown) => void;
 }
 
 /**
@@ -79,48 +50,19 @@ function emitActivity(activity: RuntimeActivity, sink: AgentRuntimeActivitySink)
   sink(Object.freeze(activity));
 }
 
-export function createRuntimeSubmission(): SubmissionDeferred {
-  let resolve!: (settlement: RuntimeSubmissionSettlement) => void;
-  let settled = false;
-  const submission = Object.freeze({
-    settled: new Promise<RuntimeSubmissionSettlement>((value) => {
-      resolve = value;
-    }),
-  });
-  return {
-    submission,
-    settle(settlement) {
-      if (settled) return false;
-      settled = true;
-      resolve(settlement);
-      return true;
-    },
-  };
-}
-
 export function handleProtocolEvent(
-  active: ActiveTurn,
   event: ClaudeProtocolEvent,
   context: ProtocolEventContext,
 ): void {
-  if (event.kind === 'command_lifecycle') {
-    // `started` is the one lifecycle state recorded here: it is the
-    // attribution input for the group the next `result` completes. The
-    // terminal states are drainage bookkeeping that arrives after that
-    // `result`.
-    if (event.state !== 'started') return;
-    if (
-      active.submissions.has(event.commandUuid) &&
-      !active.completedCommands.has(event.commandUuid) &&
-      !active.started.includes(event.commandUuid)
-    ) {
-      active.started.push(event.commandUuid);
-    }
+  if (event.kind === 'command_lifecycle') return;
+  if (event.kind === 'interrupted') {
+    endNativeTurn('interrupted', null, context.activitySink);
+    context.activity.tools.clear();
     return;
   }
   if (event.kind === 'result') {
     // `result` is claude's native terminal, and the display line ends on it:
-    // the attribution, the completion and the settlements below are
+    // attribution, completion and request settlement are
     // push-back's work on the same fact, and none of them may change the end,
     // delay it, or withhold it.
     endNativeTurn(
@@ -128,99 +70,17 @@ export function handleProtocolEvent(
       event.outcome.isError ? turnFailureMessage(event.outcome) : null,
       context.activitySink,
     );
-    completeStartedGroup(active, event.outcome, context);
+    context.activity.tools.clear();
     return;
   }
-  emitStreamActivity(active, event.line, context);
-}
-
-/** claude's own words for why its turn failed. */
-function turnFailureMessage(outcome: TurnOutcome): string {
-  return outcome.errors.join('; ') || outcome.subtype || 'claude turn failed';
-}
-
-function completeStartedGroup(
-  active: ActiveTurn,
-  outcome: TurnOutcome,
-  context: ProtocolEventContext,
-): void {
-  const commandUuids = active.started.splice(0);
-  if (
-    commandUuids.length === 0 &&
-    (active.submissions.size > 1 || active.completedCommands.size > 0)
-  ) {
-    failUnattributedResult(active, context);
-    return;
-  }
-  for (const uuid of commandUuids) active.completedCommands.add(uuid);
-  let representative = commandUuids
-    .map(uuid => active.submissions.get(uuid))
-    .find((deferred): deferred is SubmissionDeferred => deferred !== undefined);
-  if (representative === undefined && active.submissions.size === 1) {
-    const only = active.submissions.entries().next().value as
-      | [string, SubmissionDeferred]
-      | undefined;
-    if (only !== undefined) {
-      commandUuids.push(only[0]);
-      representative = only[1];
-    }
-  }
-  if (representative === undefined) {
-    failUnattributedResult(active, context);
-    return;
-  }
-
-  let completion: RuntimeCompletion;
-  if (outcome.isError) {
-    completion = Object.freeze({
-      status: 'failed',
-      error: new Error(turnFailureMessage(outcome)),
-    });
-  } else {
-    try {
-      completion = Object.freeze({
-        status: 'completed',
-          resultText: resultTextFromTurnOutcome(
-          outcome,
-          context.threadId,
-          context.outputSchemaEnabled,
-        ),
-      });
-    } catch (error) {
-      completion = Object.freeze({
-        status: 'failed',
-          error: asError(error),
-      });
-    }
-  }
-  for (const uuid of commandUuids) {
-    active.submissions.get(uuid)?.settle({ kind: 'completion', completion });
-  }
-}
-
-function failUnattributedResult(
-  active: ActiveTurn,
-  context: ProtocolEventContext,
-): void {
-  const error = new Error(
-    active.completedCommands.size > 0
-      ? 'claude emitted a conflicting result without a new started command'
-      : 'claude result cannot be attributed without command started lifecycle',
-  );
-  context.log('error', error.message, error);
-  for (const deferred of active.submissions.values()) {
-    deferred.settle({ kind: 'failed', error });
-  }
+  emitStreamActivity(event.line, context);
 }
 
 /**
  * Put what claude said and did on this agent's activity stream.
  *
- * No submission is looked up. A window folds any number of commands into one
- * native turn, so naming one of them as the activity's owner was always a
- * guess — and when the guess failed, which it did for anything claude emitted
- * before a command's `started` lifecycle arrived, the fact was dropped
- * entirely. The agent is the subject, and it is always known.
+ * Activity belongs to the resident agent, including native background work
+ * that answers no explicit request. It needs no submission lookup.
  *
  * The envelope decides what a block means, not the block's own type. An
  * `assistant` envelope carries the model's words and its tool calls. A `user`
@@ -231,25 +91,24 @@ function failUnattributedResult(
  * displayed at all. Operator ruling, 2026-09-03: 「所有的 user 消息都隐藏即可」.
  */
 function emitStreamActivity(
-  active: ActiveTurn,
   line: ClaudeActivityLine,
-  context: ProtocolEventContext,
+  { activity: activityState, activitySink }: ProtocolEventContext,
 ): void {
   if (line.kind === 'compact_boundary') {
-    emitActivity(compactedActivity(active), context.activitySink);
+    emitActivity(compactedActivity(activityState), activitySink);
     return;
   }
   const message = recordValue(line.raw['message']) ?? line.raw;
-  const messageId = stringValue(message['id']) ?? `stream-${active.activitySequence++}`;
+  const messageId = stringValue(message['id']) ?? `stream-${activityState.activitySequence++}`;
   const content = Array.isArray(message['content']) ? message['content'] : [];
   for (const [blockIndex, candidate] of content.entries()) {
     const block = recordValue(candidate);
     if (block === null) continue;
     const activity = line.kind === 'assistant'
-      ? assistantBlockActivity(active, messageId, blockIndex, block)
-      : toolResultActivity(active, messageId, block);
+      ? assistantBlockActivity(activityState, messageId, blockIndex, block)
+      : toolResultActivity(activityState, messageId, block);
     if (activity === null) continue;
-    emitActivity(activity, context.activitySink);
+    emitActivity(activity, activitySink);
   }
 }
 
@@ -263,18 +122,18 @@ function emitStreamActivity(
  */
 const COMPACTED_SESSION_MESSAGE = 'Compacted session';
 
-function compactedActivity(active: ActiveTurn): RuntimeActivity {
+function compactedActivity(activityState: NativeActivityState): RuntimeActivity {
   return {
     kind: 'assistant.message',
     occurredAt: Date.now(),
-    id: `stream-${active.activitySequence++}:compacted`,
+    id: `stream-${activityState.activitySequence++}:compacted`,
     text: COMPACTED_SESSION_MESSAGE,
   };
 }
 
 /** What the model said, or a tool it called. */
 function assistantBlockActivity(
-  active: ActiveTurn,
+  activityState: NativeActivityState,
   messageId: string,
   blockIndex: number,
   block: Record<string, unknown>,
@@ -292,7 +151,7 @@ function assistantBlockActivity(
   const name = stringValue(block['name']);
   if (callId === null || callId === '' || name === null) return null;
   const args = toJsonValue(block['input']);
-  active.tools.set(callId, { name, arguments: args });
+  activityState.tools.set(callId, { name, arguments: args });
   return {
     kind: 'tool.call',
     occurredAt: Date.now(),
@@ -309,14 +168,14 @@ function assistantBlockActivity(
 
 /** What a tool returned, correlated to the call the model made. */
 function toolResultActivity(
-  active: ActiveTurn,
+  activityState: NativeActivityState,
   messageId: string,
   block: Record<string, unknown>,
 ): RuntimeActivity | null {
   if (block['type'] !== 'tool_result') return null;
   const callId = stringValue(block['tool_use_id']);
   if (callId === null || callId === '') return null;
-  const known = active.tools.get(callId);
+  const known = activityState.tools.get(callId);
   const failed = block['is_error'] === true;
   const result = normalizeTextBlocks(block['content']);
   return {
@@ -369,8 +228,4 @@ function toJsonValue(value: unknown): JsonValue | null {
   } catch {
     return String(value);
   }
-}
-
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
 }

@@ -42,7 +42,14 @@ which shares this pull request but is a separate subject from card lifecycle.
   finding as it was raised and the shape as it was then delivered. See
   [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).)*
 - **Files:** [`/packages/agent-runtime/claude-code/src/runtime.ts`](/packages/agent-runtime/claude-code/src/runtime.ts),
-  [`/packages/agent-runtime/claude-code/src/runtime-submissions.ts`](/packages/agent-runtime/claude-code/src/runtime-submissions.ts)
+  [`runtime-submissions.ts` at the repair revision](https://github.com/excitedjs/dreamux/blob/6acc6d282d61387ce5e68739bd985c0b7fa50c10/packages/agent-runtime/claude-code/src/runtime-submissions.ts)
+
+Since this was recorded: on 2026-09-07 the operator approved replacing request
+windows with resident-session settlement. The deleted settlement module's
+activity projection now lives in
+[`runtime-activity.ts`](/packages/agent-runtime/claude-code/src/runtime-activity.ts).
+See the [current replacement design](/.agents/tasks/completion-routing/adopt-completion-token-routing/technical-design/session-submissions.md);
+the observations below describe the earlier implementation.
 
 ### What ships today
 
@@ -177,3 +184,13 @@ Recorded because the reasoning is easy to lose and easy to repeat.
 
 Both were caught by probing the compiled build rather than by reading the diff,
 and both are now pinned by tests listed in [verification.md](verification.md).
+
+## Since this was recorded
+
+2026-09-07: The approved [Claude background-turn repair](/.agents/tasks/completion-routing/adopt-completion-token-routing/requirement.md#background-turn-repair-2026-09-07)
+supersedes the retained fail-loud unattributed-result path above. Native
+background tasks may start turns without a Dreamux submission; those results
+are valid and must not terminate the resident process. Explicit steers that
+join them still settle through the existing completion-token routing. The
+historical adjudication is preserved here; the [current settlement contract](/.agents/domains/provider-runtime.md#claude-code-stream-json-settlement)
+owns the replacement behavior.

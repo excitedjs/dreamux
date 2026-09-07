@@ -335,6 +335,34 @@ Source:
 - `/packages/dreamux/src/service/teammate-service/runtime-owner.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
 
+### Regression Trap: background origin is not completion ownership
+
+A Claude background task can start a native follow-up with no submitted command,
+then receive explicit requests midway through that turn. The command lifecycle
+that admits those requests determines the result's submitted group; the original
+trigger and the result's single user-message UUID do not describe that whole
+group. Filtering all task-notification results drops valid steered answers.
+
+Native result/activity handling must work without a submission. No submitted
+group means no request settlement, not a process failure. A merely queued request
+must not be settled by a prior background result through a sole-pending fallback.
+Normal completed lifecycle frames may precede their shared result, so they do not
+erase its started group. Core continues routing shared completion tokens to the
+recipients captured on each submitted request.
+
+Source: `/packages/agent-runtime/claude-code/src/rpc.ts`,
+`/packages/agent-runtime/claude-code/src/runtime-session.ts`,
+`/packages/agent-runtime/claude-code/src/runtime.ts`,
+`/packages/dreamux/src/service/completion-router/index.ts`.
+
+### Regression Trap: a native state is not a user capability
+
+Claude reports cancelled after native API and setup failures. Treating that
+word as an operator cancellation hid errors, even though the Claude provider has
+no user cancellation entry point. Do not invent a product action or its compatibility
+machinery from a protocol label. The current failure and settlement rules are
+defined in [Claude Code settlement](#claude-code-stream-json-settlement).
+
 ### Logical Turn And Admission
 
 The runtime object is the provider-owned authority for native submission and
@@ -380,60 +408,100 @@ Source:
 - `/packages/dreamux-types/src/agent-runtime.ts`
 - `/packages/agent-runtime/codex/src/turn-manager.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
-- `/packages/agent-runtime/claude-code/src/runtime-submissions.ts`
+- `/packages/agent-runtime/claude-code/src/runtime-activity.ts`
 - `/packages/agent-runtime/claude-code/src/rpc.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
 
 ### Claude Code Stream-Json Settlement
 
-Both runtimes wait for every native submission folded into a logical turn to
-converge, but they read convergence off different signals. Codex has a native
-turn id per submission. Claude Code does not: these are the `claude`
-stream-json wire facts, probed against a live resident session (2.1.231) rather
-than inferred, and the repo has guessed them wrong twice.
+One resident session accepts every input through the same submit path. RPC owns
+one table of unanswered requests: the settlement resolver, native admission
+resolver and, while capability is unknown, a deferred write. Requests are
+registered before writing so early native evidence cannot outrun registration.
+The runtime owns process continuity and durable state; it has no second request
+registry, initial/steer branch or enclosing execution-window promise.
 
-- **Commands fold.** A message that arrives while the in-flight turn is inside a
-  tool call is absorbed into that turn at the next query-loop boundary: the CLI
-  issues `started` for each queued command, answers them together, and emits a
-  **single** `result` (3 commands → 1 result, observed). A command that
-  arrives between turns runs alone and gets its own `result`.
-- **`result.user_message_uuid` is not a completion ledger.** A folded command's
-  uuid never appears on any `result`, so counting one result per submitted uuid
-  deadlocks. When several commands fold, the single result does not reliably
-  carry the first-submitted uuid — a later uuid has been observed instead. It is
-  usable only as a cross-talk guard.
-- **An interrupt genuinely interrupts.** The running command goes
-  `cancelled` and the CLI emits a `result` with `subtype:
-  "error_during_execution"` and **no** `result` key and **no**
-  `user_message_uuid`. "Missing uuid" therefore cannot mean "settle now" —
-  that artifact would settle the turn on an interrupt.
-- **`command_lifecycle` is the only 1:1 signal.** Every submitted uuid reaches a
-  terminal state (`queued → started → completed | cancelled`), folded commands
-  included. It is a top-level `type` (`{type, command_uuid, state, uuid,
-  session_id}`); the `system`-subtype shape is only kept for older streams and
-  fixtures.
-- **Ordering between lifecycle and result is not stable.** Terminal states have
-  been observed both before and after the result they belong to. Only eventual
-  arrival may be assumed.
+Admission resolves on a successful write callback or positive native evidence.
+A proven failure before writing is failed admission; an unconfirmed write is
+ambiguous and must not be retried automatically. Concurrent inputs wait for
+lifecycle evidence when capability is unknown, and are rejected when it is
+unavailable. Existing single-input compatibility remains supported.
 
-Consequently a logical turn settles when **every submitted command uuid has
-reached a terminal lifecycle state and at least one `result` has been seen**,
-carrying the last result seen (the aggregator is last-result-wins). A result
-naming a uuid this turn never submitted is dropped rather than allowed to settle
-another turn. Two escapes keep that gate from hanging: a build with no
-`msg_lifecycle_v1` has no lifecycle signal at all and settles on its first
-result; and a turn whose commands all ended without ever running (`cancelled`,
-`discarded`, or a failed steer write) can never be answered and fails
-immediately, because the idle deadline is not an acceptable backstop there — it
-reaps the resident child, and unrelated stream lines re-arm it. A turn that did
-run a command keeps waiting for its result, since terminality does not imply the
-result has already been emitted.
+At each native result, RPC associates and settles the requests it answers:
+
+- Commands observed as started participate until the applicable result. Normal
+  completed lifecycle frames may precede or follow the result and do not gate
+  the next input. The consumed set also tracks native internal commands, so a
+  queued cancellation can be distinguished from consumed work being cancelled.
+- An exactly matching submitted user_message_uuid is additional positive
+  evidence, including no-start compatibility. A foreign or absent UUID never
+  vetoes consumed requests, and origin is never a routing filter.
+- With lifecycle evidence, an empty group stays empty. A merely queued request
+  is not answered by an earlier background result. The lifecycle-less fallback
+  applies only to a written single input and a result with no UUID.
+
+RPC removes answered requests before callbacks, creates one immutable completion
+using the pinned session/structured-output contract, and settles those requests
+with the same object. Core retains captured recipients and completion-object
+identity deduplication. A result with no related request still reports activity
+and its native end, creates no request completion, and leaves the process alive.
+
+Native cancelled is not proof of a user stop; it also follows hard failures.
+The Claude provider has no user cancellation entry point. Consumed commands retain
+their result membership through cancelled so that either native ordering preserves
+the actual result. An unconsumed cancelled request fails with its named protocol
+state, as do refusal/discard. There is no aggregate window drainage. Explicit
+runtime stop settles outstanding requests, fences late activity and converges
+pending admissions. Actual transport loss fails outstanding requests and
+retains its cause through cleanup, including admission racing with that cleanup.
+
+Text aggregation belongs to the resident stream. Each result consumes its text.
+Cancelling consumed work clears canceled text so a later empty answer cannot
+inherit it; cancelling an unconsumed queued request does not clear current text.
+Every native error result reports a failed end, even when text and input UUID
+are absent. No broad interrupt-artifact guard may discard it: an error subtype
+or is_error: true establishes failure, including API errors carried in the
+success arm. Native errors, API error text and terminal_reason supply diagnostic
+details. A setup error can omit both started and UUID evidence; its failed end
+retains the details, but a later named cancelled request fails with its protocol
+state. The adapter does not guess that an unbound result belongs to that request.
+
+The configured max-idle timer exists while requests await settlement and resets
+on native stream activity. It clears as soon as no request remains; a late
+completed frame is not required. A genuinely silent outstanding request still
+fails and triggers process teardown. Pure background work arms no such timer.
+
+Custom ClaudeCodeSession factories implement submit returning RuntimeAdmission,
+with settlement owned by the session. The spec supplies sessionId and optional
+outputSchemaEnabled; the exit callback carries its Error. Protocol result
+callbacks retain commandUuids and command_lifecycle for observation. The public
+interrupted variant remains available for independently established interruption;
+cancelled alone no longer emits that boundary. Direct ClaudeCodeStreamRpc
+consumers also use submit, fail and stop; its options require sessionId and its
+timeout callback receives the failure Error. Protocol callbacks alone do not
+settle requests. This is a breaking Claude extension-seam change; the neutral
+runtime ABI is unchanged.
+
+Evidence boundary: live CLI 2.1.231/2.1.263 captures show fold/queue and both
+completed/result orders. Observed task-notification folds omit both result UUID
+echo fields despite answering explicit requests. The installed 2.1.263 schema
+marks command_lifecycle as internal; the public SDK reference does not define
+that contract. No-start fixtures are compatibility coverage, not an observation
+of that build. A fresh real 2.1.263 CLI probe against a controlled local API
+confirmed success/is_error: true/api_error followed by cancelled, with no cancel
+request sent. External queued cancellation is not a current Dreamux user
+capability. Exceptional tool-result ordering and cancellation interleavings
+retain evidence gaps; deterministic coverage is not a universal ordering guarantee.
 
 Source:
 
 - `/packages/agent-runtime/claude-code/src/rpc.ts`
-- `/packages/agent-runtime/claude-code/src/stream.ts`
+- `/packages/agent-runtime/claude-code/src/runtime-session.ts`
+- `/packages/agent-runtime/claude-code/src/runtime-activity.ts`
+- `/packages/agent-runtime/claude-code/src/runtime.ts`
+- `/packages/agent-runtime/claude-code/src/types.ts`
 - `/packages/agent-runtime/claude-code/tests/rpc.test.ts`
+- `/packages/agent-runtime/claude-code/tests/runtime-background.test.ts`
 
 ### Claude Code Stream-Json Envelopes On The Display Line
 
@@ -450,17 +518,19 @@ block there is context the CLI injected into its conversation — observed on
 whole SKILL.md body follows as a separate `user` line with no field marking it
 as injected. None of that text is displayed. Every other stdout line — `init`,
 `command_lifecycle`, control traffic, every other `system` notice,
-`stream_event`, `rate_limit_event` — stays inside the RPC, which only counts it
-as activity for the idle deadline. The operator's own input is displayed by Core's
-`teammate.input`, not by anything on this line.
+`stream_event`, `rate_limit_event` — is excluded from Core display activity.
+RPC still uses protocol events for lifecycle, session setup and control handling,
+and exposes its Claude-specific observation callback. Incoming lines also
+refresh the idle deadline while requests remain unanswered. Core displays the operator's
+own input through `teammate.input`, not through this line.
 
 Source:
 
 - `/packages/agent-runtime/claude-code/src/types.ts`
-- `/packages/agent-runtime/claude-code/src/runtime-submissions.ts`
+- `/packages/agent-runtime/claude-code/src/runtime-activity.ts`
 - `/packages/agent-runtime/claude-code/src/tool-display.ts`
 - `/packages/agent-runtime/codex/src/tool-display.ts`
-- `/packages/agent-runtime/claude-code/tests/runtime-submissions.test.ts`
+- `/packages/agent-runtime/claude-code/tests/runtime-activity.test.ts`
 
 History: the 2026-09-03 ruling 「所有的 user 消息都隐藏即可」 in
 [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md);
@@ -598,14 +668,15 @@ a `webSearch` item, which carries no tool name and was dropped before, is a
 `null` and displays as its name. Core sanitizes both facts exactly as it does
 arguments and results.
 
-One native turn is one provider-native terminal: one Claude Code `result`, one
-Codex `turn/completed`. A resident Claude Code execution window may legally
-answer several commands in sequence and so reports one end per `result`. Where a
+A normal native turn ends at its provider-native terminal: Claude Code `result`
+or Codex `turn/completed`. A resident Claude session can answer several inputs
+in sequence and reports one end per result. Native cancelled alone supplies no
+separate display terminal; it may precede or follow the failure result. Where a
 turn ends with no native terminal at all — a stop, a protocol loss, a rejected
 run — the provider reports one end from that teardown without asking whether a
 turn was open: codex from `TurnManager.stop()` and from the first protocol
 failure, Claude Code from `stop()` and from the fence, each for a live child
-only, and from a run that died before any stop. The gate is the native session's
+only, and from an unexpected resident-child exit before any stop. The gate is the native session's
 existence, not a display fact: Core stops a runtime whose start failed before it
 revokes the generation, so a teardown end reported with no child would close the
 card ahead of Core's own failed end carrying the start error. A state write that

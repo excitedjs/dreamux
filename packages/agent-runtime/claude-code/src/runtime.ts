@@ -7,20 +7,15 @@ import type { DispatcherClaudeCodeConfig } from './config.js';
 import { claudeCodeResidentArgs } from './args.js';
 import { stringifyClaudeCodeMcpConfig } from './mcp-config.js';
 import { materializeClaudeSkillAddDir } from './skill-materializer.js';
-import {
-  type ClaudeCodeSession,
-} from './supervisor.js';
+import type { ClaudeCodeSession } from './supervisor.js';
 import type { ClaudeProtocolEvent } from './types.js';
 import { consoleFallbackLogger } from './logger.js';
-import { ClaudeSteerAdmissionError } from './rpc.js';
 import type { ClaudeCodeRuntimeDeps } from './runtime-deps.js';
 import {
-  createRuntimeSubmission,
   endNativeTurn,
   handleProtocolEvent,
-  type ActiveTurn,
-} from './runtime-submissions.js';
-import { asError, classifySteerFailure } from './admission-classify.js';
+  type NativeActivityState,
+} from './runtime-activity.js';
 import { buildClaudeProcessEnv } from './runtime-session.js';
 import { RuntimeStateFence } from '@excitedjs/dreamux-utils';
 import type {
@@ -39,9 +34,9 @@ function errMessage(err: unknown): string {
 
 /**
  * The Claude Code agent runtime for one dispatcher. A single resident
- * stream-json child serves every turn. Turns run serially (one at a time) and
- * `submit` returns after the message is accepted — not after the turn
- * completes — matching the Codex runtime's submit-then-serialize contract.
+ * stream-json child accepts every input through the same native write path.
+ * Admission returns after the write is acknowledged; each request is settled
+ * by the session that consumed it, independently of later inputs.
  */
 export class ClaudeCodeRuntime implements AgentRuntime {
   private readonly dispatcherId: string;
@@ -74,14 +69,12 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   });
   private stopped = false;
   private readonly pendingAdmissions = new Set<Promise<RuntimeAdmission>>();
-  private queue: Promise<void> = Promise.resolve();
   private session: ClaudeCodeSession | null = null;
   private sessionStarting: Promise<ClaudeCodeSession> | null = null;
   private startTask: Promise<AgentRuntimeStartOutcome> | null = null;
   private stopTask: Promise<void> | null = null;
   private generation = 0;
-  private activeTurn: ActiveTurn | null = null;
-  private queuedTurnCount = 0;
+
   constructor(
     identity: AgentRuntimeIdentity,
     private readonly deps: ClaudeCodeRuntimeDeps,
@@ -178,8 +171,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // and Core stops that runtime before revoking its generation, so an end
     // here would close the card ahead of Core's own failed end carrying the
     // start error.
-    if (this.session !== null) this.endNativeTurn('interrupted', null);
-    if (this.activeTurn !== null) this.stopUnsettled(this.activeTurn);
+    if (this.session?.isAlive()) this.endNativeTurn('interrupted', null);
     return this.track(this.stopRuntime());
   }
 
@@ -221,7 +213,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     }
     // Same quiescence as an ordinary stop, on both paths.
     await this.drainAdmissions();
-    await this.queue;
     this.status = 'stopped';
   }
 
@@ -238,7 +229,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       if (this.session === session) this.session = null;
     }
     await this.drainAdmissions();
-    await this.queue;
     await this.settleStatus('stopped');
   }
 
@@ -253,48 +243,23 @@ export class ClaudeCodeRuntime implements AgentRuntime {
 
   private async acceptInput(text: string): Promise<RuntimeAdmission> {
     if (this.stopped) return { status: 'stopped' };
-    const commandUuid = randomUUID();
-    const deferred = createRuntimeSubmission();
-    const active = this.activeTurn;
-    if (active !== null) {
-      active.submissions.set(commandUuid, deferred);
-      try {
-        await this.steerActiveTurn(active, text, commandUuid);
-        return { status: 'submitted', submission: deferred.submission };
-      } catch (error) {
-        active.submissions.delete(commandUuid);
-        deferred.settle({ kind: 'failed', error: asError(error) });
-        return classifySteerFailure(error, this.stopped);
-      }
+    let session: ClaudeCodeSession;
+    try {
+      session = await this.ensureSession();
+    } catch (error) {
+      if (this.stopped) return { status: 'stopped' };
+      this.setStatus('degraded', error);
+      return { status: 'failed', error: error instanceof Error ? error : new Error(String(error)) };
     }
-    this.recordQueuedTurnStart();
-    let resolveSession!: (session: ClaudeCodeSession) => void;
-    let rejectSession!: (error: Error) => void;
-    const sessionReady = new Promise<ClaudeCodeSession>((resolve, reject) => {
-      resolveSession = resolve;
-      rejectSession = reject;
-    });
-    void sessionReady.catch(() => undefined);
-    const turn: ActiveTurn = {
-      initialCommandUuid: commandUuid,
-      submissions: new Map([[commandUuid, deferred]]),
-      started: [],
-      completedCommands: new Set(),
-      activitySequence: 0,
-      tools: new Map(),
-      session: null,
-      sessionReady,
-      resolveSession,
-      rejectSession,
-      steerQueue: Promise.resolve(),
-      generation: this.generation,
-    };
-    this.activeTurn = turn;
-    void this.runActiveTurnOnQueue(text, turn).then(
-      () => this.markTurnSucceeded(turn),
-      (err) => this.markTurnFailed(turn, err),
-    );
-    return { status: 'submitted', submission: deferred.submission };
+    if (this.stopped) return { status: 'stopped' };
+    const admission = await session.submit(text);
+    if (
+      !this.stopped && this.session === session && session.isAlive() &&
+      admission.status === 'submitted' && this.status !== 'ready'
+    ) {
+      this.setStatus('ready');
+    }
+    return admission;
   }
 
   private trackAdmission(
@@ -313,119 +278,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     }
   }
 
-  private runActiveTurnOnQueue(
-    prompt: string,
-    active: ActiveTurn,
-  ): Promise<void> {
-    const run = this.queue.then(() => this.runActiveTurn(prompt, active));
-    this.queue = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
-  }
-
-  private async runActiveTurn(
-    prompt: string,
-    active: ActiveTurn,
-  ): Promise<void> {
-    try {
-      this.assertGeneration(active.generation);
-      const session = await this.ensureSession();
-      this.assertGeneration(active.generation);
-      const outcome = session.submitTurn(
-        prompt,
-        {},
-        active.initialCommandUuid,
-      );
-      active.session = session;
-      active.resolveSession(session);
-      await outcome;
-      this.assertGeneration(active.generation);
-      this.log('info', 'claude-code turn completed');
-    } finally {
-      active.session = null;
-      if (this.activeTurn === active) this.activeTurn = null;
-    }
-  }
-
-  private async steerActiveTurn(
-    active: ActiveTurn,
-    prompt: string,
-    commandUuid: string,
-  ): Promise<void> {
-    this.assertGeneration(active.generation);
-    const session = active.session ?? await active.sessionReady;
-    const steer = active.steerQueue.then(() => {
-      this.assertGeneration(active.generation);
-      if (active.session !== session || this.session !== session) {
-        throw new ClaudeSteerAdmissionError(
-          'failed',
-          'claude-code session changed before live steer',
-        );
-      }
-      return session.steerTurn(prompt, {}, commandUuid);
-    });
-    active.steerQueue = steer.then(
-      () => undefined,
-      () => undefined,
-    );
-    await steer;
-    this.assertGeneration(active.generation);
-  }
-
-  private markTurnSucceeded(turn: ActiveTurn): void {
-    this.recordQueuedTurnEnd();
-    this.stopUnsettled(turn);
-    if (this.stopped) return;
-    if (this.status !== 'ready') this.setStatus('ready');
-  }
-
-  private markTurnFailed(turn: ActiveTurn, err: unknown): void {
-    this.recordQueuedTurnEnd();
-    this.log('error', 'claude-code turn failed', err);
-    turn.rejectSession(asError(err));
-    // The run died, which is claude's own terminal for whatever native turn it
-    // was on — reported before any settlement, and whether or not there is a
-    // submission left to settle. After stop() the teardown has already
-    // reported the interrupted end; this run died of that teardown.
-    if (!this.stopped) this.endNativeTurn('failed', asError(err).message);
-    // A turn that fails after stop() was requested (the resident child is being
-    // torn down) is a `stopped` settlement; otherwise it is a genuine `failed`.
-    // Fire before the stopped early-return so an interrupted teammate turn is
-    // never lost.
-    for (const deferred of turn.submissions.values()) {
-      deferred.settle(this.stopped
-        ? { kind: 'stopped' }
-        : { kind: 'failed', error: asError(err) });
-    }
-    if (this.stopped) return;
-    // Surface the failure as durable runtime state rather than swallowing it.
-    this.setStatus('degraded', err);
-  }
-
-  private stopUnsettled(turn: ActiveTurn): void {
-    // Push-back only: reached from stop, the fatal fence, and a window that
-    // closed with a submission still unanswered. The display line is not
-    // consulted here; the teardown that closed the window reported its end.
-    for (const deferred of turn.submissions.values()) {
-      deferred.settle({ kind: 'stopped' });
-    }
-  }
-
   private endNativeTurn(
     status: 'completed' | 'failed' | 'interrupted',
     reason: string | null,
   ): void {
     endNativeTurn(status, reason, this.deps.activitySink);
-  }
-
-  private recordQueuedTurnStart(): void {
-    this.queuedTurnCount += 1;
-  }
-
-  private recordQueuedTurnEnd(): void {
-    this.queuedTurnCount = Math.max(0, this.queuedTurnCount - 1);
   }
 
   /** Ensure a live resident session exists, resuming after a child exit. */
@@ -467,12 +324,15 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       disableFeatures: this.deps.disableFeatures,
       outputSchema: this.deps.outputSchema,
     });
+    const activity: NativeActivityState = { activitySequence: 0, tools: new Map() };
     const session = this.deps.sessionFactory({
       bin: this.bin,
       args,
       cwd: this.cwd,
       env: buildClaudeProcessEnv(this.deps.injectEnv, this.config.extra_env),
       stderrLogPath: this.stderrLogPath,
+      sessionId: candidateSessionId,
+      outputSchemaEnabled: this.deps.outputSchema !== undefined,
       turnTimeoutMs: this.config.turn_timeout_ms,
       remoteControl: this.config.remote_control,
       onRemoteControlUrl: this.config.remote_control
@@ -480,11 +340,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
             this.log('info', `claude-code remote control URL: ${url}`);
           }
         : undefined,
-      onProtocolEvent: (event) => this.onProtocolEvent(event),
+      onProtocolEvent: (event) => this.onProtocolEvent(event, activity),
       log: (level, msg, err) => this.log(level, msg, err),
     });
-    session.setOnExit(() => {
-      void this.onSessionExit(session);
+    session.setOnExit((error) => {
+      void this.onSessionExit(session, error);
     });
     // Retain termination authority before spawn.
     this.session = session;
@@ -518,10 +378,11 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   }
 
   /** React to an unexpected resident-child exit: degrade and drop the session. */
-  private async onSessionExit(session: ClaudeCodeSession): Promise<void> {
+  private async onSessionExit(session: ClaudeCodeSession, error: Error): Promise<void> {
     if (this.session !== session) return; // already replaced/stopped
     if (this.stopped) return;
     this.log('error', 'claude-code resident child exited unexpectedly');
+    this.endNativeTurn('failed', error.message);
     try {
       await session.stop();
       if (this.session === session) this.session = null;
@@ -530,23 +391,18 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       return;
     }
     if (!this.stopped) {
-      this.setStatus(
-        'degraded',
-        new Error('claude resident child exited'),
-      );
+      this.setStatus('degraded', error);
     }
   }
 
-  private onProtocolEvent(event: ClaudeProtocolEvent): void {
-    const active = this.activeTurn;
-    if (active === null) return;
-    handleProtocolEvent(active, event, {
-      threadId: this.threadId,
-      outputSchemaEnabled: this.deps.outputSchema !== undefined,
+  private onProtocolEvent(event: ClaudeProtocolEvent, activity: NativeActivityState): void {
+    if (this.stopped) return;
+    handleProtocolEvent(event, {
+      activity,
       activitySink: this.deps.activitySink,
-      log: (level, message, error) => this.log(level, message, error),
     });
   }
+
   private assertGeneration(generation: number): void {
     if (this.stopped || this.fence.isFenced || generation !== this.generation) {
       throw new Error('claude-code runtime is stopped');
@@ -566,15 +422,13 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private async terminateForFence(): Promise<void> {
     this.stopped = true;
     this.generation += 1;
-    const turn = this.activeTurn;
-    if (turn !== null) this.stopUnsettled(turn);
     const session = this.session;
     if (session !== null) {
       // Killing a live child interrupts whatever it was running; the end is
       // reported for that child and not otherwise. A fence that fires while a
       // start is still failing has no child, and the card is then closed by
       // Core's own failed end carrying the start error.
-      this.endNativeTurn('interrupted', null);
+      if (session.isAlive()) this.endNativeTurn('interrupted', null);
       // The reference is dropped only once this child's own stop succeeded; a
       // failure propagates to `RuntimeStateFence.terminated()` with the
       // termination authority intact, and leaves the status alone so a later

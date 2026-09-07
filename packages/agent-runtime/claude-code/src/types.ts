@@ -3,8 +3,9 @@
  *
  * These are data contracts only: no IO, no process spawning, no timers.
  */
+import type { RuntimeAdmission } from '@excitedjs/dreamux-types';
 
-/** A parsed JSON object, or `null` for anything that is not a JSON object. */
+/** A parsed JSON object. */
 export type JsonObject = Record<string, unknown>;
 
 /**
@@ -83,7 +84,9 @@ export interface ResultEnvelope {
   /** `success` or one of the `error_*` subtypes. Unknown subtypes pass through. */
   readonly subtype: string | null;
   readonly isError: boolean;
-  /** The success-path final text (`result`); `null` for error subtypes. */
+  /** Why native generation ended; abort and hard failure share cancelled lifecycle. */
+  readonly terminalReason: string | null;
+  /** The success-arm text (`result`), including API error text; null for error subtypes. */
   readonly text: string | null;
   readonly sessionId: string | null;
   /**
@@ -92,9 +95,10 @@ export interface ResultEnvelope {
    *
    * This is an optional attribution hint on the wire: `result` carries no
    * `command_uuid`, its own `uuid` is server-generated, and `session_id` is
-   * shared by every execution window of the resident session. The RPC layer
-   * validates a present value against submitted commands; started lifecycle
-   * facts own attribution when this field is absent.
+   * shared by every native turn of the resident session. It can name an
+   * internal background input even when submitted commands joined that turn.
+   * A matching value adds that submitted command to the started group; an
+   * internal or absent value never vetoes any started command.
    */
   readonly userMessageUuid: string | null;
   /** Error subtypes may carry a message list; empty otherwise. */
@@ -126,6 +130,7 @@ export interface TurnSubmitOptions {
 /** The reduced outcome of one assistant turn, terminated by a `result`. */
 export interface TurnOutcome {
   readonly isError: boolean;
+  readonly terminalReason: string | null;
   /** Final reply text: the `result.result`, falling back to the last assistant snapshot. */
   readonly text: string;
   readonly sessionId: string | null;
@@ -148,11 +153,13 @@ export interface ClaudeCodeSessionSpec {
   env: NodeJS.ProcessEnv;
   /** Where to append the child's stderr (its stdout is the in-process data plane). */
   stderrLogPath: string;
+  /** Pinned native identity and result contract for requests sent to this session. */
+  sessionId: string;
+  outputSchemaEnabled?: boolean;
   /**
-   * Per-turn deadline (ms). If the still-alive child never emits a terminal
-   * `result` within this window, the turn is failed and the child is reaped so
-   * the serial turn queue (and TeamMate completion delivery behind it) cannot
-   * wedge forever. Must be > 0.
+   * Maximum idle interval (ms) while submitted requests await settlement. Every
+   * inbound stream line resets it; silence for the entire interval fails the
+   * pending commands and reaps the child. Must be > 0.
    */
   turnTimeoutMs: number;
   /**
@@ -181,34 +188,34 @@ export type ClaudeActivityLine = Extract<
 >;
 
 export type ClaudeProtocolEvent =
+  | { readonly kind: 'interrupted' }
   | {
+      /** Public native observation; lifecycle alone does not supply a completion. */
       readonly kind: 'command_lifecycle';
       readonly commandUuid: string;
       readonly state: CommandLifecycleState;
     }
   | { readonly kind: 'stream'; readonly line: ClaudeActivityLine }
-  | { readonly kind: 'result'; readonly outcome: TurnOutcome };
+  | {
+      readonly kind: 'result';
+      readonly outcome: TurnOutcome;
+      /** Submitted commands answered by this result; empty for background-only turns. */
+      readonly commandUuids: readonly string[];
+    };
 
 /**
- * A resident Claude Code session. Full turns are serialized by the caller;
- * `steerTurn` is the one allowed concurrent write, used to steer the active
- * turn without creating a second completion subscription.
+ * A resident Claude Code session. Every input follows the same write path;
+ * the CLI decides whether it folds into current work or queues for later.
  */
 export interface ClaudeCodeSession {
   /** Spawn the child and resolve once it is up (reject on spawn error). */
   start(): Promise<void>;
-  /** Submit one user turn; resolve once all accepted commands have drained. */
-  submitTurn(
+  /** Resolve native admission; the returned submission carries eventual settlement. */
+  submit(
     prompt: string,
     options?: TurnSubmitOptions,
     commandUuid?: string,
-  ): Promise<void>;
-  /** Send a user message into the active turn without awaiting a separate result. */
-  steerTurn(
-    prompt: string,
-    options?: TurnSubmitOptions,
-    commandUuid?: string,
-  ): Promise<void>;
+  ): Promise<RuntimeAdmission>;
   /** Whether the child is currently alive. */
   isAlive(): boolean;
   /**
@@ -216,7 +223,7 @@ export interface ClaudeCodeSession {
    * {@link stop}). The runtime uses it to mark itself degraded and re-spawn on
    * the next turn. Register before {@link start}.
    */
-  setOnExit(handler: () => void): void;
+  setOnExit(handler: (error: Error) => void): void;
   /** Reap the child (SIGTERM -> SIGKILL group). Idempotent. */
   stop(): Promise<void>;
 }

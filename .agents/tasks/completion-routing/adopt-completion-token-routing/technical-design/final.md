@@ -1,5 +1,13 @@
 # Final solution: provider completion token + core dedup routing
 
+## Since this was recorded (2026-09-07)
+
+The operator approved replacing the retained Claude request-window coordination.
+The current Claude implementation plan is [resident-session input and per-request
+settlement](session-submissions.md). Its removal account supersedes instructions
+below to preserve command drainage or the window-oriented custom session seam.
+The original Core completion-token design and retained product behavior remain.
+
 ## Model
 
 Separate three concepts the interim model conflated:
@@ -80,3 +88,54 @@ implementation against this architecture, a batch multi-agent stage re-covers
 the deleted areas guided by the acceptance matrix in the requirement. Gates
 before PR: rush build, lint, typecheck, deterministic test suite, `rush change`
 with a breaking note for the provider ABI, and `.agents/scripts/check.sh`.
+
+## Background-turn repair (2026-09-07)
+
+Keep RuntimeSubmission and Core completion-token routing unchanged. Claude
+command lifecycle remains the owner of fold/queue attribution: the commands
+that actually started before a result boundary form its submitted request group.
+An exactly matching submitted result UUID is also positive evidence, including
+existing no-start compatibility sequences. The group's membership may grow when
+a steer joins a native background turn.
+A result's origin or single user-message UUID cannot veto that group.
+
+Allow a native result with no submitted group: publish its native activity/end,
+settle no unrelated submission, and keep the process alive. Remove the fatal
+no-pending and foreign-result-UUID assumptions. With lifecycle evidence, an
+empty started group must not fall back to the sole pending request. Preserve
+existing supported lifecycle-less single-input behavior with evidence, without
+using it to override an explicit queued/started lifecycle or a foreign result
+UUID.
+
+Separate resident native activity/aggregation from the request group so that
+streams and result boundaries are handled even when no request is outstanding.
+Keep command drainage distinct from native result delivery: background results
+must not drain queued requests. Preserve native interruption artifact handling,
+transport failures, and the established admission/order rules. Discard unfinished
+aggregate text at a cancelled native boundary, including when another request
+remains queued. Fence late callbacks after stop and emit a failed native end for
+a resident background exit without duplicating active-request failure handling.
+
+Acceptance sequence: background native turn -> submit B -> B started -> result
+settles B regardless of the turn's original trigger. If B is only queued at that
+result, settle nothing yet; B started -> next result settles B. If B and C join
+the same native turn, settle both with one immutable completion and let Core
+deliver it once per registered recipient. No origin field is needed for this fix.
+
+The Claude-specific session result callback carries the command UUID group
+computed by RPC; runtime settlement consumes that group rather than maintaining
+a second started ledger. This callback type is exported through the Claude
+session extension seam, so custom session implementations need the new field.
+Record that compatibility impact explicitly in a Rush breaking minor note;
+RuntimeSubmission, AgentRuntime and Core routing contracts are unchanged.
+
+### Style and redundancy cleanup
+
+Delete the unused queuedTurnCount bookkeeping, its two update methods and their
+call sites. Simplify duplicate activity-state arguments and misleading private
+names using the existing owners, without introducing replacement wrappers or
+mirrored state. Review adjacent source and test code for equivalent low-cost
+cleanup. Default fixtures should emit observed started lifecycle events; keep
+missing-start plus matching-UUID cases as explicit compatibility tests. Preserve
+UUID-positive attribution and the public command_lifecycle observer callback.
+No origin filter, new attribution mechanism or timeout-policy change is needed.

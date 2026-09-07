@@ -192,3 +192,13 @@
   before further edits; it is at the 700-line lint cap.
 - No per-target or per-logical-turn presentation split is permitted by the
   current requirement.
+
+## Since this was recorded
+
+2026-09-07: The approved [Claude background-turn repair](/.agents/tasks/completion-routing/adopt-completion-token-routing/requirement.md#background-turn-repair-2026-09-07)
+supersedes the retained fail-loud unattributed-result path above. Native
+background tasks may start turns without a Dreamux submission; those results
+are valid and must not terminate the resident process. Explicit steers that
+join them still settle through the existing completion-token routing. The
+historical adjudication is preserved here; the [current settlement contract](/.agents/domains/provider-runtime.md#claude-code-stream-json-settlement)
+owns the replacement behavior.

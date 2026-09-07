@@ -1,271 +1,187 @@
-/**
- * Resident-session contract tests (issue #120, migrated to the value-keyed turn
- * contract).
- *
- * These drive the REAL `createDefaultClaudeCodeSession` supervisor over real OS
- * pipes against a tiny fake `claude` stream-json child (no real `claude` binary
- * needed — see `fixtures/fake-claude-stream.mjs`). The fake only ever replays
- * native stream-json envelopes; every expectation below is derived from those
- * envelopes, never from an instruction handed to the fake.
- *
- * The seam under test changed: `submitTurn` no longer *returns* the turn
- * result. A native `result` envelope is now pushed out of the live stream as an
- * `onProtocolEvent({ kind: 'result', outcome })` BEFORE the submission settles,
- * alongside the live `stream` / `command_lifecycle` activity of the same native
- * window. `submitTurn` only resolves once the resident command group drained.
- *
- * Still covered from the original suite: a child that stays alive but never
- * emits a terminal `result` must not pend forever — the per-turn idle deadline
- * fails the turn and reaps the child so follow-up work cannot wedge.
- */
-
+/** Real OS pipes and supervisor around synthetic native protocol fixtures. */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createDefaultClaudeCodeSession, type ClaudeCodeSession } from '../src/supervisor.js';
+import { createClaudeCodeAgentRuntimeProvider } from '../src/provider.js';
+import { defaultDispatcherClaudeCodeConfig } from '../src/config.js';
+import type { ClaudeProtocolEvent } from '../src/types.js';
+import type { RuntimeAdmission, RuntimeSubmission } from '@excitedjs/dreamux-types';
 
-import {
-  createDefaultClaudeCodeSession,
-  type ClaudeCodeSession,
-} from '../src/supervisor.js';
-import type { ClaudeProtocolEvent, TurnOutcome } from '../src/types.js';
+const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-claude-stream.mjs');
+async function accepted(admission: Promise<RuntimeAdmission>): Promise<RuntimeSubmission> {
+  const value = await admission;
+  if (value.status !== 'submitted') throw new Error(`expected submission, got ${value.status}`);
+  return value.submission;
+}
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const FIXTURE = join(HERE, 'fixtures', 'fake-claude-stream.mjs');
-
-describe('resident claude session (real child, fake stream-json protocol)', () => {
+describe('resident session over real pipes', () => {
   let dir: string;
-  let stderrLog: string;
-  /** Everything the live stream pushed, in arrival order. */
   let events: ClaudeProtocolEvent[];
-
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'dreamux-cc-session-'));
-    stderrLog = join(dir, 'stderr.log');
+  let sessions: ClaudeCodeSession[];
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'dreamux-cc-session-'));
     events = [];
+    sessions = [];
   });
-
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+  afterEach(async () => {
+    await Promise.all(sessions.map((session) => session.stop()));
+    await rm(dir, { recursive: true, force: true });
   });
-
-  async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      if (predicate()) return;
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    throw new Error('waitFor timed out');
-  }
-
-  function makeSession(
-    mode: 'echo' | 'stall',
-    turnTimeoutMs: number,
-    remoteControl = false,
-    onRemoteControlUrl?: (url: string) => void,
-  ): ClaudeCodeSession {
-    return createDefaultClaudeCodeSession({
-      bin: process.execPath,
-      args: [FIXTURE, mode],
-      cwd: dir,
-      env: process.env,
-      stderrLogPath: stderrLog,
-      turnTimeoutMs,
-      remoteControl,
-      onRemoteControlUrl,
+  function makeSession(mode: 'echo' | 'stall', timeout = 5_000, onRemoteControlUrl?: (url: string) => void) {
+    const session = createDefaultClaudeCodeSession({
+      bin: process.execPath, args: [FIXTURE, mode], cwd: dir, env: process.env,
+      stderrLogPath: join(dir, 'stderr.log'), sessionId: 'fake-sess-1', turnTimeoutMs: timeout,
+      remoteControl: onRemoteControlUrl !== undefined, onRemoteControlUrl,
       onProtocolEvent: (event) => events.push(event),
     });
+    sessions.push(session);
+    return session;
   }
 
-  /** The native `result` envelopes observed on the live stream, in order. */
-  function resultOutcomes(): TurnOutcome[] {
-    return events
-      .filter((event): event is Extract<ClaudeProtocolEvent, { kind: 'result' }> =>
-        event.kind === 'result',
-      )
-      .map((event) => event.outcome);
-  }
-
-  /** Index of the first live `assistant` snapshot carrying `text`, or -1. */
-  function assistantEventIndex(text: string): number {
-    return events.findIndex(
-      (event) =>
-        event.kind === 'stream' &&
-        event.line.kind === 'assistant' &&
-        event.line.text === text,
-    );
-  }
-
-  function resultEventIndex(text: string): number {
-    return events.findIndex(
-      (event) => event.kind === 'result' && event.outcome.text === text,
-    );
-  }
-
-  it('pushes each native result out of the live stream (not out of submitTurn) and serves both turns over one process', async () => {
-    const session = makeSession('echo', 5_000);
+  it('returns admission and per-request answers, reusing one process for subsequent input', async () => {
+    const session = makeSession('echo');
     await session.start();
-
-    const firstUuid = 'cmd-first-0000-0000-000000000001';
-    // The submission itself carries no value: the native `result` is delivered
-    // live, so it is already on the sink when the submission settles.
-    await expect(session.submitTurn('hello', {}, firstUuid)).resolves.toBeUndefined();
-
-    const afterFirst = resultOutcomes();
-    expect(afterFirst).toHaveLength(1);
-    expect(afterFirst[0]!.text).toBe('echo:hello');
-    expect(afterFirst[0]!.sessionId).toBe('fake-sess-1');
-    expect(afterFirst[0]!.isError).toBe(false);
-
-    // Live activity of this native window is pushed BEFORE its terminal result,
-    // in native order — never rebuilt afterwards.
-    const assistantIdx = assistantEventIndex('echo:hello');
-    expect(assistantIdx).toBeGreaterThanOrEqual(0);
-    expect(assistantIdx).toBeLessThan(resultEventIndex('echo:hello'));
-
-    // The lifecycle fact of this window names the exact submitted command uuid:
-    // one stable, non-empty id shared by the submission and its native facts.
-    const lifecycle = events.filter(
-      (event): event is Extract<ClaudeProtocolEvent, { kind: 'command_lifecycle' }> =>
-        event.kind === 'command_lifecycle',
-    );
-    expect(lifecycle.map((event) => event.commandUuid)).toContain(firstUuid);
-    expect(
-      lifecycle.find((event) => event.commandUuid === firstUuid)!.state,
-    ).toBe('completed');
-
-    // Second turn over the SAME resident child: a second native `user` message
-    // produces a second native `result`, hence a second result event.
-    await expect(session.submitTurn('again')).resolves.toBeUndefined();
-    const afterSecond = resultOutcomes();
-    expect(afterSecond).toHaveLength(2);
-    expect(afterSecond[1]!.text).toBe('echo:again');
+    const a = await accepted(session.submit('hello', {}, 'A'));
+    await expect(a.settled).resolves.toEqual({ kind: 'completion', completion: { status: 'completed', resultText: 'echo:hello' } });
+    const b = await accepted(session.submit('again', {}, 'B'));
+    await expect(b.settled).resolves.toEqual({ kind: 'completion', completion: { status: 'completed', resultText: 'echo:again' } });
     expect(session.isAlive()).toBe(true);
-
-    await session.stop();
-    expect(session.isAlive()).toBe(false);
+    expect(events.filter((event) => event.kind === 'command_lifecycle')).toEqual([
+      { kind: 'command_lifecycle', commandUuid: 'A', state: 'started' },
+      { kind: 'command_lifecycle', commandUuid: 'A', state: 'completed' },
+      { kind: 'command_lifecycle', commandUuid: 'B', state: 'started' },
+      { kind: 'command_lifecycle', commandUuid: 'B', state: 'completed' },
+    ]);
+    const resultIndex = events.findIndex((event) => event.kind === 'result');
+    const assistantIndex = events.findIndex((event) => event.kind === 'stream' && event.line.kind === 'assistant');
+    expect(assistantIndex).toBeGreaterThanOrEqual(0);
+    expect(assistantIndex).toBeLessThan(resultIndex);
   });
 
-  it('emits one result event per native result even when two queued turns produce byte-identical text', async () => {
-    const session = makeSession('echo', 5_000);
+  it('keeps identical answers to separate inputs as distinct completions', async () => {
+    const session = makeSession('echo');
     await session.start();
-
-    // Two separate native `user` messages, each answered by its own native
-    // `result`. Byte-identical result text must NOT collapse them.
-    await session.submitTurn('same');
-    await session.submitTurn('same');
-
-    const outcomes = resultOutcomes();
-    expect(outcomes).toHaveLength(2);
-    expect(outcomes[0]!.text).toBe('echo:same');
-    expect(outcomes[1]!.text).toBe('echo:same');
-    // Object identity is deliberately NOT asserted here: `TurnOutcome` is built
-    // as a fresh literal per envelope (src/stream.ts `outcome()`), so a
-    // reference comparison could never fail and would prove nothing. Completion
-    // TOKEN identity is the real contract and is proven one layer up, against
-    // src/runtime-submissions.ts, in tests/runtime-activity.test.ts.
-    //
-    // What IS falsifiable at this seam is that the two byte-identical answers
-    // came from two SEPARATE native turns: each `result` must be preceded by
-    // its own native line, so the two result events cannot be adjacent.
-    const resultIndexes = events
-      .map((event, index) => (event.kind === 'result' ? index : -1))
-      .filter((index) => index >= 0);
-    expect(resultIndexes).toHaveLength(2);
-    expect(resultIndexes[1]! - resultIndexes[0]!).toBeGreaterThan(1);
-
-    await session.stop();
+    const a = await accepted(session.submit('same'));
+    const first = await a.settled;
+    const b = await accepted(session.submit('same'));
+    const second = await b.settled;
+    expect(second).toEqual(first);
+    if (first.kind !== 'completion' || second.kind !== 'completion') throw new Error('expected completions');
+    expect(second.completion).not.toBe(first.completion);
   });
 
-  it('enables Remote Control at resident child startup when configured', async () => {
-    const urls: string[] = [];
-    const session = makeSession('echo', 5_000, true, (url) => urls.push(url));
+  it('admits concurrent input before either request has a result', async () => {
+    const session = makeSession('stall');
     await session.start();
-
-    await waitFor(
-      () =>
-        existsSync(stderrLog) &&
-        readFileSync(stderrLog, 'utf8').includes('remote-control-requested'),
-    );
-    await waitFor(() => urls.length === 1);
-    expect(urls).toEqual(['https://example.invalid/session/fake']);
-
-    // The control handshake is not a turn: it produces no result event, and a
-    // later turn still reports its native result on the live stream.
-    expect(resultOutcomes()).toHaveLength(0);
-
-    await session.submitTurn('after rc');
-    const outcomes = resultOutcomes();
-    expect(outcomes).toHaveLength(1);
-    expect(outcomes[0]!.text).toBe('echo:after rc');
-
+    const a = await accepted(session.submit('one'));
+    const b = await accepted(session.submit('two'));
+    expect(events.filter((event) => event.kind === 'result')).toEqual([]);
     await session.stop();
+    await expect(a.settled).resolves.toEqual({ kind: 'stopped' });
+    await expect(b.settled).resolves.toEqual({ kind: 'stopped' });
   });
 
-  it('rejects a concurrent submit rather than interleaving two turns', async () => {
-    const session = makeSession('stall', 5_000);
+  it('enables Remote Control independently of request settlement', async () => {
+    let resolveUrl!: (url: string) => void;
+    const url = new Promise<string>((resolve) => { resolveUrl = resolve; });
+    const session = makeSession('echo', 5_000, resolveUrl);
     await session.start();
-    const first = session.submitTurn('one'); // never completes (stall)
-    await expect(session.submitTurn('two')).rejects.toThrow(/mid-turn/i);
-    void first.catch(() => {
-      /* abandoned when the session is stopped below */
-    });
-    await session.stop();
+    await expect(url).resolves.toBe('https://example.invalid/session/fake');
+    expect(events.filter((event) => event.kind === 'result')).toEqual([]);
+    const request = await accepted(session.submit('after control'));
+    await expect(request.settled).resolves.toMatchObject({ kind: 'completion', completion: { resultText: 'echo:after control' } });
   });
 
-  it('admits a live steer into the active resident window without opening a second turn', async () => {
-    const session = makeSession('stall', 5_000);
-    await session.start();
-    const first = session.submitTurn('one'); // stall: no native `result` ever
-    void first.catch(() => {
-      /* abandoned when the session is stopped below */
-    });
-
-    // The steer is written into the SAME native window: the child echoes it as
-    // live activity, and no native `result` is produced by either command.
-    await expect(session.steerTurn('steered')).resolves.toBeUndefined();
-    await waitFor(() => assistantEventIndex('echo:steered') >= 0);
-    expect(resultOutcomes()).toHaveLength(0);
-
-    // A steer is not a new submission: a real second submit is still refused.
-    await expect(session.submitTurn('two')).rejects.toThrow(/mid-turn/i);
-
-    await session.stop();
-  });
-
-  it('fails the turn and reaps the child when the live child never emits a result', async () => {
-    const session = makeSession('stall', 250);
-    await session.start();
-    expect(session.isAlive()).toBe(true);
-
-    await expect(session.submitTurn('hangs forever')).rejects.toThrow(
-      /stalled|no stream activity/i,
-    );
-    // A stalled turn observed no native result, so nothing was ever pushed as a
-    // completion: a failure creates no result event.
-    expect(resultOutcomes()).toHaveLength(0);
-
-    // The deadline reaped the child, so the runtime re-spawns on the next turn
-    // instead of reusing a child with half a turn's output buffered.
-    expect(session.isAlive()).toBe(false);
-
-    await session.stop(); // idempotent
-    expect(session.isAlive()).toBe(false);
-  });
-
-  it('does not wedge follow-up work: a submit after a timeout fails fast, not forever', async () => {
+  it('fails silent requests, reports the timeout once and reaps the child', async () => {
     const session = makeSession('stall', 200);
+    const failures: Error[] = [];
+    session.setOnExit((error) => failures.push(error));
     await session.start();
-    await expect(session.submitTurn('first')).rejects.toThrow(
-      /stalled|no stream activity/i,
-    );
+    const request = await accepted(session.submit('stall'));
+    await expect(request.settled).resolves.toMatchObject({ kind: 'failed', error: expect.objectContaining({ message: expect.stringContaining('no stream activity') }) });
+    expect(failures).toHaveLength(1);
+    expect(session.isAlive()).toBe(false);
+    await expect(session.submit('after timeout')).resolves.toMatchObject({
+      status: 'failed', error: failures[0],
+    });
+    expect(events.filter((event) => event.kind === 'result')).toEqual([]);
+  });
 
-    // A follow-up submit returns promptly (rejected) rather than hanging — the
-    // property that keeps the serial queue and TeamMate delivery retry moving.
-    const start = Date.now();
-    await expect(session.submitTurn('second')).rejects.toThrow();
-    expect(Date.now() - start).toBeLessThan(1_000);
-    expect(resultOutcomes()).toHaveLength(0);
+  it.each(['exit', 'stop'] as const)('preserves %s intent while recovery admission awaits durable identity publication', async (action) => {
+    // Controlled Node children exercise the production provider and supervisor.
+    // The assistant envelope reports the test child's PID; this is not Claude evidence.
+    const childSource = `
+      process.stdin.resume();
+      process.stdout.write(JSON.stringify({type:'assistant',message:{content:[
+        {type:'text',text:String(process.pid)}
+      ]}})+'\\n');
+    `;
+    const pidResolvers: Array<(pid: number) => void> = [];
+    const pids = [0, 1].map(() => new Promise<number>((resolve) => pidResolvers.push(resolve)));
+    const nativeEnds: string[] = [];
+    let notifyEnd!: () => void;
+    let nextEnd = new Promise<void>((resolve) => { notifyEnd = resolve; });
+    let releasePublish!: () => void;
+    const publication = new Promise<void>((resolve) => { releasePublish = resolve; });
+    let notifyPublish!: () => void;
+    const publishing = new Promise<void>((resolve) => { notifyPublish = resolve; });
+    let holdIdentity = false;
+    const provider = createClaudeCodeAgentRuntimeProvider({
+      sessionFactory: (spec) => {
+        const session = createDefaultClaudeCodeSession({
+          ...spec, bin: process.execPath, args: ['-e', childSource], remoteControl: false,
+        });
+        sessions.push(session);
+        return session;
+      },
+    });
+    const runtime = await provider.createRuntime({
+      identity: { runtimeId: 'exit-admission-test', sessionId: null },
+      config: defaultDispatcherClaudeCodeConfig(), cwd: dir,
+      mcpServers: [], skillSources: [], disabledFeatures: [],
+      paths: { cacheDir: () => dir, logsDir: () => dir, runtimeSocketDirs: () => [dir] },
+      state: { publish: async (update) => {
+        if (update.kind === 'session' && holdIdentity) {
+          notifyPublish();
+          await publication;
+        }
+      } },
+      activity: (event) => {
+        if (event.kind === 'assistant.message') pidResolvers.shift()!(Number(event.text));
+        if (event.kind === 'turn.ended') {
+          nativeEnds.push(event.status);
+          notifyEnd();
+        }
+      },
+    });
+    try {
+      await runtime.start();
+      process.kill(await pids[0]!, 'SIGTERM');
+      await nextEnd;
+      nextEnd = new Promise<void>((resolve) => { notifyEnd = resolve; });
+      holdIdentity = true;
+      const admission = runtime.submit({ text: 'input during recovery' });
+      await publishing;
+      const secondPid = await pids[1]!;
+      const stopping = action === 'stop' ? runtime.stop() : null;
+      if (action === 'exit') process.kill(secondPid, 'SIGTERM');
+      await nextEnd;
+      releasePublish();
+      if (action === 'exit') {
+        await expect(admission).resolves.toMatchObject({
+          status: 'failed', error: expect.objectContaining({ message: 'claude resident child exited' }),
+        });
+      } else {
+        await stopping;
+        await expect(admission).resolves.toEqual({ status: 'stopped' });
+      }
+      expect(nativeEnds).toEqual(['failed', action === 'exit' ? 'failed' : 'interrupted']);
+    } finally {
+      releasePublish();
+      await runtime.stop();
+    }
   });
 });

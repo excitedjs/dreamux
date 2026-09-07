@@ -111,7 +111,8 @@ function parseResult(o: JsonObject): ResultEnvelope {
     : [];
   let isError: boolean;
   if (subtype !== null) {
-    isError = subtype !== 'success';
+    // The success arm also carries API failures, with error text in `result`.
+    isError = subtype !== 'success' || o['is_error'] === true;
   } else {
     isError = o['is_error'] === true || errors.length > 0;
   }
@@ -129,11 +130,12 @@ function parseResult(o: JsonObject): ResultEnvelope {
   return {
     subtype,
     isError,
+    terminalReason: str(o['terminal_reason']),
     text,
     sessionId: str(o['session_id']),
     // The client-supplied `uuid` of a user message associated with this result.
-    // It is optional and is validated as a hint; command lifecycle remains the
-    // ownership source when one result represents several started commands.
+    // It is optional and may name an internal background input; command
+    // lifecycle owns which submitted commands this result answers.
     userMessageUuid: str(o['user_message_uuid']),
     errors,
     hasStructuredOutput,
@@ -232,8 +234,8 @@ export function parseLine(line: string): ParsedLine {
 
 /**
  * Parse a `command_lifecycle` envelope. The resident CLI emits it as a
- * top-level `type`; older streams (and the test fixture) emit it as a
- * `system` subtype. Both shapes carry the same `command_uuid`/`state` fields.
+ * top-level `type`; older streams emit it as a `system` subtype. Both shapes
+ * carry the same `command_uuid`/`state` fields.
  */
 function parseCommandLifecycle(parsed: Record<string, unknown>): ParsedLine {
   const state = str(parsed['state']);
@@ -245,8 +247,8 @@ function parseCommandLifecycle(parsed: Record<string, unknown>): ParsedLine {
       state === 'started' ||
       state === 'completed' ||
       state === 'cancelled' ||
-      state === 'discarded'
-      || state === 'refused'
+      state === 'discarded' ||
+      state === 'refused'
         ? state
         : null,
     raw: parsed,
@@ -318,9 +320,11 @@ export function buildControlAck(requestId: string): string {
 // ─── Turn aggregation ───────────────────────────────────────────────────────
 
 /**
- * Accumulates the envelopes of a single turn and resolves a `TurnOutcome` when
- * the `result` lands. One aggregator per turn: feed every `ParsedLine`, then
- * read `outcome()` once `done` is true.
+ * Accumulates native-turn envelopes across a resident session. Feed each
+ * `ParsedLine`; `done` becomes true when a result arrives, and `outcome()`
+ * reads it without consuming it. Use `takeOutcome()` at a result boundary
+ * or `discard()` on cancellation to clear turn content for reuse while
+ * retaining the session identity.
  *
  * The final text prefers the `result.result` (the CLI's own canonical answer)
  * and falls back to the latest `assistant` snapshot — so a turn that ends
@@ -368,6 +372,7 @@ export class TurnAggregator {
       text,
       sessionId: r.sessionId ?? this.initSessionId,
       subtype: r.subtype,
+      terminalReason: r.terminalReason,
       errors: r.errors,
       hasStructuredOutput: r.hasStructuredOutput,
     };
@@ -377,8 +382,13 @@ export class TurnAggregator {
   takeOutcome(): TurnOutcome | null {
     const outcome = this.outcome();
     if (outcome === null) return null;
+    this.discard();
+    return outcome;
+  }
+
+  /** Discard accumulated native-turn content, retaining the session identity. */
+  discard(): void {
     this.result = null;
     this.lastAssistantText = '';
-    return outcome;
   }
 }

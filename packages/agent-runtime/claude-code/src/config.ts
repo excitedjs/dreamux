@@ -39,8 +39,8 @@ import {
  * is reset on every inbound stream line, so it bounds the max time the
  * still-alive child may emit *no* stream activity — not the total turn duration.
  * A child silent for the whole window is failed and reaped/re-spawned (rather
- * than wedging the serial turn queue and, behind it, TeamMate completion
- * delivery), while a long but actively-streaming turn never trips it.
+ * than blocking request settlement and TeamMate completion delivery), while a
+ * long but actively-streaming turn never trips it.
  */
 export interface DispatcherClaudeCodeConfig {
   bin: string;
