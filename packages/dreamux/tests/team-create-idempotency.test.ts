@@ -103,6 +103,8 @@ describe('team.create idempotency', () => {
       status: 'existing',
       team_name: first.team_name,
       leader_name: first.leader_name,
+      leader_agent_runtime: first.leader_agent_runtime,
+      runtime_cwd: first.runtime_cwd,
     });
 
     // A fresh `TeamCollection` bound to the exact same `team/` root has no
@@ -120,6 +122,8 @@ describe('team.create idempotency', () => {
       status: 'existing',
       team_name: first.team_name,
       leader_name: first.leader_name,
+      leader_agent_runtime: first.leader_agent_runtime,
+      runtime_cwd: first.runtime_cwd,
     });
   });
 
@@ -177,6 +181,8 @@ describe('team.create idempotency', () => {
       status: 'closed',
       team_name: created.team_name,
       leader_name: created.leader_name,
+      leader_agent_runtime: created.leader_agent_runtime,
+      runtime_cwd: created.runtime_cwd,
     });
   });
 

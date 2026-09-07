@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Refine Feishu route cards with canonical Team runtime context and distinct removal reasons; limit plain-text COT results to ten lines and complete superseded cards successfully. Route notifications use Card 2.0 and require Feishu 7.20 or newer. No state rebuild is needed.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

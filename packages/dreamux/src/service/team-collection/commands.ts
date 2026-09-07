@@ -138,8 +138,16 @@ export function teamCommands(host: CoreCommandHost): readonly AnyCoreCommand[] {
         status: enumOf(['created', 'existing', 'closed']),
         team_name: STRING,
         leader_name: STRING,
+        leader_agent_runtime: STRING,
+        runtime_cwd: STRING,
       },
-      ['status', 'team_name', 'leader_name'],
+      [
+        'status',
+        'team_name',
+        'leader_name',
+        'leader_agent_runtime',
+        'runtime_cwd',
+      ],
     ),
     parse(payload) {
       const params = commandPayload(payload);

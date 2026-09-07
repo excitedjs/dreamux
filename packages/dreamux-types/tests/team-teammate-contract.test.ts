@@ -139,6 +139,8 @@ describe('TeamCreateCommand carries restart-durable request identity and leader 
 
   it('TeamCreateResult status is exactly created | existing | closed', () => {
     assertType<Equal<TeamCreateResult['status'], 'created' | 'existing' | 'closed'>>();
+    assertType<Equal<TeamCreateResult['leader_agent_runtime'], string>>();
+    assertType<Equal<TeamCreateResult['runtime_cwd'], string>>();
   });
 });
 

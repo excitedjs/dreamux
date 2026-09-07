@@ -2,7 +2,6 @@ import {
   assertNotReservedAgentName,
   type AgentEntityIdentityStatus,
   type AgentEntityRuntimeStatus,
-  type AgentEntitySubmissionResult,
   type AgentEntityWorktreeIdentity,
 } from '../agent-entity/types.js';
 import type {
@@ -325,13 +324,12 @@ export interface TeamHistoryResult {
   next_cursor: string | null;
 }
 
-export interface TeamCreateResult extends TeamSummary {
-  /**
-   * The leader's first-turn result, or `null` when the team was created without
-   * an explicit `prompt` (no leader process starts and no turn fires at creation).
-   */
-  status: AgentEntitySubmissionResult['status'] | null;
-  error?: string;
+/** Facts produced by the internal Team creation operation. */
+export interface TeamCreateResult {
+  team_name: string;
+  leader_name: string;
+  leader_agent_runtime: string;
+  runtime_cwd: string;
 }
 
 /** Read an optional Team status filter, in this domain's own vocabulary. */

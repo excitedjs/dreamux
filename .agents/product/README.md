@@ -55,8 +55,13 @@ the same change that touches it.
   When a chat, topic, or space binding changes, the built-in Feishu channel
   posts a confirmation card: space-bound shows the space name, TeamLeader
   runtime, and repo policy; route-bound shows the binding kind, Team name,
-  TeamLeader name, runtime, and runtime cwd; unbinding is a one-liner. The
-  absolute repo cwd and runtime working directory are **deliberately**
+  TeamLeader name, configured runtime ID, and runtime cwd. Explicit Channel MCP
+  unbind says that only the route was removed and the Team remains active; final
+  Team dissolution says that Team closure removed all of that Team's routes; an
+  early route removal on `TEAM_CLOSED` stays cause-neutral until closure is
+  final. The route-bound, route-unbound, and Team-dissolved cards use English
+  Card 2.0 copy; the cause-neutral route-ended card keeps its existing schema.
+  The absolute repo cwd and runtime working directory are **deliberately**
   disclosed to the bound conversation's members — an explicit operator ruling
   that narrowed the earlier disclosure allowlist. Delivery is best-effort with
   one retry; a failed card never affects the binding change it reports.
@@ -150,7 +155,10 @@ the same change that touches it.
   that keeps its indentation and column alignment (each space that begins
   a line or sits in a run is sent as a no-break space, because the client
   collapses ordinary runs; single spaces between words still wrap).
-  Every card string is cut only at Feishu's own per-event limit, never
+  A non-JSON tool result keeps its first ten content lines and gains the English
+  truncation marker when an eleventh line exists; a terminal LF or CRLF does not
+  invent another content line. A JSON object or array bypasses that line rule.
+  Every card string is still finally bounded by Feishu's per-event limit, never
   earlier in Core. Raw
   JSON arguments appear nowhere on the card. Codex web searches are rows too.
   The card's own words — row verbs (Read, Edit, Search, List), the Completed and
@@ -184,6 +192,9 @@ the same change that touches it.
   (Requirement: 「CoT需要真实反映agent provider现在正在发生的事情」 and the
   2026-09-03 ruling on display state in
   [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md).)
+  When a newer inbound anchor supersedes an open card, that old presentation
+  closes successfully and activity continues on the new anchor; route release,
+  Team or session close, and runtime interruption remain interrupted.
 
 ## Failures the model sees
 

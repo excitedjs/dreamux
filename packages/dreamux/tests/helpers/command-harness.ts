@@ -129,6 +129,8 @@ export function createFakeDispatcher(
         status: 'created',
         team_name: 'harness-team',
         leader_name: 'harness-leader',
+        leader_agent_runtime: 'fake-runtime',
+        runtime_cwd: '/tmp/harness-workspace',
       })),
     submitToTeamLeader:
       overrides.submitToTeamLeader ??

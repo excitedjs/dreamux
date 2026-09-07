@@ -221,7 +221,13 @@ describe('TeamCollection: shared create/open construction', () => {
     const [createResult, admitResult] = await Promise.all([creating, admitting]);
 
     expect(delivered).toBe(true);
-    expect(createResult.team.status).toBe('running');
+    expect(createResult).toEqual({
+      team_name: 'joined',
+      leader_name: expect.any(String),
+      leader_agent_runtime: 'fake',
+      runtime_cwd: expect.any(String),
+    });
+    expect((await harness.collection.summary('joined')).team.status).toBe('running');
     expect(admitResult.status).toBe('running');
     // Exactly one leader submission for both callers together.
     expect(gate.callCount()).toBe(1);
