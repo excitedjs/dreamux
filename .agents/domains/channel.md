@@ -14,8 +14,9 @@ A Channel provider owns platform I/O, inbound normalization, target resolution,
 provider-specific tools, message ownership facts, and **routing**: which
 conversation reaches which Team, and what a Collaboration Space is. Dreamux core
 owns Channel session lifetime, the Command port a Channel invokes, the scoped
-Core event source it subscribes to, and generic MCP forwarding. Core holds no
-binding table, no target model, and no Collaboration Space container.
+Core event source it subscribes to, generic MCP forwarding, and a read-only
+configured-Channel inventory. Core holds no binding table, no target model,
+and no Collaboration Space container.
 
 The built-in Feishu provider lives outside the host package:
 
@@ -45,6 +46,22 @@ Source:
 - `/packages/dreamux/tests/package-boundary-guards.test.ts`
 
 ## Contracts
+
+### Configured Channel inventory
+
+The dispatcher-scoped `channel.list` Core Command is available through the
+admin socket and the Channel's in-process `invoke` port only, so a host can
+inspect configured Channels without an agent turn. It has no public CLI
+wrapper; the public CLI is reserved for host lifecycle operations.
+
+The metadata contract and stopped-dispatcher behavior are owned by
+[`service/CLAUDE.md`](/packages/dreamux/src/service/CLAUDE.md). This read-only
+inventory adds no routing or provider-tool authority to Core.
+
+Source:
+
+- `/packages/dreamux/src/service/channel-service/commands.ts`
+- `/packages/dreamux/src/service/channel-service/types.ts`
 
 ### Channel sessions
 

@@ -62,6 +62,30 @@ describe('adapter equivalence — one representative Command per namespace', () 
     expect((viaAdmin as { result: unknown }).result).toEqual(viaChannel);
   });
 
+  it('channel.list: identical result via admin.sock and the Channel invoker', async () => {
+    const channels = [
+      { channel_id: 'primary', provider: 'npm:@example/primary', identity: '', live: true },
+      {
+        channel_id: 'secondary',
+        provider: 'npm:@example/secondary',
+        identity: 'secondary-identity',
+        live: false,
+      },
+    ];
+    const harness = createCommandHarness({
+      dispatcherOverrides: { listChannels: () => channels },
+    });
+    admin = await startHarnessAdminSocket(harness);
+    const lease = createHarnessChannelInvoker(harness);
+
+    const viaAdmin = await admin.send('channel.list', { dispatcher_id: 'harness-d1' });
+    const viaChannel = await lease.port.invoke.invoke('channel.list', {});
+
+    expect(viaAdmin.ok).toBe(true);
+    expect((viaAdmin as { result: unknown }).result).toEqual(viaChannel);
+    expect(viaChannel).toEqual({ channels });
+  });
+
   it('team.list: identical result via both adapters', async () => {
     const harness = createCommandHarness({
       dispatcherOverrides: { listTeams: async () => [{ team_id: 'alpha' }] },

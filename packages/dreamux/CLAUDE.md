@@ -60,6 +60,12 @@ Two settled shape rules govern where code lives:
   delivery) inside the Dispatcher Service.
 - Own the canonical Command catalog and expose it identically to `admin.sock`
   and to an in-process Channel's `invoke` port.
+- Expose `channel.list` through the admin socket and a Channel's in-process
+  `invoke` port only, for dispatcher-scoped public Channel metadata: `channel_id`,
+  provider ref, opaque `identity` (empty when absent), and `live`, in configuration order.
+  `DispatcherService.listChannels()` reads configured and live Channels without
+  starting sessions or exposing provider configuration. There is no public CLI
+  wrapper: the public CLI is reserved for host lifecycle operations.
 
 ## Boundaries
 

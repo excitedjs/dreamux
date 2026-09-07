@@ -14,6 +14,7 @@ import type { CoreCommandDefinition } from '@excitedjs/dreamux-types';
 
 import { CoreCommands } from '../src/command/registry.js';
 import { dispatcherCommands } from '../src/service/dispatchers/commands.js';
+import { channelCommands } from '../src/service/channel-service/commands.js';
 import { teamCommands } from '../src/service/team-collection/commands.js';
 import { teammateCommands } from '../src/service/teammate-collection/commands.js';
 import { workflowCommands } from '../src/service/workflow-service/commands.js';
@@ -38,6 +39,7 @@ const FROZEN_NAMESPACE_TABLE = [
   'dispatcher.list',
   'dispatcher.status',
   'dispatcher.start',
+  'channel.list',
   'team.create',
   'team.submit',
   'team.list',
@@ -113,6 +115,7 @@ describe('createCoreCommandRegistry — the catalog', () => {
     const byPrefix: Record<string, string> = {
       'server.': 'server.status',
       'dispatcher.': 'dispatcher.',
+      'channel.': 'channel.',
       'team.': 'team.',
       'teammate.': 'teammate.',
       'workflow.': 'workflow.',
@@ -183,6 +186,7 @@ describe('CoreCommands — one authority, not a second one', () => {
     const allDefinitions = [
       ...serverCommands(host),
       ...dispatcherCommands(host),
+      ...channelCommands(host),
       ...teamCommands(host),
       ...teammateCommands(host),
       ...workflowCommands(host),

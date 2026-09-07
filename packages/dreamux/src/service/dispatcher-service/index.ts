@@ -43,6 +43,7 @@ import { SchedulerService } from '../scheduler/service.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
 import { CronJobStore } from '../scheduler/store.js';
 import { ChannelService } from '../channel-service/index.js';
+import type { ChannelMetadata } from '../channel-service/types.js';
 import { DispatcherCoreEventBus } from '../dispatcher-core-events/index.js';
 import type {
   TeamCreateInput,
@@ -396,6 +397,17 @@ export class DispatcherService {
 
   runtimeStatus(): DispatcherRuntimeStatus {
     return dispatcherRuntimeStatus(this.inputSources.agent);
+  }
+
+  /** Public Channel metadata in configuration order, without starting sessions. */
+  listChannels(): ChannelMetadata[] {
+    const live = this.channels.live();
+    return this.channels.configuredChannels().map((channel): ChannelMetadata => ({
+      channel_id: channel.id,
+      provider: channel.provider,
+      identity: channel.identity ?? '',
+      live: live.has(channel.id),
+    }));
   }
 
   liveRuntimeStatus(): LiveDispatcherRuntimeStatus | null {
