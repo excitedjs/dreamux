@@ -74,14 +74,12 @@ export class TeamRuntimeRegistry {
     const created = await construction;
     if (created === null) return null;
     const { service, leaderResult } = created;
+    const team = service.view();
     return {
-      team: service.view(),
-      leader: leaderResult.teammate,
-      member_count: await service.memberCount(),
-      status: leaderResult.submission?.status ?? null,
-      ...(leaderResult.submission?.error !== undefined
-        ? { error: leaderResult.submission.error }
-        : {}),
+      team_name: team.team_name,
+      leader_name: team.leader_name,
+      leader_agent_runtime: team.leader_agent_runtime,
+      runtime_cwd: leaderResult.teammate.repo.path,
     };
   }
 

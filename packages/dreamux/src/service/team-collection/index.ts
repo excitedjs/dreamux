@@ -185,10 +185,10 @@ export class TeamCollection {
       }
       return {
         status: 'created',
-        team_name: created.team.team_name,
-        leader_name: created.team.leader_name,
-        leader_agent_runtime: created.team.leader_agent_runtime,
-        runtime_cwd: created.leader.repo.path,
+        team_name: created.team_name,
+        leader_name: created.leader_name,
+        leader_agent_runtime: created.leader_agent_runtime,
+        runtime_cwd: created.runtime_cwd,
       };
     });
   }
