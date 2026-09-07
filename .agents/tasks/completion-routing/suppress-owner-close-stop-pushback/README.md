@@ -19,8 +19,8 @@
   [boundary review](/.agents/tasks/completion-routing/suppress-owner-close-stop-pushback/technical-design/reviews/boundary-review.md),
   and [verification review](/.agents/tasks/completion-routing/suppress-owner-close-stop-pushback/technical-design/reviews/verification-review.md).
 - Blockers: None.
-- Next action: Open the implementation pull request for operator review, then
-  complete remote CI and delivery verification.
+- Next action: Operator review of the Draft PR, remote CI, and delivery
+  verification.
 - Related tasks:
   - `builds-on`: [Adopt provider completion token routing and settlement](/.agents/tasks/completion-routing/adopt-completion-token-routing/README.md) — retains the general failed/stopped settlement path introduced before that refactor.
   - Historical behavior origin: [PR #149](https://github.com/excitedjs/dreamux/pull/149).
@@ -43,7 +43,8 @@
 
 ## Delivery
 
-- Pull request / CI / merge: Not started.
+- Pull request / CI / merge: [#389](https://github.com/excitedjs/dreamux/pull/389)
+  opened as a Draft against `next` on 2026-09-07; CI and merge are pending.
 - Knowledge closeout: Complete locally; product, architecture, package-local,
   maintenance, task-index, and release records are aligned. Remote CI remains
   pending.
