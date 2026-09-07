@@ -1,5 +1,8 @@
 # Verification
 
+Current work: [Resident-session replacement verification](#resident-session-replacement-verification-2026-09-07).
+Earlier gate and live-probe results below certify their stated revisions only.
+
 ## Implementation (single developer, code only)
 
 - Build: `rush update` then `rush build --to @excitedjs/dreamux --to
@@ -302,3 +305,134 @@ the cleanup in this task's requirement, solution and verification. No new domain
 configuration, persisted-state, maintenance or routing contract is introduced.
 The already published alpha remains tied to `72af66e5`; this cleanup updates the
 existing PR without republishing or upgrading an installed host.
+
+## External review and corrected evidence (2026-09-07)
+
+Eight external PR comments on `6acc6d28` were inspected, followed by an
+independent Fable review against official SDK documentation, the installed
+Claude Code 2.1.263 schema, existing native captures, Core routing and Channel
+display. This was read-only: no GitHub replies or code corrections were made.
+The operator subsequently approved the replacement below, so the old window's
+branches are not a preservation requirement or a patch checklist.
+
+The corrected evidence, rather than the reviewer's initial report, is retained:
+
+- Task-notification results in the observed background fold omit both UUID
+  echo fields while answering explicit steers. Origin and UUID-only routing
+  cannot implement that observed case. The public SDK describes omissions for
+  synthetic turns; the installed CLI marks command lifecycle as internal.
+- The baseline before PR #384 did not call `discard` on cancellation. Clearing
+  resident text for any cancelled UUID was introduced in this PR. An external
+  queued-command cancellation may therefore clear another turn's cached text.
+  That exact external-control sequence has not been probed. Dreamux does not
+  itself send that control request, but this is not proof of unreachability
+  through its optional Remote Control surface.
+- Feishu operator input immediately opens a receipt card. A later unbound
+  native end can close it before the queued request begins; subsequent activity
+  opens a new card. This is consistent with the recorded activity/card model,
+  not evidence for adding submission or origin gates to native end events.
+- Official task-notification documentation describes ordinary background Bash,
+  Monitor, subagent and automatically backgrounded MCP completion. Exceptional
+  foreground tool-result ordering after a result remains unproven. If a late
+  tool result loses its cached metadata, the current display still emits it
+  with a generic name and null arguments; settlement is a separate concern.
+- UUID-less interrupt artifacts were observed on 2.1.231 for an explicit
+  cancelled input. Newer error-UUID echo documentation cannot be applied
+  retroactively. The corresponding 2.1.263 interruption ordering has not been
+  measured; the comments' proposed later second result is not established by
+  the available captures.
+
+The old capability tri-state mutation and unknown-state admission guard were
+identified as avoidable compatibility changes. The replacement must implement
+native admission coherently; it need not preserve those branches or reapply
+their suggested edits mechanically. The exported session seam is now explicitly
+in the approved replacement boundary, with a breaking extension note required.
+
+Sources: [official TypeScript reference](https://code.claude.com/docs/en/agent-sdk/typescript),
+[official headless documentation](https://code.claude.com/docs/en/headless),
+installed CLI schema and private native captures. Raw captures are not committed.
+
+## Resident-session replacement verification (2026-09-07)
+
+- Baseline: `6acc6d28`; PR base remains `2575e056`.
+- Development approval and the superseded model are recorded in [rulings](rulings.md).
+- Current solution: [resident-session input and settlement](technical-design/session-submissions.md).
+- Implementation and TeamLeader pre-review: complete. The current replacement
+  uses one unanswered-request table in RPC and no aggregate execution-window
+  promise, drainage gate, runtime queue or initial/steer execution split.
+- Scoped developer gates passed: 12 test files, 205 cases. The TeamLeader then
+  ran full-workspace Rush build, lint, test and typecheck:tests sequentially; all
+  passed. Test warnings were expected stderr from exercised failure paths. The
+  real Codex integration tests also ran; no live-skip variable was used.
+- Existing pure/fold/queue native captures replayed through the replacement RPC
+  successfully. This is producer-trace replay, distinct from the fresh live
+  measurements below.
+- Independent workflow review: not started and omitted at the operator's
+  14:35 instruction; see [ruling R3](rulings.md#r3-publish-the-pr-link-and-omit-the-workflow-review).
+  Earlier review conclusions certify their original revisions, not this rewrite.
+
+### Fresh real-provider/Core measurements
+
+Claude Code 2.1.263 ran in three isolated resident sessions with the production
+provider and real Core completion-delivery policy. The recipient was in memory;
+no production chat or running agent was used. Each scenario accepted a final
+ordinary input through the same process and then stopped cleanly.
+
+| Scenario | Native results / native ends | Delivered completions | Result |
+| --- | --- | --- | --- |
+| Pure background follow-up | 3 / 3 | 2: initial and subsequent input | Background result settled no request and caused no extra delivery. |
+| Background plus two folded steers | 3 / 3 | 3: initial, shared steer answer, subsequent input | Both steer submissions shared the same completion object; recipient received it once. |
+| Background plus queued input | 4 / 4 | 3: initial, queued answer, subsequent input | The queued request received its own answer, not the earlier background result. |
+
+Private raw stdout, protocol-event captures and reports were retained separately
+from the earlier repair evidence. They are not committed. These measurements
+prove the observed scenarios, not all possible interruption or tool-result orders.
+
+### Structural and capability account
+
+Replacement relative to `6acc6d28`: nine source paths (six modified, one added,
+two deleted) and six test paths. The complete PR relative to `2575e056` changes
+ten source paths (seven modified, one added, two deleted) and eight test/fixture
+paths. The package's source file count changes from 29 to 28.
+
+| Source | Responsibility and reason |
+| --- | --- |
+| `rpc.ts` | One request table, native admission, observed consumption and direct per-request settlement; deletes `PendingTurn` and aggregate drainage. |
+| `runtime.ts` | Resident session, persisted identity/status and stop/admission convergence; deletes request-window queue/readiness and group cleanup. |
+| `runtime-session.ts` | Create one immutable completion, validating pinned identity and structured output, before sharing it with answered requests. |
+| `runtime-activity.ts` (added) | Preserve the independent native activity projection from the deleted settlement module. |
+| `runtime-submissions.ts` (deleted) | Remove `ActiveTurn`, the second request registry and runtime-side settlement ownership. |
+| `admission-classify.ts` (deleted) | Remove error classification tied to the deleted steer-only path. |
+| `supervisor.ts` | Forward unified submission and propagate actual child-exit/idle failure causes. |
+| `types.ts` | Replace the Claude-specific window extension seam with submission admission and settlement; retain native observation callbacks. |
+| `stream.ts` | Earlier PR repair retained resident aggregation reset boundaries and corrected UUID semantics; unchanged by this replacement. |
+| `config.ts` | Remove the stale queue comment; configuration and timeout policy are unchanged. |
+
+| Preserved capability | Current owner and evidence |
+| --- | --- |
+| Parent completion routing | Unchanged Core policy; fresh live probes check delivery counts and shared identity. |
+| Fold, queue, early result, identical text | RPC regressions assert observed settlements and object identity; background tests run actual runtime plus RPC. |
+| Cancellation and subsequent input | RPC/background regressions distinguish queued cancellation from consumed work, clear cancelled text and preserve unrelated requests. |
+| Stop and process failure | Runtime/supervisor regressions cover pending admission, early exit, state-write failure and late callback suppression. |
+| Native display events | Activity tests preserve text/tool filtering and one end per result independently of requests; cancellation reports its interrupted boundary. |
+| Continuity, state fencing, MCP, skills, config, Remote Control, cold reads, structured output | Existing owners retained; source/caller review plus corresponding package suites and full test typecheck passed. |
+
+Test changes were reviewed against the retained product contract and new session
+seam. Refusal/discard fails its own request immediately, cancellation stops its
+own request, and first input waits for native admission just like subsequent
+input. No replacement test requires aggregate terminal drainage. Compatibility
+fixtures remain labeled as such; they are not claimed as current native traces.
+
+### Remaining evidence boundaries
+
+- `command_lifecycle` is an internal CLI seam, not a stable documented SDK
+  contract. Real background folds require consumption evidence because the
+  observed result omits both UUID echo fields.
+- Missing-start plus matching-UUID sequences retain deterministic compatibility
+  coverage. No observed lifecycle-capable prompt lacks both consumption
+  evidence and matching result UUID; the implementation does not guess owners.
+- Cancellation/Remote Control interleaving and exceptional tool-result order
+  have no fresh live probe. Their regression tests do not close that evidence gap.
+- Genuine outstanding-request idle failure still reaps the process at the
+  configured deadline. Pure background work with no pending request has no timer.
+- PR CI is a separate delivery gate; local success does not claim remote CI.

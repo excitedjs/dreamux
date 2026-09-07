@@ -15,10 +15,8 @@ import {
   removeEmptyLogFile,
   SupervisedChild,
 } from '@excitedjs/dreamux-utils';
-import {
-  ClaudeCodeStreamRpc,
-  ClaudeSteerAdmissionError,
-} from './rpc.js';
+import { ClaudeCodeStreamRpc } from './rpc.js';
+import type { RuntimeAdmission } from '@excitedjs/dreamux-types';
 import type {
   ClaudeCodeSession,
   ClaudeCodeSessionSpec,
@@ -35,7 +33,7 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
   private startTask: Promise<void> | null = null;
   private stopTask: Promise<void> | null = null;
   private rpc: ClaudeCodeStreamRpc | null = null;
-  private onExitHandler: (() => void) | null = null;
+  private onExitHandler: ((error: Error) => void) | null = null;
 
   constructor(private readonly spec: ClaudeCodeSessionSpec) {}
 
@@ -86,7 +84,7 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     supervisor.onError((error) => {
       this.spec.log?.('warn', 'claude resident child error', error);
     });
-    supervisor.onExit(() => this.onChildExit());
+    supervisor.onExit(() => this.onChildExit(new Error('claude resident child exited')));
     // Publish group-termination authority before spawn resolves. If a later
     // setup step fails, runtime cleanup can still prove that no child remains.
     this.supervisor = supervisor;
@@ -103,9 +101,12 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
       throw new Error('claude resident child spawned without stdin');
     }
     const rpc = new ClaudeCodeStreamRpc(stdin, {
+      sessionId: this.spec.sessionId,
+      outputSchemaEnabled: this.spec.outputSchemaEnabled,
       turnTimeoutMs: this.spec.turnTimeoutMs,
       log: this.spec.log,
-      reapOnTimeout: () => {
+      reapOnTimeout: (error) => {
+        this.onChildExit(error);
         void this.stop().catch(() => {
           /* reap is best-effort */
         });
@@ -121,42 +122,16 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     if (this.spec.remoteControl) rpc.enableRemoteControl();
   }
 
-  async submitTurn(
+  submit(
     prompt: string,
     options: TurnSubmitOptions = {},
     commandUuid?: string,
-  ): Promise<void> {
-    if (this.stopRequested || this.stopped) {
-      return Promise.reject(new Error('claude resident session is stopped'));
-    }
+  ): Promise<RuntimeAdmission> {
+    if (this.stopRequested || this.stopped) return Promise.resolve({ status: 'stopped' });
     if (this.child === null || this.exited || this.rpc === null) {
-      return Promise.reject(new Error('claude resident child is not running'));
+      return Promise.resolve({ status: 'failed', error: new Error('claude resident child is not running') });
     }
-    return this.rpc.submitTurn(prompt, options, commandUuid);
-  }
-
-  async steerTurn(
-    prompt: string,
-    options: TurnSubmitOptions = {},
-    commandUuid?: string,
-  ): Promise<void> {
-    if (this.stopRequested || this.stopped) {
-      return Promise.reject(
-        new ClaudeSteerAdmissionError(
-          'failed',
-          'claude resident session is stopped before live steer',
-        ),
-      );
-    }
-    if (this.child === null || this.exited || this.rpc === null) {
-      return Promise.reject(
-        new ClaudeSteerAdmissionError(
-          'failed',
-          'claude resident child is not running before live steer',
-        ),
-      );
-    }
-    return this.rpc.steerTurn(prompt, options, commandUuid);
+    return this.rpc.submit(prompt, options, commandUuid);
   }
 
   async stop(): Promise<void> {
@@ -179,9 +154,7 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     // would fire `onExit` and degrade the runtime we are intentionally tearing
     // down.
     this.exited = true;
-    this.rpc?.failPending(
-      new Error('claude resident session stopped mid-turn'),
-    );
+    this.rpc?.stop();
     const supervisorAtStop = this.supervisor;
     const supervisorStop = supervisorAtStop?.stop() ?? null;
     void supervisorStop?.catch(() => undefined);
@@ -206,14 +179,14 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     }
   }
 
-  private onChildExit(): void {
+  private onChildExit(error: Error): void {
     if (this.exited) return;
     this.exited = true;
-    this.rpc?.failPending(new Error('claude resident child exited mid-turn'));
-    this.onExitHandler?.();
+    this.rpc?.fail(error);
+    this.onExitHandler?.(error);
   }
 
-  setOnExit(handler: () => void): void {
+  setOnExit(handler: (error: Error) => void): void {
     this.onExitHandler = handler;
   }
 }

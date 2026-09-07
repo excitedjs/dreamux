@@ -2,21 +2,24 @@
 
 ## Current state
 
-- Goal: Preserve completion-token routing while fixing Claude native background turns and requests steered into them.
+- Goal: Replace Claude request-window coordination with resident-session input and per-request settlement, preserving completion-token routing and background work.
 - State: `done`
 - Requirement: [Current requirement](/.agents/tasks/completion-routing/adopt-completion-token-routing/requirement.md)
-- Final solution: [Final solution](/.agents/tasks/completion-routing/adopt-completion-token-routing/technical-design/final.md)
+- Final solution: [Resident-session replacement](/.agents/tasks/completion-routing/adopt-completion-token-routing/technical-design/session-submissions.md)
+- Operator rulings: [Rulings](/.agents/tasks/completion-routing/adopt-completion-token-routing/rulings.md)
 - Verification: [Verification](/.agents/tasks/completion-routing/adopt-completion-token-routing/verification.md)
 - Solution review Issue: Not created — the operator approved the recorded final solution directly and waived further consultation (simplest path).
 - Blockers: None.
 - Accepted decision record: [accepted-decision.md](/.agents/tasks/completion-routing/adopt-completion-token-routing/accepted-decision.md) (backfilled 2026-09-01).
-- Next action: Update PR #384 with the reviewed cleanup and await its CI. Merge requires separate operator authority.
+- Next action: Push the completed replacement and update PR #384; wait for normal CI and send the link. Merge requires separate operator authority.
 - Historical test replacement inventory (completed in PR #344; see verification): claude-code `rpc/runtime-activity/session/stream/transcript.test.ts`; codex `turn-manager.test.ts`; core `agent-runtime-provider`, `claude-code-live`, `claude-code-runtime`, `codex-completion`, `codex-live`, `core-event-owner-publishers`, `dispatcher-collaboration-space`, `entity-turn`, `external-runtime-parity`, `team-collection-read-path`, `team-scheduler`, `teammate-service`, `workflow-service` tests plus `helpers/fake-runtime`, `helpers/fake-team-runtime`, `helpers/runtime-turn`, `fixtures/external-runtime-provider`; types `fixtures.test.ts`, `root-exports.test.ts`, `fixtures/external-provider.ts`. Retained consumer suites (`team-dissolve-*`, `team-mcp-dissolve-boundary`, `collaboration-space-repo-close`, and all untouched files) compile again once the shared helpers are restored; the re-coverage stage must restore every deleted contract without weakening it.
 - Related tasks: None.
 
 ## Development approval
 
 - Status: Granted.
+- Current approval: 2026-09-07 13:45 local time, explicitly authorizing implementation of the resident-session replacement described in the bound conversation. See [ruling R2](rulings.md#r2-implement-the-replacement).
+- Current boundary: Claude provider input, native result attribution and request settlement; associated tests, package extension documentation, release notes and owning knowledge. Core and neutral runtime contracts remain unchanged. The previous development approval below records the original PR #344 delivery.
 - Source: Operator instruction via the Team's bound channel, 2026-08-25 — implement the recorded solution as one PR, with a prescribed six-step process (task record; delete invalidated unit tests; one codex developer, code only; two independent reviewers checking the implementation against the approved architecture; batch multi-agent unit-test re-coverage on sonnet; open the PR).
 - Approved implementation boundary: `packages/dreamux-types` runtime contract, `packages/dreamux` core completion-router and teammate-service wiring, `packages/agent-runtime/claude-code` settlement/rpc/stream/transcript-completion paths, `packages/agent-runtime/codex` turn-manager, associated tests and Rush change files. No other provider, no web/platform surface, no channel-facing telemetry projection.
 
@@ -90,3 +93,35 @@
   Product/provider domain owners, neutral contracts, state/config maintenance,
   glossary and root routing need no additional changes: this cleanup preserves
   the repaired behavior and existing ownership, with no new concept or surface.
+
+## Resident-session replacement (2026-09-07)
+
+The operator rejected repeated local patching as the architectural standard and
+asked what a fresh implementation would require. The TeamLeader traced the
+retained request window through PR #344 and proposed replacing input-to-settlement
+coordination while preserving unrelated provider capabilities. The operator
+explicitly approved implementation of that proposal; see [rulings](rulings.md).
+
+The current implementation baseline is `6acc6d28`. Earlier repair, cleanup,
+alpha and review results above describe that earlier implementation, not the
+replacement. Its acceptance and evidence will be recorded separately.
+
+### Replacement knowledge closeout
+
+- Implementation, TeamLeader whole-diff pre-review, four full-workspace Rush
+  gates and three fresh real Claude/provider/Core scenarios passed. The
+  operator omitted workflow review before it started; no independent review of
+  this revision is claimed. See [verification](verification.md#resident-session-replacement-verification-2026-09-07).
+- Task requirement, solution and rulings: current. Provider-runtime owner and
+  package README: updated to unified submission and per-request settlement.
+  Historical COT source links preserve their prior revision and identify the
+  current activity owner. The Rush breaking minor note describes the final
+  Claude-specific extension change and supersedes the earlier repair note.
+- Product catalog: N/A for additional replacement changes; the existing
+  background-work and completion-delivery entries remain satisfied.
+- Config/persisted-state maintenance: N/A; no shape, path, default, ownership or
+  meaning changes. `config.ts` changes only a stale comment.
+- Root routing, glossary and directory guidance: N/A; the existing task and
+  provider owner remain authoritative, without a new shared mechanism.
+- Complete PR source scope: ten paths, all in the Claude package. Core and
+  neutral runtime contracts are unchanged.

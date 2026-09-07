@@ -33,13 +33,15 @@ async function harness(onActivity?: (activity: RuntimeActivity) => void) {
     sessionFactory: (spec) => {
       createSession();
       let alive = false;
-      let onExit: (() => void) | undefined;
+      let onExit: ((error: Error) => void) | undefined;
       const sessionRpc = new ClaudeCodeStreamRpc(new Writable({
         write(chunk: Buffer, _encoding, callback) {
           writes.push(JSON.parse(chunk.toString()) as { uuid: string });
           callback();
         },
       }), {
+        sessionId: spec.sessionId,
+        outputSchemaEnabled: spec.outputSchemaEnabled,
         turnTimeoutMs: 5_000,
         reapOnTimeout: reap,
         onProtocolEvent: spec.onProtocolEvent,
@@ -47,18 +49,18 @@ async function harness(onActivity?: (activity: RuntimeActivity) => void) {
       rpc = sessionRpc;
       exitSession = () => {
         alive = false;
-        sessionRpc.failPending(new Error('native child exited'));
-        onExit?.();
+        const error = new Error('native child exited');
+        sessionRpc.fail(error);
+        onExit?.(error);
       };
       return {
         start: async () => { alive = true; },
-        submitTurn: (prompt, options, uuid) => sessionRpc.submitTurn(prompt, options, uuid),
-        steerTurn: (prompt, options, uuid) => sessionRpc.steerTurn(prompt, options, uuid),
+        submit: (prompt, options, uuid) => sessionRpc.submit(prompt, options, uuid),
         isAlive: () => alive,
         setOnExit: (handler) => { onExit = handler; },
         stop: async () => {
           alive = false;
-          sessionRpc.failPending(new Error('session stopped'));
+          sessionRpc.stop();
         },
       };
     },
@@ -115,7 +117,7 @@ const assistant = (text: string): Record<string, unknown> => ({
 });
 
 describe('resident background turns and submitted commands', () => {
-  it('publishes background text, tools, compaction and end after request drainage, then serves another input', async () => {
+  it('publishes background text, tools, compaction and end without pending requests, then serves another input', async () => {
     const h = await harness();
     h.activity.length = 0;
     h.emit(assistant('background work'), {
@@ -219,7 +221,8 @@ describe('resident background turns and submitted commands', () => {
     expect(aSettled).toHaveBeenCalledWith({
       kind: 'completion', completion: { status: 'completed', resultText: 'A answer' },
     });
-    expect(bSettled).not.toHaveBeenCalled();
+    if (state === 'queued') expect(bSettled).not.toHaveBeenCalled();
+    else expect(bSettled).toHaveBeenCalledWith({ kind: 'failed', error: expect.any(Error) });
     const aToken = await h.completion(a);
     h.lifecycle(aUuid, 'completed');
 
@@ -233,7 +236,7 @@ describe('resident background turns and submitted commands', () => {
       expect(bToken).toEqual({ status: 'completed', resultText: 'B answer' });
       expect(bToken).not.toBe(aToken);
     } else {
-      await expect(b.settled).resolves.toEqual({ kind: 'stopped' });
+      await expect(b.settled).resolves.toMatchObject({ kind: 'failed' });
     }
     expect(h.reap).not.toHaveBeenCalled();
   });
@@ -280,7 +283,7 @@ describe('resident background turns and submitted commands', () => {
     expect(h.reap).not.toHaveBeenCalled();
   });
 
-  it('does not give a background result to an admitted input whose RPC write has not started', async () => {
+  it('does not give a background result to input awaiting its native write', async () => {
     let admission: Promise<RuntimeAdmission> | undefined;
     const h = await harness((activity) => {
       if (activity.kind === 'assistant.message' && activity.text === 'admit B now') {
@@ -288,7 +291,7 @@ describe('resident background turns and submitted commands', () => {
       }
     });
     h.emit(assistant('admit B now'), { type: 'result', subtype: 'success', result: 'background answer' });
-    // Activity delivery admitted B synchronously, while its RPC write is queued.
+    // Activity delivery called submit synchronously; the native write awaits the session.
     expect(h.writes).toHaveLength(1);
     const accepted = await admission;
     if (accepted?.status !== 'submitted') throw new Error('expected B admission');
@@ -305,17 +308,17 @@ describe('resident background turns and submitted commands', () => {
     expect(h.reap).not.toHaveBeenCalled();
   });
 
-  it.each(['drained', 'queued', 'started'])('discards cancelled text when the next input is %s, without losing that input', async (nextState) => {
+  it.each(['later', 'queued', 'started'])('discards cancelled text when the next input is %s, without losing that input', async (nextState) => {
     const h = await harness();
     const a = await h.submit('A');
     const aUuid = h.writes[1]!.uuid;
     h.lifecycle(aUuid, 'started');
     h.emit(assistant('cancelled answer'));
-    const bBeforeCancel = nextState === 'drained' ? null : await h.submit('B');
+    const bBeforeCancel = nextState === 'later' ? null : await h.submit('B');
     if (bBeforeCancel !== null) h.lifecycle(h.writes[2]!.uuid, nextState);
     h.lifecycle(aUuid, 'cancelled');
-    if (nextState === 'drained') {
-      await expect(a.settled).resolves.toMatchObject({ kind: 'failed' });
+    if (nextState === 'later') {
+      await expect(a.settled).resolves.toMatchObject({ kind: 'stopped' });
       await tick();
     }
     const b = bBeforeCancel ?? await h.submit('B');
@@ -324,7 +327,7 @@ describe('resident background turns and submitted commands', () => {
     h.result('');
     h.lifecycle(bUuid, 'completed');
     expect(await h.completion(b)).toEqual({ status: 'completed', resultText: null });
-    if (nextState !== 'drained') await expect(a.settled).resolves.toEqual({ kind: 'stopped' });
+    if (nextState !== 'later') await expect(a.settled).resolves.toEqual({ kind: 'stopped' });
     expect(h.reap).not.toHaveBeenCalled();
     expect(h.createSession).toHaveBeenCalledTimes(1);
   });
@@ -341,7 +344,7 @@ describe('resident background turns and submitted commands', () => {
     h.result('', { user_message_uuid: aUuid });
     h.lifecycle(aUuid, 'completed');
     expect(await h.completion(a)).toEqual({ status: 'completed', resultText: 'running answer' });
-    await expect(b.settled).resolves.toEqual({ kind: 'stopped' });
+    await expect(b.settled).resolves.toMatchObject({ kind: 'failed' });
     expect(h.reap).not.toHaveBeenCalled();
   });
 
@@ -352,11 +355,11 @@ describe('resident background turns and submitted commands', () => {
     h.exitSession();
     await tick();
     expect(h.activity.filter((event) => event.kind === 'turn.ended')).toEqual([
-      expect.objectContaining({ status: 'failed', reason: 'claude resident child exited' }),
+      expect.objectContaining({ status: 'failed', reason: 'native child exited' }),
     ]);
   });
 
-  it('reports only the request failure end when the exiting session owns an active request', async () => {
+  it('reports one failed native end and fails the request when its session exits', async () => {
     const h = await harness();
     const a = await h.submit('A');
     h.lifecycle(h.writes[1]!.uuid, 'started');
@@ -370,7 +373,7 @@ describe('resident background turns and submitted commands', () => {
     ]);
   });
 
-  it('reports the background exit when a new admission has not reached the session yet', async () => {
+  it('reports a background exit before write as failed admission, then resumes for the next input', async () => {
     let admission: Promise<RuntimeAdmission> | undefined;
     const h = await harness((event) => {
       if (event.kind === 'assistant.message' && event.text === 'admit before exit') {
@@ -381,18 +384,19 @@ describe('resident background turns and submitted commands', () => {
     h.activity.length = 0;
     h.emit(assistant('admit before exit'));
     expect(h.writes).toHaveLength(1);
-    const accepted = await admission;
-    if (accepted?.status !== 'submitted') throw new Error('expected A admission');
+    await expect(admission).resolves.toMatchObject({ status: 'failed' });
+    expect(h.writes).toHaveLength(1);
     await tick();
     expect(h.activity.filter((event) => event.kind === 'turn.ended')).toEqual([
-      expect.objectContaining({ status: 'failed', reason: 'claude resident child exited' }),
+      expect.objectContaining({ status: 'failed', reason: 'native child exited' }),
     ]);
+    const next = await h.submit('next input');
     expect(h.createSession).toHaveBeenCalledTimes(2);
     h.lifecycle(h.writes[1]!.uuid, 'started');
     h.emit({ type: 'system', subtype: 'init', capabilities: ['msg_lifecycle_v1'] });
     h.result('A answer', { user_message_uuid: h.writes[1]!.uuid });
     h.lifecycle(h.writes[1]!.uuid, 'completed');
-    expect(await h.completion(accepted.submission)).toMatchObject({ resultText: 'A answer' });
+    expect(await h.completion(next)).toMatchObject({ resultText: 'A answer' });
   });
 
   it('ignores late native protocol callbacks after stop', async () => {
@@ -406,7 +410,7 @@ describe('resident background turns and submitted commands', () => {
     expect(h.activity).toEqual(beforeLate);
   });
 
-  it('ignores an interrupt artifact after drainage and preserves queued work through cancellation', async () => {
+  it('ignores an interrupt artifact and preserves queued work through cancellation', async () => {
     const h = await harness();
     const artifact = { type: 'result', subtype: 'error_during_execution', is_error: true };
     h.emit(artifact);

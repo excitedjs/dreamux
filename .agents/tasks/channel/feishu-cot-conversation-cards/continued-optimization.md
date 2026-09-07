@@ -42,7 +42,14 @@ which shares this pull request but is a separate subject from card lifecycle.
   finding as it was raised and the shape as it was then delivered. See
   [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/README.md).)*
 - **Files:** [`/packages/agent-runtime/claude-code/src/runtime.ts`](/packages/agent-runtime/claude-code/src/runtime.ts),
-  [`/packages/agent-runtime/claude-code/src/runtime-submissions.ts`](/packages/agent-runtime/claude-code/src/runtime-submissions.ts)
+  [`runtime-submissions.ts` at the repair revision](https://github.com/excitedjs/dreamux/blob/6acc6d282d61387ce5e68739bd985c0b7fa50c10/packages/agent-runtime/claude-code/src/runtime-submissions.ts)
+
+Since this was recorded: on 2026-09-07 the operator approved replacing request
+windows with resident-session settlement. The deleted settlement module's
+activity projection now lives in
+[`runtime-activity.ts`](/packages/agent-runtime/claude-code/src/runtime-activity.ts).
+See the [current replacement design](/.agents/tasks/completion-routing/adopt-completion-token-routing/technical-design/session-submissions.md);
+the observations below describe the earlier implementation.
 
 ### What ships today
 

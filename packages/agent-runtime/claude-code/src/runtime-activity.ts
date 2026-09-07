@@ -1,45 +1,16 @@
-import { resultTextFromTurnOutcome } from './runtime-session.js';
+import { turnFailureMessage } from './runtime-session.js';
 import { toolDisplay } from './tool-display.js';
-import type { ClaudeCodeSession } from './supervisor.js';
 import type {
   ClaudeActivityLine,
   ClaudeProtocolEvent,
-  TurnOutcome,
 } from './types.js';
 import type {
   JsonValue,
   RuntimeActivity,
   AgentRuntimeActivitySink,
-  RuntimeCompletion,
-  RuntimeSubmission,
-  RuntimeSubmissionSettlement,
 } from '@excitedjs/dreamux-types';
 
-export interface SubmissionDeferred {
-  submission: RuntimeSubmission;
-  settle: (settlement: RuntimeSubmissionSettlement) => boolean;
-}
-
-/**
- * One resident execution window: the commands claude is serving together.
- *
- * It is not one native turn. A window is opened by an initial command and can
- * legally produce several sequential `result` boundaries — one native turn each
- * — as commands steered or queued into it run after the earlier ones were
- * answered.
- */
-export interface ActiveTurn {
-  initialCommandUuid: string;
-  submissions: Map<string, SubmissionDeferred>;
-  session: ClaudeCodeSession | null;
-  sessionReady: Promise<ClaudeCodeSession>;
-  resolveSession: (session: ClaudeCodeSession) => void;
-  rejectSession: (error: Error) => void;
-  steerQueue: Promise<void>;
-  generation: number;
-}
-
-/** Resident activity survives the drainage of any submitted command group. */
+/** Resident activity is independent of request admission and settlement. */
 export interface NativeActivityState {
   activitySequence: number;
   tools: Map<string, { name: string; arguments: JsonValue | null }>;
@@ -47,8 +18,6 @@ export interface NativeActivityState {
 
 export interface ProtocolEventContext {
   activity: NativeActivityState;
-  threadId: string | null;
-  outputSchemaEnabled: boolean;
   activitySink: AgentRuntimeActivitySink;
 }
 
@@ -81,34 +50,19 @@ function emitActivity(activity: RuntimeActivity, sink: AgentRuntimeActivitySink)
   sink(Object.freeze(activity));
 }
 
-export function createRuntimeSubmission(): SubmissionDeferred {
-  let resolve!: (settlement: RuntimeSubmissionSettlement) => void;
-  let settled = false;
-  const submission = Object.freeze({
-    settled: new Promise<RuntimeSubmissionSettlement>((value) => {
-      resolve = value;
-    }),
-  });
-  return {
-    submission,
-    settle(settlement) {
-      if (settled) return false;
-      settled = true;
-      resolve(settlement);
-      return true;
-    },
-  };
-}
-
 export function handleProtocolEvent(
-  active: ActiveTurn | null,
   event: ClaudeProtocolEvent,
   context: ProtocolEventContext,
 ): void {
   if (event.kind === 'command_lifecycle') return;
+  if (event.kind === 'interrupted') {
+    endNativeTurn('interrupted', null, context.activitySink);
+    context.activity.tools.clear();
+    return;
+  }
   if (event.kind === 'result') {
     // `result` is claude's native terminal, and the display line ends on it:
-    // the attribution, the completion and the settlements below are
+    // attribution, completion and request settlement are
     // push-back's work on the same fact, and none of them may change the end,
     // delay it, or withhold it.
     endNativeTurn(
@@ -117,61 +71,16 @@ export function handleProtocolEvent(
       context.activitySink,
     );
     context.activity.tools.clear();
-    if (active !== null) completeSubmittedGroup(active, event.commandUuids, event.outcome, context);
     return;
   }
   emitStreamActivity(event.line, context);
 }
 
-/** claude's own words for why its turn failed. */
-function turnFailureMessage(outcome: TurnOutcome): string {
-  return outcome.errors.join('; ') || outcome.subtype || 'claude turn failed';
-}
-
-function completeSubmittedGroup(
-  active: ActiveTurn,
-  commandUuids: readonly string[],
-  outcome: TurnOutcome,
-  context: ProtocolEventContext,
-): void {
-  if (commandUuids.length === 0) return;
-
-  let completion: RuntimeCompletion;
-  if (outcome.isError) {
-    completion = Object.freeze({
-      status: 'failed',
-      error: new Error(turnFailureMessage(outcome)),
-    });
-  } else {
-    try {
-      completion = Object.freeze({
-        status: 'completed',
-        resultText: resultTextFromTurnOutcome(
-          outcome,
-          context.threadId,
-          context.outputSchemaEnabled,
-        ),
-      });
-    } catch (error) {
-      completion = Object.freeze({
-        status: 'failed',
-        error: asError(error),
-      });
-    }
-  }
-  for (const uuid of commandUuids) {
-    active.submissions.get(uuid)?.settle({ kind: 'completion', completion });
-  }
-}
-
 /**
  * Put what claude said and did on this agent's activity stream.
  *
- * No submission is looked up. A window folds any number of commands into one
- * native turn, so naming one of them as the activity's owner was always a
- * guess — and when the guess failed, which it did for anything claude emitted
- * before a command's `started` lifecycle arrived, the fact was dropped
- * entirely. The agent is the subject, and it is always known.
+ * Activity belongs to the resident agent, including native background work
+ * that answers no explicit request. It needs no submission lookup.
  *
  * The envelope decides what a block means, not the block's own type. An
  * `assistant` envelope carries the model's words and its tool calls. A `user`
@@ -319,8 +228,4 @@ function toJsonValue(value: unknown): JsonValue | null {
   } catch {
     return String(value);
   }
-}
-
-function asError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
 }

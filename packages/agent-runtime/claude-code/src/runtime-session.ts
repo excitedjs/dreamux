@@ -1,4 +1,5 @@
-import type { TurnOutcome } from './supervisor.js';
+import type { RuntimeCompletion } from '@excitedjs/dreamux-types';
+import type { TurnOutcome } from './types.js';
 
 export function buildClaudeProcessEnv(
   injectEnv: Record<string, string> | undefined,
@@ -11,32 +12,38 @@ export function buildClaudeProcessEnv(
   };
 }
 
-export function resultTextFromTurnOutcome(
+/** One immutable completion per native result, shared by every answered request. */
+export function completionFromTurnOutcome(
   outcome: TurnOutcome,
   expectedSessionId: string | null,
   requiresStructuredOutput: boolean,
-): string | null {
+): RuntimeCompletion {
+  let error: Error | null = null;
   if (
     outcome.sessionId !== null &&
     outcome.sessionId !== '' &&
     outcome.sessionId !== expectedSessionId
   ) {
-    throw new Error(
+    error = new Error(
       'claude-code returned a session id that differs from the pinned native session',
     );
-  }
-  if (outcome.isError) {
-    const detail =
-      outcome.errors.length > 0
-        ? outcome.errors.join('; ')
-        : (outcome.subtype ?? 'unknown error');
-    throw new Error(`claude turn returned an error result: ${detail}`);
-  }
-  if (requiresStructuredOutput && !outcome.hasStructuredOutput) {
-    throw new Error(
+  } else if (outcome.isError) {
+    error = new Error(turnFailureMessage(outcome));
+  } else if (requiresStructuredOutput && !outcome.hasStructuredOutput) {
+    error = new Error(
       'claude turn did not return structured_output for a ' +
         '--json-schema session',
     );
   }
-  return outcome.text === '' ? null : outcome.text;
+  return error !== null
+    ? Object.freeze({ status: 'failed', error })
+    : Object.freeze({
+        status: 'completed',
+        resultText: outcome.text === '' ? null : outcome.text,
+      });
+}
+
+/** Claude's own explanation for a failed native result. */
+export function turnFailureMessage(outcome: TurnOutcome): string {
+  return outcome.errors.join('; ') || outcome.subtype || 'claude turn failed';
 }

@@ -1,5 +1,13 @@
 # Final solution: provider completion token + core dedup routing
 
+## Since this was recorded (2026-09-07)
+
+The operator approved replacing the retained Claude request-window coordination.
+The current Claude implementation plan is [resident-session input and per-request
+settlement](session-submissions.md). Its removal account supersedes instructions
+below to preserve command drainage or the window-oriented custom session seam.
+The original Core completion-token design and retained product behavior remain.
+
 ## Model
 
 Separate three concepts the interim model conflated:

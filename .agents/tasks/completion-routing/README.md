@@ -13,4 +13,4 @@
 ## Child Scopes
 
 ## Tasks
-- [Adopt provider completion token routing and settlement](/.agents/tasks/completion-routing/adopt-completion-token-routing/README.md) — `done`: Repair Claude background-turn and steer settlement while preserving the original completion-token contract. Originally: replace the interim PR #342 settlement gate with the completion-token architecture: provider-owned logical completion identity, core at-most-once ordered completion delivery, and the Last completion boundary fix.
+- [Adopt provider completion token routing and settlement](/.agents/tasks/completion-routing/adopt-completion-token-routing/README.md) — `done`: Replace Claude request-window coordination with resident-session input and per-request settlement, retaining the background-turn repair and Core completion-token contract. Original delivery: PR #344.

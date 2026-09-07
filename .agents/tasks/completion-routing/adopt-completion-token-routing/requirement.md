@@ -1,5 +1,40 @@
 # Requirement
 
+Current implementation requirement: [Resident-session replacement](#resident-session-replacement-2026-09-07).
+Earlier deliveries below remain history except for the product behavior retained
+explicitly by that section.
+
+## Resident-session replacement (2026-09-07)
+
+The operator approved [the replacement proposal](technical-design/session-submissions.md)
+after evaluating the provider as a fresh implementation; see [rulings](rulings.md).
+This supersedes the implementation choice to preserve request-window drainage
+in the earlier repair, while retaining its background and completion-routing
+product requirements.
+
+- Native background work continues independently of Dreamux requests. Its
+  activity and native end remain visible, and an unrelated result neither
+  answers a queued request nor tears the process down.
+- Every accepted request receives its actual answer or an explicit failure or
+  stopped settlement. Folded requests share one completion; queued requests
+  wait for distinct results. Core keeps its existing recipient and dedup rules.
+- Remove the artificial request window, its aggregate drainage and the separate
+  initial/steer execution paths. Work is organized around the resident session,
+  pending requests and observed native results. No renamed replacement window.
+- Preserve cancellation, native write admission, prompt ordering, configured
+  idle failure, stop/admission convergence, process supervision, continuity,
+  state fencing, structured output, MCP, skills, Remote Control and cold reads.
+- Change only Claude input/settlement implementation and associated tests and
+  documentation. The exported Claude session seam may change to remove the
+  window; record that breaking extension change. Core and the neutral runtime
+  ABI do not change.
+- Judge the result by deleted concepts and preserved capabilities, then
+  deterministic and real-provider verification, the four Rush gates and
+  knowledge closeout. The operator subsequently omitted the workflow review
+  in [ruling R3](rulings.md#r3-publish-the-pr-link-and-omit-the-workflow-review);
+  TeamLeader whole-diff pre-review remains recorded. The existing PR remains the
+  delivery surface. Do not poll TeamMate results.
+
 ## Initial request
 
 Rework turn settlement and completion delivery on top of `next` (head
