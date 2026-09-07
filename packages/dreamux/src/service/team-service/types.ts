@@ -11,10 +11,6 @@ import type {
   CompletionDeliveryPolicy,
   CompletionInitiator,
 } from '../completion-router/index.js';
-import type {
-  AgentEntityRuntimeStatus,
-  AgentEntitySubmissionResult,
-} from '../agent-entity/types.js';
 import type { AgentNameRegistry } from '../agent-entity/identity-store.js';
 import type { ClosedListener } from '../closed-fact.js';
 import type { DispatcherCoreEventPublisher } from '../dispatcher-core-events/index.js';
@@ -51,10 +47,6 @@ export interface TeamSchedulerLifecycle {
 export interface TeamServiceCreateOutput<Service> {
   service: Service;
   schedulerLifecycle: TeamSchedulerLifecycle;
-  leaderResult: {
-    teammate: AgentEntityRuntimeStatus;
-    submission: AgentEntitySubmissionResult | null;
-  };
 }
 
 /**

@@ -61,10 +61,13 @@ Affected-package lint and test typechecking, the deterministic Dreamux rerun,
 full-repository gates, and independent implementation review remain for the
 Draft PR follow-up.
 
-## Known limitations
+## Post-merge compact-layout verification
 
-- No live Feishu client send was performed after implementation. The selected
-  Card 2.0 component vocabulary was rendered and selected during requirement
-  clarification, and production shape tests now lock its meaningful details.
+- The three cards were exported from the compiled production constructors and
+  sent to the operator's Feishu conversation. The operator rejected the
+  zero-spacing experiment as too dense, then accepted the final `heading-4`,
+  restored 8px group rhythm, compact panels, and orange dissolution header.
+- Production payload tests pin the accepted typography, spacing, header color,
+  fact order, and dynamic-value treatment.
 - Card 2.0 requires Feishu client 7.20 or newer, an operator-accepted baseline
   recorded in the approved requirement.

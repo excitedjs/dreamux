@@ -1,8 +1,4 @@
-import type {
-  // The published `team.create` contract; the Team domain returns it directly
-  // rather than defining a second creation-result shape.
-  TeamCreateResult as TeamCreateRequestResult,
-} from '@excitedjs/dreamux-types';
+import type { TeamSummary } from '@excitedjs/dreamux-types';
 
 import type { WorktreeManager } from '../worktree/manager.js';
 import { requireLifecycleText } from '../agent-entity/types.js';
@@ -11,13 +7,10 @@ import { TeamStore } from './store.js';
 import type {
   TeamCreateInput,
   TeamCreateAtNameInput,
-  TeamCreateResult,
   TeamHistoryQuery,
   TeamHistoryResult,
-  TeamListRow,
   TeamRecord,
   TeamCollectionOptions,
-  TeamSummary,
 } from './types.js';
 import { validateTeamId } from './types.js';
 import { allocateConcreteNameAsync } from '../name-allocator.js';
@@ -126,7 +119,7 @@ export class TeamCollection {
     requestId: string;
     payloadHash: string;
     options: TeamCreateInput;
-  }): Promise<TeamCreateRequestResult> {
+  }): Promise<TeamSummary> {
     return this.createRequestLifecycle.run(input.requestId, async () => {
       const { namePrefix, ...options } = input.options;
       const accepted = await this.acceptedRequest(input.requestId);
@@ -137,19 +130,10 @@ export class TeamCollection {
               'different team.create payload; use a new request_id for a new Team',
           );
         }
-        // The record is the acceptance point, so it alone answers the replay. A
-        // hard process loss between publishing it and the leader identity
-        // becoming durable leaves a truthful `starting` Team; materializing it
-        // finishes creation through the ordinary TeamMate-owned leader path.
-        return {
-          status: accepted.status === 'closed' ? 'closed' : 'existing',
-          team_name: accepted.team_id,
-          leader_name: accepted.leader_name,
-          leader_agent_runtime: accepted.leader_agent_runtime,
-          runtime_cwd: accepted.runtime_cwd,
-        };
+        // Read the accepted Team without materializing it or resubmitting work.
+        return this.summaryFromRecord(accepted);
       }
-      const outcome: { created: TeamCreateResult | null } = { created: null };
+      const outcome: { created: TeamService | null } = { created: null };
       const teamName = await allocateConcreteNameAsync({
         kind: 'team',
         base: namePrefix,
@@ -183,13 +167,7 @@ export class TeamCollection {
             `${JSON.stringify(teamName)} without publishing a Team record`,
         );
       }
-      return {
-        status: 'created',
-        team_name: created.team_name,
-        leader_name: created.leader_name,
-        leader_agent_runtime: created.leader_agent_runtime,
-        runtime_cwd: created.runtime_cwd,
-      };
+      return created.status();
     });
   }
 
@@ -209,23 +187,6 @@ export class TeamCollection {
   }
 
   /**
-   * Create one Team at an exact name the caller chose.
-   *
-   * Publication of the Team record decides the outcome: a name a valid record
-   * already occupies fails here rather than resolving to some other Team. Use
-   * {@link createAtCandidate} when a name allocator should rotate instead.
-   */
-  async create(input: TeamCreateAtNameInput): Promise<TeamCreateResult> {
-    const created = await this.createAtCandidate(input);
-    if (created === null) {
-      throw new Error(
-        `Team ${JSON.stringify(input.name)} already exists`,
-      );
-    }
-    return created;
-  }
-
-  /**
    * Create one Team at a candidate name, or report the candidate as taken.
    *
    * `null` means a valid Team record occupies that name — the candidate is
@@ -233,12 +194,16 @@ export class TeamCollection {
    */
   private async createAtCandidate(
     input: TeamCreateAtNameInput,
-  ): Promise<TeamCreateResult | null> {
+  ): Promise<TeamService | null> {
     return this.runtimes.create(input, validateTeamId(input.name));
   }
 
-  async list(): Promise<TeamListRow[]> {
-    return this.reads.list();
+  async list(): Promise<TeamSummary[]> {
+    const summaries: TeamSummary[] = [];
+    for (const record of await this.store.list()) {
+      summaries.push(await this.summaryFromRecord(record));
+    }
+    return summaries;
   }
 
   async history(
@@ -294,8 +259,13 @@ export class TeamCollection {
    */
   async summary(teamId: string): Promise<TeamSummary> {
     const record = await this.mustTeam(validateTeamId(teamId));
+    return this.summaryFromRecord(record);
+  }
+
+  /** One source selection for status, list, and accepted-request replay. */
+  private async summaryFromRecord(record: TeamRecord): Promise<TeamSummary> {
     const live = this.runtimes.live(record.team_id);
-    return live === null ? this.reads.summary(record) : live.status();
+    return live === null ? this.reads.summary(record) : live.status(record);
   }
 
   /**

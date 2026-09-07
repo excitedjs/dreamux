@@ -222,7 +222,7 @@ describe('TeamService.submitToLeader: the leader starts inside the submission', 
     }]);
     // The Team is still the recoverable tail of its creation: its leader has
     // not taken a turn.
-    expect(team.service.view().status).toBe('starting');
+    expect((await team.service.status()).status).toBe('starting');
   });
 
   it('marks a starting Team running once its leader has taken a turn', async () => {
@@ -234,7 +234,7 @@ describe('TeamService.submitToLeader: the leader starts inside the submission', 
     });
 
     expect(admission.status).toBe('submitted');
-    expect(team.service.view().status).toBe('running');
+    expect((await team.service.status()).status).toBe('running');
     // The runtime owns the end of an accepted turn; Core ends nothing here.
     expect(team.seen).toEqual(['input:first work for the leader']);
   });

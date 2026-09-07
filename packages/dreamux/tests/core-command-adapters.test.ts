@@ -17,6 +17,7 @@ import {
   channelContext,
   createCommandHarness,
   createHarnessChannelInvoker,
+  harnessTeamSummary,
   hostileDeepPayload,
   mintFakeMcpServer,
   startHarnessAdminSocket,
@@ -87,8 +88,9 @@ describe('adapter equivalence — one representative Command per namespace', () 
   });
 
   it('team.list: identical result via both adapters', async () => {
+    const summary = harnessTeamSummary({ team_name: 'alpha' });
     const harness = createCommandHarness({
-      dispatcherOverrides: { listTeams: async () => [{ team_id: 'alpha' }] },
+      dispatcherOverrides: { listTeams: async () => [summary] },
     });
     admin = await startHarnessAdminSocket(harness);
     const lease = createHarnessChannelInvoker(harness);
@@ -98,7 +100,7 @@ describe('adapter equivalence — one representative Command per namespace', () 
 
     expect(viaAdmin.ok).toBe(true);
     expect((viaAdmin as { result: unknown }).result).toEqual(viaChannel);
-    expect((viaChannel as { teams: unknown[] }).teams).toEqual([{ team_id: 'alpha' }]);
+    expect((viaChannel as { teams: unknown[] }).teams).toEqual([summary]);
   });
 
   it('teammate.list: identical result via both adapters', async () => {

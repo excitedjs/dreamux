@@ -26,7 +26,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { JsonValue } from '@excitedjs/dreamux-types';
 
-import { teamStatus } from './helpers/team-status.js';
+import { teamSummary } from './helpers/team-status.js';
 
 import { FeishuRouting } from '../src/routing/index.js';
 import { FeishuRoutingStore } from '../src/routing/store.js';
@@ -93,7 +93,7 @@ async function harness(readStatus?: (teamName: string) => Promise<JsonValue>): P
       err.code = 'TEAM_NOT_FOUND';
       throw err;
     }
-    return teamStatus(teamName, status);
+    return teamSummary(teamName, status);
   };
 
   const notify = (
@@ -145,7 +145,7 @@ describe('FeishuBindingOperations — manual bind synchronous validation', () =>
     const pending = h.ops.bindChannel({ target: { chatId: 'chat-a' }, teamName: 'team-a', display: null });
     expect(bind).not.toHaveBeenCalled();
     expect(h.notifications).toEqual([]);
-    resolveStatus(teamStatus('team-a'));
+    resolveStatus(teamSummary('team-a'));
     await pending;
     expect(bind).toHaveBeenCalledOnce();
     const card = JSON.stringify(h.notifications[0]!.card);
@@ -156,7 +156,10 @@ describe('FeishuBindingOperations — manual bind synchronous validation', () =>
   });
 
   it('refuses a Team whose stored leader view is missing before binding or announcing', async () => {
-    const h = await harness(async () => ({ ...teamStatus('team-a'), leader: null }));
+    const h = await harness(async () => ({
+      ...teamSummary('team-a'),
+      leader_state: null,
+    }));
     await expect(h.ops.bindChannel({ target: { chatId: 'chat-a' }, teamName: 'team-a', display: null }))
       .rejects.toThrow('no complete TeamLeader runtime context');
     expect(h.routing.bindingFor(chatTarget('chat-a', 'group'))).toBeUndefined();

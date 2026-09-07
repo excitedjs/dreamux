@@ -13,6 +13,9 @@ import {
   feishuCardField as line,
 } from './feishu-card.js';
 
+const BODY_PADDING = '8px 12px 12px 12px';
+const GROUP_MARGIN = '0px 0px 8px 0px';
+
 export function bindingBoundCard(input: {
   target: FeishuTarget;
   display: string | null;
@@ -36,12 +39,12 @@ export function bindingBoundCard(input: {
     },
     body: {
       direction: 'vertical',
-      padding: '12px 12px 20px 12px',
+      padding: BODY_PADDING,
       elements: [
-        { ...textBlock(input.teamName, 'heading-2', 'green'), margin: '0px 0px 2px 0px' },
+        { ...textBlock(input.teamName, 'heading-4', 'green'), margin: '0px' },
         {
-          ...textBlock(`Bound to ${targetDisplay} · ${binding}`, 'notation', 'grey'),
-          margin: '0px 0px 12px 0px',
+          ...textBlock(`Bound to ${targetDisplay} · ${binding}`, 'normal', 'grey'),
+          margin: GROUP_MARGIN,
         },
         factRow([
           ['Target', targetDisplay],
@@ -78,12 +81,12 @@ export function bindingUnboundCard(input: {
     },
     body: {
       direction: 'vertical',
-      padding: '12px 12px 20px 12px',
+      padding: BODY_PADDING,
       elements: [
-        { ...textBlock(input.teamName, 'heading-2'), margin: '0px 0px 2px 0px' },
+        { ...textBlock(input.teamName, 'heading-4'), margin: '0px' },
         {
-          ...textBlock(`Unbound from ${targetDisplay}`, 'notation', 'grey'),
-          margin: '0px 0px 12px 0px',
+          ...textBlock(`Unbound from ${targetDisplay}`, 'normal', 'grey'),
+          margin: GROUP_MARGIN,
         },
         factRow([
           ['Target', targetDisplay],
@@ -113,17 +116,17 @@ export function teamDissolvedCard(input: {
       summary: { content: `Team ${input.teamName} dissolved; routes removed` },
     },
     header: {
-      ...routeHeader('Dreamux team dissolved', 'grey', 'Team dissolved', 'orange'),
+      ...routeHeader('Dreamux team dissolved', 'orange', 'Team dissolved', 'orange'),
       icon: { tag: 'standard_icon', token: 'warning_outlined', color: 'orange' },
     },
     body: {
       direction: 'vertical',
-      padding: '12px 12px 20px 12px',
+      padding: BODY_PADDING,
       elements: [
-        { ...textBlock(input.teamName, 'heading-2', 'orange'), margin: '0px 0px 2px 0px' },
+        { ...textBlock(input.teamName, 'heading-4', 'orange'), margin: '0px' },
         {
-          ...textBlock('Team closed; routes removed automatically', 'notation', 'grey'),
-          margin: '0px 0px 12px 0px',
+          ...textBlock('Team closed; routes removed automatically', 'normal', 'grey'),
+          margin: GROUP_MARGIN,
         },
         factRow([
           ['Target', input.display ?? describeTarget(input.target)],
@@ -160,7 +163,7 @@ export function bindingRouteEndedCard(input: {
 
 function routeHeader(
   title: string,
-  template: 'green' | 'grey',
+  template: 'green' | 'grey' | 'orange',
   status: string,
   color: 'green' | 'neutral' | 'orange',
 ) {
@@ -173,7 +176,7 @@ function routeHeader(
 
 function textBlock(
   content: string,
-  textSize: 'heading-2' | 'normal' | 'notation',
+  textSize: 'heading-4' | 'normal',
   textColor: 'default' | 'grey' | 'green' | 'orange' = 'default',
   textAlign: 'left' | 'center' = 'left',
 ) {
@@ -188,16 +191,16 @@ function factRow(facts: Array<[string, string]>) {
     tag: 'column_set',
     flex_mode: 'none',
     horizontal_spacing: '8px',
-    margin: '0px 0px 12px 0px',
+    margin: GROUP_MARGIN,
     columns: facts.map(([label, value]) => ({
       tag: 'column',
       width: 'weighted',
       weight: 1,
       background_style: 'grey-50',
-      padding: '8px 8px 8px 8px',
-      vertical_spacing: '2px',
+      padding: '6px 8px 6px 8px',
+      vertical_spacing: '0px',
       elements: [
-        textBlock(label, 'notation', 'grey', 'center'),
+        textBlock(label, 'normal', 'grey', 'center'),
         textBlock(value, 'normal', 'default', 'center'),
       ],
     })),
@@ -214,8 +217,8 @@ function detailPanel(labelMarkdown: string, value: string, background: string) {
       width: 'weighted',
       weight: 1,
       background_style: background,
-      padding: '12px 12px 12px 12px',
-      vertical_spacing: '4px',
+      padding: '8px 10px 8px 10px',
+      vertical_spacing: '2px',
       elements: [
         { tag: 'markdown', content: labelMarkdown },
         textBlock(value, 'normal'),

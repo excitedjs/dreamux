@@ -25,7 +25,7 @@
 import type {
   DreamuxLogger,
   JsonValue,
-  TeamCreateResult,
+  TeamSummary,
 } from '@excitedjs/dreamux-types';
 
 import type { FeishuRouting } from './routing/index.js';
@@ -199,7 +199,7 @@ export class FeishuProvisioning {
 
   private async createTeam(
     input: ProvisioningRequest,
-  ): Promise<TeamCreateResult> {
+  ): Promise<TeamSummary> {
     const { space, target } = input;
     return (await this.opts.invoke('team.create', {
       // The inbound Feishu message id, used bare: it is globally unique, so it
@@ -210,9 +210,9 @@ export class FeishuProvisioning {
       // The platform redelivering one message replays this same id, so Core's
       // team.create idempotency answers with the Team the first attempt made
       // instead of building a second one. If that first attempt died between
-      // `team.create` and the routing bind, the replay answers `existing` and
-      // this run goes on to install the binding — recovering the half-finished
-      // provisioning rather than duplicating it.
+      // `team.create` and the routing bind, the replay returns the same Team
+      // summary and this run goes on to install the binding — recovering the
+      // half-finished provisioning rather than duplicating it.
       //
       // A new message always mints a new id, which is the point. After a Team
       // is dissolved, the next message to that same topic provisions a fresh
@@ -254,6 +254,6 @@ export class FeishuProvisioning {
             },
           }
         : {}),
-    } as JsonValue)) as unknown as TeamCreateResult;
+    } as JsonValue)) as unknown as TeamSummary;
   }
 }

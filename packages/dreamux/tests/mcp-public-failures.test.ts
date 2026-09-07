@@ -44,6 +44,7 @@ import {
   createCommandHarness,
   createFakeDispatcher,
   createHarnessChannelInvoker,
+  harnessTeamSummary,
   startHarnessAdminSocket,
   type CapturedLog,
   type CommandHarness,
@@ -672,11 +673,12 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
     expected: unknown;
   }
 
-  const teamSummary = {
-    team: { team_name: 'blue-1a2b', status: 'running' },
-    leader: { name: 'blue-1a2b-leader', status: 'running' },
+  const teamSummary = harnessTeamSummary({
+    team_name: 'blue-1a2b',
+    leader_name: 'blue-1a2b-leader',
+    leader_state: 'running',
     member_count: 2,
-  };
+  });
   const historyPage = {
     items: [{ team_name: 'blue-1a2b', status: 'closed' }],
     next_cursor: 'c-2',
@@ -718,10 +720,10 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
     },
     {
       operation: 'team.list',
-      overrides: { listTeams: async () => [{ team_name: 'blue-1a2b' }] },
+      overrides: { listTeams: async () => [teamSummary] },
       command: { name: 'team.list', params: {} },
       tool: { delegate: 'team', name: 'list', args: {} },
-      expected: { teams: [{ team_name: 'blue-1a2b' }] },
+      expected: { teams: [teamSummary] },
     },
     {
       operation: 'teammate.status',

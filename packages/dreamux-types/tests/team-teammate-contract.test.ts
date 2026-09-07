@@ -13,7 +13,8 @@ import { describe, expect, it } from 'vitest';
 import type {
   TeamCreateCommand,
   TeamCreateRepoRequest,
-  TeamCreateResult,
+  TeamStatus,
+  TeamSummary,
   TeamStateEvent,
   TeamStateTeammateSummary,
   TeamSubmitCommand,
@@ -137,10 +138,12 @@ describe('TeamCreateCommand carries restart-durable request identity and leader 
     expect(command.leader.identity).toBeUndefined();
   });
 
-  it('TeamCreateResult status is exactly created | existing | closed', () => {
-    assertType<Equal<TeamCreateResult['status'], 'created' | 'existing' | 'closed'>>();
-    assertType<Equal<TeamCreateResult['leader_agent_runtime'], string>>();
-    assertType<Equal<TeamCreateResult['runtime_cwd'], string>>();
+  it('TeamSummary carries lifecycle status and the stable runtime context', () => {
+    assertType<Equal<TeamStatus, 'starting' | 'running' | 'closed'>>();
+    assertType<Equal<TeamSummary['status'], TeamStatus>>();
+    assertType<Equal<TeamSummary['leader_agent_runtime'], string>>();
+    assertType<Equal<TeamSummary['runtime_cwd'], string>>();
+    assertType<Equal<TeamSummary['leader_state'], import('../src/teammate.js').TeammateStatus | null>>();
   });
 });
 

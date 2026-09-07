@@ -104,7 +104,8 @@ export type {
 export type {
   TeamCreateCommand,
   TeamCreateRepoRequest,
-  TeamCreateResult,
+  TeamStatus,
+  TeamSummary,
   TeamStateEvent,
   TeamStateTeammateSummary,
   TeamSubmitCommand,

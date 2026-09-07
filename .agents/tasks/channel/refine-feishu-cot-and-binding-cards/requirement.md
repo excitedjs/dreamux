@@ -194,3 +194,47 @@
   - "cwd" means the TeamLeader runtime working directory shown by the old
     route-bound card, not the collaboration-space repository policy.
 - Blocking unknowns: None.
+
+## Post-merge presentation correction
+
+After PR #386 merged, the operator reported that the route-bound, active-unbind,
+and Team-dissolution cards were visually too loose:
+
+- "首先，团队名字的字体太大了。我预期这张卡片里，除了标题以外，其他
+  字体全部都是正文字体大小"
+- "其实卡片上下的行间距太长了"
+
+The accepted correction is deliberately presentation-only:
+
+1. In those three Card 2.0 notifications, only the header title keeps title
+   typography. The Team name, subtitle, fact labels and values, and detail-panel
+   label and value all render at normal body size. Color may still distinguish
+   state; font size may not.
+2. Reduce vertical whitespace throughout the body: compact the space between the
+   Team line, subtitle, fact row, and detail panel, and reduce the body bottom,
+   fact-cell, and detail-panel padding proportionally. The three cards share one
+   spacing vocabulary rather than carrying separate constants.
+3. Keep wording, field order, literal dynamic text, colors, icons, causes, and
+   route behavior unchanged. The cause-neutral Card 1.0 `route ended` notification
+   and Collaboration Space cards are not part of this correction.
+4. Acceptance is structural and visual: card payload tests assert no
+   `heading-*` text outside the header and the compact shared spacing values; a
+   rendered preview confirms the cards no longer present the Team name as a
+   second title or leave the original large vertical gaps.
+
+After reviewing the first compact previews, the operator refined that correction:
+
+- "team name 还是再大一点吧": the Team name is one modest display step
+  above body copy, while all other body text remains normal size.
+- "间距还能继续缩小吗？给他缩到0 ，或者不传间距。靠行高撑起来就够了":
+  explicit vertical margins, vertical spacing, and top/bottom padding are zero
+  or omitted. Text line height supplies the vertical rhythm; only horizontal
+  padding remains.
+
+The zero-spacing preview showed that line height alone collapsed the four body
+groups into one visual stack. The operator therefore superseded only that
+spacing choice: "完全堆在一起了。还是恢复吧". Restore the preceding compact
+8px group rhythm while keeping the larger Team name. The operator also required
+the Team-dissolution header to use the same orange family as its body rather
+than grey: "解散的这个标题颜色给我换成和底下颜色差不多的色系，不要搞成
+灰色的".

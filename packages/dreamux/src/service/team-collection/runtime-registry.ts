@@ -19,7 +19,6 @@ import type { TeamStore } from './store.js';
 import type {
   TeamCollectionOptions,
   TeamCreateAtNameInput,
-  TeamCreateResult,
   TeamRecord,
 } from './types.js';
 
@@ -54,7 +53,7 @@ export class TeamRuntimeRegistry {
   async create(
     input: TeamCreateAtNameInput,
     teamId: string,
-  ): Promise<TeamCreateResult | null> {
+  ): Promise<TeamService | null> {
     requireLifecycleText(input.intent, 'Team create intent');
     // A cheap early-out before the expensive workspace preparation. The
     // authoritative answer is the exclusive record publication below, which
@@ -69,15 +68,7 @@ export class TeamRuntimeRegistry {
       construction.then((created) => created?.service ?? null),
     );
     const created = await construction;
-    if (created === null) return null;
-    const { service, leaderResult } = created;
-    const team = service.view();
-    return {
-      team_name: team.team_name,
-      leader_name: team.leader_name,
-      leader_agent_runtime: team.leader_agent_runtime,
-      runtime_cwd: leaderResult.teammate.repo.path,
-    };
+    return created?.service ?? null;
   }
 
   /**

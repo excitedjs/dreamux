@@ -222,8 +222,7 @@ describe('TeamService.createNew: the leader starts inside its first submission',
     // Nothing asked the Agent Runtime provider for anything: no thread, no
     // codex process, nothing that would need a resumable rollout.
     expect(team.createRuntimeCalls()).toBe(0);
-    expect(result?.leaderResult.submission).toBeNull();
-    expect(result?.service.view().status).toBe('running');
+    expect((await result?.service.status())?.status).toBe('running');
     expect(team.order).toEqual([]);
 
     // The first ordinary submission is where the runtime actually starts.
@@ -248,7 +247,7 @@ describe('TeamService.createNew: the leader starts inside its first submission',
     expect(result).not.toBeNull();
     expect(team.order).toEqual(['input:do the thing', 'createRuntime', 'start', 'submit']);
     expect(team.createRuntimeCalls()).toBe(1);
-    expect(result?.leaderResult.submission?.status).toBe('submitted');
+    expect((await result?.service.status())?.status).toBe('running');
     expect(team.currentRecord()?.status).toBe('running');
   });
 

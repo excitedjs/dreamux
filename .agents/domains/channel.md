@@ -503,6 +503,10 @@ conversation is told. A nonexistent Team throws Core's `TEAM_NOT_FOUND`
 unchanged; a closed Team is a successful status response whose `team.status` is
 `closed`, which the Channel rejects. A Team that dissolves afterwards converges
 through the `team.state` event instead.
+The same response is the flat canonical Team summary returned by create and
+list. Manual bind makes exactly this one status call and also rejects a summary
+whose `leader_state` is null, preserving the existing interrupted-creation
+guard before route persistence.
 
 What Core owns is the lease scope. Every Channel MCP call carries a
 `ChannelMcpCallContext` of `dispatcher_id`, `channel_id`, and the caller
@@ -548,7 +552,7 @@ The run order is the one that degrades honestly — create the Team, commit the
 route, announce it, deliver the message — and every exit before `team.submit`
 answers `unsubmitted`, so the message it was carrying goes to the Dispatcher
 Agent like any other message this Channel could not hand to a Team. The
-`team.create` receipt carries the created Team's leader name, configured runtime
+`team.create` summary carries the Team lifecycle, leader name, configured runtime
 ID, and runtime cwd, so the Channel can render the route card without an
 immediate `team.status` round trip. Failing to provision is not a reason to drop
 what somebody wrote. A failure after `team.create` leaves an ordinary Team
@@ -561,8 +565,9 @@ Idempotency comes from one choice with several consequences: the `team.create`
 - The platform redelivering one message replays that id, so Core's `team.create`
   idempotency answers with the Team the first attempt made instead of building a
   second one. If the first attempt died between `team.create` and the routing
-  bind, the replay answers `existing` and the run installs the binding, which
-  recovers half-finished provisioning rather than duplicating it.
+  bind, the replay returns the same Team summary and the run installs the
+  binding, which recovers half-finished provisioning rather than duplicating
+  it.
 - A new message always mints a new id, so after a Team is dissolved the next
   message to that topic provisions a fresh Team. A thread-scoped id could not:
   Core keeps a request's acceptance record permanently, so it would replay

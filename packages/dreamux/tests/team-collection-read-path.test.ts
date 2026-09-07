@@ -5,16 +5,22 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { TeamNotFoundError, TeamClosedError } from '../src/service/team-collection/errors.js';
+import { teamCreatePayloadHash } from '../src/service/team-collection/create-request.js';
+import { AgentEntityCollectionStore } from '../src/service/agent-entity/identity-store.js';
+import { teamMateCollectionDir } from '../src/platform/paths.js';
 import { resolveSpawnWorkspace } from '../src/service/worktree/workspaces.js';
 import type { SpawnTeamMateRequest } from '../src/service/teammate-collection/types.js';
 import type { DreamuxConfig } from '../src/config/config.js';
 
 import {
   buildTeamCollectionHarness,
+  buildRestartedTeamCollection,
+  harnessLog,
   minimalTeamRecordInput,
   mockLeaderSubmission,
   type TeamCollectionHarness,
 } from './helpers/team-harness.js';
+import { reuseCwdWorktree } from '../src/service/worktree/manager.js';
 
 let harness: TeamCollectionHarness | null = null;
 let submission: { restore(): void } | null = null;
@@ -99,7 +105,8 @@ describe('TeamCollection: missing/malformed records', () => {
     await writeRawRecord(harness, 'loose', JSON.stringify(valid));
 
     await expect(harness.collection.summary('loose')).resolves.toMatchObject({
-      team: { team_name: 'loose', status: 'running' },
+      team_name: 'loose',
+      status: 'running',
     });
   });
 
@@ -170,14 +177,69 @@ describe('TeamCollection: closed Teams are record-only reads', () => {
     ]);
 
     const summary = await harness.collection.summary('retired');
-    expect(summary.team.status).toBe('closed');
-    expect(summary.leader).toBeNull();
+    expect(summary.status).toBe('closed');
+    expect(summary.leader_state).toBeNull();
 
     // The one operation that DOES require a live Team refuses instead of
     // building one — a closed Team is never materialized again.
     await expect(harness.collection.open('retired')).rejects.toBeInstanceOf(
       TeamClosedError,
     );
+  });
+});
+
+describe('TeamCollection: canonical live/store projection', () => {
+  it('counts member-directory occupancy identically for a live Team and a cold collection', async () => {
+    harness = await buildTeamCollectionHarness();
+    const created = await harness.collection.createFromRequest({
+      requestId: 'member-count-request',
+      payloadHash: teamCreatePayloadHash({ intent: 'prove canonical member occupancy' }),
+      options: {
+        namePrefix: 'members',
+        leaderAgentRuntime: 'fake',
+        intent: 'prove canonical member occupancy',
+      },
+    });
+    const teamRoot = join(harness.teamCollectionRoot, created.team_name);
+    const memberRoot = teamMateCollectionDir(teamRoot);
+    const members = new AgentEntityCollectionStore({
+      root: memberRoot,
+      dispatcherId: harness.dispatcherId,
+      log: harnessLog(),
+    });
+    await members.entity('closed-member').create({
+      name: 'closed-member',
+      teamId: created.team_name,
+      agentRuntime: 'fake',
+      sourceCwd: created.runtime_cwd,
+      sourceRepo: created.source_repo,
+      cwd: created.runtime_cwd,
+      runtimeCwd: created.runtime_cwd,
+      worktree: reuseCwdWorktree(created.runtime_cwd),
+      status: 'closed',
+    });
+    await mkdir(join(memberRoot, 'missing-identity'), { recursive: true });
+    await mkdir(join(memberRoot, 'malformed-identity'), { recursive: true });
+    await writeFile(
+      join(memberRoot, 'malformed-identity', 'identity.json'),
+      '{ malformed identity',
+    );
+
+    const liveStatus = await harness.collection.summary(created.team_name);
+    const liveList = (await harness.collection.list()).find(
+      (team) => team.team_name === created.team_name,
+    );
+    expect(liveStatus.member_count).toBe(3);
+    expect(liveList).toEqual(liveStatus);
+
+    const cold = buildRestartedTeamCollection(harness);
+    const coldStatus = await cold.summary(created.team_name);
+    const coldList = (await cold.list()).find(
+      (team) => team.team_name === created.team_name,
+    );
+    expect(coldStatus.member_count).toBe(3);
+    expect(coldList).toEqual(coldStatus);
+    expect(coldStatus.leader_name).toBe(created.leader_name);
   });
 });
 
@@ -190,25 +252,35 @@ describe('TeamCollection: shared create/open construction', () => {
     // A prompt is what makes the leader's first submission happen at all — a
     // promptless creation would reach no runtime, and there would be nothing
     // here to hold open.
-    const creating = harness.collection.create({
-      name: 'joined',
-      leaderAgentRuntime: 'fake',
-      intent: 'first caller',
-      prompt: 'first task',
+    const creating = harness.collection.createFromRequest({
+      requestId: 'joined-request',
+      payloadHash: teamCreatePayloadHash({ intent: 'first caller', prompt: 'first task' }),
+      options: {
+        namePrefix: 'joined',
+        leaderAgentRuntime: 'fake',
+        intent: 'first caller',
+        prompt: 'first task',
+      },
     });
 
     // Wait for the record to actually be durable (the record is published
     // BEFORE the leader's first `submitInput()` call) so the concurrent
     // `admit` below has a real, findable Team to join rather than racing
     // record publication.
-    await waitFor(async () => (await harness!.seedStore.get('joined')) !== null);
+    let joinedTeamName: string | null = null;
+    await waitFor(async () => {
+      const [record] = await harness!.seedStore.list();
+      joinedTeamName = record?.team_id ?? null;
+      return joinedTeamName !== null;
+    });
+    if (joinedTeamName === null) throw new Error('created Team record has no name');
 
     let delivered = false;
     let seenService: unknown;
-    const admitting = harness.collection.admit('joined', async (service) => {
+    const admitting = harness.collection.admit(joinedTeamName, async (service) => {
       delivered = true;
       seenService = service;
-      return service.view();
+      return service.status();
     });
 
     // The leader's first `submitInput()` is still held open, so nothing has
@@ -221,20 +293,21 @@ describe('TeamCollection: shared create/open construction', () => {
     const [createResult, admitResult] = await Promise.all([creating, admitting]);
 
     expect(delivered).toBe(true);
-    expect(createResult).toEqual({
-      team_name: 'joined',
+    expect(createResult).toMatchObject({
+      team_name: expect.stringMatching(/^joined-/),
+      status: 'running',
       leader_name: expect.any(String),
       leader_agent_runtime: 'fake',
       runtime_cwd: expect.any(String),
     });
-    expect((await harness.collection.summary('joined')).team.status).toBe('running');
+    expect((await harness.collection.summary(createResult.team_name)).status).toBe('running');
     expect(admitResult.status).toBe('running');
     // Exactly one leader submission for both callers together.
     expect(gate.callCount()).toBe(1);
 
     // The exact same TeamService instance both callers ended up sharing is
     // also what a later, ordinary open() reads back from the cache.
-    const reopened = await harness.collection.open('joined');
+    const reopened = await harness.collection.open(createResult.team_name);
     expect(reopened).toBe(seenService);
   });
 });

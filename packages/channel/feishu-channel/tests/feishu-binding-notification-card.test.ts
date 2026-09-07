@@ -63,7 +63,7 @@ const cards = [
     card: teamDissolvedCard({ target, display, teamName: team.teamName }),
     summary: `Team ${team.teamName} dissolved; routes removed`,
     title: 'Dreamux team dissolved',
-    color: 'grey',
+    color: 'orange',
     icon: { token: 'warning_outlined', color: 'orange' },
     status: 'Team dissolved',
     statusColor: 'orange',
@@ -96,17 +96,17 @@ describe('selected route notification cards', () => {
   it.each(cards)('$name preserves the Team hero, subtitle and selected body spacing', ({ card, heroColor, subtitle }) => {
     expect(card).toMatchObject({ body: {
       direction: 'vertical',
-      padding: '12px 12px 20px 12px',
+      padding: '8px 12px 12px 12px',
       elements: [
         {
-          tag: 'div', margin: '0px 0px 2px 0px',
-          text: { tag: 'plain_text', content: team.teamName, text_size: 'heading-2', text_color: heroColor },
+          tag: 'div', margin: '0px',
+          text: { tag: 'plain_text', content: team.teamName, text_size: 'heading-4', text_color: heroColor },
         },
         {
-          tag: 'div', margin: '0px 0px 12px 0px',
-          text: { tag: 'plain_text', content: subtitle, text_size: 'notation', text_color: 'grey' },
+          tag: 'div', margin: '0px 0px 8px 0px',
+          text: { tag: 'plain_text', content: subtitle, text_size: 'normal', text_color: 'grey' },
         },
-        { tag: 'column_set', margin: '0px 0px 12px 0px' },
+        { tag: 'column_set', margin: '0px 0px 8px 0px' },
         { tag: 'column_set', margin: '0px' },
       ],
     } });
@@ -121,9 +121,9 @@ describe('selected route notification cards', () => {
       flex_mode: 'none', horizontal_spacing: '8px',
       columns: facts.map(([label, value]) => ({
         tag: 'column', width: 'weighted', weight: 1,
-        background_style: 'grey-50', padding: '8px 8px 8px 8px', vertical_spacing: '2px',
+        background_style: 'grey-50', padding: '6px 8px 6px 8px', vertical_spacing: '0px',
         elements: [
-          { text: { tag: 'plain_text', content: label, text_size: 'notation', text_color: 'grey', text_align: 'center' } },
+          { text: { tag: 'plain_text', content: label, text_size: 'normal', text_color: 'grey', text_align: 'center' } },
           { text: { tag: 'plain_text', content: value, text_align: 'center' } },
         ],
       })),
@@ -139,7 +139,7 @@ describe('selected route notification cards', () => {
       flex_mode: 'none', margin: '0px',
       columns: [{
         tag: 'column', width: 'weighted', weight: 1,
-        background_style: panel, padding: '12px 12px 12px 12px', vertical_spacing: '4px',
+        background_style: panel, padding: '8px 10px 8px 10px', vertical_spacing: '2px',
         elements: [
           { tag: 'markdown', content: panelLabel },
           { tag: 'div', text: { tag: 'plain_text', content: panelValue, text_align: 'left' } },
@@ -147,6 +147,16 @@ describe('selected route notification cards', () => {
       }],
     });
     expect(rows[1]!['columns']).toHaveLength(1);
+  });
+
+  it.each(cards)('$name uses heading typography only for the Team name', ({ card }) => {
+    const headingTexts = nodes(card)
+      .filter((node) =>
+        typeof node['text_size'] === 'string' && node['text_size'].startsWith('heading-'),
+      )
+      .map((node) => node['content']);
+    expect(headingTexts).toEqual([team.teamName]);
+    expect(nodes(card).filter((node) => node['text_size'] === 'notation')).toEqual([]);
   });
 
   it.each(cards)('$name renders dynamic values literally without preview labels or Chinese fallback copy', ({ card, panelLabel }) => {

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: Review: callers of team.create, team.list, and team.status must consume the same flat Team summary and lifecycle status; list rows are no longer compact and create no longer reports an operation outcome. No rebuild is needed; persisted Team and Agent state is unchanged.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { DreamuxLogger, JsonValue } from '@excitedjs/dreamux-types';
 
-import { teamCreateResult } from './helpers/team-status.js';
+import { teamSummary } from './helpers/team-status.js';
 
 import { FeishuProvisioning } from '../src/feishu-provisioning.js';
 import { FeishuRouting } from '../src/routing/index.js';
@@ -164,7 +164,7 @@ describe('Provisioning snapshot immutability', () => {
       repo: null,
     });
 
-    resolveCreate(teamCreateResult('old-snapshot-team') as unknown as JsonValue);
+    resolveCreate(teamSummary('old-snapshot-team') as unknown as JsonValue);
     await run;
 
     const createPayload = invokeCalls[0] as Record<string, unknown>;
@@ -202,7 +202,7 @@ describe('Provisioning snapshot immutability', () => {
       },
       invoke: async (command, payload) => {
         invokeCalls.push(payload);
-        return teamCreateResult('new-snapshot-team') as unknown as JsonValue;
+        return teamSummary('new-snapshot-team') as unknown as JsonValue;
       },
       announce: () => undefined,
     });
@@ -268,7 +268,7 @@ describe('unbindSpace — stops future provisioning only', () => {
     expect(removed?.space_name).toBe('space-a');
     // No new provisioning will start (no policy left to provision under), but
     // the in-flight run is untouched and still completes.
-    resolveCreate(teamCreateResult('surviving-team') as unknown as JsonValue);
+    resolveCreate(teamSummary('surviving-team') as unknown as JsonValue);
     const outcome = await run;
     expect(outcome).toEqual({ status: 'submitted', turnId: 't3' });
     expect(routing.bindingFor(topicTarget('oc_c', 'thread-surviving'))?.team_name).toBe(

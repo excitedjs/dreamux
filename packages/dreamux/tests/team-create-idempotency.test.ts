@@ -2,17 +2,22 @@ import { readdir } from 'node:fs/promises';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import type {
+  AgentRuntimeCreateContext,
+  AgentRuntimeProvider,
+} from '@excitedjs/dreamux-types';
+
 import { teamCreatePayloadHash } from '../src/service/team-collection/create-request.js';
 import { IdempotencyConflictError } from '../src/service/team-collection/errors.js';
-import { TeamCollection } from '../src/service/team-collection/index.js';
-import type { TeamCollectionOptions } from '../src/service/team-collection/types.js';
 
 import {
+  buildRestartedTeamCollection,
   buildTeamCollectionHarness,
   minimalTeamRecordInput,
   mockLeaderSubmissionRejected,
   type TeamCollectionHarness,
 } from './helpers/team-harness.js';
+import { controllableRuntimeSubmission } from './helpers/runtime-submission.js';
 
 /**
  * `team.create` idempotency (technical-design/final.md §1-4): the Team record
@@ -64,7 +69,7 @@ describe('team.create idempotency', () => {
       payloadHash: hash,
       options: { namePrefix: 'alpha', leaderAgentRuntime: 'fake', intent: 'ship the thing' },
     });
-    expect(created.status).toBe('created');
+    expect(created.status).toBe('running');
 
     const record = await harness.seedStore.get(created.team_name);
     expect(record?.create_request_id).toBe('req-only-record');
@@ -92,39 +97,81 @@ describe('team.create idempotency', () => {
       payloadHash: hash,
       options: { namePrefix: 'alpha', leaderAgentRuntime: 'fake', intent: 'ship the thing' },
     });
-    expect(first.status).toBe('created');
+    expect(first.status).toBe('running');
 
     const secondSameProcess = await harness.collection.createFromRequest({
       requestId,
       payloadHash: hash,
       options: { namePrefix: 'alpha', leaderAgentRuntime: 'fake', intent: 'ship the thing' },
     });
-    expect(secondSameProcess).toEqual({
-      status: 'existing',
-      team_name: first.team_name,
-      leader_name: first.leader_name,
-      leader_agent_runtime: first.leader_agent_runtime,
-      runtime_cwd: first.runtime_cwd,
-    });
+    expect(secondSameProcess).toEqual(first);
 
     // A fresh `TeamCollection` bound to the exact same `team/` root has no
     // in-memory cache at all — the replay answer has to come from scanning
     // durable records, which is what a restart actually has available.
-    const restarted = new TeamCollection({
-      ...collectionOptionsFor(harness),
-    });
+    const restarted = buildRestartedTeamCollection(harness);
     const afterRestart = await restarted.createFromRequest({
       requestId,
       payloadHash: hash,
       options: { namePrefix: 'alpha', leaderAgentRuntime: 'fake', intent: 'ship the thing' },
     });
     expect(afterRestart).toEqual({
-      status: 'existing',
-      team_name: first.team_name,
-      leader_name: first.leader_name,
-      leader_agent_runtime: first.leader_agent_runtime,
-      runtime_cwd: first.runtime_cwd,
+      ...first,
+      leader_runtime_status: null,
     });
+  });
+
+  it('returns one current held-live runtime status from create, status, list, and same-process replay without resubmitting', async () => {
+    let submissions = 0;
+    const provider = {
+      getCapabilities: () => ({ tags: [] }),
+      readRecentActivity: async () => ({ records: [], truncated: false }),
+      async createRuntime(context: AgentRuntimeCreateContext<unknown>) {
+        return {
+          async start() {
+            await context.state.publish({ kind: 'status', status: 'ready' });
+            return { continuity: 'fresh' as const };
+          },
+          async submit() {
+            submissions += 1;
+            const pending = controllableRuntimeSubmission();
+            pending.complete(null);
+            return { status: 'submitted' as const, submission: pending.submission };
+          },
+          async stop() {},
+        };
+      },
+    } as AgentRuntimeProvider<unknown>;
+    harness = await buildTeamCollectionHarness({
+      agentRuntime: { id: 'live-runtime', provider },
+    });
+    const requestId = 'req-held-live-runtime';
+    const hash = hashOf({ intent: 'observe the live owner', prompt: 'start now' });
+    const request = {
+      requestId,
+      payloadHash: hash,
+      options: {
+        namePrefix: 'alpha',
+        leaderAgentRuntime: 'live-runtime',
+        intent: 'observe the live owner',
+        prompt: 'start now',
+      },
+    };
+
+    const created = await harness.collection.createFromRequest(request);
+    expect(created.leader_runtime_status).toBe('ready');
+    expect(submissions).toBe(1);
+
+    const status = await harness.collection.summary(created.team_name);
+    const listed = (await harness.collection.list()).find(
+      (team) => team.team_name === created.team_name,
+    );
+    const replayed = await harness.collection.createFromRequest(request);
+
+    expect(status).toEqual(created);
+    expect(listed).toEqual(created);
+    expect(replayed).toEqual(created);
+    expect(submissions).toBe(1);
   });
 
   it('raises IdempotencyConflictError for the same request id replayed with a different payload, and creates no second Team', async () => {
@@ -136,7 +183,7 @@ describe('team.create idempotency', () => {
       payloadHash: hashOf({ intent: 'version A' }),
       options: { namePrefix: 'alpha', leaderAgentRuntime: 'fake', intent: 'version A' },
     });
-    expect(created.status).toBe('created');
+    expect(created.status).toBe('running');
 
     await expect(
       harness.collection.createFromRequest({
@@ -177,7 +224,7 @@ describe('team.create idempotency', () => {
       payloadHash: hash,
       options: { namePrefix: 'alpha', leaderAgentRuntime: 'fake', intent: 'short-lived' },
     });
-    expect(replay).toEqual({
+    expect(replay).toMatchObject({
       status: 'closed',
       team_name: created.team_name,
       leader_name: created.leader_name,
@@ -276,51 +323,13 @@ describe('team.create idempotency', () => {
       }),
     ]);
 
-    // Exactly one of the two callers actually created the Team; the other
-    // joined the same request-id lifecycle queue and read back the answer.
-    const statuses = [first.status, second.status].sort();
-    expect(statuses).toEqual(['created', 'existing']);
-    expect(first.team_name).toBe(second.team_name);
-    expect(first.leader_name).toBe(second.leader_name);
+    // Exactly one caller publishes the Team; the other joins the same
+    // request-id lifecycle queue and receives the same canonical projection,
+    // with no operation-outcome discriminator.
+    expect(second).toEqual(first);
+    expect(first.status).toBe('running');
 
     const all = await harness.seedStore.list();
     expect(all).toHaveLength(1);
   });
 });
-
-function collectionOptionsFor(harness: TeamCollectionHarness): TeamCollectionOptions {
-  // A second `TeamCollection` over the exact same durable root, standing in
-  // for "a fresh process attached to the same state" — deliberately built
-  // from scratch rather than reusing any in-memory object the first
-  // collection constructed.
-  return {
-    dispatcherId: harness.dispatcherId,
-    config: { agents: {}, dispatchers: [] },
-    agentRuntimeProviders: {} as unknown as TeamCollectionOptions['agentRuntimeProviders'],
-    worktrees: {} as unknown as TeamCollectionOptions['worktrees'],
-    root: harness.teamCollectionRoot,
-    names: {
-      allocate: async () => `restarted-leader-${Math.random().toString(36).slice(2)}`,
-    } as unknown as TeamCollectionOptions['names'],
-    admissions: {} as unknown as TeamCollectionOptions['admissions'],
-    completionDelivery: {} as unknown as TeamCollectionOptions['completionDelivery'],
-    dispatcherCompletionInitiator: async () => null,
-    leaderMcp: () => ({ leases: {}, delegates: [], adminSocketPath: '' }) as unknown as ReturnType<
-      TeamCollectionOptions['leaderMcp']
-    >,
-    log: {
-      error: () => {},
-      warn: () => {},
-      info: () => {},
-      debug: () => {},
-      trace: () => {},
-    } as unknown as TeamCollectionOptions['log'],
-    workflowLog: {
-      error: () => {},
-      warn: () => {},
-      info: () => {},
-      debug: () => {},
-      trace: () => {},
-    } as unknown as TeamCollectionOptions['log'],
-  };
-}

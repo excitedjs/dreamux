@@ -78,7 +78,8 @@ Team's members are the same pair again, scoped to the Team.
   dissolve it submits and then runs behind the receipt. `closing.ts` owns the
   stop-and-close sequence and the host sweep; `collaborators.ts`,
   `completion-targets.ts`, `leader-agent.ts`, `roster-projection.ts`,
-  `team-view.ts`, and `delivery-result.ts` are its parts.
+  `team-summary.ts`, and `delivery-result.ts` are its parts; its retirement
+  broadcast uses the shared `ClosedFactPublisher`.
   `DispatcherService.team()` returns a `TeamLeaderHandle` to admin/MCP
   team-leader callers, never the concrete `TeamService`.
 - **`teammate-collection/` + `teammate-service/` + `completion-router/`** —

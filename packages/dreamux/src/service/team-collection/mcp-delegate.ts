@@ -60,6 +60,7 @@ import type { DispatcherService } from '../dispatcher-service/index.js';
 import { teamCreatePayloadHash } from './create-request.js';
 import { teamHistoryQuery, teamNameParam } from './types.js';
 import { teamSubmitResult } from '../team-service/types.js';
+import { TEAM_SUMMARY_SCHEMA } from './summary-schema.js';
 
 /** Who this delegate serves. Bound once, at runtime construction. */
 export type TeamMcpCaller =
@@ -161,11 +162,10 @@ async function create(
     structured: result,
     // A create that carried a prompt handed work down: the TeamLeader's first
     // turn was submitted behind this receipt, and its result arrives later.
-    // Without a prompt no turn starts, and an `existing` or `closed` replay
-    // submitted nothing — neither has a completion to wait for.
-    ...(prompt !== null && result.status === 'created'
-      ? { text: TEAM_DISPATCH_SUCCESS_REMINDER }
-      : {}),
+    // This delegate mints a fresh request id for every call. A successful
+    // prompt-bearing create therefore submitted the first turn; replays belong
+    // to callers that supply their own durable request identity.
+    ...(prompt !== null ? { text: TEAM_DISPATCH_SUCCESS_REMINDER } : {}),
   };
 }
 
@@ -332,7 +332,7 @@ function teamToolDescriptors(
       ['name_prefix', 'leader_agent_runtime', 'intent'],
       {
         title: 'Create a Team',
-        output: teamCreateSchema(),
+        output: TEAM_SUMMARY_SCHEMA,
         annotations: MUTATING_ANNOTATIONS,
       },
     ),
@@ -378,18 +378,18 @@ function teamToolDescriptors(
     ),
     tool(
       'list',
-      'List Teams owned by this dispatcher (compact scan rows: team_name, status, intent, repo, leader, and member count). Where a Team is reachable from the outside is a channel fact; ask the channel that owns the route.',
+      'List Teams owned by this dispatcher using the same current Team summary returned by create and status. Where a Team is reachable from the outside is a channel fact; ask the channel that owns the route.',
       {},
       [],
       {
         title: 'List Teams',
-        output: closedObjectSchema({ teams: arrayOf(OPEN_OBJECT) }, ['teams']),
+        output: closedObjectSchema({ teams: arrayOf(TEAM_SUMMARY_SCHEMA) }, ['teams']),
         annotations: READ_ONLY_ANNOTATIONS,
       },
     ),
     tool(
       'status',
-      'Read one Team\'s detailed current status by its team_name (record with its workspace kind and cleanup mode, TeamLeader status, and member count).',
+      'Read one Team\'s current summary by its team_name, using the same fields returned by create and list.',
       {
         team_name: {
           type: 'string',
@@ -401,14 +401,7 @@ function teamToolDescriptors(
       ['team_name'],
       {
         title: 'Read Team status',
-        output: closedObjectSchema(
-          {
-            team: OPEN_OBJECT,
-            leader: { type: ['object', 'null'] },
-            member_count: { type: 'integer' },
-          },
-          ['team', 'leader', 'member_count'],
-        ),
+        output: TEAM_SUMMARY_SCHEMA,
         annotations: READ_ONLY_ANNOTATIONS,
       },
     ),
@@ -521,25 +514,6 @@ function dissolveReceiptSchema(): Record<string, unknown> {
       status: { type: 'string' },
     },
     ['accepted', 'team_name', 'status'],
-  );
-}
-
-function teamCreateSchema(): Record<string, unknown> {
-  return closedObjectSchema(
-    {
-      status: { type: 'string', enum: ['created', 'existing', 'closed'] },
-      team_name: { type: 'string' },
-      leader_name: { type: 'string' },
-      leader_agent_runtime: { type: 'string' },
-      runtime_cwd: { type: 'string' },
-    },
-    [
-      'status',
-      'team_name',
-      'leader_name',
-      'leader_agent_runtime',
-      'runtime_cwd',
-    ],
   );
 }
 
