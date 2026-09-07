@@ -9,7 +9,6 @@
  *   server-ctl dispatcher list
  *   server-ctl dispatcher status --id flow
  *   server-ctl dispatcher start --id flow
- *   server-ctl channel list --id flow
  */
 
 import { connect, type Socket } from 'node:net';
@@ -84,7 +83,6 @@ function resolveMethod(obj: string | undefined, verb: string | undefined): strin
       case 'start': return 'dispatcher.start';
     }
   }
-  if (o === 'channel' && v === 'list') return 'channel.list';
   return null;
 }
 
@@ -170,7 +168,6 @@ Usage:
   ${programName} dispatcher list
   ${programName} dispatcher status --id <ID>
   ${programName} dispatcher start --id <ID>
-  ${programName} channel list --id <ID>
 
 Dispatcher declarations live in ~/.dreamux/config.json dispatchers[].
 Edit config and restart dreamux serve to add or remove dispatchers.

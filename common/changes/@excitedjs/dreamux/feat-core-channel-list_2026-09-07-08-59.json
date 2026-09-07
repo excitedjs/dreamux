@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Add the provider-neutral `channel.list` Core command (`dreamux channel list --id <dispatcher>`): lists the dispatcher's configured Channels in config order as `{channel_id, provider, identity, live}` without starting any Channel session. Additive; no existing command, tool, or state changes.",
+      "comment": "Add the provider-neutral `channel.list` Core command: lists the dispatcher's configured Channels in config order as `{channel_id, provider, identity, live}` without starting any Channel session. Additive; no existing command, tool, or state changes.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux"
     }

@@ -2,14 +2,12 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { execa } from 'execa';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentRuntimeProviderCatalog } from '../src/agent-runtime/catalog.js';
 import { ChannelProviderCatalog } from '../src/channel/catalog.js';
 import type { DreamuxConfig } from '../src/config/config.js';
 import { ExecaCommandRunner } from '../src/onboard/commands.js';
-import { dreamuxBinPath } from '../src/platform/package-bin.js';
 import { getRuntimeConfig, setRuntimeConfig } from '../src/platform/paths.js';
 import { parseProviderRef } from '../src/registry/provider-ref.js';
 import { ProviderRegistry } from '../src/registry/registry.js';
@@ -127,32 +125,6 @@ describe('channel.list', () => {
       await close();
     }
   });
-
-  it('dreamux channel list --id reaches the real Server through the public bin', async () => {
-    const { server, root, fake, close } = await createChannelListServer();
-    try {
-      await server.start();
-      const result = await execa(dreamuxBinPath({}), ['channel', 'list', '--id', 'stopped'], {
-        env: { DREAMUX_ROOT: root },
-      });
-
-      expect(result.exitCode).toBe(0);
-      expect(JSON.parse(result.stdout)).toEqual({
-        channels: [
-          { channel_id: 'primary', provider: 'npm:@example/primary', identity: '', live: false },
-          {
-            channel_id: 'secondary',
-            provider: 'npm:@example/secondary',
-            identity: 'secondary-identity',
-            live: false,
-          },
-        ],
-      });
-      expect(fake.sessions.size).toBe(0);
-    } finally {
-      await close();
-    }
-  });
 });
 
 describe('ExecaCommandRunner', () => {
@@ -187,7 +159,7 @@ describe('ExecaCommandRunner', () => {
   });
 });
 
-/** Real Server fixture shared by the inventory and public CLI cases. */
+/** Real Server fixture shared by the stopped and live inventory cases. */
 async function createChannelListServer() {
   const root = await mkdtemp(join(tmpdir(), 'dreamux-channel-list-'));
   const previousConfig = getRuntimeConfig();
@@ -229,13 +201,12 @@ async function createChannelListServer() {
     providerRegistry: registry,
     agentRuntimeProviderCatalog: runtimes,
     channelProviderCatalog: new ChannelProviderCatalog({ registry }),
-    adminSocketPath: join(root, 'run', 'admin.sock'),
+    adminSocketPath: join(root, 'admin.sock'),
     logger: { error: noop, warn: noop, info: noop, debug: noop, trace: noop },
   });
 
   return {
     server,
-    root,
     fake,
     runtimes,
     async close() {

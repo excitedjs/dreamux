@@ -50,9 +50,9 @@ Source:
 ### Configured Channel inventory
 
 The dispatcher-scoped `channel.list` Core Command is available through the
-admin socket and the Channel's in-process `invoke` port. The public CLI
-`dreamux channel list --id <ID>` delegates to the same command through the admin
-socket, so a host can inspect configured Channels without an agent turn.
+admin socket and the Channel's in-process `invoke` port only, so a host can
+inspect configured Channels without an agent turn. It has no public CLI
+wrapper; the public CLI is reserved for host lifecycle operations.
 
 The metadata contract and stopped-dispatcher behavior are owned by
 [`service/CLAUDE.md`](/packages/dreamux/src/service/CLAUDE.md). This read-only
@@ -62,7 +62,6 @@ Source:
 
 - `/packages/dreamux/src/service/channel-service/commands.ts`
 - `/packages/dreamux/src/service/channel-service/types.ts`
-- `/packages/dreamux/src/cli/commands/channel.ts`
 
 ### Channel sessions
 
