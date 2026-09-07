@@ -606,11 +606,12 @@ There are six renderers, and their field sets are the content contract:
 - **space unbound**: space name, container group display, and a status line
   saying provisioning stopped while existing Teams and bindings are unchanged.
 
-The three route lifecycle cards use Card 2.0 with English fixed copy and literal
-`plain_text` dynamic values. Collaboration Space cards keep their existing
-schema. Cards render display fields, Team facts, and the Space's own policy
-without rendering prompts or raw errors. The repository path is deliberately
-visible to the members of the bound conversation; the user-visible half of that disclosure is
+The route-bound, route-unbound, and Team-dissolved cards use Card 2.0 with
+English fixed copy and literal `plain_text` dynamic values. The cause-neutral
+route-ended card and Collaboration Space cards keep their existing schema.
+Cards render display fields, Team facts, and the Space's own policy without
+rendering prompts or raw errors. The repository path is deliberately visible
+to the members of the bound conversation; the user-visible half of that disclosure is
 [`/.agents/product/README.md`](/.agents/product/README.md).
 
 Where a card goes follows the target. A route card for a topic replies under the

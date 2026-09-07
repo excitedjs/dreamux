@@ -59,8 +59,9 @@ the same change that touches it.
   unbind says that only the route was removed and the Team remains active; final
   Team dissolution says that Team closure removed all of that Team's routes; an
   early route removal on `TEAM_CLOSED` stays cause-neutral until closure is
-  final. The selected route lifecycle cards use English Card 2.0 copy. The
-  absolute repo cwd and runtime working directory are **deliberately**
+  final. The route-bound, route-unbound, and Team-dissolved cards use English
+  Card 2.0 copy; the cause-neutral route-ended card keeps its existing schema.
+  The absolute repo cwd and runtime working directory are **deliberately**
   disclosed to the bound conversation's members — an explicit operator ruling
   that narrowed the earlier disclosure allowlist. Delivery is best-effort with
   one retry; a failed card never affects the binding change it reports.

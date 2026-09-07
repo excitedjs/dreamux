@@ -9,9 +9,9 @@ import { requireLifecycleText } from '../agent-entity/types.js';
 import { KeyedAsyncQueue } from '../serial-queue.js';
 import { TeamStore } from './store.js';
 import type {
+  CreatedTeam,
   TeamCreateInput,
   TeamCreateAtNameInput,
-  TeamCreateResult,
   TeamHistoryQuery,
   TeamHistoryResult,
   TeamListRow,
@@ -149,7 +149,7 @@ export class TeamCollection {
           runtime_cwd: accepted.runtime_cwd,
         };
       }
-      const outcome: { created: TeamCreateResult | null } = { created: null };
+      const outcome: { created: CreatedTeam | null } = { created: null };
       const teamName = await allocateConcreteNameAsync({
         kind: 'team',
         base: namePrefix,
@@ -215,7 +215,7 @@ export class TeamCollection {
    * already occupies fails here rather than resolving to some other Team. Use
    * {@link createAtCandidate} when a name allocator should rotate instead.
    */
-  async create(input: TeamCreateAtNameInput): Promise<TeamCreateResult> {
+  async create(input: TeamCreateAtNameInput): Promise<CreatedTeam> {
     const created = await this.createAtCandidate(input);
     if (created === null) {
       throw new Error(
@@ -233,7 +233,7 @@ export class TeamCollection {
    */
   private async createAtCandidate(
     input: TeamCreateAtNameInput,
-  ): Promise<TeamCreateResult | null> {
+  ): Promise<CreatedTeam | null> {
     return this.runtimes.create(input, validateTeamId(input.name));
   }
 
