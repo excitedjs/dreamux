@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Expose the created TeamLeader runtime ID and runtime cwd on the canonical team.create result.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

@@ -305,20 +305,17 @@ export class FeishuChannelSession {
   /**
    * Commit the removal of every route to a Team, and say what it removed.
    *
-   * Both reasons reach the same durable change, so they share the one commit
+   * All reasons reach the same durable change, so they share the one commit
    * path the store owns rather than growing a second authority beside it. A
    * commit that fails is logged and nothing more: the route is still live, and
    * the next message to it earns the same rejection and the same attempt.
    *
-   * Only a closed Team is announced. That is a transition the conversation
-   * lived through — it had a Team, and the Team ended — while a stale route is
-   * this Channel correcting its own document on the way to delivering a
-   * message, and telling a group about it would be noise about nothing the
-   * group did.
+   * A final closed event announces dissolution; an admission rejection only
+   * announces that the route ended. A missing Team stays silent.
    */
   private async forgetTeamRoutes(
     teamName: string,
-    reason: 'team_closed' | 'stale_route',
+    reason: 'team_closed' | 'route_ended' | 'stale_route',
   ): Promise<void> {
     const scope = {
       dispatcher_id: this.opts.dispatcherId,
@@ -335,8 +332,8 @@ export class FeishuChannelSession {
       );
       // Past the commit: the rows are gone from disk, and what follows is
       // presentation over what they said.
-      if (reason === 'team_closed') {
-        this.bindings.announceTeamClosed({ teamName, removed });
+      if (reason !== 'stale_route') {
+        this.bindings.announceRoutesRemoved({ teamName, removed, reason });
       }
     } catch (err) {
       this.opts.log.warn(
@@ -439,17 +436,13 @@ export class FeishuChannelSession {
     // proves nothing about whether a turn exists, and nothing is sent twice on
     // a guess.
     if (plan.kind === 'bound') {
-      // Only a rejection can arrive from that branch, and its code says what
-      // kind of evidence removed the row. `TEAM_CLOSED` is the same close the
-      // `team.state` event proves, and it usually arrives here first: dissolve
-      // raises the Team's closing fence before it publishes the final state,
-      // so the message that gets refused precedes the event. It is announced
-      // for that reason. `TEAM_NOT_FOUND` is a row pointing at nothing, which
-      // is this Channel correcting its own document and stays silent.
+      // TEAM_CLOSED also covers a pending dissolve that may still be refused.
+      // Announce only route removal until the final Team state proves closure.
+      // TEAM_NOT_FOUND is silent correction of a row pointing at nothing.
       await this.forgetTeamRoutes(
         plan.teamName,
         outcome.status === 'rejected' && outcome.code === 'TEAM_CLOSED'
-          ? 'team_closed'
+          ? 'route_ended'
           : 'stale_route',
       );
     }

@@ -530,8 +530,16 @@ function teamCreateSchema(): Record<string, unknown> {
       status: { type: 'string', enum: ['created', 'existing', 'closed'] },
       team_name: { type: 'string' },
       leader_name: { type: 'string' },
+      leader_agent_runtime: { type: 'string' },
+      runtime_cwd: { type: 'string' },
     },
-    ['status', 'team_name', 'leader_name'],
+    [
+      'status',
+      'team_name',
+      'leader_name',
+      'leader_agent_runtime',
+      'runtime_cwd',
+    ],
   );
 }
 

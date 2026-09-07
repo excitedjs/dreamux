@@ -325,7 +325,9 @@ export interface TeamHistoryResult {
   next_cursor: string | null;
 }
 
-export interface TeamCreateResult extends TeamSummary {
+export interface TeamCreateResult extends Omit<TeamSummary, 'leader'> {
+  /** A successful creation always publishes its TeamLeader identity. */
+  leader: AgentEntityRuntimeStatus;
   /**
    * The leader's first-turn result, or `null` when the team was created without
    * an explicit `prompt` (no leader process starts and no turn fires at creation).

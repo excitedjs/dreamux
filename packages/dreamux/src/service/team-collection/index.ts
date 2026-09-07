@@ -145,6 +145,8 @@ export class TeamCollection {
           status: accepted.status === 'closed' ? 'closed' : 'existing',
           team_name: accepted.team_id,
           leader_name: accepted.leader_name,
+          leader_agent_runtime: accepted.leader_agent_runtime,
+          runtime_cwd: accepted.runtime_cwd,
         };
       }
       const outcome: { created: TeamCreateResult | null } = { created: null };
@@ -185,6 +187,8 @@ export class TeamCollection {
         status: 'created',
         team_name: created.team.team_name,
         leader_name: created.team.leader_name,
+        leader_agent_runtime: created.team.leader_agent_runtime,
+        runtime_cwd: created.leader.repo.path,
       };
     });
   }

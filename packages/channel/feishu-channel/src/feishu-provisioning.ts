@@ -1,10 +1,10 @@
 /**
  * Turning an unrouted Feishu topic into a working Team.
  *
- * This is the Collaboration Space product effect, composed from two generic
+ * This is the Collaboration Space product effect, composed from generic
  * Core Commands. Core is not told that a space exists, that a topic is a child
  * of a group, or that anything is being orchestrated: it is asked to create a
- * Team, and then to accept one submission.
+ * Team and then accept one submission.
  *
  * None of the work is durable. It lives in this process and may be lost with
  * it — there is no record to resume from, and after a restart the next message
@@ -22,7 +22,11 @@
  * operator who rebinds or removes the space meanwhile changes what the next
  * creation sees and nothing about one already under way.
  */
-import type { DreamuxLogger, JsonValue } from '@excitedjs/dreamux-types';
+import type {
+  DreamuxLogger,
+  JsonValue,
+  TeamCreateResult,
+} from '@excitedjs/dreamux-types';
 
 import type { FeishuRouting } from './routing/index.js';
 import type { FeishuSpaceRecord } from './routing/document.js';
@@ -39,12 +43,6 @@ import {
   type FeishuTeamSubmitter,
 } from './feishu-submit.js';
 
-interface TeamCreateResultShape {
-  status: 'created' | 'existing' | 'closed';
-  team_name: string;
-  leader_name: string;
-}
-
 export interface FeishuProvisioningOptions {
   readonly dispatcherId: string;
   readonly channelId: string;
@@ -57,7 +55,9 @@ export interface FeishuProvisioningOptions {
     target: FeishuTarget;
     display: string | null;
     teamName: string;
-    spaceName: string;
+    leaderName: string;
+    agentRuntime: string;
+    runtimeCwd: string;
   }): void;
 }
 
@@ -131,7 +131,7 @@ export class FeishuProvisioning {
   }
 
   /**
-   * Create the Team, commit the route, announce it, deliver the message.
+   * Create the Team, commit the route, announce it, then submit.
    *
    * The order is the one that degrades honestly. A failure before the binding
    * commits leaves an ordinary Team nothing routes to, which an operator can
@@ -139,7 +139,7 @@ export class FeishuProvisioning {
    * compensation ledger for work this design has already declared expendable.
    *
    * Only the last line reaches Core with this message. Every earlier exit is
-   * `unsubmitted`, which is a fact about this run and not a guess: no Command
+   * `unsubmitted`, which is a fact about this run and not a guess: no submission
    * has been sent yet, so the message is still owed a recipient.
    */
   private async run(input: ProvisioningRequest): Promise<FeishuSubmitOutcome> {
@@ -174,7 +174,9 @@ export class FeishuProvisioning {
       target: input.target,
       display: input.display,
       teamName: created.team_name,
-      spaceName: input.space.space_name,
+      leaderName: created.leader_name,
+      agentRuntime: created.leader_agent_runtime,
+      runtimeCwd: created.runtime_cwd,
     });
     return this.opts.submitter.submit(created.team_name, input.submission);
   }
@@ -197,7 +199,7 @@ export class FeishuProvisioning {
 
   private async createTeam(
     input: ProvisioningRequest,
-  ): Promise<TeamCreateResultShape> {
+  ): Promise<TeamCreateResult> {
     const { space, target } = input;
     return (await this.opts.invoke('team.create', {
       // The inbound Feishu message id, used bare: it is globally unique, so it
@@ -252,6 +254,6 @@ export class FeishuProvisioning {
             },
           }
         : {}),
-    } as JsonValue)) as unknown as TeamCreateResultShape;
+    } as JsonValue)) as unknown as TeamCreateResult;
   }
 }

@@ -362,7 +362,7 @@ export class FeishuCotAdapter {
     anchor: VisibleMessageAnchor | null,
   ): void {
     state.generation += 1;
-    this.detach(key, state, 'interrupted');
+    this.detach(key, state, anchor === null ? 'interrupted' : 'completed');
     state.anchor = anchor;
     if (anchor === null) {
       state.openCalls.clear();
@@ -371,9 +371,8 @@ export class FeishuCotAdapter {
   }
 
   /**
-   * Stop writing to this card and record how it ends. A card retired by a
-   * lifecycle path — a replaced anchor, a closing session — is interrupted
-   * rather than failed, because nothing about it failed.
+   * Stop writing to this card and record how it ends. Anchor replacement
+   * completes the old card; retirement and session closure interrupt it.
    */
   private detach(
     key: string,

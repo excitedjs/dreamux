@@ -4,7 +4,7 @@
  * These cards used to be rendered from Core binding events, which meant Core
  * had to publish a binding fact for a Channel to be able to describe its own
  * state. They are now rendered from this Channel's own records, at the moment
- * this Channel changes them, and no Core event is involved.
+ * this Channel changes them, and no Core binding event is involved.
  */
 import type { FeishuSpaceRecord } from './routing/document.js';
 import { describeTarget, type FeishuTarget } from './routing/target.js';
@@ -17,23 +17,45 @@ export function bindingBoundCard(input: {
   target: FeishuTarget;
   display: string | null;
   teamName: string;
-  /** Set when the binding was installed automatically for a space. */
-  spaceName: string | null;
+  leaderName: string;
+  agentRuntime: string;
+  runtimeCwd: string;
 }): unknown {
-  const topic = input.target.kind === 'topic';
-  return buildFeishuStatusCard({
-    template: 'green',
-    title: topic ? 'Dreamux 话题已绑定' : 'Dreamux 群聊已绑定',
-    enTitle: topic ? 'Dreamux topic bound' : 'Dreamux group bound',
-    fields: [
-      line('目标', 'Target', input.display ?? describeTarget(input.target)),
-      line('绑定类型', 'Binding', topic ? '话题' : '群聊', topic ? 'topic' : 'group'),
-      line('团队', 'Team', input.teamName),
-      ...(input.spaceName !== null
-        ? [line('协作空间', 'Collaboration space', input.spaceName)]
-        : []),
-    ],
-  });
+  const targetDisplay = input.display ?? describeTarget(input.target);
+  const binding = input.target.kind === 'topic' ? 'topic' : 'group';
+  return {
+    schema: '2.0',
+    config: {
+      update_multi: true,
+      width_mode: 'default',
+      summary: { content: `${targetDisplay} bound to Team ${input.teamName}` },
+    },
+    header: {
+      ...routeHeader(`Dreamux ${binding} bound`, 'green', 'Bound', 'green'),
+      icon: { tag: 'standard_icon', token: 'group_outlined', color: 'green' },
+    },
+    body: {
+      direction: 'vertical',
+      padding: '12px 12px 20px 12px',
+      elements: [
+        { ...textBlock(input.teamName, 'heading-2', 'green'), margin: '0px 0px 2px 0px' },
+        {
+          ...textBlock(`Bound to ${targetDisplay} · ${binding}`, 'notation', 'grey'),
+          margin: '0px 0px 12px 0px',
+        },
+        factRow([
+          ['Target', targetDisplay],
+          ['TeamLeader', input.leaderName],
+          ['Agent Runtime', input.agentRuntime],
+        ]),
+        detailPanel(
+          "**<font color='green'>Runtime cwd</font>**",
+          input.runtimeCwd,
+          'green-50',
+        ),
+      ],
+    },
+  };
 }
 
 export function bindingUnboundCard(input: {
@@ -41,24 +63,165 @@ export function bindingUnboundCard(input: {
   display: string | null;
   teamName: string;
 }): unknown {
-  const topic = input.target.kind === 'topic';
+  const targetDisplay = input.display ?? describeTarget(input.target);
+  const binding = input.target.kind === 'topic' ? 'topic' : 'group';
+  return {
+    schema: '2.0',
+    config: {
+      update_multi: true,
+      width_mode: 'default',
+      summary: { content: `${targetDisplay} unbound from Team ${input.teamName}` },
+    },
+    header: {
+      ...routeHeader(`Dreamux ${binding} unbound`, 'grey', 'Unbound', 'neutral'),
+      icon: { tag: 'standard_icon', token: 'close_outlined', color: 'grey' },
+    },
+    body: {
+      direction: 'vertical',
+      padding: '12px 12px 20px 12px',
+      elements: [
+        { ...textBlock(input.teamName, 'heading-2'), margin: '0px 0px 2px 0px' },
+        {
+          ...textBlock(`Unbound from ${targetDisplay}`, 'notation', 'grey'),
+          margin: '0px 0px 12px 0px',
+        },
+        factRow([
+          ['Target', targetDisplay],
+          ['Binding', binding],
+          ['Team', input.teamName],
+        ]),
+        detailPanel(
+          "**<font color='grey'>Why</font>**",
+          'Unbound via Feishu Channel; the Team remains active.',
+          'grey-50',
+        ),
+      ],
+    },
+  };
+}
+
+export function teamDissolvedCard(input: {
+  target: FeishuTarget;
+  display: string | null;
+  teamName: string;
+}): unknown {
+  return {
+    schema: '2.0',
+    config: {
+      update_multi: true,
+      width_mode: 'default',
+      summary: { content: `Team ${input.teamName} dissolved; routes removed` },
+    },
+    header: {
+      ...routeHeader('Dreamux team dissolved', 'grey', 'Team dissolved', 'orange'),
+      icon: { tag: 'standard_icon', token: 'warning_outlined', color: 'orange' },
+    },
+    body: {
+      direction: 'vertical',
+      padding: '12px 12px 20px 12px',
+      elements: [
+        { ...textBlock(input.teamName, 'heading-2', 'orange'), margin: '0px 0px 2px 0px' },
+        {
+          ...textBlock('Team closed; routes removed automatically', 'notation', 'grey'),
+          margin: '0px 0px 12px 0px',
+        },
+        factRow([
+          ['Target', input.display ?? describeTarget(input.target)],
+          ['Binding', input.target.kind === 'topic' ? 'topic' : 'group'],
+          ['Team', input.teamName],
+        ]),
+        detailPanel(
+          "**<font color='orange'>Why</font>**",
+          'Team closed; all of its routes were removed automatically.',
+          'orange-50',
+        ),
+      ],
+    },
+  };
+}
+
+/** Admission can be refused while dissolution is still pending. */
+export function bindingRouteEndedCard(input: {
+  target: FeishuTarget;
+  display: string | null;
+  teamName: string;
+}): unknown {
   return buildFeishuStatusCard({
     template: 'grey',
-    title: topic ? 'Dreamux 话题已解绑' : 'Dreamux 群聊已解绑',
-    enTitle: topic ? 'Dreamux topic unbound' : 'Dreamux group unbound',
+    title: 'Dreamux route ended',
+    enTitle: 'Dreamux route ended',
     fields: [
-      line('目标', 'Target', input.display ?? describeTarget(input.target)),
-      line('团队', 'Team', input.teamName),
-      line(
-        '状态',
-        'Status',
-        topic ? '该话题已不再路由到团队。' : '该群聊已不再路由到团队。',
-        topic
-          ? 'This topic is no longer routed to a Team.'
-          : 'This group is no longer routed to a Team.',
-      ),
+      line('Target', 'Target', input.display ?? describeTarget(input.target)),
+      line('Team', 'Team', input.teamName),
+      line('Status', 'Status', 'This conversation is no longer routed to this Team.'),
     ],
   });
+}
+
+function routeHeader(
+  title: string,
+  template: 'green' | 'grey',
+  status: string,
+  color: 'green' | 'neutral' | 'orange',
+) {
+  return {
+    title: { tag: 'plain_text', content: title },
+    template,
+    text_tag_list: [{ tag: 'text_tag', text: { tag: 'plain_text', content: status }, color }],
+  };
+}
+
+function textBlock(
+  content: string,
+  textSize: 'heading-2' | 'normal' | 'notation',
+  textColor: 'default' | 'grey' | 'green' | 'orange' = 'default',
+  textAlign: 'left' | 'center' = 'left',
+) {
+  return {
+    tag: 'div',
+    text: { tag: 'plain_text', content, text_size: textSize, text_color: textColor, text_align: textAlign },
+  };
+}
+
+function factRow(facts: Array<[string, string]>) {
+  return {
+    tag: 'column_set',
+    flex_mode: 'none',
+    horizontal_spacing: '8px',
+    margin: '0px 0px 12px 0px',
+    columns: facts.map(([label, value]) => ({
+      tag: 'column',
+      width: 'weighted',
+      weight: 1,
+      background_style: 'grey-50',
+      padding: '8px 8px 8px 8px',
+      vertical_spacing: '2px',
+      elements: [
+        textBlock(label, 'notation', 'grey', 'center'),
+        textBlock(value, 'normal', 'default', 'center'),
+      ],
+    })),
+  };
+}
+
+function detailPanel(labelMarkdown: string, value: string, background: string) {
+  return {
+    tag: 'column_set',
+    flex_mode: 'none',
+    margin: '0px',
+    columns: [{
+      tag: 'column',
+      width: 'weighted',
+      weight: 1,
+      background_style: background,
+      padding: '12px 12px 12px 12px',
+      vertical_spacing: '4px',
+      elements: [
+        { tag: 'markdown', content: labelMarkdown },
+        textBlock(value, 'normal'),
+      ],
+    }],
+  };
 }
 
 export function spaceBoundCard(space: FeishuSpaceRecord): unknown {

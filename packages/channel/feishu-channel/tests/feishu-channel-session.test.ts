@@ -139,7 +139,7 @@ function readBindings(channelId: string): Array<Record<string, unknown>> {
 }
 
 describe('FeishuChannelSession.deliver — typed pre-admission rejection fallback', () => {
-  it('TEAM_CLOSED: removes the stale binding, announces it, and delivers once to the Dispatcher Agent', async () => {
+  it('TEAM_CLOSED during a refused dissolve: removes the route neutrally and falls back once', async () => {
     const bot = createFakeFeishuBot();
     const channelId = 'chan-closed';
     const session = await newSession(bot, channelId);
@@ -175,8 +175,18 @@ describe('FeishuChannelSession.deliver — typed pre-admission rejection fallbac
     expect(outcome).toEqual({ status: 'submitted', turnId: 'turn-fallback-1' });
     expect(submitCalls).toBe(2);
     expect(session.routing.bindingFor(chatTarget('oc_closed', 'group'))).toBeUndefined();
-    // TEAM_CLOSED is announced: the conversation is told its route ended.
     expect(bot.sentCards).toHaveLength(1);
+    expect(JSON.stringify(bot.sentCards[0]!.card)).toContain('Dreamux route ended');
+    expect(JSON.stringify(bot.sentCards[0]!.card)).not.toMatch(/dissolved|remains active|Team closed/);
+
+    // The pending non-force dissolve is refused; Core still reports an open Team.
+    port.emit({
+      schema_version: 1, kind: 'team.state', occurred_at: Date.now(),
+      team_name: 'closing-team', leader_name: 'leader-1', status: 'running', teammates: [],
+    });
+    expect(bot.sentCards).toHaveLength(1);
+    expect(readBindings(channelId)).toEqual([]);
+    expect(port.calls.map((call) => call.command)).toEqual(['team.submit', 'team.submit']);
 
     await session.close();
   });
@@ -316,6 +326,11 @@ describe('FeishuChannelSession — team.state closed invalidates every binding t
       () => session.routing.bindingFor(chatTarget('oc_x', 'group')) === undefined,
     );
     await waitFor(() => bot.sentCards.length >= 2);
+    for (const { card } of bot.sentCards) {
+      expect(JSON.stringify(card)).toContain('Dreamux team dissolved');
+      expect(JSON.stringify(card)).toContain('all of its routes were removed automatically.');
+      expect(JSON.stringify(card)).not.toContain('remains active');
+    }
 
     await session.close();
 
@@ -360,7 +375,7 @@ describe('FeishuChannelSession — team.state closed invalidates every binding t
     // awaits the store's own commit queue regardless of who queued it.
     expect(readBindings(channelId)).toEqual([]);
 
-    // But no card exists — announceTeamClosed's notify() only reaches the
+    // But no card exists — announceRoutesRemoved's notify() only reaches the
     // network after the write resolves, by which point close() has already
     // aborted this session's fence, and notify() refuses to run past that
     // point. No presentation callback fires after final close.

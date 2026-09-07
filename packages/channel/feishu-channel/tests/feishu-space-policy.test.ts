@@ -19,6 +19,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { DreamuxLogger, JsonValue } from '@excitedjs/dreamux-types';
 
+import { teamCreateResult } from './helpers/team-status.js';
+
 import { FeishuProvisioning } from '../src/feishu-provisioning.js';
 import { FeishuRouting } from '../src/routing/index.js';
 import { FeishuRoutingStore } from '../src/routing/store.js';
@@ -162,7 +164,7 @@ describe('Provisioning snapshot immutability', () => {
       repo: null,
     });
 
-    resolveCreate({ status: 'created', team_name: 'old-snapshot-team', leader_name: 'l1' } as unknown as JsonValue);
+    resolveCreate(teamCreateResult('old-snapshot-team') as unknown as JsonValue);
     await run;
 
     const createPayload = invokeCalls[0] as Record<string, unknown>;
@@ -200,7 +202,7 @@ describe('Provisioning snapshot immutability', () => {
       },
       invoke: async (command, payload) => {
         invokeCalls.push(payload);
-        return { status: 'created', team_name: 'new-snapshot-team', leader_name: 'l2' } as unknown as JsonValue;
+        return teamCreateResult('new-snapshot-team') as unknown as JsonValue;
       },
       announce: () => undefined,
     });
@@ -246,10 +248,11 @@ describe('unbindSpace — stops future provisioning only', () => {
       submitter: {
         submit: async (): Promise<FeishuSubmitOutcome> => ({ status: 'submitted', turnId: 't3' }),
       },
-      invoke: async () =>
-        new Promise<JsonValue>((resolve) => {
+      invoke: async (command, payload) => {
+        return new Promise<JsonValue>((resolve) => {
           resolveCreate = resolve;
-        }),
+        });
+      },
       announce: () => undefined,
     });
 
@@ -265,7 +268,7 @@ describe('unbindSpace — stops future provisioning only', () => {
     expect(removed?.space_name).toBe('space-a');
     // No new provisioning will start (no policy left to provision under), but
     // the in-flight run is untouched and still completes.
-    resolveCreate({ status: 'created', team_name: 'surviving-team', leader_name: 'l3' } as unknown as JsonValue);
+    resolveCreate(teamCreateResult('surviving-team') as unknown as JsonValue);
     const outcome = await run;
     expect(outcome).toEqual({ status: 'submitted', turnId: 't3' });
     expect(routing.bindingFor(topicTarget('oc_c', 'thread-surviving'))?.team_name).toBe(

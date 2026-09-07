@@ -482,8 +482,9 @@ one, and send the notification card.
 
 Refusing to route to a Team that cannot answer is the one moment the question can
 be asked: `team.status` is invoked before the row is written and before the
-conversation is told, and only a definite answer refuses — `TEAM_NOT_FOUND`,
-`TEAM_CLOSED`, or a `closed` status. A Team that dissolves afterwards converges
+conversation is told. A nonexistent Team throws Core's `TEAM_NOT_FOUND`
+unchanged; a closed Team is a successful status response whose `team.status` is
+`closed`, which the Channel rejects. A Team that dissolves afterwards converges
 through the `team.state` event instead.
 
 What Core owns is the lease scope. Every Channel MCP call carries a
@@ -529,10 +530,13 @@ provisioning begins on first accepted topic inbound.
 The run order is the one that degrades honestly — create the Team, commit the
 route, announce it, deliver the message — and every exit before `team.submit`
 answers `unsubmitted`, so the message it was carrying goes to the Dispatcher
-Agent like any other message this Channel could not hand to a Team. Failing to
-provision is not a reason to drop what somebody wrote. A failure after
-`team.create` leaves an ordinary Team nothing routes to: an accepted orphan an
-operator can see and use, deliberately not compensated.
+Agent like any other message this Channel could not hand to a Team. The
+`team.create` receipt carries the created Team's leader name, configured runtime
+ID, and runtime cwd, so the Channel can render the route card without an
+immediate `team.status` round trip. Failing to provision is not a reason to drop
+what somebody wrote. A failure after `team.create` leaves an ordinary Team
+nothing routes to: an accepted orphan an operator can see and use, deliberately
+not compensated.
 
 Idempotency comes from one choice with several consequences: the `team.create`
 `request_id` is the inbound message id, used bare.
@@ -583,23 +587,30 @@ Routing notification cards are rendered from this Channel's own records, at the
 moment this Channel changes them, and no Core event is involved — Core publishes
 no binding fact, because it holds none.
 
-There are four renderers, and their field sets are the content contract:
+There are six renderers, and their field sets are the content contract:
 
 - **route bound** (manual bind, or an automatic provisioning announcement):
-  target display, binding kind (topic or group), Team name, and the space name
-  when the row was installed for a Space;
-- **route unbound** (manual unbind, and every route a closing Team gives up):
-  target display, Team name, and a status line;
+  target display, binding kind (topic or group), Team name, TeamLeader name,
+  configured Agent Runtime ID, and runtime cwd;
+- **route unbound** (manual Channel MCP unbind): target display, binding kind,
+  Team name, and an explicit statement that only the route was removed and the
+  Team remains active;
+- **Team dissolved** (routes removed after final `team.state(status: 'closed')`):
+  target display, binding kind, Team name, and the confirmed Team-closure cause;
+- **route ended** (early route removal after an inbound `TEAM_CLOSED` rejection):
+  target display, binding kind, Team name, and cause-neutral wording because
+  dissolution may still be in progress and may be refused;
 - **space bound**: space name, container group display, TeamLeader runtime, the
   workspace — which renders the configured repository path when the policy has
   one — base ref, and a note that new topics get their own Team;
 - **space unbound**: space name, container group display, and a status line
   saying provisioning stopped while existing Teams and bindings are unchanged.
 
-Cards use Feishu `plain_text` elements only and render display fields, Team
-facts, and the Space's own policy without rendering prompts or raw errors. The
-repository path is deliberately visible to the members of the bound conversation;
-the user-visible half of that disclosure is
+The three route lifecycle cards use Card 2.0 with English fixed copy and literal
+`plain_text` dynamic values. Collaboration Space cards keep their existing
+schema. Cards render display fields, Team facts, and the Space's own policy
+without rendering prompts or raw errors. The repository path is deliberately
+visible to the members of the bound conversation; the user-visible half of that disclosure is
 [`/.agents/product/README.md`](/.agents/product/README.md).
 
 Where a card goes follows the target. A route card for a topic replies under the

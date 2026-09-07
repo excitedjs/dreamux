@@ -68,6 +68,8 @@ export interface TeamCreateResult {
   readonly status: 'created' | 'existing' | 'closed';
   readonly team_name: string;
   readonly leader_name: string;
+  readonly leader_agent_runtime: string;
+  readonly runtime_cwd: string;
 }
 
 /**

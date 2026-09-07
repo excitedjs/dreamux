@@ -8,8 +8,8 @@
  * What came back is shown by what it is, not by how long it is: a value that
  * parses as JSON is pretty-printed in a `json` code segment, anything else is
  * plain text (operator ruling, 2026-09-04: 「文本的输出，就按文本输出。能解析成JSON
- * 的再放进代码段」), and a string is cut only where it would exceed Feishu's
- * per-event content limit (「截断长度以飞书平台上给出的最长长度为准」).
+ * 的再放进代码段」). Plain text keeps ten content lines; every result remains
+ * bounded by Feishu's per-event content limit.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -18,6 +18,7 @@ import type { TeammateActivity } from '@excitedjs/dreamux-types';
 
 import {
   toolCallResultEvents,
+  toolResultOutput,
   toolCallStartEvents,
 } from '../src/feishu-cot-events.js';
 
@@ -188,6 +189,50 @@ describe('runtime-labelled tool rows', () => {
     expect(Buffer.byteLength(JSON.stringify(result!.content), 'utf8')).toBeLessThanOrEqual(4_096);
   });
 
+  it.each(['', 'one', ...['\n', '\r\n'].flatMap((separator) => {
+    const ten = Array.from({ length: 10 }, (_, i) => `line-${i}`).join(separator);
+    return [ten, ten + separator];
+  })])('keeps at most ten content lines unchanged: %j', (output) => {
+    expect(toolResultOutput(output)).toEqual(output === '' ? null : { kind: 'text', text: output });
+  });
+
+  it.each(['\n', '\r\n'])('cuts the eleventh content line, including an empty one, with %j', (separator) => {
+    const ten = Array.from({ length: 10 }, (_, i) => `line-${i}`).join(separator);
+    for (const eleventh of ['line-eleven', separator]) {
+      const [event] = toolCallResultEvents(toolCall({
+        status: 'completed', result_json: ten + separator + eleventh,
+      }));
+      expect(event!.content).toMatchObject({
+        content: { type: 'text', text: ten + separator + '… (truncated)' },
+      });
+    }
+  });
+
+  it.each([Array.from({ length: 12 }, (_, i) => i), { values: Array.from({ length: 12 }, (_, i) => i) }])(
+    'keeps all lines of a JSON object or array', (value) => {
+      const [event] = toolCallResultEvents(toolCall({ status: 'completed', result_json: JSON.stringify(value) }));
+      expect(event!.content).toMatchObject({
+        content: { type: 'code', language: 'json', code: JSON.stringify(value, null, 2) },
+      });
+    },
+  );
+
+  it('treats a JSON scalar with multiline whitespace as text and cuts its source lines', () => {
+    const scalar = '42' + '\n'.repeat(11);
+    expect(JSON.parse(scalar)).toBe(42);
+    expect(toolResultOutput(scalar)).toEqual({ kind: 'text', text: '42' + '\n'.repeat(10) + '… (truncated)' });
+  });
+
+  it.each([
+    '  ' + '界'.repeat(2_000) + '\nshort'.repeat(10),
+    JSON.stringify({ values: Array.from({ length: 12 }, () => '界'.repeat(1_000)) }),
+  ])('still applies the event byte limit after classification and line cutting', (output) => {
+    const [event] = toolCallResultEvents(toolCall({ status: 'completed', result_json: output }));
+    const shown = (event!.content as { content: { text?: string; code?: string } }).content;
+    expect(shown.text ?? shown.code).toContain('… (truncated)');
+    expect(Buffer.byteLength(JSON.stringify(event!.content), 'utf8')).toBeLessThanOrEqual(4_096);
+  });
+
   it('pretty-prints an output that parses as JSON in a json code segment, its spaces untouched', () => {
     const [result] = toolCallResultEvents(toolCall({
       tool_name: 'mcp__teammate__spawn',
@@ -219,7 +264,7 @@ describe('runtime-labelled tool rows', () => {
     }
   });
 
-  it("cuts an output only at Feishu's per-event content limit, with the marker", () => {
+  it("cuts a long single-line output at Feishu's per-event content limit, with the marker", () => {
     const [result] = toolCallResultEvents(toolCall({
       status: 'completed',
       result_json: 'x'.repeat(10_000),

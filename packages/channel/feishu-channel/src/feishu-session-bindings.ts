@@ -11,13 +11,13 @@
  * lifecycle fence and bounded-send policy, and this module needs neither.
  */
 import type { JsonValue } from '@excitedjs/dreamux-types';
-import { PublicInvokeFailure } from '@excitedjs/dreamux-utils';
-
-import { commandErrorCode } from './feishu-submit.js';
+import { isPlainObject, PublicInvokeFailure } from '@excitedjs/dreamux-utils';
 
 import {
   bindingBoundCard,
   bindingUnboundCard,
+  bindingRouteEndedCard,
+  teamDissolvedCard,
   spaceBoundCard,
   spaceUnboundCard,
 } from './feishu-binding-notification-card.js';
@@ -71,7 +71,27 @@ export class FeishuBindingOperations {
           'group, or a topic inside one.',
       );
     }
-    await this.requireRoutableTeam(input.teamName);
+    const answer = await this.opts.invoke('team.status', { team_name: input.teamName });
+    const team = isPlainObject(answer) ? answer['team'] : null;
+    if (isPlainObject(team) && team['status'] === 'closed') {
+      throw new PublicInvokeFailure(
+        `Team ${JSON.stringify(input.teamName)} is closed and can no longer ` +
+          'answer here. Bind an open Team instead.',
+      );
+    }
+    const leader = isPlainObject(answer) ? answer['leader'] : null;
+    const repo = isPlainObject(leader) ? leader['repo'] : null;
+    if (
+      !isPlainObject(team) ||
+      typeof team['team_name'] !== 'string' || team['team_name'] === '' ||
+      typeof team['leader_name'] !== 'string' || team['leader_name'] === '' ||
+      typeof team['leader_agent_runtime'] !== 'string' || team['leader_agent_runtime'] === '' ||
+      !isPlainObject(repo) || typeof repo['path'] !== 'string' || repo['path'] === ''
+    ) {
+      throw new PublicInvokeFailure(
+        `Team ${JSON.stringify(input.teamName)} has no complete TeamLeader runtime context.`,
+      );
+    }
     const { previousTeamName } = await this.opts.routing.bind({
       target,
       teamName: input.teamName,
@@ -91,46 +111,14 @@ export class FeishuBindingOperations {
       bindingBoundCard({
         target,
         display: input.display,
-        teamName: input.teamName,
-        spaceName: null,
+        teamName: team['team_name'],
+        leaderName: team['leader_name'],
+        agentRuntime: team['leader_agent_runtime'],
+        runtimeCwd: repo['path'],
       }),
       input.teamName,
     );
     return { team_name: input.teamName, previous_team_name: previousTeamName };
-  }
-
-  /**
-   * Refuse to route a conversation to a Team that cannot answer in it.
-   *
-   * Where a message goes is this Channel's own decision, but whether a Team
-   * exists and is open is Core's fact, so it is asked rather than assumed —
-   * before the row is written and before the conversation is told, since a
-   * binding card naming a Team that is gone is worse than no binding at all.
-   * This is the only moment the question can be asked; a Team that dissolves
-   * afterwards still converges through the `team.closed` event.
-   *
-   * Only a definite answer refuses. Core proving the Team missing or closed is
-   * one, and so is a `closed` status; any other reply already proves a Team
-   * answered to that name, whatever else it says.
-   */
-  private async requireRoutableTeam(teamName: string): Promise<void> {
-    let answer: JsonValue;
-    try {
-      answer = await this.opts.invoke('team.status', { team_name: teamName });
-    } catch (error) {
-      const code = commandErrorCode(error);
-      if (code !== 'TEAM_NOT_FOUND' && code !== 'TEAM_CLOSED') throw error;
-      throw new PublicInvokeFailure(
-        `There is no Team named ${JSON.stringify(teamName)} to route this ` +
-          'conversation to. Bind an open Team, or create one first.',
-      );
-    }
-    if (teamStatusOf(answer) === 'closed') {
-      throw new PublicInvokeFailure(
-        `Team ${JSON.stringify(teamName)} is closed and can no longer ` +
-          'answer here. Bind an open Team instead.',
-      );
-    }
   }
 
   async unbindChannel(
@@ -178,22 +166,13 @@ export class FeishuBindingOperations {
     return space;
   }
 
-  /**
-   * A closed Team's routes are gone; announce it where each one served.
-   *
-   * Removal already committed, and this only says so. Every row gets the same
-   * two effects a manual unbind gets — the COT route release and the unbound
-   * card — because to the conversation nothing else happened: it was routed to
-   * a Team, and now it is not. The card falls back to the target description
-   * when the removed row carried no display, exactly as an unbind does.
-   *
-   * Nothing here is awaited or retried. A card that does not arrive leaves the
-   * route removed, which is the fact that mattered.
-   */
-  announceTeamClosed(input: {
+  /** Announce committed route removal using only its confirmed cause. */
+  announceRoutesRemoved(input: {
     teamName: string;
     removed: readonly FeishuRemovedRoute[];
+    reason: 'team_closed' | 'route_ended';
   }): void {
+    const card = input.reason === 'team_closed' ? teamDissolvedCard : bindingRouteEndedCard;
     for (const route of input.removed) {
       this.opts.cot.onRouteReleased({
         teamName: input.teamName,
@@ -201,7 +180,7 @@ export class FeishuBindingOperations {
       });
       this.opts.notify(
         route.target,
-        bindingUnboundCard({
+        card({
           target: route.target,
           display: route.display,
           teamName: input.teamName,
@@ -216,7 +195,9 @@ export class FeishuBindingOperations {
     target: FeishuTarget;
     display: string | null;
     teamName: string;
-    spaceName: string;
+    leaderName: string;
+    agentRuntime: string;
+    runtimeCwd: string;
   }): void {
     this.opts.cot.onRouteClaimed({
       teamName: input.teamName,
@@ -228,24 +209,13 @@ export class FeishuBindingOperations {
         target: input.target,
         display: input.display,
         teamName: input.teamName,
-        spaceName: input.spaceName,
+        leaderName: input.leaderName,
+        agentRuntime: input.agentRuntime,
+        runtimeCwd: input.runtimeCwd,
       }),
       input.teamName,
     );
   }
-}
-
-/** Read the Team status out of a `team.status` answer, if it states one. */
-function teamStatusOf(answer: JsonValue): string | null {
-  if (answer === null || typeof answer !== 'object' || Array.isArray(answer)) {
-    return null;
-  }
-  const team = (answer as Record<string, unknown>)['team'];
-  if (team === null || typeof team !== 'object' || Array.isArray(team)) {
-    return null;
-  }
-  const status = (team as Record<string, unknown>)['status'];
-  return typeof status === 'string' ? status : null;
 }
 
 export function selectorTarget(

@@ -32,8 +32,8 @@ const COT_REQUEST_ENCODING_RESERVE_BYTES = 512;
 /**
  * How a card ends: the same three words the runtime uses for a turn end,
  * because a card's terminal *is* the end of what it was showing. The lifecycle
- * paths that end a card with no runtime saying so — a retired anchor, a session
- * close — are exactly `interrupted`. Wire spelling is this module's business.
+ * paths that retire an anchor or close a session use `interrupted`; replacing
+ * an anchor completes its old card. Wire spelling is this module's business.
  *
  * Feishu documents one more `RUN_FINISHED.status`, `paused`, that nothing here
  * produces: a card is open or ended, never held. The omission is deliberate.
@@ -263,8 +263,9 @@ export interface ToolResultParts {
  * a `json` code segment, anything else as plain text (operator ruling,
  * 2026-09-04: 「文本的输出，就按文本输出。能解析成JSON的再放进代码段」). The whole
  * text is parsed first and cut last, so a cut never decides what a value was.
- * Plain text keeps its spacing the way the client keeps it (`preserveSpacing`),
- * before the cut is measured; a code segment keeps its own spaces.
+ * Plain text keeps ten content lines, then preserves its spacing the way the
+ * client keeps it (`preserveSpacing`) before byte fitting. JSON keeps its lines
+ * and spaces until byte fitting.
  */
 export interface ToolResultOutput {
   readonly kind: 'json' | 'text';
@@ -282,7 +283,17 @@ export function toolResultOutput(resultJson: string | null): ToolResultOutput | 
   } catch {
     // Not JSON: the runtime's own text, shown as text.
   }
-  return { kind: 'text', text: preserveSpacing(text) };
+  let boundary = -1;
+  for (let line = 0; line < 10; line += 1) {
+    boundary = text.indexOf('\n', boundary + 1);
+    if (boundary === -1 || boundary === text.length - 1) {
+      return { kind: 'text', text: preserveSpacing(text) };
+    }
+  }
+  return {
+    kind: 'text',
+    text: preserveSpacing(text.slice(0, boundary + 1) + TRUNCATION_MARKER),
+  };
 }
 
 export function assembleToolResultContent(parts: ToolResultParts): unknown {

@@ -272,7 +272,7 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
     await session.close();
   });
 
-  it('interrupts one predecessor and opens exactly one successor for a second inbound', async () => {
+  it('completes one predecessor and opens exactly one successor for a second inbound', async () => {
     let submissionIndex = 0;
     const { session, cot, port } = await harness('chan-cot-successor', async (
       command,
@@ -313,14 +313,14 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       },
     });
     await waitFor(() => cot.cards.length === 2);
-    await waitFor(() => cotTerminal(cot.cards[0]!) === 'interrupted');
+    await waitFor(() => cotTerminal(cot.cards[0]!) === 'done');
 
     expect(cot.cards).toHaveLength(2);
     expect(cot.cards.map((card) => card.originMessageId)).toEqual([
       'message-one',
       'message-two',
     ]);
-    expect(cot.cards.map(cotTerminal)).toEqual(['interrupted', null]);
+    expect(cot.cards.map(cotTerminal)).toEqual(['done', null]);
     expectOpeningTexts(cot.cards[0]!, ['first answer']);
     expectOpeningTexts(cot.cards[1]!, []);
 
@@ -360,12 +360,12 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
     const outcome = await session.submit(null, submission);
     expect(outcome).toEqual({ status: 'duplicate' });
     await waitFor(() => cot.cards.length === 2);
-    await waitFor(() => cotTerminal(cot.cards[0]!) === 'interrupted');
+    await waitFor(() => cotTerminal(cot.cards[0]!) === 'done');
     expect(cot.cards.map((card) => card.originMessageId)).toEqual([
       'message-repeat',
       'message-repeat',
     ]);
-    expect(cot.cards.map(cotTerminal)).toEqual(['interrupted', null]);
+    expect(cot.cards.map(cotTerminal)).toEqual(['done', null]);
     expectOpeningTexts(cot.cards[1]!, []);
 
     port.emit(assistantMessage('turn-original', 'dispatcher', 'after repeat'));
@@ -377,12 +377,14 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
   });
 
   it('carries the same anchor to the Dispatcher when a proven-stale route falls back', async () => {
-    const { session, cot, port } = await harness('chan-cot-fallback', async (
+    let submitCalls = 0;
+    const { session, cot, port, bot } = await harness('chan-cot-fallback', async (
       command,
       payload,
       emit,
     ) => {
       if (command !== 'team.submit') throw new Error(`unexpected ${command}`);
+      submitCalls += 1;
       const p = payload as Record<string, unknown>;
       // The stored route names a Team that is closed: proven no admission.
       if (p['team_name'] !== undefined) throw teamClosedError();
@@ -422,6 +424,9 @@ describe('FeishuChannelSession COT — the anchor is the visible inbound message
       'om_user_1',
     ]);
     expect(cot.cards.map(cotTerminal)).toEqual(['interrupted', null]);
+    expect(submitCalls).toBe(2);
+    expect(JSON.stringify(bot.sentCards[0]!.card)).toContain('Dreamux route ended');
+    expect(JSON.stringify(bot.sentCards[0]!.card)).not.toContain('dissolved');
     port.emit(assistantMessage('turn-fallback', 'dispatcher', 'dispatcher answered'));
     await waitFor(() => cotTexts(cot.cards[1]!).length === 2);
     expectOpeningTexts(cot.cards[1]!, ['dispatcher answered']);

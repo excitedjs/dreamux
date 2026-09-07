@@ -15,9 +15,11 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { DreamuxLogger, JsonValue } from '@excitedjs/dreamux-types';
+import type { DreamuxLogger, JsonValue, TeamCreateResult } from '@excitedjs/dreamux-types';
+
+import { teamCreateResult } from './helpers/team-status.js';
 
 import { FeishuProvisioning } from '../src/feishu-provisioning.js';
 import { FeishuRouting } from '../src/routing/index.js';
@@ -58,8 +60,14 @@ interface Harness {
   provisioning: FeishuProvisioning;
   invokeCalls: Array<{ command: string; payload: JsonValue }>;
   submitCalls: Array<{ teamName: string; sourceId: string }>;
-  announceCalls: Array<{ teamName: string; spaceName: string }>;
-  createResult: { status: 'created' | 'existing' | 'closed'; team_name: string; leader_name: string };
+  announceCalls: Array<{
+    teamName: string;
+    leaderName: string;
+    agentRuntime: string;
+    runtimeCwd: string;
+  }>;
+  trace: string[];
+  createResult: TeamCreateResult;
   createImpl?: (payload: JsonValue) => Promise<JsonValue>;
   submitResult: FeishuSubmitOutcome;
 }
@@ -79,7 +87,8 @@ async function harness(): Promise<Harness> {
     invokeCalls: [],
     submitCalls: [],
     announceCalls: [],
-    createResult: { status: 'created', team_name: 'space-team-1', leader_name: 'leader-1' },
+    trace: [],
+    createResult: teamCreateResult('space-team-1'),
     submitResult: { status: 'submitted', turnId: 'turn-1' },
   };
 
@@ -90,11 +99,13 @@ async function harness(): Promise<Harness> {
     routing,
     submitter: {
       submit: async (teamName, sub) => {
+        state.trace.push('team.submit');
         state.submitCalls.push({ teamName, sourceId: sub.sourceId });
         return state.submitResult;
       },
     },
     invoke: async (command, payload) => {
+      state.trace.push(command);
       state.invokeCalls.push({ command, payload });
       if (command === 'team.create') {
         if (state.createImpl !== undefined) return state.createImpl(payload);
@@ -103,7 +114,13 @@ async function harness(): Promise<Harness> {
       throw new Error(`unexpected command ${command}`);
     },
     announce: (input) => {
-      state.announceCalls.push({ teamName: input.teamName, spaceName: input.spaceName });
+      state.trace.push('announce');
+      state.announceCalls.push({
+        teamName: input.teamName,
+        leaderName: input.leaderName,
+        agentRuntime: input.agentRuntime,
+        runtimeCwd: input.runtimeCwd,
+      });
     },
   });
   state.provisioning = provisioning;
@@ -127,6 +144,11 @@ describe('FeishuProvisioning — happy-path ordering', () => {
     const h = await harness();
     const spaceRecord = await h.routing.bindSpace(space());
     const target = topicTarget('oc_container', 'thread_new');
+    const bind = h.routing.bind.bind(h.routing);
+    vi.spyOn(h.routing, 'bind').mockImplementation(async (input) => {
+      h.trace.push('bind');
+      return bind(input);
+    });
 
     const outcome = await h.provisioning.provisionForInbound({
       space: spaceRecord,
@@ -136,13 +158,13 @@ describe('FeishuProvisioning — happy-path ordering', () => {
     });
 
     expect(outcome).toEqual({ status: 'submitted', turnId: 'turn-1' });
-    expect(h.invokeCalls).toHaveLength(1);
-    expect(h.invokeCalls[0]?.command).toBe('team.create');
+    expect(h.invokeCalls.map((call) => call.command)).toEqual(['team.create']);
     expect(h.routing.bindingFor(target)?.team_name).toBe('space-team-1');
     expect(h.announceCalls).toEqual([
-      { teamName: 'space-team-1', spaceName: 'space-a' },
+      { teamName: 'space-team-1', leaderName: 'space-team-1-leader', agentRuntime: 'trae-gpt', runtimeCwd: '/workspace/space-team-1' },
     ]);
     expect(h.submitCalls).toEqual([{ teamName: 'space-team-1', sourceId: 'msg-1' }]);
+    expect(h.trace).toEqual(['team.create', 'bind', 'announce', 'team.submit']);
   });
 
   it('derives request_id from the inbound message id, so distinct messages get distinct ids', async () => {
@@ -155,7 +177,7 @@ describe('FeishuProvisioning — happy-path ordering', () => {
       display: null,
       submission: submission('m1'),
     });
-    h.createResult = { status: 'created', team_name: 'space-team-2', leader_name: 'leader-2' };
+    h.createResult = teamCreateResult('space-team-2');
     await h.provisioning.provisionForInbound({
       space: spaceRecord,
       target: topicTarget('oc_container', 'thread_2'),
@@ -163,7 +185,7 @@ describe('FeishuProvisioning — happy-path ordering', () => {
       submission: submission('m2'),
     });
 
-    const requestIds = h.invokeCalls.map(
+    const requestIds = h.invokeCalls.filter((c) => c.command === 'team.create').map(
       (c) => (c.payload as Record<string, unknown>)['request_id'],
     );
     // Bare message ids, not a composite: a Feishu message id is already
@@ -185,7 +207,7 @@ describe('FeishuProvisioning — happy-path ordering', () => {
     // The same message arriving again after the binding was lost — the run
     // reaches team.create a second time and must present the same identity.
     await h.routing.unbind(target);
-    h.createResult = { status: 'existing', team_name: 'space-team-1', leader_name: 'leader-1' };
+    h.createResult = teamCreateResult('space-team-1', 'existing');
     await h.provisioning.provisionForInbound({
       space: spaceRecord,
       target,
@@ -193,7 +215,7 @@ describe('FeishuProvisioning — happy-path ordering', () => {
       submission: submission('redelivered'),
     });
 
-    const requestIds = h.invokeCalls.map(
+    const requestIds = h.invokeCalls.filter((c) => c.command === 'team.create').map(
       (c) => (c.payload as Record<string, unknown>)['request_id'],
     );
     expect(requestIds).toEqual(['redelivered', 'redelivered']);
@@ -206,7 +228,7 @@ describe('FeishuProvisioning — happy-path ordering', () => {
 
     // The earlier attempt created the Team but died before binding, so Core
     // answers this replay with the Team it already published.
-    h.createResult = { status: 'existing', team_name: 'space-team-1', leader_name: 'leader-1' };
+    h.createResult = teamCreateResult('space-team-1', 'existing');
     const outcome = await h.provisioning.provisionForInbound({
       space: spaceRecord,
       target,
@@ -247,7 +269,7 @@ describe('FeishuProvisioning — concurrency: one run per target', () => {
       submission: submission('second'),
     });
 
-    resolveCreate({ status: 'created', team_name: 'shared-team', leader_name: 'leader-x' } as unknown as JsonValue);
+    resolveCreate(teamCreateResult('shared-team') as unknown as JsonValue);
 
     const [firstOutcome, secondOutcome] = await Promise.all([first, second]);
     expect(firstOutcome).toEqual({ status: 'submitted', turnId: 'turn-1' });
@@ -293,7 +315,7 @@ describe('FeishuProvisioning — interrupted run leaves at most an accepted orph
   it('an empty Team name from team.create is treated as no admission, not a crash', async () => {
     const h = await harness();
     const spaceRecord = await h.routing.bindSpace(space());
-    h.createResult = { status: 'created', team_name: '', leader_name: '' };
+    h.createResult = { ...teamCreateResult('space-team-1'), team_name: '' };
 
     const outcome = await h.provisioning.provisionForInbound({
       space: spaceRecord,
@@ -308,7 +330,7 @@ describe('FeishuProvisioning — interrupted run leaves at most an accepted orph
   it('a replayed-closed team.create answer is reported rather than retried', async () => {
     const h = await harness();
     const spaceRecord = await h.routing.bindSpace(space());
-    h.createResult = { status: 'closed', team_name: 'ghost-team', leader_name: 'x' };
+    h.createResult = teamCreateResult('ghost-team', 'closed');
 
     const outcome = await h.provisioning.provisionForInbound({
       space: spaceRecord,
